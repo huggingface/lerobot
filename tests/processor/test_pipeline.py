@@ -34,7 +34,12 @@ from lerobot.processor import (
     ProcessorStepRegistry,
     TransitionKey,
 )
-from lerobot.processor.converters import create_transition, identity_transition
+from lerobot.processor.converters import (
+    batch_to_transition,
+    create_transition,
+    identity_transition,
+    transition_to_batch,
+)
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, REWARD, TRUNCATED
 from tests.conftest import assert_contract_is_typed
 
@@ -1850,6 +1855,114 @@ def test_save_load_with_custom_converter_functions():
         result = loaded(batch)
         # With new behavior, default to_output is _default_transition_to_batch, so result is batch dict
         assert OBS_IMAGE in result
+
+
+def test_from_pretrained_restores_registered_converters():
+    """Test that registered converter functions (e.g. policy_action_to_transition) survive save/load.
+
+    This is a regression test for issue #2702: from_pretrained was losing converter functions,
+    always falling back to batch_to_transition / transition_to_batch defaults.
+    """
+    from lerobot.processor.converters import (
+        policy_action_to_transition,
+        transition_to_policy_action,
+    )
+
+    step = MockStep("test_step")
+
+    # Create a pipeline with policy-specific converters (like ACT's postprocessor uses)
+    pipeline = DataProcessorPipeline(
+        [step],
+        name="TestPolicyPostprocessor",
+        to_transition=policy_action_to_transition,
+        to_output=transition_to_policy_action,
+    )
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        # Save the pipeline
+        pipeline.save_pretrained(tmp_dir)
+
+        # Verify the converter names are saved in the config JSON
+        config_path = Path(tmp_dir) / "testpolicypostprocessor.json"
+        with open(config_path) as f:
+            config = json.load(f)
+
+        assert config["to_transition"] == "policy_action_to_transition"
+        assert config["to_output"] == "transition_to_policy_action"
+
+        # Load without explicitly passing converter functions
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="testpolicypostprocessor.json"
+        )
+
+        # The loaded pipeline should have the correct converters restored
+        assert loaded_pipeline.to_transition is policy_action_to_transition
+        assert loaded_pipeline.to_output is transition_to_policy_action
+
+        # Verify it actually works: pass a tensor through the loaded pipeline
+        action_tensor = torch.randn(1, 7)
+        result = loaded_pipeline(action_tensor)
+        assert isinstance(result, torch.Tensor)
+        assert result.shape == action_tensor.shape
+
+
+def test_from_pretrained_backward_compat_no_converter_keys():
+    """Test that old configs without to_transition/to_output keys fall back to defaults."""
+    step = MockStep("test_step")
+    pipeline = DataProcessorPipeline([step], name="OldStylePipeline")
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        pipeline.save_pretrained(tmp_dir)
+
+        # Manually strip the converter keys to simulate an old config
+        config_path = Path(tmp_dir) / "oldstylepipeline.json"
+        with open(config_path) as f:
+            config = json.load(f)
+
+        config.pop("to_transition", None)
+        config.pop("to_output", None)
+
+        with open(config_path, "w") as f:
+            json.dump(config, f, indent=2)
+
+        # Load should fall back to batch_to_transition / transition_to_batch
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="oldstylepipeline.json"
+        )
+
+        assert loaded_pipeline.to_transition is batch_to_transition
+        assert loaded_pipeline.to_output is transition_to_batch
+
+
+def test_from_pretrained_explicit_override_takes_priority():
+    """Test that explicitly passed to_transition/to_output override saved values."""
+    from lerobot.processor.converters import (
+        policy_action_to_transition,
+        transition_to_policy_action,
+    )
+
+    step = MockStep("test_step")
+    pipeline = DataProcessorPipeline(
+        [step],
+        name="OverridePriorityTest",
+        to_transition=policy_action_to_transition,
+        to_output=transition_to_policy_action,
+    )
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        pipeline.save_pretrained(tmp_dir)
+
+        # Load with explicit converters that should take priority
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(
+            tmp_dir,
+            config_filename="overrideprioritytest.json",
+            to_transition=identity_transition,
+            to_output=identity_transition,
+        )
+
+        # The explicitly passed converters should win over saved ones
+        assert loaded_pipeline.to_transition is identity_transition
+        assert loaded_pipeline.to_output is identity_transition
 
 
 class NonCompliantStep:
