@@ -49,9 +49,14 @@ import torch
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
-from lerobot.robots import (
-    RobotConfig,  # noqa: F401
+from lerobot.robots import (  # noqa: F401
+    Robot,
+    RobotConfig,
+    bi_so_follower,
+    koch_follower,
     make_robot_from_config,
+    omx_follower,
+    so_follower,
 )
 from lerobot.transport import (
     services_pb2,  # type: ignore
