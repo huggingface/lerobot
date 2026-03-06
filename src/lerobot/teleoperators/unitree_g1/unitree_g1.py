@@ -15,10 +15,12 @@
 # limitations under the License.
 
 import logging
+import struct
 import time
 from functools import cached_property
+from typing import Any
 
-from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex
+from lerobot.robots.unitree_g1.g1_utils import REMOTE_AXES, G1_29_JointArmIndex
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
 
 from ..teleoperator import Teleoperator
@@ -27,6 +29,91 @@ from .exo_ik import ExoskeletonIKHelper
 from .exo_serial import ExoskeletonArm
 
 logger = logging.getLogger(__name__)
+
+
+class RemoteController:
+    """Unitree remote controller data parser for joystick and button state."""
+
+    # ADC parameters for exoskeleton joystick (12-bit ADC)
+    ADC_MAX = 4095
+    ADC_HALF = ADC_MAX / 2
+    JOYSTICK_X_IDX = 11  # X axis in raw ADC array
+    JOYSTICK_BTN_IDX = 12  # Button in raw ADC array
+    JOYSTICK_Y_IDX = 13  # Y axis in raw ADC array
+
+    def __init__(self):
+        self.lx = 0.0
+        self.ly = 0.0
+        self.rx = 0.0
+        self.ry = 0.0
+        self.button = [0] * 16
+        self.remote_action = dict.fromkeys(REMOTE_AXES, 0.0)
+
+        # Joystick center calibration (read at connect time)
+        self.left_center_x = self.ADC_HALF
+        self.left_center_y = self.ADC_HALF
+        self.right_center_x = self.ADC_HALF
+        self.right_center_y = self.ADC_HALF
+
+        # Whether to use exo joystick (detected at connect time)
+        self.use_left_exo_joystick = False
+        self.use_right_exo_joystick = False
+
+    def _sync_remote_action(self) -> None:
+        self.remote_action.update(zip(self.remote_action, (self.lx, self.ly, self.rx, self.ry), strict=True))
+
+    def calibrate_center(self, raw16: list[int] | None, side: str) -> None:
+        if raw16 is None or len(raw16) < 16:
+            logger.info(f"{side.capitalize()} exo joystick: no data available")
+            return
+
+        btn_val = raw16[self.JOYSTICK_BTN_IDX]
+        logger.info(f"{side.capitalize()} exo joystick button ADC: {btn_val} (threshold: {self.ADC_HALF})")
+        if btn_val <= self.ADC_HALF:
+            logger.info(f"{side.capitalize()} exo joystick not detected (button below threshold)")
+            return
+
+        x = raw16[self.JOYSTICK_X_IDX]
+        y = raw16[self.JOYSTICK_Y_IDX]
+        if side == "left":
+            self.use_left_exo_joystick = True
+            self.left_center_x, self.left_center_y = x, y
+        else:
+            self.use_right_exo_joystick = True
+            self.right_center_x, self.right_center_y = x, y
+        logger.info(f"{side.capitalize()} exo joystick enabled, center: x={x}, y={y}")
+
+    def set_from_exo(self, raw16: list[int] | None, side: str) -> None:
+        if raw16 is None or len(raw16) < 16:
+            return
+
+        if side == "left":
+            if not self.use_left_exo_joystick:
+                return
+            self.lx = (raw16[self.JOYSTICK_X_IDX] - self.left_center_x) / self.ADC_HALF
+            self.ly = (raw16[self.JOYSTICK_Y_IDX] - self.left_center_y) / self.ADC_HALF
+            if raw16[self.JOYSTICK_BTN_IDX] < self.ADC_HALF:
+                self.button[4] = 1
+            return
+
+        if not self.use_right_exo_joystick:
+            return
+        self.rx = (raw16[self.JOYSTICK_X_IDX] - self.right_center_x) / self.ADC_HALF
+        self.ry = (raw16[self.JOYSTICK_Y_IDX] - self.right_center_y) / self.ADC_HALF
+        if raw16[self.JOYSTICK_BTN_IDX] < self.ADC_HALF:
+            self.button[0] = 1
+
+    def set_from_wireless(self, wireless_remote: bytes) -> None:
+        """Parse Unitree wireless remote raw bytes into joystick + button state."""
+        if len(wireless_remote) < 24:
+            return
+        keys = struct.unpack("H", wireless_remote[2:4])[0]
+        for i in range(16):
+            self.button[i] = (keys & (1 << i)) >> i
+        self.lx = struct.unpack("f", wireless_remote[4:8])[0]
+        self.rx = struct.unpack("f", wireless_remote[8:12])[0]
+        self.ry = struct.unpack("f", wireless_remote[12:16])[0]
+        self.ly = struct.unpack("f", wireless_remote[20:24])[0]
 
 
 class UnitreeG1Teleoperator(Teleoperator):
@@ -43,6 +130,13 @@ class UnitreeG1Teleoperator(Teleoperator):
     def __init__(self, config: UnitreeG1TeleoperatorConfig):
         super().__init__(config)
         self.config = config
+        left_exo_enabled = bool(config.left_arm_config.port.strip())
+        right_exo_enabled = bool(config.right_arm_config.port.strip())
+        if left_exo_enabled != right_exo_enabled:
+            raise ValueError(
+                "Invalid exo config: set both left/right exo ports, or leave both empty for remote-only mode."
+            )
+        self._arm_control_enabled = left_exo_enabled and right_exo_enabled
 
         # Setup calibration directory
         self.calibration_dir = (
@@ -70,10 +164,15 @@ class UnitreeG1Teleoperator(Teleoperator):
         )
 
         self.ik_helper: ExoskeletonIKHelper | None = None
+        self.remote_controller = RemoteController()
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        return {f"{name}.q": float for name in self._g1_joint_names}
+        remote_features = dict.fromkeys(self.remote_controller.remote_action, float)
+        if not self._arm_control_enabled:
+            return remote_features
+        joint_features = {f"{name}.q": float for name in self._g1_arm_joint_names}
+        return {**joint_features, **remote_features}
 
     @cached_property
     def feedback_features(self) -> dict[str, type]:
@@ -81,19 +180,34 @@ class UnitreeG1Teleoperator(Teleoperator):
 
     @property
     def is_connected(self) -> bool:
+        if not self._arm_control_enabled:
+            return True
         return self.left_arm.is_connected and self.right_arm.is_connected
 
     @property
     def is_calibrated(self) -> bool:
+        if not self._arm_control_enabled:
+            return True
         return self.left_arm.is_calibrated and self.right_arm.is_calibrated
 
     def connect(self, calibrate: bool = True) -> None:
+        if not self._arm_control_enabled:
+            logger.warning("Exo ports not fully configured; teleop will send joystick only (no arm actions)")
+            return
+
         self.left_arm.connect(calibrate)
         self.right_arm.connect(calibrate)
 
         frozen_joints = [j.strip() for j in self.config.frozen_joints.split(",") if j.strip()]
         self.ik_helper = ExoskeletonIKHelper(frozen_joints=frozen_joints)
         logger.info("IK helper initialized")
+
+        time.sleep(0.1)  # Give serial time to populate buffer
+
+        left_raw = self.left_arm.read_raw()
+        right_raw = self.right_arm.read_raw()
+        self.remote_controller.calibrate_center(left_raw, "left")
+        self.remote_controller.calibrate_center(right_raw, "right")
 
     def calibrate(self) -> None:
         if not self.left_arm.is_calibrated:
@@ -115,12 +229,33 @@ class UnitreeG1Teleoperator(Teleoperator):
         pass
 
     def get_action(self) -> dict[str, float]:
-        left_angles = self.left_arm.get_angles()
-        right_angles = self.right_arm.get_angles()
-        return self.ik_helper.compute_g1_joints_from_exo(left_angles, right_angles)
+        joint_action = {}
+        left_raw = None
+        right_raw = None
+        if self._arm_control_enabled:
+            left_raw = self.left_arm.read_raw()
+            right_raw = self.right_arm.read_raw()
 
-    def send_feedback(self, feedback: dict[str, float]) -> None:
-        raise NotImplementedError("Exoskeleton arms do not support feedback")
+            left_angles = self.left_arm.get_angles()
+            right_angles = self.right_arm.get_angles()
+            joint_action = self.ik_helper.compute_g1_joints_from_exo(left_angles, right_angles)
+
+        # Wireless remote has priority when non-zero; otherwise, use exo joystick.
+        rc = self.remote_controller
+        wireless_active = (
+            abs(rc.lx) > 1e-3 or abs(rc.ly) > 1e-3 or abs(rc.rx) > 1e-3 or abs(rc.ry) > 1e-3
+        ) or any(rc.button)
+        if self._arm_control_enabled and not wireless_active:
+            rc.set_from_exo(left_raw, "left")
+            rc.set_from_exo(right_raw, "right")
+
+        rc._sync_remote_action()
+        return {**joint_action, **rc.remote_action}
+
+    def send_feedback(self, feedback: dict[str, Any]) -> None:
+        wireless_remote = feedback.get("wireless_remote")
+        if wireless_remote is not None:
+            self.remote_controller.set_from_wireless(wireless_remote)
 
     def disconnect(self) -> None:
         self.left_arm.disconnect()
@@ -153,5 +288,5 @@ class UnitreeG1Teleoperator(Teleoperator):
             print("\n\nVisualization stopped.")
 
     @cached_property
-    def _g1_joint_names(self) -> list[str]:
-        return [joint.name for joint in G1_29_JointIndex]
+    def _g1_arm_joint_names(self) -> list[str]:
+        return [joint.name for joint in G1_29_JointArmIndex]
