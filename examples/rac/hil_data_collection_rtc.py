@@ -78,12 +78,11 @@ from lerobot.utils.constants import ACTION, OBS_STATE, OBS_STR
 from lerobot.utils.control_utils import is_headless
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import init_logging, log_say
-from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
 logger = logging.getLogger(__name__)
 
 
-def _set_openarm_max_relative_target_if_missing(robot_cfg: RobotConfig, max_relative_target: float = 10.0) -> None:
+def _set_openarm_max_relative_target_if_missing(robot_cfg: RobotConfig, max_relative_target: float = 8.0) -> None:
     """Set a safe default max_relative_target for OpenArm followers when not provided."""
     if isinstance(robot_cfg, BiOpenArmFollowerConfig):
         if robot_cfg.left_arm_config.max_relative_target is None:
@@ -107,7 +106,8 @@ class HILRTCConfig:
     play_sounds: bool = True
     resume: bool = False
     device: str = "cuda"
-    use_torch_compile: bool = True  # First compile takes minutes, disable for real-time
+    use_torch_compile: bool = False  # First compile can stall startup, keep off by default for HIL.
+    compile_warmup_inferences: int = 2
     calibrate: bool = False
     log_hz: bool = True
     hz_log_interval_s: float = 2.0
@@ -189,6 +189,22 @@ def _reanchor_delta_rtc_prefix(
     return transition[TransitionKey.ACTION].to(policy_device)
 
 
+def _normalize_prev_actions_length(prev_actions: torch.Tensor, target_steps: int) -> torch.Tensor:
+    """Pad/truncate RTC prefix actions to a fixed length for stable compiled inference."""
+    if prev_actions.ndim != 2:
+        raise ValueError(f"Expected prev_actions to be 2D [T, A], got shape={tuple(prev_actions.shape)}")
+
+    steps, action_dim = prev_actions.shape
+    if steps == target_steps:
+        return prev_actions
+    if steps > target_steps:
+        return prev_actions[:target_steps]
+
+    padded = torch.zeros((target_steps, action_dim), dtype=prev_actions.dtype, device=prev_actions.device)
+    padded[:steps] = prev_actions
+    return padded
+
+
 def start_pedal_listener(events: dict):
     """Start foot pedal listener thread if evdev is available.
 
@@ -260,6 +276,7 @@ def rtc_inference_thread(
     queue_holder: dict,
     shutdown_event: Event,
     policy_active: Event,
+    compile_warmup_done: Event,
     cfg: HILRTCConfig,
 ):
     """Background thread for RTC action chunk generation."""
@@ -270,6 +287,8 @@ def rtc_inference_thread(
     stats_window_start = time.perf_counter()
     policy_inference_count = 0
     latency_sum_s = 0.0
+    inference_count = 0
+    warmup_required = max(1, int(cfg.compile_warmup_inferences)) if cfg.use_torch_compile else 0
 
     delta_step = next(
         (
@@ -338,6 +357,11 @@ def rtc_inference_thread(
                             policy_device=policy_device,
                         )
 
+                if prev_actions is not None:
+                    prev_actions = _normalize_prev_actions_length(
+                        prev_actions, target_steps=cfg.rtc.execution_horizon
+                    )
+
                 actions = policy.predict_action_chunk(
                     preprocessed, inference_delay=delay, prev_chunk_left_over=prev_actions
                 )
@@ -346,10 +370,23 @@ def rtc_inference_thread(
                 processed = postprocessor(actions).squeeze(0)
                 new_latency = time.perf_counter() - current_time
                 new_delay = math.ceil(new_latency / time_per_chunk)
-                latency_tracker.add(new_latency)
+                inference_count += 1
+                is_warmup_inference = cfg.use_torch_compile and inference_count <= warmup_required
+                if is_warmup_inference:
+                    # Ignore compile warmup latency for RTC delay estimation.
+                    latency_tracker.reset()
+                else:
+                    latency_tracker.add(new_latency)
                 queue.merge(original, processed, new_delay, idx_before)
                 policy_inference_count += 1
                 latency_sum_s += new_latency
+                if is_warmup_inference and inference_count >= warmup_required and not compile_warmup_done.is_set():
+                    compile_warmup_done.set()
+                    logger.info(
+                        "[RTC] Compile warmup complete (%d/%d inferences)",
+                        inference_count,
+                        warmup_required,
+                    )
                 logger.debug(f"[RTC] Inference latency={new_latency:.2f}s, queue={queue.qsize()}")
             except Exception as e:
                 logger.error(f"[RTC] Error: {e}")
@@ -385,6 +422,7 @@ def rollout_loop(
     queue_holder: dict,
     obs_holder: dict,
     policy_active: Event,
+    compile_warmup_done: Event,
     hw_features: dict,
 ):
     """Rollout loop with RTC for asynchronous inference."""
@@ -419,6 +457,12 @@ def rollout_loop(
     stats_window_start = start_t
     robot_command_count = 0
     record_tick = 0
+    obs_poll_interval = 1.0 / fps
+    last_obs_poll_t = 0.0
+    obs_filtered: dict[str, Any] = {}
+    obs_frame: dict[str, Any] = {}
+    warmup_wait_logged = False
+    warmup_queue_flushed = False
 
     while timestamp < cfg.dataset.episode_time_s:
         loop_start = time.perf_counter()
@@ -469,12 +513,21 @@ def rollout_loop(
             # Drop stale RTC leftovers: teleop takeover changes robot state anchor.
             queue_holder["queue"] = ActionQueue(cfg.rtc)
 
-        obs = robot.get_observation()
-        obs_filtered = {k: obs[k] for k in obs_state_names if k in obs}
-        obs_filtered.update({k: obs[k] for k in obs_image_names if k in obs})
-        obs_frame = build_dataset_frame(dataset.features, obs_filtered, prefix=OBS_STR)
-
-        obs_holder["obs"] = obs_filtered
+        now_for_obs = time.perf_counter()
+        should_poll_obs = (
+            not obs_filtered
+            or (now_for_obs - last_obs_poll_t) >= obs_poll_interval
+            or events["correction_active"]
+            or waiting_for_takeover
+            or events["policy_paused"]
+        )
+        if should_poll_obs:
+            obs = robot.get_observation()
+            obs_filtered = {k: obs[k] for k in obs_state_names if k in obs}
+            obs_filtered.update({k: obs[k] for k in obs_image_names if k in obs})
+            obs_frame = build_dataset_frame(dataset.features, obs_filtered, prefix=OBS_STR)
+            obs_holder["obs"] = obs_filtered
+            last_obs_poll_t = now_for_obs
 
         if events["correction_active"]:
             robot_action = teleop.get_action()
@@ -499,32 +552,45 @@ def rollout_loop(
             if not policy_active.is_set():
                 policy_active.set()
 
-            queue = queue_holder["queue"]
+            if cfg.use_torch_compile and not compile_warmup_done.is_set():
+                if not warmup_wait_logged:
+                    logger.info(
+                        "[RTC] Waiting for compile warmup (%d inferences) before policy rollout",
+                        max(1, int(cfg.compile_warmup_inferences)),
+                    )
+                    warmup_wait_logged = True
+            else:
+                if cfg.use_torch_compile and not warmup_queue_flushed:
+                    # Discard stale warmup chunks (anchored to old state) before live rollout.
+                    queue_holder["queue"] = ActionQueue(cfg.rtc)
+                    interpolator.reset()
+                    warmup_queue_flushed = True
+                    logger.info("[RTC] Warmup queue cleared; starting live policy rollout")
 
-            if interpolator.needs_new_action():
-                new_action = queue.get() if queue else None
-                if new_action is not None:
-                    interpolator.add(new_action.cpu())
+                queue = queue_holder["queue"]
 
-            action_tensor = interpolator.get()
-            if action_tensor is not None:
-                robot_action = {
-                    k: action_tensor[i].item() for i, k in enumerate(action_keys) if i < len(action_tensor)
-                }
-                robot.send_action(robot_action)
-                robot_command_count += 1
-                last_action = robot_action
-                action_frame = build_dataset_frame(dataset.features, robot_action, prefix=ACTION)
-                if record_tick % record_stride == 0:
-                    frame = {**obs_frame, **action_frame, "task": cfg.dataset.single_task}
-                    if stream_frames_online:
-                        dataset.add_frame(frame)
-                    else:
-                        frame_buffer.append(frame)
-                record_tick += 1
+                if interpolator.needs_new_action():
+                    new_action = queue.get() if queue else None
+                    if new_action is not None:
+                        interpolator.add(new_action.cpu())
 
-        if cfg.display_data and robot_action:
-            log_rerun_data(observation=obs_filtered, action=robot_action)
+                action_tensor = interpolator.get()
+                if action_tensor is not None:
+                    robot_action = {
+                        k: action_tensor[i].item() for i, k in enumerate(action_keys) if i < len(action_tensor)
+                    }
+                    robot.send_action(robot_action)
+                    robot_command_count += 1
+                    last_action = robot_action
+                    action_frame = build_dataset_frame(dataset.features, robot_action, prefix=ACTION)
+                    if record_tick % record_stride == 0:
+                        frame = {**obs_frame, **action_frame, "task": cfg.dataset.single_task}
+                        if stream_frames_online:
+                            dataset.add_frame(frame)
+                        else:
+                            frame_buffer.append(frame)
+                    record_tick += 1
+
 
         dt = time.perf_counter() - loop_start
         if (sleep_time := control_interval - dt) > 0:
@@ -556,10 +622,7 @@ def hil_rtc_collect(cfg: HILRTCConfig) -> LeRobotDataset:
     init_logging()
     logger.info(pformat(cfg.__dict__))
 
-    if cfg.display_data:
-        init_rerun(session_name="hil_rtc_collection")
-
-    _set_openarm_max_relative_target_if_missing(cfg.robot, max_relative_target=10.0)
+    _set_openarm_max_relative_target_if_missing(cfg.robot, max_relative_target=8.0)
     robot_raw = make_robot_from_config(cfg.robot)
     teleop = make_teleoperator_from_config(cfg.teleop)
 
@@ -588,6 +651,9 @@ def hil_rtc_collect(cfg: HILRTCConfig) -> LeRobotDataset:
     listener = None
     shutdown_event = Event()
     policy_active = Event()
+    compile_warmup_done = Event()
+    if not cfg.use_torch_compile:
+        compile_warmup_done.set()
     rtc_thread = None
 
     try:
@@ -680,6 +746,7 @@ def hil_rtc_collect(cfg: HILRTCConfig) -> LeRobotDataset:
                 queue_holder,
                 shutdown_event,
                 policy_active,
+                compile_warmup_done,
                 cfg,
             ),
             daemon=True,
@@ -710,6 +777,7 @@ def hil_rtc_collect(cfg: HILRTCConfig) -> LeRobotDataset:
                     queue_holder=queue_holder,
                     obs_holder=obs_holder,
                     policy_active=policy_active,
+                    compile_warmup_done=compile_warmup_done,
                     hw_features=hw_features,
                 )
 
