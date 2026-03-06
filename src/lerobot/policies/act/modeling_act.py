@@ -66,6 +66,10 @@ class ACTPolicy(PreTrainedPolicy):
         if config.temporal_ensemble_coeff is not None:
             self.temporal_ensembler = ACTTemporalEnsembler(config.temporal_ensemble_coeff, config.chunk_size)
 
+        if config.compile_model:
+            self.forward = torch.compile(self.forward, mode=config.compile_mode)
+            self.select_action = torch.compile(self.select_action, mode="default")
+
         self.reset()
 
     def get_optim_params(self) -> dict:
@@ -145,7 +149,7 @@ class ACTPolicy(PreTrainedPolicy):
             F.l1_loss(batch[ACTION], actions_hat, reduction="none") * ~batch["action_is_pad"].unsqueeze(-1)
         ).mean()
 
-        loss_dict = {"l1_loss": l1_loss.item()}
+        loss_dict = {"l1_loss": l1_loss}
         if self.config.use_vae:
             # Calculate Dₖₗ(latent_pdf || standard_normal). Note: After computing the KL-divergence for
             # each dimension independently, we sum over the latent dimension to get the total
@@ -154,7 +158,7 @@ class ACTPolicy(PreTrainedPolicy):
             mean_kld = (
                 (-0.5 * (1 + log_sigma_x2_hat - mu_hat.pow(2) - (log_sigma_x2_hat).exp())).sum(-1).mean()
             )
-            loss_dict["kld_loss"] = mean_kld.item()
+            loss_dict["kld_loss"] = mean_kld
             loss = l1_loss + mean_kld * self.config.kl_weight
         else:
             loss = l1_loss
