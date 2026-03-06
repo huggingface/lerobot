@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 def encode_image(image: np.ndarray, quality: int = 80) -> str:
     """Encode RGB image to base64 JPEG string."""
     _, buffer = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
-    return base64.b64encode(buffer).decode("utf-8")
+    return base64.b64encode(bytes(buffer)).decode("utf-8")
 
 
 class ImageServer:
