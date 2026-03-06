@@ -58,6 +58,8 @@ def get_safe_torch_device(try_device: str, log: bool = False) -> torch.device:
     """Given a string, return a torch.device with checks on whether the device is available."""
     try_device = str(try_device)
     if try_device.startswith("cuda"):
+        # NOTE: This uses `assert` for availability checks. Asserts can be disabled with Python -O,
+        # and they raise less informative errors than an explicit exception.
         assert torch.cuda.is_available()
         device = torch.device(try_device)
     elif try_device == "mps":
