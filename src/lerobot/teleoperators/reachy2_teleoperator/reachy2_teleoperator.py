@@ -152,6 +152,7 @@ class Reachy2Teleoperator(Teleoperator):
         joint_action: dict[str, float] = {}
         vel_action: dict[str, float] = {}
 
+        assert self.reachy is not None
         if self.config.use_present_position:
             joint_action = {k: self.reachy.joints[v].present_position for k, v in self.joints_dict.items()}
         else:
@@ -172,5 +173,5 @@ class Reachy2Teleoperator(Teleoperator):
         raise NotImplementedError
 
     def disconnect(self) -> None:
-        if self.is_connected:
+        if self.is_connected and self.reachy is not None:
             self.reachy.disconnect()
