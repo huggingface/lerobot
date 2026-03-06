@@ -85,6 +85,13 @@ Modify tasks - set default task with overrides for specific episodes (WARNING: m
         --operation.new_task "Default task" \
         --operation.episode_tasks '{"5": "Special task for episode 5"}'
 
+Trim first 3 seconds from all episodes:
+    python -m lerobot.scripts.lerobot_edit_dataset \
+        --repo_id lerobot/pusht \
+        --new_repo_id lerobot/pusht_trim3s \
+        --operation.type trim_episode_start \
+        --operation.seconds 3.0
+
 Convert image dataset to video format and save locally:
     python -m lerobot.scripts.lerobot_edit_dataset \
         --repo_id lerobot/pusht_image \
@@ -125,6 +132,7 @@ from lerobot.datasets.dataset_tools import (
     modify_tasks,
     remove_feature,
     split_dataset,
+    trim_episode_start,
 )
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.utils.constants import HF_LEROBOT_HOME
@@ -167,6 +175,13 @@ class RemoveFeatureConfig(OperationConfig):
 class ModifyTasksConfig(OperationConfig):
     new_task: str | None = None
     episode_tasks: dict[str, str] | None = None
+
+
+@OperationConfig.register_subclass("trim_episode_start")
+@dataclass
+class TrimEpisodeStartConfig(OperationConfig):
+    seconds: float | None = None
+    episode_indices: list[int] | None = None
 
 
 @OperationConfig.register_subclass("convert_image_to_video")
@@ -373,6 +388,41 @@ def handle_modify_tasks(cfg: EditDatasetConfig) -> None:
         modified_dataset.push_to_hub()
 
 
+def handle_trim_episode_start(cfg: EditDatasetConfig) -> None:
+    if not isinstance(cfg.operation, TrimEpisodeStartConfig):
+        raise ValueError("Operation config must be TrimEpisodeStartConfig")
+
+    if cfg.operation.seconds is None:
+        raise ValueError("seconds must be specified for trim_episode_start operation")
+
+    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+    output_repo_id, output_dir = get_output_path(
+        cfg.repo_id, cfg.new_repo_id, Path(cfg.root) if cfg.root else None
+    )
+
+    if cfg.new_repo_id is None:
+        dataset.root = Path(str(dataset.root) + "_old")
+
+    logging.info(
+        f"Trimming first {cfg.operation.seconds}s from episodes "
+        f"{cfg.operation.episode_indices if cfg.operation.episode_indices else 'ALL'} in {cfg.repo_id}"
+    )
+    new_dataset = trim_episode_start(
+        dataset=dataset,
+        seconds=cfg.operation.seconds,
+        episode_indices=cfg.operation.episode_indices,
+        output_dir=output_dir,
+        repo_id=output_repo_id,
+    )
+
+    logging.info(f"Dataset saved to {output_dir}")
+    logging.info(f"Episodes: {new_dataset.meta.total_episodes}, Frames: {new_dataset.meta.total_frames}")
+
+    if cfg.push_to_hub:
+        logging.info(f"Pushing to hub as {output_repo_id}")
+        LeRobotDataset(output_repo_id, root=output_dir).push_to_hub()
+
+
 def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
     # Note: Parser may create any config type with the right fields, so we access fields directly
     # instead of checking isinstance()
@@ -450,6 +500,8 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
         handle_remove_feature(cfg)
     elif operation_type == "modify_tasks":
         handle_modify_tasks(cfg)
+    elif operation_type == "trim_episode_start":
+        handle_trim_episode_start(cfg)
     elif operation_type == "convert_image_to_video":
         handle_convert_image_to_video(cfg)
     else:
