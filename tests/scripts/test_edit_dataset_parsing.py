@@ -28,6 +28,7 @@ from lerobot.scripts.lerobot_edit_dataset import (
     RemoveFeatureConfig,
     SplitConfig,
     _validate_config,
+    TrimEpisodeStartConfig,
 )
 
 
@@ -47,6 +48,7 @@ class TestOperationTypeParsing:
             ("merge", MergeConfig),
             ("remove_feature", RemoveFeatureConfig),
             ("modify_tasks", ModifyTasksConfig),
+            ("trim_episode_start", TrimEpisodeStartConfig),
             ("convert_image_to_video", ConvertImageToVideoConfig),
             ("info", InfoConfig),
         ],
@@ -77,6 +79,7 @@ class TestOperationTypeParsing:
             ("merge", MergeConfig),
             ("remove_feature", RemoveFeatureConfig),
             ("modify_tasks", ModifyTasksConfig),
+            ("trim_episode_start", TrimEpisodeStartConfig),
             ("convert_image_to_video", ConvertImageToVideoConfig),
             ("info", InfoConfig),
         ],
