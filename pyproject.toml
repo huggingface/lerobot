@@ -128,6 +128,7 @@ intelrealsense = [
     "pyrealsense2>=2.55.1.6486,<2.57.0 ; sys_platform != 'darwin'",
     "pyrealsense2-macosx>=2.54,<2.55.0 ; sys_platform == 'darwin'",
 ]
+realsense-mesh = ["lerobot[intelrealsense]", "open3d>=0.18.0,<0.20.0"]
 phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0", "fastapi<1.0"]
 
 # Policies
@@ -201,6 +202,8 @@ all = [
 [project.scripts]
 lerobot-calibrate="lerobot.scripts.lerobot_calibrate:main"
 lerobot-find-cameras="lerobot.scripts.lerobot_find_cameras:main"
+lerobot-preview-cameras="lerobot.scripts.lerobot_preview_cameras:main"
+lerobot-realsense-mesh="lerobot.scripts.lerobot_realsense_mesh:main"
 lerobot-find-port="lerobot.scripts.lerobot_find_port:main"
 lerobot-record="lerobot.scripts.lerobot_record:main"
 lerobot-replay="lerobot.scripts.lerobot_replay:main"

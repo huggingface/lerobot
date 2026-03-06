@@ -22,7 +22,16 @@ Every camera requires a unique identifier to be instantiated, allowing you to di
 lerobot-find-cameras opencv # or realsense for Intel Realsense cameras
 ```
 
-The output will look something like this if you have two cameras connected:
+To view a **live preview** of each camera in separate windows:
+
+```bash
+lerobot-preview-cameras        # preview all detected OpenCV cameras
+lerobot-preview-cameras 0 1 2  # preview cameras at indices 0, 1, 2
+```
+
+Press `q` in any preview window to quit.
+
+The output of `lerobot-find-cameras` will look something like this if you have two cameras connected:
 
 ```bash
 --- Detected Cameras ---
