@@ -583,11 +583,18 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         self.gradient_checkpointing_enabled = False
 
         # Compile model if requested
+        # Note: torch.compile is not fully supported on MPS (Apple Silicon) yet
         if config.compile_model:
-            torch.set_float32_matmul_precision("high")
-            self.sample_actions = torch.compile(self.sample_actions, mode=config.compile_mode)
-            # Also compile the main forward pass used during training
-            self.forward = torch.compile(self.forward, mode=config.compile_mode)
+            if config.device == "mps":
+                logging.warning(
+                    "torch.compile is not fully supported on MPS device. "
+                    "Skipping model compilation. Performance may be slower than on CUDA."
+                )
+            else:
+                torch.set_float32_matmul_precision("high")
+                self.sample_actions = torch.compile(self.sample_actions, mode=config.compile_mode)
+                # Also compile the main forward pass used during training
+                self.forward = torch.compile(self.forward, mode=config.compile_mode)
 
     def gradient_checkpointing_enable(self):
         """Enable gradient checkpointing for memory optimization."""
