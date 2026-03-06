@@ -1,0 +1,20 @@
+{
+  "type": "xlerobot",
+  "left_arm": {},
+  "right_arm": {},
+  "mount": {},
+  "cameras": {},
+  "shared_buses": {},
+  "base": {
+    "type": "biwheel_odrive",
+    "wheel_radius": 0.05,
+    "wheel_base": 0.25,
+    "invert_left_motor": true,
+    "invert_right_motor": false,
+    "odrive_serial": null,
+    "axis_left": 1,
+    "axis_right": 0,
+    "disable_watchdog": true,
+    "request_closed_loop": true
+  }
+}

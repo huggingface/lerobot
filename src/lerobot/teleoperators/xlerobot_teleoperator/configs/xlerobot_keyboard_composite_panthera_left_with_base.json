@@ -1,0 +1,31 @@
+{
+  "_comment": "Use with --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_keyboard_composite_panthera_left_with_base.json",
+  "type": "xlerobot_keyboard_composite",
+  "arm_side": "left",
+  "arm": {
+    "key_radial_out": "t",
+    "key_radial_in": "g",
+    "key_orbit_ccw": "f",
+    "key_orbit_cw": "h",
+    "key_up": "r",
+    "key_down": "v",
+    "key_pitch_pos": "i",
+    "key_pitch_neg": "k",
+    "key_yaw_pos": "j",
+    "key_yaw_neg": "l",
+    "key_roll_pos": "u",
+    "key_roll_neg": "o",
+    "key_gripper_close": "z",
+    "key_gripper_open": "c"
+  },
+  "base": {
+    "linear_speed": 0.4,
+    "angular_speed": 80.0,
+    "speed_increment": 0.05,
+    "turn_assist_ratio": 0.0,
+    "angular_speed_ratio": 200.0,
+    "min_linear_speed": 0.05,
+    "min_angular_speed": 10.0
+  },
+  "mount": {}
+}

@@ -1,0 +1,54 @@
+{
+  "_comment": "Use with --robot.config_file=src/lerobot/robots/xlerobot/configs/xlerobot_biwheel_feetech.json",
+  "type": "xlerobot",
+  "left_arm": {
+    "id": "xlerobot_arm_left"
+  },
+  "right_arm": {
+    "id": "xlerobot_arm_right"
+  },
+  "base": {
+    "type": "biwheel_feetech",
+    "wheel_radius": 0.05,
+    "wheel_base": 0.25,
+    "base_motor_ids": [9, 10],
+    "invert_left_motor": true,
+    "invert_right_motor": false
+  },
+  "mount": {
+    "pan_motor_id": 1,
+    "tilt_motor_id": 2,
+    "motor_model": "sts3215",
+    "pan_key": "mount_pan.pos",
+    "tilt_key": "mount_tilt.pos",
+    "max_pan_speed_dps": 60.0,
+    "max_tilt_speed_dps": 45.0,
+    "pan_range": [-90.0, 90.0],
+    "tilt_range": [-30.0, 60.0]
+  },
+  "cameras": {
+    "top": {
+      "type": "opencv",
+      "index_or_path": 0,
+      "width": 640,
+      "height": 480,
+      "fps": 30
+    }
+  },
+  "shared_buses": {
+    "left_bus": {
+      "port": "/dev/ttyACM2",
+      "components": [
+        {"component": "left_arm"},
+        {"component": "mount", "motor_id_offset": 6}
+      ]
+    },
+    "right_bus": {
+      "port": "/dev/ttyACM3",
+      "components": [
+        {"component": "right_arm"},
+        {"component": "base", "motor_id_offset": 6}
+      ]
+    }
+  }
+}
