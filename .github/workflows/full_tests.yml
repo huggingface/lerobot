@@ -89,6 +89,7 @@ jobs:
         run: uv sync --extra all # TODO(Steven): Make flash-attn optional
 
       - name: Login to Hugging Face
+        if: env.HF_USER_TOKEN != ''
         run: |
           uv run hf auth login --token "$HF_USER_TOKEN" --add-to-git-credential
           uv run hf auth whoami
@@ -181,6 +182,7 @@ jobs:
         working-directory: /lerobot
     steps:
       - name: Login to Hugging Face
+        if: env.HF_USER_TOKEN != ''
         run: |
           hf auth login --token "$HF_USER_TOKEN" --add-to-git-credential
           hf auth whoami

@@ -91,6 +91,7 @@ jobs:
         run: uv sync --extra "test"
 
       - name: Login to Hugging Face
+        if: env.HF_USER_TOKEN != ''
         run: |
           uv run hf auth login --token "$HF_USER_TOKEN" --add-to-git-credential
           uv run hf auth whoami

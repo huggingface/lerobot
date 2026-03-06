@@ -16,7 +16,10 @@
 
 """Test script to verify PI0.5 (pi05) support in PI0 policy, only meant to be run locally!"""
 
+import pytest
 import torch
+
+pytest.importorskip("transformers")
 
 from lerobot.policies.factory import make_policy_config  # noqa: E402
 from lerobot.policies.pi05 import (  # noqa: E402
@@ -25,10 +28,11 @@ from lerobot.policies.pi05 import (  # noqa: E402
     make_pi05_pre_post_processors,  # noqa: E402
 )
 from lerobot.utils.random_utils import set_seed
-from tests.utils import require_cuda  # noqa: E402
+from tests.utils import require_cuda, require_hf_token  # noqa: E402
 
 
 @require_cuda
+@require_hf_token
 def test_policy_instantiation():
     # Create config
     set_seed(42)
@@ -141,6 +145,7 @@ def test_policy_instantiation():
 
 
 @require_cuda
+@require_hf_token
 def test_config_creation():
     """Test policy config creation through factory."""
     try:
