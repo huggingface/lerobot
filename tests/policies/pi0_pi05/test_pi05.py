@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Test script to verify PI0.5 (pi05) support in PI0 policy, only meant to be run locally!"""
+"""Test script to verify PI0.5 (pi05) support in PI0 policy"""
 
 import pytest
 import torch

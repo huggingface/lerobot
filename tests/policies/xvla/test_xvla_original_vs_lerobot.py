@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Test script to verify XVLA policy integration with LeRobot vs the original implementation, only meant to be run locally!"""
+"""Test script to verify XVLA policy integration with LeRobot vs the original implementation"""
 # ruff: noqa: E402
 
 import random

@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Test script to verify PI0 policy integration with LeRobot, only meant to be run locally!"""
+"""Test script to verify PI0 policy integration with LeRobot"""
 
 import pytest
 import torch
