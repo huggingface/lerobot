@@ -13,10 +13,7 @@
 
 import time
 
-import cv2
-
 from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
-from lerobot.cameras.oak.configuration_oak import OAKCameraConfig
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.utils.robot_utils import precise_sleep
 
@@ -25,12 +22,11 @@ FPS = 30
 
 def main():
     robot_config = LeKiwiClientConfig(
-        remote_ip="10.42.0.87",
+        remote_ip="100.68.67.21",
         id="my_kiwi",
         include_arm=False,
-        cameras={
-            "front": OAKCameraConfig(fps=FPS, width=640, height=400),
-        },
+        connect_timeout_s=30,
+        cameras={},
     )
     keyboard_config = KeyboardTeleopConfig(id="my_laptop_keyboard")
 
@@ -46,9 +42,6 @@ def main():
     print("Starting base-only teleop with OAK-D Lite...")
     print("Controls: W/S forward/back, A/D left/right, Z/X rotate, R/F speed up/down, Q quit")
 
-    cv2.namedWindow("LeKiwi", cv2.WINDOW_NORMAL)
-    cv2.resizeWindow("LeKiwi", 640, 400)
-
     try:
         while True:
             t0 = time.perf_counter()
@@ -61,15 +54,9 @@ def main():
             if base_action:
                 robot.send_action(base_action)
 
-            if "front" in observation and hasattr(observation["front"], "shape"):
-                cv2.imshow("LeKiwi", observation["front"])
-
-            if cv2.waitKey(1) == ord("q"):
-                break
-
             precise_sleep(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
-    finally:
-        cv2.destroyAllWindows()
+    except KeyboardInterrupt:
+        print("\nStopped.")
 
 
 if __name__ == "__main__":
