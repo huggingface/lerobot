@@ -21,6 +21,11 @@ This script takes two random samples from a dataset:
 - Uses actions from the first sample as previous chunk
 - Generates new actions for the second sample with and without RTC
 
+Sampling modes:
+- Random (default): Two independent random samples
+- Correlated (--sample_correlation_shift): Second sample is shifted from first by N steps
+  to test temporal correlation and sigma effects
+
 It compares action predictions with and without RTC on dataset samples,
 measuring consistency and ground truth alignment.
 
@@ -66,8 +71,8 @@ Usage:
     # With torch.compile for faster inference (PyTorch 2.0+)
     # Note: CUDA graphs disabled by default due to in-place ops in denoising loop
     uv run python examples/rtc/eval_dataset.py \
-        --policy.path=<USER>/smolvla_check_rtc_last3 \
-        --dataset.repo_id=<USER>/check_rtc \
+        --policy.path=helper2424/smolvla_check_rtc_last3 \
+        --dataset.repo_id=helper2424/check_rtc \
         --rtc.execution_horizon=8 \
         --device=mps \
         --use_torch_compile=true \
@@ -116,6 +121,7 @@ from lerobot.configs.types import RTCAttentionSchedule
 from lerobot.datasets.factory import resolve_delta_timestamps
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
+from lerobot.processor import DataProcessorPipeline, MPCActionSmoothingProcessor
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.policies.rtc.debug_visualizer import RTCDebugVisualizer
 from lerobot.utils.hub import HubMixin
@@ -215,6 +221,19 @@ class RTCEvalConfig(HubMixin):
         },
     )
 
+    next_inference_after: int = field(
+        default=10,
+        metadata={"help": "How many steps after the previous "},
+    )
+
+    random_chunks: bool = field(
+        default=False,
+        metadata={
+            "help": "The shift between the two chunks to be evaluated. It's used to check bigger difference between previons action chunk"
+            "and newly generated chunk."
+        },
+    )
+
     def __post_init__(self):
         # Parse policy path
         policy_path = parser.get_path_arg("policy")
@@ -274,6 +293,21 @@ class RTCEvaluator:
             },
         )
 
+        qp_step = MPCActionSmoothingProcessor(
+            dt=0.02,
+            vel_limits=None,
+            acc_limits=None,
+            w_data=1.0,
+            w_acc=1.0,
+            w_jerk=1.0,
+            fix_ends=False,
+            verbose=False,
+        )
+
+        self.opt_pipeline = DataProcessorPipeline(steps=[qp_step], name="qp_test_pipeline")
+
+
+
         logging.info("=" * 80)
         logging.info("Ready to run evaluation with sequential policy loading:")
         logging.info("  1. policy_prev_chunk - Generate reference chunk, then destroy")
@@ -302,6 +336,17 @@ class RTCEvaluator:
 
         if self.cfg.policy.type == "pi05" or self.cfg.policy.type == "pi0":
             config.compile_model = self.cfg.use_torch_compile
+
+        # Override number of flow matching steps if specified
+        if self.cfg.num_inference_steps is not None:
+            if self.cfg.policy.type == "smolvla":
+                config.num_steps = self.cfg.num_inference_steps
+                logging.info(f"  Overriding num_steps for SmolVLA: {self.cfg.num_inference_steps}")
+            elif self.cfg.policy.type in ["pi0", "pi05"]:
+                config.num_inference_steps = self.cfg.num_inference_steps
+                logging.info(
+                    f"  Overriding num_inference_steps for {self.cfg.policy.type}: {self.cfg.num_inference_steps}"
+                )
 
         policy = policy_class.from_pretrained(self.cfg.policy.pretrained_path, config=config)
         policy = policy.to(self.device)
@@ -433,13 +478,46 @@ class RTCEvaluator:
         logging.info("=" * 80)
         logging.info("Starting RTC evaluation")
         logging.info(f"Inference delay: {self.cfg.inference_delay}")
+        if self.cfg.num_inference_steps is not None:
+            logging.info(f"Number of flow matching steps: {self.cfg.num_inference_steps}")
+        else:
+            logging.info("Number of flow matching steps: Using policy default")
         logging.info("=" * 80)
 
-        # Load two random samples from dataset
-        data_loader = torch.utils.data.DataLoader(self.dataset, batch_size=1, shuffle=True)
-        loader_iter = iter(data_loader)
-        first_sample = next(loader_iter)
-        second_sample = next(loader_iter)
+        # Correlated sampling: second sample is shifted from first
+        shift = self.cfg.next_inference_after
+        logging.info(f"Using correlated sampling: second sample shifted by {shift} from first sample")
+
+        # Get random first index
+        # first_idx = random.randint(0, len(self.dataset) - 1)
+        first_idx = int(len(self.dataset) / 2)
+
+        # Calculate second index with shift, ensuring it's within bounds
+        second_idx = first_idx + shift
+
+        if self.cfg.random_chunks:
+            second_idx = random.randint(first_idx + 1, len(self.dataset) - 1)
+
+        if second_idx < 0 or second_idx >= len(self.dataset):
+            raise ValueError(
+                f"Second sample index {second_idx} is out of bounds [0, {len(self.dataset) - 1}]. "
+                f"First index: {first_idx}, shift: {shift}. "
+                f"Please use a smaller shift value or adjust the seed."
+            )
+
+        logging.info(f"First sample index: {first_idx}, Second sample index: {second_idx}")
+
+        # Get samples directly from dataset
+        first_sample = self.dataset[first_idx]
+        second_sample = self.dataset[second_idx]
+
+        # Add batch dimension (dataset returns unbatched samples)
+        first_sample = {
+            k: v.unsqueeze(0) if isinstance(v, torch.Tensor) else v for k, v in first_sample.items()
+        }
+        second_sample = {
+            k: v.unsqueeze(0) if isinstance(v, torch.Tensor) else v for k, v in second_sample.items()
+        }
 
         preprocessed_first_sample = self.preprocessor(first_sample)
         preprocessed_second_sample = self.preprocessor(second_sample)
@@ -461,7 +539,16 @@ class RTCEvaluator:
         with torch.no_grad():
             prev_chunk_left_over = policy_prev_chunk_policy.predict_action_chunk(
                 preprocessed_first_sample,
-            )[:, :25, :].squeeze(0)
+            )
+           
+        
+            prev_chunk_left_over_org = prev_chunk_left_over[:, shift:, :].squeeze(0)
+
+            # resume orignal actions
+            prev_chunk_left_over = self.postprocessor(prev_chunk_left_over)
+            prev_chunk_left_over = self.opt_pipeline.process_action(prev_chunk_left_over)
+            prev_chunk_left_over = prev_chunk_left_over[:, shift:, :].squeeze(0)
+
         logging.info(f"  Generated prev_chunk shape: {prev_chunk_left_over.shape}")
 
         # Destroy policy_prev_chunk to free memory for large models
@@ -491,8 +578,13 @@ class RTCEvaluator:
         with torch.no_grad():
             no_rtc_actions = policy_no_rtc_policy.predict_action_chunk(
                 preprocessed_second_sample,
-                noise=noise,
+                noise=noise_clone,
             )
+            # resume orignal actions
+            no_rtc_actions = self.postprocessor(no_rtc_actions)
+            no_rtc_actions = self.opt_pipeline.process_action(no_rtc_actions)
+            
+
         no_rtc_tracked_steps = policy_no_rtc_policy.rtc_processor.tracker.get_all_steps()
         logging.info(f"  Tracked {len(no_rtc_tracked_steps)} steps without RTC")
         logging.info(f"  Generated no_rtc_actions shape: {no_rtc_actions.shape}")
@@ -521,9 +613,13 @@ class RTCEvaluator:
                 preprocessed_second_sample,
                 noise=noise_clone,
                 inference_delay=self.cfg.inference_delay,
-                prev_chunk_left_over=prev_chunk_left_over,
+                prev_chunk_left_over=prev_chunk_left_over_org,
                 execution_horizon=self.cfg.rtc.execution_horizon,
             )
+            # resume orignal actions
+            rtc_actions = self.postprocessor(rtc_actions)
+            rtc_actions = self.opt_pipeline.process_action(rtc_actions)
+
         rtc_tracked_steps = policy_rtc_policy.rtc_processor.get_all_debug_steps()
         logging.info(f"  Tracked {len(rtc_tracked_steps)} steps with RTC")
         logging.info(f"  Generated rtc_actions shape: {rtc_actions.shape}")
@@ -582,7 +678,7 @@ class RTCEvaluator:
                 start_from=0,
                 color="red",
                 label="Previous Chunk (Ground Truth)",
-                linewidth=2.5,
+                linewidth=2,
                 alpha=0.8,
             )
 
@@ -604,7 +700,7 @@ class RTCEvaluator:
                 start_from=0,
                 color="green",
                 label="RTC",
-                linewidth=2,
+                linewidth=2.5,
                 alpha=0.7,
             )
 
