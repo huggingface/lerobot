@@ -1019,6 +1019,13 @@ class PI05Policy(PreTrainedPolicy):
 
             if remap_count > 0:
                 print(f"Remapped {remap_count} state dict keys")
+                
+            # Handle weight tying: copy lm_head.weight to embed_tokens.weight if missing
+            missing_embed_key = "model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
+            source_lm_head_key = "model.paligemma_with_expert.paligemma.lm_head.weight"
+            if missing_embed_key not in remapped_state_dict and source_lm_head_key in remapped_state_dict:
+                remapped_state_dict[missing_embed_key] = remapped_state_dict[source_lm_head_key]
+                print(f"Weight tying applied: Copied {source_lm_head_key} to {missing_embed_key}")
 
             # Load the remapped state dict into the model
             missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
