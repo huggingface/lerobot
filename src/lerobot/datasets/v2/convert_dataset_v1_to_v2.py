@@ -105,6 +105,7 @@ import filecmp
 import json
 import logging
 import math
+import re
 import shutil
 import subprocess
 import tempfile
@@ -143,7 +144,7 @@ from lerobot.datasets.video_utils import (
 )
 from lerobot.robots import RobotConfig
 
-V16 = "v1.6"
+V16 = "v1.3"
 V20 = "v2.0"
 
 GITATTRIBUTES_REF = "aliberts/gitattributes_reference"
@@ -325,7 +326,19 @@ def move_videos(
         video_files = [str(f.relative_to(work_dir)) for f in work_dir.glob("videos*/*/*/*.mp4")]
         videos_moved = True  # Videos have already been moved
 
-    assert len(video_files) == total_episodes * len(video_keys)
+    expected_count = total_episodes * len(video_keys)
+    if len(video_files) != expected_count:
+        print(
+            f"Warning: expected {expected_count} video files "
+            f"({total_episodes} episodes x {len(video_keys)} keys), "
+            f"found {len(video_files)}. Keeping only videos matching existing episodes."
+        )
+        episode_pattern = re.compile(r"episode_(\d+)")
+        valid_episodes = set(range(total_episodes))
+        video_files = [
+            f for f in video_files
+            if (m := episode_pattern.search(f)) and int(m.group(1)) in valid_episodes
+        ]
 
     lfs_untracked_videos = _get_lfs_untracked_videos(work_dir, video_files)
 
