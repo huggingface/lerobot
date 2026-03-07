@@ -18,7 +18,8 @@
 Edit LeRobot datasets using various transformation tools.
 
 This script allows you to delete episodes, split datasets, merge datasets,
-remove features, modify tasks, and convert image datasets to video format.
+remove features, modify tasks, and convert image datasets to video format,
+and export episodes as individual video files.
 When new_repo_id is specified, creates a new dataset.
 
 Path semantics (v2): --root and --new_root are exact dataset folders containing
@@ -136,6 +137,13 @@ Convert image dataset to video format and push to hub:
         --operation.type convert_image_to_video \
         --push_to_hub true
 
+Export specific episodes as individual MP4 files:
+    python -m lerobot.scripts.lerobot_edit_dataset \
+        --repo_id lerobot/pusht \
+        --operation.type export_video \
+        --operation.output exported_videos \
+        --operation.episodes "[1, 2, 3]"
+
 Show dataset information:
     lerobot-edit-dataset \
         --repo_id lerobot/pusht_image \
@@ -166,6 +174,7 @@ from lerobot.configs import parser
 from lerobot.datasets.dataset_tools import (
     convert_image_to_video_dataset,
     delete_episodes,
+    export_episode_videos,
     merge_datasets,
     modify_tasks,
     remove_feature,
@@ -228,6 +237,18 @@ class ConvertImageToVideoConfig(OperationConfig):
     num_workers: int = 4
     max_episodes_per_batch: int | None = None
     max_frames_per_batch: int | None = None
+
+
+@OperationConfig.register_subclass("export_video")
+@dataclass
+class ExportVideoConfig(OperationConfig):
+    type: str = "export_video"
+    output: str = "exported_videos"
+    episodes: list[int] | None = None
+    vcodec: str = "libsvtav1"
+    pix_fmt: str = "yuv420p"
+    g: int = 2
+    crf: int = 30
 
 
 @OperationConfig.register_subclass("info")
@@ -525,6 +546,21 @@ def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
         logging.info("Dataset saved locally (not pushed to hub)")
 
 
+def handle_export_video(cfg: EditDatasetConfig) -> None:
+    if not isinstance(cfg.operation, ExportVideoConfig):
+        raise ValueError("Operation config must be ExportVideoConfig")
+
+    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root, episodes=cfg.operation.episodes)
+    export_episode_videos(
+        dataset,
+        output_dir=cfg.operation.output,
+        vcodec=cfg.operation.vcodec,
+        pix_fmt=cfg.operation.pix_fmt,
+        g=cfg.operation.g,
+        crf=cfg.operation.crf,
+    )
+
+
 def _get_dataset_size(repo_path):
     import os
 
@@ -596,6 +632,8 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
         handle_modify_tasks(cfg)
     elif operation_type == "convert_image_to_video":
         handle_convert_image_to_video(cfg)
+    elif operation_type == "export_video":
+        handle_export_video(cfg)
     elif operation_type == "info":
         handle_info(cfg)
     else:
