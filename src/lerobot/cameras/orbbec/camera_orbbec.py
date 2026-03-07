@@ -15,7 +15,8 @@
 """
 Provides the OrbbecCamera class for capturing frames from Orbbec cameras.
 
-Uses the ``pyorbbecsdk`` (2.0.18) Python bindings which wrap the Orbbec SDK v2.
+Uses the ``pyorbbecsdk`` Python bindings (from the ``pyorbbecsdk2`` package, >=2.0.18)
+which wrap the Orbbec SDK v2.
 """
 
 import logging
@@ -130,7 +131,7 @@ def _frame_to_rgb_image(frame: "VideoFrame") -> "NDArray[np.uint8] | None":
 
 
 class OrbbecCamera(Camera):
-    """Manages interactions with Orbbec depth cameras via ``pyorbbecsdk`` (2.0.18).
+    """Manages interactions with Orbbec RGBD cameras via ``pyorbbecsdk``.
 
     * A **background thread** continuously reads FrameSets from the pipeline.
     * Color and depth are extracted from the **same** FrameSet for frame-level sync.
