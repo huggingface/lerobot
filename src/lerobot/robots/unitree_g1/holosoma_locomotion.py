@@ -82,7 +82,7 @@ def load_policy(
     logger.info(f"Policy loaded: {policy.get_inputs()[0].shape} → {policy.get_outputs()[0].shape}")
 
     # Extract KP/KD from ONNX metadata
-    model = onnx.load(policy_path)
+    model = onnx.load(policy_path, load_external_data=False)
     metadata = {prop.key: prop.value for prop in model.metadata_props}
 
     if "kp" not in metadata or "kd" not in metadata:

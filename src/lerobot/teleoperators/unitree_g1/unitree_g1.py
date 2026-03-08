@@ -26,7 +26,13 @@ from lerobot.utils.import_utils import _unitree_sdk_available
 if TYPE_CHECKING or _unitree_sdk_available:
     from unitree_sdk2py.utils.joystick import Joystick
 else:
-    Joystick = None
+
+    class Joystick:
+        def __init__(self):
+            raise ImportError(
+                "unitree_sdk2py is required for RemoteController. Install with: pip install unitree_sdk2py"
+            )
+
 
 from ..teleoperator import Teleoperator
 from .config_unitree_g1 import UnitreeG1TeleoperatorConfig
