@@ -135,16 +135,33 @@ Learn how to implement your own simulation environment or benchmark and distribu
 
 ## Citation
 
-If you use LeRobot in your research, please cite:
+If you use LeRobot in your project, please cite the GitHub repository to acknowledge the ongoing development and contributors:
+
+```bibtex
+@misc{cadene2024lerobot,
+    author = {Cadene, Remi and Alibert, Simon and Soare, Alexander and Gallouedec, Quentin and Zouitine, Adil and Palma, Steven and Kooijmans, Pepijn and Aractingi, Michel and Shukor, Mustafa and Aubakirova, Dana and Russi, Martino and Capuano, Francesco and Pascal, Caroline and Choghari, Jade and Moss, Jess and Wolf, Thomas},
+    title = {LeRobot: State-of-the-art Machine Learning for Real-World Robotics in Pytorch},
+    howpublished = "\url{https://github.com/huggingface/lerobot}",
+    year = {2024}
+}
+```
+
+If you are referencing our research or the academic paper, please also cite our ICLR publication:
+
+<details>
+<summary><b>ICLR 2026 Paper</b></summary>
 
 ```bibtex
 @inproceedings{cadenelerobot,
   title={LeRobot: An Open-Source Library for End-to-End Robot Learning},
   author={Cadene, Remi and Alibert, Simon and Capuano, Francesco and Aractingi, Michel and Zouitine, Adil and Kooijmans, Pepijn and Choghari, Jade and Russi, Martino and Pascal, Caroline and Palma, Steven and Shukor, Mustafa and Moss, Jess and Soare, Alexander and Aubakirova, Dana and Lhoest, Quentin and Gallou\'edec, Quentin and Wolf, Thomas},
   booktitle={The Fourteenth International Conference on Learning Representations},
-  year={2026}
+  year={2026},
+  url={https://arxiv.org/abs/2602.22818}
 }
 ```
+
+</details>
 
 ## Contribute
 
