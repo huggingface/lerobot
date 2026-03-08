@@ -13,24 +13,36 @@ bash Miniforge3-$(uname)-$(uname -m).sh
 
 Create a virtual environment with Python 3.12:
 
+<!-- prettier-ignore-start -->
 <hfoptions id="create_venv">
-  <hfoption id="conda">
-    ```bash conda create -y -n lerobot python=3.12 ```
-  </hfoption>
-  <hfoption id="uv">
-    ```bash uv python install 3.12 uv venv --python 3.12 ```
-  </hfoption>
+<hfoption id="conda">
+```bash
+conda create -y -n lerobot python=3.12
+```
+</hfoption>
+<hfoption id="uv">
+```bash
+uv python install 3.12 uv venv --python 3.12
+```
+</hfoption>
 </hfoptions>
+<!-- prettier-ignore-end -->
 
 Then activate your virtual environment, you have to do this each time you open a shell to use lerobot:
 
+<!-- prettier-ignore-start -->
 <hfoptions id="activate_venv">
-  <hfoption id="conda">```bash conda activate lerobot ```</hfoption>
-  <hfoption id="uv">
-    ```bash # Linux/macOS source .venv/bin/activate # Windows PowerShell
-    .venv\Scripts\Activate.ps1 ```
-  </hfoption>
+<hfoption id="conda">```bash conda activate lerobot ```</hfoption>
+<hfoption id="uv">
+```bash
+# Linux/macOSsource
+.venv/bin/activate
+# Windows PowerShell
+.venv\Scripts\Activate.ps1
+```
+</hfoption>
 </hfoptions>
+<!-- prettier-ignore-end -->
 
 When using `conda`, install `ffmpeg` in your environment:
 
@@ -73,20 +85,40 @@ cd lerobot
 
 Then, install the library in editable mode. This is useful if you plan to contribute to the code.
 
+<!-- prettier-ignore-start -->
 <hfoptions id="install_lerobot_src">
-  <hfoption id="conda">```bash pip install -e . ```</hfoption>
-  <hfoption id="uv">```bash uv pip install -e . ```</hfoption>
+<hfoption id="conda">
+```bash
+pip install -e .
+```
+</hfoption>
+<hfoption id="uv">
+```bash
+uv pip install -e .
+```
+</hfoption>
 </hfoptions>
+<!-- prettier-ignore-end -->
 
 ### Installation from PyPI
 
 **Core Library:**
 Install the base package with:
 
+<!-- prettier-ignore-start -->
 <hfoptions id="install_lerobot_pypi">
-  <hfoption id="conda">```bash pip install lerobot ```</hfoption>
-  <hfoption id="uv">```bash uv pip install lerobot ```</hfoption>
+<hfoption id="conda">
+```bash
+pip install lerobot
+```
+</hfoption>
+<hfoption id="uv">
+```bash
+uv pip install lerobot
+```
+</hfoption>
 </hfoptions>
+<!-- prettier-ignore-end -->
 
 _This installs only the default dependencies._
 
