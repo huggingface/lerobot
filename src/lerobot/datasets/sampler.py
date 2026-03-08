@@ -51,6 +51,8 @@ class EpisodeAwareSampler:
 
     def __iter__(self) -> Iterator[int]:
         if self.shuffle:
+            # NOTE: torch.randperm here does not use an explicit Generator / epoch-based seed.
+            # In multi-worker or distributed setups, this can make shuffling harder to reproduce/control.
             for i in torch.randperm(len(self.indices)):
                 yield self.indices[i]
         else:

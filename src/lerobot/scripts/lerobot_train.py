@@ -209,6 +209,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
     # Use accelerator's device
     device = accelerator.device
+    # NOTE: cudnn.benchmark=True can improve throughput but may reduce strict determinism/reproducibility
+    # even when seeds are set (algorithm selection can vary across runs/machines).
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
@@ -341,6 +343,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     # create dataloader for offline training
     if hasattr(cfg.policy, "drop_n_last_frames"):
         shuffle = False
+        # NOTE: When using a custom sampler, we disable DataLoader's `shuffle`.
+        # In distributed training, ensure the sampler partitions indices per-rank;
+        # otherwise different processes may sample overlapping data.
         sampler = EpisodeAwareSampler(
             dataset.meta.episodes["dataset_from_index"],
             dataset.meta.episodes["dataset_to_index"],
@@ -356,7 +361,12 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         dataset,
         num_workers=cfg.num_workers,
         batch_size=cfg.batch_size,
+        # NOTE: For multi-process (DDP/accelerate) training, relying on `shuffle=True` without an explicit
+        # per-rank sampler (e.g. DistributedSampler) can lead to different processes iterating over the
+        # same samples (data duplication), depending on seeding/sampler behavior.
         shuffle=shuffle and not cfg.dataset.streaming,
+        # NOTE: StreamingLeRobotDataset is an IterableDataset; passing a sampler is typically not supported
+        # for iterable-style datasets and may error or behave unexpectedly.
         sampler=sampler,
         pin_memory=device.type == "cuda",
         drop_last=False,
@@ -509,6 +519,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                     initial_step=step,
                     accelerator=accelerator,
                 )
+                # NOTE: MetricsTracker's `batch_size` affects derived counters (samples/episodes/epochs).
+                # Evaluation environment parallelism is configured via `cfg.eval.batch_size`, but this
+                # uses training `cfg.batch_size`, so these derived counters may be inconsistent.
                 eval_tracker.eval_s = aggregated.pop("eval_s")
                 eval_tracker.avg_sum_reward = aggregated.pop("avg_sum_reward")
                 eval_tracker.pc_success = aggregated.pop("pc_success")
