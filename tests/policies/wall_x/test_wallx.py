@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Test script to verify Wall-X policy integration with LeRobot, only meant to be run locally!"""
+"""Test script to verify Wall-X policy integration with LeRobot"""
 
 import pytest
 import torch
@@ -29,10 +29,11 @@ from lerobot.policies.wall_x import WallXConfig  # noqa: E402
 from lerobot.policies.wall_x.modeling_wall_x import WallXPolicy  # noqa: E402
 from lerobot.policies.wall_x.processor_wall_x import make_wall_x_pre_post_processors  # noqa: E402
 from lerobot.utils.random_utils import set_seed  # noqa: E402
-from tests.utils import require_cuda  # noqa: E402
+from tests.utils import require_cuda, require_hf_token  # noqa: E402
 
 
 @require_cuda
+@require_hf_token
 def test_policy_instantiation():
     # Create config
     set_seed(42)
@@ -118,6 +119,7 @@ def test_policy_instantiation():
 
 
 @require_cuda
+@require_hf_token
 def test_config_creation():
     """Test policy config creation through factory."""
     try:
