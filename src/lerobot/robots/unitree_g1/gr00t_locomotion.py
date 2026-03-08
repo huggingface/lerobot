@@ -28,7 +28,6 @@ from lerobot.robots.unitree_g1.g1_utils import (
     get_gravity_orientation,
 )
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -43,7 +42,7 @@ CONTROL_DT = 0.02  # 50Hz
 ANG_VEL_SCALE: float = 0.25
 DOF_POS_SCALE: float = 1.0
 DOF_VEL_SCALE: float = 0.05
-CMD_SCALE: list = [2.0, 2.0, 0.25]
+CMD_SCALE: list[float] = [2.0, 2.0, 0.25]
 
 
 DEFAULT_GROOT_REPO_ID = "nepyope/GR00T-WholeBodyControl_g1"
@@ -104,6 +103,20 @@ class GrootLocomotionController:
             self.groot_obs_history.append(np.zeros(86, dtype=np.float32))
 
         logger.info("GrootLocomotionController initialized")
+
+    def reset(self) -> None:
+        """Reset internal state for a new episode."""
+        self.cmd[:] = 0.0
+        self.groot_qj_all[:] = 0.0
+        self.groot_dqj_all[:] = 0.0
+        self.groot_action[:] = 0.0
+        self.groot_obs_single[:] = 0.0
+        self.groot_obs_stacked[:] = 0.0
+        self.groot_height_cmd = 0.74
+        self.groot_orientation_cmd[:] = 0.0
+        self.groot_obs_history.clear()
+        for _ in range(6):
+            self.groot_obs_history.append(np.zeros(86, dtype=np.float32))
 
     def run_step(self, action: dict, lowstate) -> dict:
         """Run one step of the locomotion controller.

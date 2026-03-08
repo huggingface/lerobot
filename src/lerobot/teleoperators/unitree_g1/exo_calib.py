@@ -112,11 +112,8 @@ class CalibParams:
 
 
 def normalize_angle(angle: float) -> float:
-    while angle > np.pi:
-        angle -= 2 * np.pi
-    while angle < -np.pi:
-        angle += 2 * np.pi
-    return angle
+    """Normalize angle to [-pi, pi]."""
+    return float(np.arctan2(np.sin(angle), np.cos(angle)))
 
 
 def joint_z_and_angle(raw16: list[int], j: ExoskeletonJointCalibration) -> tuple[np.ndarray, float]:

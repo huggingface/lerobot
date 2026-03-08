@@ -15,13 +15,18 @@
 # limitations under the License.
 
 import logging
-import struct
 import time
 from functools import cached_property
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from lerobot.robots.unitree_g1.g1_utils import REMOTE_AXES, G1_29_JointArmIndex
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
+from lerobot.utils.import_utils import _unitree_sdk_available
+
+if TYPE_CHECKING or _unitree_sdk_available:
+    from unitree_sdk2py.utils.joystick import Joystick
+else:
+    Joystick = None
 
 from ..teleoperator import Teleoperator
 from .config_unitree_g1 import UnitreeG1TeleoperatorConfig
@@ -41,6 +46,27 @@ class RemoteController:
     JOYSTICK_BTN_IDX = 12  # Button in raw ADC array
     JOYSTICK_Y_IDX = 13  # Y axis in raw ADC array
 
+    # Map SDK named buttons to positional indices matching the wireless_remote
+    # byte layout (little-endian uint16 from bytes 2-3).
+    _BUTTON_MAP: list[str] = [
+        "RB",
+        "LB",
+        "start",
+        "back",
+        "RT",
+        "LT",
+        "",
+        "",
+        "A",
+        "B",
+        "X",
+        "Y",
+        "up",
+        "right",
+        "down",
+        "left",
+    ]
+
     def __init__(self):
         self.lx = 0.0
         self.ly = 0.0
@@ -48,6 +74,13 @@ class RemoteController:
         self.ry = 0.0
         self.button = [0] * 16
         self.remote_action = dict.fromkeys(REMOTE_AXES, 0.0)
+
+        # SDK joystick parser for wireless remote bytes
+        self._joystick = Joystick()
+        # Disable axis smoothing and deadzone to preserve raw values
+        for axis in (self._joystick.lx, self._joystick.ly, self._joystick.rx, self._joystick.ry):
+            axis.smooth = 1.0
+            axis.deadzone = 0.0
 
         # Joystick center calibration (read at connect time)
         self.left_center_x = self.ADC_HALF
@@ -60,7 +93,7 @@ class RemoteController:
         self.use_right_exo_joystick = False
 
     def _sync_remote_action(self) -> None:
-        self.remote_action.update(zip(self.remote_action, (self.lx, self.ly, self.rx, self.ry), strict=True))
+        self.remote_action.update(zip(REMOTE_AXES, (self.lx, self.ly, self.rx, self.ry), strict=True))
 
     def calibrate_center(self, raw16: list[int] | None, side: str) -> None:
         if raw16 is None or len(raw16) < 16:
@@ -92,28 +125,29 @@ class RemoteController:
                 return
             self.lx = (raw16[self.JOYSTICK_X_IDX] - self.left_center_x) / self.ADC_HALF
             self.ly = (raw16[self.JOYSTICK_Y_IDX] - self.left_center_y) / self.ADC_HALF
-            if raw16[self.JOYSTICK_BTN_IDX] < self.ADC_HALF:
-                self.button[4] = 1
+            self.button[4] = 1 if raw16[self.JOYSTICK_BTN_IDX] < self.ADC_HALF else 0
             return
 
         if not self.use_right_exo_joystick:
             return
         self.rx = (raw16[self.JOYSTICK_X_IDX] - self.right_center_x) / self.ADC_HALF
         self.ry = (raw16[self.JOYSTICK_Y_IDX] - self.right_center_y) / self.ADC_HALF
-        if raw16[self.JOYSTICK_BTN_IDX] < self.ADC_HALF:
-            self.button[0] = 1
+        self.button[0] = 1 if raw16[self.JOYSTICK_BTN_IDX] < self.ADC_HALF else 0
 
     def set_from_wireless(self, wireless_remote: bytes) -> None:
         """Parse Unitree wireless remote raw bytes into joystick + button state."""
         if len(wireless_remote) < 24:
             return
-        keys = struct.unpack("H", wireless_remote[2:4])[0]
-        for i in range(16):
-            self.button[i] = (keys & (1 << i)) >> i
-        self.lx = struct.unpack("f", wireless_remote[4:8])[0]
-        self.rx = struct.unpack("f", wireless_remote[8:12])[0]
-        self.ry = struct.unpack("f", wireless_remote[12:16])[0]
-        self.ly = struct.unpack("f", wireless_remote[20:24])[0]
+        self._joystick.extract(wireless_remote)
+
+        self.lx = self._joystick.lx.data
+        self.ly = self._joystick.ly.data
+        self.rx = self._joystick.rx.data
+        self.ry = self._joystick.ry.data
+
+        for i, name in enumerate(self._BUTTON_MAP):
+            if name:
+                self.button[i] = getattr(self._joystick, name).data
 
 
 class UnitreeG1Teleoperator(Teleoperator):
@@ -176,7 +210,7 @@ class UnitreeG1Teleoperator(Teleoperator):
 
     @cached_property
     def feedback_features(self) -> dict[str, type]:
-        return {}
+        return {"wireless_remote": bytes}
 
     @property
     def is_connected(self) -> bool:

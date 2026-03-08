@@ -22,9 +22,13 @@ import onnx
 import onnxruntime as ort
 from huggingface_hub import hf_hub_download
 
-from lerobot.robots.unitree_g1.g1_utils import REMOTE_AXES, G1_29_JointIndex, get_gravity_orientation
+from lerobot.robots.unitree_g1.g1_utils import (
+    REMOTE_AXES,
+    G1_29_JointArmIndex,
+    G1_29_JointIndex,
+    get_gravity_orientation,
+)
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 DEFAULT_ANGLES = np.zeros(29, dtype=np.float32)
@@ -38,7 +42,7 @@ DEFAULT_ANGLES[[18, 25]] = 0.6  # Elbow
 
 # Control parameters
 ACTION_SCALE = 0.25
-CONTROL_DT = 0.005  # 50Hz
+CONTROL_DT = 0.005  # 200Hz
 ANG_VEL_SCALE = 0.25
 DOF_POS_SCALE = 1.0
 DOF_VEL_SCALE = 0.05
@@ -115,6 +119,16 @@ class HolosomaLocomotionController:
 
         logger.info("HolosomaLocomotionController initialized")
 
+    def reset(self) -> None:
+        """Reset internal state for a new episode."""
+        self.cmd[:] = 0.0
+        self.qj[:] = 0.0
+        self.dqj[:] = 0.0
+        self.obs[:] = 0.0
+        self.last_action[:] = 0.0
+        self.phase = np.array([[0.0, np.pi]], dtype=np.float32)
+        self.is_standing = True
+
     def run_step(self, action: dict, lowstate) -> dict:
         """Run one step of the locomotion controller.
 
@@ -144,9 +158,9 @@ class HolosomaLocomotionController:
 
         # Hide arm positions from policy (show DEFAULT_ANGLES instead)
         # This prevents policy from reacting to teleop arm movements
-        for idx in range(15, 29):
-            self.qj[idx] = DEFAULT_ANGLES[idx]
-            self.dqj[idx] = 0.0
+        for arm_joint in G1_29_JointArmIndex:
+            self.qj[arm_joint.value] = DEFAULT_ANGLES[arm_joint.value]
+            self.dqj[arm_joint.value] = 0.0
 
         # Express IMU data in gravity frame of reference
         quat = lowstate.imu_state.quaternion

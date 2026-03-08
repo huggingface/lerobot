@@ -90,6 +90,7 @@ class CameraCaptureThread:
 
 class ImageServer:
     def __init__(self, config: dict, port: int = 5555):
+        # fps controls the publish loop rate (how often frames are sent over ZMQ), not the camera capture rate
         self.fps = config.get("fps", 30)
         self.cameras: dict[str, OpenCVCamera] = {}
         self.capture_threads: dict[str, CameraCaptureThread] = {}
