@@ -1,10 +1,169 @@
-# DRTC Remote Setup
+# Distributed Real-Time Chunking (DRTC)
 
-- Provision and set up prime intellect gpu instance:
-  - `./scripts/provision_prime_lerobot.sh --deploy-key-email your.email@example.com`
-- Add the generated deploy public key to your repository deploy keys in GitHub.
-- Install and authenticate Tailscale on the remote node, then copy the node DNS name.
-- Run experiments from the robot client with a required remote host flag:
-  - `./scripts/run_drtc_experiment_with_remote_server.sh --remote-server-host <TAILSCALE_DOMAIN> --config mixture_of_faults`
-- If you are tunneling over SSH, start the client with an explicit tunnel target:
-  - `./scripts/start_drtc_client.sh --tunnel-ssh-user-host root@<REMOTE_HOST>`
+Distributed Real-Time Chunking (DRTC) is an async inference approach for action chunking policies in distributed client-server deployments. It combines RTC-compatible in-painting with resilient message handling under unreliable communication.
+
+For more details see https://jackvial.com/posts/distributed-real-time-chunking.html
+
+## Prerequisites
+
+- **uv** (Python package/project manager): https://docs.astral.sh/uv/getting-started/installation/
+- Prime Intellect account and prime CLI installed locally: https://www.primeintellect.ai/
+  - `~/.prime/config.json` with your API key and SSH key path (see below)
+- Tailscale account/network for secure connectivity between client and remote server: https://tailscale.com/
+- SO101 robot setup (default tested hardware profile in this repo)
+
+## Getting Started
+
+### 0. Set Up the Local Environment
+
+Install `uv` if you haven't already:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Create a virtual environment with Python 3.12 and activate it:
+
+```bash
+uv venv --python 3.12
+source .venv/bin/activate
+```
+
+Install the project with the required extras (`smolvla`, `async`, `feetech`):
+
+```bash
+uv pip install -e ".[smolvla,async,feetech,scipy-dep]"
+```
+
+### 1. Provision A Remote Policy Server On Prime Intellect
+
+Run from this repository root:
+
+```bash
+./scripts/provision_prime_lerobot.sh
+```
+
+This script searches for available GPUs with the required CUDA image, presents them in an interactive table for you to choose from, provisions the selected instance, clones the repo, installs dependencies, sets up Tailscale, and prints:
+- SSH connection details (`user@host` and port)
+- Tailscale domain for the remote machine
+
+To resume setup on an existing pod (e.g. after a network interruption):
+
+```bash
+./scripts/provision_prime_lerobot.sh --pod-id <POD_ID>
+```
+
+### 2. Start the policy server on Prime Intellect
+
+SSH to the provisioned machine (use the connection details printed at the end of provisioning), then start the policy server:
+
+```bash
+ssh -i <SSH_KEY_PATH> -p <SSH_PORT> <SSH_USER>@<SSH_HOST>
+cd /workspace/drtc
+./scripts/start_drtc_server.sh
+```
+
+Leave this process running while the client connects.
+
+### 3. Start a local client
+
+Make sure your client/robot machine is joined to the same Tailscale network as the remote server (install Tailscale and run `sudo tailscale up` if you haven't already).
+
+From your local client/robot machine, start the client pointing at the remote server's Tailscale domain:
+
+```bash
+./scripts/run_drtc_experiment_with_remote_server.sh \
+  --remote-server-host <TAILSCALE_DOMAIN> \
+  --config examples/experiments/configs/baseline.yaml
+```
+
+> Note: You can also run the policy server locally if preferred:
+> `./scripts/start_drtc_server.sh`
+
+## Customization (Model, Cameras, Robot)
+
+Current repo defaults remain preconfigured for your existing setup:
+- Robot type: `so101`
+- Model: `jackvial/so101_smolvla_pickplaceorangecube_e100`
+- Camera paths/format from the current SO101 setup
+
+`robot_type` is configurable (currently supported: `so101`/`so101_follower`, `so100`/`so100_follower`).
+
+### Local client path overrides
+
+When using `examples/tutorial/async-inf/robot_client_drtc.py`, you can override settings via environment variables:
+
+```bash
+export LEROBOT_POLICY_TYPE=smolvla
+export LEROBOT_PRETRAINED_NAME_OR_PATH=your-org/your-model
+export LEROBOT_ROBOT_TYPE=so101
+export LEROBOT_FOLLOWER_PORT=/dev/ttyACM1
+export LEROBOT_FOLLOWER_ID=your_robot_id
+export LEROBOT_CAMERA1_PATH=/dev/v4l/by-path/your-camera-1
+export LEROBOT_CAMERA2_PATH=/dev/v4l/by-path/your-camera-2
+export LEROBOT_CAMERA_WIDTH=800
+export LEROBOT_CAMERA_HEIGHT=600
+export LEROBOT_CAMERA_FPS=30
+export LEROBOT_CAMERA_FOURCC=MJPG
+```
+
+### Experiment path overrides (YAML)
+
+When running via `scripts/run_drtc_experiment_with_remote_server.sh`, set values in your experiment config YAML (loaded by `examples/experiments/run_drtc_experiment.py`):
+
+```yaml
+robot_type: so101
+robot_port: /dev/ttyACM0
+robot_id: so101_follower_2026_01_03
+
+policy_type: smolvla
+pretrained_name_or_path: jackvial/so101_smolvla_pickplaceorangecube_e100
+
+camera1_path: /dev/v4l/by-path/platform-xhci-hcd.1-usb-0:2:1.0-video-index0
+camera2_path: /dev/v4l/by-path/platform-xhci-hcd.0-usb-0:2:1.0-video-index0
+camera_width: 800
+camera_height: 600
+camera_fps: 30
+camera_fourcc: MJPG
+camera_use_threaded_async_read: true
+camera_allow_stale_frames: true
+```
+
+## Run Experiments from the Client
+
+Use the remote experiment runner script and point it at the remote policy server host/domain:
+
+```bash
+./scripts/run_drtc_experiment_with_remote_server.sh \
+  --remote-server-host <TAILSCALE_DOMAIN_OR_IP> \
+  --config mixture_of_faults \
+  --output_dir results/experiments
+```
+
+Another example:
+
+```bash
+./scripts/run_drtc_experiment_with_remote_server.sh \
+  --remote-server-host <TAILSCALE_DOMAIN_OR_IP> \
+  --config spike \
+  --output_dir results/experiments
+```
+
+## Plot Results
+
+After experiments finish, generate plots with:
+
+```bash
+uv run python examples/experiments/plot_results.py \
+  --input results/experiments \
+  --output results/experiments/summary
+```
+
+For a single run:
+
+```bash
+uv run python examples/experiments/plot_results.py \
+  --input results/experiments/<run_name>/<run_name>.csv \
+  --mode detailed \
+  --output results/experiments/<run_name>/detailed
+```

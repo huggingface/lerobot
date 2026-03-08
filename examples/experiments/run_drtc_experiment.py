@@ -31,8 +31,7 @@ from lerobot.async_inference.utils.simulation import (
     DropConfig, DropEvent, DuplicateConfig, DuplicateEvent, ReorderConfig, ReorderEvent,
 )
 from lerobot.cameras.opencv import OpenCVCameraConfig
-from lerobot.robots.so100_follower import SO100FollowerConfig
-from lerobot.robots.so101_follower import SO101FollowerConfig
+from lerobot.robots.so_follower.config_so_follower import SO100FollowerConfig, SO101FollowerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -40,14 +39,12 @@ logger = logging.getLogger(__name__)
 DEFAULT_SERVER_ADDRESS = "192.168.4.37:8080"
 DEFAULT_ROBOT_PORT = "/dev/ttyACM0"
 DEFAULT_ROBOT_ID = "so101_follower_2026_01_03"
-DEFAULT_CAMERA1_PATH = "/dev/v4l/by-path/platform-xhci-hcd.1-usb-0:2:1.0-video-index0"
-DEFAULT_CAMERA2_PATH = "/dev/v4l/by-path/platform-xhci-hcd.0-usb-0:2:1.0-video-index0"
+DEFAULT_CAMERA1_PATH = "/dev/video2"
+DEFAULT_CAMERA2_PATH = "/dev/video6"
 DEFAULT_CAMERA_WIDTH = 800
 DEFAULT_CAMERA_HEIGHT = 600
 DEFAULT_CAMERA_FPS = 30
 DEFAULT_CAMERA_FOURCC = "MJPG"
-DEFAULT_CAMERA_USE_THREADED_ASYNC_READ = True
-DEFAULT_CAMERA_ALLOW_STALE_FRAMES = True
 DEFAULT_MODEL_PATH = "jackvial/so101_smolvla_pickplaceorangecube_e100"
 DEFAULT_TASK = "Pick up the orange cube and place it on the black X marker with the white background"
 
@@ -73,8 +70,6 @@ class ExperimentConfig:
     camera_height: int = DEFAULT_CAMERA_HEIGHT
     camera_fps: int = DEFAULT_CAMERA_FPS
     camera_fourcc: str | None = DEFAULT_CAMERA_FOURCC
-    camera_use_threaded_async_read: bool = DEFAULT_CAMERA_USE_THREADED_ASYNC_READ
-    camera_allow_stale_frames: bool = DEFAULT_CAMERA_ALLOW_STALE_FRAMES
     # Policy
     policy_type: str = "smolvla"
     pretrained_name_or_path: str = DEFAULT_MODEL_PATH
@@ -124,7 +119,6 @@ _SCALAR_FIELDS = frozenset({
     "robot_port", "robot_id",
     "camera1_path", "camera2_path",
     "camera_width", "camera_height", "camera_fps", "camera_fourcc",
-    "camera_use_threaded_async_read", "camera_allow_stale_frames",
     "policy_type", "pretrained_name_or_path",
     "latency_k", "epsilon", "s_min", "latency_alpha", "latency_beta",
     "duration_s", "fps", "actions_per_chunk",
@@ -245,8 +239,6 @@ def create_robot_config(config: ExperimentConfig) -> SO100FollowerConfig | SO101
             height=config.camera_height,
             fps=config.camera_fps,
             fourcc=camera_fourcc,
-            use_threaded_async_read=config.camera_use_threaded_async_read,
-            allow_stale_frames=config.camera_allow_stale_frames,
         ),
         "camera1": OpenCVCameraConfig(
             index_or_path=config.camera1_path,
@@ -254,8 +246,6 @@ def create_robot_config(config: ExperimentConfig) -> SO100FollowerConfig | SO101
             height=config.camera_height,
             fps=config.camera_fps,
             fourcc=camera_fourcc,
-            use_threaded_async_read=config.camera_use_threaded_async_read,
-            allow_stale_frames=config.camera_allow_stale_frames,
         ),
     }
     robot_type_normalized = config.robot_type.strip().lower()
