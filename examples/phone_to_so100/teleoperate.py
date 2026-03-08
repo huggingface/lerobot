@@ -21,14 +21,13 @@ from lerobot.processor.converters import (
     robot_action_observation_to_transition,
     transition_to_robot_action,
 )
-from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
-from lerobot.robots.so100_follower.robot_kinematic_processor import (
+from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
+from lerobot.robots.so_follower.robot_kinematic_processor import (
     EEBoundsAndSafety,
     EEReferenceAndDelta,
     GripperVelocityToJoint,
     InverseKinematicsEEToJoints,
 )
-from lerobot.robots.so100_follower.so100_follower import SO100Follower
 from lerobot.teleoperators.phone.config_phone import PhoneConfig, PhoneOS
 from lerobot.teleoperators.phone.phone_processor import MapPhoneActionToRobotAction
 from lerobot.teleoperators.phone.teleop_phone import Phone

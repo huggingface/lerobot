@@ -33,18 +33,18 @@ Example teleoperation with bimanual so100:
 
 ```shell
 lerobot-teleoperate \
-  --robot.type=bi_so100_follower \
-  --robot.left_arm_port=/dev/tty.usbmodem5A460851411 \
-  --robot.right_arm_port=/dev/tty.usbmodem5A460812391 \
+  --robot.type=bi_so_follower \
+  --robot.left_arm_config.port=/dev/tty.usbmodem5A460822851 \
+  --robot.right_arm_config.port=/dev/tty.usbmodem5A460814411 \
   --robot.id=bimanual_follower \
-  --robot.cameras='{
-    left: {"type": "opencv", "index_or_path": 0, "width": 1920, "height": 1080, "fps": 30},
-    top: {"type": "opencv", "index_or_path": 1, "width": 1920, "height": 1080, "fps": 30},
-    right: {"type": "opencv", "index_or_path": 2, "width": 1920, "height": 1080, "fps": 30}
+  --robot.left_arm_config.cameras='{
+    wrist: {"type": "opencv", "index_or_path": 1, "width": 640, "height": 480, "fps": 30},
+  }' --robot.right_arm_config.cameras='{
+    wrist: {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 30},
   }' \
-  --teleop.type=bi_so100_leader \
-  --teleop.left_arm_port=/dev/tty.usbmodem5A460828611 \
-  --teleop.right_arm_port=/dev/tty.usbmodem5A460826981 \
+  --teleop.type=bi_so_leader \
+  --teleop.left_arm_config.port=/dev/tty.usbmodem5A460852721 \
+  --teleop.right_arm_config.port=/dev/tty.usbmodem5A460819811 \
   --teleop.id=bimanual_leader \
   --display_data=true
 ```
@@ -52,19 +52,17 @@ lerobot-teleoperate \
 """
 
 import logging
-import os
 import time
 from dataclasses import asdict, dataclass
-from pathlib import Path
 from pprint import pformat
 
 import rerun as rr
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.cameras.zmq.configuration_zmq import ZMQCameraConfig  # noqa: F401
 from lerobot.configs import parser
 from lerobot.processor import (
-    IdentityProcessorStep,
     RobotAction,
     RobotObservation,
     RobotProcessorPipeline,
@@ -73,27 +71,34 @@ from lerobot.processor import (
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
-    bi_so100_follower,
+    bi_openarm_follower,
+    bi_so_follower,
     earthrover_mini_plus,
     hope_jr,
     koch_follower,
     make_robot_from_config,
     omx_follower,
-    so100_follower,
-    so101_follower,
+    openarm_follower,
+    reachy2,
+    so_follower,
+    unitree_g1 as unitree_g1_robot,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
-    bi_so100_leader,
+    bi_openarm_leader,
+    bi_so_leader,
     gamepad,
     homunculus,
     keyboard,
     koch_leader,
     make_teleoperator_from_config,
     omx_leader,
-    so100_leader,
-    so101_leader,
+    openarm_leader,
+    openarm_mini,
+    reachy2_teleoperator,
+    so_leader,
+    unitree_g1,
 )
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.robot_utils import precise_sleep
@@ -111,15 +116,12 @@ class TeleoperateConfig:
     teleop_time_s: float | None = None
     # Display all cameras on screen
     display_data: bool = False
-    # Optional filtering to reduce "slow movement jitter" caused by small sensor noise / quantization
-    # in the teleoperator position readings.
-    #
-    # - action_deadband: either a single float deadband applied to all action keys, or a per-key dict.
-    #   If, for every key, abs(delta vs last *sent* action) <= its deadband, we skip sending a new
-    #   command for that frame.
-    # - action_smoothing_alpha: EMA smoothing factor in [0, 1]. Higher means less smoothing.
-    action_deadband: float | dict[str, float] | None = None
-    action_smoothing_alpha: float | None = None
+    # Display data on a remote Rerun server
+    display_ip: str | None = None
+    # Port of the remote Rerun server
+    display_port: int | None = None
+    # Whether to  display compressed images in Rerun
+    display_compressed_images: bool = False
 
 
 def teleop_loop(
@@ -131,8 +133,7 @@ def teleop_loop(
     robot_observation_processor: RobotProcessorPipeline[RobotObservation, RobotObservation],
     display_data: bool = False,
     duration: float | None = None,
-    action_deadband: float | dict[str, float] | None = None,
-    action_smoothing_alpha: float | None = None,
+    display_compressed_images: bool = False,
 ):
     """
     This function continuously reads actions from a teleoperation device, processes them through optional
@@ -144,6 +145,7 @@ def teleop_loop(
         robot: The robot instance being controlled.
         fps: The target frequency for the control loop in frames per second.
         display_data: If True, fetches robot observations and displays them in the console and Rerun.
+        display_compressed_images: If True, compresses images before sending them to Rerun for display.
         duration: The maximum duration of the teleoperation loop in seconds. If None, the loop runs indefinitely.
         teleop_action_processor: An optional pipeline to process raw actions from the teleoperator.
         robot_action_processor: An optional pipeline to process actions before they are sent to the robot.
@@ -152,48 +154,17 @@ def teleop_loop(
 
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
-    last_loop_report_s = start
-    last_sent_action: dict[str, float] | None = None
-    smoothed_action: dict[str, float] | None = None
-
-    if action_smoothing_alpha is not None and not (0.0 <= action_smoothing_alpha <= 1.0):
-        raise ValueError(f"action_smoothing_alpha must be in [0, 1], got {action_smoothing_alpha}")
-    if action_deadband is not None and not isinstance(action_deadband, (float, dict)):
-        raise ValueError(f"action_deadband must be a float, dict[str, float], or None, got {type(action_deadband)}")
-
-    def _deadband_for_key(key: str) -> float | None:
-        if action_deadband is None:
-            return None
-        if isinstance(action_deadband, float):
-            return float(action_deadband)
-        # Dict deadband: allow providing only a subset of keys.
-        val = action_deadband.get(key)
-        return None if val is None else float(val)
-
-    def _is_identity_pipeline(pipeline: RobotProcessorPipeline) -> bool:
-        # We only auto-skip observations when we're sure the pipeline won't use them.
-        # Default teleoperate uses a single IdentityProcessorStep, but we accept multiple.
-        return len(pipeline.steps) > 0 and all(isinstance(step, IdentityProcessorStep) for step in pipeline.steps)
-
-    # Reading robot observations can be expensive (motor sync reads + camera async_read that waits for new frames),
-    # and can unintentionally rate-limit the control loop to camera FPS. If we're not displaying data and both
-    # action processors are pure identity, it's safe to skip observations entirely.
-    should_read_observation = display_data or not (
-        _is_identity_pipeline(teleop_action_processor) and _is_identity_pipeline(robot_action_processor)
-    )
-    if not should_read_observation:
-        logging.info(
-            "Teleop: skipping robot observations (including camera reads) to avoid camera-FPS rate limiting. "
-            "Set --display_data=true to force observations/visualization."
-        )
-
     while True:
         loop_start = time.perf_counter()
 
-        # Get robot observation (optional).
-        # Note: `robot_action_observation_to_transition` accepts `observation=None`.
-        # obs = robot.get_observation() if should_read_observation else None
+        # Get robot observation
+        # Not really needed for now other than for visualization
+        # teleop_action_processor can take None as an observation
+        # given that it is the identity processor as default
         obs = robot.get_observation()
+
+        if robot.name == "unitree_g1":
+            teleop.send_feedback(obs)
 
         # Get teleop action
         raw_action = teleop.get_action()
@@ -204,40 +175,8 @@ def teleop_loop(
         # Process action for robot through pipeline
         robot_action_to_send = robot_action_processor((teleop_action, obs))
 
-        # Optional smoothing (EMA) on the final robot action.
-        if action_smoothing_alpha is not None:
-            if smoothed_action is None:
-                smoothed_action = {k: float(v) for k, v in robot_action_to_send.items()}
-            else:
-                alpha = float(action_smoothing_alpha)
-                for key, value in robot_action_to_send.items():
-                    prev = smoothed_action.get(key, float(value))
-                    smoothed_action[key] = alpha * float(value) + (1.0 - alpha) * float(prev)
-            robot_action_to_send = smoothed_action
-
-        # Optional deadband vs last *sent* action: if nothing changed enough, skip sending.
-        if action_deadband is not None and last_sent_action is not None:
-            any_exceeds_deadband = False
-            for key, value in robot_action_to_send.items():
-                prev = last_sent_action.get(key, float(value))
-                delta = abs(float(value) - float(prev))
-                deadband = _deadband_for_key(key)
-                # If no deadband specified for this key (dict mode), treat it as "always send if it changes".
-                if deadband is None:
-                    if delta > 0.0:
-                        any_exceeds_deadband = True
-                        break
-                elif delta > deadband:
-                    any_exceeds_deadband = True
-                    break
-            if not any_exceeds_deadband:
-                dt_s = time.perf_counter() - loop_start
-                precise_sleep(1 / fps - dt_s)
-                continue
-
-        # Send processed action to robot (robot_action_processor.to_output should return dict[str, Any])
-        sent_action = robot.send_action(robot_action_to_send)
-        last_sent_action = {k: float(v) for k, v in sent_action.items()}
+        # Send processed action to robot (robot_action_processor.to_output should return RobotAction)
+        _ = robot.send_action(robot_action_to_send)
 
         if display_data:
             # Process robot observation through pipeline
@@ -246,6 +185,7 @@ def teleop_loop(
             log_rerun_data(
                 observation=obs_transition,
                 action=teleop_action,
+                compress_images=display_compressed_images,
             )
 
             print("\n" + "-" * (display_len + 10))
@@ -256,13 +196,10 @@ def teleop_loop(
             move_cursor_up(len(robot_action_to_send) + 3)
 
         dt_s = time.perf_counter() - loop_start
-        precise_sleep(1 / fps - dt_s)
+        precise_sleep(max(1 / fps - dt_s, 0.0))
         loop_s = time.perf_counter() - loop_start
-        # Printing every iteration can itself become a bottleneck at higher FPS.
-        if time.perf_counter() - last_loop_report_s >= 1.0:
-            print(f"Teleop loop time: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
-            move_cursor_up(1)
-            last_loop_report_s = time.perf_counter()
+        print(f"Teleop loop time: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
+        move_cursor_up(1)
 
         if duration is not None and time.perf_counter() - start >= duration:
             return
@@ -270,12 +207,15 @@ def teleop_loop(
 
 @parser.wrap()
 def teleoperate(cfg: TeleoperateConfig):
-    log_file_env = os.getenv("LEROBOT_LOG_FILE")
-    log_file = Path(log_file_env) if log_file_env else None
-    init_logging(log_file=log_file)
+    init_logging()
     logging.info(pformat(asdict(cfg)))
     if cfg.display_data:
-        init_rerun(session_name="teleoperation")
+        init_rerun(session_name="teleoperation", ip=cfg.display_ip, port=cfg.display_port)
+    display_compressed_images = (
+        True
+        if (cfg.display_data and cfg.display_ip is not None and cfg.display_port is not None)
+        else cfg.display_compressed_images
+    )
 
     teleop = make_teleoperator_from_config(cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
@@ -294,8 +234,7 @@ def teleoperate(cfg: TeleoperateConfig):
             teleop_action_processor=teleop_action_processor,
             robot_action_processor=robot_action_processor,
             robot_observation_processor=robot_observation_processor,
-            action_deadband=cfg.action_deadband,
-            action_smoothing_alpha=cfg.action_smoothing_alpha,
+            display_compressed_images=display_compressed_images,
         )
     except KeyboardInterrupt:
         pass

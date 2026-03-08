@@ -82,6 +82,20 @@ def test_save_checkpoint(mock_save_training_state, tmp_path, optimizer):
     mock_save_training_state.assert_called_once()
 
 
+@patch("lerobot.utils.train_utils.save_training_state")
+def test_save_checkpoint_peft(mock_save_training_state, tmp_path, optimizer):
+    policy = Mock()
+    policy.config = Mock()
+    policy.config.save_pretrained = Mock()
+    cfg = Mock()
+    cfg.use_peft = True
+    save_checkpoint(tmp_path, 10, cfg, policy, optimizer)
+    policy.save_pretrained.assert_called_once()
+    cfg.save_pretrained.assert_called_once()
+    policy.config.save_pretrained.assert_called_once()
+    mock_save_training_state.assert_called_once()
+
+
 def test_save_training_state(tmp_path, optimizer, scheduler):
     save_training_state(tmp_path, 10, optimizer, scheduler)
     assert (tmp_path / TRAINING_STATE_DIR).is_dir()

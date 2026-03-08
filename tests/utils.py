@@ -22,8 +22,9 @@ import torch
 
 from lerobot import available_cameras, available_motors, available_robots
 from lerobot.utils.import_utils import is_package_available
+from lerobot.utils.utils import auto_select_torch_device
 
-DEVICE = os.environ.get("LEROBOT_TEST_DEVICE", "cuda") if torch.cuda.is_available() else "cpu"
+DEVICE = os.environ.get("LEROBOT_TEST_DEVICE", str(auto_select_torch_device()))
 
 TEST_ROBOT_TYPES = []
 for robot_type in available_robots:
@@ -107,6 +108,22 @@ def require_cuda(func):
     return wrapper
 
 
+def require_hf_token(func):
+    """
+    Decorator that skips the test if no Hugging Face Hub token is available.
+    """
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        from huggingface_hub import get_token
+
+        if get_token() is None:
+            pytest.skip("requires HF token for gated model access")
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
 def require_env(func):
     """
     Decorator that skips the test if the required environment package is not installed.
@@ -167,7 +184,7 @@ def require_package_arg(func):
     return wrapper
 
 
-def require_package(package_name):
+def require_package(package_name, import_name=None):
     """
     Decorator that skips the test if the specified package is not installed.
     """
@@ -175,7 +192,7 @@ def require_package(package_name):
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            if not is_package_available(package_name):
+            if not is_package_available(pkg_name=package_name, import_name=import_name):
                 pytest.skip(f"{package_name} not installed")
             return func(*args, **kwargs)
 

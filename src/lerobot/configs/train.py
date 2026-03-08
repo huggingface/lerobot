@@ -24,7 +24,7 @@ from huggingface_hub.errors import HfHubHTTPError
 
 from lerobot import envs
 from lerobot.configs import parser
-from lerobot.configs.default import DatasetConfig, EvalConfig, WandBConfig
+from lerobot.configs.default import DatasetConfig, EvalConfig, PeftConfig, WandBConfig
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.optim import OptimizerConfig
 from lerobot.optim.schedulers import LRSchedulerConfig
@@ -50,6 +50,9 @@ class TrainPipelineConfig(HubMixin):
     # `seed` is used for training (eg: model initialization, dataset shuffling)
     # AND for the evaluation environments.
     seed: int | None = 1000
+    # Set to True to use deterministic cuDNN algorithms for reproducibility.
+    # This disables cudnn.benchmark and may reduce training speed by ~10-20%.
+    cudnn_deterministic: bool = False
     # Number of workers for the dataloader.
     num_workers: int = 4
     batch_size: int = 8
@@ -65,6 +68,7 @@ class TrainPipelineConfig(HubMixin):
     scheduler: LRSchedulerConfig | None = None
     eval: EvalConfig = field(default_factory=EvalConfig)
     wandb: WandBConfig = field(default_factory=WandBConfig)
+    peft: PeftConfig | None = None
 
     # RA-BC (Reward-Aligned Behavior Cloning) parameters
     use_rabc: bool = False  # Enable reward-weighted training

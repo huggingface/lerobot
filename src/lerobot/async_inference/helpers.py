@@ -34,7 +34,7 @@ Action = Any
 # See robot_client_drtc.py for the two-clock causality model documentation.
 ControlStep = int
 
-# observation as received from the robot
+# observation as received from the robot (can be numpy arrays, floats, etc.)
 RawObservation = dict[str, Any]
 
 # observation as those recorded in LeRobot dataset (keys are different)

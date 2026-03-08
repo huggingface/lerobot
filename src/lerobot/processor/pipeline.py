@@ -39,7 +39,7 @@ from collections.abc import Callable, Iterable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Generic, TypeAlias, TypedDict, TypeVar, cast
+from typing import Any, TypedDict, TypeVar, cast
 
 import torch
 from huggingface_hub import hf_hub_download
@@ -49,7 +49,7 @@ from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from lerobot.utils.hub import HubMixin
 
 from .converters import batch_to_transition, create_transition, transition_to_batch
-from .core import EnvAction, EnvTransition, PolicyAction, RobotAction, TransitionKey
+from .core import EnvAction, EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
 
 # Generic type variables for pipeline input and output.
 TInput = TypeVar("TInput")
@@ -251,7 +251,7 @@ class ProcessorMigrationError(Exception):
 
 
 @dataclass
-class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
+class DataProcessorPipeline[TInput, TOutput](HubMixin):
     """A sequential pipeline for processing data, integrated with the Hugging Face Hub.
 
     This class chains together multiple `ProcessorStep` instances to form a complete
@@ -413,7 +413,7 @@ class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
         Args:
             save_directory: The directory where the pipeline will be saved. If None, saves to
                 HF_LEROBOT_HOME/processors/{sanitized_pipeline_name}.
-            repo_id: ID of your repository on the Hub. Used only if `push_to_hub=True`.
+            repo_id: ID of your repository on the Hub. Used only if `push_to_hub=true`.
             push_to_hub: Whether or not to push your object to the Hugging Face Hub after saving it.
             card_kwargs: Additional arguments passed to the card template to customize the card.
             config_filename: The name of the JSON configuration file. If None, a name is
@@ -1337,7 +1337,7 @@ class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
         return features
 
     # Convenience methods for processing individual parts of a transition.
-    def process_observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+    def process_observation(self, observation: RobotObservation) -> RobotObservation:
         """Processes only the observation part of a transition through the pipeline.
 
         Args:
@@ -1432,15 +1432,15 @@ class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
 
 
 # Type aliases for semantic clarity.
-RobotProcessorPipeline: TypeAlias = DataProcessorPipeline[TInput, TOutput]
-PolicyProcessorPipeline: TypeAlias = DataProcessorPipeline[TInput, TOutput]
+RobotProcessorPipeline = DataProcessorPipeline[TInput, TOutput]
+PolicyProcessorPipeline = DataProcessorPipeline[TInput, TOutput]
 
 
 class ObservationProcessorStep(ProcessorStep, ABC):
     """An abstract `ProcessorStep` that specifically targets the observation in a transition."""
 
     @abstractmethod
-    def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+    def observation(self, observation: RobotObservation) -> RobotObservation:
         """Processes an observation dictionary. Subclasses must implement this method.
 
         Args:

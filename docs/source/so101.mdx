@@ -1,5 +1,18 @@
 # SO-101
 
+<div style="display: flex; align-items: center; gap: 10px;">
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/SO101_Follower.webp"
+    alt="SO-101"
+    width="60%"
+  />
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/SO101_Leader.webp"
+    alt="SO-101"
+    width="60%"
+  />
+</div>
+
 In the steps below, we explain how to assemble our flagship robot, the SO-101.
 
 ## Source the parts
@@ -125,7 +138,7 @@ lerobot-setup-motors \
 
 <!-- prettier-ignore-start -->
 ```python
-from lerobot.robots.so101_follower import SO101Follower, SO101FollowerConfig
+from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
 
 config = SO101FollowerConfig(
     port="/dev/tty.usbmodem585A0076841",
@@ -201,7 +214,7 @@ lerobot-setup-motors \
 
 <!-- prettier-ignore-start -->
 ```python
-from lerobot.teleoperators.so101_leader import SO101Leader, SO101LeaderConfig
+from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 
 config = SO101LeaderConfig(
     port="/dev/tty.usbmodem585A0076841",
@@ -364,7 +377,7 @@ lerobot-calibrate \
 
 <!-- prettier-ignore-start -->
 ```python
-from lerobot.robots.so101_follower import SO101FollowerConfig, SO101Follower
+from lerobot.robots.so_follower import SO101FollowerConfig, SO101Follower
 
 config = SO101FollowerConfig(
     port="/dev/tty.usbmodem585A0076891",
@@ -413,7 +426,7 @@ lerobot-calibrate \
 
 <!-- prettier-ignore-start -->
 ```python
-from lerobot.teleoperators.so101_leader import SO101LeaderConfig, SO101Leader
+from lerobot.teleoperators.so_leader import SO101LeaderConfig, SO101Leader
 
 config = SO101LeaderConfig(
     port="/dev/tty.usbmodem58760431551",

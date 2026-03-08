@@ -42,6 +42,7 @@ lerobot-eval \
 ```
 
 - `--env.task` picks the suite (`libero_object`, `libero_spatial`, etc.).
+- `--env.task_ids` picks task ids to run (`[0]`, `[1,2,3]`, etc.). Omit this flag (or set it to `null`) to run all tasks in the suite.
 - `--eval.batch_size` controls how many environments run in parallel.
 - `--eval.n_episodes` sets how many episodes to run in total.
 
