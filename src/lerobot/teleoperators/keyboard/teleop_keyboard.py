@@ -61,17 +61,17 @@ class KeyboardTeleop(Teleoperator):
         self.config = config
         self.robot_type = config.type
 
-        self.event_queue = Queue()
-        self.current_pressed = {}
-        self.listener = None
-        self.logs = {}
+        self.event_queue: Queue[tuple[str, bool]] = Queue()
+        self.current_pressed: dict[str, bool] = {}
+        self.listener: Any = None
+        self.logs: dict[str, float] = {}
 
     @property
     def action_features(self) -> dict:
         return {
             "dtype": "float32",
-            "shape": (len(self.arm),),
-            "names": {"motors": list(self.arm.motors)},
+            "shape": (len(self.arm),),  # type: ignore[attr-defined]  # set by subclass/config
+            "names": {"motors": list(self.arm.motors)},  # type: ignore[attr-defined]  # set by subclass/config
         }
 
     @property
@@ -84,11 +84,11 @@ class KeyboardTeleop(Teleoperator):
 
     @property
     def is_calibrated(self) -> bool:
-        pass
+        return True
 
     @check_if_already_connected
-    def connect(self) -> None:
-        if PYNPUT_AVAILABLE:
+    def connect(self, calibrate: bool = True) -> None:
+        if PYNPUT_AVAILABLE and keyboard is not None:
             logging.info("pynput is available - enabling local keyboard listener.")
             self.listener = keyboard.Listener(
                 on_press=self._on_press,
@@ -154,7 +154,7 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
     def __init__(self, config: KeyboardEndEffectorTeleopConfig):
         super().__init__(config)
         self.config = config
-        self.misc_keys_queue = Queue()
+        self.misc_keys_queue: Queue[object] = Queue()
 
     @property
     def action_features(self) -> dict:

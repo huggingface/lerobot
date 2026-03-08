@@ -54,7 +54,7 @@ class GamepadTeleop(Teleoperator):
         self.config = config
         self.robot_type = config.type
 
-        self.gamepad = None
+        self.gamepad: Any = None
 
     @property
     def action_features(self) -> dict:
@@ -75,7 +75,7 @@ class GamepadTeleop(Teleoperator):
     def feedback_features(self) -> dict:
         return {}
 
-    def connect(self) -> None:
+    def connect(self, calibrate: bool = True) -> None:
         # use HidApi for macos
         if sys.platform == "darwin":
             # NOTE: On macOS, pygame doesn’t reliably detect input from some controllers so we fall back to hidapi
@@ -88,11 +88,12 @@ class GamepadTeleop(Teleoperator):
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:
+        assert self.gamepad is not None
         # Update the controller to get fresh inputs
-        self.gamepad.update()
+        self.gamepad.update()  # type: ignore[attr-defined]  # GamepadController duck type
 
         # Get movement deltas from the controller
-        delta_x, delta_y, delta_z = self.gamepad.get_deltas()
+        delta_x, delta_y, delta_z = self.gamepad.get_deltas()  # type: ignore[attr-defined]  # GamepadController duck type
 
         # Create action from gamepad input
         gamepad_action = np.array([delta_x, delta_y, delta_z], dtype=np.float32)
@@ -106,7 +107,7 @@ class GamepadTeleop(Teleoperator):
         # Default gripper action is to stay
         gripper_action = GripperAction.STAY.value
         if self.config.use_gripper:
-            gripper_command = self.gamepad.gripper_command()
+            gripper_command = self.gamepad.gripper_command()  # type: ignore[attr-defined]  # GamepadController duck type
             gripper_action = gripper_action_map[gripper_command]
             action_dict["gripper"] = gripper_action
 
@@ -133,13 +134,13 @@ class GamepadTeleop(Teleoperator):
             }
 
         # Update gamepad state to get fresh inputs
-        self.gamepad.update()
+        self.gamepad.update()  # type: ignore[attr-defined]  # GamepadController duck type
 
         # Check if intervention is active
-        is_intervention = self.gamepad.should_intervene()
+        is_intervention = self.gamepad.should_intervene()  # type: ignore[attr-defined]  # GamepadController duck type
 
         # Get episode end status
-        episode_end_status = self.gamepad.get_episode_end_status()
+        episode_end_status = self.gamepad.get_episode_end_status()  # type: ignore[attr-defined]  # GamepadController duck type
         terminate_episode = episode_end_status in [
             TeleopEvents.RERECORD_EPISODE,
             TeleopEvents.FAILURE,
@@ -157,7 +158,7 @@ class GamepadTeleop(Teleoperator):
     def disconnect(self) -> None:
         """Disconnect from the gamepad."""
         if self.gamepad is not None:
-            self.gamepad.stop()
+            self.gamepad.stop()  # type: ignore[attr-defined]  # GamepadController duck type
             self.gamepad = None
 
     @property
@@ -170,6 +171,7 @@ class GamepadTeleop(Teleoperator):
         # No calibration needed for gamepad
         pass
 
+    @property
     def is_calibrated(self) -> bool:
         """Check if gamepad is calibrated."""
         # Gamepad doesn't require calibration
