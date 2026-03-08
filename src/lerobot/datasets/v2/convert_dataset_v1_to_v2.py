@@ -144,7 +144,7 @@ from lerobot.datasets.video_utils import (
 )
 from lerobot.robots import RobotConfig
 
-V16 = "v1.3"
+V16 = "v1.6"
 V20 = "v2.0"
 
 GITATTRIBUTES_REF = "aliberts/gitattributes_reference"
