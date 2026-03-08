@@ -1,8 +1,8 @@
 # Installation
 
-This guide uses conda (via miniforge) to manage environments (recommended). If you prefer another environment manager (e.g. `uv`, `venv`), ensure you have Python >=3.12 and ffmpeg installed with the `libsvtav1` encoder, then skip ahead to [Install LeRobot](#step-2-environment-setup-).
+This guide uses `conda` (via miniforge) to manage environments (recommended). If you prefer another environment manager (e.g. `uv`, `venv`), ensure you have Python >=3.12 and ffmpeg installed with the `libsvtav1` encoder, then skip ahead to [Install LeRobot](#step-2-environment-setup).
 
-## Step 1 (conda only): Install [`miniforge`](https://conda-forge.org/download/)
+## Step 1 (`conda` only): Install [`miniforge`](https://conda-forge.org/download/)
 
 ```bash
 wget "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh"
@@ -32,7 +32,9 @@ Then activate your virtual environment, you have to do this each time you open a
 
 <!-- prettier-ignore-start -->
 <hfoptions id="activate_venv">
-<hfoption id="conda">```bash conda activate lerobot ```</hfoption>
+<hfoption id="conda">```bash
+conda activate lerobot
+```</hfoption>
 <hfoption id="uv">
 ```bash
 # Linux/macOSsource
