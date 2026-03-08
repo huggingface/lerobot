@@ -17,11 +17,11 @@ The Unitree G1 humanoid is now supported in LeRobot! You can teleoperate, train 
 ```bash
 conda create -y -n lerobot python=3.12
 conda activate lerobot
+git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
+cd unitree_sdk2_python && pip install -e .
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
 pip install -e '.[unitree_g1]'
-git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
-cd unitree_sdk2_python && pip install -e .
 ```
 
 ### Test the Installation (Simulation)
@@ -66,11 +66,11 @@ From the robot:
 ```bash
 conda create -y -n lerobot python=3.12
 conda activate lerobot
+git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
+cd unitree_sdk2_python && pip install -e .
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
 pip install -e '.[unitree_g1]'
-git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
-cd unitree_sdk2_python && pip install -e .
 ```
 
 > **Note:** The Unitree SDK requires CycloneDDS v0.10.2. See the [Unitree SDK docs](https://github.com/unitreerobotics/unitree_sdk2_python) for details.
@@ -215,7 +215,7 @@ python src/lerobot/scripts/lerobot_train.py \
   --policy.type=pi05 \
   --output_dir=./outputs/pi05_training \
   --job_name=pi05_training \
-  --policy.repo_id=your-username/your_repo_id \
+  --policy.repo_id=your-username/your-repo-id \
   --policy.pretrained_path=lerobot/pi05_base \
   --policy.compile_model=true \
   --policy.gradient_checkpointing=true \
@@ -234,11 +234,11 @@ Once trained, we recommend deploying policies using inference-time RTC:
 
 ```bash
 python examples/rtc/eval_with_real_robot.py \
-  --policy.path=your-username/your_repo_idl \
+  --policy.path=your-username/your-repo-id \
   --policy.device=cuda \
   --robot.type=unitree_g1 \
   --robot.is_simulation=false \
-  --robot.locomotion=holosoma \
+  --robot.controller=HolosomaLocomotionController \
   --robot.cameras='{"global_view": {"type": "zmq", "server_address": "<ROBOT_IP>", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30}}' \
   --task="task_description" \
   --duration=1000 \

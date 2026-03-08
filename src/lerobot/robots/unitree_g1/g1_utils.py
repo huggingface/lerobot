@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib
 from enum import IntEnum
 
 import numpy as np
@@ -32,7 +33,7 @@ def default_remote_input() -> dict[str, float]:
     return dict.fromkeys(REMOTE_KEYS, 0.0)
 
 
-def get_gravity_orientation(quaternion) -> np.ndarray:
+def get_gravity_orientation(quaternion: list[float] | np.ndarray) -> np.ndarray:
     """Get gravity orientation from quaternion [w, x, y, z]."""
     qw, qx, qy, qz = quaternion
     gravity_orientation = np.zeros(3, dtype=np.float32)
@@ -50,7 +51,7 @@ class G1_29_JointArmIndex(IntEnum):
     kLeftElbow = 18
     kLeftWristRoll = 19
     kLeftWristPitch = 20
-    kLeftWristyaw = 21
+    kLeftWristYaw = 21
 
     # Right arm
     kRightShoulderPitch = 22
@@ -60,6 +61,21 @@ class G1_29_JointArmIndex(IntEnum):
     kRightWristRoll = 26
     kRightWristPitch = 27
     kRightWristYaw = 28
+
+
+def make_locomotion_controller(name: str | None):
+    """Instantiate a locomotion controller by class name. Returns None if name is None."""
+    if name is None:
+        return None
+    controllers = {
+        "GrootLocomotionController": "lerobot.robots.unitree_g1.gr00t_locomotion",
+        "HolosomaLocomotionController": "lerobot.robots.unitree_g1.holosoma_locomotion",
+    }
+    module_path = controllers.get(name)
+    if module_path is None:
+        raise ValueError(f"Unknown controller: {name!r}. Available: {list(controllers)}")
+    module = importlib.import_module(module_path)
+    return getattr(module, name)()
 
 
 class G1_29_JointIndex(IntEnum):
@@ -90,7 +106,7 @@ class G1_29_JointIndex(IntEnum):
     kLeftElbow = 18
     kLeftWristRoll = 19
     kLeftWristPitch = 20
-    kLeftWristyaw = 21
+    kLeftWristYaw = 21
 
     # Right arm
     kRightShoulderPitch = 22

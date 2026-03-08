@@ -14,13 +14,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import importlib
+from __future__ import annotations
+
 import logging
 import threading
 import time
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Any
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -33,13 +34,46 @@ from lerobot.robots.unitree_g1.g1_utils import (
     G1_29_JointArmIndex,
     G1_29_JointIndex,
     default_remote_input,
+    make_locomotion_controller,
 )
 from lerobot.robots.unitree_g1.robot_kinematic_processor import G1_29_ArmIK
+from lerobot.utils.import_utils import _unitree_sdk_available
 
 from ..robot import Robot
 from .config_unitree_g1 import UnitreeG1Config
 
+if TYPE_CHECKING or _unitree_sdk_available:
+    from unitree_sdk2py.core.channel import (
+        ChannelFactoryInitialize as _SDKChannelFactoryInitialize,
+        ChannelPublisher as _SDKChannelPublisher,
+        ChannelSubscriber as _SDKChannelSubscriber,
+    )
+    from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_
+    from unitree_sdk2py.idl.unitree_hg.msg.dds_ import (
+        LowCmd_ as hg_LowCmd,
+        LowState_ as hg_LowState,
+    )
+    from unitree_sdk2py.utils.crc import CRC
+else:
+    _SDKChannelFactoryInitialize = None
+    _SDKChannelPublisher = None
+    _SDKChannelSubscriber = None
+    unitree_hg_msg_dds__LowCmd_ = None
+    hg_LowCmd = None
+    hg_LowState = None
+    CRC = None
+
 logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class LocomotionController(Protocol):
+    control_dt: float
+
+    def run_step(self, action: dict, lowstate) -> dict: ...
+
+    def reset(self) -> None: ...
+
 
 # DDS topic names follow Unitree SDK naming conventions
 # ruff: noqa: N816
@@ -69,7 +103,7 @@ class IMUState:
 class G1_29_LowState:  # noqa: N801
     motor_state: list[MotorState] = field(default_factory=lambda: [MotorState() for _ in G1_29_JointIndex])
     imu_state: IMUState = field(default_factory=IMUState)
-    wireless_remote: Any = None  # Raw wireless remote data
+    wireless_remote: bytes | None = None  # Raw wireless remote data
     mode_machine: int = 0  # Robot mode
 
 
@@ -90,11 +124,9 @@ class UnitreeG1(Robot):
 
         # Import channel classes based on mode
         if config.is_simulation:
-            from unitree_sdk2py.core.channel import (
-                ChannelFactoryInitialize,
-                ChannelPublisher,
-                ChannelSubscriber,
-            )
+            self._ChannelFactoryInitialize = _SDKChannelFactoryInitialize
+            self._ChannelPublisher = _SDKChannelPublisher
+            self._ChannelSubscriber = _SDKChannelSubscriber
         else:
             from lerobot.robots.unitree_g1.unitree_sdk2_socket import (
                 ChannelFactoryInitialize,
@@ -102,29 +134,22 @@ class UnitreeG1(Robot):
                 ChannelSubscriber,
             )
 
-        # Store for use in connect()
-        self._ChannelFactoryInitialize = ChannelFactoryInitialize
-        self._ChannelPublisher = ChannelPublisher
-        self._ChannelSubscriber = ChannelSubscriber
+            self._ChannelFactoryInitialize = ChannelFactoryInitialize
+            self._ChannelPublisher = ChannelPublisher
+            self._ChannelSubscriber = ChannelSubscriber
 
         # Initialize state variables
         self.sim_env = None
         self._env_wrapper = None
         self._lowstate = None
+        self._lowstate_lock = threading.Lock()
         self._shutdown_event = threading.Event()
         self.subscribe_thread = None
 
         self.arm_ik = G1_29_ArmIK() if config.gravity_compensation else None
 
-        # Lower-body controller loaded dynamically from robots/unitree_g1/controller
-        self.controller = None
-        if config.controller:
-            controller_cls = getattr(
-                importlib.import_module("lerobot.robots.unitree_g1.controller"),
-                config.controller,
-                None,
-            ) or (_ for _ in ()).throw(ValueError(f"Unknown controller: {config.controller}"))
-            self.controller = controller_cls()
+        # Lower-body controller loaded dynamically
+        self.controller: LocomotionController | None = make_locomotion_controller(config.controller)
 
         # Controller thread state
         self._controller_thread = None
@@ -132,7 +157,7 @@ class UnitreeG1(Robot):
         self.controller_input = default_remote_input()
         self.controller_output = {}
 
-    def subscribe_lowstate(self):  # polls robot state @ 250Hz
+    def _subscribe_lowstate(self):  # polls robot state @ 250Hz
         while not self._shutdown_event.is_set():
             start_time = time.time()
 
@@ -145,11 +170,11 @@ class UnitreeG1(Robot):
                 lowstate = G1_29_LowState()
 
                 # Capture motor states using jointindex
-                for id in G1_29_JointIndex:
-                    lowstate.motor_state[id].q = msg.motor_state[id].q
-                    lowstate.motor_state[id].dq = msg.motor_state[id].dq
-                    lowstate.motor_state[id].tau_est = msg.motor_state[id].tau_est
-                    lowstate.motor_state[id].temperature = msg.motor_state[id].temperature
+                for joint in G1_29_JointIndex:
+                    lowstate.motor_state[joint].q = msg.motor_state[joint].q
+                    lowstate.motor_state[joint].dq = msg.motor_state[joint].dq
+                    lowstate.motor_state[joint].tau_est = msg.motor_state[joint].tau_est
+                    lowstate.motor_state[joint].temperature = msg.motor_state[joint].temperature
 
                 # Capture IMU state
                 lowstate.imu_state.quaternion = list(msg.imu_state.quaternion)
@@ -164,7 +189,8 @@ class UnitreeG1(Robot):
                 # Capture mode_machine
                 lowstate.mode_machine = msg.mode_machine
 
-                self._lowstate = lowstate
+                with self._lowstate_lock:
+                    self._lowstate = lowstate
 
             current_time = time.time()
             all_t_elapsed = current_time - start_time
@@ -224,7 +250,10 @@ class UnitreeG1(Robot):
         while not self._shutdown_event.is_set():
             start_time = time.time()
 
-            if self._lowstate is not None and self.controller is not None:
+            with self._lowstate_lock:
+                lowstate = self._lowstate
+
+            if lowstate is not None and self.controller is not None:
                 loop_count += 1
                 if time.time() - last_log_time >= 5.0:  # Log every 5 seconds
                     actual_hz = loop_count / (time.time() - last_log_time)
@@ -238,7 +267,7 @@ class UnitreeG1(Robot):
                     controller_input = dict(self.controller_input)
 
                 # Run controller step
-                controller_action = self.controller.run_step(controller_input, self._lowstate)
+                controller_action = self.controller.run_step(controller_input, lowstate)
 
                 # Write controller output snapshot
                 with self._controller_action_lock:
@@ -260,13 +289,6 @@ class UnitreeG1(Robot):
         pass
 
     def connect(self, calibrate: bool = True) -> None:  # connect to DDS
-        from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_
-        from unitree_sdk2py.idl.unitree_hg.msg.dds_ import (
-            LowCmd_ as hg_LowCmd,
-            LowState_ as hg_LowState,
-        )
-        from unitree_sdk2py.utils.crc import CRC
-
         # Initialize DDS channel and simulation environment
         if self.config.is_simulation:
             self._ChannelFactoryInitialize(0, "lo")
@@ -283,7 +305,7 @@ class UnitreeG1(Robot):
         self.lowstate_subscriber.Init()
 
         # Start subscribe thread to read robot state
-        self.subscribe_thread = threading.Thread(target=self.subscribe_lowstate)
+        self.subscribe_thread = threading.Thread(target=self._subscribe_lowstate)
         self.subscribe_thread.start()
 
         # Connect cameras
@@ -300,22 +322,26 @@ class UnitreeG1(Robot):
 
         # Wait for first state message to arrive
         lowstate = None
+        deadline = time.time() + 10.0
         while lowstate is None:
-            lowstate = self._lowstate
+            with self._lowstate_lock:
+                lowstate = self._lowstate
             if lowstate is None:
+                if time.time() > deadline:
+                    raise TimeoutError("Timed out waiting for robot state (10s)")
+                logger.warning("[UnitreeG1] Waiting for robot state...")
                 time.sleep(0.01)
-            logger.warning("[UnitreeG1] Waiting for robot state...")
-        logger.warning("[UnitreeG1] Connected to robot.")
+        logger.info("[UnitreeG1] Connected to robot.")
         self.msg.mode_machine = lowstate.mode_machine
 
         self.kp = np.array(self.config.kp, dtype=np.float32)
         self.kd = np.array(self.config.kd, dtype=np.float32)
 
-        for id in G1_29_JointIndex:
-            self.msg.motor_cmd[id].mode = 1
-            self.msg.motor_cmd[id].kp = self.kp[id.value]
-            self.msg.motor_cmd[id].kd = self.kd[id.value]
-            self.msg.motor_cmd[id].q = lowstate.motor_state[id.value].q
+        for joint in G1_29_JointIndex:
+            self.msg.motor_cmd[joint].mode = 1
+            self.msg.motor_cmd[joint].kp = self.kp[joint.value]
+            self.msg.motor_cmd[joint].kd = self.kd[joint.value]
+            self.msg.motor_cmd[joint].q = lowstate.motor_state[joint.value].q
 
         # Start controller thread if enabled
         if self.controller is not None:
@@ -324,7 +350,25 @@ class UnitreeG1(Robot):
             fps = int(1.0 / self.controller.control_dt)
             logger.info(f"Controller thread started ({fps}Hz)")
 
+    def _send_zero_torque(self) -> None:
+        """Send a zero-gain command to make joints passive before shutting down."""
+        try:
+            with self._lowstate_lock:
+                lowstate = self._lowstate
+            if lowstate is None:
+                return
+            action = {f"{motor.name}.q": lowstate.motor_state[motor.value].q for motor in G1_29_JointIndex}
+            zero_gains = np.zeros(29, dtype=np.float32)
+            self.publish_lowcmd(action, kp=zero_gains, kd=zero_gains, tau=zero_gains)
+            logger.info("Sent zero-torque command for safe shutdown")
+        except Exception as e:
+            logger.warning(f"Failed to send zero-torque on disconnect: {e}")
+
     def disconnect(self):
+        # Put robot in passive mode before stopping threads
+        if not self.config.is_simulation:
+            self._send_zero_torque()
+
         # Signal thread to stop and unblock any waits
         self._shutdown_event.set()
 
@@ -366,7 +410,8 @@ class UnitreeG1(Robot):
             cam.disconnect()
 
     def get_observation(self) -> RobotObservation:
-        lowstate = self._lowstate
+        with self._lowstate_lock:
+            lowstate = self._lowstate
         if lowstate is None:
             return {}
 
@@ -421,10 +466,11 @@ class UnitreeG1(Robot):
             # Controller thread owns legs/waist. Here we only update joystick inputs
             # and publish arm targets from the teleoperator.
             self._update_controller_action(action)
+            arm_prefixes = tuple(j.name for j in G1_29_JointArmIndex)
             action_to_publish = {
                 key: value
                 for key, value in action.items()
-                if key.endswith(".q") and key.startswith(tuple(f"{j.name}" for j in G1_29_JointArmIndex))
+                if key.endswith(".q") and key.startswith(arm_prefixes)
             }
 
         tau = None
@@ -459,7 +505,8 @@ class UnitreeG1(Robot):
 
     @property
     def is_connected(self) -> bool:
-        return self._lowstate is not None
+        with self._lowstate_lock:
+            return self._lowstate is not None
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -514,5 +561,9 @@ class UnitreeG1(Robot):
                 elapsed = time.time() - start_time
                 sleep_time = max(0, control_dt - elapsed)
                 time.sleep(sleep_time)
+
+        # Reset controller internal state (gait phase, obs history, etc.)
+        if self.controller is not None and hasattr(self.controller, "reset"):
+            self.controller.reset()
 
         logger.info("Reached default position")

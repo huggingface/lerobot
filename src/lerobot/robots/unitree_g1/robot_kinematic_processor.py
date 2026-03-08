@@ -16,13 +16,10 @@
 
 import logging
 import os
-import sys
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
-parent2_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.append(parent2_dir)
 
 
 class WeightedMovingFilter:
