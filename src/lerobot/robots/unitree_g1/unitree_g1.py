@@ -28,6 +28,7 @@ import numpy as np
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.envs.factory import make_env
 from lerobot.processor import RobotAction, RobotObservation
+from lerobot.robots.unitree_g1.g1_kinematics import G1_29_ArmIK
 from lerobot.robots.unitree_g1.g1_utils import (
     REMOTE_AXES,
     REMOTE_KEYS,
@@ -36,7 +37,6 @@ from lerobot.robots.unitree_g1.g1_utils import (
     default_remote_input,
     make_locomotion_controller,
 )
-from lerobot.robots.unitree_g1.robot_kinematic_processor import G1_29_ArmIK
 from lerobot.utils.import_utils import _unitree_sdk_available
 
 from ..robot import Robot
