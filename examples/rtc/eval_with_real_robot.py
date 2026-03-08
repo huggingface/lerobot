@@ -78,6 +78,7 @@ from torch import Tensor
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.cameras.zmq.configuration_zmq import ZMQCameraConfig  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import RTCAttentionSchedule
@@ -97,6 +98,7 @@ from lerobot.robots import (  # noqa: F401
     bi_so_follower,
     koch_follower,
     so_follower,
+    unitree_g1,
 )
 from lerobot.robots.utils import make_robot_from_config
 from lerobot.utils.constants import OBS_IMAGES
