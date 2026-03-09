@@ -126,10 +126,10 @@ unitree_g1 = [
     "lerobot[matplotlib-dep]",
     "lerobot[pygame-dep]",
     "casadi>=3.6.0,<4.0.0",
-    "mujoco>=3.0.0",
-    "loguru>=0.7.0",
-    "msgpack>=1.0.0",
-    "msgpack-numpy>=0.4.8",
+    "mujoco>=3.0.0,<4.0.0",
+    "loguru>=0.7.0,<0.8.0",
+    "msgpack>=1.0.0,<2.0.0",
+    "msgpack-numpy>=0.4.8,<0.5.0",
     "lerobot[scipy-dep]",
 ]
 reachy2 = ["reachy2_sdk>=1.0.15,<1.1.0"]
