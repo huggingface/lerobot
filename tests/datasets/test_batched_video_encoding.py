@@ -72,5 +72,3 @@ def test_batched_video_encoding_advances_timestamps(tmp_path, features_factory):
         assert video_path.exists()
         duration_s = get_video_duration_in_s(video_path)
         assert duration_s > ep0[f"videos/{vid_key}/to_timestamp"]
-
-

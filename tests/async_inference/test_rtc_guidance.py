@@ -22,7 +22,6 @@ These tests verify that RTC guidance works correctly when:
 
 from __future__ import annotations
 
-import pytest
 import torch
 
 from lerobot.async_inference.rtc_guidance import AsyncRTCConfig, AsyncRTCProcessor

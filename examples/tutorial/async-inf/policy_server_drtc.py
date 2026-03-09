@@ -34,9 +34,7 @@ def main() -> None:
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     )
 
-    parser = argparse.ArgumentParser(
-        description="Run the DRTC Policy Server"
-    )
+    parser = argparse.ArgumentParser(description="Run the DRTC Policy Server")
     parser.add_argument(
         "--host",
         default="0.0.0.0",
@@ -92,4 +90,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

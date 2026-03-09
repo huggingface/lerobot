@@ -654,7 +654,7 @@
 <body>
     <h1>RTC Trajectory Visualization</h1>
     <div id="status" class="status disconnected">Disconnected</div>
-    
+
     <!-- RTC Parameters Panel -->
     <div class="rtc-panel" id="rtc-panel">
         <div class="rtc-panel-title">RTC Guidance Parameters</div>
@@ -717,7 +717,7 @@
             </div>
         </div>
     </div>
-    
+
     <!-- Session Summary Panel -->
     <div class="summary-panel">
         <div class="summary-title">Session Rolling Average (for parameter sweep comparison)</div>
@@ -762,26 +762,26 @@
             </div>
         </div> -->
     </div>
-    
+
     <!-- Debug Panel -->
     <div class="debug-panel" id="debug-panel">
         Debug info will appear here...
     </div>
-    
+
     <div class="charts-grid" id="charts-grid">
         <!-- Predicted action chunk charts will be created dynamically -->
     </div>
-    
+
     <h2 style="color: #aaa; margin: 15px 0 10px 0; font-size: 16px;">Executed Actions (actually sent to robot)</h2>
     <div class="charts-grid" id="executed-charts-grid">
         <!-- Executed action charts will be created dynamically -->
     </div>
-    
+
     <div class="legend-container">
         <div class="legend-title">Chunk Legend (source_step)</div>
         <div class="legend-items" id="legend-items"></div>
     </div>
-    
+
     <div class="stats" id="stats">
         Waiting for data...
     </div>
@@ -934,10 +934,10 @@
         // Update rolling average chart
         function updateRollingAvgChart() {
             if (!rollingAvgChart) return;
-            
+
             const discData = sessionMetrics.rollingAvgHistory.map(p => ({ x: p.timeOffset, y: p.discrepancy }));
             const accelData = sessionMetrics.rollingAvgHistory.map(p => ({ x: p.timeOffset, y: p.acceleration }));
-            
+
             rollingAvgChart.data.datasets[0].data = discData;
             rollingAvgChart.data.datasets[1].data = accelData;
             rollingAvgChart.update('none');
@@ -973,8 +973,8 @@
                                 color: '#1a1a1a',
                                 font: { size: 9, weight: 'bold' }
                             },
-                            ticks: { 
-                                color: '#5a5a5a', 
+                            ticks: {
+                                color: '#5a5a5a',
                                 font: { size: 8 },
                                 maxTicksLimit: 10
                             },
@@ -989,8 +989,8 @@
                                 color: '#1a1a1a',
                                 font: { size: 9, weight: 'bold' }
                             },
-                            ticks: { 
-                                color: '#5a5a5a', 
+                            ticks: {
+                                color: '#5a5a5a',
                                 font: { size: 8 },
                                 stepSize: 0.5
                             },
@@ -1093,7 +1093,7 @@
             // Debounce: only update DOM if parameters actually changed
             const newParamsJson = JSON.stringify(rtcParams);
             const paramsChanged = newParamsJson !== lastRtcParamsJson;
-            
+
             if (paramsChanged) {
                 lastRtcParamsJson = newParamsJson;
                 currentRtcParams = rtcParams;
@@ -1141,7 +1141,7 @@
             if (!actions || actions.length < 3) return null;
             const numJoints = actions[0].length;
             const maxAccel = new Array(numJoints).fill(0);
-            
+
             for (let t = 1; t < actions.length - 1; t++) {
                 for (let d = 0; d < numJoints; d++) {
                     const accel = Math.abs(actions[t+1][d] - 2*actions[t][d] + actions[t-1][d]);
@@ -1157,87 +1157,87 @@
             const prevEnd = prevChunk.source_step + prevChunk.actions.length - 1;
             const newStart = newChunk.source_step;
             const newEnd = newChunk.source_step + newChunk.actions.length - 1;
-            
+
             const overlapStart = Math.max(prevStart, newStart);
             const overlapEnd = Math.min(prevEnd, newEnd);
-            
+
             if (overlapStart > overlapEnd) {
                 return null;  // No overlap
             }
-            
+
             return { start: overlapStart, end: overlapEnd };
         }
 
         // Compute metrics when a new chunk arrives
         function computeAndStoreMetrics(prevChunk, newChunk) {
             const timestamp = Date.now();
-            
+
             if (sessionStartTime === null) {
                 sessionStartTime = timestamp;
             }
-            
+
             // Find overlap range
             const overlap = findOverlapRange(prevChunk, newChunk);
-            
+
             if (!overlap) {
                 debug(`No overlap: prev=[${prevChunk.source_step}, ${prevChunk.source_step + prevChunk.actions.length - 1}], new=[${newChunk.source_step}, ${newChunk.source_step + newChunk.actions.length - 1}]`);
                 return null;
             }
-            
+
             // Compare at the START of the overlap (where we'd switch chunks)
             // This is typically where the new chunk starts
             const compareStep = overlap.start;
-            
+
             const prevIdx = compareStep - prevChunk.source_step;
             const newIdx = compareStep - newChunk.source_step;
-            
+
             debug(`Overlap [${overlap.start}-${overlap.end}], comparing at step ${compareStep}: prevIdx=${prevIdx}, newIdx=${newIdx}`);
-            
+
             // Bounds check
             if (prevIdx < 0 || prevIdx >= prevChunk.actions.length ||
                 newIdx < 0 || newIdx >= newChunk.actions.length) {
                 debug(`Bounds check failed: prevIdx=${prevIdx}/${prevChunk.actions.length}, newIdx=${newIdx}/${newChunk.actions.length}`);
                 return null;
             }
-            
+
             const prevAction = prevChunk.actions[prevIdx];
             const newAction = newChunk.actions[newIdx];
-            
+
             if (!prevAction || !newAction) {
                 debug(`Missing action data at indices`);
                 return null;
             }
-            
+
             // Compute per-joint discrepancy (absolute difference)
             const perJointDiscrepancy = prevAction.map((v, i) => Math.abs(v - newAction[i]));
             const avgDiscrepancy = mean(perJointDiscrepancy);
-            
+
             debug(`Discrepancy computed: avg=${avgDiscrepancy.toFixed(4)}, perJoint=[${perJointDiscrepancy.map(v => v.toFixed(3)).join(', ')}]`);
-            
+
             // Compute per-joint max acceleration in new chunk
             const perJointMaxAccel = computePerJointMaxAcceleration(newChunk.actions);
             const avgMaxAccel = perJointMaxAccel ? mean(perJointMaxAccel) : 0;
-            
+
             // Store in session metrics
             sessionMetrics.discrepancies.push(avgDiscrepancy);
             sessionMetrics.accelerations.push(avgMaxAccel);
-            
+
             // Compute rolling average and store for chart
             const rollingAvgDisc = mean(sessionMetrics.discrepancies);
             const rollingAvgAccel = mean(sessionMetrics.accelerations);
             const timeOffset = (timestamp - sessionStartTime) / 1000;
-            
+
             sessionMetrics.rollingAvgHistory.push({
                 timeOffset,
                 discrepancy: rollingAvgDisc,
                 acceleration: rollingAvgAccel
             });
-            
+
             // Prune chart history if too long
             while (sessionMetrics.rollingAvgHistory.length > MAX_ROLLING_AVG_POINTS) {
                 sessionMetrics.rollingAvgHistory.shift();
             }
-            
+
             // Auto-calibrate thresholds
             if (sessionMetrics.discrepancies.length > 5) {
                 const sorted = [...sessionMetrics.discrepancies].sort((a, b) => a - b);
@@ -1251,7 +1251,7 @@
                 accelerationThresholds.warn = medianAccel * 1.5;
                 accelerationThresholds.critical = medianAccel * 2.5;
             }
-            
+
             return { perJointDiscrepancy, avgDiscrepancy, perJointMaxAccel, avgMaxAccel };
         }
 
@@ -1266,7 +1266,7 @@
                     sampleCount: 0,
                 };
             }
-            
+
             return {
                 meanDiscrepancy: mean(sessionMetrics.discrepancies),
                 maxDiscrepancy: Math.max(...sessionMetrics.discrepancies),
@@ -1279,19 +1279,19 @@
         // Update the session summary panel
         function updateSummaryPanel() {
             const stats = getSessionStats();
-            
+
             const meanDiscEl = document.getElementById('summary-disc-mean');
             const maxDiscEl = document.getElementById('summary-disc-max');
             const meanAccelEl = document.getElementById('summary-accel-mean');
             const maxAccelEl = document.getElementById('summary-accel-max');
             const samplesEl = document.getElementById('summary-samples');
-            
+
             if (meanDiscEl) meanDiscEl.textContent = formatNumber(stats.meanDiscrepancy);
             if (maxDiscEl) maxDiscEl.textContent = formatNumber(stats.maxDiscrepancy);
             if (meanAccelEl) meanAccelEl.textContent = formatNumber(stats.meanAcceleration);
             if (maxAccelEl) maxAccelEl.textContent = formatNumber(stats.maxAcceleration);
             if (samplesEl) samplesEl.textContent = stats.sampleCount;
-            
+
             // Color code based on thresholds
             if (meanDiscEl) {
                 meanDiscEl.className = 'summary-metric-value';
@@ -1305,7 +1305,7 @@
                     }
                 }
             }
-            
+
             if (meanAccelEl) {
                 meanAccelEl.className = 'summary-metric-value';
                 if (stats.meanAcceleration !== null) {
@@ -1318,7 +1318,7 @@
                     }
                 }
             }
-            
+
             // Update rolling average chart
             updateRollingAvgChart();
         }
@@ -1327,31 +1327,31 @@
         function updateJointBars(containerId, values, avgId, thresholds) {
             const container = document.getElementById(containerId);
             const avgEl = document.getElementById(avgId);
-            
+
             if (!values || values.length === 0) {
                 container.innerHTML = '<div style="color: #8b7355; font-size: 12px;">Waiting for data...</div>';
                 avgEl.textContent = '--';
                 return;
             }
-            
+
             const avg = mean(values);
             avgEl.textContent = formatNumber(avg);
-            
+
             // Find max for scaling (use threshold if values are small)
             const maxVal = Math.max(...values, thresholds.warn, 0.001);
-            
+
             let html = '';
             for (let i = 0; i < values.length; i++) {
                 const val = values[i];
                 const pct = Math.min((val / maxVal) * 100, 100);
-                
+
                 let barClass = '';
                 if (val > thresholds.critical) {
                     barClass = 'critical';
                 } else if (val > thresholds.warn) {
                     barClass = 'high';
                 }
-                
+
                 html += `
                     <div class="joint-bar-row">
                         <span class="joint-bar-label">Joint ${i}</span>
@@ -1575,7 +1575,7 @@
 
             for (let d = 0; d < charts.length; d++) {
                 const datasets = [];
-                
+
                 for (const chunk of chunks) {
                     const data = [];
                     for (let t = 0; t < chunk.actions.length; t++) {
@@ -1583,7 +1583,7 @@
                         const value = chunk.actions[t][d];
                         data.push({ x: step, y: value });
                     }
-                    
+
                     datasets.push({
                         label: `Step ${chunk.source_step}`,
                         data: data,
@@ -1592,7 +1592,7 @@
                         tension: 0.1
                     });
                 }
-                
+
                 charts[d].data.datasets = datasets;
                 charts[d].options.plugins.annotation = { annotations };
                 charts[d].update('none');
@@ -1605,7 +1605,7 @@
         function updateLegend() {
             const legend = document.getElementById('legend-items');
             legend.innerHTML = '';
-            
+
             for (const chunk of chunks) {
                 const color = CHUNK_COLORS[chunk.colorIndex % CHUNK_COLORS.length];
                 const item = document.createElement('div');
@@ -1624,7 +1624,7 @@
             const now = Date.now();
             const timeSinceLastChunk = lastChunkTime ? ((now - lastChunkTime) / 1000).toFixed(1) : 'N/A';
             const sessionDuration = sessionStartTime ? ((now - sessionStartTime) / 1000).toFixed(0) : '0';
-            
+
             stats.innerHTML = `
                 Chunks received: ${chunkCount} |
                 Chunks displayed: ${chunks.length} |
@@ -1633,7 +1633,7 @@
                 Session duration: ${sessionDuration}s |
                 Metrics samples: ${getSessionStats().sampleCount}
             `;
-            
+
             updateSummaryPanel();
         }
 
@@ -1684,7 +1684,7 @@
             // Update UI
             updateCharts();
             updateStats();
-            
+
             // Update bar charts
             if (currentMetrics) {
                 updateJointBars('disc-bars', currentMetrics.perJointDiscrepancy, 'disc-current-avg', discrepancyThresholds);

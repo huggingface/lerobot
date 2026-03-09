@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.signal import butter, sosfilt, sosfilt_zi
 
+
 @dataclass
 class FilterContext:
     """Context passed to filters each tick.
@@ -42,6 +43,7 @@ class ActionFilter(ABC):
         """
         pass
 
+    @abstractmethod
     def reset(self) -> None:
         """Reset filter state (optional override)."""
         pass
@@ -52,6 +54,10 @@ class NoFilter(ActionFilter):
 
     def apply(self, ctx: FilterContext) -> np.ndarray:
         return ctx.action
+
+    def reset(self) -> None:
+        return None
+
 
 class ButterworthFilter(ActionFilter):
     """Butterworth low-pass filter for action smoothing.

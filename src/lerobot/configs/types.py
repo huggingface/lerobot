@@ -14,10 +14,10 @@
 # Note: We subclass str so that serialization is straightforward
 # https://stackoverflow.com/questions/24481852/serialising-an-enum-member-to-json
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class FeatureType(str, Enum):
+class FeatureType(StrEnum):
     STATE = "STATE"
     VISUAL = "VISUAL"
     ENV = "ENV"
@@ -26,12 +26,12 @@ class FeatureType(str, Enum):
     LANGUAGE = "LANGUAGE"
 
 
-class PipelineFeatureType(str, Enum):
+class PipelineFeatureType(StrEnum):
     ACTION = "ACTION"
     OBSERVATION = "OBSERVATION"
 
 
-class NormalizationMode(str, Enum):
+class NormalizationMode(StrEnum):
     MIN_MAX = "MIN_MAX"
     MEAN_STD = "MEAN_STD"
     IDENTITY = "IDENTITY"
@@ -45,7 +45,7 @@ class PolicyFeature:
     shape: tuple[int, ...]
 
 
-class RTCAttentionSchedule(str, Enum):
+class RTCAttentionSchedule(StrEnum):
     ZEROS = "ZEROS"
     ONES = "ONES"
     LINEAR = "LINEAR"

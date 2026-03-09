@@ -34,7 +34,7 @@ from .metrics import (
     ExperimentMetricsWriter,
     ExperimentTick,
     Metrics,
- )
+)
 from .simulation import DropSimulator, MockRobot, SpikeDelayConfig, SpikeDelaySimulator, SpikeEvent
 
 __all__ = [

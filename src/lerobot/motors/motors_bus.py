@@ -26,7 +26,7 @@ import logging
 from collections.abc import Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from functools import cached_property
 from pprint import pformat
 from typing import Protocol
@@ -155,7 +155,7 @@ def assert_same_address(model_ctrl_table: dict[str, dict], motor_models: list[st
         )
 
 
-class MotorNormMode(str, Enum):
+class MotorNormMode(StrEnum):
     RANGE_0_100 = "range_0_100"
     RANGE_M100_100 = "range_m100_100"
     DEGREES = "degrees"

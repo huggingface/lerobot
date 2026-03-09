@@ -32,42 +32,49 @@ import subprocess
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-from matplotlib.patches import Patch
-import numpy as np
 import pandas as pd
+from matplotlib.patches import Patch
 
 
 def setup_paper_style():
     """Configure matplotlib rcParams for clean, academic paper-ready plots."""
-    plt.rcParams.update({
-        "font.family": "sans-serif",
-        "font.size": 11,
-        "axes.titlesize": 13,
-        "axes.labelsize": 11,
-        "xtick.labelsize": 10,
-        "ytick.labelsize": 10,
-        "legend.fontsize": 9,
-        "axes.spines.top": False,
-        "axes.spines.right": False,
-        "axes.grid": True,
-        "grid.alpha": 0.3,
-        "grid.linewidth": 0.5,
-        "lines.linewidth": 1.5,
-        "lines.markersize": 5,
-        "figure.facecolor": "white",
-        "axes.facecolor": "white",
-        "savefig.dpi": 300,
-        "savefig.bbox": "tight",
-        "figure.dpi": 100,
-    })
+    plt.rcParams.update(
+        {
+            "font.family": "sans-serif",
+            "font.size": 11,
+            "axes.titlesize": 13,
+            "axes.labelsize": 11,
+            "xtick.labelsize": 10,
+            "ytick.labelsize": 10,
+            "legend.fontsize": 9,
+            "axes.spines.top": False,
+            "axes.spines.right": False,
+            "axes.grid": True,
+            "grid.alpha": 0.3,
+            "grid.linewidth": 0.5,
+            "lines.linewidth": 1.5,
+            "lines.markersize": 5,
+            "figure.facecolor": "white",
+            "axes.facecolor": "white",
+            "savefig.dpi": 300,
+            "savefig.bbox": "tight",
+            "figure.dpi": 100,
+        }
+    )
 
 
 def _latex_escape(text: str) -> str:
     """Escape special LaTeX characters in *text*."""
     # Order matters: ampersand first so we don't double-escape later subs.
     for char, replacement in [
-        ("&", r"\&"), ("%", r"\%"), ("$", r"\$"), ("#", r"\#"),
-        ("_", r"\_"), ("{", r"\{"), ("}", r"\}"), ("~", r"\textasciitilde{}"),
+        ("&", r"\&"),
+        ("%", r"\%"),
+        ("$", r"\$"),
+        ("#", r"\#"),
+        ("_", r"\_"),
+        ("{", r"\{"),
+        ("}", r"\}"),
+        ("~", r"\textasciitilde{}"),
         ("^", r"\textasciicircum{}"),
     ]:
         text = text.replace(char, replacement)
@@ -193,14 +200,10 @@ def generate_config_table(
 
     # Fault-injection section (only if any faults are configured)
     if simulation_config:
-        has_any_faults = any(
-            simulation_config.get(key) for key, _ in _SIM_CONFIG_DISPLAY
-        )
+        has_any_faults = any(simulation_config.get(key) for key, _ in _SIM_CONFIG_DISPLAY)
         if has_any_faults:
             rows.append("    \\midrule")
-            rows.append(
-                "    \\multicolumn{2}{l}{\\textit{Fault Injection}} \\\\"
-            )
+            rows.append("    \\multicolumn{2}{l}{\\textit{Fault Injection}} \\\\")
             for key, label in _SIM_CONFIG_DISPLAY:
                 windows = simulation_config.get(key, [])
                 if windows:
@@ -225,7 +228,7 @@ def generate_config_table(
 
 # Kandinsky-inspired color palette (from trajectory_viz.html)
 CHUNK_COLORS = [
-    "#c1272d",  # vermillion
+    "#c1272d",  # vermilion
     "#1a3a6e",  # ultramarine
     "#f4c430",  # cadmium yellow
     "#e85d04",  # orange
@@ -280,15 +283,31 @@ def plot_trajectory_on_axis(
             Defaults to the SO101 follower joint names.
     """
     if trajectory_data is None:
-        ax.text(0.5, 0.5, "No trajectory data", transform=ax.transAxes,
-                ha="center", va="center", fontsize=10, color="gray")
+        ax.text(
+            0.5,
+            0.5,
+            "No trajectory data",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            fontsize=10,
+            color="gray",
+        )
         return
 
     executed = trajectory_data.get("executed", [])
 
     if not executed:
-        ax.text(0.5, 0.5, "No executed actions", transform=ax.transAxes,
-                ha="center", va="center", fontsize=10, color="gray")
+        ax.text(
+            0.5,
+            0.5,
+            "No executed actions",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            fontsize=10,
+            color="gray",
+        )
         return
 
     if joint_names is None:
@@ -309,18 +328,18 @@ def plot_trajectory_on_axis(
 
 # Colors for event types (sim events + obs/action from CSV)
 _SIM_EVENT_COLORS = {
-    "obs_triggered": "#3498db",      # blue
-    "action_received": "#e67e22",   # orange
-    "obs_dropped": "#c1272d",       # vermillion
+    "obs_triggered": "#3498db",  # blue
+    "action_received": "#e67e22",  # orange
+    "obs_dropped": "#c1272d",  # vermilion
     "obs_reorder_held": "#f4c430",  # cadmium yellow
     "obs_reorder_swapped": "#e85d04",  # orange
-    "obs_duplicated": "#5c3d6e",    # purple
-    "action_dropped": "#1a3a6e",    # ultramarine
+    "obs_duplicated": "#5c3d6e",  # purple
+    "action_dropped": "#1a3a6e",  # ultramarine
     "action_reorder_held": "#0077b6",  # cerulean
     "action_reorder_swapped": "#2d6a4f",  # deep green
-    "action_duplicated": "#9d4edd", # violet
-    "disconnect": "#333333",        # dark gray
-    "spike": "#e74c3c",             # red
+    "action_duplicated": "#9d4edd",  # violet
+    "disconnect": "#333333",  # dark gray
+    "spike": "#e74c3c",  # red
 }
 
 # Y-position for each event type so they don't overlap (contiguous)
@@ -373,9 +392,14 @@ def plot_gantt_on_axis(
     sim_config = trajectory_data.get("simulation_config", {})
     if not sim_config:
         ax.text(
-            0.5, 0.5, "No simulation config",
-            transform=ax.transAxes, ha="center", va="center",
-            fontsize=10, color="gray",
+            0.5,
+            0.5,
+            "No simulation config",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            fontsize=10,
+            color="gray",
         )
         return
 
@@ -389,9 +413,14 @@ def plot_gantt_on_axis(
 
     if not lane_keys:
         ax.text(
-            0.5, 0.5, "No fault windows configured",
-            transform=ax.transAxes, ha="center", va="center",
-            fontsize=10, color="gray",
+            0.5,
+            0.5,
+            "No fault windows configured",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            fontsize=10,
+            color="gray",
         )
         return
 
@@ -420,30 +449,44 @@ def plot_gantt_on_axis(
             bars.append((start, dur))
 
         ax.broken_barh(
-            bars, (y - bar_height / 2, bar_height),
-            facecolors=color, alpha=0.7, edgecolors="white", linewidth=0.5,
+            bars,
+            (y - bar_height / 2, bar_height),
+            facecolors=color,
+            alpha=0.7,
+            edgecolors="white",
+            linewidth=0.5,
         )
-        for (start, dur), label in zip(bars, labels):
+        for (start, dur), label in zip(bars, labels, strict=False):
             if is_spike:
                 ax.text(
-                    start + dur / 2, y,
+                    start + dur / 2,
+                    y,
                     label,
-                    ha="center", va="center", fontsize=8, color="white",
+                    ha="center",
+                    va="center",
+                    fontsize=8,
+                    color="white",
                     fontweight="bold",
-                    rotation=-90, rotation_mode="anchor",
+                    rotation=-90,
+                    rotation_mode="anchor",
                 )
             else:
                 ax.text(
-                    start + dur / 2, y,
+                    start + dur / 2,
+                    y,
                     label,
-                    ha="center", va="center", fontsize=8, color="white",
+                    ha="center",
+                    va="center",
+                    fontsize=8,
+                    color="white",
                     fontweight="bold",
                 )
 
     # Configure axis
     ax.set_yticks(range(n_lanes))
     ax.set_yticklabels(
-        [lane.replace("_", " ") for lane in lane_keys], fontsize=9,
+        [lane.replace("_", " ") for lane in lane_keys],
+        fontsize=9,
     )
     # ax.set_ylim(-0.5, n_lanes - 0.5)
     # ax.set_ylabel("Fault Schedule")
@@ -451,10 +494,10 @@ def plot_gantt_on_axis(
 
 # Lane configuration for the latency breakdown Gantt chart.
 _LATENCY_GANTT_LANES = [
-    ("total", "Total", "#e74c3c"),              # red
-    ("client_to_server", "Client \u2192 Server", "#0077b6"),   # cerulean
-    ("model_inference", "Model Inference", "#2d6a4f"),         # deep green
-    ("server_to_client", "Server \u2192 Client", "#e85d04"),   # orange
+    ("total", "Total", "#e74c3c"),  # red
+    ("client_to_server", "Client \u2192 Server", "#0077b6"),  # cerulean
+    ("model_inference", "Model Inference", "#2d6a4f"),  # deep green
+    ("server_to_client", "Server \u2192 Client", "#e85d04"),  # orange
 ]
 
 
@@ -488,24 +531,34 @@ def plot_latency_gantt_on_axis(
 
     if not use_timestamps and not use_legacy:
         ax.text(
-            0.5, 0.5, "No latency breakdown data",
-            transform=ax.transAxes, ha="center", va="center",
-            fontsize=10, color="gray",
+            0.5,
+            0.5,
+            "No latency breakdown data",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            fontsize=10,
+            color="gray",
         )
         return
 
     # Filter to rows where action was received and all required cols exist
     check_cols = ts_cols if use_timestamps else legacy_cols
-    mask = (df["action_received"] == 1)
+    mask = df["action_received"] == 1
     for col in check_cols:
         mask = mask & df[col].notna()
     rtt_rows = df[mask]
 
     if len(rtt_rows) == 0:
         ax.text(
-            0.5, 0.5, "No latency breakdown data",
-            transform=ax.transAxes, ha="center", va="center",
-            fontsize=10, color="gray",
+            0.5,
+            0.5,
+            "No latency breakdown data",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            fontsize=10,
+            color="gray",
         )
         return
 
@@ -521,10 +574,10 @@ def plot_latency_gantt_on_axis(
     csv_t0 = df["t"].iloc[0]
 
     # Colors for the two-lane layout
-    total_color = "#e74c3c"       # red
-    c2s_color = "#0077b6"         # cerulean
-    model_color = "#2d6a4f"       # deep green
-    s2c_color = "#e85d04"         # orange
+    total_color = "#e74c3c"  # red
+    c2s_color = "#0077b6"  # cerulean
+    model_color = "#2d6a4f"  # deep green
+    s2c_color = "#e85d04"  # orange
 
     for _, row in rtt_rows.iterrows():
         if use_timestamps:
@@ -553,8 +606,10 @@ def plot_latency_gantt_on_axis(
         ax.broken_barh(
             [(t_send, max(rtt_s, min_bar_width))],
             (1 - bar_height / 2, bar_height),
-            facecolors=total_color, alpha=0.7,
-            edgecolors="white", linewidth=0.3,
+            facecolors=total_color,
+            alpha=0.7,
+            edgecolors="white",
+            linewidth=0.3,
         )
 
         # Lane 0 (bottom, y=0): Breakdown segments tiled end-to-end.
@@ -574,8 +629,10 @@ def plot_latency_gantt_on_axis(
             ax.broken_barh(
                 [(seg_start, dur)],
                 (0 - bar_height / 2, bar_height),
-                facecolors=color, alpha=0.7,
-                edgecolors="white", linewidth=0.3,
+                facecolors=color,
+                alpha=0.7,
+                edgecolors="white",
+                linewidth=0.3,
             )
             seg_start += dur
 
@@ -629,9 +686,14 @@ def plot_sim_events_on_axis(
 
     if not sim_events and not sim_config and df is None:
         ax.text(
-            0.5, 0.5, "No events",
-            transform=ax.transAxes, ha="center", va="center",
-            fontsize=10, color="gray",
+            0.5,
+            0.5,
+            "No events",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            fontsize=10,
+            color="gray",
         )
         return
 
@@ -675,8 +737,12 @@ def plot_sim_events_on_axis(
         y = active_ypos[etype]
         color = _SIM_EVENT_COLORS.get(etype, "#888888")
         ax.scatter(
-            times, [y] * len(times),
-            marker="|", s=40, color=color, alpha=0.8,
+            times,
+            [y] * len(times),
+            marker="|",
+            s=40,
+            color=color,
+            alpha=0.8,
         )
 
     # Configure axis
@@ -713,8 +779,10 @@ def load_experiment_data(csv_path: Path) -> pd.DataFrame:
             last_reset = reset_indices[-1]
             n_dropped = last_reset
             df = df.iloc[last_reset:].reset_index(drop=True)
-            print(f"    WARNING: CSV contains concatenated runs; "
-                  f"dropped first {n_dropped} rows, keeping last run ({len(df)} rows)")
+            print(
+                f"    WARNING: CSV contains concatenated runs; "
+                f"dropped first {n_dropped} rows, keeping last run ({len(df)} rows)"
+            )
 
     # --- Drop rows with anomalous timestamps ---
     # A flush race can also truncate a timestamp (e.g. '773263.12' instead
@@ -738,7 +806,14 @@ def load_experiment_data(csv_path: Path) -> pd.DataFrame:
     df["stall_rolling"] = df["stall"].rolling(window=30, min_periods=1).mean()
 
     # Convert measured_latency_ms and timestamp columns to numeric (may have empty strings)
-    for col in ["measured_latency_ms", "latency_estimate_ms", "obs_sent_ts", "server_obs_received_ts", "server_action_sent_ts", "action_received_ts"]:
+    for col in [
+        "measured_latency_ms",
+        "latency_estimate_ms",
+        "obs_sent_ts",
+        "server_obs_received_ts",
+        "server_action_sent_ts",
+        "action_received_ts",
+    ]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
@@ -759,7 +834,15 @@ def load_experiment_data(csv_path: Path) -> pd.DataFrame:
     return df
 
 
-def plot_single_experiment(df: pd.DataFrame, title: str, ax_cooldown, ax_latency, ax_schedule=None, ax_events=None, time_offset: float = 0.0):
+def plot_single_experiment(
+    df: pd.DataFrame,
+    title: str,
+    ax_cooldown,
+    ax_latency,
+    ax_schedule=None,
+    ax_events=None,
+    time_offset: float = 0.0,
+):
     """Plot a single experiment's data across 2-4 subplots.
 
     When *ax_events* is ``None`` (trajectory mode), the obs/action events
@@ -780,12 +863,17 @@ def plot_single_experiment(df: pd.DataFrame, title: str, ax_cooldown, ax_latency
     action_received_count = df["action_received"].sum()
 
     # 1. Cooldown counter + quantized latency estimate (both in steps)
-    ax_cooldown.plot(t, df["cooldown"], linewidth=1.5, alpha=0.7,
-                     color="#9b59b6", label="Cooldown")
+    ax_cooldown.plot(t, df["cooldown"], linewidth=1.5, alpha=0.7, color="#9b59b6", label="Cooldown")
     if "latency_estimate_steps" in df.columns:
-        ax_cooldown.plot(t, df["latency_estimate_steps"], drawstyle="steps-post",
-                         linewidth=1.2, color="#2ecc71", alpha=0.7,
-                         label="Latency estimate (steps)")
+        ax_cooldown.plot(
+            t,
+            df["latency_estimate_steps"],
+            drawstyle="steps-post",
+            linewidth=1.2,
+            color="#2ecc71",
+            alpha=0.7,
+            label="Latency estimate (steps)",
+        )
     ax_cooldown.set_title("Cooldown & Latency Estimate (steps)")
     ax_cooldown.set_ylabel("Steps")
     ax_cooldown.legend(loc="upper right", fontsize=8)
@@ -798,15 +886,18 @@ def plot_single_experiment(df: pd.DataFrame, title: str, ax_cooldown, ax_latency
         t_span = df["t_relative"].iloc[-1]
         fps = (len(df) - 1) / t_span if t_span > 0 else 60.0
         estimate_ms = df["latency_estimate_steps"] / fps * 1000.0
-    ax_latency.plot(t, estimate_ms, linewidth=1.5, color="#3498db",
-                    label="Estimate")
+    ax_latency.plot(t, estimate_ms, linewidth=1.5, color="#3498db", label="Estimate")
     # Overlay measured RTT in ms (red scatter)
     if "measured_latency_ms" in df.columns:
         measured = df[df["measured_latency_ms"].notna()]
         if len(measured) > 0:
             ax_latency.scatter(
-                measured["t_relative"] - time_offset, measured["measured_latency_ms"],
-                s=25, alpha=0.8, color="#e74c3c", label="Measured RTT",
+                measured["t_relative"] - time_offset,
+                measured["measured_latency_ms"],
+                s=25,
+                alpha=0.8,
+                color="#e74c3c",
+                label="Measured RTT",
                 zorder=5,
             )
     ax_latency.legend(loc="upper right", fontsize=8)
@@ -825,8 +916,22 @@ def plot_single_experiment(df: pd.DataFrame, title: str, ax_cooldown, ax_latency
         obs_times = t[df["obs_triggered"] == 1]
         action_times = t[df["action_received"] == 1]
 
-        ax_events.scatter(obs_times, [1] * len(obs_times), marker="|", s=30, alpha=0.7, label=f"obs triggered ({obs_triggered_count})")
-        ax_events.scatter(action_times, [0] * len(action_times), marker="|", s=30, alpha=0.7, label=f"action recv ({action_received_count})")
+        ax_events.scatter(
+            obs_times,
+            [1] * len(obs_times),
+            marker="|",
+            s=30,
+            alpha=0.7,
+            label=f"obs triggered ({obs_triggered_count})",
+        )
+        ax_events.scatter(
+            action_times,
+            [0] * len(action_times),
+            marker="|",
+            s=30,
+            alpha=0.7,
+            label=f"action recv ({action_received_count})",
+        )
         ax_events.set_ylabel("Events")
         ax_events.set_ylim(-0.5, 1.5)
         ax_events.set_yticks([0, 1])
@@ -869,8 +974,9 @@ def plot_estimator_comparison(
     # Create figure with extra rows for trajectory if available
     if has_trajectory_data:
         # 2 main plots + 2 trajectory plots (one for JK, one for Max10)
-        fig, axes = plt.subplots(4, 1, figsize=(14, 12), sharex=True,
-                                 gridspec_kw={"height_ratios": [2, 2, 2, 2]})
+        fig, axes = plt.subplots(
+            4, 1, figsize=(14, 12), sharex=True, gridspec_kw={"height_ratios": [2, 2, 2, 2]}
+        )
         ax_measured, ax_latency, ax_traj_jk, ax_traj_max = axes
     else:
         fig, axes = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
@@ -912,7 +1018,9 @@ def plot_estimator_comparison(
                 )
 
         # Latency estimate (line plot with distinct linestyle)
-        ax_latency.plot(t, df["latency_estimate_steps"], linewidth=1.5, linestyle=linestyle, color=color, label=label)
+        ax_latency.plot(
+            t, df["latency_estimate_steps"], linewidth=1.5, linestyle=linestyle, color=color, label=label
+        )
 
         # Plot trajectory data if available
         if has_trajectory_data and name in trajectories and trajectories[name] is not None:
@@ -1039,7 +1147,10 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
         if filter_pattern:
             csv_files = [f for f in csv_files if filter_pattern in f.name]
         if not csv_files:
-            print(f"No CSV files found in {input_path}" + (f" matching '{filter_pattern}'" if filter_pattern else ""))
+            print(
+                f"No CSV files found in {input_path}"
+                + (f" matching '{filter_pattern}'" if filter_pattern else "")
+            )
             return
     else:
         print(f"Input path does not exist: {input_path}")
@@ -1081,11 +1192,13 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
         # trajectory gets 2, the rest 1
         height_ratios = [2, 1, 1, 1, 1, 1]
         fig, axes = plt.subplots(
-            n_rows, 1, figsize=(14, 16), sharex=True,
+            n_rows,
+            1,
+            figsize=(14, 16),
+            sharex=True,
             gridspec_kw={"height_ratios": height_ratios},
         )
-        (ax_traj, ax_gantt, ax_sim_events,
-         ax_latency, ax_cooldown, ax_schedule) = axes
+        (ax_traj, ax_gantt, ax_sim_events, ax_latency, ax_cooldown, ax_schedule) = axes
         ax_events = None  # obs/action events merged into sim_events
     else:
         n_rows = 4
@@ -1134,7 +1247,8 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
         # 5. Gantt chart of fault injection windows
         if ax_gantt is not None:
             plot_gantt_on_axis(
-                ax_gantt, trajectory_data,
+                ax_gantt,
+                trajectory_data,
                 sim_config_offset=sim_config_offset,
             )
             ax_gantt.set_title("Fault Injection Schedule")
@@ -1142,7 +1256,8 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
         # 6. Events timeline (sim events + obs/action from CSV)
         if ax_sim_events is not None:
             plot_sim_events_on_axis(
-                ax_sim_events, trajectory_data,
+                ax_sim_events,
+                trajectory_data,
                 sim_config_offset=sim_config_offset,
                 df=df0,
             )
@@ -1154,12 +1269,6 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
     # Add legends (only for the separate events axis in non-trajectory mode)
     if ax_events is not None:
         ax_events.legend(loc="upper right")
-
-    # Create title
-    if len(csv_files) == 1:
-        title = list(dfs.keys())[0]
-    else:
-        title = f"Experiment Comparison ({len(csv_files)} files)"
 
     plt.tight_layout()
 
@@ -1183,9 +1292,14 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
         exp_config = trajectory_data.get("experiment_config")
         sim_config = trajectory_data.get("simulation_config")
         if exp_config:
-            config_table_tex = "\n" + generate_config_table(
-                exp_config, simulation_config=sim_config,
-            ) + "\n"
+            config_table_tex = (
+                "\n"
+                + generate_config_table(
+                    exp_config,
+                    simulation_config=sim_config,
+                )
+                + "\n"
+            )
 
     tex_content = rf"""\documentclass[11pt]{{article}}
 \usepackage[margin=1in]{{geometry}}
@@ -1207,8 +1321,8 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
     print(f"LaTeX saved to: {tex_path}")
 
     # Compile LaTeX to PDF if pdflatex is available
-    if shutil.which("pdflatex"):
-        tex_pdf_path = tex_path.with_suffix(".pdf")
+    pdflatex_path = shutil.which("pdflatex")
+    if pdflatex_path:
         # Rename the plot PDF temporarily so pdflatex output doesn't collide
         plot_pdf_tmp = pdf_path.with_suffix(".plot.pdf")
         pdf_path.rename(plot_pdf_tmp)
@@ -1217,7 +1331,7 @@ def plot_results(input_path: Path, output_path: Path, mode: str = "basic", filte
         tex_path.write_text(tex_content_tmp)
         try:
             result = subprocess.run(
-                ["pdflatex", "-interaction=nonstopmode", tex_path.name],
+                [pdflatex_path, "-interaction=nonstopmode", tex_path.name],
                 cwd=tex_path.parent,
                 capture_output=True,
                 text=True,
@@ -1297,10 +1411,7 @@ def main():
     # Default output path (stem only – both .png and .pdf are generated)
     output = args.output
     if output is None:
-        if args.input.is_file():
-            output = args.input.parent / args.input.stem
-        else:
-            output = args.input / args.input.name
+        output = args.input.parent / args.input.stem if args.input.is_file() else args.input / args.input.name
 
     plot_results(args.input, output, mode=args.mode, filter_pattern=args.filter)
 

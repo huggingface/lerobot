@@ -26,7 +26,6 @@ from lerobot.robots.config import RobotConfig
 from .constants import DEFAULT_FPS, DEFAULT_OBS_QUEUE_TIMEOUT
 from .utils.simulation import DisconnectConfig, DropConfig, DuplicateConfig, ReorderConfig, SpikeDelayConfig
 
-
 # =============================================================================
 # Robot Client Configuration
 # =============================================================================
@@ -54,8 +53,12 @@ class RobotClientDrtcConfig:
     # Hardware metadata (for experiment reports)
     robot_type: str = field(default="", metadata={"help": "Robot type identifier (e.g. so101)"})
     gpu: str = field(default="", metadata={"help": "GPU used for inference (e.g. RTX 4070 TI SUPER)"})
-    client_host: str = field(default="", metadata={"help": "Description of the client host (e.g. local server)"})
-    server_host: str = field(default="", metadata={"help": "Description of the server host (e.g. local server)"})
+    client_host: str = field(
+        default="", metadata={"help": "Description of the client host (e.g. local server)"}
+    )
+    server_host: str = field(
+        default="", metadata={"help": "Description of the server host (e.g. local server)"}
+    )
 
     # Task instruction for the robot
     task: str = field(default="", metadata={"help": "Task instruction for the robot to execute"})
@@ -192,7 +195,9 @@ class RobotClientDrtcConfig:
     # Simulation mode (for experiments)
     use_mock_robot: bool = field(
         default=False,
-        metadata={"help": "Use mock robot instead of real hardware (for experiments without a physical robot)"},
+        metadata={
+            "help": "Use mock robot instead of real hardware (for experiments without a physical robot)"
+        },
     )
     cooldown_enabled: bool = field(
         default=True,
@@ -326,8 +331,7 @@ class RobotClientDrtcConfig:
     action_filter_butterworth_order: int = field(
         default=2,
         metadata={
-            "help": "Butterworth filter order (1-4). "
-            "Higher = sharper frequency rolloff but more phase lag."
+            "help": "Butterworth filter order (1-4). Higher = sharper frequency rolloff but more phase lag."
         },
     )
     action_filter_gain: float = field(
@@ -389,11 +393,15 @@ class RobotClientDrtcConfig:
         if self.obs_fallback_max_age_s <= 0:
             raise ValueError(f"obs_fallback_max_age_s must be positive, got {self.obs_fallback_max_age_s}")
         if self.rtc_max_guidance_weight is not None and self.rtc_max_guidance_weight <= 0:
-            raise ValueError(f"rtc_max_guidance_weight must be positive or None, got {self.rtc_max_guidance_weight}")
+            raise ValueError(
+                f"rtc_max_guidance_weight must be positive or None, got {self.rtc_max_guidance_weight}"
+            )
         if self.rtc_sigma_d <= 0:
             raise ValueError(f"rtc_sigma_d must be positive, got {self.rtc_sigma_d}")
         if self.num_flow_matching_steps is not None and self.num_flow_matching_steps <= 0:
-            raise ValueError(f"num_flow_matching_steps must be positive or None, got {self.num_flow_matching_steps}")
+            raise ValueError(
+                f"num_flow_matching_steps must be positive or None, got {self.num_flow_matching_steps}"
+            )
         if self.action_filter_mode not in ("none", "adaptive_lowpass", "hold_stable", "butterworth"):
             raise ValueError(
                 f"action_filter_mode must be 'none', 'adaptive_lowpass', 'hold_stable', or 'butterworth', "
@@ -404,20 +412,28 @@ class RobotClientDrtcConfig:
         if self.action_filter_alpha_max <= 0 or self.action_filter_alpha_max > 1:
             raise ValueError(f"action_filter_alpha_max must be in (0, 1], got {self.action_filter_alpha_max}")
         if self.action_filter_deadband < 0:
-            raise ValueError(f"action_filter_deadband must be non-negative, got {self.action_filter_deadband}")
+            raise ValueError(
+                f"action_filter_deadband must be non-negative, got {self.action_filter_deadband}"
+            )
         if self.action_filter_butterworth_cutoff <= 0:
-            raise ValueError(f"action_filter_butterworth_cutoff must be positive, got {self.action_filter_butterworth_cutoff}")
+            raise ValueError(
+                f"action_filter_butterworth_cutoff must be positive, got {self.action_filter_butterworth_cutoff}"
+            )
         if self.action_filter_butterworth_cutoff >= self.fps / 2:
             raise ValueError(
                 f"action_filter_butterworth_cutoff must be < fps/2 (Nyquist), "
                 f"got {self.action_filter_butterworth_cutoff} >= {self.fps / 2}"
             )
         if self.action_filter_butterworth_order < 1 or self.action_filter_butterworth_order > 4:
-            raise ValueError(f"action_filter_butterworth_order must be 1-4, got {self.action_filter_butterworth_order}")
+            raise ValueError(
+                f"action_filter_butterworth_order must be 1-4, got {self.action_filter_butterworth_order}"
+            )
         if self.action_filter_gain <= 0:
             raise ValueError(f"action_filter_gain must be positive, got {self.action_filter_gain}")
         if self.action_filter_past_buffer_size < 1:
-            raise ValueError(f"action_filter_past_buffer_size must be >= 1, got {self.action_filter_past_buffer_size}")
+            raise ValueError(
+                f"action_filter_past_buffer_size must be >= 1, got {self.action_filter_past_buffer_size}"
+            )
 
 
 # =============================================================================

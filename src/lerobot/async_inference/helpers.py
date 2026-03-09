@@ -16,9 +16,9 @@ import logging
 import logging.handlers
 import os
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
@@ -90,7 +90,9 @@ def hw_to_dataset_features(
     return features
 
 
-def build_dataset_frame(ds_features: dict[str, dict], values: dict[str, Any], prefix: str) -> dict[str, np.ndarray]:
+def build_dataset_frame(
+    ds_features: dict[str, dict], values: dict[str, Any], prefix: str
+) -> dict[str, np.ndarray]:
     """Lightweight version of `lerobot.datasets.utils.build_dataset_frame`."""
     frame: dict[str, np.ndarray] = {}
     for key, ft in ds_features.items():

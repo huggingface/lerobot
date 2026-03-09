@@ -179,9 +179,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             f"Actions per chunk: {policy_specs.actions_per_chunk} | "
             f"Device: {policy_specs.device}"
         )
-        self.logger.debug(
-            "Policy instructions payload deserialized in %.2fms", self._ms(t_deserialize)
-        )
+        self.logger.debug("Policy instructions payload deserialized in %.2fms", self._ms(t_deserialize))
 
         self.device = policy_specs.device
         self.policy_type = policy_specs.policy_type  # act, pi0, etc.

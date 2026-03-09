@@ -17,19 +17,16 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from typing import Generic, TypeVar
-
-T = TypeVar("T")
 
 
 @dataclass(frozen=True)
-class LWWState(Generic[T]):
+class LWWState[T]:
     """Last-write-wins state element."""
 
     control_step: int
     value: T
 
-    def __or__(self, other: "LWWState[T]") -> "LWWState[T]":
+    def __or__(self, other: LWWState[T]) -> LWWState[T]:
         """Join (⊔): keep the state with the larger control_step.
 
         Tie-breaking is intentionally stable: if control_step is equal, keep `self`.
@@ -46,18 +43,18 @@ class LWWCursor:
 
     watermark: int
 
-    def __or__(self, other: "LWWCursor") -> "LWWCursor":
+    def __or__(self, other: LWWCursor) -> LWWCursor:
         return self if self.watermark >= other.watermark else other
 
 
-class LWWReader(Generic[T]):
+class LWWReader[T]:
     """Per-consumer read-once view of an `LWWRegister`.
 
     The cursor (watermark) is stored inside the reader, so call sites don't need
     to carry `_last_*` or explicit cursor arguments.
     """
 
-    def __init__(self, register: "LWWRegister[T]", *, initial_watermark: int):
+    def __init__(self, register: LWWRegister[T], *, initial_watermark: int):
         self._register = register
         self._cursor = LWWCursor(watermark=initial_watermark)
 
@@ -73,7 +70,7 @@ class LWWReader(Generic[T]):
         return state, self._cursor, is_new
 
 
-class LWWRegister(Generic[T]):
+class LWWRegister[T]:
     """A thread-safe LWW register holding a single `LWWState`.
 
     Notes:

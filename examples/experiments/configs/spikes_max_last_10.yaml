@@ -17,7 +17,7 @@ defaults:
   s_min: 20
   latency_alpha: 0.125
   latency_beta: 0.25
-  
+
   # Flow matching / RTC
   num_flow_matching_steps: 8
   rtc_enabled: true

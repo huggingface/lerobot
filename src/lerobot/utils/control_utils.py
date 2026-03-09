@@ -20,7 +20,7 @@
 import logging
 import os
 import traceback
-from contextlib import nullcontext
+from contextlib import nullcontext, suppress
 from copy import copy
 from functools import cache
 from typing import Any
@@ -157,12 +157,10 @@ def init_keyboard_listener():
         d = xdisplay.Display()
         try:
             # Trigger extension lookup: will raise AttributeError if RECORD isn't available.
-            _ = getattr(d, "record_create_context")
+            _ = d.record_create_context
         finally:
-            try:
+            with suppress(Exception):
                 d.close()
-            except Exception:
-                pass
     except Exception as e:
         logging.warning(f"Keyboard listener disabled (X RECORD extension unavailable): {e!r}")
         listener = None

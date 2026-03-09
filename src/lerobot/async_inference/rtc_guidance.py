@@ -23,8 +23,8 @@ that expect `rtc_processor.denoise_step(...)`.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 import torch
 from torch import Tensor
@@ -127,8 +127,8 @@ class AsyncRTCProcessor:
             overlap_end = chunk_t - inference_delay
 
         # Clamp overlap_end to available prefix length
-        T_prefix = prev.shape[1]
-        overlap_end = min(overlap_end, T_prefix)
+        prefix_len = prev.shape[1]
+        overlap_end = min(overlap_end, prefix_len)
 
         # With server-side zero-padding to max_action_dim, dimensions should now match.
         # Log at debug level if they still differ (shouldn't happen after the fix).
@@ -147,7 +147,9 @@ class AsyncRTCProcessor:
 
         # Pad prefix temporal dimension to match chunk_t, but keep action dimension as target_a.
         if prev.shape[1] < chunk_t:
-            padded = torch.zeros(batch_size, chunk_t, target_a, device=x_t_local.device, dtype=x_t_local.dtype)
+            padded = torch.zeros(
+                batch_size, chunk_t, target_a, device=x_t_local.device, dtype=x_t_local.dtype
+            )
             padded[:, : prev.shape[1], :] = prev.to(device=x_t_local.device, dtype=x_t_local.dtype)
             prev = padded
         else:
@@ -183,7 +185,9 @@ class AsyncRTCProcessor:
             if self.cfg.full_trajectory_alignment:
                 correction = err
             else:
-                correction = torch.autograd.grad(x1_t_for_loss, x_t_local, err.detach(), retain_graph=False)[0]
+                correction = torch.autograd.grad(x1_t_for_loss, x_t_local, err.detach(), retain_graph=False)[
+                    0
+                ]
 
         # Alex Soare optimization: Use num_flow_matching_steps as max_guidance_weight if not set.
         # Reference: https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html
@@ -260,5 +264,3 @@ class AsyncRTCProcessor:
         if ones_len <= 0:
             return weights
         return torch.cat([torch.ones(ones_len), weights])
-
-

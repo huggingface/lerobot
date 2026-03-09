@@ -1,29 +1,30 @@
 import logging
 
-
 # Track which (schedule, d, overlap_end) combos have been logged to avoid spam
 _prefix_weights_logged: set[tuple[str, int, int]] = set()
 
 
-def compute_prefix_weights_for_viz(d: int, overlap_end: int, H: int, schedule: str = "linear") -> list[float]:
+def compute_prefix_weights_for_viz(
+    d: int, overlap_end: int, chunk_len: int, schedule: str = "linear"
+) -> list[float]:
     """Compute prefix weights for RTC visualization.
 
     Args:
         d: Inference delay (hard mask region ends at d).
         overlap_end: Where soft masking ends (H - d with s=d).
-        H: Total chunk size.
+        chunk_len: Total chunk size.
         schedule: Weight schedule ("linear" or "exp").
 
     Returns:
-        List of H floats, each in [0, 1]:
+        List of `chunk_len` floats, each in [0, 1]:
         - [0, d): weight = 1.0 (hard mask)
         - [d, overlap_end): weight decays 1->0 (soft mask)
-        - [overlap_end, H): weight = 0.0 (fresh)
+        - [overlap_end, chunk_len): weight = 0.0 (fresh)
     """
     import math
 
     weights = []
-    for i in range(H):
+    for i in range(chunk_len):
         if i < d:
             # Hard mask region
             weights.append(1.0)
@@ -44,14 +45,17 @@ def compute_prefix_weights_for_viz(d: int, overlap_end: int, H: int, schedule: s
 
     # Log weight samples once per unique (schedule, d, overlap_end) to verify formula
     _log_key = (schedule.lower(), d, overlap_end)
-    if _log_key not in _prefix_weights_logged and H > 0:
+    if _log_key not in _prefix_weights_logged and chunk_len > 0:
         _prefix_weights_logged.add(_log_key)
         logger = logging.getLogger("policy_server_drtc")
         sample_indices = [d, (d + overlap_end) // 2, overlap_end - 1]
         samples = [(i, weights[i]) for i in sample_indices if 0 <= i < len(weights)]
         logger.info(
             "RTC prefix weights (%s): d=%d, overlap_end=%d, H=%d, samples=%s",
-            schedule, d, overlap_end, H,
+            schedule,
+            d,
+            overlap_end,
+            chunk_len,
             [(f"w[{i}]", f"{w:.3f}") for i, w in samples],
         )
 

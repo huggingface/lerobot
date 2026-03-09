@@ -18,17 +18,24 @@ import logging
 import signal
 import threading
 import time
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 import yaml
 
-from lerobot.async_inference.robot_client_drtc import RobotClientDrtc
 from lerobot.async_inference.configs_drtc import RobotClientDrtcConfig
+from lerobot.async_inference.robot_client_drtc import RobotClientDrtc
 from lerobot.async_inference.utils.simulation import (
-    DisconnectConfig, DisconnectEvent,
-    DropConfig, DropEvent, DuplicateConfig, DuplicateEvent, ReorderConfig, ReorderEvent,
+    DisconnectConfig,
+    DisconnectEvent,
+    DropConfig,
+    DropEvent,
+    DuplicateConfig,
+    DuplicateEvent,
+    ReorderConfig,
+    ReorderEvent,
 )
 from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.robots.so_follower.config_so_follower import SO100FollowerConfig, SO101FollowerConfig
@@ -54,6 +61,7 @@ CONFIGS_DIR = Path(__file__).parent / "configs"
 @dataclass
 class ExperimentConfig:
     """Configuration for a single experiment run."""
+
     name: str
     estimator: str
     cooldown: bool
@@ -113,23 +121,48 @@ class ExperimentConfig:
 # ---- YAML config loading ----
 
 # Scalar fields that map 1:1 from YAML keys to ExperimentConfig constructor args.
-_SCALAR_FIELDS = frozenset({
-    "name", "estimator", "cooldown",
-    "robot_type", "gpu", "client_host", "server_host",
-    "robot_port", "robot_id",
-    "camera1_path", "camera2_path",
-    "camera_width", "camera_height", "camera_fps", "camera_fourcc",
-    "policy_type", "pretrained_name_or_path",
-    "latency_k", "epsilon", "s_min", "latency_alpha", "latency_beta",
-    "duration_s", "fps", "actions_per_chunk",
-    "num_flow_matching_steps", "rtc_enabled", "rtc_max_guidance_weight",
-    "rtc_prefix_attention_schedule", "rtc_sigma_d", "rtc_full_trajectory_alignment",
-    "action_filter_mode", "action_filter_butterworth_cutoff",
-    "action_filter_butterworth_order", "action_filter_gain",
-    "action_filter_past_buffer_size",
-    "full_diagnostics",
-    "trajectory_viz_enabled",
-})
+_SCALAR_FIELDS = frozenset(
+    {
+        "name",
+        "estimator",
+        "cooldown",
+        "robot_type",
+        "gpu",
+        "client_host",
+        "server_host",
+        "robot_port",
+        "robot_id",
+        "camera1_path",
+        "camera2_path",
+        "camera_width",
+        "camera_height",
+        "camera_fps",
+        "camera_fourcc",
+        "policy_type",
+        "pretrained_name_or_path",
+        "latency_k",
+        "epsilon",
+        "s_min",
+        "latency_alpha",
+        "latency_beta",
+        "duration_s",
+        "fps",
+        "actions_per_chunk",
+        "num_flow_matching_steps",
+        "rtc_enabled",
+        "rtc_max_guidance_weight",
+        "rtc_prefix_attention_schedule",
+        "rtc_sigma_d",
+        "rtc_full_trajectory_alignment",
+        "action_filter_mode",
+        "action_filter_butterworth_cutoff",
+        "action_filter_butterworth_order",
+        "action_filter_gain",
+        "action_filter_past_buffer_size",
+        "full_diagnostics",
+        "trajectory_viz_enabled",
+    }
+)
 
 
 def _parse_experiment_dict(d: dict) -> ExperimentConfig:
@@ -144,13 +177,19 @@ def _parse_experiment_dict(d: dict) -> ExperimentConfig:
     if "dup_obs" in d:
         kwargs["dup_obs_config"] = DuplicateConfig(duplicates=[DuplicateEvent(**e) for e in d["dup_obs"]])
     if "dup_action" in d:
-        kwargs["dup_action_config"] = DuplicateConfig(duplicates=[DuplicateEvent(**e) for e in d["dup_action"]])
+        kwargs["dup_action_config"] = DuplicateConfig(
+            duplicates=[DuplicateEvent(**e) for e in d["dup_action"]]
+        )
     if "reorder_obs" in d:
         kwargs["reorder_obs_config"] = ReorderConfig(reorders=[ReorderEvent(**e) for e in d["reorder_obs"]])
     if "reorder_action" in d:
-        kwargs["reorder_action_config"] = ReorderConfig(reorders=[ReorderEvent(**e) for e in d["reorder_action"]])
+        kwargs["reorder_action_config"] = ReorderConfig(
+            reorders=[ReorderEvent(**e) for e in d["reorder_action"]]
+        )
     if "disconnect" in d:
-        kwargs["disconnect_config"] = DisconnectConfig(disconnects=[DisconnectEvent(**e) for e in d["disconnect"]])
+        kwargs["disconnect_config"] = DisconnectConfig(
+            disconnects=[DisconnectEvent(**e) for e in d["disconnect"]]
+        )
     if "spikes" in d:
         kwargs["spikes"] = d["spikes"]
 
@@ -222,13 +261,13 @@ def resolve_config_path(config_arg: str) -> Path:
         if in_configs_yaml.exists():
             return in_configs_yaml
 
-    raise FileNotFoundError(
-        f"Config not found: {config_arg} (also tried {CONFIGS_DIR / config_arg})"
-    )
+    raise FileNotFoundError(f"Config not found: {config_arg} (also tried {CONFIGS_DIR / config_arg})")
 
 
 def create_robot_config(config: ExperimentConfig) -> SO100FollowerConfig | SO101FollowerConfig:
-    camera_fourcc = config.camera_fourcc.strip() if isinstance(config.camera_fourcc, str) else config.camera_fourcc
+    camera_fourcc = (
+        config.camera_fourcc.strip() if isinstance(config.camera_fourcc, str) else config.camera_fourcc
+    )
     if camera_fourcc == "":
         camera_fourcc = None
 
@@ -268,58 +307,58 @@ def create_client_config(
 ) -> RobotClientDrtcConfig:
     """Create a client config for a single experiment."""
     robot_cfg = create_robot_config(config)
-    client_kwargs = dict(
-        robot=robot_cfg,
-        server_address=server_address,
-        robot_type=config.robot_type,
-        gpu=config.gpu,
-        client_host=config.client_host,
-        server_host=config.server_host,
-        policy_device="cuda",
-        policy_type=config.policy_type,
-        pretrained_name_or_path=config.pretrained_name_or_path,
-        actions_per_chunk=config.actions_per_chunk,
-        fps=config.fps,
-        s_min=config.s_min,
-        latency_estimator_type=config.estimator,
-        cooldown_enabled=config.cooldown,
-        latency_k=config.latency_k,
-        epsilon=config.epsilon,
-        latency_alpha=config.latency_alpha,
-        latency_beta=config.latency_beta,
+    client_kwargs = {
+        "robot": robot_cfg,
+        "server_address": server_address,
+        "robot_type": config.robot_type,
+        "gpu": config.gpu,
+        "client_host": config.client_host,
+        "server_host": config.server_host,
+        "policy_device": "cuda",
+        "policy_type": config.policy_type,
+        "pretrained_name_or_path": config.pretrained_name_or_path,
+        "actions_per_chunk": config.actions_per_chunk,
+        "fps": config.fps,
+        "s_min": config.s_min,
+        "latency_estimator_type": config.estimator,
+        "cooldown_enabled": config.cooldown,
+        "latency_k": config.latency_k,
+        "epsilon": config.epsilon,
+        "latency_alpha": config.latency_alpha,
+        "latency_beta": config.latency_beta,
         # Flow matching / RTC
-        num_flow_matching_steps=config.num_flow_matching_steps,
-        rtc_enabled=config.rtc_enabled,
-        rtc_max_guidance_weight=config.rtc_max_guidance_weight,
-        rtc_prefix_attention_schedule=config.rtc_prefix_attention_schedule,
-        rtc_sigma_d=config.rtc_sigma_d,
-        rtc_full_trajectory_alignment=config.rtc_full_trajectory_alignment,
+        "num_flow_matching_steps": config.num_flow_matching_steps,
+        "rtc_enabled": config.rtc_enabled,
+        "rtc_max_guidance_weight": config.rtc_max_guidance_weight,
+        "rtc_prefix_attention_schedule": config.rtc_prefix_attention_schedule,
+        "rtc_sigma_d": config.rtc_sigma_d,
+        "rtc_full_trajectory_alignment": config.rtc_full_trajectory_alignment,
         # Butterworth filter
-        action_filter_mode=config.action_filter_mode,
-        action_filter_butterworth_cutoff=config.action_filter_butterworth_cutoff,
-        action_filter_butterworth_order=config.action_filter_butterworth_order,
-        action_filter_gain=config.action_filter_gain,
-        action_filter_past_buffer_size=config.action_filter_past_buffer_size,
+        "action_filter_mode": config.action_filter_mode,
+        "action_filter_butterworth_cutoff": config.action_filter_butterworth_cutoff,
+        "action_filter_butterworth_order": config.action_filter_butterworth_order,
+        "action_filter_gain": config.action_filter_gain,
+        "action_filter_past_buffer_size": config.action_filter_past_buffer_size,
         # Diagnostics and robustness
-        metrics_diagnostic_enabled=True,
-        metrics_diagnostic_interval_s=2.0,
-        metrics_diagnostic_window_s=10.0,
-        metrics_diagnostic_verbose=config.full_diagnostics,
-        control_use_deadline_clock=True,
-        obs_fallback_on_failure=True,
-        obs_fallback_max_age_s=2.0,
-        trajectory_viz_enabled=config.trajectory_viz_enabled,
+        "metrics_diagnostic_enabled": True,
+        "metrics_diagnostic_interval_s": 2.0,
+        "metrics_diagnostic_window_s": 10.0,
+        "metrics_diagnostic_verbose": config.full_diagnostics,
+        "control_use_deadline_clock": True,
+        "obs_fallback_on_failure": True,
+        "obs_fallback_max_age_s": 2.0,
+        "trajectory_viz_enabled": config.trajectory_viz_enabled,
         # Drop/spike/duplicate/reorder/disconnect injection
-        drop_obs_config=config.drop_obs_config,
-        drop_action_config=config.drop_action_config,
-        dup_obs_config=config.dup_obs_config,
-        dup_action_config=config.dup_action_config,
-        reorder_obs_config=config.reorder_obs_config,
-        reorder_action_config=config.reorder_action_config,
-        disconnect_config=config.disconnect_config,
-        spikes=config.spikes,
-        metrics_path=str(metrics_path),
-    )
+        "drop_obs_config": config.drop_obs_config,
+        "drop_action_config": config.drop_action_config,
+        "dup_obs_config": config.dup_obs_config,
+        "dup_action_config": config.dup_action_config,
+        "reorder_obs_config": config.reorder_obs_config,
+        "reorder_action_config": config.reorder_action_config,
+        "disconnect_config": config.disconnect_config,
+        "spikes": config.spikes,
+        "metrics_path": str(metrics_path),
+    }
     if trajectory_viz_ws_url:
         client_kwargs["trajectory_viz_ws_url"] = trajectory_viz_ws_url
     return RobotClientDrtcConfig(**client_kwargs)
@@ -348,7 +387,9 @@ def run_experiment(
     metrics_path = exp_dir / f"{exp_name}.csv"
 
     logger.info(f"Running experiment: {config.name}")
-    logger.info(f"  Estimator: {config.estimator}, Cooldown: {config.cooldown}, Full diagnostics: {config.full_diagnostics}")
+    logger.info(
+        f"  Estimator: {config.estimator}, Cooldown: {config.cooldown}, Full diagnostics: {config.full_diagnostics}"
+    )
     if config.drop_obs_config:
         logger.info(f"  Drop obs: {config.drop_obs_config}")
     if config.drop_action_config:
@@ -403,10 +444,8 @@ def run_experiment(
             # Ensure metrics are flushed from the main thread in case signal_stop
             # hasn't finished or was never called (e.g. control loop exited early).
             if client._metrics.experiment is not None and client.config.metrics_path:
-                try:
+                with suppress(Exception):
                     client._metrics.experiment.flush(client.config.metrics_path)
-                except Exception:
-                    pass
             success = metrics_path.exists()
             logger.info(f"Experiment finished. Metrics saved: {success}")
             if success:
@@ -424,10 +463,8 @@ def run_experiment(
     finally:
         signal.signal(signal.SIGINT, original_handler)
         # Only disconnect at the very end for standalone experiments
-        try:
+        with suppress(Exception):
             client.stop()
-        except Exception:
-            pass
 
 
 def main():
@@ -478,9 +515,9 @@ def main():
     results = []
     for i, config in enumerate(configs):
         if len(configs) > 1:
-            logger.info(f"{'='*50}")
-            logger.info(f"[{i+1}/{len(configs)}] {config.name}")
-            logger.info(f"{'='*50}")
+            logger.info(f"{'=' * 50}")
+            logger.info(f"[{i + 1}/{len(configs)}] {config.name}")
+            logger.info(f"{'=' * 50}")
 
         experiment_name = (args.experiment_name or "").strip() or None
         result = run_experiment(

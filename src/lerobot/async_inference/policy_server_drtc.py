@@ -24,13 +24,13 @@ import pickle  # nosec
 import threading
 import time
 from collections import OrderedDict
-from contextlib import suppress
 from concurrent import futures
+from contextlib import suppress
 from typing import Any
 
-import numpy as np
 import draccus
 import grpc
+import numpy as np
 import torch
 
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
@@ -53,13 +53,13 @@ from .helpers import (
     get_logger,
     raw_observation_to_observation,
 )
+from .lww_register import LWWRegister
 from .rtc_guidance import AsyncRTCConfig, AsyncRTCProcessor
+from .utils.compression import decode_images_from_transport
+from .utils.metrics import DiagnosticMetrics, EvActionChunk, Metrics
 from .utils.simulation import SpikeDelaySimulator
 from .utils.trajectory_viz import TrajectoryVizServer
-from .utils.metrics import DiagnosticMetrics, EvActionChunk, Metrics
 from .utils.viz_utils import compute_prefix_weights_for_viz
-from .utils.compression import decode_images_from_transport
-from .lww_register import LWWRegister
 
 _INITIAL_K = -(2**63)
 
@@ -126,6 +126,7 @@ class ActionChunkCache:
     def clear(self) -> None:
         """Clear all cached chunks."""
         self._cache.clear()
+
 
 class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
     """DRTC policy server.
@@ -380,7 +381,9 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
 
             self._rtc_cfg = AsyncRTCConfig(
                 enabled=True,
-                prefix_attention_schedule=str(getattr(policy_specs, "rtc_prefix_attention_schedule", "linear")),
+                prefix_attention_schedule=str(
+                    getattr(policy_specs, "rtc_prefix_attention_schedule", "linear")
+                ),
                 max_guidance_weight=max_gw,
                 sigma_d=float(getattr(policy_specs, "rtc_sigma_d", 1.0)),
                 full_trajectory_alignment=bool(getattr(policy_specs, "rtc_full_trajectory_alignment", False)),
@@ -393,16 +396,16 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             rtc = AsyncRTCProcessor(self._rtc_cfg, postprocess=None)
 
             # Flow policies expect `policy.rtc_processor` and `policy.model.rtc_processor`.
-            setattr(self.policy, "rtc_processor", rtc)
+            self.policy.rtc_processor = rtc
             model_value = getattr(self.policy, "model", None)
             if model_value is not None:
-                setattr(model_value, "rtc_processor", rtc)
+                model_value.rtc_processor = rtc
 
             # Satisfy policy-side `_rtc_enabled()` checks without importing RTCConfig.
             cfg_obj = getattr(self.policy, "config", None)
             if cfg_obj is not None:
                 with suppress(Exception):
-                    setattr(cfg_obj, "rtc_config", type("RTCConfigShim", (), {"enabled": True})())
+                    cfg_obj.rtc_config = type("RTCConfigShim", (), {"enabled": True})()
 
         # Apply spike configuration from client (for experiments)
         spikes = getattr(policy_specs, "spikes", [])
@@ -440,9 +443,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         # network transfer of the chunked image payload, not just the
         # gRPC handler dispatch time).
         t_recv_start = time.perf_counter()
-        received_bytes = receive_bytes_in_chunks(
-            request_iterator, None, self.shutdown_event, self.logger
-        )
+        received_bytes = receive_bytes_in_chunks(request_iterator, None, self.shutdown_event, self.logger)
         t_recv_done = time.perf_counter()
         receive_time = time.time()
 
@@ -465,7 +466,9 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
 
         # Diagnostics
         # Provide a stable `step` field for compact diagnostics.
-        self._metrics.diagnostic.set_context(step=obs_control_step, last_obs_step=obs_control_step, chunk_size=self.actions_per_chunk)
+        self._metrics.diagnostic.set_context(
+            step=obs_control_step, last_obs_step=obs_control_step, chunk_size=self.actions_per_chunk
+        )
         self._metrics.diagnostic.timing_s("obs_recv_ms", t_recv_done - t_recv_start)
         self._metrics.diagnostic.timing_s("deser_ms", t_deser_done - t_deser_start)
         self._metrics.diagnostic.timing_s("obs_decode_ms", t_decode_done - t_decode_start)
@@ -617,7 +620,9 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     chunk_size=self.actions_per_chunk,
                 )
                 self._metrics.diagnostic.timing_s("infer_total_ms", t_infer_done - t_infer_start)
-                self._metrics.diagnostic.timing_s("producer_loop_total_ms", time.perf_counter() - t_total_start)
+                self._metrics.diagnostic.timing_s(
+                    "producer_loop_total_ms", time.perf_counter() - t_total_start
+                )
                 consecutive_errors = 0
             except Exception as e:
                 consecutive_errors += 1
@@ -692,8 +697,8 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     action_schedule_spans = rtc_meta.get("action_schedule_spans")
 
                     # overlap_end from client: where fresh region starts (H - max(s_min, d))
-                    H = self.actions_per_chunk
-                    overlap_end = int(rtc_meta.get("overlap_end") or (H - d))
+                    chunk_len = self.actions_per_chunk
+                    overlap_end = int(rtc_meta.get("overlap_end") or (chunk_len - d))
                     self._metrics.diagnostic.counter("rtc_meta_seen", 1)
 
                     # Reconstruct prefix tensor from multiple cached chunks
@@ -717,18 +722,20 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                             # Concatenate all slices along time dimension -> (T_total, A)
                             prefix_tensor = torch.cat(slices, dim=0)
                             prefix_tensor = prefix_tensor.unsqueeze(0)  # (1, T_total, A)
-                            T_prefix = prefix_tensor.shape[1]
+                            prefix_len = prefix_tensor.shape[1]
 
                             # Clamp overlap_end to what we actually have in the prefix
                             # This allows graceful degradation when cache is incomplete
-                            effective_overlap_end = min(overlap_end, T_prefix)
+                            effective_overlap_end = min(overlap_end, prefix_len)
 
                             # Zero-pad to max_action_dim if model uses padded action space
                             max_action_dim = getattr(self.policy.config, "max_action_dim", None)
                             if max_action_dim is not None and prefix_tensor.shape[-1] < max_action_dim:
                                 b, t, a = prefix_tensor.shape
                                 padded = torch.zeros(
-                                    b, t, max_action_dim,
+                                    b,
+                                    t,
+                                    max_action_dim,
                                     device=prefix_tensor.device,
                                     dtype=prefix_tensor.dtype,
                                 )
@@ -746,7 +753,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                             self._metrics.diagnostic.counter("rtc_not_applied_no_slices", 1)
                     else:
                         self._metrics.diagnostic.counter("rtc_not_applied_empty_prefix", 1)
-                except Exception as e:
+                except Exception:
                     self._metrics.diagnostic.counter("rtc_meta_error", 1)
                     rtc_kwargs = {}
 
@@ -787,12 +794,14 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             if self._rtc_cfg is not None and self._rtc_cfg.enabled and rtc_kwargs:
                 d_viz = rtc_kwargs.get("inference_delay", 0)
                 # Use intended overlap_end for visualization (not clamped to prefix length)
-                overlap_end_viz = rtc_kwargs.get("overlap_end_intended", rtc_kwargs.get("overlap_end", self.actions_per_chunk))
-                H_viz = self.actions_per_chunk
+                overlap_end_viz = rtc_kwargs.get(
+                    "overlap_end_intended", rtc_kwargs.get("overlap_end", self.actions_per_chunk)
+                )
+                chunk_len_viz = self.actions_per_chunk
 
                 rtc_params_viz = {
                     "d": d_viz,
-                    "H": H_viz,
+                    "H": chunk_len_viz,
                     "overlap_end": overlap_end_viz,
                     "sigma_d": self._rtc_cfg.sigma_d,
                     "schedule": self._rtc_cfg.prefix_attention_schedule,
@@ -800,7 +809,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     "full_trajectory_alignment": self._rtc_cfg.full_trajectory_alignment,
                 }
                 prefix_weights_viz = compute_prefix_weights_for_viz(
-                    d_viz, overlap_end_viz, H_viz, self._rtc_cfg.prefix_attention_schedule
+                    d_viz, overlap_end_viz, chunk_len_viz, self._rtc_cfg.prefix_attention_schedule
                 )
 
             # Create and emit the event
@@ -815,15 +824,15 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             )
             self._trajectory_viz_server.on_chunk(event)
 
-        dense_kwargs: dict[str, Any] = dict(
-            timestamp=float(observation_t.get_timestamp()),
-            source_control_step=int(observation_t.get_control_step()),
-            chunk_start_step=int(observation_t.chunk_start_step),
-            dt=float(self.config.environment_dt),
-            num_actions=int(payload.shape[0]),
-            action_dim=int(payload.shape[1]),
-            actions_f32=payload.tobytes(order="C"),
-        )
+        dense_kwargs: dict[str, Any] = {
+            "timestamp": float(observation_t.get_timestamp()),
+            "source_control_step": int(observation_t.get_control_step()),
+            "chunk_start_step": int(observation_t.chunk_start_step),
+            "dt": float(self.config.environment_dt),
+            "num_actions": int(payload.shape[0]),
+            "action_dim": int(payload.shape[1]),
+            "actions_f32": payload.tobytes(order="C"),
+        }
         dense = services_pb2.ActionsDense(**dense_kwargs)
         return dense
 
@@ -835,7 +844,9 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._metrics.diagnostic.timing_s("policy_predict_ms", t1 - t0)
 
         if chunk.ndim != 3:
-            chunk = chunk.unsqueeze(0)  # Add batch dimension: (chunk_size, action_dim) -> (1, chunk_size, action_dim)
+            chunk = chunk.unsqueeze(
+                0
+            )  # Add batch dimension: (chunk_size, action_dim) -> (1, chunk_size, action_dim)
 
         return chunk[:, : self.actions_per_chunk, :]
 
@@ -886,4 +897,3 @@ def serve_drtc(cfg: PolicyServerDrtcConfig) -> None:
 
 if __name__ == "__main__":
     serve_drtc()
-

@@ -24,7 +24,6 @@ from typing import Any
 
 import numpy as np
 
-
 # =============================================================================
 # Configuration Dataclasses
 # =============================================================================
@@ -385,11 +384,7 @@ class DuplicateSimulator:
 
         elapsed = now - self._start_time
 
-        for dup in self._duplicates:
-            if dup.start_s <= elapsed < dup.start_s + dup.duration_s:
-                return True
-
-        return False
+        return any(dup.start_s <= elapsed < dup.start_s + dup.duration_s for dup in self._duplicates)
 
     def reset(self) -> None:
         """Reset the simulator start time."""
@@ -588,8 +583,7 @@ class DisconnectConfig:
     def from_dicts(cls, disconnect_dicts: list[dict]) -> "DisconnectConfig":
         """Create config from list of dicts (for JSON/CLI compatibility)."""
         disconnects = [
-            DisconnectEvent(start_s=d["start_s"], duration_s=d["duration_s"])
-            for d in disconnect_dicts
+            DisconnectEvent(start_s=d["start_s"], duration_s=d["duration_s"]) for d in disconnect_dicts
         ]
         return cls(disconnects=disconnects)
 

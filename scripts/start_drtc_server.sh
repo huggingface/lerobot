@@ -40,13 +40,13 @@ POLICY_SERVER_PID=""
 cleanup() {
     echo ""
     echo "Shutting down async inference components..."
-    
+
     if [ -n "$POLICY_SERVER_PID" ] && kill -0 "$POLICY_SERVER_PID" 2>/dev/null; then
         echo "Stopping policy server (PID: $POLICY_SERVER_PID)..."
         kill -TERM "$POLICY_SERVER_PID" 2>/dev/null || true
         wait "$POLICY_SERVER_PID" 2>/dev/null || true
     fi
-    
+
     echo "Cleanup complete."
     exit 0
 }

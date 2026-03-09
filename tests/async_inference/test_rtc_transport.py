@@ -40,5 +40,3 @@ def test_actionsdense_raw_payload_sizes_match() -> None:
 
     x = np.zeros((t, a), dtype=np.float32, order="C")
     assert len(x.tobytes(order="C")) == nbytes_expected
-
-

@@ -25,7 +25,7 @@ if _version_not_supported:
     )
 
 
-class LearnerServiceStub(object):
+class LearnerServiceStub:
     """LearnerService: the Actor calls this to push transitions.
     The Learner implements this service.
     """
@@ -58,7 +58,7 @@ class LearnerServiceStub(object):
                 _registered_method=True)
 
 
-class LearnerServiceServicer(object):
+class LearnerServiceServicer:
     """LearnerService: the Actor calls this to push transitions.
     The Learner implements this service.
     """
@@ -119,7 +119,7 @@ def add_LearnerServiceServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class LearnerService(object):
+class LearnerService:
     """LearnerService: the Actor calls this to push transitions.
     The Learner implements this service.
     """
@@ -233,7 +233,7 @@ class LearnerService(object):
             _registered_method=True)
 
 
-class AsyncInferenceStub(object):
+class AsyncInferenceStub:
     """AsyncInference: from Robot perspective
     Robot send observations to & executes action received from a remote Policy server
     """
@@ -276,7 +276,7 @@ class AsyncInferenceStub(object):
                 _registered_method=True)
 
 
-class AsyncInferenceServicer(object):
+class AsyncInferenceServicer:
     """AsyncInference: from Robot perspective
     Robot send observations to & executes action received from a remote Policy server
     """
@@ -362,7 +362,7 @@ def add_AsyncInferenceServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class AsyncInference(object):
+class AsyncInference:
     """AsyncInference: from Robot perspective
     Robot send observations to & executes action received from a remote Policy server
     """

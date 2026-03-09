@@ -1371,7 +1371,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # During recording, metadata can be buffered and `meta.episodes` may not be loaded in-memory yet.
         # Batch encoding relies on episode metadata (chunk/file indices), so load episodes from disk if needed.
-        if self.meta.episodes is None or len(self.meta.episodes) <= start_episode or self.meta.episodes[start_episode] is None:
+        if (
+            self.meta.episodes is None
+            or len(self.meta.episodes) <= start_episode
+            or self.meta.episodes[start_episode] is None
+        ):
             # Ensure episode metadata has been flushed *and the parquet writer is closed* before loading.
             # If the writer is still open, the parquet footer may not be written yet, and readers will fail
             # with "Parquet magic bytes not found in footer".
@@ -1391,7 +1395,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 logging.error(f"Cannot batch-encode videos: failed to load episode metadata: {e!r}")
                 return
 
-        if self.meta.episodes is None or len(self.meta.episodes) <= start_episode or self.meta.episodes[start_episode] is None:
+        if (
+            self.meta.episodes is None
+            or len(self.meta.episodes) <= start_episode
+            or self.meta.episodes[start_episode] is None
+        ):
             logging.error(
                 f"Cannot batch-encode videos: missing episode metadata for start_episode={start_episode}. "
                 f"meta.episodes_len={0 if self.meta.episodes is None else len(self.meta.episodes)}"

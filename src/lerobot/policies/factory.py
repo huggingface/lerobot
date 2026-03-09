@@ -92,7 +92,7 @@ def _apply_pipeline_step_overrides(
                 setattr(step, attr_name, attr_value)
             used_override_keys.add(override_key)
 
-    unused = [k for k in overrides.keys() if k not in used_override_keys]
+    unused = [k for k in overrides if k not in used_override_keys]
     if unused:
         available = []
         for step in pipeline.steps:

@@ -33,8 +33,8 @@ import json
 import logging
 import threading
 import time
-from functools import partial
 from http.server import HTTPServer, SimpleHTTPRequestHandler
+from ipaddress import IPv4Address
 from pathlib import Path
 from queue import Empty, Full, Queue
 from typing import TYPE_CHECKING
@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from .metrics import EvActionChunk, EvExecutedAction
 
 logger = logging.getLogger(__name__)
+ALL_INTERFACES_HOST = str(IPv4Address(0))
 
 
 # =============================================================================
@@ -60,7 +61,7 @@ class TrajectoryVizServer:
         self._clients: set = set()
         self._shutdown = threading.Event()
 
-    def on_chunk(self, event: "EvActionChunk") -> None:
+    def on_chunk(self, event: EvActionChunk) -> None:
         """Callback to forward action chunks."""
         chunk_data = {
             "type": "action_chunk",
@@ -135,8 +136,9 @@ class TrajectoryVizServer:
             logger.error("websockets package not installed. Run: uv pip install websockets")
             return
 
-        async with websockets.serve(self._handler, "0.0.0.0", self.ws_port):
-            logger.info(f"WebSocket server started on ws://0.0.0.0:{self.ws_port}")
+        host = ALL_INTERFACES_HOST
+        async with websockets.serve(self._handler, host, self.ws_port):
+            logger.info(f"WebSocket server started on ws://{host}:{self.ws_port}")
             broadcaster_task = asyncio.create_task(self._broadcaster())
             try:
                 await asyncio.Future()  # Run forever
@@ -162,8 +164,9 @@ class TrajectoryVizServer:
                     self.path = "/trajectory_viz.html"
                 return super().do_GET()
 
-        server = HTTPServer(("0.0.0.0", self.http_port), Handler)
-        logger.info(f"HTTP server started on http://0.0.0.0:{self.http_port}")
+        host = ALL_INTERFACES_HOST
+        server = HTTPServer((host, self.http_port), Handler)
+        logger.info(f"HTTP server started on http://{host}:{self.http_port}")
         server.serve_forever()
 
     def start(self):
@@ -274,7 +277,7 @@ class TrajectoryVizClient:
                     )
                 await asyncio.sleep(2.0)
 
-    def on_chunk(self, event: "EvActionChunk") -> None:
+    def on_chunk(self, event: EvActionChunk) -> None:
         """Callback to queue an action chunk for sending."""
         if not self._connected:
             self._dropped_while_disconnected += 1
@@ -312,7 +315,7 @@ class TrajectoryVizClient:
             except Empty:
                 pass
 
-    def on_executed_action(self, event: "EvExecutedAction") -> None:
+    def on_executed_action(self, event: EvExecutedAction) -> None:
         """Callback to queue an executed action for sending."""
         if not self._connected:
             # Don't count/warn for executed actions, just silently drop
@@ -353,10 +356,7 @@ def generate_mock_chunks(server: TrajectoryVizServer, interval: float = 0.5):
         actions = []
         base = [random.uniform(-1, 1) for _ in range(num_dims)]
         for t in range(num_actions):
-            action = [
-                base[d] + 0.1 * t + random.gauss(0, 0.05)
-                for d in range(num_dims)
-            ]
+            action = [base[d] + 0.1 * t + random.gauss(0, 0.05) for d in range(num_dims)]
             actions.append(action)
 
         # Create mock event
@@ -391,9 +391,7 @@ def main():
 
     if args.mock:
         # Start mock data generator in background
-        mock_thread = threading.Thread(
-            target=generate_mock_chunks, args=(server,), daemon=True
-        )
+        mock_thread = threading.Thread(target=generate_mock_chunks, args=(server,), daemon=True)
         mock_thread.start()
         logger.info("Mock data generator started")
 

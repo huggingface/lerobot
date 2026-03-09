@@ -3,6 +3,7 @@ from typing import Any
 import cv2  # type: ignore
 import numpy as np
 
+
 def _is_uint8_hwc3_image(x: Any) -> bool:
     if not isinstance(x, np.ndarray):
         return False
@@ -50,6 +51,7 @@ def encode_images_for_transport(
         return {"__lerobot_image_encoding__": "jpeg", "quality": int(jpeg_quality), "data": payload}
 
     return _encode_any(observation), stats
+
 
 def decode_images_from_transport(observation: Any) -> tuple[Any, dict[str, int]]:
     """Recursively decode JPEG-marked images back into uint8 HWC3 RGB numpy arrays."""

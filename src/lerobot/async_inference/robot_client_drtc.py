@@ -3,14 +3,14 @@ import pickle  # nosec
 import threading
 import time
 from collections import deque
-from sortedcontainers import SortedDict
 from contextlib import suppress
 from dataclasses import asdict, dataclass
 from queue import Empty, Full, Queue
 from typing import Any
 
-import numpy as np
 import grpc
+import numpy as np
+from sortedcontainers import SortedDict
 
 from lerobot.robots.utils import make_robot_from_config
 from lerobot.transport import (
@@ -30,18 +30,25 @@ from .helpers import (
     map_robot_keys_to_lerobot_features,
     visualize_action_queue_size,
 )
+from .lww_register import LWWReader, LWWRegister
 from .utils.action_filter import (
     ActionFilter,
     ButterworthFilter,
     FilterContext,
     NoFilter,
 )
+from .utils.compression import encode_images_for_transport
 from .utils.latency_estimation import make_latency_estimator
 from .utils.metrics import DiagnosticMetrics, EvExecutedAction, ExperimentMetricsWriter, Metrics
-from .utils.simulation import DisconnectSimulator, DropSimulator, DuplicateSimulator, MockRobot, ReorderSimulator
+from .utils.simulation import (
+    DisconnectSimulator,
+    DropSimulator,
+    DuplicateSimulator,
+    MockRobot,
+    ReorderSimulator,
+)
 from .utils.trajectory_viz import TrajectoryVizClient
-from .utils.compression import encode_images_for_transport
-from .lww_register import LWWReader, LWWRegister
+
 
 @dataclass
 class ScheduledAction:
@@ -229,8 +236,7 @@ class ActionSchedule:
         # Single summary log instead of per-action logs (saves ~20ms for 23 log calls)
         if logger and stale_count:
             logger.debug(
-                f"Merge stats: {stale_count} stale, "
-                f"{inserted_count} inserted, {updated_count} updated"
+                f"Merge stats: {stale_count} stale, {inserted_count} inserted, {updated_count} updated"
             )
 
         overlap_count = len(l2_distances)
@@ -246,6 +252,7 @@ class ActionSchedule:
     def clear(self) -> None:
         """Clear all scheduled actions."""
         self._schedule.clear()
+
 
 @dataclass
 class ObservationRequest:
@@ -286,6 +293,7 @@ class ReceivedActionChunk:
     server_obs_received_ts: float | None = None
     server_action_sent_ts: float | None = None
     action_received_ts: float | None = None
+
 
 class RobotClientDrtc:
     prefix = "robot_client_drtc"
@@ -534,7 +542,7 @@ class RobotClientDrtc:
 
     def signal_stop(self) -> None:
         """Signal the client to stop without disconnecting the robot.
-        
+
         Use this when you want to stop the control loop but keep the robot
         and server connection alive for subsequent experiments.
         """
@@ -553,6 +561,7 @@ class RobotClientDrtc:
                 self._metrics.experiment.flush(self.config.metrics_path)
             except Exception as e:
                 import traceback as _tb
+
                 self.logger.error(f"Failed to flush experiment metrics: {e}")
                 _tb.print_exc()
 
@@ -693,9 +702,7 @@ class RobotClientDrtc:
 
                 # Encode images for transport
                 t_encode_start = time.perf_counter()
-                encoded_observation, _ = encode_images_for_transport(
-                    raw_observation, jpeg_quality=60
-                )
+                encoded_observation, _ = encode_images_for_transport(raw_observation, jpeg_quality=60)
                 t_encode_done = time.perf_counter()
                 self._metrics.diagnostic.timing_s("obs_encode_ms", t_encode_done - t_encode_start)
 
@@ -907,7 +914,7 @@ class RobotClientDrtc:
         actions = np.frombuffer(dense.actions_f32, dtype=np.float32)
         if actions.size != num_actions * action_dim:
             raise ValueError(
-                f"ActionsDense buffer size mismatch: {actions.size} != {num_actions*action_dim}"
+                f"ActionsDense buffer size mismatch: {actions.size} != {num_actions * action_dim}"
             )
         actions = actions.reshape(num_actions, action_dim)
         t_deser_done = time.perf_counter()
@@ -1098,10 +1105,9 @@ class RobotClientDrtc:
             latency_steps = self.latency_estimator.estimate_steps
             epsilon = self.config.epsilon
             s_min = self.config.s_min
-            H = self.config.actions_per_chunk
+            chunk_len = self.config.actions_per_chunk
 
-
-            trigger_threshold = H - s_min
+            trigger_threshold = chunk_len - s_min
             if self.config.cooldown_enabled:
                 should_trigger = schedule_size <= trigger_threshold and self.obs_cooldown == 0
             else:
@@ -1123,7 +1129,7 @@ class RobotClientDrtc:
                     # - Soft mask region: [d, overlap_end) with decaying weight
                     d = int(latency_steps)
                     s = max(s_min, d)  # Effective execution horizon
-                    overlap_end = H - s  # Where fresh region starts
+                    overlap_end = chunk_len - s  # Where fresh region starts
 
                     # Get masking spans from schedule (handles multi-chunk prefixes)
                     # Returns list of (src_step, start_idx, end_idx) for server cache lookup
@@ -1154,7 +1160,8 @@ class RobotClientDrtc:
 
                 # Publish newest request (monotone w.r.t. control_step t)
                 _, obs_accepted = self._obs_request_reg.update_if_newer(
-                    control_step=request.control_step, value=request,
+                    control_step=request.control_step,
+                    value=request,
                 )
 
                 if self._metrics.experiment is not None:
@@ -1183,7 +1190,6 @@ class RobotClientDrtc:
             state, _, is_new = self._action_reader.read_if_newer()
             chunk = state.value
             if is_new and chunk is not None:
-
                 current_step = self.current_action_step
                 latency_steps = self.latency_estimator.estimate_steps
 

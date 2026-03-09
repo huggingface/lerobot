@@ -5,8 +5,8 @@ for all causality relationships. See robot_client_drtc.py for the full
 causality model documentation.
 """
 
-import pytest
 from lerobot.async_inference.lww_register import LWWCursor, LWWRegister, LWWState
+
 
 def test_lww_state_idempotent() -> None:
     s = LWWState(control_step=3, value="x")

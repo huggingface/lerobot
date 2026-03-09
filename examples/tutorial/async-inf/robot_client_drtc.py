@@ -161,14 +161,12 @@ def main() -> None:
         latency_alpha=0.125,  # Smoothing factor for RTT mean
         latency_beta=0.25,  # Smoothing factor for RTT deviation
         latency_k=2.0,  # Scaling factor for deviation (K=1 for faster recovery)
-        
         # DRTC trajectory smoothing filter
         action_filter_mode="butterworth",
         action_filter_past_buffer_size=10,
         action_filter_butterworth_cutoff=3.0,  # Hz - passes motion, attenuates jitter
-        action_filter_butterworth_order=2,       # Good balance of sharpness vs phase lag
-        action_filter_gain=1.4,                  # Slight boost to compensate attenuation
-        
+        action_filter_butterworth_order=2,  # Good balance of sharpness vs phase lag
+        action_filter_gain=1.4,  # Slight boost to compensate attenuation
         # Debug: visualize action queue size after stopping
         debug_visualize_queue_size=False,
         # Diagnostics (helpful to distinguish model stutter vs timing/latency jitter)
@@ -194,7 +192,7 @@ def main() -> None:
         num_flow_matching_steps=None,  # Use policy default
         rtc_max_guidance_weight=None,  # Auto (Beta = n)
         # Experiment metrics
-        metrics_path="results/jitter_analysis.csv"
+        metrics_path="results/jitter_analysis.csv",
     )
 
     # -------------------------------------------------------------------------
@@ -242,4 +240,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

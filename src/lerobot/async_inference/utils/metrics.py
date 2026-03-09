@@ -29,7 +29,7 @@ import logging
 import threading
 import time
 from collections import defaultdict, deque
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from queue import Empty, Full, Queue
@@ -379,10 +379,7 @@ class ExperimentMetricsWriter:
             src_control_step: The control step t that produced this action.
             chunk_start_step: The start step of the source chunk.
         """
-        if isinstance(action, np.ndarray):
-            action_list = action.tolist()
-        else:
-            action_list = list(action)
+        action_list = action.tolist() if isinstance(action, np.ndarray) else list(action)
 
         executed = ExecutedAction(
             step=step,
@@ -444,30 +441,18 @@ class ExperimentMetricsWriter:
             "stall": tick.stall,
             "obs_triggered": tick.obs_triggered,
             "action_received": tick.action_received,
-            "measured_latency_ms": tick.measured_latency_ms
-            if tick.measured_latency_ms is not None
-            else "",
-            "obs_sent_ts": tick.obs_sent_ts
-            if tick.obs_sent_ts is not None
-            else "",
+            "measured_latency_ms": tick.measured_latency_ms if tick.measured_latency_ms is not None else "",
+            "obs_sent_ts": tick.obs_sent_ts if tick.obs_sent_ts is not None else "",
             "server_obs_received_ts": tick.server_obs_received_ts
             if tick.server_obs_received_ts is not None
             else "",
             "server_action_sent_ts": tick.server_action_sent_ts
             if tick.server_action_sent_ts is not None
             else "",
-            "action_received_ts": tick.action_received_ts
-            if tick.action_received_ts is not None
-            else "",
-            "chunk_overlap_count": tick.chunk_overlap_count
-            if tick.chunk_overlap_count is not None
-            else "",
-            "chunk_mean_l2": tick.chunk_mean_l2
-            if tick.chunk_mean_l2 is not None
-            else "",
-            "chunk_max_l2": tick.chunk_max_l2
-            if tick.chunk_max_l2 is not None
-            else "",
+            "action_received_ts": tick.action_received_ts if tick.action_received_ts is not None else "",
+            "chunk_overlap_count": tick.chunk_overlap_count if tick.chunk_overlap_count is not None else "",
+            "chunk_mean_l2": tick.chunk_mean_l2 if tick.chunk_mean_l2 is not None else "",
+            "chunk_max_l2": tick.chunk_max_l2 if tick.chunk_max_l2 is not None else "",
         }
 
     def _auto_flush_ticks(self) -> None:
@@ -534,10 +519,7 @@ class ExperimentMetricsWriter:
                     }
                     for e in self._executed
                 ],
-                "sim_events": [
-                    {"event_type": ev.event_type, "t": ev.t}
-                    for ev in self._sim_events
-                ],
+                "sim_events": [{"event_type": ev.event_type, "t": ev.t} for ev in self._sim_events],
                 "register_events": [
                     {
                         "t": rev.t,
@@ -699,10 +681,8 @@ class DiagnosticMetrics:
     def timing_ms(self, name: str, ms: float) -> None:
         if not self._enabled:
             return
-        try:
+        with suppress(Full):
             self._queue.put_nowait(_EvTiming(str(name), float(ms)))
-        except Full:
-            pass
 
     def timing_s(self, name: str, seconds: float) -> None:
         self.timing_ms(name, self._ms(seconds))
@@ -710,18 +690,14 @@ class DiagnosticMetrics:
     def counter(self, name: str, inc: int = 1) -> None:
         if not self._enabled:
             return
-        try:
+        with suppress(Full):
             self._queue.put_nowait(_EvCounter(str(name), int(inc)))
-        except Full:
-            pass
 
     def set_context(self, **ctx: Any) -> None:
         if not self._enabled:
             return
-        try:
+        with suppress(Full):
             self._queue.put_nowait(_EvContext(dict(ctx)))
-        except Full:
-            pass
 
     @contextmanager
     def time_block(self, name: str):
@@ -808,7 +784,7 @@ class DiagnosticMetrics:
                 "obs_recv_ms",
                 "obs_decode_ms",
             ]
-            remaining = sorted([k for k in timings.keys() if k not in preferred])
+            remaining = sorted([k for k in timings if k not in preferred])
             keys = [k for k in preferred if k in timings] + remaining
 
             timing_part = " ".join(f"{k}(avg/max)={_format_avg_max(list(timings[k]))}" for k in keys)
@@ -824,4 +800,3 @@ class Metrics:
 
     experiment: ExperimentMetricsWriter | None = None
     diagnostic: DiagnosticMetrics | None = None
-

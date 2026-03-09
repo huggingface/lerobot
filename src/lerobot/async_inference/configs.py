@@ -14,10 +14,10 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    import torch
+    pass
 
 from lerobot.robots.config import RobotConfig
 
@@ -140,9 +140,7 @@ class RobotClientConfig:
     fps: int = field(default=DEFAULT_FPS, metadata={"help": "Frames per second"})
     min_observation_period_s: float = field(
         default=0.0,
-        metadata={
-            "help": "Minimum time (seconds) between enqueued observations. 0 disables rate limiting."
-        },
+        metadata={"help": "Minimum time (seconds) between enqueued observations. 0 disables rate limiting."},
     )
     observation_capture_period_s: float = field(
         default=0.0,
