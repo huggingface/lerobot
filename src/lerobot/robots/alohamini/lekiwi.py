@@ -35,10 +35,9 @@ from lerobot.utils.decorators import check_if_already_connected, check_if_not_co
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
 from .config_lekiwi import LeKiwiConfig
+from .lift_axis import LiftAxis, LiftAxisConfig
 
 logger = logging.getLogger(__name__)
-
-from .lift_axis import LiftAxis, LiftAxisConfig
 
 
 class LeKiwi(Robot):
@@ -464,6 +463,7 @@ class LeKiwi(Robot):
             "theta.vel": theta,
         }  # m/s and deg/s
 
+    @staticmethod
     def _raw_to_ma(raw):
         try:
             return float(raw) * 6.5
@@ -500,7 +500,7 @@ class LeKiwi(Robot):
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
         # currents protection
-        self.read_and_check_currents(limit_ma=2000, print_currents=True)
+        self.read_and_check_currents(limit_ma=2000, print_currents=False)
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
@@ -589,11 +589,14 @@ class LeKiwi(Robot):
             right_curr_raw = self.right_bus.sync_read("Present_Current", list(self.right_bus.motors.keys()))
 
         if print_currents:
-            left_line = "{" + ",".join(str(int(v * scale)) for v in left_curr_raw.values()) + "}"
-            # print(f"Left Bus currents(ma): {left_line}")
+            logger.debug(
+                "Left Bus currents(ma): {%s}", ",".join(str(int(v * scale)) for v in left_curr_raw.values())
+            )
             if right_curr_raw:
-                right_line = "{" + ",".join(str(int(v * scale)) for v in right_curr_raw.values()) + "}"
-                # print(f"Right Bus currents(ma): {right_line}")
+                logger.debug(
+                    "Right Bus currents(ma): {%s}",
+                    ",".join(str(int(v * scale)) for v in right_curr_raw.values()),
+                )
 
         tripped = None
         for name, raw in {**left_curr_raw, **right_curr_raw}.items():
@@ -619,11 +622,11 @@ class LeKiwi(Robot):
             try:
                 self.stop_base()
             except Exception:
-                pass
+                logger.exception("[Overcurrent] Failed to stop base before disconnect")
             try:
                 self.disconnect()
             except Exception as e:
-                print(f"[Overcurrent] disconnect error: {e}")
+                logger.exception("[Overcurrent] Failed to disconnect cleanly: %s", e)
             sys.exit(1)
 
         return {k: round(v * scale, 1) for k, v in {**left_curr_raw, **right_curr_raw}.items()}

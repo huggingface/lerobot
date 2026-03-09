@@ -6,7 +6,7 @@
   width="70%"
 />
 
-AlohaMini is an open-source dual-arm mobile robot with a motorized vertical lift, built on top of LeKiwi.  
+AlohaMini is an open-source dual-arm mobile robot with a motorized vertical lift, built on top of LeKiwi.
 For a smoother start, we recommend assembling a LeKiwi first to get familiar with the workflow, since many parts are shared between the two platforms.
 
 ## Hardware docs
@@ -17,28 +17,29 @@ Follow the [README](https://github.com/liyiteng/AlohaMini/tree/main). It contain
 
 ### Hardware
 
-| | LeKiwi | AlohaMini |
-|---|---|---|
-| Arms | 1 follower + 1 leader | 2 follower + 2 leader (4 ports total) |
-| Lift | None | Motorized vertical lift, 0–60 cm travel |
-| Cameras | 1 (default) | 5 cameras: 2 wrist + 3 head |
-| Mobile base | 3-wheel omni drive | 3-wheel omni drive |
-| Servos | Feetech STS3215 | Feetech STS3215 |
-| Motor control | Waveshare Bus Servo Adapter (A) | Waveshare Bus Servo Adapter (A) × 2 |
-| Compute | Raspberry Pi 5 | Raspberry Pi 5 |
-| DOF | 9 DOF | 16 DOF |
+|               | LeKiwi                          | AlohaMini                               |
+| ------------- | ------------------------------- | --------------------------------------- |
+| Arms          | 1 follower + 1 leader           | 2 follower + 2 leader (4 ports total)   |
+| Lift          | None                            | Motorized vertical lift, 0–60 cm travel |
+| Cameras       | 1 (default)                     | 5 cameras: 2 wrist + 3 head             |
+| Mobile base   | 3-wheel omni drive              | 3-wheel omni drive                      |
+| Servos        | Feetech STS3215                 | Feetech STS3215                         |
+| Motor control | Waveshare Bus Servo Adapter (A) | Waveshare Bus Servo Adapter (A) × 2     |
+| Compute       | Raspberry Pi 5                  | Raspberry Pi 5                          |
+| DOF           | 9 DOF                           | 16 DOF                                  |
 
 Motor control wiring:
+
 - Adapter 1: left follower arm + base + lift motor
 - Adapter 2: right follower arm
 
 Connection notes:
+
 - Adapter 1 and Adapter 2 both connect to the Raspberry Pi 5.
 - Leader arms connect to your PC.
 - The lift axis homes to 0 cm automatically on each startup, so no manual calibration is required.
 
 ## Software docs
-
 
 ### 1. Install LeRobot on Pi 5 and PC
 
@@ -71,11 +72,11 @@ For camera setup details (finding devices, testing streams, and troubleshooting)
 
 AlohaMini's motor ID assignment differs from LeKiwi:
 
-| Motor | ID |
-|---|---|
-| Arm joints | 1–6 |
-| Wheels | 8, 9, 10 |
-| Lift | 11 |
+| Motor      | ID       |
+| ---------- | -------- |
+| Arm joints | 1–6      |
+| Wheels     | 8, 9, 10 |
+| Lift       | 11       |
 
 **Arm motors** (ID 1–6) can be configured with the standard LeRobot command, run once per follower arm:
 
@@ -129,23 +130,23 @@ python examples/alohamini/teleoperate_bi.py \
 Keyboard controls :
 
 | Speed Mode | Linear Speed (m/s) | Rotation Speed (deg/s) |
-| --- | --- | --- |
-| Fast | 0.25 | 75 |
-| Medium | 0.2 | 60 |
-| Slow | 0.15 | 45 |
+| ---------- | ------------------ | ---------------------- |
+| Fast       | 0.25               | 75                     |
+| Medium     | 0.2                | 60                     |
+| Slow       | 0.15               | 45                     |
 
-| Key | Action |
-| --- | --- |
-| W | Move forward |
-| S | Move backward |
-| A | Turn left |
-| D | Turn right |
-| Z | Move left |
-| X | Move right |
-| U | Lift up |
-| J | Lift down |
-| R | Increase speed |
-| F | Decrease speed |
+| Key | Action         |
+| --- | -------------- |
+| W   | Move forward   |
+| S   | Move backward  |
+| A   | Turn left      |
+| D   | Turn right     |
+| Z   | Move left      |
+| X   | Move right     |
+| U   | Lift up        |
+| J   | Lift down      |
+| R   | Increase speed |
+| F   | Decrease speed |
 
 ### 7. Record a dataset
 

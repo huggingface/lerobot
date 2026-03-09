@@ -14,7 +14,6 @@ Usage:
 """
 
 import argparse
-from pathlib import Path
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import hw_to_dataset_features
@@ -75,8 +74,6 @@ def main():
     action_features = hw_to_dataset_features(robot.action_features, ACTION)
     obs_features = hw_to_dataset_features(robot.observation_features, OBS_STR)
     dataset_features = {**action_features, **obs_features}
-
-    dataset_root = Path(args.dataset.split("/")[-1])
 
     if args.resume:
         print("Resuming existing dataset:", args.dataset)

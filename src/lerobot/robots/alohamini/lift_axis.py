@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from typing import Protocol
+
+from lerobot.motors import Motor, MotorNormMode
+from lerobot.motors.feetech import OperatingMode
+
+logger = logging.getLogger(__name__)
 
 
 class BusLike(Protocol):
@@ -11,10 +17,6 @@ class BusLike(Protocol):
     def read(self, item: str, name: str) -> float: ...
     def write(self, item: str, name: str, value: float) -> None: ...
     def sync_write(self, item: str, values: dict[str, float]) -> None: ...
-
-
-from lerobot.motors import Motor, MotorNormMode
-from lerobot.motors.feetech import OperatingMode
 
 
 @dataclass
@@ -137,7 +139,8 @@ class LiftAxis:
                     print(f"[lift_axis.home] Present_Current={cur_ma} mA")  # debug
                     print(f"[lift_axis.home] Present_Position={now_tick} ticks")  # debug
 
-                except Exception:
+                except Exception as exc:
+                    logger.warning("Failed to read lift-axis current during homing: %s", exc)
                     cur_ma = 0
             if (use_current and cur_ma >= self.cfg.home_stall_current_ma) or (not moved):
                 print(f"[lift_axis.home] Stalled at current={cur_ma} mA, moved={moved}")  # debug
@@ -167,8 +170,8 @@ class LiftAxis:
             obs[f"{self.cfg.name}.vel"] = int(
                 self._bus.read("Present_Velocity", self.cfg.name, normalize=False)
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to read lift-axis velocity for observation: %s", exc)
 
     def apply_action(self, action: dict[str, float]) -> None:
         """
@@ -208,8 +211,8 @@ class LiftAxis:
                 cur_mm = self.get_height_mm()
                 if (cur_mm >= self.cfg.soft_max_mm and v > 0) or (cur_mm <= self.cfg.soft_min_mm and v < 0):
                     v = 0
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Failed to clamp lift-axis velocity by soft limits: %s", exc)
             self._bus.write("Goal_Velocity", self.cfg.name, v * self.cfg.dir_sign)
 
         # ticks = int(self._bus.read("Present_Position", self.cfg.name, normalize=False))
