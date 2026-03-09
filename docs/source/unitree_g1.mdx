@@ -34,8 +34,13 @@ python -m pip install -e .
 cd ..
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
+conda install -c conda-forge pinocchio
 python -m pip install -e '.[unitree_g1]'
 ```
+
+<Tip>
+Pinocchio must be installed from conda-forge (not pip) to include the CasADi bindings needed for arm IK.
+</Tip>
 
 ### Test the Installation (Simulation)
 
@@ -121,6 +126,7 @@ python -m pip install -e .
 cd ..
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
+conda install -c conda-forge pinocchio
 python -m pip install -e '.[unitree_g1]'
 ```
 

@@ -121,11 +121,10 @@ lekiwi = ["lerobot[feetech]", "pyzmq>=26.2.1,<28.0.0"]
 unitree_g1 = [
     "pyzmq>=26.2.1,<28.0.0",
     "onnxruntime>=1.16.0,<2.0.0",
-    "pin>=3.0.0,<4.0.0",
+    # NOTE: pinocchio (with CasADi bindings) must be installed via conda: conda install -c conda-forge pinocchio
     "meshcat>=0.3.0,<0.4.0",
     "lerobot[matplotlib-dep]",
     "lerobot[pygame-dep]",
-    "casadi>=3.6.0,<4.0.0",
     "mujoco>=3.0.0,<4.0.0",
     "loguru>=0.7.0,<0.8.0",
     "msgpack>=1.0.0,<2.0.0",
