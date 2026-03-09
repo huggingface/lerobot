@@ -121,7 +121,7 @@ lekiwi = ["lerobot[feetech]", "pyzmq>=26.2.1,<28.0.0"]
 unitree_g1 = [
     "pyzmq>=26.2.1,<28.0.0",
     "onnxruntime>=1.16.0,<2.0.0",
-    "onnx>=1.16.0",
+    "onnx>=1.16.0,<2.0.0",
     "meshcat>=0.3.0,<0.4.0",
     "lerobot[matplotlib-dep]",
     "lerobot[pygame-dep]",
