@@ -119,7 +119,6 @@ gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0,<0.15.0"]
 hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]
 lekiwi = ["lerobot[feetech]", "pyzmq>=26.2.1,<28.0.0"]
 unitree_g1 = [
-    "unitree-sdk2==1.0.1",
     "pyzmq>=26.2.1,<28.0.0",
     "onnxruntime>=1.16.0,<2.0.0",
     "pin>=3.0.0,<4.0.0",
@@ -127,6 +126,11 @@ unitree_g1 = [
     "lerobot[matplotlib-dep]",
     "lerobot[pygame-dep]",
     "casadi>=3.6.0,<4.0.0",
+    "mujoco>=3.0.0",
+    "loguru>=0.7.0",
+    "msgpack>=1.0.0",
+    "msgpack-numpy>=0.4.8",
+    "lerobot[scipy-dep]",
 ]
 reachy2 = ["reachy2_sdk>=1.0.15,<1.1.0"]
 kinematics = ["lerobot[placo-dep]"]
