@@ -120,6 +120,7 @@ from huggingface_hub import HfApi
 from huggingface_hub.errors import EntryNotFoundError, HfHubHTTPError
 from safetensors.torch import load_file
 
+from lerobot.datasets.backward_compatibility import CompatibilityError
 from lerobot.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_PARQUET_PATH,
@@ -131,6 +132,7 @@ from lerobot.datasets.utils import (
     create_branch,
     create_lerobot_dataset_card,
     flatten_dict,
+    get_repo_versions,
     get_safe_version,
     load_json,
     unflatten_dict,
@@ -455,8 +457,16 @@ def convert_dataset(
     test_branch: str | None = None,
     **card_kwargs,
 ):
-    v1 = get_safe_version(repo_id, V16)
-    v1x_dir = local_dir / V16 / repo_id
+    try:
+        v1 = get_safe_version(repo_id, V16)
+    except CompatibilityError:
+        hub_versions = get_repo_versions(repo_id)
+        v1x_versions = [v for v in hub_versions if v.major == 1]
+        if not v1x_versions:
+            raise
+        v1 = f"v{max(v1x_versions)}"
+        logging.warning(f"v1.6 not found for {repo_id}, falling back to {v1}")
+    v1x_dir = local_dir / v1 / repo_id
     v20_dir = local_dir / V20 / repo_id
     v1x_dir.mkdir(parents=True, exist_ok=True)
     v20_dir.mkdir(parents=True, exist_ok=True)
