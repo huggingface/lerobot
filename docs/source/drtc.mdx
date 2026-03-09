@@ -80,52 +80,119 @@ From your local client or robot machine, make sure you are connected to the same
   --config examples/experiments/configs/baseline.yaml
 ```
 
-## Customization (Model, Cameras, Robot)
+## API Usage
 
-Current repo defaults remain preconfigured for your existing setup:
+After getting familiar with the quick start you will likely want to interact with the DRTC client and server APIs directly. Reference implementations can be found in:
 
-- Robot type: `so101`
-- Model: `jackvial/so101_smolvla_pickplaceorangecube_e100`
-- Camera paths/format from the current SO101 setup
+- Client: `examples/tutorial/async-inf/robot_client_drtc.py`
+- Server: `src/lerobot/async_inference/policy_server_drtc.py`
 
-`robot_type` is configurable (currently supported: `so101`/`so101_follower`, `so100`/`so100_follower`).
+### Minimal Client API Usage Example
 
-### Local client path overrides
+```python
+import threading
 
-When using `examples/tutorial/async-inf/robot_client_drtc.py`, you can override settings via environment variables:
+from lerobot.async_inference.robot_client_drtc import RobotClientDrtc
+from lerobot.async_inference.configs_drtc import RobotClientDrtcConfig
+from lerobot.cameras.opencv import OpenCVCameraConfig
+from lerobot.robots.so101_follower import SO101FollowerConfig
 
-```bash
-export LEROBOT_POLICY_TYPE=smolvla
-export LEROBOT_PRETRAINED_NAME_OR_PATH=your-org/your-model
-export LEROBOT_ROBOT_TYPE=so101
-export LEROBOT_FOLLOWER_PORT=/dev/ttyACM1
-export LEROBOT_FOLLOWER_ID=your_robot_id
-export LEROBOT_CAMERA1_PATH=/dev/v4l/by-path/your-camera-1
-export LEROBOT_CAMERA2_PATH=/dev/v4l/by-path/your-camera-2
-export LEROBOT_CAMERA_WIDTH=800
-export LEROBOT_CAMERA_HEIGHT=600
-export LEROBOT_CAMERA_FPS=30
-export LEROBOT_CAMERA_FOURCC=MJPG
+camera_cfg = {
+    "camera1": OpenCVCameraConfig(
+        index_or_path="/dev/video0",
+        width=800,
+        height=600,
+        fps=30,
+        fourcc="MJPG",
+        use_threaded_async_read=True,
+        allow_stale_frames=True,
+    ),
+    "camera2": OpenCVCameraConfig(
+        index_or_path="/dev/video2",
+        width=800,
+        height=600,
+        fps=30,
+        fourcc="MJPG",
+        use_threaded_async_read=True,
+        allow_stale_frames=True,
+    ),
+}
+
+robot_cfg = SO101FollowerConfig(
+    port="/dev/ttyACM0",
+    id="so101_follower",
+    cameras=camera_cfg,
+)
+
+client_cfg = RobotClientDrtcConfig(
+    robot=robot_cfg,
+    server_address="127.0.0.1:8080",
+    policy_device="cuda",
+    policy_type="smolvla",
+    pretrained_name_or_path="jackvial/so101_smolvla_pickplaceorangecube_e100",
+    actions_per_chunk=50,
+    fps=60,
+    s_min=15,
+    epsilon=2,
+    rtc_sigma_d=0.2,
+    rtc_full_trajectory_alignment=False,
+    num_flow_matching_steps=None,
+    action_filter_mode="butterworth",
+    action_filter_past_buffer_size=10,
+    action_filter_butterworth_cutoff=3.0,
+    action_filter_butterworth_order=2,
+    action_filter_gain=1.4,
+    metrics_diagnostic_enabled=True,
+    control_use_deadline_clock=True,
+    obs_fallback_on_failure=True,
+    obs_fallback_max_age_s=2.0,
+    trajectory_viz_enabled=True,
+    trajectory_viz_ws_url="ws://localhost:8089",
+)
+
+client = RobotClientDrtc(client_cfg)
+
+if client.start():
+    observation_thread = threading.Thread(
+        target=client.observation_sender,
+        name="observation_sender",
+        daemon=True,
+    )
+    action_thread = threading.Thread(
+        target=client.action_receiver,
+        name="action_receiver",
+        daemon=True,
+    )
+
+    observation_thread.start()
+    action_thread.start()
+
+    try:
+        client.control_loop(
+            "Pick up the orange cube and place it on the black X marker with the white background"
+        )
+    finally:
+        client.stop()
+        observation_thread.join(timeout=2.0)
+        action_thread.join(timeout=2.0)
 ```
 
-### Experiment path overrides (YAML)
+### Minimal Server API Usage Example
 
-When running via `scripts/run_drtc_experiment_with_remote_server.sh`, set values in your experiment config YAML (loaded by `examples/experiments/run_drtc_experiment.py`):
+```python
+from lerobot.async_inference.configs_drtc import PolicyServerDrtcConfig
+from lerobot.async_inference.policy_server_drtc import serve_drtc
 
-```yaml
-robot_type: so101
-robot_port: /dev/ttyACM0
-robot_id: so101_follower_2026_01_03
-
-policy_type: smolvla
-pretrained_name_or_path: jackvial/so101_smolvla_pickplaceorangecube_e100
-
-camera1_path: /dev/v4l/by-path/platform-xhci-hcd.1-usb-0:2:1.0-video-index0
-camera2_path: /dev/v4l/by-path/platform-xhci-hcd.0-usb-0:2:1.0-video-index0
-camera_width: 800
-camera_height: 600
-camera_fps: 30
-camera_fourcc: MJPG
-camera_use_threaded_async_read: true
-camera_allow_stale_frames: true
+serve_drtc(
+    PolicyServerDrtcConfig(
+        host="0.0.0.0",
+        port=8080,
+        fps=30,
+        warmup_passes=2,
+        trajectory_viz_enabled=True,
+        trajectory_viz_http_port=8088,
+        trajectory_viz_ws_port=8089,
+    )
+)
 ```
+
