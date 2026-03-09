@@ -29,6 +29,7 @@ from .config_so_leader import SOLeaderTeleopConfig
 
 logger = logging.getLogger(__name__)
 
+
 class SOLeader(Teleoperator):
     """Generic SO leader base for SO-100/101/10X teleoperators."""
 
@@ -38,7 +39,6 @@ class SOLeader(Teleoperator):
     def __init__(self, config: SOLeaderTeleopConfig):
         super().__init__(config)
         self.config = config
-        self._last_emitted_action: dict[str, float] | None = None
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
         self.bus = FeetechMotorsBus(
             port=self.config.port,
