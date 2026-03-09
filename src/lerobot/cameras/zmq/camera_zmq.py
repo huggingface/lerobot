@@ -181,7 +181,7 @@ class ZMQCamera(Camera):
         try:
             message = self.socket.recv_string()
         except Exception as e:
-            # Check for ZMQ timeout (EAGAIN/Again) without requiring global zmq import
+            # zmq is lazy-imported in connect(), so check by name to avoid a top-level import
             if type(e).__name__ == "Again":
                 raise TimeoutError(f"{self} timeout after {self.timeout_ms}ms") from e
             raise

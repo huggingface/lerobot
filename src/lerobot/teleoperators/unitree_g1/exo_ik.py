@@ -26,8 +26,8 @@ from typing import Any
 
 import numpy as np
 
+from lerobot.robots.unitree_g1.g1_kinematics import G1_29_ArmIK
 from lerobot.robots.unitree_g1.g1_utils import G1_29_JointArmIndex
-from lerobot.robots.unitree_g1.robot_kinematic_processor import G1_29_ArmIK
 
 from .exo_calib import JOINTS
 

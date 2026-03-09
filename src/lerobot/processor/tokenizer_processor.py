@@ -336,7 +336,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
     Requires the `transformers` library to be installed.
 
     Attributes:
-        tokenizer_name: The name of a pretrained processor from the Hugging Face Hub (e.g., "physical-intelligence/fast").
+        tokenizer_name: The name of a pretrained processor from the Hugging Face Hub (e.g., "lerobot/fast-action-tokenizer").
         tokenizer: A pre-initialized processor/tokenizer object. If provided, `tokenizer_name` is ignored.
         trust_remote_code: Whether to trust remote code when loading the tokenizer (required for some tokenizers).
         action_tokenizer: The internal tokenizer/processor instance, loaded during initialization.

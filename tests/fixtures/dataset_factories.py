@@ -222,7 +222,7 @@ def tasks_factory():
     def _create_tasks(total_tasks: int = 3) -> pd.DataFrame:
         ids = list(range(total_tasks))
         tasks = [f"Perform action {i}." for i in ids]
-        df = pd.DataFrame({"task_index": ids}, index=tasks)
+        df = pd.DataFrame({"task_index": ids}, index=pd.Index(tasks, name="task"))
         return df
 
     return _create_tasks
