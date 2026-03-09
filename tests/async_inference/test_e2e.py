@@ -154,14 +154,7 @@ def test_async_inference_e2e(monkeypatch):
         if args:
             for timed_action in args[0]:  # args[0] is the list of TimedAction
                 action_tensor = timed_action.get_action()
-                action_device = getattr(action_tensor, "device", "cpu")
-                if hasattr(action_device, "type"):
-                    device_type = action_device.type
-                elif isinstance(action_device, str):
-                    device_type = action_device
-                else:
-                    device_type = "cpu"
-                if device_type != "cpu":
+                if action_tensor.device.type != "cpu":
                     action_chunks_received["actions_on_cpu"] = False
         return original_aggregate(*args, **kwargs)
 
