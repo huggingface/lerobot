@@ -16,12 +16,12 @@
 
 import abc
 from dataclasses import dataclass
-from enum import Enum, StrEnum
+from enum import Enum
 
 import draccus  # type: ignore  # TODO: add type stubs for draccus
 
 
-class ColorMode(StrEnum):
+class ColorMode(str, Enum):
     RGB = "rgb"
     BGR = "bgr"
 
