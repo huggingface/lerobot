@@ -74,7 +74,7 @@ _peft_available = is_package_available("peft")
 _scipy_available = is_package_available("scipy")
 _reachy2_sdk_available = is_package_available("reachy2_sdk")
 _can_available = is_package_available("python-can", "can")
-_unitree_sdk_available = is_package_available("unitree-sdk2", "unitree_sdk2py")
+_unitree_sdk_available = is_package_available("unitree-sdk2py", "unitree_sdk2py")
 _pygame_available = is_package_available("pygame")
 
 
