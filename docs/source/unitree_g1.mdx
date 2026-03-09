@@ -26,6 +26,7 @@ cmake --build . --target install
 export CYCLONEDDS_HOME=$(pwd)/../install
 cd ../..
 pip install -e .
+cd ..
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
 pip install -e '.[unitree_g1]'
@@ -82,6 +83,7 @@ cmake --build . --target install
 export CYCLONEDDS_HOME=$(pwd)/../install
 cd ../..
 pip install -e .
+cd ..
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
 pip install -e '.[unitree_g1]'
