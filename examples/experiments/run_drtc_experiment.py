@@ -43,11 +43,11 @@ from lerobot.robots.so_follower.config_so_follower import SO100FollowerConfig, S
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_SERVER_ADDRESS = "192.168.4.37:8080"
+DEFAULT_SERVER_ADDRESS = "192.168.4.38:8080"
 DEFAULT_ROBOT_PORT = "/dev/ttyACM0"
 DEFAULT_ROBOT_ID = "so101_follower_2026_01_03"
-DEFAULT_CAMERA1_PATH = "/dev/video2"
-DEFAULT_CAMERA2_PATH = "/dev/video6"
+DEFAULT_CAMERA1_PATH = "/dev/video0"
+DEFAULT_CAMERA2_PATH = "/dev/video4"
 DEFAULT_CAMERA_WIDTH = 800
 DEFAULT_CAMERA_HEIGHT = 600
 DEFAULT_CAMERA_FPS = 30
