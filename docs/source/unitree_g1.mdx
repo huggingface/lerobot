@@ -14,17 +14,13 @@ The Unitree G1 humanoid is now supported in LeRobot! You can teleoperate, train 
 
 ### Install the Unitree SDK
 
+Follow the [unitree_sdk2_python installation guide](https://github.com/unitreerobotics/unitree_sdk2_python#installation). Tested with `unitree_sdk2py==1.0.1` and `cyclonedds==0.10.2`:
+
 ```bash
 conda create -y -n lerobot python=3.12
 conda activate lerobot
 git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
 cd unitree_sdk2_python
-git clone https://github.com/eclipse-cyclonedds/cyclonedds -b releases/0.10.x
-cd cyclonedds && mkdir -p build install && cd build
-cmake .. -DCMAKE_INSTALL_PREFIX=../install
-cmake --build . --target install
-export CYCLONEDDS_HOME=$(pwd)/../install
-cd ../..
 python -m pip install -e .
 ```
 
@@ -113,17 +109,13 @@ ping -c 3 8.8.8.8
 
 ### Install the Unitree SDK on the G1
 
+Follow the [unitree_sdk2_python installation guide](https://github.com/unitreerobotics/unitree_sdk2_python#installation):
+
 ```bash
 conda create -y -n lerobot python=3.12
 conda activate lerobot
 git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
 cd unitree_sdk2_python
-git clone https://github.com/eclipse-cyclonedds/cyclonedds -b releases/0.10.x
-cd cyclonedds && mkdir build install && cd build
-cmake .. -DCMAKE_INSTALL_PREFIX=../install
-cmake --build . --target install
-export CYCLONEDDS_HOME=$(pwd)/../install
-cd ../..
 python -m pip install -e .
 ```
 
