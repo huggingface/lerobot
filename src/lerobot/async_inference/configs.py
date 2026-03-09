@@ -14,10 +14,8 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
 
-if TYPE_CHECKING:
-    pass
+import torch
 
 from lerobot.robots.config import RobotConfig
 
@@ -36,7 +34,7 @@ AGGREGATE_FUNCTIONS = {
 }
 
 
-def get_aggregate_function(name: str) -> Callable[[Any, Any], Any]:
+def get_aggregate_function(name: str) -> Callable[[torch.Tensor, torch.Tensor], torch.Tensor]:
     """Get aggregate function by name from registry."""
     if name not in AGGREGATE_FUNCTIONS:
         available = list(AGGREGATE_FUNCTIONS.keys())
@@ -138,16 +136,6 @@ class RobotClientConfig:
     # Control behavior configuration
     chunk_size_threshold: float = field(default=0.5, metadata={"help": "Threshold for chunk size control"})
     fps: int = field(default=DEFAULT_FPS, metadata={"help": "Frames per second"})
-    min_observation_period_s: float = field(
-        default=0.0,
-        metadata={"help": "Minimum time (seconds) between enqueued observations. 0 disables rate limiting."},
-    )
-    observation_capture_period_s: float = field(
-        default=0.0,
-        metadata={
-            "help": "When >0, capture observations in a background thread at this period (seconds) using a non-blocking robot I/O lock. 0 captures synchronously in the control loop."
-        },
-    )
 
     # Aggregate function configuration (CLI-compatible)
     aggregate_fn_name: str = field(
@@ -158,12 +146,6 @@ class RobotClientConfig:
     # Debug configuration
     debug_visualize_queue_size: bool = field(
         default=False, metadata={"help": "Visualize the action queue size"}
-    )
-
-    # Experiment metrics (CSV export)
-    experiment_metrics_path: str | None = field(
-        default=None,
-        metadata={"help": "Path to write experiment metrics CSV (None = disabled)"},
     )
 
     @property
@@ -197,16 +179,6 @@ class RobotClientConfig:
         if self.actions_per_chunk <= 0:
             raise ValueError(f"actions_per_chunk must be positive, got {self.actions_per_chunk}")
 
-        if self.min_observation_period_s < 0:
-            raise ValueError(
-                f"min_observation_period_s must be non-negative, got {self.min_observation_period_s}"
-            )
-
-        if self.observation_capture_period_s < 0:
-            raise ValueError(
-                f"observation_capture_period_s must be non-negative, got {self.observation_capture_period_s}"
-            )
-
         self.aggregate_fn = get_aggregate_function(self.aggregate_fn_name)
 
     @classmethod
@@ -227,7 +199,5 @@ class RobotClientConfig:
             "actions_per_chunk": self.actions_per_chunk,
             "task": self.task,
             "debug_visualize_queue_size": self.debug_visualize_queue_size,
-            "aggregate_fn_name": self.aggregate_fn_name,
-            "min_observation_period_s": self.min_observation_period_s,
-            "observation_capture_period_s": self.observation_capture_period_s,
+            "aggregate_fn_name": self.aggregate_fn_name
         }
