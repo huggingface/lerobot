@@ -59,6 +59,8 @@
     title: Use Async Inference
   - local: rtc
     title: Real-Time Chunking (RTC)
+  - local: drtc
+    title: Distributed Real-Time Chunking (DRTC)
   title: "Inference"
 - sections:
   - local: envhub

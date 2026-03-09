@@ -1,0 +1,129 @@
+# Distributed Real-Time Chunking (DRTC)
+
+[Distributed Real-Time Chunking](https://jackvial.com/posts/distributed-real-time-chunking.html) (DRTC) extends [RTC](./rtc.mdx) to a distributed client-server setup. You can think of it as combining [RTC](./rtc.mdx)'s in-painting with [async inference](./async.mdx)'s networked client-server pattern.
+
+## Supported models
+[SmolVLA](./smolvla.mdx), [pi0](./pi0.mdx) and any other flow matching models should work.
+
+## Quick Start
+
+DRTC assumes you already have a working LeRobot environment. If not, follow the main [Installation Guide](./installation), then install the extras used by the default DRTC scripts:
+
+```bash
+uv pip install -e ".[smolvla,async,feetech,scipy-dep]"
+```
+
+The examples below are currently set up around the default SO101 hardware profile in this repo. Configure your policy type and pretrained weight path in `examples/experiments/configs/baseline.yaml` before running.
+
+### Client + Server on Same Node
+
+If your policy server and robot client are running on the same machine, the simplest entrypoint is:
+
+```bash
+./scripts/run_drtc_experiment.sh \
+  --config examples/experiments/configs/baseline.yaml
+```
+
+This starts the DRTC policy server locally and then runs the experiment client against it. Add `--viz` if you also want the trajectory visualization server on `http://localhost:8088`.
+
+### Remote Server With Local Client
+
+Use this setup when you want the policy server on a remote GPU machine while keeping the robot client on your local robot computer.
+
+> Note: The workflow below uses Prime Intellect for cloud GPUs and Tailscale for secure networking because that is one setup currently documented in this repo. They are not required. Any comparable cloud GPU provider and VPN or private network setup should work as well.
+
+#### Prerequisites
+
+- A Prime Intellect account: https://www.primeintellect.ai/
+- A local `~/.prime/config.json` containing your API key and SSH key path for `./scripts/provision_prime_lerobot.sh`
+- A Tailscale network shared by the local client and remote server: https://tailscale.com/
+
+#### 1. Provision a remote policy server
+
+Run from the repository root:
+
+```bash
+./scripts/provision_prime_lerobot.sh
+```
+
+This script searches for available GPUs with the required CUDA image, lets you choose one, provisions the instance, clones the repo, installs dependencies, sets up Tailscale, and prints:
+
+- SSH connection details (`user@host` and port)
+- The Tailscale domain for the remote machine
+
+To resume setup on an existing pod (for example, after a network interruption):
+
+```bash
+./scripts/provision_prime_lerobot.sh --pod-id <POD_ID>
+```
+
+#### 2. Start the policy server on the remote machine
+
+SSH to the provisioned machine using the connection details printed at the end of provisioning, then start the policy server:
+
+```bash
+ssh -i <SSH_KEY_PATH> -p <SSH_PORT> <SSH_USER>@<SSH_HOST>
+cd /workspace/drtc
+./scripts/start_drtc_server.sh
+```
+
+Leave this process running while the local client connects.
+
+#### 3. Start the local client against the remote server
+
+From your local client or robot machine, make sure you are connected to the same Tailscale network as the remote server, then run:
+
+```bash
+./scripts/run_drtc_experiment_with_remote_server.sh \
+  --remote-server-host <TAILSCALE_DOMAIN> \
+  --config examples/experiments/configs/baseline.yaml
+```
+
+## Customization (Model, Cameras, Robot)
+
+Current repo defaults remain preconfigured for your existing setup:
+- Robot type: `so101`
+- Model: `jackvial/so101_smolvla_pickplaceorangecube_e100`
+- Camera paths/format from the current SO101 setup
+
+`robot_type` is configurable (currently supported: `so101`/`so101_follower`, `so100`/`so100_follower`).
+
+### Local client path overrides
+
+When using `examples/tutorial/async-inf/robot_client_drtc.py`, you can override settings via environment variables:
+
+```bash
+export LEROBOT_POLICY_TYPE=smolvla
+export LEROBOT_PRETRAINED_NAME_OR_PATH=your-org/your-model
+export LEROBOT_ROBOT_TYPE=so101
+export LEROBOT_FOLLOWER_PORT=/dev/ttyACM1
+export LEROBOT_FOLLOWER_ID=your_robot_id
+export LEROBOT_CAMERA1_PATH=/dev/v4l/by-path/your-camera-1
+export LEROBOT_CAMERA2_PATH=/dev/v4l/by-path/your-camera-2
+export LEROBOT_CAMERA_WIDTH=800
+export LEROBOT_CAMERA_HEIGHT=600
+export LEROBOT_CAMERA_FPS=30
+export LEROBOT_CAMERA_FOURCC=MJPG
+```
+
+### Experiment path overrides (YAML)
+
+When running via `scripts/run_drtc_experiment_with_remote_server.sh`, set values in your experiment config YAML (loaded by `examples/experiments/run_drtc_experiment.py`):
+
+```yaml
+robot_type: so101
+robot_port: /dev/ttyACM0
+robot_id: so101_follower_2026_01_03
+
+policy_type: smolvla
+pretrained_name_or_path: jackvial/so101_smolvla_pickplaceorangecube_e100
+
+camera1_path: /dev/v4l/by-path/platform-xhci-hcd.1-usb-0:2:1.0-video-index0
+camera2_path: /dev/v4l/by-path/platform-xhci-hcd.0-usb-0:2:1.0-video-index0
+camera_width: 800
+camera_height: 600
+camera_fps: 30
+camera_fourcc: MJPG
+camera_use_threaded_async_read: true
+camera_allow_stale_frames: true
+```
