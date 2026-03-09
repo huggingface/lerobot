@@ -27,8 +27,8 @@ from PIL import Image
 from transformers import CLIPModel, CLIPProcessor
 
 from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.policies.sarm.configuration_sarm import SARMConfig
-from lerobot.policies.sarm.sarm_utils import (
+from lerobot.rewards.sarm.configuration_sarm import SARMConfig
+from lerobot.rewards.sarm.sarm_utils import (
     apply_rewind_augmentation,
     compute_absolute_indices,
     find_stage_and_tau,

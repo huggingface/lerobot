@@ -19,12 +19,13 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
 from lerobot.optim.optimizers import AdamWConfig, OptimizerConfig
 from lerobot.optim.schedulers import LRSchedulerConfig
+from lerobot.rewards.base import RewardModelConfig
 from lerobot.utils.constants import OBS_IMAGE
 
 
 @PreTrainedConfig.register_subclass(name="reward_classifier")
 @dataclass
-class RewardClassifierConfig(PreTrainedConfig):
+class RewardClassifierConfig(RewardModelConfig):
     """Configuration for the Reward Classifier model."""
 
     name: str = "reward_classifier"
@@ -45,18 +46,6 @@ class RewardClassifierConfig(PreTrainedConfig):
             "VISUAL": NormalizationMode.MEAN_STD,
         }
     )
-
-    @property
-    def observation_delta_indices(self) -> list | None:
-        return None
-
-    @property
-    def action_delta_indices(self) -> list | None:
-        return None
-
-    @property
-    def reward_delta_indices(self) -> list | None:
-        return None
 
     def get_optimizer_preset(self) -> OptimizerConfig:
         return AdamWConfig(

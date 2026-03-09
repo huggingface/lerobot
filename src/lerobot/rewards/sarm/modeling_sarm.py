@@ -34,12 +34,12 @@ import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.sarm.configuration_sarm import SARMConfig
-from lerobot.policies.sarm.sarm_utils import (
+from lerobot.rewards.sarm.configuration_sarm import SARMConfig
+from lerobot.rewards.sarm.sarm_utils import (
     normalize_stage_tau,
     pad_state_to_max_dim,
 )
+from lerobot.rewards.base import RewardModel
 from lerobot.utils.constants import OBS_STR
 
 
@@ -352,7 +352,7 @@ def gen_stage_emb(num_classes: int, targets: torch.Tensor) -> torch.Tensor:
     return stage_onehot
 
 
-class SARMRewardModel(PreTrainedPolicy):
+class SARMRewardModel(RewardModel):
     """
     SARM Reward Model for stage-aware task completion rewards.
 
@@ -499,7 +499,7 @@ class SARMRewardModel(PreTrainedPolicy):
             return_stages: If True, also return stage predictions
             return_confidence: If True, also return stage confidence
             head_mode: Which head to use ("sparse" or "dense")
-            frame_index: Index of the target frame to extract (default: n_obs_steps).
+            frame_index: Index of the target frame to extract (default: n_obs_steps // 2, center of bidirectional window).
 
         Returns:
             Rewards and optionally stage probs/confidence.
@@ -581,9 +581,9 @@ class SARMRewardModel(PreTrainedPolicy):
                 subtask_names=self.config.dense_subtask_names,
             )
 
-        # Default frame index is n_obs_steps (last observation frame)
+        # Default frame index is center of bidirectional window
         if frame_index is None:
-            frame_index = self.config.n_obs_steps
+            frame_index = self.config.n_obs_steps // 2
 
         # Prepare outputs (batch mode or no smoothing)
         if return_all_frames:
@@ -625,21 +625,20 @@ class SARMRewardModel(PreTrainedPolicy):
 
         return chain(self.stage_model.parameters(), self.subtask_model.parameters())
 
+    def compute_reward(self, batch: dict[str, Tensor]) -> Tensor:
+        observation = batch.get(OBS_STR, batch)
+        rewards = self.calculate_rewards(
+            text_embeddings=observation["text_features"],
+            video_embeddings=observation["video_features"],
+            state_features=observation.get("state_features"),
+            lengths=observation.get("lengths"),
+            frame_index=self.config.n_obs_steps // 2,
+        )
+        result = torch.as_tensor(rewards, dtype=torch.float32)
+        return result.to(self.device) if result.device != self.device else result
+
     def get_optim_params(self):
-        """Override to return optimizer parameters from both models."""
         return self.parameters()
-
-    def reset(self):
-        """Required by PreTrainedPolicy but not used for reward models."""
-        pass
-
-    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
-        """Required by PreTrainedPolicy but not used for reward models."""
-        raise NotImplementedError("SARM model does not predict action chunks")
-
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        """Required by PreTrainedPolicy but not used for SARM."""
-        raise NotImplementedError("SARM model does not select actions")
 
     def _train_step(
         self,

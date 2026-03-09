@@ -18,7 +18,7 @@ from typing import Any
 
 import torch
 
-from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
+from lerobot.rewards.classifier.configuration_classifier import RewardClassifierConfig
 from lerobot.processor import (
     DeviceProcessorStep,
     IdentityProcessorStep,

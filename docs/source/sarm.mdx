@@ -46,7 +46,7 @@ This ensures identical task states map to consistent progress values, even acros
 
 ## Inputs and Targets (What the new code expects)
 
-SARM is trained through its processor (`src/lerobot/policies/sarm/processor_sarm.py`), which:
+SARM is trained through its processor (`src/lerobot/rewards/sarm/processor_sarm.py`), which:
 
 - **Encodes** images and task text with CLIP (ViT-B/32) into `video_features` and `text_features`
 - **Pads/truncates** robot state into `state_features` (up to `max_state_dim`)
@@ -347,7 +347,7 @@ Use `compute_rabc_weights.py` with `--visualize-only` to visualize model predict
 <hfoption id="single_stage">
 
 ```bash
-python src/lerobot/policies/sarm/compute_rabc_weights.py \
+python src/lerobot/rewards/sarm/compute_rabc_weights.py \
   --dataset-repo-id your-username/your-dataset \
   --reward-model-path your-username/sarm-model \
   --visualize-only \
@@ -360,7 +360,7 @@ python src/lerobot/policies/sarm/compute_rabc_weights.py \
 <hfoption id="dense_only">
 
 ```bash
-python src/lerobot/policies/sarm/compute_rabc_weights.py \
+python src/lerobot/rewards/sarm/compute_rabc_weights.py \
   --dataset-repo-id your-username/your-dataset \
   --reward-model-path your-username/sarm-model \
   --visualize-only \
@@ -373,7 +373,7 @@ python src/lerobot/policies/sarm/compute_rabc_weights.py \
 <hfoption id="dual">
 
 ```bash
-python src/lerobot/policies/sarm/compute_rabc_weights.py \
+python src/lerobot/rewards/sarm/compute_rabc_weights.py \
   --dataset-repo-id your-username/your-dataset \
   --reward-model-path your-username/sarm-model \
   --visualize-only \
@@ -429,7 +429,7 @@ The weighting follows **Equations 8-9** from the paper:
 First, run the SARM model on all frames in your dataset to compute progress values:
 
 ```bash
-python src/lerobot/policies/sarm/compute_rabc_weights.py \
+python src/lerobot/rewards/sarm/compute_rabc_weights.py \
   --dataset-repo-id your-username/your-dataset \
   --reward-model-path your-username/sarm-model \
   --head-mode sparse \

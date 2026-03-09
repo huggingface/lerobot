@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 import torch
 
-from lerobot.policies.sarm.sarm_utils import (
+from lerobot.rewards.sarm.sarm_utils import (
     apply_rewind_augmentation,
     compute_absolute_indices,
     compute_tau,

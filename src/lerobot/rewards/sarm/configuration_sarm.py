@@ -26,12 +26,13 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
+from lerobot.rewards.base import RewardModelConfig
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
 
 
 @PreTrainedConfig.register_subclass("sarm")
 @dataclass
-class SARMConfig(PreTrainedConfig):
+class SARMConfig(RewardModelConfig):
     """Configuration class for SARM (Stage-Aware Reward Modeling).
 
     Supports three annotation modes:
@@ -239,11 +240,3 @@ class SARMConfig(PreTrainedConfig):
 
         return obs_deltas + rewind_deltas
 
-    @property
-    def action_delta_indices(self) -> None:
-        """SARM is a reward model, not an action policy."""
-        return None
-
-    @property
-    def reward_delta_indices(self) -> None:
-        return None
