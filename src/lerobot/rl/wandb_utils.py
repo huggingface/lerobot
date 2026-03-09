@@ -177,6 +177,13 @@ class WandBLogger:
                 self._wandb.define_metric(new_custom_key, hidden=True)
 
         for k, v in d.items():
+            # Log list metrics as individual entries (e.g. loss_per_dim)
+            if isinstance(v, (list, tuple)):
+                for i, elem in enumerate(v):
+                    if isinstance(elem, (int, float)):
+                        d_expanded = {f"{mode}/{k}_{i}": elem}
+                        self._wandb.log(d_expanded)
+                continue
             if not isinstance(v, (int | float | str)):
                 logging.warning(
                     f'WandB logging of key "{k}" was ignored as its type "{type(v)}" is not handled by this wrapper.'
