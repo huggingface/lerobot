@@ -1369,43 +1369,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
             f"Batch encoding {self.batch_encoding_size} videos for episodes {start_episode} to {end_episode - 1}"
         )
 
-        # During recording, metadata can be buffered and `meta.episodes` may not be loaded in-memory yet.
-        # Batch encoding relies on episode metadata (chunk/file indices), so load episodes from disk if needed.
-        if (
-            self.meta.episodes is None
-            or len(self.meta.episodes) <= start_episode
-            or self.meta.episodes[start_episode] is None
-        ):
-            # Ensure episode metadata has been flushed *and the parquet writer is closed* before loading.
-            # If the writer is still open, the parquet footer may not be written yet, and readers will fail
-            # with "Parquet magic bytes not found in footer".
-            try:
-                self.meta._close_writer()
-            except Exception as e:
-                logging.warning(f"Failed to close episode metadata writer before encoding: {e!r}")
-            try:
-                self.meta.episodes = load_episodes(self.root)
-            except FileNotFoundError as e:
-                logging.error(
-                    f"Cannot batch-encode videos: episode metadata not found on disk yet: {e}. "
-                    "This usually means episode metadata wasn't flushed before encoding."
-                )
-                return
-            except Exception as e:
-                logging.error(f"Cannot batch-encode videos: failed to load episode metadata: {e!r}")
-                return
-
-        if (
-            self.meta.episodes is None
-            or len(self.meta.episodes) <= start_episode
-            or self.meta.episodes[start_episode] is None
-        ):
-            logging.error(
-                f"Cannot batch-encode videos: missing episode metadata for start_episode={start_episode}. "
-                f"meta.episodes_len={0 if self.meta.episodes is None else len(self.meta.episodes)}"
-            )
-            return
-
         chunk_idx = self.meta.episodes[start_episode]["data/chunk_index"]
         file_idx = self.meta.episodes[start_episode]["data/file_index"]
         episode_df_path = self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
@@ -1434,22 +1397,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             # Save the current episode's video metadata to the dataframe
             video_ep_metadata = {}
             for video_key in self.meta.video_keys:
-                per_key_metadata = self._save_episode_video(video_key, ep_idx)
-                video_ep_metadata.update(per_key_metadata)
-
-                # IMPORTANT: In batched encoding mode, episode metadata rows are written *before* video fields
-                # exist. `_save_episode_video` decides whether to append/concatenate based on
-                # `self.meta.latest_episode` having `videos/{video_key}/...` keys. If we don't update it here,
-                # every episode is treated as a "first write", which overwrites the same mp4 and records
-                # `from_timestamp=0` for all episodes.
-                #
-                # We only inject the `videos/...` fields (list-wrapped) to avoid clobbering non-video metadata
-                # (e.g. dataset_to_index) that the recorder relies on for subsequent episodes.
-                if self.meta.latest_episode is None:
-                    self.meta.latest_episode = {}
-                for k, v in per_key_metadata.items():
-                    if isinstance(k, str) and k.startswith("videos/"):
-                        self.meta.latest_episode[k] = [v]
+                video_ep_metadata.update(self._save_episode_video(video_key, ep_idx))
             video_ep_metadata.pop("episode_index")
             video_ep_df = pd.DataFrame(video_ep_metadata, index=[ep_idx]).convert_dtypes(
                 dtype_backend="pyarrow"
@@ -1578,18 +1526,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if self.meta.episodes is not None and len(self.meta.episodes) > 0:
                 # It means we are resuming recording, so we need to load the latest episode
                 # Update the indices to avoid overwriting the latest episode
-                try:
-                    old_chunk_idx = self.meta.episodes[-1][f"videos/{video_key}/chunk_index"]
-                    old_file_idx = self.meta.episodes[-1][f"videos/{video_key}/file_index"]
-                except KeyError:
-                    # In batched encoding, episode metadata rows may exist before any video fields
-                    # are written. Treat as a fresh video file in that case.
-                    old_chunk_idx = None
-                    old_file_idx = None
-                if old_chunk_idx is not None and old_file_idx is not None:
-                    chunk_idx, file_idx = update_chunk_file_indices(
-                        old_chunk_idx, old_file_idx, self.meta.chunks_size
-                    )
+                old_chunk_idx = self.meta.episodes[-1][f"videos/{video_key}/chunk_index"]
+                old_file_idx = self.meta.episodes[-1][f"videos/{video_key}/file_index"]
+                chunk_idx, file_idx = update_chunk_file_indices(
+                    old_chunk_idx, old_file_idx, self.meta.chunks_size
+                )
             latest_duration_in_s = 0.0
             new_path = self.root / self.meta.video_path.format(
                 video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
