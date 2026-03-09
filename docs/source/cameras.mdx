@@ -2,13 +2,13 @@
 
 LeRobot offers multiple options for video capture:
 
-| Class             | Supported Cameras                                          |
-| ----------------- | ---------------------------------------------------------- |
-| `OpenCVCamera`    | Phone, built-in laptop, USB webcams                        |
-| `ZMQCamera`       | Network-connected cameras                                  |
-| `RealSenseCamera` | Intel RealSense (with depth)                               |
-| `OrbbecCamera`    | Orbbec RGBD cameras (Structured Light, Stereo Vision, etc) |
-| `Reachy2Camera`   | Reachy 2 robot cameras                                     |
+| Class             | Supported Cameras                   |
+| ----------------- | ----------------------------------- |
+| `OpenCVCamera`    | Phone, built-in laptop, USB webcams |
+| `ZMQCamera`       | Network-connected cameras           |
+| `RealSenseCamera` | Intel RealSense (with depth)        |
+| `OrbbecCamera`    | Orbbec RGBD cameras (Gemini series) |
+| `Reachy2Camera`   | Reachy 2 robot cameras              |
 
 > [!TIP]
 > For `OpenCVCamera` compatibility details, see the [Video I/O with OpenCV Overview](https://docs.opencv.org/4.x/d0/da7/videoio_overview.html).
@@ -64,7 +64,7 @@ The following examples show how to use the camera API to configure and capture f
 
 - **Blocking and non-blocking frame capture** using an OpenCV-based camera
 - **Color and depth capture** using an Intel RealSense camera
-- **Color and depth capture** using an Orbbec camera — To leverage depth data from Orbbec cameras, we developed a 4-channel RGBD variant of ACT, extending the standard 3-channel RGB input to include a depth channel. This model has been validated on the SO101 robotic arm. See the [`so101-act-rgbd`](https://github.com/orbbec/lerobot/tree/feat/orbbec-so101-act-rgbd) branch for details.
+- **RGBD Capture and Training** using an Orbbec camera — To leverage depth data from Orbbec cameras, we developed a 4-channel RGBD variant of ACT, extending the standard 3-channel RGB input to include a depth channel. This model has been validated on the SO101 robotic arm. See the [`so101-act-rgbd`](https://github.com/orbbec/lerobot/tree/feat/orbbec-so101-act-rgbd) branch for details.
 
 > [!WARNING]
 > Failing to cleanly disconnect cameras can cause resource leaks. Use the context manager protocol to ensure automatic cleanup:
