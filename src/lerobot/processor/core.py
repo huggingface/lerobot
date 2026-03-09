@@ -16,14 +16,14 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
+from enum import Enum
 from typing import Any, TypedDict
 
 import numpy as np
 import torch
 
 
-class TransitionKey(StrEnum):
+class TransitionKey(str, Enum):
     """Keys for accessing EnvTransition dictionary components."""
 
     # TODO(Steven): Use consts
