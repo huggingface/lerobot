@@ -30,10 +30,6 @@ from lerobot.utils.utils import init_logging
 
 Action = Any
 
-# Type alias for the monotone control-loop clock used throughout async inference.
-# See robot_client_drtc.py for the two-clock causality model documentation.
-ControlStep = int
-
 # observation as received from the robot (can be numpy arrays, floats, etc.)
 RawObservation = dict[str, Any]
 
@@ -266,36 +262,28 @@ def get_logger(name: str, log_to_file: bool = True) -> logging.Logger:
 
 @dataclass
 class TimedData:
-    """A data object with timestamp and control_step information.
+    """A data object with timestamp and timestep information.
 
     Args:
         timestamp: Unix timestamp relative to data's creation.
-        control_step: The control-loop tick t when this data was created.
+        timestep: Monotone async-inference step associated with this data.
     """
 
     timestamp: float
-    control_step: int
+    timestep: int
 
     def get_timestamp(self):
         return self.timestamp
 
-    def get_control_step(self):
-        return self.control_step
+    def get_timestep(self):
+        return self.timestep
 
 
 @dataclass
 class TimedAction(TimedData):
-    """A timed action with both control_step (t) and action_step (j).
+    """A timed action associated with a legacy async-inference timestep."""
 
-    control_step comes from TimedData (identifies the observation/chunk).
-    action_step is the execution index j = chunk_start_step + i.
-    """
-
-    action_step: int = 0
     action: Action = None
-
-    def get_action_step(self):
-        return self.action_step
 
     def get_action(self):
         return self.action
@@ -303,17 +291,10 @@ class TimedAction(TimedData):
 
 @dataclass
 class TimedObservation(TimedData):
-    """A timed observation carrying both control_step (t) and chunk_start_step (n_k).
-
-    control_step comes from TimedData (monotone LWW key).
-    chunk_start_step is the action step at which the resulting chunk should start.
-    server_received_ts is set by the server when the observation is received (Unix seconds).
-    """
+    """A timed observation associated with a legacy async-inference timestep."""
 
     observation: RawObservation = None
-    chunk_start_step: int = 0
     must_go: bool = False
-    server_received_ts: float = 0.0
 
     def get_observation(self):
         return self.observation

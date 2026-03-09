@@ -21,11 +21,10 @@ from lerobot.transport.utils import grpc_channel_options, send_bytes_in_chunks
 
 from .configs_drtc import RobotClientDrtcConfig
 from .constants import SUPPORTED_ROBOTS
+from .drtc_timed import DrtcAction, DrtcObservation
 from .helpers import (
     RawObservation,
     RemotePolicyConfig,
-    TimedAction,
-    TimedObservation,
     get_logger,
     map_robot_keys_to_lerobot_features,
     visualize_action_queue_size,
@@ -175,7 +174,7 @@ class ActionSchedule:
 
     def merge(
         self,
-        incoming_actions: list[TimedAction],
+        incoming_actions: list[DrtcAction],
         src_control_step: int,
         chunk_start_step: int,
         current_action_step: int,
@@ -184,7 +183,7 @@ class ActionSchedule:
         """Merge incoming actions using freshest-observation-wins strategy.
 
         Args:
-            incoming_actions: List of TimedAction from the server.
+            incoming_actions: List of DrtcAction from the server.
             src_control_step: The control-loop tick t that produced this chunk (freshness key).
             chunk_start_step: The action step n_k where this chunk starts.
             current_action_step: The most recently executed action step (n*).
@@ -275,7 +274,7 @@ class ReceivedActionChunk:
     """Action chunk received from the server with metadata.
 
     Attributes:
-        actions: List of TimedAction from the server.
+    actions: List of DrtcAction from the server.
         src_control_step: The control-loop tick t that produced this chunk.
         chunk_start_step: The action step n_k where this chunk starts.
         measured_latency: Measured round-trip time for this chunk.
@@ -285,7 +284,7 @@ class ReceivedActionChunk:
         action_received_ts: Wall-clock timestamp when the client received the action chunk.
     """
 
-    actions: list[TimedAction]
+    actions: list[DrtcAction]
     src_control_step: int
     chunk_start_step: int
     measured_latency: float
@@ -707,7 +706,7 @@ class RobotClientDrtc:
                 self._metrics.diagnostic.timing_s("obs_encode_ms", t_encode_done - t_encode_start)
 
                 # Create timed observation
-                timed_obs = TimedObservation(
+                timed_obs = DrtcObservation(
                     timestamp=start_rtt_timestamp,
                     control_step=request.control_step,
                     observation=encoded_observation,
@@ -760,7 +759,7 @@ class RobotClientDrtc:
             except Exception as e:
                 self.logger.error("Error in observation sender: %s", e, exc_info=True)
 
-    def _send_observation(self, obs: TimedObservation) -> bool:
+    def _send_observation(self, obs: DrtcObservation) -> bool:
         """Send a timed observation to the policy server via gRPC."""
         try:
             observation_bytes = pickle.dumps(obs)
@@ -902,7 +901,7 @@ class RobotClientDrtc:
                 time.sleep(0.1)
 
     def _handle_actions_dense(self, dense: services_pb2.ActionsDense, rpc_ms: float) -> None:
-        """Decode a dense action chunk into TimedAction list and publish to main thread."""
+        """Decode a dense action chunk into DrtcAction list and publish to main thread."""
         receive_time = time.time()
 
         num_actions = int(dense.num_actions)
@@ -926,7 +925,7 @@ class RobotClientDrtc:
 
         measured_latency = receive_time - timestamp
         timed_actions = [
-            TimedAction(
+            DrtcAction(
                 timestamp=timestamp + i * dt,
                 control_step=source_control_step,
                 action_step=chunk_start_step + i,
@@ -972,7 +971,7 @@ class RobotClientDrtc:
     def _publish_received_actions(
         self,
         *,
-        timed_actions: list[TimedAction],
+        timed_actions: list[DrtcAction],
         src_control_step: int,
         chunk_start_step: int,
         measured_latency: float,
@@ -1224,7 +1223,7 @@ class RobotClientDrtc:
 
                 # Send action chunk to policy server for trajectory visualization
                 if self.config.trajectory_viz_enabled and chunk.actions:
-                    # Extract action arrays from TimedAction list
+                    # Extract action arrays from the DRTC action payloads
                     actions_arrays = [ta.action for ta in chunk.actions]
                     self._queue_trajectory_chunk(
                         src_control_step=chunk.src_control_step,

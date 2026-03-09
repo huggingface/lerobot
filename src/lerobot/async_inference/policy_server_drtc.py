@@ -46,10 +46,10 @@ from lerobot.transport.utils import receive_bytes_in_chunks
 
 from .configs_drtc import PolicyServerDrtcConfig
 from .constants import SUPPORTED_POLICIES
+from .drtc_timed import DrtcObservation
 from .helpers import (
     Observation,
     RemotePolicyConfig,
-    TimedObservation,
     get_logger,
     raw_observation_to_observation,
 )
@@ -165,7 +165,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         # SPSC LWW registers
         # - Receiver thread -> inference producer: latest observation (by control_step)
         # - Inference producer -> StreamActionsDense: latest dense actions (by control_step)
-        self._obs_reg: LWWRegister[TimedObservation | None] = LWWRegister(
+        self._obs_reg: LWWRegister[DrtcObservation | None] = LWWRegister(
             initial_control_step=_INITIAL_K, initial_value=None
         )
         self._action_reg: LWWRegister[services_pb2.ActionsDense | None] = LWWRegister(
@@ -632,7 +632,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 backoff = min(0.1 * (2 ** (consecutive_errors - 1)), 2.0)
                 time.sleep(backoff)
 
-    def _mock_predict_action_chunk_dense(self, observation_t: TimedObservation) -> services_pb2.ActionsDense:
+    def _mock_predict_action_chunk_dense(self, observation_t: DrtcObservation) -> services_pb2.ActionsDense:
         """Generate mock actions for simulation experiments (no real model)."""
         action_dim = self.config.mock_action_dim
         actions_per_chunk = self.actions_per_chunk or 50
@@ -652,7 +652,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         )
         return dense
 
-    def _predict_action_chunk_dense(self, observation_t: TimedObservation) -> services_pb2.ActionsDense:
+    def _predict_action_chunk_dense(self, observation_t: DrtcObservation) -> services_pb2.ActionsDense:
         """Run inference on an observation and return dense packed actions (lower jitter)."""
         if self.actions_per_chunk is None:
             raise RuntimeError("actions_per_chunk is not set; did SendPolicyInstructions run?")
