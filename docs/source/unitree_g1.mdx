@@ -176,6 +176,10 @@ python src/lerobot/robots/unitree_g1/run_g1_server.py --camera
 
 ### Run the Locomotion Policy
 
+You can run the teleoperation client from your laptop over Ethernet, over WiFi (experimental), or directly on the robot itself.
+
+**From your laptop:**
+
 ```bash
 lerobot-teleoperate \
   --robot.type=unitree_g1 \
@@ -185,10 +189,10 @@ lerobot-teleoperate \
   --teleop.id=wbc_unitree \
   --robot.cameras='{"global_view": {"type": "zmq", "server_address": "<ROBOT_IP>", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30}}' \
   --display_data=true \
-  --robot.controller=HolosomaLocomotionController
+  --robot.controller=GrootLocomotionController
 ```
 
-We support both [HolosomaLocomotionController](https://github.com/amazon-far/holosoma) and [GrootLocomotionController](https://github.com/NVlabs/GR00T-WholeBodyControl).
+We support both [GrootLocomotionController](https://github.com/NVlabs/GR00T-WholeBodyControl) and [HolosomaLocomotionController](https://github.com/amazon-far/holosoma) via `--robot.controller`.
 
 ---
 
