@@ -25,7 +25,7 @@ cmake .. -DCMAKE_INSTALL_PREFIX=../install
 cmake --build . --target install
 export CYCLONEDDS_HOME=$(pwd)/../install
 cd ../..
-pip install -e .
+python -m pip install -e .
 ```
 
 ### Install LeRobot
@@ -34,7 +34,7 @@ pip install -e .
 cd ..
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
-pip install -e '.[unitree_g1]'
+python -m pip install -e '.[unitree_g1]'
 ```
 
 ### Test the Installation (Simulation)
@@ -73,9 +73,33 @@ ssh unitree@192.168.123.164
 # Password: 123
 ```
 
-### Install the Unitree SDK on the G1
+### Share Internet via Ethernet
 
-From the robot:
+The G1 needs internet access to clone repos and install packages. Share your laptop's connection over Ethernet:
+
+**On your laptop:**
+
+```bash
+sudo sysctl -w net.ipv4.ip_forward=1
+
+# Replace wlp132s0f0 with your WiFi interface name
+sudo iptables -t nat -A POSTROUTING -o wlp132s0f0 -s 192.168.123.0/24 -j MASQUERADE
+sudo iptables -A FORWARD -i wlp132s0f0 -o enp131s0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+sudo iptables -A FORWARD -i enp131s0 -o wlp132s0f0 -j ACCEPT
+```
+
+**On the G1:**
+
+```bash
+sudo ip route del default 2>/dev/null || true
+sudo ip route add default via 192.168.123.200 dev eth0
+echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
+
+# Verify
+ping -c 3 8.8.8.8
+```
+
+### Install the Unitree SDK on the G1
 
 ```bash
 conda create -y -n lerobot python=3.12
@@ -88,7 +112,7 @@ cmake .. -DCMAKE_INSTALL_PREFIX=../install
 cmake --build . --target install
 export CYCLONEDDS_HOME=$(pwd)/../install
 cd ../..
-pip install -e .
+python -m pip install -e .
 ```
 
 ### Install LeRobot on the G1
@@ -97,14 +121,16 @@ pip install -e .
 cd ..
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
-pip install -e '.[unitree_g1]'
+python -m pip install -e '.[unitree_g1]'
 ```
 
----
+<Tip>
+Always use `python -m pip` instead of `pip` on the G1. The Orin's system `pip` points to Python 3.8, not the conda environment's Python 3.12.
+</Tip>
 
-## Part 2: Enable WiFi on the Robot
+### (Optional) Enable WiFi on the Robot
 
-Wi-Fi connectivity is blocked by default on the G1. To activate:
+For wireless SSH access, you can enable WiFi on the G1 (it's blocked by default):
 
 ```bash
 sudo rfkill unblock all
@@ -112,28 +138,6 @@ sudo ip link set wlan0 up
 sudo nmcli radio wifi on
 sudo nmcli device set wlan0 managed yes
 sudo systemctl restart NetworkManager
-```
-
-**On your laptop** (share internet via Ethernet):
-
-```bash
-sudo sysctl -w net.ipv4.ip_forward=1
-
-# Replace wlp132s0f0 with your WiFi interface name
-sudo iptables -t nat -A POSTROUTING -o wlp132s0f0 -s 192.168.123.0/24 -j MASQUERADE
-sudo iptables -A FORWARD -i wlp132s0f0 -o enp131s0 -m state --state RELATED,ESTABLISHED -j ACCEPT
-sudo iptables -A FORWARD -i enp131s0 -o wlp132s0f0 -j ACCEPT
-```
-
-**On the G1** (set default route through your laptop):
-
-```bash
-sudo ip route del default 2>/dev/null || true
-sudo ip route add default via 192.168.123.200 dev eth0
-echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
-
-# Verify
-ping -c 3 8.8.8.8
 ```
 
 **Connect to a WiFi network:**
@@ -150,7 +154,7 @@ sudo nmcli connection up "YourNetwork"
 ip a show wlan0
 ```
 
-You can now SSH over WiFi:
+You can then SSH over WiFi instead of Ethernet:
 
 ```bash
 ssh unitree@<ROBOT_WIFI_IP>
@@ -159,13 +163,14 @@ ssh unitree@<ROBOT_WIFI_IP>
 
 ---
 
-## Part 3: Teleoperation & Locomotion
+## Part 2: Teleoperation & Locomotion
 
 ### Run the Robot Server
 
-On the robot:
+On the robot (from `~/lerobot`):
 
 ```bash
+cd ~/lerobot
 python src/lerobot/robots/unitree_g1/run_g1_server.py --camera
 ```
 
@@ -187,7 +192,7 @@ We support both [HolosomaLocomotionController](https://github.com/amazon-far/hol
 
 ---
 
-## Part 4: Loco-Manipulation with the Homunculus Exoskeleton
+## Part 3: Loco-Manipulation with the Homunculus Exoskeleton
 
 We provide a loco-manipulation solution via the Homunculus Exoskeleton — an open-source 7 DoF exoskeleton for whole-body control. Assembly instructions [here](https://github.com/nepyope/hmc_exo).
 
@@ -230,7 +235,7 @@ Example dataset: [nepyope/unitree_box_move_blue_full](https://huggingface.co/dat
 
 ---
 
-## Part 5: Training & Inference
+## Part 4: Training & Inference
 
 ### Train
 
