@@ -199,5 +199,5 @@ class RobotClientConfig:
             "actions_per_chunk": self.actions_per_chunk,
             "task": self.task,
             "debug_visualize_queue_size": self.debug_visualize_queue_size,
-            "aggregate_fn_name": self.aggregate_fn_name
+            "aggregate_fn_name": self.aggregate_fn_name,
         }
