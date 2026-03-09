@@ -56,55 +56,6 @@ from lerobot.utils.constants import (
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
 
-
-def _apply_pipeline_step_overrides(
-    pipeline: PolicyProcessorPipeline[Any, Any],
-    overrides: dict[str, Any] | None,
-    *,
-    pipeline_label: str,
-) -> None:
-    """Apply step overrides to an already-instantiated processor pipeline.
-
-    This is primarily used as a best-effort fallback when a pretrained processor pipeline
-    configuration file is missing (e.g., `policy_preprocessor.json` on the Hub) and we need
-    to build processors from the policy config instead.
-    """
-    if not overrides:
-        return
-
-    used_override_keys: set[str] = set()
-    for step in pipeline.steps:
-        registry_name = getattr(step.__class__, "_registry_name", None)
-        class_name = step.__class__.__name__
-
-        for override_key, params in overrides.items():
-            if override_key not in {registry_name, class_name}:
-                continue
-            if not isinstance(params, dict):
-                raise TypeError(
-                    f"{pipeline_label}: override for step '{override_key}' must be a dict, got {type(params)}"
-                )
-            for attr_name, attr_value in params.items():
-                if not hasattr(step, attr_name):
-                    raise AttributeError(
-                        f"{pipeline_label}: step '{override_key}' has no attribute '{attr_name}' to override"
-                    )
-                setattr(step, attr_name, attr_value)
-            used_override_keys.add(override_key)
-
-    unused = [k for k in overrides if k not in used_override_keys]
-    if unused:
-        available = []
-        for step in pipeline.steps:
-            registry_name = getattr(step.__class__, "_registry_name", None)
-            if registry_name is not None:
-                available.append(registry_name)
-            available.append(step.__class__.__name__)
-        raise KeyError(
-            f"{pipeline_label}: override keys not applied: {unused}. Available steps: {sorted(set(available))}"
-        )
-
-
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:
     """
     Retrieves a policy class by its registered name.
@@ -457,18 +408,6 @@ def make_pre_post_processors(
             )
         except Exception as e:
             raise ValueError(f"Processor for policy type '{policy_cfg.type}' is not implemented.") from e
-
-    # Best-effort: apply overrides to config-constructed processors (e.g., device override in inference servers).
-    _apply_pipeline_step_overrides(
-        processors[0],
-        kwargs.get("preprocessor_overrides"),
-        pipeline_label="preprocessor",
-    )
-    _apply_pipeline_step_overrides(
-        processors[1],
-        kwargs.get("postprocessor_overrides"),
-        pipeline_label="postprocessor",
-    )
 
     return processors
 
