@@ -84,7 +84,7 @@ class OrbbecCameraConfig(CameraConfig):
     color_mode: ColorMode = ColorMode.RGB
     use_depth: bool = False
     align_depth: bool = False
-    d2c_mode: D2CMode = D2CMode.HARDWARE
+    d2c_mode: D2CMode = D2CMode.SOFTWARE
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     warmup_s: int = 1
 
