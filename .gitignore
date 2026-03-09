@@ -177,5 +177,3 @@ outputs/
 *.urdf
 *.xml
 *.part
-results/
-archived_results/
