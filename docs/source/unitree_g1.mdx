@@ -39,7 +39,7 @@ lerobot-teleoperate \
   --robot.is_simulation=true \
   --teleop.type=unitree_g1 \
   --teleop.id=wbc_unitree \
-  --robot.cameras='{"global_view": {"type": "zmq", "server_address": "localhost", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30}}' \
+  --robot.cameras='{"global_view": {"type": "zmq", "server_address": "localhost", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30, "warmup_s": 5}}' \
   --display_data=true
 ```
 
