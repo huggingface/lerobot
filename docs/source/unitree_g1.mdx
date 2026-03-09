@@ -45,6 +45,12 @@ python -m pip install -e '.[unitree_g1]'
 
 ### Test the Installation (Simulation)
 
+The simulation environment has its own dependencies. Install them before launching:
+
+```bash
+pip install mujoco loguru msgpack msgpack-numpy
+```
+
 ```bash
 lerobot-teleoperate \
   --robot.type=unitree_g1 \
@@ -130,11 +136,6 @@ cd lerobot
 conda install -c conda-forge pinocchio
 python -m pip install -e '.[unitree_g1]'
 ```
-
-<Tip>
-  Always use `python -m pip` instead of `pip` on the G1. The Orin's system `pip`
-  points to Python 3.8, not the conda environment's Python 3.12.
-</Tip>
 
 ### (Optional) Enable WiFi on the Robot
 
