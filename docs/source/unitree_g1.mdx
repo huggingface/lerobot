@@ -20,7 +20,7 @@ conda activate lerobot
 git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
 cd unitree_sdk2_python
 git clone https://github.com/eclipse-cyclonedds/cyclonedds -b releases/0.10.x
-cd cyclonedds && mkdir build install && cd build
+cd cyclonedds && mkdir -p build install && cd build
 cmake .. -DCMAKE_INSTALL_PREFIX=../install
 cmake --build . --target install
 export CYCLONEDDS_HOME=$(pwd)/../install
