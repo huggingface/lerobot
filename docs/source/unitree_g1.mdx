@@ -12,7 +12,7 @@ The Unitree G1 humanoid is now supported in LeRobot! You can teleoperate, train 
 
 ## Part 1: Getting Started
 
-### Install LeRobot on Your Machine
+### Install the Unitree SDK
 
 ```bash
 conda create -y -n lerobot python=3.12
@@ -26,6 +26,11 @@ cmake --build . --target install
 export CYCLONEDDS_HOME=$(pwd)/../install
 cd ../..
 pip install -e .
+```
+
+### Install LeRobot
+
+```bash
 cd ..
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
@@ -41,10 +46,11 @@ lerobot-teleoperate \
   --teleop.type=unitree_g1 \
   --teleop.id=wbc_unitree \
   --robot.cameras='{"global_view": {"type": "zmq", "server_address": "localhost", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30, "warmup_s": 5}}' \
-  --display_data=true
+  --display_data=true \
+  --robot.controller=HolosomaLocomotionController
 ```
 
-This will launch a [MuJoCo sim instance](https://huggingface.co/lerobot/unitree-g1-mujoco/tree/main) for the G1.
+This will launch a [MuJoCo sim instance](https://huggingface.co/lerobot/unitree-g1-mujoco/tree/main) for the G1. You can plug in any locomotion controller via `--robot.controller`. We support both [HolosomaLocomotionController](https://github.com/amazon-far/holosoma) and [GrootLocomotionController](https://github.com/NVlabs/GR00T-WholeBodyControl).
 
 - Press `9` to release the robot
 - Press `7` / `8` to increase / decrease waist height
@@ -67,7 +73,7 @@ ssh unitree@192.168.123.164
 # Password: 123
 ```
 
-### Install LeRobot on the G1
+### Install the Unitree SDK on the G1
 
 From the robot:
 
@@ -83,6 +89,11 @@ cmake --build . --target install
 export CYCLONEDDS_HOME=$(pwd)/../install
 cd ../..
 pip install -e .
+```
+
+### Install LeRobot on the G1
+
+```bash
 cd ..
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
