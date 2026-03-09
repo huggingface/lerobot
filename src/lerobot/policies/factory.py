@@ -56,6 +56,7 @@ from lerobot.utils.constants import (
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
 
+
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:
     """
     Retrieves a policy class by its registered name.
@@ -260,38 +261,27 @@ def make_pre_post_processors(
             }
             kwargs["preprocessor_overrides"] = preprocessor_overrides
             kwargs["postprocessor_overrides"] = postprocessor_overrides
-        try:
-            return (
-                PolicyProcessorPipeline.from_pretrained(
-                    pretrained_model_name_or_path=pretrained_path,
-                    config_filename=kwargs.get(
-                        "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
-                    ),
-                    overrides=kwargs.get("preprocessor_overrides", {}),
-                    to_transition=batch_to_transition,
-                    to_output=transition_to_batch,
+
+        return (
+            PolicyProcessorPipeline.from_pretrained(
+                pretrained_model_name_or_path=pretrained_path,
+                config_filename=kwargs.get(
+                    "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
                 ),
-                PolicyProcessorPipeline.from_pretrained(
-                    pretrained_model_name_or_path=pretrained_path,
-                    config_filename=kwargs.get(
-                        "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
-                    ),
-                    overrides=kwargs.get("postprocessor_overrides", {}),
-                    to_transition=policy_action_to_transition,
-                    to_output=transition_to_policy_action,
+                overrides=kwargs.get("preprocessor_overrides", {}),
+                to_transition=batch_to_transition,
+                to_output=transition_to_batch,
+            ),
+            PolicyProcessorPipeline.from_pretrained(
+                pretrained_model_name_or_path=pretrained_path,
+                config_filename=kwargs.get(
+                    "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
                 ),
-            )
-        except FileNotFoundError as e:
-            logging.warning(
-                "Could not load processor pipelines from '%s' (%s). "
-                "Falling back to constructing processors from the policy config. "
-                "For best results, ensure '%s.json' and '%s.json' are present alongside the checkpoint.",
-                pretrained_path,
-                str(e),
-                POLICY_PREPROCESSOR_DEFAULT_NAME,
-                POLICY_POSTPROCESSOR_DEFAULT_NAME,
-            )
-            pretrained_path = None
+                overrides=kwargs.get("postprocessor_overrides", {}),
+                to_transition=policy_action_to_transition,
+                to_output=transition_to_policy_action,
+            ),
+        )
 
     # Create a new processor based on policy type
     if isinstance(policy_cfg, TDMPCConfig):
