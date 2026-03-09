@@ -13,7 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from __future__ import annotations
 
 import logging
 import os
@@ -26,13 +25,11 @@ from copy import copy, deepcopy
 from datetime import datetime
 from pathlib import Path
 from statistics import mean
-from typing import TYPE_CHECKING
 
 import numpy as np
-
-if TYPE_CHECKING:
-    import torch
-    from accelerate import Accelerator
+import torch
+from accelerate import Accelerator
+from datasets.utils.logging import disable_progress_bar, enable_progress_bar
 
 
 def inside_slurm():
@@ -43,7 +40,6 @@ def inside_slurm():
 
 def auto_select_torch_device() -> torch.device:
     """Tries to select automatically a torch device."""
-    import torch
 
     if torch.cuda.is_available():
         logging.info("Cuda backend detected, using cuda.")
@@ -62,7 +58,6 @@ def auto_select_torch_device() -> torch.device:
 # TODO(Steven): Remove log. log shouldn't be an argument, this should be handled by the logger level
 def get_safe_torch_device(try_device: str, log: bool = False) -> torch.device:
     """Given a string, return a torch.device with checks on whether the device is available."""
-    import torch
 
     try_device = str(try_device)
     if try_device.startswith("cuda"):
@@ -89,7 +84,6 @@ def get_safe_dtype(dtype: torch.dtype, device: str | torch.device):
     """
     mps is currently not compatible with float64
     """
-    import torch
 
     if isinstance(device, torch.device):
         device = device.type
@@ -115,7 +109,6 @@ def get_safe_dtype(dtype: torch.dtype, device: str | torch.device):
 
 
 def is_torch_device_available(try_device: str) -> bool:
-    import torch
 
     try_device = str(try_device)  # Ensure try_device is a string
     if try_device.startswith("cuda"):
@@ -158,18 +151,6 @@ def init_logging(
         file_level: Logging level for file output
         accelerator: Optional Accelerator instance (for multi-GPU detection)
     """
-    # Environment overrides (useful for demos/tutorials without editing code).
-    # - LEROBOT_CONSOLE_LEVEL=DEBUG (or INFO/WARNING/ERROR/CRITICAL)
-    # - LEROBOT_FILE_LEVEL=DEBUG (or INFO/WARNING/ERROR/CRITICAL)
-    # - LEROBOT_DEBUG=1 is shorthand for console DEBUG when LEROBOT_CONSOLE_LEVEL is not set
-    env_console_level = os.getenv("LEROBOT_CONSOLE_LEVEL")
-    env_file_level = os.getenv("LEROBOT_FILE_LEVEL")
-    if env_console_level:
-        console_level = env_console_level
-    elif os.getenv("LEROBOT_DEBUG", "0") == "1":
-        console_level = "DEBUG"
-    if env_file_level:
-        file_level = env_file_level
 
     def custom_format(record: logging.LogRecord) -> str:
         dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -321,13 +302,9 @@ class SuppressProgressBars:
     """
 
     def __enter__(self):
-        from datasets.utils.logging import disable_progress_bar
-
         disable_progress_bar()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        from datasets.utils.logging import enable_progress_bar
-
         enable_progress_bar()
 
 
