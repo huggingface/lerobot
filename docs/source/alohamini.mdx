@@ -1,0 +1,197 @@
+# AlohaMini
+
+<img
+  src="https://raw.githubusercontent.com/liyiteng/AlohaMini/main/docs/media/alohamini_git.png"
+  alt="AlohaMini"
+  width="70%"
+/>
+
+AlohaMini is an open-source dual-arm mobile robot with a motorized vertical lift, built on top of LeKiwi.  
+For a smoother start, we recommend assembling a LeKiwi first to get familiar with the workflow, since many parts are shared between the two platforms.
+
+## Hardware docs
+
+Follow the [README](https://github.com/liyiteng/AlohaMini/tree/main). It contains the bill of materials, part sourcing links, 3D printing instructions, and assembly instructions.
+
+## What's different from LeKiwi
+
+### Hardware
+
+| | LeKiwi | AlohaMini |
+|---|---|---|
+| Arms | 1 follower + 1 leader | 2 follower + 2 leader (4 ports total) |
+| Lift | None | Motorized vertical lift, 0–60 cm travel |
+| Cameras | 1 (default) | 5 cameras: 2 wrist + 3 head |
+| Mobile base | 3-wheel omni drive | 3-wheel omni drive |
+| Servos | Feetech STS3215 | Feetech STS3215 |
+| Motor control | Waveshare Bus Servo Adapter (A) | Waveshare Bus Servo Adapter (A) × 2 |
+| Compute | Raspberry Pi 5 | Raspberry Pi 5 |
+| DOF | 9 DOF | 16 DOF |
+
+Motor control wiring:
+- Adapter 1: left follower arm + base + lift motor
+- Adapter 2: right follower arm
+
+Connection notes:
+- Adapter 1 and Adapter 2 both connect to the Raspberry Pi 5.
+- Leader arms connect to your PC.
+- The lift axis homes to 0 cm automatically on each startup, so no manual calibration is required.
+
+## Software docs
+
+
+### 1. Install LeRobot on Pi 5 and PC
+
+On both your Raspberry Pi 5 and your PC, install Miniforge and LeRobot by following our [Installation Guide](./installation).
+
+In addition to these instructions, install the dependencies on both machines:
+
+```bash
+pip install -e ".[lekiwi]"
+```
+
+### 2. Find ports
+
+Same process as [LeKiwi](./lekiwi#find-the-usb-ports-associated-with-motor-board), but AlohaMini has **4 ports** to identify (2 follower arms on Pi + 2 leader arms on PC). After identifying all ports, update them in:
+
+- **Follower arms (Pi):** `src/lerobot/robots/alohamini/config_lekiwi.py`
+- **Leader arms (PC):**
+  - `examples/alohamini/teleoperate_bi.py`
+  - `examples/alohamini/record_bi.py`
+
+### 3. Configure cameras
+
+Set camera ports and names before teleoperation. You need to apply the same camera configuration on both the Pi 5 and the PC:
+
+- `src/lerobot/robots/alohamini/config_lekiwi.py`
+
+For camera setup details (finding devices, testing streams, and troubleshooting), see the [LeRobot camera docs](./cameras).
+
+### 4. Configure motors
+
+AlohaMini's motor ID assignment differs from LeKiwi:
+
+| Motor | ID |
+|---|---|
+| Arm joints | 1–6 |
+| Wheels | 8, 9, 10 |
+| Lift | 11 |
+
+**Arm motors** (ID 1–6) can be configured with the standard LeRobot command, run once per follower arm:
+
+```bash
+lerobot-setup-motors \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0  # <- port found above
+```
+
+**Wheel motors** (ID 8, 9, 10) and **lift motor** (ID 11) can be set separately using the [Feetech Debug Tool](https://www.feetechrc.com/software.html) on Windows. Connect one motor at a time, assign the correct ID, and set the baudrate to **1,000,000**.
+
+### 5. Calibration
+
+Calibrate each arm separately. The wheel motors and lift motor do not require calibration.
+For a detailed walkthrough, see the [SO101 calibration video](./so101#calibration-video).
+
+**Follower arms** (run on Pi via SSH):
+
+```bash
+python -m lerobot.robots.alohamini.lekiwi_host
+```
+
+On first run, the script will automatically prompt you to calibrate each follower arm. Follow the on-screen instructions to complete calibration.
+
+**Leader arms** (run on PC):
+
+```bash
+python examples/alohamini/teleoperate_bi.py \
+    --remote_ip 192.168.50.43 \ # <- replace with your Pi IP
+    --leader_id so101_leader_bi
+```
+
+On first run, the script will automatically prompt you to calibrate each leader arm. Follow the on-screen instructions to complete calibration.
+
+### 6. Teleoperate AlohaMini
+
+SSH into the Pi and start the host:
+
+```bash
+python -m lerobot.robots.alohamini.lekiwi_host
+```
+
+On your PC:
+
+```bash
+python examples/alohamini/teleoperate_bi.py \
+    --remote_ip 192.168.50.43 \
+    --leader_id so101_leader_bi
+```
+
+Keyboard controls :
+
+| Speed Mode | Linear Speed (m/s) | Rotation Speed (deg/s) |
+| --- | --- | --- |
+| Fast | 0.25 | 75 |
+| Medium | 0.2 | 60 |
+| Slow | 0.15 | 45 |
+
+| Key | Action |
+| --- | --- |
+| W | Move forward |
+| S | Move backward |
+| A | Turn left |
+| D | Turn right |
+| Z | Move left |
+| X | Move right |
+| U | Lift up |
+| J | Lift down |
+| R | Increase speed |
+| F | Decrease speed |
+
+### 7. Record a dataset
+
+```bash
+python examples/alohamini/record_bi.py \
+    --dataset $HF_USER/alohamini_test \
+    --num_episodes 50 \
+    --fps 30 \
+    --episode_time 45 \
+    --reset_time 8 \
+    --task_description "pick up the object and place it in the bin" \
+    --remote_ip 192.168.50.43 \
+    --leader_id so101_leader_bi
+```
+
+For HuggingFace login and token setup, follow the [LeKiwi guide](./lekiwi#record-a-dataset).
+
+### 8. Replay an episode
+
+```bash
+python examples/alohamini/replay_bi.py \
+    --dataset $HF_USER/alohamini_test \
+    --episode 0 \
+    --remote_ip 192.168.50.43
+```
+
+### 9. Train a policy
+
+Congrats 🎉, your robot is all set to learn a task on its own. Start training it by the training part of this tutorial: [Getting started with real-world robots](./il_robots)
+
+### 10. Evaluate your policy
+
+To evaluate your policy, run:
+
+```bash
+python examples/alohamini/evaluate_bi.py \
+    --num_episodes 3 \
+    --fps 30 \
+    --episode_time 45 \
+    --task_description "pick up the object and place it in the bin" \
+    --hf_model_id $HF_USER/act_alohamini_policy \
+    --hf_dataset_id $HF_USER/alohamini_eval \
+    --remote_ip 192.168.50.43
+```
+
+Make sure to update `remote_ip`, `hf_model_id`, and `hf_dataset_id` to match your setup.
+
+> [!TIP]
+> If you have any questions or need help, please reach out on [Discord](https://discord.gg/CacMUBaFgJ).
