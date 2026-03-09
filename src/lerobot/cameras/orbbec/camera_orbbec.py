@@ -430,9 +430,28 @@ class OrbbecCamera(Camera):
         try:
             self._pipeline.start(self._config)
         except Exception as e:
-            self._pipeline = None
-            self._config = None
-            raise ConnectionError(f"Failed to start pipeline for {self}.") from e
+            # Hardware D2C is not supported by the current stream profile — fall back to software.
+            if "hardware d2c" in str(e).lower() and self.align_depth and self.d2c_mode != D2CMode.SOFTWARE:
+                logger.warning(
+                    f"{self}: hardware D2C not supported by current stream profile "
+                    f"({e}); falling back to software AlignFilter."
+                )
+                self._pipeline = None
+                self._config = None
+                self._align_filter = None
+                self.d2c_mode = D2CMode.SOFTWARE
+                self._configure_pipeline(device)
+                assert self._pipeline is not None and self._config is not None
+                try:
+                    self._pipeline.start(self._config)
+                except Exception as e2:
+                    self._pipeline = None
+                    self._config = None
+                    raise ConnectionError(f"Failed to start pipeline for {self}.") from e2
+            else:
+                self._pipeline = None
+                self._config = None
+                raise ConnectionError(f"Failed to start pipeline for {self}.") from e
 
         self._start_read_thread()
 
