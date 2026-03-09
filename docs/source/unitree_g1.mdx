@@ -18,7 +18,14 @@ The Unitree G1 humanoid is now supported in LeRobot! You can teleoperate, train 
 conda create -y -n lerobot python=3.12
 conda activate lerobot
 git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
-cd unitree_sdk2_python && pip install -e .
+cd unitree_sdk2_python
+git clone https://github.com/eclipse-cyclonedds/cyclonedds -b releases/0.10.x
+cd cyclonedds && mkdir build install && cd build
+cmake .. -DCMAKE_INSTALL_PREFIX=../install
+cmake --build . --target install
+export CYCLONEDDS_HOME=$(pwd)/../install
+cd ../..
+pip install -e .
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
 pip install -e '.[unitree_g1]'
@@ -67,13 +74,18 @@ From the robot:
 conda create -y -n lerobot python=3.12
 conda activate lerobot
 git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
-cd unitree_sdk2_python && pip install -e .
+cd unitree_sdk2_python
+git clone https://github.com/eclipse-cyclonedds/cyclonedds -b releases/0.10.x
+cd cyclonedds && mkdir build install && cd build
+cmake .. -DCMAKE_INSTALL_PREFIX=../install
+cmake --build . --target install
+export CYCLONEDDS_HOME=$(pwd)/../install
+cd ../..
+pip install -e .
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
 pip install -e '.[unitree_g1]'
 ```
-
-> **Note:** The Unitree SDK requires CycloneDDS v0.10.2. See the [Unitree SDK docs](https://github.com/unitreerobotics/unitree_sdk2_python) for details.
 
 ---
 
