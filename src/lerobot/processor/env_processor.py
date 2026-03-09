@@ -154,6 +154,44 @@ class LiberoProcessorStep(ObservationProcessorStep):
 
 
 @dataclass
+@ProcessorStepRegistry.register(name="robocasa_processor")
+class RoboCasaProcessorStep(ObservationProcessorStep):
+    """
+    Processes RoboCasa observations into LeRobot format.
+
+    The RoboCasaEnv wrapper returns:
+        - ``pixels.<cam_name>``: (B, C, H, W) float32 images (already converted by vectorenv)
+        - ``observation.robot_state``: (B, 16) float32 proprioception
+
+    This step remaps them to:
+        - ``observation.images.<cam_name>``   (unchanged tensor)
+        - ``observation.state``               (robot_state renamed)
+    """
+
+    def _process_observation(self, observation: dict) -> dict:
+        processed = {}
+        obs_prefix = OBS_PREFIX  # "observation."
+
+        for key, value in observation.items():
+            if key.startswith(f"{OBS_IMAGES}."):
+                # Already in the right place; pass through
+                processed[key] = value
+            elif key == OBS_STATE or key == f"{obs_prefix}robot_state":
+                # Rename robot_state → observation.state
+                processed[OBS_STATE] = value.float() if hasattr(value, "float") else value
+
+        return processed
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+    def observation(self, observation: dict) -> dict:
+        return self._process_observation(observation)
+
+
+@dataclass
 @ProcessorStepRegistry.register(name="isaaclab_arena_processor")
 class IsaaclabArenaProcessorStep(ObservationProcessorStep):
     """

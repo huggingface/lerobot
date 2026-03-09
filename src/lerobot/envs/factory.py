@@ -20,11 +20,11 @@ import gymnasium as gym
 from gymnasium.envs.registration import registry as gym_registry
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.envs.configs import AlohaEnv, EnvConfig, HubEnvConfig, IsaaclabArenaEnv, LiberoEnv, PushtEnv
+from lerobot.envs.configs import AlohaEnv, EnvConfig, HubEnvConfig, IsaaclabArenaEnv, LiberoEnv, PushtEnv, RoboCasaEnv
 from lerobot.envs.utils import _call_make_env, _download_hub_file, _import_hub_module, _normalize_hub_result
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig
 from lerobot.processor import ProcessorStep
-from lerobot.processor.env_processor import IsaaclabArenaProcessorStep, LiberoProcessorStep
+from lerobot.processor.env_processor import IsaaclabArenaProcessorStep, LiberoProcessorStep, RoboCasaProcessorStep
 from lerobot.processor.pipeline import PolicyProcessorPipeline
 
 
@@ -35,6 +35,8 @@ def make_env_config(env_type: str, **kwargs) -> EnvConfig:
         return PushtEnv(**kwargs)
     elif env_type == "libero":
         return LiberoEnv(**kwargs)
+    elif env_type == "robocasa":
+        return RoboCasaEnv(**kwargs)
     else:
         raise ValueError(f"Policy type '{env_type}' is not available.")
 
@@ -72,6 +74,10 @@ def make_env_pre_post_processors(
     # For LIBERO environments, add the LiberoProcessorStep to preprocessor
     if isinstance(env_cfg, LiberoEnv) or "libero" in env_cfg.type:
         preprocessor_steps.append(LiberoProcessorStep())
+
+    # For RoboCasa environments, add the RoboCasaProcessorStep to preprocessor
+    if isinstance(env_cfg, RoboCasaEnv) or "robocasa" in env_cfg.type:
+        preprocessor_steps.append(RoboCasaProcessorStep())
 
     # For Isaaclab Arena environments, add the IsaaclabArenaProcessorStep
     if isinstance(env_cfg, IsaaclabArenaEnv) or "isaaclab_arena" in env_cfg.type:
@@ -181,6 +187,20 @@ def make_env(
             control_mode=cfg.control_mode,
             episode_length=cfg.episode_length,
         )
+    elif "robocasa" in cfg.type:
+        from lerobot.envs.robocasa import create_robocasa_envs
+
+        tasks = cfg.tasks if cfg.tasks else [cfg.task]
+        return create_robocasa_envs(
+            tasks=tasks,
+            n_envs=n_envs,
+            image_size=cfg.image_size,
+            split=cfg.split,
+            episode_length=cfg.episode_length,
+            gym_kwargs=cfg.gym_kwargs,
+            env_cls=env_cls,
+        )
+
     elif "metaworld" in cfg.type:
         from lerobot.envs.metaworld import create_metaworld_envs
 

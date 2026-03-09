@@ -346,6 +346,52 @@ class LiberoEnv(EnvConfig):
         return kwargs
 
 
+@EnvConfig.register_subclass("robocasa")
+@dataclass
+class RoboCasaEnv(EnvConfig):
+    """RoboCasa kitchen composite-task environments.
+
+    Wraps ``robocasa.wrappers.gym_wrapper.RoboCasaGymEnv`` with a flat 12-D Box
+    action space and a structured pixel + state observation dict.
+
+    Selected benchmark tasks (3 short + 2 long):
+        Short:  PickPlaceCounterToCabinet, PrepareToast, CoffeeSetupMug
+        Long:   PrepareCoffee, RestockPantry
+    """
+
+    task: str = "PickPlaceCounterToCabinet"
+    tasks: list[str] | None = None  # multi-task: list of task names (without robocasa/ prefix)
+    fps: int = 20
+    episode_length: int = 500
+    image_size: int = 128
+    split: str = "target"  # "pretrain" or "target"
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(12,)),
+        }
+    )
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            ACTION: ACTION,
+            "agentview_left":  f"{OBS_IMAGES}.agentview_left",
+            "agentview_right": f"{OBS_IMAGES}.agentview_right",
+            "eye_in_hand":     f"{OBS_IMAGES}.eye_in_hand",
+            "robot_state":     OBS_STATE,
+        }
+    )
+
+    def __post_init__(self):
+        for cam in ("agentview_left", "agentview_right", "eye_in_hand"):
+            self.features[cam] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.image_size, self.image_size, 3)
+            )
+        self.features["robot_state"] = PolicyFeature(type=FeatureType.STATE, shape=(16,))
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {"split": self.split}
+
+
 @EnvConfig.register_subclass("metaworld")
 @dataclass
 class MetaworldEnv(EnvConfig):
