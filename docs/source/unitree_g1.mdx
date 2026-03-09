@@ -21,27 +21,28 @@ conda create -y -n lerobot python=3.12
 conda activate lerobot
 git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
 cd unitree_sdk2_python
-python -m pip install -e .
+pip install -e .
+cd ..
 ```
 
 ### Install LeRobot
 
 ```bash
-cd ..
+conda install ffmpeg -c conda-forge
+conda install -c conda-forge pinocchio
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
-conda install -c conda-forge pinocchio
-python -m pip install -e '.[unitree_g1]'
+pip install -e '.[unitree_g1]'
 ```
 
 <Tip>
-  Pinocchio must be installed from conda-forge (not pip) to include the CasADi
-  bindings needed for arm IK.
+  For now, pinocchio must be installed from conda-forge (not pip) to include the
+  CasADi bindings needed for arm IK.
 </Tip>
 
 ### Test the Installation (Simulation)
 
-The simulation environment has its own dependencies. Install them before launching:
+The simulation environment has its own dependencies. Check the Simulation environment dependencies: [Unitree G1 Mujoco EnvHub](https://huggingface.co/lerobot/unitree-g1-mujoco/tree/main).
 
 ```bash
 pip install mujoco loguru msgpack msgpack-numpy
@@ -55,7 +56,7 @@ lerobot-teleoperate \
   --teleop.id=wbc_unitree \
   --robot.cameras='{"global_view": {"type": "zmq", "server_address": "localhost", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30, "warmup_s": 5}}' \
   --display_data=true \
-  --robot.controller=HolosomaLocomotionController
+  --robot.controller=GrootLocomotionController
 ```
 
 This will launch a [MuJoCo sim instance](https://huggingface.co/lerobot/unitree-g1-mujoco/tree/main) for the G1. You can connect a gamepad to your machine before launching in order to control the robot's locomotion in sim. We support both [HolosomaLocomotionController](https://github.com/amazon-far/holosoma) and [GrootLocomotionController](https://github.com/NVlabs/GR00T-WholeBodyControl) via `--robot.controller`.
@@ -117,17 +118,22 @@ conda activate lerobot
 git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
 cd unitree_sdk2_python
 python -m pip install -e .
+cd ..
 ```
 
 ### Install LeRobot on the G1
 
 ```bash
-cd ..
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
 conda install -c conda-forge pinocchio
 python -m pip install -e '.[unitree_g1]'
 ```
+
+<Tip>
+  For now, pinocchio must be installed from conda-forge (not pip) to include the
+  CasADi bindings needed for arm IK.
+</Tip>
 
 ### (Optional) Enable WiFi on the Robot
 
@@ -177,7 +183,7 @@ python src/lerobot/robots/unitree_g1/run_g1_server.py --camera
 
 ### Run the Locomotion Policy
 
-You can run the teleoperation client from your laptop over Ethernet, over WiFi (experimental), or directly on the robot itself.
+You can run the teleoperation client from your laptop over Ethernet, over WiFi (experimental), or directly on the robot itself. Mind potential latency introduced by your network.
 
 **From your laptop:**
 
@@ -190,7 +196,7 @@ lerobot-teleoperate \
   --teleop.id=wbc_unitree \
   --robot.cameras='{"global_view": {"type": "zmq", "server_address": "<ROBOT_IP>", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30}}' \
   --display_data=true \
-  --robot.controller=GrootLocomotionController
+  --robot.controller=HolosomaLocomotionController
 ```
 
 We support both [GrootLocomotionController](https://github.com/NVlabs/GR00T-WholeBodyControl) and [HolosomaLocomotionController](https://github.com/amazon-far/holosoma) via `--robot.controller`.
@@ -199,7 +205,7 @@ We support both [GrootLocomotionController](https://github.com/NVlabs/GR00T-Whol
 
 ## Part 3: Loco-Manipulation with the Homunculus Exoskeleton
 
-We provide a loco-manipulation solution via the Homunculus Exoskeleton — an open-source 7 DoF exoskeleton for whole-body control. Assembly instructions [here](https://github.com/nepyope/hmc_exo).
+We provide a loco-manipulation solution via the Homunculus Exoskeleton — an open-source 7 DoF exoskeleton for whole-body control. Check it out [here](https://github.com/nepyope/hmc_exo).
 
 ### Calibrate
 
