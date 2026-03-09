@@ -103,8 +103,6 @@ class OpenCVCamera(Camera):
 
         self.config = config
         self.index_or_path = config.index_or_path
-        self.width: int | None = config.width
-        self.height: int | None = config.height
 
         self.fps = config.fps
         self.color_mode = config.color_mode
@@ -122,7 +120,7 @@ class OpenCVCamera(Camera):
         self.rotation: int | None = get_cv2_rotation(config.rotation)
         self.backend: int = config.backend
 
-        if self.height is not None and self.width is not None:
+        if self.height and self.width:
             self.capture_width, self.capture_height = self.width, self.height
             if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
                 self.capture_width, self.capture_height = self.height, self.width
