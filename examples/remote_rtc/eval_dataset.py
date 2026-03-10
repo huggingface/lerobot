@@ -139,6 +139,14 @@ class RTCEvalConfig:
         default=False,
         metadata={"help": "Enable per-request timing logs"},
     )
+    use_torch_compile: bool = field(
+        default=False,
+        metadata={"help": "Enable torch.compile on the server policy"},
+    )
+    torch_compile_mode: str = field(
+        default="reduce-overhead",
+        metadata={"help": "torch.compile mode (reduce-overhead, max-autotune, default)"},
+    )
 
     def __post_init__(self):
         if not self.server_address:
@@ -208,6 +216,8 @@ class RTCEvaluator:
                 lerobot_features=self.lerobot_features,
                 rtc_config=self.cfg.rtc,
                 device=self.cfg.policy_device,
+                use_torch_compile=self.cfg.use_torch_compile,
+                torch_compile_mode=self.cfg.torch_compile_mode,
             )
 
             policy_config_bytes = pickle.dumps(policy_config)

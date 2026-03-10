@@ -156,6 +156,14 @@ class RobotClientConfig:
         default=False,
         metadata={"help": "Enable per-request timing logs"},
     )
+    use_torch_compile: bool = field(
+        default=False,
+        metadata={"help": "Enable torch.compile on the server policy"},
+    )
+    torch_compile_mode: str = field(
+        default="reduce-overhead",
+        metadata={"help": "torch.compile mode (reduce-overhead, max-autotune, default)"},
+    )
     compile_warmup_delay: list[int] = field(
         default_factory=lambda: [0, 4],
         metadata={"help": "Warmup inference delays per call, e.g. [0,4,5,6]. Empty list disables warmup."},
@@ -262,6 +270,8 @@ class RobotClient:
                 lerobot_features=self.lerobot_features,
                 rtc_config=self.config.rtc,
                 device=self.config.policy_device,
+                use_torch_compile=self.config.use_torch_compile,
+                torch_compile_mode=self.config.torch_compile_mode,
             )
 
             policy_config_bytes = pickle.dumps(policy_config)
@@ -270,7 +280,8 @@ class RobotClient:
             logger.info(
                 f"Policy instructions sent | "
                 f"Type: {self.config.policy_type} | "
-                f"Device: {self.config.policy_device}"
+                f"Device: {self.config.policy_device} | "
+                f"Compile: {self.config.use_torch_compile} ({self.config.torch_compile_mode})"
             )
 
             return True
