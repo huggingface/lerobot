@@ -196,8 +196,7 @@ class ActionQueue:
 
         if indexes_diff != real_delay:
             logger.debug(
-                "[ACTION_QUEUE] Using actual consumed actions as delay: %d "
-                "(latency estimate was %d)",
+                "[ACTION_QUEUE] Using actual consumed actions as delay: %d (latency estimate was %d)",
                 indexes_diff,
                 real_delay,
             )
@@ -246,4 +245,3 @@ class ActionQueue:
         self.queue = self.queue[self.last_index :]
 
         self.last_index = 0
-

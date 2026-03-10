@@ -306,18 +306,10 @@ class RTCEvaluator:
                 client_get_actions_ms=roundtrip_ms,
                 client_unpickle_ms=unpickle_ms,
                 client_total_ms=total_ms,
-                server_queue_wait_ms=(
-                    server_timing.queue_wait_ms if server_timing is not None else None
-                ),
-                server_preprocess_ms=(
-                    server_timing.preprocess_ms if server_timing is not None else None
-                ),
-                server_inference_ms=(
-                    server_timing.inference_ms if server_timing is not None else None
-                ),
-                server_postprocess_ms=(
-                    server_timing.postprocess_ms if server_timing is not None else None
-                ),
+                server_queue_wait_ms=(server_timing.queue_wait_ms if server_timing is not None else None),
+                server_preprocess_ms=(server_timing.preprocess_ms if server_timing is not None else None),
+                server_inference_ms=(server_timing.inference_ms if server_timing is not None else None),
+                server_postprocess_ms=(server_timing.postprocess_ms if server_timing is not None else None),
                 server_pickle_ms=server_timing.pickle_ms if server_timing is not None else None,
                 server_total_ms=server_timing.total_ms if server_timing is not None else None,
             )

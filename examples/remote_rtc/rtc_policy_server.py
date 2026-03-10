@@ -26,9 +26,9 @@ Usage:
         --port=8080
 """
 
+import contextlib
 import logging
 import pickle  # nosec
-import sys
 import threading
 import time
 from concurrent import futures
@@ -42,19 +42,18 @@ import torch
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
-from lerobot.processor import PolicyProcessorPipeline
-from lerobot.transport import (
-    services_pb2,  # type: ignore
-    services_pb2_grpc,  # type: ignore
-)
 from lerobot.policies.rtc.remote import (
     RTCActionData,
     RTCObservationData,
     RTCRemotePolicyConfig,
     RTCTimingData,
 )
+from lerobot.processor import PolicyProcessorPipeline
+from lerobot.transport import (
+    services_pb2,  # type: ignore
+    services_pb2_grpc,  # type: ignore
+)
 from lerobot.transport.utils import receive_bytes_in_chunks
-
 from lerobot.utils.utils import init_logging
 
 logger = logging.getLogger(__name__)
@@ -347,10 +346,8 @@ class RTCPolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
         # Enqueue observation (replacing old one if queue is full)
         if self.observation_queue.full():
-            try:
+            with contextlib.suppress(Empty):
                 self.observation_queue.get_nowait()
-            except Empty:
-                pass
 
         rtc_obs_data._server_receive_time = t_start  # Store for end-to-end timing
         self.observation_queue.put(rtc_obs_data)
@@ -372,9 +369,7 @@ class RTCPolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             wait_end = time.perf_counter()
 
             logger.debug(
-                f"Running inference | "
-                f"delay={rtc_obs.inference_delay} | "
-                f"horizon={rtc_obs.execution_horizon}"
+                f"Running inference | delay={rtc_obs.inference_delay} | horizon={rtc_obs.execution_horizon}"
             )
 
             t_start = time.perf_counter()

@@ -223,9 +223,7 @@ class RobotClient:
         self.robot_wrapper = RobotWrapper(self.robot)
 
         # Create lerobot features mapping
-        self.lerobot_features = hw_to_dataset_features(
-            self.robot.observation_features, "observation"
-        )
+        self.lerobot_features = hw_to_dataset_features(self.robot.observation_features, "observation")
 
         # Initialize gRPC connection
         self.channel = grpc.insecure_channel(
@@ -313,9 +311,7 @@ class RobotClient:
         obs_processed = self.robot_observation_processor(raw_obs)
 
         # Build dataset frame with proper keys
-        obs_with_features = build_dataset_frame(
-            self.lerobot_features, obs_processed, prefix="observation"
-        )
+        obs_with_features = build_dataset_frame(self.lerobot_features, obs_processed, prefix="observation")
 
         # Convert to tensors and prepare for policy
         for name in obs_with_features:
@@ -326,9 +322,7 @@ class RobotClient:
             obs_with_features[name] = obs_with_features[name].unsqueeze(0)
 
         obs_with_features["task"] = [task]
-        obs_with_features["robot_type"] = (
-            self.robot.name if hasattr(self.robot, "name") else ""
-        )
+        obs_with_features["robot_type"] = self.robot.name if hasattr(self.robot, "name") else ""
 
         return obs_with_features
 
@@ -417,21 +411,11 @@ class RobotClient:
                 client_get_actions_ms=client_get_actions_ms,
                 client_unpickle_ms=client_unpickle_ms,
                 client_total_ms=client_total_ms,
-                server_queue_wait_ms=(
-                    server_timing.queue_wait_ms if server_timing is not None else None
-                ),
-                server_preprocess_ms=(
-                    server_timing.preprocess_ms if server_timing is not None else None
-                ),
-                server_inference_ms=(
-                    server_timing.inference_ms if server_timing is not None else None
-                ),
-                server_postprocess_ms=(
-                    server_timing.postprocess_ms if server_timing is not None else None
-                ),
-                server_pickle_ms=(
-                    server_timing.pickle_ms if server_timing is not None else None
-                ),
+                server_queue_wait_ms=(server_timing.queue_wait_ms if server_timing is not None else None),
+                server_preprocess_ms=(server_timing.preprocess_ms if server_timing is not None else None),
+                server_inference_ms=(server_timing.inference_ms if server_timing is not None else None),
+                server_postprocess_ms=(server_timing.postprocess_ms if server_timing is not None else None),
+                server_pickle_ms=(server_timing.pickle_ms if server_timing is not None else None),
                 server_total_ms=server_timing.total_ms if server_timing is not None else None,
             )
         )
@@ -569,8 +553,7 @@ class RobotClient:
                 if action is not None:
                     action = action.cpu()
                     action_dict = {
-                        key: action[i].item()
-                        for i, key in enumerate(self.robot_wrapper.action_features())
+                        key: action[i].item() for i, key in enumerate(self.robot_wrapper.action_features())
                     }
                     action_processed = self.robot_action_processor((action_dict, None))
                     self.robot_wrapper.send_action(action_processed)
