@@ -55,12 +55,8 @@ from lerobot.policies.rtc.remote import (
 )
 from lerobot.transport.utils import receive_bytes_in_chunks
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
+from lerobot.utils.utils import init_logging
+
 logger = logging.getLogger(__name__)
 
 
@@ -485,6 +481,7 @@ class RTCPolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 @draccus.wrap()
 def serve(cfg: RTCPolicyServerConfig):
     """Start the RTC Policy Server."""
+    init_logging()
     logger.info("Configuration:\n%s", pformat(asdict(cfg)))
 
     logger.info("Creating RTCPolicyServer...")
