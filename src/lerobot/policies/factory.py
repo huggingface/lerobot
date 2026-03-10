@@ -30,6 +30,7 @@ from lerobot.envs.configs import EnvConfig
 from lerobot.envs.utils import env_to_policy_features
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
+from lerobot.policies.gr00t_n1d6.configuration_gr00t_n1d6 import Gr00tN1d6Config
 from lerobot.policies.groot.configuration_groot import GrootConfig
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
@@ -43,7 +44,7 @@ from lerobot.policies.utils import validate_visual_features_consistency
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.policies.wall_x.configuration_wall_x import WallXConfig
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig
-from lerobot.processor import PolicyAction, PolicyProcessorPipeline
+from lerobot.processor import DeviceProcessorStep, PolicyAction, PolicyProcessorPipeline
 from lerobot.processor.converters import (
     batch_to_transition,
     policy_action_to_transition,
@@ -66,7 +67,8 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
 
     Args:
         name: The name of the policy. Supported names are "tdmpc", "diffusion", "act",
-              "vqbet", "pi0", "pi05", "sac", "reward_classifier", "smolvla", "wall_x".
+              "vqbet", "pi0", "pi05", "sac", "reward_classifier", "smolvla", "sarm",
+              "groot", "gr00t_n1d6", "xvla".
 
     Returns:
         The policy class corresponding to the given name.
@@ -122,6 +124,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.groot.modeling_groot import GrootPolicy
 
         return GrootPolicy
+    elif name == "gr00t_n1d6":
+        from lerobot.policies.gr00t_n1d6.modeling_gr00t_n1d6 import Gr00tN1d6Policy
+
+        return Gr00tN1d6Policy
     elif name == "xvla":
         from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
 
@@ -176,6 +182,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return RewardClassifierConfig(**kwargs)
     elif policy_type == "groot":
         return GrootConfig(**kwargs)
+    elif policy_type == "gr00t_n1d6":
+        return Gr00tN1d6Config(**kwargs)
     elif policy_type == "xvla":
         return XVLAConfig(**kwargs)
     elif policy_type == "wall_x":
@@ -261,6 +269,96 @@ def make_pre_post_processors(
             }
             kwargs["preprocessor_overrides"] = preprocessor_overrides
             kwargs["postprocessor_overrides"] = postprocessor_overrides
+
+        # Groot N1.6: Load from pretrained if available, otherwise create new
+        if isinstance(policy_cfg, Gr00tN1d6Config):
+            # Try to load from pretrained first
+            try:
+                from pathlib import Path
+
+                # Set processor_config_path override to point to policy config
+                pretrained_path_obj = Path(pretrained_path)
+                policy_config_path = str(pretrained_path_obj / "config.json")
+
+                # Filter overrides to only include gr00t_n1d6-specific steps
+                all_preprocessor_overrides = kwargs.get("preprocessor_overrides", {})
+                preprocessor_overrides = {}
+                # Only include overrides for steps that exist in gr00t_n1d6 pipeline
+                gr00t_n1d6_step_names = {
+                    "gr00t_n1d6_process_v1",
+                    "rename_observations_processor",
+                    "device_processor",
+                }
+                for key, value in all_preprocessor_overrides.items():
+                    if key in gr00t_n1d6_step_names:
+                        preprocessor_overrides[key] = value
+
+                if "gr00t_n1d6_process_v1" not in preprocessor_overrides:
+                    preprocessor_overrides["gr00t_n1d6_process_v1"] = {}
+                preprocessor_overrides["gr00t_n1d6_process_v1"]["processor_config_path"] = policy_config_path
+
+                # Filter postprocessor overrides to only include gr00t_n1d6-specific steps
+                all_postprocessor_overrides = kwargs.get("postprocessor_overrides", {})
+                postprocessor_overrides = {}
+                # Only include overrides for steps that exist in gr00t_n1d6 postprocessor pipeline
+                gr00t_n1d6_postprocessor_step_names = {"device_processor"}
+                for key, value in all_postprocessor_overrides.items():
+                    if key in gr00t_n1d6_postprocessor_step_names:
+                        postprocessor_overrides[key] = value
+
+                preprocessor = PolicyProcessorPipeline.from_pretrained(
+                    pretrained_model_name_or_path=pretrained_path,
+                    config_filename=kwargs.get(
+                        "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+                    ),
+                    overrides=preprocessor_overrides,
+                    to_transition=batch_to_transition,
+                    to_output=transition_to_batch,
+                )
+
+                # For GR00T N1.6, we need to create the postprocessor with the unnormalizer step
+                # that shares the processor from the preprocessor. This ensures statistics are
+                # available for action decoding during inference.
+                from lerobot.policies.gr00t_n1d6.processor_gr00t_n1d6 import (
+                    Gr00tN1d6ProcessStep,
+                    Gr00tN1d6UnnormalizerStep,
+                )
+
+                # Find the Gr00tN1d6ProcessStep and get its processor
+                gr00t_processor = None
+                for step in preprocessor.steps:
+                    if isinstance(step, Gr00tN1d6ProcessStep):
+                        gr00t_processor = step.processor
+                        break
+
+                # Create postprocessor with the shared processor
+                postprocessor = PolicyProcessorPipeline[PolicyAction, PolicyAction](
+                    steps=[
+                        Gr00tN1d6UnnormalizerStep(
+                            processor=gr00t_processor,
+                            embodiment_tag=policy_cfg.embodiment_tag,
+                            action_dim=None,  # Will be inferred from statistics
+                        ),
+                        DeviceProcessorStep(device="cpu"),
+                    ],
+                    name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
+                    to_transition=policy_action_to_transition,
+                    to_output=transition_to_policy_action,
+                )
+
+                return (preprocessor, postprocessor)
+            except FileNotFoundError:
+                # If pretrained processor doesn't exist, create new one
+                from lerobot.policies.gr00t_n1d6.processor_gr00t_n1d6 import (
+                    make_gr00t_n1d6_pre_post_processors,
+                )
+
+                preprocessor, postprocessor = make_gr00t_n1d6_pre_post_processors(
+                    config=policy_cfg,
+                    dataset_stats=kwargs.get("dataset_stats"),
+                )
+
+                return (preprocessor, postprocessor)
 
         return (
             PolicyProcessorPipeline.from_pretrained(
@@ -371,7 +469,37 @@ def make_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
+    elif isinstance(policy_cfg, Gr00tN1d6Config):
+        from lerobot.policies.gr00t_n1d6.processor_gr00t_n1d6 import make_gr00t_n1d6_pre_post_processors
+        from lerobot.policies.gr00t_n1d6.utils import (
+            EMBODIMENT_STAT_CONFIGS,
+            compute_relative_action_stats,
+        )
 
+        # Prepare dataset stats with relative actions if dataset is available
+        dataset_stats = kwargs.get("dataset_stats")
+        dataset = kwargs.get("dataset")
+        if dataset is not None and dataset_stats is not None:
+            embodiment_tag = policy_cfg.embodiment_tag
+            if embodiment_tag in EMBODIMENT_STAT_CONFIGS:
+                import logging
+
+                logging.info(f"Computing relative action statistics for embodiment: {embodiment_tag}")
+                try:
+                    rel_stats = compute_relative_action_stats(dataset, embodiment_tag)
+                    if rel_stats:
+                        dataset_stats["relative_action"] = rel_stats
+                        logging.info(
+                            f"Successfully computed relative action stats for: {list(rel_stats.keys())}"
+                        )
+                except Exception as e:
+                    logging.error(f"Failed to compute relative action stats: {e}")
+                    raise
+
+        processors = make_gr00t_n1d6_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=dataset_stats,
+        )
     elif isinstance(policy_cfg, XVLAConfig):
         from lerobot.policies.xvla.processor_xvla import (
             make_xvla_pre_post_processors,
