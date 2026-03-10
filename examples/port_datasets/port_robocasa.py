@@ -178,10 +178,8 @@ def discover_dataset_properties(hdf5_paths: list[str]) -> dict[str, Any]:
                                         1:
                                     ]  # Skip time dimension
                             elif f"obs/{obs_key}" in max_dims:
-                                state_keys.add(obs_key)
-                                if obs_key not in state_shapes:
-                                    state_shapes[obs_key] = max_dims[f"obs/{obs_key}"]  # Skip time dimension
-                                    state_dtypes[obs_key] = obs_group[obs_key].dtype
+                                # Skip variable-length observation keys entirely (never export them)
+                                continue
                             else:
                                 # This might be state/proprioceptive data
                                 state_keys.add(obs_key)
@@ -201,7 +199,8 @@ def discover_dataset_properties(hdf5_paths: list[str]) -> dict[str, Any]:
                     # It's a dataset (like "actions", "states", "policy_mode", etc.)
                     # Skip actions as it's handled separately
                     if key not in ["actions"] and key not in other_keys and key in max_dims:
-                        other_keys[key] = (max_dims[key], str(item.dtype))
+                        # Skip variable-length episode-level datasets entirely (never export them)
+                        continue
                     elif key not in ["actions"] and key not in other_keys:
                         other_keys[key] = (
                             (item.shape[1:], str(item.dtype))
@@ -434,57 +433,57 @@ def convert_robocasa_to_lerobot(
     for dataset_name, paths in dataset_groups.items():
         print(f"  {dataset_name}: {len(paths)} path(s)")
 
-    # Process each dataset group
+    # Process all dataset groups into a single LeRobot dataset so all tasks share one repo.
     all_total_episodes = 0
     all_datasets = []
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = CLIPTextModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
     tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-base-patch32")
-    for dataset_name, paths in dataset_groups.items():
-        dataset_repo_id = f"{repo_name}"
-        output_path = HF_LEROBOT_HOME / dataset_repo_id
 
-        # Clean up any existing dataset
-        if output_path.exists():
-            print(f"\nCleaning up existing dataset at {output_path}...")
-            shutil.rmtree(output_path)
+    dataset_repo_id = f"{repo_name}"
+    output_path = HF_LEROBOT_HOME / dataset_repo_id
 
-        # Create LeRobot dataset for this dataset name
-        print(f"\nCreating LeRobot dataset '{dataset_repo_id}'...")
-        print(f"Video encoding backend: {video_codec}")
-        dataset = LeRobotDataset.create(
-            repo_id=dataset_repo_id,
-            robot_type="PandaOmron",  # Default, in robocasa datasets
-            fps=fps,
-            features=features,
-            image_writer_threads=10,
-            image_writer_processes=5,
+    # Clean up any existing dataset once, before aggregating all HDF5 files.
+    if output_path.exists():
+        print(f"\nCleaning up existing dataset at {output_path}...")
+        shutil.rmtree(output_path)
+
+    # Create a single LeRobot dataset that will contain episodes from all groups.
+    print(f"\nCreating LeRobot dataset '{dataset_repo_id}'...")
+    print(f"Video encoding backend: {video_codec}")
+    dataset = LeRobotDataset.create(
+        repo_id=dataset_repo_id,
+        robot_type="PandaOmron",  # Default, in robocasa datasets
+        fps=fps,
+        features=features,
+        image_writer_threads=10,
+        image_writer_processes=5,
+    )
+
+    # Override video encoding method to use specified codec
+    # Uses blog post recommended defaults: g=2, crf=30, pix_fmt=yuv420p
+    def custom_encode_video(video_key: str, episode_index: int, dataset_ref=dataset):
+        """Custom video encoding with specified codec backend."""
+        temp_path = Path(tempfile.mkdtemp(dir=dataset_ref.root)) / f"{video_key}_{episode_index:03d}.mp4"
+        img_dir = dataset_ref._get_image_file_dir(episode_index, video_key)
+        encode_video_frames(
+            img_dir,
+            temp_path,
+            dataset_ref.fps,
+            vcodec=video_codec,
+            pix_fmt="yuv420p",
+            g=2,  # GOP size (recommended for robotics datasets)
+            crf=30,  # Quality setting (recommended)
+            overwrite=True,
         )
+        shutil.rmtree(img_dir)
+        return temp_path
 
-        # Override video encoding method to use specified codec
-        # Uses blog post recommended defaults: g=2, crf=30, pix_fmt=yuv420p
-        def custom_encode_video(video_key: str, episode_index: int, dataset_ref=dataset):
-            """Custom video encoding with specified codec backend."""
-            temp_path = Path(tempfile.mkdtemp(dir=dataset_ref.root)) / f"{video_key}_{episode_index:03d}.mp4"
-            img_dir = dataset_ref._get_image_file_dir(episode_index, video_key)
-            encode_video_frames(
-                img_dir,
-                temp_path,
-                dataset_ref.fps,
-                vcodec=video_codec,
-                pix_fmt="yuv420p",
-                g=2,  # GOP size (recommended for robotics datasets)
-                crf=30,  # Quality setting (recommended)
-                overwrite=True,
-            )
-            shutil.rmtree(img_dir)
-            return temp_path
+    dataset._encode_temporary_episode_video = custom_encode_video
 
-        dataset._encode_temporary_episode_video = custom_encode_video
-
-        # Process all paths for this dataset name
-        total_episodes = 0
-        ep_meta_list = []
+    ep_meta_list = []
+    for dataset_name, paths in dataset_groups.items():
+        total_episodes_group = 0
         for dataset_path in paths:
             print(f"\nProcessing {dataset_path}...")
             with h5py.File(dataset_path, "r") as f:
@@ -515,6 +514,10 @@ def convert_robocasa_to_lerobot(
 
                         # Add each state key as a separate feature (use ALL keys found in episode)
                         for state_key in properties["state_keys"]:
+                            # Some keys may be present only in a subset of episodes / files
+                            # (e.g. variable-length or task-specific features). Skip if missing.
+                            if state_key not in ep_data["obs"]:
+                                continue
                             if "obs/" + state_key in properties["max_dims"]:
                                 frame_data[state_key] = np.full(
                                     properties["max_dims"][f"obs/{state_key}"], -np.inf
@@ -525,6 +528,8 @@ def convert_robocasa_to_lerobot(
                             else:
                                 frame_data[state_key] = ep_data["obs"][state_key][t]
                         for key in properties["other_keys"]:
+                            if key not in ep_data["other_data"]:
+                                continue
                             data = np.array(ep_data["other_data"][key][t])
                             if data.shape == ():
                                 data = np.array([data])
@@ -559,7 +564,7 @@ def convert_robocasa_to_lerobot(
 
                     # save the ep_meta for the episode in the dataset
                     dataset.save_episode()
-                    total_episodes += 1
+                    total_episodes_group += 1
                     all_total_episodes += 1
 
                     if n_episodes > 0 and all_total_episodes >= n_episodes:
@@ -568,15 +573,15 @@ def convert_robocasa_to_lerobot(
                 if n_episodes > 0 and all_total_episodes >= n_episodes:
                     break
 
-        dataset.finalize()
-        # add the ep_meta for the dataset in the info.json file
-        with open(output_path / "meta/episodes/ep_metas.json", "w") as f:
-            json.dump(ep_meta_list, f)
-        all_datasets.append((dataset, dataset_repo_id))
-        print(f"\n✅ Converted {total_episodes} episodes for dataset '{dataset_name}'!")
-        print(f"Dataset saved to: {output_path}")
+        print(f"\n--- Converted {total_episodes_group} episodes for dataset '{dataset_name}'!")
 
-    print(f"\n✅ Total: Converted {all_total_episodes} episodes across {len(dataset_groups)} dataset(s)!")
+    dataset.finalize()
+    # add the ep_meta for the combined dataset in the info.json file
+    with open(output_path / "meta/episodes/ep_metas.json", "w") as f:
+        json.dump(ep_meta_list, f)
+    all_datasets.append((dataset, dataset_repo_id))
+    print(f"Dataset saved to: {output_path}")
+    print(f"\n--- Total: Converted {all_total_episodes} episodes across {len(dataset_groups)} dataset(s)!")
 
     # Optionally push to the Hugging Face Hub
     if push_to_hub:

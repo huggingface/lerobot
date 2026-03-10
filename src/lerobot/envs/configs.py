@@ -396,8 +396,8 @@ class RoboCasaEnvConfig(EnvConfig):
     render_mode: str = "rgb_array"
     camera_name: str = "robot0_agentview_center,robot0_eye_in_hand"
     camera_name_mapping: dict[str, str] | None = None
-    observation_height: int = 256
-    observation_width: int = 256
+    observation_height: int = 128
+    observation_width: int = 128
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
             ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(12,)),
