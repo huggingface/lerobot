@@ -150,25 +150,21 @@ class RTCProcessor:
               right-padded with zeros to match ``T``.
             - Prefix weights are constructed via ``get_prefix_weights(inference_delay, execution_horizon, T)``
               and broadcast to ``(B, T, A)``.
-            - Guidance correction is computed via autograd using ``x1_t = x_t + time * v_t`` and
-              ``error = (prev_chunk_left_over - x1_t) * weights``.
+            - Guidance correction is ``err = (prev_chunk_left_over - x1_t) * weights``
+              using the identity approximation (no backward pass needed).
             - The final guidance weight is clamped by ``max_guidance_weight`` from the config.
 
         Reference:
             https://www.physicalintelligence.company/download/real_time_chunking.pdf
         """
 
-        # In the original implementation, the time goes from 0 to 1 and
-        # In our implementation, the time goes from 1 to 0
-        # So we need to invert the time
-        tau = 1 - time
-
         if prev_chunk_left_over is None:
             # First step, no guidance - return v_t
             v_t = original_denoise_step_partial(x_t)
             return v_t
 
-        x_t = x_t.clone().detach()
+        time_tensor = torch.as_tensor(time, dtype=x_t.dtype, device=x_t.device)
+        tau_tensor = 1 - time_tensor
 
         squeezed = False
         if len(x_t.shape) < 3:
@@ -183,17 +179,19 @@ class RTCProcessor:
         if execution_horizon is None:
             execution_horizon = self.rtc_config.execution_horizon
 
-        # If the previous action chunk is to short then it doesn't make sense to use long execution horizon
-        # because there is nothing to merge
-        if execution_horizon > prev_chunk_left_over.shape[1]:
-            execution_horizon = prev_chunk_left_over.shape[1]
+        # Clamp execution_horizon to prev_chunk length (compile-friendly)
+        prev_chunk_len = prev_chunk_left_over.shape[1]
+        if isinstance(execution_horizon, Tensor):
+            execution_horizon = torch.clamp(execution_horizon, max=prev_chunk_len)
+        elif execution_horizon > prev_chunk_len:
+            execution_horizon = prev_chunk_len
 
         batch_size = x_t.shape[0]
         action_chunk_size = x_t.shape[1]
         action_dim = x_t.shape[2]
 
         if prev_chunk_left_over.shape[1] < action_chunk_size or prev_chunk_left_over.shape[2] < action_dim:
-            padded = torch.zeros(batch_size, action_chunk_size, action_dim).to(x_t.device)
+            padded = torch.zeros(batch_size, action_chunk_size, action_dim, device=x_t.device, dtype=x_t.dtype)
             padded[:, : prev_chunk_left_over.shape[1], : prev_chunk_left_over.shape[2]] = prev_chunk_left_over
             prev_chunk_left_over = padded
 
@@ -202,23 +200,22 @@ class RTCProcessor:
         )
 
         weights = (
-            self.get_prefix_weights(inference_delay, execution_horizon, action_chunk_size)
-            .to(x_t.device)
+            self.get_prefix_weights(
+                inference_delay, execution_horizon, action_chunk_size, device=x_t.device, dtype=x_t.dtype
+            )
             .unsqueeze(0)
             .unsqueeze(-1)
         )
 
-        with torch.enable_grad():
-            v_t = original_denoise_step_partial(x_t)
-            x_t.requires_grad_(True)
+        # Identity approximation (J ≈ I): correction = err, no backward pass needed.
+        v_t = original_denoise_step_partial(x_t)
+        x1_t = x_t - time_tensor * v_t  # noqa: N806
+        err = (prev_chunk_left_over - x1_t) * weights
+        correction = err.detach()
 
-            x1_t = x_t - time * v_t  # noqa: N806
-            err = (prev_chunk_left_over - x1_t) * weights
-            grad_outputs = err.clone().detach()
-            correction = torch.autograd.grad(x1_t, x_t, grad_outputs, retain_graph=False)[0]
-
-        max_guidance_weight = torch.as_tensor(self.rtc_config.max_guidance_weight)
-        tau_tensor = torch.as_tensor(tau)
+        max_guidance_weight = torch.as_tensor(
+            self.rtc_config.max_guidance_weight, dtype=x_t.dtype, device=x_t.device
+        )
         squared_one_minus_tau = (1 - tau_tensor) ** 2
         inv_r2 = (squared_one_minus_tau + tau_tensor**2) / (squared_one_minus_tau)
         c = torch.nan_to_num((1 - tau_tensor) / tau_tensor, posinf=max_guidance_weight)
@@ -247,24 +244,40 @@ class RTCProcessor:
 
         return result
 
-    def get_prefix_weights(self, start, end, total):
-        start = min(start, end)
+    def get_prefix_weights(
+        self,
+        start: int | Tensor,
+        end: int | Tensor,
+        total: int,
+        *,
+        device: torch.device | None = None,
+        dtype: torch.dtype = torch.float32,
+    ):
+        # Pure tensor implementation — no .item() calls, no dynamic slicing,
+        # so this can live inside a torch.compile full-graph.
+        idx = torch.arange(total, device=device, dtype=dtype)
+        start_f = torch.as_tensor(start, device=device, dtype=dtype).reshape(())
+        end_f = torch.as_tensor(end, device=device, dtype=dtype).reshape(())
+        start_f = torch.minimum(start_f, end_f)
 
-        if self.rtc_config.prefix_attention_schedule == RTCAttentionSchedule.ZEROS:
-            weights = torch.zeros(total)
-            weights[:start] = 1.0
-        elif self.rtc_config.prefix_attention_schedule == RTCAttentionSchedule.ONES:
-            weights = torch.ones(total)
-            weights[end:] = 0.0
-        elif self.rtc_config.prefix_attention_schedule == RTCAttentionSchedule.LINEAR:
-            lin_weights = self._linweights(start, end, total)
-            weights = self._add_trailing_zeros(lin_weights, total, end)
-            weights = self._add_leading_ones(weights, start, total)
-        elif self.rtc_config.prefix_attention_schedule == RTCAttentionSchedule.EXP:
-            lin_weights = self._linweights(start, end, total)
-            lin_weights = lin_weights * torch.expm1(lin_weights).div(math.e - 1)
-            weights = self._add_trailing_zeros(lin_weights, total, end)
-            weights = self._add_leading_ones(weights, start, total)
+        schedule = self.rtc_config.prefix_attention_schedule
+
+        if schedule == RTCAttentionSchedule.ZEROS:
+            weights = torch.where(idx < start_f, 1.0, 0.0)
+        elif schedule == RTCAttentionSchedule.ONES:
+            weights = torch.where(idx < end_f, 1.0, 0.0)
+        elif schedule in (RTCAttentionSchedule.LINEAR, RTCAttentionSchedule.EXP):
+            range_len = end_f - start_f
+            # Equivalent to linspace(1, 0, range_len+2)[1:-1] mapped onto [start, end)
+            # For absolute index i in [start, end): weight = (end - i) / (range_len + 1)
+            lin = (end_f - idx) / (range_len + 1)
+
+            if schedule == RTCAttentionSchedule.EXP:
+                lin = lin * torch.expm1(lin) / (math.e - 1)
+
+            leading_mask = idx < start_f
+            middle_mask = (idx >= start_f) & (idx < end_f)
+            weights = torch.where(leading_mask, 1.0, torch.where(middle_mask, lin, 0.0))
 
         return weights
 

@@ -102,6 +102,16 @@ class ActionQueue:
         length = len(self.queue)
         return length - self.last_index <= 0
 
+    def clear(self) -> None:
+        """Clear all actions from the queue, resetting to empty state.
+
+        Used when switching tasks so stale actions are not executed.
+        """
+        with self.lock:
+            self.queue = None
+            self.original_queue = None
+            self.last_index = 0
+
     def get_action_index(self) -> int:
         """Get the current action consumption index.
 

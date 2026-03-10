@@ -17,6 +17,7 @@
 import builtins
 import logging
 import math
+import threading
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypedDict
@@ -785,7 +786,9 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         masks,
         noise=None,
         num_steps=None,
-        **kwargs: Unpack[ActionSelectKwargs],
+        inference_delay: int | None = None,
+        prev_chunk_left_over: Tensor | None = None,
+        execution_horizon: int | None = None,
     ) -> Tensor:
         """Do a full inference forward and compute the action."""
         if num_steps is None:
@@ -824,6 +827,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         for step in range(num_steps):
             time = 1.0 + step * dt
             time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
+            rtc_time_tensor = torch.tensor(time, dtype=torch.float32, device=device)
 
             def denoise_step_partial_call(input_x_t, current_timestep=time_tensor):
                 return self.denoise_step(
@@ -834,15 +838,11 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                 )
 
             if self._rtc_enabled():
-                inference_delay = kwargs.get("inference_delay")
-                prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
-                execution_horizon = kwargs.get("execution_horizon")
-
                 v_t = self.rtc_processor.denoise_step(
                     x_t=x_t,
                     prev_chunk_left_over=prev_chunk_left_over,
                     inference_delay=inference_delay,
-                    time=time,
+                    time=rtc_time_tensor,
                     original_denoise_step_partial=denoise_step_partial_call,
                     execution_horizon=execution_horizon,
                 )
@@ -1105,9 +1105,36 @@ class PI05Policy(PreTrainedPolicy):
     def get_optim_params(self) -> dict:
         return self.parameters()
 
+    def _new_action_queue(self) -> deque:
+        """Create a fresh action queue honoring n_action_steps."""
+        return deque(maxlen=self.config.n_action_steps)
+
+    def _get_thread_action_queue(self) -> deque:
+        """Return the action queue scoped to the current thread."""
+        if not hasattr(self, "_thread_local"):
+            self._thread_local = threading.local()
+        action_queue = getattr(self._thread_local, "action_queue", None)
+        if action_queue is None:
+            action_queue = self._new_action_queue()
+            self._thread_local.action_queue = action_queue
+        return action_queue
+
+    @property
+    def _action_queue(self) -> deque:
+        """Expose the thread-local action queue (backwards compatible attribute)."""
+        return self._get_thread_action_queue()
+
+    @_action_queue.setter
+    def _action_queue(self, queue: deque) -> None:
+        if not hasattr(self, "_thread_local"):
+            self._thread_local = threading.local()
+
+        self._thread_local.action_queue = queue
+
     def reset(self):
         """Reset internal state - called when environment resets."""
-        self._action_queue = deque(maxlen=self.config.n_action_steps)
+        self._thread_local = threading.local()
+        self._action_queue = self._new_action_queue()
         self._queues = {
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
@@ -1225,8 +1252,42 @@ class PI05Policy(PreTrainedPolicy):
         images, img_masks = self._preprocess_images(batch)
         tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
 
-        # Sample actions using the model (pass through RTC kwargs, no separate state needed for PI05)
-        actions = self.model.sample_actions(images, img_masks, tokens, masks, **kwargs)
+        # Normalize RTC inputs before the compiled sample_actions boundary to
+        # prevent dynamo recompilation:
+        #  - Convert inference_delay / execution_horizon from Python int to tensor
+        #    (dynamo specializes on int values, recompiling for each unique value;
+        #    tensors are dynamic).
+        #  - Pad prev_chunk_left_over to (chunk_size, max_action_dim) so the compiled
+        #    function always sees the same input shape.
+        inference_delay = kwargs.get("inference_delay")
+        if inference_delay is not None and not isinstance(inference_delay, torch.Tensor):
+            inference_delay = torch.tensor(inference_delay, dtype=torch.long)
+
+        execution_horizon = kwargs.get("execution_horizon")
+        if execution_horizon is not None and not isinstance(execution_horizon, torch.Tensor):
+            execution_horizon = torch.tensor(execution_horizon, dtype=torch.long)
+
+        prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
+        if prev_chunk_left_over is not None:
+            model_device = tokens.device
+            prev_chunk_left_over = prev_chunk_left_over.to(device=model_device)
+            target_t, target_a = self.config.chunk_size, self.config.max_action_dim
+            cur_t, cur_a = prev_chunk_left_over.shape[-2], prev_chunk_left_over.shape[-1]
+            if cur_t < target_t or cur_a < target_a:
+                pad_shape = (*prev_chunk_left_over.shape[:-2], target_t, target_a)
+                padded = torch.zeros(pad_shape, device=model_device, dtype=prev_chunk_left_over.dtype)
+                padded[..., :cur_t, :cur_a] = prev_chunk_left_over
+                prev_chunk_left_over = padded
+
+        actions = self.model.sample_actions(
+            images,
+            img_masks,
+            tokens,
+            masks,
+            inference_delay=inference_delay,
+            prev_chunk_left_over=prev_chunk_left_over,
+            execution_horizon=execution_horizon,
+        )
 
         # Unpad actions to actual action dimension
         original_action_dim = self.config.output_features[ACTION].shape[0]

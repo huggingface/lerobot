@@ -76,9 +76,9 @@ dependencies = [
     "pyserial>=3.5,<4.0",
     "wandb>=0.24.0,<0.25.0",
 
-    "torch>=2.2.1,<2.11.0", # TODO: Bump dependency
-    "torchcodec>=0.2.1,<0.11.0; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')", # TODO: Bump dependency
-    "torchvision>=0.21.0,<0.26.0", # TODO: Bump dependency
+    "torch>=2.2.1,<2.8.0", # TODO: Bump dependency
+    "torchcodec>=0.2.1,<0.6.0; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')", # TODO: Bump dependency
+    "torchvision>=0.21.0,<0.23.0", # TODO: Bump dependency
 
     "draccus==0.10.0", # TODO: Remove ==
     "gymnasium>=1.1.1,<2.0.0",
@@ -96,7 +96,7 @@ dependencies = [
 # Common
 pygame-dep = ["pygame>=2.5.1,<2.7.0"]
 placo-dep = ["placo>=0.9.6,<0.10.0"]
-transformers-dep = ["transformers>=4.57.1,<5.0.0"]
+transformers-dep = ["transformers>=4.47.0,<6.0.0"]
 grpcio-dep = ["grpcio==1.73.1", "protobuf>=6.31.1,<6.32.0"]
 can-dep = ["python-can>=4.2.0,<5.0.0"]
 
@@ -135,6 +135,8 @@ wallx = [
     "torchdiffeq==0.2.5",
     "qwen_vl_utils==0.0.11"
 ]
+# NOTE: pi extra has no conflicts declared due to uv bug with git URL dependencies
+# Do not install pi with transformers-dep extras simultaneously
 pi = ["transformers @ git+https://github.com/huggingface/transformers.git@fix/lerobot_openpi", "scipy>=1.10.1,<1.15"]
 smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "accelerate>=1.7.0,<2.0.0", "safetensors>=0.4.3,<1.0.0"]
 groot = [
@@ -219,6 +221,19 @@ lerobot = ["envs/*.json"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchvision = [
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
 
 [tool.ruff]
 target-version = "py310"
@@ -399,83 +414,10 @@ ignore_errors = false
 # ignore_errors = false
 
 [tool.uv]
-# wallx requires transformers==4.49.0 which conflicts with other extras that need >=4.53.0
+# wallx has incompatible versions with many extras
 conflicts = [
-    [
-        { extra = "wallx" },
-        { extra = "transformers-dep" },
-    ],
-    [
-        { extra = "wallx" },
-        { extra = "pi" },
-    ],
-    [
-        { extra = "wallx" },
-        { extra = "smolvla" },
-    ],
-    [
-        { extra = "wallx" },
-        { extra = "groot" },
-    ],
-    [
-        { extra = "wallx" },
-        { extra = "xvla" },
-    ],
-    [
-        { extra = "wallx" },
-        { extra = "sarm" },
-    ],
-    [
-        { extra = "wallx" },
-        { extra = "hilserl" },
-    ],
-    [
-        { extra = "wallx" },
-        { extra = "libero" },
-    ],
-    [
-        { extra = "wallx" },
-        { extra = "peft" },
-    ],
-    [
-        { extra = "wallx" },
-        { extra = "all" },
-    ],
-    # pi uses custom branch which conflicts with transformers-dep
-    [
-        { extra = "pi" },
-        { extra = "transformers-dep" },
-    ],
-    [
-        { extra = "pi" },
-        { extra = "smolvla" },
-    ],
-    [
-        { extra = "pi" },
-        { extra = "groot" },
-    ],
-    [
-        { extra = "pi" },
-        { extra = "xvla" },
-    ],
-    [
-        { extra = "pi" },
-        { extra = "sarm" },
-    ],
-    [
-        { extra = "pi" },
-        { extra = "hilserl" },
-    ],
-    [
-        { extra = "pi" },
-        { extra = "libero" },
-    ],
-    [
-        { extra = "pi" },
-        { extra = "peft" },
-    ],
-    [
-        { extra = "pi" },
-        { extra = "all" },
-    ],
+    [{ extra = "wallx" }, { extra = "all" }],
+    [{ extra = "wallx" }, { extra = "peft" }],
+    [{ extra = "wallx" }, { extra = "sarm" }],
+    [{ extra = "wallx" }, { extra = "pi" }],
 ]
