@@ -459,6 +459,7 @@ class RobotClient:
             warmup_delays,
         )
         prev_actions = None
+        last_warmup_latency = None
 
         for warmup_idx, delay in enumerate(warmup_delays):
             observation_start = time.perf_counter()
@@ -466,7 +467,7 @@ class RobotClient:
             observation_ms = (time.perf_counter() - observation_start) * 1000
 
             try:
-                rtc_action_data, _, _ = self._run_remote_request(
+                rtc_action_data, warmup_latency, _ = self._run_remote_request(
                     observation,
                     action_index_before=0,
                     queue_size_before=self.action_queue.qsize(),
@@ -477,6 +478,7 @@ class RobotClient:
                     merge_actions=False,
                     observation_ms=observation_ms,
                 )
+                last_warmup_latency = warmup_latency
             except RuntimeError:
                 logger.warning("Warmup request returned empty response, stopping warmup early")
                 break
@@ -489,8 +491,17 @@ class RobotClient:
                 else:
                     prev_actions = None
 
+        # Clear any stale state from warmup
+        self.action_queue.clear()
+
+        # Seed latency tracker with last warmup latency so the first real
+        # request uses a realistic inference_delay instead of 0
         self.latency_tracker = LatencyTracker()
-        logger.info("Remote warmup finished")
+        if last_warmup_latency is not None:
+            self.latency_tracker.add(last_warmup_latency)
+            logger.info("Remote warmup finished (seed latency: %.1fms)", last_warmup_latency * 1000)
+        else:
+            logger.info("Remote warmup finished (no latency seed)")
 
     def get_actions_thread(self):
         """Thread function to request action chunks from remote server."""

@@ -159,9 +159,10 @@ class ActionQueue:
 
             if self.cfg.enabled:
                 self._replace_actions_queue(original_actions, processed_actions, real_delay)
-                return
+                return real_delay
 
             self._append_actions_queue(original_actions, processed_actions)
+            return 0
 
     def _replace_actions_queue(self, original_actions: Tensor, processed_actions: Tensor, real_delay: int):
         """Replace the queue with new actions (RTC mode).
