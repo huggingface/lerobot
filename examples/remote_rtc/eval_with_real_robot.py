@@ -98,8 +98,8 @@ from lerobot.transport import (
 )
 from lerobot.transport.utils import grpc_channel_options, send_bytes_in_chunks
 from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.utils import init_logging
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -440,7 +440,6 @@ class RobotClient:
         if self.config.verbose_request_logging:
             logger.info(
                 f"[GET_ACTIONS] {label} | "
-                f"observation: {observation_ms:.1f}ms | "
                 f"total: {client_total_ms:.1f}ms | "
                 f"delay: {applied_delay} | "
                 f"queue: {queue_size_after}"
@@ -490,10 +489,6 @@ class RobotClient:
                 else:
                     prev_actions = None
 
-        # Clear stale warmup state. Don't seed latency tracker — warmup
-        # latencies include torch.compile overhead and are not representative
-        # of steady-state inference. The first real request will use
-        # inference_delay=0 and the actual round-trip will seed the tracker.
         self.action_queue.clear()
         self.latency_tracker = LatencyTracker()
         logger.info("Remote warmup finished")
@@ -595,6 +590,7 @@ class RobotClient:
 @draccus.wrap()
 def main(cfg: RobotClientConfig):
     """Main entry point for RTC Robot Client."""
+    init_logging()
     logger.info(pformat(asdict(cfg)))
 
     signal_handler = ProcessSignalHandler(use_threads=True, display_pid=False)

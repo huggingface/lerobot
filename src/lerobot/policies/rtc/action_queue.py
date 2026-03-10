@@ -191,14 +191,8 @@ class ActionQueue:
 
         if indexes_diff <= 0:
             # Queue was empty during inference (first request or queue ran dry).
-            # Use latency-based estimate since we have no ground truth.
-            logger.debug(
-                "[ACTION_QUEUE] No actions consumed during inference "
-                "(indexes_diff=%d), using latency estimate: %d",
-                indexes_diff,
-                real_delay,
-            )
-            return real_delay
+            # Robot didn't move, so no actions are stale — skip nothing.
+            return 0
 
         if indexes_diff != real_delay:
             logger.debug(

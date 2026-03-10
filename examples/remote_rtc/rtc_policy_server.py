@@ -334,6 +334,11 @@ class RTCPolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         unpickle_ms = (t_unpickle - t_receive) * 1000
 
         if self.config.verbose_request_logging:
+            prev_shape = (
+                tuple(rtc_obs_data.prev_chunk_left_over.shape)
+                if rtc_obs_data.prev_chunk_left_over is not None
+                else None
+            )
             logger.info(
                 f"Observation received | "
                 f"bytes: {len(received_bytes)} | "
@@ -341,7 +346,7 @@ class RTCPolicyServer(services_pb2_grpc.AsyncInferenceServicer):
                 f"unpickle: {unpickle_ms:.1f}ms | "
                 f"inference_delay: {rtc_obs_data.inference_delay} | "
                 f"execution_horizon: {rtc_obs_data.execution_horizon} | "
-                f"has_prev_chunk: {rtc_obs_data.prev_chunk_left_over is not None}"
+                f"prev_chunk_left_over: {prev_shape}"
             )
 
         # Enqueue observation (replacing old one if queue is full)
@@ -385,7 +390,7 @@ class RTCPolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             t_preprocess = time.perf_counter()
 
             # Run policy with RTC parameters
-            logger.debug("Running predict_action_chunk (first run may take 30-60s for compilation)...")
+            logger.debug("Running predict_action_chunk...")
             with torch.no_grad():
                 actions = self.policy.predict_action_chunk(
                     preprocessed_obs,

@@ -1259,17 +1259,18 @@ class PI05Policy(PreTrainedPolicy):
         #    tensors are dynamic).
         #  - Pad prev_chunk_left_over to (chunk_size, max_action_dim) so the compiled
         #    function always sees the same input shape.
+        model_device = tokens.device
+
         inference_delay = kwargs.get("inference_delay")
         if inference_delay is not None and not isinstance(inference_delay, torch.Tensor):
-            inference_delay = torch.tensor(inference_delay, dtype=torch.long)
+            inference_delay = torch.tensor(inference_delay, dtype=torch.long, device=model_device)
 
         execution_horizon = kwargs.get("execution_horizon")
         if execution_horizon is not None and not isinstance(execution_horizon, torch.Tensor):
-            execution_horizon = torch.tensor(execution_horizon, dtype=torch.long)
+            execution_horizon = torch.tensor(execution_horizon, dtype=torch.long, device=model_device)
 
         prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
         if prev_chunk_left_over is not None:
-            model_device = tokens.device
             prev_chunk_left_over = prev_chunk_left_over.to(device=model_device)
             target_t, target_a = self.config.chunk_size, self.config.max_action_dim
             cur_t, cur_a = prev_chunk_left_over.shape[-2], prev_chunk_left_over.shape[-1]
