@@ -459,7 +459,6 @@ class RobotClient:
             warmup_delays,
         )
         prev_actions = None
-        last_warmup_latency = None
 
         for warmup_idx, delay in enumerate(warmup_delays):
             observation_start = time.perf_counter()
@@ -478,7 +477,7 @@ class RobotClient:
                     merge_actions=False,
                     observation_ms=observation_ms,
                 )
-                last_warmup_latency = warmup_latency
+                logger.info("Warmup %d/%d: %.1fms", warmup_idx + 1, len(warmup_delays), warmup_latency * 1000)
             except RuntimeError:
                 logger.warning("Warmup request returned empty response, stopping warmup early")
                 break
@@ -491,17 +490,13 @@ class RobotClient:
                 else:
                     prev_actions = None
 
-        # Clear any stale state from warmup
+        # Clear stale warmup state. Don't seed latency tracker — warmup
+        # latencies include torch.compile overhead and are not representative
+        # of steady-state inference. The first real request will use
+        # inference_delay=0 and the actual round-trip will seed the tracker.
         self.action_queue.clear()
-
-        # Seed latency tracker with last warmup latency so the first real
-        # request uses a realistic inference_delay instead of 0
         self.latency_tracker = LatencyTracker()
-        if last_warmup_latency is not None:
-            self.latency_tracker.add(last_warmup_latency)
-            logger.info("Remote warmup finished (seed latency: %.1fms)", last_warmup_latency * 1000)
-        else:
-            logger.info("Remote warmup finished (no latency seed)")
+        logger.info("Remote warmup finished")
 
     def get_actions_thread(self):
         """Thread function to request action chunks from remote server."""

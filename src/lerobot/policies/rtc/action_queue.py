@@ -141,28 +141,74 @@ class ActionQueue:
         processed_actions: Tensor,
         real_delay: int,
         action_index_before_inference: int | None = 0,
-    ):
+    ) -> int:
         """Merge new actions into the queue.
 
         This method operates differently based on RTC mode:
         - RTC enabled: Replaces the queue, accounting for inference delay
         - RTC disabled: Appends to the queue, maintaining continuity
 
+        For RTC mode, the delay used for slicing is determined by ground truth
+        (actual actions consumed during inference) when available, falling back
+        to the latency-based estimate when the queue was empty.
+
         Args:
             original_actions: Unprocessed actions from policy (time_steps, action_dim).
             processed_actions: Post-processed actions for robot (time_steps, action_dim).
-            real_delay: Number of time steps of inference delay.
+            real_delay: Number of time steps of inference delay (ceil of latency).
             action_index_before_inference: Index before inference started, for validation.
+
+        Returns:
+            int: The actual delay applied (number of actions skipped).
         """
         with self.lock:
-            self._check_delays(real_delay, action_index_before_inference)
-
             if self.cfg.enabled:
-                self._replace_actions_queue(original_actions, processed_actions, real_delay)
-                return real_delay
+                actual_delay = self._compute_actual_delay(real_delay, action_index_before_inference)
+                self._replace_actions_queue(original_actions, processed_actions, actual_delay)
+                return actual_delay
 
             self._append_actions_queue(original_actions, processed_actions)
             return 0
+
+    def _compute_actual_delay(self, real_delay: int, action_index_before_inference: int | None) -> int:
+        """Compute the actual delay to use for queue slicing.
+
+        Uses ground truth (actions consumed during inference) when the queue
+        was active. Falls back to latency-based estimate when the queue was
+        empty (e.g. first request after warmup).
+
+        Args:
+            real_delay: Latency-based delay estimate (ceil).
+            action_index_before_inference: Action index when inference started.
+
+        Returns:
+            int: Delay to use for slicing the new action chunk.
+        """
+        if action_index_before_inference is None:
+            return real_delay
+
+        indexes_diff = self.last_index - action_index_before_inference
+
+        if indexes_diff <= 0:
+            # Queue was empty during inference (first request or queue ran dry).
+            # Use latency-based estimate since we have no ground truth.
+            logger.debug(
+                "[ACTION_QUEUE] No actions consumed during inference "
+                "(indexes_diff=%d), using latency estimate: %d",
+                indexes_diff,
+                real_delay,
+            )
+            return real_delay
+
+        if indexes_diff != real_delay:
+            logger.debug(
+                "[ACTION_QUEUE] Using actual consumed actions as delay: %d "
+                "(latency estimate was %d)",
+                indexes_diff,
+                real_delay,
+            )
+
+        return indexes_diff
 
     def _replace_actions_queue(self, original_actions: Tensor, processed_actions: Tensor, real_delay: int):
         """Replace the queue with new actions (RTC mode).
@@ -207,24 +253,3 @@ class ActionQueue:
 
         self.last_index = 0
 
-    def _check_delays(self, real_delay: int, action_index_before_inference: int | None = None):
-        """Validate that computed delays match expectations.
-
-        Compares the delay computed from inference latency with the actual
-        number of actions consumed during inference.
-
-        Args:
-            real_delay: Delay computed from inference latency.
-            action_index_before_inference: Action index when inference started.
-        """
-        if action_index_before_inference is None:
-            return
-
-        indexes_diff = self.last_index - action_index_before_inference
-        if indexes_diff != real_delay:
-            # Let's check that action index difference (real delay calculated based on action queue)
-            # is the same as delay calculated based on inference latency
-            logger.warning(
-                f"[ACTION_QUEUE] Indexes diff is not equal to real delay. "
-                f"Indexes diff: {indexes_diff}, real delay: {real_delay}"
-            )
