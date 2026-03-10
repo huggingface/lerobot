@@ -18,72 +18,100 @@ import logging
 
 import woangripper_api_py as woangripper
 
+from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.utils.errors import DeviceNotConnectedError
 
 from ...robots.onerobotics_follower.woan_arm import WoanAdapter
+from .config_woan_arm_teleoperate import WoanTeleopLeaderConfig
 
 logger = logging.getLogger("woan_arm")
 
 
-class WoanTeleopLeader(WoanAdapter):
+class WoanTeleopLeader(Teleoperator):
     """
-    Specialized Adapter for Teleoperation Leader scenarios.
+    Teleoperator wrapper for the Woan leader arm.
 
-    This adapter can have specialized methods if needed.
-    Starting gravity compensation when connected, etc.
+    This class implements the `Teleoperator` interface and delegates low-level
+    robot interactions to a `WoanAdapter` instance. Using composition keeps
+    the teleoperator visible to the rest of the system as a `Teleoperator`.
     """
 
-    def connect(self) -> None:
-        """
-        Connect to the Woan Arm robot and start gravity compensation.
-        """
-        super().connect()
-        # time.sleep(0.5)  # Wait a bit to ensure connection is stable
-        if self.is_connected:
-            self._arm.ArmGravityCompensation()
-            logger.info(f"{self} gravity compensation started.")
-            if self.config.enable_gripper_joystick:
-                self._gripper_joystick = woangripper.GripperControl()
-                if not self._gripper_joystick.initialize_joystick(self.config.port, self.config.slcan_type):
-                    logger.warning("Failed to connect to gripper joystick control.")
+    config_class = WoanTeleopLeaderConfig
+    name = "woan_teleop_leader"
 
-    def send_action(self, action):
-        """
-        Only handle reset action specifically.
-        """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
+    def __init__(self, config: WoanTeleopLeaderConfig):
+        super().__init__(config)
+        self.config = config
+        self._adapter = WoanAdapter(config)
+        self._gripper_joystick = None
 
-        if action.get("reset", False):
-            # Leader stops gravity compensation and then resets
-            logger.debug("Leader adapter executing reset action.")
-            self._arm.StopGravityCompensation()
-            self._execute_reset_position()
-            return action
-        # For other actions, skip and just return
-        logger.debug("Leader adapter ignoring non-reset action.")
-        return action
+    @property
+    def action_features(self) -> dict[str, type]:
+        return self._adapter.action_features
 
-    def get_observation(self):
-        """
-        Get observation from the robot, including joint states and gripper joystick status if enabled.
-        """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
+    @property
+    def feedback_features(self) -> dict[str, type]:
+        return {}
 
-        obs_dict = super().get_observation()
-        if self.config.enable_gripper_joystick:
-            obs_dict["gripper.position"] = self._gripper_joystick.get_joystick_pos()
+    @property
+    def is_connected(self) -> bool:
+        return self._adapter.is_connected
 
-        return obs_dict
+    def connect(self, calibrate: bool = True) -> None:
+        self._adapter.connect()
+        # Start gravity compensation if available
+        try:
+            if self._adapter.is_connected:
+                # Move main arm to predefined safe joints before enabling gravity compensation
+                home_joints_positions = getattr(self.config, "home_joints_positions", None)
+                if home_joints_positions is not None:
+                    self._adapter._arm.movej(home_joints_positions, speed_scale=0.8, trajectory_connect=0)
+
+                self._adapter._arm.ArmGravityCompensation()
+                logger.info(f"{self} gravity compensation started.")
+                if self.config.enable_gripper_joystick:
+                    self._gripper_joystick = woangripper.GripperControl()
+                    if not self._gripper_joystick.initialize_joystick(
+                        self.config.port, self.config.slcan_type
+                    ):
+                        logger.warning("Failed to connect to gripper joystick control.")
+        except Exception:
+            logger.exception("Error during leader connect/gravity compensation")
+
+    @property
+    def is_calibrated(self) -> bool:
+        # Delegate to adapter when applicable
+        return getattr(self._adapter, "is_calibrated", True)
+
+    def calibrate(self) -> None:
+        # No-op: adapter handles any hardware calibration
+        return None
+
+    def configure(self) -> None:
+        # No special configuration beyond adapter
+        return None
 
     def get_action(self):
-        """
-        Get current action from the leader arm.
+        if not self._adapter.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        This is the main method for teleoperators - it reads the current state
-        of the leader arm and returns it as an action that can be sent to a follower.
+        obs = self._adapter.get_observation()
+        if self.config.enable_gripper_joystick and self._gripper_joystick is not None:
+            try:
+                obs["gripper.position"] = self._gripper_joystick.get_joystick_pos()
+            except Exception:
+                logger.exception("Failed reading gripper joystick position")
 
-        Reads all motor states (pos/vel/torque) in one CAN refresh cycle.
-        """
-        return self.get_observation()
+        return obs
+
+    def send_feedback(self, feedback: dict[str, any]) -> None:
+        # Leader teleop typically doesn't accept feedback; no-op for now
+        return None
+
+    def disconnect(self) -> None:
+        try:
+            if self._gripper_joystick:
+                # If the gripper joystick has a cleanup method, call it.
+                self._gripper_joystick = None
+        finally:
+            self._adapter.disconnect()

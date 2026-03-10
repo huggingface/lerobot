@@ -31,7 +31,6 @@ import woanarm_api_py as woanarm
 import woangripper_api_py as woangripper
 
 from lerobot.cameras.utils import make_cameras_from_configs
-from lerobot.robots.robot import Robot
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from .config_woan_arm import WoanRobotConfig
@@ -39,7 +38,7 @@ from .config_woan_arm import WoanRobotConfig
 logger = logging.getLogger("woan_arm")
 
 
-class WoanAdapter(Robot):
+class WoanAdapter:
     """
     Adapter for Woan Robot Arm (7-DOF) to be used with LeRobot.
     """
@@ -54,7 +53,9 @@ class WoanAdapter(Robot):
         Args:
             config (WoanRobotConfig): Configuration object containing device path and other settings.
         """
-        super().__init__(config)
+        from lerobot.robots.robot import Robot
+
+        Robot.__init__(self, config)
         self.config = config
         self._is_connected = False
         self._arm = None
@@ -76,7 +77,8 @@ class WoanAdapter(Robot):
         Connect to the Woan Arm robot.
 
         Establish communication with the robot arm hardware using the configuration provided.
-        Enables motors upon successful connection.
+        Enables motors upon successful connection. For follower arms, optionally moves to an
+        intermediate position before the final home position to avoid collisions.
 
         Raises:
             DeviceAlreadyConnectedError: If the device is already connected.
@@ -112,6 +114,8 @@ class WoanAdapter(Robot):
                 self._gripper = woangripper.GripperControl()
                 if not self._gripper.initialize(self.config.port, self.config.slcan_type):
                     logger.warning("Failed to initialize gripper, continuing without it.")
+                else:
+                    logger.info(f"{self} gripper initialized successfully.")
 
             # Connect cameras
             if not self.config.is_teleop_leader:
@@ -213,7 +217,7 @@ class WoanAdapter(Robot):
 
     def _execute_joint_control(self, action: dict, params: dict):
         target_joints = [float(action[f"joint{i}.pos"]) for i in range(1, self.dof + 1)]
-        self._arm.movej(target_joints, **params)
+        self._arm.movej(target_joints, speed_scale=0.8, trajectory_connect=0)
 
     def _execute_pose_control(self, action: dict, params: dict):
         target_pose = self._parse_pose(action["pose"])
@@ -222,9 +226,7 @@ class WoanAdapter(Robot):
 
     def _execute_reset_position(self):
         home_joints = list(self.config.home_joints_positions)
-
-        # Reset may require forcing specific parameters, overriding common parameters
-        self._arm.movej(home_joints, speed_scale=0.5, trajectory_connect=0)
+        self._arm.movej(home_joints, speed_scale=0.8, trajectory_connect=0)
 
     def _execute_gripper_control(self, action: dict, params: dict):
         if not self._gripper:
@@ -300,6 +302,7 @@ class WoanAdapter(Robot):
                 dt_ms = (time.perf_counter() - start) * 1e3
                 logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
         self._prev_observation = obs_dict
+
         return obs_dict
 
     @property
@@ -365,6 +368,12 @@ class WoanTeleopFollower(WoanAdapter):
     This adapter overrides send_action to prioritize direct MIT control.
     """
 
+    def connect(self):
+        super().connect()
+        self.runtohome()
+        time.sleep(15)  # Allow time for the robot to stabilize at home position after initialization
+        return
+
     def unpack_action(self, action_tensor: torch.Tensor, dof: int = 7) -> dict:
         """
         unpack data from tensor to action dict for teleoperation.
@@ -419,7 +428,9 @@ class WoanTeleopFollower(WoanAdapter):
                 action = self.mirror_action(action)
             r = range(1, self.dof + 1)
             target_pos = [float(action[f"joint{i}.pos"]) for i in r]
-            target_vel = [float(action[f"joint{i}.vel"]) for i in r]
+
+            # target_vel = [float(action[f"joint{i}.vel"]) for i in r]
+            target_vel = [0.0 for _ in r]
 
             self._arm.send_trajectory_point(target_pos, target_vel)
 
@@ -450,9 +461,35 @@ class WoanTeleopFollower(WoanAdapter):
             joint_pos = f"joint{i}.pos"
             if joint_pos in mirrored_action:
                 mirrored_action[joint_pos] = -mirrored_action[joint_pos]
-
             joint_vel = f"joint{i}.vel"
             if joint_vel in mirrored_action:
                 mirrored_action[joint_vel] = -mirrored_action[joint_vel]
 
         return mirrored_action
+
+    """
+    The runtohome method is designed to safely move the robot arm to its home position during initialization.
+    For teleoperation followers, it's crucial to avoid any sudden or unsafe movements that could occur if
+    """
+
+    def runtohome(self):
+        """
+        Move the robot arm to the home position safely.
+        """
+        # 1. move to intermediate position if specified to avoid collisions
+
+        intermediate_joints = getattr(self.config, "intermediate_joints_positions", None)
+        if intermediate_joints is not None:
+            try:
+                logger.info("start movej to home")
+                self._arm.movej(intermediate_joints, speed_scale=0.8, trajectory_connect=0)
+            except Exception:
+                logger.exception("Failed to move to intermediate joints position")
+
+        # 2. move to final home position
+        home_joints = getattr(self.config, "home_joints_positions", None)
+        try:
+            self._arm.movej(home_joints, speed_scale=0.8, trajectory_connect=0)
+        except Exception:
+            logger.exception("Failed to move to home joints position")
+        self._initialized = True

@@ -15,7 +15,7 @@
 # limitations under the License.
 
 
-from .config_woan_arm import WoanRobotConfig
+from .config_woan_arm import WoanRobotConfig, WoanTeleopFollowerConfig
 from .woan_arm import WoanAdapter, WoanTeleopFollower
 
-__all__ = ["WoanAdapter", "WoanRobotConfig", "WoanTeleopFollower"]
+__all__ = ["WoanAdapter", "WoanRobotConfig", "WoanTeleopFollower", "WoanTeleopFollowerConfig"]

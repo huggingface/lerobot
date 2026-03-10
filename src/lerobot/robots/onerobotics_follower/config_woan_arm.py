@@ -46,6 +46,9 @@ class WoanRobotConfig(RobotConfig):
     home_joints_positions: list[float] = field(
         default_factory=lambda: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     )  # Default home position for the robot's joints
+    intermediate_joints_positions: list[float] = field(
+        default_factory=lambda: None
+    )  # Intermediate position for the robot's joints, useful for safe transitions
 
     enable_gripper: bool = True  # Whether to enable gripper control
 
