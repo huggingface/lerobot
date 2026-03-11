@@ -36,8 +36,9 @@ from .config import PantheraArmConfig
 
 logger = logging.getLogger(__name__)
 
+
 class PantheraArm(Robot):
-    """Panthera arm wrapper with polar and Cartesian EE command support. https://github.com/HighTorque-Robotics"""
+    """Panthera arm wrapper with Cartesian EE command support. https://github.com/HighTorque-Robotics"""
 
     config_class = PantheraArmConfig
     name = "panthera_arm"
@@ -96,8 +97,8 @@ class PantheraArm(Robot):
     @cached_property
     def action_features(self) -> dict[str, type]:
         return {
-            "radial": float,
-            "orbit": float,
+            "delta_x": float,
+            "delta_y": float,
             "delta_z": float,
             "delta_roll": float,
             "delta_pitch": float,
@@ -220,8 +221,6 @@ class PantheraArm(Robot):
         assert self._robot is not None
         assert self._target_pos is not None and self._target_rot is not None
 
-        radial = float(action.get("radial", 0.0))
-        orbit = float(action.get("orbit", 0.0))
         delta_x = float(action.get("delta_x", 0.0))
         delta_y = float(action.get("delta_y", 0.0))
         delta_z = float(action.get("delta_z", 0.0))
@@ -231,8 +230,7 @@ class PantheraArm(Robot):
         gripper = float(action.get("gripper", 1.0))
 
         with self._target_lock:
-            self._apply_cartesian_delta(delta_x=delta_x, delta_y=delta_y)
-            self._apply_polar_delta(radial=radial, orbit=orbit, delta_z=delta_z)
+            self._apply_cartesian_delta(delta_x=delta_x, delta_y=delta_y, delta_z=delta_z)
             self._apply_rotation_delta(
                 delta_roll=delta_roll,
                 delta_pitch=delta_pitch,
@@ -264,8 +262,8 @@ class PantheraArm(Robot):
             else:
                 logger.debug("Panthera IK failed for impedance target %s", target_pos.tolist())
             return {
-                "radial": radial,
-                "orbit": orbit,
+                "delta_x": delta_x,
+                "delta_y": delta_y,
                 "delta_z": delta_z,
                 "delta_roll": delta_roll,
                 "delta_pitch": delta_pitch,
@@ -288,8 +286,8 @@ class PantheraArm(Robot):
         if q_goal is None:
             logger.debug("Panthera IK failed for target %s", target_pos.tolist())
             return {
-                "radial": radial,
-                "orbit": orbit,
+                "delta_x": delta_x,
+                "delta_y": delta_y,
                 "delta_z": delta_z,
                 "delta_roll": delta_roll,
                 "delta_pitch": delta_pitch,
@@ -309,8 +307,8 @@ class PantheraArm(Robot):
         )
 
         return {
-            "radial": radial,
-            "orbit": orbit,
+            "delta_x": delta_x,
+            "delta_y": delta_y,
             "delta_z": delta_z,
             "delta_roll": delta_roll,
             "delta_pitch": delta_pitch,
@@ -346,34 +344,24 @@ class PantheraArm(Robot):
             self._joint_target_q = None
         logger.info("%s disconnected.", self)
 
-    def _apply_polar_delta(self, radial: float, orbit: float, delta_z: float) -> None:
+    def _apply_cartesian_delta(self, delta_x: float, delta_y: float, delta_z: float) -> None:
         assert self._target_pos is not None
-
-        x, y, z = self._target_pos
-        radius = float(np.hypot(x, y))
-        angle = float(np.arctan2(y, x))
-
-        radius += radial * self.config.radial_step_m
-        radius = float(np.clip(radius, self.config.min_radius_m, self.config.max_radius_m))
-        angle += orbit * self.config.polar_angle_step_rad
-        z += delta_z * self.config.vertical_step_m
-        z = float(np.clip(z, self.config.min_z_m, self.config.max_z_m))
-
-        self._target_pos = np.array([radius * np.cos(angle), radius * np.sin(angle), z], dtype=float)
-
-    def _apply_cartesian_delta(self, delta_x: float, delta_y: float) -> None:
-        assert self._target_pos is not None
-        if delta_x == 0.0 and delta_y == 0.0:
+        if delta_x == 0.0 and delta_y == 0.0 and delta_z == 0.0:
             return
 
-        self._target_pos = np.array(
-            [
-                self._target_pos[0] + delta_x * self.config.radial_step_m,
-                self._target_pos[1] + delta_y * self.config.radial_step_m,
-                self._target_pos[2],
-            ],
-            dtype=float,
-        )
+        x = float(self._target_pos[0] + delta_x * self.config.xy_step_m)
+        y = float(self._target_pos[1] + delta_y * self.config.xy_step_m)
+        z = float(self._target_pos[2] + delta_z * self.config.vertical_step_m)
+
+        z = float(np.clip(z, self.config.min_z_m, self.config.max_z_m))
+        radius = float(np.hypot(x, y))
+        clamped_radius = float(np.clip(radius, self.config.min_radius_m, self.config.max_radius_m))
+        if radius > 1e-9 and clamped_radius != radius:
+            scale = clamped_radius / radius
+            x *= scale
+            y *= scale
+
+        self._target_pos = np.array([x, y, z], dtype=float)
 
     def _apply_rotation_delta(self, delta_roll: float, delta_pitch: float, delta_yaw: float) -> None:
         assert self._target_rot is not None

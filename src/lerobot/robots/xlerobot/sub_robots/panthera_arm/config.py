@@ -36,8 +36,7 @@ class PantheraArmConfig(RobotConfig):
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
     # Cartesian delta action scaling
-    radial_step_m: float = 0.001
-    polar_angle_step_rad: float = 0.008726646259971648  # 0.5 deg
+    xy_step_m: float = 0.001
     vertical_step_m: float = 0.001
     rotation_step_deg: float = 0.2
 
