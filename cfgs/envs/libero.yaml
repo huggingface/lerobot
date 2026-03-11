@@ -1,0 +1,15 @@
+dataset:
+  repo_id: HuggingFaceVLA/libero
+  image_transforms:
+    enable: true
+
+env:
+  type: libero
+  task: libero_object
+  fps: 10
+  max_parallel_tasks: 1
+
+eval:
+  batch_size: 1
+  n_episodes: 1
+  use_async_envs: false

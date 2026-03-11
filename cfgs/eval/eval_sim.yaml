@@ -1,0 +1,16 @@
+output_dir: data/eval_logs/
+
+env:
+  type: libero
+  task: libero_spatial,libero_object,libero_goal,libero_10
+  fps: 10
+  max_parallel_tasks: 1
+eval:
+  batch_size: 10
+  n_episodes: 10
+  use_async_envs: true
+policy:
+  type: groot
+  pretrained_path: ar0s/groot_liber
+  n_action_steps: 8
+

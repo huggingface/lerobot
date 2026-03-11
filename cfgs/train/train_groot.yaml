@@ -1,0 +1,21 @@
+ # train_groot_libero10.yaml
+
+<<: !include ../envs/libero.yaml
+
+steps: 100000
+batch_size: 8
+num_workers: 10
+eval_freq: 10000
+
+wandb:
+  enable: true
+  project: lerobot
+  disable_artifact: true
+
+policy:
+  type: groot
+  repo_id: ar0s/groot_libero
+  device: cuda
+  n_obs_steps: 1
+  chunk_size: 50
+  n_action_steps: 8
