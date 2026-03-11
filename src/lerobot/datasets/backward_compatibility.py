@@ -14,34 +14,17 @@
 
 import packaging.version
 
-V2_MESSAGE = """
+V30_MESSAGE = """
 The dataset you requested ({repo_id}) is in {version} format.
 
-We introduced a new format since v2.0 which is not backward compatible with v1.x.
-Please, use our conversion script. Modify the following command with your own task description:
+We introduced a new format since v3.0 which is not backward compatible with v2.1.
+Please, update your dataset to the new format using this command:
 ```
-python -m lerobot.datasets.v2.convert_dataset_v1_to_v2 \\
-    --repo-id {repo_id} \\
-    --single-task "TASK DESCRIPTION."  # <---- /!\\ Replace TASK DESCRIPTION /!\\
+python -m lerobot.datasets.v30.convert_dataset_v21_to_v30 --repo-id={repo_id}
 ```
 
-A few examples to replace TASK DESCRIPTION: "Pick up the blue cube and place it into the bin.", "Insert the
-peg into the socket.", "Slide open the ziploc bag.", "Take the elevator to the 1st floor.", "Open the top
-cabinet, store the pot inside it then close the cabinet.", "Push the T-shaped block onto the T-shaped
-target.", "Grab the spray paint on the shelf and place it in the bin on top of the robot dog.", "Fold the
-sweatshirt.", ...
-
-If you encounter a problem, contact LeRobot maintainers on [Discord](https://discord.com/invite/s3KuuzsPFb)
-or open an [issue on GitHub](https://github.com/huggingface/lerobot/issues/new/choose).
-"""
-
-V21_MESSAGE = """
-The dataset you requested ({repo_id}) is in {version} format.
-While current version of LeRobot is backward-compatible with it, the version of your dataset still uses global
-stats instead of per-episode stats. Update your dataset stats to the new format using this command:
-```
-python -m lerobot.datasets.v21.convert_dataset_v20_to_v21 --repo-id={repo_id}
-```
+If you already have a converted version uploaded to the hub, then this error might be because of
+an older version in your local cache. Consider deleting the cached version and retrying.
 
 If you encounter a problem, contact LeRobot maintainers on [Discord](https://discord.com/invite/s3KuuzsPFb)
 or open an [issue on GitHub](https://github.com/huggingface/lerobot/issues/new/choose).
@@ -58,7 +41,12 @@ class CompatibilityError(Exception): ...
 
 class BackwardCompatibilityError(CompatibilityError):
     def __init__(self, repo_id: str, version: packaging.version.Version):
-        message = V2_MESSAGE.format(repo_id=repo_id, version=version)
+        if version.major == 2 and version.minor == 1:
+            message = V30_MESSAGE.format(repo_id=repo_id, version=version)
+        else:
+            raise NotImplementedError(
+                "Contact the maintainer on [Discord](https://discord.com/invite/s3KuuzsPFb)."
+            )
         super().__init__(message)
 
 

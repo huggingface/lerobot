@@ -18,6 +18,8 @@ from typing import TypedDict
 
 import torch
 
+from lerobot.utils.constants import ACTION
+
 
 class Transition(TypedDict):
     state: dict[str, torch.Tensor]
@@ -39,7 +41,7 @@ def move_transition_to_device(transition: Transition, device: str = "cpu") -> Tr
     }
 
     # Move action to device
-    transition["action"] = transition["action"].to(device, non_blocking=non_blocking)
+    transition[ACTION] = transition[ACTION].to(device, non_blocking=non_blocking)
 
     # Move reward and done if they are tensors
     if isinstance(transition["reward"], torch.Tensor):
@@ -61,7 +63,7 @@ def move_transition_to_device(transition: Transition, device: str = "cpu") -> Tr
         for key, val in transition["complementary_info"].items():
             if isinstance(val, torch.Tensor):
                 transition["complementary_info"][key] = val.to(device, non_blocking=non_blocking)
-            elif isinstance(val, (int, float, bool)):
+            elif isinstance(val, (int | float | bool)):
                 transition["complementary_info"][key] = torch.tensor(val, device=device)
             else:
                 raise ValueError(f"Unsupported type {type(val)} for complementary_info[{key}]")

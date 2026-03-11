@@ -38,8 +38,8 @@ def robot_client():
     """Fresh `RobotClient` instance for each test case (no threads started).
     Uses DummyRobot."""
     # Import only when the test actually runs (after decorator check)
-    from lerobot.scripts.server.configs import RobotClientConfig
-    from lerobot.scripts.server.robot_client import RobotClient
+    from lerobot.async_inference.configs import RobotClientConfig
+    from lerobot.async_inference.robot_client import RobotClient
     from tests.mocks.mock_robot import MockRobotConfig
 
     test_config = MockRobotConfig()
@@ -51,7 +51,6 @@ def robot_client():
         policy_type="test",
         pretrained_name_or_path="test",
         actions_per_chunk=20,
-        verify_robot_cameras=False,
     )
 
     client = RobotClient(test_config)
@@ -73,7 +72,7 @@ def robot_client():
 
 def _make_actions(start_ts: float, start_t: int, count: int):
     """Generate `count` consecutive TimedAction objects starting at timestep `start_t`."""
-    from lerobot.scripts.server.helpers import TimedAction
+    from lerobot.async_inference.helpers import TimedAction
 
     fps = 30  # emulates most common frame-rate
     actions = []
@@ -124,7 +123,7 @@ def test_aggregate_action_queues_combines_actions_in_overlap(
 ):
     """`_aggregate_action_queues` must combine actions on overlapping timesteps according
     to the provided aggregate_fn, here tested with multiple coefficients."""
-    from lerobot.scripts.server.helpers import TimedAction
+    from lerobot.async_inference.helpers import TimedAction
 
     robot_client.chunks_received = 0
 
@@ -232,3 +231,39 @@ def test_ready_to_send_observation_with_varying_threshold(robot_client, g_thresh
         robot_client.action_queue.put(act)
 
     assert robot_client._ready_to_send_observation() is expected
+
+
+# -----------------------------------------------------------------------------
+# Regression test: robot type registry populated by robot_client imports
+# -----------------------------------------------------------------------------
+
+
+def test_robot_client_registers_builtin_robot_types():
+    """Importing robot_client must populate RobotConfig's ChoiceRegistry.
+
+    This is a regression test for a bug introduced in #2425, where removing
+    robot module imports from robot_client.py caused RobotConfig's registry to
+    be empty, breaking CLI argument parsing with:
+      error: argument --robot.type: invalid choice: 'so101_follower' (choose from )
+
+    Robot types are registered via @RobotConfig.register_subclass() decorators
+    at import time, so all supported modules must be explicitly imported.
+    """
+    import lerobot.async_inference.robot_client  # noqa: F401
+    from lerobot.robots.config import RobotConfig
+
+    known_choices = RobotConfig.get_known_choices()
+
+    expected_robot_types = [
+        "so100_follower",
+        "so101_follower",
+        "koch_follower",
+        "omx_follower",
+        "bi_so_follower",
+    ]
+    for robot_type in expected_robot_types:
+        assert robot_type in known_choices, (
+            f"Robot type '{robot_type}' is not registered in RobotConfig's ChoiceRegistry. "
+            f"Ensure the corresponding module is imported in robot_client.py. "
+            f"Known choices: {sorted(known_choices)}"
+        )

@@ -16,7 +16,7 @@
 
 import pytest
 
-from lerobot.utils.encoding_utils import (
+from lerobot.motors.encoding_utils import (
     decode_sign_magnitude,
     decode_twos_complement,
     encode_sign_magnitude,

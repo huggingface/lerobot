@@ -18,11 +18,11 @@ Replays the actions of an episode from a dataset on a robot.
 Example:
 
 ```shell
-python -m lerobot.replay \
+lerobot-replay \
     --robot.type=so100_follower \
     --robot.port=/dev/tty.usbmodem58760431541 \
     --robot.id=black \
-    --dataset.repo_id=aliberts/record-test \
+    --dataset.repo_id=<USER>/record-test \
     --dataset.episode=2
 ```
 """
@@ -41,10 +41,10 @@ from lerobot.robots import (  # noqa: F401
     RobotConfig,
     koch_follower,
     make_robot_from_config,
-    so100_follower,
-    so101_follower,
+    so_follower,
 )
-from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.constants import ACTION
+from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import (
     init_logging,
     log_say,
@@ -57,7 +57,7 @@ class DatasetReplayConfig:
     repo_id: str
     # Episode to replay.
     episode: int
-    # Root directory where the dataset will be stored (e.g. 'dataset/path').
+    # Root directory where the dataset will be stored (e.g. 'dataset/path'). If None, defaults to $HF_LEROBOT_HOME/repo_id.
     root: str | Path | None = None
     # Limit the frames per second. By default, uses the policy fps.
     fps: int = 30
@@ -78,27 +78,28 @@ def replay(cfg: ReplayConfig):
 
     robot = make_robot_from_config(cfg.robot)
     dataset = LeRobotDataset(cfg.dataset.repo_id, root=cfg.dataset.root, episodes=[cfg.dataset.episode])
-    actions = dataset.hf_dataset.select_columns("action")
+    actions = dataset.hf_dataset.select_columns(ACTION)
     robot.connect()
 
-    log_say("Replaying episode", cfg.play_sounds, blocking=True)
-    for idx in range(dataset.num_frames):
-        start_episode_t = time.perf_counter()
+    try:
+        log_say("Replaying episode", cfg.play_sounds, blocking=True)
+        for idx in range(dataset.num_frames):
+            start_episode_t = time.perf_counter()
 
-        action_array = actions[idx]["action"]
-        action = {}
-        for i, name in enumerate(dataset.features["action"]["names"]):
-            key = f"{name.removeprefix('main_')}.pos"
-            action[key] = action_array[i].item()
+            action_array = actions[idx][ACTION]
+            action = {}
+            for i, name in enumerate(dataset.features[ACTION]["names"]):
+                key = f"{name.removeprefix('main_')}.pos"
+                action[key] = action_array[i].item()
 
-        action["shoulder_lift.pos"] = -(action["shoulder_lift.pos"] - 90)
-        action["elbow_flex.pos"] -= 90
-        robot.send_action(action)
+            action["shoulder_lift.pos"] = -(action["shoulder_lift.pos"] - 90)
+            action["elbow_flex.pos"] -= 90
+            robot.send_action(action)
 
-        dt_s = time.perf_counter() - start_episode_t
-        busy_wait(1 / dataset.fps - dt_s)
-
-    robot.disconnect()
+            dt_s = time.perf_counter() - start_episode_t
+            precise_sleep(max(1 / dataset.fps - dt_s, 0.0))
+    finally:
+        robot.disconnect()
 
 
 if __name__ == "__main__":

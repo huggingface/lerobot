@@ -25,6 +25,7 @@ from lerobot.policies.sac.configuration_sac import (
     PolicyConfig,
     SACConfig,
 )
+from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_STATE
 
 
 def test_sac_config_default_initialization():
@@ -37,15 +38,15 @@ def test_sac_config_default_initialization():
         "ACTION": NormalizationMode.MIN_MAX,
     }
     assert config.dataset_stats == {
-        "observation.image": {
+        OBS_IMAGE: {
             "mean": [0.485, 0.456, 0.406],
             "std": [0.229, 0.224, 0.225],
         },
-        "observation.state": {
+        OBS_STATE: {
             "min": [0.0, 0.0],
             "max": [1.0, 1.0],
         },
-        "action": {
+        ACTION: {
             "min": [0.0, 0.0, 0.0],
             "max": [1.0, 1.0, 1.0],
         },
@@ -68,7 +69,6 @@ def test_sac_config_default_initialization():
 
     # Training parameters
     assert config.online_steps == 1000000
-    assert config.online_env_seed == 10000
     assert config.online_buffer_capacity == 100000
     assert config.offline_buffer_capacity == 100000
     assert config.async_prefetch is False
@@ -90,15 +90,15 @@ def test_sac_config_default_initialization():
 
     # Dataset stats defaults
     expected_dataset_stats = {
-        "observation.image": {
+        OBS_IMAGE: {
             "mean": [0.485, 0.456, 0.406],
             "std": [0.229, 0.224, 0.225],
         },
-        "observation.state": {
+        OBS_STATE: {
             "min": [0.0, 0.0],
             "max": [1.0, 1.0],
         },
-        "action": {
+        ACTION: {
             "min": [0.0, 0.0, 0.0],
             "max": [1.0, 1.0, 1.0],
         },
@@ -191,8 +191,8 @@ def test_sac_config_custom_initialization():
 
 def test_validate_features():
     config = SACConfig(
-        input_features={"observation.state": PolicyFeature(type=FeatureType.STATE, shape=(10,))},
-        output_features={"action": PolicyFeature(type=FeatureType.ACTION, shape=(3,))},
+        input_features={OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(10,))},
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(3,))},
     )
     config.validate_features()
 
@@ -200,7 +200,7 @@ def test_validate_features():
 def test_validate_features_missing_observation():
     config = SACConfig(
         input_features={"wrong_key": PolicyFeature(type=FeatureType.STATE, shape=(10,))},
-        output_features={"action": PolicyFeature(type=FeatureType.ACTION, shape=(3,))},
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(3,))},
     )
     with pytest.raises(
         ValueError, match="You must provide either 'observation.state' or an image observation"
@@ -210,7 +210,7 @@ def test_validate_features_missing_observation():
 
 def test_validate_features_missing_action():
     config = SACConfig(
-        input_features={"observation.state": PolicyFeature(type=FeatureType.STATE, shape=(10,))},
+        input_features={OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(10,))},
         output_features={"wrong_key": PolicyFeature(type=FeatureType.ACTION, shape=(3,))},
     )
     with pytest.raises(ValueError, match="You must provide 'action' in the output features"):
