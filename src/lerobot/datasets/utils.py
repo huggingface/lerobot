@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from __future__ import annotations
 
 # Copyright 2024 The HuggingFace Inc. team. All rights reserved.
 #
@@ -21,7 +22,11 @@ from collections import deque
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 from pprint import pformat
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from lerobot.data_processing.data_annotations.subtask_annotations import EpisodeSkills
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 import datasets
 import numpy as np
@@ -1214,6 +1219,113 @@ def find_float_index(target, float_list, threshold=1e-6):
         if abs(target - x) <= threshold:
             return i
     return -1
+
+def create_subtasks_dataframe(
+    annotations: "dict[int, EpisodeSkills]",
+) -> tuple[pd.DataFrame, dict[str, int]]:
+    """
+    Create a subtasks DataFrame from skill annotations.
+
+    Args:
+        annotations: Dictionary of episode skills
+
+    Returns:
+        Tuple of (subtasks_df, skill_to_subtask_idx mapping)
+    """
+    # Collect all unique skill names
+    all_skill_names: set[str] = set()
+    for episode_skills in annotations.values():
+        for skill in episode_skills.skills:
+            all_skill_names.add(skill.name)
+
+    print(f"Found {len(all_skill_names)} unique subtasks")
+
+    # Build subtasks DataFrame
+    subtask_data = []
+    for i, skill_name in enumerate(sorted(all_skill_names)):
+        subtask_data.append({
+            "subtask": skill_name,
+            "subtask_index": i,
+        })
+
+    subtasks_df = pd.DataFrame(subtask_data).set_index("subtask")
+
+    # Build skill name to subtask_index mapping
+    skill_to_subtask_idx = {
+        skill_name: int(subtasks_df.loc[skill_name, "subtask_index"])
+        for skill_name in all_skill_names
+    }
+
+    return subtasks_df, skill_to_subtask_idx
+
+
+def save_subtasks(
+    subtasks_df: pd.DataFrame,
+    dataset_root: Path,
+) -> None:
+    """Save subtasks to subtasks.parquet."""
+    output_path = dataset_root / "meta" / "subtasks.parquet"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    subtasks_df.to_parquet(output_path, engine="pyarrow", compression="snappy")
+    print(f" Saved subtasks to {output_path}")
+
+
+def create_subtask_index_array(
+    dataset: "LeRobotDataset",
+    annotations: "dict[int, EpisodeSkills]",
+    skill_to_subtask_idx: dict[str, int],
+) -> np.ndarray:
+    """
+    Create a subtask_index array for each frame based on skill annotations.
+
+    Args:
+        dataset: The LeRobot dataset
+        annotations: Dictionary of episode skills
+        skill_to_subtask_idx: Mapping from skill name to subtask_index
+
+    Returns:
+        Array of subtask indices for each frame in the dataset
+    """
+    # Array to store subtask index for each frame
+    # Initialize with -1 to indicate unannotated frames
+    full_dataset_length = len(dataset)
+    subtask_indices = np.full(full_dataset_length, -1, dtype=np.int64)
+
+    print(f"Creating subtask_index array for {full_dataset_length} frames...")
+
+    # Assign subtask_index for each annotated episode
+    fps = float(dataset.meta.fps)
+    for ep_idx, episode_skills in annotations.items():
+        skills = episode_skills.skills
+
+        # Get episode frame range
+        ep = dataset.meta.episodes[ep_idx]
+        ep_from = int(ep["dataset_from_index"])
+        ep_to = int(ep["dataset_to_index"])
+
+        # Process each frame in the episode (compute timestamp from index to avoid loading video)
+        for frame_idx in range(ep_from, ep_to):
+            timestamp = (frame_idx - ep_from) / fps
+
+            # Find which skill covers this timestamp (inline to avoid circular import)
+            skill = None
+            for s in skills:
+                if s.start <= timestamp < s.end:
+                    skill = s
+                    break
+                if timestamp >= s.end and s == skills[-1]:
+                    skill = s
+                    break
+            if not skill and skills:
+                skill = skills[-1]
+
+            if skill and skill.name in skill_to_subtask_idx:
+                subtask_idx = skill_to_subtask_idx[skill.name]
+                subtask_indices[frame_idx] = subtask_idx
+
+    print(" Created subtask_index array")
+    return subtask_indices
 
 
 class LookBackError(Exception):
