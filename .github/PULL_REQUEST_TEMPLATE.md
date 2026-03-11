@@ -1,41 +1,55 @@
-## What this does
+## Title
 
-Explain what this PR does. Feel free to tag your PR with the appropriate label(s).
+Short, imperative summary (e.g., "fix(robots): handle None in sensor parser"). See [CONTRIBUTING.md](../CONTRIBUTING.md) for PR conventions.
 
-Examples:
-| Title | Label |
-|----------------------|-----------------|
-| Fixes #[issue] | (🐛 Bug) |
-| Adds new dataset | (🗃️ Dataset) |
-| Optimizes something | (⚡️ Performance) |
+## Type / Scope
 
-## How it was tested
+- **Type**: (Bug | Feature | Docs | Performance | Test | CI | Chore)
+- **Scope**: (optional — name of module or package affected)
 
-Explain/show how you tested your changes.
+## Summary / Motivation
 
-Examples:
+- One-paragraph description of what changes and why.
+- Why this change is needed and any trade-offs or design notes.
 
-- Added `test_something` in `tests/test_stuff.py`.
-- Added `new_feature` and checked that training converges with policy X on dataset/environment Y.
-- Optimized `some_function`, it now runs X times faster than previously.
+## Related issues
 
-## How to checkout & try? (for the reviewer)
+- Fixes / Closes: # (if any)
+- Related: # (if any)
 
-Provide a simple way for the reviewer to try out your changes.
+## What changed
 
-Examples:
+- Short, concrete bullets of the modifications (files/behaviour).
+- Short note if this introduces breaking changes and migration steps.
 
-```bash
-pytest -sx tests/test_stuff.py::test_something
-```
+## How was this tested (or how to run locally)
 
-```bash
-lerobot-train --some.option=true
-```
+- Tests added: list new tests or test files.
+- Manual checks / dataset runs performed.
+- Instructions for the reviewer
 
-## SECTION TO REMOVE BEFORE SUBMITTING YOUR PR
+Example:
 
-**Note**: Anyone in the community is free to review the PR once the tests have passed. Feel free to tag
-members/contributors who may be interested in your PR. Try to avoid tagging more than 3 people.
+- Ran the relevant tests:
 
-**Note**: Before submitting this PR, please read the [contributor guideline](https://github.com/huggingface/lerobot/blob/main/CONTRIBUTING.md#submitting-a-pull-request-pr).
+  ```bash
+  pytest -q tests/ -k <keyword>
+  ```
+
+- Reproduce with a quick example or CLI (if applicable):
+
+  ```bash
+  lerobot-train --some.option=true
+  ```
+
+## Checklist (required before merge)
+
+- [ ] Linting/formatting run (`pre-commit run -a`)
+- [ ] All tests pass locally (`pytest`)
+- [ ] Documentation updated
+- [ ] CI is green
+
+## Reviewer notes
+
+- Anything the reviewer should focus on (performance, edge-cases, specific files) or general notes.
+- Anyone in the community is free to review the PR.

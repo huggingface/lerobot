@@ -1,0 +1,80 @@
+# Meta-World
+
+Meta-World is a well-designed, open-source simulation benchmark for multi-task and meta reinforcement learning in continuous-control robotic manipulation. It gives researchers a shared, realistic playground to test whether algorithms can _learn many different tasks_ and _generalize quickly to new ones_ — two central challenges for real-world robotics.
+
+- 📄 [MetaWorld paper](https://arxiv.org/pdf/1910.10897)
+- 💻 [Original MetaWorld repo](https://github.com/Farama-Foundation/Metaworld)
+
+![MetaWorld MT10 demo](https://meta-world.github.io/figures/ml45.gif)
+
+## Why Meta-World matters
+
+- **Diverse, realistic tasks.** Meta-World bundles a large suite of simulated manipulation tasks (50 in the MT50 suite) using everyday objects and a common tabletop Sawyer arm. This diversity exposes algorithms to a wide variety of dynamics, contacts and goal specifications while keeping a consistent control and observation structure.
+- **Focus on generalization and multi-task learning.** By evaluating across task distributions that share structure but differ in goals and objects, Meta-World reveals whether an agent truly learns transferable skills rather than overfitting to a narrow task.
+- **Standardized evaluation protocol.** It provides clear evaluation modes and difficulty splits, so different methods can be compared fairly across easy, medium, hard and very-hard regimes.
+- **Empirical insight.** Past evaluations on Meta-World show impressive progress on some fronts, but also highlight that current multi-task and meta-RL methods still struggle with large, diverse task sets. That gap points to important research directions.
+
+## What it enables in LeRobot
+
+In LeRobot, you can evaluate any policy or vision-language-action (VLA) model on Meta-World tasks and get a clear success-rate measure. The integration is designed to be straightforward:
+
+- We provide a LeRobot-ready dataset for Meta-World (MT50) on the HF Hub: `https://huggingface.co/datasets/lerobot/metaworld_mt50`.
+  - This dataset is formatted for the MT50 evaluation that uses all 50 tasks (the most challenging multi-task setting).
+  - MT50 gives the policy a one-hot task vector and uses fixed object/goal positions for consistency.
+
+- Task descriptions and the exact keys required for evaluation are available in the repo/dataset — use these to ensure your policy outputs the right success signals.
+
+## Quick start, train a SmolVLA policy on Meta-World
+
+Example command to train a SmolVLA policy on a subset of tasks:
+
+```bash
+lerobot-train \
+  --policy.type=smolvla \
+  --policy.repo_id=${HF_USER}/metaworld-test \
+  --policy.load_vlm_weights=true \
+  --dataset.repo_id=lerobot/metaworld_mt50 \
+  --env.type=metaworld \
+  --env.task=assembly-v3,dial-turn-v3,handle-press-side-v3 \
+  --output_dir=./outputs/ \
+  --steps=100000 \
+  --batch_size=4 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=1 \
+  --eval_freq=1000
+```
+
+Notes:
+
+- `--env.task` accepts explicit task lists (comma separated) or difficulty groups (e.g., `env.task="hard"`).
+- Adjust `batch_size`, `steps`, and `eval_freq` to match your compute budget.
+- **Gymnasium Assertion Error**: if you encounter an error like
+  `AssertionError: ['human', 'rgb_array', 'depth_array']` when running MetaWorld environments, this comes from a mismatch between MetaWorld and your Gymnasium version.
+  We recommend using:
+
+```bash
+  pip install "gymnasium==1.1.0"
+```
+
+to ensure proper compatibility.
+
+## Quick start — evaluate a trained policy
+
+To evaluate a trained policy on the Meta-World medium difficulty split:
+
+```bash
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=metaworld \
+  --env.task=medium \
+  --eval.batch_size=1 \
+  --eval.n_episodes=2
+```
+
+This will run episodes and return per-task success rates using the standard Meta-World evaluation keys.
+
+## Practical tips
+
+- If you care about generalization, run on the full MT50 suite — it’s intentionally challenging and reveals strengths/weaknesses better than a few narrow tasks.
+- Use the one-hot task conditioning for multi-task training (MT10 / MT50 conventions) so policies have explicit task context.
+- Inspect the dataset task descriptions and the `info["is_success"]` keys when writing post-processing or logging so your success metrics line up with the benchmark.

@@ -19,6 +19,7 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
 from lerobot.optim.optimizers import AdamWConfig, OptimizerConfig
 from lerobot.optim.schedulers import LRSchedulerConfig
+from lerobot.utils.constants import OBS_IMAGE
 
 
 @PreTrainedConfig.register_subclass(name="reward_classifier")
@@ -32,7 +33,7 @@ class RewardClassifierConfig(PreTrainedConfig):
     latent_dim: int = 256
     image_embedding_pooling_dim: int = 8
     dropout_rate: float = 0.1
-    model_name: str = "helper2424/resnet10"
+    model_name: str = "helper2424/resnet10"  # TODO: This needs to be updated. The model on the Hub doesn't call self.post_init() in its __init__, which is required by transformers v5 to set all_tied_weights_keys. The from_pretrained call fails when it tries to access this attribute during _finalize_model_loading.
     device: str = "cpu"
     model_type: str = "cnn"  # "transformer" or "cnn"
     num_cameras: int = 2
@@ -69,7 +70,7 @@ class RewardClassifierConfig(PreTrainedConfig):
 
     def validate_features(self) -> None:
         """Validate feature configurations."""
-        has_image = any(key.startswith("observation.image") for key in self.input_features)
+        has_image = any(key.startswith(OBS_IMAGE) for key in self.input_features)
         if not has_image:
             raise ValueError(
                 "You must provide an image observation (key starting with 'observation.image') in the input features"

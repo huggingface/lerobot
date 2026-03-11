@@ -1,4 +1,6 @@
-# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#!/usr/bin/env python
+
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import pytest
 
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
@@ -19,6 +22,11 @@ from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 @pytest.fixture
 def mock_metrics():
     return {"loss": AverageMeter("loss", ":.3f"), "accuracy": AverageMeter("accuracy", ":.2f")}
+
+
+class MockAccelerator:
+    def __init__(self, num_processes: int):
+        self.num_processes = num_processes
 
 
 def test_average_meter_initialization():
@@ -75,6 +83,37 @@ def test_metrics_tracker_step(mock_metrics):
     tracker.step()
     assert tracker.steps == 6
     assert tracker.samples == 6 * 32
+    assert tracker.episodes == tracker.samples / (1000 / 50)
+    assert tracker.epochs == tracker.samples / 1000
+
+
+def test_metrics_tracker_initialization_with_accelerator(mock_metrics):
+    tracker = MetricsTracker(
+        batch_size=32,
+        num_frames=1000,
+        num_episodes=50,
+        metrics=mock_metrics,
+        initial_step=10,
+        accelerator=MockAccelerator(num_processes=2),
+    )
+    assert tracker.steps == 10
+    assert tracker.samples == 10 * 32 * 2
+    assert tracker.episodes == tracker.samples / (1000 / 50)
+    assert tracker.epochs == tracker.samples / 1000
+
+
+def test_metrics_tracker_step_with_accelerator(mock_metrics):
+    tracker = MetricsTracker(
+        batch_size=32,
+        num_frames=1000,
+        num_episodes=50,
+        metrics=mock_metrics,
+        initial_step=5,
+        accelerator=MockAccelerator(num_processes=2),
+    )
+    tracker.step()
+    assert tracker.steps == 6
+    assert tracker.samples == (5 * 32 * 2) + (32 * 2)
     assert tracker.episodes == tracker.samples / (1000 / 50)
     assert tracker.epochs == tracker.samples / 1000
 
