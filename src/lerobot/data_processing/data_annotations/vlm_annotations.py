@@ -255,9 +255,15 @@ class Qwen2VL(BaseVLM):
             # Try to find JSON object in response
             match = re.search(r"\{.*\}", response, re.DOTALL)
             if match:
-                data = json.loads(match.group())
-                skills_data = data.get("skills", [])
-                return [Skill.from_dict(s) for s in skills_data]
+                try:
+                    data = json.loads(match.group())
+                    skills_data = data.get("skills", [])
+                    return [Skill.from_dict(s) for s in skills_data]
+                except json.JSONDecodeError as e:
+                    excerpt = response[:200]
+                    raise ValueError(
+                        f"Could not parse JSON from VLM response (fallback failed): {excerpt}..."
+                    ) from e
 
         raise ValueError(f"Could not parse skills from response: {response[:200]}...")
 
