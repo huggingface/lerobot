@@ -166,7 +166,7 @@ Start Rerun on Mac and keep it running:
 rerun
 ```
 
-In XQuartz `xterm`, connect to Thor:
+Connect to Thor:
 
 ```bash
 ssh -Y thor@thor
@@ -204,6 +204,8 @@ lerobot-teleoperate \
 ```
 
 Replace `<MAC_LAN_IP>` with your Mac LAN IP.
+
+*Note: After the robot starts, use XQuartz `xterm` for keyboard teleoperation. Keystrokes entered in the macOS Terminal app are not captured.*
 
 ## Default composite (`xlerobot_default_composite`)
 
