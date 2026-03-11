@@ -10,7 +10,7 @@
 set -e
 
 # --------------- Configuration ---------------
-REPO_ID="${REPO_ID:-lerobot-data-collection/round1_1}"
+REPO_ID="${REPO_ID:-lerobot-data-collection/round1_4}"
 # MODEL="${MODEL:-Qwen/Qwen3-VL-30B-A3B-Thinking}"
 MODEL="${MODEL:-Qwen/Qwen3.5-27B}"
 # Or: MODEL="Qwen/Qwen2-VL-7B-Instruct"

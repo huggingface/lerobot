@@ -70,8 +70,8 @@ class SubtaskAnnotateConfig:
     output_dir: str | None = None
     output_repo_id: str | None = None
     push_to_hub: bool = False
-    # Closed vocabulary: model must choose only from these labels
-    subtask_labels: list[str] | None = None
+    # Closed vocabulary: comma-separated labels (e.g. "label1,label2,label3")
+    subtask_labels: str | None = None
     # Disable timer overlay on video (by default a timer is drawn for the VLM)
     no_timer_overlay: bool = False
 
@@ -87,6 +87,11 @@ def subtask_annotate(cfg: SubtaskAnnotateConfig):
     if (cfg.data_dir is None) == (cfg.repo_id is None):
         raise ValueError("Provide exactly one of --data_dir or --repo_id")
 
+    # Parse comma-separated subtask labels into a list (or None)
+    subtask_labels_list: list[str] | None = None
+    if cfg.subtask_labels and cfg.subtask_labels.strip():
+        subtask_labels_list = [s.strip() for s in cfg.subtask_labels.split(",") if s.strip()]
+
     dtype_map = {
         "bfloat16": torch.bfloat16,
         "float16": torch.float16,
@@ -96,9 +101,7 @@ def subtask_annotate(cfg: SubtaskAnnotateConfig):
 
     print("Loading dataset...")
     if cfg.data_dir:
-        dataset = LeRobotDataset(
-            repo_id="local/dataset", root=cfg.data_dir, download_videos=False
-        )
+        dataset = LeRobotDataset(repo_id="local/dataset", root=cfg.data_dir, download_videos=False)
     else:
         dataset = LeRobotDataset(repo_id=cfg.repo_id, download_videos=True)
 
@@ -106,9 +109,7 @@ def subtask_annotate(cfg: SubtaskAnnotateConfig):
 
     if cfg.video_key not in dataset.meta.video_keys:
         available = ", ".join(dataset.meta.video_keys)
-        raise ValueError(
-            f"Video key '{cfg.video_key}' not found. Available: {available}"
-        )
+        raise ValueError(f"Video key '{cfg.video_key}' not found. Available: {available}")
 
     print(f"Initializing VLM: {cfg.model}...")
     vlm = get_vlm(cfg.model, cfg.device, torch_dtype)
@@ -125,14 +126,12 @@ def subtask_annotate(cfg: SubtaskAnnotateConfig):
         video_key=cfg.video_key,
         episodes=cfg.episodes,
         skip_existing=cfg.skip_existing,
-        subtask_labels=cfg.subtask_labels,
+        subtask_labels=subtask_labels_list,
     )
 
     output_dir = Path(cfg.output_dir) if cfg.output_dir else None
     output_repo_id = cfg.output_repo_id
-    new_dataset = save_skill_annotations(
-        dataset, annotations, output_dir, output_repo_id
-    )
+    new_dataset = save_skill_annotations(dataset, annotations, output_dir, output_repo_id)
 
     total_skills = sum(len(ann.skills) for ann in annotations.values())
     print("\nAnnotation complete!")

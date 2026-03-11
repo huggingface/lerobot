@@ -1220,8 +1220,9 @@ def find_float_index(target, float_list, threshold=1e-6):
             return i
     return -1
 
+
 def create_subtasks_dataframe(
-    annotations: "dict[int, EpisodeSkills]",
+    annotations: dict[int, EpisodeSkills],
 ) -> tuple[pd.DataFrame, dict[str, int]]:
     """
     Create a subtasks DataFrame from skill annotations.
@@ -1237,23 +1238,24 @@ def create_subtasks_dataframe(
     for episode_skills in annotations.values():
         for skill in episode_skills.skills:
             all_skill_names.add(skill.name)
-
-    print(f"Found {len(all_skill_names)} unique subtasks")
-
     # Build subtasks DataFrame
     subtask_data = []
     for i, skill_name in enumerate(sorted(all_skill_names)):
-        subtask_data.append({
-            "subtask": skill_name,
-            "subtask_index": i,
-        })
+        subtask_data.append(
+            {
+                "subtask": skill_name,
+                "subtask_index": i,
+            }
+        )
 
-    subtasks_df = pd.DataFrame(subtask_data).set_index("subtask")
+    if not subtask_data:
+        subtasks_df = pd.DataFrame(columns=["subtask", "subtask_index"]).set_index("subtask")
+    else:
+        subtasks_df = pd.DataFrame(subtask_data).set_index("subtask")
 
     # Build skill name to subtask_index mapping
     skill_to_subtask_idx = {
-        skill_name: int(subtasks_df.loc[skill_name, "subtask_index"])
-        for skill_name in all_skill_names
+        skill_name: int(subtasks_df.loc[skill_name, "subtask_index"]) for skill_name in all_skill_names
     }
 
     return subtasks_df, skill_to_subtask_idx
@@ -1266,14 +1268,13 @@ def save_subtasks(
     """Save subtasks to subtasks.parquet."""
     output_path = dataset_root / "meta" / "subtasks.parquet"
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    
+
     subtasks_df.to_parquet(output_path, engine="pyarrow", compression="snappy")
-    print(f" Saved subtasks to {output_path}")
 
 
 def create_subtask_index_array(
-    dataset: "LeRobotDataset",
-    annotations: "dict[int, EpisodeSkills]",
+    dataset: LeRobotDataset,
+    annotations: dict[int, EpisodeSkills],
     skill_to_subtask_idx: dict[str, int],
 ) -> np.ndarray:
     """
@@ -1291,8 +1292,6 @@ def create_subtask_index_array(
     # Initialize with -1 to indicate unannotated frames
     full_dataset_length = len(dataset)
     subtask_indices = np.full(full_dataset_length, -1, dtype=np.int64)
-
-    print(f"Creating subtask_index array for {full_dataset_length} frames...")
 
     # Assign subtask_index for each annotated episode
     fps = float(dataset.meta.fps)
@@ -1324,7 +1323,6 @@ def create_subtask_index_array(
                 subtask_idx = skill_to_subtask_idx[skill.name]
                 subtask_indices[frame_idx] = subtask_idx
 
-    print(" Created subtask_index array")
     return subtask_indices
 
 
@@ -1391,7 +1389,7 @@ class Backtrackable[T]:
         self._history = history
         self._lookahead = lookahead
 
-    def __iter__(self) -> "Backtrackable[T]":
+    def __iter__(self) -> Backtrackable[T]:
         return self
 
     def __next__(self) -> T:
