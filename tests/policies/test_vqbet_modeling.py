@@ -15,6 +15,7 @@
 # limitations under the License.
 """Regression tests for VQBeT modeling internals."""
 
+import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, PolicyFeature
@@ -105,4 +106,59 @@ def test_discretize_updates_buffers_in_place():
     assert "freeze_codebook" in freeze_buffer_names, (
         "vq_layer.freeze_codebook is no longer a registered buffer after discretize(). "
         "Use .fill_() instead of direct assignment to preserve buffer registration."
+    )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_discretize_keeps_buffers_on_gpu():
+    """Regression test: discretize() must not move registered buffers from GPU to CPU.
+
+    This is the exact failure mode that caused the DDP crash:
+        RuntimeError: No backend type associated with device type cpu
+
+    When `self.vqvae_model.discretized = torch.tensor(True)` is used (wrong),
+    torch.tensor() creates a CPU tensor by default, silently moving the buffer
+    off the GPU. DDP's _sync_buffers() then tries to NCCL-broadcast a CPU tensor,
+    which NCCL does not support.
+
+    This test places the model on GPU and verifies that after discretize() both
+    buffers remain on CUDA, preventing the above regression.
+    """
+    config = _make_minimal_config(n_vqvae_training_steps=3)
+    head = VQBeTHead(config)
+    device = torch.device("cuda:0")
+    head = head.to(device)
+
+    vqvae = head.vqvae_model
+    vq_layer = vqvae.vq_layer
+
+    # Confirm buffers start on GPU.
+    assert vqvae.discretized.device.type == "cuda", "discretized should start on CUDA"
+    assert vq_layer.freeze_codebook.device.type == "cuda", "freeze_codebook should start on CUDA"
+
+    # Run discretize() until the threshold is crossed.
+    batch_size = 4
+    seq_len = config.action_chunk_size
+    action_dim = config.action_feature.shape[0]
+    dummy_actions = torch.randn(batch_size, seq_len, action_dim, device=device)
+
+    n_steps = config.n_vqvae_training_steps
+    for _ in range(n_steps):
+        head.discretize(n_steps, dummy_actions)
+
+    # Flags must be True.
+    assert vqvae.discretized.item(), "discretized should be True after training"
+    assert vq_layer.freeze_codebook.item(), "freeze_codebook should be True after training"
+
+    # Core assertion: buffers must still live on GPU after discretize().
+    # A direct-assignment `= torch.tensor(True)` creates a CPU tensor and fails here.
+    assert vqvae.discretized.device.type == "cuda", (
+        "vqvae_model.discretized was moved to CPU during discretize(). "
+        "This would cause 'RuntimeError: No backend type associated with device type cpu' "
+        "in DDP._sync_buffers(). Use .fill_(True) instead of = torch.tensor(True)."
+    )
+    assert vq_layer.freeze_codebook.device.type == "cuda", (
+        "vq_layer.freeze_codebook was moved to CPU during discretize(). "
+        "This would cause 'RuntimeError: No backend type associated with device type cpu' "
+        "in DDP._sync_buffers(). Use .fill_(True) instead of = torch.tensor(True)."
     )
