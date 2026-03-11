@@ -57,6 +57,7 @@ import pyarrow as pa
 import tqdm
 from datasets import Dataset, Features, Image
 from huggingface_hub import HfApi, snapshot_download
+from huggingface_hub.errors import RevisionNotFoundError
 from requests import HTTPError
 
 from lerobot.datasets.compute_stats import aggregate_stats
@@ -511,7 +512,7 @@ def convert_dataset(
         hub_api = HfApi()
         try:
             hub_api.delete_tag(repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
-        except HTTPError as e:
+        except(HTTPError,RevisionNotFoundError) as e:
             print(f"tag={CODEBASE_VERSION} probably doesn't exist. Skipping exception ({e})")
             pass
         hub_api.delete_files(
