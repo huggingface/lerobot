@@ -81,15 +81,6 @@ class RLAlgorithm(abc.ABC):
     """Base for all RL algorithms."""
 
     @abc.abstractmethod
-    def select_action(self, observation: dict[str, Tensor]) -> Tensor:
-        """Select action(s) for rollout.
-
-        Single-step policies (e.g. SAC) return shape ``(action_dim,)``;
-        chunking policies (e.g. VLA) return ``(chunk_size, action_dim)``.
-        """
-        ...
-
-    @abc.abstractmethod
     def update(self, batch_iterator: Iterator[BatchType]) -> TrainingStats:
         """One complete training step.
 
@@ -145,12 +136,12 @@ class RLAlgorithm(abc.ABC):
         self._optimization_step = int(value)
 
     def get_weights(self) -> dict[str, Any]:
-        """State-dict(s) to push to actors."""
+        """Policy state-dict to push to actors."""
         return {}
 
     @abc.abstractmethod
     def load_weights(self, weights: dict[str, Any], device: str | torch.device = "cpu") -> None:
-        """Load state-dict(s) received from the learner (inverse of ``get_weights``)."""
+        """Load policy state-dict received from the learner (inverse of ``get_weights``)."""
 
     @torch.no_grad()
     def get_observation_features(
