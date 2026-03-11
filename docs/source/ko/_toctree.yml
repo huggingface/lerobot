@@ -113,6 +113,7 @@
 - sections:
   - local: in_translation
     title: (번역중) 카메라
+  title: "센서"
 - sections:
   - local: in_translation
     title: (번역중) PyTorch 가속기
