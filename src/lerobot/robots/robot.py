@@ -15,11 +15,11 @@
 import abc
 import builtins
 from pathlib import Path
-from typing import Any
 
 import draccus
 
 from lerobot.motors import MotorCalibration
+from lerobot.processor import RobotAction, RobotObservation
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, ROBOTS
 
 from .config import RobotConfig
@@ -57,6 +57,32 @@ class Robot(abc.ABC):
 
     def __str__(self) -> str:
         return f"{self.id} {self.__class__.__name__}"
+
+    def __enter__(self):
+        """
+        Context manager entry.
+        Automatically connects to the camera.
+        """
+        self.connect()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        """
+        Context manager exit.
+        Automatically disconnects, ensuring resources are released even on error.
+        """
+        self.disconnect()
+
+    def __del__(self) -> None:
+        """
+        Destructor safety net.
+        Attempts to disconnect if the object is garbage collected without cleanup.
+        """
+        try:
+            if self.is_connected:
+                self.disconnect()
+        except Exception:  # nosec B110
+            pass
 
     # TODO(aliberts): create a proper Feature class for this that links with datasets
     @property
@@ -153,28 +179,28 @@ class Robot(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def get_observation(self) -> dict[str, Any]:
+    def get_observation(self) -> RobotObservation:
         """
         Retrieve the current observation from the robot.
 
         Returns:
-            dict[str, Any]: A flat dictionary representing the robot's current sensory state. Its structure
+            RobotObservation: A flat dictionary representing the robot's current sensory state. Its structure
                 should match :pymeth:`observation_features`.
         """
 
         pass
 
     @abc.abstractmethod
-    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
+    def send_action(self, action: RobotAction) -> RobotAction:
         """
         Send an action command to the robot.
 
         Args:
-            action (dict[str, Any]): Dictionary representing the desired action. Its structure should match
+            action (RobotAction): Dictionary representing the desired action. Its structure should match
                 :pymeth:`action_features`.
 
         Returns:
-            dict[str, Any]: The action actually sent to the motors potentially clipped or modified, e.g. by
+            RobotAction: The action actually sent to the motors potentially clipped or modified, e.g. by
                 safety limits on velocity.
         """
         pass

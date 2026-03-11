@@ -24,7 +24,7 @@ from datatrove.executor.slurm import SlurmPipelineExecutor
 from datatrove.pipeline.base import PipelineStep
 from huggingface_hub import HfApi
 from huggingface_hub.constants import REPOCARD_NAME
-from port_datasets.droid_rlds.port_droid import DROID_SHARDS
+from port_droid import DROID_SHARDS
 
 from lerobot.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDatasetMetadata
 from lerobot.datasets.utils import create_lerobot_dataset_card
@@ -185,11 +185,11 @@ class UploadDataset(PipelineStep):
 
 
 def make_upload_executor(
-    repo_id, job_name, logs_dir, workers, partition, cpus_per_task, mem_per_cpu, slurm=True
+    repo_id, job_name, logs_dir, workers, partition, cpus_per_task, mem_per_cpu, private=False, slurm=True
 ):
     kwargs = {
         "pipeline": [
-            UploadDataset(repo_id),
+            UploadDataset(repo_id, private=private),
         ],
         "logging_dir": str(logs_dir / job_name),
     }
@@ -266,6 +266,12 @@ def main():
         type=str,
         default="1950M",
         help="Memory per cpu that each worker will use.",
+    )
+    parser.add_argument(
+        "--private",
+        action="store_true",
+        default=False,
+        help="Whether to create a private repository.",
     )
 
     init_logging()

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 default_language_version:
-    python: python3.10
+    python: python3.12
 
 exclude: "tests/artifacts/.*\\.safetensors$"
 
@@ -55,7 +55,7 @@ repos:
     rev: v3.21.0
     hooks:
     -   id: pyupgrade
-        args: [--py310-plus]
+        args: [--py312-plus]
 
   ##### Markdown Quality #####
   - repo: https://github.com/rbubley/mirrors-prettier
@@ -87,7 +87,7 @@ repos:
   # TODO(Steven): Uncomment when ready to use
   ##### Static Analysis & Typing #####
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.18.2
+    rev: v1.19.1
     hooks:
       - id: mypy
         args: [--config-file=pyproject.toml]

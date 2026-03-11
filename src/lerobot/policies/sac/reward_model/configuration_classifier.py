@@ -33,7 +33,7 @@ class RewardClassifierConfig(PreTrainedConfig):
     latent_dim: int = 256
     image_embedding_pooling_dim: int = 8
     dropout_rate: float = 0.1
-    model_name: str = "helper2424/resnet10"
+    model_name: str = "helper2424/resnet10"  # TODO: This needs to be updated. The model on the Hub doesn't call self.post_init() in its __init__, which is required by transformers v5 to set all_tied_weights_keys. The from_pretrained call fails when it tries to access this attribute during _finalize_model_loading.
     device: str = "cpu"
     model_type: str = "cnn"  # "transformer" or "cnn"
     num_cameras: int = 2

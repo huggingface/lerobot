@@ -47,6 +47,7 @@ class VQBeTPolicy(PreTrainedPolicy):
     def __init__(
         self,
         config: VQBeTConfig | None = None,
+        **kwargs,
     ):
         """
         Args:
