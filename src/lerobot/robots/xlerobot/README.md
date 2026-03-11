@@ -147,6 +147,112 @@ It now also includes:
 In observations these appear as `left_gripper_camera` and `base_camera`.
 If your device indices differ, update `index_or_path` values in the JSON config before running.
 
+## Remote keyboard teleoperation with Rerun
+
+Use this when `lerobot-teleoperate` runs on Thor and Rerun runs on your local machine.
+
+### Linux local machine
+
+Start local viewer:
+
+```bash
+rerun
+```
+
+Connect to Thor:
+
+```bash
+ssh -Y thor@thor
+```
+
+Run teleop on Thor with your local viewer machine IP:
+
+```bash
+lerobot-teleoperate \
+  --robot.type=xlerobot \
+  --robot.config_file=src/lerobot/robots/xlerobot/configs/xlerobot_biwheel_odrive_panthera_left.json \
+  --teleop.type=xlerobot_keyboard_composite \
+  --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_keyboard_composite_panthera_left_with_base.json \
+  --display_data=true \
+  --fps=30 \
+  --display_ip=<LOCAL_MACHINE_IP> \
+  --display_port=9876
+```
+
+### macOS local machine (XQuartz + RECORD + xterm keyboard capture)
+
+Install/start XQuartz:
+
+```bash
+brew install --cask xquartz
+open -a XQuartz
+```
+
+Enable test extensions and restart XQuartz:
+
+```bash
+defaults write org.xquartz.X11 enable_test_extensions -boolean true
+killall XQuartz
+open -a XQuartz
+```
+
+Verify `RECORD` is available:
+
+```bash
+/opt/X11/bin/xdpyinfo | grep -i RECORD
+```
+
+If `RECORD` is missing, keyboard teleop listeners using `pynput` may fail with
+`AttributeError: record_create_context`.
+
+Open `xterm` from XQuartz and use it for keyboard teleop control.
+Keyboard events for `pynput` are captured from the focused X11 window (`xterm`), not from regular macOS Terminal.
+
+Start Rerun on Mac and keep it running:
+
+```bash
+rerun
+```
+
+In XQuartz `xterm`, connect to Thor:
+
+```bash
+ssh -Y thor@thor
+```
+
+On Thor, verify X11 forwarding:
+
+```bash
+echo "$DISPLAY"
+```
+
+`DISPLAY` must be non-empty before starting `lerobot-teleoperate`.
+
+Optional: tune Rerun micro-batching on Thor before starting teleop:
+
+```bash
+export RERUN_FLUSH_TICK_SECS=0.03
+export RERUN_FLUSH_NUM_BYTES=65536
+export RERUN_FLUSH_NUM_ROWS=4096
+```
+
+Then run teleop on Thor (direct to Mac IP):
+
+```bash
+lerobot-teleoperate \
+  --robot.type=xlerobot \
+  --robot.config_file=src/lerobot/robots/xlerobot/configs/xlerobot_biwheel_odrive_panthera_left.json \
+  --teleop.type=xlerobot_keyboard_composite \
+  --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_keyboard_composite_panthera_left_with_base.json \
+  --display_data=true \
+  --fps=30 \
+  --display_ip=<MAC_LAN_IP> \
+  --display_port=9876 \
+  --display_compressed_images=True
+```
+
+Replace `<MAC_LAN_IP>` with your Mac LAN IP.
+
 ## Dedicated buses (non-shared components)
 
 Some drivers (for example ODrive-based bases) cannot share a Feetech bus. In that case, omit the component from
