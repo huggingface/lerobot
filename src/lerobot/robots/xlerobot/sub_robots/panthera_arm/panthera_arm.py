@@ -37,7 +37,7 @@ from .config import PantheraArmConfig
 logger = logging.getLogger(__name__)
 
 class PantheraArm(Robot):
-    """Panthera arm wrapper with polar end-effector action interface. https://github.com/HighTorque-Robotics"""
+    """Panthera arm wrapper with polar and Cartesian EE command support. https://github.com/HighTorque-Robotics"""
 
     config_class = PantheraArmConfig
     name = "panthera_arm"
@@ -222,6 +222,8 @@ class PantheraArm(Robot):
 
         radial = float(action.get("radial", 0.0))
         orbit = float(action.get("orbit", 0.0))
+        delta_x = float(action.get("delta_x", 0.0))
+        delta_y = float(action.get("delta_y", 0.0))
         delta_z = float(action.get("delta_z", 0.0))
         delta_roll = float(action.get("delta_roll", 0.0))
         delta_pitch = float(action.get("delta_pitch", 0.0))
@@ -229,6 +231,7 @@ class PantheraArm(Robot):
         gripper = float(action.get("gripper", 1.0))
 
         with self._target_lock:
+            self._apply_cartesian_delta(delta_x=delta_x, delta_y=delta_y)
             self._apply_polar_delta(radial=radial, orbit=orbit, delta_z=delta_z)
             self._apply_rotation_delta(
                 delta_roll=delta_roll,
@@ -357,6 +360,20 @@ class PantheraArm(Robot):
         z = float(np.clip(z, self.config.min_z_m, self.config.max_z_m))
 
         self._target_pos = np.array([radius * np.cos(angle), radius * np.sin(angle), z], dtype=float)
+
+    def _apply_cartesian_delta(self, delta_x: float, delta_y: float) -> None:
+        assert self._target_pos is not None
+        if delta_x == 0.0 and delta_y == 0.0:
+            return
+
+        self._target_pos = np.array(
+            [
+                self._target_pos[0] + delta_x * self.config.radial_step_m,
+                self._target_pos[1] + delta_y * self.config.radial_step_m,
+                self._target_pos[2],
+            ],
+            dtype=float,
+        )
 
     def _apply_rotation_delta(self, delta_roll: float, delta_pitch: float, delta_yaw: float) -> None:
         assert self._target_rot is not None

@@ -41,6 +41,7 @@
     "type": "biwheel_odrive",
     "wheel_radius": 0.05,
     "wheel_base": 0.25,
+    "reverse_front_direction": false,
     "invert_left_motor": true,
     "invert_right_motor": false,
     "odrive_serial": null,

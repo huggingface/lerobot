@@ -27,9 +27,9 @@ from typing import Any
 
 from ...keyboard import KeyboardRoverTeleop
 from ...teleoperator import Teleoperator
-from ..sub_teleoperators.panthera_keyboard_ee import PantheraKeyboardEETeleop
+from ..sub_teleoperators.panthera_keyboard_ee import PantheraKeyboardEETeleop, PantheraKeyboardEETeleopConfig
 from ..sub_teleoperators.xlerobot_mount_gamepad.teleop import XLeRobotMountGamepadTeleop
-from .config import XLeRobotKeyboardCompositeConfig
+from .config import PantheraArmKeyboardTeleopConfig, XLeRobotKeyboardCompositeConfig
 
 
 class XLeRobotKeyboardComposite(Teleoperator):
@@ -41,9 +41,17 @@ class XLeRobotKeyboardComposite(Teleoperator):
     def __init__(self, config: XLeRobotKeyboardCompositeConfig):
         self.config = config
         super().__init__(config)
-        self.arm_teleop = PantheraKeyboardEETeleop(config.arm_config) if config.arm_config else None
+        self.arm_teleop = self._make_arm_teleop(config.arm_config)
         self.base_teleop = KeyboardRoverTeleop(config.base_config) if config.base_config else None
         self.mount_teleop = XLeRobotMountGamepadTeleop(config.mount_config) if config.mount_config else None
+
+    @staticmethod
+    def _make_arm_teleop(config: PantheraArmKeyboardTeleopConfig | None) -> Teleoperator | None:
+        if config is None:
+            return None
+        if isinstance(config, PantheraKeyboardEETeleopConfig):
+            return PantheraKeyboardEETeleop(config)
+        raise TypeError(f"Unsupported Panthera arm teleop config type: {type(config).__name__}")
 
     def _iter_active_teleops(self) -> tuple[Teleoperator, ...]:
         return tuple(tp for tp in (self.arm_teleop, self.base_teleop, self.mount_teleop) if tp is not None)

@@ -22,18 +22,21 @@ from ....config import TeleoperatorConfig
 @TeleoperatorConfig.register_subclass("panthera_keyboard_ee")
 @dataclass
 class PantheraKeyboardEETeleopConfig(TeleoperatorConfig):
-    """Keyboard teleop config for Panthera EE polar/cartesian commands.
+    """Keyboard teleop config for Panthera EE with Cartesian translation mapping.
 
     Defaults are chosen to avoid collisions with KeyboardRoverTeleop
-    (W/A/S/D/Q/E/X for base driving).
+    (W/A/S/D/Q/E/X for base driving):
+    - T/G -> delta_x +/-
+    - F/H -> delta_y +/-
+    - R/V -> delta_z +/-
     """
 
-    key_radial_out: str = "t"
-    key_radial_in: str = "g"
-    key_orbit_ccw: str = "f"
-    key_orbit_cw: str = "h"
-    key_up: str = "r"
-    key_down: str = "v"
+    key_x_pos: str = "t"
+    key_x_neg: str = "g"
+    key_y_pos: str = "f"
+    key_y_neg: str = "h"
+    key_z_pos: str = "r"
+    key_z_neg: str = "v"
 
     key_pitch_pos: str = "i"
     key_pitch_neg: str = "k"

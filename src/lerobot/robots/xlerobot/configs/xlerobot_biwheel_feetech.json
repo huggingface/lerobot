@@ -11,6 +11,7 @@
     "type": "biwheel_feetech",
     "wheel_radius": 0.05,
     "wheel_base": 0.25,
+    "reverse_front_direction": false,
     "base_motor_ids": [9, 10],
     "invert_left_motor": true,
     "invert_right_motor": false

@@ -17,4 +17,7 @@
 from .config_panthera_keyboard_ee import PantheraKeyboardEETeleopConfig
 from .teleop_panthera_keyboard_ee import PantheraKeyboardEETeleop
 
-__all__ = ["PantheraKeyboardEETeleop", "PantheraKeyboardEETeleopConfig"]
+__all__ = [
+    "PantheraKeyboardEETeleop",
+    "PantheraKeyboardEETeleopConfig",
+]

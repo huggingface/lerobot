@@ -44,8 +44,15 @@ class BiwheelBase(Robot, abc.ABC):
     def action_features(self) -> dict[str, type]:
         return self._state_ft
 
+    def _apply_front_direction(self, x: float, theta: float) -> tuple[float, float]:
+        """Apply optional front-direction flip to linear motion only."""
+        if getattr(self.config, "reverse_front_direction", False):
+            return -x, theta
+        return x, theta
+
     def _body_to_wheel_linear(self, x: float, theta: float) -> tuple[float, float]:
         """Convert body-frame velocities into wheel linear velocities (m/s)."""
+        x, theta = self._apply_front_direction(x, theta)
         theta_rad = np.deg2rad(theta)
         half_wheelbase = self.config.wheel_base / 2.0
         left_linear = x - theta_rad * half_wheelbase
@@ -57,6 +64,7 @@ class BiwheelBase(Robot, abc.ABC):
         x_vel = (left_linear + right_linear) / 2.0
         theta_rad = (right_linear - left_linear) / self.config.wheel_base
         theta_vel = np.rad2deg(theta_rad)
+        x_vel, theta_vel = self._apply_front_direction(x_vel, theta_vel)
         return {
             "x.vel": x_vel,
             "theta.vel": theta_vel,

@@ -45,7 +45,7 @@ except Exception as e:
 
 
 class PantheraKeyboardEETeleop(Teleoperator):
-    """Keyboard teleop for Panthera end-effector polar + orientation control."""
+    """Keyboard teleop for Panthera end-effector Cartesian + orientation control."""
 
     config_class = PantheraKeyboardEETeleopConfig
     name = "panthera_keyboard_ee"
@@ -60,8 +60,8 @@ class PantheraKeyboardEETeleop(Teleoperator):
     @property
     def action_features(self) -> dict[str, type]:
         return {
-            "radial": float,
-            "orbit": float,
+            "delta_x": float,
+            "delta_y": float,
             "delta_z": float,
             "delta_roll": float,
             "delta_pitch": float,
@@ -118,9 +118,9 @@ class PantheraKeyboardEETeleop(Teleoperator):
         self._drain_pressed_keys()
         active = {key for key, pressed in self.current_pressed.items() if pressed}
 
-        radial = float((self.config.key_radial_out in active) - (self.config.key_radial_in in active))
-        orbit = float((self.config.key_orbit_ccw in active) - (self.config.key_orbit_cw in active))
-        delta_z = float((self.config.key_up in active) - (self.config.key_down in active))
+        delta_x = float((self.config.key_x_pos in active) - (self.config.key_x_neg in active))
+        delta_y = float((self.config.key_y_pos in active) - (self.config.key_y_neg in active))
+        delta_z = float((self.config.key_z_pos in active) - (self.config.key_z_neg in active))
         delta_roll = float((self.config.key_roll_pos in active) - (self.config.key_roll_neg in active))
         delta_pitch = float((self.config.key_pitch_pos in active) - (self.config.key_pitch_neg in active))
         delta_yaw = float((self.config.key_yaw_pos in active) - (self.config.key_yaw_neg in active))
@@ -132,8 +132,8 @@ class PantheraKeyboardEETeleop(Teleoperator):
             gripper = 0.0
 
         return {
-            "radial": radial,
-            "orbit": orbit,
+            "delta_x": delta_x,
+            "delta_y": delta_y,
             "delta_z": delta_z,
             "delta_roll": delta_roll,
             "delta_pitch": delta_pitch,

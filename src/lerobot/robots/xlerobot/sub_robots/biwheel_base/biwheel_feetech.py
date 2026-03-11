@@ -146,6 +146,7 @@ class BiwheelFeetech(BiwheelBase):
         wheel_radius = wheel_radius or self.config.wheel_radius
         wheel_base = wheel_base or self.config.wheel_base
         max_raw = max_raw or self.config.max_wheel_raw
+        x, theta = self._apply_front_direction(x, theta)
 
         theta_rad = np.deg2rad(theta)
 
@@ -222,6 +223,7 @@ class BiwheelFeetech(BiwheelBase):
         # Angular velocity: ω = (v_right - v_left) / L
         theta_rad = (right_linear_speed - left_linear_speed) / wheel_base
         theta_vel = np.rad2deg(theta_rad)
+        x_vel, theta_vel = self._apply_front_direction(x_vel, theta_vel)
 
         return {
             "x.vel": x_vel,  # Linear velocity (m/s)

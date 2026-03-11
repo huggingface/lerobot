@@ -40,6 +40,8 @@ DEFAULT_BASE_KEYBOARD_CONFIG = {
     "min_angular_speed": 10.0,
 }
 
+PantheraArmKeyboardTeleopConfig = PantheraKeyboardEETeleopConfig
+
 
 @TeleoperatorConfig.register_subclass("xlerobot_keyboard_composite")
 @dataclass
@@ -72,15 +74,20 @@ class XLeRobotKeyboardCompositeConfig(TeleoperatorConfig):
         self.config_file = config_file
 
     def _coerce_arm_config(
-        self, value: PantheraKeyboardEETeleopConfig | dict[str, Any] | None
-    ) -> PantheraKeyboardEETeleopConfig | None:
+        self, value: PantheraArmKeyboardTeleopConfig | dict[str, Any] | None
+    ) -> PantheraArmKeyboardTeleopConfig | None:
         if isinstance(value, PantheraKeyboardEETeleopConfig):
             return value
         if not value:
             return None
+
         data = dict(value)
-        data.pop("type", None)
-        return PantheraKeyboardEETeleopConfig(**data)
+        arm_type = str(data.pop("type", "panthera_keyboard_ee"))
+        if arm_type == "panthera_keyboard_ee":
+            return PantheraKeyboardEETeleopConfig(**data)
+        raise ValueError(
+            "xlerobot_keyboard_composite.arm.type must be 'panthera_keyboard_ee'."
+        )
 
     def _coerce_base_config(
         self, value: KeyboardRoverTeleopConfig | dict[str, Any] | None

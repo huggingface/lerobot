@@ -28,6 +28,10 @@ class BiwheelBaseConfig(RobotConfig):
     invert_left_motor: bool = True
     invert_right_motor: bool = False
 
+    # If True, treat the opposite chassis side as "front" by inverting only x direction.
+    # Turning sign (theta) is intentionally kept unchanged.
+    reverse_front_direction: bool = False
+
 
 @RobotConfig.register_subclass("biwheel_base")
 @RobotConfig.register_subclass("biwheel_feetech")

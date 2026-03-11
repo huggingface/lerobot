@@ -1,16 +1,47 @@
 # XLeRobot Modular Platform
 
-An example run using the bash example in the end of this ReadMe document: [video](https://youtu.be/OGI-Qtl3s6s)
+An example run with so101 arms: [video](https://youtu.be/OGI-Qtl3s6s)
 
-`xlerobot` is a fully mobile manipulator robot by composing:
+`xlerobot` is a configurable mobile manipulator platform composed from optional sub-robots:
 
-- **Dual SO-101 follower arms** with shared calibration assets.
-- **Mobile base** abstraction with current support for `lekiwi_base` and `biwheel_base`.
+- **Arms** with support for dual SO-101/SO-100 follower arms or a single left/right `panthera_arm`.
+- **Mobile base** abstraction with support for `lekiwi_base`, `biwheel_base`, `biwheel_feetech`, and `biwheel_odrive`.
 - **Pan/Tilt camera mount** driven by Feetech servos.
-- **Multi-camera rig** wired through the standard camera factory so training pipelines receive synchronized RGB frames.
-- **Shared motor buses** that multiplex multiple components on one serial port, reducing cabling and easing deployment on embedded PCs.
+- **Multi-camera rig** using the standard camera factory (robot-level and arm-attached cameras).
+- **Shared bus or dedicated bus wiring** so Feetech components can share buses while ODrive/Panthera stay on dedicated connections.
 
-This is the same configuration showcased in the [XLeRobot demo run script](run.sh) and mirrors the hardware described in the linked community projects.
+## Folder structure
+
+```text
+src/lerobot/robots/xlerobot/
+|-- README.md
+|-- __init__.py
+|-- config_xlerobot.py
+|-- xlerobot.py
+|-- configs/
+|   |-- base_only.json
+|   |-- xlerobot_biwheel_feetech.json
+|   `-- xlerobot_biwheel_odrive_panthera_left.json
+|-- shared_bus_mode/
+|   |-- component_assembly.py
+|   `-- shared_bus.py
+`-- sub_robots/
+    |-- __init__.py
+    |-- biwheel_base/
+    |   |-- config_biwheel_base.py
+    |   |-- biwheel_base.py
+    |   |-- biwheel_feetech.py
+    |   `-- biwheel_odrive.py
+    |-- lekiwi_base/
+    |   |-- config.py
+    |   `-- lekiwi_base.py
+    |-- panthera_arm/
+    |   |-- config.py
+    |   `-- panthera_arm.py
+    `-- xlerobot_mount/
+        |-- config.py
+        `-- xlerobot_mount.py
+```
 
 ## The robot class
 
@@ -24,7 +55,7 @@ This is the same configuration showcased in the [XLeRobot demo run script](run.s
 
 ## Configuration example
 
-Simply run the demo run script under `./src/lerobot/teleoperators/xlerobot_teleoperator/run.sh`. Or, if needed, you may create an XLeRobotConfig instance by configuring it like below.
+Use the config examples below directly with `lerobot-teleoperate`, or create an `XLeRobotConfig` instance with equivalent fields.
 
 Note, make sure on the shared buses, you have set the motor ID correctly. In subrobot's configs, the motor IDs index from 1. In the `shared_buses` field, the subrobot's IDs will be shifted by `motor_id_offset`. For example, the `pan_motor_id` for the `mount` will be 1 + 6 = 7. So, you would also need to set the FeeTech motor to be 7 using supported motor programming tool. This ensures the IDs do no collide with the other subrobots on the same bus.
 
@@ -90,7 +121,9 @@ lerobot-teleoperate \
   --robot.type=xlerobot \
   --robot.config_file=src/lerobot/robots/xlerobot/configs/xlerobot_biwheel_feetech.json \
   --teleop.type=xlerobot_default_composite \
-  --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_default_composite_biwheel.json \
+  --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_default_composite_lekiwi.json \
+  --teleop.base_type=biwheel_gamepad \
+  --teleop.base='{"joystick_index": 0, "max_speed_mps": 0.8, "yaw_speed_deg": 45.0, "deadzone": 0.15}' \
   --robot.shared_buses.left_bus.port=/dev/ttyACM2 \
   --display_data=true
 ```
@@ -100,6 +133,10 @@ lerobot-teleoperate \
 If you only want the mobile base, use `base_only.json` as a reference. It disables arms/mount and configures
 ODrive axis mapping and motor inversion (for example `invert_left_motor: true` and swapping `axis_left/right`)
 so that `x.vel` drives forward instead of yawing.
+
+For both `biwheel_odrive` and `biwheel_feetech`, you can flip only forward/backward direction by setting
+`base.reverse_front_direction: true` (or `--robot.base.reverse_front_direction=true` on CLI).
+This keeps turning sign unchanged (`theta.vel` still uses the same left/right convention).
 
 ```bash
 lerobot-teleoperate \
@@ -123,7 +160,7 @@ lerobot-teleoperate \
   --display_data=true
 ```
 
-### Panthera arm + ODrive base (Keyboard teleop)
+### Panthera arm + ODrive base (Keyboard teleop, Cartesian EE mapping)
 
 For a single left Panthera arm mounted on xlerobot:
 
@@ -132,7 +169,7 @@ lerobot-teleoperate \
   --robot.type=xlerobot \
   --robot.config_file=src/lerobot/robots/xlerobot/configs/xlerobot_biwheel_odrive_panthera_left.json \
   --teleop.type=xlerobot_keyboard_composite \
-  --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_keyboard_composite_panthera_left.json \
+  --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_keyboard_composite_panthera_left_ee.json \
   --display_data=true
 ```
 Panthera arms use a different motor/driver stack and must stay off `shared_buses` (`shared_bus: false`).
@@ -172,7 +209,7 @@ lerobot-teleoperate \
   --robot.type=xlerobot \
   --robot.config_file=src/lerobot/robots/xlerobot/configs/xlerobot_biwheel_odrive_panthera_left.json \
   --teleop.type=xlerobot_keyboard_composite \
-  --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_keyboard_composite_panthera_left_with_base.json \
+  --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_keyboard_composite_panthera_left_ee_with_base.json \
   --display_data=true \
   --fps=30 \
   --display_ip=<LOCAL_MACHINE_IP> \
@@ -243,7 +280,7 @@ lerobot-teleoperate \
   --robot.type=xlerobot \
   --robot.config_file=src/lerobot/robots/xlerobot/configs/xlerobot_biwheel_odrive_panthera_left.json \
   --teleop.type=xlerobot_keyboard_composite \
-  --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_keyboard_composite_panthera_left_with_base.json \
+  --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_keyboard_composite_panthera_left_ee_with_base.json \
   --display_data=true \
   --fps=30 \
   --display_ip=<MAC_LAN_IP> \
