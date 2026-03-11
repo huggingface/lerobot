@@ -302,22 +302,35 @@ class PS4EyeCamera(Camera):
         default_width = int(round(cap.get(cv2.CAP_PROP_FRAME_WIDTH)))
         default_height = int(round(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
 
-        if self.width is None or self.height is None:
-            target_w, target_h = default_width, default_height
-        else:
-            target_w = self.capture_width if self.capture_width else self.width
-            target_h = self.capture_height if self.capture_height else self.height
+        target_raw_w, target_raw_h = default_width, default_height
 
-        if (target_w, target_h) != (default_width, default_height):
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, float(target_w))
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, float(target_h))
+        if self.width is not None and self.height is not None:
+            # Figure out what panoramic resolution gives this crop
+            w, h = self.width, self.height
+            if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
+                w, h = h, w
+            
+            if self.eye == EyeSelection.BOTH:
+                target_raw_w, target_raw_h = w, h
+            else:
+                for (pano_w, pano_h), crop in _STEREO_CROPS.items():
+                    r0, r1, cl0, cl1, cr0, cr1 = crop
+                    cw = (cl1 - cl0) if self.eye == EyeSelection.LEFT else (cr1 - cr0)
+                    ch = r1 - r0
+                    if w == cw and h == ch:
+                        target_raw_w, target_raw_h = pano_w, pano_h
+                        break
+
+        if (target_raw_w, target_raw_h) != (default_width, default_height):
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, float(target_raw_w))
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, float(target_raw_h))
 
             actual_w = int(round(cap.get(cv2.CAP_PROP_FRAME_WIDTH)))
             actual_h = int(round(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
 
-            if actual_w != target_w or actual_h != target_h:
+            if actual_w != target_raw_w or actual_h != target_raw_h:
                 raise RuntimeError(
-                    f"{self} failed to set resolution {target_w}×{target_h}; "
+                    f"{self} failed to set panoramic resolution {target_raw_w}×{target_raw_h}; "
                     f"device reports {actual_w}×{actual_h}."
                 )
             shared.capture_width = actual_w
@@ -335,14 +348,28 @@ class PS4EyeCamera(Camera):
     def _sync_settings_from_shared(self, shared: _SharedCapture) -> None:
         """Align our own width/height with what the shared capture is already set to."""
         if self.width is not None and self.height is not None:
-            rw = self.capture_width if self.capture_width else self.width
-            rh = self.capture_height if self.capture_height else self.height
-            if rw != shared.capture_width or rh != shared.capture_height:
+            # We must verify that the shared capture's dimensions CAN produce our requested crop
+            w, h = self.width, self.height
+            if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
+                w, h = h, w
+            
+            if self.eye == EyeSelection.BOTH:
+                expected_raw_w, expected_raw_h = w, h
+            else:
+                expected_raw_w, expected_raw_h = None, None
+                for (pano_w, pano_h), crop in _STEREO_CROPS.items():
+                    r0, r1, cl0, cl1, cr0, cr1 = crop
+                    cw = (cl1 - cl0) if self.eye == EyeSelection.LEFT else (cr1 - cr0)
+                    ch = r1 - r0
+                    if w == cw and h == ch:
+                        expected_raw_w, expected_raw_h = pano_w, pano_h
+                        break
+            
+            if expected_raw_w is not None and (expected_raw_w != shared.capture_width or expected_raw_h != shared.capture_height):
                 raise RuntimeError(
-                    f"{self}: Requested resolution {rw}×{rh} conflicts with the "
+                    f"{self}: Requested output {self.width}×{self.height} conflicts with the "
                     f"already-opened shared capture resolution "
-                    f"{shared.capture_width}×{shared.capture_height}. "
-                    f"All instances sharing the same device must use the same resolution."
+                    f"{shared.capture_width}×{shared.capture_height}."
                 )
 
     @staticmethod
@@ -539,11 +566,12 @@ class PS4EyeCamera(Camera):
             )
 
         h, w, c = image.shape
+        shared = _SHARED_CAPTURES.get(self._key)
 
-        if h != self.capture_height or w != self.capture_width:
+        if shared is not None and (h != shared.capture_height or w != shared.capture_width):
             raise RuntimeError(
-                f"{self} frame width={w} or height={h} do not match configured "
-                f"width={self.capture_width} or height={self.capture_height}."
+                f"{self} received raw frame width={w} height={h}, "
+                f"but hardware is set to {shared.capture_width}×{shared.capture_height}."
             )
 
         if c != 3:
@@ -562,6 +590,15 @@ class PS4EyeCamera(Camera):
         # Rotation
         if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE, cv2.ROTATE_180]:
             processed = cv2.rotate(processed, self.rotation)
+
+        # Validate final dimensions
+        out_h, out_w = processed.shape[:2]
+        if self.width is not None and self.height is not None:
+            if out_h != self.height or out_w != self.width:
+                raise RuntimeError(
+                    f"{self} frame width={out_w} or height={out_h} do not match configured "
+                    f"width={self.width} or height={self.height}."
+                )
 
         return processed
 
