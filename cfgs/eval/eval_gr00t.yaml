@@ -4,15 +4,15 @@ dataset:
   repo_id: HSP-IIT/eval_test
   fps: 10
   num_episodes: 1
-  single_task: Perform the task.
+  single_task: Interact with the human.
   episode_time_s: 3000
   reset_time_s: 0
   
 
 policy:
   type: groot
-  pretrained_path: steb6/groot-ROBOARENA_ONLY_YAW_FINAL
+  pretrained_path: HSP-IIT/groot-HRI3_emo
   n_action_steps: 10
 
 resume: false
-display_data: true
+display_data: false
