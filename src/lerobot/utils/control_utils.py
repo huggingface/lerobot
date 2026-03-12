@@ -149,7 +149,8 @@ def init_keyboard_listener():
         while not _stop.is_set():
             try:
                 key = readchar.readkey()
-            except Exception:
+            except Exception as exc:
+                logging.debug("Keyboard listener stopped due to exception from readchar.readkey(): %s", exc, exc_info=True)
                 break
             if key == readchar.key.RIGHT:
                 print("Right arrow key pressed. Exiting loop...")
