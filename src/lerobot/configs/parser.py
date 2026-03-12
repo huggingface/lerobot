@@ -13,8 +13,10 @@
 # limitations under the License.
 import importlib
 import inspect
+import json
 import pkgutil
 import sys
+import tempfile
 from argparse import ArgumentError
 from collections.abc import Callable, Iterable, Sequence
 from functools import wraps
@@ -24,6 +26,7 @@ from types import ModuleType
 from typing import Any, TypeVar, cast
 
 import draccus
+import yaml
 
 from lerobot.utils.utils import has_method
 
@@ -31,6 +34,10 @@ F = TypeVar("F", bound=Callable[..., object])
 
 PATH_KEY = "path"
 PLUGIN_DISCOVERY_SUFFIX = "discover_packages_path"
+
+# Storage for path args extracted from YAML/JSON config files, so that
+# get_path_arg() can find them even when they weren't passed via CLI.
+_config_path_args: dict[str, str] = {}
 
 
 def get_cli_overrides(field_name: str, args: Sequence[str] | None = None) -> list[str] | None:
@@ -145,7 +152,10 @@ def load_plugin(plugin_path: str) -> None:
 
 
 def get_path_arg(field_name: str, args: Sequence[str] | None = None) -> str | None:
-    return parse_arg(f"{field_name}.{PATH_KEY}", args)
+    result = parse_arg(f"{field_name}.{PATH_KEY}", args)
+    if result is None:
+        result = _config_path_args.get(field_name)
+    return result
 
 
 def get_type_arg(field_name: str, args: Sequence[str] | None = None) -> str | None:
@@ -192,6 +202,51 @@ def filter_path_args(fields_to_filter: str | list[str], args: Sequence[str] | No
     return filtered_args
 
 
+def extract_path_fields_from_config(config_path: str, path_fields: list[str]) -> str:
+    """Extract `path` fields from a YAML/JSON config before draccus processes it.
+
+    When a user specifies e.g. ``policy.path: lerobot/smolvla_base`` in a YAML config,
+    draccus will fail because ``path`` is not a valid field on policy config classes.
+    This function extracts those path values, stores them in ``_config_path_args`` for
+    later retrieval by ``get_path_arg()``, and returns a cleaned temp config file path.
+    """
+    config_file = Path(config_path)
+    suffix = config_file.suffix.lower()
+
+    if suffix in (".yaml", ".yml"):
+        with open(config_file) as f:
+            config_data = yaml.safe_load(f)
+    elif suffix == ".json":
+        with open(config_file) as f:
+            config_data = json.load(f)
+    else:
+        return config_path
+
+    if not isinstance(config_data, dict):
+        return config_path
+
+    modified = False
+    for field in path_fields:
+        if field in config_data and isinstance(config_data[field], dict) and PATH_KEY in config_data[field]:
+            _config_path_args[field] = str(config_data[field].pop(PATH_KEY))
+            # Remove the field entirely if it's now empty
+            if not config_data[field]:
+                del config_data[field]
+            modified = True
+
+    if not modified:
+        return config_path
+
+    # Write cleaned config to a temp file
+    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=suffix, delete=False)
+    if suffix in (".yaml", ".yml"):
+        yaml.dump(config_data, tmp, default_flow_style=False)
+    else:
+        json.dump(config_data, tmp, indent=2)
+    tmp.close()
+    return tmp.name
+
+
 def wrap(config_path: Path | None = None) -> Callable[[F], F]:
     """
     HACK: Similar to draccus.wrap but does three additional things:
@@ -225,6 +280,9 @@ def wrap(config_path: Path | None = None) -> Callable[[F], F]:
                 if has_method(argtype, "__get_path_fields__"):
                     path_fields = argtype.__get_path_fields__()
                     cli_args = filter_path_args(path_fields, cli_args)
+                    # Also extract path fields from the YAML/JSON config file
+                    if config_path_cli:
+                        config_path_cli = extract_path_fields_from_config(config_path_cli, path_fields)
                 if has_method(argtype, "from_pretrained") and config_path_cli:
                     cli_args = filter_arg("config_path", cli_args)
                     cfg = argtype.from_pretrained(config_path_cli, cli_args=cli_args)
