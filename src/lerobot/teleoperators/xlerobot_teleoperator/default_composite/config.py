@@ -27,6 +27,7 @@ from lerobot.configs import parser
 
 from ...bi_so_leader import BiSOLeaderConfig
 from ...config import TeleoperatorConfig
+from ...so_leader import SOLeaderConfig
 from ..sub_teleoperators.biwheel_gamepad.config_biwheel_gamepad import BiwheelGamepadTeleopConfig
 from ..sub_teleoperators.lekiwi_base_gamepad.config_lekiwi_base_gamepad import LeKiwiBaseTeleopConfig
 from ..sub_teleoperators.xlerobot_mount_gamepad.config import XLeRobotMountGamepadTeleopConfig
@@ -48,7 +49,7 @@ class XLeRobotDefaultCompositeConfig(TeleoperatorConfig):
 
     _comment: str | None = None
     config_file: str | None = None
-    arms: BiSOLeaderConfig | None = None
+    arms: dict[str, Any] = field(default_factory=dict)
     base: dict[str, Any] = field(default_factory=dict)
     mount: dict[str, Any] = field(default_factory=dict)
     base_type: str | None = BASE_TYPE_LEKIWI
@@ -57,12 +58,7 @@ class XLeRobotDefaultCompositeConfig(TeleoperatorConfig):
         if self.config_file:
             self._load_from_config_file(self.config_file)
 
-        if self.arms is not None and not isinstance(self.arms, BiSOLeaderConfig):
-            raise TypeError(
-                "xlerobot_default_composite.arms must be a BiSOLeaderConfig object with "
-                "left_arm_config/right_arm_config."
-            )
-        arms_cfg = self.arms
+        arms_cfg = self._parse_arms_config(self.arms)
 
         base_cfg: LeKiwiBaseTeleopConfig | BiwheelGamepadTeleopConfig | None = None
         base_type = self.base_type or self.BASE_TYPE_LEKIWI
@@ -94,6 +90,42 @@ class XLeRobotDefaultCompositeConfig(TeleoperatorConfig):
         self.base_config = base_cfg
         self.mount_config = mount_cfg
         self.base_type = base_type
+
+    def _parse_so_leader_config(self, value: SOLeaderConfig | dict[str, Any], field_name: str) -> SOLeaderConfig:
+        if isinstance(value, SOLeaderConfig):
+            return value
+        if isinstance(value, dict):
+            data = dict(value)
+            data.pop("type", None)
+            return SOLeaderConfig(**data)
+        raise TypeError(
+            f"xlerobot_default_composite.arms.{field_name} must be a dict or SOLeaderConfig; "
+            f"got {type(value).__name__}."
+        )
+
+    def _parse_arms_config(self, value: object) -> BiSOLeaderConfig | None:
+        if value is None or value == {}:
+            return None
+        if isinstance(value, BiSOLeaderConfig):
+            return value
+        if not isinstance(value, dict):
+            raise TypeError(
+                "xlerobot_default_composite.arms must be a dict with "
+                "`left_arm_config` and `right_arm_config`."
+            )
+
+        left_arm = value.get("left_arm_config")
+        right_arm = value.get("right_arm_config")
+        if left_arm is None or right_arm is None:
+            raise ValueError(
+                "xlerobot_default_composite.arms must define both "
+                "`left_arm_config` and `right_arm_config`."
+            )
+
+        return BiSOLeaderConfig(
+            left_arm_config=self._parse_so_leader_config(left_arm, "left_arm_config"),
+            right_arm_config=self._parse_so_leader_config(right_arm, "right_arm_config"),
+        )
 
     def _load_from_config_file(self, config_file: str) -> None:
         cli_overrides = parser.get_cli_overrides("teleop") or []
