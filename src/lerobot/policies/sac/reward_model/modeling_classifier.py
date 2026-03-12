@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import logging
+from typing import Any
 
 import torch
 from torch import Tensor, nn
@@ -107,10 +108,11 @@ class Classifier(PreTrainedPolicy):
     def __init__(
         self,
         config: RewardClassifierConfig,
+        **kwargs: Any,
     ):
         from transformers import AutoModel
 
-        super().__init__(config)
+        super().__init__(config, **kwargs)
         self.config = config
 
         # Set up encoder
