@@ -346,6 +346,19 @@ class LiberoEnv(EnvConfig):
         return kwargs
 
 
+@EnvConfig.register_subclass("libero_plus")
+@dataclass
+class LiberoPlusEnv(LiberoEnv):
+    """Alias config for LIBERO-plus benchmarks.
+
+    LIBERO-plus keeps the same Python package/module names as LIBERO, so this
+    config reuses the existing LIBERO env implementation while making intent explicit
+    in experiment configs (`env.type=libero_plus`).
+    """
+
+    task: str = "libero_spatial"
+
+
 @EnvConfig.register_subclass("robocasa")
 @dataclass
 class RoboCasaEnv(EnvConfig):
