@@ -125,6 +125,7 @@ def prepare_observation_for_inference(
         inference, residing on the target device. Image tensors are reshaped
         to (C, H, W) and normalized to a [0, 1] range.
     """
+    device = torch.device(device) if not isinstance(device, torch.device) else device
     for name in observation:
         value = observation[name]
 
@@ -137,7 +138,7 @@ def prepare_observation_for_inference(
                 use_pin = device.type == "cuda"
                 buf = torch.empty(1, c, h, w, dtype=torch.float32)
                 _pinned_buffers[buf_key] = buf.pin_memory() if use_pin else buf
-            frame = torch.from_numpy(value).permute(2, 0, 1).unsqueeze(0)
+            frame = torch.from_numpy(value).permute(2, 0, 1).unsqueeze(0).to(dtype=torch.float32)
             _pinned_buffers[buf_key].copy_(frame)
             t = _pinned_buffers[buf_key].to(device, non_blocking=True)
             # Use out-of-place division to avoid corrupting the shared buffer
