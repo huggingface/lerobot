@@ -87,3 +87,20 @@ class TestOperationTypeParsing:
         )
         resolved_name = OperationConfig.get_choice_name(type(cfg.operation))
         assert resolved_name == type_name
+
+    def test_modify_tasks_replacements_args_parse(self):
+        cfg = parse_cfg(
+            [
+                "--repo_id",
+                "test/repo",
+                "--operation.type",
+                "modify_tasks",
+                "--operation.task_replacements",
+                '{"task_0": "pick cube", "task_1": "place cube"}',
+            ]
+        )
+        assert isinstance(cfg.operation, ModifyTasksConfig)
+        assert cfg.operation.task_replacements == {
+            "task_0": "pick cube",
+            "task_1": "place cube",
+        }
