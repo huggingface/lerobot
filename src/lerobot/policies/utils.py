@@ -139,11 +139,9 @@ def prepare_observation_for_inference(
                 _pinned_buffers[buf_key] = buf.pin_memory() if use_pin else buf
             frame = torch.from_numpy(value).permute(2, 0, 1).unsqueeze(0)
             _pinned_buffers[buf_key].copy_(frame)
-            observation[name] = (
-                _pinned_buffers[buf_key]
-                .to(device, dtype=torch.float32, non_blocking=True)
-                .div_(255.0)
-            )
+            t = _pinned_buffers[buf_key].to(device, non_blocking=True)
+            # Use out-of-place division to avoid corrupting the shared buffer
+            observation[name] = t.div(255.0)
         else:
             if not value.flags["C_CONTIGUOUS"]:
                 value = np.ascontiguousarray(value)
