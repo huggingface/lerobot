@@ -4,16 +4,17 @@
 # Licensed under The MIT License [see LICENSE for details]
 # --------------------------------------------------------
 
-from __future__ import annotations
 
 # copy from https://github.com/huggingface/transformers/blob/main/src/transformers/models/llava_onevision/image_processing_llava_onevision_fast.py
+from typing import Optional
+
 from transformers.image_processing_utils import (
     BatchFeature,
     get_patch_output_size,
 )
 from transformers.image_processing_utils_fast import (
     BaseImageProcessorFast,
-    ImagesKwargs,
+    DefaultFastImageProcessorKwargs,
     group_images_by_shape,
     reorder_images,
 )
@@ -76,7 +77,7 @@ def crop(img: torch.Tensor, left: int, top: int, right: int, bottom: int) -> tor
     return img[:, top:bottom, left:right]
 
 
-class Eagle25VLFastImageProcessorKwargs(ImagesKwargs):
+class Eagle25VLFastImageProcessorKwargs(DefaultFastImageProcessorKwargs):
     max_dynamic_tiles: int | None
     min_dynamic_tiles: int | None
     use_thumbnail: bool | None
@@ -164,11 +165,11 @@ class Eagle25VLImageProcessorFast(BaseImageProcessorFast):
 
     def _resize_for_patching(
         self,
-        image: torch.Tensor,
+        image: "torch.Tensor",
         target_resolution: tuple,
-        interpolation: F.InterpolationMode,
+        interpolation: "F.InterpolationMode",
         input_data_format: ChannelDimension,
-    ) -> torch.Tensor:
+    ) -> "torch.Tensor":
         """
         Resizes an image to a target resolution while maintaining aspect ratio.
 
@@ -218,8 +219,8 @@ class Eagle25VLImageProcessorFast(BaseImageProcessorFast):
         return best_ratio
 
     def _pad_for_patching(
-        self, image: torch.Tensor, target_resolution: tuple, input_data_format: ChannelDimension
-    ) -> torch.Tensor:
+        self, image: "torch.Tensor", target_resolution: tuple, input_data_format: ChannelDimension
+    ) -> "torch.Tensor":
         """
         Pad an image to a target resolution while maintaining aspect ratio.
         """
@@ -235,15 +236,15 @@ class Eagle25VLImageProcessorFast(BaseImageProcessorFast):
 
     def _get_image_patches(
         self,
-        image: torch.Tensor,
+        image: "torch.Tensor",
         min_num: int,
         max_num: int,
         size: tuple,
         tile_size: int,
         use_thumbnail: bool,
-        interpolation: F.InterpolationMode,
+        interpolation: "F.InterpolationMode",
         pad_during_tiling: bool,
-    ) -> list[torch.Tensor]:
+    ) -> list["torch.Tensor"]:
         image_size = get_image_size(image, channel_dim=ChannelDimension.FIRST)
         orig_height, orig_width = image_size
         aspect_ratio = orig_width / orig_height
@@ -304,8 +305,8 @@ class Eagle25VLImageProcessorFast(BaseImageProcessorFast):
 
     def _pad_for_batching(
         self,
-        pixel_values: list[torch.Tensor],
-    ) -> list[torch.Tensor]:
+        pixel_values: list["torch.Tensor"],
+    ) -> list["torch.Tensor"]:
         """
         Pads images on the `num_of_patches` dimension with zeros to form a batch of same number of patches.
 
@@ -326,14 +327,14 @@ class Eagle25VLImageProcessorFast(BaseImageProcessorFast):
 
     def _preprocess(
         self,
-        images: list[torch.Tensor],
+        images: list["torch.Tensor"],
         do_resize: bool,
         size: SizeDict,
         max_dynamic_tiles: int,
         min_dynamic_tiles: int,
         use_thumbnail: bool,
         pad_during_tiling: bool,
-        interpolation: F.InterpolationMode | None,
+        interpolation: Optional["F.InterpolationMode"],
         do_center_crop: bool,
         crop_size: SizeDict,
         do_rescale: bool,

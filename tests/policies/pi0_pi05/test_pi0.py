@@ -14,12 +14,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Test script to verify PI0 policy integration with LeRobot"""
+"""Test script to verify PI0 policy integration with LeRobot, only meant to be run locally!"""
+
+import os
 
 import pytest
 import torch
 
-pytest.importorskip("transformers")
+# Skip this entire module in CI
+pytestmark = pytest.mark.skipif(
+    os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true",
+    reason="This test requires local OpenPI installation and is not meant for CI",
+)
 
 from lerobot.policies.factory import make_policy_config  # noqa: E402
 from lerobot.policies.pi0 import (  # noqa: E402
@@ -28,11 +34,10 @@ from lerobot.policies.pi0 import (  # noqa: E402
     make_pi0_pre_post_processors,  # noqa: E402
 )
 from lerobot.utils.random_utils import set_seed  # noqa: E402
-from tests.utils import require_cuda, require_hf_token  # noqa: E402
+from tests.utils import require_cuda  # noqa: E402
 
 
 @require_cuda
-@require_hf_token
 def test_policy_instantiation():
     # Create config
     set_seed(42)
@@ -109,7 +114,6 @@ def test_policy_instantiation():
 
 
 @require_cuda
-@require_hf_token
 def test_config_creation():
     """Test policy config creation through factory."""
     try:

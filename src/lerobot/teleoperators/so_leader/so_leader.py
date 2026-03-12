@@ -16,6 +16,7 @@
 
 import logging
 import time
+from typing import TypeAlias
 
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.feetech import (
@@ -155,5 +156,5 @@ class SOLeader(Teleoperator):
         logger.info(f"{self} disconnected.")
 
 
-SO100Leader = SOLeader
-SO101Leader = SOLeader
+SO100Leader: TypeAlias = SOLeader
+SO101Leader: TypeAlias = SOLeader
