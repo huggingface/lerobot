@@ -377,7 +377,7 @@ If you want to dive deeper into this important topic, you can check out the [blo
 
 #### Troubleshooting:
 
-- On Linux, if the left and right arrow keys and escape key don't have any effect during data recording, make sure you've set the `$DISPLAY` environment variable. See [pynput limitations](https://pynput.readthedocs.io/en/latest/limitations.html#linux).
+- On Linux, keyboard shortcuts (arrow keys, Escape) work natively on both X11 and Wayland sessions — no extra configuration required. If keys still have no effect, confirm that you are running from an interactive terminal (not a piped or non-TTY session).
 
 ## Visualize a dataset
 
