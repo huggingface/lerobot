@@ -211,7 +211,7 @@ Replace `<MAC_LAN_IP>` with your Mac LAN IP.
 
 Defined in `default_composite/teleop.py`, this teleoperator merges:
 
-- A `BiSO101Leader` instance (`arms_config`) for dual-arm control.
+- A `BiSOLeader` instance (`arms_config`) for dual-arm control.
 - A base gamepad teleop (`base_config`) that can target either the LeKiwi or BiWheel drive via Xbox gamepad axes.
 - A mount gamepad teleop (`mount_config`) for pan/tilt camera motion.
 

@@ -24,7 +24,8 @@ from typing import Any
 import draccus
 
 from lerobot.configs import parser
-from ...bi_so101_leader.config_bi_so101_leader import BiSO101LeaderConfig
+
+from ...bi_so_leader import BiSOLeaderConfig
 from ...config import TeleoperatorConfig
 from ..sub_teleoperators.biwheel_gamepad.config_biwheel_gamepad import BiwheelGamepadTeleopConfig
 from ..sub_teleoperators.lekiwi_base_gamepad.config_lekiwi_base_gamepad import LeKiwiBaseTeleopConfig
@@ -37,7 +38,7 @@ class XLeRobotDefaultCompositeConfig(TeleoperatorConfig):
     """Configuration for composite XLeRobot teleoperation with leader arms and gamepad.
 
     This composite teleoperator combines:
-    - BiSO101Leader: Leader arms for controlling follower arms
+    - BiSOLeader: Leader arms for controlling follower arms
     - LeKiwiBaseTeleop: Xbox gamepad left stick for base control
     - XLeRobotMountGamepadTeleop: Xbox gamepad right stick for mount control
     """
@@ -47,7 +48,7 @@ class XLeRobotDefaultCompositeConfig(TeleoperatorConfig):
 
     _comment: str | None = None
     config_file: str | None = None
-    arms: dict[str, Any] = field(default_factory=dict)
+    arms: BiSOLeaderConfig | None = None
     base: dict[str, Any] = field(default_factory=dict)
     mount: dict[str, Any] = field(default_factory=dict)
     base_type: str | None = BASE_TYPE_LEKIWI
@@ -55,11 +56,13 @@ class XLeRobotDefaultCompositeConfig(TeleoperatorConfig):
     def __post_init__(self) -> None:
         if self.config_file:
             self._load_from_config_file(self.config_file)
-        arms_cfg: BiSO101LeaderConfig | None = None
-        if isinstance(self.arms, BiSO101LeaderConfig):
-            arms_cfg = self.arms
-        elif self.arms:
-            arms_cfg = BiSO101LeaderConfig(**self.arms)
+
+        if self.arms is not None and not isinstance(self.arms, BiSOLeaderConfig):
+            raise TypeError(
+                "xlerobot_default_composite.arms must be a BiSOLeaderConfig object with "
+                "left_arm_config/right_arm_config."
+            )
+        arms_cfg = self.arms
 
         base_cfg: LeKiwiBaseTeleopConfig | BiwheelGamepadTeleopConfig | None = None
         base_type = self.base_type or self.BASE_TYPE_LEKIWI

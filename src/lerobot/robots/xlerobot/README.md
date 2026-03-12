@@ -367,8 +367,12 @@ lerobot-teleoperate \
     --teleop.type=xlerobot_default_composite \
     --teleop.base_type=lekiwi_base_gamepad \
     --teleop.arms='{
-        "left_arm_port": "/dev/ttyACM0",
-        "right_arm_port": "/dev/ttyACM1",
+        "left_arm_config": {
+            "port": "/dev/ttyACM0"
+        },
+        "right_arm_config": {
+            "port": "/dev/ttyACM1"
+        },
         "id": "leader"
     }' \
     --teleop.base='{

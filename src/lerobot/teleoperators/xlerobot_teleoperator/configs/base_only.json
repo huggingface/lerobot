@@ -1,6 +1,6 @@
 {
   "type": "xlerobot_default_composite",
-  "arms": {},
+  "arms": null,
   "base_type": "biwheel_gamepad",
   "base": {
     "joystick_index": 0,

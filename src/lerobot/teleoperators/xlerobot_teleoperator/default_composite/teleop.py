@@ -24,7 +24,7 @@ from contextlib import suppress
 from functools import cached_property
 from typing import Any
 
-from ...bi_so101_leader.bi_so101_leader import BiSO101Leader
+from ...bi_so_leader.bi_so_leader import BiSOLeader
 from ...teleoperator import Teleoperator
 from ..sub_teleoperators.biwheel_gamepad.teleop_biwheel_gamepad import BiwheelGamepadTeleop
 from ..sub_teleoperators.lekiwi_base_gamepad.teleop_lekiwi_base_gamepad import LeKiwiBaseTeleop
@@ -36,7 +36,7 @@ class XLeRobotDefaultComposite(Teleoperator):
     """Composite teleoperator for XLeRobot combining leader arms with gamepad inputs.
 
     This teleoperator combines three input methods:
-    - BiSO101Leader: Leader arms for controlling follower arms
+    - BiSOLeader: Leader arms for controlling follower arms
     - LeKiwiBaseTeleop: Xbox gamepad left stick for base movement
     - XLeRobotMountGamepadTeleop: Xbox gamepad right stick for mount pan/tilt
 
@@ -50,7 +50,7 @@ class XLeRobotDefaultComposite(Teleoperator):
     def __init__(self, config: XLeRobotDefaultCompositeConfig):
         self.config = config
         super().__init__(config)
-        self.arm_teleop = BiSO101Leader(config.arms_config) if config.arms_config else None
+        self.arm_teleop = BiSOLeader(config.arms_config) if config.arms_config else None
         self.base_teleop = self._build_base_teleop()
         self.mount_teleop = self._build_mount_teleop()
 

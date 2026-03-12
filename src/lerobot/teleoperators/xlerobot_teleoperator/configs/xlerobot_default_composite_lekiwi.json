@@ -2,8 +2,12 @@
   "_comment": "Use with --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_default_composite_lekiwi.json",
   "type": "xlerobot_default_composite",
   "arms": {
-    "left_arm_port": "/dev/ttyACM0",
-    "right_arm_port": "/dev/ttyACM1"
+    "left_arm_config": {
+      "port": "/dev/ttyACM0"
+    },
+    "right_arm_config": {
+      "port": "/dev/ttyACM1"
+    }
   },
   "base_type": "lekiwi_base_gamepad",
   "base": {
