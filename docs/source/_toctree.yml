@@ -31,6 +31,8 @@
     title: Using Subtasks in the Dataset
   - local: streaming_video_encoding
     title: Streaming Video Encoding
+  - local: multi_dataset_training
+    title: Multi-Dataset Training
   title: "Datasets"
 - sections:
   - local: act
