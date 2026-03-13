@@ -1,8 +1,9 @@
 import torch
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.policies.factory import make_policy, make_pre_post_processors
-from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
+from lerobot.policies.factory import make_policy
+from lerobot.rewards.classifier.configuration_classifier import RewardClassifierConfig
+from lerobot.rewards.factory import make_reward_pre_post_processors
 
 
 def main():
@@ -26,7 +27,7 @@ def main():
     # Make policy, preprocessor, and optimizer
     policy = make_policy(config, ds_meta=dataset.meta)
     optimizer = config.get_optimizer_preset().build(policy.parameters())
-    preprocessor, _ = make_pre_post_processors(policy_cfg=config, dataset_stats=dataset.meta.stats)
+    preprocessor, _ = make_reward_pre_post_processors(config, dataset_stats=dataset.meta.stats)
 
     classifier_id = "<user>/reward_classifier_hil_serl_example"
 

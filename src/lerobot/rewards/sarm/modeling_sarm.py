@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2025 Qianzhong Chen, Justin Yu, Mac Schwager, Pieter Abbeel, Yide Shentu, Philipp Wu
 # and The HuggingFace Inc. team. All rights reserved.
 #
@@ -34,9 +32,9 @@ import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.sarm.configuration_sarm import SARMConfig
-from lerobot.policies.sarm.sarm_utils import (
+from lerobot.rewards.pretrained import PreTrainedRewardModel
+from lerobot.rewards.sarm.configuration_sarm import SARMConfig
+from lerobot.rewards.sarm.sarm_utils import (
     normalize_stage_tau,
     pad_state_to_max_dim,
 )
@@ -352,7 +350,7 @@ def gen_stage_emb(num_classes: int, targets: torch.Tensor) -> torch.Tensor:
     return stage_onehot
 
 
-class SARMRewardModel(PreTrainedPolicy):
+class SARMRewardModel(PreTrainedRewardModel):
     """
     SARM Reward Model for stage-aware task completion rewards.
 
@@ -469,6 +467,23 @@ class SARMRewardModel(PreTrainedPolicy):
         self.stage_model.to(device)
         self.subtask_model.to(device)
         return self
+
+    def compute_reward(self, batch: dict[str, Tensor]) -> Tensor:
+        """Compute dense progress reward in [0, 1] from batch.
+
+        Expects batch to contain:
+        - "observation_features" or video embeddings: (B, T, 512)
+        - "language_embedding" or text embeddings: (B, 512)
+        - optionally "observation.state": (B, T, state_dim)
+        """
+        text_emb = batch.get("language_embedding", batch.get("text_features"))
+        video_emb = batch.get("observation_features", batch.get("video_features"))
+        state = batch.get("observation.state", batch.get("state_features"))
+
+        rewards = self.calculate_rewards(text_emb, video_emb, state)
+        if isinstance(rewards, np.ndarray):
+            rewards = torch.from_numpy(rewards).float()
+        return rewards
 
     @torch.no_grad()
     def calculate_rewards(

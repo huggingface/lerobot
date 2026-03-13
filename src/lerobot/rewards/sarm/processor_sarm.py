@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,13 +25,6 @@ from PIL import Image
 from transformers import CLIPModel, CLIPProcessor
 
 from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.policies.sarm.configuration_sarm import SARMConfig
-from lerobot.policies.sarm.sarm_utils import (
-    apply_rewind_augmentation,
-    compute_absolute_indices,
-    find_stage_and_tau,
-    pad_state_to_max_dim,
-)
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
@@ -50,6 +41,13 @@ from lerobot.processor.converters import (
 )
 from lerobot.processor.core import EnvTransition, TransitionKey
 from lerobot.processor.pipeline import PipelineFeatureType
+from lerobot.rewards.sarm.configuration_sarm import SARMConfig
+from lerobot.rewards.sarm.sarm_utils import (
+    apply_rewind_augmentation,
+    compute_absolute_indices,
+    find_stage_and_tau,
+    pad_state_to_max_dim,
+)
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
 

@@ -36,6 +36,7 @@ from lerobot.envs.utils import close_envs
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.rewards.factory import make_reward_pre_post_processors
 from lerobot.rl.wandb_utils import WandBLogger
 from lerobot.scripts.lerobot_eval import eval_policy_all
 from lerobot.utils.import_utils import register_third_party_plugins
@@ -283,19 +284,30 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             },
         }
 
-    preprocessor, postprocessor = make_pre_post_processors(
-        policy_cfg=cfg.policy,
-        pretrained_path=cfg.policy.pretrained_path,
-        **processor_kwargs,
-        **postprocessor_kwargs,
-    )
+    # TODO (kmeftah): Add `reward_model` field to TrainPipelineConfig so policy/reward training
+    # paths are separated at the config level instead of relying on isinstance checks.
+    # HACK: Reward model configs are currently passed via cfg.policy; detect and route accordingly.
+    from lerobot.configs.rewards import RewardModelConfig
+
+    if isinstance(cfg.policy, RewardModelConfig):
+        preprocessor, postprocessor = make_reward_pre_post_processors(
+            cfg.policy,
+            **processor_kwargs,
+        )
+    else:
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy_cfg=cfg.policy,
+            pretrained_path=cfg.policy.pretrained_path,
+            **processor_kwargs,
+            **postprocessor_kwargs,
+        )
 
     if is_main_process:
         logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
 
     # Load precomputed SARM progress for RA-BC if enabled
-    # Generate progress using: src/lerobot/policies/sarm/compute_rabc_weights.py
+    # Generate progress using: src/lerobot/rewards/sarm/compute_rabc_weights.py
     rabc_weights = None
     if cfg.use_rabc:
         from lerobot.utils.rabc import RABCWeights
