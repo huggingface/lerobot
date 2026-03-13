@@ -192,6 +192,62 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     # When using accelerate, only the main process should log to avoid duplicate outputs
     is_main_process = accelerator.is_main_process
 
+    # Optionally auto-scale LR and steps when using multiple processes BEFORE logging config
+    def _scale_optimizer_lr(opt_cfg, factor: int):
+        """Scale learning rates within optimizer config, including grouped configs."""
+        try:
+            if hasattr(opt_cfg, "lr") and isinstance(getattr(opt_cfg, "lr"), (int, float)):
+                opt_cfg.lr *= factor
+            # Handle multi-optimizer groups if present
+            if hasattr(opt_cfg, "optimizer_groups") and isinstance(opt_cfg.optimizer_groups, dict):
+                for _name, group in opt_cfg.optimizer_groups.items():
+                    if isinstance(group, dict) and "lr" in group and isinstance(group["lr"], (int, float)):
+                        group["lr"] *= factor
+        except (AttributeError, TypeError) as e:
+            # Best-effort scaling; if structure is unexpected, log a warning
+            logging.warning(f"Failed to scale optimizer lr: {e}")
+
+    if cfg.auto_scale and not cfg.resume:
+        world_size = max(1, accelerator.num_processes)
+        if world_size > 1:
+            old_steps = cfg.steps
+            # Linear LR scaling
+            _scale_optimizer_lr(cfg.optimizer, world_size)
+            # Also scale policy-level LR fields when using presets (e.g., optimizer_lr, optimizer_lr_backbone)
+            if cfg.use_policy_training_preset and cfg.policy is not None:
+                scaled_policy_lr_fields: list[tuple[str, float, float]] = []
+                for attr in dir(cfg.policy):
+                    if not attr.startswith("optimizer_lr"):
+                        continue
+                    try:
+                        val = getattr(cfg.policy, attr)
+                    except AttributeError:
+                        continue
+                    if isinstance(val, (int, float)):
+                        new_val = val * world_size
+                        setattr(cfg.policy, attr, new_val)
+                        scaled_policy_lr_fields.append((attr, val, new_val))
+            # Scale steps down so total samples processed remains comparable
+            # Use ceiling division to ensure at least the original number of total samples are processed across all GPUs.
+            # Implements ceil(steps / world_size)
+            cfg.steps = max(1, (cfg.steps + world_size - 1) // world_size)
+            if is_main_process:
+                logging.info(
+                    colored(
+                        f"Auto-scale enabled with world_size={world_size}: lr x{world_size}, steps {old_steps} -> {cfg.steps}",
+                        "cyan",
+                        attrs=["bold"],
+                    )
+                )
+                if cfg.use_policy_training_preset and cfg.policy is not None:
+                    for (name, old_v, new_v) in scaled_policy_lr_fields:
+                        logging.info(colored(f"Auto-scale policy {name}: {old_v} -> {new_v}", "cyan"))
+        else:
+            if is_main_process:
+                logging.info("Auto-scale enabled but single process detected; skipping scaling.")
+    elif cfg.auto_scale and cfg.resume and is_main_process:
+        logging.info("Auto-scale requested but resume=True; skipping scaling to preserve checkpoint state.")
+
     # Only log on main process
     if is_main_process:
         logging.info(pformat(cfg.to_dict()))
