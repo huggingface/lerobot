@@ -1,0 +1,40 @@
+# Mixture of faults -- drops, duplicates, reordering, and disconnect combined
+name: baseline_cloud_raspberry
+
+# Hardware
+robot_type: so101
+gpu: RTX 4090
+client_host: raspberrypiv5
+server_host: cloudserver4090
+
+# Policy
+policy_type: smolvla
+pretrained_name_or_path: jackvial/so101_smolvla_pickplaceorangecube_e100
+
+# DRTC parameters
+estimator: jk
+cooldown: true
+latency_k: 1.5
+epsilon: 1
+actions_per_chunk: 50
+s_min: 20
+latency_alpha: 0.125
+latency_beta: 0.25
+
+# Timing
+duration_s: 25.0
+fps: 60
+
+# Flow matching / RTC
+num_flow_matching_steps: 8
+rtc_enabled: true
+rtc_sigma_d: 0.2
+rtc_prefix_attention_schedule: linear
+
+# Butterworth filter
+action_filter_mode: butterworth
+action_filter_butterworth_cutoff: 3.0
+action_filter_gain: 1.4
+
+# Diagnostics
+full_diagnostics: true

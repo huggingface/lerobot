@@ -45,6 +45,7 @@ from typing import Any
 
 import draccus
 import grpc
+import numpy as np
 import torch
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
@@ -170,6 +171,16 @@ class RobotClient:
             self.logger.error(f"Failed to connect to policy server: {e}")
             return False
 
+    @staticmethod
+    def _get_action_device_type(action: Any) -> str:
+        """Best-effort device detection for torch and NumPy action payloads."""
+        action_device = getattr(action, "device", None)
+        if hasattr(action_device, "type"):
+            return action_device.type
+        if isinstance(action_device, str):
+            return action_device
+        return "cpu"
+
     def stop(self):
         """Stop the robot client"""
         self.shutdown_event.set()
@@ -288,15 +299,19 @@ class RobotClient:
 
                 # Log device type of received actions
                 if len(timed_actions) > 0:
-                    received_device = timed_actions[0].get_action().device.type
+                    received_device = self._get_action_device_type(timed_actions[0].get_action())
                     self.logger.debug(f"Received actions on device: {received_device}")
 
                 # Move actions to client_device (e.g., for downstream planners that need GPU)
                 client_device = self.config.client_device
                 if client_device != "cpu":
                     for timed_action in timed_actions:
-                        if timed_action.get_action().device.type != client_device:
-                            timed_action.action = timed_action.get_action().to(client_device)
+                        action = timed_action.get_action()
+                        if self._get_action_device_type(action) != client_device:
+                            if isinstance(action, np.ndarray):
+                                timed_action.action = torch.from_numpy(action).to(client_device)
+                            else:
+                                timed_action.action = action.to(client_device)
                     self.logger.debug(f"Converted actions to device: {client_device}")
                 else:
                     self.logger.debug(f"Actions kept on device: {client_device}")
