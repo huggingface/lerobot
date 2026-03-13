@@ -29,6 +29,7 @@ from lerobot.envs.configs import (
     LiberoPlusEnv,
     PushtEnv,
     RoboCasaEnv,
+    RoboMMEEnv,
 )
 from lerobot.envs.utils import _call_make_env, _download_hub_file, _import_hub_module, _normalize_hub_result
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig
@@ -48,6 +49,8 @@ def make_env_config(env_type: str, **kwargs) -> EnvConfig:
         return LiberoPlusEnv(**kwargs)
     elif env_type == "robocasa":
         return RoboCasaEnv(**kwargs)
+    elif env_type == "robomme":
+        return RoboMMEEnv(**kwargs)
     else:
         raise ValueError(f"Policy type '{env_type}' is not available.")
 
@@ -209,6 +212,19 @@ def make_env(
             split=cfg.split,
             episode_length=cfg.episode_length,
             gym_kwargs=cfg.gym_kwargs,
+            env_cls=env_cls,
+        )
+
+    elif "robomme" in cfg.type:
+        from lerobot.envs.robomme import create_robomme_envs
+
+        return create_robomme_envs(
+            task=cfg.task,
+            n_envs=n_envs,
+            action_space_type=cfg.action_space,
+            dataset=cfg.dataset_split,
+            episode_length=cfg.episode_length,
+            task_ids=cfg.task_ids,
             env_cls=env_cls,
         )
 

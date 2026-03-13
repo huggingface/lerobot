@@ -16,18 +16,13 @@
 
 from dataclasses import dataclass, field
 
-from lerobot.datasets.transforms import ImageTransformsConfig
+from lerobot.datasets.transforms import DatasetTransformStepConfig, ImageTransformsConfig
 from lerobot.datasets.video_utils import get_safe_default_codec
 
 
 @dataclass
 class DatasetConfig:
-    # You may provide a list of datasets here. `train.py` creates them all and concatenates them. Note: only data
-    # keys common between the datasets are kept. Each dataset gets and additional transform that inserts the
-    # "dataset_index" into the returned item. The index mapping is made according to the order in which the
-    # datasets are provided.
     repo_id: str
-    # Root directory where the dataset will be stored (e.g. 'dataset/path'). If None, defaults to $HF_LEROBOT_HOME/repo_id.
     root: str | None = None
     episodes: list[int] | None = None
     image_transforms: ImageTransformsConfig = field(default_factory=ImageTransformsConfig)
@@ -35,6 +30,32 @@ class DatasetConfig:
     use_imagenet_stats: bool = True
     video_backend: str = field(default_factory=get_safe_default_codec)
     streaming: bool = False
+
+
+@dataclass
+class SubDatasetConfig:
+    """Configuration for a single dataset within a MultiDatasetConfig."""
+
+    repo_id: str
+    root: str | None = None
+    episodes: list[int] | None = None
+    revision: str | None = None
+    video_backend: str = field(default_factory=get_safe_default_codec)
+    weight: float = 1.0
+    # Maps dataset-local feature keys to unified policy keys.
+    # Keys not listed pass through unchanged.
+    feature_map: dict[str, str] = field(default_factory=dict)
+    # Per-dataset transforms applied after feature renaming, before cross-dataset padding.
+    transforms: list[DatasetTransformStepConfig] | None = None
+
+
+@dataclass
+class MultiDatasetConfig:
+    """Configuration for training on multiple datasets jointly."""
+
+    datasets: list[SubDatasetConfig] = field(default_factory=list)
+    image_transforms: ImageTransformsConfig = field(default_factory=ImageTransformsConfig)
+    use_imagenet_stats: bool = True
 
 
 @dataclass

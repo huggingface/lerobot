@@ -405,6 +405,46 @@ class RoboCasaEnv(EnvConfig):
         return {"split": self.split}
 
 
+@EnvConfig.register_subclass("robomme")
+@dataclass
+class RoboMMEEnv(EnvConfig):
+    """RoboMME memory-augmented manipulation benchmark (ManiSkill/SAPIEN).
+
+    16 tasks across 4 suites: Counting, Permanence, Reference, Imitation.
+    Uses BenchmarkEnvBuilder from the robomme package.
+    """
+
+    task: str = "PickXtimes"
+    fps: int = 10
+    episode_length: int = 300
+    action_space: str = "joint_angle"
+    dataset_split: str = "test"
+    task_ids: list[int] | None = None
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(8,)),
+            "front_rgb": PolicyFeature(type=FeatureType.VISUAL, shape=(256, 256, 3)),
+            "wrist_rgb": PolicyFeature(type=FeatureType.VISUAL, shape=(256, 256, 3)),
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(8,)),
+        }
+    )
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            ACTION: ACTION,
+            "front_rgb": f"{OBS_IMAGES}.front",
+            "wrist_rgb": f"{OBS_IMAGES}.wrist",
+            OBS_STATE: OBS_STATE,
+        }
+    )
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            "action_space": self.action_space,
+            "dataset": self.dataset_split,
+        }
+
+
 @EnvConfig.register_subclass("metaworld")
 @dataclass
 class MetaworldEnv(EnvConfig):

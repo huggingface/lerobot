@@ -24,7 +24,7 @@ from huggingface_hub.errors import HfHubHTTPError
 
 from lerobot import envs
 from lerobot.configs import parser
-from lerobot.configs.default import DatasetConfig, EvalConfig, PeftConfig, WandBConfig
+from lerobot.configs.default import DatasetConfig, EvalConfig, MultiDatasetConfig, PeftConfig, WandBConfig
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.optim import OptimizerConfig
 from lerobot.optim.schedulers import LRSchedulerConfig
@@ -35,7 +35,7 @@ TRAIN_CONFIG_NAME = "train_config.json"
 
 @dataclass
 class TrainPipelineConfig(HubMixin):
-    dataset: DatasetConfig
+    dataset: DatasetConfig | MultiDatasetConfig
     env: envs.EnvConfig | None = None
     policy: PreTrainedConfig | None = None
     # Set `dir` to where you would like to save all of the run outputs. If you run another training session
@@ -129,8 +129,9 @@ class TrainPipelineConfig(HubMixin):
             train_dir = f"{now:%Y-%m-%d}/{now:%H-%M-%S}_{self.job_name}"
             self.output_dir = Path("outputs/train") / train_dir
 
-        if isinstance(self.dataset.repo_id, list):
-            raise NotImplementedError("LeRobotMultiDataset is not currently implemented.")
+        if isinstance(self.dataset, MultiDatasetConfig):
+            if len(self.dataset.datasets) < 1:
+                raise ValueError("MultiDatasetConfig.datasets must contain at least one sub-dataset.")
 
         if not self.use_policy_training_preset and (self.optimizer is None or self.scheduler is None):
             raise ValueError("Optimizer and Scheduler must be set when the policy presets are not used.")
@@ -143,8 +144,7 @@ class TrainPipelineConfig(HubMixin):
                 "'policy.repo_id' argument missing. Please specify it to push the model to the hub."
             )
 
-        if self.use_rabc and not self.rabc_progress_path:
-            # Auto-detect from dataset path
+        if self.use_rabc and not self.rabc_progress_path and isinstance(self.dataset, DatasetConfig):
             repo_id = self.dataset.repo_id
             if self.dataset.root:
                 self.rabc_progress_path = str(Path(self.dataset.root) / "sarm_progress.parquet")

@@ -14,11 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import collections
+import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 import torch
+import torch.nn.functional as F_nn
 from torchvision.transforms import v2
 from torchvision.transforms.v2 import (
     Transform,
@@ -258,3 +260,116 @@ class ImageTransforms(Transform):
 
     def forward(self, *inputs: Any) -> Any:
         return self.tf(*inputs)
+
+
+# ---------------------------------------------------------------------------
+# Per-dataset transform pipeline (used by MultiLeRobotDataset)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class DatasetTransformStepConfig:
+    """Config for a single per-dataset transform step."""
+
+    type: str
+    kwargs: dict[str, Any] = field(default_factory=dict)
+
+
+_DATASET_TRANSFORM_REGISTRY: dict[str, type["DatasetTransformStep"]] = {}
+
+
+def register_dataset_transform(name: str):
+    """Decorator to register a DatasetTransformStep by name."""
+
+    def decorator(cls: type["DatasetTransformStep"]) -> type["DatasetTransformStep"]:
+        _DATASET_TRANSFORM_REGISTRY[name] = cls
+        return cls
+
+    return decorator
+
+
+class DatasetTransformStep:
+    """Base class for a single per-dataset transform applied to a sample dict."""
+
+    def __call__(self, sample: dict) -> dict:
+        raise NotImplementedError
+
+
+@register_dataset_transform("pad_action")
+class PadAction(DatasetTransformStep):
+    """Zero-pad the ``action`` tensor to *target_dim* along the last axis."""
+
+    def __init__(self, target_dim: int):
+        self.target_dim = target_dim
+
+    def __call__(self, sample: dict) -> dict:
+        action = sample.get("action")
+        if action is None:
+            return sample
+        current = action.shape[-1]
+        if current < self.target_dim:
+            sample["action"] = F_nn.pad(action, (0, self.target_dim - current))
+        return sample
+
+
+@register_dataset_transform("pad_state")
+class PadState(DatasetTransformStep):
+    """Zero-pad ``observation.state`` to *target_dim* along the last axis."""
+
+    def __init__(self, target_dim: int):
+        self.target_dim = target_dim
+
+    def __call__(self, sample: dict) -> dict:
+        state = sample.get("observation.state")
+        if state is None:
+            return sample
+        current = state.shape[-1]
+        if current < self.target_dim:
+            sample["observation.state"] = F_nn.pad(state, (0, self.target_dim - current))
+        return sample
+
+
+@register_dataset_transform("resize_images")
+class ResizeImages(DatasetTransformStep):
+    """Resize all image/video camera tensors to (height, width)."""
+
+    def __init__(self, height: int, width: int):
+        self.size = (height, width)
+
+    def __call__(self, sample: dict) -> dict:
+        for key in list(sample.keys()):
+            if not key.startswith("observation.images."):
+                continue
+            img = sample[key]
+            if not isinstance(img, torch.Tensor) or img.ndim < 3:
+                continue
+            sample[key] = F.resize(img, self.size, antialias=True)
+        return sample
+
+
+class DatasetTransformPipeline:
+    """Sequential pipeline of DatasetTransformStep instances."""
+
+    def __init__(self, configs: list[DatasetTransformStepConfig] | None = None):
+        self.steps: list[DatasetTransformStep] = []
+        if configs:
+            for cfg in configs:
+                self.steps.append(self._build(cfg))
+
+    @staticmethod
+    def _build(cfg: DatasetTransformStepConfig) -> DatasetTransformStep:
+        cls = _DATASET_TRANSFORM_REGISTRY.get(cfg.type)
+        if cls is None:
+            raise ValueError(
+                f"Unknown dataset transform '{cfg.type}'. "
+                f"Available: {list(_DATASET_TRANSFORM_REGISTRY)}"
+            )
+        return cls(**cfg.kwargs)
+
+    def __call__(self, sample: dict) -> dict:
+        for step in self.steps:
+            sample = step(sample)
+        return sample
+
+    def __repr__(self) -> str:
+        return f"DatasetTransformPipeline(steps={self.steps})"

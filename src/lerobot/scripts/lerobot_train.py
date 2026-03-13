@@ -29,7 +29,8 @@ from tqdm import tqdm
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.factory import make_dataset
-from lerobot.datasets.sampler import EpisodeAwareSampler
+from lerobot.datasets.multi_dataset import NewMultiLeRobotDataset
+from lerobot.datasets.sampler import EpisodeAwareSampler, WeightedEpisodeAwareSampler
 from lerobot.datasets.utils import cycle
 from lerobot.envs.factory import make_env, make_env_pre_post_processors
 from lerobot.envs.utils import close_envs
@@ -343,13 +344,25 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
     # create dataloader for offline training
-    if hasattr(cfg.policy, "drop_n_last_frames"):
+    drop_n_last = getattr(cfg.policy, "drop_n_last_frames", 0)
+
+    if isinstance(dataset, NewMultiLeRobotDataset):
+        shuffle = False
+        sampler = WeightedEpisodeAwareSampler(
+            dataset.meta.episodes["dataset_from_index"],
+            dataset.meta.episodes["dataset_to_index"],
+            dataset_membership=dataset.meta.episodes["dataset_source"],
+            dataset_weights=dataset.dataset_weights,
+            drop_n_last_frames=drop_n_last,
+            shuffle=True,
+        )
+    elif drop_n_last > 0:
         shuffle = False
         sampler = EpisodeAwareSampler(
             dataset.meta.episodes["dataset_from_index"],
             dataset.meta.episodes["dataset_to_index"],
             episode_indices_to_use=dataset.episodes,
-            drop_n_last_frames=cfg.policy.drop_n_last_frames,
+            drop_n_last_frames=drop_n_last,
             shuffle=True,
         )
     else:
@@ -360,7 +373,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         dataset,
         num_workers=cfg.num_workers,
         batch_size=cfg.batch_size,
-        shuffle=shuffle and not cfg.dataset.streaming,
+        shuffle=shuffle and not getattr(cfg.dataset, "streaming", False),
         sampler=sampler,
         pin_memory=device.type == "cuda",
         drop_last=False,
