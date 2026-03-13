@@ -72,16 +72,38 @@ def is_image_key(k: str) -> bool:
 
 
 def resize_robot_observation_image(image: torch.tensor, resize_dims: tuple[int, int, int]) -> torch.tensor:
-    assert image.ndim == 3, f"Image must be (C, H, W)! Received {image.shape}"
-    # (H, W, C) -> (C, H, W) for resizing from robot obsevation resolution to policy image resolution
+    assert image.ndim == 3, f"Image must be (H, W, C)! Received {image.shape}"
+    # (H, W, C) -> (C, H, W) for resizing from robot observation resolution to policy image resolution
     image = image.permute(2, 0, 1)
-    dims = (resize_dims[1], resize_dims[2])
-    # Add batch dimension for interpolate: (C, H, W) -> (1, C, H, W)
-    image_batched = image.unsqueeze(0)
-    # Interpolate and remove batch dimension: (1, C, H, W) -> (C, H, W)
-    resized = torch.nn.functional.interpolate(image_batched, size=dims, mode="bilinear", align_corners=False)
+    target_height, target_width = resize_dims[1], resize_dims[2]
 
-    return resized.squeeze(0)
+    # Use aspect-ratio-preserving resize with padding (same as sync inference)
+    # to avoid distorting the image content which causes policy failures.
+    _, cur_height, cur_width = image.shape
+    ratio = max(cur_width / target_width, cur_height / target_height)
+    resized_height = int(cur_height / ratio)
+    resized_width = int(cur_width / ratio)
+
+    # Add batch dimension for interpolate: (C, H, W) -> (1, C, H, W)
+    image_batched = image.unsqueeze(0).float()
+    resized = torch.nn.functional.interpolate(
+        image_batched, size=(resized_height, resized_width), mode="bilinear", align_corners=False
+    )
+
+    # Clamp based on dtype
+    if image.dtype == torch.uint8:
+        resized = torch.round(resized).clamp(0, 255).to(torch.uint8)
+    else:
+        resized = resized.clamp(0.0, 1.0)
+
+    # Pad to target dimensions with black
+    pad_h0, remainder_h = divmod(target_height - resized_height, 2)
+    pad_h1 = pad_h0 + remainder_h
+    pad_w0, remainder_w = divmod(target_width - resized_width, 2)
+    pad_w1 = pad_w0 + remainder_w
+    padded = torch.nn.functional.pad(resized, (pad_w0, pad_w1, pad_h0, pad_h1), mode="constant", value=0)
+
+    return padded.squeeze(0)
 
 
 # TODO(Steven): Consider implementing a pipeline step for this
