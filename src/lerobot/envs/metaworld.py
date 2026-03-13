@@ -25,7 +25,7 @@ import metaworld.policies as policies
 import numpy as np
 from gymnasium import spaces
 
-from lerobot.processor import RobotObservation
+from lerobot.types import RobotObservation
 
 # ---- Load configuration data from the external JSON file ----
 CONFIG_PATH = Path(__file__).parent / "metaworld_config.json"

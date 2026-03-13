@@ -26,8 +26,6 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 import numpy as np
 
 from lerobot.cameras.utils import make_cameras_from_configs
-from lerobot.envs.factory import make_env
-from lerobot.processor import RobotAction, RobotObservation
 from lerobot.robots.unitree_g1.g1_kinematics import G1_29_ArmIK
 from lerobot.robots.unitree_g1.g1_utils import (
     REMOTE_AXES,
@@ -37,6 +35,7 @@ from lerobot.robots.unitree_g1.g1_utils import (
     default_remote_input,
     make_locomotion_controller,
 )
+from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.import_utils import _unitree_sdk_available
 
 from ..robot import Robot
@@ -291,6 +290,8 @@ class UnitreeG1(Robot):
     def connect(self, calibrate: bool = True) -> None:  # connect to DDS
         # Initialize DDS channel and simulation environment
         if self.config.is_simulation:
+            from lerobot.envs.factory import make_env
+
             self._ChannelFactoryInitialize(0, "lo")
             self._env_wrapper = make_env("lerobot/unitree-g1-mujoco", trust_remote_code=True)
             # Extract the actual gym env from the dict structure
