@@ -119,6 +119,10 @@ class ACTConfig(PreTrainedConfig):
     # Note: the value used in ACT when temporal ensembling is enabled is 0.01.
     temporal_ensemble_coeff: float | None = None
 
+    # Compilation.
+    compile_model: bool = False
+    compile_mode: str = "reduce-overhead"
+
     # Training and loss computation.
     dropout: float = 0.1
     kl_weight: float = 10.0
