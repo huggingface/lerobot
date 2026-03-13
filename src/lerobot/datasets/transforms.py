@@ -26,6 +26,48 @@ from torchvision.transforms.v2 import (
 )
 
 
+class ImageTransformPipeline:
+    """Composable pipeline of image transforms applied inside dataset `__getitem__`."""
+
+    def __init__(self, image_transforms: Callable | list[Callable] | tuple[Callable, ...] | None = None):
+        self.transforms: list[Callable] = []
+        self.set_transforms(image_transforms)
+
+    def __call__(self, image: torch.Tensor) -> torch.Tensor:
+        for transform in self.transforms:
+            image = transform(image)
+        return image
+
+    def __bool__(self) -> bool:
+        return len(self.transforms) > 0
+
+    def __repr__(self) -> str:
+        return repr(self.transforms)
+
+    def set_transforms(
+        self, image_transforms: Callable | list[Callable] | tuple[Callable, ...] | None
+    ) -> None:
+        self.transforms = []
+        if image_transforms is None:
+            return
+
+        if isinstance(image_transforms, ImageTransformPipeline):
+            self.transforms = list(image_transforms.transforms)
+            return
+
+        if isinstance(image_transforms, (list, tuple)):
+            for transform in image_transforms:
+                self.register_transform(transform)
+            return
+
+        self.register_transform(image_transforms)
+
+    def register_transform(self, image_transform: Callable) -> None:
+        if not callable(image_transform):
+            raise TypeError("Image transforms must be callable.")
+        self.transforms.append(image_transform)
+
+
 class RandomSubsetApply(Transform):
     """Apply a random subset of N transformations from a list of transformations.
 
