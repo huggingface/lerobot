@@ -162,15 +162,16 @@ def rollout(
     while not np.all(done) and step < max_steps:
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
         observation = preprocess_observation(observation)
+        
+        # Apply environment-specific preprocessing (e.g., LiberoProcessorStep for LIBERO)
+        observation = env_preprocessor(observation)
+        
         if return_observations:
             all_observations.append(deepcopy(observation))
 
         # Infer "task" from attributes of environments.
         # TODO: works with SyncVectorEnv but not AsyncVectorEnv
         observation = add_envs_task(env, observation)
-
-        # Apply environment-specific preprocessing (e.g., LiberoProcessorStep for LIBERO)
-        observation = env_preprocessor(observation)
 
         observation = preprocessor(observation)
         with torch.inference_mode():
@@ -226,6 +227,7 @@ def rollout(
     # Track the final observation.
     if return_observations:
         observation = preprocess_observation(observation)
+        observation = env_preprocessor(observation)
         all_observations.append(deepcopy(observation))
 
     # Stack the sequence along the first dimension so that we have (batch, sequence, *) tensors.
@@ -238,7 +240,8 @@ def rollout(
     if return_observations:
         stacked_observations = {}
         for key in all_observations[0]:
-            stacked_observations[key] = torch.stack([obs[key] for obs in all_observations], dim=1)
+            if OBS_STR in key:  # we don't want to include the action in the observations
+                stacked_observations[key] = torch.stack([obs[key] for obs in all_observations], dim=1)
         ret[OBS_STR] = stacked_observations
 
     if hasattr(policy, "use_original_modules"):
@@ -300,6 +303,7 @@ def eval_policy(
     sum_rewards = []
     max_rewards = []
     all_successes = []
+    all_steps = []
     all_seeds = []
     threads = []  # for video saving threads
     n_episodes_rendered = 0  # for saving the correct number of videos
@@ -364,6 +368,7 @@ def eval_policy(
         max_rewards.extend(batch_max_rewards.tolist())
         batch_successes = einops.reduce((rollout_data["success"] * mask), "b n -> b", "any")
         all_successes.extend(batch_successes.tolist())
+        all_steps.extend((done_indices + 1).tolist())
         if seeds:
             all_seeds.extend(seeds)
         else:
@@ -412,7 +417,8 @@ def eval_policy(
                 n_episodes_rendered += 1
 
         progbar.set_postfix(
-            {"running_success_rate": f"{np.mean(all_successes[:n_episodes]).item() * 100:.1f}%"}
+            {"running_success_rate": f"{np.mean(all_successes[:n_episodes]).item() * 100:.1f}%",
+             "running_total_step": f"{np.mean(all_steps[:n_episodes]).item():.1f}"}
         )
 
     # Wait till all video rendering threads are done.
@@ -427,13 +433,15 @@ def eval_policy(
                 "sum_reward": sum_reward,
                 "max_reward": max_reward,
                 "success": success,
+                "step": step,
                 "seed": seed,
             }
-            for i, (sum_reward, max_reward, success, seed) in enumerate(
+            for i, (sum_reward, max_reward, success, step, seed) in enumerate(
                 zip(
                     sum_rewards[:n_episodes],
                     max_rewards[:n_episodes],
                     all_successes[:n_episodes],
+                    all_steps[:n_episodes],
                     all_seeds[:n_episodes],
                     strict=True,
                 )
@@ -443,6 +451,7 @@ def eval_policy(
             "avg_sum_reward": float(np.nanmean(sum_rewards[:n_episodes])),
             "avg_max_reward": float(np.nanmean(max_rewards[:n_episodes])),
             "pc_success": float(np.nanmean(all_successes[:n_episodes]) * 100),
+            "pc_step": float(np.nanmean(all_steps[:n_episodes])),
             "eval_s": time.time() - start,
             "eval_ep_s": (time.time() - start) / n_episodes,
         },
@@ -584,10 +593,11 @@ class TaskMetrics(TypedDict):
     sum_rewards: list[float]
     max_rewards: list[float]
     successes: list[bool]
+    steps: list[float]
     video_paths: list[str]
 
 
-ACC_KEYS = ("sum_rewards", "max_rewards", "successes", "video_paths")
+ACC_KEYS = ("sum_rewards", "max_rewards", "successes", "steps", "video_paths")
 
 
 def eval_one(
@@ -627,6 +637,7 @@ def eval_one(
         sum_rewards=[ep["sum_reward"] for ep in per_episode],
         max_rewards=[ep["max_reward"] for ep in per_episode],
         successes=[ep["success"] for ep in per_episode],
+        steps=[ep["step"] for ep in per_episode],
         video_paths=task_result.get("video_paths", []),
     )
 
@@ -727,6 +738,7 @@ def eval_policy_all(
         _append("sum_rewards", metrics.get("sum_rewards"))
         _append("max_rewards", metrics.get("max_rewards"))
         _append("successes", metrics.get("successes"))
+        _append("steps", metrics.get("steps"))
         # video_paths is list-like
         paths = metrics.get("video_paths", [])
         if paths:
@@ -781,6 +793,7 @@ def eval_policy_all(
             "avg_sum_reward": _agg_from_list(acc["sum_rewards"]),
             "avg_max_reward": _agg_from_list(acc["max_rewards"]),
             "pc_success": _agg_from_list(acc["successes"]) * 100 if acc["successes"] else float("nan"),
+            "pc_step": _agg_from_list(acc["steps"]) if acc["steps"] else float("nan"),
             "n_episodes": len(acc["sum_rewards"]),
             "video_paths": list(acc["video_paths"]),
         }
@@ -790,6 +803,7 @@ def eval_policy_all(
         "avg_sum_reward": _agg_from_list(overall["sum_rewards"]),
         "avg_max_reward": _agg_from_list(overall["max_rewards"]),
         "pc_success": _agg_from_list(overall["successes"]) * 100 if overall["successes"] else float("nan"),
+        "pc_step": _agg_from_list(overall["steps"]) if overall["steps"] else float("nan"),
         "n_episodes": len(overall["sum_rewards"]),
         "eval_s": time.time() - start_t,
         "eval_ep_s": (time.time() - start_t) / max(1, len(overall["sum_rewards"])),
