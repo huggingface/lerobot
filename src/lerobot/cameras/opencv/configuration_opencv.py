@@ -49,7 +49,7 @@ class OpenCVCameraConfig(CameraConfig):
         color_mode: Color mode for image output (RGB or BGR). Defaults to RGB.
         rotation: Image rotation setting (0°, 90°, 180°, or 270°). Defaults to no rotation.
         warmup_s: Time reading frames before returning from connect (in seconds)
-        fourcc: FOURCC code for video format (e.g., "MJPG", "YUYV", "I420"). Defaults to None (auto-detect).
+        fourcc: FOURCC code for video format (e.g., "MJPG", "YUYV", "I420"). Defaults to "MJPG".
         backend: OpenCV backend identifier (https://docs.opencv.org/3.4/d4/d15/group__videoio__flags__base.html). Defaults to ANY.
 
     Note:
@@ -62,7 +62,7 @@ class OpenCVCameraConfig(CameraConfig):
     color_mode: ColorMode = ColorMode.RGB
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     warmup_s: int = 1
-    fourcc: str | None = None
+    fourcc: str | None = "MJPG"
     backend: Cv2Backends = Cv2Backends.ANY
 
     def __post_init__(self) -> None:
