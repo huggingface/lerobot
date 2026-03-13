@@ -127,6 +127,7 @@ class ACTConfig(PreTrainedConfig):
     optimizer_lr: float = 1e-5
     optimizer_weight_decay: float = 1e-4
     optimizer_lr_backbone: float = 1e-5
+    optimizer_fused: bool = False  # Use CUDA fused AdamW kernel
 
     def __post_init__(self):
         super().__post_init__()
@@ -155,6 +156,7 @@ class ACTConfig(PreTrainedConfig):
         return AdamWConfig(
             lr=self.optimizer_lr,
             weight_decay=self.optimizer_weight_decay,
+            fused=self.optimizer_fused,
         )
 
     def get_scheduler_preset(self) -> None:
