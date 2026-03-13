@@ -23,8 +23,6 @@ from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.processor import (
-    RobotAction,
-    RobotObservation,
     RobotProcessorPipeline,
     make_default_teleop_action_processor,
 )
@@ -40,6 +38,7 @@ from lerobot.robots.so_follower.robot_kinematic_processor import (
     InverseKinematicsEEToJoints,
 )
 from lerobot.scripts.lerobot_record import record_loop
+from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
