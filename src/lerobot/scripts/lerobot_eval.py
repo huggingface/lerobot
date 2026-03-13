@@ -43,6 +43,17 @@ lerobot-eval \
 
 Note that in both examples, the repo/folder should contain at least `config.json` and `model.safetensors` files.
 
+You can also evaluate a model on a Hub environment with custom kwargs:
+```
+lerobot-eval \
+    --policy.path=HF_USER/HF_REPO \
+    --env=HF_USER/HF_REPO \
+    --eval.batch_size=1 \
+    --eval.n_episodes=10 \
+    --env_kwargs.environment=env_A \
+    --env_kwargs.embodiment=emb_B \
+```
+
 You can learn about the CLI options for this script in the `EvalPipelineConfig` in lerobot/configs/eval.py
 """
 
@@ -521,6 +532,7 @@ def eval_main(cfg: EvalPipelineConfig):
         n_envs=cfg.eval.batch_size,
         use_async_envs=cfg.eval.use_async_envs,
         trust_remote_code=cfg.trust_remote_code,
+        **cfg.env_kwargs,
     )
 
     logging.info("Making policy.")
