@@ -262,10 +262,8 @@ class ImageTransforms(Transform):
         return self.tf(*inputs)
 
 
-# ---------------------------------------------------------------------------
-# Per-dataset transform pipeline (used by MultiLeRobotDataset)
-# ---------------------------------------------------------------------------
 
+# Per-dataset transform pipeline (used by MultiLeRobotDataset)
 
 @dataclass
 class DatasetTransformStepConfig:
