@@ -1348,11 +1348,21 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 start_ep = self.num_episodes - self.batch_encoding_size
                 end_ep = self.num_episodes
                 self._batch_save_episode_video(start_ep, end_ep)
+
+                # Clean up temporary images after successful batch encoding
+                for ep_idx in range(start_ep, end_ep):
+                    for cam_key in self.meta.camera_keys:
+                        img_dir = self._get_image_file_dir(ep_idx, cam_key)
+                        if img_dir.is_dir():
+                            shutil.rmtree(img_dir)
+
                 self.episodes_since_last_encoding = 0
 
         if not episode_data:
             # Reset episode buffer and clean up temporary images (if not already deleted during video encoding)
-            self.clear_episode_buffer(delete_images=len(self.meta.image_keys) > 0)
+            # For batched encoding, keep images until batch encoding is complete
+            delete_images = len(self.meta.image_keys) > 0 and not (has_video_keys and use_batched_encoding)
+            self.clear_episode_buffer(delete_images=delete_images)
 
     def _batch_save_episode_video(self, start_episode: int, end_episode: int | None = None) -> None:
         """
@@ -1368,6 +1378,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
         logging.info(
             f"Batch encoding {self.batch_encoding_size} videos for episodes {start_episode} to {end_episode - 1}"
         )
+
+        # Close writer to ensure all episode metadata is flushed and written to disk completely
+        # This is necessary because ParquetWriter buffers data and only writes complete files on close
+        self.meta._close_writer()
+
+        # Reload episodes to ensure we have the latest metadata for all episodes,
+        # especially when resuming recording with batch encoding enabled
+        self.meta.episodes = load_episodes(self.root)
 
         chunk_idx = self.meta.episodes[start_episode]["data/chunk_index"]
         file_idx = self.meta.episodes[start_episode]["data/file_index"]
@@ -1523,8 +1541,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
         ):
             # Initialize indices for a new dataset made of the first episode data
             chunk_idx, file_idx = 0, 0
-            if self.meta.episodes is not None and len(self.meta.episodes) > 0:
-                # It means we are resuming recording, so we need to load the latest episode
+            if (
+                self.meta.episodes is not None
+                and len(self.meta.episodes) > 0
+                and f"videos/{video_key}/chunk_index" in self.meta.episodes[-1]
+                and self.meta.episodes[-1][f"videos/{video_key}/chunk_index"] is not None
+            ):
+                # It means we are resuming recording with existing video metadata
                 # Update the indices to avoid overwriting the latest episode
                 old_chunk_idx = self.meta.episodes[-1][f"videos/{video_key}/chunk_index"]
                 old_file_idx = self.meta.episodes[-1][f"videos/{video_key}/file_index"]
