@@ -32,25 +32,29 @@ def parse_raw16(line: bytes) -> list[int] | None:
         if len(parts) < 16:
             return None
         return [int(x) for x in parts[:16]]
-    except Exception:
+    except (ValueError, IndexError):
         return None
 
 
 def read_raw_from_serial(ser) -> list[int] | None:
     """Read latest sample from serial; if buffer is backed up, keep only the newest."""
-    last = None
-    while ser.in_waiting > 0:
-        b = ser.readline()
-        if not b:
-            break
-        raw16 = parse_raw16(b)
-        if raw16 is not None:
-            last = raw16
-    if last is None:
-        b = ser.readline()
-        if b:
-            last = parse_raw16(b)
-    return last
+    try:
+        last = None
+        while ser.in_waiting > 0:
+            b = ser.readline()
+            if not b:
+                break
+            raw16 = parse_raw16(b)
+            if raw16 is not None:
+                last = raw16
+        if last is None:
+            b = ser.readline()
+            if b:
+                last = parse_raw16(b)
+        return last
+    except serial.SerialException as e:
+        logger.warning(f"Serial read error: {e}")
+        return None
 
 
 @dataclass
@@ -115,5 +119,6 @@ class ExoskeletonArm:
         return {} if raw is None else exo_raw_to_angles(raw, self.calibration)
 
     def calibrate(self) -> None:
-        ser = self._ser
-        self.calibration = run_exo_calibration(ser, self.side, self.calibration_fpath)
+        if not self.is_connected:
+            raise RuntimeError("Cannot calibrate: exoskeleton not connected")
+        self.calibration = run_exo_calibration(self._ser, self.side, self.calibration_fpath)
