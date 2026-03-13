@@ -97,10 +97,7 @@ class SpatialLearnedEmbeddings(nn.Module):
 
 
 class Classifier(PreTrainedRewardModel):
-    """Image classifier built on top of a pre-trained encoder.
-
-    Binary success/failure classifier from images. Trainable via ``forward()``.
-    """
+    """Image classifier built on top of a pre-trained encoder."""
 
     name = "reward_classifier"
     config_class = RewardClassifierConfig
@@ -108,7 +105,6 @@ class Classifier(PreTrainedRewardModel):
     def __init__(
         self,
         config: RewardClassifierConfig,
-        **kwargs,
     ):
         from transformers import AutoModel
 
@@ -215,6 +211,7 @@ class Classifier(PreTrainedRewardModel):
 
     def extract_images_and_labels(self, batch: dict[str, Tensor]) -> tuple[list, Tensor]:
         """Extract image tensors and label tensors from batch."""
+        # Check for both OBS_IMAGE and OBS_IMAGES prefixes
         images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE)]
         labels = batch[REWARD]
 
@@ -279,6 +276,11 @@ class Classifier(PreTrainedRewardModel):
 
     def predict_reward(self, batch, threshold=0.5):
         """Eval method. Returns predicted reward with the decision threshold as argument."""
+        # Check for both OBS_IMAGE and OBS_IMAGES prefixes
+        batch = self.normalize_inputs(batch)
+        batch = self.normalize_targets(batch)
+
+        # Extract images from batch dict
         images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE)]
 
         if self.config.num_classes == 2:

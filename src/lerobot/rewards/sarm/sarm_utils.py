@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -91,9 +89,29 @@ def compute_absolute_indices(
     n_obs_steps: int,
     frame_gap: int = 30,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Compute absolute frame indices with clamping for bidirectional observation sequence."""
+    """Compute absolute frame indices with clamping for bidirectional observation sequence.
+
+    Bidirectional sampling centered on target frame:
+    - Before: [-frame_gap * half_steps, ..., -frame_gap] (half_steps frames)
+    - Current: [0] (1 frame)
+    - After: [frame_gap, ..., frame_gap * half_steps] (half_steps frames)
+    - Total: n_obs_steps + 1 frames
+
+    Out-of-bounds frames are clamped (duplicated from boundary).
+
+    Args:
+        frame_idx: Target frame index (center frame of sequence)
+        ep_start: Episode start index
+        ep_end: Episode end index (exclusive)
+        n_obs_steps: Number of observation steps (must be even for symmetric sampling)
+        frame_gap: Gap between observation frames
+
+    Returns:
+        Tuple of (indices, out_of_bounds_flags)
+    """
     half_steps = n_obs_steps // 2
 
+    # Bidirectional deltas: past + current + future
     past_deltas = [-frame_gap * i for i in range(half_steps, 0, -1)]
     future_deltas = [frame_gap * i for i in range(1, half_steps + 1)]
     delta_indices = past_deltas + [0] + future_deltas
@@ -103,8 +121,10 @@ def compute_absolute_indices(
 
     for delta in delta_indices:
         target_idx = frame_idx + delta
+        # Clamp to episode bounds (duplicate boundary frames for out-of-bounds)
         clamped_idx = max(ep_start, min(ep_end - 1, target_idx))
         frames.append(clamped_idx)
+        # Flag as out-of-bounds if clamping occurred
         out_of_bounds.append(1 if target_idx != clamped_idx else 0)
 
     return torch.tensor(frames), torch.tensor(out_of_bounds)
@@ -118,13 +138,34 @@ def apply_rewind_augmentation(
     frame_gap: int = 30,
     rewind_step: int | None = None,
 ) -> tuple[int, list[int]]:
-    """Generate rewind frame indices for temporal augmentation."""
+    """
+    Generate rewind frame indices for temporal augmentation.
+
+    Rewind simulates going backwards through previously seen frames,
+    starting from before the earliest observation frame (for bidirectional sampling).
+    Appends reversed frames after the observation sequence.
+
+    Args:
+        frame_idx: Target frame index (center of bidirectional observation window)
+        ep_start: Episode start index
+        n_obs_steps: Number of observation steps
+        max_rewind_steps: Maximum rewind steps
+        frame_gap: Gap between frames
+        rewind_step: If provided, use this exact rewind step (for deterministic behavior).
+                     If None, sample randomly.
+
+    Returns:
+        Tuple of (rewind_step, rewind_indices)
+    """
+    # For bidirectional sampling, earliest obs frame is at frame_idx - half_steps * frame_gap
     half_steps = n_obs_steps // 2
     earliest_obs_frame = frame_idx - half_steps * frame_gap
 
+    # Required history: frames before earliest observation frame
     if earliest_obs_frame <= ep_start:
-        return 0, []
+        return 0, []  # No history before observation window
 
+    # Max valid rewind steps based on available history before earliest obs frame
     available_history = earliest_obs_frame - ep_start
     max_valid_step = available_history // frame_gap
     max_rewind = min(max_rewind_steps, max(0, max_valid_step))
@@ -132,15 +173,18 @@ def apply_rewind_augmentation(
     if max_rewind <= 0:
         return 0, []
 
+    # Sample rewind steps if not provided
     rewind_step = random.randint(1, max_rewind) if rewind_step is None else min(rewind_step, max_rewind)
 
     if rewind_step == 0:
         return 0, []
 
+    # Generate rewind indices going backwards from earliest obs frame
+    # rewind_indices[0] is closest to obs window, rewind_indices[-1] is furthest back
     rewind_indices = []
     for i in range(1, rewind_step + 1):
         idx = earliest_obs_frame - i * frame_gap
-        idx = max(ep_start, idx)
+        idx = max(ep_start, idx)  # Clamp to episode start
         rewind_indices.append(idx)
 
     return rewind_step, rewind_indices
@@ -158,9 +202,10 @@ def pad_state_to_max_dim(state: torch.Tensor, max_state_dim: int) -> torch.Tenso
     """Pad the state tensor's last dimension to max_state_dim with zeros."""
     current_dim = state.shape[-1]
     if current_dim >= max_state_dim:
-        return state[..., :max_state_dim]
+        return state[..., :max_state_dim]  # Truncate if larger
 
-    padding = (0, max_state_dim - current_dim)
+    # Pad with zeros on the right
+    padding = (0, max_state_dim - current_dim)  # (left, right) for last dim
     return F.pad(state, padding, mode="constant", value=0)
 
 
@@ -201,7 +246,25 @@ def normalize_stage_tau(
     temporal_proportions: dict[str, float] | list[float] | None = None,
     subtask_names: list[str] | None = None,
 ) -> float | torch.Tensor:
-    """Normalize stage+tau reward to [0, 1] with custom breakpoints."""
+    """
+    Normalize stage+tau reward to [0, 1] with custom breakpoints.
+
+    Maps stage index + within-stage tau to normalized progress [0, 1].
+    The breakpoints are designed to give appropriate weight to each stage
+    based on their importance in the task (using temporal proportions).
+
+    Priority: breakpoints > temporal_proportions > linear fallback
+
+    Args:
+        x: Raw reward value (stage index + tau) where stage ∈ [0, num_stages-1] and tau ∈ [0, 1)
+        num_stages: Number of stages (required if breakpoints/proportions not provided)
+        breakpoints: Optional custom breakpoints list of length num_stages + 1.
+        temporal_proportions: Optional temporal proportions dict/list to compute breakpoints.
+        subtask_names: Optional ordered list of subtask names (for dict proportions)
+
+    Returns:
+        Normalized progress value ∈ [0, 1]
+    """
     if breakpoints is not None:
         num_stages = len(breakpoints) - 1
     elif temporal_proportions is not None:

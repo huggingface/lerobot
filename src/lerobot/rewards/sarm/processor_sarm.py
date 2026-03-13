@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -70,14 +68,17 @@ class SARMEncodingProcessorStep(ProcessorStep):
         self.dataset_stats = dataset_stats
         self.annotation_mode = config.annotation_mode
 
+        # Helper to create temporal proportions dict
         def make_props_dict(names, props):
             return dict(zip(names, props, strict=True)) if names and props else None
 
+        # Sparse annotations (always needed)
         self.sparse_temporal_proportions = make_props_dict(
             config.sparse_subtask_names, config.sparse_temporal_proportions
         )
         self.sparse_subtask_names = config.sparse_subtask_names
 
+        # Dense annotations (only for dual mode)
         self.dense_subtask_names = config.dense_subtask_names if config.uses_dual_heads else None
         self.dense_temporal_proportions = (
             make_props_dict(config.dense_subtask_names, config.dense_temporal_proportions)
@@ -113,6 +114,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
 
         episode_indices = np.atleast_1d(np.asarray(from_tensor_to_numpy(episode_index)))
 
+        # If single episode but multiple frames, compute episode for each frame
         if len(episode_indices) == 1 and len(frame_indices) > 1:
             return np.array([self._find_episode_for_frame(int(f)) for f in frame_indices])
 
@@ -139,9 +141,11 @@ class SARMEncodingProcessorStep(ProcessorStep):
         global_names: list[str],
     ) -> tuple[list | None, list | None, list | None]:
         """Load subtask annotations for an episode from DataFrame."""
+        # Single-stage mode: (linear progress 0→1)
         if episodes_df is None or len(global_names) == 1:
             return None, None, None
 
+        # Resolve column name with fallback
         def col(suffix):
             prefixed = f"{annotation_type}_{suffix}"
             return prefixed if prefixed in episodes_df.columns else suffix
@@ -161,7 +165,15 @@ class SARMEncodingProcessorStep(ProcessorStep):
         )
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        """Encode images, text, and normalize states in the transition."""
+        """
+        Encode images, text, and normalize states in the transition.
+
+        Implements SARM training data preparation:
+        - Applies language perturbation (20% probability)
+        - Applies rewind augmentation (80% probability)
+        - Generates stage+tau targets for all frames
+        - Outputs lengths tensor for valid sequence masking
+        """
         new_transition = transition.copy() if hasattr(transition, "copy") else dict(transition)
         observation = new_transition.get(TransitionKey.OBSERVATION)
         comp_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
@@ -181,17 +193,20 @@ class SARMEncodingProcessorStep(ProcessorStep):
         if isinstance(image, torch.Tensor):
             image = image.cpu().numpy()
 
+        # If 4D (T, C, H, W) from delta_timestamps, add batch dim
+        # If 3D (C, H, W) single frame, add batch and time dims
         if image.ndim == 4:
-            image = image[np.newaxis, ...]
+            image = image[np.newaxis, ...]  # (T, C, H, W) -> (1, T, C, H, W)
         elif image.ndim == 3:
-            image = image[np.newaxis, np.newaxis, ...]
+            image = image[np.newaxis, np.newaxis, ...]  # (C, H, W) -> (1, 1, C, H, W)
 
         batch_size = image.shape[0]
-        total_frames = image.shape[1]
+        total_frames = image.shape[1]  # Should be 13: 9 obs + 4 rewind placeholders
         n_obs_steps = self.config.n_obs_steps
         max_rewind_steps = self.config.max_rewind_steps
-        n_obs_frames = 1 + n_obs_steps
+        n_obs_frames = 1 + n_obs_steps  # 9 observation frames (including current)
 
+        # Rewind augmentation
         rewind_steps = torch.zeros(batch_size, dtype=torch.int32)
         apply_rewind = self.training and random.random() < self.config.rewind_probability
 
@@ -207,13 +222,17 @@ class SARMEncodingProcessorStep(ProcessorStep):
                 )
                 rewind_steps[b_idx] = rewind_step
 
-        lengths = n_obs_frames + rewind_steps
+        # Compute valid lengths: n_obs_frames + rewind_steps
+        lengths = n_obs_frames + rewind_steps  # (B,)
 
+        # Apply rewind masking to images
+        # For frames beyond valid length, we mask with zeros (or copy last valid frame)
         for b_idx in range(batch_size):
             valid_len = lengths[b_idx].item()
             if valid_len < total_frames:
-                image[b_idx, valid_len:] = 0
+                image[b_idx, valid_len:] = 0  # Zero out frames beyond valid length
 
+        # Encode images with CLIP
         video_features = self._encode_images_batch(image)
         observation["video_features"] = video_features
 
@@ -226,14 +245,15 @@ class SARMEncodingProcessorStep(ProcessorStep):
             state_tensor = torch.tensor(state_data, dtype=torch.float32)
 
         if state_tensor.ndim == 2:
-            state_tensor = state_tensor.unsqueeze(0)
+            state_tensor = state_tensor.unsqueeze(0)  # (T, D) -> (1, T, D)
         elif state_tensor.ndim == 1:
-            state_tensor = state_tensor.unsqueeze(0).unsqueeze(0)
+            state_tensor = state_tensor.unsqueeze(0).unsqueeze(0)  # (D,) -> (1, 1, D)
 
+        # Apply same rewind masking to state
         for b_idx in range(batch_size):
             valid_len = lengths[b_idx].item()
             if valid_len < state_tensor.shape[1]:
-                state_tensor[b_idx, valid_len:] = 0
+                state_tensor[b_idx, valid_len:] = 0  # Zero out frames beyond valid length
 
         observation["state_features"] = pad_state_to_max_dim(state_tensor, self.config.max_state_dim)
 
@@ -241,19 +261,26 @@ class SARMEncodingProcessorStep(ProcessorStep):
         if isinstance(task, list):
             task = task[0] if task else ""
 
+        # Apply language perturbation during training (20% probability)
+        # When perturbed, targets will be zeroed to train model to output low values for irrelevant text
         apply_perturbation = self.training and random.random() < self.config.language_perturbation_probability
         if apply_perturbation:
             task = self._generate_perturbed_task()
 
+        # Encode text with CLIP
         observation["text_features"] = self._encode_text_clip(task, batch_size)
 
+        # Store lengths for model
         observation["lengths"] = lengths
 
+        # When language is perturbed, targets are zero so perturbed samples don't contribute to progress loss
         if self.dataset_meta is not None:
             episodes_df = self.dataset_meta.episodes.to_pandas()
 
+            # Generate sparse targets
             if self.sparse_temporal_proportions is not None:
                 if apply_perturbation:
+                    # Zero targets when language is perturbed
                     sparse_targets = torch.zeros(batch_size, total_frames, dtype=torch.float32)
                 else:
                     sparse_targets = self._compute_batch_targets(
@@ -261,8 +288,10 @@ class SARMEncodingProcessorStep(ProcessorStep):
                     )
                 observation["sparse_targets"] = sparse_targets
 
+            # Generate dense targets (for dual mode)
             if self.config.uses_dual_heads and self.dense_temporal_proportions is not None:
                 if apply_perturbation:
+                    # Zero targets when language is perturbed
                     dense_targets = torch.zeros(batch_size, total_frames, dtype=torch.float32)
                 else:
                     dense_targets = self._compute_batch_targets(
@@ -304,11 +333,13 @@ class SARMEncodingProcessorStep(ProcessorStep):
                 ep_idx, episodes_df, annotation_type, global_names
             )
 
+            # Compute observation frame indices
             obs_indices, _ = compute_absolute_indices(
                 frame_idx, ep_start, ep_end, n_obs_steps, frame_gap=frame_gap
             )
             obs_indices = obs_indices.tolist()
 
+            # Compute targets for observation frames
             for t_idx, abs_idx in enumerate(obs_indices):
                 rel_frame = abs_idx - ep_start
                 targets[b_idx, t_idx] = find_stage_and_tau(
@@ -322,6 +353,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
                     return_combined=True,
                 )
 
+            # Compute targets for rewind frames (if any)
             rewind_step = rewind_steps[b_idx].item()
             if rewind_step > 0:
                 _, rewind_indices = apply_rewind_augmentation(
@@ -363,7 +395,15 @@ class SARMEncodingProcessorStep(ProcessorStep):
 
     @torch.no_grad()
     def _encode_images_batch(self, images: np.ndarray) -> torch.Tensor:
-        """Encode a batch of images using CLIP."""
+        """Encode a batch of images using CLIP.
+
+        Args:
+            images: Batched images with shape: (B, T, C, H, W)
+
+        Returns:
+            Encoded feature vectors with shape (B, T, 512)
+        """
+
         batch_size, seq_length = images.shape[0], images.shape[1]
         images = images.reshape(batch_size * seq_length, *images.shape[2:])
 
@@ -371,9 +411,10 @@ class SARMEncodingProcessorStep(ProcessorStep):
         images_list = []
         for i in range(num_frames):
             img = images[i]
-            if img.shape[0] in [1, 3]:
+            if img.shape[0] in [1, 3]:  # Channel first (C, H, W)
                 img = img.transpose(1, 2, 0)
 
+            # Handle single channel
             if img.shape[-1] == 1:
                 img = np.repeat(img, 3, axis=-1)
 
@@ -389,21 +430,31 @@ class SARMEncodingProcessorStep(ProcessorStep):
             inputs = self.clip_processor(images=batch_imgs, return_tensors="pt")
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
+            # Get image embeddings
             embeddings = self.clip_model.get_image_features(**inputs).detach().cpu()
 
+            # Handle single frame case
             if embeddings.dim() == 1:
                 embeddings = embeddings.unsqueeze(0)
 
             all_embeddings.append(embeddings)
 
-        all_embeddings = torch.cat(all_embeddings)
-        all_embeddings = all_embeddings.reshape(batch_size, seq_length, -1)
+        all_embeddings = torch.cat(all_embeddings)  # (B*T, 512)
+        all_embeddings = all_embeddings.reshape(batch_size, seq_length, -1)  # (B, T, 512)
 
         return all_embeddings
 
     @torch.no_grad()
     def _encode_text_clip(self, text: str, batch_size: int) -> torch.Tensor:
-        """Encode text using CLIP text encoder (per SARM paper A.4)."""
+        """Encode text using CLIP text encoder (per SARM paper A.4).
+
+        Args:
+            text: Task description text to encode
+            batch_size: Batch size to replicate for
+
+        Returns:
+            Encoded text features with shape (B, 512)
+        """
         inputs = self.clip_processor.tokenizer([text], return_tensors="pt", padding=True, truncation=True)
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
 

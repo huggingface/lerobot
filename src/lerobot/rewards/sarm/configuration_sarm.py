@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2025 Qianzhong Chen, Justin Yu, Mac Schwager, Pieter Abbeel, Yide Shentu, Philipp Wu
 # and The HuggingFace Inc. team. All rights reserved.
 #
@@ -55,6 +53,10 @@ class SARMConfig(RewardModelConfig):
     frame_gap: int = 30  # Frame gap between frames (at 30 fps = 1 second)
     max_rewind_steps: int = 4  # Maximum rewind steps for temporal augmentation
 
+    # Total frames = 1 + n_obs_steps + max_rewind_steps (computed in property)
+    # During training with rewind: [obs_frames] + [rewind_frames]
+    # During inference: [obs_frames] only
+
     # Architecture params
     image_dim: int = 512
     text_dim: int = 512
@@ -66,7 +68,7 @@ class SARMConfig(RewardModelConfig):
     batch_size: int = 64
     clip_batch_size: int = 64
     dropout: float = 0.1
-    stage_loss_weight: float = 1.0
+    stage_loss_weight: float = 1.0  # Weight for stage classification loss when using subtask annotations
 
     rewind_probability: float = 0.8
     language_perturbation_probability: float = 0.2
@@ -82,7 +84,8 @@ class SARMConfig(RewardModelConfig):
     dense_temporal_proportions: list | None = None
 
     pretrained_model_path: str | None = None
-    image_key: str = OBS_IMAGES + ".top"
+    device: str | None = None
+    image_key: str = OBS_IMAGES + ".top"  # Key for image used from the dataset
     state_key: str = OBS_STATE
 
     # Populated by the processor (video_features, state_features, text_features)
@@ -114,6 +117,7 @@ class SARMConfig(RewardModelConfig):
             )
 
         if self.annotation_mode == "single_stage":
+            # Use task description as stage name, full episode as one stage
             self.num_sparse_stages = 1
             self.sparse_subtask_names = ["task"]
             self.sparse_temporal_proportions = [1.0]
@@ -201,7 +205,11 @@ class SARMConfig(RewardModelConfig):
 
     @property
     def num_frames(self) -> int:
-        """Total number of frames in sequence."""
+        """Total number of frames in sequence.
+
+        For training: 1 + n_obs_steps + max_rewind_steps
+        The sequence is: [obs_frames (n_obs_steps + 1)] + [rewind_frames (max_rewind_steps)]
+        """
         return 1 + self.n_obs_steps + self.max_rewind_steps
 
     @property
@@ -210,7 +218,14 @@ class SARMConfig(RewardModelConfig):
 
     @property
     def observation_delta_indices(self) -> list[int]:
-        """Bidirectional frame sampling centered on target frame."""
+        """Bidirectional frame sampling centered on target frame.
+
+        Example with n_obs_steps=8, gap=30:
+        Before: [-120, -90, -60, -30]  (4 frames)
+        Current: [0]                   (1 frame)
+        After:  [30, 60, 90, 120]      (4 frames)
+        Total: 9 frames
+        """
         half_steps = self.n_obs_steps // 2
 
         past_deltas = [-self.frame_gap * i for i in range(half_steps, 0, -1)]
