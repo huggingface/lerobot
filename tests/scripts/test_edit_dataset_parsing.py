@@ -18,6 +18,7 @@ import draccus
 import pytest
 
 from lerobot.scripts.lerobot_edit_dataset import (
+    AddFeatureConfig,
     ConvertImageToVideoConfig,
     DeleteEpisodesConfig,
     EditDatasetConfig,
@@ -45,6 +46,7 @@ class TestOperationTypeParsing:
             ("delete_episodes", DeleteEpisodesConfig),
             ("split", SplitConfig),
             ("merge", MergeConfig),
+            ("add_feature", AddFeatureConfig),
             ("remove_feature", RemoveFeatureConfig),
             ("modify_tasks", ModifyTasksConfig),
             ("convert_image_to_video", ConvertImageToVideoConfig),
@@ -75,6 +77,7 @@ class TestOperationTypeParsing:
             ("delete_episodes", DeleteEpisodesConfig),
             ("split", SplitConfig),
             ("merge", MergeConfig),
+            ("add_feature", AddFeatureConfig),
             ("remove_feature", RemoveFeatureConfig),
             ("modify_tasks", ModifyTasksConfig),
             ("convert_image_to_video", ConvertImageToVideoConfig),
@@ -87,3 +90,28 @@ class TestOperationTypeParsing:
         )
         resolved_name = OperationConfig.get_choice_name(type(cfg.operation))
         assert resolved_name == type_name
+
+    def test_add_feature_args_parse(self):
+        cfg = parse_cfg(
+            [
+                "--repo_id",
+                "test/repo",
+                "--new_repo_id",
+                "test/repo_with_reward",
+                "--operation.type",
+                "add_feature",
+                "--operation.feature_name",
+                "reward",
+                "--operation.feature_values_path",
+                "reward.npy",
+                "--operation.feature_dtype",
+                "float32",
+                "--operation.feature_shape",
+                "[1]",
+            ]
+        )
+        assert isinstance(cfg.operation, AddFeatureConfig)
+        assert cfg.operation.feature_name == "reward"
+        assert cfg.operation.feature_values_path == "reward.npy"
+        assert cfg.operation.feature_dtype == "float32"
+        assert cfg.operation.feature_shape == [1]
