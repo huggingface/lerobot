@@ -145,6 +145,7 @@ wallx = [
 ]
 pi = ["lerobot[transformers-dep]", "lerobot[scipy-dep]"]
 smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "accelerate>=1.7.0,<2.0.0", "safetensors>=0.4.3,<1.0.0"]
+multi_task_dit = ["lerobot[transformers-dep]"]
 groot = [
     "lerobot[transformers-dep]",
     "lerobot[peft]",
