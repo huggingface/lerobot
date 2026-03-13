@@ -180,6 +180,9 @@ libero_plus = [
     "libero @ git+https://github.com/sylvestf/LIBERO-plus.git@main ; sys_platform == 'linux'",
     "lerobot[scipy-dep]",
 ]
+robomme = [
+    "robomme @ git+https://github.com/RoboMME/robomme_benchmark.git@main ; sys_platform == 'linux'",
+]
 metaworld = ["metaworld==3.0.0", "lerobot[scipy-dep]"]
 
 # All
