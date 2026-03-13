@@ -24,6 +24,7 @@ import torch
 from huggingface_hub import HfApi
 from PIL import Image
 from safetensors.torch import load_file
+from torchvision.transforms import v2
 
 import lerobot
 from lerobot.configs.default import DatasetConfig
@@ -344,6 +345,29 @@ def test_add_frame_image_pil(image_dataset):
     dataset.save_episode()
 
     assert dataset[0]["image"].shape == torch.Size(DUMMY_CHW)
+
+
+def test_register_image_transform_applies_transparently(image_dataset):
+    dataset = image_dataset
+    dataset.add_frame({"image": np.random.rand(*DUMMY_CHW), "task": "Dummy task"})
+    dataset.save_episode()
+
+    dataset.register_image_transform(v2.Resize((224, 224)))
+    assert dataset[0]["image"].shape == torch.Size((3, 224, 224))
+
+    dataset.register_image_transform(v2.Resize((128, 128)))
+    assert dataset[0]["image"].shape == torch.Size((3, 128, 128))
+
+    dataset.clear_image_transforms()
+    assert dataset[0]["image"].shape == torch.Size(DUMMY_CHW)
+
+
+def test_set_image_transforms_supports_loaded_dataset(tmp_path, lerobot_dataset_factory):
+    dataset = lerobot_dataset_factory(root=tmp_path / "test", use_videos=False)
+    dataset.set_image_transforms([v2.Resize((224, 224)), v2.Resize((112, 112))])
+
+    camera_key = dataset.meta.camera_keys[0]
+    assert dataset[0][camera_key].shape == torch.Size((3, 112, 112))
 
 
 def test_image_array_to_pil_image_wrong_range_float_0_255():
