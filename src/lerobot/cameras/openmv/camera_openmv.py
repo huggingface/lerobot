@@ -49,7 +49,7 @@ class OpenMVCamera(Camera):
                 break
             time.sleep(0.1)
         self._is_connected = True
-        print(f"OpenMVCamera bağlandı: {self.port}")
+        print(f"OpenMVCamera connected to: {self.port}")
 
     def _read_loop(self):
         buf = b""
@@ -92,7 +92,7 @@ class OpenMVCamera(Camera):
                     self._event.set()
 
             except Exception as e:
-                print(f"OpenMV hata: {e}", flush=True)
+                print(f"OpenMV error: {e}", flush=True)
                 if self._running:
                     buf = b""
                     time.sleep(0.1)
@@ -116,4 +116,4 @@ class OpenMVCamera(Camera):
         self._is_connected = False
         if self.ser:
             self.ser.close()
-        print("OpenMVCamera bağlantısı kesildi.")
+        print("OpenMVCamera disconnected.")
