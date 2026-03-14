@@ -124,6 +124,7 @@ class RealSenseCamera(Camera):
 
         self.fps = config.fps
         self.color_mode = config.color_mode
+        self.color_format = config.color_format
         self.use_depth = config.use_depth
         self.warmup_s = config.warmup_s
 
@@ -153,6 +154,62 @@ class RealSenseCamera(Camera):
         """Checks if the camera pipeline is started and streams are active."""
         return self.rs_pipeline is not None and self.rs_profile is not None
 
+    def _hardware_reset(self, wait_s: float = 5.0) -> None:
+        """Issue a USB hardware reset and wait for the device to re-enumerate.
+
+        Some RealSense models (notably the D405) can enter an unresponsive
+        state after a previous pipeline is stopped.  A hardware reset via the
+        SDK reliably recovers the device without requiring a physical replug.
+        """
+        context = rs.context()
+        for device in context.query_devices():
+            if device.get_info(rs.camera_info.serial_number) == self.serial_number:
+                logger.info(f"{self} performing hardware reset.")
+                device.hardware_reset()
+                time.sleep(wait_s)
+                return
+        logger.warning(f"{self} device not found for hardware reset, skipping.")
+
+    def _start_pipeline(self) -> None:
+        """Initialize and start the RealSense pipeline with the current configuration."""
+        self.rs_pipeline = rs.pipeline()
+        rs_config = rs.config()
+        self._configure_rs_pipeline_config(rs_config)
+
+        try:
+            self.rs_profile = self.rs_pipeline.start(rs_config)
+        except RuntimeError as e:
+            self.rs_profile = None
+            self.rs_pipeline = None
+            raise ConnectionError(
+                f"Failed to open {self}. Run `lerobot-find-cameras realsense` to find available cameras."
+            ) from e
+
+        self._configure_capture_settings()
+        self._start_read_thread()
+
+    def _stop_pipeline(self) -> None:
+        """Stop the read thread and pipeline, clearing all state."""
+        self._stop_read_thread()
+        if self.rs_pipeline is not None:
+            self.rs_pipeline.stop()
+            self.rs_pipeline = None
+            self.rs_profile = None
+
+    def _warmup(self) -> None:
+        """Wait for at least one valid frame from the background thread.
+
+        Raises:
+            TimeoutError: If no frame arrives within the warmup period.
+        """
+        start_time = time.time()
+        while time.time() - start_time < self.warmup_s:
+            self.async_read(timeout_ms=self.warmup_s * 1000)
+            time.sleep(0.1)
+        with self.frame_lock:
+            if self.latest_color_frame is None or self.use_depth and self.latest_depth_frame is None:
+                raise TimeoutError(f"{self} no frames during warmup.")
+
     @check_if_already_connected
     def connect(self, warmup: bool = True) -> None:
         """
@@ -160,6 +217,10 @@ class RealSenseCamera(Camera):
 
         Initializes the RealSense pipeline, configures the required streams (color
         and optionally depth), starts the pipeline, and validates the actual stream settings.
+
+        If the camera fails to deliver frames during warmup (which can happen on
+        models like the D405 after a previous session), the driver automatically
+        performs a USB hardware reset and retries once.
 
         Args:
             warmup (bool): If True, waits at connect() time until at least one valid frame
@@ -172,32 +233,28 @@ class RealSenseCamera(Camera):
             RuntimeError: If the pipeline starts but fails to apply requested settings.
         """
 
-        self.rs_pipeline = rs.pipeline()
-        rs_config = rs.config()
-        self._configure_rs_pipeline_config(rs_config)
-
-        try:
-            self.rs_profile = self.rs_pipeline.start(rs_config)
-        except RuntimeError as e:
-            self.rs_profile = None
-            self.rs_pipeline = None
-            raise ConnectionError(
-                f"Failed to open {self}.Run `lerobot-find-cameras realsense` to find available cameras."
-            ) from e
-
-        self._configure_capture_settings()
-        self._start_read_thread()
-
         # NOTE(Steven/Caroline): Enforcing at least one second of warmup as RS cameras need a bit of time before the first read. If we don't wait, the first read from the warmup will raise.
         self.warmup_s = max(self.warmup_s, 1)
 
-        start_time = time.time()
-        while time.time() - start_time < self.warmup_s:
-            self.async_read(timeout_ms=self.warmup_s * 1000)
-            time.sleep(0.1)
-        with self.frame_lock:
-            if self.latest_color_frame is None or self.use_depth and self.latest_depth_frame is None:
-                raise ConnectionError(f"{self} failed to capture frames during warmup.")
+        self._start_pipeline()
+
+        try:
+            self._warmup()
+        except (TimeoutError, ConnectionError):
+            # Some models (e.g. D405) become unresponsive after a previous
+            # session.  A hardware reset followed by a fresh pipeline start
+            # reliably recovers the device.
+            logger.warning(f"{self} warmup failed, attempting hardware reset and retry.")
+            self._stop_pipeline()
+            self._hardware_reset()
+            self._start_pipeline()
+            try:
+                self._warmup()
+            except (TimeoutError, ConnectionError) as e:
+                self._stop_pipeline()
+                raise ConnectionError(
+                    f"{self} failed to capture frames even after hardware reset."
+                ) from e
 
         logger.info(f"{self} connected.")
 
@@ -277,16 +334,18 @@ class RealSenseCamera(Camera):
         """Creates and configures the RealSense pipeline configuration object."""
         rs.config.enable_device(rs_config, self.serial_number)
 
+        rs_color_format = getattr(rs.format, self.color_format)
+
         if self.width and self.height and self.fps:
             rs_config.enable_stream(
-                rs.stream.color, self.capture_width, self.capture_height, rs.format.rgb8, self.fps
+                rs.stream.color, self.capture_width, self.capture_height, rs_color_format, self.fps
             )
             if self.use_depth:
                 rs_config.enable_stream(
                     rs.stream.depth, self.capture_width, self.capture_height, rs.format.z16, self.fps
                 )
         else:
-            rs_config.enable_stream(rs.stream.color)
+            rs_config.enable_stream(rs.stream.color, rs_color_format)
             if self.use_depth:
                 rs_config.enable_stream(rs.stream.depth)
 
@@ -418,7 +477,8 @@ class RealSenseCamera(Camera):
         Applies color conversion, dimension validation, and rotation to a raw color frame.
 
         Args:
-            image (np.ndarray): The raw image frame (expected RGB format from RealSense).
+            image (np.ndarray): The raw image frame from RealSense (rgb8 or bgr8 depending
+                on ``self.color_format``).
 
         Returns:
             np.ndarray: The processed image frame according to `self.color_mode` and `self.rotation`.
@@ -448,8 +508,15 @@ class RealSenseCamera(Camera):
             )
 
         processed_image = image
-        if self.color_mode == ColorMode.BGR:
-            processed_image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+
+        # Convert between color orderings when the SDK format and the requested
+        # output mode differ.  Both rgb8->BGR and bgr8->RGB use the same
+        # channel-swap operation (COLOR_RGB2BGR == COLOR_BGR2RGB in OpenCV).
+        if not depth_frame:
+            source_is_rgb = self.color_format == "rgb8"
+            want_rgb = self.color_mode == ColorMode.RGB
+            if source_is_rgb != want_rgb:
+                processed_image = cv2.cvtColor(processed_image, cv2.COLOR_RGB2BGR)
 
         if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE, cv2.ROTATE_180]:
             processed_image = cv2.rotate(processed_image, self.rotation)
@@ -470,8 +537,9 @@ class RealSenseCamera(Camera):
         if self.stop_event is None:
             raise RuntimeError(f"{self}: stop_event is not initialized before starting read loop.")
 
+        stop_event = self.stop_event  # local ref avoids race if _stop_read_thread() clears the attr
         failure_count = 0
-        while not self.stop_event.is_set():
+        while not stop_event.is_set():
             try:
                 frame = self._read_from_hardware()
                 color_frame_raw = frame.get_color_frame()
@@ -622,18 +690,6 @@ class RealSenseCamera(Camera):
                 f"Attempted to disconnect {self}, but it appears already disconnected."
             )
 
-        if self.thread is not None:
-            self._stop_read_thread()
-
-        if self.rs_pipeline is not None:
-            self.rs_pipeline.stop()
-            self.rs_pipeline = None
-            self.rs_profile = None
-
-        with self.frame_lock:
-            self.latest_color_frame = None
-            self.latest_depth_frame = None
-            self.latest_timestamp = None
-            self.new_frame_event.clear()
+        self._stop_pipeline()
 
         logger.info(f"{self} disconnected.")
