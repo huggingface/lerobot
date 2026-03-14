@@ -98,12 +98,10 @@ def predict_action(
         A `torch.Tensor` containing the predicted action, ready for the robot.
     """
     observation = copy(observation)
-    with (
-        torch.inference_mode(),
-        torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
-    ):
-        # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
-        observation = prepare_observation_for_inference(observation, device, task, robot_type)
+    with torch.inference_mode():
+        with torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext():
+            # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
+            observation = prepare_observation_for_inference(observation, device, task, robot_type)
         observation = preprocessor(observation)
 
         # Compute the next action with the policy
@@ -195,7 +193,8 @@ def sanity_check_dataset_name(repo_id, policy_cfg):
     # Check if dataset_name does not start with "eval_" but policy is provided
     if not dataset_name.startswith("eval_") and policy_cfg is not None:
         raise ValueError(
-            f"Your dataset name does not begin with 'eval_' ({dataset_name}), but a policy is provided ({policy_cfg.type})."
+            f"Your dataset name does not begin with 'eval_' ({dataset_name}),"
+            " but a policy is provided ({policy_cfg.type})."
         )
 
 
