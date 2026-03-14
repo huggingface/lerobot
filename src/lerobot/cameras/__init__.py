@@ -15,3 +15,4 @@
 from .camera import Camera
 from .configs import CameraConfig, ColorMode, Cv2Backends, Cv2Rotation
 from .utils import make_cameras_from_configs
+from .openmv.configuration_openmv import OpenMVCameraConfig
