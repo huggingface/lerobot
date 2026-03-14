@@ -144,8 +144,10 @@ class OpenArmFollower(Robot):
 
         self.configure()
 
-        if self.is_calibrated:
+        if self.is_calibrated and calibrate:
             self.bus.set_zero_position()
+        elif self.is_calibrated and not calibrate:
+            logger.info("Skipping set_zero_position because connect(calibrate=False)")
 
         self.bus.enable_torque()
 
@@ -286,8 +288,14 @@ class OpenArmFollower(Robot):
         # /!\ Slower fps expected due to reading from the follower.
         if self.config.max_relative_target is not None:
             present_pos = self.bus.sync_read("Present_Position")
-            goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
-            goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
+            # Keep gripper out of relative-motion clamping; it is already bounded
+            # by absolute joint limits and should track policy intent directly.
+            goal_present_pos = {
+                key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items() if key != "gripper"
+            }
+            if goal_present_pos:
+                safe_goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
+                goal_pos.update(safe_goal_pos)
 
         # TODO(Steven, Pepijn): Refactor writing
         # Motor name to index mapping for gains

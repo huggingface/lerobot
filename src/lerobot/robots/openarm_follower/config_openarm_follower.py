@@ -21,8 +21,8 @@ from lerobot.cameras import CameraConfig
 from ..config import RobotConfig
 
 LEFT_DEFAULT_JOINTS_LIMITS: dict[str, tuple[float, float]] = {
-    "joint_1": (-75.0, 75.0),
-    "joint_2": (-90.0, 9.0),
+    "joint_1": (-90.0, 90.0),
+    "joint_2": (-9.0, 90.0),
     "joint_3": (-85.0, 85.0),
     "joint_4": (0.0, 135.0),
     "joint_5": (-85.0, 85.0),
@@ -32,8 +32,8 @@ LEFT_DEFAULT_JOINTS_LIMITS: dict[str, tuple[float, float]] = {
 }
 
 RIGHT_DEFAULT_JOINTS_LIMITS: dict[str, tuple[float, float]] = {
-    "joint_1": (-75.0, 75.0),
-    "joint_2": (-9.0, 90.0),
+    "joint_1": (-90.0, 90.0),
+    "joint_2": (-90.0, 9.0),
     "joint_3": (-85.0, 85.0),
     "joint_4": (0.0, 135.0),
     "joint_5": (-85.0, 85.0),
@@ -119,4 +119,10 @@ class OpenArmFollowerConfigBase:
 @RobotConfig.register_subclass("openarm_follower")
 @dataclass
 class OpenArmFollowerConfig(RobotConfig, OpenArmFollowerConfigBase):
-    pass
+    def __post_init__(self):
+        super().__post_init__()
+
+        if self.id is None:
+            side = (self.side or "arm").lower()
+            port = self.port.replace("/", "_").replace("\\", "_").strip("_") or "unknown"
+            self.id = f"openarm_follower_{side}_{port}"
