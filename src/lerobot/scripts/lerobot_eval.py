@@ -171,9 +171,7 @@ def rollout(
         observation = env_preprocessor(observation)
 
         if return_observations:
-            all_observations.append(
-                deepcopy({k: v for k, v in observation.items() if isinstance(v, Tensor)})
-            )
+            all_observations.append(deepcopy({k: v for k, v in observation.items() if isinstance(v, Tensor)}))
 
         observation = preprocessor(observation)
         with torch.inference_mode():
@@ -231,9 +229,7 @@ def rollout(
         observation = preprocess_observation(observation)
         observation = add_envs_task(env, observation)
         observation = env_preprocessor(observation)
-        all_observations.append(
-            deepcopy({k: v for k, v in observation.items() if isinstance(v, Tensor)})
-        )
+        all_observations.append(deepcopy({k: v for k, v in observation.items() if isinstance(v, Tensor)}))
 
     # Stack the sequence along the first dimension so that we have (batch, sequence, *) tensors.
     ret = {
