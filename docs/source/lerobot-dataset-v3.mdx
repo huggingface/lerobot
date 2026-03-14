@@ -168,7 +168,7 @@ Each call to `add_frame(frame)` must include:
 - `frame_index` = position within the current episode (0-based counter)
 - `timestamp` = `frame_index / fps`
 
-Passing them will raise `ValueError: Extra features: {'timestamp'}`.
+Passing them will raise a `ValueError` indicating extra features (for example mentioning `"timestamp"` or `"frame_index"`).
 
 ### Example with images
 
