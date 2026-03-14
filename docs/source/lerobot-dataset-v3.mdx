@@ -83,6 +83,148 @@ A core v3 principle is **decoupling storage from the user API**: data is stored 
 - **`data/`**: frame‑by‑frame **Parquet** shards; each file typically contains **many episodes**.
 - **`videos/`**: **MP4** shards per camera; each file typically contains **many episodes**.
 
+## Create a dataset programmatically
+
+Use `LeRobotDataset.create()` when you want to build a dataset from your own data source — a simulator, a custom replay buffer, or an offline conversion script — without going through the `lerobot-record` CLI.
+
+The recording loop always follows the same three-step pattern:
+
+```
+LeRobotDataset.create(...)
+  └─ for each episode:
+       ├─ add_frame(frame)  ×  N          # buffer frames in memory / write images to tmp
+       └─ save_episode()                  # flush episode to parquet (and encode video if any)
+  └─ finalize()                           # close parquet writers, write footer metadata
+  └─ push_to_hub()  [optional]
+```
+
+### Minimal example (states + actions, no cameras)
+
+```python
+import numpy as np
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+FPS = 50
+dataset = LeRobotDataset.create(
+    repo_id="<hf_username>/my_dataset",
+    fps=FPS,
+    features={
+        "observation.state": {"dtype": "float32", "shape": (6,), "names": ["joint_0", "joint_1", "joint_2", "joint_3", "joint_4", "joint_5"]},
+        "action":            {"dtype": "float32", "shape": (6,), "names": ["joint_0", "joint_1", "joint_2", "joint_3", "joint_4", "joint_5"]},
+    },
+)
+
+for episode_idx in range(num_episodes):
+    for step in range(episode_length):
+        dataset.add_frame({
+            "observation.state": obs[step],   # np.ndarray, shape (6,), dtype float32
+            "action":            act[step],   # np.ndarray, shape (6,), dtype float32
+            "task": "pick up the cube",       # required: natural-language task description
+            # Do NOT include "timestamp" or "frame_index" — these are auto-computed
+        })
+    dataset.save_episode()
+
+dataset.finalize()          # must call before push_to_hub() or reloading the dataset
+dataset.push_to_hub()
+```
+
+### What `add_frame()` expects
+
+Each call to `add_frame(frame)` must include:
+
+<table>
+  <thead>
+    <tr>
+      <th>Key</th>
+      <th>Type</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Your feature keys</td>
+      <td>
+        <code>np.ndarray</code> or <code>torch.Tensor</code>
+      </td>
+      <td>
+        Must match the <code>dtype</code> and <code>shape</code> declared in{" "}
+        <code>features</code>
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>"task"</code>
+      </td>
+      <td>
+        <code>str</code>
+      </td>
+      <td>Natural-language description of the task for this episode</td>
+    </tr>
+  </tbody>
+</table>
+
+**Do not** include `"timestamp"` or `"frame_index"` — they are part of `DEFAULT_FEATURES` and are **automatically computed** by the pipeline:
+
+- `frame_index` = position within the current episode (0-based counter)
+- `timestamp` = `frame_index / fps`
+
+Passing them will raise `ValueError: Extra features: {'timestamp'}`.
+
+### Example with images
+
+Image features use `dtype: "image"` (PNG files) or `dtype: "video"` (MP4). Declare `shape` as `(C, H, W)` in the `features` dict; the array passed to `add_frame` can be either CHW `(C, H, W)` or HWC `(H, W, C)` — both are accepted:
+
+```python
+import numpy as np
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+dataset = LeRobotDataset.create(
+    repo_id="<hf_username>/my_vision_dataset",
+    fps=30,
+    features={
+        "observation.state":          {"dtype": "float32", "shape": (6,),       "names": None},
+        "action":                     {"dtype": "float32", "shape": (6,),       "names": None},
+        "observation.images.top":     {"dtype": "video",   "shape": (3, 480, 640), "names": ["channels", "height", "width"]},
+    },
+    use_videos=True,
+)
+
+for episode_idx in range(num_episodes):
+    for step in range(episode_length):
+        dataset.add_frame({
+            "observation.state":      state[step],          # (6,) float32
+            "action":                 action[step],         # (6,) float32
+            "observation.images.top": rgb_frame[step],      # np.ndarray (3,480,640) CHW or (480,640,3) HWC, both accepted
+            "task": "pick up the cube",
+        })
+    dataset.save_episode()
+
+dataset.finalize()
+dataset.push_to_hub()
+```
+
+### Local-only datasets (no Hub upload)
+
+Pass a local `root` path and skip `push_to_hub()`:
+
+```python
+from pathlib import Path
+
+dataset = LeRobotDataset.create(
+    repo_id="local/my_dataset",
+    fps=50,
+    features={
+        "observation.state": {"dtype": "float32", "shape": (6,), "names": None},
+        "action":            {"dtype": "float32", "shape": (6,), "names": None},
+        # add more features as needed
+    },
+    root=Path("./data/my_dataset"),
+)
+# ... record ...
+dataset.finalize()
+# Dataset is saved to ./data/my_dataset, no upload needed
+```
+
 ## Load a dataset for training
 
 `LeRobotDataset` returns Python dictionaries of PyTorch tensors and integrates with `torch.utils.data.DataLoader`. Here is a code example showing its use:
