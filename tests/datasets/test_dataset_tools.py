@@ -1321,3 +1321,94 @@ def test_convert_image_to_video_dataset_subset_episodes(tmp_path):
 
         if output_dir.exists():
             shutil.rmtree(output_dir)
+
+
+def test_delete_episodes_preserves_feature_fps(sample_dataset, tmp_path):
+    """Test that fps metadata on features is preserved after deleting episodes.
+
+    Regression test for https://github.com/huggingface/lerobot/issues/2679
+    Datasets from the Hub have an 'fps' key on each non-video feature. Operations
+    like delete_episodes, split_dataset, and merge_datasets call
+    LeRobotDatasetMetadata.create(), which must not strip this key.
+    """
+    import copy
+
+    # Simulate a Hub dataset by adding fps to all non-image/video features.
+    # IMPORTANT: use deepcopy to break shared references to DEFAULT_FEATURES
+    # sub-dicts that create() stores. Without deepcopy, mutating the feature
+    # dicts in-place would also mutate DEFAULT_FEATURES (same object), masking
+    # the bug where {**features, **DEFAULT_FEATURES} overwrites input features.
+    fps_value = sample_dataset.meta.fps
+    new_features = copy.deepcopy(sample_dataset.meta.features)
+    for key in new_features:
+        if new_features[key]["dtype"] not in ("image", "video"):
+            new_features[key]["fps"] = fps_value
+    sample_dataset.meta.info["features"] = new_features
+
+    output_dir = tmp_path / "filtered"
+
+    with (
+        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(output_dir)
+
+        new_dataset = delete_episodes(
+            sample_dataset,
+            episode_indices=[0],
+            output_dir=output_dir,
+        )
+
+    # Verify fps is preserved on scalar features
+    default_feature_keys = ["timestamp", "frame_index", "episode_index", "index", "task_index"]
+    for key in default_feature_keys:
+        assert "fps" in new_dataset.meta.features[key], (
+            f"Feature '{key}' lost its 'fps' metadata after delete_episodes"
+        )
+        assert new_dataset.meta.features[key]["fps"] == fps_value
+
+
+def test_split_dataset_preserves_feature_fps(sample_dataset, tmp_path):
+    """Test that fps metadata on features is preserved after splitting.
+
+    Regression test for https://github.com/huggingface/lerobot/issues/2679
+    """
+    import copy
+
+    fps_value = sample_dataset.meta.fps
+    new_features = copy.deepcopy(sample_dataset.meta.features)
+    for key in new_features:
+        if new_features[key]["dtype"] not in ("image", "video"):
+            new_features[key]["fps"] = fps_value
+    sample_dataset.meta.info["features"] = new_features
+
+    splits = {"train": [0, 1, 2], "val": [3, 4]}
+
+    with (
+        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+
+        def mock_snapshot(repo_id, **kwargs):
+            for split_name in splits:
+                if split_name in repo_id:
+                    return str(tmp_path / f"{sample_dataset.repo_id}_{split_name}")
+            return str(kwargs.get("local_dir", tmp_path))
+
+        mock_snapshot_download.side_effect = mock_snapshot
+
+        result = split_dataset(
+            sample_dataset,
+            splits=splits,
+            output_dir=tmp_path,
+        )
+
+    default_feature_keys = ["timestamp", "frame_index", "episode_index", "index", "task_index"]
+    for split_ds in result.values():
+        for key in default_feature_keys:
+            assert "fps" in split_ds.meta.features[key], (
+                f"Feature '{key}' lost its 'fps' metadata after split_dataset"
+            )
+            assert split_ds.meta.features[key]["fps"] == fps_value
