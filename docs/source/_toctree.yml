@@ -19,6 +19,8 @@
     title: Multi GPU training
   - local: peft_training
     title: Training with PEFT (e.g., LoRA)
+  - local: benchmark_training
+    title: Benchmark Training & Evaluation
   title: "Tutorials"
 - sections:
   - local: lerobot-dataset-v3

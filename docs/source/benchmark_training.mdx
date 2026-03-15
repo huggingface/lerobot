@@ -1,0 +1,260 @@
+# Benchmark Training & Evaluation
+
+This guide explains how to train and evaluate policies on the simulation benchmarks
+integrated in LeRobot: **LIBERO**, **LIBERO-plus**, **MetaWorld**, **RoboCasa**, and **RoboMME**.
+
+The workflow is:
+
+1. Pick one or more benchmarks.
+2. For each benchmark, train a policy on its combined dataset (multi-GPU).
+3. Upload the trained policy to the Hugging Face Hub.
+4. Evaluate the policy on every task suite within that benchmark.
+
+## Prerequisites
+
+Install the benchmark-specific dependencies for the environments you want to evaluate on:
+
+```bash
+# LIBERO (original)
+pip install -e ".[libero]"
+
+# LIBERO-plus
+pip install -e ".[libero_plus]"
+
+# MetaWorld
+pip install -e ".[metaworld]"
+
+# RoboCasa
+pip install -e ".[robocasa]"
+
+# RoboMME
+pip install -e ".[robomme]"
+```
+
+`libero_plus` includes the same EGL probe dependencies as `libero` so headless
+renderer setup is consistent between both installs.
+
+If your environment has CMake build-isolation issues, use the same fallback as
+standard LIBERO installs:
+
+```bash
+PATH=/usr/bin:/bin:$PATH pip install --no-build-isolation -e ".[libero-plus]"
+```
+
+For multi-GPU training you also need [Accelerate](https://huggingface.co/docs/accelerate):
+
+```bash
+pip install accelerate
+```
+
+## Quick start — single benchmark
+
+Train SmolVLA on LIBERO-plus with 4 GPUs for 50 000 steps:
+
+```bash
+lerobot-benchmark train \
+    --benchmarks libero_plus \
+    --policy-path lerobot/smolvla_base \
+    --hub-user $HF_USER \
+    --num-gpus 4 \
+    --steps 50000 \
+    --batch-size 32 \
+    --wandb
+```
+
+This trains on the combined LIBERO-plus dataset and pushes the checkpoint to
+`$HF_USER/smolvla_libero_plus` on the Hub.
+
+Then evaluate on **all four** LIBERO suites (spatial, object, goal, 10):
+
+```bash
+lerobot-benchmark eval \
+    --benchmarks libero_plus \
+    --hub-user $HF_USER \
+    --n-episodes 50
+```
+
+This automatically runs a separate `lerobot-eval` for each suite.
+
+## Full sweep — multiple benchmarks
+
+Run training **and** evaluation across all benchmarks:
+
+```bash
+lerobot-benchmark all \
+    --benchmarks libero,libero_plus,metaworld,robocasa,robomme \
+    --policy-path lerobot/smolvla_base \
+    --hub-user $HF_USER \
+    --num-gpus 4 \
+    --steps 50000 \
+    --batch-size 32 \
+    --wandb \
+    --push-eval-to-hub
+```
+
+For each benchmark the runner:
+1. Trains a policy on its dataset.
+2. Evaluates on every eval task in the benchmark (e.g. 4 suites for LIBERO).
+3. Uploads eval results + videos to the Hub.
+
+<Tip>
+
+Use `--dry-run` to print the exact `lerobot-train` / `lerobot-eval` commands without executing them, so you can inspect or modify them before running.
+
+</Tip>
+
+## Using the CLI directly (without the benchmark runner)
+
+You can also compose the commands yourself. The benchmark runner is a thin wrapper; here is what it does under the hood.
+
+### Training
+
+```bash
+accelerate launch \
+    --multi_gpu \
+    --num_processes=4 \
+    $(which lerobot-train) \
+    --policy.path=lerobot/smolvla_base \
+    --dataset.repo_id=$HF_USER/libero_plus \
+    --policy.repo_id=$HF_USER/smolvla_libero_plus \
+    --env.type=libero_plus \
+    --env.task=libero_spatial \
+    --steps=50000 \
+    --batch_size=32 \
+    --eval_freq=10000 \
+    --save_freq=10000 \
+    --output_dir=outputs/train/smolvla_libero_plus \
+    --job_name=smolvla_libero_plus \
+    --policy.push_to_hub=true \
+    --wandb.enable=true
+```
+
+### Evaluation (run once per suite)
+
+```bash
+for SUITE in libero_spatial libero_object libero_goal libero_10; do
+    lerobot-eval \
+        --policy.path=$HF_USER/smolvla_libero_plus \
+        --env.type=libero_plus \
+        --env.task=$SUITE \
+        --eval.n_episodes=50 \
+        --eval.batch_size=10 \
+        --output_dir=outputs/eval/smolvla_libero_plus/$SUITE \
+        --policy.device=cuda
+done
+```
+
+## Available benchmarks
+
+| Benchmark | Env type | Dataset | Eval tasks | Action dim |
+|---|---|---|---|---|
+| `libero` | `libero` | `{hub_user}/libero` | spatial, object, goal, 10 | 7 |
+| `libero_plus` | `libero_plus` | `{hub_user}/libero_plus` | spatial, object, goal, 10 | 7 |
+| `metaworld` | `metaworld` | `{hub_user}/metaworld` | push-v2 | 4 |
+| `robocasa` | `robocasa` | `{hub_user}/robocasa` | PickPlaceCounterToCabinet | 12 |
+| `robomme` | `robomme` | `{hub_user}/robomme` | PickXtimes | 8 |
+
+Run `lerobot-benchmark list` to see the full registry with all eval tasks.
+
+## Policy naming convention
+
+The benchmark runner stores trained policies under:
+
+```
+{hub_user}/{policy_name}_{benchmark}
+```
+
+The default `--policy-name` is `smolvla`. So training on `libero_plus` as user `alice` produces `alice/smolvla_libero_plus`.
+
+You can override this, e.g. `--policy-name pi05` if training π₀.₅ instead.
+
+## Multi-GPU considerations
+
+The effective batch size is `batch_size × num_gpus`. With `--batch-size=32` and
+`--num-gpus=4`, you train with an effective batch of 128 per step. LeRobot does **not**
+auto-scale the learning rate; see the [Multi-GPU Training guide](./multi_gpu_training) for
+details on when and how to adjust it.
+
+## Custom benchmarks
+
+To add a new benchmark, edit the `BENCHMARK_REGISTRY` in
+`src/lerobot/scripts/lerobot_benchmark.py`:
+
+```python
+from lerobot.scripts.lerobot_benchmark import BenchmarkEntry, BENCHMARK_REGISTRY
+
+BENCHMARK_REGISTRY["my_benchmark"] = BenchmarkEntry(
+    dataset_repo_id="{hub_user}/my_dataset",
+    env_type="my_env",
+    env_task="MyDefaultTask",
+    eval_tasks=["TaskA", "TaskB", "TaskC"],
+)
+```
+
+Then use `--benchmarks my_benchmark` as usual. The runner will train once and
+evaluate separately on TaskA, TaskB, and TaskC.
+
+## Outputs
+
+After training and evaluation, your outputs directory looks like:
+
+```
+outputs/
+├── train/
+│   ├── smolvla_libero/
+│   │   ├── checkpoints/
+│   │   └── ...
+│   ├── smolvla_libero_plus/
+│   ├── smolvla_robocasa/
+│   └── smolvla_robomme/
+└── eval/
+    ├── smolvla_libero/
+    │   ├── libero_spatial/
+    │   │   ├── eval_info.json
+    │   │   └── videos/
+    │   ├── libero_object/
+    │   ├── libero_goal/
+    │   └── libero_10/
+    ├── smolvla_libero_plus/
+    │   ├── libero_spatial/
+    │   ├── libero_object/
+    │   ├── libero_goal/
+    │   └── libero_10/
+    ├── smolvla_robocasa/
+    └── smolvla_robomme/
+```
+
+Each `eval_info.json` contains per-episode rewards, success rates, and aggregate metrics.
+
+## Uploading eval results to the Hub
+
+Add `--push-eval-to-hub` to upload evaluation metrics and videos to the policy's
+Hub repo after each eval run:
+
+```bash
+lerobot-benchmark eval \
+    --benchmarks libero_plus,robocasa \
+    --hub-user $HF_USER \
+    --push-eval-to-hub
+```
+
+For LIBERO-plus, each suite's results are uploaded to `eval/libero_spatial/`,
+`eval/libero_object/`, etc. inside the `$HF_USER/smolvla_libero_plus` model repo.
+
+This also works with the `all` subcommand — pass `--push-eval-to-hub` and results
+are automatically uploaded after each eval run.
+
+## Passing extra arguments
+
+Any arguments after the recognized flags are forwarded to `lerobot-train` or
+`lerobot-eval`. For example, to use PEFT/LoRA during training:
+
+```bash
+lerobot-benchmark train \
+    --benchmarks libero_plus \
+    --policy-path lerobot/smolvla_base \
+    --hub-user $HF_USER \
+    --num-gpus 4 \
+    --steps 50000 \
+    --peft.method_type=LORA --peft.r=16
+```

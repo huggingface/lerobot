@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from functools import partial
@@ -28,12 +29,51 @@ import torch
 from gymnasium import spaces
 
 try:
-    from libero.libero import benchmark, get_libero_path
-    from libero.libero.envs import OffScreenRenderEnv
+    import libero as _libero_pkg  # noqa: F401
 except ImportError:
-    # LIBERO-plus may be installed from source with an extra nested package level.
-    from libero.libero.libero import benchmark, get_libero_path
-    from libero.libero.libero.envs import OffScreenRenderEnv
+    raise ImportError(
+        "Could not import libero. Install benchmark dependencies with one of:\n"
+        "  pip install -e \".[libero]\"\n"
+        "  pip install -e \".[libero_plus]\"  (alias: \".[libero-plus]\")"
+    )
+
+# LIBERO's env_wrapper unconditionally imports wand (ImageMagick Python binding)
+# which requires the system-level libMagickWand library. The wand features are only
+# used for visual noise perturbations and are not needed for standard evaluation.
+# Pre-install a stub so the import succeeds even without ImageMagick.
+import sys
+import types
+
+if "wand" not in sys.modules:
+    try:
+        import wand.api  # noqa: F401
+    except (ImportError, OSError):
+
+        class _AttrSink:
+            """Accepts any attribute get/set without error."""
+
+            def __getattr__(self, _name):
+                return self
+
+            def __setattr__(self, _name, _value):
+                pass
+
+            def __call__(self, *a, **kw):
+                pass
+
+        _wand = types.ModuleType("wand")
+        _wand_api = types.ModuleType("wand.api")
+        _wand_api.library = _AttrSink()
+        _wand_image = types.ModuleType("wand.image")
+        _wand_image.Image = type("Image", (), {})
+        _wand.api = _wand_api
+        _wand.image = _wand_image
+        sys.modules["wand"] = _wand
+        sys.modules["wand.api"] = _wand_api
+        sys.modules["wand.image"] = _wand_image
+
+from libero.libero import benchmark, get_libero_path
+from libero.libero.envs import OffScreenRenderEnv
 
 from lerobot.processor import RobotObservation
 
@@ -74,13 +114,30 @@ def _select_task_ids(total_tasks: int, task_ids: Iterable[int] | None) -> list[i
 
 
 def get_task_init_states(task_suite: Any, i: int) -> np.ndarray:
-    init_states_path = (
-        Path(get_libero_path("init_states"))
-        / task_suite.tasks[i].problem_folder
-        / task_suite.tasks[i].init_states_file
+    init_states_dir = Path(get_libero_path("init_states")) / task_suite.tasks[i].problem_folder
+    init_states_file = task_suite.tasks[i].init_states_file
+
+    candidate_names = [init_states_file]
+    # Some LIBERO-plus task names include a "_table_<n>" suffix while shipped
+    # init files use the base name without that table suffix.
+    if "_table_" in init_states_file:
+        candidate_names.append(re.sub(r"_table_\d+(?=\.pruned_init$|\.init$)", "", init_states_file))
+
+    for name in candidate_names:
+        candidate_path = init_states_dir / name
+        if candidate_path.exists():
+            return torch.load(candidate_path, weights_only=False)  # nosec B614
+
+    # Last-resort fallback: pick any file matching the base prefix + extension.
+    stem, suffix = os.path.splitext(init_states_file)
+    stem = re.sub(r"_table_\d+$", "", stem)
+    fallback_matches = sorted(init_states_dir.glob(f"{stem}*{suffix}"))
+    if fallback_matches:
+        return torch.load(fallback_matches[0], weights_only=False)  # nosec B614
+
+    raise FileNotFoundError(
+        f"Could not find init states for task {i}. Tried {candidate_names} in '{init_states_dir}'."
     )
-    init_states = torch.load(init_states_path, weights_only=False)  # nosec B614
-    return init_states
 
 
 def get_libero_dummy_action():
@@ -98,6 +155,29 @@ TASK_SUITE_MAX_STEPS: dict[str, int] = {
     "libero_10": 520,  # longest training demo has 505 steps
     "libero_90": 400,  # longest training demo has 373 steps
 }
+
+
+def _make_offscreen_env_with_renderer_fallback(env_args: dict[str, Any]) -> Any:
+    """Create OffScreenRenderEnv and fallback to OSMesa if EGL is unavailable."""
+    try:
+        return OffScreenRenderEnv(**env_args)
+    except ImportError as exc:
+        msg = str(exc)
+        if "EGL" not in msg and "PLATFORM_DEVICE" not in msg:
+            raise
+
+        # Headless clusters often miss EGL PLATFORM_DEVICE support. Retry with
+        # software rendering to keep evaluation working.
+        os.environ["MUJOCO_GL"] = "osmesa"
+        os.environ["PYOPENGL_PLATFORM"] = "osmesa"
+        try:
+            return OffScreenRenderEnv(**env_args)
+        except Exception as fallback_exc:
+            raise ImportError(
+                "Failed to initialize robosuite offscreen renderer with both EGL and "
+                "OSMesa backends. Set up EGL-capable drivers or install OSMesa (e.g. "
+                "`conda install -c conda-forge mesalib`) and retry."
+            ) from fallback_exc
 
 
 class LiberoEnv(gym.Env):
@@ -244,7 +324,7 @@ class LiberoEnv(gym.Env):
             "camera_heights": self.observation_height,
             "camera_widths": self.observation_width,
         }
-        env = OffScreenRenderEnv(**env_args)
+        env = _make_offscreen_env_with_renderer_fallback(env_args)
         env.reset()
         return env
 
