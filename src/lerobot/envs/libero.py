@@ -77,6 +77,32 @@ from libero.libero.envs import OffScreenRenderEnv
 
 from lerobot.processor import RobotObservation
 
+_ASSET_DOWNLOAD_INSTRUCTIONS = """\
+LIBERO-plus assets not found at: {assets_dir}
+
+The LIBERO-plus benchmark requires ~6 GB of scene/texture/object assets that
+are hosted separately on Hugging Face.  To download and install them:
+
+    python -c "
+from huggingface_hub import hf_hub_download
+hf_hub_download('Sylvest/LIBERO-plus', 'assets.zip',
+                repo_type='dataset', local_dir='/tmp/libero-plus-assets')
+"
+    unzip /tmp/libero-plus-assets/assets.zip -d /tmp/libero-plus-assets-unzipped
+    # The zip contains a deeply nested path; move the assets directory:
+    mv /tmp/libero-plus-assets-unzipped/inspire/*/assets {assets_dir}
+    rm -rf /tmp/libero-plus-assets /tmp/libero-plus-assets-unzipped
+
+See https://huggingface.co/datasets/Sylvest/LIBERO-plus for details.
+"""
+
+
+def _check_libero_plus_assets() -> None:
+    """Validate that LIBERO-plus scene assets are present."""
+    assets_dir = Path(get_libero_path("benchmark_root")) / "assets"
+    if not (assets_dir / "scenes").is_dir():
+        raise FileNotFoundError(_ASSET_DOWNLOAD_INSTRUCTIONS.format(assets_dir=assets_dir))
+
 
 def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
     """Normalize camera_name into a non-empty list of strings."""

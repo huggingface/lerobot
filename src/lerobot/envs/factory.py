@@ -191,6 +191,11 @@ def make_env(
         if cfg.task is None:
             raise ValueError("LiberoEnv requires a task to be specified")
 
+        if cfg.type == "libero_plus":
+            from lerobot.envs.libero import _check_libero_plus_assets
+
+            _check_libero_plus_assets()
+
         return create_libero_envs(
             task=cfg.task,
             n_envs=n_envs,

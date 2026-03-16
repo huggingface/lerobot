@@ -180,6 +180,14 @@ libero_plus = [
     "hf-egl-probe>=1.0.1; sys_platform == 'linux'",
     "egl_probe>=1.0.1; sys_platform == 'linux'",
     "libero @ git+https://github.com/sylvestf/LIBERO-plus.git@main ; sys_platform == 'linux'",
+    # LIBERO-plus setup.py has empty install_requires; declare its runtime deps here.
+    "robosuite>=1.4.0,<1.5.0; sys_platform == 'linux'",
+    "bddl>=1.0.1,<2.0.0; sys_platform == 'linux'",
+    "robomimic>=0.2.0,<0.3.0; sys_platform == 'linux'",
+    "easydict>=1.9; sys_platform == 'linux'",
+    "wand; sys_platform == 'linux'",
+    "scikit-image>=0.20.0; sys_platform == 'linux'",
+    "gym>=0.25.0,<0.27.0; sys_platform == 'linux'",
     "lerobot[scipy-dep]",
 ]
 libero-plus = ["lerobot[libero_plus]"]
