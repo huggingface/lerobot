@@ -268,7 +268,7 @@ def test_factory_rabc_auto_detects_from_dataset_root(sample_progress_parquet):
     )
 
     assert weighter is not None
-    from lerobot.policies.sarm.rabc import RABCWeights
+    from lerobot.rewards.sarm.rabc import RABCWeights
 
     assert isinstance(weighter, RABCWeights)
 
@@ -306,7 +306,7 @@ def test_factory_rabc_auto_detects_from_repo_id():
 
 def test_rabc_weights_is_sample_weighter(sample_progress_parquet):
     """Test that RABCWeights inherits from SampleWeighter."""
-    from lerobot.policies.sarm.rabc import RABCWeights
+    from lerobot.rewards.sarm.rabc import RABCWeights
 
     weighter = RABCWeights(
         progress_path=sample_progress_parquet,
@@ -318,7 +318,7 @@ def test_rabc_weights_is_sample_weighter(sample_progress_parquet):
 
 def test_rabc_compute_batch_weights(sample_progress_parquet):
     """Test RABCWeights.compute_batch_weights returns correct structure."""
-    from lerobot.policies.sarm.rabc import RABCWeights
+    from lerobot.rewards.sarm.rabc import RABCWeights
 
     weighter = RABCWeights(
         progress_path=sample_progress_parquet,
@@ -338,7 +338,7 @@ def test_rabc_compute_batch_weights(sample_progress_parquet):
 
 def test_rabc_get_stats(sample_progress_parquet):
     """Test RABCWeights.get_stats returns expected structure."""
-    from lerobot.policies.sarm.rabc import RABCWeights
+    from lerobot.rewards.sarm.rabc import RABCWeights
 
     weighter = RABCWeights(
         progress_path=sample_progress_parquet,
@@ -360,7 +360,7 @@ def test_rabc_get_stats(sample_progress_parquet):
 
 def test_factory_creates_rabc_weighter(sample_progress_parquet):
     """Test factory creates RABCWeights with valid config."""
-    from lerobot.policies.sarm.rabc import RABCWeights
+    from lerobot.rewards.sarm.rabc import RABCWeights
 
     config = SampleWeightingConfig(
         type="rabc",
@@ -381,7 +381,7 @@ def test_factory_creates_rabc_weighter(sample_progress_parquet):
 
 def test_rabc_weights_normalization(sample_progress_parquet):
     """Test that RABCWeights normalizes weights to sum to batch_size."""
-    from lerobot.policies.sarm.rabc import RABCWeights
+    from lerobot.rewards.sarm.rabc import RABCWeights
 
     weighter = RABCWeights(
         progress_path=sample_progress_parquet,

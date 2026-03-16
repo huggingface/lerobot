@@ -149,7 +149,7 @@ def _make_rabc_weighter(
         dataset_repo_id: HuggingFace repo ID (for auto-detecting progress_path).
     """
     # Import here to avoid circular imports and keep RABC code in SARM module
-    from lerobot.policies.sarm.rabc import RABCWeights
+    from lerobot.rewards.sarm.rabc import RABCWeights
 
     # Extract chunk_size from policy config
     chunk_size = getattr(policy.config, "chunk_size", None)
@@ -171,7 +171,7 @@ def _make_rabc_weighter(
                 "RABC sample weighting requires 'progress_path' to be set, "
                 "or dataset_root/dataset_repo_id for auto-detection. "
                 "Generate progress values using: "
-                "python -m lerobot.policies.sarm.compute_rabc_weights --help"
+                "python -m lerobot.rewards.sarm.compute_rabc_weights --help"
             )
 
     return RABCWeights(
