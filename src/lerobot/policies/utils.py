@@ -23,7 +23,7 @@ from torch import nn
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.datasets.utils import build_dataset_frame
+from lerobot.datasets.feature_utils import build_dataset_frame
 from lerobot.types import PolicyAction, RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_STR
 

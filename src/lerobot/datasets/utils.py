@@ -27,11 +27,47 @@ import torch
 from huggingface_hub import DatasetCard, DatasetCardData, HfApi
 from huggingface_hub.errors import RevisionNotFoundError
 
-from lerobot.datasets.backward_compatibility import (
-    FUTURE_MESSAGE,
-    BackwardCompatibilityError,
-    ForwardCompatibilityError,
-)
+V30_MESSAGE = """
+The dataset you requested ({repo_id}) is in {version} format.
+
+We introduced a new format since v3.0 which is not backward compatible with v2.1.
+Please, update your dataset to the new format using this command:
+```
+python -m lerobot.scripts.convert_dataset_v21_to_v30 --repo-id={repo_id}
+```
+
+If you already have a converted version uploaded to the hub, then this error might be because of
+an older version in your local cache. Consider deleting the cached version and retrying.
+
+If you encounter a problem, contact LeRobot maintainers on [Discord](https://discord.com/invite/s3KuuzsPFb)
+or open an [issue on GitHub](https://github.com/huggingface/lerobot/issues/new/choose).
+"""
+
+FUTURE_MESSAGE = """
+The dataset you requested ({repo_id}) is only available in {version} format.
+As we cannot ensure forward compatibility with it, please update your current version of lerobot.
+"""
+
+
+class CompatibilityError(Exception): ...
+
+
+class BackwardCompatibilityError(CompatibilityError):
+    def __init__(self, repo_id: str, version: packaging.version.Version):
+        if version.major == 2 and version.minor == 1:
+            message = V30_MESSAGE.format(repo_id=repo_id, version=version)
+        else:
+            raise NotImplementedError(
+                "Contact the maintainer on [Discord](https://discord.com/invite/s3KuuzsPFb)."
+            )
+        super().__init__(message)
+
+
+class ForwardCompatibilityError(CompatibilityError):
+    def __init__(self, repo_id: str, version: packaging.version.Version):
+        message = FUTURE_MESSAGE.format(repo_id=repo_id, version=version)
+        super().__init__(message)
+
 
 DEFAULT_CHUNK_SIZE = 1000  # Max number of files per chunk
 DEFAULT_DATA_FILE_SIZE_IN_MB = 100  # Max size per file
@@ -392,52 +428,3 @@ def safe_shard(dataset: datasets.IterableDataset, index: int, num_shards: int) -
     shard_idx = min(dataset.num_shards, index + 1) - 1
 
     return dataset.shard(num_shards, index=shard_idx)
-
-
-# ---------------------------------------------------------------------------
-# Backward-compatible re-exports: symbols moved to focused submodules.
-# Existing ``from lerobot.datasets.utils import <name>`` will keep working.
-# ---------------------------------------------------------------------------
-from lerobot.datasets.backtracking import Backtrackable, LookAheadError, LookBackError  # noqa: E402, F401
-from lerobot.datasets.feature_utils import (  # noqa: E402, F401
-    _validate_feature_names,
-    build_dataset_frame,
-    check_delta_timestamps,
-    combine_feature_dicts,
-    create_empty_dataset_info,
-    dataset_to_policy_features,
-    get_delta_indices,
-    get_hf_features_from_features,
-    hw_to_dataset_features,
-    validate_episode_buffer,
-    validate_feature_dtype_and_shape,
-    validate_feature_image_or_video,
-    validate_feature_numpy_array,
-    validate_feature_string,
-    validate_features_presence,
-    validate_frame,
-)
-from lerobot.datasets.io_utils import (  # noqa: E402, F401
-    cast_stats_to_numpy,
-    embed_images,
-    get_file_size_in_mb,
-    get_hf_dataset_size_in_mb,
-    get_parquet_file_size_in_mb,
-    get_parquet_num_frames,
-    hf_transform_to_torch,
-    item_to_torch,
-    load_episodes,
-    load_image_as_numpy,
-    load_info,
-    load_json,
-    load_nested_dataset,
-    load_stats,
-    load_subtasks,
-    load_tasks,
-    to_parquet_with_hf_images,
-    write_episodes,
-    write_info,
-    write_json,
-    write_stats,
-    write_tasks,
-)
