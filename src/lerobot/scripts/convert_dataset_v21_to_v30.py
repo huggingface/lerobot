@@ -28,13 +28,13 @@ Usage:
 
 Convert a dataset from the hub:
 ```bash
-python src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
+python src/lerobot/scripts/convert_dataset_v21_to_v30.py \
     --repo-id=lerobot/pusht
 ```
 
 Convert a local dataset (works in place):
 ```bash
-python src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
+python src/lerobot/scripts/convert_dataset_v21_to_v30.py \
     --repo-id=lerobot/pusht \
     --root=/path/to/local/dataset/directory \
     --push-to-hub=false

@@ -28,7 +28,7 @@ quantile statistics (q01, q10, q50, q90, q99) in their metadata. This script:
 Usage:
 
 ```bash
-python src/lerobot/datasets/v30/augment_dataset_quantile_stats.py \
+python src/lerobot/scripts/augment_dataset_quantile_stats.py \
     --repo-id=lerobot/pusht \
 ```
 """
