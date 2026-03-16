@@ -503,19 +503,34 @@ def _compile_episode_data(
     return data_dict
 
 
+def _serializable_config(obj: Any) -> Any:
+    """Recursively convert a config dict so it is JSON-serializable."""
+    if isinstance(obj, dict):
+        return {k: _serializable_config(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_serializable_config(v) for v in obj]
+    if isinstance(obj, Path):
+        return str(obj)
+    if isinstance(obj, (int, float, str, bool, type(None))):
+        return obj
+    return str(obj)
+
+
 def push_eval_to_hub(
     repo_id: str,
     output_dir: Path,
     info: dict,
     env_type: str,
+    eval_config: dict | None = None,
 ) -> str:
-    """Upload eval results, videos, and an updated model card to the Hub.
+    """Upload eval results, videos, config, and an updated model card to the Hub.
 
     Args:
         repo_id: HF model repo (e.g. "user/my_policy").
         output_dir: Local directory containing eval_info.json and videos/.
         info: The eval results dict (as returned by eval_policy_all).
         env_type: Environment type string (e.g. "libero_plus", "pusht").
+        eval_config: Serialized EvalPipelineConfig dict (policy + env + eval settings).
 
     Returns:
         URL of the last Hub commit.
@@ -525,9 +540,10 @@ def push_eval_to_hub(
     api = HfApi()
     api.create_repo(repo_id=repo_id, exist_ok=True)
 
+    commit_url = ""
+
     # 1. Upload eval_info.json
     eval_json_path = output_dir / "eval_info.json"
-    commit_url = ""
     if eval_json_path.exists():
         commit_url = api.upload_file(
             path_or_fileobj=str(eval_json_path),
@@ -536,7 +552,17 @@ def push_eval_to_hub(
             commit_message=f"Upload eval results for {env_type}",
         )
 
-    # 2. Upload rollout videos
+    # 2. Upload eval_config.json (policy, env, and eval settings used)
+    eval_config_path = output_dir / "eval_config.json"
+    if eval_config_path.exists():
+        api.upload_file(
+            path_or_fileobj=str(eval_config_path),
+            path_in_repo=f"eval/{env_type}/eval_config.json",
+            repo_id=repo_id,
+            commit_message=f"Upload eval config for {env_type}",
+        )
+
+    # 3. Upload rollout videos
     videos_dir = output_dir / "videos"
     if videos_dir.is_dir():
         api.upload_folder(
@@ -546,15 +572,15 @@ def push_eval_to_hub(
             commit_message=f"Upload eval rollout videos for {env_type}",
         )
 
-    # 3. Update the model card with an eval results table
-    _update_model_card_with_eval(api, repo_id, info, env_type)
+    # 4. Update the model card with an eval results table and config summary
+    _update_model_card_with_eval(api, repo_id, info, env_type, eval_config=eval_config)
 
     logging.info(f"Eval results pushed to https://huggingface.co/{repo_id}")
     return commit_url
 
 
-def _format_eval_table(info: dict, env_type: str) -> str:
-    """Build a markdown table from eval results."""
+def _format_eval_table(info: dict, env_type: str, eval_config: dict | None = None) -> str:
+    """Build a markdown table from eval results, optionally including config."""
     lines = [
         f"### Evaluation: `{env_type}`\n",
         "| Suite | Success Rate (%) | Avg Sum Reward | Episodes |",
@@ -575,6 +601,14 @@ def _format_eval_table(info: dict, env_type: str) -> str:
         n_ep = overall.get("n_episodes", 0)
         lines.append(f"| **Overall** | **{sr:.1f}** | **{reward:.2f}** | **{n_ep}** |")
 
+    if eval_config:
+        lines.append("")
+        lines.append("<details><summary>Eval configuration</summary>\n")
+        lines.append("```json")
+        lines.append(json.dumps(eval_config, indent=2))
+        lines.append("```\n")
+        lines.append("</details>")
+
     video_paths = overall.get("video_paths", [])
     if video_paths:
         lines.append("")
@@ -589,7 +623,9 @@ def _format_eval_table(info: dict, env_type: str) -> str:
     return "\n".join(lines)
 
 
-def _update_model_card_with_eval(api: Any, repo_id: str, info: dict, env_type: str) -> None:
+def _update_model_card_with_eval(
+    api: Any, repo_id: str, info: dict, env_type: str, eval_config: dict | None = None
+) -> None:
     """Append or replace the eval section in the model card README."""
     from huggingface_hub import ModelCard
 
@@ -600,7 +636,7 @@ def _update_model_card_with_eval(api: Any, repo_id: str, info: dict, env_type: s
 
     content = card.content or ""
 
-    eval_table = _format_eval_table(info, env_type)
+    eval_table = _format_eval_table(info, env_type, eval_config=eval_config)
 
     section_marker_start = f"<!-- eval-results-{env_type}-start -->"
     section_marker_end = f"<!-- eval-results-{env_type}-end -->"
@@ -699,6 +735,10 @@ def eval_main(cfg: EvalPipelineConfig):
     with open(output_dir / "eval_info.json", "w") as f:
         json.dump(info, f, indent=2)
 
+    eval_cfg_dict = _serializable_config(asdict(cfg))
+    with open(output_dir / "eval_config.json", "w") as f:
+        json.dump(eval_cfg_dict, f, indent=2)
+
     if cfg.push_to_hub:
         repo_id = str(cfg.policy.pretrained_path)
         push_eval_to_hub(
@@ -706,6 +746,7 @@ def eval_main(cfg: EvalPipelineConfig):
             output_dir=output_dir,
             info=info,
             env_type=cfg.env.type,
+            eval_config=eval_cfg_dict,
         )
 
     logging.info("End of eval")
