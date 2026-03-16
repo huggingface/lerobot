@@ -18,7 +18,8 @@ from typing import Any
 
 from lerobot.configs.types import PipelineFeatureType
 from lerobot.datasets.utils import hw_to_dataset_features
-from lerobot.processor import DataProcessorPipeline, RobotAction, RobotObservation
+from lerobot.processor import DataProcessorPipeline
+from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE, OBS_STR
 
 
