@@ -20,11 +20,9 @@ import torch
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.datasets.lerobot_dataset import (
-    LeRobotDataset,
-    LeRobotDatasetMetadata,
-    MultiLeRobotDataset,
-)
+from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.multi_dataset import MultiLeRobotDataset
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from lerobot.datasets.transforms import ImageTransforms
 from lerobot.utils.constants import ACTION, OBS_PREFIX, REWARD

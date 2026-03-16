@@ -33,25 +33,29 @@ from huggingface_hub.errors import RevisionNotFoundError
 
 from lerobot.datasets.compute_stats import compute_episode_stats
 from lerobot.datasets.dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
+from lerobot.datasets.feature_utils import (
+    check_delta_timestamps,
+    get_delta_indices,
+    get_hf_features_from_features,
+    validate_episode_buffer,
+    validate_frame,
+)
 from lerobot.datasets.image_writer import AsyncImageWriter, write_image
+from lerobot.datasets.io_utils import (
+    embed_images,
+    get_file_size_in_mb,
+    hf_transform_to_torch,
+    load_episodes,
+    load_nested_dataset,
+    write_info,
+)
 from lerobot.datasets.utils import (
     DEFAULT_EPISODES_PATH,
     DEFAULT_IMAGE_PATH,
-    check_delta_timestamps,
     create_lerobot_dataset_card,
-    embed_images,
-    get_delta_indices,
-    get_file_size_in_mb,
-    get_hf_features_from_features,
     get_safe_version,
-    hf_transform_to_torch,
     is_valid_version,
-    load_episodes,
-    load_nested_dataset,
     update_chunk_file_indices,
-    validate_episode_buffer,
-    validate_frame,
-    write_info,
 )
 from lerobot.datasets.video_utils import (
     StreamingVideoEncoder,
@@ -1238,9 +1242,3 @@ class LeRobotDataset(torch.utils.data.Dataset):
             obj._streaming_encoder = None
 
         return obj
-
-
-# ---------------------------------------------------------------------------
-# Backward-compatible re-export
-# ---------------------------------------------------------------------------
-from lerobot.datasets.multi_dataset import MultiLeRobotDataset  # noqa: E402, F401

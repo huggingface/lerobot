@@ -19,10 +19,10 @@ import pytest
 import torch
 from datasets import Dataset
 
-from lerobot.datasets.sampler import EpisodeAwareSampler
-from lerobot.datasets.utils import (
+from lerobot.datasets.io_utils import (
     hf_transform_to_torch,
 )
+from lerobot.datasets.sampler import EpisodeAwareSampler
 
 
 def calculate_episode_data_index(hf_dataset: Dataset) -> dict[str, torch.Tensor]:
