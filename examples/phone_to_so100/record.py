@@ -19,7 +19,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
 from lerobot.datasets.utils import combine_feature_dicts
 from lerobot.model.kinematics import RobotKinematics
-from lerobot.processor import RobotAction, RobotObservation, RobotProcessorPipeline
+from lerobot.processor import RobotProcessorPipeline
 from lerobot.processor.converters import (
     observation_to_transition,
     robot_action_observation_to_transition,
@@ -38,6 +38,7 @@ from lerobot.scripts.lerobot_record import record_loop
 from lerobot.teleoperators.phone.config_phone import PhoneConfig, PhoneOS
 from lerobot.teleoperators.phone.phone_processor import MapPhoneActionToRobotAction
 from lerobot.teleoperators.phone.teleop_phone import Phone
+from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
