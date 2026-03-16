@@ -1,0 +1,1747 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RTC Trajectory Visualization</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+    <style>
+        /* Kandinsky-inspired palette */
+        :root {
+            --bg-cream: #f5f0e1;
+            --bg-white: #ffffff;
+            --primary-blue: #1a3a6e;
+            --primary-yellow: #f4c430;
+            --primary-red: #c1272d;
+            --structural-black: #1a1a1a;
+            --accent-orange: #e85d04;
+            --accent-purple: #5c3d6e;
+            --ochre: #8b7355;
+            --text-dark: #1a1a1a;
+            --text-muted: #5a5a5a;
+            --grid-line: #d0c8b8;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            background: var(--bg-cream);
+            color: var(--text-dark);
+            padding: 16px;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 12px;
+            color: var(--structural-black);
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            position: relative;
+        }
+
+        h1::before {
+            content: '';
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            bottom: -6px;
+            width: 60px;
+            height: 4px;
+            background: var(--primary-red);
+        }
+
+        h2 {
+            color: var(--text-dark);
+            font-weight: 600;
+            margin: 20px 0 12px 0;
+            font-size: 15px;
+            border-left: 4px solid var(--primary-blue);
+            padding-left: 10px;
+        }
+
+        .status {
+            text-align: center;
+            margin-bottom: 16px;
+            padding: 10px 16px;
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border: 3px solid var(--structural-black);
+        }
+
+        .status.connected {
+            background: var(--primary-yellow);
+            color: var(--structural-black);
+        }
+
+        .status.disconnected {
+            background: var(--primary-red);
+            color: var(--bg-cream);
+        }
+
+        .status.connecting {
+            background: var(--primary-blue);
+            color: var(--bg-cream);
+        }
+
+        /* RTC Parameters Panel */
+        .rtc-panel {
+            background: var(--bg-white);
+            border: 3px solid var(--structural-black);
+            padding: 16px;
+            margin-bottom: 16px;
+            position: relative;
+        }
+
+        .rtc-panel::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: linear-gradient(90deg, var(--primary-blue) 0%, var(--primary-yellow) 50%, var(--primary-red) 100%);
+        }
+
+        .rtc-panel-title {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            font-weight: 600;
+        }
+
+        .rtc-params-grid {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .rtc-param {
+            display: flex;
+            flex-direction: column;
+            background: var(--bg-cream);
+            padding: 8px;
+            border: 2px solid var(--structural-black);
+        }
+
+        .rtc-param-label {
+            font-size: 10px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 600;
+        }
+
+        .rtc-param-value {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--structural-black);
+            font-family: 'Courier New', monospace;
+        }
+
+        .rtc-regions {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+
+        .rtc-region {
+            flex: 1;
+            padding: 10px;
+            border: 2px solid var(--structural-black);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .rtc-region.frozen {
+            background: rgba(26, 58, 110, 0.2);
+            border-color: var(--primary-blue);
+        }
+
+        .rtc-region.softmask {
+            background: linear-gradient(90deg, rgba(26, 58, 110, 0.2) 0%, rgba(244, 196, 48, 0.2) 100%);
+            border-color: var(--primary-yellow);
+        }
+
+        .rtc-region.fresh {
+            background: rgba(139, 115, 85, 0.1);
+            border-color: var(--ochre);
+        }
+
+        .rtc-region-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-dark);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .rtc-region-range {
+            font-size: 14px;
+            font-weight: 700;
+            font-family: 'Courier New', monospace;
+            color: var(--structural-black);
+        }
+
+        .prefix-weights-chart-container {
+            background: var(--bg-cream);
+            border: 2px solid var(--structural-black);
+            padding: 10px;
+            height: 130px;
+        }
+
+        .prefix-weights-chart-container h4 {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .prefix-weights-chart-container canvas {
+            width: 100% !important;
+            height: 60px !important;
+        }
+
+        .prefix-regions-legend {
+            display: flex;
+            width: 100%;
+            margin-top: 6px;
+            border: 1px solid var(--structural-black);
+            overflow: hidden;
+        }
+
+        .region-segment {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 4px 2px;
+            font-size: 9px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            border-right: 1px solid var(--structural-black);
+            min-width: 0;
+            overflow: hidden;
+        }
+
+        .region-segment:last-child {
+            border-right: none;
+        }
+
+        .region-segment.hard-mask {
+            background: rgba(26, 58, 110, 0.3);
+            color: var(--primary-blue);
+        }
+
+        .region-segment.soft-mask {
+            background: rgba(244, 196, 48, 0.3);
+            color: #8b6914;
+        }
+
+        .region-segment.fresh {
+            background: rgba(139, 115, 85, 0.15);
+            color: var(--ochre);
+        }
+
+        .region-label {
+            font-size: 8px;
+            white-space: nowrap;
+        }
+
+        .region-range {
+            font-family: 'Courier New', monospace;
+            font-size: 9px;
+            white-space: nowrap;
+        }
+
+        @media (max-width: 1000px) {
+            .rtc-params-grid {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+
+        @media (max-width: 600px) {
+            .rtc-params-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .rtc-regions {
+                flex-direction: column;
+            }
+        }
+
+        /* Session Summary Panel */
+        .summary-panel {
+            background: var(--bg-white);
+            border: 3px solid var(--structural-black);
+            padding: 16px;
+            margin-bottom: 16px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .summary-panel::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 6px;
+            height: 100%;
+            background: var(--primary-blue);
+        }
+
+        .summary-title {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            font-weight: 600;
+            padding-left: 10px;
+        }
+
+        .summary-content {
+            display: flex;
+            gap: 24px;
+            align-items: stretch;
+            padding-left: 10px;
+        }
+
+        .summary-metrics {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            min-width: 200px;
+            flex-shrink: 0;
+        }
+
+        .summary-metric {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .summary-metric-label {
+            font-size: 10px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 600;
+        }
+
+        .summary-metric-value {
+            font-size: 36px;
+            font-weight: 700;
+            color: var(--structural-black);
+            font-family: 'Courier New', monospace;
+        }
+
+        .summary-metric-value.good {
+            color: #2d6a4f;
+        }
+
+        .summary-metric-value.warning {
+            color: var(--accent-orange);
+        }
+
+        .summary-metric-value.bad {
+            color: var(--primary-red);
+        }
+
+        .summary-metric-sub {
+            font-size: 11px;
+            color: var(--ochre);
+            font-family: 'Courier New', monospace;
+        }
+
+        .rolling-avg-chart-container {
+            flex: 1;
+            min-width: 0;
+            min-height: 120px;
+            max-height: 150px;
+            background: var(--bg-cream);
+            border: 2px solid var(--structural-black);
+            padding: 10px;
+            overflow: hidden;
+        }
+
+        .rolling-avg-chart-container h4 {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .rolling-avg-chart-container canvas {
+            width: 100% !important;
+            height: 100px !important;
+        }
+
+        /* Metrics Panel with Bar Charts */
+        .metrics-panel {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+
+        .metric-card {
+            background: var(--bg-white);
+            border: 3px solid var(--structural-black);
+            padding: 14px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .metric-card:first-child::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: var(--primary-red);
+        }
+
+        .metric-card:last-child::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: var(--primary-yellow);
+        }
+
+        .metric-card-title {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 600;
+        }
+
+        .metric-card-avg {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--structural-black);
+            font-family: 'Courier New', monospace;
+        }
+
+        .joint-bars {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .joint-bar-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 11px;
+        }
+
+        .joint-bar-label {
+            width: 50px;
+            color: var(--text-muted);
+            flex-shrink: 0;
+            font-weight: 600;
+        }
+
+        .joint-bar-container {
+            flex: 1;
+            height: 16px;
+            background: var(--bg-cream);
+            border: 2px solid var(--structural-black);
+            overflow: hidden;
+            min-width: 0;
+        }
+
+        .joint-bar {
+            height: 100%;
+            background: var(--primary-blue);
+            transition: width 0.2s ease;
+            max-width: 100%;
+        }
+
+        .joint-bar.high {
+            background: var(--accent-orange);
+        }
+
+        .joint-bar.critical {
+            background: var(--primary-red);
+        }
+
+        .joint-bar-value {
+            width: 60px;
+            text-align: right;
+            color: var(--text-dark);
+            font-family: 'Courier New', monospace;
+            flex-shrink: 0;
+            font-weight: 600;
+        }
+
+        /* Charts Grid */
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            width: 100%;
+            margin: 0;
+        }
+
+        .chart-container {
+            background: var(--bg-white);
+            border: 3px solid var(--structural-black);
+            padding: 12px;
+            height: calc(35vh - 50px);
+            overflow: hidden;
+            position: relative;
+        }
+
+        .chart-container::after {
+            content: '';
+            position: absolute;
+            bottom: 8px;
+            right: 8px;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: var(--primary-yellow);
+            border: 2px solid var(--structural-black);
+        }
+
+        .chart-container h3 {
+            text-align: left;
+            margin-bottom: 8px;
+            font-size: 13px;
+            color: var(--text-dark);
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .legend-container {
+            margin: 16px 0;
+            background: var(--bg-white);
+            border: 3px solid var(--structural-black);
+            padding: 12px;
+            position: relative;
+        }
+
+        .legend-container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 0;
+            height: 0;
+            border-style: solid;
+            border-width: 0 30px 30px 0;
+            border-color: transparent var(--primary-red) transparent transparent;
+        }
+
+        .legend-title {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-bottom: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .legend-items {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            padding: 4px 10px;
+            background: var(--bg-cream);
+            border: 2px solid var(--structural-black);
+            font-weight: 500;
+        }
+
+        .legend-color {
+            width: 14px;
+            height: 14px;
+            border: 2px solid var(--structural-black);
+        }
+
+        .stats {
+            margin: 16px 0;
+            background: var(--bg-white);
+            border: 3px solid var(--structural-black);
+            padding: 12px 16px;
+            font-size: 12px;
+            color: var(--text-muted);
+            font-family: 'Courier New', monospace;
+            position: relative;
+        }
+
+        .stats::before {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: repeating-linear-gradient(
+                90deg,
+                var(--primary-blue) 0px,
+                var(--primary-blue) 20px,
+                var(--primary-yellow) 20px,
+                var(--primary-yellow) 40px,
+                var(--primary-red) 40px,
+                var(--primary-red) 60px
+            );
+        }
+
+        .debug-panel {
+            margin: 12px 0;
+            background: var(--bg-white);
+            border: 2px solid var(--ochre);
+            padding: 10px;
+            font-size: 11px;
+            font-family: 'Courier New', monospace;
+            color: var(--ochre);
+            max-height: 100px;
+            overflow-y: auto;
+        }
+
+        @media (max-width: 1200px) {
+            .charts-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 800px) {
+            .charts-grid {
+                grid-template-columns: 1fr;
+            }
+            .metrics-panel {
+                grid-template-columns: 1fr;
+            }
+            .summary-content {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>RTC Trajectory Visualization</h1>
+    <div id="status" class="status disconnected">Disconnected</div>
+
+    <!-- RTC Parameters Panel -->
+    <div class="rtc-panel" id="rtc-panel">
+        <div class="rtc-panel-title">RTC Guidance Parameters</div>
+        <div class="rtc-params-grid">
+            <div class="rtc-param">
+                <span class="rtc-param-label">H (chunk size)</span>
+                <span class="rtc-param-value" id="rtc-H">--</span>
+            </div>
+            <div class="rtc-param">
+                <span class="rtc-param-label">d (delay)</span>
+                <span class="rtc-param-value" id="rtc-d">--</span>
+            </div>
+            <div class="rtc-param">
+                <span class="rtc-param-label">overlap_end</span>
+                <span class="rtc-param-value" id="rtc-overlap-end">--</span>
+            </div>
+            <div class="rtc-param">
+                <span class="rtc-param-label">σ_d</span>
+                <span class="rtc-param-value" id="rtc-sigma-d">--</span>
+            </div>
+            <div class="rtc-param">
+                <span class="rtc-param-label">schedule</span>
+                <span class="rtc-param-value" id="rtc-schedule">--</span>
+            </div>
+            <div class="rtc-param">
+                <span class="rtc-param-label">max β</span>
+                <span class="rtc-param-value" id="rtc-max-gw">--</span>
+            </div>
+        </div>
+        <div class="rtc-regions">
+            <div class="rtc-region frozen">
+                <span class="rtc-region-label">Frozen [0, d)</span>
+                <span class="rtc-region-range" id="rtc-frozen-range">--</span>
+            </div>
+            <div class="rtc-region softmask">
+                <span class="rtc-region-label">Soft Mask [d, overlap_end)</span>
+                <span class="rtc-region-range" id="rtc-softmask-range">--</span>
+            </div>
+            <div class="rtc-region fresh">
+                <span class="rtc-region-label">Fresh [overlap_end, H)</span>
+                <span class="rtc-region-range" id="rtc-fresh-range">--</span>
+            </div>
+        </div>
+        <div class="prefix-weights-chart-container">
+            <h4>Prefix Weights (current chunk)</h4>
+            <canvas id="prefix-weights-chart"></canvas>
+            <div class="prefix-regions-legend" id="prefix-regions-legend">
+                <div class="region-segment hard-mask" id="legend-hard-mask">
+                    <span class="region-label">Hard Mask</span>
+                    <span class="region-range" id="legend-hard-range">[0, 0)</span>
+                </div>
+                <div class="region-segment soft-mask" id="legend-soft-mask">
+                    <span class="region-label">Soft Mask</span>
+                    <span class="region-range" id="legend-soft-range">[0, 0)</span>
+                </div>
+                <div class="region-segment fresh" id="legend-fresh">
+                    <span class="region-label">Fresh</span>
+                    <span class="region-range" id="legend-fresh-range">[0, 0)</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Session Summary Panel -->
+    <div class="summary-panel">
+        <div class="summary-title">Session Rolling Average (for parameter sweep comparison)</div>
+        <div class="summary-content">
+            <div class="summary-metrics">
+                <div class="summary-metric">
+                    <span class="summary-metric-label">Mean Discrepancy</span>
+                    <span class="summary-metric-value" id="summary-disc-mean">--</span>
+                    <span class="summary-metric-sub">samples: <span id="summary-samples">0</span> | max: <span id="summary-disc-max">--</span></span>
+                </div>
+                <!-- <div class="summary-metric">
+                    <span class="summary-metric-label">Mean Max Accel</span>
+                    <span class="summary-metric-value" id="summary-accel-mean">--</span>
+                    <span class="summary-metric-sub">max: <span id="summary-accel-max">--</span></span>
+                </div> -->
+            </div>
+            <div class="rolling-avg-chart-container">
+                <h4>Rolling Average Over Time</h4>
+                <canvas id="rolling-avg-chart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Per-Joint Metrics Bar Charts -->
+    <div class="metrics-panel">
+        <div class="metric-card">
+            <div class="metric-card-title">
+                <span>Transition Discrepancy (current)</span>
+                <span class="metric-card-avg">Avg: <span id="disc-current-avg">--</span></span>
+            </div>
+            <div class="joint-bars" id="disc-bars">
+                <div style="color: #8b7355; font-size: 12px;">Waiting for overlapping chunks...</div>
+            </div>
+        </div>
+        <!-- <div class="metric-card">
+            <div class="metric-card-title">
+                <span>Max Acceleration (current chunk)</span>
+                <span class="metric-card-avg">Avg: <span id="accel-current-avg">--</span></span>
+            </div>
+            <div class="joint-bars" id="accel-bars">
+                <div style="color: #8b7355; font-size: 12px;">Waiting for data...</div>
+            </div>
+        </div> -->
+    </div>
+
+    <!-- Debug Panel -->
+    <div class="debug-panel" id="debug-panel">
+        Debug info will appear here...
+    </div>
+
+    <div class="charts-grid" id="charts-grid">
+        <!-- Predicted action chunk charts will be created dynamically -->
+    </div>
+
+    <h2 style="color: #aaa; margin: 15px 0 10px 0; font-size: 16px;">Executed Actions (actually sent to robot)</h2>
+    <div class="charts-grid" id="executed-charts-grid">
+        <!-- Executed action charts will be created dynamically -->
+    </div>
+
+    <div class="legend-container">
+        <div class="legend-title">Chunk Legend (source_step)</div>
+        <div class="legend-items" id="legend-items"></div>
+    </div>
+
+    <div class="stats" id="stats">
+        Waiting for data...
+    </div>
+
+    <script>
+        // Configuration
+        const WS_PORT = 8089;
+        const MAX_CHUNKS = 10;
+        const MAX_ROLLING_AVG_POINTS = 100;
+        const MAX_DEBUG_LINES = 10;
+        const CHUNK_COLORS = [
+            '#c1272d',  // vermillion
+            '#1a3a6e',  // ultramarine
+            '#f4c430',  // cadmium yellow
+            '#e85d04',  // orange
+            '#5c3d6e',  // purple
+            '#2d6a4f',  // deep green
+            '#1a1a1a',  // black
+            '#8b7355',  // ochre
+            '#0077b6',  // cerulean
+            '#9d4edd'   // violet
+        ];
+
+        // State
+        let charts = [];
+        let executedCharts = [];  // Charts for executed actions
+        let rollingAvgChart = null;
+        let prefixWeightsChart = null;  // RTC prefix weights chart
+        let currentRtcParams = null;  // Current RTC parameters
+        let lastRtcParamsJson = null;  // For debouncing RTC panel updates
+        let chunks = [];
+        let executedActions = [];  // Rolling buffer of executed actions {step, action}
+        const MAX_EXECUTED_ACTIONS = 500;  // Keep last N executed actions
+        let numDimensions = 6;
+        let ws = null;
+        let reconnectTimeout = null;
+        let chunkCount = 0;
+        let executedCount = 0;
+        let lastChunkTime = null;
+        let sessionStartTime = null;
+        let debugLines = [];
+
+        // Session metrics
+        const sessionMetrics = {
+            discrepancies: [],
+            accelerations: [],
+            rollingAvgHistory: [],
+        };
+
+        // Thresholds for color coding
+        let discrepancyThresholds = { warn: 0.1, critical: 0.2 };
+        let accelerationThresholds = { warn: 0.05, critical: 0.1 };
+
+        // Helper functions
+        function mean(arr) {
+            if (arr.length === 0) return 0;
+            return arr.reduce((a, b) => a + b, 0) / arr.length;
+        }
+
+        function formatNumber(n, decimals = 4) {
+            if (n === null || n === undefined || isNaN(n)) return '--';
+            return n.toFixed(decimals);
+        }
+
+        function debug(msg) {
+            debugLines.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
+            while (debugLines.length > MAX_DEBUG_LINES) {
+                debugLines.shift();
+            }
+            document.getElementById('debug-panel').textContent = debugLines.join('\n');
+        }
+
+        // Initialize rolling average chart
+        function initRollingAvgChart() {
+            const ctx = document.getElementById('rolling-avg-chart').getContext('2d');
+            rollingAvgChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    datasets: [
+                        {
+                            label: 'Discrepancy',
+                            data: [],
+                            borderColor: '#1a3a6e',
+                            backgroundColor: 'rgba(26, 58, 110, 0.15)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 0,
+                            borderWidth: 3,
+                        },
+                        {
+                            label: 'Acceleration',
+                            data: [],
+                            borderColor: '#c1272d',
+                            backgroundColor: 'rgba(193, 39, 45, 0.15)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 0,
+                            borderWidth: 3,
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    interaction: {
+                        intersect: false,
+                        mode: 'index',
+                    },
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top',
+                            labels: {
+                                color: '#1a1a1a',
+                                boxWidth: 14,
+                                padding: 10,
+                                font: { size: 11, weight: 'bold' }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            title: {
+                                display: true,
+                                text: 'Time (s)',
+                                color: '#1a1a1a',
+                                font: { size: 10, weight: 'bold' }
+                            },
+                            ticks: { color: '#5a5a5a', font: { size: 9 } },
+                            grid: { color: '#d0c8b8' }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'Rolling Avg',
+                                color: '#1a1a1a',
+                                font: { size: 10, weight: 'bold' }
+                            },
+                            ticks: { color: '#5a5a5a', font: { size: 9 } },
+                            grid: { color: '#d0c8b8' },
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
+
+        // Update rolling average chart
+        function updateRollingAvgChart() {
+            if (!rollingAvgChart) return;
+
+            const discData = sessionMetrics.rollingAvgHistory.map(p => ({ x: p.timeOffset, y: p.discrepancy }));
+            const accelData = sessionMetrics.rollingAvgHistory.map(p => ({ x: p.timeOffset, y: p.acceleration }));
+
+            rollingAvgChart.data.datasets[0].data = discData;
+            rollingAvgChart.data.datasets[1].data = accelData;
+            rollingAvgChart.update('none');
+        }
+
+        // Initialize prefix weights chart
+        function initPrefixWeightsChart() {
+            const ctx = document.getElementById('prefix-weights-chart').getContext('2d');
+            prefixWeightsChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Prefix Weight',
+                        data: [],
+                        backgroundColor: [],
+                        borderColor: '#1a1a1a',
+                        borderWidth: 1,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Action Index',
+                                color: '#1a1a1a',
+                                font: { size: 9, weight: 'bold' }
+                            },
+                            ticks: {
+                                color: '#5a5a5a',
+                                font: { size: 8 },
+                                maxTicksLimit: 10
+                            },
+                            grid: { display: false }
+                        },
+                        y: {
+                            min: 0,
+                            max: 1,
+                            title: {
+                                display: true,
+                                text: 'c_i',
+                                color: '#1a1a1a',
+                                font: { size: 9, weight: 'bold' }
+                            },
+                            ticks: {
+                                color: '#5a5a5a',
+                                font: { size: 8 },
+                                stepSize: 0.5
+                            },
+                            grid: { color: '#d0c8b8' }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Update prefix weights chart with new data
+        function updatePrefixWeightsChart(weights, rtcParams) {
+            if (!prefixWeightsChart || !weights) return;
+
+            const d = rtcParams?.d || 0;
+            const overlapEnd = rtcParams?.overlap_end || weights.length;
+            const H = weights.length;
+            const schedule = rtcParams?.schedule || 'linear';
+
+            // Debug: log weight samples to verify exp decay is being applied
+            if (H > 0 && d < overlapEnd) {
+                const midIdx = Math.floor((d + overlapEnd) / 2);
+                const samples = [];
+                if (d < H) samples.push(`w[${d}]=${weights[d]?.toFixed(3)}`);
+                if (midIdx < H && midIdx > d) samples.push(`w[${midIdx}]=${weights[midIdx]?.toFixed(3)}`);
+                if (overlapEnd - 1 < H && overlapEnd - 1 > d) samples.push(`w[${overlapEnd-1}]=${weights[overlapEnd-1]?.toFixed(3)}`);
+                debug(`Prefix weights (${schedule}): ${samples.join(', ')}`);
+            }
+
+            // Create labels and colors
+            const labels = [];
+            const colors = [];
+            for (let i = 0; i < H; i++) {
+                labels.push(i);
+                if (i < d) {
+                    // Frozen region - blue
+                    colors.push('rgba(26, 58, 110, 0.8)');
+                } else if (i < overlapEnd) {
+                    // Soft mask region - gradient from blue to yellow
+                    const t = (i - d) / Math.max(overlapEnd - d, 1);
+                    const r = Math.round(26 + (244 - 26) * t);
+                    const g = Math.round(58 + (196 - 58) * t);
+                    const b = Math.round(110 + (48 - 110) * t);
+                    colors.push(`rgba(${r}, ${g}, ${b}, 0.8)`);
+                } else {
+                    // Fresh region - gray
+                    colors.push('rgba(139, 115, 85, 0.3)');
+                }
+            }
+
+            prefixWeightsChart.data.labels = labels;
+            prefixWeightsChart.data.datasets[0].data = weights;
+            prefixWeightsChart.data.datasets[0].backgroundColor = colors;
+            prefixWeightsChart.update('none');
+
+            // Update HTML legend below the chart
+            const hardMaskWidth = d;
+            const softMaskWidth = overlapEnd - d;
+            const freshWidth = H - overlapEnd;
+
+            const hardMaskEl = document.getElementById('legend-hard-mask');
+            const softMaskEl = document.getElementById('legend-soft-mask');
+            const freshEl = document.getElementById('legend-fresh');
+
+            // Set flex values for proportional widths
+            hardMaskEl.style.flex = hardMaskWidth;
+            softMaskEl.style.flex = softMaskWidth;
+            freshEl.style.flex = freshWidth;
+
+            // Hide segments with zero width
+            hardMaskEl.style.display = hardMaskWidth > 0 ? 'flex' : 'none';
+            softMaskEl.style.display = softMaskWidth > 0 ? 'flex' : 'none';
+            freshEl.style.display = freshWidth > 0 ? 'flex' : 'none';
+
+            // Update range labels
+            document.getElementById('legend-hard-range').textContent = `[0, ${d})`;
+            document.getElementById('legend-soft-range').textContent = `[${d}, ${overlapEnd})`;
+            document.getElementById('legend-fresh-range').textContent = `[${overlapEnd}, ${H})`;
+        }
+
+        // Update RTC parameters panel (with debouncing to prevent flashing)
+        function updateRtcPanel(rtcParams, prefixWeights) {
+            if (!rtcParams) {
+                // No RTC data - show defaults (only if we had data before)
+                if (lastRtcParamsJson !== null) {
+                    document.getElementById('rtc-H').textContent = '--';
+                    document.getElementById('rtc-d').textContent = '--';
+                    document.getElementById('rtc-overlap-end').textContent = '--';
+                    document.getElementById('rtc-sigma-d').textContent = '--';
+                    document.getElementById('rtc-schedule').textContent = '--';
+                    document.getElementById('rtc-max-gw').textContent = '--';
+                    document.getElementById('rtc-frozen-range').textContent = '--';
+                    document.getElementById('rtc-softmask-range').textContent = '--';
+                    document.getElementById('rtc-fresh-range').textContent = '--';
+                    lastRtcParamsJson = null;
+                }
+                return;
+            }
+
+            // Debounce: only update DOM if parameters actually changed
+            const newParamsJson = JSON.stringify(rtcParams);
+            const paramsChanged = newParamsJson !== lastRtcParamsJson;
+
+            if (paramsChanged) {
+                lastRtcParamsJson = newParamsJson;
+                currentRtcParams = rtcParams;
+
+                const H = rtcParams.H || 0;
+                const d = rtcParams.d || 0;
+                const overlapEnd = rtcParams.overlap_end || H;
+                const sigmaD = rtcParams.sigma_d;
+                const schedule = rtcParams.schedule || 'linear';
+                const maxGw = rtcParams.max_guidance_weight;
+
+                // Log schedule info for debugging exp decay
+                /**
+                console.log(`[RTC] Schedule: ${schedule}, H: ${H}, d: ${d}, overlap_end: ${overlapEnd}`);
+                if (prefixWeights && prefixWeights.length > 0) {
+                    // Sample a few weights to verify exp decay is applied
+                    const sampleIndices = [d, Math.floor((d + overlapEnd) / 2), overlapEnd - 1].filter(i => i >= 0 && i < prefixWeights.length);
+                    const samples = sampleIndices.map(i => `w[${i}]=${prefixWeights[i].toFixed(3)}`);
+                    console.log(`[RTC] Prefix weight samples (${schedule}): ${samples.join(', ')}`);
+                }
+                */
+
+                // Update parameter values
+                document.getElementById('rtc-H').textContent = H;
+                document.getElementById('rtc-d').textContent = d;
+                document.getElementById('rtc-overlap-end').textContent = overlapEnd;
+                document.getElementById('rtc-sigma-d').textContent = sigmaD != null ? sigmaD.toFixed(2) : 'auto';
+                document.getElementById('rtc-schedule').textContent = schedule;
+                document.getElementById('rtc-max-gw').textContent = maxGw != null ? maxGw : 'auto';
+
+                // Update region ranges
+                document.getElementById('rtc-frozen-range').textContent = `[0, ${d}) = ${d} actions`;
+                document.getElementById('rtc-softmask-range').textContent = `[${d}, ${overlapEnd}) = ${overlapEnd - d} actions`;
+                document.getElementById('rtc-fresh-range').textContent = `[${overlapEnd}, ${H}) = ${H - overlapEnd} actions`;
+            }
+
+            // Always update prefix weights chart (the chart itself handles animation)
+            if (prefixWeights) {
+                updatePrefixWeightsChart(prefixWeights, rtcParams);
+            }
+        }
+
+        // Compute per-joint max acceleration in a chunk
+        function computePerJointMaxAcceleration(actions) {
+            if (!actions || actions.length < 3) return null;
+            const numJoints = actions[0].length;
+            const maxAccel = new Array(numJoints).fill(0);
+
+            for (let t = 1; t < actions.length - 1; t++) {
+                for (let d = 0; d < numJoints; d++) {
+                    const accel = Math.abs(actions[t+1][d] - 2*actions[t][d] + actions[t-1][d]);
+                    maxAccel[d] = Math.max(maxAccel[d], accel);
+                }
+            }
+            return maxAccel;
+        }
+
+        // Find overlap range between two chunks
+        function findOverlapRange(prevChunk, newChunk) {
+            const prevStart = prevChunk.source_step;
+            const prevEnd = prevChunk.source_step + prevChunk.actions.length - 1;
+            const newStart = newChunk.source_step;
+            const newEnd = newChunk.source_step + newChunk.actions.length - 1;
+
+            const overlapStart = Math.max(prevStart, newStart);
+            const overlapEnd = Math.min(prevEnd, newEnd);
+
+            if (overlapStart > overlapEnd) {
+                return null;  // No overlap
+            }
+
+            return { start: overlapStart, end: overlapEnd };
+        }
+
+        // Compute metrics when a new chunk arrives
+        function computeAndStoreMetrics(prevChunk, newChunk) {
+            const timestamp = Date.now();
+
+            if (sessionStartTime === null) {
+                sessionStartTime = timestamp;
+            }
+
+            // Find overlap range
+            const overlap = findOverlapRange(prevChunk, newChunk);
+
+            if (!overlap) {
+                debug(`No overlap: prev=[${prevChunk.source_step}, ${prevChunk.source_step + prevChunk.actions.length - 1}], new=[${newChunk.source_step}, ${newChunk.source_step + newChunk.actions.length - 1}]`);
+                return null;
+            }
+
+            // Compare at the START of the overlap (where we'd switch chunks)
+            // This is typically where the new chunk starts
+            const compareStep = overlap.start;
+
+            const prevIdx = compareStep - prevChunk.source_step;
+            const newIdx = compareStep - newChunk.source_step;
+
+            debug(`Overlap [${overlap.start}-${overlap.end}], comparing at step ${compareStep}: prevIdx=${prevIdx}, newIdx=${newIdx}`);
+
+            // Bounds check
+            if (prevIdx < 0 || prevIdx >= prevChunk.actions.length ||
+                newIdx < 0 || newIdx >= newChunk.actions.length) {
+                debug(`Bounds check failed: prevIdx=${prevIdx}/${prevChunk.actions.length}, newIdx=${newIdx}/${newChunk.actions.length}`);
+                return null;
+            }
+
+            const prevAction = prevChunk.actions[prevIdx];
+            const newAction = newChunk.actions[newIdx];
+
+            if (!prevAction || !newAction) {
+                debug(`Missing action data at indices`);
+                return null;
+            }
+
+            // Compute per-joint discrepancy (absolute difference)
+            const perJointDiscrepancy = prevAction.map((v, i) => Math.abs(v - newAction[i]));
+            const avgDiscrepancy = mean(perJointDiscrepancy);
+
+            debug(`Discrepancy computed: avg=${avgDiscrepancy.toFixed(4)}, perJoint=[${perJointDiscrepancy.map(v => v.toFixed(3)).join(', ')}]`);
+
+            // Compute per-joint max acceleration in new chunk
+            const perJointMaxAccel = computePerJointMaxAcceleration(newChunk.actions);
+            const avgMaxAccel = perJointMaxAccel ? mean(perJointMaxAccel) : 0;
+
+            // Store in session metrics
+            sessionMetrics.discrepancies.push(avgDiscrepancy);
+            sessionMetrics.accelerations.push(avgMaxAccel);
+
+            // Compute rolling average and store for chart
+            const rollingAvgDisc = mean(sessionMetrics.discrepancies);
+            const rollingAvgAccel = mean(sessionMetrics.accelerations);
+            const timeOffset = (timestamp - sessionStartTime) / 1000;
+
+            sessionMetrics.rollingAvgHistory.push({
+                timeOffset,
+                discrepancy: rollingAvgDisc,
+                acceleration: rollingAvgAccel
+            });
+
+            // Prune chart history if too long
+            while (sessionMetrics.rollingAvgHistory.length > MAX_ROLLING_AVG_POINTS) {
+                sessionMetrics.rollingAvgHistory.shift();
+            }
+
+            // Auto-calibrate thresholds
+            if (sessionMetrics.discrepancies.length > 5) {
+                const sorted = [...sessionMetrics.discrepancies].sort((a, b) => a - b);
+                const medianDisc = sorted[Math.floor(sorted.length / 2)];
+                discrepancyThresholds.warn = medianDisc * 1.5;
+                discrepancyThresholds.critical = medianDisc * 2.5;
+            }
+            if (sessionMetrics.accelerations.length > 5) {
+                const sorted = [...sessionMetrics.accelerations].sort((a, b) => a - b);
+                const medianAccel = sorted[Math.floor(sorted.length / 2)];
+                accelerationThresholds.warn = medianAccel * 1.5;
+                accelerationThresholds.critical = medianAccel * 2.5;
+            }
+
+            return { perJointDiscrepancy, avgDiscrepancy, perJointMaxAccel, avgMaxAccel };
+        }
+
+        // Get session stats
+        function getSessionStats() {
+            if (sessionMetrics.discrepancies.length === 0) {
+                return {
+                    meanDiscrepancy: null,
+                    maxDiscrepancy: null,
+                    meanAcceleration: null,
+                    maxAcceleration: null,
+                    sampleCount: 0,
+                };
+            }
+
+            return {
+                meanDiscrepancy: mean(sessionMetrics.discrepancies),
+                maxDiscrepancy: Math.max(...sessionMetrics.discrepancies),
+                meanAcceleration: mean(sessionMetrics.accelerations),
+                maxAcceleration: Math.max(...sessionMetrics.accelerations),
+                sampleCount: sessionMetrics.discrepancies.length,
+            };
+        }
+
+        // Update the session summary panel
+        function updateSummaryPanel() {
+            const stats = getSessionStats();
+
+            const meanDiscEl = document.getElementById('summary-disc-mean');
+            const maxDiscEl = document.getElementById('summary-disc-max');
+            const meanAccelEl = document.getElementById('summary-accel-mean');
+            const maxAccelEl = document.getElementById('summary-accel-max');
+            const samplesEl = document.getElementById('summary-samples');
+
+            if (meanDiscEl) meanDiscEl.textContent = formatNumber(stats.meanDiscrepancy);
+            if (maxDiscEl) maxDiscEl.textContent = formatNumber(stats.maxDiscrepancy);
+            if (meanAccelEl) meanAccelEl.textContent = formatNumber(stats.meanAcceleration);
+            if (maxAccelEl) maxAccelEl.textContent = formatNumber(stats.maxAcceleration);
+            if (samplesEl) samplesEl.textContent = stats.sampleCount;
+
+            // Color code based on thresholds
+            if (meanDiscEl) {
+                meanDiscEl.className = 'summary-metric-value';
+                if (stats.meanDiscrepancy !== null) {
+                    if (stats.meanDiscrepancy > discrepancyThresholds.critical) {
+                        meanDiscEl.classList.add('bad');
+                    } else if (stats.meanDiscrepancy > discrepancyThresholds.warn) {
+                        meanDiscEl.classList.add('warning');
+                    } else {
+                        meanDiscEl.classList.add('good');
+                    }
+                }
+            }
+
+            if (meanAccelEl) {
+                meanAccelEl.className = 'summary-metric-value';
+                if (stats.meanAcceleration !== null) {
+                    if (stats.meanAcceleration > accelerationThresholds.critical) {
+                        meanAccelEl.classList.add('bad');
+                    } else if (stats.meanAcceleration > accelerationThresholds.warn) {
+                        meanAccelEl.classList.add('warning');
+                    } else {
+                        meanAccelEl.classList.add('good');
+                    }
+                }
+            }
+
+            // Update rolling average chart
+            updateRollingAvgChart();
+        }
+
+        // Create/update per-joint bar charts
+        function updateJointBars(containerId, values, avgId, thresholds) {
+            const container = document.getElementById(containerId);
+            const avgEl = document.getElementById(avgId);
+
+            if (!values || values.length === 0) {
+                container.innerHTML = '<div style="color: #8b7355; font-size: 12px;">Waiting for data...</div>';
+                avgEl.textContent = '--';
+                return;
+            }
+
+            const avg = mean(values);
+            avgEl.textContent = formatNumber(avg);
+
+            // Find max for scaling (use threshold if values are small)
+            const maxVal = Math.max(...values, thresholds.warn, 0.001);
+
+            let html = '';
+            for (let i = 0; i < values.length; i++) {
+                const val = values[i];
+                const pct = Math.min((val / maxVal) * 100, 100);
+
+                let barClass = '';
+                if (val > thresholds.critical) {
+                    barClass = 'critical';
+                } else if (val > thresholds.warn) {
+                    barClass = 'high';
+                }
+
+                html += `
+                    <div class="joint-bar-row">
+                        <span class="joint-bar-label">Joint ${i}</span>
+                        <div class="joint-bar-container">
+                            <div class="joint-bar ${barClass}" style="width: ${pct}%"></div>
+                        </div>
+                        <span class="joint-bar-value">${formatNumber(val)}</span>
+                    </div>
+                `;
+            }
+            container.innerHTML = html;
+        }
+
+        // Initialize trajectory charts
+        function initCharts(numDims) {
+            const grid = document.getElementById('charts-grid');
+            grid.innerHTML = '';
+            charts = [];
+
+            for (let d = 0; d < numDims; d++) {
+                const container = document.createElement('div');
+                container.className = 'chart-container';
+                container.innerHTML = `
+                    <h3>Joint ${d}</h3>
+                    <canvas id="chart-${d}"></canvas>
+                `;
+                grid.appendChild(container);
+
+                const ctx = document.getElementById(`chart-${d}`).getContext('2d');
+                const chart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: [],
+                        datasets: []
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        animation: false,
+                        plugins: {
+                            legend: {
+                                display: false
+                            }
+                        },
+                        scales: {
+                            x: {
+                                type: 'linear',
+                                title: {
+                                    display: true,
+                                    text: 'Step #',
+                                    color: '#1a1a1a',
+                                    font: { weight: 'bold' }
+                                },
+                                ticks: { color: '#5a5a5a' },
+                                grid: { color: '#d0c8b8' }
+                            },
+                            y: {
+                                title: {
+                                    display: true,
+                                    text: 'Position',
+                                    color: '#1a1a1a',
+                                    font: { weight: 'bold' }
+                                },
+                                ticks: { color: '#5a5a5a' },
+                                grid: { color: '#d0c8b8' }
+                            }
+                        },
+                        elements: {
+                            point: {
+                                radius: 0
+                            },
+                            line: {
+                                borderWidth: 3
+                            }
+                        }
+                    }
+                });
+                charts.push(chart);
+            }
+        }
+
+        // Initialize executed action charts
+        function initExecutedCharts(numDims) {
+            const grid = document.getElementById('executed-charts-grid');
+            grid.innerHTML = '';
+            executedCharts = [];
+
+            for (let d = 0; d < numDims; d++) {
+                const container = document.createElement('div');
+                container.className = 'chart-container';
+                container.innerHTML = `
+                    <h3>Executed Joint ${d}</h3>
+                    <canvas id="executed-chart-${d}"></canvas>
+                `;
+                grid.appendChild(container);
+
+                const ctx = document.getElementById(`executed-chart-${d}`).getContext('2d');
+                const chart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: [],
+                        datasets: [{
+                            label: 'Executed',
+                            data: [],
+                            borderColor: '#2d6a4f',  // Deep green for executed
+                            backgroundColor: 'transparent',
+                            tension: 0.1,
+                            borderWidth: 3
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        animation: false,
+                        plugins: {
+                            legend: {
+                                display: false
+                            }
+                        },
+                        scales: {
+                            x: {
+                                type: 'linear',
+                                title: {
+                                    display: true,
+                                    text: 'Step #',
+                                    color: '#1a1a1a',
+                                    font: { weight: 'bold' }
+                                },
+                                ticks: { color: '#5a5a5a' },
+                                grid: { color: '#d0c8b8' }
+                            },
+                            y: {
+                                title: {
+                                    display: true,
+                                    text: 'Position',
+                                    color: '#1a1a1a',
+                                    font: { weight: 'bold' }
+                                },
+                                ticks: { color: '#5a5a5a' },
+                                grid: { color: '#d0c8b8' }
+                            }
+                        },
+                        elements: {
+                            point: {
+                                radius: 0
+                            },
+                            line: {
+                                borderWidth: 3
+                            }
+                        }
+                    }
+                });
+                executedCharts.push(chart);
+            }
+        }
+
+        // Update executed action charts
+        function updateExecutedCharts() {
+            if (executedCharts.length === 0 || executedActions.length === 0) return;
+
+            for (let d = 0; d < executedCharts.length; d++) {
+                const data = executedActions.map(ea => ({
+                    x: ea.step,
+                    y: ea.action[d]
+                }));
+
+                executedCharts[d].data.datasets[0].data = data;
+                executedCharts[d].update('none');
+            }
+        }
+
+        // Handle incoming executed action
+        function onExecutedAction(data) {
+            executedCount++;
+
+            // Initialize executed charts if needed
+            if (data.action && data.action.length !== executedCharts.length) {
+                initExecutedCharts(data.action.length);
+            }
+
+            // Add to rolling buffer
+            executedActions.push({
+                step: data.step,
+                action: data.action,
+                timestamp: data.timestamp
+            });
+
+            // Keep only last N actions
+            while (executedActions.length > MAX_EXECUTED_ACTIONS) {
+                executedActions.shift();
+            }
+
+            // Update charts
+            updateExecutedCharts();
+        }
+
+        // Update trajectory charts with new chunk
+        function updateCharts() {
+            if (charts.length === 0 || chunks.length === 0) return;
+
+            // Build annotations for transition lines (where new actions replace old)
+            const annotations = {};
+            for (let i = 0; i < chunks.length; i++) {
+                const chunk = chunks[i];
+                const transitionStep = chunk.source_step + chunk.frozen_len;
+                const color = CHUNK_COLORS[chunk.colorIndex % CHUNK_COLORS.length];
+
+                // Transition line (dashed) - where new actions replace old
+                annotations[`transition-${i}`] = {
+                    type: 'line',
+                    xMin: transitionStep,
+                    xMax: transitionStep,
+                    borderColor: color,
+                    borderWidth: 2,
+                    borderDash: [5, 5],
+                    label: {
+                        display: false
+                    }
+                };
+            }
+
+            for (let d = 0; d < charts.length; d++) {
+                const datasets = [];
+
+                for (const chunk of chunks) {
+                    const data = [];
+                    for (let t = 0; t < chunk.actions.length; t++) {
+                        const step = chunk.source_step + t;
+                        const value = chunk.actions[t][d];
+                        data.push({ x: step, y: value });
+                    }
+
+                    datasets.push({
+                        label: `Step ${chunk.source_step}`,
+                        data: data,
+                        borderColor: CHUNK_COLORS[chunk.colorIndex % CHUNK_COLORS.length],
+                        backgroundColor: 'transparent',
+                        tension: 0.1
+                    });
+                }
+
+                charts[d].data.datasets = datasets;
+                charts[d].options.plugins.annotation = { annotations };
+                charts[d].update('none');
+            }
+
+            updateLegend();
+        }
+
+        // Update legend
+        function updateLegend() {
+            const legend = document.getElementById('legend-items');
+            legend.innerHTML = '';
+
+            for (const chunk of chunks) {
+                const color = CHUNK_COLORS[chunk.colorIndex % CHUNK_COLORS.length];
+                const item = document.createElement('div');
+                item.className = 'legend-item';
+                item.innerHTML = `
+                    <div class="legend-color" style="background: ${color}"></div>
+                    <span>Step ${chunk.source_step} (frozen: ${chunk.frozen_len})</span>
+                `;
+                legend.appendChild(item);
+            }
+        }
+
+        // Update stats
+        function updateStats() {
+            const stats = document.getElementById('stats');
+            const now = Date.now();
+            const timeSinceLastChunk = lastChunkTime ? ((now - lastChunkTime) / 1000).toFixed(1) : 'N/A';
+            const sessionDuration = sessionStartTime ? ((now - sessionStartTime) / 1000).toFixed(0) : '0';
+
+            stats.innerHTML = `
+                Chunks received: ${chunkCount} |
+                Chunks displayed: ${chunks.length} |
+                Executed actions: ${executedCount} (displayed: ${executedActions.length}) |
+                Time since last chunk: ${timeSinceLastChunk}s |
+                Session duration: ${sessionDuration}s |
+                Metrics samples: ${getSessionStats().sampleCount}
+            `;
+
+            updateSummaryPanel();
+        }
+
+        // Handle incoming chunk
+        function onChunk(data) {
+            chunkCount++;
+            lastChunkTime = Date.now();
+
+            debug(`Chunk #${chunkCount}: source_step=${data.source_step}, actions=${data.actions.length}, frozen_len=${data.frozen_len}`);
+
+            // Initialize charts if needed
+            if (data.actions.length > 0 && data.actions[0].length !== numDimensions) {
+                numDimensions = data.actions[0].length;
+                initCharts(numDimensions);
+                debug(`Initialized ${numDimensions} charts`);
+            }
+
+            // Update RTC panel with new data
+            updateRtcPanel(data.rtc_params, data.prefix_weights);
+
+            // Get previous chunk for metrics computation
+            const prevChunk = chunks.length > 0 ? chunks[chunks.length - 1] : null;
+
+            // Add new chunk
+            const colorIndex = chunkCount % CHUNK_COLORS.length;
+            const newChunk = {
+                source_step: data.source_step,
+                actions: data.actions,
+                frozen_len: data.frozen_len,
+                timestamp: data.timestamp,
+                colorIndex: colorIndex,
+                rtc_params: data.rtc_params,
+                prefix_weights: data.prefix_weights
+            };
+            chunks.push(newChunk);
+
+            // Compute metrics if we have a previous chunk
+            let currentMetrics = null;
+            if (prevChunk) {
+                currentMetrics = computeAndStoreMetrics(prevChunk, newChunk);
+            }
+
+            // Keep only last MAX_CHUNKS
+            while (chunks.length > MAX_CHUNKS) {
+                chunks.shift();
+            }
+
+            // Update UI
+            updateCharts();
+            updateStats();
+
+            // Update bar charts
+            if (currentMetrics) {
+                updateJointBars('disc-bars', currentMetrics.perJointDiscrepancy, 'disc-current-avg', discrepancyThresholds);
+                updateJointBars('accel-bars', currentMetrics.perJointMaxAccel, 'accel-current-avg', accelerationThresholds);
+            }
+            updateSummaryPanel();
+        }
+
+        // WebSocket connection
+        function connect() {
+            const statusEl = document.getElementById('status');
+            statusEl.className = 'status connecting';
+            statusEl.textContent = 'Connecting...';
+
+            const wsUrl = `ws://${window.location.hostname}:${WS_PORT}`;
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                statusEl.className = 'status connected';
+                statusEl.textContent = `Connected to ${wsUrl}`;
+                debug('WebSocket connected');
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'action_chunk') {
+                        onChunk(data);
+                    } else if (data.type === 'executed_action') {
+                        onExecutedAction(data);
+                    }
+                } catch (e) {
+                    debug(`Parse error: ${e.message}`);
+                }
+            };
+
+            ws.onclose = () => {
+                statusEl.className = 'status disconnected';
+                statusEl.textContent = 'Disconnected - reconnecting in 2s...';
+                debug('WebSocket closed, reconnecting...');
+                reconnectTimeout = setTimeout(connect, 2000);
+            };
+
+            ws.onerror = (error) => {
+                debug('WebSocket error');
+            };
+        }
+
+        // Initialize
+        initCharts(numDimensions);
+        initExecutedCharts(numDimensions);
+        initRollingAvgChart();
+        initPrefixWeightsChart();
+        connect();
+
+        // Update stats periodically
+        setInterval(updateStats, 1000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,1353 @@
+import logging
+import pickle  # nosec
+import threading
+import time
+from collections import deque
+from contextlib import suppress
+from dataclasses import asdict, dataclass
+from queue import Empty, Full, Queue
+from typing import Any
+
+import grpc
+import numpy as np
+from sortedcontainers import SortedDict
+
+from lerobot.robots.utils import make_robot_from_config
+from lerobot.transport import (
+    services_pb2,  # type: ignore
+    services_pb2_grpc,  # type: ignore
+)
+from lerobot.transport.utils import grpc_channel_options, send_bytes_in_chunks
+
+from .configs_drtc import RobotClientDrtcConfig
+from .constants import SUPPORTED_ROBOTS
+from .drtc_timed import DrtcAction, DrtcObservation
+from .helpers import (
+    RawObservation,
+    RemotePolicyConfig,
+    get_logger,
+    map_robot_keys_to_lerobot_features,
+    visualize_action_queue_size,
+)
+from .lww_register import LWWReader, LWWRegister
+from .utils.action_filter import (
+    ActionFilter,
+    ButterworthFilter,
+    FilterContext,
+    NoFilter,
+)
+from .utils.compression import encode_images_for_transport
+from .utils.latency_estimation import make_latency_estimator
+from .utils.metrics import DiagnosticMetrics, EvExecutedAction, ExperimentMetricsWriter, Metrics
+from .utils.simulation import (
+    DisconnectSimulator,
+    DropSimulator,
+    DuplicateSimulator,
+    MockRobot,
+    ReorderSimulator,
+)
+from .utils.trajectory_viz import TrajectoryVizClient
+
+
+@dataclass
+class ScheduledAction:
+    """An action scheduled for execution at a specific step.
+
+    Attributes:
+        action: The action tensor/array to execute.
+        src_control_step: The control-loop tick t that produced this action (freshness key).
+        chunk_start_step: The action step n_k where the source chunk starts (for RTC offset math).
+    """
+
+    action: np.ndarray
+    src_control_step: int
+    chunk_start_step: int
+
+
+@dataclass
+class MergeStats:
+    """Statistics from merging an action chunk into the schedule.
+
+    Used for tracking action discontinuity (L2 distance between old and new
+    actions at overlapping timesteps) to assess RTC smoothness.
+
+    Attributes:
+        overlap_count: Number of overlapping non-hard-masked actions compared.
+        mean_l2: Mean L2 distance across overlapping actions (0.0 if no overlap).
+        max_l2: Maximum L2 distance across overlapping actions (0.0 if no overlap).
+    """
+
+    overlap_count: int
+    mean_l2: float
+    max_l2: float
+
+
+class ActionSchedule:
+    def __init__(self):
+        self._schedule: SortedDict[int, ScheduledAction] = SortedDict()
+
+    def __len__(self) -> int:
+        return len(self._schedule)
+
+    def pop_front(self) -> tuple[int, np.ndarray, int, int] | None:
+        """Pop and return the first (lowest action step) scheduled action.
+
+        Returns:
+            Tuple of (step, action, src_control_step, chunk_start_step) or None if empty.
+        """
+        if not self._schedule:
+            return None
+        # SortedDict maintains sorted key order; pop first (lowest key) item
+        step, scheduled = self._schedule.popitem(0)
+        return step, scheduled.action, scheduled.src_control_step, scheduled.chunk_start_step
+
+    def get_masking_chunk_spans(
+        self, *, current_step: int, max_len: int
+    ) -> list[tuple[int, int, int]] | None:
+        """Get list of (src_control_step, start_idx, end_idx) spans for RTC masking prefix.
+
+        This returns information needed to look up raw actions in the server's cache
+        (keyed by src_control_step).  The offset within a cached chunk is computed as
+        ``step - scheduled.chunk_start_step``.
+
+        The prefix covers both hard mask and soft mask regions.
+        Handles prefixes that span multiple source chunks due to merging.
+
+        Args:
+            current_step: The current action step being executed.
+            max_len: Total number of actions to include (d + epsilon).
+
+        Returns:
+            List of (src_control_step, start_idx, end_idx) tuples in execution order,
+            or None if empty.  Each tuple specifies a contiguous slice from a cached
+            chunk on the server.
+        """
+        if max_len <= 0:
+            return None
+
+        chunks: list[tuple[int, int, int]] = []
+        current_src_control_step: int | None = None
+        current_start: int | None = None
+        current_end: int = 0
+        count = 0
+
+        for step, scheduled in self._schedule.items():
+            if step <= current_step:
+                continue
+
+            # Index of this action within its source chunk (offset by chunk_start_step)
+            chunk_idx = step - scheduled.chunk_start_step
+
+            if current_src_control_step is None:
+                # First action in prefix
+                current_src_control_step = scheduled.src_control_step
+                current_start = chunk_idx
+                current_end = chunk_idx + 1
+            elif scheduled.src_control_step == current_src_control_step and chunk_idx == current_end:
+                # Contiguous with current span (same source, consecutive index)
+                current_end = chunk_idx + 1
+            else:
+                # New span - save current and start new
+                if current_start is not None:
+                    chunks.append((current_src_control_step, current_start, current_end))
+                current_src_control_step = scheduled.src_control_step
+                current_start = chunk_idx
+                current_end = chunk_idx + 1
+
+            count += 1
+            if count >= max_len:
+                break
+
+        # Save final span
+        if current_src_control_step is not None and current_start is not None:
+            chunks.append((current_src_control_step, current_start, current_end))
+
+        return chunks if chunks else None
+
+    def get_size(self) -> int:
+        """Get the current schedule size."""
+        return len(self._schedule)
+
+    def is_empty(self) -> bool:
+        """Check if schedule is empty."""
+        return len(self._schedule) == 0
+
+    def merge(
+        self,
+        incoming_actions: list[DrtcAction],
+        src_control_step: int,
+        chunk_start_step: int,
+        current_action_step: int,
+        logger: logging.Logger | None = None,
+    ) -> MergeStats:
+        """Merge incoming actions using freshest-observation-wins strategy.
+
+        Args:
+            incoming_actions: List of DrtcAction from the server.
+            src_control_step: The control-loop tick t that produced this chunk (freshness key).
+            chunk_start_step: The action step n_k where this chunk starts.
+            current_action_step: The most recently executed action step (n*).
+            logger: Optional logger for debug output.
+
+        Returns:
+            MergeStats with L2 discrepancy metrics for overlapping actions.
+        """
+        # Use counters instead of per-action logging to avoid ~1ms per log call
+        stale_count = 0
+        inserted_count = 0
+        updated_count = 0
+
+        # Track L2 discrepancy for overlapping actions (non-hard-masked)
+        l2_distances: list[float] = []
+
+        for timed_action in incoming_actions:
+            step = timed_action.get_action_step()
+            action = timed_action.get_action()
+
+            # Skip stale actions (already executed)
+            if step <= current_action_step:
+                stale_count += 1
+                continue
+
+            # TODO - revisit this check
+            existing = self._schedule.get(step)
+            if existing is None:
+                self._schedule[step] = ScheduledAction(
+                    action=action, src_control_step=src_control_step, chunk_start_step=chunk_start_step
+                )
+                inserted_count += 1
+                continue
+
+            # Compute L2 discrepancy for ALL overlapping actions (for analysis metrics)
+            old_arr = np.asarray(existing.action, dtype=np.float32).reshape(-1)
+            new_arr = np.asarray(action, dtype=np.float32).reshape(-1)
+            if old_arr.shape == new_arr.shape and old_arr.size > 0:
+                l2 = float(np.linalg.norm(new_arr - old_arr))
+                l2_distances.append(l2)
+
+            if src_control_step > existing.src_control_step:
+                # Fresher observation wins (only for non-hard-masked actions)
+                self._schedule[step] = ScheduledAction(
+                    action=action, src_control_step=src_control_step, chunk_start_step=chunk_start_step
+                )
+                updated_count += 1
+
+        # Single summary log instead of per-action logs (saves ~20ms for 23 log calls)
+        if logger and stale_count:
+            logger.debug(
+                f"Merge stats: {stale_count} stale, {inserted_count} inserted, {updated_count} updated"
+            )
+
+        overlap_count = len(l2_distances)
+        if overlap_count > 0:
+            mean_l2 = float(np.mean(l2_distances))
+            max_l2 = float(np.max(l2_distances))
+        else:
+            mean_l2 = 0.0
+            max_l2 = 0.0
+
+        return MergeStats(overlap_count=overlap_count, mean_l2=mean_l2, max_l2=max_l2)
+
+    def clear(self) -> None:
+        """Clear all scheduled actions."""
+        self._schedule.clear()
+
+
+@dataclass
+class ObservationRequest:
+    """Request for an observation capture, sent from main thread to obs sender.
+
+    Attributes:
+        control_step: The control-loop tick t when this request was made (LWW key).
+        chunk_start_step: The action step n_k where the resulting chunk should start.
+        task: The task description string.
+    """
+
+    control_step: int
+    chunk_start_step: int
+    task: str
+    rtc_meta: dict[str, Any] | None = None
+
+
+@dataclass
+class ReceivedActionChunk:
+    """Action chunk received from the server with metadata.
+
+    Attributes:
+    actions: List of DrtcAction from the server.
+        src_control_step: The control-loop tick t that produced this chunk.
+        chunk_start_step: The action step n_k where this chunk starts.
+        measured_latency: Measured round-trip time for this chunk.
+        obs_sent_ts: Wall-clock timestamp when the client sent the observation (Unix seconds).
+        server_obs_received_ts: Wall-clock timestamp when the server received the observation.
+        server_action_sent_ts: Wall-clock timestamp when the server sent the action chunk.
+        action_received_ts: Wall-clock timestamp when the client received the action chunk.
+    """
+
+    actions: list[DrtcAction]
+    src_control_step: int
+    chunk_start_step: int
+    measured_latency: float
+    obs_sent_ts: float | None = None
+    server_obs_received_ts: float | None = None
+    server_action_sent_ts: float | None = None
+    action_received_ts: float | None = None
+
+
+class RobotClientDrtc:
+    prefix = "robot_client_drtc"
+    logger = get_logger(prefix)
+
+    @staticmethod
+    def _ms(seconds: float) -> float:
+        return seconds * 1000.0
+
+    def __init__(self, config: RobotClientDrtcConfig):
+        """Initialize the DRTC robot client.
+
+        Args:
+            config: Configuration for the robot client.
+        """
+        self.config = config
+
+        # Use mock robot when no physical robot is available
+        if config.use_mock_robot:
+            self.robot = MockRobot()
+            self.robot.connect()
+            # Mock features for simulation
+            lerobot_features = {
+                "observation.state": list(self.robot.state_features),
+                "action": list(self.robot.action_features),
+            }
+        else:
+            self.robot = make_robot_from_config(config.robot)
+            self.robot.connect()
+            lerobot_features = map_robot_keys_to_lerobot_features(self.robot)
+
+        self._obs_drop_sim = DropSimulator(config=config.drop_obs_config)
+        self._action_drop_sim = DropSimulator(config=config.drop_action_config)
+        self._obs_dup_sim = DuplicateSimulator(config=config.dup_obs_config)
+        self._action_dup_sim = DuplicateSimulator(config=config.dup_action_config)
+        self._obs_reorder_sim = ReorderSimulator(config=config.reorder_obs_config)
+        self._action_reorder_sim = ReorderSimulator(config=config.reorder_action_config)
+        self._disconnect_sim = DisconnectSimulator(config=config.disconnect_config)
+
+        self.server_address = config.server_address
+        self.policy_config = RemotePolicyConfig(
+            config.policy_type,
+            config.pretrained_name_or_path,
+            lerobot_features,
+            config.actions_per_chunk,
+            config.policy_device,
+            rtc_enabled=config.rtc_enabled,
+            rtc_max_guidance_weight=config.rtc_max_guidance_weight,
+            rtc_prefix_attention_schedule=config.rtc_prefix_attention_schedule,
+            rtc_sigma_d=config.rtc_sigma_d,
+            rtc_full_trajectory_alignment=config.rtc_full_trajectory_alignment,
+            num_flow_matching_steps=config.num_flow_matching_steps,
+            spikes=config.spikes,
+            diagnostics_verbose=config.metrics_diagnostic_verbose,
+        )
+
+        self.channel = grpc.insecure_channel(
+            self.server_address, grpc_channel_options(initial_backoff=f"{config.environment_dt:.4f}s")
+        )
+        self.stub = services_pb2_grpc.AsyncInferenceStub(self.channel)
+
+        # Shutdown coordination
+        self.shutdown_event = threading.Event()
+        self._active_action_stream: grpc.Future | None = None  # Cancel on stop to unblock action_receiver
+
+        # Action state: n(t), initialized to -1 per algorithm.
+        # Note: Only the main control loop thread reads/writes action_step.
+        self.action_step: int = -1
+
+        # Control-loop tick counter t ∈ ℕ (monotone, incremented every tick).
+        # Used as the LWW logical clock so that dropped messages never stall watermarks.
+        self.control_step: int = 0
+
+        # Latency estimation (configurable: JK or max_last_10)
+        # Upper bound: d <= H/2 per RTC constraint (with s = d, d <= H - s becomes d <= H/2)
+        self.latency_estimator = make_latency_estimator(
+            kind=config.latency_estimator_type,
+            fps=config.fps,
+            alpha=config.latency_alpha,
+            beta=config.latency_beta,
+            k=config.latency_k,
+            action_chunk_size=config.actions_per_chunk,
+            s_min=config.s_min,
+        )
+
+        # Action schedule (replaces Queue with OrderedDict)
+        self.action_schedule = ActionSchedule()
+
+        # Cool-down counter O^c(t).
+        # Note: Only the main control loop thread reads/writes obs_cooldown.
+        self.obs_cooldown: int = 0
+
+        # SPSC Mailboxes (one-slot queues)
+        # Observation request register: main thread -> observation sender
+        self._obs_request_reg: LWWRegister[ObservationRequest | None] = LWWRegister(
+            initial_control_step=-1, initial_value=None
+        )
+
+        # Action register: action receiver -> main thread
+        self._action_reg: LWWRegister[ReceivedActionChunk | None] = LWWRegister(
+            initial_control_step=-1, initial_value=None
+        )
+        self._action_reader: LWWReader[ReceivedActionChunk | None] = self._action_reg.reader()
+
+        # Synchronization barrier for thread startup
+        self.start_barrier = threading.Barrier(3)  # 3 threads: main, obs sender, action receiver
+
+        # Debug tracking (bounded to ~5 min at control rate to prevent unbounded growth)
+        _max_queue_history = self.config.fps * 300  # 5 minutes
+        self.action_queue_sizes: deque[int] = deque(maxlen=_max_queue_history)
+
+        # Metrics (two categories):
+        # - experiment: written to disk (CSV + trajectory JSON) when metrics_path is set
+        # - diagnostic: periodic console output (avg/max timings) when enabled
+        diag = DiagnosticMetrics(
+            fps=config.fps,
+            window_s=config.metrics_diagnostic_window_s,
+            interval_s=config.metrics_diagnostic_interval_s,
+            enabled=config.metrics_diagnostic_enabled,
+            verbose=config.metrics_diagnostic_verbose,
+            prefix="DIAG",
+        )
+        diag.start()
+
+        exp: ExperimentMetricsWriter | None = None
+        if config.metrics_path:
+            exp = ExperimentMetricsWriter(
+                path=config.metrics_path,
+                simulation_config=self._build_simulation_config(),
+                experiment_config=self._build_experiment_config(),
+            )
+
+        self._metrics = Metrics(experiment=exp, diagnostic=diag)
+
+        # Trajectory visualization: send chunks to policy server via gRPC
+        # Uses a queue + background thread to avoid blocking the control loop
+        self._trajectory_chunk_queue: Queue[services_pb2.TrajectoryChunk] = Queue(maxsize=10)
+        self._trajectory_sender_thread: threading.Thread | None = None
+        self._trajectory_viz_client: TrajectoryVizClient | None = None
+        if config.trajectory_viz_enabled:
+            self._trajectory_sender_thread = threading.Thread(
+                target=self._trajectory_chunk_sender,
+                name="trajectory_chunk_sender",
+                daemon=True,
+            )
+            self._trajectory_sender_thread.start()
+
+            # WebSocket client for sending executed actions directly to viz server
+            self._trajectory_viz_client = TrajectoryVizClient(ws_url=config.trajectory_viz_ws_url)
+            self._trajectory_viz_client.start()
+
+        # Action filter (class-based, with optional hard-mask lookahead)
+        self._action_filter: ActionFilter = self._create_action_filter()
+
+    @property
+    def running(self) -> bool:
+        return not self.shutdown_event.is_set()
+
+    @property
+    def current_action_step(self) -> int:
+        """Get the most recently executed action step n*(t).
+
+        Note: Only the main control loop thread should access this property.
+        """
+        return max(self.action_step, -1)
+
+    def _create_action_filter(self) -> ActionFilter:
+        """Create the action filter based on configuration.
+
+        Returns:
+            Configured ActionFilter instance.
+        """
+        cfg = self.config
+        mode = cfg.action_filter_mode
+
+        if mode == "none":
+            return NoFilter()
+        elif mode == "butterworth":
+            return ButterworthFilter(
+                cutoff=cfg.action_filter_butterworth_cutoff,
+                order=cfg.action_filter_butterworth_order,
+                fps=cfg.fps,
+                gain=cfg.action_filter_gain,
+                past_buffer_size=cfg.action_filter_past_buffer_size,
+            )
+        else:
+            return NoFilter()
+
+    def start(self) -> bool:
+        """Start the robot client and connect to the policy server."""
+        try:
+            t_total_start = time.perf_counter()
+
+            # Server handshake
+            t_ready_start = time.perf_counter()
+            self.stub.Ready(services_pb2.Empty())
+            t_ready_done = time.perf_counter()
+            self._metrics.diagnostic.timing_s("ready_rpc_ms", t_ready_done - t_ready_start)
+
+            # Send policy configuration
+            policy_config_bytes = pickle.dumps(self.policy_config)
+            policy_setup = services_pb2.PolicySetup(data=policy_config_bytes)
+
+            t_policy_rpc_start = time.perf_counter()
+            self.stub.SendPolicyInstructions(policy_setup)
+            t_policy_rpc_done = time.perf_counter()
+            self._metrics.diagnostic.timing_s("policy_rpc_ms", t_policy_rpc_done - t_policy_rpc_start)
+
+            self.shutdown_event.clear()
+
+            # Seed cooldown with s_min so the trigger gate works before the
+            # first real RTT measurement.  The estimator itself stays unseeded;
+            # it will initialise from the first real measurement (zero variance).
+            self.obs_cooldown = self.config.s_min + self.config.epsilon
+            self._metrics.diagnostic.timing_s("client_init_total_ms", time.perf_counter() - t_total_start)
+
+            return True
+
+        except grpc.RpcError as e:
+            self.logger.error(f"Failed to connect to policy server: {e}")
+            return False
+
+    def stop(self) -> None:
+        """Stop the robot client."""
+        self.shutdown_event.set()
+
+        # Cancel active gRPC action stream so action_receiver unblocks promptly
+        stream = self._active_action_stream
+        if stream is not None:
+            with suppress(Exception):
+                stream.cancel()
+            self._active_action_stream = None
+
+        # Flush experiment metrics if enabled (disk output; behavior unchanged)
+        if self._metrics.experiment is not None and self.config.metrics_path:
+            self._metrics.experiment.flush(self.config.metrics_path)
+
+        # Stop trajectory viz client if enabled
+        if self._trajectory_viz_client is not None:
+            self._trajectory_viz_client.stop()
+
+        self.robot.disconnect()
+
+        self.channel.close()
+        self._metrics.diagnostic.stop()
+
+    def signal_stop(self) -> None:
+        """Signal the client to stop without disconnecting the robot.
+
+        Use this when you want to stop the control loop but keep the robot
+        and server connection alive for subsequent experiments.
+        """
+        self.shutdown_event.set()
+
+        # Cancel active gRPC action stream so action_receiver unblocks promptly
+        stream = self._active_action_stream
+        if stream is not None:
+            with suppress(Exception):
+                stream.cancel()
+            self._active_action_stream = None
+
+        # Flush experiment metrics if enabled (disk output; behavior unchanged)
+        if self._metrics.experiment is not None and self.config.metrics_path:
+            try:
+                self._metrics.experiment.flush(self.config.metrics_path)
+            except Exception as e:
+                import traceback as _tb
+
+                self.logger.error(f"Failed to flush experiment metrics: {e}")
+                _tb.print_exc()
+
+    def _build_experiment_config(self) -> dict:
+        """Build a serialisable dict of core experiment parameters.
+
+        Captures robot/hardware metadata, policy, DRTC, and
+        action-filter settings so the plotter can render a configuration
+        table in LaTeX output.
+        """
+        # Build camera summary from robot config
+        cameras = getattr(self.config.robot, "cameras", {})
+        num_cameras = len(cameras)
+        camera_parts = []
+        for name, cam_cfg in cameras.items():
+            w = getattr(cam_cfg, "width", "?")
+            h = getattr(cam_cfg, "height", "?")
+            camera_parts.append(f"{name} ({w}x{h})")
+        cameras_str = ", ".join(camera_parts) if camera_parts else "none"
+
+        return {
+            # Robot / hardware
+            "robot_type": self.config.robot_type,
+            "gpu": self.config.gpu,
+            "client_host": self.config.client_host,
+            "server_host": self.config.server_host,
+            "num_cameras": num_cameras,
+            "cameras": cameras_str,
+            # Policy
+            "policy_type": self.config.policy_type,
+            "pretrained_name_or_path": self.config.pretrained_name_or_path,
+            "chunk_size": self.config.actions_per_chunk,
+            "fps": self.config.fps,
+            "s_min": self.config.s_min,
+            "epsilon": self.config.epsilon,
+            "latency_estimator_type": self.config.latency_estimator_type,
+            "latency_alpha": self.config.latency_alpha,
+            "latency_beta": self.config.latency_beta,
+            "latency_k": self.config.latency_k,
+            # Flow matching / RTC
+            "num_flow_matching_steps": self.config.num_flow_matching_steps,
+            "rtc_enabled": self.config.rtc_enabled,
+            "rtc_max_guidance_weight": self.config.rtc_max_guidance_weight,
+            "rtc_prefix_attention_schedule": self.config.rtc_prefix_attention_schedule,
+            "rtc_sigma_d": self.config.rtc_sigma_d,
+            "rtc_full_trajectory_alignment": self.config.rtc_full_trajectory_alignment,
+            # Action filter
+            "filter_type": self.config.action_filter_mode,
+            "filter_cutoff": self.config.action_filter_butterworth_cutoff,
+            "gain": self.config.action_filter_gain,
+        }
+
+    def _build_simulation_config(self) -> dict:
+        """Build a serialisable dict of all configured simulation events.
+
+        Captures drop, duplicate, reorder, and spike configs so they can be
+        stored alongside trajectory data for post-hoc visualisation.
+        """
+
+        def _events_to_dicts(config, attr: str) -> list[dict]:
+            if config is None:
+                return []
+            return [asdict(ev) for ev in getattr(config, attr, [])]
+
+        return {
+            "drop_obs": _events_to_dicts(self.config.drop_obs_config, "drops"),
+            "drop_action": _events_to_dicts(self.config.drop_action_config, "drops"),
+            "dup_obs": _events_to_dicts(self.config.dup_obs_config, "duplicates"),
+            "dup_action": _events_to_dicts(self.config.dup_action_config, "duplicates"),
+            "reorder_obs": _events_to_dicts(self.config.reorder_obs_config, "reorders"),
+            "reorder_action": _events_to_dicts(self.config.reorder_action_config, "reorders"),
+            "disconnect": _events_to_dicts(self.config.disconnect_config, "disconnects"),
+            "spikes": list(self.config.spikes) if self.config.spikes else [],
+        }
+
+    # -------------------------------------------------------------------------
+    # Observation Sender Thread
+    # -------------------------------------------------------------------------
+
+    def observation_sender(self) -> None:
+        """Captures, encodes, and sends observations to the policy server."""
+        self.start_barrier.wait()
+
+        last_good_observation: RawObservation | None = None
+        last_good_observation_time: float | None = None
+        consecutive_capture_failures = 0
+        reader = self._obs_request_reg.reader()
+        idle_start = time.perf_counter()
+
+        while self.running:
+            try:
+                state, _, is_new = reader.read_if_newer()
+                request = state.value
+                if not is_new or request is None:
+                    time.sleep(0.01)
+                    continue
+
+                # Emit wait time (how long obs sender was idle waiting for work)
+                self._metrics.diagnostic.timing_s("obs_wait_ms", time.perf_counter() - idle_start)
+
+                t_capture_start = time.perf_counter()
+
+                # Capture observation from robot
+                used_fallback = False
+                start_rtt_timestamp = time.time()
+                try:
+                    raw_observation = self.robot.get_observation()
+                    last_good_observation = raw_observation
+                    last_good_observation_time = time.time()
+                    consecutive_capture_failures = 0
+                except Exception as e:
+                    consecutive_capture_failures += 1
+                    if (
+                        self.config.obs_fallback_on_failure
+                        and last_good_observation is not None
+                        and last_good_observation_time is not None
+                        and (time.time() - last_good_observation_time) <= self.config.obs_fallback_max_age_s
+                    ):
+                        used_fallback = True
+                        raw_observation = last_good_observation
+                        self._metrics.diagnostic.counter("obs_fallback_used", 1)
+                    else:
+                        self.logger.error(
+                            "Observation capture failed (%s). No usable fallback (consecutive_failures=%s).",
+                            e,
+                            consecutive_capture_failures,
+                        )
+                        continue
+
+                # Avoid mutating cached observation dict if we are reusing it.
+                if used_fallback:
+                    raw_observation = dict(raw_observation)
+                raw_observation["task"] = request.task
+                if request.rtc_meta is not None:
+                    raw_observation["__rtc__"] = request.rtc_meta
+
+                t_capture_done = time.perf_counter()
+
+                # Encode images for transport
+                t_encode_start = time.perf_counter()
+                encoded_observation, _ = encode_images_for_transport(raw_observation, jpeg_quality=60)
+                t_encode_done = time.perf_counter()
+                self._metrics.diagnostic.timing_s("obs_encode_ms", t_encode_done - t_encode_start)
+
+                # Create timed observation
+                timed_obs = DrtcObservation(
+                    timestamp=start_rtt_timestamp,
+                    control_step=request.control_step,
+                    observation=encoded_observation,
+                    chunk_start_step=request.chunk_start_step,
+                )
+
+                # Network disconnect simulation (blocks until window ends)
+                disconnect_sleep = self._disconnect_sim.wait_if_disconnected()
+                if disconnect_sleep > 0:
+                    self._metrics.diagnostic.counter("disconnect_sim", 1)
+                    if self._metrics.experiment is not None:
+                        self._metrics.experiment.record_sim_event("disconnect")
+                    continue
+
+                # Check if observation should be dropped (simulation/experiments)
+                if self._obs_drop_sim.should_drop():
+                    self._metrics.diagnostic.counter("obs_dropped_sim", 1)
+                    if self._metrics.experiment is not None:
+                        self._metrics.experiment.record_sim_event("obs_dropped")
+                    continue
+
+                # Reorder injection (hold-and-swap before send)
+                obs_items = self._obs_reorder_sim.process(timed_obs)
+                if not obs_items:
+                    self._metrics.diagnostic.counter("obs_reorder_held", 1)
+                    if self._metrics.experiment is not None:
+                        self._metrics.experiment.record_sim_event("obs_reorder_held")
+                    continue
+                if len(obs_items) > 1:
+                    self._metrics.diagnostic.counter("obs_reorder_swapped", 1)
+                    if self._metrics.experiment is not None:
+                        self._metrics.experiment.record_sim_event("obs_reorder_swapped")
+
+                # Send each item (1 normally, 2 when a swap completes)
+                t_send_start = time.perf_counter()
+                for obs_item in obs_items:
+                    self._send_observation(obs_item)
+
+                    # Duplicate injection (after send)
+                    if self._obs_dup_sim.should_duplicate():
+                        self._send_observation(obs_item)
+                        self._metrics.diagnostic.counter("obs_duplicated_sim", 1)
+                        if self._metrics.experiment is not None:
+                            self._metrics.experiment.record_sim_event("obs_duplicated")
+                t_send_done = time.perf_counter()
+                self._metrics.diagnostic.timing_s("obs_capture_ms", t_capture_done - t_capture_start)
+                self._metrics.diagnostic.timing_s("obs_send_ms", t_send_done - t_send_start)
+                idle_start = time.perf_counter()
+
+            except Exception as e:
+                self.logger.error("Error in observation sender: %s", e, exc_info=True)
+
+    def _send_observation(self, obs: DrtcObservation) -> bool:
+        """Send a timed observation to the policy server via gRPC."""
+        try:
+            observation_bytes = pickle.dumps(obs)
+            observation_iterator = send_bytes_in_chunks(
+                observation_bytes,
+                services_pb2.Observation,
+                log_prefix="[CLIENT] Observation",
+                silent=True,
+            )
+            _ = self.stub.SendObservations(observation_iterator)
+            return True
+        except grpc.RpcError as e:
+            self.logger.error(f"Error sending observation: {e}")
+            return False
+
+    # -------------------------------------------------------------------------
+    # Trajectory Chunk Sender Thread
+    # -------------------------------------------------------------------------
+
+    def _trajectory_chunk_sender(self) -> None:
+        """Background thread that sends trajectory chunks to the policy server."""
+        while self.running:
+            try:
+                # Wait for a chunk to send (with timeout to check shutdown)
+                try:
+                    chunk = self._trajectory_chunk_queue.get(timeout=0.1)
+                except Empty:
+                    continue
+
+                # Send to server (best-effort, don't block on errors)
+                try:
+                    self.stub.SendTrajectoryChunk(chunk)
+                except grpc.RpcError as e:
+                    self.logger.debug("Trajectory chunk send failed: %s", e)
+                    self._metrics.diagnostic.counter("trajectory_chunk_send_rpc_error", 1)
+
+            except Exception as e:
+                self.logger.error("Error in trajectory chunk sender: %s", e, exc_info=True)
+                self._metrics.diagnostic.counter("trajectory_chunk_sender_error", 1)
+
+    def _queue_trajectory_chunk(
+        self,
+        src_control_step: int,
+        actions: list[np.ndarray],
+        frozen_len: int,
+    ) -> None:
+        """Queue a trajectory chunk for sending to the policy server (non-blocking)."""
+        if not actions:
+            return
+
+        # Convert actions to packed float32 bytes
+        action_dim = actions[0].shape[0] if len(actions) > 0 else 0
+        actions_array = np.stack([a.astype(np.float32) for a in actions], axis=0)
+        actions_bytes = actions_array.tobytes()
+
+        chunk = services_pb2.TrajectoryChunk(
+            source_step=src_control_step,
+            num_actions=len(actions),
+            action_dim=action_dim,
+            actions_f32=actions_bytes,
+            frozen_len=frozen_len,
+            timestamp=time.time(),
+        )
+
+        # Non-blocking put: drop if queue is full
+        try:
+            self._trajectory_chunk_queue.put_nowait(chunk)
+        except Full:
+            # Drop oldest and add new
+            with suppress(Empty):
+                self._trajectory_chunk_queue.get_nowait()
+            with suppress(Full):
+                self._trajectory_chunk_queue.put_nowait(chunk)
+
+    # -------------------------------------------------------------------------
+    # Action Receiver Thread
+    # -------------------------------------------------------------------------
+
+    def action_receiver(self) -> None:
+        """Receives actions from the server via streaming."""
+        self.start_barrier.wait()
+        last_chunk_time: float | None = None
+        while self.running:
+            try:
+                t_rpc_start = time.perf_counter()
+                stream = self.stub.StreamActionsDense(services_pb2.Empty())
+                self._active_action_stream = stream  # Store for cancellation on stop
+                t_rpc_done = time.perf_counter()
+                self._metrics.diagnostic.timing_s("rpc_ms", t_rpc_done - t_rpc_start)
+
+                for dense in stream:
+                    if not self.running:
+                        break
+                    t_chunk_received = time.perf_counter()
+                    # Emit chunk gap timing (time since last chunk)
+                    if last_chunk_time is not None:
+                        self._metrics.diagnostic.timing_s("chunk_gap_ms", t_chunk_received - last_chunk_time)
+                    last_chunk_time = t_chunk_received
+
+                    # Network disconnect simulation (blocks until window ends)
+                    disconnect_sleep = self._disconnect_sim.wait_if_disconnected()
+                    if disconnect_sleep > 0:
+                        self._metrics.diagnostic.counter("disconnect_sim", 1)
+                        if self._metrics.experiment is not None:
+                            self._metrics.experiment.record_sim_event("disconnect")
+                        continue
+
+                    # Reorder injection (hold-and-swap before handle)
+                    dense_items = self._action_reorder_sim.process(dense)
+                    if not dense_items:
+                        self._metrics.diagnostic.counter("action_reorder_held", 1)
+                        if self._metrics.experiment is not None:
+                            self._metrics.experiment.record_sim_event("action_reorder_held")
+                        continue
+                    if len(dense_items) > 1:
+                        self._metrics.diagnostic.counter("action_reorder_swapped", 1)
+                        if self._metrics.experiment is not None:
+                            self._metrics.experiment.record_sim_event("action_reorder_swapped")
+
+                    for dense_item in dense_items:
+                        self._handle_actions_dense(dense_item, rpc_ms=0.0)
+
+                        # Duplicate injection (after handle)
+                        if self._action_dup_sim.should_duplicate():
+                            self._handle_actions_dense(dense_item, rpc_ms=0.0)
+                            self._metrics.diagnostic.counter("action_chunk_duplicated_sim", 1)
+                            if self._metrics.experiment is not None:
+                                self._metrics.experiment.record_sim_event("action_duplicated")
+
+            except grpc.RpcError as e:
+                if e.code() == grpc.StatusCode.UNIMPLEMENTED:
+                    self.logger.error(
+                        "Server does not implement StreamActionsDense. "
+                        "This client is streaming-only for actions; please update the server."
+                    )
+                    self.stop()
+                    return
+                self.logger.error(f"Error in StreamActionsDense: {e}")
+                time.sleep(0.1)
+
+    def _handle_actions_dense(self, dense: services_pb2.ActionsDense, rpc_ms: float) -> None:
+        """Decode a dense action chunk into DrtcAction list and publish to main thread."""
+        receive_time = time.time()
+
+        num_actions = int(dense.num_actions)
+        action_dim = int(dense.action_dim)
+        if num_actions <= 0 or action_dim <= 0:
+            return
+
+        t_deser_start = time.perf_counter()
+        actions = np.frombuffer(dense.actions_f32, dtype=np.float32)
+        if actions.size != num_actions * action_dim:
+            raise ValueError(
+                f"ActionsDense buffer size mismatch: {actions.size} != {num_actions * action_dim}"
+            )
+        actions = actions.reshape(num_actions, action_dim)
+        t_deser_done = time.perf_counter()
+
+        timestamp = float(dense.timestamp)
+        source_control_step = int(dense.source_control_step)
+        chunk_start_step = int(dense.chunk_start_step)
+        dt = float(dense.dt)
+
+        measured_latency = receive_time - timestamp
+        timed_actions = [
+            DrtcAction(
+                timestamp=timestamp + i * dt,
+                control_step=source_control_step,
+                action_step=chunk_start_step + i,
+                action=actions[i],
+            )
+            for i in range(num_actions)
+        ]
+
+        # Extract raw timestamps for the round-trip journey (stored in CSV as-is)
+        server_obs_received_ts = float(dense.server_obs_received_ts)
+        server_action_sent_ts = float(dense.server_action_sent_ts)
+        if server_obs_received_ts > 0 and server_action_sent_ts > 0:
+            obs_sent_ts = timestamp
+            action_received_ts = receive_time
+        else:
+            obs_sent_ts = None
+            server_obs_received_ts = None
+            server_action_sent_ts = None
+            action_received_ts = None
+
+        self._metrics.diagnostic.timing_ms("rpc_ms", rpc_ms)
+        self._metrics.diagnostic.timing_s("deser_ms", t_deser_done - t_deser_start)
+        self._metrics.diagnostic.timing_s("total_latency_rtt_ms", measured_latency)
+
+        # Check if action chunk should be dropped (simulation/experiments)
+        if self._action_drop_sim.should_drop():
+            self._metrics.diagnostic.counter("action_chunk_dropped_sim", 1)
+            if self._metrics.experiment is not None:
+                self._metrics.experiment.record_sim_event("action_dropped")
+            return
+
+        self._publish_received_actions(
+            timed_actions=timed_actions,
+            src_control_step=source_control_step,
+            chunk_start_step=chunk_start_step,
+            measured_latency=measured_latency,
+            obs_sent_ts=obs_sent_ts,
+            server_obs_received_ts=server_obs_received_ts,
+            server_action_sent_ts=server_action_sent_ts,
+            action_received_ts=action_received_ts,
+        )
+
+    def _publish_received_actions(
+        self,
+        *,
+        timed_actions: list[DrtcAction],
+        src_control_step: int,
+        chunk_start_step: int,
+        measured_latency: float,
+        obs_sent_ts: float | None = None,
+        server_obs_received_ts: float | None = None,
+        server_action_sent_ts: float | None = None,
+        action_received_ts: float | None = None,
+    ) -> None:
+        chunk = ReceivedActionChunk(
+            actions=timed_actions,
+            src_control_step=src_control_step,
+            chunk_start_step=chunk_start_step,
+            measured_latency=measured_latency,
+            obs_sent_ts=obs_sent_ts,
+            server_obs_received_ts=server_obs_received_ts,
+            server_action_sent_ts=server_action_sent_ts,
+            action_received_ts=action_received_ts,
+        )
+        _, accepted = self._action_reg.update_if_newer(control_step=src_control_step, value=chunk)
+
+        if self._metrics.experiment is not None:
+            self._metrics.experiment.record_register_event(
+                register_name="client_action",
+                control_step=src_control_step,
+                chunk_start_step=chunk_start_step,
+                accepted=accepted,
+            )
+
+    # -------------------------------------------------------------------------
+    # Main Thread: Control Loop
+    # -------------------------------------------------------------------------
+
+    def control_loop(self, task: str | None = None) -> None:
+        """Main control loop following Algorithm 1 from the paper.
+
+        This loop:
+        1. Executes actions if available
+        2. Checks inference trigger condition and requests observations
+        3. Processes incoming action chunks
+        4. Maintains control frequency
+
+        Args:
+            task: Optional task override (uses config.task if not provided).
+        """
+        self.start_barrier.wait()
+
+        task = task or self.config.task
+
+        prev_loop_start: float | None = None
+        next_tick: float | None = time.perf_counter() if self.config.control_use_deadline_clock else None
+
+        while self.running:
+            t_loop_start = time.perf_counter()
+            if prev_loop_start is not None:
+                self._metrics.diagnostic.timing_s("loop_dt_ms", t_loop_start - prev_loop_start)
+            prev_loop_start = t_loop_start
+
+            # Experiment metrics tracking for this tick
+            _tick_obs_triggered = False
+            _tick_action_received = False
+            _tick_measured_latency_ms: float | None = None
+            _tick_obs_sent_ts: float | None = None
+            _tick_server_obs_received_ts: float | None = None
+            _tick_server_action_sent_ts: float | None = None
+            _tick_action_received_ts: float | None = None
+            _tick_chunk_overlap_count: int | None = None
+            _tick_chunk_mean_l2: float | None = None
+            _tick_chunk_max_l2: float | None = None
+
+            # Phase timing tracking
+            _phase_exec_ms = 0.0
+            _phase_trigger_ms = 0.0
+            _phase_merge_ms = 0.0
+
+            # ---------------------------------------------------------------------
+            # Step 1: Execute action if available
+            # ---------------------------------------------------------------------
+            t_phase1_start = time.perf_counter()
+            if not self.action_schedule.is_empty():
+                result = self.action_schedule.pop_front()
+                if result is not None:
+                    step, action, src_control_step, chunk_start_step = result
+
+                    # Apply action filter to reduce jitter from policy micro-updates
+                    ctx = FilterContext(action=action)
+                    filtered_action = self._action_filter.apply(ctx)
+
+                    t_send_start = time.perf_counter()
+                    self.robot.send_action(self._action_array_to_dict(filtered_action))
+                    t_send_done = time.perf_counter()
+
+                    # Keep action_step aligned with the schedule's action-step keys.
+                    # Only the main control loop thread writes this.
+                    self.action_step = step
+                    self._metrics.diagnostic.timing_s("send_action_ms", t_send_done - t_send_start)
+
+                    # Stream executed action to the visualization server (best-effort).
+                    if self._trajectory_viz_client is not None:
+                        self._trajectory_viz_client.on_executed_action(
+                            EvExecutedAction(
+                                step=step,
+                                action=filtered_action.tolist(),
+                                timestamp=time.time(),
+                            )
+                        )
+
+                    # Record executed action for experiment trajectory visualization
+                    if self._metrics.experiment is not None:
+                        self._metrics.experiment.record_executed_action(
+                            step=step,
+                            action=filtered_action,
+                            src_control_step=src_control_step,
+                            chunk_start_step=chunk_start_step,
+                        )
+
+            t_phase1_end = time.perf_counter()
+            _phase_exec_ms = self._ms(t_phase1_end - t_phase1_start)
+
+            # Track queue size for debugging and starvation detection
+            schedule_size = self.action_schedule.get_size()
+            self.action_queue_sizes.append(schedule_size)
+            is_starved = schedule_size == 0
+            if is_starved:
+                self._metrics.diagnostic.counter("starvation", 1)
+
+            # ---------------------------------------------------------------------
+            # Step 2: Check inference trigger condition
+            # ---------------------------------------------------------------------
+            t_phase2_start = time.perf_counter()
+            latency_steps = self.latency_estimator.estimate_steps
+            epsilon = self.config.epsilon
+            s_min = self.config.s_min
+            chunk_len = self.config.actions_per_chunk
+
+            trigger_threshold = chunk_len - s_min
+            if self.config.cooldown_enabled:
+                should_trigger = schedule_size <= trigger_threshold and self.obs_cooldown == 0
+            else:
+                # Classic async baseline: always trigger when schedule is low
+                should_trigger = schedule_size <= trigger_threshold
+
+            if should_trigger:
+                current_step = self.current_action_step
+
+                # Clamp to 0 so the server produces chunks starting at 0 on startup (consistent with the
+                # original async inference implementation that uses max(latest_action, 0)).
+                rtc_meta: dict[str, Any] | None = None
+                if self.config.rtc_enabled:
+                    t_rtc_start = time.perf_counter()
+
+                    # RTC paper: effective execution horizon is s = max(s_min, d)
+                    # - d = latency_steps = hard mask region (weight 1.0)
+                    # - overlap_end = H - s = where fresh region starts
+                    # - Soft mask region: [d, overlap_end) with decaying weight
+                    d = int(latency_steps)
+                    s = max(s_min, d)  # Effective execution horizon
+                    overlap_end = chunk_len - s  # Where fresh region starts
+
+                    # Get masking spans from schedule (handles multi-chunk prefixes)
+                    # Returns list of (src_step, start_idx, end_idx) for server cache lookup
+                    action_schedule_spans = self.action_schedule.get_masking_chunk_spans(
+                        current_step=current_step, max_len=overlap_end
+                    )
+
+                    rtc_meta = {
+                        "enabled": True,
+                        "latency_steps": d,  # Hard mask region [0, d)
+                        "action_schedule_spans": action_schedule_spans,  # List of (src_step, start, end) or None
+                        "overlap_end": overlap_end,  # H - max(s_min, d): where fresh region starts
+                    }
+                    t_rtc_end = time.perf_counter()
+                    self._metrics.diagnostic.timing_s("rtc_build_ms", t_rtc_end - t_rtc_start)
+
+                request = ObservationRequest(
+                    control_step=self.control_step,
+                    chunk_start_step=max(current_step, 0),
+                    task=task,
+                    rtc_meta=rtc_meta,
+                )
+
+                # Always reset cooldown when trigger fires (before attempting put)
+                # Cooldown = latency_steps + epsilon (buffer to prevent over-triggering)
+                if self.config.cooldown_enabled:
+                    self.obs_cooldown = latency_steps + epsilon
+
+                # Publish newest request (monotone w.r.t. control_step t)
+                _, obs_accepted = self._obs_request_reg.update_if_newer(
+                    control_step=request.control_step,
+                    value=request,
+                )
+
+                if self._metrics.experiment is not None:
+                    self._metrics.experiment.record_register_event(
+                        register_name="client_obs_request",
+                        control_step=request.control_step,
+                        accepted=obs_accepted,
+                    )
+
+                _tick_obs_triggered = True
+                self._metrics.diagnostic.counter("obs_triggered", 1)
+            else:
+                # Decrement cooldown: O^c(t+1) = max(O^c(t) - 1, 0)
+                # Only decrement in 'cooldown' mode (default behavior for drop recovery)
+                # In 'merge_reset' mode, cooldown is only reset when actions are merged
+                if self.config.cooldown_enabled and self.config.inference_reset_mode == "cooldown":
+                    self.obs_cooldown = max(self.obs_cooldown - 1, 0)
+
+            t_phase2_end = time.perf_counter()
+            _phase_trigger_ms = self._ms(t_phase2_end - t_phase2_start)
+
+            # ---------------------------------------------------------------------
+            # Step 3: Check for incoming action chunks
+            # ---------------------------------------------------------------------
+            t_phase3_start = time.perf_counter()
+            state, _, is_new = self._action_reader.read_if_newer()
+            chunk = state.value
+            if is_new and chunk is not None:
+                current_step = self.current_action_step
+                latency_steps = self.latency_estimator.estimate_steps
+
+                # Update latency estimate
+                self.latency_estimator.update(chunk.measured_latency)
+
+                # Merge actions into schedule
+                merge_stats = self.action_schedule.merge(
+                    incoming_actions=chunk.actions,
+                    src_control_step=chunk.src_control_step,
+                    chunk_start_step=chunk.chunk_start_step,
+                    current_action_step=current_step,
+                )
+
+                _tick_action_received = True
+                _tick_measured_latency_ms = self._ms(chunk.measured_latency)
+                _tick_obs_sent_ts = chunk.obs_sent_ts
+                _tick_server_obs_received_ts = chunk.server_obs_received_ts
+                _tick_server_action_sent_ts = chunk.server_action_sent_ts
+                _tick_action_received_ts = chunk.action_received_ts
+
+                # Track discrepancy stats from the merge
+                _tick_chunk_overlap_count = merge_stats.overlap_count
+                _tick_chunk_mean_l2 = merge_stats.mean_l2
+                _tick_chunk_max_l2 = merge_stats.max_l2
+
+                # In merge_reset mode, reset cooldown when actions are merged
+                # This mimics RTC-style behavior where inference readiness is gated
+                # by action arrival rather than time-based cooldown
+                if self.config.inference_reset_mode == "merge_reset":
+                    self.obs_cooldown = 0
+
+                # Send action chunk to policy server for trajectory visualization
+                if self.config.trajectory_viz_enabled and chunk.actions:
+                    # Extract action arrays from the DRTC action payloads
+                    actions_arrays = [ta.action for ta in chunk.actions]
+                    self._queue_trajectory_chunk(
+                        src_control_step=chunk.src_control_step,
+                        actions=actions_arrays,
+                        frozen_len=latency_steps,
+                    )
+
+                # Record chunk for experiment trajectory visualization
+                if self._metrics.experiment is not None and chunk.actions:
+                    actions_arrays = [ta.action for ta in chunk.actions]
+                    self._metrics.experiment.record_chunk(
+                        src_control_step=chunk.src_control_step,
+                        actions=actions_arrays,
+                        frozen_len=int(latency_steps),
+                        chunk_start_step=chunk.chunk_start_step,
+                    )
+
+            t_phase3_end = time.perf_counter()
+            _phase_merge_ms = self._ms(t_phase3_end - t_phase3_start)
+
+            # Diagnostic phase timings (avg/max only; printed periodically by DiagnosticMetrics)
+            self._metrics.diagnostic.timing_ms("phase_exec_ms", _phase_exec_ms)
+            self._metrics.diagnostic.timing_ms("phase_trigger_ms", _phase_trigger_ms)
+            self._metrics.diagnostic.timing_ms("phase_merge_ms", _phase_merge_ms)
+
+            # Advance the control-loop clock (always monotone, even when no action executes)
+            self.control_step += 1
+
+            # ---------------------------------------------------------------------
+            # Step 4: Maintain control frequency
+            # ---------------------------------------------------------------------
+            elapsed = time.perf_counter() - t_loop_start
+            if next_tick is None:
+                sleep_s = max(0.0, self.config.environment_dt - elapsed)
+                if sleep_s > 0:
+                    time.sleep(sleep_s)
+                else:
+                    self._metrics.diagnostic.counter("overrun", 1)
+            else:
+                # Deadline-based clock: reduces drift and jitter when occasional overruns happen.
+                next_tick += self.config.environment_dt
+                now = time.perf_counter()
+                sleep_s = next_tick - now
+                if sleep_s > 0:
+                    time.sleep(sleep_s)
+                else:
+                    # If we're behind, count an overrun and re-anchor to now to avoid runaway lag.
+                    self._metrics.diagnostic.counter("overrun", 1)
+                    next_tick = now
+
+            self._metrics.diagnostic.set_context(
+                step=self.current_action_step,
+                schedule_size=self.action_schedule.get_size(),
+                latency_steps=self.latency_estimator.estimate_steps,
+                cooldown=self.obs_cooldown,
+                s_min=self.config.s_min,
+                fps=self.config.fps,
+            )
+
+            # Record experiment metrics for this tick
+            if self._metrics.experiment is not None:
+                self._metrics.experiment.record_tick(
+                    step=self.current_action_step,
+                    schedule_size=self.action_schedule.get_size(),
+                    latency_estimate_steps=self.latency_estimator.estimate_steps,
+                    latency_estimate_ms=self.latency_estimator.estimate_seconds * 1000.0,
+                    cooldown=self.obs_cooldown,
+                    obs_triggered=_tick_obs_triggered,
+                    action_received=_tick_action_received,
+                    measured_latency_ms=_tick_measured_latency_ms,
+                    obs_sent_ts=_tick_obs_sent_ts,
+                    server_obs_received_ts=_tick_server_obs_received_ts,
+                    server_action_sent_ts=_tick_server_action_sent_ts,
+                    action_received_ts=_tick_action_received_ts,
+                    chunk_overlap_count=_tick_chunk_overlap_count,
+                    chunk_mean_l2=_tick_chunk_mean_l2,
+                    chunk_max_l2=_tick_chunk_max_l2,
+                )
+
+    def _action_array_to_dict(self, action_array: np.ndarray) -> dict[str, float]:
+        """Convert action array to dictionary keyed by robot action features."""
+        return {key: action_array[i].item() for i, key in enumerate(self.robot.action_features)}
+
+
+def async_client_drtc(cfg: RobotClientDrtcConfig) -> None:
+    """Run the DRTC async inference client."""
+
+    if cfg.robot.type not in SUPPORTED_ROBOTS:
+        raise ValueError(f"Robot {cfg.robot.type} not yet supported!")
+
+    client = RobotClientDrtc(cfg)
+
+    if client.start():
+        # Start observation sender thread
+        obs_sender_thread = threading.Thread(
+            target=client.observation_sender,
+            name="observation_sender",
+            daemon=True,
+        )
+
+        # Start action receiver thread
+        action_receiver_thread = threading.Thread(
+            target=client.action_receiver,
+            name="action_receiver",
+            daemon=True,
+        )
+
+        obs_sender_thread.start()
+        action_receiver_thread.start()
+
+        try:
+            # Main thread runs the control loop
+            client.control_loop()
+
+        finally:
+            client.stop()
+            obs_sender_thread.join(timeout=2.0)
+            action_receiver_thread.join(timeout=2.0)
+
+            if cfg.debug_visualize_queue_size:
+                visualize_action_queue_size(client.action_queue_sizes)
+
+
+if __name__ == "__main__":
+    import draccus
+
+    draccus.wrap()(async_client_drtc)()

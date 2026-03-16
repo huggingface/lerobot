@@ -1,0 +1,198 @@
+# Distributed Real-Time Chunking (DRTC)
+
+[Distributed Real-Time Chunking](https://jackvial.com/posts/distributed-real-time-chunking.html) (DRTC) extends [RTC](./rtc.mdx) to a distributed client-server setup. You can think of it as combining [RTC](./rtc.mdx)'s in-painting with [async inference](./async.mdx)'s networked client-server pattern.
+
+## Supported models
+
+[SmolVLA](./smolvla.mdx), [pi0](./pi0.mdx) and any other flow matching models should work.
+
+## Quick Start
+
+DRTC assumes you already have a working LeRobot environment. If not, follow the main [Installation Guide](./installation), then install the extras used by the default DRTC scripts:
+
+```bash
+uv pip install -e ".[smolvla,async,feetech,scipy-dep]"
+```
+
+The examples below are currently set up around the default SO101 hardware profile in this repo. Configure your policy type and pretrained weight path in `examples/experiments/configs/baseline.yaml` before running.
+
+### Client + Server on Same Node
+
+If your policy server and robot client are running on the same machine, the simplest entrypoint is:
+
+```bash
+./scripts/run_drtc_experiment.sh \
+  --config examples/experiments/configs/baseline.yaml
+```
+
+This starts the DRTC policy server locally and then runs the experiment client against it. Add `--viz` if you also want the trajectory visualization server on `http://localhost:8088`.
+
+### Remote Server With Local Client
+
+Use this setup when you want the policy server on a remote GPU machine while keeping the robot client on your local robot computer.
+
+> Note: The workflow below uses Prime Intellect for cloud GPUs and Tailscale for secure networking because that is one setup currently documented in this repo. They are not required. Any comparable cloud GPU provider and VPN or private network setup should work as well.
+
+#### Prerequisites
+
+- A Prime Intellect account: https://www.primeintellect.ai/
+- A local `~/.prime/config.json` containing your API key and SSH key path for `./scripts/provision_prime_lerobot.sh`
+- A Tailscale network shared by the local client and remote server: https://tailscale.com/
+
+#### 1. Provision a remote policy server
+
+Run from the repository root:
+
+```bash
+./scripts/provision_prime_lerobot.sh
+```
+
+This script searches for available GPUs with the required CUDA image, lets you choose one, provisions the instance, clones the repo, installs dependencies, sets up Tailscale, and prints:
+
+- SSH connection details (`user@host` and port)
+- The Tailscale domain for the remote machine
+
+To resume setup on an existing pod (for example, after a network interruption):
+
+```bash
+./scripts/provision_prime_lerobot.sh --pod-id <POD_ID>
+```
+
+#### 2. Start the policy server on the remote machine
+
+SSH to the provisioned machine using the connection details printed at the end of provisioning, then start the policy server:
+
+```bash
+ssh -i <SSH_KEY_PATH> -p <SSH_PORT> <SSH_USER>@<SSH_HOST>
+cd /workspace/drtc
+./scripts/start_drtc_server.sh
+```
+
+Leave this process running while the local client connects.
+
+#### 3. Start the local client against the remote server
+
+From your local client or robot machine, make sure you are connected to the same Tailscale network as the remote server, then run:
+
+```bash
+./scripts/run_drtc_experiment_with_remote_server.sh \
+  --remote-server-host <TAILSCALE_DOMAIN> \
+  --config examples/experiments/configs/baseline.yaml
+```
+
+## API Usage
+
+After getting familiar with the quick start you will likely want to interact with the DRTC client and server APIs directly. Reference implementations can be found in:
+
+- Client: `examples/tutorial/async-inf/robot_client_drtc.py`
+- Server: `src/lerobot/async_inference/policy_server_drtc.py`
+
+### Minimal Client API Usage Example
+
+```python
+import threading
+
+from lerobot.async_inference.robot_client_drtc import RobotClientDrtc
+from lerobot.async_inference.configs_drtc import RobotClientDrtcConfig
+from lerobot.cameras.opencv import OpenCVCameraConfig
+from lerobot.robots.so101_follower import SO101FollowerConfig
+
+camera_cfg = {
+    "camera1": OpenCVCameraConfig(
+        index_or_path="/dev/video0",
+        width=800,
+        height=600,
+        fps=30,
+        fourcc="MJPG",
+        use_threaded_async_read=True,
+        allow_stale_frames=True,
+    ),
+    "camera2": OpenCVCameraConfig(
+        index_or_path="/dev/video2",
+        width=800,
+        height=600,
+        fps=30,
+        fourcc="MJPG",
+        use_threaded_async_read=True,
+        allow_stale_frames=True,
+    ),
+}
+
+robot_cfg = SO101FollowerConfig(
+    port="/dev/ttyACM0",
+    id="so101_follower",
+    cameras=camera_cfg,
+)
+
+client_cfg = RobotClientDrtcConfig(
+    robot=robot_cfg,
+    server_address="127.0.0.1:8080",
+    policy_device="cuda",
+    policy_type="smolvla",
+    pretrained_name_or_path="jackvial/so101_smolvla_pickplaceorangecube_e100",
+    actions_per_chunk=50,
+    fps=60,
+    s_min=15,
+    epsilon=2,
+    rtc_sigma_d=0.2,
+    rtc_full_trajectory_alignment=False,
+    num_flow_matching_steps=None,
+    action_filter_mode="butterworth",
+    action_filter_past_buffer_size=10,
+    action_filter_butterworth_cutoff=3.0,
+    action_filter_butterworth_order=2,
+    action_filter_gain=1.4,
+    metrics_diagnostic_enabled=True,
+    control_use_deadline_clock=True,
+    obs_fallback_on_failure=True,
+    obs_fallback_max_age_s=2.0,
+    trajectory_viz_enabled=True,
+    trajectory_viz_ws_url="ws://localhost:8089",
+)
+
+client = RobotClientDrtc(client_cfg)
+
+if client.start():
+    observation_thread = threading.Thread(
+        target=client.observation_sender,
+        name="observation_sender",
+        daemon=True,
+    )
+    action_thread = threading.Thread(
+        target=client.action_receiver,
+        name="action_receiver",
+        daemon=True,
+    )
+
+    observation_thread.start()
+    action_thread.start()
+
+    try:
+        client.control_loop(
+            "Pick up the orange cube and place it on the black X marker with the white background"
+        )
+    finally:
+        client.stop()
+        observation_thread.join(timeout=2.0)
+        action_thread.join(timeout=2.0)
+```
+
+### Minimal Server API Usage Example
+
+```python
+from lerobot.async_inference.configs_drtc import PolicyServerDrtcConfig
+from lerobot.async_inference.policy_server_drtc import serve_drtc
+
+serve_drtc(
+    PolicyServerDrtcConfig(
+        host="0.0.0.0",
+        port=8080,
+        fps=30,
+        warmup_passes=2,
+        trajectory_viz_enabled=True,
+        trajectory_viz_http_port=8088,
+        trajectory_viz_ws_port=8089,
+    )
+)
+```
+

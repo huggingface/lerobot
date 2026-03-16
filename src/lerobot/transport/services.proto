@@ -40,15 +40,19 @@ service AsyncInference {
   // Policy -> Robot to share actions predicted for given observations
   rpc SendObservations(stream Observation) returns (Empty);
   rpc GetActions(Empty) returns (Actions);
+  // Low-jitter path: server-streamed dense action chunks (preferred).
+  rpc StreamActionsDense(Empty) returns (stream ActionsDense);
   rpc SendPolicyInstructions(PolicySetup) returns (Empty);
   rpc Ready(Empty) returns (Empty);
+  // Robot -> Policy to send trajectory data for visualization
+  rpc SendTrajectoryChunk(TrajectoryChunk) returns (Empty);
 }
 
 enum TransferState {
-    TRANSFER_UNKNOWN = 0;
-    TRANSFER_BEGIN = 1;
-    TRANSFER_MIDDLE = 2;
-    TRANSFER_END = 3;
+  TRANSFER_UNKNOWN = 0;
+  TRANSFER_BEGIN = 1;
+  TRANSFER_MIDDLE = 2;
+  TRANSFER_END = 3;
 }
 
 // Messages
@@ -70,7 +74,7 @@ message InteractionMessage {
 // Messages
 message Observation {
   // sent by Robot, to remote Policy
-  TransferState transfer_state = 1;  // Observations can be streamed exceeding 4MB of size
+  TransferState transfer_state = 1; // Observations can be streamed exceeding 4MB of size
   bytes data = 2;
 }
 
@@ -79,9 +83,39 @@ message Actions {
   bytes data = 1;
 }
 
+message ActionsDense {
+  // Timestamp of the source observation (Unix time, seconds).
+  double timestamp = 1;
+  // Control-loop timestep t that triggered this inference (LWW logical clock).
+  int64 source_control_step = 2;
+  // Action timestep spacing (seconds).
+  float dt = 3;
+  // Actions array shape: (num_actions, action_dim).
+  int32 num_actions = 4;
+  int32 action_dim = 5;
+  // Packed row-major float32 actions, length = num_actions*action_dim*4 bytes.
+  bytes actions_f32 = 6;
+  // Action step n_k at which this chunk starts in execution space.
+  int64 chunk_start_step = 7;
+  // Timestamp when the server received this observation (Unix time, seconds).
+  double server_obs_received_ts = 8;
+  // Timestamp when the server finished inference and is about to send (Unix time, seconds).
+  double server_action_sent_ts = 9;
+}
+
 message PolicySetup {
   // sent by Robot to remote server, to init Policy
   bytes data = 1;
+}
+
+message TrajectoryChunk {
+  // sent by Robot to Policy server for trajectory visualization
+  int64 source_step = 1; // Chunk provenance (observation step that triggered inference)
+  int32 num_actions = 2; // Number of actions in the chunk (T)
+  int32 action_dim = 3; // Action dimension (A)
+  bytes actions_f32 = 4; // Packed row-major float32 actions, length = T*A*4 bytes
+  int32 frozen_len = 5; // Number of frozen actions in this chunk
+  double timestamp = 6; // Arrival time (Unix time, seconds)
 }
 
 message Empty {}
