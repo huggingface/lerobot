@@ -23,3 +23,7 @@ from ..config import TeleoperatorConfig
 @dataclass
 class GamepadTeleopConfig(TeleoperatorConfig):
     use_gripper: bool = True
+    # Substring to match against device product name (e.g. "Xbox", "PS5", "Logitech Gamepad").
+    # When None, the first recognized gamepad is used. Use --teleop.device_name=Xbox to
+    # select a specific controller when multiple HID devices are connected.
+    device_name: str | None = None
