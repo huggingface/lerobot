@@ -21,14 +21,8 @@ sortable, filterable leaderboard table.
 
 Usage::
 
-    lerobot-leaderboard \
-        --repo-ids user/model_a,user/model_b \
-        --output leaderboard.html
-
-    # Or from a file listing repo IDs (one per line):
-    lerobot-leaderboard \
-        --repo-ids-file models.txt \
-        --output leaderboard.html
+    # models.txt contains one HF repo ID per line (lines starting with # are ignored)
+    lerobot-leaderboard models.txt --output leaderboard.html
 """
 
 from __future__ import annotations
@@ -548,15 +542,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="Generate an interactive eval leaderboard from Hub model repos.",
     )
     p.add_argument(
-        "--repo-ids",
+        "repo_ids_file",
         type=str,
-        default=None,
-        help="Comma-separated list of HF model repo IDs.",
-    )
-    p.add_argument(
-        "--repo-ids-file",
-        type=str,
-        default=None,
         help="Path to a text file with one repo ID per line.",
     )
     p.add_argument(
@@ -577,17 +564,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None):
     args = parse_args(argv)
 
-    repo_ids: list[str] = []
-    if args.repo_ids:
-        repo_ids.extend(r.strip() for r in args.repo_ids.split(",") if r.strip())
-    if args.repo_ids_file:
-        path = Path(args.repo_ids_file)
-        if not path.exists():
-            logger.error(f"File not found: {path}")
-            sys.exit(1)
-        repo_ids.extend(line.strip() for line in path.read_text().splitlines() if line.strip())
+    path = Path(args.repo_ids_file)
+    if not path.exists():
+        logger.error(f"File not found: {path}")
+        sys.exit(1)
+    repo_ids = [line.strip() for line in path.read_text().splitlines() if line.strip() and not line.startswith("#")]
     if not repo_ids:
-        logger.error("No repo IDs provided. Use --repo-ids or --repo-ids-file.")
+        logger.error(f"No repo IDs found in {path}")
         sys.exit(1)
 
     entries = fetch_all(repo_ids)
