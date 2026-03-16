@@ -165,7 +165,7 @@ hf auth login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 Then store your Hugging Face repository name in a variable:
 
 ```bash
-HF_USER=$(hf auth whoami | awk -F': *' 'NR==1 {print $2}')
+HF_USER=$(NO_COLOR=1 hf auth whoami | awk -F': *' 'NR==1 {print $2}')
 echo $HF_USER
 ```
 

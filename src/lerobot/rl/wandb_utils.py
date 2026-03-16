@@ -98,7 +98,7 @@ class WandBLogger:
             entity=self.cfg.entity,
             name=self.job_name,
             notes=self.cfg.notes,
-            tags=cfg_to_group(cfg, return_list=True, truncate_tags=True),
+            tags=cfg_to_group(cfg, return_list=True, truncate_tags=True) if self.cfg.add_tags else None,
             dir=self.log_dir,
             config=cfg.to_dict(),
             # TODO(rcadene): try set to True
