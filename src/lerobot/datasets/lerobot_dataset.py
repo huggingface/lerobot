@@ -80,6 +80,8 @@ from lerobot.datasets.video_utils import (
 )
 from lerobot.utils.constants import HF_LEROBOT_HOME
 
+logger = logging.getLogger(__name__)
+
 CODEBASE_VERSION = "v3.0"
 
 
@@ -535,7 +537,10 @@ class LeRobotDatasetMetadata:
             video_files_size_in_mb,
         )
         if len(obj.video_keys) > 0 and not use_videos:
-            raise ValueError()
+            raise ValueError(
+                f"Features contain video keys {obj.video_keys}, but 'use_videos' is set to False. "
+                "Either remove video features from the features dict, or set 'use_videos=True'."
+            )
         write_json(obj.info, obj.root / INFO_PATH)
         obj.revision = None
         obj.writer = None
@@ -1326,7 +1331,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                             temp_path = future.result()
                             results[video_key] = temp_path
                         except Exception as exc:
-                            logging.error(f"Video encoding failed for {video_key}: {exc}")
+                            logger.error(f"Video encoding failed for {video_key}: {exc}")
                             raise exc
 
                 for video_key in self.meta.video_keys:
@@ -1365,7 +1370,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if end_episode is None:
             end_episode = self.num_episodes
 
-        logging.info(
+        logger.info(
             f"Batch encoding {self.batch_encoding_size} videos for episodes {start_episode} to {end_episode - 1}"
         )
 
@@ -1375,7 +1380,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         episode_df = pd.read_parquet(episode_df_path)
 
         for ep_idx in range(start_episode, end_episode):
-            logging.info(f"Encoding videos for episode {ep_idx}")
+            logger.info(f"Encoding videos for episode {ep_idx}")
 
             if (
                 self.meta.episodes[ep_idx]["data/chunk_index"] != chunk_idx
@@ -1605,7 +1610,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     def start_image_writer(self, num_processes: int = 0, num_threads: int = 4) -> None:
         if isinstance(self.image_writer, AsyncImageWriter):
-            logging.warning(
+            logger.warning(
                 "You are starting a new AsyncImageWriter that is replacing an already existing one in the dataset."
             )
 
@@ -1771,7 +1776,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         for repo_id, ds in zip(self.repo_ids, self._datasets, strict=True):
             extra_keys = set(ds.features).difference(intersection_features)
             if extra_keys:
-                logging.warning(
+                logger.warning(
                     f"keys {extra_keys} of {repo_id} were disabled as they are not contained in all the "
                     "other datasets."
                 )
