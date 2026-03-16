@@ -39,7 +39,6 @@ from lerobot.processor.converters import (
     policy_action_to_transition,
     transition_to_policy_action,
 )
-from lerobot.processor.core import EnvTransition, TransitionKey
 from lerobot.processor.pipeline import PipelineFeatureType
 from lerobot.rewards.sarm.configuration_sarm import SARMConfig
 from lerobot.rewards.sarm.sarm_utils import (
@@ -48,6 +47,7 @@ from lerobot.rewards.sarm.sarm_utils import (
     find_stage_and_tau,
     pad_state_to_max_dim,
 )
+from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
 

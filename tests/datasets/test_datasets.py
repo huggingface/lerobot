@@ -29,20 +29,19 @@ import lerobot
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.factory import make_dataset
+from lerobot.datasets.feature_utils import get_hf_features_from_features, hw_to_dataset_features
 from lerobot.datasets.image_writer import image_array_to_pil_image
+from lerobot.datasets.io_utils import hf_transform_to_torch
 from lerobot.datasets.lerobot_dataset import (
     LeRobotDataset,
-    MultiLeRobotDataset,
     _encode_video_worker,
 )
+from lerobot.datasets.multi_dataset import MultiLeRobotDataset
 from lerobot.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_VIDEO_FILE_SIZE_IN_MB,
     create_branch,
-    get_hf_features_from_features,
-    hf_transform_to_torch,
-    hw_to_dataset_features,
 )
 from lerobot.datasets.video_utils import VALID_VIDEO_CODECS
 from lerobot.envs.factory import make_env_config
@@ -1329,7 +1328,7 @@ def test_frames_in_current_file_calculation(tmp_path, empty_lerobot_dataset_fact
 
     dataset.finalize()
 
-    from lerobot.datasets.utils import load_episodes
+    from lerobot.datasets.io_utils import load_episodes
 
     dataset.meta.episodes = load_episodes(dataset.root)
     assert dataset.meta.episodes is not None
