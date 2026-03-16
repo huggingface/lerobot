@@ -273,6 +273,12 @@ class EarthRoverMiniPlus(Robot):
 
         Raises:
             DeviceNotConnectedError: If robot is not connected
+
+        Note:
+            Camera frames are retrieved from SDK endpoints /v2/front and /v2/rear.
+            Frames are decoded from base64 and converted from BGR to RGB format.
+            Robot telemetry is retrieved from /data endpoint.
+            All SDK values are normalized to appropriate ranges for dataset recording.
         """
 
         observation = {}
@@ -493,14 +499,17 @@ class EarthRoverMiniPlus(Robot):
             response = requests.get(f"{self.sdk_base_url}/data", timeout=2.0)
             if response.status_code == 200:
                 data = response.json()
+                # Cache the successful data
                 self._last_robot_data = data
                 return data
         except Exception as e:
             logger.warning(f"Error fetching robot data: {e}")
 
+        # Fallback: use cache or default values
         if self._last_robot_data is not None:
             return self._last_robot_data
 
+        # Return dict with default values (used only on first failure before any cache exists)
         return {
             "speed": 0,
             "battery": 0,

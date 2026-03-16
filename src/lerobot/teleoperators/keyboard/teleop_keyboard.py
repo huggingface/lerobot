@@ -362,7 +362,8 @@ class KeyboardRoverTeleop(KeyboardTeleop):
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:
-        """Get the current action based on pressed keys.
+        """
+        Get the current action based on pressed keys.
 
         Returns:
             RobotAction with 'linear_velocity' and 'angular_velocity' keys.
@@ -374,32 +375,37 @@ class KeyboardRoverTeleop(KeyboardTeleop):
         linear_velocity = 0.0
         angular_velocity = 0.0
 
+        # Check which keys are currently pressed (not released)
         active_keys = {key for key, is_pressed in self.current_pressed.items() if is_pressed}
 
+        # Linear movement (W/S) - these take priority
         if "w" in active_keys:
             linear_velocity = self.current_linear_speed
         elif "s" in active_keys:
             linear_velocity = -self.current_linear_speed
 
+        # Turning (A/D/Q/E)
         if "d" in active_keys:
             angular_velocity = -self.current_angular_speed
-            if linear_velocity == 0:
+            if linear_velocity == 0:  # If not moving forward/back, add slight forward motion
                 linear_velocity = self.current_linear_speed * self.config.turn_assist_ratio
         elif "a" in active_keys:
             angular_velocity = self.current_angular_speed
-            if linear_velocity == 0:
+            if linear_velocity == 0:  # If not moving forward/back, add slight forward motion
                 linear_velocity = self.current_linear_speed * self.config.turn_assist_ratio
         elif "q" in active_keys:
             angular_velocity = self.current_angular_speed
-            linear_velocity = 0
+            linear_velocity = 0  # Rotate in place
         elif "e" in active_keys:
             angular_velocity = -self.current_angular_speed
-            linear_velocity = 0
+            linear_velocity = 0  # Rotate in place
 
+        # Stop (X) - overrides everything
         if "x" in active_keys:
             linear_velocity = 0
             angular_velocity = 0
 
+        # Speed adjustment
         if "+" in active_keys or "=" in active_keys:
             self.current_linear_speed += self.config.speed_increment
             self.current_angular_speed += self.config.speed_increment * self.config.angular_speed_ratio
