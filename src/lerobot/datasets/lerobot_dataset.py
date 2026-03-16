@@ -1175,9 +1175,21 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     def add_frame(self, frame: dict) -> None:
         """
-        This function only adds the frame to the episode_buffer. Apart from images — which are written in a
-        temporary directory — nothing is written to disk. To save those frames, the 'save_episode()' method
-        then needs to be called.
+        Add a single frame to the current episode buffer.
+
+        Apart from images — which are written to a temporary directory — nothing is written to
+        disk at this point.  Call ``save_episode()`` to persist the accumulated frames.
+
+        Args:
+            frame (dict): Feature values for the current frame.  Must include:
+
+                * All user-defined features declared in ``features`` at dataset creation.
+                * ``"task"`` (str): Natural-language description of the current task.
+
+                Must NOT include ``"timestamp"`` or ``"frame_index"``; these are computed
+                automatically from the buffer position and ``fps``, and will raise a
+                ``ValueError`` if present (they are in ``DEFAULT_FEATURES`` and therefore
+                treated as "extra" by ``validate_frame``).
         """
         # Convert torch to numpy if needed
         for name in frame:
@@ -1191,7 +1203,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Automatically add frame_index and timestamp to episode buffer
         frame_index = self.episode_buffer["size"]
-        timestamp = frame.pop("timestamp") if "timestamp" in frame else frame_index / self.fps
+        timestamp = frame_index / self.fps
         self.episode_buffer["frame_index"].append(frame_index)
         self.episode_buffer["timestamp"].append(timestamp)
         self.episode_buffer["task"].append(frame.pop("task"))  # Remove task from frame after processing
