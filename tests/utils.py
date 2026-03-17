@@ -21,8 +21,8 @@ import pytest
 import torch
 
 from lerobot import available_cameras, available_motors, available_robots
+from lerobot.utils.device_utils import auto_select_torch_device
 from lerobot.utils.import_utils import is_package_available
-from lerobot.utils.utils import auto_select_torch_device
 
 DEVICE = os.environ.get("LEROBOT_TEST_DEVICE", str(auto_select_torch_device()))
 
