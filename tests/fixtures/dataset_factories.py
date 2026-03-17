@@ -26,7 +26,10 @@ import pytest
 import torch
 from datasets import Dataset
 
-from lerobot.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset, LeRobotDatasetMetadata
+from lerobot.datasets.dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
+from lerobot.datasets.feature_utils import get_hf_features_from_features
+from lerobot.datasets.io_utils import hf_transform_to_torch
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
@@ -35,8 +38,6 @@ from lerobot.datasets.utils import (
     DEFAULT_VIDEO_FILE_SIZE_IN_MB,
     DEFAULT_VIDEO_PATH,
     flatten_dict,
-    get_hf_features_from_features,
-    hf_transform_to_torch,
 )
 from lerobot.datasets.video_utils import encode_video_frames
 from tests.fixtures.constants import (
@@ -453,8 +454,8 @@ def lerobot_dataset_metadata_factory(
             episodes=episodes,
         )
         with (
-            patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version_patch,
-            patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download_patch,
+            patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version_patch,
+            patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download_patch,
         ):
             mock_get_safe_version_patch.side_effect = lambda repo_id, version: version
             mock_snapshot_download_patch.side_effect = mock_snapshot_download
