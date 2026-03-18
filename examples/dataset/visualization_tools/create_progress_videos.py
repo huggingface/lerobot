@@ -16,8 +16,9 @@ from huggingface_hub import snapshot_download
 
 # ─────────────────────── Config ───────────────────────
 DATASETS = [
-    {"repo_id": "lerobot-data-collection/level1_rac3_rtc_s6_1", "episode": 0},
+    {"repo_id": "lerobot-data-collection/level2_final_quality3", "episode": 1100},
 ]
+CAMERA_KEY = "observation.images.base"  # None = auto-select first camera, or set e.g. "observation.images.top"
 OUTPUT_DIR = Path("/Users/pepijnkooijmans/Documents/GitHub_local/progress_videos")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
@@ -61,8 +62,13 @@ def load_episode_meta(local: Path, episode: int) -> dict:
     video_keys = [k for k, v in features.items() if v.get("dtype") == "video"]
     if not video_keys:
         raise RuntimeError("No video keys found in dataset features")
-    first_cam = video_keys[0]
-    print(f"   fps={fps}  first_camera='{first_cam}'  all_cams={video_keys}")
+    if CAMERA_KEY is not None:
+        if CAMERA_KEY not in video_keys:
+            raise RuntimeError(f"CAMERA_KEY='{CAMERA_KEY}' not found. Available: {video_keys}")
+        first_cam = CAMERA_KEY
+    else:
+        first_cam = video_keys[0]
+    print(f"   fps={fps}  camera='{first_cam}'  all_cams={video_keys}")
 
     # Load all episode-meta parquet files and find our episode
     ep_rows = []
