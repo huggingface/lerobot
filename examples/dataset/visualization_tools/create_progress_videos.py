@@ -14,7 +14,6 @@ import pandas as pd
 from huggingface_hub import snapshot_download
 
 
-# ─────────────────────── Config ───────────────────────
 DATASETS = [
     {"repo_id": "lerobot-data-collection/level2_final_quality3", "episode": 1100},
 ]
@@ -32,8 +31,6 @@ FILL_ALPHA        = 0.55             # opacity of the grey fill under the line
 SCORE_FONT_SCALE  = 0.8
 TASK_FONT_SCALE   = 0.55
 
-
-# ─────────────────────── Helpers ──────────────────────
 
 def download_episode(repo_id: str, episode: int) -> Path:
     """Download only the files needed for this episode."""
@@ -409,8 +406,6 @@ def composite_video(
     palette.unlink(missing_ok=True)
     return gif_path
 
-
-# ─────────────────────── Main ──────────────────────────
 
 def process_dataset(repo_id: str, episode: int):
     safe_name = repo_id.replace("/", "_")
