@@ -36,6 +36,16 @@ class DatasetConfig:
     video_backend: str = field(default_factory=get_safe_default_codec)
     streaming: bool = False
 
+    def __post_init__(self) -> None:
+        if self.episodes is not None:
+            if any(ep < 0 for ep in self.episodes):
+                raise ValueError(
+                    f"Episode indices must be non-negative, got: {[ep for ep in self.episodes if ep < 0]}"
+                )
+            if len(self.episodes) != len(set(self.episodes)):
+                duplicates = sorted({ep for ep in self.episodes if self.episodes.count(ep) > 1})
+                raise ValueError(f"Episode indices contain duplicates: {duplicates}")
+
 
 @dataclass
 class WandBConfig:
@@ -47,6 +57,7 @@ class WandBConfig:
     notes: str | None = None
     run_id: str | None = None
     mode: str | None = None  # Allowed values: 'online', 'offline' 'disabled'. Defaults to 'online'
+    add_tags: bool = True  # If True, save configuration as tags in the WandB run.
 
 
 @dataclass
