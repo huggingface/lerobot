@@ -31,7 +31,8 @@ pytest.importorskip("scipy")
 from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig
 from lerobot.policies.pi0_fast.modeling_pi0_fast import PI0FastPolicy
 from lerobot.policies.pi0_fast.processor_pi0_fast import make_pi0_fast_pre_post_processors
-from lerobot.processor import PolicyAction, PolicyProcessorPipeline  # noqa: E402
+from lerobot.processor import PolicyProcessorPipeline  # noqa: E402
+from lerobot.types import PolicyAction  # noqa: E402
 from lerobot.utils.constants import (
     ACTION_TOKEN_MASK,
     ACTION_TOKENS,
