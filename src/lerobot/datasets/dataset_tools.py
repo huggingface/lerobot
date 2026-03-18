@@ -24,10 +24,12 @@ This module provides utilities for:
 """
 
 import logging
+import os
 import shutil
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+import subprocess
 
 import datasets
 import numpy as np
@@ -45,14 +47,16 @@ from lerobot.datasets.utils import (
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
     DEFAULT_EPISODES_PATH,
+    DEFAULT_VIDEO_PATH,
     get_parquet_file_size_in_mb,
     load_episodes,
     update_chunk_file_indices,
+    write_episodes,
     write_info,
     write_stats,
     write_tasks,
 )
-from lerobot.datasets.video_utils import encode_video_frames, get_video_info
+from lerobot.datasets.video_utils import concatenate_video_files, encode_video_frames, get_video_duration_in_s, get_video_info
 from lerobot.utils.constants import HF_LEROBOT_HOME, OBS_IMAGE
 
 
@@ -346,6 +350,9 @@ def modify_features(
     video_keys_to_remove = [name for name in remove_features_list if name in dataset.meta.video_keys]
     remaining_video_keys = [k for k in dataset.meta.video_keys if k not in video_keys_to_remove]
 
+    video_keys_to_add = [k for k, v in add_features.items() if v[1]["dtype"]=="video"]
+    remaining_video_keys += video_keys_to_add
+
     new_meta = LeRobotDatasetMetadata.create(
         repo_id=repo_id,
         fps=dataset.meta.fps,
@@ -355,6 +362,7 @@ def modify_features(
         use_videos=len(remaining_video_keys) > 0,
     )
 
+    # NOTE: video aren't loaded here since this function is used just to modify parquet (data) files
     _copy_data_with_feature_changes(
         dataset=dataset,
         new_meta=new_meta,
@@ -362,8 +370,17 @@ def modify_features(
         remove_features=remove_features_list if remove_features_list else None,
     )
 
+    # video_keys is a property: if new_features contains a video, it'll be updated
     if new_meta.video_keys:
-        _copy_videos(dataset, new_meta, exclude_keys=video_keys_to_remove if video_keys_to_remove else None)
+        new_meta.load_metadata()
+        _copy_videos_with_feature_changes(
+            dataset, 
+            new_meta, 
+            add_features=add_features,
+            exclude_keys=video_keys_to_remove if video_keys_to_remove else None,
+        )
+        print(new_meta.episodes.to_pandas().columns)
+        #_copy_videos(dataset, new_meta, video_keys_to_remove if video_keys_to_remove else None)
 
     new_dataset = LeRobotDataset(
         repo_id=repo_id,
@@ -963,6 +980,7 @@ def _save_data_chunk(
     return chunk_idx, file_idx, episode_metadata
 
 
+# TODO: this doesn't consider reindexing data if data to insert are too large (>data_file_size_mb)
 def _copy_data_with_feature_changes(
     dataset: LeRobotDataset,
     new_meta: LeRobotDatasetMetadata,
@@ -993,7 +1011,9 @@ def _copy_data_with_feature_changes(
 
         if add_features:
             end_idx = frame_idx + len(df)
-            for feature_name, (values, _) in add_features.items():
+            for feature_name, (values, feature_info) in add_features.items():
+                if feature_info["dtype"] == "video": # or images
+                    continue
                 if callable(values):
                     feature_values = []
                     for _, row in df.iterrows():
@@ -1047,6 +1067,158 @@ def _copy_videos(
             dst_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(src_dataset.root / src_path, dst_path)
 
+def _copy_videos_with_feature_changes(
+    dataset: LeRobotDataset,
+    new_meta: LeRobotDatasetMetadata,
+    add_features: dict[str, tuple] | None = None,
+    exclude_keys: list[str] | None = None,
+) -> None:
+    """Copy video files, optionally excluding certain keys."""
+    logging.info("Copying existing videos in the new dataset")
+    _copy_videos(dataset, new_meta, exclude_keys)
+    
+    logging.info("Adding videos in the new dataset")
+    if add_features is None:
+        return
+    add_video_features = {fn: (p, fi) for fn, (p, fi) in add_features.items() if fi["dtype"]=="video"}
+    if len(add_video_features) == 0:
+        logging.info("No video features to add")
+        return
+    
+    root = new_meta.root
+    tmp_videos_root = root / "tmp_videos"
+    target_fps = dataset.fps
+    target_vcodec = dataset.vcodec
+    num_episodes = len(dataset.meta.episodes)
+    ep_paths = []
+
+    # to avoid heavy logging on terminal
+    env = os.environ.copy()
+    env["SVT_LOG"] = "1"
+
+    for feature_name, (path, feature_info) in add_video_features.items():
+        if feature_info["dtype"] != "video":
+            continue
+        # create tmp videos directory
+        tmp_videos = tmp_videos_root / feature_name
+        tmp_videos.mkdir(parents=True, exist_ok=True)
+
+        # create per episode sliced videos
+        for episode in tqdm(dataset.meta.episodes, desc=f"Creating tmp per episode videos of {feature_name}"):
+            ep_paths.append(tmp_videos / f"episode_{episode['episode_index']}.mp4")
+            out_path = ep_paths[-1]
+            
+            # continue
+
+            start_frame = episode["dataset_from_index"]
+            end_frame = episode["dataset_to_index"]
+
+            start_time_s = start_frame / target_fps
+            duration_s = (end_frame - start_frame) / target_fps
+
+            
+            cmd = [
+                "ffmpeg",
+                "-y",                       # Overwrite output files without asking
+                "-ss", str(start_time_s),   # Start timestamp in seconds
+                "-i", str(path),            # Input source video
+                "-t", str(duration_s),      # Duration of the slice in seconds
+                "-r", str(target_fps),      # Force the output to match the dataset's FPS (doesn't work with c:v copy)
+                "-c:v", str(target_vcodec), # Standard LeRobot codec (or use your preferred one) (this is how is vcodec chosen in _encode_video_worker)
+                #"-c:v", "copy", # fastest 
+                "-pix_fmt", "yuv420p",      # Standard pixel format (doesn't work with c:v copy) (this is the standard used in _encode_video_worker)
+                "-loglevel", "error",       # Keep the terminal clean 
+                str(out_path)
+            ]
+            
+            try:
+                subprocess.run(
+                        cmd, 
+                        check=True,
+                        capture_output=True, 
+                        text=True, 
+                        env=env
+                    )
+            except subprocess.CalledProcessError as e:
+                logging.error(f"Error slicing episode {episode['episode_index']}: {e}")
+                raise
+        
+        # create chunkized videos
+        max_size_mb = dataset.meta.video_files_size_in_mb
+        chunks_size = dataset.meta.chunks_size
+        
+        # used to create episodes metadata
+        col_chunk = [0] * num_episodes
+        col_file = [0] * num_episodes
+        col_from = [0.0] * num_episodes
+        col_to = [0.0] * num_episodes
+        
+        chunk_idx = 0
+        file_idx = 0
+        
+        cum_size_mb = 0.0
+        start_idx = 0
+        from_timestep = 0
+
+        for ep_idx in tqdm(range(num_episodes), desc=f"Organizing {feature_name} videos in chunk and files"):
+            ep_path = tmp_videos / f"episode_{ep_idx}.mp4"
+            ep_size_mb = os.path.getsize(ep_path) / (1024 * 1024)
+
+            # if is the first iteration or the current ep_file fit in the file-xxx
+            if (cum_size_mb == 0 or cum_size_mb + ep_size_mb <= max_size_mb): #and ep_idx != (num_episodes-1):
+                # update cum_size in order to do the same check for the following episode
+                cum_size_mb += ep_size_mb
+
+
+                col_from[ep_idx] = from_timestep
+                col_to[ep_idx] = from_timestep + get_video_duration_in_s(ep_path)
+                from_timestep = col_to[ep_idx]
+            # the current ep_file do not fit in the file-xxx
+            else:
+                # concatenate and save videos until ep_idx (excluded)
+                out_path = root / new_meta.video_path.format(
+                                                    video_key=feature_name, 
+                                                    chunk_index=chunk_idx, 
+                                                    file_index=file_idx
+                                                )
+                concatenate_video_files(ep_paths[start_idx:ep_idx], out_path)
+                chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, chunks_size)
+                # set the cumulative size to include the current ep_file
+                cum_size_mb = ep_size_mb
+                # start the following concatenation from the current ep_file
+                start_idx = ep_idx
+
+                col_from[ep_idx] = 0.0
+                col_to[ep_idx] = get_video_duration_in_s(ep_path)
+                from_timestep = col_to[ep_idx]
+            
+            col_file[ep_idx] = file_idx
+            col_chunk[ep_idx] = chunk_idx
+
+        # save the last videos
+        out_path = root / new_meta.video_path.format(
+            video_key=feature_name, 
+            chunk_index=chunk_idx, 
+            file_index=file_idx
+        )
+        concatenate_video_files(ep_paths[start_idx:num_episodes], out_path)
+
+        logging.info(f"Adding {feature_name} index information into new dataset metadata")
+        # update episodes
+        episodes_ds = new_meta.episodes
+        episodes_ds = episodes_ds.add_column(f"videos/{feature_name}/chunk_index", col_chunk)
+        episodes_ds = episodes_ds.add_column(f"videos/{feature_name}/file_index", col_file)
+        episodes_ds = episodes_ds.add_column(f"videos/{feature_name}/from_timestamp", col_from)
+        episodes_ds = episodes_ds.add_column(f"videos/{feature_name}/to_timestamp", col_to)
+        new_meta.episodes = episodes_ds
+
+        shutil.rmtree(tmp_videos)
+
+    shutil.rmtree(tmp_videos_root)
+
+    write_episodes(new_meta.episodes, new_meta.root)
+    #_copy_episodes_metadata_and_stats(dataset, new_meta)
+
 
 def _copy_episodes_metadata_and_stats(
     src_dataset: LeRobotDataset,
@@ -1071,6 +1243,10 @@ def _copy_episodes_metadata_and_stats(
         }
     )
 
+    # TODO: consider even when there are new video sources
+    if set(dst_meta.video_keys) != set(src_dataset.meta.video_keys):
+        logging.info("blasmcsx")
+
     if dst_meta.video_keys and src_dataset.meta.video_keys:
         for key in dst_meta.video_keys:
             if key in src_dataset.meta.features:
@@ -1080,6 +1256,7 @@ def _copy_episodes_metadata_and_stats(
 
     write_info(dst_meta.info, dst_meta.root)
 
+    # TODO: just matching features between src and dst are written, i.e. new features aren't considered
     if set(dst_meta.features.keys()) != set(src_dataset.meta.features.keys()):
         logging.info("Recalculating dataset statistics...")
         if src_dataset.meta.stats:

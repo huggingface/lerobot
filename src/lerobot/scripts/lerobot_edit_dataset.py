@@ -151,6 +151,7 @@ from lerobot.datasets.dataset_tools import (
     split_dataset,
 )
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.video_utils import get_video_info
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.utils import init_logging
 
@@ -190,6 +191,7 @@ class RemoveFeatureConfig(OperationConfig):
 class AddFeatureConfig(OperationConfig):
     feature_names: list[str] | None = None
     feature_paths: list[str] | None = None
+    # TODO: add codec, pix_fmt, num_workers
 
 @OperationConfig.register_subclass("modify_tasks")
 @dataclass
@@ -381,22 +383,43 @@ def handle_add_feature(cfg: EditDatasetConfig):
         raise ValueError("feature_names and feature_paths must have the same length")
     
     # OPTIMIZATION HERE: use callable instead of array to optimize loading, ecc
+    # VIDEO HERE: detect file extention and treat it in a different way
+    #               =====> CREATE A LOADER FUNCTION THAT LOAD THE RIGHT WAY THE RIGHT FILE ??
     features = {}
-    for f_name, f_path in zip(cfg.operation.feature_names, cfg.operation.feature_paths):
-        with open(f_path, 'rb') as file:
-            f_arr = pkl.load(file)
-        
-        dtype = f_arr.dtype.name
-        
-        shape = f_arr.shape
-        if len(shape) <= 1:
-            raise ValueError("Data provided must have at least two dimensions: (episodes, other_dimensions)")
+    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root) # need this to write fps
 
-        shape = shape[1:] # consider only the shape of the data, excluding episodes
+    for f_name, f_path in zip(cfg.operation.feature_names, cfg.operation.feature_paths):                
+        """ if len(shape) <= 1:
+            raise ValueError("Data provided must have at least two dimensions: (episodes, other_dimensions)") """
 
-        features[f_name] = (f_arr, {"dtype": dtype, "shape": shape, "names": None}) # TODO: names in the arguments
+        if f_path.endswith(".mp4"):
+            video_info = get_video_info(f_path) # TODO: should the path be absolute??
+            shape = (
+                video_info.pop("video.height"),
+                video_info.pop("video.width"),
+                video_info.pop("video.channels")
+            )
+            new_feature_info = {
+                "dtype": "video",
+                "shape": shape,
+                "names": ["height", "width", "channels"],
+                "video_info": video_info
+            }
+            new_feature_info["video_info"]["video.fps"] = dataset.fps
+            new_feature_value = f_path
+        else:
+            with open(f_path, 'rb') as file:    
+                f_arr = pkl.load(file)
+            new_feature_info = {
+                "dtype": f_arr.dtype.name,
+                "shape": f_arr.shape[1:], # consider only the shape of the data, excluding episodes (assume data are provided with shape (episodes, other_dims))
+                "names": None, # TODO: names in the arguments?
+                "fps": dataset.fps
+            }
+            new_feature_value = f_arr
+        
+        features[f_name] = (new_feature_value, new_feature_info)
     
-    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
     output_repo_id, output_dir = get_output_path(
         cfg.repo_id, cfg.new_repo_id, Path(cfg.root) if cfg.root else None
     )
