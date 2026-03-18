@@ -1063,7 +1063,9 @@ class VideoEncodingManager:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        streaming_encoder = getattr(self.dataset, "_streaming_encoder", None)
+        streaming_encoder = (
+            getattr(self.dataset._writer, "_streaming_encoder", None) if self.dataset._writer else None
+        )
 
         if streaming_encoder is not None:
             # Handle streaming encoder cleanup
@@ -1083,7 +1085,7 @@ class VideoEncodingManager:
                 f"Encoding remaining {self.dataset.episodes_since_last_encoding} episodes, "
                 f"from episode {start_ep} to {end_ep - 1}"
             )
-            self.dataset._batch_save_episode_video(start_ep, end_ep)
+            self.dataset._writer._batch_save_episode_video(start_ep, end_ep)
 
         # Finalize the dataset to properly close all writers
         self.dataset.finalize()
@@ -1092,7 +1094,7 @@ class VideoEncodingManager:
         if exc_type is not None and streaming_encoder is None:
             interrupted_episode_index = self.dataset.num_episodes
             for key in self.dataset.meta.video_keys:
-                img_dir = self.dataset._get_image_file_path(
+                img_dir = self.dataset._writer._get_image_file_path(
                     episode_index=interrupted_episode_index, image_key=key, frame_index=0
                 ).parent
                 if img_dir.exists():

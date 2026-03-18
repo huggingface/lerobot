@@ -15,10 +15,9 @@
 # limitations under the License.
 import contextlib
 import logging
+from collections.abc import Callable
 from pathlib import Path
 
-import numpy as np
-import PIL.Image
 import torch
 import torch.utils
 from huggingface_hub import HfApi, snapshot_download
@@ -27,9 +26,7 @@ from huggingface_hub.errors import RevisionNotFoundError
 from lerobot.datasets.dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from lerobot.datasets.dataset_reader import DatasetReader
 from lerobot.datasets.dataset_writer import DatasetWriter
-from lerobot.datasets.feature_utils import get_hf_features_from_features
 from lerobot.datasets.utils import (
-    DEFAULT_IMAGE_PATH,
     create_lerobot_dataset_card,
     get_safe_version,
     is_valid_version,
@@ -50,7 +47,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         repo_id: str,
         root: str | Path | None = None,
         episodes: list[int] | None = None,
-        image_transforms=None,
+        image_transforms: Callable | None = None,
         delta_timestamps: dict[str, list[float]] | None = None,
         tolerance_s: float = 1e-4,
         revision: str | None = None,
@@ -307,24 +304,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def hf_dataset(self, value):
         self._ensure_reader().hf_dataset = value
 
-    @property
-    def delta_indices(self):
-        if self._reader is None:
-            return None
-        return self._reader.delta_indices
-
-    @property
-    def _absolute_to_relative_idx(self):
-        if self._reader is None:
-            return None
-        return self._reader._absolute_to_relative_idx
-
-    @property
-    def hf_features(self):
-        if self._reader is None:
-            return get_hf_features_from_features(self.meta.features)
-        return self._reader.hf_features
-
     # ── Writer proxy properties ───────────────────────────────────────
 
     @property
@@ -349,20 +328,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self._writer.latest_episode if self._writer is not None else None
 
     @property
-    def _current_file_start_frame(self):
-        return self._writer._current_file_start_frame if self._writer is not None else None
-
-    @property
-    def _streaming_encoder(self):
-        return self._writer._streaming_encoder if self._writer is not None else None
-
-    @property
     def episodes_since_last_encoding(self):
         return self._writer.episodes_since_last_encoding if self._writer is not None else 0
-
-    @property
-    def _recorded_frames(self):
-        return self._writer._recorded_frames if self._writer is not None else 0
 
     # ── Metadata properties ───────────────────────────────────────────
 
@@ -400,11 +367,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def get_episodes_file_paths(self):
         return self._ensure_reader().get_episodes_file_paths()
 
-    def _check_cached_episodes_sufficient(self) -> bool:
-        reader = self._ensure_reader()
-        reader.episodes = self.episodes
-        return reader._check_cached_episodes_sufficient()
-
     # ── Writer-delegated methods ──────────────────────────────────────
 
     def add_frame(self, frame: dict) -> None:
@@ -423,22 +385,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._require_writer("create_episode_buffer")
         return self._writer.create_episode_buffer(episode_index)
 
-    def _save_episode_data(self, episode_buffer: dict) -> dict:
-        self._require_writer("_save_episode_data")
-        return self._writer._save_episode_data(episode_buffer)
-
-    def _save_episode_video(self, video_key: str, episode_index: int, temp_path=None) -> dict:
-        self._require_writer("_save_episode_video")
-        return self._writer._save_episode_video(video_key, episode_index, temp_path)
-
-    def _batch_save_episode_video(self, start_episode: int, end_episode: int | None = None) -> None:
-        self._require_writer("_batch_save_episode_video")
-        self._writer._batch_save_episode_video(start_episode, end_episode)
-
-    def _encode_temporary_episode_video(self, video_key: str, episode_index: int):
-        self._require_writer("_encode_temporary_episode_video")
-        return self._writer._encode_temporary_episode_video(video_key, episode_index)
-
     def start_image_writer(self, num_processes: int = 0, num_threads: int = 4) -> None:
         self._require_writer("start_image_writer")
         self._writer.start_image_writer(num_processes, num_threads)
@@ -446,27 +392,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def stop_image_writer(self) -> None:
         if self._writer is not None:
             self._writer.stop_image_writer()
-
-    def _wait_image_writer(self) -> None:
-        if self._writer is not None:
-            self._writer._wait_image_writer()
-
-    def _save_image(
-        self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path, compress_level: int = 1
-    ) -> None:
-        self._require_writer("_save_image")
-        self._writer._save_image(image, fpath, compress_level)
-
-    def _get_image_file_path(self, episode_index: int, image_key: str, frame_index: int) -> Path:
-        if self._writer is not None:
-            return self._writer._get_image_file_path(episode_index, image_key, frame_index)
-        fpath = DEFAULT_IMAGE_PATH.format(
-            image_key=image_key, episode_index=episode_index, frame_index=frame_index
-        )
-        return self.root / fpath
-
-    def _get_image_file_dir(self, episode_index: int, image_key: str) -> Path:
-        return self._get_image_file_path(episode_index, image_key, frame_index=0).parent
 
     def finalize(self):
         """
@@ -476,11 +401,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self._writer is not None:
             self._writer.finalize()
             self._is_finalized = True
-
-    def _close_writer(self) -> None:
-        """Close and cleanup the parquet writer if it exists."""
-        if self._writer is not None:
-            self._writer.close_writer()
 
     def __del__(self):
         """Safety check: close the parquet writer on garbage collection."""

@@ -293,7 +293,7 @@ class DatasetWriter:
                 self._batch_save_episode_video(start_ep, end_ep)
                 self.episodes_since_last_encoding = 0
 
-        if not episode_data:
+        if episode_data is None:
             self.clear_episode_buffer(delete_images=len(self.meta.image_keys) > 0)
 
     def _batch_save_episode_video(self, start_episode: int, end_episode: int | None = None) -> None:
