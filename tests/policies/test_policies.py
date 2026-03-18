@@ -28,7 +28,8 @@ from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.datasets.factory import make_dataset
-from lerobot.datasets.utils import cycle, dataset_to_policy_features
+from lerobot.datasets.feature_utils import dataset_to_policy_features
+from lerobot.datasets.utils import cycle
 from lerobot.envs.factory import make_env, make_env_config
 from lerobot.envs.utils import preprocess_observation
 from lerobot.optim.factory import make_optimizer_and_scheduler

@@ -15,7 +15,7 @@
 # limitations under the License.
 import numpy as np
 
-from lerobot.datasets.utils import load_image_as_numpy
+from lerobot.datasets.io_utils import load_image_as_numpy
 
 DEFAULT_QUANTILES = [0.01, 0.10, 0.50, 0.90, 0.99]
 
