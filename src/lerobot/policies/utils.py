@@ -133,7 +133,7 @@ def prepare_observation_for_inference(
             if not value.flags["C_CONTIGUOUS"]:
                 value = np.ascontiguousarray(value)
             h, w, c = value.shape
-            buf_key = f"{name}_{h}_{w}"
+            buf_key = f"{name}_{h}_{w}_{device.type}"
             if buf_key not in _pinned_buffers:
                 use_pin = device.type == "cuda"
                 buf = torch.empty(1, c, h, w, dtype=torch.float32)
