@@ -13,28 +13,28 @@ import numpy as np
 import pandas as pd
 from huggingface_hub import snapshot_download
 
-
 DATASETS = [
     {"repo_id": "lerobot-data-collection/level2_final_quality3", "episode": 1100},
 ]
-CAMERA_KEY = "observation.images.base"  # None = auto-select first camera, or set e.g. "observation.images.top"
+CAMERA_KEY = (
+    "observation.images.base"  # None = auto-select first camera, or set e.g. "observation.images.top"
+)
 OUTPUT_DIR = Path("/Users/pepijnkooijmans/Documents/GitHub_local/progress_videos")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 # Progress line spans the full video height
-GRAPH_Y_TOP_FRAC  = 0.01
-GRAPH_Y_BOT_FRAC  = 0.99
-LINE_THICKNESS    = 3
-SHADOW_THICKNESS  = 6                # white edge thickness
-REF_ALPHA         = 0.45             # opacity of the 1.0 reference line
-FILL_ALPHA        = 0.55             # opacity of the grey fill under the line
-SCORE_FONT_SCALE  = 0.8
-TASK_FONT_SCALE   = 0.55
+GRAPH_Y_TOP_FRAC = 0.01
+GRAPH_Y_BOT_FRAC = 0.99
+LINE_THICKNESS = 3
+SHADOW_THICKNESS = 6  # white edge thickness
+REF_ALPHA = 0.45  # opacity of the 1.0 reference line
+FILL_ALPHA = 0.55  # opacity of the grey fill under the line
+SCORE_FONT_SCALE = 0.8
+TASK_FONT_SCALE = 0.55
 
 
 def download_episode(repo_id: str, episode: int) -> Path:
     """Download only the files needed for this episode."""
-    safe_ep = f"{episode:06d}"
     # We need: meta/, sarm_progress.parquet, and the relevant video/data chunks.
     # We'll download meta + sarm first, then figure out chunks.
     print(f"\n[1/5] Downloading metadata for {repo_id} …")
@@ -79,29 +79,32 @@ def load_episode_meta(local: Path, episode: int) -> dict:
     row = row.iloc[0]
 
     # Extract video chunk/file index for first camera
-    cam_key = first_cam.replace(".", "/")  # some datasets store as nested key
     # Try both dot and slash variants of the key
     chunk_col = f"videos/{first_cam}/chunk_index"
-    file_col  = f"videos/{first_cam}/file_index"
-    ts_col    = f"videos/{first_cam}/from_timestamp"
-    to_col    = f"videos/{first_cam}/to_timestamp"
+    file_col = f"videos/{first_cam}/file_index"
+    ts_col = f"videos/{first_cam}/from_timestamp"
+    to_col = f"videos/{first_cam}/to_timestamp"
 
     # Some datasets use different column naming
     if chunk_col not in row.index:
         # Try without the 'videos/' prefix
         chunk_col = f"{first_cam}/chunk_index"
-        file_col  = f"{first_cam}/file_index"
-        ts_col    = f"{first_cam}/from_timestamp"
-        to_col    = f"{first_cam}/to_timestamp"
+        file_col = f"{first_cam}/file_index"
+        ts_col = f"{first_cam}/from_timestamp"
+        to_col = f"{first_cam}/to_timestamp"
     if chunk_col not in row.index:
-        raise RuntimeError(f"Cannot find video metadata columns for {first_cam}.\nAvailable: {list(row.index)}")
+        raise RuntimeError(
+            f"Cannot find video metadata columns for {first_cam}.\nAvailable: {list(row.index)}"
+        )
 
     chunk_idx = int(row[chunk_col])
-    file_idx  = int(row[file_col])
-    from_ts   = float(row[ts_col])
-    to_ts     = float(row[to_col])
+    file_idx = int(row[file_col])
+    from_ts = float(row[ts_col])
+    to_ts = float(row[to_col])
 
-    video_template = info.get("video_path", "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4")
+    video_template = info.get(
+        "video_path", "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
+    )
     video_rel = video_template.format(
         video_key=first_cam,
         chunk_index=chunk_idx,
@@ -197,13 +200,20 @@ def extract_episode_clip(video_path: Path, from_ts: float, to_ts: float, out_pat
     duration = to_ts - from_ts
     print(f"[3/5] Extracting clip [{from_ts:.3f}s → {to_ts:.3f}s] ({duration:.2f}s) …")
     cmd = [
-        "ffmpeg", "-y",
-        "-ss", str(from_ts),
-        "-i", str(video_path),
-        "-t", str(duration),
-        "-c:v", "libx264",
-        "-preset", "fast",
-        "-crf", "18",
+        "ffmpeg",
+        "-y",
+        "-ss",
+        str(from_ts),
+        "-i",
+        str(video_path),
+        "-t",
+        str(duration),
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-crf",
+        "18",
         "-an",
         str(out_path),
     ]
@@ -226,7 +236,6 @@ def precompute_pixels(
     """
     frame_indices = progress_data[:, 0].astype(float)
     progress_vals = np.clip(progress_data[:, 1].astype(float), 0.0, 1.0)
-    n = len(frame_indices)
 
     y_top = int(frame_h * GRAPH_Y_TOP_FRAC)
     y_bot = int(frame_h * GRAPH_Y_BOT_FRAC)
@@ -254,10 +263,13 @@ def prerender_fill(
     """Pre-render the full grey fill polygon under the curve as a BGRA image."""
     y_bot = int(frame_h * GRAPH_Y_BOT_FRAC)
     fill_img = np.zeros((frame_h, frame_w, 4), dtype=np.uint8)
-    poly = np.concatenate([
-        pixels,
-        [[pixels[-1][0], y_bot], [pixels[0][0], y_bot]],
-    ], axis=0).astype(np.int32)
+    poly = np.concatenate(
+        [
+            pixels,
+            [[pixels[-1][0], y_bot], [pixels[0][0], y_bot]],
+        ],
+        axis=0,
+    ).astype(np.int32)
     cv2.fillPoly(fill_img, [poly], color=(128, 128, 128, int(255 * FILL_ALPHA)))
     return fill_img
 
@@ -270,9 +282,9 @@ def alpha_composite(base: np.ndarray, overlay_bgra: np.ndarray, x_max: int) -> N
     roi_o = overlay_bgra[:, :x_max]
     alpha = roi_o[:, :, 3:4].astype(np.float32) / 255.0
     roi_b[:] = np.clip(
-        roi_o[:, :, :3].astype(np.float32) * alpha
-        + roi_b.astype(np.float32) * (1.0 - alpha),
-        0, 255,
+        roi_o[:, :, :3].astype(np.float32) * alpha + roi_b.astype(np.float32) * (1.0 - alpha),
+        0,
+        255,
     ).astype(np.uint8)
 
 
@@ -302,17 +314,14 @@ def composite_video(
     n_total = int(cv2.VideoCapture(str(clip_path)).get(cv2.CAP_PROP_FRAME_COUNT))
     pixels = precompute_pixels(progress_data, n_total, frame_w, frame_h)
 
-    y_top = int(frame_h * GRAPH_Y_TOP_FRAC)
-    y_bot = int(frame_h * GRAPH_Y_BOT_FRAC)
-    y_ref = y_top
+    y_ref = int(frame_h * GRAPH_Y_TOP_FRAC)
 
     # Pre-render fill polygon (line is drawn per-frame with live color)
     fill_img = prerender_fill(pixels, frame_w, frame_h)
 
     # 1.0 reference line overlay (full width, drawn once)
     ref_img = np.zeros((frame_h, frame_w, 4), dtype=np.uint8)
-    cv2.line(ref_img, (0, y_ref), (frame_w - 1, y_ref),
-             (200, 200, 200, int(255 * REF_ALPHA)), 1, cv2.LINE_AA)
+    cv2.line(ref_img, (0, y_ref), (frame_w - 1, y_ref), (200, 200, 200, int(255 * REF_ALPHA)), 1, cv2.LINE_AA)
 
     frame_indices = progress_data[:, 0].astype(int)
     progress_vals = progress_data[:, 1].astype(float)
@@ -343,33 +352,52 @@ def composite_video(
             t_cur = (n_drawn - 1) / max(len(progress_vals) - 1, 1)
             line_col = progress_color(t_cur)
             pts = pixels[:n_drawn].reshape(-1, 1, 2).astype(np.int32)
-            cv2.polylines(frame, [pts], isClosed=False,
-                          color=(255, 255, 255), thickness=SHADOW_THICKNESS,
-                          lineType=cv2.LINE_AA)
-            cv2.polylines(frame, [pts], isClosed=False,
-                          color=line_col, thickness=LINE_THICKNESS,
-                          lineType=cv2.LINE_AA)
+            cv2.polylines(
+                frame,
+                [pts],
+                isClosed=False,
+                color=(255, 255, 255),
+                thickness=SHADOW_THICKNESS,
+                lineType=cv2.LINE_AA,
+            )
+            cv2.polylines(
+                frame, [pts], isClosed=False, color=line_col, thickness=LINE_THICKNESS, lineType=cv2.LINE_AA
+            )
 
         # 4. score — bottom right
         if n_drawn > 0:
             score = float(progress_vals[min(n_drawn, len(progress_vals)) - 1])
             score_text = f"{score:.2f}"
-            (tw, th), _ = cv2.getTextSize(score_text, cv2.FONT_HERSHEY_SIMPLEX,
-                                          SCORE_FONT_SCALE, 2)
+            (tw, th), _ = cv2.getTextSize(score_text, cv2.FONT_HERSHEY_SIMPLEX, SCORE_FONT_SCALE, 2)
             sx = frame_w - tw - 12
             sy = frame_h - 12
             # coloured score matching current gradient position
             t_cur = (n_drawn - 1) / max(len(progress_vals) - 1, 1)
             score_col = progress_color(t_cur)
-            cv2.putText(frame, score_text, (sx, sy), cv2.FONT_HERSHEY_SIMPLEX,
-                        SCORE_FONT_SCALE, (0, 0, 0), 4, cv2.LINE_AA)
-            cv2.putText(frame, score_text, (sx, sy), cv2.FONT_HERSHEY_SIMPLEX,
-                        SCORE_FONT_SCALE, score_col, 2, cv2.LINE_AA)
+            cv2.putText(
+                frame,
+                score_text,
+                (sx, sy),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                SCORE_FONT_SCALE,
+                (0, 0, 0),
+                4,
+                cv2.LINE_AA,
+            )
+            cv2.putText(
+                frame,
+                score_text,
+                (sx, sy),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                SCORE_FONT_SCALE,
+                score_col,
+                2,
+                cv2.LINE_AA,
+            )
 
         # 5. task name — top centre
         if task_name:
-            (tw, _), _ = cv2.getTextSize(task_name, cv2.FONT_HERSHEY_SIMPLEX,
-                                         TASK_FONT_SCALE, 1)
+            (tw, _), _ = cv2.getTextSize(task_name, cv2.FONT_HERSHEY_SIMPLEX, TASK_FONT_SCALE, 1)
             tx = max((frame_w - tw) // 2, 4)
             draw_text_outlined(frame, task_name, (tx, 22), TASK_FONT_SCALE)
 
@@ -385,21 +413,38 @@ def composite_video(
     # Convert to GIF: full resolution, 12fps, 128-color diff palette (<40MB)
     gif_path = out_path.with_suffix(".gif")
     palette = out_path.parent / "_palette.png"
-    r1 = subprocess.run([
-        "ffmpeg", "-y", "-i", str(tmp_path),
-        "-vf", f"fps=10,scale={frame_w}:-1:flags=lanczos,palettegen=max_colors=128:stats_mode=diff",
-        "-update", "1",
-        str(palette),
-    ], capture_output=True, text=True)
+    r1 = subprocess.run(  # nosec B607
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(tmp_path),
+            "-vf",
+            f"fps=10,scale={frame_w}:-1:flags=lanczos,palettegen=max_colors=128:stats_mode=diff",
+            "-update",
+            "1",
+            str(palette),
+        ],
+        capture_output=True,
+        text=True,
+    )
     if r1.returncode != 0:
         print(f"   WARNING: palettegen failed:\n{r1.stderr[-500:]}")
-    r2 = subprocess.run([
-        "ffmpeg", "-y",
-        "-i", str(tmp_path), "-i", str(palette),
-        "-filter_complex",
-        f"fps=10,scale={frame_w}:-1:flags=lanczos[v];[v][1:v]paletteuse=dither=bayer:bayer_scale=3",
-        str(gif_path),
-    ], capture_output=True, text=True)
+    r2 = subprocess.run(  # nosec B607
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(tmp_path),
+            "-i",
+            str(palette),
+            "-filter_complex",
+            f"fps=10,scale={frame_w}:-1:flags=lanczos[v];[v][1:v]paletteuse=dither=bayer:bayer_scale=3",
+            str(gif_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
     if r2.returncode != 0:
         print(f"   WARNING: gif encode failed:\n{r2.stderr[-500:]}")
     tmp_path.unlink(missing_ok=True)
@@ -409,9 +454,9 @@ def composite_video(
 
 def process_dataset(repo_id: str, episode: int):
     safe_name = repo_id.replace("/", "_")
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Processing: {repo_id}  |  episode {episode}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     # 1. Download metadata
     local = download_episode(repo_id, episode)
@@ -448,8 +493,15 @@ def process_dataset(repo_id: str, episode: int):
 
     # 7. Composite (draw line directly on frames)
     out_path = OUTPUT_DIR / f"{safe_name}_ep{episode}_progress.mp4"
-    final = composite_video(clip_path, progress_data, out_path, actual_fps, frame_h, frame_w,
-                            task_name=ep_meta.get("task_name", ""))
+    final = composite_video(
+        clip_path,
+        progress_data,
+        out_path,
+        actual_fps,
+        frame_h,
+        frame_w,
+        task_name=ep_meta.get("task_name", ""),
+    )
     clip_path.unlink(missing_ok=True)
     print(f"\n✓ Done: {final}")
     return final
@@ -464,9 +516,11 @@ if __name__ == "__main__":
                 results.append(out)
         except Exception as e:
             print(f"\nERROR processing {cfg['repo_id']}: {e}")
-            import traceback; traceback.print_exc()
+            import traceback
 
-    print("\n" + "="*60)
+            traceback.print_exc()
+
+    print("\n" + "=" * 60)
     print("Output files:")
     for r in results:
         print(f"  {r}")
