@@ -26,7 +26,6 @@ import numpy as np
 import pytest
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.video_utils import get_video_duration_in_s
 
 
 def _get_actual_frame_pts(video_path) -> list[float]:
@@ -79,22 +78,22 @@ def test_from_timestamp_matches_actual_video_pts(tmp_path, num_episodes):
     episode_metadata = []
     for ep_idx in range(num_episodes):
         for frame_idx in range(frame_counts[ep_idx]):
-            dataset.add_frame({
-                vid_key: np.full((3, 64, 64), fill_value=(frame_idx * 5) % 256, dtype=np.uint8),
-                "task": "test",
-            })
+            dataset.add_frame(
+                {
+                    vid_key: np.full((3, 64, 64), fill_value=(frame_idx * 5) % 256, dtype=np.uint8),
+                    "task": "test",
+                }
+            )
         dataset.save_episode()
         # Capture metadata from memory right after save (latest_episode is always set)
         episode_metadata.append(dict(dataset.meta.latest_episode))
 
     # Read actual PTS from the concatenated video file (ground truth)
     ep0 = episode_metadata[0]
-    video_path = (
-        dataset.root / dataset.meta.video_path.format(
-            video_key=vid_key,
-            chunk_index=ep0[f"videos/{vid_key}/chunk_index"][0],
-            file_index=ep0[f"videos/{vid_key}/file_index"][0],
-        )
+    video_path = dataset.root / dataset.meta.video_path.format(
+        video_key=vid_key,
+        chunk_index=ep0[f"videos/{vid_key}/chunk_index"][0],
+        file_index=ep0[f"videos/{vid_key}/file_index"][0],
     )
     actual_pts = _get_actual_frame_pts(video_path)
 
