@@ -66,6 +66,24 @@ class DatasetReader:
             check_delta_timestamps(delta_timestamps, meta.fps, tolerance_s)
             self.delta_indices = get_delta_indices(delta_timestamps, meta.fps)
 
+    def try_load(self) -> bool:
+        """Attempt to load from local cache. Returns True if data is sufficient."""
+        try:
+            self.hf_dataset = self.load_hf_dataset()
+        except (FileNotFoundError, NotADirectoryError):
+            self.hf_dataset = None
+            return False
+        if not self._check_cached_episodes_sufficient():
+            self.hf_dataset = None
+            return False
+        self._build_index_mapping()
+        return True
+
+    def load_and_activate(self) -> None:
+        """Load HF dataset from disk and build index mapping. Call after data is on disk."""
+        self.hf_dataset = self.load_hf_dataset()
+        self._build_index_mapping()
+
     def _build_index_mapping(self) -> None:
         """Build absolute-to-relative index mapping from loaded hf_dataset."""
         self._absolute_to_relative_idx = None

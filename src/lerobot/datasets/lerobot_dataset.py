@@ -214,20 +214,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         )
 
         # Load actual data
-        try:
-            if force_cache_sync:
-                raise FileNotFoundError
-            self._reader.hf_dataset = self._reader.load_hf_dataset()
-            if not self._reader._check_cached_episodes_sufficient():
-                raise FileNotFoundError("Cached dataset doesn't contain all requested episodes")
-        except (FileNotFoundError, NotADirectoryError):
+        if force_cache_sync or not self._reader.try_load():
             if is_valid_version(self.revision):
                 self.revision = get_safe_version(self.repo_id, self.revision)
             self.download(download_videos)
-            self._reader.hf_dataset = self._reader.load_hf_dataset()
-
-        # Build index mapping now that hf_dataset is loaded
-        self._reader._build_index_mapping()
+            self._reader.load_and_activate()
 
         # Detect write-mode params for backward compatibility
         _has_write_params = streaming_encoding or batch_encoding_size != 1
@@ -259,8 +250,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 encoder_threads=encoder_threads,
                 batch_encoding_size=batch_encoding_size,
                 streaming_encoder=streaming_enc,
+                initial_frames=self.meta.total_frames,
             )
-            self._writer._recorded_frames = self.meta.total_frames
         else:
             self._writer = None
 
@@ -420,8 +411,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         reader = self._ensure_reader()
         if reader.hf_dataset is None:
             # One-shot load after finalize()
-            reader.hf_dataset = reader.load_hf_dataset()
-            reader._build_index_mapping()
+            reader.load_and_activate()
         return reader.get_item(idx)
 
     def __repr__(self):
@@ -588,8 +578,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if image_writer_processes or image_writer_threads:
             obj._writer.start_image_writer(image_writer_processes, image_writer_threads)
 
-        obj._writer.episode_buffer = obj._writer.create_episode_buffer()
-
         obj._is_finalized = False
 
         return obj
@@ -659,13 +647,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
             encoder_threads=encoder_threads,
             batch_encoding_size=batch_encoding_size,
             streaming_encoder=streaming_enc,
+            initial_frames=obj.meta.total_frames,
         )
-        obj._writer._recorded_frames = obj.meta.total_frames
 
         if image_writer_processes or image_writer_threads:
             obj._writer.start_image_writer(image_writer_processes, image_writer_threads)
-
-        obj._writer.episode_buffer = obj._writer.create_episode_buffer()
 
         obj._is_finalized = False
 

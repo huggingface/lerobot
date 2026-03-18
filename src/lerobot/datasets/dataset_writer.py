@@ -91,6 +91,7 @@ class DatasetWriter:
         encoder_threads: int | None,
         batch_encoding_size: int,
         streaming_encoder=None,
+        initial_frames: int = 0,
     ):
         self.meta = meta
         self.root = root
@@ -101,12 +102,12 @@ class DatasetWriter:
 
         # Writer state
         self.image_writer: AsyncImageWriter | None = None
-        self.episode_buffer: dict | None = None
+        self.episode_buffer: dict = self.create_episode_buffer()
         self.writer: pq.ParquetWriter | None = None
         self.latest_episode: dict | None = None
         self._current_file_start_frame: int | None = None
         self.episodes_since_last_encoding: int = 0
-        self._recorded_frames: int = 0
+        self._recorded_frames: int = initial_frames
 
     def create_episode_buffer(self, episode_index: int | None = None) -> dict:
         current_ep_idx = self.meta.total_episodes if episode_index is None else episode_index
