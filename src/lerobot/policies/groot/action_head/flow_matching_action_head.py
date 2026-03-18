@@ -253,7 +253,7 @@ class FlowmatchingActionHead(nn.Module):
 
     def sample_time(self, batch_size, device, dtype):
         if self._beta_dist is None:
-           self._beta_dist = Beta(self._noise_beta_alpha, self._noise_beta_beta, validate_args=False)
+            self._beta_dist = Beta(self._noise_beta_alpha, self._noise_beta_beta, validate_args=False)
         sample = self._beta_dist.sample([batch_size]).to(device, dtype=dtype)
         return (self.config.noise_s - sample) / self.config.noise_s
 

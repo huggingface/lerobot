@@ -247,6 +247,7 @@ class Eagle25VLProcessor(ProcessorMixin):
                         video_inputs["pixel_values"] = torch.stack(
                             [t if isinstance(t, torch.Tensor) else torch.as_tensor(t) for t in _pv]
                         )
+                    num_all_tiles = video_inputs["pixel_values"].shape[0]
                     image_sizes = video_inputs["image_sizes"]
                     if timestamps_list is not None and -1 not in timestamps_list:
                         frame_timestamps = timestamps_list[idx_in_list]
@@ -312,7 +313,7 @@ class Eagle25VLProcessor(ProcessorMixin):
                     )
                 return torch.as_tensor(v)
             pixel_values = torch.cat([_to_tensor(frame["pixel_values"]) for frame in unified_frame_list])
-            image_sizes = torch.cat([_to_tensor(frame["image_sizes"]) for frame in unified_frame_list])   
+            image_sizes = torch.cat([_to_tensor(frame["image_sizes"]) for frame in unified_frame_list])
         else:
             pixel_values = None
             image_sizes = None
