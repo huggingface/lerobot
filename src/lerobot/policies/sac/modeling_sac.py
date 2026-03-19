@@ -50,6 +50,8 @@ class SACPolicy(
         config.validate_features()
         self.config = config
 
+        self.batch_normalizer = None
+
         # Determine action dimension and initialize all components
         continuous_action_dim = config.output_features[ACTION].shape[0]
         self._init_encoders()
@@ -114,6 +116,8 @@ class SACPolicy(
         Returns:
             Tensor of Q-values from all critics
         """
+        if self.batch_normalizer is not None:
+            actions = self.batch_normalizer.normalize_action(actions)
 
         critics = self.critic_target if use_target else self.critic_ensemble
         q_values = critics(observations, actions, observation_features)

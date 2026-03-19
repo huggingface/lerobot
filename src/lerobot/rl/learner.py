@@ -66,6 +66,7 @@ from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.factory import make_policy
 from lerobot.policies.sac.modeling_sac import SACPolicy
+from lerobot.policies.sac.processor_sac import make_sac_batch_normalizer
 from lerobot.rl.buffer import ReplayBuffer, concatenate_batch_transitions
 from lerobot.rl.process import ProcessSignalHandler
 from lerobot.rl.wandb_utils import WandBLogger
@@ -313,6 +314,13 @@ def add_actor_information_and_train(
 
     assert isinstance(policy, nn.Module)
 
+    batch_normalizer = make_sac_batch_normalizer(
+        config=cfg.policy,
+        dataset_stats=cfg.policy.dataset_stats,
+        device=device,
+    )
+    policy.batch_normalizer = batch_normalizer
+
     policy.train()
 
     push_actor_policy_to_queue(parameters_queue=parameters_queue, policy=policy)
@@ -408,6 +416,9 @@ def add_actor_information_and_train(
             done = batch["done"]
             check_nan_in_transition(observations=observations, actions=actions, next_state=next_observations)
 
+            observations = batch_normalizer.normalize_observation(observations)
+            next_observations = batch_normalizer.normalize_observation(next_observations)
+
             observation_features, next_observation_features = get_observation_features(
                 policy=policy, observations=observations, next_observations=next_observations
             )
@@ -466,6 +477,9 @@ def add_actor_information_and_train(
         done = batch["done"]
 
         check_nan_in_transition(observations=observations, actions=actions, next_state=next_observations)
+
+        observations = batch_normalizer.normalize_observation(observations)
+        next_observations = batch_normalizer.normalize_observation(next_observations)
 
         observation_features, next_observation_features = get_observation_features(
             policy=policy, observations=observations, next_observations=next_observations

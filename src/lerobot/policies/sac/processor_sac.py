@@ -18,6 +18,7 @@
 from typing import Any
 
 import torch
+from torch import Tensor
 
 from lerobot.policies.sac.configuration_sac import SACConfig
 from lerobot.processor import (
@@ -30,7 +31,63 @@ from lerobot.processor import (
     UnnormalizerProcessorStep,
 )
 from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
-from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
+from lerobot.utils.constants import ACTION, POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
+
+
+class BatchNormalizer:
+    """Lightweight normalizer that operates on flat batch dicts.
+
+    Wraps a ``NormalizerProcessorStep`` and exposes a callable interface
+    compatible with ``preprocess_rl_batch`` in the trainer.  It mirrors the
+    old ``NormalizeBuffer`` behaviour: observations are normalised according
+    to their feature type (MEAN_STD for images, MIN_MAX for state/env) and
+    actions are normalised with MIN_MAX.
+    """
+
+    def __init__(self, normalizer: NormalizerProcessorStep) -> None:
+        self._normalizer = normalizer
+
+    def __call__(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+        result = self._normalizer._normalize_observation(batch, inverse=False)
+        if ACTION in result:
+            result[ACTION] = self._normalizer._normalize_action(result[ACTION], inverse=False)
+        return result
+
+    def normalize_action(self, action: Tensor) -> Tensor:
+        return self._normalizer._normalize_action(action, inverse=False)
+
+    def normalize_observation(self, observation: dict[str, Tensor]) -> dict[str, Tensor]:
+        return self._normalizer._normalize_observation(observation, inverse=False)
+
+    def to(self, device: torch.device | str) -> "BatchNormalizer":
+        self._normalizer.to(device=device)
+        return self
+
+
+def make_sac_batch_normalizer(
+    config: SACConfig,
+    dataset_stats: dict[str, dict[str, Any]] | None = None,
+    device: torch.device | str | None = None,
+) -> BatchNormalizer:
+    """Create a ``BatchNormalizer`` for SAC learner / actor normalisation.
+
+    This replicates the old ``NormalizeBuffer`` setup from commit 7dcf506:
+    - Images   (VISUAL) → MEAN_STD with ImageNet stats
+    - State    (STATE)  → MIN_MAX
+    - Actions  (ACTION) → MIN_MAX
+
+    The returned object can be called on a flat dict of observations +
+    actions (as used by ``preprocess_rl_batch``) and also exposes
+    ``normalize_action`` / ``normalize_observation`` for use in the
+    algorithm's actor-loss computation and in the actor inference loop.
+    """
+    normalizer = NormalizerProcessorStep(
+        features={**config.input_features, **config.output_features},
+        norm_map=config.normalization_mapping,
+        stats=dataset_stats,
+        device=device,
+    )
+    return BatchNormalizer(normalizer)
 
 
 def make_sac_pre_post_processors(
