@@ -97,6 +97,14 @@ class _NormalizationMixin:
     _tensor_stats: dict[str, dict[str, Tensor]] = field(default_factory=dict, init=False, repr=False)
     _stats_explicitly_provided: bool = field(default=False, init=False, repr=False)
 
+    def _reshape_visual_stats(self) -> None:
+        """Reshape 1D visual stats from [C] to [C, 1, 1] for broadcasting with [B, C, H, W] images."""
+        for key, feature in self.features.items():
+            if feature.type == FeatureType.VISUAL and key in self._tensor_stats:
+                for stat_name, stat_tensor in self._tensor_stats[key].items():
+                    if isinstance(stat_tensor, Tensor) and stat_tensor.ndim == 1:
+                        self._tensor_stats[key][stat_name] = stat_tensor.reshape(-1, 1, 1)
+
     def __post_init__(self):
         """
         Initializes the mixin after dataclass construction.
@@ -131,6 +139,7 @@ class _NormalizationMixin:
         if self.dtype is None:
             self.dtype = torch.float32
         self._tensor_stats = to_tensor(self.stats, device=self.device, dtype=self.dtype)
+        self._reshape_visual_stats()
 
     def to(
         self, device: torch.device | str | None = None, dtype: torch.dtype | None = None
@@ -149,6 +158,7 @@ class _NormalizationMixin:
         if dtype is not None:
             self.dtype = dtype
         self._tensor_stats = to_tensor(self.stats, device=self.device, dtype=self.dtype)
+        self._reshape_visual_stats()
         return self
 
     def state_dict(self) -> dict[str, Tensor]:
@@ -198,6 +208,7 @@ class _NormalizationMixin:
             # Don't load from state_dict, keep the explicitly provided stats
             # But ensure _tensor_stats is properly initialized
             self._tensor_stats = to_tensor(self.stats, device=self.device, dtype=self.dtype)  # type: ignore[assignment]
+            self._reshape_visual_stats()
             return
 
         # Normal behavior: load stats from state_dict
@@ -217,6 +228,8 @@ class _NormalizationMixin:
             for stat_name, tensor in tensor_dict.items():
                 # Convert tensor back to python/numpy format
                 self.stats[key][stat_name] = from_tensor_to_numpy(tensor)
+
+        self._reshape_visual_stats()
 
     def get_config(self) -> dict[str, Any]:
         """
