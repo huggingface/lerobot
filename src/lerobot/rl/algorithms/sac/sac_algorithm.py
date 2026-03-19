@@ -189,7 +189,7 @@ class SACAlgorithm(RLAlgorithm):
 
         critic_loss_val = loss_critic.item()
         stats = TrainingStats(
-            losses={"critic": critic_loss_val},
+            losses={"loss_critic": critic_loss_val},
             grad_norms={"critic": critic_grad_norm},
         )
 
@@ -202,7 +202,7 @@ class SACAlgorithm(RLAlgorithm):
                 max_norm=self.config.clip_grad_norm,
             ).item()
             self.optimizers["discrete_critic"].step()
-            stats.losses["discrete_critic"] = loss_discrete.item()
+            stats.losses["loss_discrete_critic"] = loss_discrete.item()
             stats.grad_norms["discrete_critic"] = dc_grad
 
         if self._optimization_step % self.config.policy_update_freq == 0:
@@ -225,8 +225,8 @@ class SACAlgorithm(RLAlgorithm):
                 ).item()
                 self.optimizers["temperature"].step()
 
-            stats.losses["actor"] = actor_loss.item()
-            stats.losses["temperature"] = temp_loss.item()
+            stats.losses["loss_actor"] = actor_loss.item()
+            stats.losses["loss_temperature"] = temp_loss.item()
             stats.grad_norms["actor"] = actor_grad
             stats.grad_norms["temperature"] = temp_grad
             stats.extra["temperature"] = self.temperature
