@@ -15,12 +15,12 @@
 # limitations under the License.
 
 from lerobot.robots.lekiwi import LeKiwiConfig
-from lerobot.teleoperators.so_leader.config_so_leader import SOLeaderConfig
+from lerobot.teleoperators.so_leader import SOLeaderConfig
 
 
 def test_lekiwi_use_degrees_defaults_true():
     cfg = LeKiwiConfig()
-    assert cfg.use_degrees is True
+    assert cfg.use_degrees
 
 
 def test_lekiwi_and_so_leader_defaults_are_consistent():
