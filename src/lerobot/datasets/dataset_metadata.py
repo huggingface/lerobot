@@ -64,30 +64,30 @@ class LeRobotDatasetMetadata:
         self.repo_id = repo_id
         self.revision = revision if revision else CODEBASE_VERSION
         self.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
-        self.writer = None
+        self._pq_writer = None
         self.latest_episode = None
-        self.metadata_buffer: list[dict] = []
-        self.metadata_buffer_size = metadata_buffer_size
+        self._metadata_buffer: list[dict] = []
+        self._metadata_buffer_size = metadata_buffer_size
 
         try:
             if force_cache_sync:
                 raise FileNotFoundError
-            self.load_metadata()
+            self._load_metadata()
         except (FileNotFoundError, NotADirectoryError):
             if is_valid_version(self.revision):
                 self.revision = get_safe_version(self.repo_id, self.revision)
 
             (self.root / "meta").mkdir(exist_ok=True, parents=True)
-            self.pull_from_repo(allow_patterns="meta/")
-            self.load_metadata()
+            self._pull_from_repo(allow_patterns="meta/")
+            self._load_metadata()
 
     def _flush_metadata_buffer(self) -> None:
         """Write all buffered episode metadata to parquet file."""
-        if not hasattr(self, "metadata_buffer") or len(self.metadata_buffer) == 0:
+        if not hasattr(self, "_metadata_buffer") or len(self._metadata_buffer) == 0:
             return
 
         combined_dict = {}
-        for episode_dict in self.metadata_buffer:
+        for episode_dict in self._metadata_buffer:
             for key, value in episode_dict.items():
                 if key not in combined_dict:
                     combined_dict[key] = []
@@ -96,32 +96,32 @@ class LeRobotDatasetMetadata:
                 val = value[0] if isinstance(value, list) else value
                 combined_dict[key].append(val.tolist() if isinstance(val, np.ndarray) else val)
 
-        first_ep = self.metadata_buffer[0]
+        first_ep = self._metadata_buffer[0]
         chunk_idx = first_ep["meta/episodes/chunk_index"][0]
         file_idx = first_ep["meta/episodes/file_index"][0]
 
         table = pa.Table.from_pydict(combined_dict)
 
-        if not self.writer:
+        if not self._pq_writer:
             path = Path(self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx))
             path.parent.mkdir(parents=True, exist_ok=True)
-            self.writer = pq.ParquetWriter(
+            self._pq_writer = pq.ParquetWriter(
                 path, schema=table.schema, compression="snappy", use_dictionary=True
             )
 
-        self.writer.write_table(table)
+        self._pq_writer.write_table(table)
 
-        self.latest_episode = self.metadata_buffer[-1]
-        self.metadata_buffer.clear()
+        self.latest_episode = self._metadata_buffer[-1]
+        self._metadata_buffer.clear()
 
     def _close_writer(self) -> None:
         """Close and cleanup the parquet writer if it exists."""
         self._flush_metadata_buffer()
 
-        writer = getattr(self, "writer", None)
+        writer = getattr(self, "_pq_writer", None)
         if writer is not None:
             writer.close()
-            self.writer = None
+            self._pq_writer = None
 
     def __del__(self):
         """
@@ -129,7 +129,7 @@ class LeRobotDatasetMetadata:
         """
         self._close_writer()
 
-    def load_metadata(self):
+    def _load_metadata(self):
         self.info = load_info(self.root)
         check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
         self.tasks = load_tasks(self.root)
@@ -137,7 +137,7 @@ class LeRobotDatasetMetadata:
         self.episodes = load_episodes(self.root)
         self.stats = load_stats(self.root)
 
-    def pull_from_repo(
+    def _pull_from_repo(
         self,
         allow_patterns: list[str] | str | None = None,
         ignore_patterns: list[str] | str | None = None,
@@ -336,8 +336,8 @@ class LeRobotDatasetMetadata:
 
             latest_path = (
                 self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
-                if self.writer is None
-                else self.writer.where
+                if self._pq_writer is None
+                else self._pq_writer.where
             )
 
             if Path(latest_path).exists():
@@ -359,10 +359,10 @@ class LeRobotDatasetMetadata:
             episode_dict["dataset_to_index"] = [self.latest_episode["dataset_to_index"][0] + num_frames]
 
         # Add to buffer
-        self.metadata_buffer.append(episode_dict)
+        self._metadata_buffer.append(episode_dict)
         self.latest_episode = episode_dict
 
-        if len(self.metadata_buffer) >= self.metadata_buffer_size:
+        if len(self._metadata_buffer) >= self._metadata_buffer_size:
             self._flush_metadata_buffer()
 
     def save_episode(
@@ -510,8 +510,8 @@ class LeRobotDatasetMetadata:
             )
         write_json(obj.info, obj.root / INFO_PATH)
         obj.revision = None
-        obj.writer = None
+        obj._pq_writer = None
         obj.latest_episode = None
-        obj.metadata_buffer = []
-        obj.metadata_buffer_size = metadata_buffer_size
+        obj._metadata_buffer = []
+        obj._metadata_buffer_size = metadata_buffer_size
         return obj

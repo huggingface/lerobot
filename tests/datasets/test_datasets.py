@@ -384,7 +384,7 @@ def test_tmp_video_deletion(tmp_path, empty_lerobot_dataset_factory):
     }
 
     ds_vid = empty_lerobot_dataset_factory(root=tmp_path / "vid", features=features_video)
-    ds_vid._writer.batch_encoding_size = 1
+    ds_vid._writer._batch_encoding_size = 1
     ds_vid.add_frame({vid_key: np.random.rand(*DUMMY_CHW), "task": "Dummy task"})
     ds_vid.save_episode()
     vid_img_dir = ds_vid._writer._get_image_file_dir(0, vid_key)
@@ -655,7 +655,7 @@ def test_check_cached_episodes_sufficient(tmp_path, lerobot_dataset_factory):
     assert dataset._reader._check_cached_episodes_sufficient() is False
 
     # Restore the original dataset for remaining tests
-    dataset._reader.hf_dataset = dataset._reader.load_hf_dataset()
+    dataset._reader.hf_dataset = dataset._reader._load_hf_dataset()
 
     # Test all episodes requested (self.episodes = None) and all are available
     dataset._reader.episodes = None
@@ -1203,9 +1203,9 @@ def test_dataset_resume_recording(tmp_path, empty_lerobot_dataset_factory):
 
     assert dataset_resumed.meta.total_episodes == initial_episodes
     assert dataset_resumed.meta.total_frames == initial_episodes * frames_per_episode
-    assert dataset_resumed._writer.latest_episode is None  # Not recording yet
-    assert dataset_resumed._writer.writer is None
-    assert dataset_resumed.meta.writer is None
+    assert dataset_resumed._writer._latest_episode is None  # Not recording yet
+    assert dataset_resumed._writer._pq_writer is None
+    assert dataset_resumed.meta._pq_writer is None
 
     additional_episodes = 2
     for ep_idx in range(initial_episodes, initial_episodes + additional_episodes):
@@ -1312,8 +1312,8 @@ def test_frames_in_current_file_calculation(tmp_path, empty_lerobot_dataset_fact
     assert dataset.meta.total_episodes == 2
     assert dataset.meta.total_frames == 2 * frames_per_episode
 
-    ep1_chunk = dataset._writer.latest_episode["data/chunk_index"]
-    ep1_file = dataset._writer.latest_episode["data/file_index"]
+    ep1_chunk = dataset._writer._latest_episode["data/chunk_index"]
+    ep1_file = dataset._writer._latest_episode["data/file_index"]
     assert ep1_chunk == 0
     assert ep1_file == 0
 
@@ -1331,8 +1331,8 @@ def test_frames_in_current_file_calculation(tmp_path, empty_lerobot_dataset_fact
     assert dataset.meta.total_episodes == 3
     assert dataset.meta.total_frames == 3 * frames_per_episode
 
-    ep2_chunk = dataset._writer.latest_episode["data/chunk_index"]
-    ep2_file = dataset._writer.latest_episode["data/file_index"]
+    ep2_chunk = dataset._writer._latest_episode["data/chunk_index"]
+    ep2_file = dataset._writer._latest_episode["data/file_index"]
     assert ep2_chunk == 0
     assert ep2_file == 0
 

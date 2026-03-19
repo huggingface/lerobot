@@ -69,7 +69,7 @@ class DatasetReader:
     def try_load(self) -> bool:
         """Attempt to load from local cache. Returns True if data is sufficient."""
         try:
-            self.hf_dataset = self.load_hf_dataset()
+            self.hf_dataset = self._load_hf_dataset()
         except (FileNotFoundError, NotADirectoryError):
             self.hf_dataset = None
             return False
@@ -81,7 +81,7 @@ class DatasetReader:
 
     def load_and_activate(self) -> None:
         """Load HF dataset from disk and build index mapping. Call after data is on disk."""
-        self.hf_dataset = self.load_hf_dataset()
+        self.hf_dataset = self._load_hf_dataset()
         self._build_index_mapping()
 
     def _build_index_mapping(self) -> None:
@@ -105,25 +105,10 @@ class DatasetReader:
         """Number of episodes selected."""
         return len(self.episodes) if self.episodes is not None else self.meta.total_episodes
 
-    @property
-    def hf_features(self) -> datasets.Features:
-        """Features of the hf_dataset."""
-        if self.hf_dataset is not None:
-            return self.hf_dataset.features
-        else:
-            return get_hf_features_from_features(self.meta.features)
-
-    def load_hf_dataset(self) -> datasets.Dataset:
+    def _load_hf_dataset(self) -> datasets.Dataset:
         """hf_dataset contains all the observations, states, actions, rewards, etc."""
         features = get_hf_features_from_features(self.meta.features)
         hf_dataset = load_nested_dataset(self.root / "data", features=features, episodes=self.episodes)
-        hf_dataset.set_transform(hf_transform_to_torch)
-        return hf_dataset
-
-    def create_hf_dataset(self) -> datasets.Dataset:
-        features = get_hf_features_from_features(self.meta.features)
-        ft_dict = {col: [] for col in features}
-        hf_dataset = datasets.Dataset.from_dict(ft_dict, features=features, split="train")
         hf_dataset.set_transform(hf_transform_to_torch)
         return hf_dataset
 
