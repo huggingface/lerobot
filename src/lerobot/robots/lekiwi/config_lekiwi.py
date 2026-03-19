@@ -45,8 +45,8 @@ class LeKiwiConfig(RobotConfig):
 
     cameras: dict[str, CameraConfig] = field(default_factory=lekiwi_cameras_config)
 
-    # Set to `True` for backward compatibility with previous policies/dataset
-    use_degrees: bool = False
+    # Keep consistency with SO leader/follower defaults to avoid teleop scale mismatch.
+    use_degrees: bool = True
 
 
 @dataclass
