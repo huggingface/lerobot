@@ -24,4 +24,12 @@ from .robot_reachy2 import (
     Reachy2Robot,
 )
 
-__all__ = ["Reachy2Robot", "Reachy2RobotConfig", "REACHY2_ANTENNAS_JOINTS", "REACHY2_L_ARM_JOINTS", "REACHY2_NECK_JOINTS", "REACHY2_R_ARM_JOINTS", "REACHY2_VEL"]
+__all__ = [
+    "Reachy2Robot",
+    "Reachy2RobotConfig",
+    "REACHY2_ANTENNAS_JOINTS",
+    "REACHY2_L_ARM_JOINTS",
+    "REACHY2_NECK_JOINTS",
+    "REACHY2_R_ARM_JOINTS",
+    "REACHY2_VEL",
+]

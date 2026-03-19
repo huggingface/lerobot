@@ -19,4 +19,10 @@ from .homunculus_arm import HomunculusArm
 from .homunculus_glove import HomunculusGlove
 from .joints_translation import homunculus_glove_to_hope_jr_hand
 
-__all__ = ["HomunculusArm", "HomunculusGlove", "HomunculusArmConfig", "HomunculusGloveConfig", "homunculus_glove_to_hope_jr_hand"]
+__all__ = [
+    "HomunculusArm",
+    "HomunculusGlove",
+    "HomunculusArmConfig",
+    "HomunculusGloveConfig",
+    "homunculus_glove_to_hope_jr_hand",
+]

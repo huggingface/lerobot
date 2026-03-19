@@ -22,4 +22,12 @@ from .config_so_leader import (
 )
 from .so_leader import SO100Leader, SO101Leader, SOLeader
 
-__all__ = ["SOLeader", "SO100Leader", "SO101Leader", "SOLeaderConfig", "SO100LeaderConfig", "SO101LeaderConfig", "SOLeaderTeleopConfig"]
+__all__ = [
+    "SOLeader",
+    "SO100Leader",
+    "SO101Leader",
+    "SOLeaderConfig",
+    "SO100LeaderConfig",
+    "SO101LeaderConfig",
+    "SOLeaderTeleopConfig",
+]

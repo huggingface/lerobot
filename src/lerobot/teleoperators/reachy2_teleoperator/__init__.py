@@ -24,4 +24,12 @@ from .reachy2_teleoperator import (
     Reachy2Teleoperator,
 )
 
-__all__ = ["Reachy2Teleoperator", "Reachy2TeleoperatorConfig", "REACHY2_ANTENNAS_JOINTS", "REACHY2_L_ARM_JOINTS", "REACHY2_NECK_JOINTS", "REACHY2_R_ARM_JOINTS", "REACHY2_VEL"]
+__all__ = [
+    "Reachy2Teleoperator",
+    "Reachy2TeleoperatorConfig",
+    "REACHY2_ANTENNAS_JOINTS",
+    "REACHY2_L_ARM_JOINTS",
+    "REACHY2_NECK_JOINTS",
+    "REACHY2_R_ARM_JOINTS",
+    "REACHY2_VEL",
+]
