@@ -60,7 +60,7 @@ from torch.multiprocessing import Event, Queue
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
-from lerobot.policies.factory import make_policy, make_pre_post_processors
+from lerobot.policies.factory import make_policy
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import TransitionKey
 from lerobot.rl.process import ProcessSignalHandler
@@ -255,35 +255,8 @@ def act_with_policy(
     policy = policy.eval()
     assert isinstance(policy, nn.Module)
 
-    # Build policy pre/post processors for observation normalization and action unnormalization
-    processor_kwargs = {}
-    postprocessor_kwargs = {}
-    if (cfg.policy.pretrained_path and not cfg.resume) or not cfg.policy.pretrained_path:
-        processor_kwargs["dataset_stats"] = cfg.policy.dataset_stats
-
-    if cfg.policy.pretrained_path is not None:
-        processor_kwargs["preprocessor_overrides"] = {
-            "device_processor": {"device": device.type},
-            "normalizer_processor": {
-                "stats": cfg.policy.dataset_stats,
-                "features": {**policy.config.input_features, **policy.config.output_features},
-                "norm_map": policy.config.normalization_mapping,
-            },
-        }
-        postprocessor_kwargs["postprocessor_overrides"] = {
-            "unnormalizer_processor": {
-                "stats": cfg.policy.dataset_stats,
-                "features": policy.config.output_features,
-                "norm_map": policy.config.normalization_mapping,
-            },
-        }
-
-    preprocessor, postprocessor = make_pre_post_processors(
-        policy_cfg=cfg.policy,
-        pretrained_path=cfg.policy.pretrained_path,
-        **processor_kwargs,
-        **postprocessor_kwargs,
-    )
+    # TODO: Re-enable processor pipeline once refactoring is validated against main
+    # preprocessor, postprocessor = None, None
 
     obs, info = online_env.reset()
     env_processor.reset()
@@ -313,26 +286,10 @@ def act_with_policy(
             k: v for k, v in transition[TransitionKey.OBSERVATION].items() if k in cfg.policy.input_features
         }
 
-        # Preprocess observation (normalization, batch dim, device)
-        batch = {**observation}
-        batch = preprocessor(batch)
-        observation_for_inference = {k: v for k, v in batch.items() if k.startswith("observation.")}
-
         # Time policy inference and check if it meets FPS requirement
         with policy_timer:
-            action = policy.select_action(observation_for_inference)
+            action = policy.select_action(batch=observation)
         policy_fps = policy_timer.fps_last
-
-        # Postprocess action (unnormalization, move to cpu).
-        # Actions may include extra dimensions (e.g. discrete gripper) that are
-        # appended after the continuous action and should not be unnormalized.
-        expected_action_dim = cfg.policy.output_features["action"].shape[0]
-        if action.shape[-1] > expected_action_dim:
-            extra = action[..., expected_action_dim:]
-            action = postprocessor(action[..., :expected_action_dim])
-            action = torch.cat([action, extra.cpu()], dim=-1)
-        else:
-            action = postprocessor(action)
 
         log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)
 
