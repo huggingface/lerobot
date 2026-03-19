@@ -19,7 +19,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from lerobot.cameras.utils import make_cameras_from_configs
-from lerobot.processor import RobotAction, RobotObservation
+from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.import_utils import _reachy2_sdk_available
 
 from ..robot import Robot
@@ -180,7 +180,7 @@ class Reachy2Robot(Robot):
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
-            obs_dict[cam_key] = cam.async_read()
+            obs_dict[cam_key] = cam.read_latest()
 
         return obs_dict
 

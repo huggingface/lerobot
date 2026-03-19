@@ -50,6 +50,9 @@ class TrainPipelineConfig(HubMixin):
     # `seed` is used for training (eg: model initialization, dataset shuffling)
     # AND for the evaluation environments.
     seed: int | None = 1000
+    # Set to True to use deterministic cuDNN algorithms for reproducibility.
+    # This disables cudnn.benchmark and may reduce training speed by ~10-20 percent.
+    cudnn_deterministic: bool = False
     # Number of workers for the dataloader.
     num_workers: int = 4
     batch_size: int = 8

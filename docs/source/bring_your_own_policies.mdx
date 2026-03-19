@@ -32,7 +32,7 @@ version = "0.1.0"
 dependencies = [
     # your policy-specific dependencies
 ]
-requires-python = ">= 3.11"
+requires-python = ">= 3.12"
 
 [build-system]
 build-backend = # your-build-backend
@@ -82,7 +82,7 @@ Create your policy implementation by inheriting from LeRobot's base `PreTrainedP
 # modeling_my_custom_policy.py
 import torch
 import torch.nn as nn
-from typing import Dict, Any
+from typing import Any
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from .configuration_my_custom_policy import MyCustomPolicyConfig
@@ -91,7 +91,7 @@ class MyCustomPolicy(PreTrainedPolicy):
     config_class = MyCustomPolicyConfig
     name = "my_custom_policy"
 
-    def __init__(self, config: MyCustomPolicyConfig, dataset_stats: Dict[str, Any] = None):
+    def __init__(self, config: MyCustomPolicyConfig, dataset_stats: dict[str, Any] = None):
         super().__init__(config, dataset_stats)
         ...
 ```
@@ -102,7 +102,7 @@ Create processor functions:
 
 ```python
 # processor_my_custom_policy.py
-from typing import Dict, Any
+from typing import Any
 import torch
 
 

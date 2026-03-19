@@ -16,15 +16,13 @@
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.datasets.feature_utils import combine_feature_dicts
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
-from lerobot.datasets.utils import combine_feature_dicts
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.processor import (
-    RobotAction,
-    RobotObservation,
     RobotProcessorPipeline,
     make_default_teleop_action_processor,
 )
@@ -40,6 +38,7 @@ from lerobot.robots.so_follower.robot_kinematic_processor import (
     InverseKinematicsEEToJoints,
 )
 from lerobot.scripts.lerobot_record import record_loop
+from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
@@ -142,38 +141,24 @@ def main():
     listener, events = init_keyboard_listener()
     init_rerun(session_name="phone_so100_evaluate")
 
-    if not robot.is_connected:
-        raise ValueError("Robot is not connected!")
+    try:
+        if not robot.is_connected:
+            raise ValueError("Robot is not connected!")
 
-    print("Starting evaluate loop...")
-    episode_idx = 0
-    for episode_idx in range(NUM_EPISODES):
-        log_say(f"Running inference, recording eval episode {episode_idx + 1} of {NUM_EPISODES}")
+        print("Starting evaluate loop...")
+        episode_idx = 0
+        for episode_idx in range(NUM_EPISODES):
+            log_say(f"Running inference, recording eval episode {episode_idx + 1} of {NUM_EPISODES}")
 
-        # Main record loop
-        record_loop(
-            robot=robot,
-            events=events,
-            fps=FPS,
-            policy=policy,
-            preprocessor=preprocessor,  # Pass the pre and post policy processors
-            postprocessor=postprocessor,
-            dataset=dataset,
-            control_time_s=EPISODE_TIME_SEC,
-            single_task=TASK_DESCRIPTION,
-            display_data=True,
-            teleop_action_processor=make_default_teleop_action_processor(),
-            robot_action_processor=robot_ee_to_joints_processor,
-            robot_observation_processor=robot_joints_to_ee_pose_processor,
-        )
-
-        # Reset the environment if not stopping or re-recording
-        if not events["stop_recording"] and ((episode_idx < NUM_EPISODES - 1) or events["rerecord_episode"]):
-            log_say("Reset the environment")
+            # Main record loop
             record_loop(
                 robot=robot,
                 events=events,
                 fps=FPS,
+                policy=policy,
+                preprocessor=preprocessor,  # Pass the pre and post policy processors
+                postprocessor=postprocessor,
+                dataset=dataset,
                 control_time_s=EPISODE_TIME_SEC,
                 single_task=TASK_DESCRIPTION,
                 display_data=True,
@@ -182,24 +167,41 @@ def main():
                 robot_observation_processor=robot_joints_to_ee_pose_processor,
             )
 
-        if events["rerecord_episode"]:
-            log_say("Re-record episode")
-            events["rerecord_episode"] = False
-            events["exit_early"] = False
-            dataset.clear_episode_buffer()
-            continue
+            # Reset the environment if not stopping or re-recording
+            if not events["stop_recording"] and (
+                (episode_idx < NUM_EPISODES - 1) or events["rerecord_episode"]
+            ):
+                log_say("Reset the environment")
+                record_loop(
+                    robot=robot,
+                    events=events,
+                    fps=FPS,
+                    control_time_s=EPISODE_TIME_SEC,
+                    single_task=TASK_DESCRIPTION,
+                    display_data=True,
+                    teleop_action_processor=make_default_teleop_action_processor(),
+                    robot_action_processor=robot_ee_to_joints_processor,
+                    robot_observation_processor=robot_joints_to_ee_pose_processor,
+                )
 
-        # Save episode
-        dataset.save_episode()
-        episode_idx += 1
+            if events["rerecord_episode"]:
+                log_say("Re-record episode")
+                events["rerecord_episode"] = False
+                events["exit_early"] = False
+                dataset.clear_episode_buffer()
+                continue
 
-    # Clean up
-    log_say("Stop recording")
-    robot.disconnect()
-    listener.stop()
+            # Save episode
+            dataset.save_episode()
+            episode_idx += 1
+    finally:
+        # Clean up
+        log_say("Stop recording")
+        robot.disconnect()
+        listener.stop()
 
-    dataset.finalize()
-    dataset.push_to_hub()
+        dataset.finalize()
+        dataset.push_to_hub()
 
 
 if __name__ == "__main__":

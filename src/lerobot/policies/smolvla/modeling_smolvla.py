@@ -30,7 +30,7 @@ Example of finetuning the smolvla pretrained model (`smolvla_base`):
 ```bash
 lerobot-train \
 --policy.path=lerobot/smolvla_base \
---dataset.repo_id=danaaubakirova/svla_so100_task1_v3 \
+--dataset.repo_id=<USER>/svla_so100_task1_v3 \
 --batch_size=64 \
 --steps=200000
 ```
@@ -40,7 +40,7 @@ and an action expert.
 ```bash
 lerobot-train \
 --policy.type=smolvla \
---dataset.repo_id=danaaubakirova/svla_so100_task1_v3 \
+--dataset.repo_id=<USER>/svla_so100_task1_v3 \
 --batch_size=64 \
 --steps=200000
 ```
@@ -54,12 +54,11 @@ policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
 
 import math
 from collections import deque
-from typing import TypedDict
+from typing import TypedDict, Unpack
 
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
-from typing_extensions import Unpack
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.modeling_rtc import RTCProcessor
@@ -69,7 +68,7 @@ from lerobot.policies.utils import (
     populate_queues,
 )
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
-from lerobot.utils.utils import get_safe_dtype
+from lerobot.utils.device_utils import get_safe_dtype
 
 
 class ActionSelectKwargs(TypedDict, total=False):
@@ -375,19 +374,21 @@ class SmolVLAPolicy(PreTrainedPolicy):
         lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
         lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
         actions = self.prepare_action(batch)
-        actions_is_pad = batch.get("actions_id_pad")
+        actions_is_pad = batch.get("action_is_pad")
         loss_dict = {}
         losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time)
-        loss_dict["losses_after_forward"] = losses.clone()
+        original_action_dim = self.config.action_feature.shape[0]
+        losses = losses[:, :, :original_action_dim]
+        loss_dict["losses_after_forward"] = losses.clone().mean().item()
 
         if actions_is_pad is not None:
             in_episode_bound = ~actions_is_pad
             losses = losses * in_episode_bound.unsqueeze(-1)
-            loss_dict["losses_after_in_ep_bound"] = losses.clone()
+            loss_dict["losses_after_in_ep_bound"] = losses.clone().mean().item()
 
         # Remove padding
         losses = losses[:, :, : self.config.max_action_dim]
-        loss_dict["losses_after_rm_padding"] = losses.clone()
+        loss_dict["losses_after_rm_padding"] = losses.clone().mean().item()
 
         if reduction == "none":
             # Return per-sample losses (B,) by averaging over time and action dims
@@ -592,6 +593,12 @@ class VLAFlowMatching(nn.Module):
         self.image_end_token = torch.tensor([self.fake_image_token], dtype=torch.long)
         self.prefix_length = self.config.prefix_length
         self.rtc_processor = rtc_processor
+
+        # Compile model if requested
+        if config.compile_model:
+            torch.set_float32_matmul_precision("high")
+            self.sample_actions = torch.compile(self.sample_actions, mode=config.compile_mode)
+            self.forward = torch.compile(self.forward, mode=config.compile_mode)
 
     def _rtc_enabled(self):
         return self.config.rtc_config is not None and self.config.rtc_config.enabled
