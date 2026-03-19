@@ -1063,45 +1063,21 @@ class VideoEncodingManager:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        streaming_encoder = (
-            getattr(self.dataset._writer, "_streaming_encoder", None) if self.dataset._writer else None
-        )
+        writer = self.dataset._writer
+        if writer is not None:
+            has_streaming = writer._streaming_encoder is not None
 
-        if streaming_encoder is not None:
-            # Handle streaming encoder cleanup
-            if exc_type is not None:
-                streaming_encoder.cancel_episode()
-            streaming_encoder.close()
-        elif self.dataset.episodes_since_last_encoding > 0:
-            # Handle any remaining episodes that haven't been batch encoded
-            if exc_type is not None:
-                logger.info("Exception occurred. Encoding remaining episodes before exit...")
-            else:
-                logger.info("Recording stopped. Encoding remaining episodes...")
+            if exc_type is not None and has_streaming:
+                writer.cancel_pending_videos()
 
-            start_ep = self.dataset.num_episodes - self.dataset.episodes_since_last_encoding
-            end_ep = self.dataset.num_episodes
-            logger.info(
-                f"Encoding remaining {self.dataset.episodes_since_last_encoding} episodes, "
-                f"from episode {start_ep} to {end_ep - 1}"
-            )
-            self.dataset._writer._batch_save_episode_video(start_ep, end_ep)
+            writer.flush_pending_videos()
+            self.dataset.finalize()
 
-        # Finalize the dataset to properly close all writers
-        self.dataset.finalize()
-
-        # Clean up episode images if recording was interrupted (only for non-streaming mode)
-        if exc_type is not None and streaming_encoder is None:
-            interrupted_episode_index = self.dataset.num_episodes
-            for key in self.dataset.meta.video_keys:
-                img_dir = self.dataset._writer._get_image_file_path(
-                    episode_index=interrupted_episode_index, image_key=key, frame_index=0
-                ).parent
-                if img_dir.exists():
-                    logger.debug(
-                        f"Cleaning up interrupted episode images for episode {interrupted_episode_index}, camera {key}"
-                    )
-                    shutil.rmtree(img_dir)
+            # Clean up episode images if recording was interrupted (only for non-streaming mode)
+            if exc_type is not None and not has_streaming:
+                writer.cleanup_interrupted_episode(self.dataset.num_episodes)
+        else:
+            self.dataset.finalize()
 
         # Clean up any remaining images directory if it's empty
         img_dir = self.dataset.root / "images"

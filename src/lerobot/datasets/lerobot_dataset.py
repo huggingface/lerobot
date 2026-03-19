@@ -88,7 +88,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 - stats stores the dataset statistics of the different modalities for normalization
                 - tasks contains the prompts for each task of the dataset, which can be used for
                   task-conditioned training.
-            - hf_dataset (from datasets.Dataset), which will read any values from parquet files.
+            - data (backed by datasets.Dataset), which reads values from parquet files.
             - videos (optional) from which frames are loaded to be synchronous with data from parquet files.
 
         A typical LeRobotDataset looks like this from its root path:
@@ -190,9 +190,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.episodes = episodes
         self.tolerance_s = tolerance_s
         self.revision = revision if revision else CODEBASE_VERSION
-        self.video_backend = video_backend if video_backend else get_safe_default_codec()
-        self.batch_encoding_size = batch_encoding_size
-        self.vcodec = resolve_vcodec(vcodec)
+        self._video_backend = video_backend if video_backend else get_safe_default_codec()
+        self._batch_encoding_size = batch_encoding_size
+        self._vcodec = resolve_vcodec(vcodec)
         self._encoder_threads = encoder_threads
 
         self.root.mkdir(exist_ok=True, parents=True)
@@ -208,7 +208,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             root=self.root,
             episodes=episodes,
             tolerance_s=tolerance_s,
-            video_backend=self.video_backend,
+            video_backend=self._video_backend,
             delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
         )
@@ -217,7 +217,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if force_cache_sync or not self._reader.try_load():
             if is_valid_version(self.revision):
                 self.revision = get_safe_version(self.repo_id, self.revision)
-            self.download(download_videos)
+            self._download(download_videos)
             self._reader.load_and_activate()
 
         # Detect write-mode params for backward compatibility
@@ -235,7 +235,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if streaming_encoding and len(self.meta.video_keys) > 0:
                 streaming_enc = StreamingVideoEncoder(
                     fps=self.meta.fps,
-                    vcodec=self.vcodec,
+                    vcodec=self._vcodec,
                     pix_fmt="yuv420p",
                     g=2,
                     crf=30,
@@ -246,7 +246,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self._writer = DatasetWriter(
                 meta=self.meta,
                 root=self.root,
-                vcodec=self.vcodec,
+                vcodec=self._vcodec,
                 encoder_threads=encoder_threads,
                 batch_encoding_size=batch_encoding_size,
                 streaming_encoder=streaming_enc,
@@ -277,50 +277,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 root=self.root,
                 episodes=self.episodes,
                 tolerance_s=self.tolerance_s,
-                video_backend=self.video_backend,
+                video_backend=self._video_backend,
                 delta_timestamps=self.delta_timestamps,
                 image_transforms=self.image_transforms,
             )
         return self._reader
-
-    # ── Reader proxy properties ───────────────────────────────────────
-
-    @property
-    def hf_dataset(self):
-        if self._reader is None:
-            return None
-        return self._reader.hf_dataset
-
-    @hf_dataset.setter
-    def hf_dataset(self, value):
-        self._ensure_reader().hf_dataset = value
-
-    # ── Writer proxy properties ───────────────────────────────────────
-
-    @property
-    def episode_buffer(self):
-        return self._writer.episode_buffer if self._writer is not None else None
-
-    @episode_buffer.setter
-    def episode_buffer(self, value):
-        if self._writer is not None:
-            self._writer.episode_buffer = value
-
-    @property
-    def image_writer(self):
-        return self._writer.image_writer if self._writer is not None else None
-
-    @property
-    def writer(self):
-        return self._writer.writer if self._writer is not None else None
-
-    @property
-    def latest_episode(self):
-        return self._writer.latest_episode if self._writer is not None else None
-
-    @property
-    def episodes_since_last_encoding(self):
-        return self._writer.episodes_since_last_encoding if self._writer is not None else 0
 
     # ── Metadata properties ───────────────────────────────────────────
 
@@ -347,17 +308,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def features(self) -> dict[str, dict]:
         return self.meta.features
 
-    # ── Reader-delegated methods ──────────────────────────────────────
-
-    def load_hf_dataset(self):
-        return self._ensure_reader().load_hf_dataset()
-
-    def create_hf_dataset(self):
-        return self._ensure_reader().create_hf_dataset()
-
-    def get_episodes_file_paths(self):
-        return self._ensure_reader().get_episodes_file_paths()
-
     # ── Writer-delegated methods ──────────────────────────────────────
 
     def add_frame(self, frame: dict) -> None:
@@ -372,17 +322,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._require_writer("clear_episode_buffer")
         self._writer.clear_episode_buffer(delete_images)
 
-    def create_episode_buffer(self, episode_index: int | None = None) -> dict:
-        self._require_writer("create_episode_buffer")
-        return self._writer.create_episode_buffer(episode_index)
-
-    def start_image_writer(self, num_processes: int = 0, num_threads: int = 4) -> None:
-        self._require_writer("start_image_writer")
-        self._writer.start_image_writer(num_processes, num_threads)
-
-    def stop_image_writer(self) -> None:
-        if self._writer is not None:
-            self._writer.stop_image_writer()
+    def has_pending_frames(self) -> bool:
+        """Check if there are unsaved frames in the episode buffer."""
+        if self._writer is None:
+            return False
+        return self._writer.episode_buffer is not None and self._writer.episode_buffer["size"] > 0
 
     def finalize(self):
         """
@@ -413,6 +357,22 @@ class LeRobotDataset(torch.utils.data.Dataset):
             # One-shot load after finalize()
             reader.load_and_activate()
         return reader.get_item(idx)
+
+    def select_columns(self, column_names: str | list[str]):
+        """Select specific columns from the underlying dataset.
+
+        Useful for extracting action sequences during replay without loading all features.
+        Returns a ``datasets.Dataset`` containing only the requested columns.
+        """
+        return self._ensure_reader().hf_dataset.select_columns(column_names)
+
+    def get_raw_item(self, idx) -> dict:
+        """Get a raw frame without image transforms applied.
+
+        Unlike ``__getitem__``, this returns the raw HF dataset row at the given
+        index with no delta-timestamp expansion, video decoding, or image transforms.
+        """
+        return self._ensure_reader().hf_dataset[idx]
 
     def __repr__(self):
         feature_keys = list(self.features)
@@ -482,27 +442,20 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 hub_api.delete_tag(self.repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
             hub_api.create_tag(self.repo_id, tag=CODEBASE_VERSION, revision=branch, repo_type="dataset")
 
-    def pull_from_repo(
-        self,
-        allow_patterns: list[str] | str | None = None,
-        ignore_patterns: list[str] | str | None = None,
-    ) -> None:
+    def _download(self, download_videos: bool = True) -> None:
+        """Downloads the dataset from the given 'repo_id' at the provided version."""
+        ignore_patterns = None if download_videos else "videos/"
+        files = None
+        if self.episodes is not None:
+            files = self._ensure_reader().get_episodes_file_paths()
         snapshot_download(
             self.repo_id,
             repo_type="dataset",
             revision=self.revision,
             local_dir=self.root,
-            allow_patterns=allow_patterns,
+            allow_patterns=files,
             ignore_patterns=ignore_patterns,
         )
-
-    def download(self, download_videos: bool = True) -> None:
-        """Downloads the dataset from the given 'repo_id' at the provided version."""
-        ignore_patterns = None if download_videos else "videos/"
-        files = None
-        if self.episodes is not None:
-            files = self.get_episodes_file_paths()
-        self.pull_from_repo(allow_patterns=files, ignore_patterns=ignore_patterns)
 
     # ── Class constructors ────────────────────────────────────────────
 
@@ -545,9 +498,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.image_transforms = None
         obj.delta_timestamps = None
         obj.episodes = None
-        obj.video_backend = video_backend if video_backend is not None else get_safe_default_codec()
-        obj.batch_encoding_size = batch_encoding_size
-        obj.vcodec = vcodec
+        obj._video_backend = video_backend if video_backend is not None else get_safe_default_codec()
+        obj._batch_encoding_size = batch_encoding_size
+        obj._vcodec = vcodec
         obj._encoder_threads = encoder_threads
 
         # Reader is lazily created on first access (write-only mode)
@@ -614,9 +567,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.image_transforms = None
         obj.delta_timestamps = None
         obj.episodes = None
-        obj.video_backend = video_backend if video_backend else get_safe_default_codec()
-        obj.batch_encoding_size = batch_encoding_size
-        obj.vcodec = vcodec
+        obj._video_backend = video_backend if video_backend else get_safe_default_codec()
+        obj._batch_encoding_size = batch_encoding_size
+        obj._vcodec = vcodec
         obj._encoder_threads = encoder_threads
 
         # Load metadata

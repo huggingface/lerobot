@@ -117,7 +117,7 @@ def save_first_episode(imgs_dir: Path, dataset: LeRobotDataset) -> None:
         return
 
     imgs_dir.mkdir(parents=True, exist_ok=True)
-    hf_dataset = dataset.hf_dataset.with_format(None)
+    hf_dataset = dataset._reader.hf_dataset.with_format(None)
 
     # We only save images from the first camera
     img_keys = [key for key in hf_dataset.features if key.startswith(OBS_IMAGE)]

@@ -531,6 +531,40 @@ class DatasetWriter:
             self.writer.close()
             self.writer = None
 
+    def flush_pending_videos(self) -> None:
+        """Flush any pending video encoding (streaming or batch).
+
+        For streaming encoding: closes the encoder.
+        For batch encoding: encodes any remaining episodes that haven't been batch-encoded yet.
+        """
+        if self._streaming_encoder is not None:
+            self._streaming_encoder.close()
+        elif self.episodes_since_last_encoding > 0:
+            start_ep = self.meta.total_episodes - self.episodes_since_last_encoding
+            end_ep = self.meta.total_episodes
+            logger.info(
+                f"Encoding remaining {self.episodes_since_last_encoding} episodes, "
+                f"from episode {start_ep} to {end_ep - 1}"
+            )
+            self._batch_save_episode_video(start_ep, end_ep)
+
+    def cancel_pending_videos(self) -> None:
+        """Cancel any in-progress streaming encoding without flushing."""
+        if self._streaming_encoder is not None:
+            self._streaming_encoder.cancel_episode()
+
+    def cleanup_interrupted_episode(self, episode_index: int) -> None:
+        """Remove temporary image directories for an interrupted episode."""
+        for key in self.meta.video_keys:
+            img_dir = self._get_image_file_path(
+                episode_index=episode_index, image_key=key, frame_index=0
+            ).parent
+            if img_dir.exists():
+                logger.debug(
+                    f"Cleaning up interrupted episode images for episode {episode_index}, camera {key}"
+                )
+                shutil.rmtree(img_dir)
+
     def finalize(self) -> None:
         """Close parquet writers, metadata writers, and streaming encoder."""
         self.close_writer()

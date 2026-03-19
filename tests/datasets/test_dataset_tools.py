@@ -82,7 +82,7 @@ def test_delete_single_episode(sample_dataset, tmp_path):
     assert new_dataset.meta.total_episodes == 4
     assert new_dataset.meta.total_frames == 40
 
-    episode_indices = {int(idx.item()) for idx in new_dataset.hf_dataset["episode_index"]}
+    episode_indices = {int(idx.item()) for idx in new_dataset._reader.hf_dataset["episode_index"]}
     assert episode_indices == {0, 1, 2, 3}
 
     assert len(new_dataset) == 40
@@ -108,7 +108,7 @@ def test_delete_multiple_episodes(sample_dataset, tmp_path):
     assert new_dataset.meta.total_episodes == 3
     assert new_dataset.meta.total_frames == 30
 
-    episode_indices = {int(idx.item()) for idx in new_dataset.hf_dataset["episode_index"]}
+    episode_indices = {int(idx.item()) for idx in new_dataset._reader.hf_dataset["episode_index"]}
     assert episode_indices == {0, 1, 2}
 
 
@@ -178,10 +178,10 @@ def test_split_by_episodes(sample_dataset, tmp_path):
     assert result["val"].meta.total_episodes == 2
     assert result["val"].meta.total_frames == 20
 
-    train_episodes = {int(idx.item()) for idx in result["train"].hf_dataset["episode_index"]}
+    train_episodes = {int(idx.item()) for idx in result["train"]._reader.hf_dataset["episode_index"]}
     assert train_episodes == {0, 1, 2}
 
-    val_episodes = {int(idx.item()) for idx in result["val"].hf_dataset["episode_index"]}
+    val_episodes = {int(idx.item()) for idx in result["val"]._reader.hf_dataset["episode_index"]}
     assert val_episodes == {0, 1}
 
 
@@ -285,7 +285,7 @@ def test_merge_two_datasets(sample_dataset, tmp_path, empty_lerobot_dataset_fact
     assert merged.meta.total_episodes == 8  # 5 + 3
     assert merged.meta.total_frames == 80  # 50 + 30
 
-    episode_indices = sorted({int(idx.item()) for idx in merged.hf_dataset["episode_index"]})
+    episode_indices = sorted({int(idx.item()) for idx in merged._reader.hf_dataset["episode_index"]})
     assert episode_indices == list(range(8))
 
 
@@ -934,7 +934,7 @@ def test_delete_consecutive_episodes(sample_dataset, tmp_path):
     assert new_dataset.meta.total_episodes == 2
     assert new_dataset.meta.total_frames == 20
 
-    episode_indices = sorted({int(idx.item()) for idx in new_dataset.hf_dataset["episode_index"]})
+    episode_indices = sorted({int(idx.item()) for idx in new_dataset._reader.hf_dataset["episode_index"]})
     assert episode_indices == [0, 1]
 
 
@@ -958,7 +958,7 @@ def test_delete_first_and_last_episodes(sample_dataset, tmp_path):
     assert new_dataset.meta.total_episodes == 3
     assert new_dataset.meta.total_frames == 30
 
-    episode_indices = sorted({int(idx.item()) for idx in new_dataset.hf_dataset["episode_index"]})
+    episode_indices = sorted({int(idx.item()) for idx in new_dataset._reader.hf_dataset["episode_index"]})
     assert episode_indices == [0, 1, 2]
 
 

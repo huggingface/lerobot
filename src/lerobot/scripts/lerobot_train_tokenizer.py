@@ -212,7 +212,7 @@ def process_episode(args):
             else:
                 rel_idx = abs_idx
 
-            frame = dataset.hf_dataset[rel_idx]
+            frame = dataset.get_raw_item(rel_idx)
 
             # get state (could be from observation.state or other state key)
             if state_key in frame:
