@@ -159,9 +159,16 @@ compute*.sh
 experiments.sh
 slurm_out
 auto_resume_training.py
+
 ### Miscellaneous ###
 # W&B
 wandb/
+data
+
+# Claude
+.claude/
+prompt*.md
+AGENTS.md
 
 # Dev scripts
 .dev/
