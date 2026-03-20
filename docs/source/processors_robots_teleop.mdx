@@ -128,6 +128,66 @@ How it works:
 - `combine_feature_dicts(...)`: combine multiple feature dicts.
 - Recording with `record_loop(...)` uses `build_dataset_frame(...)` to build frames consistent with `dataset.features` before we call `add_frame(...)` to add the frame to the dataset.
 
+## Gamepad direct joint control (SO-100 / SO-101)
+
+You can teleoperate an SO-100 or SO-101 follower with a gamepad (Xbox, Logitech, or any HID-compatible controller) without a leader arm, URDF, or IK solver. Each gamepad axis directly controls one joint:
+
+| Control                | Joint                  |
+| ---------------------- | ---------------------- |
+| Left stick up/down     | shoulder_lift          |
+| Left stick left/right  | shoulder_pan           |
+| Right stick up/down    | elbow_flex             |
+| Right stick left/right | wrist_flex             |
+| LB / RB                | wrist_roll             |
+| LT / RT                | gripper (close / open) |
+| Y                      | End episode (success)  |
+| X                      | End episode (failure)  |
+| A                      | Rerecord episode       |
+
+### Quick start
+
+```bash
+lerobot-teleoperate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --robot.id=my_follower \
+    --teleop.type=gamepad
+```
+
+If multiple gamepads or HID devices are connected, select one by name:
+
+```bash
+lerobot-teleoperate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --teleop.type=gamepad \
+    --teleop.device_name=xbox
+```
+
+### How it works
+
+When `make_default_processors()` detects a delta teleop (gamepad or keyboard_ee) paired with a joint-space robot (SO-100/SO-101 follower), it automatically inserts a `MapGamepadToJointPositionsStep` into the teleop action processor. This step:
+
+1. Reads the current joint positions from the robot observation.
+2. Adds scaled gamepad deltas (`joint_step_size` degrees per frame per unit of stick deflection).
+3. Outputs absolute `motor.pos` targets the robot can execute directly.
+
+No IK, URDF, or extra dependencies are needed. The robot action and observation processors remain identity pipelines.
+
+### Recording datasets
+
+Recording works the same way — `make_default_processors()` is called with the teleop and robot configs, so the joint control pipeline is set up automatically:
+
+```bash
+lerobot-record \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --teleop.type=gamepad \
+    --dataset.repo_id=<your_username>/<dataset_name> \
+    --dataset.num_episodes=10 \
+    --dataset.single_task="Pick up the cube"
+```
+
 ## Guidance when customizing robot pipelines
 
 You can store any of the following features as your action/observation space:
