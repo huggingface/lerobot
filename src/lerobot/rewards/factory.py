@@ -27,6 +27,11 @@ from lerobot.rewards.pretrained import PreTrainedRewardModel
 from lerobot.rewards.sarm.configuration_sarm import SARMConfig
 
 
+def _known_reward_model_choices() -> list[str]:
+    """Return known reward model names in deterministic order."""
+    return sorted(RewardModelConfig.get_known_choices())
+
+
 def get_reward_model_class(name: str) -> type[PreTrainedRewardModel]:
     """
     Retrieves a reward model class by its registered name.
@@ -56,7 +61,10 @@ def get_reward_model_class(name: str) -> type[PreTrainedRewardModel]:
         try:
             return _get_reward_model_cls_from_name(name=name)
         except Exception as e:
-            raise ValueError(f"Reward model type '{name}' is not available.") from e
+            raise ValueError(
+                f"Unknown reward model type '{name}'. "
+                f"Available reward models: {_known_reward_model_choices()}"
+            ) from e
 
 
 def make_reward_model_config(reward_type: str, **kwargs) -> RewardModelConfig:
@@ -86,7 +94,10 @@ def make_reward_model_config(reward_type: str, **kwargs) -> RewardModelConfig:
             config_cls = RewardModelConfig.get_choice_class(reward_type)
             return config_cls(**kwargs)
         except Exception as e:
-            raise ValueError(f"Reward model type '{reward_type}' is not available.") from e
+            raise ValueError(
+                f"Unknown reward model type '{reward_type}'. "
+                f"Available reward models: {_known_reward_model_choices()}"
+            ) from e
 
 
 def make_reward_model(cfg: RewardModelConfig, **kwargs) -> PreTrainedRewardModel:
@@ -169,7 +180,8 @@ def make_reward_pre_post_processors(
             )
         except Exception as e:
             raise ValueError(
-                f"Processor for reward model type '{reward_cfg.type}' is not implemented."
+                f"Processor for reward model type '{reward_cfg.type}' is not implemented. "
+                f"Available reward models: {_known_reward_model_choices()}"
             ) from e
         return processors
 
