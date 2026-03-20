@@ -1073,7 +1073,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
             )
             latest_size_in_mb = get_file_size_in_mb(latest_path)
-            latest_duration_in_s = latest_ep[f"videos/{video_key}/to_timestamp"][0]
+            latest_duration_in_s = get_video_duration_in_s(latest_path)
 
             if latest_size_in_mb + ep_size_in_mb >= self.meta.video_files_size_in_mb:
                 # Move temporary episode video to a new video file in the dataset
@@ -1090,6 +1090,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
                     [latest_path, ep_path],
                     latest_path,
                 )
+                # Use actual duration after concatenation to ensure consistency with decoder
+                total_duration_in_s = get_video_duration_in_s(latest_path)
+                ep_duration_in_s = total_duration_in_s - latest_duration_in_s
 
         # Remove temporary directory
         shutil.rmtree(str(ep_path.parent))
