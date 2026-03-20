@@ -279,7 +279,6 @@ def eval_policy(
     """
     if max_episodes_rendered > 0 and not videos_dir:
         raise ValueError("If max_episodes_rendered > 0, videos_dir must be provided.")
-    
     unwrapped_policy = extract_model_from_parallel(policy, keep_torch_compile=False)
 
     if not isinstance(unwrapped_policy, PreTrainedPolicy):
