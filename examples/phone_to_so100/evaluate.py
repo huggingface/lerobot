@@ -16,15 +16,13 @@
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.datasets.feature_utils import combine_feature_dicts
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
-from lerobot.datasets.utils import combine_feature_dicts
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.processor import (
-    RobotAction,
-    RobotObservation,
     RobotProcessorPipeline,
     make_default_teleop_action_processor,
 )
@@ -40,6 +38,7 @@ from lerobot.robots.so_follower.robot_kinematic_processor import (
     InverseKinematicsEEToJoints,
 )
 from lerobot.scripts.lerobot_record import record_loop
+from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
