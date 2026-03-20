@@ -1116,7 +1116,7 @@ def _save_episode_images_for_video(
     imgs_dir.mkdir(parents=True, exist_ok=True)
 
     # Get dataset without torch format for PIL image access
-    hf_dataset = dataset._reader.hf_dataset.with_format(None)
+    hf_dataset = dataset.reader.hf_dataset.with_format(None)
 
     # Select only this camera's images
     imgs_dataset = hf_dataset.select_columns(img_key)
@@ -1165,7 +1165,7 @@ def _save_batch_episodes_images(
         List of episode durations in seconds
     """
     imgs_dir.mkdir(parents=True, exist_ok=True)
-    hf_dataset = dataset._reader.hf_dataset.with_format(None)
+    hf_dataset = dataset.reader.hf_dataset.with_format(None)
     imgs_dataset = hf_dataset.select_columns(img_key)
 
     # Define function to save a single image with global frame index
@@ -1309,7 +1309,7 @@ def _estimate_frame_size_via_calibration(
         num_frames = min(num_calibration_frames, episode_length)
 
         # Get frames from dataset
-        hf_dataset = dataset._reader.hf_dataset.with_format(None)
+        hf_dataset = dataset.reader.hf_dataset.with_format(None)
         sample_indices = range(from_idx, from_idx + num_frames)
 
         # Save calibration frames
@@ -1576,7 +1576,7 @@ def convert_image_to_video_dataset(
         )
 
     # Get all image keys
-    hf_dataset = dataset._reader.hf_dataset.with_format(None)
+    hf_dataset = dataset.reader.hf_dataset.with_format(None)
     img_keys = [key for key in hf_dataset.features if key.startswith(OBS_IMAGE)]
 
     if len(img_keys) == 0:

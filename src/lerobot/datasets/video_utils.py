@@ -1063,7 +1063,7 @@ class VideoEncodingManager:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        writer = self.dataset._writer
+        writer = self.dataset.writer
         if writer is not None:
             has_streaming = writer._streaming_encoder is not None
 

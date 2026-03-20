@@ -50,12 +50,12 @@ class DatasetReader:
         delta_timestamps: dict[str, list[float]] | None,
         image_transforms: Callable | None,
     ):
-        self.meta = meta
-        self.root = root
+        self._meta = meta
+        self._root = root
         self.episodes = episodes
-        self.tolerance_s = tolerance_s
-        self.video_backend = video_backend
-        self.image_transforms = image_transforms
+        self._tolerance_s = tolerance_s
+        self._video_backend = video_backend
+        self._image_transforms = image_transforms
 
         self.hf_dataset: datasets.Dataset | None = None
         self._absolute_to_relative_idx: dict[int, int] | None = None
@@ -98,17 +98,17 @@ class DatasetReader:
         """Number of frames in selected episodes."""
         if self.episodes is not None and self.hf_dataset is not None:
             return len(self.hf_dataset)
-        return self.meta.total_frames
+        return self._meta.total_frames
 
     @property
     def num_episodes(self) -> int:
         """Number of episodes selected."""
-        return len(self.episodes) if self.episodes is not None else self.meta.total_episodes
+        return len(self.episodes) if self.episodes is not None else self._meta.total_episodes
 
     def _load_hf_dataset(self) -> datasets.Dataset:
         """hf_dataset contains all the observations, states, actions, rewards, etc."""
-        features = get_hf_features_from_features(self.meta.features)
-        hf_dataset = load_nested_dataset(self.root / "data", features=features, episodes=self.episodes)
+        features = get_hf_features_from_features(self._meta.features)
+        hf_dataset = load_nested_dataset(self._root / "data", features=features, episodes=self.episodes)
         hf_dataset.set_transform(hf_transform_to_torch)
         return hf_dataset
 
@@ -123,29 +123,29 @@ class DatasetReader:
         }
 
         if self.episodes is None:
-            requested_episodes = set(range(self.meta.total_episodes))
+            requested_episodes = set(range(self._meta.total_episodes))
         else:
             requested_episodes = set(self.episodes)
 
         if not requested_episodes.issubset(available_episodes):
             return False
 
-        if len(self.meta.video_keys) > 0:
+        if len(self._meta.video_keys) > 0:
             for ep_idx in requested_episodes:
-                for vid_key in self.meta.video_keys:
-                    video_path = self.root / self.meta.get_video_file_path(ep_idx, vid_key)
+                for vid_key in self._meta.video_keys:
+                    video_path = self._root / self._meta.get_video_file_path(ep_idx, vid_key)
                     if not video_path.exists():
                         return False
 
         return True
 
     def get_episodes_file_paths(self) -> list[Path]:
-        episodes = self.episodes if self.episodes is not None else list(range(self.meta.total_episodes))
-        fpaths = [str(self.meta.get_data_file_path(ep_idx)) for ep_idx in episodes]
-        if len(self.meta.video_keys) > 0:
+        episodes = self.episodes if self.episodes is not None else list(range(self._meta.total_episodes))
+        fpaths = [str(self._meta.get_data_file_path(ep_idx)) for ep_idx in episodes]
+        if len(self._meta.video_keys) > 0:
             video_files = [
-                str(self.meta.get_video_file_path(ep_idx, vid_key))
-                for vid_key in self.meta.video_keys
+                str(self._meta.get_video_file_path(ep_idx, vid_key))
+                for vid_key in self._meta.video_keys
                 for ep_idx in episodes
             ]
             fpaths += video_files
@@ -157,7 +157,7 @@ class DatasetReader:
         self, abs_idx: int, ep_idx: int
     ) -> tuple[dict[str, list[int]], dict[str, torch.Tensor]]:
         """Compute query indices for delta timestamps."""
-        ep = self.meta.episodes[ep_idx]
+        ep = self._meta.episodes[ep_idx]
         ep_start = ep["dataset_from_index"]
         ep_end = ep["dataset_to_index"]
         query_indices = {
@@ -178,7 +178,7 @@ class DatasetReader:
         query_indices: dict[str, list[int]] | None = None,
     ) -> dict[str, list[float]]:
         query_timestamps = {}
-        for key in self.meta.video_keys:
+        for key in self._meta.video_keys:
             if query_indices is not None and key in query_indices:
                 if self._absolute_to_relative_idx is not None:
                     relative_indices = [self._absolute_to_relative_idx[idx] for idx in query_indices[key]]
@@ -195,7 +195,7 @@ class DatasetReader:
         """Query dataset for indices across keys, skipping video keys."""
         result: dict = {}
         for key, q_idx in query_indices.items():
-            if key in self.meta.video_keys:
+            if key in self._meta.video_keys:
                 continue
             relative_indices = (
                 q_idx
@@ -213,20 +213,25 @@ class DatasetReader:
         in the main process (e.g. by using a second Dataloader with num_workers=0). It will result in a
         Segmentation Fault.
         """
-        ep = self.meta.episodes[ep_idx]
+        ep = self._meta.episodes[ep_idx]
         item = {}
         for vid_key, query_ts in query_timestamps.items():
             from_timestamp = ep[f"videos/{vid_key}/from_timestamp"]
             shifted_query_ts = [from_timestamp + ts for ts in query_ts]
 
-            video_path = self.root / self.meta.get_video_file_path(ep_idx, vid_key)
-            frames = decode_video_frames(video_path, shifted_query_ts, self.tolerance_s, self.video_backend)
+            video_path = self._root / self._meta.get_video_file_path(ep_idx, vid_key)
+            frames = decode_video_frames(video_path, shifted_query_ts, self._tolerance_s, self._video_backend)
             item[vid_key] = frames.squeeze(0)
 
         return item
 
     def get_item(self, idx) -> dict:
-        """Core __getitem__ logic. Assumes hf_dataset is loaded."""
+        """Core __getitem__ logic. Assumes hf_dataset is loaded.
+
+        ``idx`` is a *relative* index into the (possibly episode-filtered)
+        HF dataset, **not** the absolute frame index stored in the ``index``
+        column.  The absolute index is retrieved from the row itself.
+        """
         item = self.hf_dataset[idx]
         ep_idx = item["episode_index"].item()
         abs_idx = item["index"].item()
@@ -239,24 +244,24 @@ class DatasetReader:
             for key, val in query_result.items():
                 item[key] = val
 
-        if len(self.meta.video_keys) > 0:
+        if len(self._meta.video_keys) > 0:
             current_ts = item["timestamp"].item()
             query_timestamps = self._get_query_timestamps(current_ts, query_indices)
             video_frames = self._query_videos(query_timestamps, ep_idx)
             item = {**video_frames, **item}
 
-        if self.image_transforms is not None:
-            image_keys = self.meta.camera_keys
+        if self._image_transforms is not None:
+            image_keys = self._meta.camera_keys
             for cam in image_keys:
-                item[cam] = self.image_transforms(item[cam])
+                item[cam] = self._image_transforms(item[cam])
 
         # Add task as a string
         task_idx = item["task_index"].item()
-        item["task"] = self.meta.tasks.iloc[task_idx].name
+        item["task"] = self._meta.tasks.iloc[task_idx].name
 
         # add subtask information if available
-        if "subtask_index" in self.meta.features and self.meta.subtasks is not None:
+        if "subtask_index" in self._meta.features and self._meta.subtasks is not None:
             subtask_idx = item["subtask_index"].item()
-            item["subtask"] = self.meta.subtasks.iloc[subtask_idx].name
+            item["subtask"] = self._meta.subtasks.iloc[subtask_idx].name
 
         return item

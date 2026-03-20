@@ -203,7 +203,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         )
 
         # Create reader (hf_dataset loaded below)
-        self._reader = DatasetReader(
+        self.reader = DatasetReader(
             meta=self.meta,
             root=self.root,
             episodes=episodes,
@@ -214,11 +214,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         )
 
         # Load actual data
-        if force_cache_sync or not self._reader.try_load():
+        if force_cache_sync or not self.reader.try_load():
             if is_valid_version(self.revision):
                 self.revision = get_safe_version(self.repo_id, self.revision)
             self._download(download_videos)
-            self._reader.load_and_activate()
+            self.reader.load_and_activate()
 
         # Detect write-mode params for backward compatibility
         _has_write_params = streaming_encoding or batch_encoding_size != 1
@@ -233,17 +233,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
             )
             streaming_enc = None
             if streaming_encoding and len(self.meta.video_keys) > 0:
-                streaming_enc = StreamingVideoEncoder(
-                    fps=self.meta.fps,
-                    vcodec=self._vcodec,
-                    pix_fmt="yuv420p",
-                    g=2,
-                    crf=30,
-                    preset=None,
-                    queue_maxsize=encoder_queue_maxsize,
-                    encoder_threads=encoder_threads,
+                streaming_enc = self._build_streaming_encoder(
+                    self.meta.fps, self._vcodec, encoder_queue_maxsize, encoder_threads
                 )
-            self._writer = DatasetWriter(
+            self.writer = DatasetWriter(
                 meta=self.meta,
                 root=self.root,
                 vcodec=self._vcodec,
@@ -253,14 +246,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 initial_frames=self.meta.total_frames,
             )
         else:
-            self._writer = None
+            self.writer = None
 
         self._is_finalized = False
 
     # ── Writer guard ──────────────────────────────────────────────────
 
     def _require_writer(self, method_name: str) -> None:
-        if self._writer is None:
+        if self.writer is None:
             raise RuntimeError(
                 f"Cannot call '{method_name}()' on a read-only dataset. "
                 f"Use LeRobotDataset.create() for new recording or "
@@ -271,8 +264,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     def _ensure_reader(self) -> DatasetReader:
         """Lazily create the reader on first access."""
-        if self._reader is None:
-            self._reader = DatasetReader(
+        if self.reader is None:
+            self.reader = DatasetReader(
                 meta=self.meta,
                 root=self.root,
                 episodes=self.episodes,
@@ -281,7 +274,25 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 delta_timestamps=self.delta_timestamps,
                 image_transforms=self.image_transforms,
             )
-        return self._reader
+        return self.reader
+
+    @staticmethod
+    def _build_streaming_encoder(
+        fps: int,
+        vcodec: str,
+        encoder_queue_maxsize: int,
+        encoder_threads: int | None,
+    ) -> StreamingVideoEncoder:
+        return StreamingVideoEncoder(
+            fps=fps,
+            vcodec=vcodec,
+            pix_fmt="yuv420p",
+            g=2,
+            crf=30,
+            preset=None,
+            queue_maxsize=encoder_queue_maxsize,
+            encoder_threads=encoder_threads,
+        )
 
     # ── Metadata properties ───────────────────────────────────────────
 
@@ -293,16 +304,20 @@ class LeRobotDataset(torch.utils.data.Dataset):
     @property
     def num_frames(self) -> int:
         """Number of frames in selected episodes."""
-        if self._reader is None:
+        # Check directly instead of using _ensure_reader(): in write-only mode
+        # (create/resume) we rely on metadata rather than initializing a reader.
+        if self.reader is None:
             return self.meta.total_frames
-        return self._reader.num_frames
+        return self.reader.num_frames
 
     @property
     def num_episodes(self) -> int:
         """Number of episodes selected."""
-        if self._reader is None:
+        # Check directly instead of using _ensure_reader(): in write-only mode
+        # (create/resume) we rely on metadata rather than initializing a reader.
+        if self.reader is None:
             return self.meta.total_episodes
-        return self._reader.num_episodes
+        return self.reader.num_episodes
 
     @property
     def features(self) -> dict[str, dict]:
@@ -312,35 +327,35 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     def add_frame(self, frame: dict) -> None:
         self._require_writer("add_frame")
-        self._writer.add_frame(frame)
+        self.writer.add_frame(frame)
 
     def save_episode(self, episode_data: dict | None = None, parallel_encoding: bool = True) -> None:
         self._require_writer("save_episode")
-        self._writer.save_episode(episode_data, parallel_encoding)
+        self.writer.save_episode(episode_data, parallel_encoding)
 
     def clear_episode_buffer(self, delete_images: bool = True) -> None:
         self._require_writer("clear_episode_buffer")
-        self._writer.clear_episode_buffer(delete_images)
+        self.writer.clear_episode_buffer(delete_images)
 
     def has_pending_frames(self) -> bool:
         """Check if there are unsaved frames in the episode buffer."""
-        if self._writer is None:
+        if self.writer is None:
             return False
-        return self._writer.episode_buffer is not None and self._writer.episode_buffer["size"] > 0
+        return self.writer.episode_buffer is not None and self.writer.episode_buffer["size"] > 0
 
     def finalize(self):
         """
         Close the parquet writers. This function needs to be called after data collection/conversion, else footer metadata won't be written to the parquet files.
         The dataset won't be valid and can't be loaded as ds = LeRobotDataset(repo_id=repo, root=HF_LEROBOT_HOME.joinpath(repo))
         """
-        if self._writer is not None:
-            self._writer.finalize()
+        if self.writer is not None:
+            self.writer.finalize()
             self._is_finalized = True
 
     def __del__(self):
-        """Safety check: close the parquet writer on garbage collection."""
-        if hasattr(self, "_writer") and self._writer is not None:
-            self._writer.close_writer()
+        """Safety net: flush metadata + close parquet writer on garbage collection."""
+        if hasattr(self, "writer") and self.writer is not None:
+            self.writer.finalize()
 
     # ── Core Dataset methods ──────────────────────────────────────────
 
@@ -348,7 +363,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self.num_frames
 
     def __getitem__(self, idx) -> dict:
-        if self._writer is not None and not self._is_finalized:
+        if self.writer is not None and not self._is_finalized:
             raise RuntimeError(
                 "Cannot read from a dataset that is being recorded. Call finalize() first, then access items."
             )
@@ -364,7 +379,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         Useful for extracting action sequences during replay without loading all features.
         Returns a ``datasets.Dataset`` containing only the requested columns.
         """
-        return self._ensure_reader().hf_dataset.select_columns(column_names)
+        reader = self._ensure_reader()
+        if reader.hf_dataset is None:
+            reader.load_and_activate()
+        return reader.hf_dataset.select_columns(column_names)
 
     def get_raw_item(self, idx) -> dict:
         """Get a raw frame without image transforms applied.
@@ -372,7 +390,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         Unlike ``__getitem__``, this returns the raw HF dataset row at the given
         index with no delta-timestamp expansion, video decoding, or image transforms.
         """
-        return self._ensure_reader().hf_dataset[idx]
+        reader = self._ensure_reader()
+        if reader.hf_dataset is None:
+            reader.load_and_activate()
+        return reader.hf_dataset[idx]
 
     def __repr__(self):
         feature_keys = list(self.features)
@@ -447,7 +468,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         ignore_patterns = None if download_videos else "videos/"
         files = None
         if self.episodes is not None:
-            files = self._ensure_reader().get_episodes_file_paths()
+            # Reader is guaranteed to exist here (created in __init__ before _download)
+            files = self.reader.get_episodes_file_paths()
         snapshot_download(
             self.repo_id,
             repo_type="dataset",
@@ -504,22 +526,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj._encoder_threads = encoder_threads
 
         # Reader is lazily created on first access (write-only mode)
-        obj._reader = None
+        obj.reader = None
 
         # Create writer
         streaming_enc = None
         if streaming_encoding and len(obj.meta.video_keys) > 0:
-            streaming_enc = StreamingVideoEncoder(
-                fps=fps,
-                vcodec=vcodec,
-                pix_fmt="yuv420p",
-                g=2,
-                crf=30,
-                preset=None,
-                queue_maxsize=encoder_queue_maxsize,
-                encoder_threads=encoder_threads,
-            )
-        obj._writer = DatasetWriter(
+            streaming_enc = cls._build_streaming_encoder(fps, vcodec, encoder_queue_maxsize, encoder_threads)
+        obj.writer = DatasetWriter(
             meta=obj.meta,
             root=obj.root,
             vcodec=vcodec,
@@ -529,7 +542,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         )
 
         if image_writer_processes or image_writer_threads:
-            obj._writer.start_image_writer(image_writer_processes, image_writer_threads)
+            obj.writer.start_image_writer(image_writer_processes, image_writer_threads)
 
         obj._is_finalized = False
 
@@ -578,22 +591,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
         )
 
         # Reader is lazily created on first access (write-only mode)
-        obj._reader = None
+        obj.reader = None
 
         # Create writer for appending
         streaming_enc = None
         if streaming_encoding and len(obj.meta.video_keys) > 0:
-            streaming_enc = StreamingVideoEncoder(
-                fps=obj.meta.fps,
-                vcodec=vcodec,
-                pix_fmt="yuv420p",
-                g=2,
-                crf=30,
-                preset=None,
-                queue_maxsize=encoder_queue_maxsize,
-                encoder_threads=encoder_threads,
+            streaming_enc = cls._build_streaming_encoder(
+                obj.meta.fps, vcodec, encoder_queue_maxsize, encoder_threads
             )
-        obj._writer = DatasetWriter(
+        obj.writer = DatasetWriter(
             meta=obj.meta,
             root=obj.root,
             vcodec=vcodec,
@@ -604,7 +610,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         )
 
         if image_writer_processes or image_writer_threads:
-            obj._writer.start_image_writer(image_writer_processes, image_writer_threads)
+            obj.writer.start_image_writer(image_writer_processes, image_writer_threads)
 
         obj._is_finalized = False
 

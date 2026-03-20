@@ -371,7 +371,7 @@ def test_tmp_image_deletion(tmp_path, empty_lerobot_dataset_factory):
     ds_img = empty_lerobot_dataset_factory(root=tmp_path / "img", features=features_image)
     ds_img.add_frame({"image": np.random.rand(*DUMMY_CHW), "task": "Dummy task"})
     ds_img.save_episode()
-    img_dir = ds_img._writer._get_image_file_dir(0, image_key)
+    img_dir = ds_img.writer._get_image_file_dir(0, image_key)
     assert not img_dir.exists(), "Temporary image directory should be removed for image features"
 
 
@@ -384,10 +384,10 @@ def test_tmp_video_deletion(tmp_path, empty_lerobot_dataset_factory):
     }
 
     ds_vid = empty_lerobot_dataset_factory(root=tmp_path / "vid", features=features_video)
-    ds_vid._writer._batch_encoding_size = 1
+    ds_vid.writer._batch_encoding_size = 1
     ds_vid.add_frame({vid_key: np.random.rand(*DUMMY_CHW), "task": "Dummy task"})
     ds_vid.save_episode()
-    vid_img_dir = ds_vid._writer._get_image_file_dir(0, vid_key)
+    vid_img_dir = ds_vid.writer._get_image_file_dir(0, vid_key)
     assert not vid_img_dir.exists(), (
         "Temporary image directory should be removed when batch_encoding_size == 1"
     )
@@ -412,8 +412,8 @@ def test_tmp_mixed_deletion(tmp_path, empty_lerobot_dataset_factory):
         }
     )
     ds_mixed.save_episode()
-    img_dir = ds_mixed._writer._get_image_file_dir(0, image_key)
-    vid_img_dir = ds_mixed._writer._get_image_file_dir(0, vid_key)
+    img_dir = ds_mixed.writer._get_image_file_dir(0, image_key)
+    vid_img_dir = ds_mixed.writer._get_image_file_dir(0, vid_key)
     assert not img_dir.exists(), "Temporary image directory should be removed for image features"
     assert vid_img_dir.exists(), (
         "Temporary image directory should not be removed for video features when batch_encoding_size == 2"
@@ -641,29 +641,29 @@ def test_check_cached_episodes_sufficient(tmp_path, lerobot_dataset_factory):
     )
 
     # Test hf_dataset is None
-    dataset._reader.hf_dataset = None
-    assert dataset._reader._check_cached_episodes_sufficient() is False
+    dataset.reader.hf_dataset = None
+    assert dataset.reader._check_cached_episodes_sufficient() is False
 
     # Test hf_dataset is empty
     import datasets
 
     empty_features = get_hf_features_from_features(dataset.features)
-    dataset._reader.hf_dataset = datasets.Dataset.from_dict(
+    dataset.reader.hf_dataset = datasets.Dataset.from_dict(
         {key: [] for key in empty_features}, features=empty_features
     )
-    dataset._reader.hf_dataset.set_transform(hf_transform_to_torch)
-    assert dataset._reader._check_cached_episodes_sufficient() is False
+    dataset.reader.hf_dataset.set_transform(hf_transform_to_torch)
+    assert dataset.reader._check_cached_episodes_sufficient() is False
 
     # Restore the original dataset for remaining tests
-    dataset._reader.hf_dataset = dataset._reader._load_hf_dataset()
+    dataset.reader.hf_dataset = dataset.reader._load_hf_dataset()
 
     # Test all episodes requested (self.episodes = None) and all are available
-    dataset._reader.episodes = None
-    assert dataset._reader._check_cached_episodes_sufficient() is True
+    dataset.reader.episodes = None
+    assert dataset.reader._check_cached_episodes_sufficient() is True
 
     # Test specific episodes requested that are all available
-    dataset._reader.episodes = [0, 2, 4]
-    assert dataset._reader._check_cached_episodes_sufficient() is True
+    dataset.reader.episodes = [0, 2, 4]
+    assert dataset.reader._check_cached_episodes_sufficient() is True
 
     # Test request episodes that don't exist in the cached dataset
     # Create a dataset with only episodes 0, 1, 2
@@ -675,8 +675,8 @@ def test_check_cached_episodes_sufficient(tmp_path, lerobot_dataset_factory):
     )
 
     # Request episodes that include non-existent ones
-    limited_dataset._reader.episodes = [0, 1, 2, 3, 4]
-    assert limited_dataset._reader._check_cached_episodes_sufficient() is False
+    limited_dataset.reader.episodes = [0, 1, 2, 3, 4]
+    assert limited_dataset.reader._check_cached_episodes_sufficient() is False
 
     # Test create a dataset with sparse episodes (e.g., only episodes 0, 2, 4)
     # First create the full dataset structure
@@ -688,7 +688,7 @@ def test_check_cached_episodes_sufficient(tmp_path, lerobot_dataset_factory):
     )
 
     # Manually filter hf_dataset to only include episodes 0, 2, 4
-    episode_indices = sparse_dataset._reader.hf_dataset["episode_index"]
+    episode_indices = sparse_dataset.reader.hf_dataset["episode_index"]
     mask = torch.zeros(len(episode_indices), dtype=torch.bool)
     for ep in [0, 2, 4]:
         mask |= torch.tensor(episode_indices) == ep
@@ -698,8 +698,8 @@ def test_check_cached_episodes_sufficient(tmp_path, lerobot_dataset_factory):
     # Find image keys by checking features
     image_keys = [key for key, ft in sparse_dataset.features.items() if ft.get("dtype") == "image"]
 
-    for key in sparse_dataset._reader.hf_dataset.column_names:
-        values = sparse_dataset._reader.hf_dataset[key]
+    for key in sparse_dataset.reader.hf_dataset.column_names:
+        values = sparse_dataset.reader.hf_dataset[key]
         # Filter values based on mask
         filtered_values = [val for i, val in enumerate(values) if mask[i]]
 
@@ -712,22 +712,22 @@ def test_check_cached_episodes_sufficient(tmp_path, lerobot_dataset_factory):
 
         filtered_data[key] = filtered_values
 
-    sparse_dataset._reader.hf_dataset = datasets.Dataset.from_dict(
+    sparse_dataset.reader.hf_dataset = datasets.Dataset.from_dict(
         filtered_data, features=get_hf_features_from_features(sparse_dataset.features)
     )
-    sparse_dataset._reader.hf_dataset.set_transform(hf_transform_to_torch)
+    sparse_dataset.reader.hf_dataset.set_transform(hf_transform_to_torch)
 
     # Test requesting all episodes when only some are cached
-    sparse_dataset._reader.episodes = None
-    assert sparse_dataset._reader._check_cached_episodes_sufficient() is False
+    sparse_dataset.reader.episodes = None
+    assert sparse_dataset.reader._check_cached_episodes_sufficient() is False
 
     # Test requesting only the available episodes
-    sparse_dataset._reader.episodes = [0, 2, 4]
-    assert sparse_dataset._reader._check_cached_episodes_sufficient() is True
+    sparse_dataset.reader.episodes = [0, 2, 4]
+    assert sparse_dataset.reader._check_cached_episodes_sufficient() is True
 
     # Test requesting a mix of available and unavailable episodes
-    sparse_dataset._reader.episodes = [0, 1, 2]
-    assert sparse_dataset._reader._check_cached_episodes_sufficient() is False
+    sparse_dataset.reader.episodes = [0, 1, 2]
+    assert sparse_dataset.reader._check_cached_episodes_sufficient() is False
 
 
 def test_update_chunk_settings(tmp_path, empty_lerobot_dataset_factory):
@@ -1184,9 +1184,9 @@ def test_dataset_resume_recording(tmp_path, empty_lerobot_dataset_factory):
     dataset_verify = LeRobotDataset(initial_repo_id, root=initial_root, revision="v3.0")
     assert dataset_verify.meta.total_episodes == initial_episodes
     assert dataset_verify.meta.total_frames == initial_episodes * frames_per_episode
-    assert len(dataset_verify._reader.hf_dataset) == initial_episodes * frames_per_episode
+    assert len(dataset_verify.reader.hf_dataset) == initial_episodes * frames_per_episode
 
-    for idx in range(len(dataset_verify._reader.hf_dataset)):
+    for idx in range(len(dataset_verify.reader.hf_dataset)):
         item = dataset_verify[idx]
         expected_ep = idx // frames_per_episode
         expected_frame = idx % frames_per_episode
@@ -1203,8 +1203,8 @@ def test_dataset_resume_recording(tmp_path, empty_lerobot_dataset_factory):
 
     assert dataset_resumed.meta.total_episodes == initial_episodes
     assert dataset_resumed.meta.total_frames == initial_episodes * frames_per_episode
-    assert dataset_resumed._writer._latest_episode is None  # Not recording yet
-    assert dataset_resumed._writer._pq_writer is None
+    assert dataset_resumed.writer._latest_episode is None  # Not recording yet
+    assert dataset_resumed.writer._pq_writer is None
     assert dataset_resumed.meta._pq_writer is None
 
     additional_episodes = 2
@@ -1231,7 +1231,7 @@ def test_dataset_resume_recording(tmp_path, empty_lerobot_dataset_factory):
 
     assert dataset_final.meta.total_episodes == total_episodes
     assert dataset_final.meta.total_frames == total_frames
-    assert len(dataset_final._reader.hf_dataset) == total_frames
+    assert len(dataset_final.reader.hf_dataset) == total_frames
 
     for idx in range(total_frames):
         item = dataset_final[idx]
@@ -1281,7 +1281,7 @@ def test_frames_in_current_file_calculation(tmp_path, empty_lerobot_dataset_fact
     dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features, use_videos=False)
     dataset.meta.update_chunk_settings(data_files_size_in_mb=100)
 
-    assert dataset._writer._current_file_start_frame is None
+    assert dataset.writer._current_file_start_frame is None
 
     frames_per_episode = 10
     for _ in range(frames_per_episode):
@@ -1294,7 +1294,7 @@ def test_frames_in_current_file_calculation(tmp_path, empty_lerobot_dataset_fact
         )
     dataset.save_episode()
 
-    assert dataset._writer._current_file_start_frame == 0
+    assert dataset.writer._current_file_start_frame == 0
     assert dataset.meta.total_episodes == 1
     assert dataset.meta.total_frames == frames_per_episode
 
@@ -1308,12 +1308,12 @@ def test_frames_in_current_file_calculation(tmp_path, empty_lerobot_dataset_fact
         )
     dataset.save_episode()
 
-    assert dataset._writer._current_file_start_frame == 0
+    assert dataset.writer._current_file_start_frame == 0
     assert dataset.meta.total_episodes == 2
     assert dataset.meta.total_frames == 2 * frames_per_episode
 
-    ep1_chunk = dataset._writer._latest_episode["data/chunk_index"]
-    ep1_file = dataset._writer._latest_episode["data/file_index"]
+    ep1_chunk = dataset.writer._latest_episode["data/chunk_index"]
+    ep1_file = dataset.writer._latest_episode["data/file_index"]
     assert ep1_chunk == 0
     assert ep1_file == 0
 
@@ -1327,12 +1327,12 @@ def test_frames_in_current_file_calculation(tmp_path, empty_lerobot_dataset_fact
         )
     dataset.save_episode()
 
-    assert dataset._writer._current_file_start_frame == 0
+    assert dataset.writer._current_file_start_frame == 0
     assert dataset.meta.total_episodes == 3
     assert dataset.meta.total_frames == 3 * frames_per_episode
 
-    ep2_chunk = dataset._writer._latest_episode["data/chunk_index"]
-    ep2_file = dataset._writer._latest_episode["data/file_index"]
+    ep2_chunk = dataset.writer._latest_episode["data/chunk_index"]
+    ep2_file = dataset.writer._latest_episode["data/file_index"]
     assert ep2_chunk == 0
     assert ep2_file == 0
 

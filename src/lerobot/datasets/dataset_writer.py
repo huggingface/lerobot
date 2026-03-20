@@ -50,6 +50,7 @@ from lerobot.datasets.utils import (
     update_chunk_file_indices,
 )
 from lerobot.datasets.video_utils import (
+    StreamingVideoEncoder,
     concatenate_video_files,
     encode_video_frames,
     get_video_duration_in_s,
@@ -90,7 +91,7 @@ class DatasetWriter:
         vcodec: str,
         encoder_threads: int | None,
         batch_encoding_size: int,
-        streaming_encoder=None,
+        streaming_encoder: StreamingVideoEncoder | None = None,
         initial_frames: int = 0,
     ):
         self._meta = meta
@@ -490,6 +491,8 @@ class DatasetWriter:
             if self.image_writer is not None:
                 self._wait_image_writer()
             episode_index = self.episode_buffer["episode_index"]
+            # episode_index is `int` when freshly created, but becomes `np.ndarray` after
+            # save_episode() mutates the buffer. Handle both types here.
             if isinstance(episode_index, np.ndarray):
                 episode_index = episode_index.item() if episode_index.size == 1 else episode_index[0]
             for cam_key in self._meta.image_keys:

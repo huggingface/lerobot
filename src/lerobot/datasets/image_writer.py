@@ -32,7 +32,7 @@ def safe_stop_image_writer(func):
             return func(*args, **kwargs)
         except Exception as e:
             dataset = kwargs.get("dataset")
-            writer = getattr(dataset, "_writer", None) if dataset else None
+            writer = getattr(dataset, "writer", None) if dataset else None
             if writer is not None and writer.image_writer is not None:
                 logger.warning("Waiting for image writer to terminate...")
                 writer.image_writer.stop()

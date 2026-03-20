@@ -358,7 +358,7 @@ def test_safe_stop_image_writer_decorator():
 
     class MockDataset:
         def __init__(self):
-            self._writer = MockWriter()
+            self.writer = MockWriter()
 
     @safe_stop_image_writer
     def function_that_raises_exception(dataset=None):
@@ -370,7 +370,7 @@ def test_safe_stop_image_writer_decorator():
         function_that_raises_exception(dataset=dataset)
 
     assert str(exc_info.value) == "Test exception"
-    dataset._writer.image_writer.stop.assert_called_once()
+    dataset.writer.image_writer.stop.assert_called_once()
 
 
 def test_main_process_time(tmp_path, img_tensor_factory):
