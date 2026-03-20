@@ -557,6 +557,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         batch_encoding_size: int = 1,
         defer_video_encoding: bool = True,
         encode_on_exit: bool = False,
+        encoding_kwargs: dict | None = None,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -669,6 +670,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 You can also use the 'pyav' decoder used by Torchvision, which used to be the default option, or 'video_reader' which is another decoder of Torchvision.
             batch_encoding_size (int, optional): Number of episodes to accumulate before batch encoding videos.
                 Set to 1 for immediate encoding (default), or higher for batched encoding. Defaults to 1.
+            defer_video_encoding (bool, optional): If True, skip video encoding during recording; keep PNGs.
+                Use encode_pending_videos() or encode_on_exit to encode later. Defaults to True.
+            encode_on_exit (bool, optional): If True and defer_video_encoding, encode all videos when closing.
+                Defaults to False.
+            encoding_kwargs (dict | None, optional): Extra keyword arguments forwarded to
+                ``encode_video_frames`` (e.g. vcodec, pix_fmt, g, crf, fast_decode).
+                Defaults to None (uses encode_video_frames defaults).
         """
         super().__init__()
         self.repo_id = repo_id
@@ -684,6 +692,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.defer_video_encoding = defer_video_encoding
         self.encode_on_exit = encode_on_exit
         self.episodes_since_last_encoding = 0
+        self.encoding_kwargs = encoding_kwargs or {}
 
         # Unused attributes
         self.image_writer = None
@@ -1462,7 +1471,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         temp_path = Path(tempfile.mkdtemp(dir=self.root)) / f"{video_key}_{episode_index:03d}.mp4"
         img_dir = self._get_image_file_dir(episode_index, video_key)
-        encode_video_frames(img_dir, temp_path, self.fps, overwrite=True)
+        encode_video_frames(
+            img_dir, temp_path, self.fps, overwrite=True, **self.encoding_kwargs
+        )
         shutil.rmtree(img_dir)
         return temp_path
 
@@ -1554,6 +1565,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         batch_encoding_size: int = 1,
         defer_video_encoding: bool = True,
         encode_on_exit: bool = False,
+        encoding_kwargs: dict | None = None,
     ) -> "LeRobotDataset":
         """Create a LeRobot Dataset from scratch in order to record data."""
         obj = cls.__new__(cls)
@@ -1574,6 +1586,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.defer_video_encoding = defer_video_encoding
         obj.encode_on_exit = encode_on_exit
         obj.episodes_since_last_encoding = 0
+        obj.encoding_kwargs = encoding_kwargs or {}
 
         if image_writer_processes or image_writer_threads:
             obj.start_image_writer(image_writer_processes, image_writer_threads)
