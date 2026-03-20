@@ -23,6 +23,7 @@ This module provides utilities for:
 - Merging datasets (wrapper around aggregate functionality)
 """
 
+from fractions import Fraction
 import logging
 import os
 import shutil
@@ -31,6 +32,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import subprocess
 
+import av
 import datasets
 import numpy as np
 import pandas as pd
@@ -56,7 +58,7 @@ from lerobot.datasets.utils import (
     write_stats,
     write_tasks,
 )
-from lerobot.datasets.video_utils import concatenate_video_files, encode_video_frames, get_video_duration_in_s, get_video_info
+from lerobot.datasets.video_utils import _get_codec_options, concatenate_video_files, encode_video_frames, get_video_duration_in_s, get_video_info, resolve_vcodec
 from lerobot.utils.constants import HF_LEROBOT_HOME, OBS_IMAGE
 
 
@@ -377,7 +379,7 @@ def modify_features(
             dataset, 
             new_meta, 
             add_features=add_features,
-            exclude_keys=video_keys_to_remove if video_keys_to_remove else None,
+            exclude_keys=video_keys_to_remove if video_keys_to_remove else None
         )
         print(new_meta.episodes.to_pandas().columns)
         #_copy_videos(dataset, new_meta, video_keys_to_remove if video_keys_to_remove else None)
@@ -1072,10 +1074,16 @@ def _copy_videos_with_feature_changes(
     new_meta: LeRobotDatasetMetadata,
     add_features: dict[str, tuple] | None = None,
     exclude_keys: list[str] | None = None,
+    
+    fast_decode: int = 0,
+    encoder_threads: int | None = None,
+    vcodec: str | None = None,
+    pix_fmt: str = "yuv420p",
 ) -> None:
     """Copy video files, optionally excluding certain keys."""
     logging.info("Copying existing videos in the new dataset")
     _copy_videos(dataset, new_meta, exclude_keys)
+    os.environ["SVT_LOG"] = "1"
     
     logging.info("Adding videos in the new dataset")
     if add_features is None:
@@ -1085,67 +1093,102 @@ def _copy_videos_with_feature_changes(
         logging.info("No video features to add")
         return
     
-    root = new_meta.root
-    tmp_videos_root = root / "tmp_videos"
+    tmp_videos_root = new_meta.root / "tmp_videos"
+    
     target_fps = dataset.fps
-    target_vcodec = dataset.vcodec
+    target_vcodec = dataset.vcodec if dataset.vcodec is not None else vcodec
+    video_options = _get_codec_options(target_vcodec)
+
+    if fast_decode:
+        key = "svtav1-params" if target_vcodec == "libsvtav1" else "tune"
+        value = f"fast-decode={fast_decode}" if target_vcodec == "libsvtav1" else "fastdecode"
+        video_options[key] = value
+    
+    logging.getLogger("libav").setLevel(av.logging.ERROR)
+
+    if encoder_threads is not None:
+        if target_vcodec == "libsvtav1":
+            lp_param = f"lp={encoder_threads}"
+            if "svtav1-params" in video_options:
+                video_options["svtav1-params"] += f":{lp_param}"
+            else:
+                video_options["svtav1-params"] = lp_param
+        else:
+            video_options["threads"] = str(encoder_threads)
+
+    if (target_vcodec == "libsvtav1" or target_vcodec == "hevc") and pix_fmt == "yuv444p":
+        logging.warning(
+            f"Incompatible pixel format 'yuv444p' for codec {target_vcodec}, auto-selecting format 'yuv420p'"
+        )
+        pix_fmt = "yuv420p"
+
+    max_size_mb = dataset.meta.video_files_size_in_mb
+    chunks_size = dataset.meta.chunks_size
+    
     num_episodes = len(dataset.meta.episodes)
-    ep_paths = []
+    
+    for feature_name, (path, _) in add_video_features.items():
+        ep_paths = []
 
-    # to avoid heavy logging on terminal
-    env = os.environ.copy()
-    env["SVT_LOG"] = "1"
-
-    for feature_name, (path, feature_info) in add_video_features.items():
-        if feature_info["dtype"] != "video":
-            continue
         # create tmp videos directory
         tmp_videos = tmp_videos_root / feature_name
         tmp_videos.mkdir(parents=True, exist_ok=True)
 
         # create per episode sliced videos
         for episode in tqdm(dataset.meta.episodes, desc=f"Creating tmp per episode videos of {feature_name}"):
-            ep_paths.append(tmp_videos / f"episode_{episode['episode_index']}.mp4")
-            out_path = ep_paths[-1]
-            
-            # continue
+            out_path = tmp_videos / f"episode_{episode['episode_index']}.mp4"
+            ep_paths.append(out_path)
 
             start_frame = episode["dataset_from_index"]
             end_frame = episode["dataset_to_index"]
+            frames_to_write = end_frame - start_frame
 
             start_time_s = start_frame / target_fps
-            duration_s = (end_frame - start_frame) / target_fps
-
+            #duration_s = (end_frame - start_frame) / target_fps
             
-            cmd = [
-                "ffmpeg",
-                "-y",                       # Overwrite output files without asking
-                "-ss", str(start_time_s),   # Start timestamp in seconds
-                "-i", str(path),            # Input source video
-                "-t", str(duration_s),      # Duration of the slice in seconds
-                "-r", str(target_fps),      # Force the output to match the dataset's FPS (doesn't work with c:v copy)
-                "-c:v", str(target_vcodec), # Standard LeRobot codec (or use your preferred one) (this is how is vcodec chosen in _encode_video_worker)
-                #"-c:v", "copy", # fastest 
-                "-pix_fmt", "yuv420p",      # Standard pixel format (doesn't work with c:v copy) (this is the standard used in _encode_video_worker)
-                "-loglevel", "error",       # Keep the terminal clean 
-                str(out_path)
-            ]
-            
-            try:
-                subprocess.run(
-                        cmd, 
-                        check=True,
-                        capture_output=True, 
-                        text=True, 
-                        env=env
-                    )
-            except subprocess.CalledProcessError as e:
-                logging.error(f"Error slicing episode {episode['episode_index']}: {e}")
-                raise
-        
-        # create chunkized videos
-        max_size_mb = dataset.meta.video_files_size_in_mb
-        chunks_size = dataset.meta.chunks_size
+            with av.open(str(out_path), "w") as output_container:
+                # setup output stream
+                output_stream = output_container.add_stream(target_vcodec, target_fps, options=video_options)
+                output_stream.pix_fmt = pix_fmt
+                output_stream.time_base = Fraction(1, target_fps)
+                
+                # open the source video
+                with av.open(str(path), "r") as input_container:
+                    input_stream = input_container.streams.video[0]
+                    output_stream.width = input_stream.width
+                    output_stream.height = input_stream.height
+                    
+                    # seek to the nearest keyframe before the start time
+                    seek_target = int(start_time_s * av.time_base)
+                    input_container.seek(seek_target, backward=True, any_frame=False)
+                    
+                    frames_written = 0
+                    
+                    # decode frames sequentially from the seek point
+                    for frame in input_container.decode(input_stream):
+                        frame_time_s = float(frame.time) if frame.time is not None else 0.0
+                        
+                        # since we seeked backwards to a keyframe, skip until we hit the exact start time
+                        if frame_time_s < start_time_s - 1e-4:
+                            continue
+                            
+                        # reset PTS so the encoder generates continuous timestamps starting from 0
+                        frame.pts = None
+                        frame.time_base = Fraction(1, target_fps)
+                        
+                        # encode and write the frame
+                        packet = output_stream.encode(frame)
+                        if packet:
+                            output_container.mux(packet)
+                            
+                        frames_written += 1
+                        if frames_written >= frames_to_write:
+                            break
+                            
+                # flush the encoder after all frames are written
+                packet = output_stream.encode()
+                if packet:
+                    output_container.mux(packet)
         
         # used to create episodes metadata
         col_chunk = [0] * num_episodes
@@ -1176,7 +1219,7 @@ def _copy_videos_with_feature_changes(
             # the current ep_file do not fit in the file-xxx
             else:
                 # concatenate and save videos until ep_idx (excluded)
-                out_path = root / new_meta.video_path.format(
+                out_path = new_meta.root / new_meta.video_path.format(
                                                     video_key=feature_name, 
                                                     chunk_index=chunk_idx, 
                                                     file_index=file_idx
@@ -1196,7 +1239,7 @@ def _copy_videos_with_feature_changes(
             col_chunk[ep_idx] = chunk_idx
 
         # save the last videos
-        out_path = root / new_meta.video_path.format(
+        out_path = new_meta.root / new_meta.video_path.format(
             video_key=feature_name, 
             chunk_index=chunk_idx, 
             file_index=file_idx
@@ -1215,6 +1258,9 @@ def _copy_videos_with_feature_changes(
         shutil.rmtree(tmp_videos)
 
     shutil.rmtree(tmp_videos_root)
+
+    # restore logging
+    av.logging.restore_default_callback()
 
     write_episodes(new_meta.episodes, new_meta.root)
     #_copy_episodes_metadata_and_stats(dataset, new_meta)

@@ -192,6 +192,7 @@ class AddFeatureConfig(OperationConfig):
     feature_names: list[str] | None = None
     feature_paths: list[str] | None = None
     # TODO: add codec, pix_fmt, num_workers
+    num_workers: int = 1
 
 @OperationConfig.register_subclass("modify_tasks")
 @dataclass
