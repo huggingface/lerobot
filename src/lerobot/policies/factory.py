@@ -31,7 +31,10 @@ from lerobot.envs.configs import EnvConfig
 from lerobot.envs.utils import env_to_policy_features
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act_simple.configuration_act_simple import ACTSimpleConfig
+from lerobot.policies.awm.configuration_awm import AWMConfig
+from lerobot.policies.fawm.configuration_fawm import FAWMConfig
 from lerobot.policies.act_awm.configuration_act_awm import ACTAWMConfig
+from lerobot.policies.act_simple_with_awm_head.configuration_act_simple_with_awm_head import ACTSimpleWithAWMHeadConfig
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.groot.configuration_groot import GrootConfig
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
@@ -93,6 +96,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.act_awm.modeling_act_awm import ACTAWMPolicy
 
         return ACTAWMPolicy
+    elif name == "act_simple_with_awm_head":
+        from lerobot.policies.act_simple_with_awm_head.modeling_act_simple_with_awm_head import ACTSimpleWithAWMHeadPolicy
+
+        return ACTSimpleWithAWMHeadPolicy
     elif name == "vqbet":
         from lerobot.policies.vqbet.modeling_vqbet import VQBeTPolicy
 
@@ -125,6 +132,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.sarm.modeling_sarm import SARMRewardModel
 
         return SARMRewardModel
+    elif name == "fawm":
+        from lerobot.policies.fawm.modeling_fawm import FAWMPolicy
+
+        return FAWMPolicy
     elif name == "groot":
         from lerobot.policies.groot.modeling_groot import GrootPolicy
 
@@ -171,6 +182,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return ACTConfig(**kwargs)
     elif policy_type == "act_awm":
         return ACTAWMConfig(**kwargs)
+    elif policy_type == "act_simple_with_awm_head":
+        return ACTSimpleWithAWMHeadConfig(**kwargs)
     elif policy_type == "vqbet":
         return VQBeTConfig(**kwargs)
     elif policy_type == "pi0":
@@ -183,6 +196,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return SmolVLAConfig(**kwargs)
     elif policy_type == "reward_classifier":
         return RewardClassifierConfig(**kwargs)
+    elif policy_type == "fawm":
+        return FAWMConfig(**kwargs)
     elif policy_type == "groot":
         return GrootConfig(**kwargs)
     elif policy_type == "xvla":
@@ -271,26 +286,59 @@ def make_pre_post_processors(
             kwargs["preprocessor_overrides"] = preprocessor_overrides
             kwargs["postprocessor_overrides"] = postprocessor_overrides
 
-        return (
-            PolicyProcessorPipeline.from_pretrained(
-                pretrained_model_name_or_path=pretrained_path,
-                config_filename=kwargs.get(
-                    "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+        try:
+            return (
+                PolicyProcessorPipeline.from_pretrained(
+                    pretrained_model_name_or_path=pretrained_path,
+                    config_filename=kwargs.get(
+                        "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+                    ),
+                    overrides=kwargs.get("preprocessor_overrides", {}),
+                    to_transition=batch_to_transition,
+                    to_output=transition_to_batch,
                 ),
-                overrides=kwargs.get("preprocessor_overrides", {}),
-                to_transition=batch_to_transition,
-                to_output=transition_to_batch,
-            ),
-            PolicyProcessorPipeline.from_pretrained(
-                pretrained_model_name_or_path=pretrained_path,
-                config_filename=kwargs.get(
-                    "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
+                PolicyProcessorPipeline.from_pretrained(
+                    pretrained_model_name_or_path=pretrained_path,
+                    config_filename=kwargs.get(
+                        "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
+                    ),
+                    overrides=kwargs.get("postprocessor_overrides", {}),
+                    to_transition=policy_action_to_transition,
+                    to_output=transition_to_policy_action,
                 ),
-                overrides=kwargs.get("postprocessor_overrides", {}),
-                to_transition=policy_action_to_transition,
-                to_output=transition_to_policy_action,
-            ),
-        )
+            )
+        except FileNotFoundError:
+            logging.warning(
+                f"Processor configs not found at '{pretrained_path}'. "
+                "Falling back to creating processors from policy config (older model format)."
+            )
+            # For older models, extract normalization stats from model state dict
+            if "dataset_stats" not in kwargs or kwargs["dataset_stats"] is None:
+                try:
+                    from pathlib import Path
+
+                    from lerobot.processor.migrate_policy_normalization import (
+                        extract_normalization_stats,
+                        load_model_from_hub,
+                    )
+
+                    pretrained_path_str = str(pretrained_path)
+                    if Path(pretrained_path).is_dir():
+                        from safetensors.torch import load_file as load_safetensors
+
+                        state_dict = load_safetensors(
+                            str(Path(pretrained_path) / "model.safetensors")
+                        )
+                    else:
+                        state_dict, _, _ = load_model_from_hub(pretrained_path_str)
+                    extracted_stats = extract_normalization_stats(state_dict)
+                    if extracted_stats:
+                        logging.info(
+                            f"Extracted normalization stats from old model buffers: {list(extracted_stats.keys())}"
+                        )
+                        kwargs["dataset_stats"] = extracted_stats
+                except Exception as e:
+                    logging.warning(f"Could not extract normalization stats from model: {e}")
 
     # Create a new processor based on policy type
     if isinstance(policy_cfg, TDMPCConfig):
@@ -318,6 +366,30 @@ def make_pre_post_processors(
         )
 
     elif isinstance(policy_cfg, ACTSimpleConfig):
+        from lerobot.policies.act.processor_act import make_act_pre_post_processors
+
+        processors = make_act_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, AWMConfig):
+        from lerobot.policies.act.processor_act import make_act_pre_post_processors
+
+        processors = make_act_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, FAWMConfig):
+        from lerobot.policies.act.processor_act import make_act_pre_post_processors
+
+        processors = make_act_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, ACTSimpleWithAWMHeadConfig):
         from lerobot.policies.act.processor_act import make_act_pre_post_processors
 
         processors = make_act_pre_post_processors(

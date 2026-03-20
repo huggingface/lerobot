@@ -186,3 +186,23 @@ class WandBLogger:
 
         wandb_video = self._wandb.Video(video_path, fps=self.env_fps, format="mp4")
         self._wandb.log({f"{mode}/video": wandb_video}, step=step)
+
+    def log_images(self, viz: dict, step: int, mode: str = "train"):
+        """Log WM image reconstruction pairs to wandb.
+
+        Args:
+            viz: dict with string keys (e.g. "ground_truth", "decoded"), each value a
+                 (N, C, H, W) float tensor in [0, 1].
+            step: global training step.
+            mode: "train" or "eval".
+        """
+        if mode not in {"train", "eval"}:
+            raise ValueError(mode)
+        data = {}
+        for key, images in viz.items():
+            wandb_imgs = [
+                self._wandb.Image(img.permute(1, 2, 0).numpy())  # (H, W, C) for wandb
+                for img in images
+            ]
+            data[f"{mode}/wm_{key}"] = wandb_imgs
+        self._wandb.log(data, step=step)

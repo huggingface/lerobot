@@ -14,6 +14,7 @@
 
 from .act.configuration_act import ACTConfig as ACTConfig
 from .act_awm.configuration_act_awm import ACTAWMConfig as ACTAWMConfig
+from .awm.configuration_awm import AWMConfig as AWMConfig
 from .diffusion.configuration_diffusion import DiffusionConfig as DiffusionConfig
 from .groot.configuration_groot import GrootConfig as GrootConfig
 from .pi0.configuration_pi0 import PI0Config as PI0Config
@@ -29,6 +30,7 @@ from .xvla.configuration_xvla import XVLAConfig as XVLAConfig
 __all__ = [
     "ACTConfig",
     "ACTAWMConfig",
+    "AWMConfig",
     "DiffusionConfig",
     "PI0Config",
     "PI05Config",

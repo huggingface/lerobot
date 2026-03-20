@@ -39,39 +39,6 @@ Each policy follows the pattern:
 
 ---
 
-## Installation / Build
-
-The project uses `pip` with optional extras. Python ≥ 3.10 required.
-
-**From source (development):**
-```bash
-pip install -e ".[dev,test]"
-pre-commit install
-```
-
-**With simulation environments:**
-```bash
-pip install -e ".[libero]"      # LIBERO benchmark
-pip install -e ".[aloha]"       # ALOHA sim
-pip install -e ".[pusht]"       # Push-T task
-pip install -e ".[metaworld]"   # MetaWorld
-```
-
-**With specific policies:**
-```bash
-pip install -e ".[smolvla]"     # SmolVLA (needs transformers)
-pip install -e ".[groot]"       # GR00T N1.5 (needs flash-attn)
-```
-
-**Git LFS (required for test artifacts):**
-```bash
-git lfs install && git lfs pull
-```
-
-**Note on conflicts:** `wallx` and `pi` extras conflict with `transformers-dep`. Do not install them together.
-
----
-
 ## Running Training Experiments
 
 The main training entry point is `lerobot-train` (maps to `src/lerobot/scripts/lerobot_train.py`).
@@ -125,6 +92,26 @@ lerobot-train --config=outputs/train/my_run/train_config.json --resume=true
 ```
 
 **WandB logging** is on by default. Disable with `--wandb.enable=false`.
+
+Experiuments are logged in `outputs/train` and are ordered by launch times
+```
+outputs/
+  - 2026-02-23/
+    - ...
+    - ...
+  - 2026-03-01/
+    - checkpoints/
+      - 010000/
+      - 020000/
+        - pretrained_model/
+        - training_state/
+      - ...
+    - eval/
+    - wandb/
+      - latest_run/
+```
+
+You can access the checkpoints for loading in the `checkpoints` folder. You can also read the wandb training logs directly in the `wandb` folder. Use the wandb API to read logs whenever necessary.
 
 ---
 

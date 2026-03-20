@@ -17,10 +17,12 @@ import dataclasses
 import logging
 import time
 from contextlib import nullcontext
+from pathlib import Path
 from pprint import pformat
 from typing import Any
 
 import torch
+import torchvision
 from accelerate import Accelerator
 from termcolor import colored
 from torch.optim import Optimizer
@@ -52,6 +54,34 @@ from lerobot.utils.utils import (
     has_method,
     init_logging,
 )
+
+
+def _log_wm_visualizations(policy, batch, step, output_dir, wandb_logger):
+    """Log world model image reconstruction pairs if the policy supports it.
+
+    Saves a PNG grid locally with 2 rows (current obs on top, future obs on bottom).
+    Each cell is GT (left half) | decoded (right half) side-by-side for easy comparison.
+    No-op when the policy has no ``visualize`` method or image features are not configured.
+    """
+    if not hasattr(policy, "visualize"):
+        return
+    n_pairs = getattr(policy.config, "n_image_viz_pairs", 12)
+    viz = policy.visualize(batch, n_pairs=n_pairs)
+    if viz is None:
+        return
+
+    # Save locally: 2 rows — current obs pairs (top), future obs pairs (bottom).
+    vis_dir = Path(output_dir) / "wm_viz"
+    vis_dir.mkdir(parents=True, exist_ok=True)
+    n = len(viz["curr"])
+    grid = torchvision.utils.make_grid(
+        torch.cat([viz["curr"], viz["next"]], dim=0),
+        nrow=n,
+    )
+    torchvision.utils.save_image(grid, vis_dir / f"step_{step:06d}.png")
+
+    if wandb_logger is not None:
+        wandb_logger.log_images(viz, step)
 
 
 def update_policy(
@@ -441,6 +471,12 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                     )
                 wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
+
+        if is_eval_step and is_main_process:
+            # Log WM image reconstructions at eval frequency (no-op for non-AWM policies or state-only configs).
+            _log_wm_visualizations(
+                accelerator.unwrap_model(policy), batch, step, cfg.output_dir, wandb_logger
+            )
 
         if cfg.save_checkpoint and is_saving_step:
             if is_main_process:
