@@ -33,6 +33,7 @@ from pathlib import Path
 import subprocess
 
 import av
+import concurrent
 import datasets
 import numpy as np
 import pandas as pd
@@ -1069,6 +1070,59 @@ def _copy_videos(
             dst_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(src_dataset.root / src_path, dst_path)
 
+def _encode_episode_slice_worker(
+    source_path: str,
+    out_path: str,
+    start_frame: int,
+    end_frame: int,
+    target_fps: int,
+    target_vcodec: str,
+    video_options: dict,
+    pix_fmt: str
+) -> None:
+    """Worker function to encode a single episode slice in a separate process."""
+    # Silence PyAV within this specific process
+    logging.getLogger("libav").setLevel(av.logging.ERROR)
+    
+    frames_to_write = end_frame - start_frame
+    start_time_s = start_frame / target_fps
+    
+    with av.open(out_path, "w") as output_container:
+        output_stream = output_container.add_stream(target_vcodec, target_fps, options=video_options)
+        output_stream.pix_fmt = pix_fmt
+        output_stream.time_base = Fraction(1, target_fps)
+        
+        with av.open(source_path, "r") as input_container:
+            input_stream = input_container.streams.video[0]
+            output_stream.width = input_stream.width
+            output_stream.height = input_stream.height
+            
+            seek_target = int(start_time_s * av.time_base)
+            input_container.seek(seek_target, backward=True, any_frame=False)
+            
+            frames_written = 0
+            
+            for frame in input_container.decode(input_stream):
+                frame_time_s = float(frame.time) if frame.time is not None else 0.0
+                
+                if frame_time_s < start_time_s - 1e-4:
+                    continue
+                    
+                frame.pts = frames_written
+                frame.time_base = Fraction(1, target_fps)
+                
+                packets = output_stream.encode(frame)
+                for packet in packets:
+                    output_container.mux(packet)
+                    
+                frames_written += 1
+                if frames_written >= frames_to_write:
+                    break
+                    
+        packets = output_stream.encode()
+        for packet in packets:
+            output_container.mux(packet)
+
 def _copy_videos_with_feature_changes(
     dataset: LeRobotDataset,
     new_meta: LeRobotDatasetMetadata,
@@ -1126,6 +1180,7 @@ def _copy_videos_with_feature_changes(
     chunks_size = dataset.meta.chunks_size
     
     num_episodes = len(dataset.meta.episodes)
+
     
     for feature_name, (path, _) in add_video_features.items():
         ep_paths = []
@@ -1134,61 +1189,43 @@ def _copy_videos_with_feature_changes(
         tmp_videos = tmp_videos_root / feature_name
         tmp_videos.mkdir(parents=True, exist_ok=True)
 
+        # create per episode sliced videos using multiprocessing
+        futures = []
+        max_workers = max(1, os.cpu_count() - 2)
+        
         # create per episode sliced videos
-        for episode in tqdm(dataset.meta.episodes, desc=f"Creating tmp per episode videos of {feature_name}"):
-            out_path = tmp_videos / f"episode_{episode['episode_index']}.mp4"
-            ep_paths.append(out_path)
+        with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+            for episode in dataset.meta.episodes:
+                out_path = tmp_videos / f"episode_{episode['episode_index']}.mp4"
+                ep_paths.append(out_path)
 
-            start_frame = episode["dataset_from_index"]
-            end_frame = episode["dataset_to_index"]
-            frames_to_write = end_frame - start_frame
+                start_frame = episode["dataset_from_index"]
+                end_frame = episode["dataset_to_index"]
+                frames_to_write = end_frame - start_frame
 
-            start_time_s = start_frame / target_fps
-            #duration_s = (end_frame - start_frame) / target_fps
-            
-            with av.open(str(out_path), "w") as output_container:
-                # setup output stream
-                output_stream = output_container.add_stream(target_vcodec, target_fps, options=video_options)
-                output_stream.pix_fmt = pix_fmt
-                output_stream.time_base = Fraction(1, target_fps)
+                future = executor.submit(
+                    _encode_episode_slice_worker,
+                    str(path),
+                    str(out_path),
+                    start_frame,
+                    end_frame,
+                    target_fps,
+                    target_vcodec,
+                    video_options,
+                    pix_fmt
+                )
+                futures.append(future)
                 
-                # open the source video
-                with av.open(str(path), "r") as input_container:
-                    input_stream = input_container.streams.video[0]
-                    output_stream.width = input_stream.width
-                    output_stream.height = input_stream.height
-                    
-                    # seek to the nearest keyframe before the start time
-                    seek_target = int(start_time_s * av.time_base)
-                    input_container.seek(seek_target, backward=True, any_frame=False)
-                    
-                    frames_written = 0
-                    
-                    # decode frames sequentially from the seek point
-                    for frame in input_container.decode(input_stream):
-                        frame_time_s = float(frame.time) if frame.time is not None else 0.0
-                        
-                        # since we seeked backwards to a keyframe, skip until we hit the exact start time
-                        if frame_time_s < start_time_s - 1e-4:
-                            continue
-                            
-                        # reset PTS so the encoder generates continuous timestamps starting from 0
-                        frame.pts = None
-                        frame.time_base = Fraction(1, target_fps)
-                        
-                        # encode and write the frame
-                        packet = output_stream.encode(frame)
-                        if packet:
-                            output_container.mux(packet)
-                            
-                        frames_written += 1
-                        if frames_written >= frames_to_write:
-                            break
-                            
-                # flush the encoder after all frames are written
-                packet = output_stream.encode()
-                if packet:
-                    output_container.mux(packet)
+            for future in tqdm(
+                concurrent.futures.as_completed(futures), 
+                total=len(futures), 
+                desc=f"Creating tmp per episode videos of {feature_name}"
+            ):
+                try:
+                    future.result()
+                except Exception as e:
+                    logging.error(f"Error slicing an episode: {e}")
+                    raise
         
         # used to create episodes metadata
         col_chunk = [0] * num_episodes
