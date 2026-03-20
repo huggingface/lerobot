@@ -61,10 +61,12 @@ from pathlib import Path
 from pprint import pformat
 from typing import Any, TypedDict
 
+from accelerate import accelerator
 import einops
 import gymnasium as gym
 import numpy as np
 import torch
+from accelerate.utils import extract_model_from_parallel
 from termcolor import colored
 from torch import Tensor, nn
 from tqdm import trange
@@ -277,15 +279,17 @@ def eval_policy(
     """
     if max_episodes_rendered > 0 and not videos_dir:
         raise ValueError("If max_episodes_rendered > 0, videos_dir must be provided.")
+    
+    unwrapped_policy = extract_model_from_parallel(policy, keep_torch_compile=False)
 
-    if not isinstance(policy, PreTrainedPolicy):
+    if not isinstance(unwrapped_policy, PreTrainedPolicy):
         exc = ValueError(
-            f"Policy of type 'PreTrainedPolicy' is expected, but type '{type(policy)}' was provided."
+            f"Policy of type 'PreTrainedPolicy' is expected, but type '{type(unwrapped_policy)}' was provided."
         )
         try:
             from peft import PeftModel
 
-            if not isinstance(policy, PeftModel):
+            if not isinstance(unwrapped_policy, PeftModel):
                 raise exc
         except ImportError:
             raise exc from None
