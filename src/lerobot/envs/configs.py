@@ -462,7 +462,7 @@ class RoboCasaEnv(EnvConfig):
     fps: int = 20
     render_mode: str = "rgb_array"
     obs_type: str = "pixels_agent_pos"
-    camera_name: str = "robot0_agentview_center,robot0_eye_in_hand"
+    camera_name: str = "robot0_agentview_left_image,robot0_eye_in_hand,robot0_agentview_right_image"
     observation_height: int = 256
     observation_width: int = 256
     features: dict[str, PolicyFeature] = field(
@@ -474,31 +474,31 @@ class RoboCasaEnv(EnvConfig):
         default_factory=lambda: {
             ACTION: ACTION,
             "agent_pos": OBS_STATE,
-            "video.robot0_agentview_left": "observation.images.robot0_agentview_left",
-            "video.robot0_agentview_right": "observation.images.robot0_agentview_right",
-            "video.robot0_eye_in_hand": "observation.images.robot0_eye_in_hand",
+            "pixels/robot0_agentview_left": "observation.images.robot0_agentview_left",
+            "pixels/robot0_agentview_right": "observation.images.robot0_agentview_right",
+            "pixels/robot0_eye_in_hand": "observation.images.robot0_eye_in_hand",
         }
     )
 
     def __post_init__(self):
         if self.obs_type == "pixels":
-            self.features["video.robot0_agentview_left"] = PolicyFeature(
+            self.features["pixels/robot0_agentview_left"] = PolicyFeature(
                 type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
             )
-            self.features["video.robot0_agentview_right"] = PolicyFeature(
+            self.features["pixels/robot0_agentview_right"] = PolicyFeature(
                 type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
             )
-            self.features["video.robot0_eye_in_hand"] = PolicyFeature(
+            self.features["pixels/robot0_eye_in_hand"] = PolicyFeature(
                 type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
             )
         elif self.obs_type == "pixels_agent_pos":
-            self.features["video.robot0_agentview_left"] = PolicyFeature(
+            self.features["pixels/robot0_agentview_left"] = PolicyFeature(
                 type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
             )
-            self.features["video.robot0_agentview_right"] = PolicyFeature(
+            self.features["pixels/robot0_agentview_right"] = PolicyFeature(
                 type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
             )
-            self.features["video.robot0_eye_in_hand"] = PolicyFeature(
+            self.features["pixels/robot0_eye_in_hand"] = PolicyFeature(
                 type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
             )
             self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(16,))

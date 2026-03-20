@@ -18,12 +18,14 @@ from collections import defaultdict
 from collections.abc import Callable, Sequence, Mapping
 from functools import partial
 from typing import Any
+from gymnasium import spaces
 
 import numpy as np
 
 from lerobot.types import RobotObservation
 from robocasa.wrappers.gym_wrapper import RoboCasaGymEnv
 from robocasa.utils.env_utils import create_env, convert_action
+from robosuite.controllers.composite.composite_controller import HybridMobileBase
 
 OBS_STATE_DIM = 16
 ACTION_DIM = 12
@@ -32,7 +34,46 @@ AGENT_POS_HIGH = 1000.0
 ACTION_LOW = -1.0
 ACTION_HIGH = 1.0
 DEFAULT_MAX_EPISODE_STEPS = 1000
+DEFAULT_MAX_EPISODE_STEPS_BY_TASK = {
+    # single_stage tasks
+    "CloseDoubleDoor": 474,
+    "CloseDrawer": 227,
+    "CloseSingleDoor": 322,
+    "CoffeePressButton": 156,
+    "CoffeeServeMug": 433,
+    "CoffeeSetupMug": 376,
+    "NavigateKitchen": 322,
+    "OpenDoubleDoor": 889,
+    "OpenDrawer": 260,
+    "OpenSingleDoor": 414,
+    "PnPCabToCounter": 477,
+    "PnPCounterToCab": 364,
+    "PnPCounterToMicrowave": 509,
+    "PnPCounterToSink": 680,
+    "PnPCounterToStove": 404,
+    "PnPMicrowaveToCounter": 430,
+    "PnPSinkToCounter": 351,
+    "PnPStoveToCounter": 417,
+    "TurnOffMicrowave": 318,
+    "TurnOffSinkFaucet": 336,
+    "TurnOffStove": 338,
+    "TurnOnMicrowave": 279,
+    "TurnOnSinkFaucet": 342,
+    "TurnOnStove": 349,
+    "TurnSinkSpout": 187,
+    # multi_stage tasks
+    "ArrangeVegetables": 1132,
+    "MicrowaveThawing": 906,
+    "PreSoakPan": 1439,
+    "PrepareCoffee": 980,
+    "RestockPantry": 925,
+}
 
+CAMERA_NAME_MAPPING = {
+        "robot0_agentview_left_image": "robot0_agentview_left",
+        "robot0_agentview_right_image": "robot0_agentview_right",
+        "robot0_eye_in_hand_image": "robot0_eye_in_hand",
+    }
 def convert_state(dict_state): 
     """
     Converts input state (dict) to format expected LeRobot (np.array)
@@ -55,19 +96,36 @@ class RoboCasaEnv(RoboCasaGymEnv):
     def __init__(
         self,
         task:str,
-        camera_name: str | Sequence[str] = "robot0_agentview_center,robot0_eye_in_hand",
+        camera_name: str | Sequence[str] = "robot0_agentview_left_image,robot0_eye_in_hand,robot0_agentview_right_image",
         render_mode="rgb_array",
         obs_type: str = "pixels_agent_pos",
         observation_width=480,
         observation_height=480,
         visualization_width=640,
         visualization_height=480,
-        split="test",
+        split=None, # {None, "all", "pretrain", "target"}
         ep_meta: dict| None = None,
         **kwargs
     ):
         kwargs["style_ids"] = ep_meta.get("style_ids", [-1]) if ep_meta is not None else [-1]
         kwargs["layout_ids"] = ep_meta.get("layout_ids", [-1]) if ep_meta is not None else [-1]
+        self.obs_type = obs_type
+        self.camera_name = camera_name
+        self.camera_name_mapping = CAMERA_NAME_MAPPING
+        self.max_episode_steps = DEFAULT_MAX_EPISODE_STEPS_BY_TASK.get(
+            task.replace("PickPlace", "PnP"), DEFAULT_MAX_EPISODE_STEPS
+        )
+        self._max_episode_steps = (
+            self.max_episode_steps
+        )  # Required by gymnasium for env.call("_max_episode_steps")
+        self.render_mode = render_mode
+        self.observation_width = observation_width
+        self.observation_height = observation_height
+        self.visualization_width = visualization_width
+        self.visualization_height = visualization_height
+        self.kwargs = kwargs
+        self.split = split
+        self.task = task
         super().__init__(
             task,
             camera_names=camera_name,
@@ -77,18 +135,50 @@ class RoboCasaEnv(RoboCasaGymEnv):
             split=split,
             **kwargs
         )
-        self.obs_type = obs_type
-        self.render_mode = render_mode
-        self.observation_width = observation_width
-        self.observation_height = observation_height
-        self.visualization_width = visualization_width
-        self.visualization_height = visualization_height
-        self.camera_name = camera_name
-        self.kwargs = kwargs
-        self.split = split
         if ep_meta is not None:
             self.env.set_ep_meta(ep_meta)
-        # TODO: check observation and action space
+    
+    def _create_obs_and_action_space(self):
+        images = {}
+        for cam in self.camera_name:
+            images[self.camera_name_mapping.get(cam, cam)] = spaces.Box(
+                low=0,
+                high=255,
+                shape=(self.observation_height, self.observation_width, 3),
+                dtype=np.uint8,
+            )
+        if self.obs_type == "state":
+            raise NotImplementedError(
+                "The 'state' observation type is not supported in RoboCasaEnv. "
+                "Please switch to an image-based obs_type (e.g. 'pixels', 'pixels_agent_pos')."
+            )
+        elif self.obs_type == "pixels":
+            self.observation_space = spaces.Dict(
+                {
+                    "pixels": spaces.Dict(images),
+                }
+            )
+        elif self.obs_type == "pixels_agent_pos":
+            self.observation_space = spaces.Dict(
+                {
+                    "pixels": spaces.Dict(images),
+                    "agent_pos": spaces.Box(
+                        low=AGENT_POS_LOW,
+                        high=AGENT_POS_HIGH,
+                        shape=(OBS_STATE_DIM,),
+                        dtype=np.float64,
+                    ),
+                }
+            )
+        else:
+            raise ValueError(f"Unknown obs_type: {self.obs_type}")
+
+        self.action_space = spaces.Box(
+            low=ACTION_LOW,
+            high=ACTION_HIGH,
+            shape=(ACTION_DIM,),
+            dtype=np.float32
+        )
 
     def render(self) -> np.ndarray:
         """
@@ -132,9 +222,18 @@ class RoboCasaEnv(RoboCasaGymEnv):
             info (Dict[str, Any]): Additional info about the reset state.
         """
         observation, info = super().reset(seed, **kwargs)
+        new_obs = self.get_obs(observation)
+        return new_obs, info 
+    
+    def get_obs(self, raw_obs:dict):
+        new_obs = {}
         if self.obs_type == "pixels_agent_pos":
-            observation["agent_pos"] = convert_state(observation)
-        return observation, info 
+            new_obs["agent_pos"] = convert_state(raw_obs)
+        new_obs["pixels"] = {}
+        for k, v in raw_obs.items():
+            if "video." in k:
+                new_obs["pixels"][k.replace("video.", "")] = v
+        return new_obs
 
     def step(self, action: np.ndarray) -> tuple[RobotObservation, float, bool, bool, dict[str, Any]]:
         """
@@ -157,8 +256,7 @@ class RoboCasaEnv(RoboCasaGymEnv):
             )
         action_dict = convert_action(action)
         observation, reward, done, truncated, info = super().step(action_dict)
-        if self.obs_type == "pixels_agent_pos":
-            observation["agent_pos"] = convert_state(observation)
+        new_obs = self.get_obs(observation)
 
         # Determine whether the task was successful
         is_success = bool(info.get("success", 0))
@@ -178,7 +276,7 @@ class RoboCasaEnv(RoboCasaGymEnv):
             }
             self.reset()
 
-        return observation, reward, terminated, truncated, info
+        return new_obs, reward, terminated, truncated, info
 
 
 def _make_env_fns(
