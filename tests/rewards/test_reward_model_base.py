@@ -50,8 +50,14 @@ def test_factory_unknown_raises():
     """Unknown name should raise ValueError."""
     from lerobot.rewards.factory import get_reward_model_class
 
-    with pytest.raises(ValueError, match="not available"):
-        get_reward_model_class("nonexistent_reward_model")
+    unknown_type = "nonexistent_reward_model"
+    with pytest.raises(ValueError, match=f"Unknown reward model type '{unknown_type}'") as exc_info:
+        get_reward_model_class(unknown_type)
+
+    message = str(exc_info.value)
+    assert "Available reward models:" in message
+    assert "reward_classifier" in message
+    assert "sarm" in message
 
 
 def test_pretrained_reward_model_requires_config_class():
