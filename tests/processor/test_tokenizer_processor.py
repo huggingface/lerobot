@@ -25,8 +25,9 @@ import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.processor import DataProcessorPipeline, TokenizerProcessorStep, TransitionKey
+from lerobot.processor import DataProcessorPipeline, TokenizerProcessorStep
 from lerobot.processor.converters import create_transition, identity_transition
+from lerobot.types import TransitionKey
 from lerobot.utils.constants import (
     ACTION,
     OBS_IMAGE,
@@ -185,6 +186,30 @@ def test_list_of_strings_tokenization(mock_auto_tokenizer):
     tokens = observation[f"{OBS_LANGUAGE}.tokens"]
     attention_mask = observation[f"{OBS_LANGUAGE}.attention_mask"]
     assert tokens.shape == (2, 8)  # batch_size=2, seq_len=8
+    assert attention_mask.shape == (2, 8)
+
+
+@require_package("transformers")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_tuple_of_strings_tokenization(mock_auto_tokenizer):
+    """Test tokenization of a tuple of strings (returned by VectorEnv.call())."""
+    mock_tokenizer = MockTokenizer(vocab_size=100)
+    mock_auto_tokenizer.from_pretrained.return_value = mock_tokenizer
+
+    processor = TokenizerProcessorStep(tokenizer_name="test-tokenizer", max_length=8)
+
+    transition = create_transition(
+        observation={"state": torch.tensor([1.0, 2.0])},
+        action=torch.tensor([0.1, 0.2]),
+        complementary_data={"task": ("pick up cube", "place on table")},
+    )
+
+    result = processor(transition)
+
+    observation = result[TransitionKey.OBSERVATION]
+    tokens = observation[f"{OBS_LANGUAGE}.tokens"]
+    attention_mask = observation[f"{OBS_LANGUAGE}.attention_mask"]
+    assert tokens.shape == (2, 8)
     assert attention_mask.shape == (2, 8)
 
 
