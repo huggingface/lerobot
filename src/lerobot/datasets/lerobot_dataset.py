@@ -35,7 +35,6 @@ from huggingface_hub.errors import RevisionNotFoundError
 
 from lerobot.datasets.compute_stats import aggregate_stats, compute_episode_stats
 from lerobot.datasets.image_writer import AsyncImageWriter, write_image
-from lerobot.datasets.transforms import ImageTransformPipeline
 from lerobot.datasets.utils import (
     DEFAULT_EPISODES_PATH,
     DEFAULT_FEATURES,
@@ -570,7 +569,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         repo_id: str,
         root: str | Path | None = None,
         episodes: list[int] | None = None,
-        image_transforms: Callable | list[Callable] | tuple[Callable, ...] | None = None,
+        image_transforms: Callable | None = None,
         delta_timestamps: dict[str, list[float]] | None = None,
         tolerance_s: float = 1e-4,
         revision: str | None = None,
@@ -672,11 +671,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 HF_LEROBOT_HOME environment variable).
             episodes (list[int] | None, optional): If specified, this will only load episodes specified by
                 their episode_index in this list. Defaults to None.
-            image_transforms (Callable | list[Callable] | tuple[Callable, ...] | None, optional):
-                One or more torchvision-style transforms applied to visual modalities inside `__getitem__`
-                after image decoding / tensor conversion. This works for both image-backed and video-backed
-                observations and can later be updated with `set_image_transforms()` or
-                `register_image_transform()`. Defaults to None.
+            image_transforms (Callable | None, optional):
+                Transform applied to visual modalities inside `__getitem__` after image decoding / tensor
+                conversion. This works for both image-backed and video-backed observations and can later be
+                updated with `set_image_transforms()` or cleared with `clear_image_transforms()`.
+                Defaults to None.
             delta_timestamps (dict[list[float]] | None, optional): _description_. Defaults to None.
             tolerance_s (float, optional): Tolerance in seconds used to ensure data timestamps are actually in
                 sync with the fps value. It is used at the init of the dataset to make sure that each
@@ -783,21 +782,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 encoder_threads=encoder_threads,
             )
 
-    def set_image_transforms(
-        self, image_transforms: Callable | list[Callable] | tuple[Callable, ...] | None
-    ) -> None:
-        """Replace the image transform pipeline applied to visual observations."""
-        self.image_transforms = None if image_transforms is None else ImageTransformPipeline(image_transforms)
-
-    def register_image_transform(self, image_transform: Callable) -> None:
-        """Append a transform to the image transform pipeline."""
-        if self.image_transforms is None:
-            self.image_transforms = ImageTransformPipeline()
-        self.image_transforms.register_transform(image_transform)
+    def set_image_transforms(self, image_transforms: Callable | None) -> None:
+        """Replace the transform applied to visual observations."""
+        if image_transforms is not None and not callable(image_transforms):
+            raise TypeError("image_transforms must be callable or None.")
+        self.image_transforms = image_transforms
 
     def clear_image_transforms(self) -> None:
-        """Remove all registered image transforms."""
-        self.image_transforms = None
+        """Remove the transform applied to visual observations."""
+        self.set_image_transforms(None)
 
     def _close_writer(self) -> None:
         """Close and cleanup the parquet writer if it exists."""
@@ -1750,7 +1743,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         repo_ids: list[str],
         root: str | Path | None = None,
         episodes: dict | None = None,
-        image_transforms: Callable | list[Callable] | tuple[Callable, ...] | None = None,
+        image_transforms: Callable | None = None,
         delta_timestamps: dict[str, list[float]] | None = None,
         tolerances_s: dict | None = None,
         download_videos: bool = True,
@@ -1804,27 +1797,17 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         # per robot.
         self.stats = aggregate_stats([dataset.meta.stats for dataset in self._datasets])
 
-    def set_image_transforms(
-        self, image_transforms: Callable | list[Callable] | tuple[Callable, ...] | None
-    ) -> None:
-        """Replace the image transform pipeline for this dataset and its children."""
-        self.image_transforms = None if image_transforms is None else ImageTransformPipeline(image_transforms)
-        for dataset in getattr(self, "_datasets", []):
-            dataset.set_image_transforms(self.image_transforms)
-
-    def register_image_transform(self, image_transform: Callable) -> None:
-        """Append a transform to this dataset and its children."""
-        if self.image_transforms is None:
-            self.image_transforms = ImageTransformPipeline()
-        self.image_transforms.register_transform(image_transform)
+    def set_image_transforms(self, image_transforms: Callable | None) -> None:
+        """Replace the transform for this dataset and its children."""
+        if image_transforms is not None and not callable(image_transforms):
+            raise TypeError("image_transforms must be callable or None.")
+        self.image_transforms = image_transforms
         for dataset in getattr(self, "_datasets", []):
             dataset.set_image_transforms(self.image_transforms)
 
     def clear_image_transforms(self) -> None:
-        """Remove all registered image transforms from this dataset and its children."""
-        self.image_transforms = None
-        for dataset in getattr(self, "_datasets", []):
-            dataset.clear_image_transforms()
+        """Remove the transform from this dataset and its children."""
+        self.set_image_transforms(None)
 
     @property
     def repo_id_to_index(self):
