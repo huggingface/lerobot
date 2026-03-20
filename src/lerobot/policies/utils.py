@@ -13,7 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import logging
 from collections import deque
 
@@ -26,6 +25,8 @@ from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.datasets.feature_utils import build_dataset_frame
 from lerobot.types import PolicyAction, RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_STR
+
+_pinned_buffers: dict = {}
 
 
 def populate_queues(
@@ -124,13 +125,34 @@ def prepare_observation_for_inference(
         inference, residing on the target device. Image tensors are reshaped
         to (C, H, W) and normalized to a [0, 1] range.
     """
+    device = torch.device(device) if not isinstance(device, torch.device) else device
     for name in observation:
-        observation[name] = torch.from_numpy(observation[name])
+        value = observation[name]
+
         if "image" in name:
-            observation[name] = observation[name].type(torch.float32) / 255
-            observation[name] = observation[name].permute(2, 0, 1).contiguous()
-        observation[name] = observation[name].unsqueeze(0)
-        observation[name] = observation[name].to(device)
+            if not value.flags["C_CONTIGUOUS"]:
+                value = np.ascontiguousarray(value)
+            h, w, c = value.shape
+            buf_key = f"{name}_{h}_{w}_{device.type}"
+            if buf_key not in _pinned_buffers:
+                use_pin = device.type == "cuda"
+                buf = torch.empty(1, c, h, w, dtype=torch.float32)
+                _pinned_buffers[buf_key] = buf.pin_memory() if use_pin else buf
+            frame = (
+                torch.from_numpy(value)
+                .permute(2, 0, 1)
+                .unsqueeze(0)
+                .to(dtype=_pinned_buffers[buf_key].dtype)
+            )
+            _pinned_buffers[buf_key].copy_(frame)
+            t = _pinned_buffers[buf_key].to(device, non_blocking=True)
+            observation[name] = t.div(255.0)
+        else:
+            if not value.flags["C_CONTIGUOUS"]:
+                value = np.ascontiguousarray(value)
+            observation[name] = (
+                torch.from_numpy(value).unsqueeze(0).to(device)
+            )
 
     observation["task"] = task if task else ""
     observation["robot_type"] = robot_type if robot_type else ""
