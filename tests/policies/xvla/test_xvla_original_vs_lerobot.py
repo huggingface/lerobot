@@ -30,7 +30,8 @@ pytest.importorskip("transformers")
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig
 from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
 from lerobot.policies.xvla.processor_xvla import make_xvla_pre_post_processors
-from lerobot.processor import PolicyAction, PolicyProcessorPipeline  # noqa: E402
+from lerobot.processor import PolicyProcessorPipeline  # noqa: E402
+from lerobot.types import PolicyAction  # noqa: E402
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE  # noqa: E402
 from tests.utils import require_cuda  # noqa: E402
 

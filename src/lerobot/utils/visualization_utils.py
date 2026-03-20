@@ -18,7 +18,7 @@ import os
 import numpy as np
 import rerun as rr
 
-from lerobot.processor import RobotAction, RobotObservation
+from lerobot.types import RobotAction, RobotObservation
 
 from .constants import ACTION, ACTION_PREFIX, OBS_PREFIX, OBS_STR
 

@@ -80,13 +80,14 @@ from lerobot.envs.utils import (
 )
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.processor import PolicyAction, PolicyProcessorPipeline
+from lerobot.processor import PolicyProcessorPipeline
+from lerobot.types import PolicyAction
 from lerobot.utils.constants import ACTION, DONE, OBS_STR, REWARD
+from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
-    get_safe_torch_device,
     init_logging,
     inside_slurm,
 )

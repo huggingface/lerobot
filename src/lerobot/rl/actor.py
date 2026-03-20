@@ -62,7 +62,6 @@ from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.policies.factory import make_policy
 from lerobot.policies.sac.modeling_sac import SACPolicy
-from lerobot.processor import TransitionKey
 from lerobot.rl.process import ProcessSignalHandler
 from lerobot.rl.queue import get_last_item_from_queue
 from lerobot.robots import so_follower  # noqa: F401
@@ -77,6 +76,8 @@ from lerobot.transport.utils import (
     send_bytes_in_chunks,
     transitions_to_bytes,
 )
+from lerobot.types import TransitionKey
+from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.transition import (
@@ -86,7 +87,6 @@ from lerobot.utils.transition import (
 )
 from lerobot.utils.utils import (
     TimerManager,
-    get_safe_torch_device,
     init_logging,
 )
 
