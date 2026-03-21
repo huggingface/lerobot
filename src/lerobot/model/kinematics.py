@@ -52,6 +52,54 @@ class RobotKinematics:
         # Initialize frame task for IK
         self.tip_frame = self.solver.add_frame_task(self.target_frame_name, np.eye(4))
 
+    def get_joint_v_offsets(self, joint_names: list[str] | None = None) -> list[int]:
+        """Get the velocity-vector column indices for the given joints.
+
+        Placo's frame_jacobian returns a 6×nv matrix where nv includes 6 floating-base
+        DOFs followed by the actuated joints. Each joint's column is at
+        ``robot.get_joint_v_offset(name)``.
+
+        Args:
+            joint_names: Joint names to look up. Defaults to ``self.joint_names``.
+
+        Returns:
+            List of column indices into the full Jacobian.
+        """
+        names = joint_names if joint_names is not None else self.joint_names
+        return [self.robot.get_joint_v_offset(n) for n in names]
+
+    def compute_frame_jacobian(
+        self,
+        joint_pos_deg: np.ndarray,
+        frame_name: str | None = None,
+        joint_names: list[str] | None = None,
+    ) -> np.ndarray:
+        """
+        Compute the 6×n_joints frame Jacobian at the given frame, restricted to the
+        requested joints only.
+
+        Placo returns a 6×nv Jacobian over the full velocity vector (floating base +
+        all joints). This method extracts only the columns corresponding to the
+        requested joints using ``get_joint_v_offset``.
+
+        The reference frame is ``local_world_aligned`` (origin at the frame, axes
+        aligned with the world frame). Top 3 rows = linear velocity, bottom 3 =
+        angular velocity.
+
+        Args:
+            joint_pos_deg: Joint positions in degrees (numpy array).
+            frame_name: Frame to compute Jacobian at. Defaults to target_frame_name.
+            joint_names: Joints whose columns to extract. Defaults to self.joint_names.
+
+        Returns:
+            6×n_joints Jacobian matrix (numpy array).
+        """
+        self.forward_kinematics(joint_pos_deg)
+        frame = frame_name if frame_name is not None else self.target_frame_name
+        j_full = self.robot.frame_jacobian(frame, "local_world_aligned")
+        col_indices = self.get_joint_v_offsets(joint_names)
+        return j_full[:, col_indices]
+
     def forward_kinematics(self, joint_pos_deg: np.ndarray) -> np.ndarray:
         """
         Compute forward kinematics for given joint configuration given the target frame name in the constructor.
