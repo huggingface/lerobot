@@ -64,6 +64,8 @@ class EvalDockerConfig:
     gpus: str | None = "all"
     # Docker --shm-size value (increase when using larger eval.batch_size values).
     shm_size: str = "8g"
+    # Port on which the host HTTP policy inference server listens.
+    port: int = 50051
 
 
 @dataclass
