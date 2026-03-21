@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import platform
 from typing import cast
 
 from lerobot.utils.import_utils import make_device_from_device_class
@@ -68,14 +67,3 @@ def get_cv2_rotation(rotation: Cv2Rotation) -> int | None:
         return int(cv2.ROTATE_90_COUNTERCLOCKWISE)
     else:
         return None
-
-
-def get_cv2_backend() -> int:
-    import cv2
-
-    if platform.system() == "Windows":
-        return int(cv2.CAP_MSMF)  # Use MSMF for Windows instead of AVFOUNDATION
-    # elif platform.system() == "Darwin":  # macOS
-    #     return cv2.CAP_AVFOUNDATION
-    else:  # Linux and others
-        return int(cv2.CAP_ANY)

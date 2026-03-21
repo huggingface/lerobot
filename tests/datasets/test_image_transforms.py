@@ -390,6 +390,30 @@ def test_sharpness_jitter_invalid_range_max_smaller():
         SharpnessJitter((2.0, 0.1))
 
 
+def test_make_transform_from_config_with_v2_resize(img_tensor_factory):
+    img_tensor = img_tensor_factory()
+    tf_cfg = ImageTransformConfig(type="Resize", kwargs={"size": (32, 32)})
+    tf = make_transform_from_config(tf_cfg)
+    assert isinstance(tf, v2.Resize)
+    output = tf(img_tensor)
+    assert output.shape[-2:] == (32, 32)
+
+
+def test_make_transform_from_config_with_v2_identity(img_tensor_factory):
+    img_tensor = img_tensor_factory()
+    tf_cfg = ImageTransformConfig(type="Identity", kwargs={})
+    tf = make_transform_from_config(tf_cfg)
+    assert isinstance(tf, v2.Identity)
+    output = tf(img_tensor)
+    assert output.shape == img_tensor.shape
+
+
+def test_make_transform_from_config_invalid_type():
+    tf_cfg = ImageTransformConfig(type="NotARealTransform", kwargs={})
+    with pytest.raises(ValueError, match="not valid"):
+        make_transform_from_config(tf_cfg)
+
+
 def test_save_all_transforms(img_tensor_factory, tmp_path):
     img_tensor = img_tensor_factory()
     tf_cfg = ImageTransformsConfig(enable=True)

@@ -22,6 +22,8 @@ import zmq
 
 from lerobot.robots.unitree_g1.config_unitree_g1 import UnitreeG1Config
 
+# Module-level ZMQ state mirrors the Unitree SDK's global ChannelFactory Singleton.
+# Only one robot connection per process is supported.
 _ctx: zmq.Context | None = None
 _lowcmd_sock: zmq.Socket | None = None
 _lowstate_sock: zmq.Socket | None = None
@@ -97,17 +99,22 @@ def lowcmd_to_dict(topic: str, msg: Any) -> dict[str, Any]:
     }
 
 
-def ChannelFactoryInitialize(*args: Any, **kwargs: Any) -> None:  # noqa: N802
+def ChannelFactoryInitialize(domain_id: int = 0, config: Any = None) -> None:  # noqa: N802
     """
     Initialize ZMQ sockets for robot communication.
 
     This function mimics the Unitree SDK's ChannelFactoryInitialize but uses
     ZMQ sockets to connect to the robot server bridge instead of DDS.
+
+    Args:
+        domain_id: Ignored (for API compatibility with Unitree SDK)
+        config: UnitreeG1Config instance with robot_ip
     """
     global _ctx, _lowcmd_sock, _lowstate_sock
 
     # read socket config
-    config = UnitreeG1Config()
+    if config is None:
+        config = UnitreeG1Config()
     robot_ip = config.robot_ip
 
     ctx = zmq.Context.instance()

@@ -269,7 +269,7 @@ This generates visualizations showing video frames with subtask boundaries overl
 Train with **no annotations** - uses linear progress from 0 to 1:
 
 ```bash
-python src/lerobot/scripts/lerobot_train.py \
+lerobot-train \
   --dataset.repo_id=your-username/your-dataset \
   --policy.type=sarm \
   --policy.annotation_mode=single_stage \
@@ -288,7 +288,7 @@ python src/lerobot/scripts/lerobot_train.py \
 Train with **dense annotations only** (sparse auto-generated):
 
 ```bash
-python src/lerobot/scripts/lerobot_train.py \
+lerobot-train \
   --dataset.repo_id=your-username/your-dataset \
   --policy.type=sarm \
   --policy.annotation_mode=dense_only \
@@ -307,7 +307,7 @@ python src/lerobot/scripts/lerobot_train.py \
 Train with **both sparse and dense annotations**:
 
 ```bash
-python src/lerobot/scripts/lerobot_train.py \
+lerobot-train \
   --dataset.repo_id=your-username/your-dataset \
   --policy.type=sarm \
   --policy.annotation_mode=dual \
@@ -468,7 +468,7 @@ This script:
 Once you have the progress file, train your policy with RA-BC weighting. The progress file is auto-detected from the dataset path (`sarm_progress.parquet`). Currently PI0, PI0.5 and SmolVLA are supported with RA-BC:
 
 ```bash
-python src/lerobot/scripts/lerobot_train.py \
+lerobot-train \
   --dataset.repo_id=your-username/your-dataset \
   --policy.type=pi0 \
   --use_rabc=true \

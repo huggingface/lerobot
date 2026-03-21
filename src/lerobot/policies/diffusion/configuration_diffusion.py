@@ -30,7 +30,7 @@ class DiffusionConfig(PreTrainedConfig):
     Defaults are configured for training with PushT providing proprioceptive and single camera observations.
 
     The parameters you will most likely need to change are the ones which depend on the environment / sensors.
-    Those are: `input_shapes` and `output_shapes`.
+    Those are: `input_features` and `output_features`.
 
     Notes on the inputs and outputs:
         - "observation.state" is required as an input key.
@@ -48,32 +48,29 @@ class DiffusionConfig(PreTrainedConfig):
         horizon: Diffusion model action prediction size as detailed in `DiffusionPolicy.select_action`.
         n_action_steps: The number of action steps to run in the environment for one invocation of the policy.
             See `DiffusionPolicy.select_action` for more details.
-        input_shapes: A dictionary defining the shapes of the input data for the policy. The key represents
-            the input data name, and the value is a list indicating the dimensions of the corresponding data.
-            For example, "observation.image" refers to an input from a camera with dimensions [3, 96, 96],
-            indicating it has three color channels and 96x96 resolution. Importantly, `input_shapes` doesn't
-            include batch dimension or temporal dimension.
-        output_shapes: A dictionary defining the shapes of the output data for the policy. The key represents
-            the output data name, and the value is a list indicating the dimensions of the corresponding data.
-            For example, "action" refers to an output shape of [14], indicating 14-dimensional actions.
-            Importantly, `output_shapes` doesn't include batch dimension or temporal dimension.
-        input_normalization_modes: A dictionary with key representing the modality (e.g. "observation.state"),
-            and the value specifies the normalization mode to apply. The two available modes are "mean_std"
-            which subtracts the mean and divides by the standard deviation and "min_max" which rescale in a
-            [-1, 1] range.
-        output_normalization_modes: Similar dictionary as `normalize_input_modes`, but to unnormalize to the
-            original scale. Note that this is also used for normalizing the training targets.
+        input_features: A dictionary defining the PolicyFeature of the input data for the policy. The key represents
+            the input data name, and the value is PolicyFeature, which consists of FeatureType and shape attributes.
+        output_features: A dictionary defining the PolicyFeature of the output data for the policy. The key represents
+            the output data name, and the value is PolicyFeature, which consists of FeatureType and shape attributes.
+        normalization_mapping: A dictionary that maps from a str value of FeatureType (e.g., "STATE", "VISUAL") to
+            a corresponding NormalizationMode (e.g., NormalizationMode.MIN_MAX)
         vision_backbone: Name of the torchvision resnet backbone to use for encoding images.
-        crop_shape: (H, W) shape to crop images to as a preprocessing step for the vision backbone. Must fit
-            within the image size. If None, no cropping is done.
-        crop_is_random: Whether the crop should be random at training time (it's always a center crop in eval
-            mode).
+        resize_shape: (H, W) shape to resize images to as a preprocessing step for the vision
+            backbone. If None, no resizing is done and the original image resolution is used.
+        crop_ratio: Ratio in (0, 1] used to derive the crop size from resize_shape
+            (crop_h = int(resize_shape[0] * crop_ratio), likewise for width).
+            Set to 1.0 to disable cropping. Only takes effect when resize_shape is not None.
+        crop_shape: (H, W) shape to crop images to. When resize_shape is set and crop_ratio < 1.0,
+            this is computed automatically. Can also be set directly for legacy configs that use
+            crop-only (without resize). If None and no derivation applies, no cropping is done.
+        crop_is_random: Whether the crop should be random at training time (it's always a center
+            crop in eval mode).
         pretrained_backbone_weights: Pretrained weights from torchvision to initialize the backbone.
             `None` means no pretrained weights.
         use_group_norm: Whether to replace batch normalization with group normalization in the backbone.
             The group sizes are set to be about 16 (to be precise, feature_dim // 16).
         spatial_softmax_num_keypoints: Number of keypoints for SpatialSoftmax.
-        use_separate_rgb_encoders_per_camera: Whether to use a separate RGB encoder for each camera view.
+        use_separate_rgb_encoder_per_camera: Whether to use a separate RGB encoder for each camera view.
         down_dims: Feature dimension for each stage of temporal downsampling in the diffusion modeling Unet.
             You may provide a variable number of dimensions, therefore also controlling the degree of
             downsampling.
@@ -123,7 +120,9 @@ class DiffusionConfig(PreTrainedConfig):
     # Architecture / modeling.
     # Vision backbone.
     vision_backbone: str = "resnet18"
-    crop_shape: tuple[int, int] | None = (84, 84)
+    resize_shape: tuple[int, int] | None = None
+    crop_ratio: float = 1.0
+    crop_shape: tuple[int, int] | None = None
     crop_is_random: bool = True
     pretrained_backbone_weights: str | None = None
     use_group_norm: bool = True
@@ -147,6 +146,10 @@ class DiffusionConfig(PreTrainedConfig):
 
     # Inference
     num_inference_steps: int | None = None
+
+    # Optimization
+    compile_model: bool = False
+    compile_mode: str = "reduce-overhead"
 
     # Loss computation
     do_mask_loss_for_padding: bool = False
@@ -180,6 +183,25 @@ class DiffusionConfig(PreTrainedConfig):
                 f"Got {self.noise_scheduler_type}."
             )
 
+        if self.resize_shape is not None and (
+            len(self.resize_shape) != 2 or any(d <= 0 for d in self.resize_shape)
+        ):
+            raise ValueError(f"`resize_shape` must be a pair of positive integers. Got {self.resize_shape}.")
+        if not (0 < self.crop_ratio <= 1.0):
+            raise ValueError(f"`crop_ratio` must be in (0, 1]. Got {self.crop_ratio}.")
+
+        if self.resize_shape is not None:
+            if self.crop_ratio < 1.0:
+                self.crop_shape = (
+                    int(self.resize_shape[0] * self.crop_ratio),
+                    int(self.resize_shape[1] * self.crop_ratio),
+                )
+            else:
+                # Explicitly disable cropping for resize+ratio path when crop_ratio == 1.0.
+                self.crop_shape = None
+        if self.crop_shape is not None and (self.crop_shape[0] <= 0 or self.crop_shape[1] <= 0):
+            raise ValueError(f"`crop_shape` must have positive dimensions. Got {self.crop_shape}.")
+
         # Check that the horizon size and U-Net downsampling is compatible.
         # U-Net downsamples by 2 with each stage.
         downsampling_factor = 2 ** len(self.down_dims)
@@ -207,13 +229,12 @@ class DiffusionConfig(PreTrainedConfig):
         if len(self.image_features) == 0 and self.env_state_feature is None:
             raise ValueError("You must provide at least one image or the environment state among the inputs.")
 
-        if self.crop_shape is not None:
+        if self.resize_shape is None and self.crop_shape is not None:
             for key, image_ft in self.image_features.items():
                 if self.crop_shape[0] > image_ft.shape[1] or self.crop_shape[1] > image_ft.shape[2]:
                     raise ValueError(
-                        f"`crop_shape` should fit within the images shapes. Got {self.crop_shape} "
-                        f"for `crop_shape` and {image_ft.shape} for "
-                        f"`{key}`."
+                        f"`crop_shape` should fit within the image shapes. Got {self.crop_shape} "
+                        f"for `crop_shape` and {image_ft.shape} for `{key}`."
                     )
 
         # Check that all input images have the same shape.

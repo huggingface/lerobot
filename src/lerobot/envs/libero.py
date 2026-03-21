@@ -29,7 +29,7 @@ from gymnasium import spaces
 from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
 
-from lerobot.processor import RobotObservation
+from lerobot.types import RobotObservation
 
 
 def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
@@ -112,6 +112,7 @@ class LiberoEnv(gym.Env):
         visualization_height: int = 480,
         init_states: bool = True,
         episode_index: int = 0,
+        n_envs: int = 1,
         camera_name_mapping: dict[str, str] | None = None,
         num_steps_wait: int = 10,
         control_mode: str = "relative",
@@ -145,7 +146,9 @@ class LiberoEnv(gym.Env):
         self.episode_length = episode_length
         # Load once and keep
         self._init_states = get_task_init_states(task_suite, self.task_id) if self.init_states else None
-        self._init_state_id = self.episode_index  # tie each sub-env to a fixed init state
+        self._reset_stride = n_envs  # when performing a reset, append `_reset_stride` to `init_state_id`.
+
+        self.init_state_id = self.episode_index  # tie each sub-env to a fixed init state
 
         self._env = self._make_envs_task(task_suite, self.task_id)
         default_steps = 500
@@ -293,9 +296,10 @@ class LiberoEnv(gym.Env):
     def reset(self, seed=None, **kwargs):
         super().reset(seed=seed)
         self._env.seed(seed)
-        if self.init_states and self._init_states is not None:
-            self._env.set_init_state(self._init_states[self._init_state_id])
         raw_obs = self._env.reset()
+        if self.init_states and self._init_states is not None:
+            raw_obs = self._env.set_init_state(self._init_states[self.init_state_id % len(self._init_states)])
+            self.init_state_id += self._reset_stride  # Change init_state_id when reset
 
         # After reset, objects may be unstable (slightly floating, intersecting, etc.).
         # Step the simulator with a no-op action for a few frames so everything settles.
@@ -373,6 +377,7 @@ def _make_env_fns(
             init_states=init_states,
             episode_length=episode_length,
             episode_index=episode_index,
+            n_envs=n_envs,
             control_mode=control_mode,
             **local_kwargs,
         )

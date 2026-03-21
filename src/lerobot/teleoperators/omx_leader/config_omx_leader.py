@@ -27,4 +27,4 @@ class OmxLeaderConfig(TeleoperatorConfig):
 
     # Sets the arm in torque mode with the gripper motor set to this value. This makes it possible to squeeze
     # the gripper and have it spring back to an open position on its own.
-    gripper_open_pos: float = 37.0
+    gripper_open_pos: float = 60.0
