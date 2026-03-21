@@ -75,6 +75,7 @@ from .policy_robot_bridge import (
     PolicyActionToRobotActionProcessorStep,
     RobotActionToPolicyActionProcessorStep,
 )
+from .quasistatic_wrench_processor import QuasiStaticWrenchEstimatorStep
 from .rename_processor import RenameObservationsProcessorStep
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
 
@@ -111,6 +112,7 @@ __all__ = [
     "ProcessorKwargs",
     "ProcessorStep",
     "ProcessorStepRegistry",
+    "QuasiStaticWrenchEstimatorStep",
     "RobotAction",
     "RobotActionProcessorStep",
     "RobotObservation",
