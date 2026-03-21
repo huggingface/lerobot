@@ -1116,9 +1116,45 @@ def test_modify_tasks_default_with_overrides(sample_dataset):
             assert ep_data["tasks"][0] == default_task
 
 
+def test_modify_tasks_replacements(sample_dataset):
+    """Test replacing task strings based on their current values."""
+    modified_dataset = modify_tasks(
+        sample_dataset,
+        task_replacements={
+            "task_0": "Pick the cube",
+            "task_1": "Place the cube",
+        },
+    )
+
+    assert len(modified_dataset.meta.tasks) == 2
+    assert "Pick the cube" in modified_dataset.meta.tasks.index
+    assert "Place the cube" in modified_dataset.meta.tasks.index
+
+    for ep_idx in range(5):
+        expected_task = "Pick the cube" if ep_idx % 2 == 0 else "Place the cube"
+        assert modified_dataset.meta.episodes[ep_idx]["tasks"][0] == expected_task
+
+
+def test_modify_tasks_replacements_with_episode_overrides(sample_dataset):
+    """Test that explicit episode overrides take precedence over replacements."""
+    modified_dataset = modify_tasks(
+        sample_dataset,
+        task_replacements={
+            "task_0": "Pick the cube",
+            "task_1": "Place the cube",
+        },
+        episode_tasks={1: "Inspect the cube"},
+    )
+
+    assert modified_dataset.meta.episodes[0]["tasks"][0] == "Pick the cube"
+    assert modified_dataset.meta.episodes[1]["tasks"][0] == "Inspect the cube"
+    assert modified_dataset.meta.episodes[3]["tasks"][0] == "Place the cube"
+    assert len(modified_dataset.meta.tasks) == 3
+
+
 def test_modify_tasks_no_task_specified(sample_dataset):
     """Test error when no task is specified."""
-    with pytest.raises(ValueError, match="Must specify at least one of new_task or episode_tasks"):
+    with pytest.raises(ValueError, match="Must specify at least one of new_task, episode_tasks, or task_replacements"):
         modify_tasks(sample_dataset)
 
 
@@ -1126,6 +1162,22 @@ def test_modify_tasks_invalid_episode_indices(sample_dataset):
     """Test error with invalid episode indices."""
     with pytest.raises(ValueError, match="Invalid episode indices"):
         modify_tasks(sample_dataset, episode_tasks={10: "Task", 20: "Task"})
+
+
+def test_modify_tasks_invalid_task_replacements(sample_dataset):
+    """Test error when task replacements refer to unknown task strings."""
+    with pytest.raises(ValueError, match="Task replacements reference unknown tasks"):
+        modify_tasks(sample_dataset, task_replacements={"missing_task": "New task"})
+
+
+def test_modify_tasks_rejects_default_task_and_replacements(sample_dataset):
+    """Test that default-task assignment cannot be combined with find-and-replace."""
+    with pytest.raises(ValueError, match="Cannot combine new_task with task_replacements"):
+        modify_tasks(
+            sample_dataset,
+            new_task="Default task",
+            task_replacements={"task_0": "Pick the cube"},
+        )
 
 
 def test_modify_tasks_updates_info_json(sample_dataset):
