@@ -110,6 +110,30 @@ def test_dataset_initialization(tmp_path, lerobot_dataset_factory):
     assert dataset.num_frames == len(dataset)
 
 
+def test_dataset_slice(tmp_path, lerobot_dataset_factory):
+    dataset = lerobot_dataset_factory(root=tmp_path / "test", total_episodes=3, total_frames=30)
+
+    # basic slice
+    result = dataset[:5]
+    assert isinstance(result, list)
+    assert len(result) == 5
+    assert all(isinstance(item, dict) for item in result)
+
+    # step slice
+    result = dataset[::2]
+    assert len(result) == (len(dataset) + 1) // 2
+
+    # negative step / reverse
+    result = dataset[4::-1]
+    assert len(result) == 5
+
+    # single-item access still returns a dict
+    assert isinstance(dataset[0], dict)
+
+    # slice content matches individual item access
+    assert dataset[:3][0].keys() == dataset[0].keys()
+
+
 # TODO(rcadene, aliberts): do not run LeRobotDataset.create, instead refactor LeRobotDatasetMetadata.create
 # and test the small resulting function that validates the features
 def test_dataset_feature_with_forward_slash_raises_error():
