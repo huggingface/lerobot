@@ -70,8 +70,8 @@ class ForwardCompatibilityError(CompatibilityError):
 
 
 DEFAULT_CHUNK_SIZE = 1000  # Max number of files per chunk
-DEFAULT_DATA_FILE_SIZE_IN_MB = 100  # Max size per file
-DEFAULT_VIDEO_FILE_SIZE_IN_MB = 200  # Max size per file
+DEFAULT_DATA_FILE_SIZE_IN_MB = 1000  # Max size per file
+DEFAULT_VIDEO_FILE_SIZE_IN_MB = 20000  # Max size per file
 
 INFO_PATH = "meta/info.json"
 STATS_PATH = "meta/stats.json"
