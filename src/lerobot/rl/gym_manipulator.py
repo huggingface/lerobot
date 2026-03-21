@@ -16,6 +16,7 @@
 
 import logging
 import time
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -658,6 +659,7 @@ def control_loop(
     episode_idx = 0
     episode_step = 0
     episode_start_time = time.perf_counter()
+    frame_lock = threading.Lock() # Lock for dataset.add_frame
 
     while episode_idx < cfg.dataset.num_episodes_to_record:
         step_start_time = time.perf_counter()
@@ -699,8 +701,9 @@ def control_loop(
                 frame["complementary_info.discrete_penalty"] = np.array([discrete_penalty], dtype=np.float32)
 
             if dataset is not None:
-                frame["task"] = cfg.dataset.task
-                dataset.add_frame(frame)
+                with frame_lock:
+                    frame["task"] = cfg.dataset.task
+                    dataset.add_frame(frame)
 
         episode_step += 1
 
