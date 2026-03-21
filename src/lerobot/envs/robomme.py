@@ -14,11 +14,15 @@ Install: pip install robomme  (or from source: https://github.com/RoboMME/robomm
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
+from functools import partial
 from typing import Any
 
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
+
+from lerobot.envs.lazy_vec_env import LazyVectorEnv
 
 ROBOMME_TASKS = [
     "BinFill", "PickXtimes", "SwingXtimes", "StopCube",
@@ -113,6 +117,29 @@ class RoboMMEGymEnv(gym.Env):
         }
 
 
+def _make_env_fns(
+    *,
+    task: str,
+    n_envs: int,
+    action_space_type: str,
+    dataset: str,
+    episode_length: int,
+    task_id: int,
+) -> list[Callable[[], RoboMMEGymEnv]]:
+    """Build n_envs factory callables for one RoboMME task id."""
+
+    def _make_one(episode_index: int) -> RoboMMEGymEnv:
+        return RoboMMEGymEnv(
+            task=task,
+            action_space_type=action_space_type,
+            dataset=dataset,
+            episode_idx=episode_index,
+            max_steps=episode_length,
+        )
+
+    return [partial(_make_one, task_id + i) for i in range(n_envs)]
+
+
 def create_robomme_envs(
     task: str,
     n_envs: int = 1,
@@ -120,35 +147,35 @@ def create_robomme_envs(
     dataset: str = "test",
     episode_length: int = 300,
     task_ids: list[int] | None = None,
-    env_cls=None,
+    env_cls: Callable[[Sequence[Callable[[], Any]]], Any] | None = None,
 ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
     """Create vectorized RoboMME environments for evaluation.
 
     Returns {suite_name: {task_id: VectorEnv}} matching lerobot's expected format.
     """
-    if env_cls is None:
-        env_cls = gym.vector.SyncVectorEnv
+    if env_cls is None or not callable(env_cls):
+        raise ValueError("env_cls must be a callable that wraps a list of env factory callables.")
+    if not isinstance(n_envs, int) or n_envs <= 0:
+        raise ValueError(f"n_envs must be a positive int; got {n_envs}.")
 
     if task_ids is None:
         task_ids = [0]
 
     suite_name = "robomme"
     envs_by_task = {}
+    lazy = len(task_ids) > 50
+    if lazy:
+        print(f"Using lazy env creation for {len(task_ids)} tasks (envs created on demand)")
 
     for task_id in task_ids:
-        def _make_one(ep_idx=task_id):
-            return RoboMMEGymEnv(
-                task=task,
-                action_space_type=action_space_type,
-                dataset=dataset,
-                episode_idx=ep_idx,
-                max_steps=episode_length,
-            )
-
-        vec = env_cls(
-            [_make_one for _ in range(n_envs)],
-            autoreset_mode=gym.vector.AutoresetMode.SAME_STEP,
+        fns = _make_env_fns(
+            task=task,
+            n_envs=n_envs,
+            action_space_type=action_space_type,
+            dataset=dataset,
+            episode_length=episode_length,
+            task_id=task_id,
         )
-        envs_by_task[task_id] = vec
+        envs_by_task[task_id] = LazyVectorEnv(env_cls, fns) if lazy else env_cls(fns)
 
     return {suite_name: envs_by_task}

@@ -75,6 +75,7 @@ if "wand" not in sys.modules:
 from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
 
+from lerobot.envs.lazy_vec_env import LazyVectorEnv
 from lerobot.processor import RobotObservation
 
 _ASSET_DOWNLOAD_INSTRUCTIONS = """\
@@ -102,6 +103,145 @@ def _check_libero_plus_assets() -> None:
     assets_dir = Path(get_libero_path("benchmark_root")) / "assets"
     if not (assets_dir / "scenes").is_dir():
         raise FileNotFoundError(_ASSET_DOWNLOAD_INSTRUCTIONS.format(assets_dir=assets_dir))
+
+
+# ---- Perturbation support for LIBERO-Plus -----------------------------------
+
+PERTURBATION_DIMENSIONS = (
+    "Camera Viewpoints",
+    "Robot Initial States",
+    "Language Instructions",
+    "Light Conditions",
+    "Background Textures",
+    "Sensor Noise",
+    "Objects Layout",
+)
+
+PERTURBATION_SHORT_KEYS = {
+    "Camera Viewpoints": "camera",
+    "Robot Initial States": "robot",
+    "Language Instructions": "language",
+    "Light Conditions": "light",
+    "Background Textures": "background",
+    "Sensor Noise": "noise",
+    "Objects Layout": "layout",
+}
+
+
+def load_task_classification() -> dict:
+    """Load task_classification.json shipped with LIBERO-Plus."""
+    import json
+
+    benchmark_root = Path(get_libero_path("benchmark_root"))
+    candidates = [
+        benchmark_root / "benchmark" / "task_classification.json",
+        benchmark_root / "task_classification.json",
+        benchmark_root.parent / "benchmark" / "task_classification.json",
+    ]
+    for p in candidates:
+        if p.exists():
+            with open(p) as f:
+                return json.load(f)
+    raise FileNotFoundError(
+        f"task_classification.json not found. Tried: {[str(c) for c in candidates]}"
+    )
+
+
+def build_perturbation_index(suite_name: str) -> dict[int, str]:
+    """Return {0-indexed task_id: perturbation_dimension} for *suite_name*."""
+    tc = load_task_classification()
+    suite_data = tc.get(suite_name, {})
+    index: dict[int, str] = {}
+
+    # LIBERO-Plus task_classification.json has appeared in two shapes:
+    # 1) dict[suite][task_id_str] -> meta
+    # 2) dict[suite] -> list[{id, category, ...}]
+    if isinstance(suite_data, list):
+        for item in suite_data:
+            if not isinstance(item, dict):
+                continue
+            raw_id = item.get("id")
+            if raw_id is None:
+                continue
+            try:
+                # list-form ids are 1-indexed in current LIBERO-Plus release.
+                tid = int(raw_id) - 1
+            except (TypeError, ValueError):
+                continue
+            if tid < 0:
+                continue
+            dim = item.get("perturbation_type") or item.get("category", "unknown")
+            index[tid] = dim
+        return index
+
+    if isinstance(suite_data, dict):
+        # Handle both 0-indexed and 1-indexed key conventions.
+        numeric_keys: list[int] = []
+        for k in suite_data:
+            try:
+                numeric_keys.append(int(k))
+            except (TypeError, ValueError):
+                continue
+        one_indexed = bool(numeric_keys) and 0 not in numeric_keys and min(numeric_keys) >= 1
+
+        for task_id_str, meta in suite_data.items():
+            try:
+                tid = int(task_id_str)
+            except (TypeError, ValueError):
+                continue
+            if one_indexed:
+                tid -= 1
+            if tid < 0:
+                continue
+            if isinstance(meta, dict):
+                dim = meta.get("perturbation_type") or meta.get("category", "unknown")
+            else:
+                dim = "unknown"
+            index[tid] = dim
+        return index
+
+    return index
+
+
+def aggregate_by_perturbation(
+    per_task: list[dict], suite_indices: dict[str, dict[int, str]]
+) -> dict[str, dict]:
+    """Aggregate per-task eval results by perturbation dimension.
+
+    Args:
+        per_task: list of {"task_group": str, "task_id": int, "metrics": {...}}
+        suite_indices: {suite_name: {task_id: dimension_name}} from build_perturbation_index
+
+    Returns:
+        {short_key: {"pc_success": float, "n_episodes": int}} for each perturbation dimension
+    """
+    dim_successes: dict[str, list] = defaultdict(list)
+    for entry in per_task:
+        suite = entry["task_group"]
+        tid = entry["task_id"]
+        idx = suite_indices.get(suite, {})
+        dim = idx.get(tid, "unknown")
+        short = PERTURBATION_SHORT_KEYS.get(dim, dim.lower().replace(" ", "_"))
+        successes = entry["metrics"].get("successes", [])
+        dim_successes[short].extend(successes)
+
+    results: dict[str, dict] = {}
+    all_successes: list = []
+    for short_key in list(PERTURBATION_SHORT_KEYS.values()) + ["unknown"]:
+        if short_key not in dim_successes:
+            continue
+        s = dim_successes[short_key]
+        all_successes.extend(s)
+        results[short_key] = {
+            "pc_success": float(np.nanmean(s) * 100) if s else float("nan"),
+            "n_episodes": len(s),
+        }
+    if all_successes:
+        results["total"] = {
+            "pc_success": float(np.nanmean(all_successes) * 100),
+            "n_episodes": len(all_successes),
+        }
+    return results
 
 
 def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
@@ -143,26 +283,31 @@ def get_task_init_states(task_suite: Any, i: int) -> np.ndarray:
     init_states_dir = Path(get_libero_path("init_states")) / task_suite.tasks[i].problem_folder
     init_states_file = task_suite.tasks[i].init_states_file
 
-    candidate_names = [init_states_file]
-    # Some LIBERO-plus task names include a "_table_<n>" suffix while shipped
-    # init files use the base name without that table suffix.
-    if "_table_" in init_states_file:
-        candidate_names.append(re.sub(r"_table_\d+(?=\.pruned_init$|\.init$)", "", init_states_file))
+    # 1. Direct match
+    direct = init_states_dir / init_states_file
+    if direct.exists():
+        return torch.load(direct, weights_only=False)  # nosec B614
 
-    for name in candidate_names:
-        candidate_path = init_states_dir / name
-        if candidate_path.exists():
-            return torch.load(candidate_path, weights_only=False)  # nosec B614
+    # 2. LIBERO-Plus perturbation filenames append suffixes like
+    #    _view_0_0_100_0_0_initstate_1, _language_19, _noise_45, _table_1, _tb_9, _add_16
+    #    to the base task name.  Instead of regex-matching every variant, find the
+    #    longest existing base file whose stem is a prefix of the perturbation stem.
+    stem, ext = os.path.splitext(init_states_file)
+    best_match: Path | None = None
+    best_len = 0
+    for candidate in init_states_dir.glob(f"*{ext}"):
+        cstem = candidate.stem
+        if stem == cstem or (stem.startswith(cstem) and stem[len(cstem)] == "_"):
+            if len(cstem) > best_len:
+                best_len = len(cstem)
+                best_match = candidate
 
-    # Last-resort fallback: pick any file matching the base prefix + extension.
-    stem, suffix = os.path.splitext(init_states_file)
-    stem = re.sub(r"_table_\d+$", "", stem)
-    fallback_matches = sorted(init_states_dir.glob(f"{stem}*{suffix}"))
-    if fallback_matches:
-        return torch.load(fallback_matches[0], weights_only=False)  # nosec B614
+    if best_match is not None:
+        return torch.load(best_match, weights_only=False)  # nosec B614
 
     raise FileNotFoundError(
-        f"Could not find init states for task {i}. Tried {candidate_names} in '{init_states_dir}'."
+        f"Could not find init states for task {i}. "
+        f"Tried '{init_states_file}' and prefix matching in '{init_states_dir}'."
     )
 
 
@@ -259,6 +404,7 @@ class LiberoEnv(gym.Env):
         # Load once and keep
         self._init_states = get_task_init_states(task_suite, self.task_id) if self.init_states else None
         self._reset_stride = n_envs  # when performing a reset, append `_reset_stride` to `init_state_id`.
+        self._init_state_error_warned = False
 
         self.init_state_id = self.episode_index  # tie each sub-env to a fixed init state
 
@@ -410,8 +556,21 @@ class LiberoEnv(gym.Env):
         self._env.seed(seed)
         raw_obs = self._env.reset()
         if self.init_states and self._init_states is not None:
-            raw_obs = self._env.set_init_state(self._init_states[self.init_state_id % len(self._init_states)])
-            self.init_state_id += self._reset_stride  # Change init_state_id when reset
+            try:
+                raw_obs = self._env.set_init_state(self._init_states[self.init_state_id % len(self._init_states)])
+                self.init_state_id += self._reset_stride  # Change init_state_id when reset
+            except Exception as exc:
+                # Some LIBERO-Plus perturbation tasks (notably object-layout variants)
+                # can have different simulator state dimensions than their base init files.
+                # Fall back to plain env.reset() instead of aborting the whole evaluation.
+                self.init_states = False
+                if not self._init_state_error_warned:
+                    print(
+                        "WARNING: Failed to apply init state for "
+                        f"task_id={self.task_id} ({self.task}). "
+                        f"Falling back to plain reset. Error: {exc}"
+                    )
+                    self._init_state_error_warned = True
 
         # After reset, objects may be unstable (slightly floating, intersecting, etc.).
         # Step the simulator with a no-op action for a few frames so everything settles.
@@ -500,6 +659,9 @@ def _make_env_fns(
     return fns
 
 
+_LazyVecEnv = LazyVectorEnv
+
+
 # ---- Main API ----------------------------------------------------------------
 
 
@@ -543,12 +705,23 @@ def create_libero_envs(
         print(f"Restricting to task_ids={task_ids_filter}")
 
     out: dict[str, dict[int, Any]] = defaultdict(dict)
+    total_tasks = 0
     for suite_name in suite_names:
         suite = _get_suite(suite_name)
         total = len(suite.tasks)
         selected = _select_task_ids(total, task_ids_filter)
         if not selected:
             raise ValueError(f"No tasks selected for suite '{suite_name}' (available: {total}).")
+        total_tasks += len(selected)
+
+    lazy = total_tasks > 50
+    if lazy:
+        print(f"Using lazy env creation for {total_tasks} tasks (envs created on demand)")
+
+    for suite_name in suite_names:
+        suite = _get_suite(suite_name)
+        total = len(suite.tasks)
+        selected = _select_task_ids(total, task_ids_filter)
 
         for tid in selected:
             fns = _make_env_fns(
@@ -562,8 +735,11 @@ def create_libero_envs(
                 gym_kwargs=gym_kwargs,
                 control_mode=control_mode,
             )
-            out[suite_name][tid] = env_cls(fns)
-            print(f"Built vec env | suite={suite_name} | task_id={tid} | n_envs={n_envs}")
+            if lazy:
+                out[suite_name][tid] = LazyVectorEnv(env_cls, fns)
+            else:
+                out[suite_name][tid] = env_cls(fns)
+                print(f"Built vec env | suite={suite_name} | task_id={tid} | n_envs={n_envs}")
 
     # return plain dicts for predictability
     return {suite: dict(task_map) for suite, task_map in out.items()}

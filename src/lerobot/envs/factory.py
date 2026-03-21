@@ -125,7 +125,7 @@ def make_env(
     use_async_envs: bool = False,
     hub_cache_dir: str | None = None,
     trust_remote_code: bool = False,
-) -> dict[str, dict[int, gym.vector.VectorEnv]]:
+) -> dict[str, dict[int, Any]]:
     """Makes a gym vector environment according to the config or Hub reference.
 
     Args:
@@ -143,8 +143,9 @@ def make_env(
         ModuleNotFoundError: If the requested env package is not installed
 
     Returns:
-        dict[str, dict[int, gym.vector.VectorEnv]]:
-            A mapping from suite name to indexed vectorized environments.
+        dict[str, dict[int, Any]]:
+            A mapping from suite name to indexed environments. Values are either
+            materialized vector envs or lazy wrappers that materialize on first use.
             - For multi-task benchmarks (e.g., LIBERO): one entry per suite, and one vec env per task_id.
             - For single-task environments: a single suite entry (cfg.type) with task_id=0.
 

@@ -24,6 +24,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
+from lerobot.envs.lazy_vec_env import LazyVectorEnv
 
 # Action layout (flat 12D, normalized to [-1, 1]):
 #   [0:3]   end_effector_position  (delta x, y, z)
@@ -256,8 +257,12 @@ def create_robocasa_envs(
 
     gym_kwargs = dict(gym_kwargs or {})
     out: dict[str, dict[int, Any]] = defaultdict(dict)
+    total_tasks = len(task_list)
+    lazy = total_tasks > 50
 
     print(f"Creating RoboCasa envs | tasks={task_list} | n_envs(per task)={n_envs} | split={split}")
+    if lazy:
+        print(f"Using lazy env creation for {total_tasks} tasks (envs created on demand)")
     for task in task_list:
         fns = _make_env_fns(
             task=task,
@@ -267,7 +272,8 @@ def create_robocasa_envs(
             episode_length=episode_length,
             gym_kwargs=gym_kwargs,
         )
-        out["robocasa"][len(out["robocasa"])] = env_cls(fns)
-        print(f"  Built vec env | task={task} | n_envs={n_envs}")
+        out["robocasa"][len(out["robocasa"])] = LazyVectorEnv(env_cls, fns) if lazy else env_cls(fns)
+        if not lazy:
+            print(f"  Built vec env | task={task} | n_envs={n_envs}")
 
     return {suite: dict(task_map) for suite, task_map in out.items()}

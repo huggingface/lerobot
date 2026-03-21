@@ -49,7 +49,9 @@ You can learn about the CLI options for this script in the `EvalPipelineConfig` 
 import concurrent.futures as cf
 import json
 import logging
-import re
+import shutil
+import subprocess
+import sys
 import threading
 import time
 from collections import defaultdict
@@ -72,6 +74,8 @@ from tqdm import trange
 
 from lerobot.configs import parser
 from lerobot.configs.eval import EvalPipelineConfig
+from lerobot.envs.lazy_vec_env import LazyVectorEnv
+from lerobot.envs.docker_runtime import run_eval_in_docker
 from lerobot.envs.factory import make_env, make_env_pre_post_processors
 from lerobot.envs.utils import (
     add_envs_task,
@@ -86,6 +90,11 @@ from lerobot.utils.constants import ACTION, DONE, OBS_STR, REWARD
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
+from lerobot.utils.hf_eval_results import (
+    build_eval_results_rows,
+    default_eval_date,
+    upload_eval_results_yaml,
+)
 from lerobot.utils.utils import (
     get_safe_torch_device,
     init_logging,
@@ -521,16 +530,22 @@ def push_eval_to_hub(
     output_dir: Path,
     info: dict,
     env_type: str,
-    eval_config: dict | None = None,
+    env_task: str | None,
+    benchmark_dataset_id: str,
+    source_url: str | None = None,
+    notes: str | None = None,
 ) -> str:
-    """Upload eval results, videos, config, and an updated model card to the Hub.
+    """Upload eval artifacts and `.eval_results` rows to the Hub.
 
     Args:
         repo_id: HF model repo (e.g. "user/my_policy").
         output_dir: Local directory containing eval_info.json and videos/.
         info: The eval results dict (as returned by eval_policy_all).
         env_type: Environment type string (e.g. "libero_plus", "pusht").
-        eval_config: Serialized EvalPipelineConfig dict (policy + env + eval settings).
+        env_task: The env task string from eval config.
+        benchmark_dataset_id: HF dataset id of the consolidated benchmark dataset.
+        source_url: Optional source URL for `.eval_results` attribution.
+        notes: Optional setup notes to include in `.eval_results`.
 
     Returns:
         URL of the last Hub commit.
@@ -572,96 +587,95 @@ def push_eval_to_hub(
             commit_message=f"Upload eval rollout videos for {env_type}",
         )
 
-    # 4. Update the model card with an eval results table and config summary
-    _update_model_card_with_eval(api, repo_id, info, env_type, eval_config=eval_config)
+    # 4. Upload HF-native `.eval_results` rows (canonical leaderboard surface).
+    rows = build_eval_results_rows(
+        info=info,
+        env_type=env_type,
+        env_task=env_task,
+        benchmark_dataset_id=benchmark_dataset_id,
+        source_url=source_url,
+        notes=notes,
+        eval_date=default_eval_date(),
+    )
+    commit_url = upload_eval_results_yaml(
+        api=api,
+        repo_id=repo_id,
+        rows=rows,
+        env_type=env_type,
+        env_task=env_task,
+        output_dir=output_dir,
+    )
 
     logging.info(f"Eval results pushed to https://huggingface.co/{repo_id}")
     return commit_url
 
 
-def _format_eval_table(info: dict, env_type: str, eval_config: dict | None = None) -> str:
-    """Build a markdown table from eval results, optionally including config."""
-    lines = [
-        f"### Evaluation: `{env_type}`\n",
-        "| Suite | Success Rate (%) | Avg Sum Reward | Episodes |",
-        "|-------|-----------------|----------------|----------|",
-    ]
-
-    per_group = info.get("per_group", {})
-    for group_name, stats in sorted(per_group.items()):
-        sr = stats.get("pc_success", float("nan"))
-        reward = stats.get("avg_sum_reward", float("nan"))
-        n_ep = stats.get("n_episodes", 0)
-        lines.append(f"| {group_name} | {sr:.1f} | {reward:.2f} | {n_ep} |")
-
-    overall = info.get("overall", {})
-    if overall:
-        sr = overall.get("pc_success", float("nan"))
-        reward = overall.get("avg_sum_reward", float("nan"))
-        n_ep = overall.get("n_episodes", 0)
-        lines.append(f"| **Overall** | **{sr:.1f}** | **{reward:.2f}** | **{n_ep}** |")
-
-    if eval_config:
-        lines.append("")
-        lines.append("<details><summary>Eval configuration</summary>\n")
-        lines.append("```json")
-        lines.append(json.dumps(eval_config, indent=2))
-        lines.append("```\n")
-        lines.append("</details>")
-
-    video_paths = overall.get("video_paths", [])
-    if video_paths:
-        lines.append("")
-        lines.append("<details><summary>Rollout videos</summary>\n")
-        for vp in video_paths[:10]:
-            video_name = Path(vp).name
-            parent = Path(vp).parent.name
-            lines.append(f"**{parent}/{video_name}**\n")
-            lines.append(f"![{video_name}](eval/{env_type}/videos/{parent}/{video_name})\n")
-        lines.append("</details>")
-
-    return "\n".join(lines)
-
-
-def _update_model_card_with_eval(
-    api: Any, repo_id: str, info: dict, env_type: str, eval_config: dict | None = None
-) -> None:
-    """Append or replace the eval section in the model card README."""
-    from huggingface_hub import ModelCard
-
-    try:
-        card = ModelCard.load(repo_id)
-    except Exception:
-        card = ModelCard("")
-
-    content = card.content or ""
-
-    eval_table = _format_eval_table(info, env_type, eval_config=eval_config)
-
-    section_marker_start = f"<!-- eval-results-{env_type}-start -->"
-    section_marker_end = f"<!-- eval-results-{env_type}-end -->"
-    new_section = f"{section_marker_start}\n{eval_table}\n{section_marker_end}"
-
-    if section_marker_start in content:
-        content = re.sub(
-            rf"{re.escape(section_marker_start)}.*?{re.escape(section_marker_end)}",
-            new_section,
-            content,
-            flags=re.DOTALL,
-        )
-    else:
-        eval_header = "\n## Evaluation Results\n\n"
-        if "## Evaluation Results" not in content:
-            content += eval_header
-        content += f"\n{new_section}\n"
-
-    card.content = content
-    card.push_to_hub(repo_id, commit_message=f"Update eval results for {env_type}")
-
-
 @parser.wrap()
 def eval_main(cfg: EvalPipelineConfig):
     logging.info(pformat(asdict(cfg)))
+    if cfg.eval.instance_count > 1 and cfg.eval.instance_id == 0:
+        _orchestrate_multi_instance_eval(cfg)
+    else:
+        _run_eval_worker(cfg)
+
+
+def _maybe_add_libero_plus_perturbation(info: dict, cfg: EvalPipelineConfig) -> None:
+    if cfg.env.type != "libero_plus":
+        return
+    try:
+        from lerobot.envs.libero import aggregate_by_perturbation, build_perturbation_index
+
+        suite_names = [s.strip() for s in cfg.env.task.split(",") if s.strip()]
+        suite_indices = {s: build_perturbation_index(s) for s in suite_names}
+        perturbation_results = aggregate_by_perturbation(info["per_task"], suite_indices)
+        info["perturbation_results"] = perturbation_results
+        print("\n=== Perturbation Results ===")
+        for dim, stats in perturbation_results.items():
+            print(f"  {dim}: {stats['pc_success']:.1f}% ({stats['n_episodes']} episodes)")
+    except Exception as exc:
+        # Never fail a finished long-running eval on post-processing.
+        print(f"WARNING: Failed to compute LIBERO-Plus perturbation breakdown: {exc}")
+        print("Continuing with per-suite + overall metrics only.")
+
+
+def _save_eval_outputs(cfg: EvalPipelineConfig, info: dict) -> None:
+    output_dir = Path(cfg.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with open(output_dir / "eval_info.json", "w") as f:
+        json.dump(info, f, indent=2)
+
+    eval_cfg_dict = _serializable_config(asdict(cfg))
+    with open(output_dir / "eval_config.json", "w") as f:
+        json.dump(eval_cfg_dict, f, indent=2)
+
+
+def _maybe_push_eval_outputs(cfg: EvalPipelineConfig, info: dict) -> None:
+    if not cfg.push_to_hub:
+        return
+    repo_id = str(cfg.policy.pretrained_path)
+    try:
+        push_eval_to_hub(
+            repo_id=repo_id,
+            output_dir=Path(cfg.output_dir),
+            info=info,
+            env_type=cfg.env.type,
+            env_task=cfg.env.task,
+            benchmark_dataset_id=cfg.benchmark_dataset_id,
+            source_url=cfg.eval_result_source_url,
+            notes=cfg.eval_result_notes,
+        )
+    except Exception as exc:
+        logging.warning("Failed to push eval artifacts/results to Hub: %s", exc)
+
+
+def _run_eval_worker(cfg: EvalPipelineConfig) -> dict:
+    logging.info(pformat(asdict(cfg)))
+
+    if cfg.eval.runtime == "docker":
+        run_eval_in_docker(cfg)
+        output_dir = Path(cfg.output_dir)
+        with open(output_dir / "eval_info.json") as f:
+            return json.load(f)
 
     # Check device is available
     device = get_safe_torch_device(cfg.policy.device, log=True)
@@ -705,50 +719,120 @@ def eval_main(cfg: EvalPipelineConfig):
     # Create environment-specific preprocessor and postprocessor (e.g., for LIBERO environments)
     env_preprocessor, env_postprocessor = make_env_pre_post_processors(env_cfg=cfg.env, policy_cfg=cfg.policy)
 
-    with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext():
-        info = eval_policy_all(
-            envs=envs,
-            policy=policy,
-            env_preprocessor=env_preprocessor,
-            env_postprocessor=env_postprocessor,
-            preprocessor=preprocessor,
-            postprocessor=postprocessor,
-            n_episodes=cfg.eval.n_episodes,
-            max_episodes_rendered=10,
-            videos_dir=Path(cfg.output_dir) / "videos",
-            start_seed=cfg.seed,
-            max_parallel_tasks=cfg.env.max_parallel_tasks,
-        )
-        print("Overall Aggregated Metrics:")
-        print(info["overall"])
+    try:
+        with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext():
+            info = eval_policy_all(
+                envs=envs,
+                policy=policy,
+                env_preprocessor=env_preprocessor,
+                env_postprocessor=env_postprocessor,
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
+                n_episodes=cfg.eval.n_episodes,
+                max_episodes_rendered=10,
+                videos_dir=Path(cfg.output_dir) / "videos",
+                start_seed=cfg.seed,
+                max_parallel_tasks=cfg.env.max_parallel_tasks,
+                instance_count=cfg.eval.instance_count,
+                instance_id=cfg.eval.instance_id,
+            )
+            print("Overall Aggregated Metrics:")
+            print(info["overall"])
 
-        # Print per-suite stats
-        for task_group, task_group_info in info.items():
-            print(f"\nAggregated Metrics for {task_group}:")
-            print(task_group_info)
-    # Close all vec envs
-    close_envs(envs)
+            for key, val in info.get("per_group", {}).items():
+                print(f"\nAggregated Metrics for {key}:")
+                print(val)
 
-    # Save info
-    output_dir = Path(cfg.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    with open(output_dir / "eval_info.json", "w") as f:
-        json.dump(info, f, indent=2)
+            _maybe_add_libero_plus_perturbation(info, cfg)
+    finally:
+        close_envs(envs)
 
-    eval_cfg_dict = _serializable_config(asdict(cfg))
-    with open(output_dir / "eval_config.json", "w") as f:
-        json.dump(eval_cfg_dict, f, indent=2)
+    _save_eval_outputs(cfg, info)
+    _maybe_push_eval_outputs(cfg, info)
 
-    if cfg.push_to_hub:
-        repo_id = str(cfg.policy.pretrained_path)
-        push_eval_to_hub(
-            repo_id=repo_id,
-            output_dir=output_dir,
-            info=info,
-            env_type=cfg.env.type,
-            eval_config=eval_cfg_dict,
-        )
+    logging.info("End of eval")
+    return info
 
+
+def _orchestrate_multi_instance_eval(cfg: EvalPipelineConfig) -> None:
+    start_t = time.time()
+    root_output_dir = Path(cfg.output_dir)
+    instances_root = root_output_dir / "instances"
+    instances_root.mkdir(parents=True, exist_ok=True)
+
+    n_instances = cfg.eval.instance_count
+    logging.info(f"Launching multi-instance eval with {n_instances} workers.")
+
+    # Spawn workers for shard 1..N-1, run shard 0 in-process.
+    child_procs: list[tuple[int, subprocess.Popen]] = []
+    argv = [
+        arg
+        for arg in sys.argv[1:]
+        if not arg.startswith("--eval.instance_id=")
+        and not arg.startswith("--output_dir=")
+        and not arg.startswith("--push_to_hub=")
+    ]
+    for i in range(1, n_instances):
+        child_output_dir = instances_root / str(i)
+        cmd = [
+            sys.executable,
+            "-m",
+            "lerobot.scripts.lerobot_eval",
+            *argv,
+            f"--eval.instance_id={i}",
+            f"--output_dir={child_output_dir}",
+            "--push_to_hub=false",
+        ]
+        logging.info("Starting eval worker %s/%s", i + 1, n_instances)
+        child_procs.append((i, subprocess.Popen(cmd)))
+
+    cfg0 = deepcopy(cfg)
+    cfg0.eval.instance_id = 0
+    cfg0.push_to_hub = False
+    cfg0.output_dir = instances_root / "0"
+    _run_eval_worker(cfg0)
+
+    failed = []
+    for idx, proc in child_procs:
+        rc = proc.wait()
+        if rc != 0:
+            failed.append((idx, rc))
+    if failed:
+        raise RuntimeError(f"Multi-instance eval failed for workers: {failed}")
+
+    partial_infos: list[dict] = []
+    for i in range(n_instances):
+        info_path = instances_root / str(i) / "eval_info.json"
+        with open(info_path) as f:
+            partial_infos.append(json.load(f))
+
+    merged_per_task = []
+    for info in partial_infos:
+        merged_per_task.extend(info.get("per_task", []))
+    merged_per_task.sort(key=lambda x: (x["task_group"], x["task_id"]))
+
+    # Merge videos from each shard into final output dir.
+    merged_videos_dir = root_output_dir / "videos"
+    for i in range(n_instances):
+        shard_dir = instances_root / str(i)
+        shard_videos = shard_dir / "videos"
+        if shard_videos.is_dir():
+            shutil.copytree(shard_videos, merged_videos_dir, dirs_exist_ok=True)
+            old_prefix = str(shard_videos)
+            new_prefix = str(merged_videos_dir)
+            for entry in merged_per_task:
+                paths = entry.get("metrics", {}).get("video_paths", [])
+                entry["metrics"]["video_paths"] = [
+                    p.replace(old_prefix, new_prefix, 1) if p.startswith(old_prefix) else p for p in paths
+                ]
+
+    merged_info = _aggregate_eval_from_per_task(merged_per_task, total_eval_s=time.time() - start_t)
+    _maybe_add_libero_plus_perturbation(merged_info, cfg)
+    print("Overall Aggregated Metrics:")
+    print(merged_info["overall"])
+
+    _save_eval_outputs(cfg, merged_info)
+    _maybe_push_eval_outputs(cfg, merged_info)
     logging.info("End of eval")
 
 
@@ -761,6 +845,177 @@ class TaskMetrics(TypedDict):
 
 
 ACC_KEYS = ("sum_rewards", "max_rewards", "successes", "video_paths")
+
+
+def _aggregate_eval_from_per_task(per_task_infos: list[dict], total_eval_s: float) -> dict:
+    """Aggregate eval metrics from per-task payloads."""
+    group_acc: dict[str, dict[str, list]] = defaultdict(lambda: {k: [] for k in ACC_KEYS})
+    overall: dict[str, list] = {k: [] for k in ACC_KEYS}
+
+    def _append(group: str, key: str, value: Any):
+        if value is None:
+            return
+        if isinstance(value, list):
+            group_acc[group][key].extend(value)
+            overall[key].extend(value)
+        else:
+            group_acc[group][key].append(value)
+            overall[key].append(value)
+
+    for entry in per_task_infos:
+        group = entry["task_group"]
+        metrics = entry["metrics"]
+        _append(group, "sum_rewards", metrics.get("sum_rewards"))
+        _append(group, "max_rewards", metrics.get("max_rewards"))
+        _append(group, "successes", metrics.get("successes"))
+        paths = metrics.get("video_paths", [])
+        if paths:
+            group_acc[group]["video_paths"].extend(paths)
+            overall["video_paths"].extend(paths)
+
+    def _agg_from_list(xs: list[float]) -> float:
+        if not xs:
+            return float("nan")
+        arr = np.array(xs, dtype=float)
+        return float(np.nanmean(arr))
+
+    groups_aggregated = {}
+    for group, acc in group_acc.items():
+        groups_aggregated[group] = {
+            "avg_sum_reward": _agg_from_list(acc["sum_rewards"]),
+            "avg_max_reward": _agg_from_list(acc["max_rewards"]),
+            "pc_success": _agg_from_list(acc["successes"]) * 100 if acc["successes"] else float("nan"),
+            "n_episodes": len(acc["sum_rewards"]),
+            "video_paths": list(acc["video_paths"]),
+        }
+
+    overall_agg = {
+        "avg_sum_reward": _agg_from_list(overall["sum_rewards"]),
+        "avg_max_reward": _agg_from_list(overall["max_rewards"]),
+        "pc_success": _agg_from_list(overall["successes"]) * 100 if overall["successes"] else float("nan"),
+        "n_episodes": len(overall["sum_rewards"]),
+        "eval_s": total_eval_s,
+        "eval_ep_s": total_eval_s / max(1, len(overall["sum_rewards"])),
+        "video_paths": list(overall["video_paths"]),
+    }
+
+    return {"per_task": per_task_infos, "per_group": groups_aggregated, "overall": overall_agg}
+
+
+def _eval_task_batch(
+    batch: list[tuple[str, int, LazyVectorEnv]],
+    policy,
+    env_preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    env_postprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    start_seed: int | None,
+    max_episodes_rendered: int = 0,
+    videos_dir: Path | None = None,
+) -> list[tuple[str, int, TaskMetrics]]:
+    """Evaluate N tasks in a single batched rollout for GPU efficiency.
+
+    Each task contributes one sub-env to a combined SyncVectorEnv so the policy
+    processes all N observations in one forward pass per step.
+    """
+    all_fns: list[Callable] = []
+    task_slices: list[tuple[str, int, int, int]] = []
+    offset = 0
+    for task_group, task_id, lazy_env in batch:
+        fns = lazy_env.factory_fns
+        if not fns:
+            continue
+        start = offset
+        offset += len(fns)
+        all_fns.extend(fns)
+        task_slices.append((task_group, task_id, start, offset))
+
+    if not all_fns:
+        return []
+
+    env_cls = batch[0][2].env_cls
+    combined_env = env_cls(all_fns)
+
+    try:
+        seeds = None
+        if start_seed is not None:
+            seeds = list(range(start_seed, start_seed + combined_env.num_envs))
+
+        ep_frames: list[np.ndarray] = []
+
+        def render_frame(env: gym.vector.VectorEnv):
+            if max_episodes_rendered <= 0:
+                return
+            n = min(max_episodes_rendered, env.num_envs)
+            if isinstance(env, gym.vector.SyncVectorEnv):
+                ep_frames.append(np.stack([env.envs[i].render() for i in range(n)]))
+            elif isinstance(env, gym.vector.AsyncVectorEnv):
+                ep_frames.append(np.stack(env.call("render")[:n]))
+
+        rollout_data = rollout(
+            env=combined_env,
+            policy=policy,
+            env_preprocessor=env_preprocessor,
+            env_postprocessor=env_postprocessor,
+            preprocessor=preprocessor,
+            postprocessor=postprocessor,
+            seeds=seeds,
+            render_callback=render_frame if max_episodes_rendered > 0 else None,
+        )
+
+        n_steps = rollout_data["done"].shape[1]
+        done_indices = torch.argmax(rollout_data["done"].to(int), dim=1)
+        mask = (torch.arange(n_steps) <= einops.repeat(done_indices + 1, "b -> b s", s=n_steps)).int()
+        batch_sum_rewards = einops.reduce((rollout_data["reward"] * mask), "b n -> b", "sum")
+        batch_max_rewards = einops.reduce((rollout_data["reward"] * mask), "b n -> b", "max")
+        batch_successes = einops.reduce((rollout_data["success"] * mask), "b n -> b", "any")
+
+        video_paths_per_task: dict[tuple[str, int], list[str]] = defaultdict(list)
+        if max_episodes_rendered > 0 and ep_frames and videos_dir:
+            stacked = np.stack(ep_frames, axis=1)  # (batch, time, h, w, c)
+            rendered = 0
+            threads = []
+            for tg, tid, start_i, end_i in task_slices:
+                if rendered >= max_episodes_rendered:
+                    break
+                task_dir = videos_dir / f"{tg}_{tid}"
+                task_dir.mkdir(parents=True, exist_ok=True)
+                for env_idx in range(start_i, end_i):
+                    if rendered >= max_episodes_rendered:
+                        break
+                    episode_index = env_idx - start_i
+                    video_path = task_dir / f"eval_episode_{episode_index}.mp4"
+                    video_paths_per_task[(tg, tid)].append(str(video_path))
+                    di = done_indices[env_idx].item()
+                    thread = threading.Thread(
+                        target=write_video,
+                        args=(
+                            str(video_path),
+                            stacked[env_idx, : di + 1],
+                            combined_env.unwrapped.metadata["render_fps"],
+                        ),
+                    )
+                    thread.start()
+                    threads.append(thread)
+                    rendered += 1
+            for t in threads:
+                t.join()
+
+        results: list[tuple[str, int, TaskMetrics]] = []
+        for tg, tid, start_i, end_i in task_slices:
+            results.append((
+                tg,
+                tid,
+                TaskMetrics(
+                    sum_rewards=batch_sum_rewards[start_i:end_i].tolist(),
+                    max_rewards=batch_max_rewards[start_i:end_i].tolist(),
+                    successes=batch_successes[start_i:end_i].tolist(),
+                    video_paths=video_paths_per_task.get((tg, tid), []),
+                ),
+            ))
+        return results
+    finally:
+        combined_env.close()
 
 
 def eval_one(
@@ -807,7 +1062,7 @@ def eval_one(
 def run_one(
     task_group: str,
     task_id: int,
-    env,
+    env: Any,
     *,
     policy,
     env_preprocessor,
@@ -851,7 +1106,7 @@ def run_one(
 
 
 def eval_policy_all(
-    envs: dict[str, dict[int, gym.vector.VectorEnv]],
+    envs: dict[str, dict[int, Any]],
     policy,
     env_preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     env_postprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
@@ -864,6 +1119,8 @@ def eval_policy_all(
     return_episode_data: bool = False,
     start_seed: int | None = None,
     max_parallel_tasks: int = 1,
+    instance_count: int = 1,
+    instance_id: int = 0,
 ) -> dict:
     """
     Evaluate a nested `envs` dict: {task_group: {task_id: vec_env}}.
@@ -876,6 +1133,13 @@ def eval_policy_all(
 
     # Flatten envs into list of (task_group, task_id, env)
     tasks = [(tg, tid, vec) for tg, group in envs.items() for tid, vec in group.items()]
+    if instance_count > 1:
+        total_tasks = len(tasks)
+        tasks = [task for idx, task in enumerate(tasks) if idx % instance_count == instance_id]
+        logging.info(
+            f"Instance shard {instance_id + 1}/{instance_count}: "
+            f"{len(tasks)}/{total_tasks} tasks assigned."
+        )
 
     # accumulators: track metrics at both per-group level and across all groups
     group_acc: dict[str, dict[str, list]] = defaultdict(lambda: {k: [] for k in ACC_KEYS})
@@ -921,59 +1185,81 @@ def eval_policy_all(
         start_seed=start_seed,
     )
 
-    if max_parallel_tasks <= 1:
-        # sequential path (single accumulator path on the main thread)
-        # NOTE: keeping a single-threaded accumulator avoids concurrent list appends or locks
-        for task_group, task_id, env in tasks:
-            tg, tid, metrics = task_runner(task_group, task_id, env)
-            _accumulate_to(tg, metrics)
-            per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
-    else:
-        # threaded path: submit all tasks, consume completions on main thread and accumulate there
-        with cf.ThreadPoolExecutor(max_workers=max_parallel_tasks) as executor:
-            fut2meta = {}
-            for task_group, task_id, env in tasks:
-                fut = executor.submit(task_runner, task_group, task_id, env)
-                fut2meta[fut] = (task_group, task_id)
-            for fut in cf.as_completed(fut2meta):
-                tg, tid, metrics = fut.result()
+    all_lazy = all(isinstance(env, LazyVectorEnv) for _, _, env in tasks)
+    single_factory_per_task = all(
+        not isinstance(env, LazyVectorEnv) or env.num_factory_fns == 1 for _, _, env in tasks
+    )
+    can_batch = max_parallel_tasks > 1 and all_lazy and single_factory_per_task and n_episodes == 1
+
+    if can_batch:
+        # Multi-task batched path: combine N tasks into one SyncVectorEnv per chunk
+        # so the policy processes all N observations in a single forward pass per step.
+        chunk_size = max_parallel_tasks
+        logging.info(f"Task scheduler mode: batched_lazy (chunk_size={chunk_size})")
+        n_chunks = (len(tasks) + chunk_size - 1) // chunk_size
+        rendered_so_far = 0
+        for chunk_idx in range(n_chunks):
+            chunk = tasks[chunk_idx * chunk_size : (chunk_idx + 1) * chunk_size]
+            render_budget = max(0, max_episodes_rendered - rendered_so_far)
+            logging.info(
+                f"Batch {chunk_idx + 1}/{n_chunks}: evaluating {len(chunk)} tasks "
+                f"({chunk_idx * chunk_size + 1}–{chunk_idx * chunk_size + len(chunk)}/{len(tasks)})"
+            )
+            batch_results = _eval_task_batch(
+                chunk,
+                policy=policy,
+                env_preprocessor=env_preprocessor,
+                env_postprocessor=env_postprocessor,
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
+                start_seed=start_seed,
+                max_episodes_rendered=render_budget,
+                videos_dir=videos_dir,
+            )
+            for tg, tid, metrics in batch_results:
                 _accumulate_to(tg, metrics)
                 per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
+                rendered_so_far += len(metrics.get("video_paths", []))
 
-    # compute aggregated metrics helper (robust to lists/scalars)
-    def _agg_from_list(xs):
-        if not xs:
-            return float("nan")
-        arr = np.array(xs, dtype=float)
-        return float(np.nanmean(arr))
+            if overall["successes"]:
+                sr = np.nanmean(overall["successes"]) * 100
+                logging.info(f"  running success rate: {sr:.1f}%")
+    elif max_parallel_tasks <= 1:
+        logging.info("Task scheduler mode: sequential")
+        for task_group, task_id, env in tasks:
+            try:
+                tg, tid, metrics = task_runner(task_group, task_id, env)
+                _accumulate_to(tg, metrics)
+                per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
+            finally:
+                env.close()
+    else:
+        # Threaded fallback for cases where batched lazy mode cannot be used.
+        if all_lazy and n_episodes != 1:
+            logging.info(
+                "Task scheduler mode: threaded (lazy batching disabled because n_episodes != 1)"
+            )
+        elif all_lazy and not single_factory_per_task:
+            logging.info(
+                "Task scheduler mode: threaded (lazy batching disabled because eval.batch_size > 1)"
+            )
+        else:
+            logging.info(f"Task scheduler mode: threaded (max_workers={max_parallel_tasks})")
+        with cf.ThreadPoolExecutor(max_workers=max_parallel_tasks) as executor:
+            fut2meta: dict[cf.Future, tuple[str, int, Any]] = {}
+            for task_group, task_id, env in tasks:
+                fut = executor.submit(task_runner, task_group, task_id, env)
+                fut2meta[fut] = (task_group, task_id, env)
+            for fut in cf.as_completed(fut2meta):
+                tg, tid, env = fut2meta[fut]
+                try:
+                    _, _, metrics = fut.result()
+                    _accumulate_to(tg, metrics)
+                    per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
+                finally:
+                    env.close()
 
-    # compute per-group aggregates
-    groups_aggregated = {}
-    for group, acc in group_acc.items():
-        groups_aggregated[group] = {
-            "avg_sum_reward": _agg_from_list(acc["sum_rewards"]),
-            "avg_max_reward": _agg_from_list(acc["max_rewards"]),
-            "pc_success": _agg_from_list(acc["successes"]) * 100 if acc["successes"] else float("nan"),
-            "n_episodes": len(acc["sum_rewards"]),
-            "video_paths": list(acc["video_paths"]),
-        }
-
-    # overall aggregates
-    overall_agg = {
-        "avg_sum_reward": _agg_from_list(overall["sum_rewards"]),
-        "avg_max_reward": _agg_from_list(overall["max_rewards"]),
-        "pc_success": _agg_from_list(overall["successes"]) * 100 if overall["successes"] else float("nan"),
-        "n_episodes": len(overall["sum_rewards"]),
-        "eval_s": time.time() - start_t,
-        "eval_ep_s": (time.time() - start_t) / max(1, len(overall["sum_rewards"])),
-        "video_paths": list(overall["video_paths"]),
-    }
-
-    return {
-        "per_task": per_task_infos,
-        "per_group": groups_aggregated,
-        "overall": overall_agg,
-    }
+    return _aggregate_eval_from_per_task(per_task_infos, total_eval_s=time.time() - start_t)
 
 
 def main():

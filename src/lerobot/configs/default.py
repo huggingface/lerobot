@@ -50,14 +50,50 @@ class WandBConfig:
 
 
 @dataclass
+class EvalDockerConfig:
+    # Docker image to use for evaluation (e.g., "ghcr.io/org/lerobot-eval-libero:latest").
+    # Takes precedence over eval.envhub_ref.
+    image: str | None = None
+    # Optional EnvHub reference to resolve an image, e.g. "envhub://lerobot/libero_plus@v1".
+    envhub_ref: str | None = None
+    # If true, mount the local repository and prefer local source code in the container.
+    use_local_code: bool = True
+    # Pull the image before running.
+    pull: bool = True
+    # Docker --gpus value. Set to None to disable GPU flags and run CPU-only.
+    gpus: str | None = "all"
+    # Docker --shm-size value (increase when using larger eval.batch_size values).
+    shm_size: str = "8g"
+
+
+@dataclass
 class EvalConfig:
     n_episodes: int = 50
-    # `batch_size` specifies the number of environments to use in a gym.vector.VectorEnv.
+    # Number of sub-envs per task inside one VectorEnv. Increase to improve per-task
+    # inference throughput until GPU or simulator memory saturates.
     batch_size: int = 50
-    # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
+    # Use AsyncVectorEnv (multiprocessing). Prefer SyncVectorEnv unless your environment
+    # spends significant time in Python-side stepping and can benefit from process parallelism.
     use_async_envs: bool = False
+    # Runtime where evaluation executes: "local" or "docker".
+    runtime: str = "local"
+    docker: EvalDockerConfig = field(default_factory=EvalDockerConfig)
+    # Number of parallel eval script instances to launch for one run.
+    # instance_count > 1 enables multi-instance task sharding.
+    instance_count: int = 1
+    # 0-indexed shard id for this process. Users usually leave this at 0.
+    # Additional shards are launched automatically by `lerobot-eval` when instance_count > 1.
+    instance_id: int = 0
 
     def __post_init__(self) -> None:
+        if self.runtime not in {"local", "docker"}:
+            raise ValueError(f"Unsupported eval.runtime '{self.runtime}'. Expected one of: local, docker.")
+        if self.instance_count < 1:
+            raise ValueError("eval.instance_count must be >= 1.")
+        if self.instance_id < 0 or self.instance_id >= self.instance_count:
+            raise ValueError(
+                f"eval.instance_id must be in [0, {self.instance_count - 1}] (got {self.instance_id})."
+            )
         if self.batch_size > self.n_episodes:
             raise ValueError(
                 "The eval batch size is greater than the number of eval episodes "

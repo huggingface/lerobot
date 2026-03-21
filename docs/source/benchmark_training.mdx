@@ -47,6 +47,116 @@ For multi-GPU training you also need [Accelerate](https://huggingface.co/docs/ac
 pip install accelerate
 ```
 
+## Docker-isolated evaluation (EnvHub)
+
+LeRobot eval now supports running the full eval worker in a Docker container
+while keeping policy loading compatible with local checkpoints and local code changes.
+
+Use `lerobot-eval` with `--eval.runtime=docker`:
+
+```bash
+lerobot-eval \
+  --policy.path=outputs/train/my_policy/checkpoints/050000/pretrained_model \
+  --env.type=libero_plus \
+  --eval.runtime=docker \
+  --eval.docker.envhub_ref=envhub://lerobot/libero_plus@v1 \
+  --eval.n_episodes=10 \
+  --eval.batch_size=10
+```
+
+`eval.docker.envhub_ref` is optional. If omitted, LeRobot resolves a default
+image from `env.type`. You can also override the image directly:
+
+```bash
+--eval.docker.image=docker://ghcr.io/huggingface/lerobot-eval-libero-plus:latest
+```
+
+By default (`eval.docker.use_local_code=true`), the local repository is mounted
+in the container and added to `PYTHONPATH`, so edited policy/env code and local
+checkpoints continue to work without rebuilding the image for each change.
+
+Common Docker runtime options:
+
+```bash
+--eval.docker.pull=true \
+--eval.docker.gpus=all \
+--eval.docker.shm_size=8g \
+--eval.docker.use_local_code=true
+```
+
+The benchmark runner supports the same Docker eval path (extra args are
+forwarded to each generated `lerobot-eval` call):
+
+```bash
+lerobot-benchmark eval \
+    --benchmarks libero_plus,robocasa \
+    --hub-user $HF_USER \
+    --n-episodes 50 \
+    --eval.runtime=docker \
+    --eval.docker.pull=true
+```
+
+Build benchmark images locally:
+
+```bash
+make build-eval-images
+```
+
+## Fast single-machine eval tuning
+
+`lerobot-eval` now has two orthogonal throughput knobs:
+
+- `eval.batch_size`: number of sub-envs per task (inside one vector env).
+- `env.max_parallel_tasks`: number of tasks scheduled concurrently.
+- `eval.instance_count`: number of full eval instances (process-level sharding).
+
+Use them in this order:
+
+1. Increase `eval.batch_size` first for per-task throughput.
+2. Then increase `env.max_parallel_tasks` to overlap tasks, while monitoring RAM/VRAM.
+3. Optionally increase `eval.instance_count` for process-level parallelism (best with enough CPU/RAM and small models).
+
+The eval logs print the active scheduler mode (`sequential`, `threaded`, or `batched_lazy`) so you can verify the effective concurrency path.
+
+### Suggested starting points
+
+| Benchmark | Conservative | Faster (single GPU) | Notes |
+|---|---|---|---|
+| `libero` / `libero_plus` | `eval.batch_size=1`, `env.max_parallel_tasks=4` | `eval.batch_size=1`, `env.max_parallel_tasks=16` | For large suite sweeps, increase `max_parallel_tasks` before `batch_size` to avoid MuJoCo memory spikes. |
+| `metaworld` | `eval.batch_size=8`, `env.max_parallel_tasks=1` | `eval.batch_size=16`, `env.max_parallel_tasks=2` | Prefer larger per-task vectorization first. |
+| `robocasa` | `eval.batch_size=4`, `env.max_parallel_tasks=1` | `eval.batch_size=8`, `env.max_parallel_tasks=2` | Rendering/memory can dominate at high image resolution. |
+| `robomme` | `eval.batch_size=4`, `env.max_parallel_tasks=1` | `eval.batch_size=8`, `env.max_parallel_tasks=2` | Start small and scale gradually with task count. |
+
+### Local fast eval recipe
+
+```bash
+lerobot-eval \
+  --policy.path=$HF_USER/smolvla_libero_plus \
+  --env.type=libero_plus \
+  --eval.n_episodes=1 \
+  --eval.batch_size=1 \
+  --env.max_parallel_tasks=16 \
+  --eval.instance_count=2 \
+  --rename_map='{"observation.images.image":"observation.images.camera1","observation.images.image2":"observation.images.camera2"}' \
+  --output_dir=outputs/eval/smolvla_libero_plus \
+  --push_to_hub=true
+```
+
+### Docker fast eval recipe
+
+```bash
+lerobot-eval \
+  --policy.path=$HF_USER/smolvla_libero_plus \
+  --env.type=libero_plus \
+  --eval.runtime=docker \
+  --eval.docker.envhub_ref=envhub://lerobot/libero_plus@v1 \
+  --eval.docker.gpus=all \
+  --eval.docker.shm_size=16g \
+  --eval.n_episodes=1 \
+  --eval.batch_size=1 \
+  --env.max_parallel_tasks=16
+```
+
 ## Quick start — single benchmark
 
 Train SmolVLA on LIBERO-plus with 4 GPUs for 50 000 steps:
@@ -95,7 +205,7 @@ lerobot-benchmark all \
 For each benchmark the runner:
 1. Trains a policy on its dataset.
 2. Evaluates on every eval task in the benchmark (e.g. 4 suites for LIBERO).
-3. Uploads eval results + videos to the Hub.
+3. Pushes HF-native `.eval_results` rows (and optional artifacts) to the Hub.
 
 <Tip>
 
@@ -140,7 +250,9 @@ for SUITE in libero_spatial libero_object libero_goal libero_10; do
         --eval.n_episodes=50 \
         --eval.batch_size=10 \
         --output_dir=outputs/eval/smolvla_libero_plus/$SUITE \
-        --policy.device=cuda
+        --policy.device=cuda \
+        --push_to_hub=true \
+        --benchmark_dataset_id=lerobot/sim-benchmarks
 done
 ```
 
@@ -226,28 +338,44 @@ outputs/
 
 Each `eval_info.json` contains per-episode rewards, success rates, and aggregate metrics.
 
-## Uploading eval results to the Hub
+## HF Eval Results + Leaderboard
 
-Add `--push-eval-to-hub` to upload evaluation metrics and videos to the policy's
-Hub repo after each eval run:
+LeRobot publishes benchmark scores using Hugging Face's native
+`/.eval_results/*.yaml` format, which powers model-page eval cards and
+benchmark leaderboards.
+
+Add `--push-eval-to-hub` to push results after each eval run:
 
 ```bash
 lerobot-benchmark eval \
     --benchmarks libero_plus,robocasa \
     --hub-user $HF_USER \
+    --benchmark-dataset-id lerobot/sim-benchmarks \
     --push-eval-to-hub
 ```
 
-For LIBERO-plus, each suite's results are uploaded to `eval/libero_spatial/`,
-`eval/libero_object/`, etc. inside the `$HF_USER/smolvla_libero_plus` model repo.
+This writes one or more files under `.eval_results/` in the model repo, for example:
 
-This also works with the `all` subcommand — pass `--push-eval-to-hub` and results
-are automatically uploaded after each eval run.
+```yaml
+- dataset:
+    id: lerobot/sim-benchmarks
+    task_id: libero_plus/spatial
+  value: 82.4
+  notes: lerobot-eval
+```
+
+Notes:
+- `--benchmark-dataset-id` points to your consolidated benchmark dataset repo.
+- `task_id` values are derived from `env.type` and evaluated suite/task names.
+- Eval artifacts (`eval_info.json`, `eval_config.json`, videos) are still uploaded
+  for provenance, but leaderboard ranking comes from `.eval_results`.
 
 ## Passing extra arguments
 
 Any arguments after the recognized flags are forwarded to `lerobot-train` or
-`lerobot-eval`. For example, to use PEFT/LoRA during training:
+`lerobot-eval`.
+
+Example (training): use PEFT/LoRA during training.
 
 ```bash
 lerobot-benchmark train \
@@ -257,4 +385,14 @@ lerobot-benchmark train \
     --num-gpus 4 \
     --steps 50000 \
     --peft.method_type=LORA --peft.r=16
+```
+
+Example (evaluation): forward Docker runtime flags to each `lerobot-eval` call.
+
+```bash
+lerobot-benchmark eval \
+    --benchmarks libero_plus \
+    --hub-user $HF_USER \
+    --eval.runtime=docker \
+    --eval.docker.envhub_ref=envhub://lerobot/libero_plus@v1
 ```

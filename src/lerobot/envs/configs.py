@@ -45,6 +45,10 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     fps: int = 30
     features: dict[str, PolicyFeature] = field(default_factory=dict)
     features_map: dict[str, str] = field(default_factory=dict)
+    # Upper bound on concurrent task evaluation in `lerobot-eval`.
+    # - For lazy wrappers (e.g. LIBERO/LIBERO-plus), values >1 can enable chunked
+    #   task batching with one policy forward pass over multiple tasks.
+    # - For other envs, values >1 use a threaded task scheduler fallback.
     max_parallel_tasks: int = 1
     disable_env_checker: bool = True
 
@@ -356,7 +360,7 @@ class LiberoPlusEnv(LiberoEnv):
     in experiment configs (`env.type=libero_plus`).
     """
 
-    task: str = "libero_spatial"
+    task: str = "libero_spatial,libero_object,libero_goal,libero_10"
 
 
 @EnvConfig.register_subclass("robocasa")

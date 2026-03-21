@@ -25,6 +25,7 @@ import metaworld.policies as policies
 import numpy as np
 from gymnasium import spaces
 
+from lerobot.envs.lazy_vec_env import LazyVectorEnv
 from lerobot.processor import RobotObservation
 
 # ---- Load configuration data from the external JSON file ----
@@ -297,19 +298,24 @@ def create_metaworld_envs(
 
     print(f"Creating Meta-World envs | task_groups={task_groups} | n_envs(per task)={n_envs}")
 
+    group_to_tasks = {group: DIFFICULTY_TO_TASKS.get(group, [group]) for group in task_groups}
+    total_tasks = sum(len(tasks) for tasks in group_to_tasks.values())
+    lazy = total_tasks > 50
+    if lazy:
+        print(f"Using lazy env creation for {total_tasks} tasks (envs created on demand)")
+
     out: dict[str, dict[int, Any]] = defaultdict(dict)
 
     for group in task_groups:
-        # if not in difficulty presets, treat it as a single custom task
-        tasks = DIFFICULTY_TO_TASKS.get(group, [group])
+        tasks = group_to_tasks[group]
 
         for tid, task_name in enumerate(tasks):
-            print(f"Building vec env | group={group} | task_id={tid} | task={task_name}")
+            if not lazy:
+                print(f"Building vec env | group={group} | task_id={tid} | task={task_name}")
 
             # build n_envs factories
             fns = [(lambda tn=task_name: MetaworldEnv(task=tn, **gym_kwargs)) for _ in range(n_envs)]
-
-            out[group][tid] = env_cls(fns)
+            out[group][tid] = LazyVectorEnv(env_cls, fns) if lazy else env_cls(fns)
 
     # return a plain dict for consistency
     return {group: dict(task_map) for group, task_map in out.items()}
