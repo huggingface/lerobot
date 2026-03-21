@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Smoke-test a benchmark container: verifies imports and CLI entry-points.
 #
-# Run inside the container (BENCHMARK env var must be set):
-#   bash docker/smoke_test_benchmark.sh
+# Build and run for a specific benchmark:
+#   docker build --build-arg BENCHMARK=libero -f docker/Dockerfile.benchmark -t lerobot-benchmark-libero .
+#   docker run --gpus all --rm -e BENCHMARK=libero lerobot-benchmark-libero bash docker/smoke_test_benchmark.sh
 #
-# Or run all benchmarks via docker compose:
-#   for svc in libero libero_plus robomme robocasa; do
-#     docker compose -f docker/docker-compose.benchmark.yml run --rm "$svc" \
-#       bash docker/smoke_test_benchmark.sh
+# Test all benchmarks individually:
+#   for b in libero libero_plus robomme robocasa; do
+#     docker build --build-arg BENCHMARK=$b -f docker/Dockerfile.benchmark -t lerobot-benchmark-$b .
+#     docker run --gpus all --rm -e BENCHMARK=$b lerobot-benchmark-$b bash docker/smoke_test_benchmark.sh
 #   done
 
 set -euo pipefail
