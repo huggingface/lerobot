@@ -1,0 +1,68 @@
+# Benchmark evaluation services for LeRobot.
+#
+# Each service builds Dockerfile.benchmark with the matching BENCHMARK arg,
+# giving an isolated environment per benchmark suite.
+#
+# Usage:
+#   Build all:        docker compose -f docker/docker-compose.benchmark.yml build
+#   Build one:        docker compose -f docker/docker-compose.benchmark.yml build libero
+#   Run smoke tests:  docker compose -f docker/docker-compose.benchmark.yml run --rm libero bash docker/smoke_test_benchmark.sh
+#   Interactive:      docker compose -f docker/docker-compose.benchmark.yml run --rm libero
+
+x-benchmark-base: &benchmark-base
+  build:
+    context: .
+    dockerfile: docker/Dockerfile.benchmark
+  image: lerobot-benchmark-${BENCHMARK:-libero}
+  environment:
+    - MUJOCO_GL=egl
+    - DEVICE=cuda
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: 1
+            capabilities: [gpu]
+  volumes:
+    # Mount HuggingFace cache from host so model weights are not re-downloaded each run.
+    - ${HF_HOME:-~/.cache/huggingface}:/home/user_lerobot/.cache/huggingface
+  stdin_open: true
+  tty: true
+
+services:
+  libero:
+    <<: *benchmark-base
+    image: lerobot-benchmark-libero
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.benchmark
+      args:
+        BENCHMARK: libero
+
+  libero_plus:
+    <<: *benchmark-base
+    image: lerobot-benchmark-libero-plus
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.benchmark
+      args:
+        BENCHMARK: libero_plus
+
+  robomme:
+    <<: *benchmark-base
+    image: lerobot-benchmark-robomme
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.benchmark
+      args:
+        BENCHMARK: robomme
+
+  robocasa:
+    <<: *benchmark-base
+    image: lerobot-benchmark-robocasa
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.benchmark
+      args:
+        BENCHMARK: robocasa

@@ -194,6 +194,14 @@ libero-plus = ["lerobot[libero_plus]"]
 robomme = [
     "robomme @ git+https://github.com/RoboMME/robomme_benchmark.git@main ; sys_platform == 'linux'",
 ]
+robocasa = [
+    "robocasa; sys_platform == 'linux'",
+    # robocasa's setup does not declare all runtime deps; list them here explicitly.
+    "robosuite>=1.4.0,<1.5.0; sys_platform == 'linux'",
+    "easydict>=1.9; sys_platform == 'linux'",
+    "scikit-image>=0.20.0; sys_platform == 'linux'",
+    "lerobot[scipy-dep]",
+]
 metaworld = ["metaworld==3.0.0", "lerobot[scipy-dep]"]
 
 # All
