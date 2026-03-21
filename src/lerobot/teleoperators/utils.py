@@ -99,6 +99,32 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
         from .openarm_mini import OpenArmMini
 
         return OpenArmMini(config)
+    elif config.type == "lekiwi_base_gamepad":
+        from .xlerobot_teleoperator.sub_teleoperators.lekiwi_base_gamepad.teleop_lekiwi_base_gamepad import (
+            LeKiwiBaseTeleop,
+        )
+
+        return LeKiwiBaseTeleop(config)
+    elif config.type == "biwheel_gamepad":
+        from .xlerobot_teleoperator.sub_teleoperators.biwheel_gamepad import BiwheelGamepadTeleop
+
+        return BiwheelGamepadTeleop(config)
+    elif config.type == "xlerobot_mount_gamepad":
+        from .xlerobot_teleoperator.sub_teleoperators.xlerobot_mount_gamepad import XLeRobotMountGamepadTeleop
+
+        return XLeRobotMountGamepadTeleop(config)
+    elif config.type == "panthera_keyboard_ee":
+        from .xlerobot_teleoperator.sub_teleoperators.panthera_keyboard_ee import PantheraKeyboardEETeleop
+
+        return PantheraKeyboardEETeleop(config)
+    elif config.type == "xlerobot_default_composite":
+        from .xlerobot_teleoperator.default_composite import XLeRobotDefaultComposite
+
+        return XLeRobotDefaultComposite(config)
+    elif config.type == "xlerobot_keyboard_composite":
+        from .xlerobot_teleoperator.keyboard_composite import XLeRobotKeyboardComposite
+
+        return XLeRobotKeyboardComposite(config)
     else:
         try:
             return cast("Teleoperator", make_device_from_device_class(config))
