@@ -1,0 +1,157 @@
+<mujoco model="so_arm100">
+  <compiler angle="radian" meshdir="assets/"/>
+  <option integrator="implicitfast" cone="elliptic" impratio="100" timestep="0.002"/>
+
+  <asset>
+    <material name="orange" rgba="1.0 0.331 0.0 1.0" specular="0.1" shininess="0.1"/>
+    <material name="black" rgba="0.1 0.1 0.1 1.0" specular="0.1" shininess="0.1"/>
+
+    <mesh name="Base" file="Base.stl"/>
+    <mesh name="Base_Motor" file="Base_Motor.stl"/>
+    <mesh name="Rotation_Pitch" file="Rotation_Pitch.stl"/>
+    <mesh name="Rotation_Pitch_Motor" file="Rotation_Pitch_Motor.stl"/>
+    <mesh name="Upper_Arm" file="Upper_Arm.stl"/>
+    <mesh name="Upper_Arm_Motor" file="Upper_Arm_Motor.stl"/>
+    <mesh name="Lower_Arm" file="Lower_Arm.stl"/>
+    <mesh name="Lower_Arm_Motor" file="Lower_Arm_Motor.stl"/>
+    <mesh name="Wrist_Pitch_Roll" file="Wrist_Pitch_Roll.stl"/>
+    <mesh name="Wrist_Pitch_Roll_Motor" file="Wrist_Pitch_Roll_Motor.stl"/>
+    <mesh name="Fixed_Jaw" file="Fixed_Jaw.stl"/>
+    <mesh name="Fixed_Jaw_Motor" file="Fixed_Jaw_Motor.stl"/>
+    <mesh name="Fixed_Jaw_Collision_1" file="Fixed_Jaw_Collision_1.stl"/>
+    <mesh name="Fixed_Jaw_Collision_2" file="Fixed_Jaw_Collision_2.stl"/>
+    <mesh name="Moving_Jaw" file="Moving_Jaw.stl"/>
+    <mesh name="Moving_Jaw_Collision_1" file="Moving_Jaw_Collision_1.stl"/>
+    <mesh name="Moving_Jaw_Collision_2" file="Moving_Jaw_Collision_2.stl"/>
+    <mesh name="Moving_Jaw_Collision_3" file="Moving_Jaw_Collision_3.stl"/>
+  </asset>
+
+  <default>
+    <default class="so_arm100">
+      <joint frictionloss="0.1" armature="0.1"/>
+      <position kp="50" dampratio="1" forcerange="-35 35" ctrlrange="-3.14158 3.14158"/>
+      <default class="link_1">
+        <joint axis="0 1 0" range="-2.1 2.1"/>
+      </default>
+      <default class="link_2">
+        <joint axis="1 0 0" range="-3.14158 0.2"/>
+      </default>
+      <default class="link_3">
+        <joint axis="1 0 0" range="0 3.14158"/>
+      </default>
+      <default class="link_4">
+        <joint axis="1 0 0" range="-2.0 1.8"/>
+      </default>
+      <default class="link_5">
+        <joint axis="0 1 0" range="-3.14158 3.14158"/>
+      </default>
+      <default class="link_6">
+        <joint axis="0 0 1" range="-0.2 2.0"/>
+      </default>
+      <default class="visual">
+        <geom type="mesh" contype="0" conaffinity="0" density="0" group="2" material="orange"/>
+        <default class="motor_visual">
+          <geom material="black"/>
+        </default>
+      </default>
+      <default class="collision">
+        <geom group="3" type="mesh"/>
+        <default class="finger_collision">
+          <geom type="box" solimp="2 1 0.01" solref="0.01 1" friction="1.5 1 0.0001"/>
+        </default>
+      </default>
+    </default>
+  </default>
+
+  <worldbody>
+    <body name="base_link" childclass="so_arm100" quat="0 0 0 1">
+      <geom type="mesh" mesh="Base" class="visual"/>
+      <geom type="mesh" mesh="Base_Motor" class="motor_visual"/>
+      <geom type="mesh" mesh="Base" class="collision"/>
+	  
+      <body name="link_1" pos="0 -0.0452 0.0165" quat="0.707105 0.707108 0 0">
+        <inertial pos="-9.07886e-05 0.0590972 0.031089" quat="0.363978 0.441169 -0.623108 0.533504" mass="0.119226"
+          diaginertia="5.94278e-05 5.89975e-05 3.13712e-05"/>
+        <joint name="joint_1" class="link_1"/>
+        <geom type="mesh" mesh="Rotation_Pitch" class="visual"/>
+        <geom type="mesh" mesh="Rotation_Pitch_Motor" class="motor_visual"/>
+        <geom type="mesh" mesh="Rotation_Pitch" class="collision"/>
+		
+        <body name="link_2" pos="0 0.1025 0.0306" euler="1.57079 0 0">
+          <inertial pos="-1.72052e-05 0.0701802 0.00310545" quat="0.50104 0.498994 -0.493562 0.50632" mass="0.162409"
+            diaginertia="0.000213312 0.000167164 7.01522e-05"/>
+          <joint name="joint_2" class="link_2"/>
+          <geom type="mesh" mesh="Upper_Arm" class="visual"/>
+          <geom type="mesh" mesh="Upper_Arm_Motor" class="motor_visual"/>
+          <geom type="mesh" mesh="Upper_Arm" class="collision"/>
+		  
+          <body name="link_3" pos="0 0.11257 0.028" euler="-1.57079 0 0">
+            <inertial pos="-0.00339604 0.00137796 0.0768007" quat="0.701995 0.0787996 0.0645626 0.704859"
+              mass="0.147968" diaginertia="0.000138803 0.000107748 4.84242e-05"/>
+            <joint name="joint_3" class="link_3"/>
+            <geom type="mesh" mesh="Lower_Arm" class="visual"/>
+            <geom type="mesh" mesh="Lower_Arm_Motor" class="motor_visual"/>
+            <geom type="mesh" mesh="Lower_Arm" class="collision"/>
+			
+            <body name="link_4" pos="0 0.0052 0.1349" euler="-1.57079 0 0">
+              <inertial pos="-0.00852653 -0.0352279 -2.34622e-05" quat="-0.0522806 0.705235 0.0549524 0.704905"
+                mass="0.0661321" diaginertia="3.45403e-05 2.39041e-05 1.94704e-05"/>
+              <joint name="joint_4" class="link_4"/>
+              <geom type="mesh" mesh="Wrist_Pitch_Roll" class="visual"/>
+              <geom type="mesh" mesh="Wrist_Pitch_Roll_Motor" class="motor_visual"/>
+              <geom type="mesh" mesh="Wrist_Pitch_Roll" class="collision"/>
+			  
+              <body name="link_5" pos="0 -0.0601 0" euler="0 1.57079 0">
+                <inertial pos="0.00552377 -0.0280167 0.000483583" quat="0.41836 0.620891 -0.350644 0.562599"
+                  mass="0.0929859" diaginertia="5.03136e-05 4.64098e-05 2.72961e-05"/>
+                <joint name="joint_5" class="link_5"/>
+                <geom type="mesh" mesh="Fixed_Jaw" class="visual"/>
+                <geom type="mesh" mesh="Fixed_Jaw_Motor" class="motor_visual"/>
+                <geom type="mesh" mesh="Fixed_Jaw_Collision_1" class="collision"/>
+                <geom type="mesh" mesh="Fixed_Jaw_Collision_2" class="collision"/>
+                <geom class="finger_collision" name="fixed_jaw_pad_1" size="0.001 0.005 0.004" pos="0.0089 -0.1014 0"/>
+                <geom class="finger_collision" name="fixed_jaw_pad_2" size="0.001 0.005 0.006" pos="0.0109 -0.0914 0"/>
+                <geom class="finger_collision" name="fixed_jaw_pad_3" size="0.001 0.01 0.007" pos="0.0126 -0.0768 0"/>
+                <geom class="finger_collision" name="fixed_jaw_pad_4" size="0.001 0.01 0.008" pos="0.0143 -0.0572 0"/>
+				
+                <body name="link_6" pos="-0.0202 -0.0244 0" quat="1.34924e-11 -3.67321e-06 1 -3.67321e-06">
+                  <inertial pos="-0.00161745 -0.0303473 0.000449646" quat="0.696562 0.716737 -0.0239844 -0.0227026"
+                    mass="0.0202444" diaginertia="1.11265e-05 8.99651e-06 2.99548e-06"/>
+                  <joint name="joint_6" class="link_6"/>
+                  <geom type="mesh" mesh="Moving_Jaw" class="visual"/>
+                  <geom type="mesh" mesh="Moving_Jaw_Collision_1" class="collision"/>
+                  <geom type="mesh" mesh="Moving_Jaw_Collision_2" class="collision"/>
+                  <geom type="mesh" mesh="Moving_Jaw_Collision_3" class="collision"/>
+                  <geom class="finger_collision" name="moving_jaw_pad_1" size="0.001 0.005 0.004" pos="-0.0113 -0.077 0"/>
+                  <geom class="finger_collision" name="moving_jaw_pad_2" size="0.001 0.005 0.006" pos="-0.0093 -0.067 0"/>
+                  <geom class="finger_collision" name="moving_jaw_pad_3" size="0.001 0.01 0.006" pos="-0.0073 -0.055 0"/>
+                  <geom class="finger_collision" name="moving_jaw_pad_4" size="0.001 0.01 0.008" pos="-0.0073 -0.035 0"/>
+                  <!-- End-effector marker for IK (tune pos if needed) -->
+                  <site name="ee_site" pos="-0.009 -0.085 0" size="0.008" rgba="0 1 0 1"/>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <position class="link_1" name="joint_1" joint="joint_1" kp="100" kv="10" ctrlrange="-2.1 2.1" forcerange="-250 250"/>
+    <position class="link_2" name="joint_2" joint="joint_2" kp="100" kv="10" ctrlrange="-3.14158 0.2" forcerange="-150 150"/>
+    <position class="link_3" name="joint_3" joint="joint_3" kp="100" kv="10" ctrlrange="0 3.14158" forcerange="-150 150"/>
+    <position class="link_4" name="joint_4" joint="joint_4" kp="100" kv="10" ctrlrange="-2.0 1.8" forcerange="-150 150"/>
+    <position class="link_5" name="joint_5" joint="joint_5" kp="100" kv="10" ctrlrange="-3.14158 3.14158" forcerange="-150 150"/>
+    <position class="link_6" name="joint_6" joint="joint_6" kp="100" kv="10" ctrlrange="-3.14158 2.0" forcerange="-150 150"/>
+  </actuator>
+
+  <contact>
+    <exclude body1="base_link" body2="link_1"/>
+  </contact>
+
+
+  <keyframe>
+    <key name="home" qpos="0 0 0 1 0 0 0 0 -1.57079 1.57079 1.57079 -1.57079 0" ctrl="0 0 0 0 0 0"/>
+  </keyframe>
+</mujoco>
