@@ -35,7 +35,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
 from lerobot.configs import parser
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.lerobot_dataset import HF_LEROBOT_HOME, LeRobotDataset
 from lerobot.rl.algorithms.RECAPValueNetwork import RECAPValueNetwork, RECAPValueNetworkConfig
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.import_utils import _transformers_available
@@ -49,6 +49,7 @@ else:
 
 CSV_EPISODE_INDEX_COLUMN = "episode_index"
 CSV_SUCCESS_COLUMN = "success"
+DEFAULT_EPISODE_LABELS_FILENAME = "meta/episode_labels.csv"
 
 
 @dataclass(frozen=True)
@@ -86,8 +87,8 @@ class RECAPValueTrainingConfig:
     """Configuration for RECAP value-network train/val."""
 
     repo_id: str
-    labels_csv_path: str
     output_dir: str
+    labels_csv_path: str | None = None
     root: str | None = None
     revision: str | None = None
     episodes: list[int] | None = None
@@ -200,6 +201,33 @@ def _load_episode_success_map(labels_csv_path: Path) -> dict[int, int]:
             )
         success_map[episode_index] = success
     return success_map
+
+
+def _resolve_labels_csv_path(cfg: RECAPValueTrainingConfig) -> Path:
+    """Return the path to the episode-labels CSV.
+
+    When ``labels_csv_path`` is provided explicitly, that path is used directly.
+    Otherwise the file is expected at ``<dataset_root>/meta/episode_labels.csv``,
+    which is automatically downloaded when the dataset is pulled from HuggingFace
+    (the metadata snapshot covers ``meta/``).
+    """
+    if cfg.labels_csv_path is not None:
+        resolved = Path(cfg.labels_csv_path).expanduser()
+        if not resolved.is_file():
+            raise FileNotFoundError(f"Provided --labels_csv_path does not exist: {resolved}")
+        return resolved
+
+    dataset_root = Path(cfg.root) / cfg.repo_id if cfg.root else HF_LEROBOT_HOME / cfg.repo_id
+    default_path = dataset_root / DEFAULT_EPISODE_LABELS_FILENAME
+    if default_path.is_file():
+        return default_path
+
+    raise FileNotFoundError(
+        f"No episode labels CSV found at the default location: {default_path}\n"
+        "Either:\n"
+        "  1. Push a labels CSV to your HuggingFace dataset under meta/episode_labels.csv, or\n"
+        "  2. Pass --labels_csv_path explicitly."
+    )
 
 
 def _selected_episode_indices(dataset: LeRobotDataset) -> list[int]:
@@ -892,7 +920,9 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
         episodes=cfg.episodes,
     )
 
-    success_by_episode = _load_episode_success_map(Path(cfg.labels_csv_path))
+    labels_csv_path = _resolve_labels_csv_path(cfg)
+    logging.info(f"Using episode labels from: {labels_csv_path}")
+    success_by_episode = _load_episode_success_map(labels_csv_path)
     frame_targets = _build_frame_targets(
         dataset=dataset,
         success_by_episode=success_by_episode,

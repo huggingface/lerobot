@@ -22,61 +22,31 @@ The model is:
 The value trainer expects:
 
 - A valid LeRobot dataset (with episode metadata and frames).
-- A CSV with **fixed schema**:
-  - `episode_index`
-  - `success` (0 or 1)
+- A CSV with **fixed schema** containing per-episode success/failure labels.
 
-### 1.1 Required CSV format
+### 1.1 Episode labels (bundled in the dataset)
 
-Concrete example from your dataset:
+Episode labels are stored inside the dataset at `meta/episode_labels.csv`. When you
+load the dataset via `LeRobotDataset(repo_id=...)`, the labels file is downloaded
+automatically alongside the other metadata.
 
-- Dataset repo id: `jackvial/so101_pickplace_recap_merged_v2`
-- Dataset local path: `~/.cache/huggingface/lerobot/jackvial/so101_pickplace_recap_merged_v2`
-- Labels CSV path:
-  `~/.cache/huggingface/lerobot/jackvial/so101_pickplace_recap_merged_v2/data_studio_episode_labels.csv`
+The training script discovers the labels at `<dataset_root>/meta/episode_labels.csv`
+by default — no extra flags needed. You can still override the path with
+`--labels_csv_path` for local experimentation.
+
+Example dataset: `jackvial/so101_pickplace_recap_merged_v2`
+
+### 1.2 Required CSV format
 
 ```csv
 episode_index,success
 0,1
 1,1
 2,1
-3,1
-4,1
-5,1
-6,1
-7,1
-8,1
-9,1
+...
 10,0
 11,0
-12,0
-13,0
-14,0
-15,0
-16,0
-17,0
-18,0
-19,0
-20,1
-21,1
-22,1
-23,1
-24,1
-25,1
-26,1
-27,1
-28,1
-29,1
-30,0
-31,0
-32,0
-33,0
-34,0
-35,0
-36,0
-37,0
-38,0
-39,0
+...
 ```
 
 Rules:
@@ -87,7 +57,24 @@ Rules:
 
 If labels are missing for selected episodes, the script will raise an error.
 
-### 1.2 Expected reward/return construction
+### 1.3 Uploading labels to your own dataset
+
+If you have your own LeRobot dataset on HuggingFace and want to bundle episode
+labels so other users get them automatically:
+
+```python
+from huggingface_hub import HfApi
+
+api = HfApi()
+api.upload_file(
+    path_or_fileobj="path/to/your/episode_labels.csv",
+    path_in_repo="meta/episode_labels.csv",
+    repo_id="your-username/your-dataset",
+    repo_type="dataset",
+)
+```
+
+### 1.4 Expected reward/return construction
 
 During preprocessing, the script builds paper-style targets from episode outcomes:
 
@@ -117,7 +104,6 @@ Use `uv` from the repo root.
 uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
   --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
   --root="${HOME}/.cache/huggingface/lerobot" \
-  --labels_csv_path="${HOME}/.cache/huggingface/lerobot/jackvial/so101_pickplace_recap_merged_v2/data_studio_episode_labels.csv" \
   --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_merged_v2_value"
 ```
 
@@ -127,7 +113,6 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
 uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
   --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
   --root="${HOME}/.cache/huggingface/lerobot" \
-  --labels_csv_path="${HOME}/.cache/huggingface/lerobot/jackvial/so101_pickplace_recap_merged_v2/data_studio_episode_labels.csv" \
   --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_merged_v2_value_3" \
   --pretrained_path="lerobot/pi05_base" \
   --epochs=2 \
@@ -154,7 +139,6 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
 uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
   --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
   --root="${HOME}/.cache/huggingface/lerobot" \
-  --labels_csv_path="${HOME}/.cache/huggingface/lerobot/jackvial/so101_pickplace_recap_merged_v2/data_studio_episode_labels.csv" \
   --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_merged_v2_value_smoketest_1" \
   --epochs=1 \
   --batch_size=2 \
@@ -188,7 +172,6 @@ meaningful visual features from step 0:
 uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
   --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
   --root="${HOME}/.cache/huggingface/lerobot" \
-  --labels_csv_path="${HOME}/.cache/huggingface/lerobot/jackvial/so101_pickplace_recap_merged_v2/data_studio_episode_labels.csv" \
   --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_merged_v2_value_pretrained_1" \
   --pretrained_path="lerobot/pi05_base" \
   --epochs=2 \

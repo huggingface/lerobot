@@ -301,9 +301,8 @@ class RECAPValueNetwork(nn.Module):
         ).last_hidden_state
 
         lang_hidden = prefix_output[:, image_token_len:, :]
-        text_mask = attention_mask.unsqueeze(-1).to(lang_hidden.dtype)
-        text_denom = text_mask.sum(dim=1).clamp(min=1.0)
-        text_feat = (lang_hidden * text_mask).sum(dim=1) / text_denom
+        last_valid_idx = attention_mask.sum(dim=1).long() - 1
+        text_feat = lang_hidden[torch.arange(lang_hidden.size(0), device=lang_hidden.device), last_valid_idx]
 
         fusion_dtype = self.fusion_head[0].weight.dtype
         value_head_dtype = self.value_head.weight.dtype
