@@ -183,6 +183,7 @@ libero_plus = [
     # LIBERO-plus setup.py has empty install_requires; declare its runtime deps here.
     "robosuite>=1.4.0,<1.5.0; sys_platform == 'linux'",
     "bddl>=1.0.1,<2.0.0; sys_platform == 'linux'",
+    "future; sys_platform == 'linux'",  # bddl transitive dep not declared in its metadata
     "robomimic>=0.2.0,<0.3.0; sys_platform == 'linux'",
     "easydict>=1.9; sys_platform == 'linux'",
     "wand; sys_platform == 'linux'",
