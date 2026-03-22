@@ -14,9 +14,7 @@
 
 FROM lerobot-eval-base:latest
 
-RUN PATH=/usr/bin:/bin:/lerobot/.venv/bin:$PATH \
-    /lerobot/.venv/bin/python -m pip install --no-cache-dir ".[robomme]" \
-    && PATH=/usr/bin:/bin:/lerobot/.venv/bin:$PATH \
-    /lerobot/.venv/bin/python -c "import robomme"
+RUN uv pip install --no-cache ".[robomme]" \
+    && python -c "import robomme"
 
 CMD ["/bin/bash"]

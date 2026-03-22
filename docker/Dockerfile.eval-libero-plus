@@ -14,12 +14,9 @@
 
 FROM lerobot-eval-base:latest
 
-RUN PATH=/usr/bin:/bin:/lerobot/.venv/bin:$PATH \
-    /lerobot/.venv/bin/python -m pip install --no-cache-dir ".[libero_plus]" \
+RUN uv pip install --no-cache ".[libero_plus]" \
     && git clone --depth 1 https://github.com/sylvestf/LIBERO-plus.git /tmp/LIBERO-plus \
-    && PATH=/usr/bin:/bin:/lerobot/.venv/bin:$PATH \
-    /lerobot/.venv/bin/python -c "import pathlib, site; pathlib.Path(site.getsitepackages()[0], 'libero_plus_repo.pth').write_text('/tmp/LIBERO-plus\n')" \
-    && PATH=/usr/bin:/bin:/lerobot/.venv/bin:$PATH \
-    /lerobot/.venv/bin/python -c "import libero, robosuite, bddl"
+    && python -c "import pathlib, site; pathlib.Path(site.getsitepackages()[0], 'libero_plus_repo.pth').write_text('/tmp/LIBERO-plus\n')" \
+    && python -c "import libero, robosuite, bddl"
 
 CMD ["/bin/bash"]

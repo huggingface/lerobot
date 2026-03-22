@@ -14,9 +14,7 @@
 
 FROM lerobot-eval-base:latest
 
-RUN PATH=/usr/bin:/bin:/lerobot/.venv/bin:$PATH \
-    /lerobot/.venv/bin/python -m pip install --no-cache-dir ".[libero]" \
-    && PATH=/usr/bin:/bin:/lerobot/.venv/bin:$PATH \
-    /lerobot/.venv/bin/python -c "import libero"
+RUN uv pip install --no-cache ".[libero]" \
+    && python -c "import libero"
 
 CMD ["/bin/bash"]

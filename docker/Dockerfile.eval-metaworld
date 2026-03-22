@@ -14,9 +14,7 @@
 
 FROM lerobot-eval-base:latest
 
-RUN PATH=/usr/bin:/bin:/lerobot/.venv/bin:$PATH \
-    /lerobot/.venv/bin/python -m pip install --no-cache-dir ".[metaworld]" \
-    && PATH=/usr/bin:/bin:/lerobot/.venv/bin:$PATH \
-    /lerobot/.venv/bin/python -c "import metaworld"
+RUN uv pip install --no-cache ".[metaworld]" \
+    && python -c "import metaworld"
 
 CMD ["/bin/bash"]

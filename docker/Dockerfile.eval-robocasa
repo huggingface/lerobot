@@ -14,9 +14,7 @@
 
 FROM lerobot-eval-base:latest
 
-RUN PATH=/usr/bin:/bin:/lerobot/.venv/bin:$PATH \
-    /lerobot/.venv/bin/python -m pip install --no-cache-dir ".[robocasa]" \
-    && PATH=/usr/bin:/bin:/lerobot/.venv/bin:$PATH \
-    /lerobot/.venv/bin/python -c "import robocasa"
+RUN uv pip install --no-cache ".[robocasa]" \
+    && python -c "import robocasa"
 
 CMD ["/bin/bash"]
