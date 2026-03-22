@@ -21,6 +21,7 @@ from lerobot.rl.algorithms.base import (
     RLAlgorithmConfig,
     TrainingStats,
 )
+from lerobot.rl.algorithms.rlt import RLTAlgorithm, RLTAlgorithmConfig
 from lerobot.rl.algorithms.sac import SACAlgorithm, SACAlgorithmConfig
 
 
@@ -63,5 +64,7 @@ __all__ = [
     "TrainingStats",
     "SACAlgorithm",
     "SACAlgorithmConfig",
+    "RLTAlgorithm",
+    "RLTAlgorithmConfig",
     "make_algorithm",
 ]
