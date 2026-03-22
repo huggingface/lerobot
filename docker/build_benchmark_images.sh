@@ -8,6 +8,9 @@
 #   # Build and push to Docker Hub under your org
 #   bash docker/build_benchmark_images.sh --push --hub_org=pepijn223
 #
+#   # Force-rebuild base image (e.g. after Dockerfile.eval-base changes)
+#   bash docker/build_benchmark_images.sh --no-cache-base --push --hub_org=pepijn223
+#
 #   # Build only specific benchmarks
 #   bash docker/build_benchmark_images.sh --benchmarks="libero_plus robomme"
 #
@@ -23,12 +26,14 @@ set -euo pipefail
 PUSH=false
 HUB_ORG=""
 BENCHMARKS="libero libero_plus robomme robocasa"
+NO_CACHE_BASE=false
 
 for arg in "$@"; do
     case "$arg" in
         --push)            PUSH=true ;;
         --hub_org=*)       HUB_ORG="${arg#*=}" ;;
         --benchmarks=*)    BENCHMARKS="${arg#*=}" ;;
+        --no-cache-base)   NO_CACHE_BASE=true ;;
         *)                 echo "Unknown arg: $arg"; exit 1 ;;
     esac
 done
@@ -44,8 +49,14 @@ fi
 ok()   { echo "[OK]   $*"; }
 fail() { echo "[FAIL] $*"; exit 1; }
 
+BASE_CACHE_FLAG=""
+if [[ "$NO_CACHE_BASE" == "true" ]]; then
+    BASE_CACHE_FLAG="--no-cache"
+fi
+
 echo "=== Building lerobot-eval-base ==="
 docker build \
+    ${BASE_CACHE_FLAG} \
     -f "${SCRIPT_DIR}/Dockerfile.eval-base" \
     -t lerobot-eval-base:latest \
     "${REPO_ROOT}" || fail "lerobot-eval-base build failed"

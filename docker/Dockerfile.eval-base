@@ -20,7 +20,10 @@ ARG PYTHON_VERSION=3.12
 
 ENV DEBIAN_FRONTEND=noninteractive \
     MUJOCO_GL=egl \
-    PATH=/lerobot/.venv/bin:$PATH
+    PATH=/lerobot/.venv/bin:$PATH \
+    # cmake 4.x removed backward compat with cmake_minimum_required < 3.5.
+    # This env var re-enables it so packages like egl-probe can compile.
+    CMAKE_POLICY_VERSION_MINIMUM=3.5
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common build-essential git curl \
