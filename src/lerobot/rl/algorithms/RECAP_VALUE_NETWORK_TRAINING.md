@@ -113,7 +113,7 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
 uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
   --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
   --root="${HOME}/.cache/huggingface/lerobot" \
-  --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_merged_v2_value_3" \
+  --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_merged_v2_value_4" \
   --pretrained_path="lerobot/pi05_base" \
   --epochs=2 \
   --batch_size=2 \

@@ -207,9 +207,10 @@ def _resolve_labels_csv_path(cfg: RECAPValueTrainingConfig) -> Path:
     """Return the path to the episode-labels CSV.
 
     When ``labels_csv_path`` is provided explicitly, that path is used directly.
-    Otherwise the file is expected at ``<dataset_root>/meta/episode_labels.csv``,
-    which is automatically downloaded when the dataset is pulled from HuggingFace
-    (the metadata snapshot covers ``meta/``).
+    Otherwise the file is expected at ``<dataset_root>/meta/episode_labels.csv``.
+
+    If the file isn't in the local cache yet (e.g. the dataset was cached before
+    the labels were pushed), the resolver attempts to download it from HuggingFace.
     """
     if cfg.labels_csv_path is not None:
         resolved = Path(cfg.labels_csv_path).expanduser()
@@ -219,6 +220,27 @@ def _resolve_labels_csv_path(cfg: RECAPValueTrainingConfig) -> Path:
 
     dataset_root = Path(cfg.root) / cfg.repo_id if cfg.root else HF_LEROBOT_HOME / cfg.repo_id
     default_path = dataset_root / DEFAULT_EPISODE_LABELS_FILENAME
+    if default_path.is_file():
+        return default_path
+
+    # The local cache may predate the labels upload — try fetching the file.
+    try:
+        from huggingface_hub import hf_hub_download
+
+        logging.info(
+            f"Episode labels not found locally at {default_path}; "
+            f"attempting to download from {cfg.repo_id} ..."
+        )
+        hf_hub_download(
+            repo_id=cfg.repo_id,
+            filename=DEFAULT_EPISODE_LABELS_FILENAME,
+            repo_type="dataset",
+            revision=cfg.revision,
+            local_dir=str(dataset_root),
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
     if default_path.is_file():
         return default_path
 
