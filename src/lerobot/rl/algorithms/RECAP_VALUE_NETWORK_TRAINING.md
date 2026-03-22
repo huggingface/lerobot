@@ -28,14 +28,55 @@ The value trainer expects:
 
 ### 1.1 Required CSV format
 
-Example:
+Concrete example from your dataset:
+
+- Dataset repo id: `jackvial/so101_pickplace_recap_merged_v2`
+- Dataset local path: `~/.cache/huggingface/lerobot/jackvial/so101_pickplace_recap_merged_v2`
+- Labels CSV path:
+  `~/.cache/huggingface/lerobot/jackvial/so101_pickplace_recap_merged_v2/data_studio_episode_labels.csv`
 
 ```csv
 episode_index,success
 0,1
-1,0
+1,1
 2,1
 3,1
+4,1
+5,1
+6,1
+7,1
+8,1
+9,1
+10,0
+11,0
+12,0
+13,0
+14,0
+15,0
+16,0
+17,0
+18,0
+19,0
+20,1
+21,1
+22,1
+23,1
+24,1
+25,1
+26,1
+27,1
+28,1
+29,1
+30,0
+31,0
+32,0
+33,0
+34,0
+35,0
+36,0
+37,0
+38,0
+39,0
 ```
 
 Rules:
@@ -74,39 +115,84 @@ Use `uv` from the repo root.
 
 ```bash
 uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
-  --repo_id="your_org/your_dataset" \
-  --root="/path/to/local/dataset/root" \
-  --labels_csv_path="/path/to/episode_labels.csv" \
-  --output_dir="/path/to/output/recap_value"
+  --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
+  --root="${HOME}/.cache/huggingface/lerobot" \
+  --labels_csv_path="${HOME}/.cache/huggingface/lerobot/jackvial/so101_pickplace_recap_merged_v2/data_studio_episode_labels.csv" \
+  --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_merged_v2_value"
 ```
 
-### 2.2 Common useful flags
+### 2.2 Quick start (RTX 4070 TI SUPER)
 
 ```bash
 uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
-  --repo_id="your_org/your_dataset" \
-  --root="/path/to/local/dataset/root" \
-  --labels_csv_path="/path/to/episode_labels.csv" \
-  --output_dir="/path/to/output/recap_value" \
-  --epochs=20 \
-  --batch_size=8 \
+  --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
+  --root="${HOME}/.cache/huggingface/lerobot" \
+  --labels_csv_path="${HOME}/.cache/huggingface/lerobot/jackvial/so101_pickplace_recap_merged_v2/data_studio_episode_labels.csv" \
+  --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_merged_v2_value_0" \
+  --epochs=2 \
+  --batch_size=2 \
   --learning_rate=3e-4 \
   --num_workers=4 \
   --val_split_ratio=0.1 \
-  --c_fail=24.0 \
-  --num_value_bins=201 \
+  --log_every_n_steps=10 \
+  --validate_every_n_train_steps=50 \
+  --plot_every_n_train_steps=200 \
+  --max_val_steps_per_step_validation=20 \
+  --c_fail=500.0 \
+  --num_value_bins=16 \
+  --val_plot_num_episodes=4 \
+  --val_plot_num_frames=8 \
+  --val_plot_every_n_epochs=1 \
   --paligemma_variant="gemma_300m" \
-  --model_precision="float32" \
-  --freeze_vision_encoder=false
+  --model_precision="bfloat16" \
+  --freeze_vision_encoder=true
 ```
 
-### 2.3 What the script trains
+### 2.3 Full smoke-test command (step-based val + plots)
 
-- Base backbone: PI0.5/PI05-style PaliGemma language+vision stack (no action expert head).
+```bash
+uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
+  --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
+  --root="${HOME}/.cache/huggingface/lerobot" \
+  --labels_csv_path="${HOME}/.cache/huggingface/lerobot/jackvial/so101_pickplace_recap_merged_v2/data_studio_episode_labels.csv" \
+  --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_merged_v2_value_smoketest_1" \
+  --epochs=1 \
+  --batch_size=2 \
+  --learning_rate=3e-4 \
+  --num_workers=4 \
+  --val_split_ratio=0.1 \
+  --max_train_steps_per_epoch=200 \
+  --max_val_steps_per_epoch=50 \
+  --log_every_n_steps=10 \
+  --validate_every_n_train_steps=25 \
+  --plot_every_n_train_steps=100 \
+  --max_val_steps_per_step_validation=10 \
+  --c_fail=500.0 \
+  --num_value_bins=16 \
+  --val_plot_num_episodes=2 \
+  --val_plot_num_frames=8 \
+  --val_plot_every_n_epochs=1 \
+  --paligemma_variant="gemma_300m" \
+  --model_precision="bfloat16" \
+  --freeze_vision_encoder=true
+```
+
+### 2.4 What the script trains
+
+- Base backbone: lighter PI0/PI05-style PaliGemma language+vision stack (no action expert head).
+- No subtask labeling/tokenization path is used in this value-network trainer.
 - Head: distributional value head over bins.
 - Loss: cross-entropy on return bins.
 
 No TD bootstrap target is used in this training path.
+
+For short-horizon tasks, this lighter setup is usually sufficient for value learning. The richer
+`pi05_full` stack (with subtask annotation pathways and additional conditioning) tends to matter
+more for full policy/action modeling than for this standalone value head.
+
+Reference full-network implementation:
+
+- [cijerezg/lerobot `pi05_full` (my-pi05-merge)](https://github.com/cijerezg/lerobot/tree/my-pi05-merge/src/lerobot/policies/pi05_full)
 
 ---
 
@@ -118,6 +204,7 @@ Outputs are written under `--output_dir`:
 - `metrics_history.json`
 - `checkpoints/last.pt`
 - `checkpoints/best.pt`
+- `validation_plots/epoch_XXX/episode_YYYYY.png` (when plotting is enabled)
 
 ### 3.1 Metrics
 
@@ -127,13 +214,38 @@ Each epoch logs:
 - `train_bin_acc`, `val_bin_acc`: top-1 bin accuracy
 - `train_value_mae`, `val_value_mae`: MAE between expected value and continuous target
 
-### 3.2 Typical behavior
+Fine-grained progress logs can be enabled/tuned with:
+
+- `--log_every_n_steps`: print train/val running metrics, throughput, and ETA every N steps
+- `--validate_every_n_train_steps`: run an extra validation pass every N train steps (`0` disables)
+- `--max_val_steps_per_step_validation`: cap validation steps for those extra step-based passes
+
+### 3.2 Validation trajectory plots
+
+The trainer can save paper-style per-episode validation visualizations:
+
+- top strip: a few sampled frames from the trajectory
+- title: episode id + `SUCCESS`/`FAIL` label
+- return panel:
+  - labeled expected return from supervision (`target_value`)
+  - reconstructed expected return from predicted bin distribution:
+    `E[v] = sum_b p(b|x_t) * v_b`
+
+Plot controls:
+
+- `--val_plot_num_episodes`: how many validation episodes to visualize per plotted epoch (set `0` to disable)
+- `--val_plot_num_frames`: how many preview frames to show in the top strip
+- `--val_plot_every_n_epochs`: save plots every N epochs
+- `--plot_every_n_train_steps`: save validation plots every N train steps (`0` disables)
+- plotted episodes are collected with a dedicated full-trajectory pass, so plots cover complete episode trajectories even if validation metrics are step-capped
+
+### 3.3 Typical behavior
 
 - Early epochs: rapid drop in CE loss.
 - Bin accuracy usually improves before MAE fully stabilizes.
 - Validation curves are the main signal; use `best.pt` for downstream usage.
 
-### 3.3 Frequent issues
+### 3.4 Frequent issues
 
 - Missing labels: CSV does not cover all selected episodes.
 - Bad mapping: CSV `episode_index` does not match dataset episodes.
@@ -155,11 +267,15 @@ High-level flow:
 ### 4.1 Practical integration points in this repo
 
 - Advantage prompt formatting:
-  - `src/lerobot/policies/pi05_full/processor_pi05.py`
+  - `src/lerobot/policies/pi05/processor_pi05.py`
 - Actor/critic update orchestration:
   - `src/lerobot/rl/pi05_train_utils.py`
 - Current RL policy/critic plumbing:
   - `src/lerobot/rl/rl_pi05.py`
+
+If you need the full-network variant with subtask annotations, see:
+
+- [cijerezg/lerobot `pi05_full` (my-pi05-merge)](https://github.com/cijerezg/lerobot/tree/my-pi05-merge/src/lerobot/policies/pi05_full)
 
 ### 4.2 Recommended integration logic
 

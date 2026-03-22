@@ -16,6 +16,7 @@
 
 import math
 from dataclasses import dataclass
+from importlib import import_module
 from typing import TYPE_CHECKING, Literal
 
 import torch
@@ -31,7 +32,15 @@ else:
     CONFIG_MAPPING = None
     PaliGemmaForConditionalGeneration = None
 
-from lerobot.policies.pi05_full.modeling_pi05 import get_gemma_config
+def _load_get_gemma_config():
+    try:
+        module = import_module("lerobot.policies.pi05.modeling_pi05")
+    except ModuleNotFoundError:
+        module = import_module("lerobot.policies.pi05_full.modeling_pi05")
+    return module.get_gemma_config
+
+
+get_gemma_config = _load_get_gemma_config()
 
 
 @dataclass
@@ -76,7 +85,7 @@ class RECAPValueNetwork(nn.Module):
         paligemma_config_hf.text_config.vocab_size = 257152
         paligemma_config_hf.vision_config.image_size = config.image_size
         paligemma_config_hf.vision_config.intermediate_size = 4304
-        paligemma_config_hf.vision_config.projection_dim = 2048
+        paligemma_config_hf.vision_config.projection_dim = gemma_config.width
         paligemma_config_hf.vision_config.projector_hidden_act = "gelu_fast"
         paligemma_config_hf.vision_config.torch_dtype = "float32"
 
@@ -90,8 +99,9 @@ class RECAPValueNetwork(nn.Module):
             raise ValueError(f"Invalid precision: {config.precision}")
 
         if config.freeze_vision_encoder:
-            self.paligemma.vision_tower.eval()
-            for param in self.paligemma.vision_tower.parameters():
+            vision_tower = self._get_vision_tower()
+            vision_tower.eval()
+            for param in vision_tower.parameters():
                 param.requires_grad = False
 
         self.fusion_head = nn.Sequential(
@@ -109,6 +119,45 @@ class RECAPValueNetwork(nn.Module):
             persistent=True,
         )
 
+    def _get_paligemma_backbone(self):
+        if hasattr(self.paligemma, "model"):
+            return self.paligemma.model
+        return self.paligemma
+
+    def _get_language_model(self):
+        backbone = self._get_paligemma_backbone()
+        if hasattr(backbone, "language_model"):
+            return backbone.language_model
+        if hasattr(self.paligemma, "language_model"):
+            return self.paligemma.language_model
+        raise AttributeError("Unable to locate PaliGemma language model module.")
+
+    def _get_vision_tower(self):
+        backbone = self._get_paligemma_backbone()
+        if hasattr(backbone, "vision_tower"):
+            return backbone.vision_tower
+        if hasattr(self.paligemma, "vision_tower"):
+            return self.paligemma.vision_tower
+        raise AttributeError("Unable to locate PaliGemma vision tower module.")
+
+    def _extract_image_embeddings(self, image_features_output) -> Tensor:
+        """Normalize image-feature outputs across transformers versions."""
+        if isinstance(image_features_output, Tensor):
+            return image_features_output
+
+        projected = getattr(image_features_output, "pooler_output", None)
+        if isinstance(projected, Tensor):
+            return projected
+
+        fallback = getattr(image_features_output, "last_hidden_state", None)
+        if isinstance(fallback, Tensor):
+            return fallback
+
+        raise TypeError(
+            "Unsupported image feature output type from PaliGemma get_image_features: "
+            f"{type(image_features_output)}"
+        )
+
     def _prepare_attention_masks_4d(self, att_2d_masks: Tensor, dtype: torch.dtype | None = None) -> Tensor:
         att_2d_masks_4d = att_2d_masks[:, None, :, :]
         result = torch.where(att_2d_masks_4d, 0.0, OPENPI_ATTENTION_MASK_VALUE)
@@ -123,30 +172,36 @@ class RECAPValueNetwork(nn.Module):
             raise ValueError(f"Expected images with shape [B, N_cam, 3, H, W] or [B, 3, H, W], got {tuple(images.shape)}")
 
         batch_size, n_cams = images.shape[:2]
-        prefix_embs = []
-        prefix_masks = []
-        image_token_len = 0
-
-        for cam_idx in range(n_cams):
-            cam_images = images[:, cam_idx]
-            img_emb = self.paligemma.model.get_image_features(cam_images)
-            prefix_embs.append(img_emb)
-            cam_mask = torch.ones(
-                batch_size,
-                img_emb.shape[1],
-                dtype=torch.bool,
-                device=img_emb.device,
+        flat_images = images.reshape(batch_size * n_cams, *images.shape[2:])
+        image_features_output = self._get_paligemma_backbone().get_image_features(
+            flat_images,
+            return_dict=True,
+        )
+        flat_img_emb = self._extract_image_embeddings(image_features_output)
+        if flat_img_emb.ndim == 2:
+            flat_img_emb = flat_img_emb.unsqueeze(1)
+        if flat_img_emb.ndim != 3:
+            raise ValueError(
+                "Expected image embeddings with shape [B*N_cam, T_img, D] "
+                f"or [B*N_cam, D], got {tuple(flat_img_emb.shape)}"
             )
-            prefix_masks.append(cam_mask)
-            image_token_len += img_emb.shape[1]
 
-        lang_emb = self.paligemma.language_model.embed_tokens(input_ids)
+        img_token_len = flat_img_emb.shape[1]
+        img_emb = flat_img_emb.reshape(batch_size, n_cams * img_token_len, flat_img_emb.shape[-1])
+        image_token_len = img_emb.shape[1]
+        image_mask = torch.ones(
+            batch_size,
+            image_token_len,
+            dtype=torch.bool,
+            device=img_emb.device,
+        )
+
+        lang_emb = self.paligemma.get_input_embeddings()(input_ids)
         lang_emb = lang_emb * math.sqrt(lang_emb.shape[-1])
-        prefix_embs.append(lang_emb)
-        prefix_masks.append(attention_mask.bool())
+        text_mask = attention_mask.bool()
 
-        full_embs = torch.cat(prefix_embs, dim=1)
-        full_mask = torch.cat(prefix_masks, dim=1)
+        full_embs = torch.cat((img_emb, lang_emb), dim=1)
+        full_mask = torch.cat((image_mask, text_mask), dim=1)
         return full_embs, full_mask, image_token_len
 
     def forward(self, images: Tensor, input_ids: Tensor, attention_mask: Tensor) -> dict[str, Tensor]:
@@ -172,11 +227,11 @@ class RECAPValueNetwork(nn.Module):
             attention_mask=attention_mask,
         )
 
-        att_2d_masks = prefix_pad_mask[:, None, :] * prefix_pad_mask[:, :, None]
+        att_2d_masks = prefix_pad_mask[:, None, :] & prefix_pad_mask[:, :, None]
         att_4d_masks = self._prepare_attention_masks_4d(att_2d_masks, dtype=prefix_embs.dtype)
         position_ids = torch.cumsum(prefix_pad_mask, dim=1) - 1
 
-        prefix_output = self.paligemma.language_model.forward(
+        prefix_output = self._get_language_model().forward(
             inputs_embeds=prefix_embs,
             attention_mask=att_4d_masks,
             position_ids=position_ids,
@@ -188,8 +243,10 @@ class RECAPValueNetwork(nn.Module):
         text_denom = text_mask.sum(dim=1).clamp(min=1.0)
         text_feat = (lang_hidden * text_mask).sum(dim=1) / text_denom
 
-        fused = self.fusion_head(text_feat)
-        value_logits = self.value_head(fused.float())
+        fusion_dtype = self.fusion_head[0].weight.dtype
+        value_head_dtype = self.value_head.weight.dtype
+        fused = self.fusion_head(text_feat.to(dtype=fusion_dtype))
+        value_logits = self.value_head(fused.to(dtype=value_head_dtype))
 
         value_probs = torch.softmax(value_logits.float(), dim=-1)
         expected_value = (value_probs * self.value_bin_support).sum(dim=-1, keepdim=True)
