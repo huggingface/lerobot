@@ -168,7 +168,6 @@ data
 # Claude
 .claude/
 prompt*.md
-AGENTS.md
 
 # Dev scripts
 .dev/
