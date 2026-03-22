@@ -125,7 +125,11 @@ class RECAPValueTrainingConfig:
     paligemma_variant: str = "gemma_300m"
     model_precision: str = "float32"
     freeze_vision_encoder: bool = False
+    freeze_backbone: bool = False
     dropout: float = 0.1
+
+    # Pretrained VLM initialisation (e.g. "lerobot/pi05_base")
+    pretrained_path: str | None = None
 
 
 def _set_seed(seed: int) -> None:
@@ -964,8 +968,10 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
         precision=model_precision,
         image_size=cfg.image_size,
         freeze_vision_encoder=cfg.freeze_vision_encoder,
+        freeze_backbone=cfg.freeze_backbone,
         num_value_bins=cfg.num_value_bins,
         dropout=cfg.dropout,
+        pretrained_path=cfg.pretrained_path,
     )
     model = RECAPValueNetwork(model_config).to(device)
 

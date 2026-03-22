@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import math
 from dataclasses import dataclass
 from importlib import import_module
@@ -43,6 +44,10 @@ def _load_get_gemma_config():
 get_gemma_config = _load_get_gemma_config()
 
 
+PI05_VLM_KEY_PREFIX = "paligemma_with_expert.paligemma."
+PI05_PROJECTION_DIM = 2048
+
+
 @dataclass
 class RECAPValueNetworkConfig:
     """Configuration for the standalone RECAP value network."""
@@ -51,8 +56,10 @@ class RECAPValueNetworkConfig:
     precision: Literal["bfloat16", "float32"] = "float32"
     image_size: int = 224
     freeze_vision_encoder: bool = False
+    freeze_backbone: bool = False
     num_value_bins: int = 201
     dropout: float = 0.1
+    pretrained_path: str | None = None
 
 
 class RECAPValueNetwork(nn.Module):
@@ -68,8 +75,17 @@ class RECAPValueNetwork(nn.Module):
         if PaliGemmaForConditionalGeneration is None or CONFIG_MAPPING is None:
             raise ImportError("transformers is required to instantiate RECAPValueNetwork.")
 
+        if config.pretrained_path and config.paligemma_variant != "gemma_2b":
+            logging.warning(
+                f"pretrained_path is set but paligemma_variant={config.paligemma_variant!r}; "
+                "pi0.5 base uses gemma_2b for its VLM — overriding to gemma_2b."
+            )
+            config.paligemma_variant = "gemma_2b"
+
         self.config = config
         gemma_config = get_gemma_config(config.paligemma_variant)
+
+        projection_dim = PI05_PROJECTION_DIM if config.pretrained_path else gemma_config.width
 
         paligemma_config_hf = CONFIG_MAPPING["paligemma"]()
         paligemma_config_hf._vocab_size = 257152  # noqa: SLF001
@@ -85,7 +101,7 @@ class RECAPValueNetwork(nn.Module):
         paligemma_config_hf.text_config.vocab_size = 257152
         paligemma_config_hf.vision_config.image_size = config.image_size
         paligemma_config_hf.vision_config.intermediate_size = 4304
-        paligemma_config_hf.vision_config.projection_dim = gemma_config.width
+        paligemma_config_hf.vision_config.projection_dim = projection_dim
         paligemma_config_hf.vision_config.projector_hidden_act = "gelu_fast"
         paligemma_config_hf.vision_config.torch_dtype = "float32"
 
@@ -98,7 +114,11 @@ class RECAPValueNetwork(nn.Module):
         else:
             raise ValueError(f"Invalid precision: {config.precision}")
 
-        if config.freeze_vision_encoder:
+        if config.freeze_backbone:
+            self.paligemma.eval()
+            for param in self.paligemma.parameters():
+                param.requires_grad = False
+        elif config.freeze_vision_encoder:
             vision_tower = self._get_vision_tower()
             vision_tower.eval()
             for param in vision_tower.parameters():
@@ -118,6 +138,48 @@ class RECAPValueNetwork(nn.Module):
             torch.linspace(-1.0, 0.0, config.num_value_bins, dtype=torch.float32),
             persistent=True,
         )
+
+        if config.pretrained_path:
+            self._load_pretrained_vlm_weights(config.pretrained_path)
+
+    def _load_pretrained_vlm_weights(self, pretrained_path: str) -> None:
+        """Load VLM weights from a pretrained pi0.5 checkpoint into the PaliGemma backbone."""
+        from safetensors.torch import load_file
+        from transformers.utils import cached_file
+
+        logging.info(f"Loading pretrained VLM weights from {pretrained_path}")
+
+        resolved_file = cached_file(pretrained_path, "model.safetensors")
+        full_state_dict = load_file(resolved_file)
+
+        vlm_state_dict: dict[str, Tensor] = {}
+        for key, value in full_state_dict.items():
+            if not key.startswith(PI05_VLM_KEY_PREFIX):
+                continue
+            new_key = key[len("paligemma_with_expert."):]
+            vlm_state_dict[new_key] = value
+
+        lm_head_key = "paligemma.lm_head.weight"
+        embed_key = "paligemma.model.language_model.embed_tokens.weight"
+        if lm_head_key in vlm_state_dict and embed_key not in vlm_state_dict:
+            vlm_state_dict[embed_key] = vlm_state_dict[lm_head_key].clone()
+
+        missing, unexpected = self.load_state_dict(vlm_state_dict, strict=False)
+
+        fusion_value_missing = [k for k in missing if k.startswith(("fusion_head.", "value_head.", "value_bin_support"))]
+        truly_missing = [k for k in missing if k not in fusion_value_missing]
+
+        loaded_count = len(vlm_state_dict) - len(unexpected)
+        logging.info(
+            f"Pretrained VLM weights: loaded {loaded_count} tensors, "
+            f"{len(fusion_value_missing)} expected-missing (fusion/value heads), "
+            f"{len(truly_missing)} unexpectedly missing, "
+            f"{len(unexpected)} unexpected."
+        )
+        if truly_missing:
+            logging.warning(f"Unexpectedly missing keys: {truly_missing[:10]}")
+        if unexpected:
+            logging.warning(f"Unexpected keys (not loaded): {unexpected[:10]}")
 
     def _get_paligemma_backbone(self):
         if hasattr(self.paligemma, "model"):

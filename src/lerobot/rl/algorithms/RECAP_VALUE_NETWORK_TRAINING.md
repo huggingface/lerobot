@@ -128,7 +128,8 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
   --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
   --root="${HOME}/.cache/huggingface/lerobot" \
   --labels_csv_path="${HOME}/.cache/huggingface/lerobot/jackvial/so101_pickplace_recap_merged_v2/data_studio_episode_labels.csv" \
-  --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_merged_v2_value_0" \
+  --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_merged_v2_value_3" \
+  --pretrained_path="lerobot/pi05_base" \
   --epochs=2 \
   --batch_size=2 \
   --learning_rate=3e-4 \
@@ -143,9 +144,8 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
   --val_plot_num_episodes=4 \
   --val_plot_num_frames=8 \
   --val_plot_every_n_epochs=1 \
-  --paligemma_variant="gemma_300m" \
   --model_precision="bfloat16" \
-  --freeze_vision_encoder=true
+  --freeze_backbone=true
 ```
 
 ### 2.3 Full smoke-test command (step-based val + plots)
@@ -177,7 +177,57 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
   --freeze_vision_encoder=true
 ```
 
-### 2.4 What the script trains
+### 2.4 Initialising from pretrained pi0.5 weights
+
+By default the backbone is randomly initialised, which means early training learns
+only the unconditional distribution over value bins (the reconstructed return curve
+will be flat). Initialising from pretrained pi0.5 VLM weights gives the model
+meaningful visual features from step 0:
+
+```bash
+uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
+  --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
+  --root="${HOME}/.cache/huggingface/lerobot" \
+  --labels_csv_path="${HOME}/.cache/huggingface/lerobot/jackvial/so101_pickplace_recap_merged_v2/data_studio_episode_labels.csv" \
+  --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_merged_v2_value_pretrained_1" \
+  --pretrained_path="lerobot/pi05_base" \
+  --epochs=2 \
+  --batch_size=2 \
+  --learning_rate=3e-4 \
+  --num_workers=4 \
+  --val_split_ratio=0.1 \
+  --log_every_n_steps=10 \
+  --validate_every_n_train_steps=50 \
+  --plot_every_n_train_steps=200 \
+  --max_val_steps_per_step_validation=20 \
+  --c_fail=500.0 \
+  --num_value_bins=16 \
+  --val_plot_num_episodes=4 \
+  --val_plot_num_frames=8 \
+  --val_plot_every_n_epochs=1 \
+  --model_precision="bfloat16" \
+  --freeze_backbone=true
+```
+
+Notes:
+
+- `--pretrained_path` accepts any HF Hub id or local path containing a pi0.5
+  `model.safetensors` (e.g. `lerobot/pi05_base`).
+- When set, the script **automatically overrides** `paligemma_variant` to `gemma_2b`
+  (the VLM variant used by pi0.5 base) and sets `projection_dim=2048`.
+- The vision tower, multi-modal projector, and language model weights are loaded;
+  the fusion head and value head remain randomly initialised.
+- **`--freeze_backbone=true` is strongly recommended** when using pretrained weights.
+  It freezes the entire PaliGemma backbone (vision + language + projector) so only
+  the fusion head and value head are trained. This preserves pretrained features,
+  avoids OOM on 16GB GPUs, and focuses gradient signal on the value prediction heads.
+- `--freeze_vision_encoder=true` freezes only the vision tower (the language model
+  and projector remain trainable). This needs more VRAM but may improve results if
+  the domain is very different from pi0.5's pretraining data.
+- The full backbone is ~2B parameters (vs ~300M with `gemma_300m`). With
+  `--freeze_backbone=true` only ~12M parameters are trained (fusion + value heads).
+
+### 2.5 What the script trains
 
 - Base backbone: lighter PI0/PI05-style PaliGemma language+vision stack (no action expert head).
 - No subtask labeling/tokenization path is used in this value-network trainer.
