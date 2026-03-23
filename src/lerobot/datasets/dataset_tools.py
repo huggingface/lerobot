@@ -1129,8 +1129,9 @@ def _copy_videos_with_feature_changes(
     add_features: dict[str, tuple] | None = None,
     exclude_keys: list[str] | None = None,
     
-    fast_decode: int = 0,
     encoder_threads: int | None = None,
+    max_workers: int | None = None,
+    fast_decode: int = 0,
     vcodec: str | None = None,
     pix_fmt: str = "yuv420p",
 ) -> None:
@@ -1159,6 +1160,22 @@ def _copy_videos_with_feature_changes(
         video_options[key] = value
     
     logging.getLogger("libav").setLevel(av.logging.ERROR)
+    
+    MAX_THREADS_PER_ENCODER = 2
+    MAX_CONCURRENT_WORKERS = 12
+    
+    total_cores = os.cpu_count() or 4
+
+    if max_workers is None and encoder_threads is None:
+        # if not set, prioritize workers over encoder (throughput over single video parallelization)
+        encoder_threads = MAX_THREADS_PER_ENCODER
+        max_workers = max(1, min(total_cores // encoder_threads, MAX_CONCURRENT_WORKERS))
+
+    elif max_workers is None and encoder_threads is not None:
+        max_workers = max(1, min(total_cores // encoder_threads, MAX_CONCURRENT_WORKERS))
+
+    elif max_workers is not None and encoder_threads is None:
+        encoder_threads = max(1, min(total_cores // max_workers, MAX_THREADS_PER_ENCODER))
 
     if encoder_threads is not None:
         if target_vcodec == "libsvtav1":
@@ -1180,7 +1197,6 @@ def _copy_videos_with_feature_changes(
     chunks_size = dataset.meta.chunks_size
     
     num_episodes = len(dataset.meta.episodes)
-
     
     for feature_name, (path, _) in add_video_features.items():
         ep_paths = []
@@ -1191,7 +1207,6 @@ def _copy_videos_with_feature_changes(
 
         # create per episode sliced videos using multiprocessing
         futures = []
-        max_workers = max(1, os.cpu_count() - 2)
         
         # create per episode sliced videos
         with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
