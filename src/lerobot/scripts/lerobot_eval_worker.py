@@ -39,10 +39,10 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import draccus
 import numpy as np
 
 from lerobot import envs  # noqa: F401 — registers all env subclasses
-from lerobot.configs import parser
 from lerobot.envs.configs import EnvConfig
 from lerobot.envs.factory import make_env
 from lerobot.envs.utils import add_envs_task, preprocess_observation
@@ -184,7 +184,7 @@ def worker_main(cfg: EvalWorkerConfig) -> None:
 
 def main() -> None:
     init_logging()
-    cfg = parser.parse(EvalWorkerConfig)
+    cfg = draccus.parse(config_class=EvalWorkerConfig)
     worker_main(cfg)
 
 

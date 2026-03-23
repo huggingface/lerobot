@@ -39,6 +39,7 @@ ARG BENCHMARK=libero
 ENV DEBIAN_FRONTEND=noninteractive \
     MUJOCO_GL=egl \
     PATH=/lerobot/.venv/bin:$PATH \
+    CMAKE_POLICY_VERSION_MINIMUM=3.5 \
     CUDA_VISIBLE_DEVICES=0 \
     DEVICE=cuda \
     BENCHMARK=${BENCHMARK}
@@ -82,7 +83,7 @@ ENV HOME=/home/user_lerobot \
     TORCH_HOME=/home/user_lerobot/.cache/torch \
     TRITON_CACHE_DIR=/home/user_lerobot/.cache/triton
 
-RUN uv venv --python python${PYTHON_VERSION}
+RUN uv venv --seed --python python${PYTHON_VERSION}
 
 # Copy only the dependency manifests first so Docker can cache this layer
 # independently of source-code changes.
@@ -96,8 +97,29 @@ RUN if [ "$UNBOUND_DEPS" = "true" ]; then \
     fi
 
 # Install lerobot core + the selected benchmark extra.
-# Git-based deps (libero_plus, robomme) require network access at build time.
-RUN uv pip install --no-cache ".[${BENCHMARK}]"
+# LIBERO-plus needs a dedicated install path because the upstream package is
+# import-broken when installed via the extras chain alone.
+RUN case "${BENCHMARK}" in \
+    libero_plus) \
+        PATH=/usr/bin:/bin:/lerobot/.venv/bin:$PATH /lerobot/.venv/bin/python -m pip install --no-cache-dir \
+            "hf-libero>=0.1.3,<0.2.0" \
+            "hf-egl-probe>=1.0.1" \
+            "transformers>=5.3.0,<6.0.0" \
+            "scipy>=1.14.0,<2.0.0" \
+            "bddl>=1.0.1,<2.0.0" \
+            "future" \
+            "easydict>=1.9" \
+            "wand" \
+            "scikit-image>=0.20.0" \
+            "gym>=0.25.0,<0.27.0" \
+        && git clone --depth 1 https://github.com/sylvestf/LIBERO-plus.git /tmp/LIBERO-plus \
+        && PATH=/usr/bin:/bin:/lerobot/.venv/bin:$PATH /lerobot/.venv/bin/python -m pip install --no-cache-dir --no-deps /tmp/LIBERO-plus \
+        && /lerobot/.venv/bin/python -c "import pathlib, site; pathlib.Path(site.getsitepackages()[0], 'libero_plus_repo.pth').write_text('/tmp/LIBERO-plus\n')" \
+        && /lerobot/.venv/bin/python -m pip install --no-cache-dir . \
+        && /lerobot/.venv/bin/python -c "import libero, robosuite, bddl" ;; \
+    *) \
+        uv pip install --no-cache ".[${BENCHMARK}]" ;; \
+    esac
 
 # Triton requires its ptxas binary to be executable (NVIDIA-specific).
 RUN if [ -f /lerobot/.venv/lib/python${PYTHON_VERSION}/site-packages/triton/backends/nvidia/bin/ptxas ]; then \
