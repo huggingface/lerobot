@@ -30,7 +30,11 @@ RUN git clone --depth 1 https://github.com/robocasa/robocasa.git /tmp/robocasa \
         "h5py" \
         "lxml" \
         "tianshou==0.4.10" \
-        "easydict>=1.9" \
+        "easydict>=1.9"
+
+# robocasa/__init__.py asserts numpy.__version__ in ["2.2.5"] — pin it last
+# so no subsequent package can bump it away.
+RUN uv pip install --no-cache "numpy==2.2.5" \
     && python -c "import robocasa"
 
 CMD ["/bin/bash"]
