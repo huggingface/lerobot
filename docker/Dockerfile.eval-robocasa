@@ -14,20 +14,23 @@
 
 FROM lerobot-eval-base:latest
 
-# Install robocasa non-robosuite runtime deps
-RUN uv pip install --no-cache \
-    "easydict>=1.9" \
-    "scikit-image>=0.20.0" \
-    "scipy>=1.14.0,<2.0.0"
+# robocasa README says to use master branch of ARISE-Initiative/robosuite.
+# Install it with deps (robosuite from master has modern dep declarations).
+RUN git clone --depth 1 https://github.com/ARISE-Initiative/robosuite.git /tmp/robosuite \
+    && uv pip install --no-cache /tmp/robosuite
 
-# robocasa requires its own robosuite fork that adds PandaOmron and other robots.
-# The standard PyPI robosuite 1.4.x does not include these.
-RUN git clone --depth 1 -b robocasa_v1.4.1 https://github.com/ARISE-Initiative/robosuite.git /tmp/robosuite \
-    && uv pip install --no-cache --no-deps /tmp/robosuite
-
-# Clone robocasa and install with --no-deps (runtime deps declared above + robosuite fork).
+# Clone robocasa and install with --no-deps to skip its lerobot==0.3.3 pin.
+# Install robocasa's actual runtime deps explicitly instead.
 RUN git clone --depth 1 https://github.com/robocasa/robocasa.git /tmp/robocasa \
     && uv pip install --no-cache --no-deps /tmp/robocasa \
+    && uv pip install --no-cache \
+        "scikit-image>=0.20.0" \
+        "numba>=0.61.0,<0.62.0" \
+        "mujoco>=3.3.0,<4.0.0" \
+        "h5py" \
+        "lxml" \
+        "tianshou==0.4.10" \
+        "easydict>=1.9" \
     && python -c "import robocasa"
 
 CMD ["/bin/bash"]
