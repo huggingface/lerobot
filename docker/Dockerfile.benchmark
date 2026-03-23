@@ -124,7 +124,19 @@ init_states=os.path.join(root,'init_files'), datasets=os.path.join(root,'..','da
 assets=os.path.join(root,'assets')); \
 cfg_dir = os.path.expanduser('~/.libero'); os.makedirs(cfg_dir, exist_ok=True); \
 yaml.dump(d, open(os.path.join(cfg_dir,'config.yaml'),'w')); print('libero config created')" \
-        && /lerobot/.venv/bin/python -c "from libero.libero import benchmark, get_libero_path; print('libero OK')" ;; \
+        && /lerobot/.venv/bin/python -c "from libero.libero import benchmark, get_libero_path; print('libero OK')" \
+        && /lerobot/.venv/bin/python -c "\
+from huggingface_hub import hf_hub_download; \
+import zipfile, shutil, glob, os; \
+from libero.libero import get_libero_path; \
+assets_dst = os.path.join(get_libero_path('benchmark_root'), 'assets'); \
+print(f'Downloading LIBERO-plus assets to {assets_dst}...'); \
+zp = hf_hub_download('Sylvest/LIBERO-plus', 'assets.zip', repo_type='dataset', local_dir='/tmp/lp-dl'); \
+zipfile.ZipFile(zp).extractall('/tmp/lp-unzip'); \
+src = glob.glob('/tmp/lp-unzip/inspire/*/assets')[0]; \
+shutil.move(src, assets_dst); \
+shutil.rmtree('/tmp/lp-dl', True); shutil.rmtree('/tmp/lp-unzip', True); \
+print(f'Assets installed: {os.listdir(assets_dst)[:5]}...')" ;; \
     *) \
         uv pip install --no-cache ".[${BENCHMARK}]" ;; \
     esac
