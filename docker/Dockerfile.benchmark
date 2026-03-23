@@ -133,7 +133,8 @@ assets_dst = os.path.join(get_libero_path('benchmark_root'), 'assets'); \
 print(f'Downloading LIBERO-plus assets to {assets_dst}...'); \
 zp = hf_hub_download('Sylvest/LIBERO-plus', 'assets.zip', repo_type='dataset', local_dir='/tmp/lp-dl'); \
 zipfile.ZipFile(zp).extractall('/tmp/lp-unzip'); \
-src = glob.glob('/tmp/lp-unzip/inspire/*/assets')[0]; \
+hits = glob.glob('/tmp/lp-unzip/**/assets/scenes', recursive=True); \
+src = os.path.dirname(hits[0]); \
 shutil.move(src, assets_dst); \
 shutil.rmtree('/tmp/lp-dl', True); shutil.rmtree('/tmp/lp-unzip', True); \
 print(f'Assets installed: {os.listdir(assets_dst)[:5]}...')" ;; \
