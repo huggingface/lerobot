@@ -54,6 +54,8 @@ Each policy follows the pattern:
 
 ## Running Training Experiments
 
+First acitvate the correct conda environment: `conda activate lerobot` or run through tath env `conda run -n lerobot ..`
+
 The main training entry point is `lerobot-train` (maps to `src/lerobot/scripts/lerobot_train.py`).
 
 **Basic BC training:**

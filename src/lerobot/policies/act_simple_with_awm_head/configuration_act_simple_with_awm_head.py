@@ -19,6 +19,7 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
+from lerobot.policies.act_simple_with_awm_head.planning import PlanningConfig
 
 
 @PreTrainedConfig.register_subclass("act_simple_with_awm_head")
@@ -112,6 +113,10 @@ class ACTSimpleWithAWMHeadConfig(PreTrainedConfig):
     scheduler_warmup_steps: int = 5000
     scheduler_decay_steps: int = 100_000
     scheduler_decay_lr: float = 0.0
+
+    # Test-time planning.
+    use_planning: bool = False
+    planning: PlanningConfig = field(default_factory=PlanningConfig)
 
     def __post_init__(self):
         super().__post_init__()

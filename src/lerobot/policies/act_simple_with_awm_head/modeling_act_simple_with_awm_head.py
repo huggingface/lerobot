@@ -48,6 +48,7 @@ from lerobot.policies.act_simple.modeling_act_simple import (
 from lerobot.policies.act_simple_with_awm_head.configuration_act_simple_with_awm_head import (
     ACTSimpleWithAWMHeadConfig,
 )
+from lerobot.policies.act_simple_with_awm_head.planning import make_planner
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
 
@@ -269,6 +270,11 @@ class ACTSimpleWithAWMHeadPolicy(PreTrainedPolicy):
         self._ema_step = 0
         self._pending_ema_momentum = None
 
+        if config.use_planning:
+            self._planner = make_planner(config.planning)
+        else:
+            self._planner = None
+
         self.reset()
 
     def get_optim_params(self) -> dict:
@@ -293,6 +299,8 @@ class ACTSimpleWithAWMHeadPolicy(PreTrainedPolicy):
     def reset(self):
         """This should be called whenever the environment is reset."""
         self._action_queue = deque([], maxlen=self.config.n_action_steps)
+        self._z_goal: Tensor | None = None            # (S, B, dim_model)
+        self._encoder_pos_cache: Tensor | None = None  # (S, 1, dim_model)
 
     def update(self):
         if self._pending_ema_momentum is not None:
@@ -305,7 +313,10 @@ class ACTSimpleWithAWMHeadPolicy(PreTrainedPolicy):
         self.eval()
 
         if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
+            if self.config.use_planning and self._z_goal is not None:
+                actions = self._plan_action_chunk(batch)[:, : self.config.n_action_steps]
+            else:
+                actions = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
             self._action_queue.extend(actions.transpose(0, 1))
         return self._action_queue.popleft()
 
@@ -318,6 +329,79 @@ class ACTSimpleWithAWMHeadPolicy(PreTrainedPolicy):
             batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
 
         return self.model.predict(batch)
+
+    @torch.no_grad()
+    def set_goal(self, batch: dict[str, Tensor]) -> None:
+        """Encode a goal observation and store its latent tokens for planning.
+
+        Args:
+            batch: Preprocessed observation dict (same format as ``select_action``).
+                Should correspond to a single time-step (n_obs_steps=1).
+        """
+        self.eval()
+        if self.config.image_features:
+            batch = dict(batch)
+            batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
+        _, _, encoder_pos, encoder_in = self.model._encode(batch)
+        # encoder_in: (S, B, dim_model) — store as-is, index per batch element during planning.
+        self._z_goal = encoder_in
+        self._encoder_pos_cache = encoder_pos
+
+    @torch.no_grad()
+    def _plan_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+        """Use MPPI planning to produce an optimized action chunk.
+
+        Uses BC action chunk as warm start and minimizes
+        ``1 - cosine_similarity(z_goal, z_pred)`` over the full chunk.
+
+        Args:
+            batch: Preprocessed observation dict.
+
+        Returns:
+            (B, chunk_size, action_dim) tensor of planned actions.
+        """
+        self.eval()
+        if self.config.image_features:
+            batch = dict(batch)
+            batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
+
+        # BC warm start: (B, T, action_dim).
+        bc_actions = self.model.predict(batch)
+
+        # Encode current observation: (S, B, dim_model).
+        _, _, encoder_pos, encoder_in = self.model._encode(batch)
+
+        B = bc_actions.shape[0]
+        results = []
+        for b in range(B):
+            z_start_b = encoder_in[:, b, :]  # (S, D)
+
+            # z_goal per batch element; fall back to element 0 if goal was set from a
+            # different batch size (e.g. set_goal called with single-env batch).
+            # if self._z_goal.shape[1] > b:
+            z_goal_b = self._z_goal[:, b, :]
+            # else:
+                # z_goal_b = self._z_goal[:, 0, :]
+
+            init_actions_b = bc_actions[b]  # (T, action_dim)
+
+            # Closure that wraps run_wm_decoder for this batch element.
+            model = self.model  # capture for closure
+
+            def wm_predict_fn(enc_in_n: Tensor, enc_pos: Tensor, actions_n: Tensor) -> Tensor:
+                # enc_in_n: (S, N, D), enc_pos: (S, 1, D), actions_n: (T, N, action_dim)
+                return model.run_wm_decoder(enc_in_n, enc_pos, actions_n)
+
+            optimized = self._planner.optimize(
+                z_start=z_start_b,
+                encoder_pos=encoder_pos,
+                z_goal=z_goal_b,
+                initial_actions=init_actions_b,
+                wm_predict_fn=wm_predict_fn,
+            )
+            results.append(optimized)
+
+        return torch.stack(results, dim=0)  # (B, T, action_dim)
 
     @torch.no_grad()
     def visualize(self, batch: dict[str, Tensor], n_pairs: int = 12) -> dict[str, Tensor] | None:
@@ -857,3 +941,37 @@ class ACTSimpleWithAWMHead(nn.Module):
         )
         decoder_out = decoder_out.transpose(0, 1)
         return self.action_head(decoder_out)
+
+    def run_wm_decoder(
+        self,
+        encoder_in: Tensor,
+        encoder_pos: Tensor,
+        actions: Tensor,
+    ) -> Tensor:
+        """Run the world-model decoder to predict next latent tokens.
+
+        Args:
+            encoder_in: (S, N, dim_model) — encoder input tokens for N samples.
+            encoder_pos: (S, 1, dim_model) — positional embeddings from encoder.
+            actions: (T, N, action_dim) — action sequences for N samples.
+
+        Returns:
+            z_pred: (S, N, dim_model) — predicted next encoder input tokens.
+        """
+        S = self.n_encoder_tokens
+        T, N, _ = actions.shape
+
+        action_embeds = self.wm_action_proj(actions)  # (T, N, dim_model)
+        wm_action_pos = self.wm_action_pos_embed.weight[:T].unsqueeze(1)  # (T, 1, dim_model)
+        query_pos = self.wm_query_pos_embed.weight.unsqueeze(1)  # (S, 1, dim_model)
+        queries = (self.wm_query_tokens + query_pos).expand(-1, N, -1)  # (S, N, dim_model)
+        wm_in = torch.cat([queries, action_embeds + wm_action_pos], dim=0)  # (S+T, N, dim_model)
+
+        wm_cross_kv = self.wm_cross_attn_proj(encoder_in)  # (S, N, dim_model)
+        wm_out = self.wm_decoder(wm_in, wm_cross_kv, encoder_pos)  # (S+T, N, dim_model)
+        z_pred = self.wm_proj_head(wm_out[:S])  # (S, N, dim_model)
+
+        if self.config.normalize_wm_representations:
+            z_pred = F.normalize(z_pred, dim=-1)
+
+        return z_pred

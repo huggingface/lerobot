@@ -72,6 +72,7 @@ from tqdm import trange
 from lerobot.configs import parser
 from lerobot.configs.eval import EvalPipelineConfig
 from lerobot.envs.factory import make_env, make_env_pre_post_processors
+from lerobot.envs.goal_provider import BaseGoalProvider, make_goal_provider
 from lerobot.envs.utils import (
     add_envs_task,
     check_env_attributes_and_types,
@@ -102,6 +103,7 @@ def rollout(
     seeds: list[int] | None = None,
     return_observations: bool = False,
     render_callback: Callable[[gym.vector.VectorEnv], None] | None = None,
+    goal_provider: BaseGoalProvider | None = None,
 ) -> dict:
     """Run a batched policy rollout once through a batch of environments.
 
@@ -141,6 +143,16 @@ def rollout(
     observation, info = env.reset(seed=seeds)
     if render_callback is not None:
         render_callback(env)
+
+    # Provide goal observation for planning-enabled policies.
+    if goal_provider is not None and hasattr(policy, "set_goal"):
+        goal_obs_raw = goal_provider.get_goal_obs(env)
+        goal_obs = preprocess_observation(goal_obs_raw)
+        goal_obs = add_envs_task(env, goal_obs)
+        goal_obs = env_preprocessor(goal_obs)
+        goal_obs = preprocessor(goal_obs)
+        with torch.inference_mode():
+            policy.set_goal(goal_obs)
 
     all_observations = []
     all_actions = []
@@ -259,6 +271,7 @@ def eval_policy(
     videos_dir: Path | None = None,
     return_episode_data: bool = False,
     start_seed: int | None = None,
+    goal_provider: BaseGoalProvider | None = None,
 ) -> dict:
     """
     Args:
@@ -346,6 +359,7 @@ def eval_policy(
             seeds=list(seeds) if seeds else None,
             return_observations=return_episode_data,
             render_callback=render_frame if max_episodes_rendered > 0 else None,
+            goal_provider=goal_provider,
         )
 
         # Figure out where in each rollout sequence the first done condition was encountered (results after
@@ -548,6 +562,15 @@ def eval_main(cfg: EvalPipelineConfig):
     # Create environment-specific preprocessor and postprocessor (e.g., for LIBERO environments)
     env_preprocessor, env_postprocessor = make_env_pre_post_processors(env_cfg=cfg.env, policy_cfg=cfg.policy)
 
+    # Set up goal provider for planning-capable policies.
+    goal_provider = None
+    if hasattr(policy.config, "use_planning") and policy.config.use_planning:
+        try:
+            goal_provider = make_goal_provider(cfg.env.type)
+            logging.info(f"Planning enabled: using {type(goal_provider).__name__} for env type '{cfg.env.type}'")
+        except ValueError as e:
+            logging.warning(f"Planning requested but no goal provider available: {e}. Falling back to BC.")
+
     with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext():
         info = eval_policy_all(
             envs=envs,
@@ -561,6 +584,7 @@ def eval_main(cfg: EvalPipelineConfig):
             videos_dir=Path(cfg.output_dir) / "videos",
             start_seed=cfg.seed,
             max_parallel_tasks=cfg.env.max_parallel_tasks,
+            goal_provider=goal_provider,
         )
         print("Overall Aggregated Metrics:")
         print(info["overall"])
@@ -603,6 +627,7 @@ def eval_one(
     videos_dir: Path | None,
     return_episode_data: bool,
     start_seed: int | None,
+    goal_provider: BaseGoalProvider | None = None,
 ) -> TaskMetrics:
     """Evaluates one task_id of one suite using the provided vec env."""
 
@@ -620,6 +645,7 @@ def eval_one(
         videos_dir=task_videos_dir,
         return_episode_data=return_episode_data,
         start_seed=start_seed,
+        goal_provider=goal_provider,
     )
 
     per_episode = task_result["per_episode"]
@@ -646,6 +672,7 @@ def run_one(
     videos_dir: Path | None,
     return_episode_data: bool,
     start_seed: int | None,
+    goal_provider: BaseGoalProvider | None = None,
 ):
     """
     Run eval_one for a single (task_group, task_id, env).
@@ -670,6 +697,7 @@ def run_one(
         videos_dir=task_videos_dir,
         return_episode_data=return_episode_data,
         start_seed=start_seed,
+        goal_provider=goal_provider,
     )
     # ensure we always provide video_paths key to simplify accumulation
     if max_episodes_rendered > 0:
@@ -691,6 +719,7 @@ def eval_policy_all(
     return_episode_data: bool = False,
     start_seed: int | None = None,
     max_parallel_tasks: int = 1,
+    goal_provider: BaseGoalProvider | None = None,
 ) -> dict:
     """
     Evaluate a nested `envs` dict: {task_group: {task_id: vec_env}}.
@@ -746,6 +775,7 @@ def eval_policy_all(
         videos_dir=videos_dir,
         return_episode_data=return_episode_data,
         start_seed=start_seed,
+        goal_provider=goal_provider,
     )
 
     if max_parallel_tasks <= 1:
