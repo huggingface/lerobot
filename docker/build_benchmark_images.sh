@@ -25,7 +25,7 @@ set -euo pipefail
 
 PUSH=false
 HUB_ORG=""
-BENCHMARKS="libero libero_plus robomme robocasa"
+BENCHMARKS="libero libero_plus robomme robocasa metaworld"
 NO_CACHE_BASE=false
 PROGRESS="auto"
 
