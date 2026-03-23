@@ -21,7 +21,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from lerobot.processor import TransitionKey
+from lerobot.types import TransitionKey
 from lerobot.utils.constants import OBS_STATE
 
 

@@ -231,3 +231,39 @@ def test_ready_to_send_observation_with_varying_threshold(robot_client, g_thresh
         robot_client.action_queue.put(act)
 
     assert robot_client._ready_to_send_observation() is expected
+
+
+# -----------------------------------------------------------------------------
+# Regression test: robot type registry populated by robot_client imports
+# -----------------------------------------------------------------------------
+
+
+def test_robot_client_registers_builtin_robot_types():
+    """Importing robot_client must populate RobotConfig's ChoiceRegistry.
+
+    This is a regression test for a bug introduced in #2425, where removing
+    robot module imports from robot_client.py caused RobotConfig's registry to
+    be empty, breaking CLI argument parsing with:
+      error: argument --robot.type: invalid choice: 'so101_follower' (choose from )
+
+    Robot types are registered via @RobotConfig.register_subclass() decorators
+    at import time, so all supported modules must be explicitly imported.
+    """
+    import lerobot.async_inference.robot_client  # noqa: F401
+    from lerobot.robots.config import RobotConfig
+
+    known_choices = RobotConfig.get_known_choices()
+
+    expected_robot_types = [
+        "so100_follower",
+        "so101_follower",
+        "koch_follower",
+        "omx_follower",
+        "bi_so_follower",
+    ]
+    for robot_type in expected_robot_types:
+        assert robot_type in known_choices, (
+            f"Robot type '{robot_type}' is not registered in RobotConfig's ChoiceRegistry. "
+            f"Ensure the corresponding module is imported in robot_client.py. "
+            f"Known choices: {sorted(known_choices)}"
+        )

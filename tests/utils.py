@@ -21,9 +21,10 @@ import pytest
 import torch
 
 from lerobot import available_cameras, available_motors, available_robots
+from lerobot.utils.device_utils import auto_select_torch_device
 from lerobot.utils.import_utils import is_package_available
 
-DEVICE = os.environ.get("LEROBOT_TEST_DEVICE", "cuda") if torch.cuda.is_available() else "cpu"
+DEVICE = os.environ.get("LEROBOT_TEST_DEVICE", str(auto_select_torch_device()))
 
 TEST_ROBOT_TYPES = []
 for robot_type in available_robots:
@@ -102,6 +103,22 @@ def require_cuda(func):
     def wrapper(*args, **kwargs):
         if not torch.cuda.is_available():
             pytest.skip("requires cuda")
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+def require_hf_token(func):
+    """
+    Decorator that skips the test if no Hugging Face Hub token is available.
+    """
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        from huggingface_hub import get_token
+
+        if get_token() is None:
+            pytest.skip("requires HF token for gated model access")
         return func(*args, **kwargs)
 
     return wrapper

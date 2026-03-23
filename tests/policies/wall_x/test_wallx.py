@@ -14,9 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Test script to verify Wall-X policy integration with LeRobot, only meant to be run locally!"""
-
-import os
+"""Test script to verify Wall-X policy integration with LeRobot"""
 
 import pytest
 import torch
@@ -26,19 +24,16 @@ pytest.importorskip("peft")
 pytest.importorskip("transformers")
 pytest.importorskip("torchdiffeq")
 
-# Skip this entire module in CI
-pytestmark = pytest.mark.skipif(
-    os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true",
-    reason="This test requires local Wall-X installation and is not meant for CI",
-)
-
 from lerobot.policies.factory import make_policy_config  # noqa: E402
 from lerobot.policies.wall_x import WallXConfig  # noqa: E402
 from lerobot.policies.wall_x.modeling_wall_x import WallXPolicy  # noqa: E402
 from lerobot.policies.wall_x.processor_wall_x import make_wall_x_pre_post_processors  # noqa: E402
 from lerobot.utils.random_utils import set_seed  # noqa: E402
+from tests.utils import require_cuda, require_hf_token  # noqa: E402
 
 
+@require_cuda
+@require_hf_token
 def test_policy_instantiation():
     # Create config
     set_seed(42)
@@ -123,6 +118,8 @@ def test_policy_instantiation():
         raise
 
 
+@require_cuda
+@require_hf_token
 def test_config_creation():
     """Test policy config creation through factory."""
     try:
@@ -134,8 +131,3 @@ def test_config_creation():
     except Exception as e:
         print(f"Config creation failed: {e}")
         raise
-
-
-if __name__ == "__main__":
-    test_policy_instantiation()
-    test_config_creation()
