@@ -98,7 +98,14 @@ def run_worker(cfg: EvalWorkerConfig) -> dict:
     # Shard: this worker handles tasks where index % instance_count == instance_id
     if cfg.instance_count > 1:
         total = len(tasks)
-        tasks = [t for idx, t in enumerate(tasks) if idx % cfg.instance_count == cfg.instance_id]
+        assigned = {i for i in range(total) if i % cfg.instance_count == cfg.instance_id}
+        for i, (_, _, env) in enumerate(tasks):
+            if i not in assigned:
+                try:
+                    env.close()
+                except Exception:
+                    pass
+        tasks = [t for i, t in enumerate(tasks) if i in assigned]
         logger.info(
             "Shard %d/%d: %d/%d tasks assigned.",
             cfg.instance_id + 1,
