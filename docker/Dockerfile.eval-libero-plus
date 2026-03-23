@@ -14,7 +14,11 @@
 
 FROM lerobot-eval-base:latest
 
+# Diagnostic: show what's in the venv before the libero_plus install
+RUN echo "=== PRE-INSTALL ===" && uv pip list | grep -iE "robosuite|bddl|robomimic|hf.libero|scikit.image|wand" || echo "(none of the libero_plus-specific packages are installed)"
+
 RUN uv pip install --no-cache ".[libero_plus]" \
+    && echo "=== POST-INSTALL ===" && uv pip list | grep -iE "robosuite|bddl|robomimic" \
     # Clone LIBERO-plus; its setup.py has empty install_requires so deps come from the
     # lerobot[libero] extra above. Install the package to get LIBERO-plus environments,
     # then add a .pth so the libero module can locate its data files at runtime.
