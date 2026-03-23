@@ -283,8 +283,8 @@ class MLP(nn.Module):
         hidden_dims (list[int]): Sizes for each hidden layer.
         activations (Callable or str): Activation to apply between layers.
         activate_final (bool): Whether to apply activation at the final layer.
-        dropout_rate (Optional[float]): Dropout probability applied before normalization and activation.
-        final_activation (Optional[Callable or str]): Activation for the final layer when `activate_final` is True.
+        dropout_rate (float | None): Dropout probability applied before normalization and activation.
+        final_activation (Callable | str | None): Activation for the final layer when `activate_final` is True.
 
     For each layer, `in_dim` is updated to the previous `out_dim`. All constructed modules are
     stored in `self.net` as an `nn.Sequential` container.
@@ -363,7 +363,7 @@ class CriticEnsemble(nn.Module):
 
     Args:
         encoder (SACObservationEncoder): encoder for observations.
-        ensemble (List[CriticHead]): list of critic heads.
+        ensemble (list[CriticHead]): list of critic heads.
         init_final (float | None): optional initializer scale for final layers.
 
     Forward returns a tensor of shape (num_critics, batch_size) containing Q-values.
