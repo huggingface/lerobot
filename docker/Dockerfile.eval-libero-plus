@@ -34,6 +34,14 @@ RUN uv pip install --no-cache \
 RUN git clone --depth 1 https://github.com/sylvestf/LIBERO-plus.git /tmp/LIBERO-plus \
     && uv pip install --no-cache --no-deps /tmp/LIBERO-plus \
     && python -c "import pathlib, site; pathlib.Path(site.getsitepackages()[0], 'libero_plus_repo.pth').write_text('/tmp/LIBERO-plus\n')" \
-    && python -c "import libero, robosuite, bddl"
+    && python -c "\
+import os, yaml, importlib.util; \
+root = os.path.dirname(importlib.util.find_spec('libero.libero').origin); \
+d = dict(benchmark_root=root, bddl_files=os.path.join(root,'bddl_files'), \
+init_states=os.path.join(root,'init_files'), datasets=os.path.join(root,'..','datasets'), \
+assets=os.path.join(root,'assets')); \
+cfg_dir = os.path.expanduser('~/.libero'); os.makedirs(cfg_dir, exist_ok=True); \
+yaml.dump(d, open(os.path.join(cfg_dir,'config.yaml'),'w')); print('libero config created')" \
+    && python -c "from libero.libero import benchmark, get_libero_path; print('libero OK')"
 
 CMD ["/bin/bash"]
