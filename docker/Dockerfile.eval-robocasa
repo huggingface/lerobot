@@ -14,7 +14,16 @@
 
 FROM lerobot-eval-base:latest
 
-RUN uv pip install --no-cache ".[robocasa]" \
+# Install robocasa runtime deps (robocasa is not on PyPI; installed from source below).
+RUN uv pip install --no-cache \
+    "robosuite>=1.4.0,<1.5.0" \
+    "easydict>=1.9" \
+    "scikit-image>=0.20.0" \
+    "scipy>=1.14.0,<2.0.0"
+
+# Clone robocasa and install with --no-deps (runtime deps declared above).
+RUN git clone --depth 1 https://github.com/robocasa/robocasa.git /tmp/robocasa \
+    && uv pip install --no-cache --no-deps /tmp/robocasa \
     && python -c "import robocasa"
 
 CMD ["/bin/bash"]

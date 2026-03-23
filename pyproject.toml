@@ -202,8 +202,8 @@ robomme = [
     "robomme @ git+https://github.com/RoboMME/robomme_benchmark.git@main ; sys_platform == 'linux'",
 ]
 robocasa = [
-    "robocasa; sys_platform == 'linux'",
-    # robocasa's setup does not declare all runtime deps; list them here explicitly.
+    # robocasa is not on PyPI; installed from source in Dockerfile.eval-robocasa.
+    # List its runtime deps here so they are pip-installable without the package.
     "robosuite>=1.4.0,<1.5.0; sys_platform == 'linux'",
     "easydict>=1.9; sys_platform == 'linux'",
     "scikit-image>=0.20.0; sys_platform == 'linux'",
