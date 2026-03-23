@@ -14,12 +14,13 @@
 
 FROM lerobot-eval-base:latest
 
-# robomme → mani-skill==3.0.0b21 → gymnasium==0.29.1, conflicting with
-# lerobot's gymnasium>=1.1.1 requirement. Override allows the install.
-# Both gymnasium 0.29.x and 1.x use the same 5-tuple step() API (since
-# gym 0.26), so the eval worker is compatible with the downgraded version.
-RUN printf 'gymnasium==0.29.1\n' > /tmp/gym_override.txt \
-    && uv pip install --no-cache --override /tmp/gym_override.txt ".[robomme]" \
+# mani-skill==3.0.0b21 (robomme dep) pins gymnasium==0.29.1 and numpy<2.0.0,
+# conflicting with lerobot's gymnasium>=1.1.1 and numpy>=2.0.0.
+# Both overrides are safe at runtime:
+#   - gymnasium 0.29.x has the same 5-tuple step() API as 1.x (since gym 0.26)
+#   - numpy 1.26.4 is API-compatible with lerobot's actual usage (no 2.x-only APIs used)
+RUN printf 'gymnasium==0.29.1\nnumpy==1.26.4\n' > /tmp/robomme_override.txt \
+    && uv pip install --no-cache --override /tmp/robomme_override.txt ".[robomme]" \
     && python -c "import robomme"
 
 CMD ["/bin/bash"]
