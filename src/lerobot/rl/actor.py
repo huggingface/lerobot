@@ -60,7 +60,7 @@ from torch.multiprocessing import Event, Queue
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
-from lerobot.policies.factory import make_policy
+from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import TransitionKey
 from lerobot.rl.process import ProcessSignalHandler
@@ -255,8 +255,10 @@ def act_with_policy(
     policy = policy.eval()
     assert isinstance(policy, nn.Module)
 
-    # TODO: Re-enable processor pipeline once refactoring is validated against main
-    # preprocessor, postprocessor = None, None
+    preprocessor, postprocessor = make_pre_post_processors(
+        policy_cfg=cfg.policy,
+        dataset_stats=cfg.policy.dataset_stats,
+    )
 
     obs, info = online_env.reset()
     env_processor.reset()
@@ -288,7 +290,9 @@ def act_with_policy(
 
         # Time policy inference and check if it meets FPS requirement
         with policy_timer:
-            action = policy.select_action(batch=observation)
+            normalized_observation = preprocessor.process_observation(observation)
+            action = policy.select_action(batch=normalized_observation)
+            action = postprocessor.process_action(action)
         policy_fps = policy_timer.fps_last
 
         log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)

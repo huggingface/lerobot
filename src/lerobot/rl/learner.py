@@ -64,7 +64,7 @@ from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.policies.factory import make_policy
+from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.rl.algorithms import make_algorithm
 from lerobot.rl.buffer import ReplayBuffer
 from lerobot.rl.data_sources import OnlineOfflineMixer
@@ -321,8 +321,10 @@ def add_actor_information_and_train(
         algorithm_name=cfg.algorithm,
     )
 
-    # TODO: Re-enable processor pipeline once refactoring is validated against main
-    preprocessor, postprocessor = None, None
+    preprocessor, postprocessor = make_pre_post_processors(
+        policy_cfg=cfg.policy,
+        dataset_stats=cfg.policy.dataset_stats,
+    )
 
     # Push initial policy weights to actors (same path as periodic push)
     state_bytes = state_to_bytes(algorithm.get_weights())
