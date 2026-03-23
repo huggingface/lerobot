@@ -185,20 +185,17 @@ libero = [
     "lerobot[scipy-dep]",
 ]
 libero_plus = [
-    "lerobot[transformers-dep]",
-    "hf-egl-probe>=1.0.1; sys_platform == 'linux'",
-    "egl_probe>=1.0.1; sys_platform == 'linux'",
-    "libero @ git+https://github.com/sylvestf/LIBERO-plus.git@main ; sys_platform == 'linux'",
-    # LIBERO-plus setup.py has empty install_requires; declare its runtime deps here.
-    "robosuite>=1.4.0,<1.5.0; sys_platform == 'linux'",
+    # Inherit all of libero's deps (hf-libero → robosuite/robomimic/egl-probe/scipy/transformers).
+    # LIBERO-plus extends LIBERO with extra task suites; its Python module is installed
+    # from the git clone in Dockerfile.eval-libero-plus (overrides hf-libero via .pth).
+    "lerobot[libero]",
+    # Additional runtime deps declared by LIBERO-plus but absent from its setup.py:
     "bddl>=1.0.1,<2.0.0; sys_platform == 'linux'",
     "future; sys_platform == 'linux'",  # bddl transitive dep not declared in its metadata
-    "robomimic>=0.2.0,<0.3.0; sys_platform == 'linux'",
     "easydict>=1.9; sys_platform == 'linux'",
     "wand; sys_platform == 'linux'",
     "scikit-image>=0.20.0; sys_platform == 'linux'",
     "gym>=0.25.0,<0.27.0; sys_platform == 'linux'",
-    "lerobot[scipy-dep]",
 ]
 libero-plus = ["lerobot[libero_plus]"]
 robomme = [

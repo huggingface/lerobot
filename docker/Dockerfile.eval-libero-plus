@@ -15,7 +15,11 @@
 FROM lerobot-eval-base:latest
 
 RUN uv pip install --no-cache ".[libero_plus]" \
+    # Clone LIBERO-plus; its setup.py has empty install_requires so deps come from the
+    # lerobot[libero] extra above. Install the package to get LIBERO-plus environments,
+    # then add a .pth so the libero module can locate its data files at runtime.
     && git clone --depth 1 https://github.com/sylvestf/LIBERO-plus.git /tmp/LIBERO-plus \
+    && uv pip install --no-cache --no-deps /tmp/LIBERO-plus \
     && python -c "import pathlib, site; pathlib.Path(site.getsitepackages()[0], 'libero_plus_repo.pth').write_text('/tmp/LIBERO-plus\n')" \
     && python -c "import libero, robosuite, bddl"
 
