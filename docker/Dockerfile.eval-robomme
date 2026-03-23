@@ -14,7 +14,12 @@
 
 FROM lerobot-eval-base:latest
 
-RUN uv pip install --no-cache ".[robomme]" \
+# robomme → mani-skill==3.0.0b21 → gymnasium==0.29.1, conflicting with
+# lerobot's gymnasium>=1.1.1 requirement. Override allows the install.
+# Both gymnasium 0.29.x and 1.x use the same 5-tuple step() API (since
+# gym 0.26), so the eval worker is compatible with the downgraded version.
+RUN printf 'gymnasium==0.29.1\n' > /tmp/gym_override.txt \
+    && uv pip install --no-cache --override /tmp/gym_override.txt ".[robomme]" \
     && python -c "import robomme"
 
 CMD ["/bin/bash"]
