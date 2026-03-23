@@ -20,6 +20,10 @@ ARG PYTHON_VERSION=3.12
 
 ENV DEBIAN_FRONTEND=noninteractive \
     MUJOCO_GL=egl \
+    PYOPENGL_PLATFORM=egl \
+    EGL_PLATFORM=device \
+    NVIDIA_DRIVER_CAPABILITIES=all \
+    NVIDIA_VISIBLE_DEVICES=all \
     PATH=/lerobot/.venv/bin:$PATH \
     # cmake 4.x removed backward compat with cmake_minimum_required < 3.5.
     # This env var re-enables it so packages like egl-probe can compile.
@@ -27,7 +31,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common build-essential git curl \
-    libglib2.0-0 libgl1-mesa-glx libegl1-mesa libosmesa6 \
+    libglib2.0-0 libgl1 libgl1-mesa-glx libgles2 \
+    libegl1 libegl1-mesa libegl1-mesa-dev \
+    libglew-dev libglfw3 libglvnd-dev \
+    libosmesa6 libosmesa6-dev \
+    libvulkan1 mesa-vulkan-drivers \
+    libsm6 libxext6 libxrender-dev \
     ffmpeg libusb-1.0-0-dev speech-dispatcher libgeos-dev portaudio19-dev \
     cmake pkg-config ninja-build \
     && add-apt-repository -y ppa:deadsnakes/ppa \
@@ -40,6 +49,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && mv /root/.local/bin/uv /usr/local/bin/uv \
     && useradd --create-home --shell /bin/bash user_lerobot \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# NVIDIA EGL + Vulkan vendor ICDs (lets GLVND find the GPU driver)
+RUN mkdir -p /usr/share/vulkan/icd.d /usr/share/glvnd/egl_vendor.d \
+    && printf '{"file_format_version":"1.0.0","ICD":{"library_path":"libGLX_nvidia.so.0","api_version":"1.2.155"}}\n' \
+       > /usr/share/vulkan/icd.d/nvidia_icd.json \
+    && printf '{"file_format_version":"1.0.0","ICD":{"library_path":"libEGL_nvidia.so.0"}}\n' \
+       > /usr/share/glvnd/egl_vendor.d/10_nvidia.json
 
 WORKDIR /lerobot
 RUN chown -R user_lerobot:user_lerobot /lerobot

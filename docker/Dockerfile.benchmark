@@ -38,6 +38,10 @@ ARG BENCHMARK=libero
 
 ENV DEBIAN_FRONTEND=noninteractive \
     MUJOCO_GL=egl \
+    PYOPENGL_PLATFORM=egl \
+    EGL_PLATFORM=device \
+    NVIDIA_DRIVER_CAPABILITIES=all \
+    NVIDIA_VISIBLE_DEVICES=all \
     PATH=/lerobot/.venv/bin:$PATH \
     CMAKE_POLICY_VERSION_MINIMUM=3.5 \
     CUDA_VISIBLE_DEVICES=0 \
@@ -47,8 +51,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # ── Base system deps (shared across all benchmarks) ───────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common build-essential git curl \
-    libglib2.0-0 libgl1-mesa-glx libegl1-mesa libegl1-mesa-dev \
-    libglew-dev libglfw3-dev libgl1-mesa-dri \
+    libglib2.0-0 libgl1 libgl1-mesa-glx libgles2 \
+    libegl1 libegl1-mesa libegl1-mesa-dev \
+    libglew-dev libglfw3 libglfw3-dev libgl1-mesa-dri \
+    libglvnd-dev libosmesa6 libosmesa6-dev \
+    libvulkan1 mesa-vulkan-drivers \
+    libsm6 libxext6 libxrender-dev \
     ffmpeg libusb-1.0-0-dev speech-dispatcher libgeos-dev portaudio19-dev \
     cmake pkg-config ninja-build \
     && add-apt-repository -y ppa:deadsnakes/ppa \
@@ -62,6 +70,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && useradd --create-home --shell /bin/bash user_lerobot \
     && usermod -aG sudo user_lerobot \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# ── NVIDIA EGL + Vulkan vendor ICDs (lets GLVND find the GPU driver) ──────────
+RUN mkdir -p /usr/share/vulkan/icd.d /usr/share/glvnd/egl_vendor.d \
+    && printf '{"file_format_version":"1.0.0","ICD":{"library_path":"libGLX_nvidia.so.0","api_version":"1.2.155"}}\n' \
+       > /usr/share/vulkan/icd.d/nvidia_icd.json \
+    && printf '{"file_format_version":"1.0.0","ICD":{"library_path":"libEGL_nvidia.so.0"}}\n' \
+       > /usr/share/glvnd/egl_vendor.d/10_nvidia.json
 
 # ── Benchmark-specific system deps ────────────────────────────────────────────
 # libero_plus: the `wand` Python package requires ImageMagick headers.
@@ -124,28 +139,49 @@ init_states=os.path.join(root,'init_files'), datasets=os.path.join(root,'..','da
 assets=os.path.join(root,'assets')); \
 cfg_dir = os.path.expanduser('~/.libero'); os.makedirs(cfg_dir, exist_ok=True); \
 yaml.dump(d, open(os.path.join(cfg_dir,'config.yaml'),'w')); print('libero config created')" \
-        && /lerobot/.venv/bin/python -c "from libero.libero import benchmark, get_libero_path; print('libero OK')" \
-        && /lerobot/.venv/bin/python -c "\
-from huggingface_hub import hf_hub_download; \
-import zipfile, shutil, glob, os; \
-from libero.libero import get_libero_path; \
-assets_dst = os.path.join(get_libero_path('benchmark_root'), 'assets'); \
-print(f'Downloading LIBERO-plus assets to {assets_dst}...'); \
-zp = hf_hub_download('Sylvest/LIBERO-plus', 'assets.zip', repo_type='dataset', local_dir='/tmp/lp-dl'); \
-zipfile.ZipFile(zp).extractall('/tmp/lp-unzip'); \
-hits = glob.glob('/tmp/lp-unzip/**/assets/scenes', recursive=True); \
-src = os.path.dirname(hits[0]); \
-shutil.move(src, assets_dst); \
-shutil.rmtree('/tmp/lp-dl', True); shutil.rmtree('/tmp/lp-unzip', True); \
-print(f'Assets installed: {os.listdir(assets_dst)[:5]}...')" ;; \
+        && /lerobot/.venv/bin/python -c "from libero.libero import benchmark, get_libero_path; print('libero OK')" ;; \
     *) \
         uv pip install --no-cache ".[${BENCHMARK}]" ;; \
     esac
+
+# LIBERO-plus requires ~6 GB of scene/texture/object assets from HuggingFace.
+# Download at build time so containers don't need network access at runtime.
+USER root
+COPY <<'FETCH_ASSETS' /tmp/fetch_assets.py
+from huggingface_hub import hf_hub_download
+hf_hub_download("Sylvest/LIBERO-plus", "assets.zip",
+                repo_type="dataset", local_dir="/tmp/libero-plus-assets")
+FETCH_ASSETS
+COPY <<'VERIFY_ASSETS' /tmp/verify_assets.py
+from pathlib import Path
+from libero.libero import get_libero_path
+d = Path(get_libero_path("benchmark_root")) / "assets" / "scenes"
+assert d.is_dir(), f"assets missing at {d}"
+print("assets OK:", d)
+VERIFY_ASSETS
+RUN if [ "${BENCHMARK}" = "libero_plus" ]; then \
+    apt-get update && apt-get install -y --no-install-recommends unzip \
+    && apt-get clean && rm -rf /var/lib/apt/lists/* \
+    && /lerobot/.venv/bin/python /tmp/fetch_assets.py \
+    && unzip -q /tmp/libero-plus-assets/assets.zip -d /tmp/libero-plus-unzipped \
+    && ASSETS_DIR=$(/lerobot/.venv/bin/python -c "from libero.libero import get_libero_path; print(get_libero_path('benchmark_root'))") \
+    && SRC=$(find /tmp/libero-plus-unzipped -type d -name assets | head -1) \
+    && mv "$SRC" "$ASSETS_DIR/assets" \
+    && chown -R user_lerobot:user_lerobot "$ASSETS_DIR/assets" \
+    && rm -rf /tmp/libero-plus-assets /tmp/libero-plus-unzipped /tmp/fetch_assets.py \
+    && /lerobot/.venv/bin/python /tmp/verify_assets.py \
+    && rm /tmp/verify_assets.py; \
+    fi
+USER user_lerobot
 
 # Triton requires its ptxas binary to be executable (NVIDIA-specific).
 RUN if [ -f /lerobot/.venv/lib/python${PYTHON_VERSION}/site-packages/triton/backends/nvidia/bin/ptxas ]; then \
     chmod +x /lerobot/.venv/lib/python${PYTHON_VERSION}/site-packages/triton/backends/nvidia/bin/ptxas; \
     fi
+
+# Verify EGL probe is importable (runtime GPU check requires NVIDIA drivers at container start).
+RUN /lerobot/.venv/bin/python -c "import egl_probe; print('egl_probe OK')" \
+    2>/dev/null || echo 'NOTE: egl_probe not installed (non-libero build), skipping'
 
 # Copy full source (tests, examples, configs, etc.)
 COPY --chown=user_lerobot:user_lerobot . .
