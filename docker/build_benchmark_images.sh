@@ -27,6 +27,7 @@ PUSH=false
 HUB_ORG=""
 BENCHMARKS="libero libero_plus robomme robocasa"
 NO_CACHE_BASE=false
+PROGRESS="auto"
 
 for arg in "$@"; do
     case "$arg" in
@@ -34,6 +35,7 @@ for arg in "$@"; do
         --hub_org=*)       HUB_ORG="${arg#*=}" ;;
         --benchmarks=*)    BENCHMARKS="${arg#*=}" ;;
         --no-cache-base)   NO_CACHE_BASE=true ;;
+        --plain)           PROGRESS="plain" ;;
         *)                 echo "Unknown arg: $arg"; exit 1 ;;
     esac
 done
@@ -57,6 +59,7 @@ fi
 echo "=== Building lerobot-eval-base ==="
 docker build \
     ${BASE_CACHE_FLAG} \
+    --progress="${PROGRESS}" \
     -f "${SCRIPT_DIR}/Dockerfile.eval-base" \
     -t lerobot-eval-base:latest \
     "${REPO_ROOT}" || fail "lerobot-eval-base build failed"
@@ -80,6 +83,7 @@ for BENCHMARK in $BENCHMARKS; do
     echo ""
     echo "=== Building ${LOCAL_TAG} from $(basename ${DOCKERFILE}) ==="
     docker build \
+        --progress="${PROGRESS}" \
         -f "${DOCKERFILE}" \
         -t "${LOCAL_TAG}" \
         "${REPO_ROOT}" || fail "${LOCAL_TAG} build failed"
