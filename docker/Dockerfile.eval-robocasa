@@ -26,7 +26,7 @@ RUN git clone --depth 1 https://github.com/robocasa/robocasa.git /tmp/robocasa \
     && uv pip install --no-cache \
         "scikit-image>=0.20.0" \
         "numba>=0.61.0,<0.62.0" \
-        "mujoco>=3.3.0,<4.0.0" \
+        "mujoco==3.3.1" \
         "h5py" \
         "lxml" \
         "tianshou==0.4.10" \
