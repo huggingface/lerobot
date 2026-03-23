@@ -120,6 +120,7 @@ class LeRobotDatasetMetadata:
                 },
                 "config_kwargs": {
                     "max_pool_connections": max_pool_connections,
+                    "s3": {"addressing_style": "virtual"},
                 },
             }
             self.root = Path(root, **upath_params)
@@ -755,6 +756,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 },
                 "config_kwargs": {
                     "max_pool_connections": max_pool_connections,
+                    "s3": {"addressing_style": "virtual"},
                 },
             }
             self.root = Path(root, **upath_params)

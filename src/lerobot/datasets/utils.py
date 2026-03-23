@@ -15,6 +15,7 @@
 # limitations under the License.
 import contextlib
 import importlib.resources
+import io
 import json
 import logging
 from collections import deque
@@ -362,13 +363,11 @@ def load_tasks(
 ) -> pandas.DataFrame:
     tasks_path = local_dir / DEFAULT_TASKS_PATH
     if str(local_dir).startswith("s3://"):
-        storage_options = {
-            "key": key_id,
-            "secret": secret,
-            "client_kwargs": {"endpoint_url": endpoint_url},
-            "config_kwargs": {"max_pool_connections": max_pool_connections},
-        }
-        tasks = pd.read_parquet(str(tasks_path), storage_options=storage_options)
+        # Use the monkey-patched builtins.open (smart_open) so the same boto3 client
+        # that works for load_json / load_info is used, avoiding s3fs 403 issues with
+        # custom S3-compatible endpoints (e.g. Sbercloud OBS).
+        with open(str(tasks_path), "rb") as f:
+            tasks = pd.read_parquet(io.BytesIO(f.read()))
     else:
         tasks = pd.read_parquet(str(tasks_path))
     return tasks

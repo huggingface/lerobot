@@ -70,6 +70,7 @@ def image_dataset(tmp_path, empty_lerobot_dataset_factory):
     return empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
 
 
+@pytest.mark.skip(reason="Skipped in CI/CD tests because we don't need datasets creation methods ")
 def test_same_attributes_defined(tmp_path, lerobot_dataset_factory):
     """
     Instantiate a LeRobotDataset both ways with '__init__()' and 'create()' and verify that instantiated

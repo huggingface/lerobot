@@ -5,8 +5,8 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetad
 REPO_ID = "airoa-org/airoa-moma"
 REVISION = "main"
 S3_ENDPOINT_URL = "https://obs.ru-moscow-1.hc.sbercloud.ru"
-S3_PATH = "s3://d-gigachat-vision/robodata/airoa-moma"
-EPISODES = [0, 10, 11, 23]
+S3_PATH = "s3://gigaeye-data/visiondata/robotics/raw_robo_datasets/airoa-moma"
+EPISODES = [0, 1, 2]
 
 
 def test_lerobot_dataset_metadata_initialization(
