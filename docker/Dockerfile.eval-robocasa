@@ -14,14 +14,18 @@
 
 FROM lerobot-eval-base:latest
 
-# Install robocasa runtime deps (robocasa is not on PyPI; installed from source below).
+# Install robocasa non-robosuite runtime deps
 RUN uv pip install --no-cache \
-    "robosuite>=1.4.0,<1.5.0" \
     "easydict>=1.9" \
     "scikit-image>=0.20.0" \
     "scipy>=1.14.0,<2.0.0"
 
-# Clone robocasa and install with --no-deps (runtime deps declared above).
+# robocasa requires its own robosuite fork that adds PandaOmron and other robots.
+# The standard PyPI robosuite 1.4.x does not include these.
+RUN git clone --depth 1 -b robocasa_v1.4.1 https://github.com/ARISE-Initiative/robosuite.git /tmp/robosuite \
+    && uv pip install --no-cache --no-deps /tmp/robosuite
+
+# Clone robocasa and install with --no-deps (runtime deps declared above + robosuite fork).
 RUN git clone --depth 1 https://github.com/robocasa/robocasa.git /tmp/robocasa \
     && uv pip install --no-cache --no-deps /tmp/robocasa \
     && python -c "import robocasa"
