@@ -135,7 +135,7 @@ Learn how to implement your own simulation environment or benchmark and distribu
 
 ## Citation
 
-If you use LeRobot in your research, please cite:
+If you use LeRobot in your project, please cite the GitHub repository to acknowledge the ongoing development and contributors:
 
 ```bibtex
 @misc{cadene2024lerobot,
@@ -146,9 +146,26 @@ If you use LeRobot in your research, please cite:
 }
 ```
 
+If you are referencing our research or the academic paper, please also cite our ICLR publication:
+
+<details>
+<summary><b>ICLR 2026 Paper</b></summary>
+
+```bibtex
+@inproceedings{cadenelerobot,
+  title={LeRobot: An Open-Source Library for End-to-End Robot Learning},
+  author={Cadene, Remi and Alibert, Simon and Capuano, Francesco and Aractingi, Michel and Zouitine, Adil and Kooijmans, Pepijn and Choghari, Jade and Russi, Martino and Pascal, Caroline and Palma, Steven and Shukor, Mustafa and Moss, Jess and Soare, Alexander and Aubakirova, Dana and Lhoest, Quentin and Gallou\'edec, Quentin and Wolf, Thomas},
+  booktitle={The Fourteenth International Conference on Learning Representations},
+  year={2026},
+  url={https://arxiv.org/abs/2602.22818}
+}
+```
+
+</details>
+
 ## Contribute
 
-We welcome contributions from everyone in the community! To get started, please read our [CONTRIBUTING.md](./CONTRIBUTING.md) guide. Whether you're adding a new feature, improving documentation, or fixing a bug, your help and feedback are invaluable. We're incredibly excited about the future of open-source robotics and can't wait to work with you on what's next—thank you for your support!
+We welcome contributions from everyone in the community! To get started, please read our [CONTRIBUTING.md](https://github.com/huggingface/lerobot/blob/main/CONTRIBUTING.md) guide. Whether you're adding a new feature, improving documentation, or fixing a bug, your help and feedback are invaluable. We're incredibly excited about the future of open-source robotics and can't wait to work with you on what's next—thank you for your support!
 
 <p align="center">
   <img alt="SO101 Video" src="./media/readme/so100_video.webp" width="640px">

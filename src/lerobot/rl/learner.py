@@ -88,6 +88,7 @@ from lerobot.utils.constants import (
     PRETRAINED_MODEL_DIR,
     TRAINING_STATE_DIR,
 )
+from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.train_utils import (
     get_step_checkpoint_dir,
@@ -98,7 +99,6 @@ from lerobot.utils.train_utils import (
 from lerobot.utils.transition import move_transition_to_device
 from lerobot.utils.utils import (
     format_big_number,
-    get_safe_torch_device,
     init_logging,
 )
 

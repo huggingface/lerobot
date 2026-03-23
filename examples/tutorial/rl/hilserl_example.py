@@ -5,8 +5,8 @@ from queue import Empty, Full
 
 import torch
 
+from lerobot.datasets.feature_utils import hw_to_dataset_features
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.envs.configs import HILSerlProcessorConfig, HILSerlRobotEnvConfig
 from lerobot.policies.sac.configuration_sac import SACConfig
 from lerobot.policies.sac.modeling_sac import SACPolicy

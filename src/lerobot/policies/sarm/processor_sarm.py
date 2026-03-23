@@ -48,8 +48,8 @@ from lerobot.processor.converters import (
     policy_action_to_transition,
     transition_to_policy_action,
 )
-from lerobot.processor.core import EnvTransition, TransitionKey
 from lerobot.processor.pipeline import PipelineFeatureType
+from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
 
@@ -277,9 +277,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
 
         # When language is perturbed, targets are zero so perturbed samples don't contribute to progress loss
         if self.dataset_meta is not None:
-            episodes_df = None
-            if self.sparse_subtask_names != ["task"]:
-                episodes_df = self.dataset_meta.episodes.to_pandas()
+            episodes_df = self.dataset_meta.episodes.to_pandas()
 
             # Generate sparse targets
             if self.sparse_temporal_proportions is not None:

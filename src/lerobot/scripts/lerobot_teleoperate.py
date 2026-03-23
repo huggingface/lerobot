@@ -60,6 +60,7 @@ import rerun as rr
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.cameras.zmq.configuration_zmq import ZMQCameraConfig  # noqa: F401
 from lerobot.configs import parser
 from lerobot.processor import (
     RobotAction,
@@ -94,6 +95,7 @@ from lerobot.teleoperators import (  # noqa: F401
     make_teleoperator_from_config,
     omx_leader,
     openarm_leader,
+    openarm_mini,
     reachy2_teleoperator,
     so_leader,
     unitree_g1,
@@ -152,7 +154,6 @@ def teleop_loop(
 
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
-
     while True:
         loop_start = time.perf_counter()
 
@@ -161,6 +162,9 @@ def teleop_loop(
         # teleop_action_processor can take None as an observation
         # given that it is the identity processor as default
         obs = robot.get_observation()
+
+        if robot.name == "unitree_g1":
+            teleop.send_feedback(obs)
 
         # Get teleop action
         raw_action = teleop.get_action()

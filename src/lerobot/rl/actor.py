@@ -77,6 +77,7 @@ from lerobot.transport.utils import (
     send_bytes_in_chunks,
     transitions_to_bytes,
 )
+from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.transition import (
@@ -86,7 +87,6 @@ from lerobot.utils.transition import (
 )
 from lerobot.utils.utils import (
     TimerManager,
-    get_safe_torch_device,
     init_logging,
 )
 
