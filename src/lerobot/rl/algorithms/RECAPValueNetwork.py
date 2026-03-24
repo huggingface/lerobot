@@ -58,6 +58,7 @@ class RECAPValueNetworkConfig:
     max_state_dim: int = 32
     freeze_vision_encoder: bool = False
     freeze_backbone: bool = False
+    freeze_embeddings: bool = False
     num_value_bins: int = 201
     dropout: float = 0.1
     pretrained_path: str | None = None
@@ -119,11 +120,16 @@ class RECAPValueNetwork(nn.Module):
             self.paligemma.eval()
             for param in self.paligemma.parameters():
                 param.requires_grad = False
-        elif config.freeze_vision_encoder:
-            vision_tower = self._get_vision_tower()
-            vision_tower.eval()
-            for param in vision_tower.parameters():
-                param.requires_grad = False
+        else:
+            if config.freeze_vision_encoder:
+                vision_tower = self._get_vision_tower()
+                vision_tower.eval()
+                for param in vision_tower.parameters():
+                    param.requires_grad = False
+            if config.freeze_embeddings:
+                embed = self.paligemma.get_input_embeddings()
+                for param in embed.parameters():
+                    param.requires_grad = False
 
         self.state_proj = nn.Linear(config.max_state_dim, gemma_config.width)
 

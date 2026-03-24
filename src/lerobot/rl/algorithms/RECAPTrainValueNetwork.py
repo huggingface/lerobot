@@ -127,6 +127,7 @@ class RECAPValueTrainingConfig:
     model_precision: str = "float32"
     freeze_vision_encoder: bool = False
     freeze_backbone: bool = False
+    freeze_embeddings: bool = False
     dropout: float = 0.1
 
     # Pretrained VLM initialisation (e.g. "lerobot/pi05_base")
@@ -1039,6 +1040,7 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
         max_state_dim=cfg.max_state_dim,
         freeze_vision_encoder=cfg.freeze_vision_encoder,
         freeze_backbone=cfg.freeze_backbone,
+        freeze_embeddings=cfg.freeze_embeddings,
         num_value_bins=cfg.num_value_bins,
         dropout=cfg.dropout,
         pretrained_path=cfg.pretrained_path,
