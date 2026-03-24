@@ -23,8 +23,8 @@ server for action chunks.
 Architecture:
     host (GPU):
         1. Load policy + preprocessors from EvalPipelineConfig.
-        2. Start HTTP policy-inference server (one lock — serialises GPU calls).
-        3. Spawn ``instance_count`` Docker containers (one per shard).
+        2. Start ``policy_servers`` HTTP inference servers on consecutive ports.
+        3. Spawn ``instance_count`` Docker containers, round-robin assigned to servers.
         4. Wait; collect per-task JSON written to the mounted output volume.
         5. Merge shards → aggregate → write eval_info.json.
 
@@ -245,29 +245,38 @@ def run_eval_in_docker(cfg: EvalPipelineConfig) -> None:
         policy_cfg=cfg.policy,
     )
 
-    # ── Start HTTP inference server ───────────────────────────────────────
-    port = docker_cfg.port
-    server = _InferenceServer(
-        ("0.0.0.0", port),  # nosec B104 — only alive for the duration of eval
-        policy=policy,
-        env_preprocessor=env_preprocessor,
-        preprocessor=preprocessor,
-        postprocessor=postprocessor,
-    )
-    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
-    server_thread.start()
-    logger.info("Policy inference server running on port %d", port)
-
+    # ── Start HTTP inference server(s) ────────────────────────────────────
+    n_policy_servers = cfg.eval.policy_servers
+    base_port = docker_cfg.port
     host_ip = _get_host_ip()
-    server_address = f"{host_ip}:{port}"
     instance_count = cfg.eval.instance_count
     env_argv = _env_argv()
 
-    # ── Spawn containers ──────────────────────────────────────────────────
+    servers: list[_InferenceServer] = []
+    for s_idx in range(n_policy_servers):
+        port = base_port + s_idx
+        if s_idx > 0:
+            policy = make_policy(cfg=cfg.policy, env_cfg=cfg.env, rename_map=cfg.rename_map)
+            policy.eval()
+        srv = _InferenceServer(
+            ("0.0.0.0", port),  # nosec B104
+            policy=policy,
+            env_preprocessor=env_preprocessor,
+            preprocessor=preprocessor,
+            postprocessor=postprocessor,
+        )
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        servers.append(srv)
+        logger.info("Policy inference server %d/%d running on port %d", s_idx + 1, n_policy_servers, port)
+
+    # ── Spawn containers (round-robin across policy servers) ──────────────
     container_dirs: list[Path] = []
     procs: list[subprocess.Popen] = []
     try:
         for i in range(instance_count):
+            assigned_port = base_port + (i % n_policy_servers)
+            server_address = f"{host_ip}:{assigned_port}"
             shard_dir = output_dir / "shards" / str(i)
             container_dirs.append(shard_dir)
             proc = _spawn_container(
@@ -293,7 +302,8 @@ def run_eval_in_docker(cfg: EvalPipelineConfig) -> None:
             raise RuntimeError(f"Docker eval containers failed (instance_id, exit_code): {failed}")
 
     finally:
-        server.shutdown()
+        for srv in servers:
+            srv.shutdown()
 
     # ── Collect and merge per-task results ───────────────────────────────
     per_task: list[dict] = []

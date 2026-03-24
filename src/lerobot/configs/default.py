@@ -86,6 +86,10 @@ class EvalConfig:
     # 0-indexed shard id for this process. Users usually leave this at 0.
     # Additional shards are launched automatically by `lerobot-eval` when instance_count > 1.
     instance_id: int = 0
+    # Number of policy inference servers to run in parallel (Docker runtime only).
+    # Each server loads a copy of the model and listens on consecutive ports
+    # starting from eval.docker.port. Containers are round-robin assigned.
+    policy_servers: int = 1
 
     def __post_init__(self) -> None:
         if self.runtime not in {"local", "docker"}:
@@ -96,6 +100,8 @@ class EvalConfig:
             raise ValueError(
                 f"eval.instance_id must be in [0, {self.instance_count - 1}] (got {self.instance_id})."
             )
+        if self.policy_servers < 1:
+            raise ValueError("eval.policy_servers must be >= 1.")
         if self.batch_size > self.n_episodes:
             raise ValueError(
                 "The eval batch size is greater than the number of eval episodes "
