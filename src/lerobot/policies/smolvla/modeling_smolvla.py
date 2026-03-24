@@ -68,7 +68,7 @@ from lerobot.policies.utils import (
     populate_queues,
 )
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
-from lerobot.utils.utils import get_safe_dtype
+from lerobot.utils.device_utils import get_safe_dtype
 
 
 class ActionSelectKwargs(TypedDict, total=False):
@@ -377,6 +377,8 @@ class SmolVLAPolicy(PreTrainedPolicy):
         actions_is_pad = batch.get("action_is_pad")
         loss_dict = {}
         losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time)
+        original_action_dim = self.config.action_feature.shape[0]
+        losses = losses[:, :, :original_action_dim]
         loss_dict["losses_after_forward"] = losses.clone().mean().item()
 
         if actions_is_pad is not None:

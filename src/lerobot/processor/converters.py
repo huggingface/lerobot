@@ -23,9 +23,8 @@ from typing import Any
 import numpy as np
 import torch
 
+from lerobot.types import EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
 from lerobot.utils.constants import ACTION, DONE, INFO, OBS_PREFIX, REWARD, TRUNCATED
-
-from .core import EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
 
 
 @singledispatch

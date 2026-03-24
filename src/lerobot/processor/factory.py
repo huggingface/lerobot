@@ -14,13 +14,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from lerobot.types import RobotAction, RobotObservation
+
 from .converters import (
     observation_to_transition,
     robot_action_observation_to_transition,
     transition_to_observation,
     transition_to_robot_action,
 )
-from .core import RobotAction, RobotObservation
 from .pipeline import IdentityProcessorStep, RobotProcessorPipeline
 
 
