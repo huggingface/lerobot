@@ -110,6 +110,30 @@ def test_dataset_initialization(tmp_path, lerobot_dataset_factory):
     assert dataset.num_frames == len(dataset)
 
 
+def test_dataset_decode_camera_streams_rejects_unknown_keys(tmp_path, lerobot_dataset_factory):
+    with pytest.raises(ValueError, match="Unknown decode_camera_streams"):
+        lerobot_dataset_factory(root=tmp_path / "test", decode_camera_streams=["tablet"])
+
+
+def test_dataset_decode_camera_streams_only_decodes_requested_streams(tmp_path, lerobot_dataset_factory):
+    from unittest.mock import patch
+
+    dataset = lerobot_dataset_factory(root=tmp_path / "test", decode_camera_streams=["laptop"])
+    decoded_paths = []
+
+    def mock_decode_video_frames(video_path, query_timestamps, tolerance_s, video_backend):
+        del query_timestamps, tolerance_s, video_backend
+        decoded_paths.append(Path(video_path))
+        return torch.zeros((1, 3, 64, 96), dtype=torch.float32)
+
+    with patch("lerobot.datasets.lerobot_dataset.decode_video_frames", side_effect=mock_decode_video_frames):
+        item = dataset[0]
+
+    assert "laptop" in item
+    assert "phone" not in item
+    assert decoded_paths == [dataset.root / dataset.meta.get_video_file_path(0, "laptop")]
+
+
 # TODO(rcadene, aliberts): do not run LeRobotDataset.create, instead refactor LeRobotDatasetMetadata.create
 # and test the small resulting function that validates the features
 def test_dataset_feature_with_forward_slash_raises_error():
