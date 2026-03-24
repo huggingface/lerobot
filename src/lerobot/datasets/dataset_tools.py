@@ -30,7 +30,6 @@ import shutil
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-import subprocess
 
 import av
 import concurrent
@@ -954,6 +953,7 @@ def _save_data_chunk(
     meta: LeRobotDatasetMetadata,
     chunk_idx: int = 0,
     file_idx: int = 0,
+    update_file: bool = True
 ) -> tuple[int, int, dict[int, dict]]:
     """Save a data chunk and return updated indices and episode metadata.
 
@@ -977,20 +977,22 @@ def _save_data_chunk(
         }
 
     file_size = get_parquet_file_size_in_mb(path)
-    if file_size >= DEFAULT_DATA_FILE_SIZE_IN_MB * 0.9:
-        chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, DEFAULT_CHUNK_SIZE)
+    if file_size >= meta.data_files_size_in_mb * 0.9 and update_file:
+        chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, meta.chunks_size)
 
     return chunk_idx, file_idx, episode_metadata
 
 
-# TODO: this doesn't consider reindexing data if data to insert are too large (>data_file_size_mb)
 def _copy_data_with_feature_changes(
     dataset: LeRobotDataset,
     new_meta: LeRobotDatasetMetadata,
     add_features: dict[str, tuple] | None = None,
     remove_features: list[str] | None = None,
 ) -> None:
-    """Copy data while adding or removing features."""
+    """Copy data while adding or removing features, dynamically chunking based on size limits."""
+    from lerobot.datasets.utils import DATA_DIR
+    import gc  # ADDED: explicit garbage collection to prevent swap saturation
+    
     data_dir = dataset.root / DATA_DIR
     parquet_files = sorted(data_dir.glob("*/*.parquet"))
 
@@ -998,52 +1000,123 @@ def _copy_data_with_feature_changes(
         raise ValueError(f"No parquet files found in {data_dir}")
 
     frame_idx = 0
+    
+    chunk_idx = 0
+    file_idx = 0
+    current_chunk_dfs = []
+    
+    current_frames_in_buffer = 0
+    estimated_mb = 0
+    bytes_per_frame = None 
+    
+    all_episodes_metadata = {}
 
     for src_path in tqdm(parquet_files, desc="Processing data files"):
+        # Load the raw, tiny dataframe
         df = pd.read_parquet(src_path).reset_index(drop=True)
 
-        relative_path = src_path.relative_to(dataset.root)
-        chunk_dir = relative_path.parts[1]
-        file_name = relative_path.parts[2]
+        for ep_idx in tqdm(df["episode_index"].unique(), desc=f"Processing episodes of {src_path.stem}", leave=False):
+            # 1. Slice first (keeps RAM footprint minimal)
+            ep_df = df[df["episode_index"] == ep_idx].copy()
 
-        chunk_idx = int(chunk_dir.split("-")[1])
-        file_idx = int(file_name.split("-")[1].split(".")[0])
+            # 2. Modify features ON THE SLICE ONLY ("Post-Inflation")
+            if remove_features:
+                ep_df = ep_df.drop(columns=remove_features, errors="ignore")
 
-        if remove_features:
-            df = df.drop(columns=remove_features, errors="ignore")
-
-        if add_features:
-            end_idx = frame_idx + len(df)
-            for feature_name, (values, feature_info) in add_features.items():
-                if feature_info["dtype"] == "video": # or images
-                    continue
-                if callable(values):
-                    feature_values = []
-                    for _, row in df.iterrows():
-                        ep_idx = row["episode_index"]
-                        frame_in_ep = row["frame_index"]
-                        value = values(row.to_dict(), ep_idx, frame_in_ep)
-                        if isinstance(value, np.ndarray) and value.size == 1:
-                            value = value.item()
-                        feature_values.append(value)
-                    df[feature_name] = feature_values
-                else:
-                    feature_slice = values[frame_idx:end_idx]
-                    if len(feature_slice.shape) > 1 and feature_slice.shape[1] == 1:
-                        df[feature_name] = feature_slice.flatten()
+            if add_features:
+                end_idx = frame_idx + len(ep_df)
+                for feature_name, (values, feature_info) in add_features.items():
+                    if feature_info["dtype"] in ["video", "image"]: 
+                        continue
+                    if callable(values):
+                        feature_values = []
+                        for _, row in ep_df.iterrows():
+                            val = values(row.to_dict(), ep_idx, row["frame_index"])
+                            if isinstance(val, np.ndarray) and val.size == 1:
+                                val = val.item()
+                            feature_values.append(val)
+                        ep_df[feature_name] = feature_values
                     else:
-                        df[feature_name] = feature_slice
-            frame_idx = end_idx
+                        feature_slice = values[frame_idx:end_idx]
+                        if len(feature_slice.shape) > 1 and feature_slice.shape[1] == 1:
+                            # (100, 1)    -> (100,)
+                            # (10, 1, 5)  -> (10, 5)
+                            ep_df[feature_name] = list(feature_slice.squeeze(axis=1))
+                        else:
+                            ep_df[feature_name] = list(feature_slice)
+                        
+                frame_idx = end_idx
 
-        # Write using the same chunk/file structure as source
-        dst_path = new_meta.root / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
-        dst_path.parent.mkdir(parents=True, exist_ok=True)
+            if bytes_per_frame is None and len(ep_df) > 0:
+                # get the one row dimension of the dataset to estimate the size
+                bytes_per_frame = 0
+                single_row_df = ep_df.iloc[0:1] 
+                
+                for col in ep_df.columns:
+                    val = single_row_df[col].iloc[0]
+                    
+                    # if the object knows its exact C-buffer size (NumPy, PyArrow, etc)
+                    if hasattr(val, "nbytes"):
+                        bytes_per_frame += val.nbytes
+                    else:
+                        # fallback: pandas deep-scan
+                        bytes_per_frame += single_row_df[[col]].memory_usage(deep=True).sum()
 
-        _write_parquet(df, dst_path, new_meta)
+            current_chunk_dfs.append(ep_df)
+            current_frames_in_buffer += len(ep_df)
+            
+            total_mem_bytes = current_frames_in_buffer * (bytes_per_frame or 0)
+            estimated_mb = total_mem_bytes / (1024 * 1024)
 
-    # TODO: _compute_basic_stats for new features
+            # flush if too big
+            if estimated_mb >= new_meta.data_files_size_in_mb * 0.9:
+                combined_df = pd.concat(current_chunk_dfs, ignore_index=True)
+                
+                # _save_data_chunk natively writes the file and iterates the file_idx for the next loop
+                chunk_idx, file_idx, ep_meta = _save_data_chunk(combined_df, new_meta, chunk_idx, file_idx, update_file=False)
+                chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, new_meta.chunks_size)
+
+                all_episodes_metadata.update(ep_meta)
+                
+                # 5. NUCLEAR DEALLOCATION
+                del combined_df
+                current_chunk_dfs.clear()
+                current_frames_in_buffer = 0
+                estimated_mb = 0
+                gc.collect() # Force OS to reclaim RAM immediately
+
+        # 6. NUCLEAR DEALLOCATION of the parent dataframe before loading the next file
+        del df
+        gc.collect()
+
+    # flush any remaining episodes left in the buffer at the end
+    if current_chunk_dfs:
+        combined_df = pd.concat(current_chunk_dfs, ignore_index=True)
+        chunk_idx, file_idx, ep_meta = _save_data_chunk(
+            combined_df, new_meta, chunk_idx, file_idx
+        )
+        all_episodes_metadata.update(ep_meta)
+        
+        # Final cleanup
+        del combined_df
+        current_chunk_dfs.clear()
+        gc.collect()
+
     _copy_episodes_metadata_and_stats(dataset, new_meta)
+    
+    logging.info("Updating episode metadata to reflect new data chunking")
+    episodes_ds = load_episodes(new_meta.root)
+    
+    def update_row(row):
+        ep_idx = row["episode_index"]
+        if ep_idx in all_episodes_metadata:
+            row.update(all_episodes_metadata[ep_idx])
+        return row
 
+    episodes_ds = episodes_ds.map(update_row)
+    
+    new_meta.episodes = episodes_ds
+    write_episodes(episodes_ds, new_meta.root)
 
 def _copy_videos(
     src_dataset: LeRobotDataset,
