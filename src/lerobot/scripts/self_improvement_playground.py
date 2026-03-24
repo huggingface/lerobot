@@ -134,7 +134,7 @@ for iteration in range(N_ITERS):
 # Final evaluation (non-blocking SLURM jobs)
 # ═════════════════════════════════════════════════════════════════
 logger.info("Submitting final multi-seed evaluation...")
-job_ids, eval_dir = evaluate_final(ckpt, policy_overrides=[
+job_ids, eval_dir = evaluate_final(ckpt, compute_script="compute_inference.sh", policy_overrides=[
     "--policy.use_planning=true",
     "--policy.planning.algorithm=gcp",
 ])

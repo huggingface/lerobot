@@ -491,21 +491,23 @@ def load_pretrain_datasets(
 
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-    # Load metadata to get fps and episode count
+    # Load metadata to get fps, episode count, and available features
     meta_ds = LeRobotDataset(repo_id)
     fps = meta_ds.fps
     n_episodes = meta_ds.num_episodes
+    available_features = set(meta_ds.features.keys())
     del meta_ds
 
     # Compute delta_timestamps from chunk_size and fps
+    # Only include observation features that actually exist in the dataset
     obs_deltas = [0.0, chunk_size / fps]
     action_deltas = [i / fps for i in range(chunk_size)]
-    delta_timestamps = {
-        "observation.image": obs_deltas,
-        "observation.state": obs_deltas,
-        "observation.environment_state": obs_deltas,
-        "action": action_deltas,
-    }
+    delta_timestamps = {"action": action_deltas}
+    for obs_key in ["observation.image", "observation.state", "observation.environment_state"]:
+        if obs_key in available_features:
+            delta_timestamps[obs_key] = obs_deltas
+
+    logger.info("Pretrain delta_timestamps keys: %s", list(delta_timestamps.keys()))
 
     # Split episodes: last val_ratio for validation
     n_val = max(1, int(n_episodes * val_ratio))
@@ -517,8 +519,12 @@ def load_pretrain_datasets(
         len(train_episodes), len(val_episodes), fps, chunk_size,
     )
 
-    train_ds = LeRobotDataset(repo_id, episodes=train_episodes, delta_timestamps=delta_timestamps)
-    val_ds = LeRobotDataset(repo_id, episodes=val_episodes, delta_timestamps=delta_timestamps)
+    train_ds = LeRobotDataset(
+        repo_id, episodes=train_episodes, delta_timestamps=delta_timestamps, video_backend="pyav",
+    )
+    val_ds = LeRobotDataset(
+        repo_id, episodes=val_episodes, delta_timestamps=delta_timestamps, video_backend="pyav",
+    )
 
     _pretrain_cache[cache_key] = (train_ds, val_ds)
     return train_ds, val_ds
@@ -814,7 +820,7 @@ def finetune(
     # ── pretrain replay + validation ─────────────────────────────
     pretrain_train_ds, pretrain_val_ds = load_pretrain_datasets(chunk_size=chunk_size)
     pretrain_loader = DataLoader(
-        pretrain_train_ds, batch_size=pretrain_bs, shuffle=True, num_workers=2,
+        pretrain_train_ds, batch_size=pretrain_bs, shuffle=True, num_workers=0,
         pin_memory=(device == "cuda"), drop_last=True,
     )
     val_loader = DataLoader(
@@ -984,7 +990,7 @@ def finetune_wm(
     # ── pretrain replay + validation ─────────────────────────────
     pretrain_train_ds, pretrain_val_ds = load_pretrain_datasets(chunk_size=chunk_size)
     pretrain_loader = DataLoader(
-        pretrain_train_ds, batch_size=pretrain_bs, shuffle=True, num_workers=2,
+        pretrain_train_ds, batch_size=pretrain_bs, shuffle=True, num_workers=0,
         pin_memory=(device == "cuda"), drop_last=True,
     )
     val_loader = DataLoader(
