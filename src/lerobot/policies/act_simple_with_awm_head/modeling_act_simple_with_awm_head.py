@@ -347,7 +347,6 @@ class ACTSimpleWithAWMHeadPolicy(PreTrainedPolicy):
         self._z_goal = encoder_in
         self._encoder_pos_cache = encoder_pos
 
-    @torch.no_grad()
     def _plan_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
         """Use MPPI planning to produce an optimized action chunk.
 
