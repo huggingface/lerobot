@@ -96,6 +96,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         root: str | Path | None = None,
         episodes: list[int] | None = None,
         image_transforms: Callable | None = None,
+        decode_camera_streams: list[str] | None = None,
         delta_timestamps: dict[str, list[float]] | None = None,
         tolerance_s: float = 1e-4,
         revision: str | None = None,
@@ -200,6 +201,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
             image_transforms (Callable | None, optional): You can pass standard v2 image transforms from
                 torchvision.transforms.v2 here which will be applied to visual modalities (whether they come
                 from videos or images). Defaults to None.
+            decode_camera_streams (list[str] | None, optional): Restrict video decoding during reads to a
+                subset of video feature keys. When provided, only those streams are decoded and returned by
+                __getitem__. Empty lists behave like None and keep the default behavior of decoding all video
+                streams. Defaults to None.
             delta_timestamps (dict[list[float]] | None, optional): _description_. Defaults to None.
             tolerance_s (float, optional): Tolerance in seconds used to ensure data timestamps are actually in
                 sync with the fps value. It is used at the init of the dataset to make sure that each
@@ -234,6 +239,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.repo_id = repo_id
         self.root = Path(root) if root else HF_LEROBOT_HOME / repo_id
         self.image_transforms = image_transforms
+        self.decode_camera_streams = set(decode_camera_streams) if decode_camera_streams else None
         self.delta_timestamps = delta_timestamps
         self.episodes = episodes
         self.tolerance_s = tolerance_s
@@ -259,6 +265,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.meta = LeRobotDatasetMetadata(
             self.repo_id, self.root, self.revision, force_cache_sync=force_cache_sync
         )
+        self._validate_decode_camera_streams()
 
         # Track dataset state for efficient incremental writing
         self._lazy_loading = False
@@ -495,6 +502,21 @@ class LeRobotDataset(torch.utils.data.Dataset):
         else:
             return get_hf_features_from_features(self.features)
 
+    def _validate_decode_camera_streams(self) -> None:
+        if self.decode_camera_streams is None:
+            return
+
+        unknown_streams = sorted(self.decode_camera_streams - set(self.meta.video_keys))
+        if unknown_streams:
+            raise ValueError(
+                f"Unknown decode_camera_streams: {unknown_streams}. Available video streams: {self.meta.video_keys}."
+            )
+
+    def _get_decode_video_keys(self) -> list[str]:
+        if self.decode_camera_streams is None:
+            return self.meta.video_keys
+        return [key for key in self.meta.video_keys if key in self.decode_camera_streams]
+
     def _get_query_indices(
         self, abs_idx: int, ep_idx: int
     ) -> tuple[dict[str, list[int]], dict[str, torch.Tensor]]:
@@ -621,16 +643,26 @@ class LeRobotDataset(torch.utils.data.Dataset):
             for key, val in query_result.items():
                 item[key] = val
 
-        if len(self.meta.video_keys) > 0:
+        decode_video_keys = self._get_decode_video_keys()
+        if len(decode_video_keys) > 0:
             current_ts = item["timestamp"].item()
             query_timestamps = self._get_query_timestamps(current_ts, query_indices)
+            query_timestamps = {key: value for key, value in query_timestamps.items() if key in decode_video_keys}
+            item = {
+                key: value
+                for key, value in item.items()
+                if not key.endswith("_is_pad")
+                or key[: -len("_is_pad")] not in self.meta.video_keys
+                or key[: -len("_is_pad")] in decode_video_keys
+            }
             video_frames = self._query_videos(query_timestamps, ep_idx)
             item = {**video_frames, **item}
 
         if self.image_transforms is not None:
             image_keys = self.meta.camera_keys
             for cam in image_keys:
-                item[cam] = self.image_transforms(item[cam])
+                if cam in item:
+                    item[cam] = self.image_transforms(item[cam])
 
         # Add task as a string
         task_idx = item["task_index"].item()
@@ -1214,6 +1246,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.episodes = None
         obj.hf_dataset = obj.create_hf_dataset()
         obj.image_transforms = None
+        obj.decode_camera_streams = None
         obj.delta_timestamps = None
         obj.delta_indices = None
         obj._absolute_to_relative_idx = None
