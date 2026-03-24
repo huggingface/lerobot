@@ -117,8 +117,8 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
   --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_merged_v2_value_5" \
   --pretrained_path="lerobot/pi05_base" \
   --epochs=2 \
-  --batch_size=2 \
-  --learning_rate=3e-4 \
+  --batch_size=1 \
+  --learning_rate=3e-3 \
   --num_workers=4 \
   --val_split_ratio=0.1 \
   --log_every_n_steps=10 \
@@ -126,7 +126,7 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
   --plot_every_n_train_steps=200 \
   --max_val_steps_per_step_validation=20 \
   --c_fail=500.0 \
-  --num_value_bins=16 \
+  --num_value_bins=56 \
   --val_plot_num_episodes=4 \
   --val_plot_num_frames=8 \
   --val_plot_every_n_epochs=1 \
@@ -157,7 +157,7 @@ Key SmolVLA-specific flags:
 uv run python -m lerobot.rl.algorithms.RECAPTrainSmolVLANetwork \
   --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
   --root="${HOME}/.cache/huggingface/lerobot" \
-  --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_smolvla_scratch_2" \
+  --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_smolvla_scratch_3" \
   --epochs=20 \
   --batch_size=6 \
   --learning_rate=3e-3 \

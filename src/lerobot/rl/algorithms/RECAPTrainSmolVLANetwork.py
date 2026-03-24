@@ -197,8 +197,13 @@ def run_recap_smolvla_train_val(cfg: RECAPSmolVLAValueTrainingConfig) -> None:
     )
     model = RECAPSmolVLAValueNetwork(model_config).to(device)
 
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+    logging.info(
+        f"Trainable parameters: {sum(p.numel() for p in trainable_params):,} "
+        f"/ {sum(p.numel() for p in model.parameters()):,} total"
+    )
     optimizer = torch.optim.AdamW(
-        model.parameters(),
+        trainable_params,
         lr=cfg.learning_rate,
         weight_decay=cfg.weight_decay,
     )

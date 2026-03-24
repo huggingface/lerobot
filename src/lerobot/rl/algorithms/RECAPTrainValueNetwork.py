@@ -176,6 +176,7 @@ def _is_known_video_validation_error(error: Exception) -> bool:
         or "Invalid data found when processing input" in message
         or "FrameTimestampError" in message
         or "tolerance_s=" in message
+        or "Failed to decode frame" in message
     )
 
 
@@ -557,24 +558,38 @@ class RECAPFrameSupervisionDataset(Dataset):
     _MAX_DECODE_RETRIES = 5
     _RETRY_BASE_DELAY_S = 0.1
 
-    def __getitem__(self, index: int) -> dict:
-        target = self.frame_targets[index]
-
-        last_error: Exception | None = None
+    def _decode_frame(self, frame_index: int) -> dict | None:
+        """Try to decode a single frame, returning None on persistent failure."""
         for attempt in range(self._MAX_DECODE_RETRIES):
             try:
-                frame = self.base_dataset[target.frame_index]
-                break
+                return self.base_dataset[frame_index]
             except RuntimeError as exc:
                 if not _is_known_video_validation_error(exc):
                     raise
-                last_error = exc
                 time.sleep(self._RETRY_BASE_DELAY_S * (2 ** attempt))
-        else:
-            raise RuntimeError(
-                f"Failed to decode frame {target.frame_index} after "
-                f"{self._MAX_DECODE_RETRIES} retries"
-            ) from last_error
+        return None
+
+    def __getitem__(self, index: int) -> dict:
+        target = self.frame_targets[index]
+
+        frame = self._decode_frame(target.frame_index)
+        if frame is None:
+            logging.warning(
+                f"Permanently failed to decode frame {target.frame_index} "
+                f"(episode {target.episode_index}); substituting a random frame."
+            )
+            for _ in range(self._MAX_DECODE_RETRIES):
+                alt_index = random.randint(0, len(self.frame_targets) - 1)
+                alt_target = self.frame_targets[alt_index]
+                frame = self._decode_frame(alt_target.frame_index)
+                if frame is not None:
+                    target = alt_target
+                    break
+            else:
+                raise RuntimeError(
+                    f"Failed to decode frame {target.frame_index} and "
+                    f"{self._MAX_DECODE_RETRIES} random substitutes"
+                )
 
         state_vector = _prepare_state_vector(frame.get(OBS_STATE), max_state_dim=self.max_state_dim)
         task = str(frame.get("task", target.task))
@@ -1047,8 +1062,13 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
     )
     model = RECAPValueNetwork(model_config).to(device)
 
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+    logging.info(
+        f"Trainable parameters: {sum(p.numel() for p in trainable_params):,} "
+        f"/ {sum(p.numel() for p in model.parameters()):,} total"
+    )
     optimizer = torch.optim.AdamW(
-        model.parameters(),
+        trainable_params,
         lr=cfg.learning_rate,
         weight_decay=cfg.weight_decay,
     )
