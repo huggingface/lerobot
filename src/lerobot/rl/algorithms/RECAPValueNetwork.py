@@ -55,6 +55,7 @@ class RECAPValueNetworkConfig:
     paligemma_variant: str = "gemma_300m"
     precision: Literal["bfloat16", "float32"] = "float32"
     image_size: int = 224
+    max_state_dim: int = 32
     freeze_vision_encoder: bool = False
     freeze_backbone: bool = False
     num_value_bins: int = 201
@@ -124,6 +125,8 @@ class RECAPValueNetwork(nn.Module):
             for param in vision_tower.parameters():
                 param.requires_grad = False
 
+        self.state_proj = nn.Linear(config.max_state_dim, gemma_config.width)
+
         self.fusion_head = nn.Sequential(
             nn.Linear(gemma_config.width, gemma_config.width),
             nn.SiLU(),
@@ -166,13 +169,17 @@ class RECAPValueNetwork(nn.Module):
 
         missing, unexpected = self.load_state_dict(vlm_state_dict, strict=False)
 
-        fusion_value_missing = [k for k in missing if k.startswith(("fusion_head.", "value_head.", "value_bin_support"))]
-        truly_missing = [k for k in missing if k not in fusion_value_missing]
+        expected_missing = [
+            k
+            for k in missing
+            if k.startswith(("state_proj.", "fusion_head.", "value_head.", "value_bin_support"))
+        ]
+        truly_missing = [k for k in missing if k not in expected_missing]
 
         loaded_count = len(vlm_state_dict) - len(unexpected)
         logging.info(
             f"Pretrained VLM weights: loaded {loaded_count} tensors, "
-            f"{len(fusion_value_missing)} expected-missing (fusion/value heads), "
+            f"{len(expected_missing)} expected-missing (state/fusion/value heads), "
             f"{len(truly_missing)} unexpectedly missing, "
             f"{len(unexpected)} unexpected."
         )
@@ -227,7 +234,13 @@ class RECAPValueNetwork(nn.Module):
             result = result.to(dtype=dtype)
         return result
 
-    def _build_prefix_embeddings(self, images: Tensor, input_ids: Tensor, attention_mask: Tensor) -> tuple[Tensor, Tensor, int]:
+    def _build_prefix_embeddings(
+        self,
+        images: Tensor,
+        state: Tensor,
+        input_ids: Tensor,
+        attention_mask: Tensor,
+    ) -> tuple[Tensor, Tensor, int, int]:
         if images.ndim == 4:
             images = images.unsqueeze(1)
         if images.ndim != 5:
@@ -262,14 +275,40 @@ class RECAPValueNetwork(nn.Module):
         lang_emb = lang_emb * math.sqrt(lang_emb.shape[-1])
         text_mask = attention_mask.bool()
 
-        full_embs = torch.cat((img_emb, lang_emb), dim=1)
-        full_mask = torch.cat((image_mask, text_mask), dim=1)
-        return full_embs, full_mask, image_token_len
+        if state.ndim == 2:
+            state = state.unsqueeze(1)
+        if state.ndim != 3:
+            raise ValueError(
+                f"Expected state with shape [B, D_state] or [B, N_state, D_state], got {tuple(state.shape)}"
+            )
+        if state.shape[0] != batch_size:
+            raise ValueError(
+                f"State batch size {state.shape[0]} must match image batch size {batch_size}"
+            )
+        if state.shape[-1] != self.config.max_state_dim:
+            raise ValueError(
+                f"Expected state dim {self.config.max_state_dim}, got {state.shape[-1]}"
+            )
 
-    def forward(self, images: Tensor, input_ids: Tensor, attention_mask: Tensor) -> dict[str, Tensor]:
+        state = state.to(device=img_emb.device, dtype=self.state_proj.weight.dtype)
+        state_emb = self.state_proj(state).to(dtype=lang_emb.dtype)
+        state_token_len = state_emb.shape[1]
+        state_mask = torch.ones(
+            batch_size,
+            state_token_len,
+            dtype=torch.bool,
+            device=img_emb.device,
+        )
+
+        full_embs = torch.cat((img_emb, lang_emb, state_emb), dim=1)
+        full_mask = torch.cat((image_mask, text_mask, state_mask), dim=1)
+        return full_embs, full_mask, image_token_len, state_token_len
+
+    def forward(self, images: Tensor, state: Tensor, input_ids: Tensor, attention_mask: Tensor) -> dict[str, Tensor]:
         """
         Args:
             images: [B, N_cam, 3, H, W] or [B, 3, H, W]
+            state: [B, D_state] or [B, N_state, D_state]
             input_ids: [B, T]
             attention_mask: [B, T]
         Returns:
@@ -283,8 +322,9 @@ class RECAPValueNetwork(nn.Module):
         input_ids = input_ids.long()
         attention_mask = attention_mask.bool()
 
-        prefix_embs, prefix_pad_mask, image_token_len = self._build_prefix_embeddings(
+        prefix_embs, prefix_pad_mask, _image_token_len, state_token_len = self._build_prefix_embeddings(
             images=images,
+            state=state,
             input_ids=input_ids,
             attention_mask=attention_mask,
         )
@@ -300,13 +340,14 @@ class RECAPValueNetwork(nn.Module):
             use_cache=False,
         ).last_hidden_state
 
-        lang_hidden = prefix_output[:, image_token_len:, :]
-        last_valid_idx = attention_mask.sum(dim=1).long() - 1
-        text_feat = lang_hidden[torch.arange(lang_hidden.size(0), device=lang_hidden.device), last_valid_idx]
+        if state_token_len <= 0:
+            raise ValueError(f"Expected at least one state token, got {state_token_len}")
+        state_hidden = prefix_output[:, -state_token_len:, :]
+        value_feat = state_hidden[:, -1, :]
 
         fusion_dtype = self.fusion_head[0].weight.dtype
         value_head_dtype = self.value_head.weight.dtype
-        fused = self.fusion_head(text_feat.to(dtype=fusion_dtype))
+        fused = self.fusion_head(value_feat.to(dtype=fusion_dtype))
         value_logits = self.value_head(fused.to(dtype=value_head_dtype))
 
         value_probs = torch.softmax(value_logits.float(), dim=-1)
@@ -317,3 +358,15 @@ class RECAPValueNetwork(nn.Module):
             "value_probs": value_probs,
             "expected_value": expected_value,
         }
+
+
+if __name__ == "__main__":
+    model_config = RECAPValueNetworkConfig()
+    model = RECAPValueNetwork(model_config)
+
+    total_params = sum(param.numel() for param in model.parameters())
+    trainable_params = sum(param.numel() for param in model.parameters() if param.requires_grad)
+
+    print(model)
+    print(f"Total parameters: {total_params:,}")
+    print(f"Trainable parameters: {trainable_params:,}")

@@ -484,13 +484,9 @@ def _prepare_state_vector(state, max_state_dim: int) -> torch.Tensor:
     return state_tensor
 
 
-def _build_critic_prompt(task: str, state_vector: torch.Tensor) -> str:
+def _build_critic_prompt(task: str) -> str:
     cleaned_task = task.strip().replace("_", " ").replace("\n", " ").lower()
-    state_np = state_vector.cpu().numpy()
-    clipped = np.clip(state_np, -1.0, 1.0)
-    discretized = np.digitize(clipped, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
-    state_str = " ".join(map(str, discretized.tolist()))
-    return f"Task: {cleaned_task}, State: {state_str};\n"
+    return f"Task: {cleaned_task};\n"
 
 
 def _to_chw_float_tensor(image) -> torch.Tensor:
@@ -563,11 +559,12 @@ class RECAPFrameSupervisionDataset(Dataset):
 
         state_vector = _prepare_state_vector(frame.get(OBS_STATE), max_state_dim=self.max_state_dim)
         task = str(frame.get("task", target.task))
-        prompt = _build_critic_prompt(task=task, state_vector=state_vector)
+        prompt = _build_critic_prompt(task=task)
         images = _collect_images(frame=frame, camera_keys=self.camera_keys, image_size=self.image_size)
 
         return {
             "images": images,
+            "state": state_vector,
             "prompt": prompt,
             "frame_index": target.frame_index,
             "episode_index": target.episode_index,
@@ -596,6 +593,7 @@ class RECAPBatchCollator:
 
         return {
             "images": torch.stack([sample["images"] for sample in samples], dim=0),
+            "state": torch.stack([sample["state"] for sample in samples], dim=0),
             "input_ids": tokenized["input_ids"],
             "attention_mask": tokenized["attention_mask"].bool(),
             "frame_index": torch.tensor([sample["frame_index"] for sample in samples], dtype=torch.long),
@@ -782,6 +780,7 @@ def _run_epoch(
 
         outputs = model(
             images=batch["images"],
+            state=batch["state"],
             input_ids=batch["input_ids"],
             attention_mask=batch["attention_mask"],
         )
@@ -1019,6 +1018,7 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
         paligemma_variant=cfg.paligemma_variant,
         precision=model_precision,
         image_size=cfg.image_size,
+        max_state_dim=cfg.max_state_dim,
         freeze_vision_encoder=cfg.freeze_vision_encoder,
         freeze_backbone=cfg.freeze_backbone,
         num_value_bins=cfg.num_value_bins,
