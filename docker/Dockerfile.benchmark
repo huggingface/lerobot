@@ -140,6 +140,17 @@ assets=os.path.join(root,'assets')); \
 cfg_dir = os.path.expanduser('~/.libero'); os.makedirs(cfg_dir, exist_ok=True); \
 yaml.dump(d, open(os.path.join(cfg_dir,'config.yaml'),'w')); print('libero config created')" \
         && /lerobot/.venv/bin/python -c "from libero.libero import benchmark, get_libero_path; print('libero OK')" ;; \
+    libero) \
+        uv pip install --no-cache ".[libero]" \
+        && /lerobot/.venv/bin/python -c "\
+import os, yaml, importlib.util; \
+root = os.path.dirname(importlib.util.find_spec('libero.libero').origin); \
+d = dict(benchmark_root=root, bddl_files=os.path.join(root,'bddl_files'), \
+init_states=os.path.join(root,'init_files'), datasets=os.path.join(root,'..','datasets'), \
+assets=os.path.join(root,'assets')); \
+cfg_dir = os.path.expanduser('~/.libero'); os.makedirs(cfg_dir, exist_ok=True); \
+yaml.dump(d, open(os.path.join(cfg_dir,'config.yaml'),'w')); print('libero config created')" \
+        && /lerobot/.venv/bin/python -c "from libero.libero import benchmark, get_libero_path; print('libero OK')" ;; \
     *) \
         uv pip install --no-cache ".[${BENCHMARK}]" ;; \
     esac
