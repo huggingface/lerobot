@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from lerobot.scripts.lerobot_calibrate import CalibrateConfig, calibrate
@@ -121,3 +122,50 @@ def test_record_and_replay(tmp_path):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(tmp_path / "record_and_replay")
         replay(replay_cfg)
+
+
+def test_record_passes_rename_map_to_make_policy(tmp_path):
+    robot_cfg = MockRobotConfig()
+    dataset_cfg = DatasetRecordConfig(
+        repo_id="dummy/eval_repo",
+        single_task="Dummy task",
+        root=tmp_path / "record_with_policy",
+        num_episodes=1,
+        episode_time_s=0.01,
+        reset_time_s=0,
+        push_to_hub=False,
+        rename_map={"observation.images.left": "observation.images.camera1"},
+    )
+    policy_cfg = SimpleNamespace(device="cpu", pretrained_path=None, type="mock_policy")
+    cfg = RecordConfig(
+        robot=robot_cfg,
+        dataset=dataset_cfg,
+        policy=policy_cfg,
+        play_sounds=False,
+    )
+
+    captured = {"rename_map": None}
+
+    def dummy_make_policy(policy_cfg, ds_meta, rename_map):
+        captured["rename_map"] = rename_map
+        return None
+
+    def dummy_make_pre_post_processors(**kwargs):
+        return None, None
+
+    def dummy_record_loop(*args, **kwargs):
+        dataset = kwargs.get("dataset")
+        single_task = kwargs.get("single_task")
+        if dataset is not None:
+            dataset.add_frame({"task": single_task})
+
+    with (
+        patch("lerobot.scripts.lerobot_record.make_policy", dummy_make_policy),
+        patch("lerobot.scripts.lerobot_record.make_pre_post_processors", dummy_make_pre_post_processors),
+        patch("lerobot.scripts.lerobot_record.record_loop", dummy_record_loop),
+        patch("lerobot.scripts.lerobot_record.init_keyboard_listener", return_value=(None, {"stop_recording": False})),
+        patch("lerobot.scripts.lerobot_record.log_say"),
+    ):
+        record(cfg)
+
+    assert captured["rename_map"] == dataset_cfg.rename_map
