@@ -142,9 +142,9 @@ def test_write_image_image(tmp_path, img_factory):
 def test_write_image_exception(tmp_path):
     image_array = "invalid data"
     fpath = tmp_path / DUMMY_IMAGE
-    with patch("builtins.print") as mock_print:
+    with patch("lerobot.datasets.image_writer.logger") as mock_logger:
         write_image(image_array, fpath)
-        mock_print.assert_called()
+        mock_logger.error.assert_called()
         assert not fpath.exists()
 
 
@@ -243,10 +243,10 @@ def test_save_image_invalid_data(tmp_path):
         image_array = "invalid data"
         fpath = tmp_path / DUMMY_IMAGE
         fpath.parent.mkdir(parents=True, exist_ok=True)
-        with patch("builtins.print") as mock_print:
+        with patch("lerobot.datasets.image_writer.logger") as mock_logger:
             writer.save_image(image_array, fpath)
             writer.wait_until_done()
-            mock_print.assert_called()
+            mock_logger.error.assert_called()
             assert not fpath.exists()
     finally:
         writer.stop()

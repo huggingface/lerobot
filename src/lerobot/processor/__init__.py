@@ -14,19 +14,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .batch_processor import AddBatchDimensionProcessorStep
-from .converters import (
-    batch_to_transition,
-    create_transition,
-    transition_to_batch,
-)
-from .core import (
+from lerobot.types import (
     EnvAction,
     EnvTransition,
     PolicyAction,
     RobotAction,
     RobotObservation,
     TransitionKey,
+)
+
+from .batch_processor import AddBatchDimensionProcessorStep
+from .converters import (
+    batch_to_transition,
+    create_transition,
+    transition_to_batch,
 )
 from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
 from .device_processor import DeviceProcessorStep

@@ -28,13 +28,13 @@ Usage:
 
 Convert a dataset from the hub:
 ```bash
-python src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
+python src/lerobot/scripts/convert_dataset_v21_to_v30.py \
     --repo-id=lerobot/pusht
 ```
 
 Convert a local dataset (works in place):
 ```bash
-python src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
+python src/lerobot/scripts/convert_dataset_v21_to_v30.py \
     --repo-id=lerobot/pusht \
     --root=/path/to/local/dataset/directory \
     --push-to-hub=false
@@ -60,7 +60,19 @@ from huggingface_hub import HfApi, snapshot_download
 from requests import HTTPError
 
 from lerobot.datasets.compute_stats import aggregate_stats
-from lerobot.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
+from lerobot.datasets.dataset_metadata import CODEBASE_VERSION
+from lerobot.datasets.io_utils import (
+    cast_stats_to_numpy,
+    get_file_size_in_mb,
+    get_parquet_file_size_in_mb,
+    get_parquet_num_frames,
+    load_info,
+    write_episodes,
+    write_info,
+    write_stats,
+    write_tasks,
+)
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
@@ -70,17 +82,8 @@ from lerobot.datasets.utils import (
     LEGACY_EPISODES_PATH,
     LEGACY_EPISODES_STATS_PATH,
     LEGACY_TASKS_PATH,
-    cast_stats_to_numpy,
     flatten_dict,
-    get_file_size_in_mb,
-    get_parquet_file_size_in_mb,
-    get_parquet_num_frames,
-    load_info,
     update_chunk_file_indices,
-    write_episodes,
-    write_info,
-    write_stats,
-    write_tasks,
 )
 from lerobot.datasets.video_utils import concatenate_video_files, get_video_duration_in_s
 from lerobot.utils.constants import HF_LEROBOT_HOME

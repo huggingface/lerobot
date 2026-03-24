@@ -19,8 +19,8 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import Any
 
-from lerobot.processor import RobotAction
 from lerobot.teleoperators import Teleoperator, TeleoperatorConfig
+from lerobot.types import RobotAction
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 

@@ -17,8 +17,8 @@
 from dataclasses import dataclass
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.types import PolicyAction, RobotAction
 
-from .core import PolicyAction, RobotAction
 from .pipeline import ActionProcessorStep, ProcessorStepRegistry, RobotActionProcessorStep
 
 
