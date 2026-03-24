@@ -195,6 +195,7 @@ class RoboCasaEnv(RoboCasaGymEnv):
             observation (RobotObservation): The initial formatted observation.
             info (Dict[str, Any]): Additional info about the reset state.
         """
+        self.unwrapped.sim._render_context_offscreen.gl_ctx.free()
         observation, info = super().reset(seed, **kwargs)
         new_obs = self.get_obs(observation)
         return new_obs, info 
@@ -223,6 +224,7 @@ class RoboCasaEnv(RoboCasaGymEnv):
             truncated (bool): Whether the episode was truncated due to a time limit.
             info (Dict[str, Any]): Additional environment info.
         """
+        self.unwrapped.sim._render_context_offscreen.gl_ctx.make_current()
         if action.ndim != 1:
             raise ValueError(
                 f"Expected action to be 1-D (shape (action_dim,)), "
