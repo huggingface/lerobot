@@ -258,6 +258,14 @@ def run_eval_in_docker(cfg: EvalPipelineConfig) -> None:
         if s_idx > 0:
             policy = make_policy(cfg=cfg.policy, env_cfg=cfg.env, rename_map=cfg.rename_map)
             policy.eval()
+            preprocessor, postprocessor = make_pre_post_processors(
+                policy_cfg=cfg.policy,
+                pretrained_path=cfg.policy.pretrained_path,
+                preprocessor_overrides=preprocessor_overrides,
+            )
+            env_preprocessor, _ = make_env_pre_post_processors(
+                env_cfg=cfg.env, policy_cfg=cfg.policy,
+            )
         srv = _InferenceServer(
             ("0.0.0.0", port),  # nosec B104
             policy=policy,
@@ -365,6 +373,14 @@ def run_eval_multiprocess(cfg: EvalPipelineConfig) -> None:
         if s_idx > 0:
             policy = make_policy(cfg=cfg.policy, env_cfg=cfg.env, rename_map=cfg.rename_map)
             policy.eval()
+            preprocessor, postprocessor = make_pre_post_processors(
+                policy_cfg=cfg.policy,
+                pretrained_path=cfg.policy.pretrained_path,
+                preprocessor_overrides=preprocessor_overrides,
+            )
+            env_preprocessor, _ = make_env_pre_post_processors(
+                env_cfg=cfg.env, policy_cfg=cfg.policy,
+            )
         srv = _InferenceServer(
             ("0.0.0.0", port),  # nosec B104
             policy=policy,
