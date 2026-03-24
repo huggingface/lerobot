@@ -605,43 +605,130 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def __len__(self):
         return self.num_frames
 
-    def __getitem__(self, idx) -> dict:
-        # Ensure dataset is loaded when we actually need to read from it
-        self._ensure_hf_dataset_loaded()
-        item = self.hf_dataset[idx]
-        ep_idx = item["episode_index"].item()
-        # Use the absolute index from the dataset for delta timestamp calculations
-        abs_idx = item["index"].item()
+    def _get_items(self, indices: list[int]) -> list[dict]:
+        if len(indices) == 0:
+            return []
 
-        query_indices = None
+        self._ensure_hf_dataset_loaded()
+        is_contiguous = indices == list(range(indices[0], indices[0] + len(indices)))
+        batch = (
+            self.hf_dataset[slice(indices[0], indices[-1] + 1)] if is_contiguous else self.hf_dataset[indices]
+        )
+
+        batch_indices = [x.item() if isinstance(x, torch.Tensor) else x for x in batch["index"]]
+        episode_indices = [x.item() if isinstance(x, torch.Tensor) else x for x in batch["episode_index"]]
+        batch_size = len(batch_indices)
+
+        query_indices_map: dict[str, list[list[int]]] = {}
+        padding_map: dict[str, list[torch.Tensor]] = {}
         if self.delta_indices is not None:
-            query_indices, padding = self._get_query_indices(abs_idx, ep_idx)
-            query_result = self._query_hf_dataset(query_indices)
-            item = {**item, **padding}
-            for key, val in query_result.items():
-                item[key] = val
+            for i in range(batch_size):
+                query_indices, padding = self._get_query_indices(batch_indices[i], episode_indices[i])
+
+                for key, idxs in query_indices.items():
+                    query_indices_map.setdefault(key, []).append(idxs)
+
+                for key, mask in padding.items():
+                    padding_map.setdefault(key, []).append(mask)
+
+            flat_query_indices = {
+                key: [query_idx for idxs in per_item_indices for query_idx in idxs]
+                for key, per_item_indices in query_indices_map.items()
+            }
+            if flat_query_indices:
+                flat_query_result = self._query_hf_dataset(flat_query_indices)
+                for key, value in flat_query_result.items():
+                    num_deltas = len(self.delta_indices[key])
+                    batch[key] = value.reshape(batch_size, num_deltas, *value.shape[1:])
+
+            for key, val_list in padding_map.items():
+                batch[key] = torch.stack(val_list)
 
         if len(self.meta.video_keys) > 0:
-            current_ts = item["timestamp"].item()
-            query_timestamps = self._get_query_timestamps(current_ts, query_indices)
-            video_frames = self._query_videos(query_timestamps, ep_idx)
-            item = {**video_frames, **item}
+            video_frames_batch = {key: [None] * batch_size for key in self.meta.video_keys}
+            requests_by_episode: dict[int, list[tuple[int, dict[str, list[float]]]]] = {}
 
+            for i in range(batch_size):
+                current_ts = batch["timestamp"][i].item()
+                ep_idx = episode_indices[i]
+                query_indices = (
+                    {key: query_indices_map[key][i] for key in query_indices_map}
+                    if self.delta_indices
+                    else None
+                )
+                query_timestamps = self._get_query_timestamps(current_ts, query_indices)
+                requests_by_episode.setdefault(ep_idx, []).append((i, query_timestamps))
+
+            for ep_idx, requests in requests_by_episode.items():
+                ep = self.meta.episodes[ep_idx]
+
+                for vid_key in self.meta.video_keys:
+                    video_path = self.root / self.meta.get_video_file_path(ep_idx, vid_key)
+                    from_timestamp = ep[f"videos/{vid_key}/from_timestamp"]
+                    all_timestamps = []
+                    request_mapping = []
+                    offset = 0
+
+                    for batch_idx, query_timestamps in requests:
+                        shifted_timestamps = [from_timestamp + ts for ts in query_timestamps[vid_key]]
+                        all_timestamps.extend(shifted_timestamps)
+                        request_mapping.append((batch_idx, offset, len(shifted_timestamps)))
+                        offset += len(shifted_timestamps)
+
+                    frames = decode_video_frames(
+                        video_path, all_timestamps, self.tolerance_s, self.video_backend
+                    )
+
+                    for batch_idx, start_idx, count in request_mapping:
+                        frames_for_item = frames[start_idx : start_idx + count]
+                        video_frames_batch[vid_key][batch_idx] = (
+                            frames_for_item.squeeze(0) if count == 1 else frames_for_item
+                        )
+
+            for vid_key in self.meta.video_keys:
+                batch[vid_key] = torch.stack(video_frames_batch[vid_key])
+
+        items = []
+        for i in range(batch_size):
+            item = {}
+            for key, value in batch.items():
+                if isinstance(value, (list, tuple, torch.Tensor, np.ndarray)):
+                    item[key] = value[i]
+                else:
+                    item[key] = value
+            items.append(self._finalize_item(item))
+
+        return items
+
+    def _finalize_item(self, item: dict) -> dict:
         if self.image_transforms is not None:
-            image_keys = self.meta.camera_keys
-            for cam in image_keys:
+            for cam in self.meta.camera_keys:
                 item[cam] = self.image_transforms(item[cam])
 
-        # Add task as a string
         task_idx = item["task_index"].item()
         item["task"] = self.meta.tasks.iloc[task_idx].name
 
-        # add subtask information if available
         if "subtask_index" in self.features and self.meta.subtasks is not None:
             subtask_idx = item["subtask_index"].item()
             item["subtask"] = self.meta.subtasks.iloc[subtask_idx].name
 
         return item
+
+    def _normalize_index(self, idx: int) -> int:
+        if idx < 0:
+            idx += len(self)
+        if idx < 0 or idx >= len(self):
+            raise IndexError("index out of range")
+        return idx
+
+    def __getitem__(self, idx) -> dict | list[dict]:
+        if isinstance(idx, slice):
+            return self._get_items(list(range(*idx.indices(len(self)))))
+        if isinstance(idx, (int, np.integer)):
+            return self._get_items([self._normalize_index(int(idx))])[0]
+        raise TypeError(
+            f"{self.__class__.__name__} indices must be integers or slices, not {type(idx).__name__}"
+        )
 
     def __repr__(self):
         feature_keys = list(self.features)
