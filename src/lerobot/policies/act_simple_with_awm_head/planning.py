@@ -14,8 +14,8 @@ from torch import Tensor
 class PlanningConfig:
     """Configuration for test-time latent state planning.
 
-    Shared fields (used by both MPPI and GCP):
-        algorithm: Planning algorithm — "mppi" or "gcp".
+    Shared fields (used by both MPPI and GBP):
+        algorithm: Planning algorithm — "mppi" or "gbp".
         n_samples: Number of candidate trajectories sampled per iteration.
         n_iters: Maximum number of refinement iterations.
         noise_std: Initial noise standard deviation for trajectory perturbation.
@@ -25,7 +25,7 @@ class PlanningConfig:
     MPPI-specific:
         temperature: Softmax temperature for importance weight computation.
 
-    GCP-specific:
+    GBP-specific:
         lr: Gradient descent step size.
         lr_decay: Multiplicative decay applied to lr each iteration.
         convergence_tol: Early-stop when max absolute action change < this value.
@@ -42,7 +42,7 @@ class PlanningConfig:
     # MPPI
     temperature: float = 1.0
 
-    # GCP
+    # GBP
     lr: float = 0.1
     lr_decay: float = 1.0
     convergence_tol: float = 1e-3
@@ -139,7 +139,7 @@ class MPPIPlanner(BasePlanner):
         return mean  # (T, action_dim)
 
 
-class GCPPlanner(BasePlanner):
+class GBPPlanner(BasePlanner):
     """Gradient-based planning through the world model.
 
     Differentiates the latent cosine-similarity cost directly w.r.t. the
@@ -199,14 +199,14 @@ class GCPPlanner(BasePlanner):
                 # accumulate .grad on WM parameters, keeping the model weights untouched.
                 if cost.grad_fn is None:
                     raise RuntimeError(
-                        "GCPPlanner: cost has no grad_fn — wm_predict_fn output is fully detached "
+                        "GBPPlanner: cost has no grad_fn — wm_predict_fn output is fully detached "
                         "from the computation graph. Check that the WM decoder's output depends "
                         "on the action input."
                     )
                 (grad,) = torch.autograd.grad(cost, actions_opt, allow_unused=True)
                 if grad is None:
                     raise RuntimeError(
-                        "GCPPlanner: gradient of cost w.r.t. actions is None — the WM output does "
+                        "GBPPlanner: gradient of cost w.r.t. actions is None — the WM output does "
                         "not depend on the action input. Check that wm_predict_fn uses the actions "
                         "argument in its computation."
                     )
@@ -227,6 +227,6 @@ def make_planner(config: PlanningConfig) -> BasePlanner:
     """Instantiate a planner from a PlanningConfig."""
     if config.algorithm == "mppi":
         return MPPIPlanner(config)
-    if config.algorithm == "gcp":
-        return GCPPlanner(config)
-    raise ValueError(f"Unknown planning algorithm: {config.algorithm!r}. Choose 'mppi' or 'gcp'.")
+    if config.algorithm == "gbp":
+        return GBPPlanner(config)
+    raise ValueError(f"Unknown planning algorithm: {config.algorithm!r}. Choose 'mppi' or 'gbp'.")
