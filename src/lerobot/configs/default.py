@@ -77,7 +77,8 @@ class EvalConfig:
     # Use AsyncVectorEnv (multiprocessing). Prefer SyncVectorEnv unless your environment
     # spends significant time in Python-side stepping and can benefit from process parallelism.
     use_async_envs: bool = False
-    # Runtime where evaluation executes: "local" or "docker".
+    # Runtime where evaluation executes: "local", "docker", or "multiprocess".
+    # "multiprocess" spawns local worker processes + policy servers.
     runtime: str = "local"
     docker: EvalDockerConfig = field(default_factory=EvalDockerConfig)
     # Number of parallel eval script instances to launch for one run.
@@ -86,14 +87,18 @@ class EvalConfig:
     # 0-indexed shard id for this process. Users usually leave this at 0.
     # Additional shards are launched automatically by `lerobot-eval` when instance_count > 1.
     instance_id: int = 0
-    # Number of policy inference servers to run in parallel (Docker runtime only).
+    # Number of policy inference servers to run in parallel (docker/multiprocess runtimes).
     # Each server loads a copy of the model and listens on consecutive ports
-    # starting from eval.docker.port. Containers are round-robin assigned.
+    # starting from eval.docker.port. Workers are round-robin assigned.
     policy_servers: int = 1
+    # Base port for policy servers in multiprocess mode.
+    port: int = 50051
 
     def __post_init__(self) -> None:
-        if self.runtime not in {"local", "docker"}:
-            raise ValueError(f"Unsupported eval.runtime '{self.runtime}'. Expected one of: local, docker.")
+        if self.runtime not in {"local", "docker", "multiprocess"}:
+            raise ValueError(
+                f"Unsupported eval.runtime '{self.runtime}'. Expected one of: local, docker, multiprocess."
+            )
         if self.instance_count < 1:
             raise ValueError("eval.instance_count must be >= 1.")
         if self.instance_id < 0 or self.instance_id >= self.instance_count:

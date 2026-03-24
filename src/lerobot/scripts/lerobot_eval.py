@@ -74,7 +74,7 @@ from tqdm import trange
 
 from lerobot.configs import parser
 from lerobot.configs.eval import EvalPipelineConfig
-from lerobot.envs.docker_runtime import run_eval_in_docker
+
 from lerobot.envs.factory import make_env, make_env_pre_post_processors
 from lerobot.envs.lazy_vec_env import LazyVectorEnv
 from lerobot.envs.utils import (
@@ -674,8 +674,13 @@ def _maybe_push_eval_outputs(cfg: EvalPipelineConfig, info: dict) -> None:
 def _run_eval_worker(cfg: EvalPipelineConfig) -> dict:
     logging.info(pformat(asdict(cfg)))
 
-    if cfg.eval.runtime == "docker":
-        run_eval_in_docker(cfg)
+    if cfg.eval.runtime in ("docker", "multiprocess"):
+        from lerobot.envs.docker_runtime import run_eval_in_docker, run_eval_multiprocess
+
+        if cfg.eval.runtime == "docker":
+            run_eval_in_docker(cfg)
+        else:
+            run_eval_multiprocess(cfg)
         output_dir = Path(cfg.output_dir)
         with open(output_dir / "eval_info.json") as f:
             return json.load(f)
