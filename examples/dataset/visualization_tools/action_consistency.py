@@ -36,7 +36,7 @@ K_NEIGHBORS = 50
 ACTION_CHUNK_SIZE = 30
 CAMERA_KEY = "observation.images.base"
 ENCODER_MODEL = "google/siglip-base-patch16-224"
-ENCODE_BATCH_SIZE = 128
+ENCODE_BATCH_SIZE = 512
 SEED = 42
 DPI = 150
 
