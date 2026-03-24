@@ -18,7 +18,7 @@ DATASETS = [
     {"repo_id": "lerobot-data-collection/level2_final_quality3", "label": "HQ curated"},
     {"repo_id": "lerobot-data-collection/level12_rac_2_2026-02-08_1", "label": "Full collection"},
 ]
-OUTPUT_DIR = Path("/Users/pepijnkooijmans/Documents/GitHub_local/progress_videos")
+OUTPUT_DIR = Path(__file__).resolve().parent / "outputs"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 N_CLUSTERS = 10

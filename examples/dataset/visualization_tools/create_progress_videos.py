@@ -19,7 +19,7 @@ DATASETS = [
 CAMERA_KEY = (
     "observation.images.base"  # None = auto-select first camera, or set e.g. "observation.images.top"
 )
-OUTPUT_DIR = Path("/Users/pepijnkooijmans/Documents/GitHub_local/progress_videos")
+OUTPUT_DIR = Path(__file__).resolve().parent / "outputs"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 # Progress line spans the full video height

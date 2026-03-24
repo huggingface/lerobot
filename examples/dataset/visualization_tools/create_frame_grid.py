@@ -18,7 +18,7 @@ CAMERA_KEY = "observation.images.base"
 GRID_COLS = 15
 GRID_ROWS = 10
 THUMB_WIDTH = 160
-OUTPUT_DIR = Path("/Users/pepijnkooijmans/Documents/GitHub_local/progress_videos")
+OUTPUT_DIR = Path(__file__).resolve().parent / "outputs"
 OUTPUT_DIR.mkdir(exist_ok=True)
 SEED = 1
 
