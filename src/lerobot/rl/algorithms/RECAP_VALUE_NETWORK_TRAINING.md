@@ -138,7 +138,7 @@ SmolVLA backbone (from scratch, full model)
 uv run python -m lerobot.rl.algorithms.RECAPTrainSmolVLANetwork \
   --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
   --root="${HOME}/.cache/huggingface/lerobot" \
-  --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_smolvla_scratch_0" \
+  --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_smolvla_scratch_2" \
   --epochs=20 \
   --batch_size=6 \
   --learning_rate=3e-3 \
@@ -153,8 +153,8 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainSmolVLANetwork \
   --val_plot_num_episodes=4 \
   --val_plot_num_frames=8 \
   --val_plot_every_n_epochs=1 \
-  --load_vlm_weights=false \
-  --freeze_vision_encoder=false \
+  --load_vlm_weights=true \
+  --freeze_vision_encoder=true \
   --freeze_backbone=false \
   --model_precision="bfloat16"
   ```

@@ -553,9 +553,27 @@ class RECAPFrameSupervisionDataset(Dataset):
     def __len__(self) -> int:
         return len(self.frame_targets)
 
+    _MAX_DECODE_RETRIES = 5
+    _RETRY_BASE_DELAY_S = 0.1
+
     def __getitem__(self, index: int) -> dict:
         target = self.frame_targets[index]
-        frame = self.base_dataset[target.frame_index]
+
+        last_error: Exception | None = None
+        for attempt in range(self._MAX_DECODE_RETRIES):
+            try:
+                frame = self.base_dataset[target.frame_index]
+                break
+            except RuntimeError as exc:
+                if not _is_known_video_validation_error(exc):
+                    raise
+                last_error = exc
+                time.sleep(self._RETRY_BASE_DELAY_S * (2 ** attempt))
+        else:
+            raise RuntimeError(
+                f"Failed to decode frame {target.frame_index} after "
+                f"{self._MAX_DECODE_RETRIES} retries"
+            ) from last_error
 
         state_vector = _prepare_state_vector(frame.get(OBS_STATE), max_state_dim=self.max_state_dim)
         task = str(frame.get("task", target.task))
