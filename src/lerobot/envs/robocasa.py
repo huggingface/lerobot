@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,7 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import json
 from collections import defaultdict
 from collections.abc import Callable, Sequence, Mapping
 from functools import partial
@@ -24,7 +23,7 @@ import numpy as np
 
 from lerobot.types import RobotObservation
 from robocasa.wrappers.gym_wrapper import RoboCasaGymEnv
-from robocasa.utils.env_utils import create_env, convert_action
+from robocasa.utils.env_utils import create_env
 from robocasa.utils.dataset_registry import ATOMIC_TASK_DATASETS 
 
 OBS_STATE_DIM = 16
@@ -46,18 +45,32 @@ def convert_state(dict_state):
     """
     dict_state = dict_state.copy()
     final_state = np.concat([
+        dict_state["state.base_position"],
+        dict_state["state.base_rotation"],
         dict_state["state.end_effector_position_relative"],
         dict_state["state.end_effector_rotation_relative"],
         dict_state["state.gripper_qpos"],
-        dict_state["state.base_position"],
-        dict_state["state.base_rotation"],
     ], axis=0)
     
     return final_state
 
+def convert_action(action):
+    """
+    Converts input action (np.array) to format expected by gym env (dict)
+    """
+    action = action.copy()
+    output_action = {
+        "action.base_motion": action[0:4],
+        "action.control_mode": action[4:5],
+        "action.end_effector_position": action[5:8],
+        "action.end_effector_rotation": action[8:11],
+        "action.gripper_close": action[11:12],
+    }
+    return output_action
+
 
 class RoboCasaEnv(RoboCasaGymEnv):
-    metadata = {"render_modes": ["rgb_array"], "render_fps": 80}
+    metadata = {"render_modes": ["rgb_array"], "render_fps": 20}
 
     def __init__(
         self,
@@ -65,8 +78,8 @@ class RoboCasaEnv(RoboCasaGymEnv):
         camera_name: str | Sequence[str] = "robot0_agentview_left_image,robot0_eye_in_hand,robot0_agentview_right_image",
         render_mode="rgb_array",
         obs_type: str = "pixels_agent_pos",
-        observation_width=480,
-        observation_height=480,
+        observation_width=256,
+        observation_height=256,
         visualization_width=640,
         visualization_height=480,
         split=None, # {None, "all", "pretrain", "target"}
@@ -86,7 +99,6 @@ class RoboCasaEnv(RoboCasaGymEnv):
         self.kwargs = kwargs
         self.split = split
         self.task = task
-        self.max_episode_steps = ATOMIC_TASK_DATASETS[task]["horizon"]
         self._max_episode_steps = ATOMIC_TASK_DATASETS[task]["horizon"]
         super().__init__(
             task,
