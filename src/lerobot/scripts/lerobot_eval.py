@@ -185,7 +185,7 @@ def rollout(
         observation = env_preprocessor(observation)
 
         observation = preprocessor(observation)
-        with torch.inference_mode():
+        with torch.no_grad():
             action = policy.select_action(observation)
         action = postprocessor(action)
 

@@ -112,49 +112,50 @@ class MPPIPlanner(BasePlanner):
         encoder_in_k = z_start.unsqueeze(1).expand(S, K, D)  # (S, K, D)
         z_goal_k = z_goal.unsqueeze(1).expand(S, K, D)       # (S, K, D)
 
-        for _ in range(self.config.n_iters):
-            # Sample K perturbed trajectories around current mean.
-            noise = torch.randn(T, K, action_dim, device=device, dtype=dtype) * noise_std
-            actions_k = mean.unsqueeze(1) + noise  # (T, K, action_dim)
+        with torch.no_grad():
+            for _ in range(self.config.n_iters):
+                # Sample K perturbed trajectories around current mean.
+                noise = torch.randn(T, K, action_dim, device=device, dtype=dtype) * noise_std
+                actions_k = mean.unsqueeze(1) + noise  # (T, K, action_dim)
 
-            # Predict future latent for all K trajectories.
-            z_pred = wm_predict_fn(encoder_in_k, encoder_pos, actions_k)  # (S, K, D)
+                # Predict future latent for all K trajectories.
+                z_pred = wm_predict_fn(encoder_in_k, encoder_pos, actions_k)  # (S, K, D)
 
-            # Cosine similarity cost, averaged over encoder tokens.
-            cos_sim = F.cosine_similarity(z_goal_k, z_pred, dim=-1).mean(dim=0)  # (K,)
-            cost = 1.0 - cos_sim
+                # Cosine similarity cost, averaged over encoder tokens.
+                cos_sim = F.cosine_similarity(z_goal_k, z_pred, dim=-1).mean(dim=0)  # (K,)
+                cost = 1.0 - cos_sim
 
-            if self.config.action_cost_coef > 0:
-                action_cost = actions_k.pow(2).mean(dim=(0, 2))  # (K,)
-                cost = cost + self.config.action_cost_coef * action_cost
+                if self.config.action_cost_coef > 0:
+                    action_cost = actions_k.pow(2).mean(dim=(0, 2))  # (K,)
+                    cost = cost + self.config.action_cost_coef * action_cost
 
-            # MPPI importance weights.
-            weights = F.softmax(-cost / self.config.temperature, dim=0)  # (K,)
+                # MPPI importance weights.
+                weights = F.softmax(-cost / self.config.temperature, dim=0)  # (K,)
 
-            # Update mean as weighted sum of trajectories.
-            mean = (actions_k * weights.view(1, K, 1)).sum(dim=1)  # (T, action_dim)
-            noise_std = noise_std * self.config.noise_decay
+                # Update mean as weighted sum of trajectories.
+                mean = (actions_k * weights.view(1, K, 1)).sum(dim=1)  # (T, action_dim)
+                noise_std = noise_std * self.config.noise_decay
 
         return mean  # (T, action_dim)
 
 
 class GCPPlanner(BasePlanner):
-    """Monte Carlo gradient planner in world-model latent space.
+    """Gradient-based planning through the world model.
 
-    Estimates first-order gradients of the planning objective via the
-    score-function (REINFORCE) trick and performs gradient descent on the
-    mean action trajectory.  Antithetic perturbation pairs halve variance
-    for the same sample budget.  Iteration stops early when the action
-    sequence has converged.
+    Differentiates the latent cosine-similarity cost directly w.r.t. the
+    action trajectory using autograd through the WM decoder only.
+    The encoder tokens passed in are already detached, so no gradient
+    reaches the image encoder or action head — only the WM decoder
+    parameters are part of the computation graph.
 
     Per iteration:
-      1. Draw half_K perturbation vectors ε ~ N(0, noise_std² I).
-         If antithetic=True, mirror them to get K = 2*half_K samples.
-      2. Evaluate WM cost for all K perturbed trajectories.
-      3. Estimate gradient: g ≈ (1 / (K * noise_std)) * Σ_k cost_k * ε_k
-      4. Update mean:  mean ← mean - lr * g
-      5. Early-stop if max(|mean_new - mean_old|) < convergence_tol.
-      6. Decay noise_std and lr.
+      1. Mark the current action sequence as a differentiable leaf.
+      2. Run one WM decoder forward pass (N=1, exact, no sampling).
+      3. Compute cost = 1 - cosine_similarity(z_goal, z_pred).mean(tokens).
+      4. Backpropagate through the WM decoder to get ∂cost/∂actions.
+      5. Gradient descent step: mean ← mean - lr * grad.
+      6. Early-stop if max(|Δmean|) < convergence_tol.
+      7. Decay lr.
     """
 
     def __init__(self, config: PlanningConfig):
@@ -168,50 +169,55 @@ class GCPPlanner(BasePlanner):
         initial_actions: Tensor,
         wm_predict_fn: Callable[[Tensor, Tensor, Tensor], Tensor],
     ) -> Tensor:
-        T, action_dim = initial_actions.shape
-        S, D = z_start.shape
-        device = initial_actions.device
-        dtype = initial_actions.dtype
-
         cfg = self.config
-        half_K = cfg.n_samples // 2
-        K = half_K * 2 if cfg.antithetic else half_K
+        S, D = z_start.shape
 
-        mean = initial_actions.clone()  # (T, action_dim)
-        noise_std = cfg.noise_std
+        # Single-sample encoder input — gradient flows through WM only;
+        # z_start is already detached (computed under torch.no_grad in _plan_action_chunk).
+        encoder_in_1 = z_start.unsqueeze(1)  # (S, 1, D)
+
+        mean = initial_actions.clone().detach()  # (T, action_dim)
         lr = cfg.lr
 
-        encoder_in_k = z_start.unsqueeze(1).expand(S, K, D)  # (S, K, D)
-        z_goal_k = z_goal.unsqueeze(1).expand(S, K, D)       # (S, K, D)
-
         for _ in range(cfg.n_iters):
-            # --- sample perturbations ---
-            eps = torch.randn(T, half_K, action_dim, device=device, dtype=dtype) * noise_std
-            noise = torch.cat([eps, -eps], dim=1) if cfg.antithetic else eps  # (T, K, A)
+            # Fresh leaf tensor each iteration — gradient w.r.t. this step's actions only.
+            actions_opt = mean.requires_grad_(True)
 
-            actions_k = mean.unsqueeze(1) + noise  # (T, K, action_dim)
+            # enable_grad overrides any outer torch.no_grad() context (e.g. from the eval loop)
+            # so that the WM forward+backward builds a computation graph we can differentiate.
+            with torch.enable_grad():
+                # WM forward: (S, 1, D).  Gradient flows through wm_decoder → actions_opt.
+                z_pred = wm_predict_fn(encoder_in_1, encoder_pos, actions_opt.unsqueeze(1))
 
-            # --- world-model rollout and cost ---
-            z_pred = wm_predict_fn(encoder_in_k, encoder_pos, actions_k)  # (S, K, D)
-            cos_sim = F.cosine_similarity(z_goal_k, z_pred, dim=-1).mean(dim=0)  # (K,)
-            cost = 1.0 - cos_sim
+                cos_sim = F.cosine_similarity(z_goal, z_pred.squeeze(1), dim=-1).mean()
+                cost = 1.0 - cos_sim
 
-            if cfg.action_cost_coef > 0:
-                cost = cost + cfg.action_cost_coef * actions_k.pow(2).mean(dim=(0, 2))
+                if cfg.action_cost_coef > 0:
+                    cost = cost + cfg.action_cost_coef * actions_opt.pow(2).mean()
 
-            # --- score-function gradient estimate ---
-            # g ≈ E[cost * ε] / noise_std  (shape: T, action_dim)
-            grad = (noise * cost.view(1, K, 1)).mean(dim=1) / noise_std
+                # Compute gradient w.r.t. actions_opt only — torch.autograd.grad does not
+                # accumulate .grad on WM parameters, keeping the model weights untouched.
+                if cost.grad_fn is None:
+                    raise RuntimeError(
+                        "GCPPlanner: cost has no grad_fn — wm_predict_fn output is fully detached "
+                        "from the computation graph. Check that the WM decoder's output depends "
+                        "on the action input."
+                    )
+                (grad,) = torch.autograd.grad(cost, actions_opt, allow_unused=True)
+                if grad is None:
+                    raise RuntimeError(
+                        "GCPPlanner: gradient of cost w.r.t. actions is None — the WM output does "
+                        "not depend on the action input. Check that wm_predict_fn uses the actions "
+                        "argument in its computation."
+                    )
 
-            # --- gradient descent step with early stopping ---
             new_mean = mean - lr * grad
             delta = (new_mean - mean).abs().max()
-            mean = new_mean
+            mean = new_mean.detach()
 
             if delta < cfg.convergence_tol:
                 break
 
-            noise_std = noise_std * cfg.noise_decay
             lr = lr * cfg.lr_decay
 
         return mean  # (T, action_dim)
