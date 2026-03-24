@@ -167,7 +167,6 @@ def rollout(
             all_observations.append(deepcopy(observation))
 
         # Infer "task" from attributes of environments.
-        # TODO: works with SyncVectorEnv but not AsyncVectorEnv
         observation = add_envs_task(env, observation)
 
         # Apply environment-specific preprocessing (e.g., LiberoProcessorStep for LIBERO)
@@ -512,7 +511,8 @@ def eval_main(cfg: EvalPipelineConfig):
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
-    set_seed(cfg.seed)
+    if cfg.seed is not None:
+        set_seed(cfg.seed)
 
     logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
 
