@@ -14,7 +14,7 @@ import pandas as pd
 from huggingface_hub import snapshot_download
 
 DATASETS = [
-    {"repo_id": "lerobot-data-collection/level2_final_quality3", "episode": 1100},
+    {"repo_id": "lerobot-data-collection/level2_final_quality3", "episode": 250},
 ]
 CAMERA_KEY = (
     "observation.images.base"  # None = auto-select first camera, or set e.g. "observation.images.top"
