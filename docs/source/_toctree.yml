@@ -19,6 +19,8 @@
     title: Multi GPU training
   - local: peft_training
     title: Training with PEFT (e.g., LoRA)
+  - local: rename_map
+    title: Using Rename Map and Empty Cameras
   title: "Tutorials"
 - sections:
   - local: lerobot-dataset-v3
