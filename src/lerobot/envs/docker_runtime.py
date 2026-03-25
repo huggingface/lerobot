@@ -114,20 +114,18 @@ class _InferenceServer(HTTPServer):
         self._device = torch.device(str(policy.config.device))
 
     def _predict(self, obs_t: dict) -> np.ndarray:
-        """Apply full preprocessing pipeline and return (T, A) numpy chunk."""
+        """Apply full preprocessing pipeline and return (n_action_steps, A) numpy chunk."""
         obs = self._env_preprocessor(obs_t)
         obs = self._preprocessor(obs)
         obs_gpu: dict = {k: v.to(self._device) if isinstance(v, torch.Tensor) else v for k, v in obs.items()}
         with torch.no_grad():
             chunk: torch.Tensor = self._policy.predict_action_chunk(obs_gpu)  # (B, T, A)
 
-        # Postprocessor expects (B, A); apply it treating each timestep as a batch element.
-        # For linear transforms (unnormalize) this is identical to applying it to (B, T, A).
+        n_action_steps = getattr(self._policy.config, "n_action_steps", chunk.shape[1])
         batch, n_steps, action_dim = chunk.shape
         chunk_2d = chunk.reshape(batch * n_steps, action_dim)  # (B*T, A)
         chunk_2d = self._postprocessor(chunk_2d)  # (B*T, A)
-        # Return only the first env's chunk — batch_size=1 per container.
-        return chunk_2d[:n_steps].cpu().numpy()  # (T, A)
+        return chunk_2d[:n_action_steps].cpu().numpy()  # (n_action_steps, A)
 
 
 # ---------------------------------------------------------------------------
