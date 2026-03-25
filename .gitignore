@@ -181,3 +181,7 @@ outputs/
 # Track checked-in MuJoCo models and assets for the simulated bi_so follower.
 !src/lerobot/robots/bi_so_follower_simulated/mujoco/
 !src/lerobot/robots/bi_so_follower_simulated/mujoco/**
+
+tmp.txt
+__pycache__/
+

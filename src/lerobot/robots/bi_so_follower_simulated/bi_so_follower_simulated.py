@@ -30,9 +30,9 @@ import numpy as np
 from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
-from ..robot import Robot
-from ..utils import ensure_safe_goal_position
-from .config_bi_so_follower_simulated import BiSOFollowerSimulatedConfig
+from lerobot.robots.robot import Robot
+from lerobot.robots.utils import ensure_safe_goal_position
+from lerobot.robots.bi_so_follower_simulated.config_bi_so_follower_simulated import BiSOFollowerSimulatedConfig
 
 logger = logging.getLogger(__name__)
 

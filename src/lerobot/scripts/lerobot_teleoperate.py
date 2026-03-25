@@ -73,6 +73,7 @@ from lerobot.robots import (  # noqa: F401
     RobotConfig,
     bi_openarm_follower,
     bi_so_follower,
+    bi_so_follower_simulated,
     earthrover_mini_plus,
     hope_jr,
     koch_follower,

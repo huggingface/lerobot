@@ -17,7 +17,7 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..config import RobotConfig
+from lerobot.robots.config import RobotConfig
 
 
 @RobotConfig.register_subclass("bi_so_follower_simulated")
