@@ -274,7 +274,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             self.logger.debug(f"Skipping observation #{obs.get_timestep()} - Timestep predicted already!")
             return False
 
-        elif observations_similar(
+        elif self.config.obs_similarity_atol > 0.0 and observations_similar(
             obs, previous_obs, lerobot_features=self.lerobot_features, atol=self.config.obs_similarity_atol
         ):
             self.logger.debug(
