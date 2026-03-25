@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import logging
-import sys
 import threading
 import time
 from functools import cached_property
@@ -135,9 +134,8 @@ class PantheraArm(Robot):
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
         del calibrate
-        sdk_python_dir = self._resolve_sdk_python_dir()
-        panthera_cls = self._import_panthera_class(sdk_python_dir)
-        config_path = self._resolve_config_path(sdk_python_dir)
+        panthera_cls = self._import_panthera_class()
+        config_path = self._resolve_config_path()
         self._robot = panthera_cls(config_path) if config_path else panthera_cls()
 
         if self._impedance_enabled() and self.config.run_startup_sequence:
@@ -708,50 +706,34 @@ class PantheraArm(Robot):
         state = robot.get_current_state_gripper()
         return float(state.torque)
 
-    def _resolve_sdk_python_dir(self) -> Path:
-        sdk_python_dir = Path(self.config.sdk_python_dir).expanduser()
-        if not sdk_python_dir.is_absolute():
-            sdk_python_dir = (Path.cwd() / sdk_python_dir).resolve()
-        if not sdk_python_dir.exists():
-            raise FileNotFoundError(
-                "Panthera SDK python directory not found: "
-                f"{sdk_python_dir}. Set `sdk_python_dir` in panthera_arm config."
-            )
-        return sdk_python_dir
-
-    def _resolve_config_path(self, sdk_python_dir: Path) -> str | None:
+    def _resolve_config_path(self) -> str | None:
         if not self.config.config_path:
-            return None
-
-        path_in_cfg = Path(self.config.config_path).expanduser()
-        candidates: list[Path] = []
-        if path_in_cfg.is_absolute():
-            candidates.append(path_in_cfg.resolve())
-        else:
-            candidates.append((Path.cwd() / path_in_cfg).resolve())
-            # Manufacturer reference keeps config files under panthera_python/robot_param.
-            candidates.append((sdk_python_dir.parent / path_in_cfg).resolve())
-
-        for candidate in candidates:
+            candidate = (Path(__file__).resolve().parent / "robot_param" / "Follower.yaml").resolve()
             if candidate.exists():
                 return str(candidate)
+            raise FileNotFoundError(
+                "Panthera config file not found: "
+                f"{candidate}. Download the external `robot_param` files into this folder "
+                "or set `config_path` explicitly."
+            )
+
+        path_in_cfg = Path(self.config.config_path).expanduser()
+        candidate = path_in_cfg.resolve() if path_in_cfg.is_absolute() else (Path.cwd() / path_in_cfg).resolve()
+        if candidate.exists():
+            return str(candidate)
 
         raise FileNotFoundError(
-            "Panthera config file not found. Checked: "
-            + ", ".join(str(path) for path in candidates)
-            + ". Update `config_path` in panthera_arm config."
+            "Panthera config file not found: "
+            f"{candidate}. Update `config_path` in panthera_arm config."
         )
 
-    def _import_panthera_class(self, sdk_python_dir: Path):
-        sdk_path = str(sdk_python_dir)
-        if sdk_path not in sys.path:
-            sys.path.insert(0, sdk_path)
-
+    def _import_panthera_class(self):
         try:
             from Panthera_lib import Panthera
         except Exception as exc:
             raise ImportError(
                 "Failed to import Panthera SDK (`from Panthera_lib import Panthera`). "
-                f"Verify sdk_python_dir and dependencies. sdk_python_dir={sdk_python_dir}"
+                "Follow the Panthera-HT_SDK panthera_python installation steps so the module is "
+                "available in the active Python environment."
             ) from exc
         return Panthera

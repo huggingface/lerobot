@@ -27,11 +27,12 @@ class PantheraArmConfig(RobotConfig):
     """
     Configuration for Panthera arm robot wrapper.
 
-    This wrapper expects the Panthera SDK python scripts directory to contain
-    `Panthera_lib` (from xlerobot-HT_SDK).
+    This wrapper expects the Panthera SDK to be installed so
+    `from Panthera_lib import Panthera` works in the active Python environment.
+    If `config_path` is unset, this wrapper expects
+    `robot_param/Follower.yaml` to be present next to this module.
     """
 
-    sdk_python_dir: str = "../xlerobot-HT_SDK/panthera_python/scripts"
     config_path: str | None = None
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 

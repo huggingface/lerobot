@@ -4,8 +4,6 @@
   "left_arm": {
     "type": "panthera_arm",
     "shared_bus": false,
-    "sdk_python_dir": "../xlerobot-HT_SDK/panthera_python/scripts",
-    "config_path": "../xlerobot-HT_SDK/panthera_python/robot_param/Follower.yaml",
     "use_joint_impedance": true,
     "run_startup_sequence": true,
     "impedance_control_hz": 800.0,

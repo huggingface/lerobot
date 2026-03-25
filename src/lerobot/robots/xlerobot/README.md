@@ -4,17 +4,44 @@ An example run with so101 arms: [video](https://youtu.be/OGI-Qtl3s6s)
 
 `xlerobot` is a configurable mobile manipulator platform composed from optional sub-robots:
 
-- **Arms** with support for dual SO-101/SO-100 follower arms or a single left/right `panthera_arm`.
+- **Arms** with support for dual SO-101/SO-100 follower arms or `panthera_arm`.
 - **Mobile base** abstraction with support for `lekiwi_base`, `biwheel_base`, `biwheel_feetech`, and `biwheel_odrive`.
 - **Pan/Tilt camera mount** driven by Feetech servos.
 - **Multi-camera rig** using the standard camera factory (robot-level and arm-attached cameras).
 - **Shared bus or dedicated bus wiring** so Feetech components can share buses while ODrive/Panthera stay on dedicated connections.
+
+The key idea is modular composition: any sub-robot can be used, omitted, or
+swapped depending on the hardware you actually mount. A deployment may use only
+a base, a base plus mount, dual SO-101 arms, a single Panthera arm, or any
+other supported combination.
+
+Quick links:
+
+- [Base Options](#base-options)
+- [Panthera Arm Option](#panthera-arm-option)
+- [Default Configs](#default-configs)
+- [CLI Examples](./CLI_EXAMPLES.md)
+- [XLeRobot Teleoperators README](../../teleoperators/xlerobot_teleoperator/README.md)
+- [Biwheel Base README](./sub_robots/biwheel_base/README.md)
+- [Biwheel Hardware Installation](./sub_robots/biwheel_base/README.md#hardware-installation)
+- [Panthera Arm README](./sub_robots/panthera_arm/README.md)
+- [Panthera Hardware Installation](./sub_robots/panthera_arm/README.md#hardware-installation)
+- [Remote Teleoperation](#remote-keyboard-teleoperation-with-rerun)
+
+<p align="center">
+  <img
+    src="https://raw.githubusercontent.com/Vector-Wangel/XLeRobot/main/hardware/odrive/media/full_assembly.png"
+    alt="ODrive hoverboard wheels, Panthera arm, and Thor on XLeRobot"
+    style="max-height: 420px; width: auto;"
+  />
+</p>
 
 ## Folder structure
 
 ```text
 src/lerobot/robots/xlerobot/
 |-- README.md
+|-- CLI_EXAMPLES.md
 |-- __init__.py
 |-- config_xlerobot.py
 |-- xlerobot.py
@@ -28,6 +55,7 @@ src/lerobot/robots/xlerobot/
 `-- sub_robots/
     |-- __init__.py
     |-- biwheel_base/
+    |   |-- README.md
     |   |-- config_biwheel_base.py
     |   |-- biwheel_base.py
     |   |-- biwheel_feetech.py
@@ -36,6 +64,7 @@ src/lerobot/robots/xlerobot/
     |   |-- config.py
     |   `-- lekiwi_base.py
     |-- panthera_arm/
+    |   |-- README.md
     |   |-- config.py
     |   `-- panthera_arm.py
     `-- xlerobot_mount/
@@ -53,9 +82,108 @@ src/lerobot/robots/xlerobot/
 - Provides safe connect/disconnect/calibration routines that cascade to all mounted components.
 - Integrates with updated `lerobot-record`, `lerobot-replay`, and `lerobot-teleoperate` commands. No custom code required to capture trajectories or run inference.
 
+Any component block can be left empty (`{}`) when that sub-robot is not present
+in a given build.
+
+## Base Options
+
+`xlerobot` keeps `lekiwi_base` as a supported option, and also supports the
+two-wheel `biwheel_*` family:
+
+- `lekiwi_base`: original omniwheel-style mobile base
+- `biwheel_feetech`: differential drive using Feetech wheel motors on a shared bus
+- `biwheel_odrive`: differential drive using ODrive-controlled wheels on a dedicated connection
+- `biwheel_base`: generic alias resolved by `xlerobot`; it uses Feetech by default, or ODrive if `driver: odrive`
+
+For the biwheel variants, both observations and actions use:
+
+- `x.vel`: linear velocity in m/s
+- `theta.vel`: yaw velocity in deg/s
+
+The biwheel stack also supports `invert_left_motor`, `invert_right_motor`, and
+`reverse_front_direction` to fix motor wiring and chassis-front conventions
+without changing higher-level teleop code.
+
+`biwheel_feetech` can be placed on `shared_buses`.
+`biwheel_odrive` must stay off shared buses and manage its own ODrive connection.
+
+See `sub_robots/biwheel_base/README.md` for hardware and setup details.
+
+<p align="center">
+  <img
+    src="https://raw.githubusercontent.com/Vector-Wangel/XLeRobot/main/hardware/odrive/media/assembled.png"
+    alt="Biwheel ODrive base on XLeRobot"
+    style="max-height: 420px; width: auto;"
+  />
+</p>
+
+## Panthera Arm Option
+
+`panthera_arm` integrates the
+[HighTorque-Robotics/Panthera-HT_SDK](https://github.com/HighTorque-Robotics/Panthera-HT_SDK)
+arm into `xlerobot` with Cartesian end-effector delta actions plus gripper
+control. This integration was tested with the smaller Panthera variant, not the
+full-sized arm.
+
+Panthera uses a different motor/driver stack and must not be placed on
+`shared_buses` (`shared_bus: false`).
+
+To use it:
+
+- install the upstream `panthera_python` SDK so `Panthera_lib` is importable
+- download the smaller-variant `robot_param.zip` and `xlerobot-HT_description.zip` asset bundles from [Vector-Wangel/XLeRobot](https://github.com/Vector-Wangel/XLeRobot)
+- extract them into `sub_robots/panthera_arm/robot_param/` and `sub_robots/panthera_arm/xlerobot-HT_description/`
+
+See `sub_robots/panthera_arm/README.md` for the full software and hardware notes.
+
+<p align="center">
+  <img
+    src="https://raw.githubusercontent.com/Vector-Wangel/XLeRobot/main/hardware/high_torque_robotics/media/panthera.png"
+    alt="Panthera arm mounted on XLeRobot"
+    style="max-height: 420px; width: auto;"
+  />
+</p>
+
+## Onboard Compute And Remote Operation
+
+`xlerobot` can be made remote by attaching an onboard compute device to the
+platform and running the robot stack there. Any suitable edge computer can work,
+including:
+
+- NVIDIA Jetson Thor
+- NVIDIA Jetson Orin
+- Raspberry Pi
+
+If you do not want a dedicated onboard edge device, a laptop can also be used
+as the robot computer.
+
+<p align="center">
+  <img
+    src="https://raw.githubusercontent.com/Vector-Wangel/XLeRobot/main/hardware/thor/media/thor.png"
+    alt="Thor onboard compute for XLeRobot"
+    style="max-height: 420px; width: auto;"
+  />
+</p>
+
+Thor can be secured to the basket mesh using:
+
+- [`hardware/thor/thor_holder_corner.step`](https://github.com/Vector-Wangel/XLeRobot/blob/main/hardware/thor/thor_holder_corner.step)
+- [`hardware/thor/thor_holder_edge.step`](https://github.com/Vector-Wangel/XLeRobot/blob/main/hardware/thor/thor_holder_edge.step)
+
+In practice, this means `lerobot-teleoperate`, `lerobot-record`, or inference
+can run on the robot-side machine, while visualization or operator input can be
+forwarded from another machine over the network as needed. See
+[Remote Keyboard Teleoperation With Rerun](#remote-keyboard-teleoperation-with-rerun)
+for one supported remote-operation workflow.
+
 ## Configuration example
 
-Use the config examples below directly with `lerobot-teleoperate`, or create an `XLeRobotConfig` instance with equivalent fields.
+Use the config examples below directly with `lerobot-teleoperate`, or create an
+`XLeRobotConfig` instance with equivalent fields.
+
+The example below keeps `lekiwi_base` as the mobile base, which remains a
+supported option. It is only one valid composition, not the only intended
+layout.
 
 Note, make sure on the shared buses, you have set the motor ID correctly. In subrobot's configs, the motor IDs index from 1. In the `shared_buses` field, the subrobot's IDs will be shifted by `motor_id_offset`. For example, the `pan_motor_id` for the `mount` will be 1 + 6 = 7. So, you would also need to set the FeeTech motor to be 7 using supported motor programming tool. This ensures the IDs do no collide with the other subrobots on the same bus.
 
@@ -114,7 +242,12 @@ Customize the base type (`lekiwi_base`, `biwheel_base`, `biwheel_feetech`, or `b
 
 Sample robot configuration files live in `src/lerobot/robots/xlerobot/configs/`. You can pass them directly to
 `lerobot-teleoperate` via `--robot.config_file` and still override values on the CLI. The JSON files include a
-`_comment` field that documents the intended CLI flag.
+`_comment` field that documents the intended CLI flag. Treat them as
+representative examples of different modular builds rather than a single
+canonical setup.
+
+The original inline CLI-only configuration style still works too. For the
+long-form shell examples, see [CLI_EXAMPLES.md](./CLI_EXAMPLES.md).
 
 ```bash
 lerobot-teleoperate \
@@ -174,6 +307,9 @@ lerobot-teleoperate \
 ```
 Panthera arms use a different motor/driver stack and must stay off `shared_buses` (`shared_bus: false`).
 This example uses a single left Panthera arm.
+Follow the upstream `panthera_python` installation steps so `Panthera_lib` is importable in your active Python environment.
+Download the Panthera asset files separately and place them under `sub_robots/panthera_arm/robot_param/`
+and `sub_robots/panthera_arm/xlerobot-HT_description/`.
 This sample config enables Panthera joint impedance + gravity/friction compensation
 (`left_arm.use_joint_impedance: true`).
 It now also includes:
@@ -311,161 +447,3 @@ robot:
         - {component: left_arm}
         - {component: mount, motor_id_offset: 6}
 ```
-
-# XLeRobot integration based on
-
-- https://github.com/Astera-org/brainbot
-- https://github.com/Vector-Wangel/XLeRobot
-- https://github.com/bingogome/lerobot
-
-# Example Command Line Run
-
-```bash
-lerobot-teleoperate \
-    --robot.type=xlerobot \
-    --robot.left_arm='{
-        "id": "xlerobot_arm_left"
-    }' \
-    --robot.right_arm='{
-        "id": "xlerobot_arm_right"
-    }' \
-    --robot.base='{
-        "type": "lekiwi_base",
-        "wheel_radius_m": 0.05,
-        "base_radius_m": 0.125
-    }' \
-    --robot.mount='{
-        "pan_motor_id": 1,
-        "tilt_motor_id": 2,
-        "motor_model": "sts3215",
-        "pan_key": "mount_pan.pos",
-        "tilt_key": "mount_tilt.pos",
-        "max_pan_speed_dps": 60.0,
-        "max_tilt_speed_dps": 45.0,
-        "pan_range": [-90.0, 90.0],
-        "tilt_range": [-30.0, 60.0]
-    }' \
-    --robot.cameras='{
-        "top":   {"type": "opencv", "index_or_path": 8, "width": 640, "height": 480, "fps": 30}
-    }' \
-    --robot.shared_buses='{
-        "left_bus": {
-            "port": "/dev/ttyACM2",
-            "components": [
-                {"component": "left_arm"},
-                {"component": "mount", "motor_id_offset": 6}
-            ]
-        },
-        "right_bus": {
-            "port": "/dev/ttyACM3",
-            "components": [
-                {"component": "right_arm"},
-                {"component": "base", "motor_id_offset": 6}
-            ]
-        }
-    }' \
-    --teleop.type=xlerobot_default_composite \
-    --teleop.base_type=lekiwi_base_gamepad \
-    --teleop.arms='{
-        "left_arm_config": {
-            "port": "/dev/ttyACM0"
-        },
-        "right_arm_config": {
-            "port": "/dev/ttyACM1"
-        },
-        "id": "leader"
-    }' \
-    --teleop.base='{
-        "joystick_index": 0,
-        "max_speed_mps": 0.8,
-        "deadzone": 0.15,
-        "yaw_speed_deg": 45
-    }' \
-    --teleop.mount='{
-        "joystick_index": 0,
-        "deadzone": 0.15,
-        "polling_fps": 50,
-        "max_pan_speed_dps": 60.0,
-        "max_tilt_speed_dps": 45.0,
-        "pan_axis": 3,
-        "tilt_axis": 4,
-        "invert_pan": false,
-        "invert_tilt": true,
-        "pan_range": [-90.0, 90.0],
-        "tilt_range": [-30.0, 60.0]
-    }' \
-    --display_data=true
-```
-
-Or, if you want to run without arms or mount, you can either use the base-only configs:
-
-```bash
-lerobot-teleoperate \
-  --robot.type=xlerobot \
-  --robot.config_file=src/lerobot/robots/xlerobot/configs/base_only.json \
-  --teleop.type=xlerobot_default_composite \
-  --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/base_only.json \
-  --display_data=true
-```
-
-…or stick to the original CLI-only configuration (no config files):
-
-```bash
-lerobot-teleoperate \
-  --robot.type=xlerobot \
-  --robot.base='{
-      "type": "lekiwi_base",
-      "wheel_radius_m": 0.05,
-      "base_radius_m": 0.125
-  }' \
-  --robot.mount='{
-      "pan_motor_id": 1,
-      "tilt_motor_id": 2,
-      "motor_model": "sts3215",
-      "pan_key": "mount_pan.pos",
-      "tilt_key": "mount_tilt.pos",
-      "max_pan_speed_dps": 60.0,
-      "max_tilt_speed_dps": 45.0,
-      "pan_range": [-90.0, 90.0],
-      "tilt_range": [-30.0, 60.0]
-  }' \
-  --robot.cameras='{}' \
-  --robot.shared_buses='{
-      "base_bus": {
-          "port": "/dev/ttyACM4",
-          "components": [
-              {"component": "base"}
-          ]
-      },
-      "mount_bus": {
-          "port": "/dev/ttyACM5",
-          "components": [
-              {"component": "mount"}
-          ]
-      }
-  }' \
-  --teleop.type=xlerobot_default_composite \
-  --teleop.base_type=lekiwi_base_gamepad \
-  --teleop.base='{
-      "joystick_index": 0,
-      "max_speed_mps": 0.8,
-      "deadzone": 0.15,
-      "yaw_speed_deg": 45
-  }' \
-  --teleop.mount='{
-      "joystick_index": 0,
-      "deadzone": 0.15,
-      "polling_fps": 50,
-      "max_pan_speed_dps": 60.0,
-      "max_tilt_speed_dps": 45.0,
-      "pan_axis": 3,
-      "tilt_axis": 4,
-      "invert_pan": false,
-      "invert_tilt": true,
-      "pan_range": [-90.0, 90.0],
-      "tilt_range": [-30.0, 60.0]
-  }' \
-  --display_data=true
-```
-
----

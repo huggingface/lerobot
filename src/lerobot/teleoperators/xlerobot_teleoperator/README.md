@@ -4,6 +4,32 @@ An example run with so101 arms: [video](https://youtu.be/OGI-Qtl3s6s)
 
 This package introduces the teleoperation stack for the modular `xlerobot` platform. It includes two composite teleoperators (`xlerobot_default_composite` and `xlerobot_keyboard_composite`) plus reusable sub-teleoperators for LeKiwi/BiWheel base control, mount pan/tilt, bimanual SO-101 leader arms, and single-arm Panthera keyboard control (cartesian).
 
+The teleoperation stack is modular in the same way as the robot stack: you can
+compose only the sub-teleoperators you need for the hardware that is actually
+mounted. A deployment may use only a base teleop, base plus mount teleop, dual
+leader arms with gamepad base control, or a single Panthera arm with keyboard
+control.
+
+Quick links:
+
+- [Default Configs](#default-configs)
+- [Default Composite](#default-composite-xlerobot_default_composite)
+- [Keyboard Composite](#keyboard-composite-xlerobot_keyboard_composite)
+- [Robot README](../../robots/xlerobot/README.md)
+- [Biwheel Base README](../../robots/xlerobot/sub_robots/biwheel_base/README.md)
+- [Biwheel Hardware Installation](../../robots/xlerobot/sub_robots/biwheel_base/README.md#hardware-installation)
+- [Panthera Arm README](../../robots/xlerobot/sub_robots/panthera_arm/README.md)
+- [Panthera Hardware Installation](../../robots/xlerobot/sub_robots/panthera_arm/README.md#hardware-installation)
+- [XLeRobot CLI Examples](../../robots/xlerobot/CLI_EXAMPLES.md)
+
+<p align="center">
+  <img
+    src="https://raw.githubusercontent.com/Vector-Wangel/XLeRobot/main/hardware/odrive/media/full_assembly.png"
+    alt="XLeRobot teleoperation target platform"
+    style="max-height: 420px; width: auto;"
+  />
+</p>
+
 ## Folder structure
 
 ```text
@@ -42,6 +68,20 @@ src/lerobot/teleoperators/xlerobot_teleoperator/
         |-- config.py
         `-- teleop.py
 ```
+
+## Composition Model
+
+The composite teleoperators are designed so each sub-teleoperator can be
+present or omitted depending on the robot build:
+
+- base teleop only
+- base + mount teleop
+- dual-arm + base + mount teleop
+- Panthera arm keyboard teleop with or without keyboard base teleop
+
+`xlerobot_default_composite` is the gamepad/leader-arm-oriented composition.
+`xlerobot_keyboard_composite` is the keyboard-oriented composition used for the
+Panthera cartesian end-effector workflow and biwheel keyboard driving.
 
 ## Default configs
 
@@ -89,6 +129,9 @@ lerobot-teleoperate \
   --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_keyboard_composite_panthera_left_ee_with_base.json
 ```
 
+This combines Panthera cartesian keyboard control with the biwheel keyboard base
+teleop in a single composite teleoperator.
+
 The original CLI-only setup still works too (no config files needed):
 
 ```bash
@@ -98,6 +141,9 @@ lerobot-teleoperate \
   --teleop.base_type=lekiwi_base_gamepad \
   --teleop.base='{"joystick_index": 0, "max_speed_mps": 0.6, "deadzone": 0.15, "yaw_speed_deg": 45}'
 ```
+
+For longer end-to-end inline examples, see
+[`../../robots/xlerobot/CLI_EXAMPLES.md`](../../robots/xlerobot/CLI_EXAMPLES.md).
 
 ## Remote keyboard teleoperation with Rerun
 
@@ -215,6 +261,9 @@ Defined in `default_composite/teleop.py`, this teleoperator merges:
 - A base gamepad teleop (`base_config`) that can target either the LeKiwi or BiWheel drive via Xbox gamepad axes.
 - A mount gamepad teleop (`mount_config`) for pan/tilt camera motion.
 
+Each of those sections is optional, so the composite can still be used for a
+reduced robot build that only has some of those components enabled.
+
 Each sub-teleoperator contributes its action/feedback schema, and the composite exposes a single dictionary that policies, recorders, and replayers can consume. Script updates (`lerobot-record`, `lerobot-replay`, `lerobot-teleoperate`) already know about this new teleop type.
 
 ## Keyboard composite (`xlerobot_keyboard_composite`)
@@ -225,6 +274,9 @@ Defined in `keyboard_composite/teleop.py`, this variant keeps the same composite
 - `arm_side` routes arm actions to either `left_` or `right_` action namespace.
 - A `KeyboardRoverTeleop` instance (`base_config`) from `lerobot.teleoperators.keyboard`.
 - An optional `XLeRobotMountGamepadTeleop` instance (`mount_config`) for pan/tilt.
+
+This makes it suitable for a single-arm Panthera build, a biwheel-base-only
+keyboard build, or a combined Panthera + biwheel keyboard setup.
 
 The keyboard rover output (`linear.vel`, `angular.vel`) is mapped to XLeRobot base keys (`x.vel`, `theta.vel`) so it works with `biwheel_base`/`biwheel_odrive` action interfaces. Panthera arm keyboard output is prefixed (`left_...` or `right_...`) for xlerobot arm routing.
 
