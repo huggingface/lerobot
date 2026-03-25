@@ -511,8 +511,7 @@ def eval_main(cfg: EvalPipelineConfig):
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
-    if cfg.seed is not None:
-        set_seed(cfg.seed)
+    set_seed(cfg.seed)
 
     logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
 
