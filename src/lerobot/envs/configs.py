@@ -462,9 +462,10 @@ class RoboCasaEnv(EnvConfig):
     fps: int = 20
     render_mode: str = "rgb_array"
     obs_type: str = "pixels_agent_pos"
-    camera_name: str = "robot0_agentview_left_image,robot0_eye_in_hand,robot0_agentview_right_image"
+    camera_name: str = "robot0_agentview_left,robot0_eye_in_hand,robot0_agentview_right"
     observation_height: int = 256
     observation_width: int = 256
+    split: str | None = None  # Optional Robocasa dataset split {None, "all", "pretrain", "target"}
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
             ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(12,)),
@@ -512,4 +513,5 @@ class RoboCasaEnv(EnvConfig):
             "observation_width": self.observation_width,
             "observation_height": self.observation_height,
             "camera_name": self.camera_name,
+            "split": self.split,
         }

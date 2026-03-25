@@ -23,21 +23,12 @@ import numpy as np
 
 from lerobot.types import RobotObservation
 from robocasa.wrappers.gym_wrapper import RoboCasaGymEnv
-from robocasa.utils.env_utils import create_env
-from robocasa.utils.dataset_registry import ATOMIC_TASK_DATASETS 
+from robocasa.utils.dataset_registry import ATOMIC_TASK_DATASETS, COMPOSITE_TASK_DATASETS, TARGET_TASKS, PRETRAINING_TASKS
 
 OBS_STATE_DIM = 16
 ACTION_DIM = 12
-AGENT_POS_LOW = -1000.0
-AGENT_POS_HIGH = 1000.0
 ACTION_LOW = -1.0
 ACTION_HIGH = 1.0
-
-CAMERA_NAME_MAPPING = {
-        "robot0_agentview_left_image": "robot0_agentview_left",
-        "robot0_agentview_right_image": "robot0_agentview_right",
-        "robot0_eye_in_hand_image": "robot0_eye_in_hand",
-    }
 
 def convert_state(dict_state): 
     """
@@ -68,38 +59,45 @@ def convert_action(action):
     }
     return output_action
 
+def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
+    """Normalize camera_name into a non-empty list of strings."""
+    if isinstance(camera_name, str):
+        cams = [c.strip() for c in camera_name.split(",") if c.strip()]
+    elif isinstance(camera_name, (list | tuple)):
+        cams = [str(c).strip() for c in camera_name if str(c).strip()]
+    else:
+        raise TypeError(f"camera_name must be str or sequence[str], got {type(camera_name).__name__}")
+    if not cams:
+        raise ValueError("camera_name resolved to an empty list.")
+    return cams
+
 
 class RoboCasaEnv(RoboCasaGymEnv):
     metadata = {"render_modes": ["rgb_array"], "render_fps": 20}
 
     def __init__(
         self,
-        task:str,
-        camera_name: str | Sequence[str] = "robot0_agentview_left_image,robot0_eye_in_hand,robot0_agentview_right_image",
-        render_mode="rgb_array",
+        task: str,
+        camera_name: Sequence[str] = ["robot0_agentview_left", "robot0_eye_in_hand", "robot0_agentview_right"],
+        render_mode: str = "rgb_array",
         obs_type: str = "pixels_agent_pos",
-        observation_width=256,
-        observation_height=256,
-        visualization_width=640,
-        visualization_height=480,
-        split=None, # {None, "all", "pretrain", "target"}
-        ep_meta: dict| None = None,
+        observation_width: int = 256,
+        observation_height: int = 256,
+        split: str | None = None, # {None, "all", "pretrain", "target"}
         **kwargs
     ):
-        kwargs["style_ids"] = ep_meta.get("style_ids", [-1]) if ep_meta is not None else [-1]
-        kwargs["layout_ids"] = ep_meta.get("layout_ids", [-1]) if ep_meta is not None else [-1]
         self.obs_type = obs_type
-        self.camera_name = camera_name
-        self.camera_name_mapping = CAMERA_NAME_MAPPING
         self.render_mode = render_mode
-        self.observation_width = observation_width
-        self.observation_height = observation_height
-        self.visualization_width = visualization_width
-        self.visualization_height = visualization_height
         self.kwargs = kwargs
         self.split = split
         self.task = task
-        self._max_episode_steps = ATOMIC_TASK_DATASETS[task]["horizon"]
+
+        meta_info = {**ATOMIC_TASK_DATASETS, **COMPOSITE_TASK_DATASETS}
+        try:
+            self._max_episode_steps = meta_info[task]['horizon']
+        except KeyError:
+            raise ValueError(f"Unknown task '{task}'. Valid tasks are: {list(meta_info.keys())}")
+        
         super().__init__(
             task,
             camera_names=camera_name,
@@ -109,16 +107,14 @@ class RoboCasaEnv(RoboCasaGymEnv):
             split=split,
             **kwargs
         )
-        if ep_meta is not None:
-            self.env.set_ep_meta(ep_meta)
     
     def _create_obs_and_action_space(self):
         images = {}
-        for cam in self.camera_name:
-            images[self.camera_name_mapping.get(cam, cam)] = spaces.Box(
+        for cam in self.camera_names:
+            images[cam] = spaces.Box(
                 low=0,
                 high=255,
-                shape=(self.observation_height, self.observation_width, 3),
+                shape=(self.camera_heights, self.camera_widths, 3),
                 dtype=np.uint8,
             )
         if self.obs_type == "state":
@@ -137,8 +133,8 @@ class RoboCasaEnv(RoboCasaGymEnv):
                 {
                     "pixels": spaces.Dict(images),
                     "agent_pos": spaces.Box(
-                        low=AGENT_POS_LOW,
-                        high=AGENT_POS_HIGH,
+                        low=-1000,
+                        high=1000,
                         shape=(OBS_STATE_DIM,),
                         dtype=np.float64,
                     ),
@@ -153,32 +149,6 @@ class RoboCasaEnv(RoboCasaGymEnv):
             shape=(ACTION_DIM,),
             dtype=np.float32
         )
-
-    def render(self) -> np.ndarray:
-        """
-        Render the current environment frame.
-
-        Returns:
-            np.ndarray: The rendered RGB image from the environment.
-        """
-        return super().render()
-
-    def _make_envs_task(self, task: Any):
-        env = create_env(
-            task,
-            camera_name=self.camera_name,
-            camera_width=self.observation_width,
-            camera_height=self.observation_height,
-            enable_render=True,
-            split=self.split,
-            **self.kwargs
-        )
-        env.reset()
-        return env
-
-
-    def _format_raw_obs(self, raw_obs: np.ndarray) -> RobotObservation:
-        return super().get_observation(raw_obs)
 
     def reset(
         self,
@@ -197,10 +167,10 @@ class RoboCasaEnv(RoboCasaGymEnv):
         """
         self.unwrapped.sim._render_context_offscreen.gl_ctx.free()
         observation, info = super().reset(seed, **kwargs)
-        new_obs = self.get_obs(observation)
+        new_obs = self._format_raw_obs(observation)
         return new_obs, info 
     
-    def get_obs(self, raw_obs:dict):
+    def _format_raw_obs(self, raw_obs:dict):
         new_obs = {}
         if self.obs_type == "pixels_agent_pos":
             new_obs["agent_pos"] = convert_state(raw_obs)
@@ -232,7 +202,7 @@ class RoboCasaEnv(RoboCasaGymEnv):
             )
         action_dict = convert_action(action)
         observation, reward, done, truncated, info = super().step(action_dict)
-        new_obs = self.get_obs(observation)
+        new_obs = self._format_raw_obs(observation)
 
         # Determine whether the task was successful
         is_success = bool(info.get("success", 0))
@@ -260,38 +230,19 @@ def _make_env_fns(
     task_name: str,
     n_envs: int,
     camera_names: list[str],
-    gym_kwargs: Mapping[str, Any],
-    ep_metas: list[dict[str, Any]] | None = None,
+    gym_kwargs: Mapping[str, Any]
 ) -> list[Callable[[], RoboCasaEnv]]:
-    """Build n_envs factory callables for a dataset."""
+    """Build n_envs factory callables for an environment."""
 
     def _make_env(episode_index: int, **kwargs) -> RoboCasaEnv:
-        local_kwargs = dict(kwargs)
-        
-        # Extract ep_meta for this worker from ep_metas list if provided
-        if ep_metas is not None:
-            if len(ep_metas) <= episode_index:
-                raise ValueError(
-                    f"ep_metas list has {len(ep_metas)} elements, but episode_index {episode_index} "
-                    f"requires at least {episode_index + 1} elements."
-                )
-            ep_meta = ep_metas[episode_index].copy()  # Make a copy to avoid mutations
-        else:
-            # No ep_metas provided: use defaults
-            ep_meta = None
-
-        # Extract seed from ep_meta if present, otherwise use episode_index as default
-        seed = local_kwargs.pop("seed", episode_index)
-        
-        # Remove ep_meta from local_kwargs if present (shouldn't be there, but just in case)
-        local_kwargs.pop("ep_meta", None)
+        # Ensure each environment gets a different seed if not explicitly provided
+        seed = kwargs.pop("seed", episode_index)
         
         return RoboCasaEnv(
             task=task_name,
             camera_name=camera_names,
             seed=seed,
-            ep_meta=ep_meta,
-            **local_kwargs,
+            **kwargs,
         )
 
     fns: list[Callable[[], RoboCasaEnv]] = []
@@ -299,24 +250,14 @@ def _make_env_fns(
         fns.append(partial(_make_env, episode_index, **gym_kwargs))
     return fns
 
-def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
-    """Normalize camera_name into a non-empty list of strings."""
-    if isinstance(camera_name, str):
-        cams = [c.strip() for c in camera_name.split(",") if c.strip()]
-    elif isinstance(camera_name, (list | tuple)):
-        cams = [str(c).strip() for c in camera_name if str(c).strip()]
-    else:
-        raise TypeError(f"camera_name must be str or sequence[str], got {type(camera_name).__name__}")
-    if not cams:
-        raise ValueError("camera_name resolved to an empty list.")
-    return cams
 
 # ---- Main API ----------------------------------------------------------------
+
+
 def create_robocasa_envs(
     task_name: str,
     n_envs: int,
-    gym_kwargs: dict[str, Any] | None = None,
-    camera_name: str | Sequence[str] = "",
+    gym_kwargs: dict[str, Any],
     env_cls: Callable[[Sequence[Callable[[], Any]]], Any] | None = None,
 ) -> dict[str, dict[int, Any]]:
     """
@@ -324,16 +265,12 @@ def create_robocasa_envs(
 
     Returns:
         dict[suite_name][task_id] -> vec_env (env_cls([...]) with exactly n_envs factories)
-    Notes:
-        - n_envs is the number of rollouts *per task* (episode_index = 0..n_envs-1).
-        - For RoboCasa, we use a single suite_name "robocasa" and task_id 0.
     Args:
-        task_name: Name of the task
-        n_envs: Number of environments to create
-        gym_kwargs: Additional arguments to pass to RoboCasaEnv. Can include 'ep_metas' (list of dicts)
-            to provide different ep_meta for each worker. Each ep_meta dict can include a 'seed' key
-            to set a specific seed for that worker.
-        camera_name: Camera name(s) to use for observations, overrides gym_kwargs['camera_name'] if provided
+        task_name:  Name of the task (e.g. "CloseFridge"), 
+                    or list of tasks separated by commas (e.g. "CloseFridge,PrepareCoffee"), 
+                    or benchmark name (i.e.: atomic_seen, composite_seen, composite_unseen, pretrain50, pretrain100, pretrain200, pretrain300).
+        n_envs: Number of environments to create per task.
+        gym_kwargs: Additional arguments to pass to RoboCasaEnv.
         env_cls: Callable that wraps a list of environment factory callables (for vectorization)
     """
     if env_cls is None or not callable(env_cls):
@@ -341,38 +278,30 @@ def create_robocasa_envs(
     if not isinstance(n_envs, int) or n_envs <= 0:
         raise ValueError(f"n_envs must be a positive int; got {n_envs}.")
 
-    gym_kwargs = dict(gym_kwargs or {})
-    gym_kwargs_camera_name = gym_kwargs.pop("camera_name", None)
-    camera_name = camera_name if camera_name != "" else gym_kwargs_camera_name
-    parsed_camera_names = _parse_camera_names(camera_name)
-    
-    # Extract ep_metas from gym_kwargs (similar to how camera_name is handled)
-    # This prevents it from being passed to the main env class
-    ep_metas = gym_kwargs.pop("ep_metas", None)
-    if ep_metas is not None:
-        if not isinstance(ep_metas, (list, tuple)):
-            raise TypeError(f"ep_metas must be a list or tuple, got {type(ep_metas).__name__}")
-        if len(ep_metas) < n_envs:
-            raise ValueError(
-                f"ep_metas list has {len(ep_metas)} elements, but n_envs={n_envs} requires at least {n_envs} elements."
-            )
+    parsed_camera_names = _parse_camera_names(gym_kwargs.pop("camera_name"))
 
-    suite_name = "robocasa"
-    task_id = 0
-    
-    print(f"Creating RoboCasa envs | task={task_name} | n_envs(per task)={n_envs}")
-    
+    combined_tasks = {**TARGET_TASKS, **PRETRAINING_TASKS}
+
+    if task_name in combined_tasks:
+        print(f"Creating RoboCasa {task_name} benchmark")
+        task_names = combined_tasks[task_name]
+        gym_kwargs["split"] = "target" if task_name in TARGET_TASKS else "pretrain"
+    else:
+        task_names = [t.strip() for t in task_name.split(",")]
+
     out: dict[str, dict[int, Any]] = defaultdict(dict)
-    
-    fns = _make_env_fns(
-        task_name=task_name,
-        n_envs=n_envs,
-        camera_names=parsed_camera_names,
-        gym_kwargs=gym_kwargs,
-        ep_metas=ep_metas,
-    )
-    out[suite_name][task_id] = env_cls(fns)
-    print(f"Built vec env | suite={suite_name} | task_id={task_id} | n_envs={n_envs}")
+
+    for task in task_names:
+        print(f"Building vec env | task = {task} | n_envs (per task) = {n_envs}")
+
+        fns = _make_env_fns(
+            task_name=task,
+            n_envs=n_envs,
+            camera_names=parsed_camera_names,
+            gym_kwargs=gym_kwargs
+        )
+
+        out[task][0] = env_cls(fns)
 
     # return plain dicts for predictability
     return {suite: dict(task_map) for suite, task_map in out.items()}

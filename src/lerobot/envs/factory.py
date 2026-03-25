@@ -206,7 +206,6 @@ def make_env(
             task_name=cfg.task,
             n_envs=n_envs,
             gym_kwargs=cfg.gym_kwargs,
-            camera_name=cfg.camera_name,
             env_cls=env_cls,
         )
 
