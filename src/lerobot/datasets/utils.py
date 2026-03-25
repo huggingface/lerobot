@@ -408,6 +408,8 @@ def create_lerobot_dataset_card(
         template_str=card_template,
         **kwargs,
     )
+
+
 def is_float_in_list(target, float_list, threshold=1e-6):
     return any(abs(target - x) <= threshold for x in float_list)
 
