@@ -204,7 +204,9 @@ If this prints nothing, `pynput` keyboard listeners can fail with
 `AttributeError: record_create_context`.
 
 Open `xterm` from XQuartz and use it for keyboard teleop control.
-Keyboard events for `pynput` are captured from the focused X11 window (`xterm`), not from regular macOS Terminal.
+Keyboard events (for teleop keys) for `pynput` are captured from the focused X11 window (`xterm`), not from regular macOS Terminal.
+
+However, you may still use any the regular macOS terminal for starting the apps below.
 
 Start Rerun on Mac and keep it running:
 
