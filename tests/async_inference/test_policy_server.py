@@ -189,6 +189,31 @@ def test_obs_sanity_checks(policy_server):
     assert policy_server._obs_sanity_checks(obs_ok, prev) is True
 
 
+def test_obs_similarity_atol_zero_disables_check(policy_server):
+    """When obs_similarity_atol is 0.0, the similarity check is bypassed entirely
+    and even identical observations are enqueued."""
+    policy_server.config.obs_similarity_atol = 0.0
+    prev = _make_obs(torch.zeros(6), timestep=0)
+    policy_server.last_processed_obs = prev
+
+    # Identical observation — would normally be skipped
+    obs_identical = _make_obs(torch.zeros(6), timestep=1)
+    assert policy_server._obs_sanity_checks(obs_identical, prev) is True
+
+
+def test_obs_similarity_atol_custom_threshold(policy_server):
+    """A tighter atol causes previously-similar observations to pass the check."""
+    prev = _make_obs(torch.zeros(6), timestep=0)
+
+    # With default atol=1.0, a small perturbation is considered similar
+    obs_small_diff = _make_obs(torch.ones(6) * 0.1, timestep=1)
+    assert policy_server._obs_sanity_checks(obs_small_diff, prev) is False
+
+    # With a much tighter atol, the same perturbation is now considered dissimilar
+    policy_server.config.obs_similarity_atol = 0.01
+    assert policy_server._obs_sanity_checks(obs_small_diff, prev) is True
+
+
 def test_predict_action_chunk(monkeypatch, policy_server):
     """End-to-end test of `_predict_action_chunk` with a stubbed _get_action_chunk."""
     # Import only when needed
