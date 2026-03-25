@@ -328,6 +328,13 @@ class BiSOFollowerSimulated(Robot):
 
     def _robot_to_sim_arm_units(self, arm_index: int, robot_qpos: np.ndarray) -> np.ndarray:
         sim_qpos = np.asarray(robot_qpos, dtype=np.float32).copy()
+
+        # Added a static offset on joints 2 and 3 to match the SO-arm's default pose in the Task2 scene.
+        sim_qpos += np.array([9.0, -90.0, 90.0, 0.0, 0.0, 0.0], dtype=np.float32)
+
+        # Fix joint inversion
+        sim_qpos *= np.array([-1, 1, 1, 1, 1, 1], dtype=np.int32)
+
         sim_qpos[GRIPPER_INDEX] = self._gripper_percent_to_deg(arm_index, sim_qpos[GRIPPER_INDEX])
         return sim_qpos
 
@@ -384,11 +391,19 @@ class BiSOFollowerSimulated(Robot):
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
-        requested_action = {key: value for key, value in action.items() if key in self.action_features}
+        requested_action = {key: value for key, value in action.items() if key in self.action_features} 
         if not requested_action:
-            return {}
+            if 2*len(action.items()) != len(self.action_features):
+                return {}
+            for key, value in action.items():
+                l, r = "left_" + key, "right_" + key
+                if l in self.action_features and r in self.action_features:
+                    requested_action[l] = value
+                    requested_action[r] = value
+
 
         current_positions = self._current_motor_positions()
+        # safe_requested_action = requested_action
         safe_requested_action = self._clip_requested_action(requested_action, current_positions)
 
         for arm_index, arm_prefix in enumerate(ARM_PREFIXES):
@@ -430,3 +445,4 @@ class BiSOFollowerSimulated(Robot):
         self._right_bus = None
         self._backend = None
         logger.info(f"{self} disconnected.")
+

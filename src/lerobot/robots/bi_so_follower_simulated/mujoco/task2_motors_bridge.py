@@ -53,7 +53,7 @@ class Task2SharedBackend:
         self.slowmo = float(slowmo)
 
         self._ctrl_target = np.zeros(self.nu, dtype=float)
-        self._apply_startup_pose()
+        # self._apply_startup_pose()
 
         if render_size is None:
             self._renderer = None
