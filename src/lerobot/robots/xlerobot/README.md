@@ -179,7 +179,8 @@ for one supported remote-operation workflow.
 ## Configuration example
 
 Use the config examples below directly with `lerobot-teleoperate`, or create an
-`XLeRobotConfig` instance with equivalent fields.
+`XLeRobotConfig` instance with equivalent fields. The inline examples use the
+same JSON object shape as `--robot.config_file`.
 
 The example below keeps `lekiwi_base` as the mobile base, which remains a
 supported option. It is only one valid composition, not the only intended
@@ -191,47 +192,54 @@ XLeRobot's default is to connect left arm and the mount on the same board, and r
 
 If you prefer to have each sub robot on a different board, configure each with a shared bus and you are good to go.
 
-```yaml
-robot:
-  type: xlerobot
-
-  left_arm: {id: xlerobot_arm_left}
-  right_arm: {id: xlerobot_arm_right}
-  base:
-    type: lekiwi_base
-    base_motor_ids: [2, 1, 3]
-    wheel_radius_m: 0.05
-    base_radius_m: 0.125
-  mount:
-    pan_motor_id: 1
-    tilt_motor_id: 2
-    motor_model: sts3215
-    pan_key: "mount_pan.pos",
-    tilt_key: "mount_tilt.pos",
-    max_pan_speed_dps: 60.0,
-    max_tilt_speed_dps: 45.0,
-    pan_range: [-90.0, 90.0],
-    tilt_range: [-30.0, 60.0]
-
-  cameras:
-    top:
-      type: opencv
-      index_or_path: 8
-      width: 640
-      height: 480
-      fps: 30
-
-  shared_buses:
-    left_bus:
-      port: /dev/ttyACM2
-      components:
-        - {component: left_arm}
-        - {component: mount, motor_id_offset: 6}
-    right_bus:
-      port: /dev/ttyACM3
-      components:
-        - {component: right_arm}
-        - {component: base, motor_id_offset: 6}
+```json
+{
+  "type": "xlerobot",
+  "left_arm": {"id": "xlerobot_arm_left"},
+  "right_arm": {"id": "xlerobot_arm_right"},
+  "base": {
+    "type": "lekiwi_base",
+    "base_motor_ids": [2, 1, 3],
+    "wheel_radius_m": 0.05,
+    "base_radius_m": 0.125
+  },
+  "mount": {
+    "pan_motor_id": 1,
+    "tilt_motor_id": 2,
+    "motor_model": "sts3215",
+    "pan_key": "mount_pan.pos",
+    "tilt_key": "mount_tilt.pos",
+    "max_pan_speed_dps": 60.0,
+    "max_tilt_speed_dps": 45.0,
+    "pan_range": [-90.0, 90.0],
+    "tilt_range": [-30.0, 60.0]
+  },
+  "cameras": {
+    "top": {
+      "type": "opencv",
+      "index_or_path": 8,
+      "width": 640,
+      "height": 480,
+      "fps": 30
+    }
+  },
+  "shared_buses": {
+    "left_bus": {
+      "port": "/dev/ttyACM2",
+      "components": [
+        {"component": "left_arm"},
+        {"component": "mount", "motor_id_offset": 6}
+      ]
+    },
+    "right_bus": {
+      "port": "/dev/ttyACM3",
+      "components": [
+        {"component": "right_arm"},
+        {"component": "base", "motor_id_offset": 6}
+      ]
+    }
+  }
+}
 ```
 
 With this config you can drive/record the platform via standard `lerobot-teleoperate`, `lerobot-record`, and `lerobot-replay`.
@@ -432,18 +440,22 @@ Some drivers (for example ODrive-based bases) cannot share a Feetech bus. In tha
 `shared_buses` and set `shared_bus: false` in the component config. The component is then expected to manage its
 own connection (for example via `port` or `odrive_serial`).
 
-```yaml
-robot:
-  type: xlerobot
-  base:
-    type: biwheel_odrive
-    shared_bus: false
-    odrive_serial: "123456789ABC"
-
-  shared_buses:
-    left_bus:
-      port: /dev/ttyACM2
-      components:
-        - {component: left_arm}
-        - {component: mount, motor_id_offset: 6}
+```json
+{
+  "type": "xlerobot",
+  "base": {
+    "type": "biwheel_odrive",
+    "shared_bus": false,
+    "odrive_serial": "123456789ABC"
+  },
+  "shared_buses": {
+    "left_bus": {
+      "port": "/dev/ttyACM2",
+      "components": [
+        {"component": "left_arm"},
+        {"component": "mount", "motor_id_offset": 6}
+      ]
+    }
+  }
+}
 ```
