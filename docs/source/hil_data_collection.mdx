@@ -1,6 +1,6 @@
 # Human-In-the-Loop Data Collection
 
-Human-In-the-Loop (HIL) data collection lets you improve a trained policy by deploying it on a real robot while a human operator monitors and intervenes when needed. The intervention data — recovery movements and corrections — is recorded alongside autonomous segments, producing a richer training dataset that teaches the policy how to handle failures.
+Human-In-the-Loop (HIL) data collection lets you improve a trained policy by deploying it on a real robot while a human operator monitors and intervenes when needed. The intervention data (recovery movements and corrections) is recorded alongside autonomous segments, producing a richer training dataset that teaches the policy how to handle failures.
 
 ---
 
@@ -22,15 +22,15 @@ This produces a policy that not only knows how to perform the task, but also how
 During a HIL session, the human operator follows this loop within each episode:
 
 1. **Watch** the policy run autonomously
-2. **Pause** when failure is imminent — the robot holds its position
-3. **Take control** — teleoperate the robot back to a good state (recovery), then correct the behavior
-4. **Return control to the policy** — the policy resumes autonomous execution
+2. **Pause** when failure is imminent, the robot holds its position
+3. **Take control** and teleoperate the robot back to a good state (recovery), then correct the behavior
+4. **Return control to the policy**, the policy resumes autonomous execution
 5. Repeat steps 2–4 as many times as needed during the episode
 6. **End the episode** when the task is complete, save and move on to the next rollout
 
 Both autonomous and human-controlled segments are recorded. The policy and human can alternate control multiple times within a single episode, and the episode continues from the current state after each handoff (no reset required just because intervention happened). This captures autonomous execution, recovery, and correction in one continuous trajectory. After collection, the combined dataset (original demonstrations + HIL data) is used to fine-tune the policy.
 
-This process can be repeated iteratively: deploy, collect, fine-tune, repeat — each round targeting the current policy's failure modes.
+This process can be repeated iteratively: deploy, collect, fine-tune, repeat. Each round targets the current policy's failure modes.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
