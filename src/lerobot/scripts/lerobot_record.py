@@ -368,12 +368,17 @@ def record_loop(
         if policy is not None or dataset is not None:
             observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
 
+        # Track whether this iteration should be recorded to the dataset.
+        # Interpolated-only iterations send actions to the robot but don't record frames,
+        # keeping the dataset at the original fps while the robot moves at the higher rate.
+        is_record_frame = True
+
         # Get action from either policy or teleop
         if policy is not None and preprocessor is not None and postprocessor is not None:
             # With interpolation: only call policy when interpolator needs new action
             if use_interpolation:
-                # Get action keys from robot
                 action_keys = sorted(robot.action_features)
+                ran_inference = False
 
                 if interpolator.needs_new_action():
                     action_values = predict_action(
@@ -389,18 +394,18 @@ def record_loop(
                     act_processed_policy = make_robot_action(action_values, dataset.features)
                     robot_action_to_send = robot_action_processor((act_processed_policy, obs))
 
-                    # Convert to tensor for interpolator
                     action_tensor = torch.tensor([robot_action_to_send[k] for k in action_keys])
                     interpolator.add(action_tensor)
+                    ran_inference = True
 
-                # Get interpolated action
                 interp_action = interpolator.get()
                 if interp_action is not None:
                     robot_action_to_send = {k: interp_action[i].item() for i, k in enumerate(action_keys)}
                     action_values = robot_action_to_send
                 else:
-                    # No action available yet, skip this iteration
                     continue
+
+                is_record_frame = ran_inference
             else:
                 action_values = predict_action(
                     observation=observation_frame,
@@ -448,8 +453,8 @@ def record_loop(
         # TODO(steven, pepijn, adil): we should use a pipeline step to clip the action, so the sent action is the action that we input to the robot.
         _sent_action = robot.send_action(robot_action_to_send)
 
-        # Write to dataset
-        if dataset is not None:
+        # Write to dataset (only on real policy frames, not interpolated-only iterations)
+        if dataset is not None and is_record_frame:
             action_frame = build_dataset_frame(dataset.features, action_values, prefix=ACTION)
             frame = {**observation_frame, **action_frame, "task": single_task}
             dataset.add_frame(frame)
