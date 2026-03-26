@@ -22,6 +22,7 @@ import torch
 import torch.utils
 
 from lerobot.datasets.compute_stats import aggregate_stats
+from lerobot.datasets.feature_utils import get_hf_features_from_features
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.video_utils import VideoFrame
 from lerobot.utils.constants import HF_LEROBOT_HOME
@@ -125,7 +126,13 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
     def features(self) -> datasets.Features:
         features = {}
         for dataset in self._datasets:
-            features.update({k: v for k, v in dataset.hf_features.items() if k not in self.disabled_features})
+            features.update(
+                {
+                    k: v
+                    for k, v in get_hf_features_from_features(dataset.features).items()
+                    if k not in self.disabled_features
+                }
+            )
         return features
 
     @property
