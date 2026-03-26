@@ -62,6 +62,7 @@ class WandBLogger:
     def __init__(self, cfg: TrainPipelineConfig):
         self.cfg = cfg.wandb
         self.log_dir = cfg.output_dir
+        self.wandb_dir = Path("/tmp/wandb") / cfg.job_name
         self.job_name = cfg.job_name
         self.env_fps = cfg.env.fps if cfg.env else None
         self._group = cfg_to_group(cfg)
@@ -84,7 +85,7 @@ class WandBLogger:
             name=self.job_name,
             notes=self.cfg.notes,
             tags=cfg_to_group(cfg, return_list=True),
-            dir=self.log_dir,
+            dir=self.wandb_dir,
             config=cfg.to_dict(),
             # TODO(rcadene): try set to True
             save_code=False,
