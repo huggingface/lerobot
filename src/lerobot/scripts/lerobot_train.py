@@ -224,74 +224,15 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
         # Compute delta action stats BEFORE distributed sync to avoid NCCL timeout
         if getattr(cfg.policy, "use_delta_actions", False):
-            import numpy as np
+            from lerobot.datasets.compute_stats import compute_delta_action_stats
 
-            from lerobot.datasets.compute_stats import get_feature_stats
-            from lerobot.processor.delta_action_processor import DeltaActionsProcessorStep, to_delta_actions
-
-            chunk_size = cfg.policy.chunk_size
-            hf = dataset.hf_dataset
-            total_frames = len(hf)
-            sample_upper_bound = total_frames - chunk_size
-            if sample_upper_bound <= 0:
-                raise ValueError(
-                    f"Cannot compute delta action stats: total_frames={total_frames}, chunk_size={chunk_size}"
-                )
-
-            max_samples = min(100_000, sample_upper_bound)
-            indices = np.random.choice(sample_upper_bound, max_samples, replace=False)
-
-            action_names = dataset.meta.features.get("action", {}).get("names")
-            delta_mask_step = DeltaActionsProcessorStep(
-                enabled=True,
+            delta_action_stats = compute_delta_action_stats(
+                hf_dataset=dataset.hf_dataset,
+                features=dataset.meta.features,
+                chunk_size=cfg.policy.chunk_size,
                 exclude_joints=getattr(cfg.policy, "delta_exclude_joints", []),
-                action_names=action_names,
             )
-            delta_mask = delta_mask_step._build_mask(dataset.meta.features["action"]["shape"][0])
-            logging.info(
-                f"use_delta_actions is enabled — computing delta action stats "
-                f"from {max_samples} chunk samples (chunk_size={chunk_size})"
-            )
-
-            all_delta_actions = []
-            episode_indices = np.array(hf["episode_index"])
-            for idx in indices:
-                idx = int(idx)
-                ep_idx = episode_indices[idx]
-                end_idx = min(idx + chunk_size, total_frames)
-                if end_idx > idx and episode_indices[end_idx - 1] != ep_idx:
-                    continue
-
-                chunk_data = hf[idx:end_idx]
-                actions = torch.tensor(np.stack([np.asarray(a) for a in chunk_data["action"]])).float()
-                state = torch.tensor(np.asarray(chunk_data["observation.state"][0])).float()
-
-                delta = to_delta_actions(actions.unsqueeze(0), state.unsqueeze(0), delta_mask).squeeze(0)
-                all_delta_actions.append(delta.numpy())
-
-            if not all_delta_actions:
-                raise RuntimeError("Failed to compute delta action stats: no valid chunks found.")
-
-            all_delta = np.concatenate(all_delta_actions, axis=0)
-            delta_stats = get_feature_stats(all_delta, axis=0, keepdims=all_delta.ndim == 1)
-            delta_action_stats = delta_stats
             dataset.meta.stats["action"] = delta_action_stats
-
-            norm_type = "UNKNOWN"
-            if hasattr(cfg.policy, "normalization_mapping"):
-                action_norm = cfg.policy.normalization_mapping.get("ACTION", None)
-                norm_type = action_norm.value if action_norm else "UNKNOWN"
-
-            excluded_dims = len(delta_mask) - sum(delta_mask)
-            logging.info(
-                f"Delta action stats ({len(all_delta_actions)} chunks, {len(all_delta)} values, norm={norm_type}): "
-                f"delta_dims={sum(delta_mask)}/{len(delta_mask)} (excluded={excluded_dims}), "
-                f"mean={np.abs(delta_stats['mean']).mean():.4f}, std={delta_stats['std'].mean():.4f}, "
-                f"q01={delta_stats['q01'].mean():.4f}, q99={delta_stats['q99'].mean():.4f}"
-            )
-            if norm_type == "QUANTILES":
-                q_range = (delta_stats["q99"] - delta_stats["q01"]).mean()
-                logging.info(f"  Quantile range (q99-q01): {q_range:.4f}")
 
     accelerator.wait_for_everyone()
 

@@ -13,7 +13,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
+import logging
+
 import numpy as np
+import torch
 
 from lerobot.datasets.io_utils import load_image_as_numpy
 
@@ -624,3 +629,93 @@ def aggregate_stats(stats_list: list[dict[str, dict]]) -> dict[str, dict[str, np
         aggregated_stats[key] = aggregate_feature_stats(stats_with_key)
 
     return aggregated_stats
+
+
+def compute_delta_action_stats(
+    hf_dataset,
+    features: dict,
+    chunk_size: int,
+    exclude_joints: list[str] | None = None,
+    max_samples: int = 100_000,
+) -> dict[str, np.ndarray]:
+    """Compute normalization statistics for delta (relative) actions.
+
+    Samples random action chunks from the dataset, converts them to deltas
+    (action - current_state), and computes per-dimension statistics suitable
+    for normalization.
+
+    Args:
+        hf_dataset: The underlying HuggingFace dataset with "action",
+            "observation.state", and "episode_index" columns.
+        features: Dataset feature metadata (must contain "action" with "shape"
+            and optionally "names").
+        chunk_size: Number of consecutive frames per action chunk.
+        exclude_joints: Joint names whose dimensions should remain absolute
+            (not converted to deltas).
+        max_samples: Upper bound on the number of chunks to sample.
+
+    Returns:
+        Statistics dict with keys "mean", "std", "min", "max", "q01", …, "q99".
+
+    Raises:
+        ValueError: If the dataset has fewer frames than ``chunk_size``.
+        RuntimeError: If no valid (single-episode) chunks are found.
+    """
+    from lerobot.processor.delta_action_processor import DeltaActionsProcessorStep, to_delta_actions
+
+    if exclude_joints is None:
+        exclude_joints = []
+
+    total_frames = len(hf_dataset)
+    sample_upper_bound = total_frames - chunk_size
+    if sample_upper_bound <= 0:
+        raise ValueError(
+            f"Cannot compute delta action stats: total_frames={total_frames}, chunk_size={chunk_size}"
+        )
+
+    n_samples = min(max_samples, sample_upper_bound)
+    indices = np.random.choice(sample_upper_bound, n_samples, replace=False)
+
+    action_dim = features["action"]["shape"][0]
+    action_names = features.get("action", {}).get("names")
+    delta_mask_step = DeltaActionsProcessorStep(
+        enabled=True,
+        exclude_joints=exclude_joints,
+        action_names=action_names,
+    )
+    delta_mask = delta_mask_step._build_mask(action_dim)
+
+    logging.info(f"Computing delta action stats from {n_samples} chunk samples (chunk_size={chunk_size})")
+
+    episode_indices = np.array(hf_dataset["episode_index"])
+    all_delta_chunks: list[np.ndarray] = []
+
+    for idx in indices:
+        idx = int(idx)
+        ep_idx = episode_indices[idx]
+        end_idx = min(idx + chunk_size, total_frames)
+        if end_idx > idx and episode_indices[end_idx - 1] != ep_idx:
+            continue
+
+        chunk_data = hf_dataset[idx:end_idx]
+        actions = torch.tensor(np.stack([np.asarray(a) for a in chunk_data["action"]])).float()
+        state = torch.tensor(np.asarray(chunk_data["observation.state"][0])).float()
+
+        delta = to_delta_actions(actions.unsqueeze(0), state.unsqueeze(0), delta_mask).squeeze(0)
+        all_delta_chunks.append(delta.numpy())
+
+    if not all_delta_chunks:
+        raise RuntimeError("Failed to compute delta action stats: no valid chunks found.")
+
+    all_delta = np.concatenate(all_delta_chunks, axis=0)
+    stats = get_feature_stats(all_delta, axis=0, keepdims=all_delta.ndim == 1)
+
+    excluded_dims = len(delta_mask) - sum(delta_mask)
+    logging.info(
+        f"Delta action stats ({len(all_delta_chunks)} chunks, {len(all_delta)} frames): "
+        f"delta_dims={sum(delta_mask)}/{len(delta_mask)} (excluded={excluded_dims}), "
+        f"mean={np.abs(stats['mean']).mean():.4f}, std={stats['std'].mean():.4f}, "
+        f"q01={stats['q01'].mean():.4f}, q99={stats['q99'].mean():.4f}"
+    )
+
+    return stats
