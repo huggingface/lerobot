@@ -65,14 +65,14 @@ The `examples/rac` HIL scripts require **teleoperators with active motors** that
 
 ---
 
-## Scripts
+## Script
 
-Two scripts are provided depending on your policy's inference speed:
+A single script handles both synchronous and RTC-based inference. Toggle RTC with `--rtc.enabled=true`:
 
-| Script                       | Use Case                                   | Models                |
-| ---------------------------- | ------------------------------------------ | --------------------- |
-| `hil_data_collection.py`     | Standard synchronous inference             | ACT, Diffusion Policy |
-| `hil_data_collection_rtc.py` | Real-Time Chunking for high-latency models | Pi0, Pi0.5, SmolVLA   |
+| Mode                     | Flag                 | Models                |
+| ------------------------ | -------------------- | --------------------- |
+| Standard (default)       | _(no flag needed)_   | ACT, Diffusion Policy |
+| Real-Time Chunking (RTC) | `--rtc.enabled=true` | Pi0, Pi0.5, SmolVLA   |
 
 ---
 
@@ -117,10 +117,14 @@ python examples/rac/hil_data_collection.py \
 
 **With RTC for large models (Pi0, Pi0.5, SmolVLA):**
 
-For models with high inference latency, use the RTC script for smooth execution:
+For models with high inference latency, enable RTC for smooth execution:
 
 ```bash
-python examples/rac/hil_data_collection_rtc.py \
+python examples/rac/hil_data_collection.py \
+    --rtc.enabled=true \
+    --rtc.execution_horizon=20 \
+    --rtc.max_guidance_weight=5.0 \
+    --rtc.prefix_attention_schedule=LINEAR \
     --robot.type=bi_openarm_follower \
     --robot.left_arm_config.port=can1 \
     --robot.left_arm_config.side=left \
@@ -136,10 +140,7 @@ python examples/rac/hil_data_collection_rtc.py \
     --dataset.fps=30 \
     --dataset.episode_time_s=1000 \
     --dataset.num_episodes=50 \
-    --rtc.execution_horizon=20 \
-    --rtc.max_guidance_weight=5.0 \
-    --rtc.prefix_attention_schedule=LINEAR \
-    --interpolation_multiplier=2
+    --interpolation_multiplier=3
 ```
 
 **Controls (Conceptual):**
