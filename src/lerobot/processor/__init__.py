@@ -29,6 +29,7 @@ from .converters import (
     create_transition,
     transition_to_batch,
 )
+from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
 from .device_processor import DeviceProcessorStep
 from .factory import (
     make_default_processors,
@@ -76,8 +77,6 @@ from .policy_robot_bridge import (
 )
 from .relative_action_processor import (
     AbsoluteActionsProcessorStep,
-    MapDeltaActionToRobotActionStep,
-    MapTensorToDeltaActionDictStep,
     RelativeActionsProcessorStep,
     to_absolute_actions,
     to_relative_actions,
