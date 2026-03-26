@@ -18,6 +18,7 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 
+import datasets
 import torch
 import torch.utils
 from huggingface_hub import HfApi, snapshot_download
@@ -323,6 +324,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def features(self) -> dict[str, dict]:
         return self.meta.features
 
+    @property
+    def hf_dataset(self) -> datasets.Dataset:
+        """The underlying Hugging Face Dataset object"""
+        self.reader = self._ensure_reader()
+        if self.reader.hf_dataset is None:
+            self.reader.load_and_activate()
+        return self.reader.hf_dataset
+
     # ── Writer-delegated methods ──────────────────────────────────────
 
     def add_frame(self, frame: dict) -> None:
@@ -380,10 +389,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         Useful for extracting action sequences during replay without loading all features.
         Returns a ``datasets.Dataset`` containing only the requested columns.
         """
-        reader = self._ensure_reader()
-        if reader.hf_dataset is None:
-            reader.load_and_activate()
-        return reader.hf_dataset.select_columns(column_names)
+        return self.hf_dataset.select_columns(column_names)
 
     def get_raw_item(self, idx) -> dict:
         """Get a raw frame without image transforms applied.
@@ -391,10 +397,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         Unlike ``__getitem__``, this returns the raw HF dataset row at the given
         index with no delta-timestamp expansion, video decoding, or image transforms.
         """
-        reader = self._ensure_reader()
-        if reader.hf_dataset is None:
-            reader.load_and_activate()
-        return reader.hf_dataset[idx]
+        return self.hf_dataset[idx]
 
     def __repr__(self):
         feature_keys = list(self.features)
@@ -404,7 +407,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             f"    Number of selected episodes: '{self.num_episodes}',\n"
             f"    Number of selected samples: '{self.num_frames}',\n"
             f"    Features: '{feature_keys}',\n"
-            "})',\n"
+            f"}})"
         )
 
     # ── Hub methods (stay on facade) ──────────────────────────────────

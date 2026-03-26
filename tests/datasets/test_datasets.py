@@ -688,7 +688,7 @@ def test_check_cached_episodes_sufficient(tmp_path, lerobot_dataset_factory):
     )
 
     # Manually filter hf_dataset to only include episodes 0, 2, 4
-    episode_indices = sparse_dataset.reader.hf_dataset["episode_index"]
+    episode_indices = sparse_dataset.hf_dataset["episode_index"]
     mask = torch.zeros(len(episode_indices), dtype=torch.bool)
     for ep in [0, 2, 4]:
         mask |= torch.tensor(episode_indices) == ep
@@ -698,8 +698,8 @@ def test_check_cached_episodes_sufficient(tmp_path, lerobot_dataset_factory):
     # Find image keys by checking features
     image_keys = [key for key, ft in sparse_dataset.features.items() if ft.get("dtype") == "image"]
 
-    for key in sparse_dataset.reader.hf_dataset.column_names:
-        values = sparse_dataset.reader.hf_dataset[key]
+    for key in sparse_dataset.hf_dataset.column_names:
+        values = sparse_dataset.hf_dataset[key]
         # Filter values based on mask
         filtered_values = [val for i, val in enumerate(values) if mask[i]]
 
@@ -1184,9 +1184,9 @@ def test_dataset_resume_recording(tmp_path, empty_lerobot_dataset_factory):
     dataset_verify = LeRobotDataset(initial_repo_id, root=initial_root, revision="v3.0")
     assert dataset_verify.meta.total_episodes == initial_episodes
     assert dataset_verify.meta.total_frames == initial_episodes * frames_per_episode
-    assert len(dataset_verify.reader.hf_dataset) == initial_episodes * frames_per_episode
+    assert len(dataset_verify.hf_dataset) == initial_episodes * frames_per_episode
 
-    for idx in range(len(dataset_verify.reader.hf_dataset)):
+    for idx in range(len(dataset_verify.hf_dataset)):
         item = dataset_verify[idx]
         expected_ep = idx // frames_per_episode
         expected_frame = idx % frames_per_episode
@@ -1231,7 +1231,7 @@ def test_dataset_resume_recording(tmp_path, empty_lerobot_dataset_factory):
 
     assert dataset_final.meta.total_episodes == total_episodes
     assert dataset_final.meta.total_frames == total_frames
-    assert len(dataset_final.reader.hf_dataset) == total_frames
+    assert len(dataset_final.hf_dataset) == total_frames
 
     for idx in range(total_frames):
         item = dataset_final[idx]
