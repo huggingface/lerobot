@@ -21,6 +21,7 @@ import numpy as np
 import torch
 
 from lerobot.datasets.io_utils import load_image_as_numpy
+from lerobot.utils.constants import ACTION, OBS_STATE
 
 DEFAULT_QUANTILES = [0.01, 0.10, 0.50, 0.90, 0.99]
 
@@ -676,8 +677,8 @@ def compute_delta_action_stats(
     n_samples = min(max_samples, sample_upper_bound)
     indices = np.random.choice(sample_upper_bound, n_samples, replace=False)
 
-    action_dim = features["action"]["shape"][0]
-    action_names = features.get("action", {}).get("names")
+    action_dim = features[ACTION]["shape"][0]
+    action_names = features.get(ACTION, {}).get("names")
     delta_mask_step = DeltaActionsProcessorStep(
         enabled=True,
         exclude_joints=exclude_joints,
@@ -698,8 +699,8 @@ def compute_delta_action_stats(
             continue
 
         chunk_data = hf_dataset[idx:end_idx]
-        actions = torch.tensor(np.stack([np.asarray(a) for a in chunk_data["action"]])).float()
-        state = torch.tensor(np.asarray(chunk_data["observation.state"][0])).float()
+        actions = torch.tensor(np.stack([np.asarray(a) for a in chunk_data[ACTION]])).float()
+        state = torch.tensor(np.asarray(chunk_data[OBS_STATE][0])).float()
 
         delta = to_delta_actions(actions.unsqueeze(0), state.unsqueeze(0), delta_mask).squeeze(0)
         all_delta_chunks.append(delta.numpy())

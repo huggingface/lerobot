@@ -38,6 +38,7 @@ from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.rl.wandb_utils import WandBLogger
 from lerobot.scripts.lerobot_eval import eval_policy_all
+from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
@@ -232,7 +233,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                 chunk_size=cfg.policy.chunk_size,
                 exclude_joints=getattr(cfg.policy, "delta_exclude_joints", []),
             )
-            dataset.meta.stats["action"] = delta_action_stats
+            dataset.meta.stats[ACTION] = delta_action_stats
 
     accelerator.wait_for_everyone()
 
@@ -247,7 +248,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             torch.distributed.broadcast_object_list(stats_list, src=0)
             delta_action_stats = stats_list[0]
         if delta_action_stats is not None:
-            dataset.meta.stats["action"] = delta_action_stats
+            dataset.meta.stats[ACTION] = delta_action_stats
 
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,

@@ -56,7 +56,7 @@ from lerobot.datasets.utils import (
     update_chunk_file_indices,
 )
 from lerobot.datasets.video_utils import encode_video_frames, get_video_info
-from lerobot.utils.constants import HF_LEROBOT_HOME, OBS_IMAGE
+from lerobot.utils.constants import ACTION, HF_LEROBOT_HOME, OBS_IMAGE, OBS_STATE
 
 
 def _load_episode_with_stats(src_dataset: LeRobotDataset, episode_idx: int) -> dict:
@@ -1574,18 +1574,18 @@ def recompute_stats(
 
     # Build delta mask if delta_action is enabled
     delta_mask = None
-    if delta_action and "action" in features and "observation.state" in features:
+    if delta_action and ACTION in features and OBS_STATE in features:
         if delta_exclude_joints is None:
             delta_exclude_joints = ["gripper"]
-        action_names = features["action"].get("names")
+        action_names = features[ACTION].get("names")
         if action_names is not None:
             exclude = set(delta_exclude_joints)
             delta_mask = [n not in exclude for n in action_names]
         else:
-            action_dim = features["action"]["shape"][0]
+            action_dim = features[ACTION]["shape"][0]
             delta_mask = [True] * action_dim
         # Only recompute action stats when delta is enabled — state stays unchanged
-        features_to_compute = {"action": features["action"]}
+        features_to_compute = {ACTION: features[ACTION]}
         logging.info(f"Recomputing action stats as delta (exclude: {delta_exclude_joints})")
     else:
         logging.info(f"Recomputing stats for features: {list(features_to_compute.keys())}")
@@ -1615,19 +1615,19 @@ def recompute_stats(
                         episode_data[key] = np.array(values)
 
             # Apply delta conversion to actions before computing stats
-            if delta_mask is not None and "action" in episode_data:
+            if delta_mask is not None and ACTION in episode_data:
                 from lerobot.processor.delta_action_processor import to_delta_actions
 
                 # Load state for delta even if we're not computing state stats
-                if needs_state and "observation.state" in ep_df.columns:
-                    state_values = ep_df["observation.state"].values
+                if needs_state and OBS_STATE in ep_df.columns:
+                    state_values = ep_df[OBS_STATE].values
                     if hasattr(state_values[0], "__len__"):
                         states = np.stack(state_values)
                     else:
                         states = np.array(state_values)
-                    actions_t = torch.from_numpy(episode_data["action"]).float()
+                    actions_t = torch.from_numpy(episode_data[ACTION]).float()
                     states_t = torch.from_numpy(states).float()
-                    episode_data["action"] = to_delta_actions(actions_t, states_t, delta_mask).numpy()
+                    episode_data[ACTION] = to_delta_actions(actions_t, states_t, delta_mask).numpy()
 
             ep_stats = compute_episode_stats(episode_data, features_to_compute)
             all_episode_stats.append(ep_stats)
