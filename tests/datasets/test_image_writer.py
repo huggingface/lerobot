@@ -352,9 +352,13 @@ def test_with_different_image_formats(tmp_path, img_array_factory):
 
 
 def test_safe_stop_image_writer_decorator():
-    class MockDataset:
+    class MockWriter:
         def __init__(self):
             self.image_writer = MagicMock(spec=AsyncImageWriter)
+
+    class MockDataset:
+        def __init__(self):
+            self.writer = MockWriter()
 
     @safe_stop_image_writer
     def function_that_raises_exception(dataset=None):
@@ -366,7 +370,7 @@ def test_safe_stop_image_writer_decorator():
         function_that_raises_exception(dataset=dataset)
 
     assert str(exc_info.value) == "Test exception"
-    dataset.image_writer.stop.assert_called_once()
+    dataset.writer.image_writer.stop.assert_called_once()
 
 
 def test_main_process_time(tmp_path, img_tensor_factory):
