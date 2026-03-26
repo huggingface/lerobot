@@ -330,6 +330,8 @@ class _NormalizationMixin:
                     "MEAN_STD normalization mode requires mean and std stats, please update the dataset with the correct stats"
                 )
 
+            # 1e-6 epsilon matches OpenPI (src/openpi/transforms.py: Normalize._normalize,
+            # Unnormalize._unnormalize) to prevent division by zero when std is near-zero.
             mean, std = stats["mean"], stats["std"]
             if inverse:
                 return tensor * (std + 1e-6) + mean
@@ -365,6 +367,8 @@ class _NormalizationMixin:
                     "QUANTILES normalization mode requires q01 and q99 stats, please update the dataset with the correct stats using the `augment_dataset_quantile_stats.py` script"
                 )
 
+            # 1e-6 epsilon matches OpenPI (src/openpi/transforms.py: Normalize._normalize_quantile,
+            # Unnormalize._unnormalize_quantile) to prevent division by zero when quantile range is near-zero.
             denom = q99 - q01 + 1e-6
             if inverse:
                 return (tensor + 1.0) * denom / 2.0 + q01

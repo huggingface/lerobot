@@ -505,34 +505,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         start_time = time.perf_counter()
         batch = next(dl_iter)
 
-        # Debug logging for first few steps and periodically
-        if is_main_process and (step < 3 or (cfg.log_freq > 0 and step % (cfg.log_freq * 10) == 0)):
-            action = batch.get("action")
-            state = batch.get("observation.state")
-            if action is not None and state is not None:
-                logging.info(
-                    f"[DEBUG step={step}] PRE-PROCESSOR — "
-                    f"action: shape={tuple(action.shape)}, mean={action.mean():.4f}, std={action.std():.4f}, "
-                    f"min={action.min():.4f}, max={action.max():.4f} | "
-                    f"state: shape={tuple(state.shape)}, mean={state.mean():.4f}"
-                )
-
         batch = preprocessor(batch)
-
-        if is_main_process and (step < 3 or (cfg.log_freq > 0 and step % (cfg.log_freq * 10) == 0)):
-            action = batch.get("action")
-            state = batch.get("observation.state")
-            if action is not None:
-                logging.info(
-                    f"[DEBUG step={step}] POST-PROCESSOR — "
-                    f"action: shape={tuple(action.shape)}, mean={action.mean():.4f}, std={action.std():.4f}, "
-                    f"min={action.min():.4f}, max={action.max():.4f}"
-                )
-                if state is not None:
-                    logging.info(
-                        f"[DEBUG step={step}] POST-PROCESSOR — "
-                        f"state: shape={tuple(state.shape)}, mean={state.mean():.4f}, std={state.std():.4f}"
-                    )
 
         train_tracker.dataloading_s = time.perf_counter() - start_time
 

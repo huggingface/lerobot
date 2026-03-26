@@ -65,7 +65,7 @@ def _compute_delta_chunk_stats(action_chunks, states, mask):
     return get_feature_stats(all_delta, axis=0, keepdims=all_delta.ndim == 1)
 
 
-# --- Basic roundtrip tests ---
+# Basic roundtrip tests
 
 
 def test_roundtrip_3d(action_dim):
@@ -103,7 +103,7 @@ def test_exclude_joints_supports_partial_name_matching():
     assert step._build_mask(len(names)) == [True, False, True, False]
 
 
-# --- Chunk-level delta stats test ---
+# Chunk-level delta stats test
 
 
 def test_chunk_stats_have_larger_std_than_frame_stats(dataset, action_dim):
@@ -127,7 +127,7 @@ def test_chunk_stats_have_larger_std_than_frame_stats(dataset, action_dim):
     )
 
 
-# --- Full pipeline roundtrip: delta → normalize → unnormalize → absolute ---
+# Full pipeline roundtrip: delta → normalize → unnormalize → absolute
 
 
 def test_full_pipeline_roundtrip(dataset, action_dim):
@@ -229,7 +229,7 @@ def test_processor_step_disabled_is_noop(dataset, action_dim):
     torch.testing.assert_close(result[TransitionKey.ACTION], original)
 
 
-# --- Training batch shape validation ---
+# Training batch shape validation
 
 
 def test_delta_with_action_chunks(dataset, action_dim):
