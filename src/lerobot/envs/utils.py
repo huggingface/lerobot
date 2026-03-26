@@ -130,24 +130,24 @@ def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:
     return policy_features
 
 
-def all_envs_have_same_name(env: gym.vector.VectorEnv) -> bool:
-    env_names = env.get_attr("env_name")
-    return len(set(env_names)) == 1  # Check if all env names are the same
+def are_all_envs_same_type(env: gym.vector.VectorEnv) -> bool:
+    env_types = env.call("get_wrapper_attr", "__class__")
+    return len(set(env_types)) == 1
 
 
 def check_env_attributes_and_types(env: gym.vector.VectorEnv) -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("once", UserWarning)  # Apply filter only in this function
 
-        if not (env.call("has_wrapper_attr", "task_description")[0] and env.call("has_wrapper_attr", "task")[0]):
+        if not (env.call("has_wrapper_attr", "task_description")[0] or env.call("has_wrapper_attr", "task")[0]):
             warnings.warn(
-                "The environment does not have 'task_description' and 'task'. Some policies require these features.",
+                "The environment has neither 'task_description' nor 'task'. Some policies might require one of these features.",
                 UserWarning,
                 stacklevel=2,
             )
-        if not all_envs_have_same_name(env):
+        if not are_all_envs_same_type(env):
             warnings.warn(
-                "The environments have different names. Make sure you infer the right task from each environment. Empty task will be passed instead.",
+                "The environments have different types. Make sure you infer the right task from each environment. Empty task will be passed instead.",
                 UserWarning,
                 stacklevel=2,
             )
