@@ -94,9 +94,6 @@ The conversion is straightforward: `relative = absolute - current_state`. To rec
 
 **Why use relative actions?** The model learns to predict offsets centered around zero, which is easier to normalize and leads to more stable training. Because every chunk references the same current state, there is no error accumulation across chunks.
 
-> [!NOTE]
-> OpenPI's upstream code names this transform `DeltaActions`, but what it implements is UMI's **relative trajectory** representation, not true delta. We use the term "relative" in LeRobot to match the correct semantics.
-
 ### Delta Actions (sequential differences)
 
 Each action is an offset from the **previous action** (or from the current state for the first step). This is NOT what OpenPI/pi0 uses:
