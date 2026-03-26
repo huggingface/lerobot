@@ -58,10 +58,11 @@ The `examples/rac` HIL scripts require **teleoperators with active motors** that
 **Compatible teleoperators in the current `examples/rac` scripts:**
 
 - `openarm_mini` - OpenArm Mini
+- `so_leader` - SO100 / SO101 leader arm
 
 > [!IMPORTANT]
-> The provided `examples/rac` commands are wired to `bi_openarm_follower` + `openarm_mini`.
-> The scripts do not import/register SO100 configs by default.
+> The provided `examples/rac` commands default to `bi_openarm_follower` + `openarm_mini`.
+> `so_follower` + `so_leader` configs are also registered and can be used via CLI flags.
 
 ---
 
