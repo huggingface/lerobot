@@ -204,22 +204,26 @@ Replace `your_username/dataset_name` with your Hugging Face username and a name 
 
 Your dataset includes:
 
-**Your Actions (2 things)**:
+**Your Actions (2 features)**:
 
-- How much you moved forward/backward
-- How much you turned left/right
+- `linear_velocity`: How much you moved forward/backward
+- `angular_velocity`: How much you turned left/right
 
-**Robot Observations (12 things)**:
+**Robot Observations (24 features)**:
 
 - Front camera video
 - Rear camera video
 - Current speed
 - Battery level
-- Which way the robot is facing
-- GPS location (latitude, longitude, signal strength)
+- Orientation
+- GPS (latitude, longitude, signal strength)
 - Network signal strength
 - Vibration level
-- Lamp status (on/off)
+- Lamp state (on/off)
+- Accelerometer (x, y, z)
+- Gyroscope (x, y, z)
+- Magnetometer (x, y, z)
+- Wheel RPMs (4 wheels)
 
 ### Where Your Data Goes
 
