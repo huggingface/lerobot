@@ -79,6 +79,13 @@ class ActionQueue:
             self.last_index += 1
             return action.clone()
 
+    def clear(self) -> None:
+        """Clear queued actions and reset consumption index."""
+        with self.lock:
+            self.queue = None
+            self.original_queue = None
+            self.last_index = 0
+
     def qsize(self) -> int:
         """Get the number of remaining actions in the queue.
 
@@ -125,6 +132,18 @@ class ActionQueue:
                 return None
             return self.original_queue[self.last_index :]
 
+    def get_processed_left_over(self) -> Tensor | None:
+        """Get leftover processed actions (the actions currently executed by the robot).
+
+        Returns:
+            Tensor | None: Remaining processed actions (remaining_steps, action_dim),
+                or None if no processed queue exists.
+        """
+        with self.lock:
+            if self.queue is None:
+                return None
+            return self.queue[self.last_index :]
+
     def merge(
         self,
         original_actions: Tensor,
@@ -145,10 +164,10 @@ class ActionQueue:
             action_index_before_inference: Index before inference started, for validation.
         """
         with self.lock:
-            self._check_delays(real_delay, action_index_before_inference)
+            effective_delay = self._check_delays(real_delay, action_index_before_inference)
 
             if self.cfg.enabled:
-                self._replace_actions_queue(original_actions, processed_actions, real_delay)
+                self._replace_actions_queue(original_actions, processed_actions, effective_delay)
                 return
 
             self._append_actions_queue(original_actions, processed_actions)
@@ -164,12 +183,13 @@ class ActionQueue:
             processed_actions: Post-processed actions for robot.
             real_delay: Number of time steps to skip due to inference delay.
         """
-        self.original_queue = original_actions[real_delay:].clone()
-        self.queue = processed_actions[real_delay:].clone()
+        clamped_delay = max(0, min(real_delay, len(original_actions), len(processed_actions)))
+        self.original_queue = original_actions[clamped_delay:].clone()
+        self.queue = processed_actions[clamped_delay:].clone()
 
         logger.debug(f"original_actions shape: {self.original_queue.shape}")
         logger.debug(f"processed_actions shape: {self.queue.shape}")
-        logger.debug(f"real_delay: {real_delay}")
+        logger.debug(f"real_delay: {real_delay}, clamped_delay: {clamped_delay}")
 
         self.last_index = 0
 
@@ -196,7 +216,7 @@ class ActionQueue:
 
         self.last_index = 0
 
-    def _check_delays(self, real_delay: int, action_index_before_inference: int | None = None):
+    def _check_delays(self, real_delay: int, action_index_before_inference: int | None = None) -> int:
         """Validate that computed delays match expectations.
 
         Compares the delay computed from inference latency with the actual
@@ -205,15 +225,21 @@ class ActionQueue:
         Args:
             real_delay: Delay computed from inference latency.
             action_index_before_inference: Action index when inference started.
+
+        Returns:
+            int: Effective delay used to merge actions. When available, this is
+                derived from queue consumption (index diff), which is more
+                accurate than latency quantization.
         """
         if action_index_before_inference is None:
-            return
+            return max(0, real_delay)
 
-        indexes_diff = self.last_index - action_index_before_inference
+        indexes_diff = max(0, self.last_index - action_index_before_inference)
         if indexes_diff != real_delay:
             # Let's check that action index difference (real delay calculated based on action queue)
             # is the same as delay calculated based on inference latency
-            logger.warning(
-                f"[ACTION_QUEUE] Indexes diff is not equal to real delay. "
+            logger.debug(
+                f"[ACTION_QUEUE] Using index-based delay instead of latency-based delay. "
                 f"Indexes diff: {indexes_diff}, real delay: {real_delay}"
             )
+        return indexes_diff
