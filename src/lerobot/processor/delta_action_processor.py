@@ -22,9 +22,9 @@ import torch
 from torch import Tensor
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.types import EnvTransition, PolicyAction, RobotAction, TransitionKey
 from lerobot.utils.constants import OBS_STATE
 
-from .core import EnvTransition, PolicyAction, RobotAction, TransitionKey
 from .pipeline import ActionProcessorStep, ProcessorStep, ProcessorStepRegistry, RobotActionProcessorStep
 
 
@@ -298,9 +298,7 @@ class AbsoluteActionsProcessorStep(ProcessorStep):
             return new_transition
 
         mask = self.delta_step._build_mask(action.shape[-1])
-        new_transition[TransitionKey.ACTION] = to_absolute_actions(
-            action, self.delta_step._last_state, mask
-        )
+        new_transition[TransitionKey.ACTION] = to_absolute_actions(action, self.delta_step._last_state, mask)
         return new_transition
 
     def get_config(self) -> dict[str, Any]:

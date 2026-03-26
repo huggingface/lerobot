@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import logging
 import multiprocessing
 import queue
 import threading
@@ -21,6 +22,8 @@ from pathlib import Path
 import numpy as np
 import PIL.Image
 import torch
+
+logger = logging.getLogger(__name__)
 
 
 def safe_stop_image_writer(func):
@@ -31,7 +34,7 @@ def safe_stop_image_writer(func):
             dataset = kwargs.get("dataset")
             image_writer = getattr(dataset, "image_writer", None) if dataset else None
             if image_writer is not None:
-                print("Waiting for image writer to terminate...")
+                logger.warning("Waiting for image writer to terminate...")
                 image_writer.stop()
             raise e
 
@@ -89,8 +92,7 @@ def write_image(image: np.ndarray | PIL.Image.Image, fpath: Path, compress_level
             PIL.Image.Image object.
 
     Side Effects:
-        Prints an error message to the console if the image writing process
-        fails for any reason.
+        Logs an error message if the image writing process fails for any reason.
     """
     try:
         if isinstance(image, np.ndarray):
@@ -101,7 +103,7 @@ def write_image(image: np.ndarray | PIL.Image.Image, fpath: Path, compress_level
             raise TypeError(f"Unsupported image type: {type(image)}")
         img.save(fpath, compress_level=compress_level)
     except Exception as e:
-        print(f"Error writing image {fpath}: {e}")
+        logger.error("Error writing image %s: %s", fpath, e)
 
 
 def worker_thread_loop(queue: queue.Queue):

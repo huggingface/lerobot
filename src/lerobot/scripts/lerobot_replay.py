@@ -22,7 +22,7 @@ lerobot-replay \
     --robot.type=so100_follower \
     --robot.port=/dev/tty.usbmodem58760431541 \
     --robot.id=black \
-    --dataset.repo_id=aliberts/record-test \
+    --dataset.repo_id=<USER>/record-test \
     --dataset.episode=0
 ```
 
@@ -80,7 +80,7 @@ class DatasetReplayConfig:
     repo_id: str
     # Episode to replay.
     episode: int
-    # Root directory where the dataset will be stored (e.g. 'dataset/path').
+    # Root directory where the dataset will be stored (e.g. 'dataset/path'). If None, defaults to $HF_LEROBOT_HOME/repo_id.
     root: str | Path | None = None
     # Limit the frames per second. By default, uses the policy fps.
     fps: int = 30
