@@ -24,7 +24,7 @@ Keyboard Controls:
 
 Usage:
     # Standard synchronous inference (ACT, Diffusion Policy)
-    python examples/rac/hil_data_collection.py \
+    python examples/hil/hil_data_collection.py \
         --robot.type=bi_openarm_follower \
         --teleop.type=openarm_mini \
         --policy.path=path/to/pretrained_model \
@@ -34,7 +34,7 @@ Usage:
         --interpolation_multiplier=2
 
     # With RTC for large models (Pi0, Pi0.5, SmolVLA)
-    python examples/rac/hil_data_collection.py \
+    python examples/hil/hil_data_collection.py \
         --rtc.enabled=true \
         --rtc.execution_horizon=20 \
         --rtc.max_guidance_weight=5.0 \
