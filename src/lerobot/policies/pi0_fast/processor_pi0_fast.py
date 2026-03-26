@@ -24,6 +24,7 @@ import torch
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig
 from lerobot.processor import (
+    AbsoluteActionsProcessorStep,
     ActionTokenizerProcessorStep,
     AddBatchDimensionProcessorStep,
     DeltaActionsProcessorStep,
@@ -126,12 +127,20 @@ def make_pi0_fast_pre_post_processors(
     Returns:
         A tuple containing the configured pre-processor and post-processor pipelines.
     """
-    # Add remaining processors
+    delta_step = DeltaActionsProcessorStep(
+        enabled=config.use_delta_actions,
+        exclude_joints=getattr(config, "delta_exclude_joints", []),
+        action_names=getattr(config, "action_feature_names", None),
+    )
+
+    # Pi0Fast order: normalize → delta → tokenize → model → absolute → unnormalize
+    # NOTE: Normalization MUST come before delta because the state tokenizer expects
+    # normalized state in [-1, 1] range for discretization. This means delta operates
+    # on normalized values, so AbsoluteActionsProcessorStep must come before
+    # UnnormalizerProcessorStep in the postprocessor.
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
         AddBatchDimensionProcessorStep(),
-        # NOTE: NormalizerProcessorStep MUST come before Pi0FastPrepareStateAndLanguageTokenizerProcessorStep
-        # because the tokenizer step expects normalized state in [-1, 1] range for discretization
         NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
@@ -144,7 +153,7 @@ def make_pi0_fast_pre_post_processors(
             padding_side="right",
             padding="max_length",
         ),
-        DeltaActionsProcessorStep(enabled=config.use_delta_actions),
+        delta_step,
         ActionTokenizerProcessorStep(
             action_tokenizer_name=config.action_tokenizer_name,
             max_action_tokens=config.max_action_tokens,
@@ -155,6 +164,7 @@ def make_pi0_fast_pre_post_processors(
     ]
 
     output_steps: list[ProcessorStep] = [
+        AbsoluteActionsProcessorStep(enabled=config.use_delta_actions, delta_step=delta_step),
         UnnormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),

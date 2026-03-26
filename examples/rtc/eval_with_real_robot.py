@@ -87,6 +87,7 @@ from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 from lerobot.policies.rtc.action_queue import ActionQueue
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.policies.rtc.latency_tracker import LatencyTracker
+from lerobot.processor.delta_action_processor import DeltaActionsProcessorStep
 from lerobot.processor.factory import (
     make_default_robot_action_processor,
     make_default_robot_observation_processor,
@@ -212,6 +213,11 @@ def is_image_key(k: str) -> bool:
     return k.startswith(OBS_IMAGES)
 
 
+def _detect_delta_actions(preprocessor) -> bool:
+    """Check whether the preprocessor pipeline contains an enabled DeltaActionsProcessorStep."""
+    return any(isinstance(step, DeltaActionsProcessorStep) and step.enabled for step in preprocessor.steps)
+
+
 def get_actions(
     policy,
     robot: RobotWrapper,
@@ -254,6 +260,14 @@ def get_actions(
         )
 
         logger.info("[GET_ACTIONS] Preprocessor/postprocessor loaded successfully with embedded stats")
+
+        use_delta_actions = _detect_delta_actions(preprocessor)
+        if use_delta_actions:
+            logger.info(
+                "[GET_ACTIONS] Delta actions detected. RTC guidance will operate in delta "
+                "(relative) action space. Leftover actions from previous chunks are stored as "
+                "deltas and used directly for RTC inpainting."
+            )
 
         get_actions_threshold = cfg.action_queue_size_to_get_new_actions
 

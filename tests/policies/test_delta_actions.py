@@ -58,7 +58,7 @@ def _build_action_chunks(dataset, chunk_size, max_chunks=50):
 
 def _compute_delta_chunk_stats(action_chunks, states, mask):
     all_deltas = []
-    for actions, state in zip(action_chunks, states):
+    for actions, state in zip(action_chunks, states, strict=True):
         delta = to_delta_actions(actions.unsqueeze(0), state.unsqueeze(0), mask).squeeze(0)
         all_deltas.append(delta.numpy())
     all_delta = np.concatenate(all_deltas, axis=0)
@@ -66,6 +66,7 @@ def _compute_delta_chunk_stats(action_chunks, states, mask):
 
 
 # --- Basic roundtrip tests ---
+
 
 def test_roundtrip_3d(action_dim):
     actions = torch.randn(4, CHUNK_SIZE, action_dim)
@@ -104,6 +105,7 @@ def test_exclude_joints_supports_partial_name_matching():
 
 # --- Chunk-level delta stats test ---
 
+
 def test_chunk_stats_have_larger_std_than_frame_stats(dataset, action_dim):
     """Chunk-level delta stats should have larger std than per-frame delta stats."""
     action_chunks, states = _build_action_chunks(dataset, CHUNK_SIZE)
@@ -127,13 +129,14 @@ def test_chunk_stats_have_larger_std_than_frame_stats(dataset, action_dim):
 
 # --- Full pipeline roundtrip: delta → normalize → unnormalize → absolute ---
 
+
 def test_full_pipeline_roundtrip(dataset, action_dim):
     """Test the complete OpenPI pipeline: delta → normalize → unnormalize → absolute."""
     action_chunks, states = _build_action_chunks(dataset, CHUNK_SIZE)
     mask = [True] * action_dim
 
     delta_stats = _compute_delta_chunk_stats(action_chunks, states, mask)
-    stats = {ACTION: {k: v for k, v in delta_stats.items()}}
+    stats = {ACTION: dict(delta_stats.items())}
 
     features = {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(action_dim,))}
     norm_map = {FeatureType.ACTION: NormalizationMode.MEAN_STD}
@@ -176,7 +179,7 @@ def test_normalized_delta_values_are_reasonable(dataset, action_dim):
     std = torch.tensor(delta_stats["std"]).float()
 
     all_normalized = []
-    for actions, state in zip(action_chunks, states):
+    for actions, state in zip(action_chunks, states, strict=True):
         delta = to_delta_actions(actions.unsqueeze(0), state.unsqueeze(0), mask).squeeze(0)
         normalized = (delta - mean) / (std + 1e-6)
         all_normalized.append(normalized)
@@ -185,7 +188,7 @@ def test_normalized_delta_values_are_reasonable(dataset, action_dim):
 
     pct_in_range = (all_normalized.abs() < 5).float().mean()
     assert pct_in_range > 0.9, (
-        f"Only {pct_in_range*100:.1f}% of normalized values in [-5, 5], expected >90%"
+        f"Only {pct_in_range * 100:.1f}% of normalized values in [-5, 5], expected >90%"
     )
 
     assert all_normalized.mean().abs() < 1.0, (
@@ -228,6 +231,7 @@ def test_processor_step_disabled_is_noop(dataset, action_dim):
 
 # --- Training batch shape validation ---
 
+
 def test_delta_with_action_chunks(dataset, action_dim):
     """Verify delta works correctly with (B, chunk_size, action_dim) shaped actions."""
     action_chunks, states = _build_action_chunks(dataset, CHUNK_SIZE)
@@ -268,7 +272,7 @@ def test_delta_stats_match_actual_data_distribution(dataset, action_dim):
 
     # Also compute directly
     all_deltas = []
-    for actions, state in zip(action_chunks, states):
+    for actions, state in zip(action_chunks, states, strict=True):
         delta = to_delta_actions(actions.unsqueeze(0), state.unsqueeze(0), mask).squeeze(0)
         all_deltas.append(delta)
     all_deltas_tensor = torch.cat(all_deltas, dim=0)
@@ -292,7 +296,7 @@ def test_quantile_normalization_roundtrip(dataset, action_dim):
     mask = [True] * action_dim
 
     delta_stats = _compute_delta_chunk_stats(action_chunks, states, mask)
-    stats = {ACTION: {k: v for k, v in delta_stats.items()}}
+    stats = {ACTION: dict(delta_stats.items())}
 
     features = {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(action_dim,))}
     norm_map = {FeatureType.ACTION: NormalizationMode.QUANTILES}
@@ -315,9 +319,7 @@ def test_quantile_normalization_roundtrip(dataset, action_dim):
     normalized = t2[TransitionKey.ACTION]
     # Most values should be in [-1, 1] with quantile normalization
     pct_in_range = (normalized.abs() < 2).float().mean()
-    assert pct_in_range > 0.5, (
-        f"Only {pct_in_range*100:.1f}% in [-2, 2] after quantile norm, expected >50%"
-    )
+    assert pct_in_range > 0.5, f"Only {pct_in_range * 100:.1f}% in [-2, 2] after quantile norm, expected >50%"
 
     # Reverse: unnormalize → absolute
     t3 = unnormalizer(t2)

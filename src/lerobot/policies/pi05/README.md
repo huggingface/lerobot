@@ -17,6 +17,49 @@ It is designed as a **Vision-Language-Action model with open-world generalizatio
 
 ---
 
+## Delta Actions (Relative Actions)
+
+π₀.₅ supports training with **delta actions**, where the model learns relative offsets
+from the current robot state instead of absolute joint positions. This mirrors the
+`DeltaActions` transform from [OpenPI](https://github.com/Physical-Intelligence/openpi)
+and can improve performance.
+
+### How it works
+
+1. **During preprocessing**, absolute actions are converted to deltas:
+   `delta = action - state` (for selected joints).
+2. The deltas are normalized using statistics computed from the delta distribution.
+3. **During postprocessing**, predicted deltas are converted back to absolute:
+   `absolute = delta + state`.
+
+Joints listed in `delta_exclude_joints` (e.g., gripper) are kept absolute.
+
+### Configuration
+
+| Parameter              | Type        | Default       | Description                                                      |
+| ---------------------- | ----------- | ------------- | ---------------------------------------------------------------- |
+| `use_delta_actions`    | `bool`      | `False`       | Enable delta action training                                     |
+| `delta_exclude_joints` | `list[str]` | `["gripper"]` | Joint names to keep absolute (matched by substring)              |
+| `action_feature_names` | `list[str]` | `None`        | Auto-populated from dataset metadata at runtime by `make_policy` |
+
+### Training example
+
+```bash
+python -m lerobot.scripts.lerobot_train \
+  --policy.type=pi05 \
+  --dataset.repo_id=your_org/your_dataset \
+  --policy.use_delta_actions=true \
+  --policy.delta_exclude_joints='["gripper"]'
+```
+
+When `use_delta_actions=true`, the training script automatically:
+
+- Computes delta action statistics from the dataset (sampled chunk-level deltas)
+- Replaces the standard action stats with delta stats for normalization
+- Broadcasts these stats across all ranks in distributed training
+
+---
+
 ## Citation
 
 If you use this work, please cite both **OpenPI** and the π₀.₅ paper:
