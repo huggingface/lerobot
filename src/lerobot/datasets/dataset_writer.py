@@ -95,6 +95,20 @@ class DatasetWriter:
         streaming_encoder: StreamingVideoEncoder | None = None,
         initial_frames: int = 0,
     ):
+        """Initialize the writer with metadata, codec, and encoding config.
+
+        Args:
+            meta: Dataset metadata instance (used for feature schema, chunk
+                settings, and episode persistence).
+            root: Local dataset root directory.
+            vcodec: Video codec for encoding (e.g. ``'libsvtav1'``, ``'h264'``).
+            encoder_threads: Threads per encoder instance. ``None`` for auto.
+            batch_encoding_size: Number of episodes to accumulate before
+                batch-encoding videos.
+            streaming_encoder: Optional pre-built :class:`StreamingVideoEncoder`
+                for real-time encoding. ``None`` disables streaming mode.
+            initial_frames: Starting frame count (non-zero when resuming).
+        """
         self._meta = meta
         self._root = root
         self._vcodec = vcodec
@@ -485,6 +499,12 @@ class DatasetWriter:
         return metadata
 
     def clear_episode_buffer(self, delete_images: bool = True) -> None:
+        """Discard the current episode buffer and optionally delete temp images.
+
+        Args:
+            delete_images: If ``True``, remove temporary image directories
+                written for the current episode.
+        """
         # Cancel streaming encoder if active
         if self._streaming_encoder is not None:
             self._streaming_encoder.cancel_episode()
@@ -505,6 +525,12 @@ class DatasetWriter:
         self.episode_buffer = self._create_episode_buffer()
 
     def start_image_writer(self, num_processes: int = 0, num_threads: int = 4) -> None:
+        """Start an :class:`AsyncImageWriter` for background image persistence.
+
+        Args:
+            num_processes: Number of subprocesses. ``0`` means threads only.
+            num_threads: Number of threads per process.
+        """
         if isinstance(self.image_writer, AsyncImageWriter):
             logger.warning(
                 "You are starting a new AsyncImageWriter that is replacing an already existing one in the dataset."

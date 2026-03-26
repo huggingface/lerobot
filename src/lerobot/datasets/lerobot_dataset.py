@@ -182,6 +182,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
             encoder_threads (int | None, optional): Number of threads per encoder instance. None lets the
                 codec auto-detect (default). Lower values reduce CPU usage per encoder. Maps to 'lp' (via svtav1-params) for
                 libsvtav1 and 'threads' for h264/hevc.
+
+        Note:
+            Write-mode parameters (``streaming_encoding``, ``batch_encoding_size``) passed to
+            ``__init__`` are deprecated. Use :meth:`create` for new datasets or :meth:`resume`
+            to append to existing ones.
         """
         super().__init__()
         self.repo_id = repo_id
@@ -322,6 +327,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     @property
     def features(self) -> dict[str, dict]:
+        """Feature specification dict mapping feature names to their type/shape metadata."""
         return self.meta.features
 
     @property
@@ -335,14 +341,52 @@ class LeRobotDataset(torch.utils.data.Dataset):
     # ── Writer-delegated methods ──────────────────────────────────────
 
     def add_frame(self, frame: dict) -> None:
+        """Add a single frame to the current episode buffer.
+
+        Delegates to :meth:`DatasetWriter.add_frame`. The dataset must be in
+        write mode (created via :meth:`create` or :meth:`resume`).
+
+        Args:
+            frame: Dict mapping feature names to their values for this frame.
+                Must include a ``'task'`` key. Torch tensors are converted to numpy.
+
+        Raises:
+            RuntimeError: If the dataset is read-only (no writer).
+        """
         self._require_writer("add_frame")
         self.writer.add_frame(frame)
 
     def save_episode(self, episode_data: dict | None = None, parallel_encoding: bool = True) -> None:
+        """Save the current episode buffer to disk.
+
+        Delegates to :meth:`DatasetWriter.save_episode`. Encodes videos, writes
+        parquet data, and updates metadata. The episode buffer is reset afterward.
+
+        Args:
+            episode_data: Optional pre-built episode dict. If ``None``, uses the
+                internal episode buffer populated by :meth:`add_frame`.
+            parallel_encoding: If ``True`` and multiple cameras exist, encode
+                videos in parallel using a process pool.
+
+        Raises:
+            RuntimeError: If the dataset is read-only (no writer).
+        """
         self._require_writer("save_episode")
         self.writer.save_episode(episode_data, parallel_encoding)
 
     def clear_episode_buffer(self, delete_images: bool = True) -> None:
+        """Discard the current episode buffer without saving.
+
+        Delegates to :meth:`DatasetWriter.clear_episode_buffer`. Useful for
+        discarding a failed or interrupted recording episode.
+
+        Args:
+            delete_images: If ``True``, also remove temporary image files written
+                to disk for the current episode.
+
+        Raises:
+            RuntimeError: If the dataset is read-only (no writer).
+        """
         self._require_writer("clear_episode_buffer")
         self.writer.clear_episode_buffer(delete_images)
 
@@ -370,9 +414,26 @@ class LeRobotDataset(torch.utils.data.Dataset):
     # ── Core Dataset methods ──────────────────────────────────────────
 
     def __len__(self):
+        """Return the number of frames in the selected episodes."""
         return self.num_frames
 
     def __getitem__(self, idx) -> dict:
+        """Return a single frame by index, with all transforms applied.
+
+        Loads the frame from the underlying HF dataset, expands delta-timestamp
+        windows, decodes video frames, and applies image transforms. Delegates
+        the core logic to :meth:`DatasetReader.get_item`.
+
+        Args:
+            idx: Index into the (possibly episode-filtered) dataset.
+
+        Returns:
+            Dict mapping feature names to their tensor values for this frame.
+
+        Raises:
+            RuntimeError: If the dataset is currently being recorded and
+                :meth:`finalize` has not been called yet.
+        """
         if self.writer is not None and not self._is_finalized:
             raise RuntimeError(
                 "Cannot read from a dataset that is being recorded. Call finalize() first, then access items."
@@ -424,6 +485,27 @@ class LeRobotDataset(torch.utils.data.Dataset):
         upload_large_folder: bool = False,
         **card_kwargs,
     ) -> None:
+        """Upload the dataset to the Hugging Face Hub.
+
+        Creates the repository if it does not exist, uploads all dataset files
+        (optionally excluding videos), generates a dataset card, and tags the
+        revision with the current codebase version.
+
+        Args:
+            branch: Optional branch to push to. Created from the current
+                revision if it does not exist.
+            tags: Optional list of tags for the dataset card.
+            license: License identifier for the dataset card.
+            tag_version: If ``True``, create a Git tag for the current codebase
+                version.
+            push_videos: If ``False``, skip uploading the ``videos/`` directory.
+            private: If ``True``, create a private repository.
+            allow_patterns: Glob pattern(s) restricting which files to upload.
+            upload_large_folder: If ``True``, use ``upload_large_folder`` instead
+                of ``upload_folder`` for very large datasets.
+            **card_kwargs: Additional keyword arguments forwarded to dataset card
+                creation.
+        """
         ignore_patterns = ["images/"]
         if not push_videos:
             ignore_patterns.append("videos/")
@@ -505,7 +587,42 @@ class LeRobotDataset(torch.utils.data.Dataset):
         encoder_queue_maxsize: int = 30,
         encoder_threads: int | None = None,
     ) -> "LeRobotDataset":
-        """Create a LeRobot Dataset from scratch in order to record data."""
+        """Create a new LeRobotDataset from scratch for recording data.
+
+        Returns a write-mode dataset with an active :class:`DatasetWriter`. Use
+        :meth:`add_frame` / :meth:`save_episode` to populate it, then
+        :meth:`finalize` when done.
+
+        Args:
+            repo_id: Repository identifier, typically ``'{hf_user}/{dataset_name}'``.
+            fps: Frames per second used during data collection.
+            features: Feature specification dict mapping feature names to their
+                type/shape metadata.
+            root: Local directory for dataset storage. Defaults to
+                ``$HF_LEROBOT_HOME/{repo_id}``.
+            robot_type: Optional robot type string stored in metadata.
+            use_videos: If ``True``, visual modalities are stored as MP4 videos.
+                If ``False``, they are stored as images.
+            tolerance_s: Timestamp synchronization tolerance in seconds.
+            image_writer_processes: Number of subprocesses for async image
+                writing. ``0`` means use threads only.
+            image_writer_threads: Number of threads for async image writing.
+            video_backend: Video decoding backend (used when reading back).
+            batch_encoding_size: Number of episodes to accumulate before
+                batch-encoding videos. ``1`` means encode immediately.
+            vcodec: Video codec for encoding. Options include ``'libsvtav1'``,
+                ``'h264'``, ``'hevc'``, ``'auto'``.
+            metadata_buffer_size: Number of episode metadata records to buffer
+                before flushing to parquet.
+            streaming_encoding: If ``True``, encode video frames in real-time
+                during capture instead of writing images first.
+            encoder_queue_maxsize: Max buffered frames per camera when using
+                streaming encoding.
+            encoder_threads: Threads per encoder instance. ``None`` for auto.
+
+        Returns:
+            A new :class:`LeRobotDataset` in write mode.
+        """
         vcodec = resolve_vcodec(vcodec)
         obj = cls.__new__(cls)
         obj.meta = LeRobotDatasetMetadata.create(
@@ -571,8 +688,33 @@ class LeRobotDataset(torch.utils.data.Dataset):
     ) -> "LeRobotDataset":
         """Resume recording on an existing dataset.
 
-        Loads metadata from an existing dataset and creates a writer for appending new episodes.
-        The hf_dataset is not loaded until finalize() is called and data is read.
+        Loads metadata from an existing dataset (local or Hub) and creates a
+        :class:`DatasetWriter` for appending new episodes. The underlying HF
+        dataset is not loaded until :meth:`finalize` is called and data is
+        subsequently read.
+
+        Args:
+            repo_id: Repository identifier of the existing dataset.
+            root: Local directory of the dataset. Defaults to
+                ``$HF_LEROBOT_HOME/{repo_id}``.
+            tolerance_s: Timestamp synchronization tolerance in seconds.
+            revision: Git revision (branch, tag, or commit hash). Defaults to
+                current codebase version tag.
+            force_cache_sync: If ``True``, re-download metadata from the Hub even
+                if a local cache exists.
+            video_backend: Video decoding backend for reading back data.
+            batch_encoding_size: Number of episodes to accumulate before
+                batch-encoding videos.
+            vcodec: Video codec for encoding.
+            image_writer_processes: Subprocesses for async image writing.
+            image_writer_threads: Threads for async image writing.
+            streaming_encoding: If ``True``, encode video in real-time during
+                capture.
+            encoder_queue_maxsize: Max buffered frames per camera for streaming.
+            encoder_threads: Threads per encoder instance. ``None`` for auto.
+
+        Returns:
+            A :class:`LeRobotDataset` in write mode, ready to append episodes.
         """
         vcodec = resolve_vcodec(vcodec)
         obj = cls.__new__(cls)

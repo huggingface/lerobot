@@ -54,6 +54,13 @@ CODEBASE_VERSION = "v3.0"
 
 
 class LeRobotDatasetMetadata:
+    """Metadata container for a LeRobot dataset.
+
+    Manages the ``info.json``, ``stats.json``, ``tasks.parquet``, and
+    ``episodes/`` parquet files that describe a dataset's structure, content,
+    and statistics.
+    """
+
     def __init__(
         self,
         repo_id: str,
@@ -62,6 +69,23 @@ class LeRobotDatasetMetadata:
         force_cache_sync: bool = False,
         metadata_buffer_size: int = 10,
     ):
+        """Load or download metadata for an existing LeRobot dataset.
+
+        Attempts to load metadata from local disk. If files are missing or
+        ``force_cache_sync`` is ``True``, downloads the ``meta/`` directory from
+        the Hub.
+
+        Args:
+            repo_id: Repository identifier (e.g. ``'lerobot/aloha_sim'``).
+            root: Local directory for the dataset. Defaults to
+                ``$HF_LEROBOT_HOME/{repo_id}``.
+            revision: Git revision (branch, tag, or commit hash). Defaults to
+                the current codebase version.
+            force_cache_sync: If ``True``, re-download metadata from the Hub
+                even when local files exist.
+            metadata_buffer_size: Number of episode metadata records to buffer
+                in memory before flushing to parquet.
+        """
         self.repo_id = repo_id
         self.revision = revision if revision else CODEBASE_VERSION
         self.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
@@ -165,6 +189,7 @@ class LeRobotDatasetMetadata:
 
     @property
     def url_root(self) -> str:
+        """Hugging Face Hub URL root for this dataset."""
         return f"hf://datasets/{self.repo_id}"
 
     @property
@@ -173,6 +198,17 @@ class LeRobotDatasetMetadata:
         return packaging.version.parse(self.info["codebase_version"])
 
     def get_data_file_path(self, ep_index: int) -> Path:
+        """Return the relative parquet file path for the given episode index.
+
+        Args:
+            ep_index: Zero-based episode index.
+
+        Returns:
+            Path to the parquet file containing this episode's data.
+
+        Raises:
+            IndexError: If ``ep_index`` is out of range.
+        """
         if self.episodes is None:
             self.episodes = load_episodes(self.root)
         if ep_index >= len(self.episodes):
@@ -186,6 +222,19 @@ class LeRobotDatasetMetadata:
         return Path(fpath)
 
     def get_video_file_path(self, ep_index: int, vid_key: str) -> Path:
+        """Return the relative video file path for the given episode and video key.
+
+        Args:
+            ep_index: Zero-based episode index.
+            vid_key: Feature key identifying the video stream
+                (e.g. ``'observation.images.laptop'``).
+
+        Returns:
+            Path to the video file containing this episode's frames.
+
+        Raises:
+            IndexError: If ``ep_index`` is out of range.
+        """
         if self.episodes is None:
             self.episodes = load_episodes(self.root)
         if ep_index >= len(self.episodes):
@@ -289,6 +338,17 @@ class LeRobotDatasetMetadata:
             return None
 
     def save_episode_tasks(self, tasks: list[str]):
+        """Register tasks for the current episode and persist to disk.
+
+        New tasks that do not already exist in the dataset are assigned
+        sequential task indices and appended to the tasks parquet file.
+
+        Args:
+            tasks: List of unique task descriptions in natural language.
+
+        Raises:
+            ValueError: If ``tasks`` contains duplicates.
+        """
         if len(set(tasks)) != len(tasks):
             raise ValueError(f"Tasks are not unique: {tasks}")
 
@@ -385,6 +445,20 @@ class LeRobotDatasetMetadata:
         episode_stats: dict[str, dict],
         episode_metadata: dict,
     ) -> None:
+        """Persist episode metadata, update dataset info, and aggregate stats.
+
+        Writes the episode's metadata to the buffered parquet writer, increments
+        the total episode/frame counters in ``info.json``, and merges the
+        episode's statistics into the running dataset statistics.
+
+        Args:
+            episode_index: Zero-based index of the episode being saved.
+            episode_length: Number of frames in this episode.
+            episode_tasks: List of task descriptions for this episode.
+            episode_stats: Per-feature statistics for this episode.
+            episode_metadata: Additional metadata (chunk/file indices, frame
+                ranges, video timestamps, etc.).
+        """
         episode_dict = {
             "episode_index": episode_index,
             "tasks": episode_tasks,
@@ -491,7 +565,32 @@ class LeRobotDatasetMetadata:
         data_files_size_in_mb: int | None = None,
         video_files_size_in_mb: int | None = None,
     ) -> "LeRobotDatasetMetadata":
-        """Creates metadata for a LeRobotDataset."""
+        """Create metadata for a new LeRobot dataset from scratch.
+
+        Initializes the ``info.json`` file on disk with the provided feature
+        schema and dataset settings. No episode data is written yet.
+
+        Args:
+            repo_id: Repository identifier (e.g. ``'user/my_dataset'``).
+            fps: Frames per second used during data collection.
+            features: Feature specification dict mapping feature names to their
+                type/shape metadata.
+            robot_type: Optional robot type string stored in metadata.
+            root: Local directory for the dataset. Defaults to
+                ``$HF_LEROBOT_HOME/{repo_id}``. Must not already exist.
+            use_videos: If ``True``, visual modalities are encoded as MP4 videos.
+            metadata_buffer_size: Number of episode metadata records to buffer
+                before flushing to parquet.
+            chunks_size: Max number of files per chunk directory. ``None`` uses
+                the default.
+            data_files_size_in_mb: Max parquet file size in MB. ``None`` uses the
+                default.
+            video_files_size_in_mb: Max video file size in MB. ``None`` uses the
+                default.
+
+        Returns:
+            A new :class:`LeRobotDatasetMetadata` instance.
+        """
         obj = cls.__new__(cls)
         obj.repo_id = repo_id
         obj.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id

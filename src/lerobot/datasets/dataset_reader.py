@@ -50,6 +50,23 @@ class DatasetReader:
         delta_timestamps: dict[str, list[float]] | None,
         image_transforms: Callable | None,
     ):
+        """Initialize the reader with metadata, filtering, and transform config.
+
+        The HF dataset is not loaded here — call :meth:`try_load` or
+        :meth:`load_and_activate` afterward.
+
+        Args:
+            meta: Dataset metadata instance.
+            root: Local dataset root directory.
+            episodes: Optional list of episode indices to select. ``None``
+                means all episodes.
+            tolerance_s: Timestamp synchronization tolerance in seconds.
+            video_backend: Video decoding backend identifier.
+            delta_timestamps: Optional dict mapping feature keys to lists of
+                relative timestamp offsets for temporal context windows.
+            image_transforms: Optional torchvision v2 transform applied to
+                visual features.
+        """
         self._meta = meta
         self._root = root
         self.episodes = episodes
@@ -140,6 +157,10 @@ class DatasetReader:
         return True
 
     def get_episodes_file_paths(self) -> list[Path]:
+        """Return deduplicated file paths (data + video) for selected episodes.
+
+        Used to build the ``allow_patterns`` list for ``snapshot_download``.
+        """
         episodes = self.episodes if self.episodes is not None else list(range(self._meta.total_episodes))
         fpaths = [str(self._meta.get_data_file_path(ep_idx)) for ep_idx in episodes]
         if len(self._meta.video_keys) > 0:
