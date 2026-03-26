@@ -15,7 +15,7 @@
 
 This script:
 1. Loads action chunks from LeRobotDataset (with episode sampling)
-2. Optionally applies delta transforms (relative vs absolute actions)
+2. Optionally applies relative transforms (relative vs absolute actions)
 3. Extracts specified action dimensions for encoding
 4. Applies normalization (MEAN_STD, MIN_MAX, QUANTILES, or other modes)
 5. Trains FAST tokenizer (BPE on DCT coefficients) on the action chunks
@@ -32,8 +32,8 @@ lerobot-train-tokenizer \
     --max_episodes=100 \
     --sample_fraction=0.1 \
     --encoded_dims="0:6" \
-    --delta_dims="0,1,2,3,4,5" \
-    --use_delta_transform=true \
+    --relative_dims="0,1,2,3,4,5" \
+    --use_relative_transform=true \
     --state_key="observation.state" \
     --normalization_mode="QUANTILES" \
     --vocab_size=1024 \
@@ -82,10 +82,10 @@ class TokenizerTrainingConfig:
     sample_fraction: float = 0.1
     # Comma-separated dimension ranges to encode (e.g., "0:6,7:23")
     encoded_dims: str = "0:6,7:23"
-    # Comma-separated dimension indices for delta transform (e.g., "0,1,2,3,4,5")
-    delta_dims: str | None = None
-    # Whether to apply delta transform (relative actions vs absolute actions)
-    use_delta_transform: bool = False
+    # Comma-separated dimension indices for relative transform (e.g., "0,1,2,3,4,5")
+    relative_dims: str | None = None
+    # Whether to apply relative transform (relative actions vs absolute actions)
+    use_relative_transform: bool = False
     # Dataset key for state observations (default: "observation.state")
     state_key: str = OBS_STATE
     # Normalization mode (MEAN_STD, MIN_MAX, QUANTILES, QUANTILE10, IDENTITY)
@@ -104,25 +104,27 @@ class TokenizerTrainingConfig:
     hub_private: bool = False
 
 
-def apply_delta_transform(state: np.ndarray, actions: np.ndarray, delta_dims: list[int] | None) -> np.ndarray:
-    """Apply delta transform to specified dimensions.
+def apply_relative_transform(
+    state: np.ndarray, actions: np.ndarray, relative_dims: list[int] | None
+) -> np.ndarray:
+    """Apply relative transform to specified dimensions.
 
     Args:
         state: Current state [D]
         actions: Future actions [D]
-        delta_dims: List of dimension indices to apply delta transform to
+        relative_dims: List of dimension indices to apply relative transform to
 
     Returns:
         Transformed actions [D]
     """
-    if delta_dims is None or len(delta_dims) == 0:
+    if relative_dims is None or len(relative_dims) == 0:
         return actions
 
-    delta_actions = actions.copy()
-    for dim in delta_dims:
-        delta_actions[dim] = actions[dim] - state[dim]
+    relative_actions = actions.copy()
+    for dim in relative_dims:
+        relative_actions[dim] = actions[dim] - state[dim]
 
-    return delta_actions
+    return relative_actions
 
 
 def apply_normalization(
@@ -185,7 +187,7 @@ def apply_normalization(
 
 def process_episode(args):
     """Process single episode and return action chunks."""
-    dataset, ep_idx, action_horizon, delta_dims, sample_fraction, state_key, use_delta_transform = args
+    dataset, ep_idx, action_horizon, relative_dims, sample_fraction, state_key, use_relative_transform = args
 
     try:
         # get episode info
@@ -222,7 +224,7 @@ def process_episode(args):
                     else np.array(frame[state_key])
                 )
             else:
-                # if no state key, use zeros (no delta transform)
+                # if no state key, use zeros (no relative transform)
                 state = np.zeros_like(
                     frame[ACTION].numpy() if torch.is_tensor(frame[ACTION]) else np.array(frame[ACTION])
                 )
@@ -243,18 +245,18 @@ def process_episode(args):
             current_state = states[i]  # First state in chunk
             future_absolute_actions = actions[i : i + action_horizon]
 
-            if use_delta_transform:
+            if use_relative_transform:
                 # relative actions
-                delta_chunk = np.zeros_like(future_absolute_actions)
+                relative_chunk = np.zeros_like(future_absolute_actions)
                 for t in range(action_horizon):
-                    delta_chunk[t] = apply_delta_transform(
+                    relative_chunk[t] = apply_relative_transform(
                         current_state,
                         future_absolute_actions[t],
-                        delta_dims,
+                        relative_dims,
                     )
-                action_chunks.append(delta_chunk)
+                action_chunks.append(relative_chunk)
             else:
-                # absolute actions (no delta)
+                # absolute actions (no relative transform)
                 action_chunks.append(future_absolute_actions)
 
         if len(action_chunks) == 0:
@@ -407,17 +409,20 @@ def train_tokenizer(cfg: TokenizerTrainingConfig):
     total_encoded_dims = sum(end - start for start, end in encoded_dim_ranges)
     print(f"Encoding {total_encoded_dims} dimensions: {cfg.encoded_dims}")
 
-    # parse delta dimensions
-    delta_dim_list = None
-    if cfg.delta_dims is not None and cfg.delta_dims.strip():
-        delta_dim_list = [int(d.strip()) for d in cfg.delta_dims.split(",")]
-        print(f"Delta dimensions: {delta_dim_list}")
+    # parse relative dimensions
+    relative_dim_list = None
+    if cfg.relative_dims is not None and cfg.relative_dims.strip():
+        relative_dim_list = [int(d.strip()) for d in cfg.relative_dims.split(",")]
+        print(f"Relative dimensions: {relative_dim_list}")
     else:
-        print("No delta dimensions specified")
+        print("No relative dimensions specified")
 
-    print(f"Use delta transform: {cfg.use_delta_transform}")
-    if cfg.use_delta_transform and (delta_dim_list is None or len(delta_dim_list) == 0):
-        print("Warning: use_delta_transform=True but no delta_dims specified. No delta will be applied.")
+    print(f"Use relative transform: {cfg.use_relative_transform}")
+    if cfg.use_relative_transform and (relative_dim_list is None or len(relative_dim_list) == 0):
+        print(
+            "Warning: use_relative_transform=True but no relative_dims specified. "
+            "No relative transform will be applied."
+        )
 
     print(f"Action horizon: {cfg.action_horizon}")
     print(f"State key: {cfg.state_key}")
@@ -440,10 +445,10 @@ def train_tokenizer(cfg: TokenizerTrainingConfig):
                 dataset,
                 ep_idx,
                 cfg.action_horizon,
-                delta_dim_list,
+                relative_dim_list,
                 cfg.sample_fraction,
                 cfg.state_key,
-                cfg.use_delta_transform,
+                cfg.use_relative_transform,
             )
         )
         if chunks is not None:
@@ -544,9 +549,9 @@ def train_tokenizer(cfg: TokenizerTrainingConfig):
         "encoded_dims": cfg.encoded_dims,
         "encoded_dim_ranges": encoded_dim_ranges,
         "total_encoded_dims": total_encoded_dims,
-        "delta_dims": cfg.delta_dims,
-        "delta_dim_list": delta_dim_list,
-        "use_delta_transform": cfg.use_delta_transform,
+        "relative_dims": cfg.relative_dims,
+        "relative_dim_list": relative_dim_list,
+        "use_relative_transform": cfg.use_relative_transform,
         "state_key": cfg.state_key,
         "normalization_mode": norm_mode.value,
         "action_horizon": cfg.action_horizon,

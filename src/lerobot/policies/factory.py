@@ -58,21 +58,21 @@ from lerobot.utils.constants import (
 )
 
 
-def _reconnect_delta_absolute_steps(
+def _reconnect_relative_absolute_steps(
     preprocessor: PolicyProcessorPipeline, postprocessor: PolicyProcessorPipeline
 ) -> None:
-    """Wire AbsoluteActionsProcessorStep.delta_step to the DeltaActionsProcessorStep after deserialization."""
-    from lerobot.processor.delta_action_processor import (
+    """Wire AbsoluteActionsProcessorStep.delta_step to the RelativeActionsProcessorStep after deserialization."""
+    from lerobot.processor.relative_action_processor import (
         AbsoluteActionsProcessorStep,
-        DeltaActionsProcessorStep,
+        RelativeActionsProcessorStep,
     )
 
-    delta_step = next((s for s in preprocessor.steps if isinstance(s, DeltaActionsProcessorStep)), None)
-    if delta_step is None:
+    relative_step = next((s for s in preprocessor.steps if isinstance(s, RelativeActionsProcessorStep)), None)
+    if relative_step is None:
         return
     for step in postprocessor.steps:
         if isinstance(step, AbsoluteActionsProcessorStep) and step.delta_step is None:
-            step.delta_step = delta_step
+            step.delta_step = relative_step
 
 
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:
@@ -298,7 +298,7 @@ def make_pre_post_processors(
             to_transition=policy_action_to_transition,
             to_output=transition_to_policy_action,
         )
-        _reconnect_delta_absolute_steps(preprocessor, postprocessor)
+        _reconnect_relative_absolute_steps(preprocessor, postprocessor)
         return preprocessor, postprocessor
 
     # Create a new processor based on policy type
@@ -488,7 +488,7 @@ def make_policy(
     if not cfg.input_features:
         cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
 
-    # Store action feature names for delta_exclude_joints support
+    # Store action feature names for relative_exclude_joints support
     if ds_meta is not None and hasattr(cfg, "action_feature_names"):
         action_names = ds_meta.features.get(ACTION, {}).get("names")
         if action_names is not None:

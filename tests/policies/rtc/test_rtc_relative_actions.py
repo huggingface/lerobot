@@ -1,13 +1,13 @@
-"""Tests for RTC + delta actions integration.
+"""Tests for RTC + relative actions integration.
 
 Validates that Real-Time Chunking (RTC) works correctly when the policy uses
-delta (relative) actions. The key invariant: RTC guidance operates in model space
-(normalized deltas), while the robot receives absolute actions after postprocessing.
+relative actions. The key invariant: RTC guidance operates in model space
+(normalized relative actions), while the robot receives absolute actions after postprocessing.
 
 Flow under test:
-  Preprocessor: raw obs → delta step caches state → normalizer
-  Model: generates normalized delta actions (guided by RTC using leftover deltas)
-  Postprocessor: unnormalize → absolute step (delta + cached state) → robot actions
+  Preprocessor: raw obs → relative step caches state → normalizer
+  Model: generates normalized relative actions (guided by RTC using leftover relative actions)
+  Postprocessor: unnormalize → absolute step (relative + cached state) → robot actions
 """
 
 import importlib.util
@@ -23,12 +23,12 @@ from lerobot.configs.types import (
     RTCAttentionSchedule,
 )
 from lerobot.processor import TransitionKey, batch_to_transition
-from lerobot.processor.delta_action_processor import (
-    AbsoluteActionsProcessorStep,
-    DeltaActionsProcessorStep,
-    to_delta_actions,
-)
 from lerobot.processor.normalize_processor import NormalizerProcessorStep, UnnormalizerProcessorStep
+from lerobot.processor.relative_action_processor import (
+    AbsoluteActionsProcessorStep,
+    RelativeActionsProcessorStep,
+    to_relative_actions,
+)
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 
@@ -66,8 +66,8 @@ def _make_rtc_config(enabled=True):
     )
 
 
-def _make_delta_pipeline(action_dim=ACTION_DIM, norm_mode=NormalizationMode.MEAN_STD):
-    """Build paired delta/absolute processor steps and normalizer/unnormalizer."""
+def _make_relative_pipeline(action_dim=ACTION_DIM, norm_mode=NormalizationMode.MEAN_STD):
+    """Build paired relative/absolute processor steps and normalizer/unnormalizer."""
     features = {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(action_dim,))}
     norm_map = {FeatureType.ACTION: norm_mode}
 
@@ -82,46 +82,46 @@ def _make_delta_pipeline(action_dim=ACTION_DIM, norm_mode=NormalizationMode.MEAN
         }
     }
 
-    delta_step = DeltaActionsProcessorStep(enabled=True)
+    relative_step = RelativeActionsProcessorStep(enabled=True)
     normalizer = NormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
     unnormalizer = UnnormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
-    absolute_step = AbsoluteActionsProcessorStep(enabled=True, delta_step=delta_step)
-    return delta_step, normalizer, unnormalizer, absolute_step
+    absolute_step = AbsoluteActionsProcessorStep(enabled=True, delta_step=relative_step)
+    return relative_step, normalizer, unnormalizer, absolute_step
 
 
-class TestActionQueueDeltaActions:
-    """Verify ActionQueue stores model-space (delta) actions for RTC and absolute for robot."""
+class TestActionQueueRelativeActions:
+    """Verify ActionQueue stores model-space (relative) actions for RTC and absolute for robot."""
 
-    def test_left_over_returns_delta_actions(self):
-        """get_left_over() should return the original (delta-space) actions."""
+    def test_left_over_returns_relative_actions(self):
+        """get_left_over() should return the original (relative-space) actions."""
         cfg = _make_rtc_config()
         queue = ActionQueue(cfg)
 
-        delta_actions = torch.randn(CHUNK_SIZE, ACTION_DIM)
+        relative_actions = torch.randn(CHUNK_SIZE, ACTION_DIM)
         absolute_actions = torch.randn(CHUNK_SIZE, ACTION_DIM)
-        queue.merge(delta_actions, absolute_actions, real_delay=0)
+        queue.merge(relative_actions, absolute_actions, real_delay=0)
 
         for _ in range(5):
             queue.get()
 
         leftover = queue.get_left_over()
-        torch.testing.assert_close(leftover, delta_actions[5:])
+        torch.testing.assert_close(leftover, relative_actions[5:])
 
     def test_robot_receives_absolute_actions(self):
         """The robot (via get()) should receive postprocessed absolute actions."""
         cfg = _make_rtc_config()
         queue = ActionQueue(cfg)
 
-        delta_actions = torch.randn(CHUNK_SIZE, ACTION_DIM)
+        relative_actions = torch.randn(CHUNK_SIZE, ACTION_DIM)
         absolute_actions = torch.randn(CHUNK_SIZE, ACTION_DIM)
-        queue.merge(delta_actions, absolute_actions, real_delay=0)
+        queue.merge(relative_actions, absolute_actions, real_delay=0)
 
         first_action = queue.get()
         torch.testing.assert_close(first_action, absolute_actions[0])
 
 
-class TestRTCDenoiseWithDeltaLeftovers:
-    """Verify RTC denoise_step correctly handles delta-space prev_chunk_left_over."""
+class TestRTCDenoiseWithRelativeLeftovers:
+    """Verify RTC denoise_step correctly handles relative-space prev_chunk_left_over."""
 
     def test_first_chunk_no_guidance(self):
         """First chunk (no leftovers) should return v_t without guidance."""
@@ -140,7 +140,7 @@ class TestRTCDenoiseWithDeltaLeftovers:
         )
         torch.testing.assert_close(result, torch.ones_like(x_t))
 
-    def test_delta_leftovers_shape_preserved(self):
+    def test_relative_leftovers_shape_preserved(self):
         """RTC output should have the same shape as input regardless of leftover shape."""
         rtc = RTCProcessor(_make_rtc_config())
         x_t = torch.randn(1, CHUNK_SIZE, ACTION_DIM)
@@ -158,11 +158,11 @@ class TestRTCDenoiseWithDeltaLeftovers:
         )
         assert result.shape == x_t.shape
 
-    def test_guidance_steers_toward_previous_delta_actions(self):
-        """RTC guidance should push x1_t toward prev_chunk_left_over in delta space."""
+    def test_guidance_steers_toward_previous_relative_actions(self):
+        """RTC guidance should push x1_t toward prev_chunk_left_over in relative space."""
         rtc = RTCProcessor(_make_rtc_config())
         x_t = torch.randn(1, CHUNK_SIZE, ACTION_DIM)
-        prev_deltas = torch.randn(1, CHUNK_SIZE, ACTION_DIM)
+        prev_relatives = torch.randn(1, CHUNK_SIZE, ACTION_DIM)
 
         def mock_denoise(x):
             return torch.zeros_like(x)
@@ -177,7 +177,7 @@ class TestRTCDenoiseWithDeltaLeftovers:
 
         result_with_guidance = rtc.denoise_step(
             x_t=x_t.clone(),
-            prev_chunk_left_over=prev_deltas,
+            prev_chunk_left_over=prev_relatives,
             inference_delay=5,
             time=0.5,
             original_denoise_step_partial=mock_denoise,
@@ -186,12 +186,12 @@ class TestRTCDenoiseWithDeltaLeftovers:
         assert not torch.allclose(result_with_guidance, result_without_guidance, atol=1e-6)
 
 
-class TestFullPipelineDeltaRTC:
-    """End-to-end test of the RTC + delta actions pipeline matching eval_with_real_robot.py flow."""
+class TestFullPipelineRelativeRTC:
+    """End-to-end test of the RTC + relative actions pipeline matching eval_with_real_robot.py flow."""
 
     def test_preprocessor_caches_state_for_postprocessor(self):
-        """Preprocessor's delta step should cache state so postprocessor can convert back."""
-        delta_step, normalizer, unnormalizer, absolute_step = _make_delta_pipeline()
+        """Preprocessor's relative step should cache state so postprocessor can convert back."""
+        relative_step, normalizer, unnormalizer, absolute_step = _make_relative_pipeline()
 
         state = torch.randn(1, ACTION_DIM)
         actions = torch.randn(1, CHUNK_SIZE, ACTION_DIM)
@@ -199,27 +199,27 @@ class TestFullPipelineDeltaRTC:
         batch = {ACTION: actions, OBS_STATE: state}
         transition = batch_to_transition(batch)
 
-        delta_step(transition)
-        assert delta_step._last_state is not None
-        torch.testing.assert_close(delta_step._last_state, state)
+        relative_step(transition)
+        assert relative_step._last_state is not None
+        torch.testing.assert_close(relative_step._last_state, state)
 
     def test_preprocessor_caches_state_without_actions(self):
         """During inference, preprocessor receives only observations (no actions).
-        Delta step should still cache state for the postprocessor."""
-        delta_step, _, _, _ = _make_delta_pipeline()
+        Relative step should still cache state for the postprocessor."""
+        relative_step, _, _, _ = _make_relative_pipeline()
 
         state = torch.randn(1, ACTION_DIM)
         batch = {OBS_STATE: state}
         transition = batch_to_transition(batch)
 
-        delta_step(transition)
-        assert delta_step._last_state is not None
-        torch.testing.assert_close(delta_step._last_state, state)
+        relative_step(transition)
+        assert relative_step._last_state is not None
+        torch.testing.assert_close(relative_step._last_state, state)
 
     def test_roundtrip_with_identity_normalization(self):
-        """Actions → delta → normalize → [model] → unnormalize → absolute should recover originals.
+        """Actions → relative → normalize → [model] → unnormalize → absolute should recover originals.
         Using mean=0, std=1 normalization (identity)."""
-        delta_step, normalizer, unnormalizer, absolute_step = _make_delta_pipeline()
+        relative_step, normalizer, unnormalizer, absolute_step = _make_relative_pipeline()
 
         state = torch.randn(1, ACTION_DIM)
         actions = torch.randn(1, CHUNK_SIZE, ACTION_DIM)
@@ -227,7 +227,7 @@ class TestFullPipelineDeltaRTC:
         batch = {ACTION: actions.clone(), OBS_STATE: state}
         transition = batch_to_transition(batch)
 
-        t1 = delta_step(transition)
+        t1 = relative_step(transition)
         t2 = normalizer(t1)
 
         model_output = t2[TransitionKey.ACTION].clone()
@@ -240,18 +240,18 @@ class TestFullPipelineDeltaRTC:
         torch.testing.assert_close(recovered, actions, atol=1e-5, rtol=1e-5)
 
     def test_eval_loop_simulation(self):
-        """Simulate the eval_with_real_robot.py loop with delta actions.
+        """Simulate the eval_with_real_robot.py loop with relative actions.
 
-        Iteration 1: No leftovers → model generates deltas → store for RTC
-        Iteration 2: Use leftovers as RTC guidance → model generates new deltas
-        Both iterations: postprocessor converts deltas to absolute for robot
+        Iteration 1: No leftovers → model generates relative actions → store for RTC
+        Iteration 2: Use leftovers as RTC guidance → model generates new relative actions
+        Both iterations: postprocessor converts relative actions to absolute for robot
         """
-        delta_step, normalizer, unnormalizer, absolute_step = _make_delta_pipeline()
+        relative_step, normalizer, unnormalizer, absolute_step = _make_relative_pipeline()
         rtc = RTCProcessor(_make_rtc_config())
         queue = ActionQueue(_make_rtc_config())
 
         def mock_model(prev_chunk_left_over, inference_delay, state):
-            """Simulate model generating delta actions with RTC."""
+            """Simulate model generating relative actions with RTC."""
             x_t = torch.randn(1, CHUNK_SIZE, ACTION_DIM)
 
             def denoise(x):
@@ -269,12 +269,12 @@ class TestFullPipelineDeltaRTC:
         # --- Iteration 1: first chunk, no leftovers ---
         state_1 = torch.randn(1, ACTION_DIM)
         obs_batch_1 = {OBS_STATE: state_1}
-        delta_step(batch_to_transition(obs_batch_1))
+        relative_step(batch_to_transition(obs_batch_1))
 
-        model_deltas_1 = mock_model(prev_chunk_left_over=None, inference_delay=0, state=state_1)
-        original_actions_1 = model_deltas_1.squeeze(0)
+        model_relatives_1 = mock_model(prev_chunk_left_over=None, inference_delay=0, state=state_1)
+        original_actions_1 = model_relatives_1.squeeze(0)
 
-        model_transition_1 = {TransitionKey.ACTION: model_deltas_1}
+        model_transition_1 = {TransitionKey.ACTION: model_relatives_1}
         postprocessed_1 = absolute_step(unnormalizer(model_transition_1))[TransitionKey.ACTION].squeeze(0)
 
         queue.merge(original_actions_1, postprocessed_1, real_delay=0)
@@ -291,14 +291,14 @@ class TestFullPipelineDeltaRTC:
 
         state_2 = state_1 + 0.01 * torch.randn(1, ACTION_DIM)
         obs_batch_2 = {OBS_STATE: state_2}
-        delta_step(batch_to_transition(obs_batch_2))
+        relative_step(batch_to_transition(obs_batch_2))
 
-        model_deltas_2 = mock_model(
+        model_relatives_2 = mock_model(
             prev_chunk_left_over=prev_actions.unsqueeze(0), inference_delay=3, state=state_2
         )
-        original_actions_2 = model_deltas_2.squeeze(0)
+        original_actions_2 = model_relatives_2.squeeze(0)
 
-        model_transition_2 = {TransitionKey.ACTION: model_deltas_2}
+        model_transition_2 = {TransitionKey.ACTION: model_relatives_2}
         postprocessed_2 = absolute_step(unnormalizer(model_transition_2))[TransitionKey.ACTION].squeeze(0)
 
         queue.merge(original_actions_2, postprocessed_2, real_delay=3)
@@ -308,70 +308,74 @@ class TestFullPipelineDeltaRTC:
         assert action is not None
         assert action.shape == (ACTION_DIM,)
 
-        # Verify leftovers are in delta space (original_queue stores deltas)
-        leftover_deltas = queue.get_left_over()
-        assert leftover_deltas is not None
-        assert leftover_deltas.shape[1] == ACTION_DIM
+        # Verify leftovers are in relative space (original_queue stores relative actions)
+        leftover_relatives = queue.get_left_over()
+        assert leftover_relatives is not None
+        assert leftover_relatives.shape[1] == ACTION_DIM
 
     def test_postprocessor_uses_correct_state_per_iteration(self):
         """Each iteration's postprocessor should use the state from that iteration's preprocessor,
         not a stale state from a previous iteration."""
-        delta_step, _, unnormalizer, absolute_step = _make_delta_pipeline()
+        relative_step, _, unnormalizer, absolute_step = _make_relative_pipeline()
 
         state_1 = torch.tensor([[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]])
         state_2 = torch.tensor([[10.0, 20.0, 30.0, 40.0, 50.0, 60.0]])
-        deltas = torch.zeros(1, 5, ACTION_DIM)
+        relatives = torch.zeros(1, 5, ACTION_DIM)
 
         # Iteration 1: cache state_1
-        delta_step(batch_to_transition({OBS_STATE: state_1}))
-        result_1 = absolute_step(unnormalizer({TransitionKey.ACTION: deltas.clone()}))[TransitionKey.ACTION]
-        # delta=0 + state_1 should give state_1
+        relative_step(batch_to_transition({OBS_STATE: state_1}))
+        result_1 = absolute_step(unnormalizer({TransitionKey.ACTION: relatives.clone()}))[
+            TransitionKey.ACTION
+        ]
+        # relative=0 + state_1 should give state_1
         for t in range(5):
             torch.testing.assert_close(result_1[0, t], state_1[0], atol=1e-5, rtol=1e-5)
 
         # Iteration 2: cache state_2
-        delta_step(batch_to_transition({OBS_STATE: state_2}))
-        result_2 = absolute_step(unnormalizer({TransitionKey.ACTION: deltas.clone()}))[TransitionKey.ACTION]
+        relative_step(batch_to_transition({OBS_STATE: state_2}))
+        result_2 = absolute_step(unnormalizer({TransitionKey.ACTION: relatives.clone()}))[
+            TransitionKey.ACTION
+        ]
         for t in range(5):
             torch.testing.assert_close(result_2[0, t], state_2[0], atol=1e-5, rtol=1e-5)
 
 
 class TestStateRebasingApproximation:
-    """Verify that the approximation from not rebasing leftover deltas is small
+    """Verify that the approximation from not rebasing leftover relative actions is small
     when state changes between inference calls are small (real-time control regime)."""
 
     def test_small_state_change_produces_small_error(self):
         """With small state changes (typical in real-time control),
-        using stale deltas for RTC guidance introduces negligible error."""
+        using stale relative actions for RTC guidance introduces negligible error."""
         state_old = torch.randn(1, ACTION_DIM)
         state_new = state_old + 0.01 * torch.randn(1, ACTION_DIM)
 
         actions_absolute = torch.randn(1, CHUNK_SIZE, ACTION_DIM)
         mask = [True] * ACTION_DIM
 
-        deltas_old = to_delta_actions(actions_absolute, state_old, mask)
-        deltas_new = to_delta_actions(actions_absolute, state_new, mask)
+        relatives_old = to_relative_actions(actions_absolute, state_old, mask)
+        relatives_new = to_relative_actions(actions_absolute, state_new, mask)
 
-        error = (deltas_old - deltas_new).abs().mean()
+        error = (relatives_old - relatives_new).abs().mean()
         state_change = (state_old - state_new).abs().mean()
 
         # Error should be proportional to state change
         assert error < 0.1, (
-            f"Delta error {error:.4f} should be small for small state change {state_change:.4f}"
+            f"Relative-action error {error:.4f} should be small for small state change {state_change:.4f}"
         )
 
     def test_large_state_change_produces_proportional_error(self):
-        """With large state changes, stale deltas diverge more (but RTC guidance decays)."""
+        """With large state changes, stale relative actions diverge more (but RTC guidance decays)."""
         state_old = torch.randn(1, ACTION_DIM)
         state_new = state_old + 10.0 * torch.randn(1, ACTION_DIM)
 
         actions_absolute = torch.randn(1, CHUNK_SIZE, ACTION_DIM)
         mask = [True] * ACTION_DIM
 
-        deltas_old = to_delta_actions(actions_absolute, state_old, mask)
-        deltas_new = to_delta_actions(actions_absolute, state_new, mask)
+        relatives_old = to_relative_actions(actions_absolute, state_old, mask)
+        relatives_new = to_relative_actions(actions_absolute, state_new, mask)
 
-        error = (deltas_old - deltas_new).abs().mean()
+        error = (relatives_old - relatives_new).abs().mean()
         state_change = (state_old - state_new).abs().mean()
 
         # Error should be roughly equal to state change
@@ -380,7 +384,7 @@ class TestStateRebasingApproximation:
         )
 
     def test_excluded_joints_not_affected_by_state_change(self):
-        """Joints excluded from delta conversion should not contribute rebasing error."""
+        """Joints excluded from relative conversion should not contribute rebasing error."""
         state_old = torch.randn(1, ACTION_DIM)
         state_new = state_old.clone()
         state_new[0, -1] = state_old[0, -1] + 100.0
@@ -388,60 +392,60 @@ class TestStateRebasingApproximation:
         actions = torch.randn(1, CHUNK_SIZE, ACTION_DIM)
         mask = [True] * (ACTION_DIM - 1) + [False]
 
-        deltas_old = to_delta_actions(actions, state_old, mask)
-        deltas_new = to_delta_actions(actions, state_new, mask)
+        relatives_old = to_relative_actions(actions, state_old, mask)
+        relatives_new = to_relative_actions(actions, state_new, mask)
 
         # Last dim (excluded) should have zero error
-        error_excluded = (deltas_old[..., -1] - deltas_new[..., -1]).abs().max()
+        error_excluded = (relatives_old[..., -1] - relatives_new[..., -1]).abs().max()
         assert error_excluded < 1e-6, f"Excluded joint should have zero error, got {error_excluded}"
 
 
-def _detect_delta_actions(preprocessor) -> bool:
+def _detect_relative_actions(preprocessor) -> bool:
     """Mirror of the helper in eval_with_real_robot.py for testing without importing it."""
-    return any(isinstance(step, DeltaActionsProcessorStep) and step.enabled for step in preprocessor.steps)
+    return any(isinstance(step, RelativeActionsProcessorStep) and step.enabled for step in preprocessor.steps)
 
 
-class TestDetectDeltaActions:
-    """Test the _detect_delta_actions helper logic used by eval_with_real_robot.py."""
+class TestDetectRelativeActions:
+    """Test the _detect_relative_actions helper logic used by eval_with_real_robot.py."""
 
-    def test_detects_enabled_delta_step(self):
+    def test_detects_enabled_relative_step(self):
         class FakePipeline:
-            steps = [DeltaActionsProcessorStep(enabled=True)]
+            steps = [RelativeActionsProcessorStep(enabled=True)]
 
-        assert _detect_delta_actions(FakePipeline()) is True
+        assert _detect_relative_actions(FakePipeline()) is True
 
-    def test_ignores_disabled_delta_step(self):
+    def test_ignores_disabled_relative_step(self):
         class FakePipeline:
-            steps = [DeltaActionsProcessorStep(enabled=False)]
+            steps = [RelativeActionsProcessorStep(enabled=False)]
 
-        assert _detect_delta_actions(FakePipeline()) is False
+        assert _detect_relative_actions(FakePipeline()) is False
 
-    def test_returns_false_when_no_delta_step(self):
+    def test_returns_false_when_no_relative_step(self):
         class FakePipeline:
             steps = []
 
-        assert _detect_delta_actions(FakePipeline()) is False
+        assert _detect_relative_actions(FakePipeline()) is False
 
 
-class TestNonDeltaPolicy:
-    """Verify the same pipeline works when delta actions are disabled (standard absolute policy)."""
+class TestNonRelativePolicy:
+    """Verify the same pipeline works when relative actions are disabled (standard absolute policy)."""
 
-    def test_disabled_delta_step_is_noop(self):
-        delta_step = DeltaActionsProcessorStep(enabled=False)
-        absolute_step = AbsoluteActionsProcessorStep(enabled=False, delta_step=delta_step)
+    def test_disabled_relative_step_is_noop(self):
+        relative_step = RelativeActionsProcessorStep(enabled=False)
+        absolute_step = AbsoluteActionsProcessorStep(enabled=False, delta_step=relative_step)
 
         state = torch.randn(1, ACTION_DIM)
         actions = torch.randn(1, CHUNK_SIZE, ACTION_DIM)
 
         transition = batch_to_transition({ACTION: actions.clone(), OBS_STATE: state})
-        t1 = delta_step(transition)
+        t1 = relative_step(transition)
         torch.testing.assert_close(t1[TransitionKey.ACTION], actions)
 
         t2 = absolute_step({TransitionKey.ACTION: actions.clone()})
         torch.testing.assert_close(t2[TransitionKey.ACTION], actions)
 
-    def test_eval_loop_without_delta(self):
-        """Full eval loop simulation with delta disabled: original and processed actions are identical."""
+    def test_eval_loop_without_relative_actions(self):
+        """Full eval loop simulation with relative actions disabled: original and processed actions are identical."""
         features = {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(ACTION_DIM,))}
         norm_map = {FeatureType.ACTION: NormalizationMode.MEAN_STD}
         stats = {
@@ -451,15 +455,15 @@ class TestNonDeltaPolicy:
             }
         }
 
-        delta_step = DeltaActionsProcessorStep(enabled=False)
+        relative_step = RelativeActionsProcessorStep(enabled=False)
         unnormalizer = UnnormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
-        absolute_step = AbsoluteActionsProcessorStep(enabled=False, delta_step=delta_step)
+        absolute_step = AbsoluteActionsProcessorStep(enabled=False, delta_step=relative_step)
 
         rtc = RTCProcessor(_make_rtc_config())
         queue = ActionQueue(_make_rtc_config())
 
         state = torch.randn(1, ACTION_DIM)
-        delta_step(batch_to_transition({OBS_STATE: state}))
+        relative_step(batch_to_transition({OBS_STATE: state}))
 
         model_output = torch.randn(1, CHUNK_SIZE, ACTION_DIM)
         post = absolute_step(unnormalizer({TransitionKey.ACTION: model_output.clone()}))[
@@ -467,7 +471,7 @@ class TestNonDeltaPolicy:
         ].squeeze(0)
         original = model_output.squeeze(0)
 
-        # With identity norm and no delta, original and postprocessed should match
+        # With identity norm and no relative-action transform, original and postprocessed should match
         torch.testing.assert_close(original, post, atol=1e-5, rtol=1e-5)
 
         queue.merge(original, post, real_delay=0)
@@ -489,25 +493,25 @@ class TestNonDeltaPolicy:
         )
         assert result.shape == x_t.shape
 
-    def test_detect_delta_returns_false_when_disabled(self):
+    def test_detect_relative_returns_false_when_disabled(self):
         class FakePipeline:
-            steps = [DeltaActionsProcessorStep(enabled=False)]
+            steps = [RelativeActionsProcessorStep(enabled=False)]
 
-        assert not _detect_delta_actions(FakePipeline())
+        assert not _detect_relative_actions(FakePipeline())
 
-    def test_detect_delta_returns_false_when_absent(self):
+    def test_detect_relative_returns_false_when_absent(self):
         class FakePipeline:
             steps = []
 
-        assert not _detect_delta_actions(FakePipeline())
+        assert not _detect_relative_actions(FakePipeline())
 
 
 class TestMultiChunkConsistency:
-    """Test multiple RTC iterations with delta actions maintain consistency."""
+    """Test multiple RTC iterations with relative actions maintain consistency."""
 
     def test_three_iteration_pipeline(self):
         """Simulate three consecutive RTC iterations and verify queue state consistency."""
-        delta_step, normalizer, unnormalizer, absolute_step = _make_delta_pipeline()
+        relative_step, normalizer, unnormalizer, absolute_step = _make_relative_pipeline()
         queue = ActionQueue(_make_rtc_config())
 
         states = [torch.randn(1, ACTION_DIM) + i * 0.01 for i in range(3)]
@@ -515,7 +519,7 @@ class TestMultiChunkConsistency:
         for i in range(3):
             queue.get_left_over()
 
-            delta_step(batch_to_transition({OBS_STATE: states[i]}))
+            relative_step(batch_to_transition({OBS_STATE: states[i]}))
 
             model_output = torch.randn(1, CHUNK_SIZE, ACTION_DIM)
             post_transition = absolute_step(unnormalizer({TransitionKey.ACTION: model_output.clone()}))
@@ -537,43 +541,43 @@ class TestMultiChunkConsistency:
         assert leftover.ndim == 2
         assert leftover.shape[1] == ACTION_DIM
 
-    def test_leftover_and_processed_differ_when_delta_enabled(self):
-        """With delta enabled, original leftovers (deltas) must differ from processed (absolute)."""
-        delta_step, _, unnormalizer, absolute_step = _make_delta_pipeline()
+    def test_leftover_and_processed_differ_when_relative_enabled(self):
+        """With relative actions enabled, original leftovers (relative) must differ from processed (absolute)."""
+        relative_step, _, unnormalizer, absolute_step = _make_relative_pipeline()
         queue = ActionQueue(_make_rtc_config())
 
         state = torch.tensor([[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]])
-        delta_step(batch_to_transition({OBS_STATE: state}))
+        relative_step(batch_to_transition({OBS_STATE: state}))
 
-        model_deltas = torch.randn(1, CHUNK_SIZE, ACTION_DIM)
-        post = absolute_step(unnormalizer({TransitionKey.ACTION: model_deltas.clone()}))[
+        model_relatives = torch.randn(1, CHUNK_SIZE, ACTION_DIM)
+        post = absolute_step(unnormalizer({TransitionKey.ACTION: model_relatives.clone()}))[
             TransitionKey.ACTION
         ].squeeze(0)
-        original = model_deltas.squeeze(0)
+        original = model_relatives.squeeze(0)
 
         queue.merge(original, post, real_delay=0)
 
-        delta_leftover = queue.get_left_over()
+        relative_leftover = queue.get_left_over()
 
-        # Leftovers (deltas) must differ from the postprocessed absolute actions
-        assert not torch.allclose(delta_leftover, post, atol=1e-3)
-        state_expanded = state.squeeze(0).unsqueeze(0).expand_as(delta_leftover)
-        torch.testing.assert_close(post, delta_leftover + state_expanded, atol=1e-5, rtol=1e-5)
+        # Leftovers (relative) must differ from the postprocessed absolute actions
+        assert not torch.allclose(relative_leftover, post, atol=1e-3)
+        state_expanded = state.squeeze(0).unsqueeze(0).expand_as(relative_leftover)
+        torch.testing.assert_close(post, relative_leftover + state_expanded, atol=1e-5, rtol=1e-5)
 
-    def test_rtc_guidance_uses_delta_space(self):
-        """Verify that RTC denoise_step receives delta-space leftovers, not absolute."""
-        delta_step, _, unnormalizer, absolute_step = _make_delta_pipeline()
+    def test_rtc_guidance_uses_relative_space(self):
+        """Verify that RTC denoise_step receives relative-space leftovers, not absolute."""
+        relative_step, _, unnormalizer, absolute_step = _make_relative_pipeline()
         rtc = RTCProcessor(_make_rtc_config())
         queue = ActionQueue(_make_rtc_config())
 
         state = torch.tensor([[10.0, 20.0, 30.0, 40.0, 50.0, 60.0]])
-        delta_step(batch_to_transition({OBS_STATE: state}))
+        relative_step(batch_to_transition({OBS_STATE: state}))
 
-        model_deltas = 0.1 * torch.randn(1, CHUNK_SIZE, ACTION_DIM)
-        post = absolute_step(unnormalizer({TransitionKey.ACTION: model_deltas.clone()}))[
+        model_relatives = 0.1 * torch.randn(1, CHUNK_SIZE, ACTION_DIM)
+        post = absolute_step(unnormalizer({TransitionKey.ACTION: model_relatives.clone()}))[
             TransitionKey.ACTION
         ].squeeze(0)
-        original = model_deltas.squeeze(0)
+        original = model_relatives.squeeze(0)
 
         queue.merge(original, post, real_delay=0)
 
@@ -582,9 +586,9 @@ class TestMultiChunkConsistency:
 
         prev_left_over = queue.get_left_over()
 
-        # prev_left_over should be small deltas (around 0.1 * randn), not large absolute values
+        # prev_left_over should be small relative offsets (around 0.1 * randn), not large absolute values
         assert prev_left_over.abs().mean() < 5.0, (
-            f"Leftover should be small deltas, got mean abs {prev_left_over.abs().mean():.2f}"
+            f"Leftover should be small relative offsets, got mean abs {prev_left_over.abs().mean():.2f}"
         )
 
         x_t = torch.randn(1, CHUNK_SIZE, ACTION_DIM)

@@ -28,8 +28,8 @@ from lerobot.utils.constants import OBS_STATE
 from .pipeline import ActionProcessorStep, ProcessorStep, ProcessorStepRegistry, RobotActionProcessorStep
 
 
-def to_delta_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) -> Tensor:
-    """Convert absolute actions to delta: delta = action - state (for masked dims).
+def to_relative_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) -> Tensor:
+    """Convert absolute actions to relative: relative = action - state (for masked dims).
 
     Args:
         actions: (B, T, action_dim) or (B, action_dim).
@@ -47,7 +47,7 @@ def to_delta_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) -> Te
 
 
 def to_absolute_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) -> Tensor:
-    """Convert delta actions back to absolute: absolute = delta + state (for masked dims).
+    """Convert relative actions back to absolute: absolute = relative + state (for masked dims).
 
     Args:
         actions: (B, T, action_dim) or (B, action_dim).
@@ -187,8 +187,8 @@ class MapDeltaActionToRobotActionStep(RobotActionProcessorStep):
 
 @ProcessorStepRegistry.register("delta_actions_processor")
 @dataclass
-class DeltaActionsProcessorStep(ProcessorStep):
-    """Converts absolute actions to delta actions (action -= state) for masked dimensions.
+class RelativeActionsProcessorStep(ProcessorStep):
+    """Converts absolute actions to relative actions (action -= state) for masked dimensions.
 
     Mirrors OpenPI's DeltaActions transform. Applied during preprocessing so the model
     trains on relative offsets instead of absolute positions.
@@ -196,8 +196,8 @@ class DeltaActionsProcessorStep(ProcessorStep):
     the conversion during postprocessing.
 
     Attributes:
-        enabled: Whether to apply the delta conversion.
-        exclude_joints: Joint names to keep absolute (not converted to delta).
+        enabled: Whether to apply the relative conversion.
+        exclude_joints: Joint names to keep absolute (not converted to relative).
         action_names: Action dimension names from dataset metadata, used to build
             the mask from exclude_joints. If None, all dims are converted.
     """
@@ -243,7 +243,7 @@ class DeltaActionsProcessorStep(ProcessorStep):
             return new_transition
 
         mask = self._build_mask(action.shape[-1])
-        new_transition[TransitionKey.ACTION] = to_delta_actions(action, state, mask)
+        new_transition[TransitionKey.ACTION] = to_relative_actions(action, state, mask)
         return new_transition
 
     def get_config(self) -> dict[str, Any]:
@@ -262,19 +262,19 @@ class DeltaActionsProcessorStep(ProcessorStep):
 @ProcessorStepRegistry.register("absolute_actions_processor")
 @dataclass
 class AbsoluteActionsProcessorStep(ProcessorStep):
-    """Converts delta actions back to absolute actions (action += state) for all dimensions.
+    """Converts relative actions back to absolute actions (action += state) for all dimensions.
 
     Mirrors OpenPI's AbsoluteActions transform. Applied during postprocessing so
-    predicted deltas are converted back to absolute positions for execution.
-    Reads the cached state from its paired DeltaActionsProcessorStep.
+    predicted relative offsets are converted back to absolute positions for execution.
+    Reads the cached state from its paired RelativeActionsProcessorStep.
 
     Attributes:
         enabled: Whether to apply the absolute conversion.
-        delta_step: Reference to the paired DeltaActionsProcessorStep that caches state.
+        delta_step: Reference to the paired RelativeActionsProcessorStep that caches state.
     """
 
     enabled: bool = False
-    delta_step: DeltaActionsProcessorStep | None = field(default=None, repr=False)
+    delta_step: RelativeActionsProcessorStep | None = field(default=None, repr=False)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         if not self.enabled:
@@ -282,13 +282,13 @@ class AbsoluteActionsProcessorStep(ProcessorStep):
 
         if self.delta_step is None:
             raise RuntimeError(
-                "AbsoluteActionsProcessorStep requires a paired DeltaActionsProcessorStep "
+                "AbsoluteActionsProcessorStep requires a paired RelativeActionsProcessorStep "
                 "but delta_step is None. Ensure delta_step is set when constructing the postprocessor."
             )
 
         if self.delta_step._last_state is None:
             raise RuntimeError(
-                "AbsoluteActionsProcessorStep requires state from DeltaActionsProcessorStep "
+                "AbsoluteActionsProcessorStep requires state from RelativeActionsProcessorStep "
                 "but no state has been cached. Ensure the preprocessor runs before the postprocessor."
             )
 

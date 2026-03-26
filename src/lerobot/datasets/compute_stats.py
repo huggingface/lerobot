@@ -632,16 +632,16 @@ def aggregate_stats(stats_list: list[dict[str, dict]]) -> dict[str, dict[str, np
     return aggregated_stats
 
 
-def compute_delta_action_stats(
+def compute_relative_action_stats(
     hf_dataset,
     features: dict,
     chunk_size: int,
     exclude_joints: list[str] | None = None,
     max_samples: int = 100_000,
 ) -> dict[str, np.ndarray]:
-    """Compute normalization statistics for delta (relative) actions.
+    """Compute normalization statistics for relative actions.
 
-    Samples random action chunks from the dataset, converts them to deltas
+    Samples random action chunks from the dataset, converts them to relative actions
     (action - current_state), and computes per-dimension statistics suitable
     for normalization.
 
@@ -652,7 +652,7 @@ def compute_delta_action_stats(
             and optionally "names").
         chunk_size: Number of consecutive frames per action chunk.
         exclude_joints: Joint names whose dimensions should remain absolute
-            (not converted to deltas).
+            (not converted to relative actions).
         max_samples: Upper bound on the number of chunks to sample.
 
     Returns:
@@ -662,7 +662,7 @@ def compute_delta_action_stats(
         ValueError: If the dataset has fewer frames than ``chunk_size``.
         RuntimeError: If no valid (single-episode) chunks are found.
     """
-    from lerobot.processor.delta_action_processor import DeltaActionsProcessorStep, to_delta_actions
+    from lerobot.processor.relative_action_processor import RelativeActionsProcessorStep, to_relative_actions
 
     if exclude_joints is None:
         exclude_joints = []
@@ -671,7 +671,7 @@ def compute_delta_action_stats(
     sample_upper_bound = total_frames - chunk_size
     if sample_upper_bound <= 0:
         raise ValueError(
-            f"Cannot compute delta action stats: total_frames={total_frames}, chunk_size={chunk_size}"
+            f"Cannot compute relative action stats: total_frames={total_frames}, chunk_size={chunk_size}"
         )
 
     n_samples = min(max_samples, sample_upper_bound)
@@ -679,17 +679,17 @@ def compute_delta_action_stats(
 
     action_dim = features[ACTION]["shape"][0]
     action_names = features.get(ACTION, {}).get("names")
-    delta_mask_step = DeltaActionsProcessorStep(
+    relative_mask_step = RelativeActionsProcessorStep(
         enabled=True,
         exclude_joints=exclude_joints,
         action_names=action_names,
     )
-    delta_mask = delta_mask_step._build_mask(action_dim)
+    relative_mask = relative_mask_step._build_mask(action_dim)
 
-    logging.info(f"Computing delta action stats from {n_samples} chunk samples (chunk_size={chunk_size})")
+    logging.info(f"Computing relative action stats from {n_samples} chunk samples (chunk_size={chunk_size})")
 
     episode_indices = np.array(hf_dataset["episode_index"])
-    all_delta_chunks: list[np.ndarray] = []
+    all_relative_chunks: list[np.ndarray] = []
 
     for idx in indices:
         idx = int(idx)
@@ -702,19 +702,21 @@ def compute_delta_action_stats(
         actions = torch.tensor(np.stack([np.asarray(a) for a in chunk_data[ACTION]])).float()
         state = torch.tensor(np.asarray(chunk_data[OBS_STATE][0])).float()
 
-        delta = to_delta_actions(actions.unsqueeze(0), state.unsqueeze(0), delta_mask).squeeze(0)
-        all_delta_chunks.append(delta.numpy())
+        relative_actions = to_relative_actions(
+            actions.unsqueeze(0), state.unsqueeze(0), relative_mask
+        ).squeeze(0)
+        all_relative_chunks.append(relative_actions.numpy())
 
-    if not all_delta_chunks:
-        raise RuntimeError("Failed to compute delta action stats: no valid chunks found.")
+    if not all_relative_chunks:
+        raise RuntimeError("Failed to compute relative action stats: no valid chunks found.")
 
-    all_delta = np.concatenate(all_delta_chunks, axis=0)
-    stats = get_feature_stats(all_delta, axis=0, keepdims=all_delta.ndim == 1)
+    all_relative = np.concatenate(all_relative_chunks, axis=0)
+    stats = get_feature_stats(all_relative, axis=0, keepdims=all_relative.ndim == 1)
 
-    excluded_dims = len(delta_mask) - sum(delta_mask)
+    excluded_dims = len(relative_mask) - sum(relative_mask)
     logging.info(
-        f"Delta action stats ({len(all_delta_chunks)} chunks, {len(all_delta)} frames): "
-        f"delta_dims={sum(delta_mask)}/{len(delta_mask)} (excluded={excluded_dims}), "
+        f"Relative action stats ({len(all_relative_chunks)} chunks, {len(all_relative)} frames): "
+        f"relative_dims={sum(relative_mask)}/{len(relative_mask)} (excluded={excluded_dims}), "
         f"mean={np.abs(stats['mean']).mean():.4f}, std={stats['std'].mean():.4f}, "
         f"q01={stats['q01'].mean():.4f}, q99={stats['q99'].mean():.4f}"
     )

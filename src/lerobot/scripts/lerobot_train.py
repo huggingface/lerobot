@@ -254,12 +254,12 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
     processor_pretrained_path = cfg.policy.pretrained_path
     if (
-        getattr(cfg.policy, "use_delta_actions", False)
+        getattr(cfg.policy, "use_relative_actions", False)
         and processor_pretrained_path is not None
         and not cfg.resume
     ):
         logging.warning(
-            "use_delta_actions=true with pretrained processors can skip delta transforms if "
+            "use_relative_actions=true with pretrained processors can skip relative transforms if "
             "the checkpoint processors do not define them. Building processors from current policy config."
         )
         processor_pretrained_path = None

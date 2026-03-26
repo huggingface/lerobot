@@ -29,14 +29,6 @@ from .converters import (
     create_transition,
     transition_to_batch,
 )
-from .delta_action_processor import (
-    AbsoluteActionsProcessorStep,
-    DeltaActionsProcessorStep,
-    MapDeltaActionToRobotActionStep,
-    MapTensorToDeltaActionDictStep,
-    to_absolute_actions,
-    to_delta_actions,
-)
 from .device_processor import DeviceProcessorStep
 from .factory import (
     make_default_processors,
@@ -82,6 +74,14 @@ from .policy_robot_bridge import (
     PolicyActionToRobotActionProcessorStep,
     RobotActionToPolicyActionProcessorStep,
 )
+from .relative_action_processor import (
+    AbsoluteActionsProcessorStep,
+    MapDeltaActionToRobotActionStep,
+    MapTensorToDeltaActionDictStep,
+    RelativeActionsProcessorStep,
+    to_absolute_actions,
+    to_relative_actions,
+)
 from .rename_processor import RenameObservationsProcessorStep
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
 
@@ -108,7 +108,7 @@ __all__ = [
     "make_default_robot_action_processor",
     "make_default_robot_observation_processor",
     "AbsoluteActionsProcessorStep",
-    "DeltaActionsProcessorStep",
+    "RelativeActionsProcessorStep",
     "MapDeltaActionToRobotActionStep",
     "MapTensorToDeltaActionDictStep",
     "NormalizerProcessorStep",
@@ -139,7 +139,7 @@ __all__ = [
     "TransitionKey",
     "TruncatedProcessorStep",
     "to_absolute_actions",
-    "to_delta_actions",
+    "to_relative_actions",
     "UnnormalizerProcessorStep",
     "VanillaObservationProcessorStep",
 ]

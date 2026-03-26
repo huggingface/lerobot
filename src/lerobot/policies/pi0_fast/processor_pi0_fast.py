@@ -27,13 +27,13 @@ from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     ActionTokenizerProcessorStep,
     AddBatchDimensionProcessorStep,
-    DeltaActionsProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
+    RelativeActionsProcessorStep,
     RenameObservationsProcessorStep,
     TokenizerProcessorStep,
     UnnormalizerProcessorStep,
@@ -127,15 +127,15 @@ def make_pi0_fast_pre_post_processors(
     Returns:
         A tuple containing the configured pre-processor and post-processor pipelines.
     """
-    delta_step = DeltaActionsProcessorStep(
-        enabled=config.use_delta_actions,
-        exclude_joints=getattr(config, "delta_exclude_joints", []),
+    relative_step = RelativeActionsProcessorStep(
+        enabled=config.use_relative_actions,
+        exclude_joints=getattr(config, "relative_exclude_joints", []),
         action_names=getattr(config, "action_feature_names", None),
     )
 
-    # Pi0Fast order: normalize → delta → tokenize → model → absolute → unnormalize
-    # NOTE: Normalization MUST come before delta because the state tokenizer expects
-    # normalized state in [-1, 1] range for discretization. This means delta operates
+    # Pi0Fast order: normalize → relative → tokenize → model → absolute → unnormalize
+    # NOTE: Normalization MUST come before relative actions because the state tokenizer expects
+    # normalized state in [-1, 1] range for discretization. This means relative actions operate
     # on normalized values, so AbsoluteActionsProcessorStep must come before
     # UnnormalizerProcessorStep in the postprocessor.
     input_steps: list[ProcessorStep] = [
@@ -153,7 +153,7 @@ def make_pi0_fast_pre_post_processors(
             padding_side="right",
             padding="max_length",
         ),
-        delta_step,
+        relative_step,
         ActionTokenizerProcessorStep(
             action_tokenizer_name=config.action_tokenizer_name,
             max_action_tokens=config.max_action_tokens,
@@ -164,7 +164,7 @@ def make_pi0_fast_pre_post_processors(
     ]
 
     output_steps: list[ProcessorStep] = [
-        AbsoluteActionsProcessorStep(enabled=config.use_delta_actions, delta_step=delta_step),
+        AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, delta_step=relative_step),
         UnnormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),

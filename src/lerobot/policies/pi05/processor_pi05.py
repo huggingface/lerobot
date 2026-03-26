@@ -26,13 +26,13 @@ from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     AddBatchDimensionProcessorStep,
-    DeltaActionsProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
+    RelativeActionsProcessorStep,
     RenameObservationsProcessorStep,
     TokenizerProcessorStep,
     UnnormalizerProcessorStep,
@@ -127,19 +127,19 @@ def make_pi05_pre_post_processors(
         A tuple containing the configured pre-processor and post-processor pipelines.
     """
 
-    delta_step = DeltaActionsProcessorStep(
-        enabled=config.use_delta_actions,
-        exclude_joints=getattr(config, "delta_exclude_joints", []),
+    relative_step = RelativeActionsProcessorStep(
+        enabled=config.use_relative_actions,
+        exclude_joints=getattr(config, "relative_exclude_joints", []),
         action_names=getattr(config, "action_feature_names", None),
     )
 
-    # OpenPI order: raw → delta → normalize → model → unnormalize → absolute
+    # OpenPI order: raw → relative → normalize → model → unnormalize → absolute
     # NOTE: NormalizerProcessorStep MUST come before Pi05PrepareStateTokenizerProcessorStep
     # because the tokenizer step expects normalized state in [-1, 1] range for discretization
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
         AddBatchDimensionProcessorStep(),
-        delta_step,
+        relative_step,
         # NOTE: NormalizerProcessorStep MUST come before Pi05PrepareStateTokenizerProcessorStep
         # because the tokenizer step expects normalized state in [-1, 1] range for discretization
         NormalizerProcessorStep(
@@ -161,7 +161,7 @@ def make_pi05_pre_post_processors(
         UnnormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
-        AbsoluteActionsProcessorStep(enabled=config.use_delta_actions, delta_step=delta_step),
+        AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, delta_step=relative_step),
         DeviceProcessorStep(device="cpu"),
     ]
 

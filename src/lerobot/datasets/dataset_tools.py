@@ -37,7 +37,11 @@ import torch
 from tqdm import tqdm
 
 from lerobot.datasets.aggregate import aggregate_datasets
-from lerobot.datasets.compute_stats import aggregate_stats, compute_delta_action_stats, compute_episode_stats
+from lerobot.datasets.compute_stats import (
+    aggregate_stats,
+    compute_episode_stats,
+    compute_relative_action_stats,
+)
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.io_utils import (
     get_parquet_file_size_in_mb,
@@ -1536,8 +1540,8 @@ def modify_tasks(
 def recompute_stats(
     dataset: LeRobotDataset,
     skip_image_video: bool = True,
-    delta_action: bool = False,
-    delta_exclude_joints: list[str] | None = None,
+    relative_action: bool = False,
+    relative_exclude_joints: list[str] | None = None,
     chunk_size: int = 50,
 ) -> LeRobotDataset:
     """Recompute stats.json from scratch by iterating all episodes.
@@ -1546,16 +1550,16 @@ def recompute_stats(
         dataset: The LeRobotDataset to recompute stats for.
         skip_image_video: If True (default), only recompute stats for numeric features
             (action, state, etc.) and keep existing image/video stats unchanged.
-        delta_action: If True, compute action stats in delta (relative) space by
+        relative_action: If True, compute action stats in relative space by
             sampling action chunks and subtracting the current state. This matches
             the normalization distribution the model sees during training with
-            ``use_delta_actions=True``. Delegates to
-            :func:`compute_delta_action_stats` which samples random chunks — the
+            ``use_relative_actions=True``. Delegates to
+            :func:`compute_relative_action_stats` which samples random chunks — the
             same method previously used inline during training.
-        delta_exclude_joints: Joint names to exclude from delta conversion when
-            delta_action=True. These dims keep absolute stats.
-        chunk_size: Action chunk size used for delta stats sampling. Should match
-            ``policy.chunk_size``. Only used when ``delta_action=True``.
+        relative_exclude_joints: Joint names to exclude from relative conversion when
+            relative_action=True. These dims keep absolute stats.
+        chunk_size: Action chunk size used for relative stats sampling. Should match
+            ``policy.chunk_size``. Only used when ``relative_action=True``.
 
     Returns:
         The same dataset with updated stats.
@@ -1575,18 +1579,18 @@ def recompute_stats(
             k: v for k, v in features.items() if v["dtype"] != "string" and k not in meta_keys
         }
 
-    # When delta_action is enabled, compute action stats via chunk-based sampling
+    # When relative_action is enabled, compute action stats via chunk-based sampling
     # (matching what the model sees during training) and skip action in the
     # per-episode pass below.
-    delta_action_stats = None
-    if delta_action and ACTION in features and OBS_STATE in features:
-        if delta_exclude_joints is None:
-            delta_exclude_joints = ["gripper"]
-        delta_action_stats = compute_delta_action_stats(
+    relative_action_stats = None
+    if relative_action and ACTION in features and OBS_STATE in features:
+        if relative_exclude_joints is None:
+            relative_exclude_joints = ["gripper"]
+        relative_action_stats = compute_relative_action_stats(
             hf_dataset=dataset.hf_dataset,
             features=features,
             chunk_size=chunk_size,
-            exclude_joints=delta_exclude_joints,
+            exclude_joints=relative_exclude_joints,
         )
         features_to_compute.pop(ACTION, None)
 
@@ -1623,8 +1627,8 @@ def recompute_stats(
 
     new_stats = aggregate_stats(all_episode_stats) if all_episode_stats else {}
 
-    if delta_action_stats is not None:
-        new_stats[ACTION] = delta_action_stats
+    if relative_action_stats is not None:
+        new_stats[ACTION] = relative_action_stats
 
     # Merge: keep existing stats for features we didn't recompute
     if dataset.meta.stats:

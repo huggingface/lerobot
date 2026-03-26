@@ -153,13 +153,13 @@ Recompute dataset statistics:
         --repo_id lerobot/pusht \
         --operation.type recompute_stats
 
-Recompute stats for delta (relative) actions before training:
+Recompute stats for relative actions before training:
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --operation.type recompute_stats \
-        --operation.delta_action true \
+        --operation.relative_action true \
         --operation.chunk_size 50 \
-        --operation.delta_exclude_joints "['gripper']"
+        --operation.relative_exclude_joints "['gripper']"
 
 Using JSON config file:
     lerobot-edit-dataset \
@@ -248,8 +248,8 @@ class ConvertImageToVideoConfig(OperationConfig):
 @dataclass
 class RecomputeStatsConfig(OperationConfig):
     skip_image_video: bool = True
-    delta_action: bool = False
-    delta_exclude_joints: list[str] | None = None
+    relative_action: bool = False
+    relative_exclude_joints: list[str] | None = None
     chunk_size: int = 50
 
 
@@ -555,17 +555,17 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
     dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
 
     logging.info(f"Recomputing stats for {cfg.repo_id}")
-    if cfg.operation.delta_action:
+    if cfg.operation.relative_action:
         logging.info(
-            f"Delta action stats enabled (chunk_size={cfg.operation.chunk_size}, "
-            f"exclude_joints={cfg.operation.delta_exclude_joints})"
+            f"Relative action stats enabled (chunk_size={cfg.operation.chunk_size}, "
+            f"exclude_joints={cfg.operation.relative_exclude_joints})"
         )
 
     recompute_stats(
         dataset,
         skip_image_video=cfg.operation.skip_image_video,
-        delta_action=cfg.operation.delta_action,
-        delta_exclude_joints=cfg.operation.delta_exclude_joints,
+        relative_action=cfg.operation.relative_action,
+        relative_exclude_joints=cfg.operation.relative_exclude_joints,
         chunk_size=cfg.operation.chunk_size,
     )
 

@@ -55,9 +55,9 @@ class SmolVLAConfig(PreTrainedConfig):
     # the space used by the pi internal runtime which was used to train the base model.
     adapt_to_pi_aloha: bool = False
 
-    # Converts joint dimensions to deltas with respect to the current state before passing to the model.
+    # Converts joint dimensions to relative values with respect to the current state before passing to the model.
     # Gripper dimensions will remain in absolute values.
-    use_delta_joint_actions_aloha: bool = False
+    use_relative_joint_actions_aloha: bool = False
 
     # Tokenizer
     tokenizer_max_length: int = 48
@@ -118,9 +118,9 @@ class SmolVLAConfig(PreTrainedConfig):
                 f"The chunk size is the upper bound for the number of action steps per model invocation. Got "
                 f"{self.n_action_steps} for `n_action_steps` and {self.chunk_size} for `chunk_size`."
             )
-        if self.use_delta_joint_actions_aloha:
+        if self.use_relative_joint_actions_aloha:
             raise NotImplementedError(
-                "`use_delta_joint_actions_aloha` is used by smolvla for aloha real models. It is not ported yet in LeRobot."
+                "`use_relative_joint_actions_aloha` is used by smolvla for aloha real models. It is not ported yet in LeRobot."
             )
 
     def validate_features(self) -> None:
