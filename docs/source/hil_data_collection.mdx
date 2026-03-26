@@ -227,7 +227,15 @@ During correction:
 
 ## Related Work
 
-This HIL data collection approach builds on ideas from interactive imitation learning, including DAgger (Ross et al., 2011), HG-DAgger (Kelly et al., 2019), RaC (Hu et al., 2025), and RECAP (Physical Intelligence, 2025). See those works for a deeper treatment of the theory behind human-in-the-loop policy improvement.
+This HIL data collection approach builds on ideas from interactive imitation learning:
+
+- **DAgger** (Ross et al., 2011) introduced the core idea: instead of only training on expert demonstrations, query the expert for corrections on states the _learner_ visits. This breaks the compounding-error cycle of standard behavioral cloning by iteratively collecting on-policy data.
+
+- **HG-DAgger** (Kelly et al., 2019) made this practical for robotics: a human expert monitors the robot and only intervenes when needed, rather than labeling every state. The gating between autonomous and human control is exactly the pause → takeover → return-to-policy loop used in the scripts here.
+
+- **RaC** (Hu et al., 2025) scales this loop to long-horizon tasks by explicitly decomposing interventions into **recovery** (teleoperating back to a good state) and **correction** (demonstrating the right behavior from there). This decomposition is the protocol followed by the HIL scripts in `examples/rac`.
+
+- **RECAP** (Physical Intelligence, 2025) applies the same iterative collect-and-finetune loop at scale with VLA models, showing that even large pretrained policies benefit substantially from targeted human corrections on their own failure modes.
 
 ```bibtex
 @article{ross2011dagger,
