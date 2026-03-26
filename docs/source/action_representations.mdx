@@ -116,7 +116,7 @@ Here each step is relative to the one before it. To recover absolute positions y
 The figure below (from [UMI, Chi et al., 2024](https://arxiv.org/abs/2402.10329)) illustrates the key difference. With **relative trajectory**, every action in the chunk points back to the same origin (current state), so a new inference step cleanly resets the reference. With **delta**, each action depends on the previous one, so errors accumulate. **Absolute** actions require a consistent global coordinate frame.
 
 <img
-  src="./assets/action_representations_umi.png"
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/action_representations_umi.png"
   alt="Relative Trajectory as Action Representation (UMI, Chi et al., 2024)"
   width="85%"
 />
