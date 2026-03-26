@@ -37,7 +37,7 @@ from lerobot.datasets.video_utils import (
     get_safe_default_codec,
     resolve_vcodec,
 )
-from lerobot.utils.constants import HF_LEROBOT_HOME
+from lerobot.utils.constants import HF_LEROBOT_HOME, HF_LEROBOT_HUB_CACHE
 
 logger = logging.getLogger(__name__)
 
@@ -144,10 +144,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         Args:
             repo_id (str): This is the repo id that will be used to fetch the dataset.
-            root (Path | None, optional): Local directory where the dataset will be downloaded and
-                stored. If set, all dataset files will be stored directly under this path. If not set, the
-                dataset files will be stored under $HF_LEROBOT_HOME/repo_id (configurable via the
-                HF_LEROBOT_HOME environment variable).
+            root (Path | None, optional): Local directory where the dataset will be read from or downloaded
+                into. If set, all dataset files are materialized directly under this path. If not set,
+                existing local datasets are still looked up under ``$HF_LEROBOT_HOME/{repo_id}``, but Hub
+                downloads use a revision-safe snapshot cache under
+                ``$HF_LEROBOT_HOME/hub``.
             episodes (list[int] | None, optional): If specified, this will only load episodes specified by
                 their episode_index in this list. Defaults to None.
             image_transforms (Callable | None, optional): You can pass standard v2 image transforms from
@@ -190,7 +191,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         super().__init__()
         self.repo_id = repo_id
-        self.root = Path(root) if root else HF_LEROBOT_HOME / repo_id
+        self._requested_root = Path(root) if root else None
+        self.root = self._requested_root if self._requested_root is not None else HF_LEROBOT_HOME / repo_id
         self.image_transforms = image_transforms
         self.delta_timestamps = delta_timestamps
         self.episodes = episodes
@@ -201,12 +203,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._vcodec = resolve_vcodec(vcodec)
         self._encoder_threads = encoder_threads
 
-        self.root.mkdir(exist_ok=True, parents=True)
+        if self._requested_root is not None:
+            self.root.mkdir(exist_ok=True, parents=True)
 
         # Load metadata
         self.meta = LeRobotDatasetMetadata(
-            self.repo_id, self.root, self.revision, force_cache_sync=force_cache_sync
+            self.repo_id, self._requested_root, self.revision, force_cache_sync=force_cache_sync
         )
+        self.root = self.meta.root
+        self.revision = self.meta.revision
 
         # Create reader (hf_dataset loaded below)
         self.reader = DatasetReader(
@@ -556,14 +561,32 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self.episodes is not None:
             # Reader is guaranteed to exist here (created in __init__ before _download)
             files = self.reader.get_episodes_file_paths()
-        snapshot_download(
-            self.repo_id,
-            repo_type="dataset",
-            revision=self.revision,
-            local_dir=self.root,
-            allow_patterns=files,
-            ignore_patterns=ignore_patterns,
-        )
+
+        if self._requested_root is None:
+            self.root = Path(
+                snapshot_download(
+                    self.repo_id,
+                    repo_type="dataset",
+                    revision=self.revision,
+                    cache_dir=HF_LEROBOT_HUB_CACHE,
+                    allow_patterns=files,
+                    ignore_patterns=ignore_patterns,
+                )
+            )
+        else:
+            self._requested_root.mkdir(exist_ok=True, parents=True)
+            snapshot_download(
+                self.repo_id,
+                repo_type="dataset",
+                revision=self.revision,
+                local_dir=self._requested_root,
+                allow_patterns=files,
+                ignore_patterns=ignore_patterns,
+            )
+            self.root = self._requested_root
+
+        self.meta.root = self.root
+        self.reader._root = self.root
 
     # ── Class constructors ────────────────────────────────────────────
 
