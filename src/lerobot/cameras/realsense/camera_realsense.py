@@ -321,15 +321,24 @@ class RealSenseCamera(Camera):
                 self.capture_width, self.capture_height = actual_width, actual_height
 
     def _get_color_sensor(self) -> "rs.sensor":
-        """Returns the color sensor from the active pipeline profile."""
+        """Returns the sensor that controls the color stream.
+
+        Most RealSense cameras expose "RGB Camera" for color. The D405 has no
+        separate RGB module — its color stream comes from "Stereo Module".
+        We try RGB Camera first, then fall back to Stereo Module.
+        """
         if self.rs_profile is None:
             raise RuntimeError(f"{self}: rs_profile must be initialized before use.")
 
         device = self.rs_profile.get_device()
-        for sensor in device.query_sensors():
-            if sensor.get_info(rs.camera_info.name) == "RGB Camera":
-                return sensor
-        raise RuntimeError(f"{self}: no RGB Camera sensor found on device.")
+        sensors = {s.get_info(rs.camera_info.name): s for s in device.query_sensors()}
+
+        for name in ("RGB Camera", "Stereo Module"):
+            if name in sensors:
+                return sensors[name]
+
+        available = list(sensors.keys())
+        raise RuntimeError(f"{self}: no color sensor found. Available sensors: {available}")
 
     def _configure_sensor_options(self) -> None:
         """Applies manual sensor options (exposure, gain, white balance) to the color sensor.
