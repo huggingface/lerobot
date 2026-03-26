@@ -16,7 +16,6 @@
 # limitations under the License.
 
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.multi_dataset import MultiLeRobotDataset
 from lerobot.datasets.sampler import EpisodeAwareSampler
@@ -31,5 +30,4 @@ __all__ = [
     "LeRobotDatasetMetadata",
     "MultiLeRobotDataset",
     "StreamingLeRobotDataset",
-    "make_dataset",
 ]
