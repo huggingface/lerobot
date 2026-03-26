@@ -37,7 +37,7 @@ import torch
 from tqdm import tqdm
 
 from lerobot.datasets.aggregate import aggregate_datasets
-from lerobot.datasets.compute_stats import aggregate_stats, compute_episode_stats
+from lerobot.datasets.compute_stats import aggregate_stats, compute_delta_action_stats, compute_episode_stats
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.io_utils import (
     get_parquet_file_size_in_mb,
@@ -1538,6 +1538,7 @@ def recompute_stats(
     skip_image_video: bool = True,
     delta_action: bool = False,
     delta_exclude_joints: list[str] | None = None,
+    chunk_size: int = 50,
 ) -> LeRobotDataset:
     """Recompute stats.json from scratch by iterating all episodes.
 
@@ -1545,50 +1546,51 @@ def recompute_stats(
         dataset: The LeRobotDataset to recompute stats for.
         skip_image_video: If True (default), only recompute stats for numeric features
             (action, state, etc.) and keep existing image/video stats unchanged.
-        delta_action: If True, compute action stats as delta (action - state).
-            Useful when training with use_delta_actions=True so normalization matches.
+        delta_action: If True, compute action stats in delta (relative) space by
+            sampling action chunks and subtracting the current state. This matches
+            the normalization distribution the model sees during training with
+            ``use_delta_actions=True``. Delegates to
+            :func:`compute_delta_action_stats` which samples random chunks — the
+            same method previously used inline during training.
         delta_exclude_joints: Joint names to exclude from delta conversion when
-            delta_action=True. These dims keep absolute stats. Uses dataset's
-            action feature names to build the mask. Default: ["gripper"].
+            delta_action=True. These dims keep absolute stats.
+        chunk_size: Action chunk size used for delta stats sampling. Should match
+            ``policy.chunk_size``. Only used when ``delta_action=True``.
 
     Returns:
         The same dataset with updated stats.
     """
     features = dataset.meta.features
+    meta_keys = {"index", "episode_index", "task_index", "frame_index", "timestamp"}
     numeric_features = {
         k: v
         for k, v in features.items()
-        if v["dtype"] not in ["image", "video", "string"]
-        and k not in ["index", "episode_index", "task_index", "frame_index", "timestamp"]
+        if v["dtype"] not in ["image", "video", "string"] and k not in meta_keys
     }
 
     if skip_image_video:
         features_to_compute = numeric_features
     else:
         features_to_compute = {
-            k: v
-            for k, v in features.items()
-            if v["dtype"] != "string"
-            and k not in ["index", "episode_index", "task_index", "frame_index", "timestamp"]
+            k: v for k, v in features.items() if v["dtype"] != "string" and k not in meta_keys
         }
 
-    # Build delta mask if delta_action is enabled
-    delta_mask = None
+    # When delta_action is enabled, compute action stats via chunk-based sampling
+    # (matching what the model sees during training) and skip action in the
+    # per-episode pass below.
+    delta_action_stats = None
     if delta_action and ACTION in features and OBS_STATE in features:
         if delta_exclude_joints is None:
             delta_exclude_joints = ["gripper"]
-        action_names = features[ACTION].get("names")
-        if action_names is not None:
-            exclude = set(delta_exclude_joints)
-            delta_mask = [n not in exclude for n in action_names]
-        else:
-            action_dim = features[ACTION]["shape"][0]
-            delta_mask = [True] * action_dim
-        # Only recompute action stats when delta is enabled — state stays unchanged
-        features_to_compute = {ACTION: features[ACTION]}
-        logging.info(f"Recomputing action stats as delta (exclude: {delta_exclude_joints})")
-    else:
-        logging.info(f"Recomputing stats for features: {list(features_to_compute.keys())}")
+        delta_action_stats = compute_delta_action_stats(
+            hf_dataset=dataset.hf_dataset,
+            features=features,
+            chunk_size=chunk_size,
+            exclude_joints=delta_exclude_joints,
+        )
+        features_to_compute.pop(ACTION, None)
+
+    logging.info(f"Recomputing stats for features: {list(features_to_compute.keys())}")
 
     data_dir = dataset.root / DATA_DIR
     parquet_files = sorted(data_dir.glob("*/*.parquet"))
@@ -1597,8 +1599,6 @@ def recompute_stats(
 
     all_episode_stats = []
     numeric_keys = [k for k, v in features_to_compute.items() if v["dtype"] not in ["image", "video"]]
-    # Also need state for delta computation even though we don't recompute state stats
-    needs_state = delta_mask is not None
 
     for parquet_path in tqdm(parquet_files, desc="Computing stats from data files"):
         df = pd.read_parquet(parquet_path)
@@ -1614,29 +1614,17 @@ def recompute_stats(
                     else:
                         episode_data[key] = np.array(values)
 
-            # Apply delta conversion to actions before computing stats
-            if delta_mask is not None and ACTION in episode_data:
-                from lerobot.processor.delta_action_processor import to_delta_actions
-
-                # Load state for delta even if we're not computing state stats
-                if needs_state and OBS_STATE in ep_df.columns:
-                    state_values = ep_df[OBS_STATE].values
-                    if hasattr(state_values[0], "__len__"):
-                        states = np.stack(state_values)
-                    else:
-                        states = np.array(state_values)
-                    actions_t = torch.from_numpy(episode_data[ACTION]).float()
-                    states_t = torch.from_numpy(states).float()
-                    episode_data[ACTION] = to_delta_actions(actions_t, states_t, delta_mask).numpy()
-
             ep_stats = compute_episode_stats(episode_data, features_to_compute)
             all_episode_stats.append(ep_stats)
 
-    if not all_episode_stats:
+    if features_to_compute and not all_episode_stats:
         logging.warning("No episode stats computed")
         return dataset
 
-    new_stats = aggregate_stats(all_episode_stats)
+    new_stats = aggregate_stats(all_episode_stats) if all_episode_stats else {}
+
+    if delta_action_stats is not None:
+        new_stats[ACTION] = delta_action_stats
 
     # Merge: keep existing stats for features we didn't recompute
     if dataset.meta.stats:
@@ -1647,7 +1635,7 @@ def recompute_stats(
     write_stats(new_stats, dataset.root)
     dataset.meta.stats = new_stats
 
-    logging.info(f"Stats recomputed for {len(all_episode_stats)} episodes")
+    logging.info("Stats recomputed successfully")
     return dataset
 
 

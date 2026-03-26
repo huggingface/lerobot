@@ -38,7 +38,6 @@ from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.rl.wandb_utils import WandBLogger
 from lerobot.scripts.lerobot_eval import eval_policy_all
-from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
@@ -218,37 +217,15 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     torch.backends.cuda.matmul.allow_tf32 = True
 
     # Dataset loading synchronization: main process downloads first to avoid race conditions
-    delta_action_stats = None
     if is_main_process:
         logging.info("Creating dataset")
         dataset = make_dataset(cfg)
-
-        # Compute delta action stats BEFORE distributed sync to avoid NCCL timeout
-        if getattr(cfg.policy, "use_delta_actions", False):
-            from lerobot.datasets.compute_stats import compute_delta_action_stats
-
-            delta_action_stats = compute_delta_action_stats(
-                hf_dataset=dataset.hf_dataset,
-                features=dataset.meta.features,
-                chunk_size=cfg.policy.chunk_size,
-                exclude_joints=getattr(cfg.policy, "delta_exclude_joints", []),
-            )
-            dataset.meta.stats[ACTION] = delta_action_stats
 
     accelerator.wait_for_everyone()
 
     # Now all other processes can safely load the dataset
     if not is_main_process:
         dataset = make_dataset(cfg)
-
-    # Ensure all ranks use the exact same delta action stats.
-    if getattr(cfg.policy, "use_delta_actions", False):
-        if accelerator.num_processes > 1 and torch.distributed.is_initialized():
-            stats_list = [delta_action_stats]
-            torch.distributed.broadcast_object_list(stats_list, src=0)
-            delta_action_stats = stats_list[0]
-        if delta_action_stats is not None:
-            dataset.meta.stats[ACTION] = delta_action_stats
 
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
