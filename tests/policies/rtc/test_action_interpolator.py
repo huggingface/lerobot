@@ -14,23 +14,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for ActionInterpolator."""
+"""Tests for ActionInterpolator and its interaction with ActionQueue (RTC)."""
 
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
 import torch
 
-# Direct import to avoid triggering the full lerobot.policies init chain,
+# Direct imports to avoid triggering the full lerobot.policies init chain,
 # which may fail on branches where some processor modules are absent.
-_spec = importlib.util.spec_from_file_location(
-    "action_interpolator",
-    Path(__file__).resolve().parents[3] / "src" / "lerobot" / "policies" / "rtc" / "action_interpolator.py",
+_rtc_dir = Path(__file__).resolve().parents[3] / "src" / "lerobot" / "policies" / "rtc"
+
+_spec_interp = importlib.util.spec_from_file_location(
+    "action_interpolator", _rtc_dir / "action_interpolator.py"
 )
-_mod = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_mod)
-ActionInterpolator = _mod.ActionInterpolator
+_mod_interp = importlib.util.module_from_spec(_spec_interp)
+_spec_interp.loader.exec_module(_mod_interp)
+ActionInterpolator = _mod_interp.ActionInterpolator
+
+_spec_cfg = importlib.util.spec_from_file_location("configuration_rtc", _rtc_dir / "configuration_rtc.py")
+_mod_cfg = importlib.util.module_from_spec(_spec_cfg)
+_spec_cfg.loader.exec_module(_mod_cfg)
+RTCConfig = _mod_cfg.RTCConfig
+
+sys.modules["lerobot.policies.rtc.configuration_rtc"] = _mod_cfg
+
+_spec_queue = importlib.util.spec_from_file_location("action_queue", _rtc_dir / "action_queue.py")
+_mod_queue = importlib.util.module_from_spec(_spec_queue)
+_spec_queue.loader.exec_module(_mod_queue)
+ActionQueue = _mod_queue.ActionQueue
 
 
 # Fixtures
@@ -336,3 +350,237 @@ class TestControlLoop:
 
         for i in range(1, len(all_values)):
             assert all_values[i] >= all_values[i - 1]
+
+
+# ActionQueue + ActionInterpolator integration
+
+
+def _make_chunk(n_steps: int, action_dim: int = 2, offset: float = 0.0) -> torch.Tensor:
+    """Create a simple action chunk: each row is [offset + step_idx, offset + step_idx]."""
+    return torch.arange(n_steps, dtype=torch.float32).unsqueeze(1).expand(-1, action_dim) + offset
+
+
+class TestQueueInterpolatorIntegration:
+    """Verify the interpolator doesn't interfere with ActionQueue leftover tracking."""
+
+    def test_queue_consumption_rate_matches_base_fps(self):
+        """With multiplier=3, the interpolator calls queue.get() once per 3 control
+        ticks, so the queue consumption rate equals base fps, not multiplied fps."""
+        cfg = RTCConfig(enabled=True, execution_horizon=10)
+        queue = ActionQueue(cfg)
+        interp = ActionInterpolator(multiplier=3)
+
+        chunk = _make_chunk(10)
+        queue.merge(chunk, chunk.clone(), real_delay=0)
+
+        queue_gets = 0
+        control_ticks = 0
+
+        # Drain both queue AND remaining interpolator buffer
+        while True:
+            if interp.needs_new_action():
+                if queue.empty():
+                    break
+                action = queue.get()
+                if action is None:
+                    break
+                interp.add(action)
+                queue_gets += 1
+
+            result = interp.get()
+            if result is not None:
+                control_ticks += 1
+
+        assert queue_gets == 10
+        # First get produces 1 tick (no prev), remaining 9 produce 3 ticks each
+        assert control_ticks == 1 + 9 * 3
+
+    def test_leftover_decreases_only_on_queue_get(self):
+        """get_left_over() should shrink only when queue.get() is called,
+        not when the interpolator produces intermediate actions."""
+        cfg = RTCConfig(enabled=True, execution_horizon=10)
+        queue = ActionQueue(cfg)
+        interp = ActionInterpolator(multiplier=3)
+
+        chunk = _make_chunk(6)
+        queue.merge(chunk, chunk.clone(), real_delay=0)
+
+        # Pull first action into interpolator
+        assert interp.needs_new_action()
+        interp.add(queue.get())
+        leftover_after_first_get = queue.get_left_over()
+        assert leftover_after_first_get is not None
+        assert len(leftover_after_first_get) == 5  # 6 - 1
+
+        # Consume interpolated sub-steps — queue leftover must NOT change
+        interp.get()  # only 1 sub-step (no prev)
+        assert len(queue.get_left_over()) == 5  # unchanged
+
+        # Pull second action
+        interp.add(queue.get())
+        assert len(queue.get_left_over()) == 4  # 6 - 2
+
+        # Consume all 3 sub-steps — leftover stays at 4
+        for _ in range(3):
+            assert interp.get() is not None
+        assert len(queue.get_left_over()) == 4
+
+    def test_processed_leftover_tracks_queue_index(self):
+        """get_processed_left_over() must reflect the queue's last_index,
+        independent of interpolator state."""
+        cfg = RTCConfig(enabled=True, execution_horizon=10)
+        queue = ActionQueue(cfg)
+        interp = ActionInterpolator(multiplier=2)
+
+        original = _make_chunk(8, offset=0.0)
+        processed = _make_chunk(8, offset=100.0)
+        queue.merge(original, processed, real_delay=0)
+
+        # Before any get
+        left = queue.get_processed_left_over()
+        assert len(left) == 8
+
+        # Get 3 actions from queue through interpolator
+        for _ in range(3):
+            if interp.needs_new_action():
+                action = queue.get()
+                if action is not None:
+                    interp.add(action)
+            interp.get()
+
+        # Queue has consumed 2 items (first get + second get after 2 interp sub-steps)
+        # But let's verify by checking the actual leftover
+        proc_left = queue.get_processed_left_over()
+        orig_left = queue.get_left_over()
+        assert proc_left is not None and orig_left is not None
+        assert len(proc_left) == len(orig_left)
+        # Processed leftovers start at 100+idx, original at 0+idx — different offsets
+        assert proc_left[0, 0].item() >= 100.0
+        assert orig_left[0, 0].item() < 100.0
+
+    def test_merge_resets_queue_but_interpolator_keeps_prev(self):
+        """After a queue merge (new chunk), the interpolator retains its prev action
+        so the first get from the new chunk still interpolates smoothly."""
+        cfg = RTCConfig(enabled=True, execution_horizon=10)
+        queue = ActionQueue(cfg)
+        interp = ActionInterpolator(multiplier=2)
+
+        # Chunk 1: [0, 2, 4, 6, 8]
+        chunk1 = torch.tensor([[0.0], [2.0], [4.0], [6.0], [8.0]])
+        queue.merge(chunk1, chunk1.clone(), real_delay=0)
+
+        # Consume exactly 3 queue actions (5 control ticks: 1 + 2 + 2)
+        consumed = []
+        for _ in range(5):
+            if interp.needs_new_action():
+                a = queue.get()
+                if a is not None:
+                    interp.add(a)
+            r = interp.get()
+            if r is not None:
+                consumed.append(r.item())
+
+        # After 5 ticks: queue.get() called 3 times → consumed [0], [2], [4]
+        # Interpolator prev = [4], buffer exhausted
+        assert interp.needs_new_action()
+        assert consumed[-1] == pytest.approx(4.0)
+
+        # Simulate RTC: capture index before inference (as the real code does)
+        idx_before = queue.get_action_index()
+
+        # Merge new chunk — pass idx_before so delay = last_index - idx_before = 0
+        chunk2 = torch.tensor([[10.0], [12.0], [14.0]])
+        queue.merge(chunk2, chunk2.clone(), real_delay=0, action_index_before_inference=idx_before)
+
+        # Interpolator still has prev=[4] from chunk1
+        first_action = queue.get()
+        assert first_action is not None
+        interp.add(first_action)
+        first_from_new = interp.get()
+        assert first_from_new is not None
+        # Midpoint between prev=4 and new=10 → 7.0
+        assert first_from_new.item() == pytest.approx(7.0)
+
+    def test_interpolator_reset_does_not_affect_queue(self):
+        """Resetting the interpolator (e.g. on episode boundary or resume) should
+        not touch the queue state."""
+        cfg = RTCConfig(enabled=True, execution_horizon=10)
+        queue = ActionQueue(cfg)
+        interp = ActionInterpolator(multiplier=2)
+
+        chunk = _make_chunk(5)
+        queue.merge(chunk, chunk.clone(), real_delay=0)
+
+        # Consume 2 actions from queue
+        interp.add(queue.get())
+        interp.get()
+        interp.add(queue.get())
+        interp.get()
+        interp.get()
+
+        assert queue.qsize() == 3
+
+        # Reset interpolator
+        interp.reset()
+
+        # Queue is untouched
+        assert queue.qsize() == 3
+        assert len(queue.get_left_over()) == 3
+
+        # Can still pull from queue after reset
+        interp.add(queue.get())
+        result = interp.get()
+        assert result is not None
+        assert queue.qsize() == 2
+
+    def test_no_interpolation_queue_consumption_is_1_to_1(self):
+        """With multiplier=1, each queue.get() produces exactly 1 robot command."""
+        cfg = RTCConfig(enabled=True, execution_horizon=10)
+        queue = ActionQueue(cfg)
+        interp = ActionInterpolator(multiplier=1)
+
+        chunk = _make_chunk(5)
+        queue.merge(chunk, chunk.clone(), real_delay=0)
+
+        robot_commands = 0
+        while not queue.empty():
+            if interp.needs_new_action():
+                action = queue.get()
+                if action is not None:
+                    interp.add(action)
+            result = interp.get()
+            if result is not None:
+                robot_commands += 1
+
+        assert robot_commands == 5
+
+    def test_queue_delay_with_interpolation(self):
+        """Verify merge with real_delay correctly skips stale actions,
+        and the interpolator picks up from the right point."""
+        cfg = RTCConfig(enabled=True, execution_horizon=10)
+        queue = ActionQueue(cfg)
+        interp = ActionInterpolator(multiplier=2)
+
+        # Initial chunk
+        chunk1 = _make_chunk(10)
+        queue.merge(chunk1, chunk1.clone(), real_delay=0)
+
+        # Consume 3 actions while "inference" runs
+        for _ in range(5):  # 1 + 2 + 2 = 5 control ticks = 3 queue gets
+            if interp.needs_new_action():
+                a = queue.get()
+                if a is not None:
+                    interp.add(a)
+            interp.get()
+
+        assert queue.get_action_index() == 3
+
+        # New chunk arrives, delay=3 (3 actions consumed during inference)
+        chunk2 = _make_chunk(10, offset=100.0)
+        queue.merge(chunk2, chunk2.clone(), real_delay=0, action_index_before_inference=0)
+
+        # Queue should have skipped delay actions
+        first_action = queue.get()
+        assert first_action is not None
+        # After merge with index-based delay of 3, first available = chunk2[3]
+        torch.testing.assert_close(first_action, torch.tensor([103.0, 103.0]))
