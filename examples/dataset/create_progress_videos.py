@@ -21,11 +21,11 @@ Downloads datasets from HuggingFace, seeks directly into the episode segment
 of the source video, draws a progress line on each frame, and writes the result.
 
 Usage:
-    python examples/dataset/visualization_tools/create_progress_videos.py \
+    python examples/dataset/create_progress_videos.py \
         --repo-id lerobot-data-collection/level2_final_quality3 \
         --episode 1100
 
-    python examples/dataset/visualization_tools/create_progress_videos.py \
+    python examples/dataset/create_progress_videos.py \
         --repo-id lerobot-data-collection/level2_final_quality3 \
         --episode 1100 \
         --camera-key observation.images.top \
