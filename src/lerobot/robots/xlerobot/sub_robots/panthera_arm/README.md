@@ -25,6 +25,7 @@ The robot/SDK is from [HighTorque-Robotics/Panthera-HT_SDK](https://github.com/H
 
 ```text
 src/lerobot/robots/xlerobot/sub_robots/panthera_arm/
+|-- Panthera_lib/
 |-- README.md
 |-- __init__.py
 |-- config.py
@@ -35,28 +36,46 @@ src/lerobot/robots/xlerobot/sub_robots/panthera_arm/
 
 ## SDK setup
 
-This wrapper imports the manufacturer SDK with:
+This wrapper imports `Panthera` from
+`src/lerobot/robots/xlerobot/sub_robots/panthera_arm/Panthera_lib/`.
 
-```python
-from Panthera_lib import Panthera
-```
+The Panthera setup for `xlerobot` has three pieces:
 
-Follow the upstream installation steps in
+- `Panthera_lib/`: download `hardware/high_torque_robotics/Panthera_lib.zip` from [Vector-Wangel/XLeRobot](https://github.com/Vector-Wangel/XLeRobot) and extract it into `src/lerobot/robots/xlerobot/sub_robots/panthera_arm/Panthera_lib/`.
+- `robot_param/`: must be downloaded separately for the smaller XLeRobot-tested Panthera variant.
+- `xlerobot-HT_description/`: must be downloaded separately for the smaller XLeRobot-tested Panthera variant.
+
+You still need the Panthera Python runtime dependencies in your environment.
+Use the upstream
 [`Panthera-HT_SDK/panthera_python`](https://github.com/HighTorque-Robotics/Panthera-HT_SDK/tree/main/panthera_python)
-so `Panthera_lib` is importable in your active Python environment.
+package for:
+
+- the matching `motor_whl/hightorque_robot-*.whl`
+- the extra `Panthera_lib` Python dependencies (`pyyaml`, `pin`, `scipy`)
 
 Note that the default assets in the Panthera SDK repository are for the full-sized
 Panthera. This integration was tested with the smaller Panthera variant, so use
 the asset bundles from
 [Vector-Wangel/XLeRobot](https://github.com/Vector-Wangel/XLeRobot):
 
+- `hardware/high_torque_robotics/Panthera_lib.zip`
 - `hardware/high_torque_robotics/robot_param.zip`
 - `hardware/high_torque_robotics/xlerobot-HT_description.zip`
 
 After downloading and extracting them, place the contents in:
 
+- `src/lerobot/robots/xlerobot/sub_robots/panthera_arm/Panthera_lib/`
 - `src/lerobot/robots/xlerobot/sub_robots/panthera_arm/robot_param/`
 - `src/lerobot/robots/xlerobot/sub_robots/panthera_arm/xlerobot-HT_description/`
+
+The expected folder layout is:
+
+```text
+src/lerobot/robots/xlerobot/sub_robots/panthera_arm/
+|-- Panthera_lib/
+|-- robot_param/
+`-- xlerobot-HT_description/
+```
 
 ## Configuration
 
@@ -182,4 +201,3 @@ For reference renders and photos, check the `hardware/high_torque_robotics/media
 ### Wiring Schematic
 
 TODO
-

@@ -27,8 +27,9 @@ class PantheraArmConfig(RobotConfig):
     """
     Configuration for Panthera arm robot wrapper.
 
-    This wrapper expects the Panthera SDK to be installed so
-    `from Panthera_lib import Panthera` works in the active Python environment.
+    This wrapper expects `Panthera_lib` to be extracted next to this module from
+    `hardware/high_torque_robotics/Panthera_lib.zip` in Vector-Wangel/XLeRobot.
+    Install the Panthera runtime dependencies separately.
     If `config_path` is unset, this wrapper expects
     `robot_param/Follower.yaml` to be present next to this module.
     """

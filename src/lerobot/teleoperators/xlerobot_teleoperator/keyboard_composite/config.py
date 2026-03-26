@@ -50,10 +50,10 @@ class XLeRobotKeyboardCompositeConfig(TeleoperatorConfig):
 
     _comment: str | None = None
     config_file: str | None = None
-    arm: dict[str, Any] = field(default_factory=dict)
+    arm: dict[str, Any] | None = field(default_factory=dict)
     arm_side: str = "left"
-    base: dict[str, Any] = field(default_factory=dict)
-    mount: dict[str, Any] = field(default_factory=dict)
+    base: dict[str, Any] | None = field(default_factory=dict)
+    mount: dict[str, Any] | None = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.config_file:

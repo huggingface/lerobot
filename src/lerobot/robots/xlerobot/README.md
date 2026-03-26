@@ -130,7 +130,8 @@ Panthera uses a different motor/driver stack and must not be placed on
 
 To use it:
 
-- install the upstream `panthera_python` SDK so `Panthera_lib` is importable
+- download `hardware/high_torque_robotics/Panthera_lib.zip` from [Vector-Wangel/XLeRobot](https://github.com/Vector-Wangel/XLeRobot) and extract it into `sub_robots/panthera_arm/Panthera_lib/`
+- install the Panthera runtime dependencies from the upstream `panthera_python` package (`hightorque_robot` wheel plus `pyyaml`, `pin`, and `scipy`)
 - download the smaller-variant `robot_param.zip` and `xlerobot-HT_description.zip` asset bundles from [Vector-Wangel/XLeRobot](https://github.com/Vector-Wangel/XLeRobot)
 - extract them into `sub_robots/panthera_arm/robot_param/` and `sub_robots/panthera_arm/xlerobot-HT_description/`
 
@@ -315,7 +316,11 @@ lerobot-teleoperate \
 ```
 Panthera arms use a different motor/driver stack and must stay off `shared_buses` (`shared_bus: false`).
 This example uses a single left Panthera arm.
-Follow the upstream `panthera_python` installation steps so `Panthera_lib` is importable in your active Python environment.
+Download `hardware/high_torque_robotics/Panthera_lib.zip` from
+`Vector-Wangel/XLeRobot` and extract it into `sub_robots/panthera_arm/Panthera_lib/`.
+You still need the Panthera runtime dependencies from the upstream
+`panthera_python` package, including the matching `hightorque_robot` wheel plus
+`pyyaml`, `pin`, and `scipy`.
 Download the Panthera asset files separately and place them under `sub_robots/panthera_arm/robot_param/`
 and `sub_robots/panthera_arm/xlerobot-HT_description/`.
 This sample config enables Panthera joint impedance + gravity/friction compensation

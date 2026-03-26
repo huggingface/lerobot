@@ -729,11 +729,13 @@ class PantheraArm(Robot):
 
     def _import_panthera_class(self):
         try:
-            from Panthera_lib import Panthera
+            from .Panthera_lib import Panthera
         except Exception as exc:
             raise ImportError(
-                "Failed to import Panthera SDK (`from Panthera_lib import Panthera`). "
-                "Follow the Panthera-HT_SDK panthera_python installation steps so the module is "
-                "available in the active Python environment."
+                "Failed to import Panthera SDK (`from .Panthera_lib import Panthera`). "
+                "Download `hardware/high_torque_robotics/Panthera_lib.zip` from "
+                "Vector-Wangel/XLeRobot, extract it into "
+                "`sub_robots/panthera_arm/Panthera_lib/`, and install the Panthera "
+                "Python dependencies (`hightorque_robot`, `pin`, `pyyaml`, and `scipy`)."
             ) from exc
         return Panthera
