@@ -95,7 +95,18 @@ lerobot-train \
 
 By default, π₀ predicts absolute actions. You can enable **delta actions** so the model predicts offsets relative to the current robot state. This can improve training stability for certain setups.
 
-To use delta actions, first recompute your dataset stats in delta space:
+To use delta actions, first recompute your dataset stats in delta space via the CLI:
+
+```bash
+lerobot-edit-dataset \
+    --repo_id your_dataset \
+    --operation.type recompute_stats \
+    --operation.delta_action true \
+    --operation.chunk_size 50 \
+    --operation.delta_exclude_joints "['gripper']"
+```
+
+Or equivalently in Python:
 
 ```python
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
