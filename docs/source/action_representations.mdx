@@ -113,26 +113,13 @@ Here each step is relative to the one before it. To recover absolute positions y
 
 ### Visual Comparison
 
-The figure below (from [UMI, Chi et al., 2024](https://arxiv.org/abs/2402.10329)) illustrates the key difference. With **relative trajectory**, every action in the chunk points back to the same origin (current state), so a new inference step cleanly resets the reference. With **delta**, each action depends on the previous one, so small prediction errors compound.
+The figure below (from [UMI, Chi et al., 2024](https://arxiv.org/abs/2402.10329)) illustrates the key difference. With **relative trajectory**, every action in the chunk points back to the same origin (current state), so a new inference step cleanly resets the reference. With **delta**, each action depends on the previous one, so errors accumulate. **Absolute** actions require a consistent global coordinate frame.
 
-```
-Pose
- ▲
- │          ╱ ● absolute
- │        ╱       (global target)
- │      ╱
- │    ●──→ ● ──→ ● ──→ ●     delta
- │    │                        (each step relative to previous)
- │    │
- │    ●──────────→ ●
- │    │            │          relative trajectory
- │    ●────→ ●     │          (all relative to same origin)
- │    ▲            │
- │    state(t=0)   state(t=4)
- └──────────────────────────→ Time
-```
-
-At each new inference step, relative actions re-anchor to the current state, avoiding drift. Delta actions carry forward any error from previous steps.
+<img
+  src="./assets/action_representations_umi.png"
+  alt="Relative Trajectory as Action Representation (UMI, Chi et al., 2024)"
+  width="85%"
+/>
 
 ## Using Relative Actions in LeRobot
 
