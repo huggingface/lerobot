@@ -1,10 +1,43 @@
+#!/usr/bin/env python
+
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
-Create MP4 videos with sarm_progress overlay for specified episodes.
-Downloads datasets from HuggingFace, extracts episode video + progress data,
-and draws the progress line directly on each frame (no panel, no axes).
+Create MP4 (or GIF) videos with sarm_progress overlay for specified episodes.
+
+Downloads datasets from HuggingFace, seeks directly into the episode segment
+of the source video, draws a progress line on each frame, and writes the result.
+
+Usage:
+    python examples/dataset/visualization_tools/create_progress_videos.py \
+        --repo-id lerobot-data-collection/level2_final_quality3 \
+        --episode 1100
+
+    python examples/dataset/visualization_tools/create_progress_videos.py \
+        --repo-id lerobot-data-collection/level2_final_quality3 \
+        --episode 1100 \
+        --camera-key observation.images.top \
+        --output-dir ./my_videos \
+        --gif
 """
 
+from __future__ import annotations
+
+import argparse
 import json
+import logging
 import subprocess
 from pathlib import Path
 
@@ -13,32 +46,28 @@ import numpy as np
 import pandas as pd
 from huggingface_hub import snapshot_download
 
-DATASETS = [
-    {"repo_id": "lerobot-data-collection/level2_final_quality3", "episode": 1100},
-]
-CAMERA_KEY = (
-    "observation.images.base"  # None = auto-select first camera, or set e.g. "observation.images.top"
-)
-OUTPUT_DIR = Path("/Users/pepijnkooijmans/Documents/GitHub_local/progress_videos")
-OUTPUT_DIR.mkdir(exist_ok=True)
-
-# Progress line spans the full video height
 GRAPH_Y_TOP_FRAC = 0.01
 GRAPH_Y_BOT_FRAC = 0.99
 LINE_THICKNESS = 3
-SHADOW_THICKNESS = 6  # white edge thickness
-REF_ALPHA = 0.45  # opacity of the 1.0 reference line
-FILL_ALPHA = 0.55  # opacity of the grey fill under the line
+SHADOW_THICKNESS = 6
+REF_ALPHA = 0.45
+FILL_ALPHA = 0.55
 SCORE_FONT_SCALE = 0.8
 TASK_FONT_SCALE = 0.55
 
 
-def download_episode(repo_id: str, episode: int) -> Path:
-    """Download only the files needed for this episode."""
-    # We need: meta/, sarm_progress.parquet, and the relevant video/data chunks.
-    # We'll download meta + sarm first, then figure out chunks.
-    print(f"\n[1/5] Downloading metadata for {repo_id} …")
-    local = Path(
+def download_episode_metadata(repo_id: str, episode: int) -> Path:
+    """Download only the metadata and sarm_progress files for a dataset.
+
+    Args:
+        repo_id: HuggingFace dataset repository ID.
+        episode: Episode index (used for logging only; all meta is fetched).
+
+    Returns:
+        Local cache path for the downloaded snapshot.
+    """
+    logging.info("[1/5] Downloading metadata for %s (episode %d) …", repo_id, episode)
+    local_path = Path(
         snapshot_download(
             repo_id=repo_id,
             repo_type="dataset",
@@ -46,118 +75,139 @@ def download_episode(repo_id: str, episode: int) -> Path:
             ignore_patterns=["*.mp4"],
         )
     )
-    return local
+    return local_path
 
 
-def load_episode_meta(local: Path, episode: int) -> dict:
-    """Read info.json + episode-level parquet to get fps, video paths, timestamps."""
-    info = json.loads((local / "meta" / "info.json").read_text())
+def load_episode_meta(local_path: Path, episode: int, camera_key: str | None) -> dict:
+    """Read info.json and episode parquet to resolve fps, video path, and timestamps.
+
+    Args:
+        local_path: Local cache directory containing meta/.
+        episode: Episode index to look up.
+        camera_key: Camera observation key (e.g. "observation.images.base").
+            If None, the first available video key is used.
+
+    Returns:
+        Dict with keys: fps, camera, video_rel, chunk_index, file_index,
+        from_ts, to_ts, task_name.
+    """
+    info = json.loads((local_path / "meta" / "info.json").read_text())
     fps = info["fps"]
     features = info["features"]
 
-    # Find video keys (keys whose dtype=="video")
     video_keys = [k for k, v in features.items() if v.get("dtype") == "video"]
     if not video_keys:
         raise RuntimeError("No video keys found in dataset features")
-    if CAMERA_KEY is not None:
-        if CAMERA_KEY not in video_keys:
-            raise RuntimeError(f"CAMERA_KEY='{CAMERA_KEY}' not found. Available: {video_keys}")
-        first_cam = CAMERA_KEY
-    else:
-        first_cam = video_keys[0]
-    print(f"   fps={fps}  camera='{first_cam}'  all_cams={video_keys}")
 
-    # Load all episode-meta parquet files and find our episode
-    ep_rows = []
-    for pq in sorted((local / "meta" / "episodes").glob("**/*.parquet")):
-        df = pd.read_parquet(pq)
-        ep_rows.append(df)
-    ep_df = pd.concat(ep_rows, ignore_index=True)
-    row = ep_df[ep_df["episode_index"] == episode]
+    if camera_key is not None:
+        if camera_key not in video_keys:
+            raise RuntimeError(f"camera_key='{camera_key}' not found. Available: {video_keys}")
+        selected_camera = camera_key
+    else:
+        selected_camera = video_keys[0]
+    logging.info("   fps=%d  camera='%s'  all_cams=%s", fps, selected_camera, video_keys)
+
+    episode_rows = []
+    for parquet_file in sorted((local_path / "meta" / "episodes").glob("**/*.parquet")):
+        episode_rows.append(pd.read_parquet(parquet_file))
+    episode_df = pd.concat(episode_rows, ignore_index=True)
+    row = episode_df[episode_df["episode_index"] == episode]
     if row.empty:
         raise RuntimeError(f"Episode {episode} not found in episode metadata")
     row = row.iloc[0]
 
-    # Extract video chunk/file index for first camera
-    # Try both dot and slash variants of the key
-    chunk_col = f"videos/{first_cam}/chunk_index"
-    file_col = f"videos/{first_cam}/file_index"
-    ts_col = f"videos/{first_cam}/from_timestamp"
-    to_col = f"videos/{first_cam}/to_timestamp"
+    chunk_col = f"videos/{selected_camera}/chunk_index"
+    file_col = f"videos/{selected_camera}/file_index"
+    ts_from_col = f"videos/{selected_camera}/from_timestamp"
+    ts_to_col = f"videos/{selected_camera}/to_timestamp"
 
-    # Some datasets use different column naming
     if chunk_col not in row.index:
-        # Try without the 'videos/' prefix
-        chunk_col = f"{first_cam}/chunk_index"
-        file_col = f"{first_cam}/file_index"
-        ts_col = f"{first_cam}/from_timestamp"
-        to_col = f"{first_cam}/to_timestamp"
+        chunk_col = f"{selected_camera}/chunk_index"
+        file_col = f"{selected_camera}/file_index"
+        ts_from_col = f"{selected_camera}/from_timestamp"
+        ts_to_col = f"{selected_camera}/to_timestamp"
     if chunk_col not in row.index:
         raise RuntimeError(
-            f"Cannot find video metadata columns for {first_cam}.\nAvailable: {list(row.index)}"
+            f"Cannot find video metadata columns for {selected_camera}.\nAvailable: {list(row.index)}"
         )
 
-    chunk_idx = int(row[chunk_col])
-    file_idx = int(row[file_col])
-    from_ts = float(row[ts_col])
-    to_ts = float(row[to_col])
+    chunk_index = int(row[chunk_col])
+    file_index = int(row[file_col])
+    from_timestamp = float(row[ts_from_col])
+    to_timestamp = float(row[ts_to_col])
 
     video_template = info.get(
         "video_path", "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
     )
     video_rel = video_template.format(
-        video_key=first_cam,
-        chunk_index=chunk_idx,
-        file_index=file_idx,
+        video_key=selected_camera,
+        chunk_index=chunk_index,
+        file_index=file_index,
     )
 
-    # Load task name for this episode
-    # tasks.parquet uses the task string as the row index; task_index column holds the int id
-    task_name = ""
-    try:
-        # Prefer the 'tasks' list directly on the episode row
-        if "tasks" in row.index and row["tasks"] is not None:
-            tasks_val = row["tasks"]
-            if isinstance(tasks_val, (list, tuple, np.ndarray)) and len(tasks_val) > 0:
-                task_name = str(tasks_val[0])
-            else:
-                task_name = str(tasks_val).strip("[]'")
-        else:
-            tasks_pq = local / "meta" / "tasks.parquet"
-            if tasks_pq.exists():
-                tasks_df = pd.read_parquet(tasks_pq)
-                # Row index is the task string; task_index column is the int
-                task_idx = int(row.get("task_index", 0)) if "task_index" in row.index else 0
-                match = tasks_df[tasks_df["task_index"] == task_idx]
-                if not match.empty:
-                    task_name = str(match.index[0])
-        print(f"   Task name: '{task_name}'")
-    except Exception as e:
-        print(f"   WARNING: could not load task name: {e}")
+    task_name = _resolve_task_name(row, local_path)
 
     return {
         "fps": fps,
-        "first_cam": first_cam,
+        "camera": selected_camera,
         "video_rel": video_rel,
-        "chunk_index": chunk_idx,
-        "file_index": file_idx,
-        "from_ts": from_ts,
-        "to_ts": to_ts,
+        "chunk_index": chunk_index,
+        "file_index": file_index,
+        "from_ts": from_timestamp,
+        "to_ts": to_timestamp,
         "task_name": task_name,
     }
 
 
-def download_video(repo_id: str, local: Path, video_rel: str) -> Path:
-    """Download the specific video file if not already present."""
-    video_path = local / video_rel
+def _resolve_task_name(row: pd.Series, local_path: Path) -> str:
+    """Best-effort extraction of the task name for an episode row.
+
+    Args:
+        row: Single-episode row from the episodes parquet.
+        local_path: Dataset cache root.
+
+    Returns:
+        Task name string, or empty string if unavailable.
+    """
+    try:
+        if "tasks" in row.index and row["tasks"] is not None:
+            tasks_val = row["tasks"]
+            if isinstance(tasks_val, (list, tuple, np.ndarray)) and len(tasks_val) > 0:
+                return str(tasks_val[0])
+            return str(tasks_val).strip("[]'")
+
+        tasks_parquet = local_path / "meta" / "tasks.parquet"
+        if tasks_parquet.exists():
+            tasks_df = pd.read_parquet(tasks_parquet)
+            task_idx = int(row.get("task_index", 0)) if "task_index" in row.index else 0
+            match = tasks_df[tasks_df["task_index"] == task_idx]
+            if not match.empty:
+                return str(match.index[0])
+    except Exception as exc:
+        logging.warning("Could not load task name: %s", exc)
+    return ""
+
+
+def download_video_file(repo_id: str, local_path: Path, video_rel: str) -> Path:
+    """Download the specific video file if not already cached.
+
+    Args:
+        repo_id: HuggingFace dataset repository ID.
+        local_path: Local cache directory.
+        video_rel: Relative path to the video file within the dataset.
+
+    Returns:
+        Absolute path to the downloaded video file.
+    """
+    video_path = local_path / video_rel
     if video_path.exists():
-        print(f"   Video already cached: {video_path}")
+        logging.info("   Video already cached: %s", video_path)
         return video_path
-    print(f"[2/5] Downloading video file {video_rel} …")
+    logging.info("[2/5] Downloading video file %s …", video_rel)
     snapshot_download(
         repo_id=repo_id,
         repo_type="dataset",
-        local_dir=str(local),
+        local_dir=str(local_path),
         allow_patterns=[video_rel],
     )
     if not video_path.exists():
@@ -165,362 +215,467 @@ def download_video(repo_id: str, local: Path, video_rel: str) -> Path:
     return video_path
 
 
-def load_progress(local: Path, episode: int) -> np.ndarray | None:
-    """Load sarm_progress values for this episode. Returns sorted array of (frame_index, progress)."""
-    pq_path = local / "sarm_progress.parquet"
-    if not pq_path.exists():
-        print("   WARNING: sarm_progress.parquet not found, trying data parquet …")
-        return None
-    df = pd.read_parquet(pq_path)
-    print(f"   sarm_progress.parquet columns: {list(df.columns)}")
-    ep_df = df[df["episode_index"] == episode].copy()
-    if ep_df.empty:
-        print(f"   WARNING: No sarm_progress rows for episode {episode}")
-        return None
-    ep_df = ep_df.sort_values("frame_index")
+def load_progress_data(local_path: Path, episode: int) -> np.ndarray | None:
+    """Load sarm_progress values for an episode.
 
-    # Prefer dense, fall back to sparse
-    if "progress_dense" in ep_df.columns and ep_df["progress_dense"].notna().any():
-        prog_col = "progress_dense"
-    elif "progress_sparse" in ep_df.columns:
-        prog_col = "progress_sparse"
-    else:
-        # Last resort: any column with 'progress' in the name
-        prog_cols = [c for c in ep_df.columns if "progress" in c.lower()]
-        if not prog_cols:
-            return None
-        prog_col = prog_cols[0]
+    Args:
+        local_path: Dataset cache root.
+        episode: Episode index.
 
-    print(f"   Using progress column: '{prog_col}'")
-    return ep_df[["frame_index", prog_col]].rename(columns={prog_col: "progress"}).values
-
-
-def extract_episode_clip(video_path: Path, from_ts: float, to_ts: float, out_path: Path) -> Path:
-    """Use ffmpeg to cut the episode segment from the combined video file."""
-    duration = to_ts - from_ts
-    print(f"[3/5] Extracting clip [{from_ts:.3f}s → {to_ts:.3f}s] ({duration:.2f}s) …")
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-ss",
-        str(from_ts),
-        "-i",
-        str(video_path),
-        "-t",
-        str(duration),
-        "-c:v",
-        "libx264",
-        "-preset",
-        "fast",
-        "-crf",
-        "18",
-        "-an",
-        str(out_path),
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg clip extraction failed:\n{result.stderr}")
-    return out_path
-
-
-def precompute_pixels(
-    progress_data: np.ndarray,
-    n_frames: int,
-    frame_w: int,
-    frame_h: int,
-) -> np.ndarray:
+    Returns:
+        Sorted (N, 2) array of (frame_index, progress), or None if unavailable.
     """
-    Map each progress sample to pixel coordinates.
-    Returns array of shape (N, 2) with (x, y) in pixel space.
-    x spans full video width; y maps progress [0,1] to graph band.
+    parquet_path = local_path / "sarm_progress.parquet"
+    if not parquet_path.exists():
+        logging.warning("sarm_progress.parquet not found")
+        return None
+    df = pd.read_parquet(parquet_path)
+    logging.info("   sarm_progress.parquet columns: %s", list(df.columns))
+    episode_df = df[df["episode_index"] == episode].copy()
+    if episode_df.empty:
+        logging.warning("No sarm_progress rows for episode %d", episode)
+        return None
+    episode_df = episode_df.sort_values("frame_index")
+
+    if "progress_dense" in episode_df.columns and episode_df["progress_dense"].notna().any():
+        progress_column = "progress_dense"
+    elif "progress_sparse" in episode_df.columns:
+        progress_column = "progress_sparse"
+    else:
+        progress_columns = [c for c in episode_df.columns if "progress" in c.lower()]
+        if not progress_columns:
+            return None
+        progress_column = progress_columns[0]
+
+    logging.info("   Using progress column: '%s'", progress_column)
+    return episode_df[["frame_index", progress_column]].rename(columns={progress_column: "progress"}).values
+
+
+def _precompute_pixel_coords(
+    progress_data: np.ndarray,
+    num_frames: int,
+    frame_width: int,
+    frame_height: int,
+) -> np.ndarray:
+    """Map progress samples to pixel coordinates for overlay drawing.
+
+    Args:
+        progress_data: (N, 2) array of (frame_index, progress).
+        num_frames: Total number of video frames.
+        frame_width: Video width in pixels.
+        frame_height: Video height in pixels.
+
+    Returns:
+        (N, 2) array of (x, y) pixel coordinates.
     """
     frame_indices = progress_data[:, 0].astype(float)
-    progress_vals = np.clip(progress_data[:, 1].astype(float), 0.0, 1.0)
+    progress_values = np.clip(progress_data[:, 1].astype(float), 0.0, 1.0)
 
-    y_top = int(frame_h * GRAPH_Y_TOP_FRAC)
-    y_bot = int(frame_h * GRAPH_Y_BOT_FRAC)
-    graph_h = y_bot - y_top
+    y_top = int(frame_height * GRAPH_Y_TOP_FRAC)
+    y_bot = int(frame_height * GRAPH_Y_BOT_FRAC)
+    graph_height = y_bot - y_top
 
-    xs = (frame_indices / (n_frames - 1) * (frame_w - 1)).astype(int)
-    # progress=1 → y_top, progress=0 → y_bot
-    ys = (y_bot - progress_vals * graph_h).astype(int)
+    x_coords = (frame_indices / (num_frames - 1) * (frame_width - 1)).astype(int)
+    y_coords = (y_bot - progress_values * graph_height).astype(int)
 
-    return np.stack([xs, ys], axis=1)  # (N, 2)
-
-
-def progress_color(t: float) -> tuple[int, int, int]:
-    """Interpolate BGR color red→green based on normalised position t in [0,1]."""
-    r = int(255 * (1.0 - t))
-    g = int(255 * t)
-    return (0, g, r)  # BGR
+    return np.stack([x_coords, y_coords], axis=1)
 
 
-def prerender_fill(
-    pixels: np.ndarray,
-    frame_w: int,
-    frame_h: int,
+def _progress_color(normalized_position: float) -> tuple[int, int, int]:
+    """Interpolate BGR color from red to green based on position in [0, 1].
+
+    Args:
+        normalized_position: Value in [0, 1] indicating how far along the episode.
+
+    Returns:
+        BGR color tuple.
+    """
+    red = int(255 * (1.0 - normalized_position))
+    green = int(255 * normalized_position)
+    return (0, green, red)
+
+
+def _prerender_fill_polygon(
+    pixel_coords: np.ndarray,
+    frame_width: int,
+    frame_height: int,
 ) -> np.ndarray:
-    """Pre-render the full grey fill polygon under the curve as a BGRA image."""
-    y_bot = int(frame_h * GRAPH_Y_BOT_FRAC)
-    fill_img = np.zeros((frame_h, frame_w, 4), dtype=np.uint8)
-    poly = np.concatenate(
+    """Pre-render the grey fill polygon under the progress curve as a BGRA image.
+
+    Args:
+        pixel_coords: (N, 2) array of (x, y) pixel coordinates.
+        frame_width: Video width in pixels.
+        frame_height: Video height in pixels.
+
+    Returns:
+        BGRA image array of shape (frame_height, frame_width, 4).
+    """
+    y_bot = int(frame_height * GRAPH_Y_BOT_FRAC)
+    fill_image = np.zeros((frame_height, frame_width, 4), dtype=np.uint8)
+    polygon = np.concatenate(
         [
-            pixels,
-            [[pixels[-1][0], y_bot], [pixels[0][0], y_bot]],
+            pixel_coords,
+            [[pixel_coords[-1][0], y_bot], [pixel_coords[0][0], y_bot]],
         ],
         axis=0,
     ).astype(np.int32)
-    cv2.fillPoly(fill_img, [poly], color=(128, 128, 128, int(255 * FILL_ALPHA)))
-    return fill_img
+    cv2.fillPoly(fill_image, [polygon], color=(128, 128, 128, int(255 * FILL_ALPHA)))
+    return fill_image
 
 
-def alpha_composite(base: np.ndarray, overlay_bgra: np.ndarray, x_max: int) -> None:
-    """Blend overlay onto base in-place, but only for x < x_max."""
-    if x_max <= 0:
+def _alpha_composite_region(base: np.ndarray, overlay_bgra: np.ndarray, x_limit: int) -> None:
+    """Blend BGRA overlay onto BGR base in-place, up to x_limit columns.
+
+    Args:
+        base: BGR frame to draw on (modified in-place).
+        overlay_bgra: BGRA overlay image.
+        x_limit: Only blend columns [0, x_limit).
+    """
+    if x_limit <= 0:
         return
-    roi_b = base[:, :x_max]
-    roi_o = overlay_bgra[:, :x_max]
-    alpha = roi_o[:, :, 3:4].astype(np.float32) / 255.0
-    roi_b[:] = np.clip(
-        roi_o[:, :, :3].astype(np.float32) * alpha + roi_b.astype(np.float32) * (1.0 - alpha),
+    region_base = base[:, :x_limit]
+    region_overlay = overlay_bgra[:, :x_limit]
+    alpha = region_overlay[:, :, 3:4].astype(np.float32) / 255.0
+    region_base[:] = np.clip(
+        region_overlay[:, :, :3].astype(np.float32) * alpha + region_base.astype(np.float32) * (1.0 - alpha),
         0,
         255,
     ).astype(np.uint8)
 
 
-def draw_text_outlined(
+def _draw_text_outlined(
     frame: np.ndarray,
     text: str,
-    pos: tuple[int, int],
+    position: tuple[int, int],
     font_scale: float,
     thickness: int = 1,
 ) -> None:
-    """Draw text with a dark outline for readability on any background."""
+    """Draw white text with a dark outline for readability on any background.
+
+    Args:
+        frame: BGR image to draw on (modified in-place).
+        text: String to render.
+        position: (x, y) bottom-left corner of the text.
+        font_scale: OpenCV font scale.
+        thickness: Text stroke thickness.
+    """
     font = cv2.FONT_HERSHEY_SIMPLEX
-    cv2.putText(frame, text, pos, font, font_scale, (0, 0, 0), thickness + 2, cv2.LINE_AA)
-    cv2.putText(frame, text, pos, font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+    cv2.putText(frame, text, position, font, font_scale, (0, 0, 0), thickness + 2, cv2.LINE_AA)
+    cv2.putText(frame, text, position, font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
 
 
-def composite_video(
-    clip_path: Path,
+def composite_progress_video(
+    video_path: Path,
+    from_timestamp: float,
+    to_timestamp: float,
     progress_data: np.ndarray,
-    out_path: Path,
+    output_path: Path,
     fps: float,
-    frame_h: int,
-    frame_w: int,
     task_name: str = "",
 ) -> Path:
-    """Read clip frames, draw gradient progress line with fill + labels, export as GIF."""
-    n_total = int(cv2.VideoCapture(str(clip_path)).get(cv2.CAP_PROP_FRAME_COUNT))
-    pixels = precompute_pixels(progress_data, n_total, frame_w, frame_h)
+    """Read episode frames by seeking into the source video, draw progress overlay, write output.
 
-    y_ref = int(frame_h * GRAPH_Y_TOP_FRAC)
+    Uses cv2.CAP_PROP_POS_MSEC to seek directly into the source video,
+    eliminating the need for an intermediate clip file.
 
-    # Pre-render fill polygon (line is drawn per-frame with live color)
-    fill_img = prerender_fill(pixels, frame_w, frame_h)
+    Args:
+        video_path: Path to the full source video file.
+        from_timestamp: Start timestamp of the episode in seconds.
+        to_timestamp: End timestamp of the episode in seconds.
+        progress_data: (N, 2) array of (frame_index, progress).
+        output_path: Path to write the output MP4.
+        fps: Frames per second for the output video.
+        task_name: Optional task name to display at the top of the video.
 
-    # 1.0 reference line overlay (full width, drawn once)
-    ref_img = np.zeros((frame_h, frame_w, 4), dtype=np.uint8)
-    cv2.line(ref_img, (0, y_ref), (frame_w - 1, y_ref), (200, 200, 200, int(255 * REF_ALPHA)), 1, cv2.LINE_AA)
+    Returns:
+        Path to the written output file (MP4).
+    """
+    capture = cv2.VideoCapture(str(video_path))
+    try:
+        capture.set(cv2.CAP_PROP_POS_MSEC, from_timestamp * 1000)
 
-    frame_indices = progress_data[:, 0].astype(int)
-    progress_vals = progress_data[:, 1].astype(float)
+        frame_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+        frame_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        duration_seconds = to_timestamp - from_timestamp
+        num_frames = int(round(duration_seconds * fps))
 
-    print(f"[4/4] Compositing {n_total} frames …")
-    cap = cv2.VideoCapture(str(clip_path))
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    tmp_path = out_path.parent / (out_path.stem + "_tmp.mp4")
-    writer = cv2.VideoWriter(str(tmp_path), fourcc, fps, (frame_w, frame_h))
+        logging.info(
+            "   Video: %d×%d, %d frames @ %.1f fps (%.2fs)",
+            frame_width,
+            frame_height,
+            num_frames,
+            fps,
+            duration_seconds,
+        )
 
-    fi = 0
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+        pixel_coords = _precompute_pixel_coords(progress_data, num_frames, frame_width, frame_height)
+        y_ref = int(frame_height * GRAPH_Y_TOP_FRAC)
 
-        n_drawn = int(np.searchsorted(frame_indices, fi, side="right"))
-        x_cur = int(pixels[min(n_drawn, len(pixels)) - 1][0]) + 1 if n_drawn > 0 else 0
+        fill_image = _prerender_fill_polygon(pixel_coords, frame_width, frame_height)
 
-        # 1. reference line (full width, always)
-        alpha_composite(frame, ref_img, frame_w)
+        ref_line_image = np.zeros((frame_height, frame_width, 4), dtype=np.uint8)
+        cv2.line(
+            ref_line_image,
+            (0, y_ref),
+            (frame_width - 1, y_ref),
+            (200, 200, 200, int(255 * REF_ALPHA)),
+            1,
+            cv2.LINE_AA,
+        )
 
-        # 2. grey fill under curve up to current x
-        alpha_composite(frame, fill_img, x_cur)
+        frame_indices = progress_data[:, 0].astype(int)
+        progress_values = progress_data[:, 1].astype(float)
 
-        # 3. progress line — single color that transitions red→green over time
-        if n_drawn >= 2:
-            t_cur = (n_drawn - 1) / max(len(progress_vals) - 1, 1)
-            line_col = progress_color(t_cur)
-            pts = pixels[:n_drawn].reshape(-1, 1, 2).astype(np.int32)
-            cv2.polylines(
-                frame,
-                [pts],
-                isClosed=False,
-                color=(255, 255, 255),
-                thickness=SHADOW_THICKNESS,
-                lineType=cv2.LINE_AA,
-            )
-            cv2.polylines(
-                frame, [pts], isClosed=False, color=line_col, thickness=LINE_THICKNESS, lineType=cv2.LINE_AA
-            )
+        logging.info("[4/5] Compositing %d frames …", num_frames)
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(str(output_path), fourcc, fps, (frame_width, frame_height))
 
-        # 4. score — bottom right
-        if n_drawn > 0:
-            score = float(progress_vals[min(n_drawn, len(progress_vals)) - 1])
-            score_text = f"{score:.2f}"
-            (tw, th), _ = cv2.getTextSize(score_text, cv2.FONT_HERSHEY_SIMPLEX, SCORE_FONT_SCALE, 2)
-            sx = frame_w - tw - 12
-            sy = frame_h - 12
-            # coloured score matching current gradient position
-            t_cur = (n_drawn - 1) / max(len(progress_vals) - 1, 1)
-            score_col = progress_color(t_cur)
-            cv2.putText(
-                frame,
-                score_text,
-                (sx, sy),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                SCORE_FONT_SCALE,
-                (0, 0, 0),
-                4,
-                cv2.LINE_AA,
-            )
-            cv2.putText(
-                frame,
-                score_text,
-                (sx, sy),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                SCORE_FONT_SCALE,
-                score_col,
-                2,
-                cv2.LINE_AA,
+        for frame_idx in range(num_frames):
+            ret, frame = capture.read()
+            if not ret:
+                break
+
+            drawn_count = int(np.searchsorted(frame_indices, frame_idx, side="right"))
+            x_current = (
+                int(pixel_coords[min(drawn_count, len(pixel_coords)) - 1][0]) + 1 if drawn_count > 0 else 0
             )
 
-        # 5. task name — top centre
-        if task_name:
-            (tw, _), _ = cv2.getTextSize(task_name, cv2.FONT_HERSHEY_SIMPLEX, TASK_FONT_SCALE, 1)
-            tx = max((frame_w - tw) // 2, 4)
-            draw_text_outlined(frame, task_name, (tx, 22), TASK_FONT_SCALE)
+            _alpha_composite_region(frame, ref_line_image, frame_width)
+            _alpha_composite_region(frame, fill_image, x_current)
 
-        writer.write(frame)
-        fi += 1
-        if fi % 100 == 0:
-            print(f"   Frame {fi}/{n_total} …", end="\r")
+            if drawn_count >= 2:
+                time_position = (drawn_count - 1) / max(len(progress_values) - 1, 1)
+                line_color = _progress_color(time_position)
+                points = pixel_coords[:drawn_count].reshape(-1, 1, 2).astype(np.int32)
+                cv2.polylines(
+                    frame,
+                    [points],
+                    isClosed=False,
+                    color=(255, 255, 255),
+                    thickness=SHADOW_THICKNESS,
+                    lineType=cv2.LINE_AA,
+                )
+                cv2.polylines(
+                    frame,
+                    [points],
+                    isClosed=False,
+                    color=line_color,
+                    thickness=LINE_THICKNESS,
+                    lineType=cv2.LINE_AA,
+                )
 
-    cap.release()
-    writer.release()
-    print()
+            if drawn_count > 0:
+                score = float(progress_values[min(drawn_count, len(progress_values)) - 1])
+                score_text = f"{score:.2f}"
+                (text_width, text_height), _ = cv2.getTextSize(
+                    score_text, cv2.FONT_HERSHEY_SIMPLEX, SCORE_FONT_SCALE, 2
+                )
+                score_x = frame_width - text_width - 12
+                score_y = frame_height - 12
+                time_position = (drawn_count - 1) / max(len(progress_values) - 1, 1)
+                score_color = _progress_color(time_position)
+                cv2.putText(
+                    frame,
+                    score_text,
+                    (score_x, score_y),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    SCORE_FONT_SCALE,
+                    (0, 0, 0),
+                    4,
+                    cv2.LINE_AA,
+                )
+                cv2.putText(
+                    frame,
+                    score_text,
+                    (score_x, score_y),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    SCORE_FONT_SCALE,
+                    score_color,
+                    2,
+                    cv2.LINE_AA,
+                )
 
-    # Convert to GIF: full resolution, 12fps, 128-color diff palette (<40MB)
-    gif_path = out_path.with_suffix(".gif")
-    palette = out_path.parent / "_palette.png"
-    r1 = subprocess.run(  # nosec B607
+            if task_name:
+                (text_width, _), _ = cv2.getTextSize(task_name, cv2.FONT_HERSHEY_SIMPLEX, TASK_FONT_SCALE, 1)
+                task_x = max((frame_width - text_width) // 2, 4)
+                _draw_text_outlined(frame, task_name, (task_x, 22), TASK_FONT_SCALE)
+
+            writer.write(frame)
+            if frame_idx % 100 == 0:
+                logging.info("   Frame %d/%d …", frame_idx, num_frames)
+
+        writer.release()
+    finally:
+        capture.release()
+
+    logging.info("   MP4 written: %s", output_path)
+    return output_path
+
+
+def convert_mp4_to_gif(mp4_path: Path, frame_width: int) -> Path:
+    """Convert an MP4 to an optimized GIF using ffmpeg palette generation.
+
+    Args:
+        mp4_path: Path to the source MP4 file.
+        frame_width: Width for the output GIF.
+
+    Returns:
+        Path to the generated GIF file.
+    """
+    gif_path = mp4_path.with_suffix(".gif")
+    palette_path = mp4_path.parent / "_palette.png"
+
+    logging.info("[5/5] Converting to GIF …")
+    result_palette = subprocess.run(  # nosec B607
         [
             "ffmpeg",
             "-y",
             "-i",
-            str(tmp_path),
+            str(mp4_path),
             "-vf",
-            f"fps=10,scale={frame_w}:-1:flags=lanczos,palettegen=max_colors=128:stats_mode=diff",
+            f"fps=10,scale={frame_width}:-1:flags=lanczos,palettegen=max_colors=128:stats_mode=diff",
             "-update",
             "1",
-            str(palette),
+            str(palette_path),
         ],
         capture_output=True,
         text=True,
     )
-    if r1.returncode != 0:
-        print(f"   WARNING: palettegen failed:\n{r1.stderr[-500:]}")
-    r2 = subprocess.run(  # nosec B607
+    if result_palette.returncode != 0:
+        logging.warning("palettegen failed:\n%s", result_palette.stderr[-500:])
+
+    result_gif = subprocess.run(  # nosec B607
         [
             "ffmpeg",
             "-y",
             "-i",
-            str(tmp_path),
+            str(mp4_path),
             "-i",
-            str(palette),
+            str(palette_path),
             "-filter_complex",
-            f"fps=10,scale={frame_w}:-1:flags=lanczos[v];[v][1:v]paletteuse=dither=bayer:bayer_scale=3",
+            f"fps=10,scale={frame_width}:-1:flags=lanczos[v];[v][1:v]paletteuse=dither=bayer:bayer_scale=3",
             str(gif_path),
         ],
         capture_output=True,
         text=True,
     )
-    if r2.returncode != 0:
-        print(f"   WARNING: gif encode failed:\n{r2.stderr[-500:]}")
-    tmp_path.unlink(missing_ok=True)
-    palette.unlink(missing_ok=True)
+    if result_gif.returncode != 0:
+        logging.warning("GIF encode failed:\n%s", result_gif.stderr[-500:])
+
+    palette_path.unlink(missing_ok=True)
+    logging.info("   GIF written: %s", gif_path)
     return gif_path
 
 
-def process_dataset(repo_id: str, episode: int):
+def process_dataset(
+    repo_id: str,
+    episode: int,
+    camera_key: str | None,
+    output_dir: Path,
+    create_gif: bool = False,
+) -> Path | None:
+    """Full pipeline: download, extract metadata, composite progress, write output.
+
+    Args:
+        repo_id: HuggingFace dataset repository ID.
+        episode: Episode index.
+        camera_key: Camera key to use, or None for auto-selection.
+        output_dir: Directory to write output files.
+        create_gif: If True, also generate a GIF from the MP4.
+
+    Returns:
+        Path to the final output file, or None on failure.
+    """
     safe_name = repo_id.replace("/", "_")
-    print(f"\n{'=' * 60}")
-    print(f"Processing: {repo_id}  |  episode {episode}")
-    print(f"{'=' * 60}")
+    logging.info("Processing: %s  |  episode %d", repo_id, episode)
 
-    # 1. Download metadata
-    local = download_episode(repo_id, episode)
-    print(f"   Local cache: {local}")
+    local_path = download_episode_metadata(repo_id, episode)
+    logging.info("   Local cache: %s", local_path)
 
-    # 2. Read episode metadata
-    ep_meta = load_episode_meta(local, episode)
-    print(f"   Episode meta: {ep_meta}")
+    episode_meta = load_episode_meta(local_path, episode, camera_key)
+    logging.info("   Episode meta: %s", episode_meta)
 
-    # 3. Download video file
-    video_path = download_video(repo_id, local, ep_meta["video_rel"])
+    video_path = download_video_file(repo_id, local_path, episode_meta["video_rel"])
 
-    # 4. Extract clip
-    clip_path = OUTPUT_DIR / f"{safe_name}_ep{episode}_clip.mp4"
-    extract_episode_clip(video_path, ep_meta["from_ts"], ep_meta["to_ts"], clip_path)
-
-    # 5. Load progress data
-    progress_data = load_progress(local, episode)
+    progress_data = load_progress_data(local_path, episode)
     if progress_data is None:
-        print("   ERROR: Could not load sarm_progress data. Skipping overlay.")
-        return
+        logging.error("Could not load sarm_progress data. Skipping overlay.")
+        return None
 
-    n_progress = len(progress_data)
-    print(f"   Progress frames: {n_progress}")
+    logging.info("   Progress frames: %d", len(progress_data))
 
-    # 6. Get clip dimensions
-    cap = cv2.VideoCapture(str(clip_path))
-    frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    actual_fps = cap.get(cv2.CAP_PROP_FPS) or ep_meta["fps"]
-    cap.release()
-    print(f"   Clip: {frame_w}×{frame_h}  {n_frames} frames @ {actual_fps:.1f}fps")
-
-    # 7. Composite (draw line directly on frames)
-    out_path = OUTPUT_DIR / f"{safe_name}_ep{episode}_progress.mp4"
-    final = composite_video(
-        clip_path,
-        progress_data,
-        out_path,
-        actual_fps,
-        frame_h,
-        frame_w,
-        task_name=ep_meta.get("task_name", ""),
+    output_path = output_dir / f"{safe_name}_ep{episode}_progress.mp4"
+    final_path = composite_progress_video(
+        video_path=video_path,
+        from_timestamp=episode_meta["from_ts"],
+        to_timestamp=episode_meta["to_ts"],
+        progress_data=progress_data,
+        output_path=output_path,
+        fps=episode_meta["fps"],
+        task_name=episode_meta.get("task_name", ""),
     )
-    clip_path.unlink(missing_ok=True)
-    print(f"\n✓ Done: {final}")
-    return final
+
+    if create_gif:
+        capture = cv2.VideoCapture(str(final_path))
+        frame_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+        capture.release()
+        gif_path = convert_mp4_to_gif(final_path, frame_width)
+        final_path = gif_path
+
+    logging.info("Done: %s", final_path)
+    return final_path
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Create MP4/GIF videos with sarm_progress overlay for dataset episodes."
+    )
+    parser.add_argument(
+        "--repo-id",
+        type=str,
+        required=True,
+        help="HuggingFace dataset repository ID (e.g. 'lerobot-data-collection/level2_final_quality3').",
+    )
+    parser.add_argument(
+        "--episode",
+        type=int,
+        required=True,
+        help="Episode index to visualize.",
+    )
+    parser.add_argument(
+        "--camera-key",
+        type=str,
+        default=None,
+        help="Camera observation key (e.g. 'observation.images.base'). Auto-selects first camera if omitted.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("progress_videos"),
+        help="Directory to write output files (default: ./progress_videos).",
+    )
+    parser.add_argument(
+        "--gif",
+        action="store_true",
+        help="Also generate a GIF from the MP4 output.",
+    )
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+
+    result = process_dataset(
+        repo_id=args.repo_id,
+        episode=args.episode,
+        camera_key=args.camera_key,
+        output_dir=args.output_dir,
+        create_gif=args.gif,
+    )
+
+    if result:
+        logging.info("Output: %s", result)
 
 
 if __name__ == "__main__":
-    results = []
-    for cfg in DATASETS:
-        try:
-            out = process_dataset(cfg["repo_id"], cfg["episode"])
-            if out:
-                results.append(out)
-        except Exception as e:
-            print(f"\nERROR processing {cfg['repo_id']}: {e}")
-            import traceback
-
-            traceback.print_exc()
-
-    print("\n" + "=" * 60)
-    print("Output files:")
-    for r in results:
-        print(f"  {r}")
+    main()
