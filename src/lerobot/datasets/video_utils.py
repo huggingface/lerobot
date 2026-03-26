@@ -741,6 +741,7 @@ class StreamingVideoEncoder:
         self._video_paths: dict[str, Path] = {}
         self._dropped_frames: dict[str, int] = {}
         self._episode_active = False
+        self._closed = False
 
     def start_episode(self, video_keys: list[str], temp_dir: Path) -> None:
         """Start encoder threads for a new episode.
@@ -895,8 +896,11 @@ class StreamingVideoEncoder:
 
     def close(self) -> None:
         """Close the encoder, canceling any in-progress episode."""
+        if self._closed:
+            return
         if self._episode_active:
             self.cancel_episode()
+        self._closed = True
 
     def _cleanup(self) -> None:
         """Clean up queues and thread tracking dicts."""
@@ -1065,16 +1069,14 @@ class VideoEncodingManager:
     def __exit__(self, exc_type, exc_val, exc_tb):
         writer = self.dataset.writer
         if writer is not None:
-            has_streaming = writer._streaming_encoder is not None
-
-            if exc_type is not None and has_streaming:
+            if exc_type is not None and writer._streaming_encoder is not None:
                 writer.cancel_pending_videos()
 
-            writer.flush_pending_videos()
+            # finalize() handles flush_pending_videos + parquet + metadata
             self.dataset.finalize()
 
             # Clean up episode images if recording was interrupted (only for non-streaming mode)
-            if exc_type is not None and not has_streaming:
+            if exc_type is not None and writer._streaming_encoder is None:
                 writer.cleanup_interrupted_episode(self.dataset.num_episodes)
         else:
             self.dataset.finalize()

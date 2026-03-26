@@ -344,18 +344,19 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self.writer.episode_buffer is not None and self.writer.episode_buffer["size"] > 0
 
     def finalize(self):
+        """Flush all pending work and close writers.
+
+        Must be called after data collection/conversion, otherwise footer metadata
+        won't be written to the parquet files and the dataset will be invalid.
+
+        Idempotent — safe to call multiple times.  DatasetWriter.__del__ acts as a
+        safety net if this is never called explicitly.
         """
-        Close the parquet writers. This function needs to be called after data collection/conversion, else footer metadata won't be written to the parquet files.
-        The dataset won't be valid and can't be loaded as ds = LeRobotDataset(repo_id=repo, root=HF_LEROBOT_HOME.joinpath(repo))
-        """
+        if self._is_finalized:
+            return
         if self.writer is not None:
             self.writer.finalize()
-            self._is_finalized = True
-
-    def __del__(self):
-        """Safety net: flush metadata + close parquet writer on garbage collection."""
-        if hasattr(self, "writer") and self.writer is not None:
-            self.writer.finalize()
+        self._is_finalized = True
 
     # ── Core Dataset methods ──────────────────────────────────────────
 

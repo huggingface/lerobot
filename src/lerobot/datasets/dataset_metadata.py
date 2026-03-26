@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import contextlib
 from pathlib import Path
 
 import numpy as np
@@ -68,6 +69,7 @@ class LeRobotDatasetMetadata:
         self.latest_episode = None
         self._metadata_buffer: list[dict] = []
         self._metadata_buffer_size = metadata_buffer_size
+        self._finalized = False
 
         try:
             if force_cache_sync:
@@ -123,11 +125,21 @@ class LeRobotDatasetMetadata:
             writer.close()
             self._pq_writer = None
 
-    def __del__(self):
+    def finalize(self) -> None:
+        """Flush metadata buffer and close the parquet writer.
+
+        Idempotent — safe to call multiple times.
         """
-        Trust the user to call .finalize() but as an added safety check call the parquet writer to stop when calling the destructor
-        """
+        if getattr(self, "_finalized", False):
+            return
         self._close_writer()
+        self._finalized = True
+
+    def __del__(self):
+        """Safety net: flush and close parquet writer on garbage collection."""
+        # During interpreter shutdown, referenced objects may already be collected.
+        with contextlib.suppress(Exception):
+            self.finalize()
 
     def _load_metadata(self):
         self.info = load_info(self.root)
@@ -514,4 +526,5 @@ class LeRobotDatasetMetadata:
         obj.latest_episode = None
         obj._metadata_buffer = []
         obj._metadata_buffer_size = metadata_buffer_size
+        obj._finalized = False
         return obj

@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import contextlib
 import logging
 import shutil
 import tempfile
@@ -109,6 +110,7 @@ class DatasetWriter:
         self._current_file_start_frame: int | None = None
         self._episodes_since_last_encoding: int = 0
         self._recorded_frames: int = initial_frames
+        self._finalized = False
 
     def _create_episode_buffer(self, episode_index: int | None = None) -> dict:
         current_ep_idx = self._meta.total_episodes if episode_index is None else episode_index
@@ -571,8 +573,27 @@ class DatasetWriter:
                 shutil.rmtree(img_dir)
 
     def finalize(self) -> None:
-        """Close parquet writers, metadata writers, and streaming encoder."""
+        """Flush all pending work and release all resources.
+
+        Idempotent — safe to call multiple times.
+        """
+        if getattr(self, "_finalized", False):
+            return
+        # 1. Wait for async image writes to complete, then stop
+        if self.image_writer is not None:
+            self.image_writer.wait_until_done()
+            self.image_writer.stop()
+            self.image_writer = None
+        # 2. Flush pending video encoding (streaming or batch)
+        self.flush_pending_videos()
+        # 3. Close own parquet writer
         self.close_writer()
-        self._meta._close_writer()
-        if self._streaming_encoder is not None:
-            self._streaming_encoder.close()
+        # 4. Finalize metadata (idempotent)
+        self._meta.finalize()
+        self._finalized = True
+
+    def __del__(self):
+        """Safety net: release resources on garbage collection."""
+        # During interpreter shutdown, referenced objects may already be collected.
+        with contextlib.suppress(Exception):
+            self.finalize()
