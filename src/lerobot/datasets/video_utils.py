@@ -131,6 +131,7 @@ def decode_video_frames(
     timestamps: list[float],
     tolerance_s: float,
     backend: str | None = None,
+    target_device: str = "cpu",
 ) -> torch.Tensor:
     """
     Decodes video frames using the specified backend.
@@ -140,6 +141,7 @@ def decode_video_frames(
         timestamps (list[float]): List of timestamps to extract frames.
         tolerance_s (float): Allowed deviation in seconds for frame retrieval.
         backend (str, optional): Backend to use for decoding. Defaults to "torchcodec" when available in the platform; otherwise, defaults to "pyav"..
+        target_device (str): The name of the device, used for decoding when using torchcodec.
 
     Returns:
         torch.Tensor: Decoded frames.
@@ -149,7 +151,7 @@ def decode_video_frames(
     if backend is None:
         backend = get_safe_default_codec()
     if backend == "torchcodec":
-        return decode_video_frames_torchcodec(video_path, timestamps, tolerance_s)
+        return decode_video_frames_torchcodec(video_path, timestamps, tolerance_s, target_device=target_device)
     elif backend in ["pyav", "video_reader"]:
         return decode_video_frames_torchvision(video_path, timestamps, tolerance_s, backend)
     else:
@@ -266,7 +268,7 @@ class VideoDecoderCache:
         self._cache: dict[str, tuple[Any, Any]] = {}
         self._lock = Lock()
 
-    def get_decoder(self, video_path: str):
+    def get_decoder(self, video_path: str, target_device: str):
         """Get a cached decoder or create a new one."""
         if importlib.util.find_spec("torchcodec"):
             from torchcodec.decoders import VideoDecoder
@@ -278,7 +280,7 @@ class VideoDecoderCache:
         with self._lock:
             if video_path not in self._cache:
                 file_handle = fsspec.open(video_path).__enter__()
-                decoder = VideoDecoder(file_handle, seek_mode="approximate")
+                decoder = VideoDecoder(file_handle, seek_mode="approximate", device=target_device)
                 self._cache[video_path] = (decoder, file_handle)
 
             return self._cache[video_path][0]
@@ -311,6 +313,7 @@ def decode_video_frames_torchcodec(
     tolerance_s: float,
     log_loaded_timestamps: bool = False,
     decoder_cache: VideoDecoderCache | None = None,
+    target_device: int = 0,
 ) -> torch.Tensor:
     """Loads frames associated with the requested timestamps of a video using torchcodec.
 
@@ -320,7 +323,7 @@ def decode_video_frames_torchcodec(
         tolerance_s: Allowed deviation in seconds for frame retrieval.
         log_loaded_timestamps: Whether to log loaded timestamps.
         decoder_cache: Optional decoder cache instance. Uses default if None.
-
+        target_device: The name of the device, used for decoding when using torchcodec.
     Note: Setting device="cuda" outside the main process, e.g. in data loader workers, will lead to CUDA initialization errors.
 
     Note: Video benefits from inter-frame compression. Instead of storing every frame individually,
@@ -333,7 +336,7 @@ def decode_video_frames_torchcodec(
         decoder_cache = _default_decoder_cache
 
     # Use cached decoder instead of creating new one each time
-    decoder = decoder_cache.get_decoder(str(video_path))
+    decoder = decoder_cache.get_decoder(str(video_path), target_device)
 
     loaded_ts = []
     loaded_frames = []

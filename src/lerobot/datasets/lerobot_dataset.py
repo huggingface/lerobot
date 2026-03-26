@@ -108,6 +108,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         streaming_encoding: bool = False,
         encoder_queue_maxsize: int = 30,
         encoder_threads: int | None = None,
+        target_device: str = "cpu",
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -234,6 +235,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             encoder_threads (int | None, optional): Number of threads per encoder instance. None lets the
                 codec auto-detect (default). Lower values reduce CPU usage per encoder. Maps to 'lp' (via svtav1-params) for
                 libsvtav1 and 'threads' for h264/hevc.
+            target_device (str, optional): The name of the device, used for decoding when using torchcodec. Defaults to "cpu". 
+                    For GPU decoding, specify the target device as "cuda:{device_id}", e.g. "cuda:0" for the first GPU.
         """
         super().__init__()
         self.repo_id = repo_id
@@ -250,6 +253,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.episodes_since_last_encoding = 0
         self.vcodec = resolve_vcodec(vcodec)
         self._encoder_threads = encoder_threads
+        self.target_device = target_device
 
         # Unused attributes
         self.image_writer = None
@@ -609,7 +613,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             shifted_query_ts = [from_timestamp + ts for ts in query_ts]
 
             video_path = self.root / self.meta.get_video_file_path(ep_idx, vid_key)
-            frames = decode_video_frames(video_path, shifted_query_ts, self.tolerance_s, self.video_backend)
+            frames = decode_video_frames(video_path, shifted_query_ts, self.tolerance_s, self.video_backend, target_device=self.target_device)
             item[vid_key] = frames.squeeze(0)
 
         return item
