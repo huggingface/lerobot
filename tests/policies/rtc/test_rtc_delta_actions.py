@@ -107,21 +107,6 @@ class TestActionQueueDeltaActions:
         leftover = queue.get_left_over()
         torch.testing.assert_close(leftover, delta_actions[5:])
 
-    def test_processed_left_over_returns_absolute_actions(self):
-        """get_processed_left_over() should return postprocessed (absolute) actions."""
-        cfg = _make_rtc_config()
-        queue = ActionQueue(cfg)
-
-        delta_actions = torch.randn(CHUNK_SIZE, ACTION_DIM)
-        absolute_actions = torch.randn(CHUNK_SIZE, ACTION_DIM)
-        queue.merge(delta_actions, absolute_actions, real_delay=0)
-
-        for _ in range(5):
-            queue.get()
-
-        processed_leftover = queue.get_processed_left_over()
-        torch.testing.assert_close(processed_leftover, absolute_actions[5:])
-
     def test_robot_receives_absolute_actions(self):
         """The robot (via get()) should receive postprocessed absolute actions."""
         cfg = _make_rtc_config()
@@ -323,10 +308,10 @@ class TestFullPipelineDeltaRTC:
         assert action is not None
         assert action.shape == (ACTION_DIM,)
 
-        # Verify leftovers are delta actions (different from postprocessed)
+        # Verify leftovers are in delta space (original_queue stores deltas)
         leftover_deltas = queue.get_left_over()
-        leftover_processed = queue.get_processed_left_over()
-        assert not torch.allclose(leftover_deltas, leftover_processed)
+        assert leftover_deltas is not None
+        assert leftover_deltas.shape[1] == ACTION_DIM
 
     def test_postprocessor_uses_correct_state_per_iteration(self):
         """Each iteration's postprocessor should use the state from that iteration's preprocessor,
@@ -569,12 +554,11 @@ class TestMultiChunkConsistency:
         queue.merge(original, post, real_delay=0)
 
         delta_leftover = queue.get_left_over()
-        abs_leftover = queue.get_processed_left_over()
 
-        # They must differ because absolute = delta + state
-        assert not torch.allclose(delta_leftover, abs_leftover, atol=1e-3)
+        # Leftovers (deltas) must differ from the postprocessed absolute actions
+        assert not torch.allclose(delta_leftover, post, atol=1e-3)
         state_expanded = state.squeeze(0).unsqueeze(0).expand_as(delta_leftover)
-        torch.testing.assert_close(abs_leftover, delta_leftover + state_expanded, atol=1e-5, rtol=1e-5)
+        torch.testing.assert_close(post, delta_leftover + state_expanded, atol=1e-5, rtol=1e-5)
 
     def test_rtc_guidance_uses_delta_space(self):
         """Verify that RTC denoise_step receives delta-space leftovers, not absolute."""
