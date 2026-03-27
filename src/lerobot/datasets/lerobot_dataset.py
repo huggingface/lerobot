@@ -658,6 +658,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             metadata_buffer_size=metadata_buffer_size,
         )
         obj.repo_id = obj.meta.repo_id
+        obj._requested_root = obj.meta.root
         obj.root = obj.meta.root
         obj.revision = None
         obj.tolerance_s = tolerance_s
@@ -742,7 +743,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         vcodec = resolve_vcodec(vcodec)
         obj = cls.__new__(cls)
         obj.repo_id = repo_id
-        obj.root = Path(root) if root else HF_LEROBOT_HOME / repo_id
+        obj._requested_root = Path(root) if root else HF_LEROBOT_HOME / repo_id
+        obj.root = obj._requested_root
         obj.root.mkdir(exist_ok=True, parents=True)
         obj.revision = revision if revision else CODEBASE_VERSION
         obj.tolerance_s = tolerance_s
@@ -756,7 +758,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Load metadata
         obj.meta = LeRobotDatasetMetadata(
-            obj.repo_id, obj.root, obj.revision, force_cache_sync=force_cache_sync
+            obj.repo_id, obj._requested_root, obj.revision, force_cache_sync=force_cache_sync
         )
 
         # Reader is lazily created on first access (write-only mode)
