@@ -187,7 +187,7 @@ def make_my_custom_policy_pre_post_processors(
     return preprocessor, postprocessor
 ```
 
-> **Important - function naming:** LeRobot discovers your processor by name. The function **must** be called `make_{policy_name}_pre_post_processors` (matching the string you passed to `@PreTrainedConfig.register_subclass`).
+**Important - function naming:** LeRobot discovers your processor by name. The function **must** be called `make_{policy_name}_pre_post_processors` (matching the string you passed to `@PreTrainedConfig.register_subclass`).
 
 ## Step 5: Package Initialization
 
