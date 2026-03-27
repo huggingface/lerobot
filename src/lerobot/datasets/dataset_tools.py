@@ -1020,7 +1020,7 @@ def _copy_data_with_feature_changes(
                         # Multi-dimensional features (e.g. images shape (N, H, W, C)):
                         # Store each frame as a separate object in the column so pandas
                         # doesn't try to broadcast the inner dimensions as column axes.
-                        df[feature_name] = [feature_slice[i] for i in range(len(feature_slice))]
+                        df[feature_name] = list(feature_slice)
             frame_idx = end_idx
 
         # Write using the same chunk/file structure as source
