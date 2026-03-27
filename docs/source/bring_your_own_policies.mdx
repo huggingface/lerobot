@@ -150,7 +150,7 @@ class MyCustomPolicy(PreTrainedPolicy):
         """Compute the training loss.
 
         `batch["action_is_pad"]` is a bool mask of shape (B, horizon) that marks
-        timesteps padded because the episode ended before `horizon` steps, you 
+        timesteps padded because the episode ended before `horizon` steps, you
         can exclude those from your loss.
         """
         actions = batch[ACTION]
