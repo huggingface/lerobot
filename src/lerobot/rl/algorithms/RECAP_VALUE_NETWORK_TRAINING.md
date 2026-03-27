@@ -4,8 +4,7 @@ This document explains how to:
 
 1. Prepare a LeRobot dataset + success/fail labels for value training.
 2. Train the standalone RECAP value network.
-3. Interpret outputs and training behavior.
-4. Connect the trained value network to the main advantage-conditioned policy training loop.
+3. Train the advantage-conditioned policy (SmolStar06) using the frozen value network.
 
 There are two backbone variants:
 
@@ -205,3 +204,81 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
   --model_precision="bfloat16" \
   --freeze_vision_encoder=true
 ```
+
+---
+
+## 3) Advantage-Conditioned Policy Training (SmolStar06)
+
+The RECAP pipeline has two phases:
+
+1. **Train a value network** (Sections 2.1–2.2 above) — produces a critic that
+   predicts expected returns from observations.
+2. **Train an advantage-conditioned policy** (this section) — uses the frozen
+   value network to label each training sample with an advantage indicator
+   ("Advantage: positive" or "Advantage: negative") that is appended to the
+   language prompt before standard SmolVLA flow-matching training.
+
+At inference, the model simply conditions on "Advantage: positive" to produce
+higher-quality actions. No value network is needed at test time.
+
+### 3.1 How advantage conditioning works
+
+For each training sample `(o_t, a_t)`:
+
+1. The deterministic return `R_t` is computed from the episode success/fail
+   label and the frame's position within the episode.
+2. The frozen value network predicts `V(o_t)`.
+3. Advantage `A = R_t - V(o_t)` measures whether the trajectory did better or
+   worse than expected.
+4. `A > 0` → append `"Advantage: positive"` tokens to the prompt.
+   `A ≤ 0` → append `"Advantage: negative"` tokens.
+5. 30% of the time the advantage indicator is dropped entirely (enables
+   optional classifier-free guidance at test time with `cfg_beta > 1`).
+
+### 3.2 Quick start — SmolStar06 (RTX 4070 TI SUPER)
+
+Prerequisites:
+- A trained SmolVLA value network checkpoint (from Section 2.2). The example
+  below uses `outputs/so101_pickplace_recap_smolvla_scratch_3`.
+- The same dataset and episode labels used for value network training.
+
+```bash
+lerobot-train \
+  --policy.type=smolstar06 \
+  --policy.value_network_checkpoint="${HOME}/code/lerobot/outputs/so101_pickplace_recap_smolvla_scratch_3/checkpoints/best.pt" \
+  --policy.episode_labels_path="${HOME}/.cache/huggingface/lerobot/jackvial/so101_pickplace_recap_merged_v2/meta/episode_labels.csv" \
+  --policy.c_fail=500.0 \
+  --policy.advantage_threshold=0.0 \
+  --policy.advantage_dropout=0.3 \
+  --policy.cfg_beta=1.0 \
+  --policy.tokenizer_max_length=64 \
+  --policy.optimizer_lr=1e-4 \
+  --policy.scheduler_warmup_steps=1000 \
+  --policy.scheduler_decay_steps=30000 \
+  --dataset.repo_id=jackvial/so101_pickplace_recap_merged_v2 \
+  --batch_size=32 \
+  --steps=10000
+```
+
+### 3.3 SmolStar06-specific configuration flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `value_network_checkpoint` | `None` | Path to `.pt` checkpoint from RECAP value network training |
+| `episode_labels_path` | `None` | Path to `episode_labels.csv` with per-episode success/fail labels |
+| `c_fail` | `500.0` | Failure penalty (must match the value used for value network training) |
+| `advantage_threshold` | `0.0` | Binarization threshold: advantage > threshold → positive |
+| `advantage_dropout` | `0.3` | Probability of omitting the advantage indicator (for CFG training) |
+| `cfg_beta` | `1.0` | Classifier-free guidance scale at inference (1.0 = no CFG) |
+| `tokenizer_max_length` | `64` | Increased from SmolVLA's 48 to accommodate advantage tokens |
+
+### 3.4 Inference
+
+At inference time, no value network is needed:
+
+- **`cfg_beta=1.0`** (default): The model appends "Advantage: positive" to
+  every prompt and runs standard SmolVLA action sampling.
+- **`cfg_beta>1.0`** (optional): Classifier-free guidance runs two denoising
+  passes per Euler step — one conditioned on "positive" and one without the
+  indicator — then interpolates the flow vectors for sharper action
+  distributions.
