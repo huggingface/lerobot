@@ -256,8 +256,9 @@ lerobot-train \
   --policy.scheduler_warmup_steps=1000 \
   --policy.scheduler_decay_steps=30000 \
   --dataset.repo_id=jackvial/so101_pickplace_recap_merged_v2 \
-  --batch_size=32 \
+  --batch_size=6 \
   --policy.push_to_hub=false \
+  --save_freq=1000 \
   --steps=10000
 ```
 

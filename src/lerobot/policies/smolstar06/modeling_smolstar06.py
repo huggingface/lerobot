@@ -77,6 +77,8 @@ class SmolStar06Policy(SmolVLAPolicy):
         if dataset_meta is not None and config.episode_labels_path is not None:
             self._setup_episode_metadata(dataset_meta, config.episode_labels_path)
 
+        self._train_step_count = 0
+
     def _load_value_network(self, checkpoint_path: str) -> None:
         """Load a pre-trained RECAP value network and freeze all parameters."""
         logging.info(f"Loading frozen value network from {checkpoint_path}")
@@ -138,6 +140,7 @@ class SmolStar06Policy(SmolVLAPolicy):
                     "length": ep_len,
                     "success": success_map[ep_idx],
                     "task": task,
+                    "dataset_from_index": ep["dataset_from_index"],
                 }
                 if task not in task_max_len or ep_len > task_max_len[task]:
                     task_max_len[task] = ep_len
@@ -252,14 +255,13 @@ class SmolStar06Policy(SmolVLAPolicy):
         Returns are normalized by per-task max episode length and clamped to [-1, 0].
         """
         ep_indices = batch["episode_index"]
-        frame_indices = batch["frame_index"]
+        global_indices = batch["index"]
         B = ep_indices.shape[0]
         device = ep_indices.device
 
         returns = torch.zeros(B, device=device, dtype=torch.float32)
         for i in range(B):
             ep_idx = ep_indices[i].item()
-            frame_idx = frame_indices[i].item()
 
             info = self._episode_info.get(ep_idx)
             if info is None:
@@ -268,6 +270,7 @@ class SmolStar06Policy(SmolVLAPolicy):
                     f"Ensure episode_labels_path covers all training episodes."
                 )
 
+            frame_idx = global_indices[i].item() - info["dataset_from_index"]
             length = info["length"]
             remaining = length - 1 - frame_idx
             ret = float(-remaining)
@@ -280,16 +283,19 @@ class SmolStar06Policy(SmolVLAPolicy):
 
         return returns
 
-    def _compute_advantages(self, batch: dict[str, Tensor]) -> Tensor:
+    def _compute_advantages(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, float]]:
         """Compute per-sample advantages using the most informative available source.
 
         Priority:
           1. batch["advantage"] — pre-computed advantages (e.g., from offline labeling)
           2. batch["target_value"] + frozen VN — on-the-fly V(o_t)
           3. Episode metadata + frozen VN — fully on-the-fly R_t and V(o_t)
+
+        Returns (advantage, diagnostics) where diagnostics contains V_t, R_t stats.
         """
         if "advantage" in batch:
-            return batch["advantage"]
+            adv = batch["advantage"]
+            return adv, {"advantage_mean": adv.mean().item(), "advantage_std": adv.std().item()}
 
         if self.value_network is None:
             raise ValueError(
@@ -309,7 +315,16 @@ class SmolStar06Policy(SmolVLAPolicy):
                 "Provide batch['target_value'], batch['advantage'], or set episode_labels_path."
             )
 
-        return R_t - V_t
+        adv = R_t - V_t
+        diagnostics = {
+            "V_t_mean": V_t.mean().item(),
+            "V_t_std": V_t.std().item(),
+            "R_t_mean": R_t.mean().item(),
+            "R_t_std": R_t.std().item(),
+            "advantage_mean": adv.mean().item(),
+            "advantage_std": adv.std().item(),
+        }
+        return adv, diagnostics
 
     def forward(
         self, batch: dict[str, Tensor], noise=None, time=None, reduction: str = "mean"
@@ -323,9 +338,11 @@ class SmolStar06Policy(SmolVLAPolicy):
           4. Augment language tokens with advantage indicator
           5. Run base SmolVLA flow-matching forward
         """
-        advantage = self._compute_advantages(batch)
+        advantage, adv_diagnostics = self._compute_advantages(batch)
 
         advantage_indicator = advantage > self.config.advantage_threshold
+        n_positive = advantage_indicator.sum().item()
+        n_total = advantage_indicator.shape[0]
 
         dropout_mask = None
         if self.training and self.config.advantage_dropout > 0:
@@ -343,7 +360,27 @@ class SmolStar06Policy(SmolVLAPolicy):
         batch[OBS_LANGUAGE_TOKENS] = aug_tokens
         batch[OBS_LANGUAGE_ATTENTION_MASK] = aug_masks
 
-        return super().forward(batch, noise=noise, time=time, reduction=reduction)
+        loss, output_dict = super().forward(batch, noise=noise, time=time, reduction=reduction)
+
+        output_dict.update(adv_diagnostics)
+        output_dict["advantage_threshold"] = self.config.advantage_threshold
+        output_dict["advantage_pct_positive"] = n_positive / n_total
+        n_dropped = int(dropout_mask.sum().item()) if dropout_mask is not None else 0
+        output_dict["advantage_pct_dropped"] = n_dropped / n_total
+
+        if self.training:
+            self._train_step_count += 1
+            if self._train_step_count % 10 == 1:
+                parts = [f"[RECAP step {self._train_step_count}]"]
+                if "V_t_mean" in adv_diagnostics:
+                    parts.append(f"V(o_t)={adv_diagnostics['V_t_mean']:.4f}±{adv_diagnostics['V_t_std']:.4f}")
+                    parts.append(f"R_t={adv_diagnostics['R_t_mean']:.4f}±{adv_diagnostics['R_t_std']:.4f}")
+                parts.append(f"adv={adv_diagnostics['advantage_mean']:.4f}±{adv_diagnostics['advantage_std']:.4f}")
+                parts.append(f"token=pos:{n_positive}/{n_total} drop:{n_dropped}/{n_total}")
+                parts.append(f"thresh={self.config.advantage_threshold}")
+                logging.info("  ".join(parts))
+
+        return loss, output_dict
 
     def _get_action_chunk(
         self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[ActionSelectKwargs]
