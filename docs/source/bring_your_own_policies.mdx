@@ -134,12 +134,8 @@ class MyCustomPolicy(PreTrainedPolicy):
         self.config = config
         self.model = ...  # your nn.Module here
 
-    def reset(self, done: torch.Tensor | None = None):
-        """Reset episode state.
-
-        `done` is a bool tensor of shape (B,) for vectorised environments. When
-        provided, only reset the environments where `done[b]` is True.
-        """
+    def reset(self):
+        """Reset episode state."""
         ...
 
     def select_action(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
