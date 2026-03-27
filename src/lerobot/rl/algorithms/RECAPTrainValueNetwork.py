@@ -1339,6 +1339,7 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
             "metrics": epoch_metrics,
         }
         torch.save(checkpoint, checkpoints_dir / "last.pt")
+        torch.save(checkpoint, checkpoints_dir / f"epoch_{epoch:04d}.pt")
         if epoch_metrics["val_loss"] < best_val_loss:
             best_val_loss = epoch_metrics["val_loss"]
             torch.save(checkpoint, checkpoints_dir / "best.pt")

@@ -156,13 +156,13 @@ Key SmolVLA-specific flags:
 uv run python -m lerobot.rl.algorithms.RECAPTrainSmolVLANetwork \
   --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
   --root="${HOME}/.cache/huggingface/lerobot" \
-  --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_smolvla_scratch_3" \
-  --epochs=20 \
+  --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_value" \
+  --epochs=2 \
   --batch_size=6 \
   --learning_rate=3e-3 \
   --num_workers=4 \
   --val_split_ratio=0.1 \
-  --log_every_n_steps=20 \
+  --log_every_n_steps=100 \
   --validate_every_n_train_steps=50 \
   --plot_every_n_train_steps=200 \
   --max_val_steps_per_step_validation=20 \
@@ -245,7 +245,7 @@ Prerequisites:
 ```bash
 lerobot-train \
   --policy.type=smolstar06 \
-  --policy.value_network_checkpoint="${HOME}/code/lerobot/outputs/so101_pickplace_recap_smolvla_scratch_3/checkpoints/best.pt" \
+  --policy.value_network_checkpoint="${HOME}/code/lerobot/outputs/so101_pickplace_recap_value/checkpoints/last.pt" \
   --policy.episode_labels_path="${HOME}/.cache/huggingface/lerobot/jackvial/so101_pickplace_recap_merged_v2/meta/episode_labels.csv" \
   --policy.c_fail=500.0 \
   --policy.advantage_threshold=0.0 \
@@ -257,6 +257,7 @@ lerobot-train \
   --policy.scheduler_decay_steps=30000 \
   --dataset.repo_id=jackvial/so101_pickplace_recap_merged_v2 \
   --batch_size=32 \
+  --policy.push_to_hub=false \
   --steps=10000
 ```
 
