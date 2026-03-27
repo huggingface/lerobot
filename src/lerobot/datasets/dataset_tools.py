@@ -891,7 +891,7 @@ def _copy_and_reindex_episodes_metadata(
 
         total_frames += src_episode["length"]
 
-    dst_meta._close_writer()
+    dst_meta.finalize()
 
     dst_meta.info.update(
         {

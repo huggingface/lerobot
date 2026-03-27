@@ -95,6 +95,8 @@ def init_logging(
         file_handler.setLevel(file_level.upper())
         logger.addHandler(file_handler)
 
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
 
 def format_big_number(num, precision=0):
     suffixes = ["", "K", "M", "B", "T", "Q"]
