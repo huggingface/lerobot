@@ -87,7 +87,7 @@ class MyCustomPolicyConfig(PreTrainedConfig):
         return AdamWConfig(lr=self.optimizer_lr, weight_decay=self.optimizer_weight_decay)
 
     def get_scheduler_preset(self):
-        return CosineDecayWithWarmupSchedulerConfig(peak_lr=self.optimizer_lr)
+        return None
 
     @property
     def observation_delta_indices(self) -> list[int] | None:
