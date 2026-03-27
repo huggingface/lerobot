@@ -44,6 +44,7 @@ from lerobot.datasets.utils import (
     check_version_compatibility,
     flatten_dict,
     get_safe_version,
+    has_legacy_hub_download_metadata,
     is_valid_version,
     update_chunk_file_indices,
 )
@@ -102,7 +103,7 @@ class LeRobotDatasetMetadata:
 
         try:
             if force_cache_sync or (
-                self._requested_root is None and self._has_legacy_hub_download_metadata(self.root)
+                self._requested_root is None and has_legacy_hub_download_metadata(self.root)
             ):
                 raise FileNotFoundError
             self._load_metadata()
@@ -112,11 +113,6 @@ class LeRobotDatasetMetadata:
 
             self._pull_from_repo(allow_patterns="meta/")
             self._load_metadata()
-
-    @staticmethod
-    def _has_legacy_hub_download_metadata(root: Path) -> bool:
-        """Return True when ``root`` looks like a legacy Hub ``local_dir`` mirror."""
-        return (root / ".cache" / "huggingface" / "download").exists()
 
     def _flush_metadata_buffer(self) -> None:
         """Write all buffered episode metadata to parquet file."""
@@ -619,7 +615,8 @@ class LeRobotDatasetMetadata:
         """
         obj = cls.__new__(cls)
         obj.repo_id = repo_id
-        obj.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
+        obj._requested_root = Path(root) if root is not None else None
+        obj.root = obj._requested_root if obj._requested_root is not None else HF_LEROBOT_HOME / repo_id
 
         obj.root.mkdir(parents=True, exist_ok=False)
 

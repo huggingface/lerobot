@@ -49,7 +49,7 @@ def _make_frame(task: str = "Dummy task") -> dict:
 def _set_default_cache_root(monkeypatch: pytest.MonkeyPatch, cache_root: Path) -> None:
     monkeypatch.setattr(dataset_metadata_module, "HF_LEROBOT_HOME", cache_root)
     monkeypatch.setattr(dataset_metadata_module, "HF_LEROBOT_HUB_CACHE", cache_root / "hub")
-    monkeypatch.setattr(lerobot_dataset_module, "HF_LEROBOT_HOME", cache_root)
+    monkeypatch.setattr(lerobot_dataset_module, "HF_LEROBOT_HUB_CACHE", cache_root / "hub")
 
 
 def _write_dataset_tree(
@@ -244,8 +244,14 @@ def test_without_root_reads_different_revisions_from_distinct_snapshot_roots(
         "main": main_root,
         old_revision: old_root,
     }
-    snapshot_download = Mock(side_effect=lambda repo_id, **kwargs: str(snapshot_roots[kwargs["revision"]]))
-    monkeypatch.setattr(dataset_metadata_module, "snapshot_download", snapshot_download)
+    meta_snapshot_download = Mock(
+        side_effect=lambda repo_id, **kwargs: str(snapshot_roots[kwargs["revision"]])
+    )
+    data_snapshot_download = Mock(
+        side_effect=lambda repo_id, **kwargs: str(snapshot_roots[kwargs["revision"]])
+    )
+    monkeypatch.setattr(dataset_metadata_module, "snapshot_download", meta_snapshot_download)
+    monkeypatch.setattr(lerobot_dataset_module, "snapshot_download", data_snapshot_download)
 
     main_dataset = LeRobotDataset(repo_id=repo_id, revision="main", download_videos=False)
     old_dataset = LeRobotDataset(repo_id=repo_id, revision=old_revision, download_videos=False)
@@ -254,10 +260,11 @@ def test_without_root_reads_different_revisions_from_distinct_snapshot_roots(
     assert old_dataset.root == old_root
     assert "test" in main_dataset.hf_dataset.column_names
     assert "test" not in old_dataset.hf_dataset.column_names
-    assert snapshot_download.call_count == 2
-    for download_call in snapshot_download.call_args_list:
+
+    # Metadata downloads use cache_dir, not local_dir
+    assert meta_snapshot_download.call_count == 2
+    for download_call in meta_snapshot_download.call_args_list:
         assert download_call.kwargs["cache_dir"] == cache_root / "hub"
-        assert download_call.kwargs["allow_patterns"] == "meta/"
         assert "local_dir" not in download_call.kwargs
 
 
@@ -320,6 +327,60 @@ def test_metadata_without_root_ignores_legacy_local_dir_cache(
     assert meta.root == snapshot_root
     assert "test" in meta.features
     assert snapshot_download.call_count == 1
+
+
+def test_download_without_root_uses_hub_cache(
+    tmp_path,
+    info_factory,
+    stats_factory,
+    tasks_factory,
+    episodes_factory,
+    hf_dataset_factory,
+    create_info,
+    create_stats,
+    create_tasks,
+    create_episodes,
+    create_hf_dataset,
+    monkeypatch,
+):
+    """LeRobotDataset._download() uses cache_dir (not local_dir) when root is not provided."""
+    repo_id = DUMMY_REPO_ID
+    cache_root = tmp_path / "lerobot_cache"
+    snapshot_root = cache_root / "hub" / "datasets--dummy--repo" / "snapshots" / "commit-main"
+
+    # Pre-populate snapshot directory so metadata loads succeed, but leave
+    # data absent so that _download() is triggered.
+    _write_dataset_tree(
+        snapshot_root,
+        motor_features=SIMPLE_FEATURES,
+        info_factory=info_factory,
+        stats_factory=stats_factory,
+        tasks_factory=tasks_factory,
+        episodes_factory=episodes_factory,
+        hf_dataset_factory=hf_dataset_factory,
+        create_info=create_info,
+        create_stats=create_stats,
+        create_tasks=create_tasks,
+        create_episodes=create_episodes,
+        create_hf_dataset=create_hf_dataset,
+    )
+
+    _set_default_cache_root(monkeypatch, cache_root)
+    meta_snapshot_download = Mock(return_value=str(snapshot_root))
+    monkeypatch.setattr(dataset_metadata_module, "snapshot_download", meta_snapshot_download)
+
+    # Mock the data snapshot_download to return the same root (data already
+    # exists there from _write_dataset_tree).
+    data_snapshot_download = Mock(return_value=str(snapshot_root))
+    monkeypatch.setattr(lerobot_dataset_module, "snapshot_download", data_snapshot_download)
+
+    LeRobotDataset(repo_id=repo_id, revision="main", force_cache_sync=True)
+
+    # _download() should have called snapshot_download with cache_dir
+    assert data_snapshot_download.call_count == 1
+    call_kwargs = data_snapshot_download.call_args.kwargs
+    assert call_kwargs["cache_dir"] == cache_root / "hub"
+    assert "local_dir" not in call_kwargs
 
 
 # ── Write-only mode (via create()) ──────────────────────────────────

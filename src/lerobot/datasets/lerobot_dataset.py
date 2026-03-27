@@ -37,7 +37,7 @@ from lerobot.datasets.video_utils import (
     get_safe_default_codec,
     resolve_vcodec,
 )
-from lerobot.utils.constants import HF_LEROBOT_HOME, HF_LEROBOT_HUB_CACHE
+from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +192,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         super().__init__()
         self.repo_id = repo_id
         self._requested_root = Path(root) if root else None
-        self.root = self._requested_root if self._requested_root is not None else HF_LEROBOT_HOME / repo_id
         self.image_transforms = image_transforms
         self.delta_timestamps = delta_timestamps
         self.episodes = episodes
@@ -204,9 +203,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._encoder_threads = encoder_threads
 
         if self._requested_root is not None:
-            self.root.mkdir(exist_ok=True, parents=True)
+            self._requested_root.mkdir(exist_ok=True, parents=True)
 
-        # Load metadata
+        # Load metadata (sets self.root once from the resolved metadata root)
         self.meta = LeRobotDatasetMetadata(
             self.repo_id, self._requested_root, self.revision, force_cache_sync=force_cache_sync
         )
@@ -563,7 +562,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             files = self.reader.get_episodes_file_paths()
 
         if self._requested_root is None:
-            self.root = Path(
+            self.meta.root = Path(
                 snapshot_download(
                     self.repo_id,
                     repo_type="dataset",
@@ -583,10 +582,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 allow_patterns=files,
                 ignore_patterns=ignore_patterns,
             )
-            self.root = self._requested_root
+            self.meta.root = self._requested_root
 
-        self.meta.root = self.root
-        self.reader._root = self.root
+        # Propagate resolved root from metadata (single source of truth)
+        self.root = self.meta.root
+        self.reader.root = self.meta.root
 
     # ── Class constructors ────────────────────────────────────────────
 
@@ -719,8 +719,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         Args:
             repo_id: Repository identifier of the existing dataset.
-            root: Local directory of the dataset. Defaults to
-                ``$HF_LEROBOT_HOME/{repo_id}``.
+            root: Local directory of the dataset. When provided, Hub downloads
+                are materialized directly into this directory. When omitted,
+                Hub downloads use a revision-safe snapshot cache under
+                ``$HF_LEROBOT_HOME/hub``.
             tolerance_s: Timestamp synchronization tolerance in seconds.
             revision: Git revision (branch, tag, or commit hash). Defaults to
                 current codebase version tag.
@@ -743,9 +745,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         vcodec = resolve_vcodec(vcodec)
         obj = cls.__new__(cls)
         obj.repo_id = repo_id
-        obj._requested_root = Path(root) if root else HF_LEROBOT_HOME / repo_id
-        obj.root = obj._requested_root
-        obj.root.mkdir(exist_ok=True, parents=True)
+        obj._requested_root = Path(root) if root else None
         obj.revision = revision if revision else CODEBASE_VERSION
         obj.tolerance_s = tolerance_s
         obj.image_transforms = None
@@ -756,10 +756,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj._vcodec = vcodec
         obj._encoder_threads = encoder_threads
 
-        # Load metadata
+        if obj._requested_root is not None:
+            obj._requested_root.mkdir(exist_ok=True, parents=True)
+
+        # Load metadata (revision-safe when root is not provided)
         obj.meta = LeRobotDatasetMetadata(
             obj.repo_id, obj._requested_root, obj.revision, force_cache_sync=force_cache_sync
         )
+        obj.root = obj.meta.root
 
         # Reader is lazily created on first access (write-only mode)
         obj.reader = None
