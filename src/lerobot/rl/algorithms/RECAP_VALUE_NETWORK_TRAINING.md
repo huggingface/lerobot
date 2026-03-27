@@ -244,6 +244,7 @@ Prerequisites:
 
 ```bash
 lerobot-train \
+  --job_name=recap_smolstar06_pickplace_2026_03_26_0\
   --policy.type=smolstar06 \
   --policy.value_network_checkpoint="${HOME}/code/lerobot/outputs/so101_pickplace_recap_value/checkpoints/last.pt" \
   --policy.episode_labels_path="${HOME}/.cache/huggingface/lerobot/jackvial/so101_pickplace_recap_merged_v2/meta/episode_labels.csv" \
