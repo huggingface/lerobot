@@ -253,8 +253,12 @@ def test_without_root_reads_different_revisions_from_distinct_snapshot_roots(
     monkeypatch.setattr(dataset_metadata_module, "snapshot_download", meta_snapshot_download)
     monkeypatch.setattr(lerobot_dataset_module, "snapshot_download", data_snapshot_download)
 
-    main_dataset = LeRobotDataset(repo_id=repo_id, revision="main", download_videos=False)
-    old_dataset = LeRobotDataset(repo_id=repo_id, revision=old_revision, download_videos=False)
+    main_dataset = LeRobotDataset(
+        repo_id=repo_id, revision="main", download_videos=False, force_cache_sync=True
+    )
+    old_dataset = LeRobotDataset(
+        repo_id=repo_id, revision=old_revision, download_videos=False, force_cache_sync=True
+    )
 
     assert main_dataset.root == main_root
     assert old_dataset.root == old_root
@@ -264,6 +268,12 @@ def test_without_root_reads_different_revisions_from_distinct_snapshot_roots(
     # Metadata downloads use cache_dir, not local_dir
     assert meta_snapshot_download.call_count == 2
     for download_call in meta_snapshot_download.call_args_list:
+        assert download_call.kwargs["cache_dir"] == cache_root / "hub"
+        assert "local_dir" not in download_call.kwargs
+
+    # Data downloads also use cache_dir, not local_dir
+    assert data_snapshot_download.call_count == 2
+    for download_call in data_snapshot_download.call_args_list:
         assert download_call.kwargs["cache_dir"] == cache_root / "hub"
         assert "local_dir" not in download_call.kwargs
 

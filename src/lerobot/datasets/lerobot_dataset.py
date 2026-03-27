@@ -742,10 +742,16 @@ class LeRobotDataset(torch.utils.data.Dataset):
         Returns:
             A :class:`LeRobotDataset` in write mode, ready to append episodes.
         """
+        if not root:
+            raise ValueError(
+                "resume() requires an explicit 'root' directory because it creates a DatasetWriter. "
+                "Writing into the revision-safe Hub snapshot cache (used when root=None) would corrupt "
+                "the shared cache. Please provide a local directory path."
+            )
         vcodec = resolve_vcodec(vcodec)
         obj = cls.__new__(cls)
         obj.repo_id = repo_id
-        obj._requested_root = Path(root) if root else None
+        obj._requested_root = Path(root)
         obj.revision = revision if revision else CODEBASE_VERSION
         obj.tolerance_s = tolerance_s
         obj.image_transforms = None
