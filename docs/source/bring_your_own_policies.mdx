@@ -48,7 +48,6 @@ Here is a template to get you started, customize the parameters and methods as n
 # configuration_my_custom_policy.py
 from dataclasses import dataclass, field
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import NormalizationMode
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 
@@ -68,14 +67,6 @@ class MyCustomPolicyConfig(PreTrainedConfig):
     horizon: int = 50
     n_action_steps: int = 50
     hidden_dim: int = 256
-
-    normalization_mapping: dict[str, NormalizationMode] = field(
-        default_factory=lambda: {
-            "VISUAL": NormalizationMode.MEAN_STD,
-            "STATE": NormalizationMode.MEAN_STD,
-            "ACTION": NormalizationMode.MEAN_STD,
-        }
-    )
 
     optimizer_lr: float = 1e-4
     optimizer_weight_decay: float = 1e-4
