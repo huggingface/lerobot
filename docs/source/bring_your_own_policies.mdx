@@ -138,7 +138,15 @@ class MyCustomPolicy(PreTrainedPolicy):
         """Reset episode state."""
         ...
 
-    def select_action(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
+    def get_optim_params(self) -> dict:
+        """Return parameters to pass to the optimizer (e.g. with per-group lr/wd)."""
+        return {"params": self.parameters()}
+
+    def predict_action_chunk(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
+        """Return the full action chunk (B, chunk_size, action_dim) for the current observation."""
+        ...
+
+    def select_action(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
         """Return a single action for the current timestep (called at inference)."""
         ...
 
