@@ -35,8 +35,6 @@ from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.sac.configuration_sac import SACConfig
-from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
-from lerobot.policies.sarm.configuration_sarm import SARMConfig
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.policies.utils import validate_visual_features_consistency
@@ -67,7 +65,7 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
 
     Args:
         name: The name of the policy. Supported names are "tdmpc", "diffusion", "act",
-              "vqbet", "pi0", "pi05", "sac", "reward_classifier", "smolvla", "wall_x".
+              "vqbet", "pi0", "pi05", "sac", "smolvla", "wall_x".
 
     Returns:
         The policy class corresponding to the given name.
@@ -107,18 +105,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.sac.modeling_sac import SACPolicy
 
         return SACPolicy
-    elif name == "reward_classifier":
-        from lerobot.policies.sac.reward_model.modeling_classifier import Classifier
-
-        return Classifier
     elif name == "smolvla":
         from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
         return SmolVLAPolicy
-    elif name == "sarm":
-        from lerobot.policies.sarm.modeling_sarm import SARMRewardModel
-
-        return SARMRewardModel
     elif name == "groot":
         from lerobot.policies.groot.modeling_groot import GrootPolicy
 
@@ -148,7 +138,7 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
     Args:
         policy_type: The type of the policy. Supported types include "tdmpc",
                      "diffusion", "act", "vqbet", "pi0", "pi05", "sac", "smolvla",
-                     "reward_classifier", "wall_x".
+                     "wall_x".
         **kwargs: Keyword arguments to be passed to the configuration class constructor.
 
     Returns:
@@ -173,8 +163,6 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return SACConfig(**kwargs)
     elif policy_type == "smolvla":
         return SmolVLAConfig(**kwargs)
-    elif policy_type == "reward_classifier":
-        return RewardClassifierConfig(**kwargs)
     elif policy_type == "groot":
         return GrootConfig(**kwargs)
     elif policy_type == "xvla":
@@ -341,14 +329,6 @@ def make_pre_post_processors(
             dataset_stats=kwargs.get("dataset_stats"),
         )
 
-    elif isinstance(policy_cfg, RewardClassifierConfig):
-        from lerobot.policies.sac.reward_model.processor_classifier import make_classifier_processor
-
-        processors = make_classifier_processor(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-        )
-
     elif isinstance(policy_cfg, SmolVLAConfig):
         from lerobot.policies.smolvla.processor_smolvla import make_smolvla_pre_post_processors
 
@@ -357,14 +337,6 @@ def make_pre_post_processors(
             dataset_stats=kwargs.get("dataset_stats"),
         )
 
-    elif isinstance(policy_cfg, SARMConfig):
-        from lerobot.policies.sarm.processor_sarm import make_sarm_pre_post_processors
-
-        processors = make_sarm_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-            dataset_meta=kwargs.get("dataset_meta"),
-        )
     elif isinstance(policy_cfg, GrootConfig):
         from lerobot.policies.groot.processor_groot import make_groot_pre_post_processors
 

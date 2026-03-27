@@ -1,5 +1,3 @@
-# !/usr/bin/env python
-
 # Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,8 +17,8 @@ import logging
 import torch
 from torch import Tensor, nn
 
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
+from lerobot.rewards.classifier.configuration_classifier import RewardClassifierConfig
+from lerobot.rewards.pretrained import PreTrainedRewardModel
 from lerobot.utils.constants import OBS_IMAGE, REWARD
 
 
@@ -98,7 +96,7 @@ class SpatialLearnedEmbeddings(nn.Module):
         return output
 
 
-class Classifier(PreTrainedPolicy):
+class Classifier(PreTrainedRewardModel):
     """Image classifier built on top of a pre-trained encoder."""
 
     name = "reward_classifier"
@@ -234,6 +232,16 @@ class Classifier(PreTrainedPolicy):
 
         return ClassifierOutput(logits=logits, probabilities=probabilities, hidden_states=encoder_outputs)
 
+    def compute_reward(self, batch: dict[str, Tensor]) -> Tensor:
+        """Returns 1.0 for success, 0.0 for failure based on image observations."""
+        images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE)]
+        output = self.predict(images)
+
+        if self.config.num_classes == 2:
+            return (output.probabilities > 0.5).float()
+        else:
+            return torch.argmax(output.probabilities, dim=1).float()
+
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Tensor]]:
         """Standard forward pass for training compatible with train.py."""
         # Extract images and labels
@@ -281,28 +289,3 @@ class Classifier(PreTrainedPolicy):
             return (probs > threshold).float()
         else:
             return torch.argmax(self.predict(images).probabilities, dim=1)
-
-    def get_optim_params(self):
-        """Return optimizer parameters for the policy."""
-        return self.parameters()
-
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        """
-        This method is required by PreTrainedPolicy but not used for reward classifiers.
-        The reward classifier is not an actor and does not select actions.
-        """
-        raise NotImplementedError("Reward classifiers do not select actions")
-
-    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
-        """
-        This method is required by PreTrainedPolicy but not used for reward classifiers.
-        The reward classifier is not an actor and does not produce action chunks.
-        """
-        raise NotImplementedError("Reward classifiers do not predict action chunks")
-
-    def reset(self):
-        """
-        This method is required by PreTrainedPolicy but not used for reward classifiers.
-        The reward classifier is not an actor and does not select actions.
-        """
-        pass
