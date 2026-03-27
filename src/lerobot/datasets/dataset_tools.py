@@ -1009,12 +1009,12 @@ def _copy_data_with_feature_changes(
                         feature_values.append(value)
                     df[feature_name] = feature_values
                 # BEFORE (buggy)
-                #else:
-                 #   feature_slice = values[frame_idx:end_idx]
-                  #  if len(feature_slice.shape) > 1 and feature_slice.shape[1] == 1:
-                   #     df[feature_name] = feature_slice.flatten()
-                    #else:
-                     #   df[feature_name] = feature_slice
+                # else:
+                #   feature_slice = values[frame_idx:end_idx]
+                #  if len(feature_slice.shape) > 1 and feature_slice.shape[1] == 1:
+                #     df[feature_name] = feature_slice.flatten()
+                # else:
+                #   df[feature_name] = feature_slice
                 # AFTER (fixed)
                 else:
                     feature_slice = values[frame_idx:end_idx]
