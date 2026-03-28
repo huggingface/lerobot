@@ -72,6 +72,8 @@ class RECAPValueNetwork(nn.Module):
     and recovers a scalar expected value from this distribution.
     """
 
+    value_bin_support: Tensor
+
     def __init__(self, config: RECAPValueNetworkConfig):
         super().__init__()
         if PaliGemmaForConditionalGeneration is None or CONFIG_MAPPING is None:
@@ -107,12 +109,12 @@ class RECAPValueNetwork(nn.Module):
         paligemma_config_hf.vision_config.projector_hidden_act = "gelu_fast"
         paligemma_config_hf.vision_config.torch_dtype = "float32"
 
-        self.paligemma = PaliGemmaForConditionalGeneration(config=paligemma_config_hf)
+        self.paligemma = PaliGemmaForConditionalGeneration(config=paligemma_config_hf)  # ty: ignore[invalid-argument-type]
 
         if config.precision == "bfloat16":
-            self.paligemma = self.paligemma.to(dtype=torch.bfloat16)
+            self.paligemma = self.paligemma.to(dtype=torch.bfloat16)  # ty: ignore[missing-argument]
         elif config.precision == "float32":
-            self.paligemma = self.paligemma.to(dtype=torch.float32)
+            self.paligemma = self.paligemma.to(dtype=torch.float32)  # ty: ignore[missing-argument]
         else:
             raise ValueError(f"Invalid precision: {config.precision}")
 
@@ -159,6 +161,8 @@ class RECAPValueNetwork(nn.Module):
         logging.info(f"Loading pretrained VLM weights from {pretrained_path}")
 
         resolved_file = cached_file(pretrained_path, "model.safetensors")
+        if resolved_file is None:
+            raise FileNotFoundError(f"Could not find model.safetensors in {pretrained_path}")
         full_state_dict = load_file(resolved_file)
 
         vlm_state_dict: dict[str, Tensor] = {}

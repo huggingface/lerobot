@@ -194,8 +194,9 @@ def _run_validation(
         B = lang_tokens.shape[0]
 
         actions = batch[ACTION]
-        noise = torch.randn_like(actions)
-        fm_time = torch.rand(B, 1, 1, device=device)
+        padded_actions = policy.prepare_action(batch)
+        noise = torch.randn_like(padded_actions)
+        fm_time = torch.rand(B, device=device)
 
         # Pass 1: correct advantage labels (no dropout)
         correct_toks, correct_masks = policy._augment_lang_tokens(
@@ -207,6 +208,7 @@ def _run_validation(
         loss_correct, _ = SmolVLAPolicy.forward(
             policy, correct_batch, noise=noise, time=fm_time, reduction="none"
         )
+        assert isinstance(loss_correct, torch.Tensor)
 
         # Pass 2: flipped advantage labels
         wrong_toks, wrong_masks = policy._augment_lang_tokens(
@@ -218,6 +220,7 @@ def _run_validation(
         loss_wrong, _ = SmolVLAPolicy.forward(
             policy, wrong_batch, noise=noise, time=fm_time, reduction="none"
         )
+        assert isinstance(loss_wrong, torch.Tensor)
 
         total_loss += loss_correct.sum().item()
         n_pos = pos_mask.sum().item()
@@ -362,7 +365,7 @@ def run_recap_smolstar_train_val(cfg: RECAPSmolStarTrainingConfig) -> None:
 
     preprocessor, _postprocessor = make_smolstar06_pre_post_processors(
         config=policy_cfg,
-        dataset_stats=train_dataset.meta.stats,
+        dataset_stats=train_dataset.meta.stats,  # ty: ignore[invalid-argument-type]
     )
 
     # ── 5. Create dataloaders ────────────────────────────────────────────
@@ -566,4 +569,4 @@ def run_recap_smolstar_train_val(cfg: RECAPSmolStarTrainingConfig) -> None:
 
 
 if __name__ == "__main__":
-    run_recap_smolstar_train_val()
+    run_recap_smolstar_train_val()  # ty: ignore[missing-argument]

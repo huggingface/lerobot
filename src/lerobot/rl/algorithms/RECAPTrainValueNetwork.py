@@ -990,7 +990,7 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
         seed=cfg.seed,
     )
 
-    tokenizer = AutoTokenizer.from_pretrained(cfg.text_tokenizer_name)
+    tokenizer = cast(PreTrainedTokenizerBase, AutoTokenizer.from_pretrained(cfg.text_tokenizer_name))
     if tokenizer.pad_token_id is None:
         if tokenizer.eos_token_id is None:
             raise ValueError("Tokenizer has no pad_token_id or eos_token_id.")
@@ -1348,4 +1348,4 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
 
 
 if __name__ == "__main__":
-    run_recap_value_train_val()
+    run_recap_value_train_val()  # ty: ignore[missing-argument]

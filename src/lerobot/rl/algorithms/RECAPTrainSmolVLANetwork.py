@@ -110,7 +110,7 @@ def run_recap_smolvla_train_val(cfg: RECAPSmolVLAValueTrainingConfig) -> None:
         episodes=cfg.episodes,
     )
 
-    labels_csv_path = base._resolve_labels_csv_path(cfg)
+    labels_csv_path = base._resolve_labels_csv_path(cfg)  # ty: ignore[invalid-argument-type]
     logging.info(f"Using episode labels from: {labels_csv_path}")
     success_by_episode = base._load_episode_success_map(labels_csv_path)
     frame_targets = base._build_frame_targets(
@@ -125,7 +125,7 @@ def run_recap_smolvla_train_val(cfg: RECAPSmolVLAValueTrainingConfig) -> None:
         seed=cfg.seed,
     )
 
-    tokenizer = base.AutoTokenizer.from_pretrained(cfg.text_tokenizer_name)
+    tokenizer = cast(base.PreTrainedTokenizerBase, base.AutoTokenizer.from_pretrained(cfg.text_tokenizer_name))
     if tokenizer.pad_token_id is None:
         if tokenizer.eos_token_id is None:
             raise ValueError("Tokenizer has no pad_token_id or eos_token_id.")
@@ -277,7 +277,7 @@ def run_recap_smolvla_train_val(cfg: RECAPSmolVLAValueTrainingConfig) -> None:
         should_plot = bool(plot_subdir) and bool(plot_episode_ids) and val_plot_loader is not None
         try:
             val_metrics_local = base._run_epoch(
-                model=model,
+                model=model,  # ty: ignore[invalid-argument-type]
                 loader=loader,
                 device=device,
                 optimizer=None,
@@ -299,7 +299,7 @@ def run_recap_smolvla_train_val(cfg: RECAPSmolVLAValueTrainingConfig) -> None:
             )
             try:
                 val_metrics_local = base._run_epoch(
-                    model=model,
+                    model=model,  # ty: ignore[invalid-argument-type]
                     loader=step_val_loader,
                     device=device,
                     optimizer=None,
@@ -331,7 +331,7 @@ def run_recap_smolvla_train_val(cfg: RECAPSmolVLAValueTrainingConfig) -> None:
             collected_predictions: dict[int, list[base.ValidationFramePrediction]] = {}
             try:
                 base._run_epoch(
-                    model=model,
+                    model=model,  # ty: ignore[invalid-argument-type]
                     loader=val_plot_loader,
                     device=device,
                     optimizer=None,
@@ -415,7 +415,7 @@ def run_recap_smolvla_train_val(cfg: RECAPSmolVLAValueTrainingConfig) -> None:
             on_train_step_end = _on_train_step_end
 
         train_metrics = base._run_epoch(
-            model=model,
+            model=model,  # ty: ignore[invalid-argument-type]
             loader=train_loader,
             device=device,
             optimizer=optimizer,
@@ -481,4 +481,4 @@ def run_recap_smolvla_train_val(cfg: RECAPSmolVLAValueTrainingConfig) -> None:
 
 
 if __name__ == "__main__":
-    run_recap_smolvla_train_val()
+    run_recap_smolvla_train_val()  # ty: ignore[missing-argument]

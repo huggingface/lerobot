@@ -56,6 +56,8 @@ class RECAPSmolVLAValueNetwork(nn.Module):
     and recovers a scalar expected value from this distribution.
     """
 
+    value_bin_support: Tensor
+
     def __init__(self, config: RECAPSmolVLAValueNetworkConfig):
         super().__init__()
         if (
@@ -79,7 +81,7 @@ class RECAPSmolVLAValueNetwork(nn.Module):
             logging.info(f"Building SmolVLM from config {config.vlm_model_name}")
             base_config = AutoConfig.from_pretrained(config.vlm_model_name)
             self.smolvlm = SmolVLMForConditionalGeneration(config=base_config)
-            self.smolvlm = self.smolvlm.to(dtype=model_dtype)
+            self.smolvlm = self.smolvlm.to(dtype=model_dtype)  # ty: ignore[missing-argument]
 
         text_model = self._get_text_model()
         if config.num_vlm_layers > 0:

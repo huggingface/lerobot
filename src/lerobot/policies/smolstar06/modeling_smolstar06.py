@@ -28,7 +28,7 @@ Two-phase workflow:
 
 import csv
 import logging
-from typing import Unpack
+from typing import Any, Unpack, cast
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -55,8 +55,12 @@ class SmolStar06Policy(SmolVLAPolicy):
     by interpolating conditioned and unconditioned flow vectors.
     """
 
+    config: SmolStar06Config
     config_class = SmolStar06Config
     name = "smolstar06"
+
+    advantage_positive_tokens: Tensor
+    advantage_negative_tokens: Tensor
 
     def __init__(
         self,
@@ -72,8 +76,8 @@ class SmolStar06Policy(SmolVLAPolicy):
 
         self._setup_advantage_tokens()
 
-        self._episode_info: dict | None = None
-        self._task_max_len: dict | None = None
+        self._episode_info: dict[int, dict] | None = None
+        self._task_max_len: dict[str, int] | None = None
         if dataset_meta is not None and config.episode_labels_path is not None:
             self._setup_episode_metadata(dataset_meta, config.episode_labels_path)
 
@@ -96,13 +100,15 @@ class SmolStar06Policy(SmolVLAPolicy):
 
     def _setup_advantage_tokens(self) -> None:
         """Pre-tokenize advantage indicator strings as registered buffers."""
-        from transformers import AutoTokenizer
+        from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
         tokenizer = AutoTokenizer.from_pretrained(self.config.vlm_model_name)
+        assert isinstance(tokenizer, PreTrainedTokenizerBase)
 
         pos_ids = tokenizer.encode(" Advantage: positive", add_special_tokens=False)
         neg_ids = tokenizer.encode(" Advantage: negative", add_special_tokens=False)
 
+        # Get the max so we can pad out the additional string to the same length
         max_len = max(len(pos_ids), len(neg_ids))
         pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
         pos_ids += [pad_id] * (max_len - len(pos_ids))
@@ -208,6 +214,7 @@ class SmolStar06Policy(SmolVLAPolicy):
         Returns:
             Tensor of shape [B] with expected values in [-1, 0].
         """
+        assert self.value_network is not None
         images = self._prepare_vn_images(batch)
         state = self.prepare_state(batch)
         lang_tokens = batch[OBS_LANGUAGE_TOKENS]
@@ -237,7 +244,7 @@ class SmolStar06Policy(SmolVLAPolicy):
         stacked = torch.stack(image_list, dim=1)
         B, N, C, H, W = stacked.shape
         target_h, target_w = self.config.resize_imgs_with_padding
-        if H != target_h or W != target_w:
+        if target_h != H or target_w != W:
             flat = stacked.reshape(B * N, C, H, W)
             flat = F.interpolate(flat, size=(target_h, target_w), mode="bilinear", align_corners=False)
             stacked = flat.reshape(B, N, C, target_h, target_w)
@@ -254,6 +261,8 @@ class SmolStar06Policy(SmolVLAPolicy):
 
         Returns are normalized by per-task max episode length and clamped to [-1, 0].
         """
+        assert self._episode_info is not None
+        assert self._task_max_len is not None
         ep_indices = batch["episode_index"]
         global_indices = batch["index"]
         B = ep_indices.shape[0]
@@ -261,7 +270,7 @@ class SmolStar06Policy(SmolVLAPolicy):
 
         returns = torch.zeros(B, device=device, dtype=torch.float32)
         for i in range(B):
-            ep_idx = ep_indices[i].item()
+            ep_idx = int(ep_indices[i].item())
 
             info = self._episode_info.get(ep_idx)
             if info is None:
@@ -326,9 +335,9 @@ class SmolStar06Policy(SmolVLAPolicy):
         }
         return adv, diagnostics
 
-    def forward(
+    def forward(  # ty: ignore[invalid-method-override]
         self, batch: dict[str, Tensor], noise=None, time=None, reduction: str = "mean"
-    ) -> dict[str, Tensor]:
+    ) -> tuple[Tensor, dict[str, float]]:
         """Training forward pass with advantage-conditioned flow matching.
 
         Steps:
@@ -360,7 +369,9 @@ class SmolStar06Policy(SmolVLAPolicy):
         batch[OBS_LANGUAGE_TOKENS] = aug_tokens
         batch[OBS_LANGUAGE_ATTENTION_MASK] = aug_masks
 
-        loss, output_dict = super().forward(batch, noise=noise, time=time, reduction=reduction)
+        result = cast(tuple[Tensor, dict[str, Any]], super().forward(batch, noise=noise, time=time, reduction=reduction))
+        loss = result[0]
+        output_dict: dict[str, float] = result[1]
 
         output_dict.update(adv_diagnostics)
         output_dict["advantage_threshold"] = self.config.advantage_threshold
@@ -445,23 +456,23 @@ class SmolStar06Policy(SmolVLAPolicy):
         from lerobot.policies.smolvla.modeling_smolvla import make_att_2d_masks
 
         cond_att_2d = make_att_2d_masks(cond_prefix_pad, cond_prefix_att)
-        cond_pos_ids = torch.cumsum(cond_prefix_pad, dim=1) - 1
+        cond_pos_ids = (torch.cumsum(cond_prefix_pad, dim=1) - 1).long()
         _, cond_kv = self.model.vlm_with_expert.forward(
             attention_mask=cond_att_2d,
-            position_ids=cond_pos_ids,
+            position_ids=cond_pos_ids,  # ty: ignore[invalid-argument-type]
             past_key_values=None,
-            inputs_embeds=[cond_prefix_embs, None],
+            inputs_embeds=[cond_prefix_embs, None],  # ty: ignore[invalid-argument-type]
             use_cache=self.config.use_cache,
             fill_kv_cache=True,
         )
 
         uncond_att_2d = make_att_2d_masks(uncond_prefix_pad, uncond_prefix_att)
-        uncond_pos_ids = torch.cumsum(uncond_prefix_pad, dim=1) - 1
+        uncond_pos_ids = (torch.cumsum(uncond_prefix_pad, dim=1) - 1).long()
         _, uncond_kv = self.model.vlm_with_expert.forward(
             attention_mask=uncond_att_2d,
-            position_ids=uncond_pos_ids,
+            position_ids=uncond_pos_ids,  # ty: ignore[invalid-argument-type]
             past_key_values=None,
-            inputs_embeds=[uncond_prefix_embs, None],
+            inputs_embeds=[uncond_prefix_embs, None],  # ty: ignore[invalid-argument-type]
             use_cache=self.config.use_cache,
             fill_kv_cache=True,
         )
@@ -491,6 +502,7 @@ class SmolStar06Policy(SmolVLAPolicy):
             x_t = x_t + dt * v_t
 
         actions = x_t
+        assert self.config.action_feature is not None
         original_action_dim = self.config.action_feature.shape[0]
         actions = actions[:, :, :original_action_dim]
 
@@ -499,7 +511,7 @@ class SmolStar06Policy(SmolVLAPolicy):
 
         return actions
 
-    def get_optim_params(self) -> dict:
+    def get_optim_params(self) -> list:  # ty: ignore[invalid-method-override]
         """Exclude frozen value network parameters from optimization."""
         params = []
         for name, param in self.named_parameters():

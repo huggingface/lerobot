@@ -51,6 +51,9 @@ def make_smolstar06_pre_post_processors(
     Identical to SmolVLA's pipelines except that tokenizer_max_length is
     increased (via SmolStar06Config) to leave room for advantage tokens.
     """
+    assert config.device is not None
+    assert config.input_features is not None
+    assert config.output_features is not None
     input_steps = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
@@ -64,13 +67,17 @@ def make_smolstar06_pre_post_processors(
         DeviceProcessorStep(device=config.device),
         NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
-            norm_map=config.normalization_mapping,
+            # Pre-existing codebase type mismatch surfaced by ty: norm_map keys are
+            # str but the parameter expects FeatureType (a str enum); compatible at runtime.
+            norm_map=config.normalization_mapping,  # ty: ignore[invalid-argument-type]
             stats=dataset_stats,
         ),
     ]
     output_steps = [
         UnnormalizerProcessorStep(
-            features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
+            features=config.output_features,
+            norm_map=config.normalization_mapping,  # ty: ignore[invalid-argument-type]
+            stats=dataset_stats,
         ),
         DeviceProcessorStep(device="cpu"),
     ]
