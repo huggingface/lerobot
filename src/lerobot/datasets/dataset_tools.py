@@ -891,7 +891,7 @@ def _copy_and_reindex_episodes_metadata(
 
         total_frames += src_episode["length"]
 
-    dst_meta._close_writer()
+    dst_meta.finalize()
 
     dst_meta.info.update(
         {
@@ -1008,14 +1008,6 @@ def _copy_data_with_feature_changes(
                             value = value.item()
                         feature_values.append(value)
                     df[feature_name] = feature_values
-                # BEFORE (buggy)
-                # else:
-                #   feature_slice = values[frame_idx:end_idx]
-                #  if len(feature_slice.shape) > 1 and feature_slice.shape[1] == 1:
-                #     df[feature_name] = feature_slice.flatten()
-                # else:
-                #   df[feature_name] = feature_slice
-                # AFTER (fixed)
                 else:
                     feature_slice = values[frame_idx:end_idx]
                     if len(feature_slice.shape) == 1:
@@ -1028,7 +1020,7 @@ def _copy_data_with_feature_changes(
                         # Multi-dimensional features (e.g. images shape (N, H, W, C)):
                         # Store each frame as a separate object in the column so pandas
                         # doesn't try to broadcast the inner dimensions as column axes.
-                        df[feature_name] = [feature_slice[i] for i in range(len(feature_slice))]
+                        df[feature_name] = list(feature_slice)
             frame_idx = end_idx
 
         # Write using the same chunk/file structure as source
