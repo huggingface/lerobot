@@ -155,7 +155,16 @@ class DatasetWriter:
             self.image_writer.save_image(image=image, fpath=fpath, compress_level=compress_level)
 
     def add_frame(self, frame: dict) -> None:
-        """Add a frame to the episode_buffer. Images are written to a temporary directory."""
+        """
+        Add a single frame to the current episode buffer.
+
+        Apart from images written to a temporary directory, nothing is written to disk
+        until ``save_episode()`` is called.
+
+        The caller must provide all user-defined features plus ``"task"``, and must
+        not provide ``"timestamp"`` or ``"frame_index"``; those are computed
+        automatically.
+        """
         # Convert torch to numpy if needed
         for name in frame:
             if isinstance(frame[name], torch.Tensor):
@@ -168,7 +177,7 @@ class DatasetWriter:
 
         # Automatically add frame_index and timestamp to episode buffer
         frame_index = self.episode_buffer["size"]
-        timestamp = frame.pop("timestamp") if "timestamp" in frame else frame_index / self._meta.fps
+        timestamp = frame_index / self._meta.fps
         self.episode_buffer["frame_index"].append(frame_index)
         self.episode_buffer["timestamp"].append(timestamp)
         self.episode_buffer["task"].append(frame.pop("task"))
