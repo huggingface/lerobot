@@ -42,7 +42,7 @@ from lerobot.datasets.feature_utils import dataset_to_policy_features
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.sampler import EpisodeAwareSampler
 from lerobot.rl.algorithms import RECAPTrainValueNetwork as base
-from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
+from lerobot.utils.constants import ACTION, OBS_LANGUAGE_TOKENS
 
 
 @dataclass
@@ -80,7 +80,6 @@ class RECAPSmolStarTrainingConfig:
     cfg_beta: float = 1.0
 
     # SmolStar06 model settings
-    tokenizer_max_length: int = 64
     load_vlm_weights: bool = True
     train_expert_only: bool = False
     freeze_vision_encoder: bool = True
@@ -168,7 +167,6 @@ def _build_policy_config(
         advantage_threshold=cfg.advantage_threshold,
         advantage_dropout=cfg.advantage_dropout,
         cfg_beta=cfg.cfg_beta,
-        tokenizer_max_length=cfg.tokenizer_max_length,
         load_vlm_weights=cfg.load_vlm_weights,
         train_expert_only=cfg.train_expert_only,
         freeze_vision_encoder=cfg.freeze_vision_encoder,
@@ -186,12 +184,11 @@ def _run_validation(
 ) -> dict[str, float]:
     """Two-pass validation computing stratified loss and conditioning accuracy.
 
-    For each batch:
-      Pass 1 -- correct advantage labels  -> per-sample loss_correct
-      Pass 2 -- flipped advantage labels  -> per-sample loss_wrong
+    For each batch (using suffix-based advantage embedding, not language tokens):
+      Pass 1 -- correct advantage embedding  -> per-sample loss_correct
+      Pass 2 -- flipped advantage embedding  -> per-sample loss_wrong
+    Both passes share identical noise and flow time for fair comparison.
     """
-    from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
-
     policy.eval()
     has_episode_info = policy._episode_info is not None
 
@@ -223,11 +220,8 @@ def _run_validation(
         pos_mask = true_indicator
         neg_mask = ~true_indicator
 
-        lang_tokens = batch[OBS_LANGUAGE_TOKENS]
-        lang_masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
-        B = lang_tokens.shape[0]
+        B = batch[OBS_LANGUAGE_TOKENS].shape[0]
 
-        # Advantage-episode alignment: does advantage sign match episode outcome?
         if has_episode_info:
             ep_indices = batch["episode_index"]
             episode_success = torch.tensor(
@@ -250,34 +244,31 @@ def _run_validation(
             if n_failure > 0:
                 total_aligned_failure += aligned[failure_mask].sum().item()
 
-        actions = batch[ACTION]
         padded_actions = policy.prepare_action(batch)
         noise = torch.randn_like(padded_actions)
         fm_time = torch.rand(B, device=device)
 
-        # Pass 1: correct advantage labels (no dropout)
-        correct_toks, correct_masks = policy._augment_lang_tokens(
-            lang_tokens, lang_masks, true_indicator, dropout_mask=None
+        # Pass 1: correct advantage embedding (no dropout)
+        losses_correct = policy._forward_with_advantage(
+            batch, true_indicator, dropout_mask=None, noise=noise, time=fm_time
         )
-        correct_batch = dict(batch)
-        correct_batch[OBS_LANGUAGE_TOKENS] = correct_toks
-        correct_batch[OBS_LANGUAGE_ATTENTION_MASK] = correct_masks
-        loss_correct, _ = SmolVLAPolicy.forward(
-            policy, correct_batch, noise=noise, time=fm_time, reduction="none"
-        )
-        assert isinstance(loss_correct, torch.Tensor)
+        original_action_dim = policy.config.action_feature.shape[0]
+        losses_correct = losses_correct[:, :, :original_action_dim]
+        actions_is_pad = batch.get("action_is_pad")
+        if actions_is_pad is not None:
+            losses_correct = losses_correct * (~actions_is_pad).unsqueeze(-1)
+        losses_correct = losses_correct[:, :, : policy.config.max_action_dim]
+        loss_correct = losses_correct.mean(dim=(1, 2))
 
-        # Pass 2: flipped advantage labels
-        wrong_toks, wrong_masks = policy._augment_lang_tokens(
-            lang_tokens, lang_masks, ~true_indicator, dropout_mask=None
+        # Pass 2: flipped advantage embedding (no dropout)
+        losses_wrong = policy._forward_with_advantage(
+            batch, ~true_indicator, dropout_mask=None, noise=noise, time=fm_time
         )
-        wrong_batch = dict(batch)
-        wrong_batch[OBS_LANGUAGE_TOKENS] = wrong_toks
-        wrong_batch[OBS_LANGUAGE_ATTENTION_MASK] = wrong_masks
-        loss_wrong, _ = SmolVLAPolicy.forward(
-            policy, wrong_batch, noise=noise, time=fm_time, reduction="none"
-        )
-        assert isinstance(loss_wrong, torch.Tensor)
+        losses_wrong = losses_wrong[:, :, :original_action_dim]
+        if actions_is_pad is not None:
+            losses_wrong = losses_wrong * (~actions_is_pad).unsqueeze(-1)
+        losses_wrong = losses_wrong[:, :, : policy.config.max_action_dim]
+        loss_wrong = losses_wrong.mean(dim=(1, 2))
 
         total_loss += loss_correct.sum().item()
         n_pos = pos_mask.sum().item()

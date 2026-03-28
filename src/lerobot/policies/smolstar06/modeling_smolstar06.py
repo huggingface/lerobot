@@ -17,9 +17,12 @@ SmolStar06: Advantage-Conditioned SmolVLA Policy
 
 Wraps SmolVLA with RECAP-style advantage conditioning. A frozen value network
 (trained separately) labels training data with per-sample advantages that are
-binarized into "Advantage: positive/negative" tokens appended to the language
-prompt. At inference, the model conditions on "Advantage: positive" to produce
-higher-quality actions.
+binarized and injected as a learned embedding directly into the action expert's
+input pathway (embed_suffix). This bypasses the VLM text processing and gives
+the advantage signal a direct gradient path to the flow-matching loss.
+
+At inference, the model conditions on the positive advantage embedding to
+produce higher-quality actions.
 
 Two-phase workflow:
   1. Train a value network with RECAPTrainSmolVLANetwork (see RECAP_VALUE_NETWORK_TRAINING.md)
@@ -28,14 +31,14 @@ Two-phase workflow:
 
 import csv
 import logging
-from typing import Any, Unpack, cast
+from typing import Unpack
 
 import torch
 import torch.nn.functional as F  # noqa: N812
-from torch import Tensor
+from torch import Tensor, nn
 
 from lerobot.policies.smolstar06.configuration_smolstar06 import SmolStar06Config
-from lerobot.policies.smolvla.modeling_smolvla import ActionSelectKwargs, SmolVLAPolicy
+from lerobot.policies.smolvla.modeling_smolvla import ActionSelectKwargs, SmolVLAPolicy, make_att_2d_masks
 from lerobot.rl.algorithms.RECAPSmolVLAValueNetwork import (
     RECAPSmolVLAValueNetwork,
     RECAPSmolVLAValueNetworkConfig,
@@ -48,9 +51,11 @@ class SmolStar06Policy(SmolVLAPolicy):
 
     During training, a frozen value network computes V(o_t) for each sample.
     The deterministic return R_t is derived from episode success/fail labels.
-    Advantage A = R_t - V(o_t) is binarized and injected as language tokens.
+    Advantage A = R_t - V(o_t) is binarized and injected as a learned embedding
+    directly into the action expert's suffix input (embed_suffix), bypassing
+    the VLM text processing entirely.
 
-    During inference, "Advantage: positive" is always appended to the prompt.
+    During inference, the positive advantage embedding is always applied.
     Optional classifier-free guidance (cfg_beta > 1) sharpens the distribution
     by interpolating conditioned and unconditioned flow vectors.
     """
@@ -58,9 +63,6 @@ class SmolStar06Policy(SmolVLAPolicy):
     config: SmolStar06Config
     config_class = SmolStar06Config
     name = "smolstar06"
-
-    advantage_positive_tokens: Tensor
-    advantage_negative_tokens: Tensor
 
     def __init__(
         self,
@@ -74,7 +76,13 @@ class SmolStar06Policy(SmolVLAPolicy):
         if config.value_network_checkpoint:
             self._load_value_network(config.value_network_checkpoint)
 
-        self._setup_advantage_tokens()
+        expert_hidden_size = self.model.vlm_with_expert.expert_hidden_size
+        self.advantage_embedding = nn.Embedding(2, expert_hidden_size)
+        nn.init.zeros_(self.advantage_embedding.weight)
+        logging.info(
+            f"Advantage embedding initialized: nn.Embedding(2, {expert_hidden_size}), "
+            f"zero-initialized"
+        )
 
         self._episode_info: dict[int, dict] | None = None
         self._task_max_len: dict[str, int] | None = None
@@ -97,30 +105,6 @@ class SmolStar06Policy(SmolVLAPolicy):
         trainable = sum(p.numel() for p in self.value_network.parameters() if p.requires_grad)
         total = sum(p.numel() for p in self.value_network.parameters())
         logging.info(f"Value network loaded: {total:,} params ({trainable:,} trainable)")
-
-    def _setup_advantage_tokens(self) -> None:
-        """Pre-tokenize advantage indicator strings as registered buffers."""
-        from transformers import AutoTokenizer, PreTrainedTokenizerBase
-
-        tokenizer = AutoTokenizer.from_pretrained(self.config.vlm_model_name)
-        assert isinstance(tokenizer, PreTrainedTokenizerBase)
-
-        pos_ids = tokenizer.encode(" Advantage: positive", add_special_tokens=False)
-        neg_ids = tokenizer.encode(" Advantage: negative", add_special_tokens=False)
-
-        # Get the max so we can pad out the additional string to the same length
-        max_len = max(len(pos_ids), len(neg_ids))
-        pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
-        pos_ids += [pad_id] * (max_len - len(pos_ids))
-        neg_ids += [pad_id] * (max_len - len(neg_ids))
-
-        self.register_buffer("advantage_positive_tokens", torch.tensor(pos_ids, dtype=torch.long))
-        self.register_buffer("advantage_negative_tokens", torch.tensor(neg_ids, dtype=torch.long))
-        self.advantage_token_length = max_len
-        logging.info(
-            f"Advantage tokens: positive={self.advantage_positive_tokens.tolist()}, "
-            f"negative={self.advantage_negative_tokens.tolist()} ({max_len} tokens)"
-        )
 
     def _setup_episode_metadata(self, dataset_meta, labels_path: str) -> None:
         """Load episode labels and build per-episode metadata for on-the-fly return computation."""
@@ -158,54 +142,34 @@ class SmolStar06Policy(SmolVLAPolicy):
             f"{sum(1 for v in episode_info.values() if v['success'])} successful"
         )
 
-    def _augment_lang_tokens(
+    def _build_advantage_embedding(
         self,
-        lang_tokens: Tensor,
-        lang_masks: Tensor,
-        advantage_indicator: Tensor | None = None,
-        dropout_mask: Tensor | None = None,
-    ) -> tuple[Tensor, Tensor]:
-        """Insert advantage indicator tokens right after text, before padding.
+        advantage_indicator: Tensor,
+        dropout_mask: Tensor | None,
+        reference_emb: Tensor,
+    ) -> Tensor:
+        """Build the advantage embedding to add to the suffix.
 
         Args:
-            lang_tokens: [B, T] token IDs (right-padded).
-            lang_masks: [B, T] attention mask (1=real, 0=padding).
-            advantage_indicator: [B] bool tensor (True=positive). None → always positive.
-            dropout_mask: [B] bool tensor (True=drop advantage tokens for this sample).
+            advantage_indicator: [B] bool tensor (True=positive advantage).
+            dropout_mask: [B] bool tensor (True=drop advantage for this sample).
+                When dropped, the embedding is zeroed out (unconditional pass).
+            reference_emb: [B, chunk_size, expert_hidden] tensor to match
+                shape and dtype.
 
         Returns:
-            Augmented (lang_tokens, lang_masks) with advantage tokens inserted.
+            [B, chunk_size, expert_hidden] advantage embedding tensor.
         """
-        B, T = lang_tokens.shape
-        device = lang_tokens.device
-        adv_len = self.advantage_token_length
+        indices = advantage_indicator.long()
+        adv_emb = self.advantage_embedding(indices)
+        adv_emb = adv_emb.unsqueeze(1).expand_as(reference_emb)
+        adv_emb = adv_emb.to(dtype=reference_emb.dtype)
 
-        if advantage_indicator is not None:
-            pos = self.advantage_positive_tokens.unsqueeze(0).expand(B, -1)
-            neg = self.advantage_negative_tokens.unsqueeze(0).expand(B, -1)
-            adv_tokens = torch.where(
-                advantage_indicator[:, None].expand(-1, adv_len),
-                pos,
-                neg,
-            )
-        else:
-            adv_tokens = self.advantage_positive_tokens.unsqueeze(0).expand(B, -1)
-
-        text_lengths = lang_masks.sum(dim=1, keepdim=True).long()
-        offsets = torch.arange(adv_len, device=device).unsqueeze(0)
-        positions = (text_lengths + offsets).clamp(max=T - 1)
-
-        new_tokens = lang_tokens.clone()
-        new_tokens.scatter_(1, positions, adv_tokens)
-
-        adv_mask_vals = torch.ones(B, adv_len, device=device, dtype=lang_masks.dtype)
         if dropout_mask is not None:
-            adv_mask_vals = adv_mask_vals * (~dropout_mask).unsqueeze(1).to(adv_mask_vals.dtype)
+            keep_mask = (~dropout_mask).to(dtype=adv_emb.dtype)
+            adv_emb = adv_emb * keep_mask[:, None, None]
 
-        new_masks = lang_masks.clone()
-        new_masks.scatter_(1, positions, adv_mask_vals)
-
-        return new_tokens, new_masks
+        return adv_emb
 
     @torch.no_grad()
     def _compute_value(self, batch: dict[str, Tensor]) -> Tensor:
@@ -296,9 +260,9 @@ class SmolStar06Policy(SmolVLAPolicy):
         """Compute per-sample advantages using the most informative available source.
 
         Priority:
-          1. batch["advantage"] — pre-computed advantages (e.g., from offline labeling)
-          2. batch["target_value"] + frozen VN — on-the-fly V(o_t)
-          3. Episode metadata + frozen VN — fully on-the-fly R_t and V(o_t)
+          1. batch["advantage"] -- pre-computed advantages (e.g., from offline labeling)
+          2. batch["target_value"] + frozen VN -- on-the-fly V(o_t)
+          3. Episode metadata + frozen VN -- fully on-the-fly R_t and V(o_t)
 
         Returns (advantage, diagnostics) where diagnostics contains V_t, R_t stats.
         """
@@ -335,6 +299,64 @@ class SmolStar06Policy(SmolVLAPolicy):
         }
         return adv, diagnostics
 
+    def _forward_with_advantage(
+        self,
+        batch: dict[str, Tensor],
+        advantage_indicator: Tensor,
+        dropout_mask: Tensor | None = None,
+        noise: Tensor | None = None,
+        time: Tensor | None = None,
+    ) -> Tensor:
+        """Flow-matching forward with advantage embedding injected into embed_suffix.
+
+        This method replicates VLAFlowMatching.forward() but adds the advantage
+        embedding to the suffix embeddings before running the joint VLM+expert pass.
+
+        Returns:
+            Per-element MSE losses of shape [B, chunk_size, action_dim].
+        """
+        images, img_masks = self.prepare_images(batch)
+        state = self.prepare_state(batch)
+        lang_tokens = batch[OBS_LANGUAGE_TOKENS]
+        lang_masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
+        actions = self.prepare_action(batch)
+
+        if noise is None:
+            noise = self.model.sample_noise(actions.shape, actions.device)
+        if time is None:
+            time = self.model.sample_time(actions.shape[0], actions.device)
+
+        time_expanded = time[:, None, None]
+        x_t = time_expanded * noise + (1 - time_expanded) * actions
+        u_t = noise - actions
+
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.model.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks, state=state
+        )
+        suffix_embs, suffix_pad_masks, suffix_att_masks = self.model.embed_suffix(x_t, time)
+
+        adv_emb = self._build_advantage_embedding(advantage_indicator, dropout_mask, suffix_embs)
+        suffix_embs = suffix_embs + adv_emb
+
+        pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
+        att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
+
+        att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
+        position_ids = torch.cumsum(pad_masks, dim=1) - 1
+        (_, suffix_out), _ = self.model.vlm_with_expert.forward(
+            attention_mask=att_2d_masks,
+            position_ids=position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, suffix_embs],
+            use_cache=False,
+            fill_kv_cache=False,
+        )
+        suffix_out = suffix_out[:, -self.model.config.chunk_size :]
+        suffix_out = suffix_out.to(dtype=torch.float32)
+        v_t = self.model.action_out_proj(suffix_out)
+        losses = F.mse_loss(u_t, v_t, reduction="none")
+        return losses
+
     def forward(  # ty: ignore[invalid-method-override]
         self, batch: dict[str, Tensor], noise=None, time=None, reduction: str = "mean"
     ) -> tuple[Tensor, dict[str, float]]:
@@ -343,10 +365,15 @@ class SmolStar06Policy(SmolVLAPolicy):
         Steps:
           1. Compute per-sample advantages (R_t - V(o_t))
           2. Binarize: positive if advantage > threshold
-          3. Apply dropout (30% by default): omit indicator for CFG training
-          4. Augment language tokens with advantage indicator
-          5. Run base SmolVLA flow-matching forward
+          3. Apply dropout (30% by default): zero out advantage embedding for CFG training
+          4. Inject advantage embedding into action expert suffix
+          5. Run flow-matching forward and compute loss
         """
+        if self.config.adapt_to_pi_aloha:
+            from lerobot.utils.constants import OBS_STATE
+            batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
+            batch[ACTION] = self._pi_aloha_encode_actions_inv(batch[ACTION])
+
         advantage, adv_diagnostics = self._compute_advantages(batch)
 
         advantage_indicator = advantage > self.config.advantage_threshold
@@ -359,20 +386,33 @@ class SmolStar06Policy(SmolVLAPolicy):
                 torch.rand(advantage.shape[0], device=advantage.device) < self.config.advantage_dropout
             )
 
-        lang_tokens = batch[OBS_LANGUAGE_TOKENS]
-        lang_masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
-        aug_tokens, aug_masks = self._augment_lang_tokens(
-            lang_tokens, lang_masks, advantage_indicator, dropout_mask
+        losses = self._forward_with_advantage(
+            batch, advantage_indicator, dropout_mask, noise=noise, time=time
         )
 
-        batch = dict(batch)
-        batch[OBS_LANGUAGE_TOKENS] = aug_tokens
-        batch[OBS_LANGUAGE_ATTENTION_MASK] = aug_masks
+        original_action_dim = self.config.action_feature.shape[0]
+        losses = losses[:, :, :original_action_dim]
+        loss_dict: dict[str, float] = {}
+        loss_dict["losses_after_forward"] = losses.clone().mean().item()
 
-        result = cast(tuple[Tensor, dict[str, Any]], super().forward(batch, noise=noise, time=time, reduction=reduction))
-        loss = result[0]
-        output_dict: dict[str, float] = result[1]
+        actions_is_pad = batch.get("action_is_pad")
+        if actions_is_pad is not None:
+            in_episode_bound = ~actions_is_pad
+            losses = losses * in_episode_bound.unsqueeze(-1)
+            loss_dict["losses_after_in_ep_bound"] = losses.clone().mean().item()
 
+        losses = losses[:, :, : self.config.max_action_dim]
+        loss_dict["losses_after_rm_padding"] = losses.clone().mean().item()
+
+        if reduction == "none":
+            per_sample_loss = losses.mean(dim=(1, 2))
+            loss = per_sample_loss
+            loss_dict["loss"] = per_sample_loss.mean().item()
+        else:
+            loss = losses.mean()
+            loss_dict["loss"] = loss.item()
+
+        output_dict = loss_dict
         output_dict.update(adv_diagnostics)
         output_dict["advantage_threshold"] = self.config.advantage_threshold
         output_dict["advantage_pct_positive"] = n_positive / n_total
@@ -387,95 +427,93 @@ class SmolStar06Policy(SmolVLAPolicy):
                     parts.append(f"V(o_t)={adv_diagnostics['V_t_mean']:.4f}±{adv_diagnostics['V_t_std']:.4f}")
                     parts.append(f"R_t={adv_diagnostics['R_t_mean']:.4f}±{adv_diagnostics['R_t_std']:.4f}")
                 parts.append(f"adv={adv_diagnostics['advantage_mean']:.4f}±{adv_diagnostics['advantage_std']:.4f}")
-                parts.append(f"token=pos:{n_positive}/{n_total} drop:{n_dropped}/{n_total}")
+                parts.append(f"emb=pos:{n_positive}/{n_total} drop:{n_dropped}/{n_total}")
                 parts.append(f"thresh={self.config.advantage_threshold}")
                 logging.info("  ".join(parts))
 
         return loss, output_dict
 
+    def _denoise_step_with_advantage(
+        self,
+        x_t: Tensor,
+        prefix_pad_masks: Tensor,
+        past_key_values,
+        timestep: Tensor,
+        advantage_indicator: Tensor,
+    ) -> Tensor:
+        """Single denoising step with advantage embedding injected into suffix."""
+        suffix_embs, suffix_pad_masks, suffix_att_masks = self.model.embed_suffix(x_t, timestep)
+
+        adv_emb = self._build_advantage_embedding(advantage_indicator, None, suffix_embs)
+        suffix_embs = suffix_embs + adv_emb
+
+        suffix_len = suffix_pad_masks.shape[1]
+        batch_size = prefix_pad_masks.shape[0]
+        prefix_len = prefix_pad_masks.shape[1]
+        prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
+
+        suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
+        full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
+        prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
+        position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
+
+        outputs_embeds, _ = self.model.vlm_with_expert.forward(
+            attention_mask=full_att_2d_masks,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            inputs_embeds=[None, suffix_embs],
+            use_cache=self.config.use_cache,
+            fill_kv_cache=False,
+        )
+        suffix_out = outputs_embeds[1]
+        suffix_out = suffix_out[:, -self.config.chunk_size :]
+        suffix_out = suffix_out.to(dtype=torch.float32)
+        v_t = self.model.action_out_proj(suffix_out)
+        return v_t
+
     def _get_action_chunk(
         self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[ActionSelectKwargs]
     ) -> Tensor:
-        """Inference action sampling: always condition on 'Advantage: positive'.
+        """Inference action sampling with positive advantage embedding.
 
         For cfg_beta > 1, runs classifier-free guidance by interpolating
         conditioned and unconditioned flow vectors.
         """
-        orig_tokens = batch[OBS_LANGUAGE_TOKENS]
-        orig_masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
-        aug_tokens, aug_masks = self._augment_lang_tokens(orig_tokens, orig_masks)
-
-        batch = dict(batch)
-        batch[OBS_LANGUAGE_TOKENS] = aug_tokens
-        batch[OBS_LANGUAGE_ATTENTION_MASK] = aug_masks
-        batch["_orig_lang_tokens"] = orig_tokens
-        batch["_orig_lang_masks"] = orig_masks
-
         if self.config.cfg_beta > 1.0:
             return self._get_action_chunk_cfg(batch, noise, **kwargs)
 
-        return super()._get_action_chunk(batch, noise, **kwargs)
-
-    def _get_action_chunk_cfg(
-        self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[ActionSelectKwargs]
-    ) -> Tensor:
-        """Classifier-free guidance inference.
-
-        Runs two forward passes per denoising step:
-          1. Conditioned on "Advantage: positive"
-          2. Unconditioned (no advantage tokens)
-        Interpolates: v = v_uncond + beta * (v_cond - v_uncond)
-        """
         for k in batch:
             if k in self._queues and k != ACTION:
                 batch[k] = torch.stack(list(self._queues[k]), dim=1)
 
         images, img_masks = self.prepare_images(batch)
         state = self.prepare_state(batch)
-
-        cond_tokens = batch[OBS_LANGUAGE_TOKENS]
-        cond_masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
-        uncond_tokens = batch["_orig_lang_tokens"]
-        uncond_masks = batch["_orig_lang_masks"]
+        lang_tokens = batch[OBS_LANGUAGE_TOKENS]
+        lang_masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
 
         bsize = state.shape[0]
         device = state.device
-        beta = self.config.cfg_beta
 
         if noise is None:
             actions_shape = (bsize, self.config.chunk_size, self.config.max_action_dim)
             noise = self.model.sample_noise(actions_shape, device)
 
-        cond_prefix_embs, cond_prefix_pad, cond_prefix_att = self.model.embed_prefix(
-            images, img_masks, cond_tokens, cond_masks, state=state
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.model.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks, state=state
         )
-        uncond_prefix_embs, uncond_prefix_pad, uncond_prefix_att = self.model.embed_prefix(
-            images, img_masks, uncond_tokens, uncond_masks, state=state
-        )
+        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
-        from lerobot.policies.smolvla.modeling_smolvla import make_att_2d_masks
-
-        cond_att_2d = make_att_2d_masks(cond_prefix_pad, cond_prefix_att)
-        cond_pos_ids = (torch.cumsum(cond_prefix_pad, dim=1) - 1).long()
-        _, cond_kv = self.model.vlm_with_expert.forward(
-            attention_mask=cond_att_2d,
-            position_ids=cond_pos_ids,  # ty: ignore[invalid-argument-type]
+        _, past_key_values = self.model.vlm_with_expert.forward(
+            attention_mask=prefix_att_2d_masks,
+            position_ids=prefix_position_ids,
             past_key_values=None,
-            inputs_embeds=[cond_prefix_embs, None],  # ty: ignore[invalid-argument-type]
+            inputs_embeds=[prefix_embs, None],
             use_cache=self.config.use_cache,
             fill_kv_cache=True,
         )
 
-        uncond_att_2d = make_att_2d_masks(uncond_prefix_pad, uncond_prefix_att)
-        uncond_pos_ids = (torch.cumsum(uncond_prefix_pad, dim=1) - 1).long()
-        _, uncond_kv = self.model.vlm_with_expert.forward(
-            attention_mask=uncond_att_2d,
-            position_ids=uncond_pos_ids,  # ty: ignore[invalid-argument-type]
-            past_key_values=None,
-            inputs_embeds=[uncond_prefix_embs, None],  # ty: ignore[invalid-argument-type]
-            use_cache=self.config.use_cache,
-            fill_kv_cache=True,
-        )
+        advantage_indicator = torch.ones(bsize, dtype=torch.bool, device=device)
 
         num_steps = self.config.num_steps
         dt = -1.0 / num_steps
@@ -485,18 +523,111 @@ class SmolStar06Policy(SmolVLAPolicy):
             time_val = 1.0 + step * dt
             time_tensor = torch.tensor(time_val, dtype=torch.float32, device=device).expand(bsize)
 
-            v_cond = self.model.denoise_step(
+            v_t = self._denoise_step_with_advantage(
                 x_t=x_t,
-                prefix_pad_masks=cond_prefix_pad,
-                past_key_values=cond_kv,
+                prefix_pad_masks=prefix_pad_masks,
+                past_key_values=past_key_values,
                 timestep=time_tensor,
+                advantage_indicator=advantage_indicator,
             )
-            v_uncond = self.model.denoise_step(
+            x_t = x_t + dt * v_t
+
+        actions = x_t
+        assert self.config.action_feature is not None
+        original_action_dim = self.config.action_feature.shape[0]
+        actions = actions[:, :, :original_action_dim]
+
+        if self.config.adapt_to_pi_aloha:
+            actions = self._pi_aloha_encode_actions(actions)
+
+        return actions
+
+    def _get_action_chunk_cfg(
+        self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[ActionSelectKwargs]
+    ) -> Tensor:
+        """Classifier-free guidance inference.
+
+        Runs two denoising passes per Euler step:
+          1. Conditioned: positive advantage embedding applied
+          2. Unconditioned: no advantage embedding (zero)
+        Interpolates: v = v_uncond + beta * (v_cond - v_uncond)
+        """
+        for k in batch:
+            if k in self._queues and k != ACTION:
+                batch[k] = torch.stack(list(self._queues[k]), dim=1)
+
+        images, img_masks = self.prepare_images(batch)
+        state = self.prepare_state(batch)
+        lang_tokens = batch[OBS_LANGUAGE_TOKENS]
+        lang_masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
+
+        bsize = state.shape[0]
+        device = state.device
+        beta = self.config.cfg_beta
+
+        if noise is None:
+            actions_shape = (bsize, self.config.chunk_size, self.config.max_action_dim)
+            noise = self.model.sample_noise(actions_shape, device)
+
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.model.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks, state=state
+        )
+        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+
+        _, past_key_values = self.model.vlm_with_expert.forward(
+            attention_mask=prefix_att_2d_masks,
+            position_ids=prefix_position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=self.config.use_cache,
+            fill_kv_cache=True,
+        )
+
+        cond_indicator = torch.ones(bsize, dtype=torch.bool, device=device)
+        uncond_dropout = torch.ones(bsize, dtype=torch.bool, device=device)
+
+        num_steps = self.config.num_steps
+        dt = -1.0 / num_steps
+        x_t = noise
+
+        for step in range(num_steps):
+            time_val = 1.0 + step * dt
+            time_tensor = torch.tensor(time_val, dtype=torch.float32, device=device).expand(bsize)
+
+            v_cond = self._denoise_step_with_advantage(
                 x_t=x_t,
-                prefix_pad_masks=uncond_prefix_pad,
-                past_key_values=uncond_kv,
+                prefix_pad_masks=prefix_pad_masks,
+                past_key_values=past_key_values,
                 timestep=time_tensor,
+                advantage_indicator=cond_indicator,
             )
+
+            suffix_embs, suffix_pad_masks, suffix_att_masks = self.model.embed_suffix(x_t, time_tensor)
+
+            adv_emb = self._build_advantage_embedding(cond_indicator, uncond_dropout, suffix_embs)
+            uncond_suffix_embs = suffix_embs + adv_emb
+
+            suffix_len = suffix_pad_masks.shape[1]
+            prefix_len = prefix_pad_masks.shape[1]
+            prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(bsize, suffix_len, prefix_len)
+            suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
+            full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
+            prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
+            position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
+
+            outputs_embeds, _ = self.model.vlm_with_expert.forward(
+                attention_mask=full_att_2d_masks,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                inputs_embeds=[None, uncond_suffix_embs],
+                use_cache=self.config.use_cache,
+                fill_kv_cache=False,
+            )
+            suffix_out = outputs_embeds[1]
+            suffix_out = suffix_out[:, -self.config.chunk_size :]
+            suffix_out = suffix_out.to(dtype=torch.float32)
+            v_uncond = self.model.action_out_proj(suffix_out)
 
             v_t = v_uncond + beta * (v_cond - v_uncond)
             x_t = x_t + dt * v_t

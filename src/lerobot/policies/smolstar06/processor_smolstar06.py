@@ -15,8 +15,9 @@
 """
 Processor for SmolStar06 policy.
 
-Mirrors the SmolVLA processor but uses the SmolStar06Config (which has an
-increased tokenizer_max_length to accommodate advantage indicator tokens).
+Mirrors the SmolVLA processor using SmolStar06Config. The advantage conditioning
+is handled via a learned embedding in the action expert's suffix, not through
+language tokens, so no extra tokenizer capacity is needed.
 """
 
 from typing import Any
@@ -48,8 +49,8 @@ def make_smolstar06_pre_post_processors(
 ]:
     """Construct pre/post-processor pipelines for SmolStar06.
 
-    Identical to SmolVLA's pipelines except that tokenizer_max_length is
-    increased (via SmolStar06Config) to leave room for advantage tokens.
+    Identical to SmolVLA's pipelines. Advantage conditioning is handled via
+    a learned embedding in the action expert, not through language tokens.
     """
     assert config.device is not None
     assert config.input_features is not None

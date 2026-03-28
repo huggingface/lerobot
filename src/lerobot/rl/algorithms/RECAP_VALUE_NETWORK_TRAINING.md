@@ -214,14 +214,95 @@ The RECAP pipeline has two phases:
 1. **Train a value network** (Sections 2.1–2.2 above) — produces a critic that
    predicts expected returns from observations.
 2. **Train an advantage-conditioned policy** (this section) — uses the frozen
-   value network to label each training sample with an advantage indicator
-   ("Advantage: positive" or "Advantage: negative") that is appended to the
-   language prompt before standard SmolVLA flow-matching training.
+   value network to label each training sample with a binarized advantage
+   indicator that is injected as a learned embedding directly into the action
+   expert's input pathway.
 
-At inference, the model simply conditions on "Advantage: positive" to produce
-higher-quality actions. No value network is needed at test time.
+At inference, the model conditions on the positive advantage embedding to
+produce higher-quality actions. No value network is needed at test time.
 
-### 3.1 How advantage conditioning works
+### 3.1 How advantage conditioning works: RECAP paper vs SmolVLA
+
+The RECAP paper (pi-0.6) and SmolVLA use fundamentally different model
+architectures, which means the advantage conditioning must be implemented
+differently. Understanding this distinction is critical.
+
+#### 3.1.1 RECAP paper (pi-0.6): single-stream architecture
+
+pi-0.6 uses a **single-stream** architecture where the VLM backbone processes a
+unified token sequence. The advantage indicator appears as text tokens in that
+sequence, positioned after the sub-task prediction but before the action tokens:
+
+```
+[images] [language: "pick up the cube"] [sub-task: "grasp object"] [Advantage: positive] [action tokens]
+```
+
+Because the action expert shares the same causal sequence as the language model,
+the advantage text is the **most recent context** when the expert generates
+actions. Standard causal attention ensures the expert directly attends to the
+advantage tokens. At inference, you simply append `"Advantage: positive"` to the
+prompt and sample actions normally.
+
+#### 3.1.2 SmolVLA: two-stream architecture
+
+SmolVLA uses a **two-stream** architecture with separate processing stacks:
+
+- **Stream 0 (VLM)**: processes images, language tokens, and robot state
+- **Stream 1 (action expert)**: processes noisy actions and flow-matching timestep
+
+The two streams are connected only through **cross-attention** (and joint
+attention at every other layer). There is no shared token sequence where
+advantage text can be placed "right before the actions."
+
+If you append `"Advantage: positive"` as text tokens to the language prompt, the
+advantage signal enters the VLM stream (stream 0) and must survive the entire
+VLM transformer stack before reaching the action expert indirectly through
+cross-attention to VLM key/value states. In practice:
+
+1. The advantage is 4 tokens among 200+ prefix tokens (images produce many
+   tokens) — the signal is too diluted in the VLM's internal representations.
+2. The VLM has no training objective that encourages it to amplify the advantage
+   signal in its key/value states.
+3. The gradient from the flow-matching MSE loss must backpropagate through the
+   expert's cross-attention, through the VLM's K/V projections, through every
+   VLM layer, back to the advantage token embeddings — an extremely weak signal.
+4. **Result**: the model produces identical flow-matching loss regardless of
+   advantage label (`cond_acc=0.0`, `cond_gap=0.0`).
+
+#### 3.1.3 SmolStar06 solution: expert-side advantage embedding
+
+SmolStar06 injects the advantage signal as a **learned embedding** directly into
+the action expert's input pathway (`embed_suffix`), bypassing the VLM text
+processing entirely:
+
+```
+nn.Embedding(2, expert_hidden_size)  →  index 0 = negative, index 1 = positive
+```
+
+The embedding vector is added to the action-time embedding in `embed_suffix`,
+so the information path is:
+
+```
+advantage_indicator (True/False)
+    → nn.Embedding lookup → dense vector [expert_hidden_size]
+    → broadcast to [B, chunk_size, expert_hidden_size]
+    → ADD to action_time_emb in embed_suffix
+    → expert layers process this directly
+    → action_out_proj → predicted velocity v_t
+    → MSE loss against target u_t
+```
+
+The gradient path is **direct**: MSE loss → `action_out_proj` → expert layers →
+advantage embedding weights. The embedding is zero-initialized so it starts
+neutral, and the MSE loss immediately provides gradient signal.
+
+The VLM prefix (images, language, state) is processed normally with no advantage
+tokens — the expert still gets all language/visual information through
+cross-attention, exactly as in base SmolVLA. The advantage embedding is a
+**separate, dedicated channel** that does not compete with image and language
+tokens for attention bandwidth.
+
+### 3.2 Training
 
 For each training sample `(o_t, a_t)`:
 
@@ -230,22 +311,25 @@ For each training sample `(o_t, a_t)`:
 2. The frozen value network predicts `V(o_t)`.
 3. Advantage `A = R_t - V(o_t)` measures whether the trajectory did better or
    worse than expected.
-4. `A > 0` → append `"Advantage: positive"` tokens to the prompt.
-   `A ≤ 0` → append `"Advantage: negative"` tokens.
-5. 30% of the time the advantage indicator is dropped entirely (enables
-   optional classifier-free guidance at test time with `cfg_beta > 1`).
+4. `A > threshold` → advantage embedding index 1 (positive).
+   `A ≤ threshold` → advantage embedding index 0 (negative).
+5. The advantage embedding vector is added to the action-time embedding in
+   `embed_suffix`, directly modulating the expert's denoising input.
+6. With 30% probability, the advantage embedding is zeroed out (dropout),
+   producing an unconditional forward pass. This enables optional
+   classifier-free guidance at test time with `cfg_beta > 1`.
 
-### 3.2 Quick start — SmolStar06 (RTX 4070 TI SUPER)
+### 3.3 Quick start — SmolStar06 (RTX 4070 TI SUPER)
 
 Prerequisites:
 - A trained SmolVLA value network checkpoint (from Section 2.2). The example
-  below uses `outputs/so101_pickplace_recap_smolvla_scratch_3`.
+  below uses `outputs/so101_pickplace_recap_value`.
 - The same dataset and episode labels used for value network training.
 
 ```bash
 uv run python -m lerobot.rl.algorithms.RECAPTrainSmolStar \
   --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
-  --output_dir="${HOME}/code/lerobot/outputs/recap_smolstar_train_0" \
+  --output_dir="${HOME}/code/lerobot/outputs/recap_smolstar_train_4" \
   --value_network_checkpoint="${HOME}/code/lerobot/outputs/so101_pickplace_recap_value/checkpoints/last.pt" \
   --epochs=5 \
   --batch_size=6 \
@@ -255,11 +339,10 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainSmolStar \
   --c_fail=500.0 \
   --advantage_threshold=0.0 \
   --advantage_dropout=0.3 \
-  --tokenizer_max_length=64 \
   --log_every_n_steps=10
 ```
 
-### 3.3 SmolStar06-specific configuration flags
+### 3.4 SmolStar06-specific configuration flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -267,9 +350,8 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainSmolStar \
 | `episode_labels_path` | `None` | Path to `episode_labels.csv` with per-episode success/fail labels |
 | `c_fail` | `500.0` | Failure penalty (must match the value used for value network training) |
 | `advantage_threshold` | `0.0` | Binarization threshold: advantage > threshold → positive |
-| `advantage_dropout` | `0.3` | Probability of omitting the advantage indicator (for CFG training) |
+| `advantage_dropout` | `0.3` | Probability of zeroing out the advantage embedding (for CFG training) |
 | `cfg_beta` | `1.0` | Classifier-free guidance scale at inference (1.0 = no CFG) |
-| `tokenizer_max_length` | `64` | Increased from SmolVLA's 48 to accommodate advantage tokens |
 
 ---
 
@@ -305,7 +387,7 @@ W&B is completely disabled — no import, no network calls.
 | Key prefix | Metrics | When |
 |------------|---------|------|
 | `train/` | `loss`, `lr`, `step_loss` | Every `log_every_n_steps` training steps |
-| `val/` | `val_loss`, `val_loss_pos`, `val_loss_neg`, `val_n_pos`, `val_n_neg`, `val_conditioning_accuracy`, `val_conditioning_gap`, `val_conditioning_gap_pos`, `val_conditioning_gap_neg` | Every validation (step-based or epoch-end) |
+| `val/` | `val_loss`, `val_loss_pos`, `val_loss_neg`, `val_n_pos`, `val_n_neg`, `val_conditioning_accuracy`, `val_conditioning_gap`, `val_conditioning_gap_pos`, `val_conditioning_gap_neg`, `val_adv_episode_alignment`, `val_alignment_on_success`, `val_alignment_on_failure` | Every validation (step-based or epoch-end) |
 | `epoch/` | All of the above plus `epoch`, `train_loss`, `lr` | End of each epoch |
 
 ### 4.4 Example commands
@@ -328,31 +410,32 @@ SmolStar06 policy with W&B:
 ```bash
 uv run python -m lerobot.rl.algorithms.RECAPTrainSmolStar \
   --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
-  --output_dir="${HOME}/code/lerobot/outputs/recap_smolstar_train_3" \
+  --output_dir="${HOME}/code/lerobot/outputs/recap_smolstar_train_5" \
   --value_network_checkpoint="${HOME}/code/lerobot/outputs/so101_pickplace_recap_value/checkpoints/last.pt" \
   --epochs=5 \
   --batch_size=6 \
-  --learning_rate=1e-4 \
+  --learning_rate=1e-3 \
   --val_split_ratio=0.1 \
   --validate_every_n_train_steps=50 \
   --c_fail=500.0 \
   --advantage_threshold=0.0 \
   --advantage_dropout=0.3 \
-  --tokenizer_max_length=64 \
   --log_every_n_steps=10 \
   --wandb_project="recap-smolstar" \
-  --wandb_run_name="smolstar-run-3"
+  --wandb_run_name="smolstar-run-5"
 ```
 
 ---
 
-### 3.4 Inference
+### 3.5 Inference
 
 At inference time, no value network is needed:
 
-- **`cfg_beta=1.0`** (default): The model appends "Advantage: positive" to
-  every prompt and runs standard SmolVLA action sampling.
+- **`cfg_beta=1.0`** (default): The positive advantage embedding (index 1) is
+  added to every `embed_suffix` call during denoising. Language tokens are
+  unmodified. This produces actions conditioned on "better than average."
 - **`cfg_beta>1.0`** (optional): Classifier-free guidance runs two denoising
-  passes per Euler step — one conditioned on "positive" and one without the
-  indicator — then interpolates the flow vectors for sharper action
-  distributions.
+  passes per Euler step — one with the positive advantage embedding
+  (conditioned) and one without any advantage embedding (unconditional) — then
+  interpolates the flow vectors:
+  `v = v_uncond + beta * (v_cond - v_uncond)`.

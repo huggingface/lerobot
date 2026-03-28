@@ -25,7 +25,8 @@ class SmolStar06Config(SmolVLAConfig):
 
     Extends SmolVLAConfig with RECAP-style advantage conditioning parameters.
     The frozen value network labels training data with per-sample advantages;
-    at inference the model simply conditions on "Advantage: positive".
+    a learned embedding injects the binarized advantage directly into the
+    action expert's input pathway (embed_suffix).
     """
 
     # Frozen value network checkpoint (path to .pt file from RECAP training)
@@ -43,6 +44,3 @@ class SmolStar06Config(SmolVLAConfig):
 
     # Episode labels CSV for on-the-fly return computation
     episode_labels_path: str | None = None
-
-    # Increase tokenizer_max_length to accommodate advantage tokens (~6 extra tokens)
-    tokenizer_max_length: int = 64
