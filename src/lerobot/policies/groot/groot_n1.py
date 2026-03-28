@@ -176,7 +176,7 @@ N_COLOR_CHANNELS = 3
 @dataclass
 class GR00TN15Config(PretrainedConfig):
     model_type = "gr00t_n1_5"
-    backbone_cfg: dict = field(init=False, metadata={"help": "Backbone configuration."})
+    backbone_cfg: dict = field(default_factory=dict, init=False, metadata={"help": "Backbone configuration."})
 
     action_head_cfg: dict = field(init=False, metadata={"help": "Action head configuration."})
 
