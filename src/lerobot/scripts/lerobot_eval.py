@@ -316,6 +316,9 @@ def eval_policy(
         elif isinstance(env, gym.vector.AsyncVectorEnv):
             # Here we must render all frames and discard any we don't need.
             ep_frames.append(np.stack(env.call("render")[:n_to_render_now]))
+        elif hasattr(env, "envs"):
+            # Process-isolated or other proxy environments that expose env.envs[i].render().
+            ep_frames.append(np.stack([env.envs[i].render() for i in range(n_to_render_now)]))  # noqa: B023
 
     if max_episodes_rendered > 0:
         video_paths: list[str] = []
@@ -517,12 +520,26 @@ def eval_main(cfg: EvalPipelineConfig):
     logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
 
     logging.info("Making environment.")
-    envs = make_env(
-        cfg.env,
-        n_envs=cfg.eval.batch_size,
-        use_async_envs=cfg.eval.use_async_envs,
-        trust_remote_code=cfg.trust_remote_code,
-    )
+    if cfg.eval.process_isolated:
+        from lerobot.envs.process_isolated import make_env_in_subprocess
+
+        logging.info(
+            "Process-isolated mode: environments will run in a subprocess with GPU disabled "
+            "(CUDA_VISIBLE_DEVICES='', MUJOCO_GL=osmesa)."
+        )
+        envs = make_env_in_subprocess(
+            cfg.env,
+            n_envs=cfg.eval.batch_size,
+            use_async_envs=cfg.eval.use_async_envs,
+            trust_remote_code=cfg.trust_remote_code,
+        )
+    else:
+        envs = make_env(
+            cfg.env,
+            n_envs=cfg.eval.batch_size,
+            use_async_envs=cfg.eval.use_async_envs,
+            trust_remote_code=cfg.trust_remote_code,
+        )
 
     logging.info("Making policy.")
 
@@ -571,7 +588,12 @@ def eval_main(cfg: EvalPipelineConfig):
             print(f"\nAggregated Metrics for {task_group}:")
             print(task_group_info)
     # Close all vec envs
-    close_envs(envs)
+    if cfg.eval.process_isolated:
+        from lerobot.envs.process_isolated import close_process_isolated_envs
+
+        close_process_isolated_envs(envs)
+    else:
+        close_envs(envs)
 
     # Save info
     with open(Path(cfg.output_dir) / "eval_info.json", "w") as f:
