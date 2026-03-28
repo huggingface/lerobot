@@ -243,24 +243,20 @@ Prerequisites:
 - The same dataset and episode labels used for value network training.
 
 ```bash
-lerobot-train \
-  --job_name=recap_smolstar06_pickplace_2026_03_26_0\
-  --policy.type=smolstar06 \
-  --policy.value_network_checkpoint="${HOME}/code/lerobot/outputs/so101_pickplace_recap_value/checkpoints/last.pt" \
-  --policy.episode_labels_path="${HOME}/.cache/huggingface/lerobot/jackvial/so101_pickplace_recap_merged_v2/meta/episode_labels.csv" \
-  --policy.c_fail=500.0 \
-  --policy.advantage_threshold=0.0 \
-  --policy.advantage_dropout=0.3 \
-  --policy.cfg_beta=1.0 \
-  --policy.tokenizer_max_length=64 \
-  --policy.optimizer_lr=1e-4 \
-  --policy.scheduler_warmup_steps=1000 \
-  --policy.scheduler_decay_steps=30000 \
-  --dataset.repo_id=jackvial/so101_pickplace_recap_merged_v2 \
+uv run python -m lerobot.rl.algorithms.RECAPTrainSmolStar \
+  --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
+  --output_dir="${HOME}/code/lerobot/outputs/recap_smolstar_train_0" \
+  --value_network_checkpoint="${HOME}/code/lerobot/outputs/so101_pickplace_recap_value/checkpoints/last.pt" \
+  --epochs=5 \
   --batch_size=6 \
-  --policy.push_to_hub=false \
-  --save_freq=1000 \
-  --steps=10000
+  --learning_rate=1e-4 \
+  --val_split_ratio=0.1 \
+  --validate_every_n_train_steps=200 \
+  --c_fail=500.0 \
+  --advantage_threshold=0.0 \
+  --advantage_dropout=0.3 \
+  --tokenizer_max_length=64 \
+  --log_every_n_steps=10
 ```
 
 ### 3.3 SmolStar06-specific configuration flags
@@ -274,6 +270,81 @@ lerobot-train \
 | `advantage_dropout` | `0.3` | Probability of omitting the advantage indicator (for CFG training) |
 | `cfg_beta` | `1.0` | Classifier-free guidance scale at inference (1.0 = no CFG) |
 | `tokenizer_max_length` | `64` | Increased from SmolVLA's 48 to accommodate advantage tokens |
+
+---
+
+## 4) Weights & Biases Logging
+
+Both the value network and SmolStar06 training scripts support optional
+[Weights & Biases](https://wandb.ai/) logging. When enabled, all metrics that
+are logged to the console and saved to `metrics_history.json` are also sent to
+a W&B run in real time.
+
+### 4.1 Enabling W&B
+
+Pass `--wandb_project` to either training script. If omitted (the default),
+W&B is completely disabled — no import, no network calls.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--wandb_project` | `None` | W&B project name. Setting this enables logging. |
+| `--wandb_entity` | `None` | W&B team/user entity (uses your default if unset). |
+| `--wandb_run_name` | `None` | Display name for the run (auto-generated if unset). |
+
+### 4.2 Metrics logged — value network
+
+| Key prefix | Metrics | When |
+|------------|---------|------|
+| `train/` | `loss`, `bin_acc`, `value_mae`, `window_loss`, `window_bin_acc`, `window_value_mae`, `samples_per_sec` | Every `log_every_n_steps` training steps |
+| `val/` | `loss`, `bin_acc`, `value_mae` | Every validation (step-based or epoch-end) |
+| `epoch/` | `train_loss`, `train_bin_acc`, `train_value_mae`, `val_loss`, `val_bin_acc`, `val_value_mae`, `lr` | End of each epoch |
+| `val_plots/` | Episode return plots (as `wandb.Image`) | When validation plots are saved |
+
+### 4.3 Metrics logged — SmolStar06 policy
+
+| Key prefix | Metrics | When |
+|------------|---------|------|
+| `train/` | `loss`, `lr`, `step_loss` | Every `log_every_n_steps` training steps |
+| `val/` | `val_loss`, `val_loss_pos`, `val_loss_neg`, `val_n_pos`, `val_n_neg`, `val_conditioning_accuracy`, `val_conditioning_gap`, `val_conditioning_gap_pos`, `val_conditioning_gap_neg` | Every validation (step-based or epoch-end) |
+| `epoch/` | All of the above plus `epoch`, `train_loss`, `lr` | End of each epoch |
+
+### 4.4 Example commands
+
+Value network with W&B:
+
+```bash
+uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
+  --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
+  --output_dir="${HOME}/code/lerobot/outputs/recap_value_wandb" \
+  --epochs=2 \
+  --batch_size=1 \
+  --wandb_project="recap-value-network" \
+  --wandb_entity="my-team" \
+  --wandb_run_name="value-net-run-1"
+```
+
+SmolStar06 policy with W&B:
+
+```bash
+uv run python -m lerobot.rl.algorithms.RECAPTrainSmolStar \
+  --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
+  --output_dir="${HOME}/code/lerobot/outputs/recap_smolstar_train_3" \
+  --value_network_checkpoint="${HOME}/code/lerobot/outputs/so101_pickplace_recap_value/checkpoints/last.pt" \
+  --epochs=5 \
+  --batch_size=6 \
+  --learning_rate=1e-4 \
+  --val_split_ratio=0.1 \
+  --validate_every_n_train_steps=50 \
+  --c_fail=500.0 \
+  --advantage_threshold=0.0 \
+  --advantage_dropout=0.3 \
+  --tokenizer_max_length=64 \
+  --log_every_n_steps=10 \
+  --wandb_project="recap-smolstar" \
+  --wandb_run_name="smolstar-run-3"
+```
+
+---
 
 ### 3.4 Inference
 

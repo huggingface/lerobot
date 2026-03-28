@@ -24,9 +24,10 @@ import json
 import logging
 import random
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 import pandas as pd
@@ -132,6 +133,11 @@ class RECAPValueTrainingConfig:
 
     # Pretrained VLM initialisation (e.g. "lerobot/pi05_base")
     pretrained_path: str | None = None
+
+    # Weights & Biases (optional; set wandb_project to enable)
+    wandb_project: str | None = None
+    wandb_entity: str | None = None
+    wandb_run_name: str | None = None
 
 
 def _set_seed(seed: int) -> None:
@@ -768,6 +774,22 @@ def _save_validation_episode_plot(
     return True
 
 
+def _init_wandb(cfg: RECAPValueTrainingConfig) -> Any:
+    """Initialise a W&B run if ``wandb_project`` is set, otherwise return ``None``."""
+    if cfg.wandb_project is None:
+        return None
+    import wandb
+
+    run = wandb.init(
+        project=cfg.wandb_project,
+        entity=cfg.wandb_entity,
+        name=cfg.wandb_run_name,
+        config=asdict(cfg),
+    )
+    logging.info(f"W&B run: {run.url}")
+    return run
+
+
 def _run_epoch(
     model: RECAPValueNetwork,
     loader: DataLoader,
@@ -782,6 +804,8 @@ def _run_epoch(
     collect_episode_ids: set[int] | None = None,
     value_bin_support: torch.Tensor | None = None,
     collected_predictions: dict[int, list[ValidationFramePrediction]] | None = None,
+    wandb_run: Any = None,
+    global_step_offset: int = 0,
 ) -> dict[str, float]:
     training = optimizer is not None
     model.train(mode=training)
@@ -902,6 +926,22 @@ def _run_epoch(
                 f"it/s={steps_per_sec:.2f} samples/s={samples_per_sec:.2f} "
                 f"elapsed={_format_duration(elapsed)} eta={_format_duration(eta_seconds)}"
             )
+            if wandb_run is not None:
+                wb_step = global_step_offset + step_num
+                wb_prefix = "train" if training else "val"
+                wandb_run.log(
+                    {
+                        f"{wb_prefix}/loss": avg_loss,
+                        f"{wb_prefix}/bin_acc": avg_acc,
+                        f"{wb_prefix}/value_mae": avg_mae,
+                        f"{wb_prefix}/window_loss": window_loss_avg,
+                        f"{wb_prefix}/window_bin_acc": window_acc_avg,
+                        f"{wb_prefix}/window_value_mae": window_mae_avg,
+                        f"{wb_prefix}/samples_per_sec": samples_per_sec,
+                        "global_step": wb_step,
+                    },
+                    step=wb_step,
+                )
             window_loss = 0.0
             window_mae = 0.0
             window_acc = 0.0
@@ -967,6 +1007,8 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
 
     device = _resolve_device(cfg.device)
     logging.info(f"Using device: {device}")
+
+    wandb_run = _init_wandb(cfg)
 
     dataset = LeRobotDataset(
         repo_id=cfg.repo_id,
@@ -1192,6 +1234,16 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
             f"val_acc={val_metrics_local['bin_acc']:.4f} "
             f"val_mae={val_metrics_local['value_mae']:.5f}"
         )
+        if wandb_run is not None:
+            wandb_run.log(
+                {
+                    "val/loss": val_metrics_local["loss"],
+                    "val/bin_acc": val_metrics_local["bin_acc"],
+                    "val/value_mae": val_metrics_local["value_mae"],
+                    "global_step": global_train_step,
+                },
+                step=global_train_step,
+            )
 
         if should_plot and plot_subdir is not None and val_plot_loader is not None:
             collected_predictions: dict[int, list[ValidationFramePrediction]] = {}
@@ -1235,6 +1287,14 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
                     saved_paths.append(plot_path)
             if saved_paths:
                 logging.info(f"[{trigger_tag}] Saved {len(saved_paths)} validation plot(s) under {plot_dir}")
+                if wandb_run is not None:
+                    import wandb as _wandb
+
+                    plot_images = {
+                        f"val_plots/episode_{p.stem.split('_')[-1]}": _wandb.Image(str(p))
+                        for p in saved_paths
+                    }
+                    wandb_run.log(plot_images, step=global_train_step)
 
         return val_metrics_local
 
@@ -1291,6 +1351,8 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
             max_steps=cfg.max_train_steps_per_epoch,
             log_every_n_steps=cfg.log_every_n_steps,
             on_train_step_end=on_train_step_end,
+            wandb_run=wandb_run,
+            global_step_offset=global_train_step,
         )
         should_plot_validation = (
             cfg.val_plot_num_episodes > 0
@@ -1327,6 +1389,11 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
             f"val_acc={epoch_metrics['val_bin_acc']:.4f} "
             f"val_mae={epoch_metrics['val_value_mae']:.5f}"
         )
+        if wandb_run is not None:
+            wandb_run.log(
+                {f"epoch/{k}": v for k, v in epoch_metrics.items()},
+                step=global_train_step,
+            )
 
         _save_json(output_dir / "metrics_history.json", history)
 
@@ -1345,6 +1412,9 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
             torch.save(checkpoint, checkpoints_dir / "best.pt")
 
     logging.info(f"Training complete. Best val loss: {best_val_loss:.5f}")
+
+    if wandb_run is not None:
+        wandb_run.finish()
 
 
 if __name__ == "__main__":

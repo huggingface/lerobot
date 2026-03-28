@@ -81,6 +81,30 @@ class RECAPSmolStarTrainingConfig:
 
     # SmolStar06 model settings
     tokenizer_max_length: int = 64
+    load_vlm_weights: bool = True
+    train_expert_only: bool = False
+    freeze_vision_encoder: bool = True
+
+    # Weights & Biases (optional; set wandb_project to enable)
+    wandb_project: str | None = None
+    wandb_entity: str | None = None
+    wandb_run_name: str | None = None
+
+
+def _init_wandb(cfg: RECAPSmolStarTrainingConfig):
+    """Initialise a W&B run if ``wandb_project`` is set, otherwise return ``None``."""
+    if cfg.wandb_project is None:
+        return None
+    import wandb
+
+    run = wandb.init(
+        project=cfg.wandb_project,
+        entity=cfg.wandb_entity,
+        name=cfg.wandb_run_name,
+        config=asdict(cfg),
+    )
+    logging.info(f"W&B run: {run.url}")
+    return run
 
 
 def _resolve_labels_csv(cfg: RECAPSmolStarTrainingConfig) -> Path:
@@ -145,6 +169,9 @@ def _build_policy_config(
         advantage_dropout=cfg.advantage_dropout,
         cfg_beta=cfg.cfg_beta,
         tokenizer_max_length=cfg.tokenizer_max_length,
+        load_vlm_weights=cfg.load_vlm_weights,
+        train_expert_only=cfg.train_expert_only,
+        freeze_vision_encoder=cfg.freeze_vision_encoder,
     )
     return policy_cfg
 
@@ -166,6 +193,7 @@ def _run_validation(
     from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
     policy.eval()
+    has_episode_info = policy._episode_info is not None
 
     total_loss = 0.0
     total_loss_pos = 0.0
@@ -177,6 +205,12 @@ def _run_validation(
     total_gap_pos = 0.0
     total_gap_neg = 0.0
     total_samples = 0
+
+    total_aligned = 0.0
+    total_aligned_success = 0.0
+    total_aligned_failure = 0.0
+    total_success_samples = 0
+    total_failure_samples = 0
 
     for step, batch in enumerate(loader):
         if max_steps is not None and step >= max_steps:
@@ -192,6 +226,29 @@ def _run_validation(
         lang_tokens = batch[OBS_LANGUAGE_TOKENS]
         lang_masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
         B = lang_tokens.shape[0]
+
+        # Advantage-episode alignment: does advantage sign match episode outcome?
+        if has_episode_info:
+            ep_indices = batch["episode_index"]
+            episode_success = torch.tensor(
+                [policy._episode_info[int(idx)]["success"] for idx in ep_indices],
+                device=device,
+                dtype=torch.bool,
+            )
+            adv_positive = advantages > policy.config.advantage_threshold
+            aligned = (adv_positive == episode_success).float()
+            total_aligned += aligned.sum().item()
+
+            success_mask = episode_success
+            failure_mask = ~episode_success
+            n_success = success_mask.sum().item()
+            n_failure = failure_mask.sum().item()
+            total_success_samples += n_success
+            total_failure_samples += n_failure
+            if n_success > 0:
+                total_aligned_success += aligned[success_mask].sum().item()
+            if n_failure > 0:
+                total_aligned_failure += aligned[failure_mask].sum().item()
 
         actions = batch[ACTION]
         padded_actions = policy.prepare_action(batch)
@@ -255,6 +312,9 @@ def _run_validation(
             "val_conditioning_gap": float("nan"),
             "val_conditioning_gap_pos": float("nan"),
             "val_conditioning_gap_neg": float("nan"),
+            "val_adv_episode_alignment": float("nan"),
+            "val_alignment_on_success": float("nan"),
+            "val_alignment_on_failure": float("nan"),
         }
 
     return {
@@ -267,6 +327,17 @@ def _run_validation(
         "val_conditioning_gap": total_gap / total_samples,
         "val_conditioning_gap_pos": total_gap_pos / total_n_pos if total_n_pos > 0 else float("nan"),
         "val_conditioning_gap_neg": total_gap_neg / total_n_neg if total_n_neg > 0 else float("nan"),
+        "val_adv_episode_alignment": total_aligned / total_samples if has_episode_info else float("nan"),
+        "val_alignment_on_success": (
+            total_aligned_success / total_success_samples
+            if has_episode_info and total_success_samples > 0
+            else float("nan")
+        ),
+        "val_alignment_on_failure": (
+            total_aligned_failure / total_failure_samples
+            if has_episode_info and total_failure_samples > 0
+            else float("nan")
+        ),
     }
 
 
@@ -278,6 +349,8 @@ def _log_val_metrics(tag: str, metrics: dict[str, float]) -> None:
         f"cond_acc={metrics['val_conditioning_accuracy']:.4f} "
         f"cond_gap={metrics['val_conditioning_gap']:.5f} "
         f"(gap_pos={metrics['val_conditioning_gap_pos']:.5f}, gap_neg={metrics['val_conditioning_gap_neg']:.5f}) "
+        f"adv_ep_align={metrics['val_adv_episode_alignment']:.4f} "
+        f"(success={metrics['val_alignment_on_success']:.4f}, failure={metrics['val_alignment_on_failure']:.4f}) "
         f"n_pos={metrics['val_n_pos']} n_neg={metrics['val_n_neg']}"
     )
 
@@ -299,6 +372,8 @@ def run_recap_smolstar_train_val(cfg: RECAPSmolStarTrainingConfig) -> None:
 
     device = base._resolve_device(cfg.device)
     logging.info(f"Using device: {device}")
+
+    wandb_run = _init_wandb(cfg)
 
     # ── 1. Load dataset and build episode-level train/val split ──────────
     full_dataset = LeRobotDataset(
@@ -459,6 +534,8 @@ def run_recap_smolstar_train_val(cfg: RECAPSmolStarTrainingConfig) -> None:
             epoch_samples += batch[ACTION].shape[0]
             global_train_step += 1
 
+            wandb_step_metrics: dict[str, float] = {}
+
             if cfg.log_every_n_steps > 0 and global_train_step % cfg.log_every_n_steps == 0:
                 avg_loss = epoch_loss / epoch_samples if epoch_samples > 0 else float("nan")
                 lr = optimizer.param_groups[0]["lr"]
@@ -468,6 +545,12 @@ def run_recap_smolstar_train_val(cfg: RECAPSmolStarTrainingConfig) -> None:
                     f"train_loss={avg_loss:.5f} lr={lr:.2e} elapsed={elapsed:.1f}s "
                     f"global_step={global_train_step}"
                 )
+                wandb_step_metrics.update({
+                    "train/loss": avg_loss,
+                    "train/lr": lr,
+                    "train/step_loss": loss.item(),
+                    "global_step": global_train_step,
+                })
 
             # Step-based validation
             if (
@@ -487,7 +570,13 @@ def run_recap_smolstar_train_val(cfg: RECAPSmolStarTrainingConfig) -> None:
                     f"(global_step={global_train_step})"
                 )
                 _log_val_metrics(tag, step_val_metrics)
+                wandb_step_metrics.update(
+                    {f"val/{k}": v for k, v in step_val_metrics.items()}
+                )
                 policy.train()
+
+            if wandb_run is not None and wandb_step_metrics:
+                wandb_run.log(wandb_step_metrics, step=global_train_step)
 
         train_loss = epoch_loss / epoch_samples if epoch_samples > 0 else float("nan")
 
@@ -522,6 +611,9 @@ def run_recap_smolstar_train_val(cfg: RECAPSmolStarTrainingConfig) -> None:
                     "val_conditioning_gap": float("nan"),
                     "val_conditioning_gap_pos": float("nan"),
                     "val_conditioning_gap_neg": float("nan"),
+                    "val_adv_episode_alignment": float("nan"),
+                    "val_alignment_on_success": float("nan"),
+                    "val_alignment_on_failure": float("nan"),
                 }
 
         scheduler.step()
@@ -543,6 +635,11 @@ def run_recap_smolstar_train_val(cfg: RECAPSmolStarTrainingConfig) -> None:
             f"cond_acc={val_metrics['val_conditioning_accuracy']:.4f} "
             f"cond_gap={val_metrics['val_conditioning_gap']:.5f}"
         )
+        if wandb_run is not None:
+            wandb_run.log(
+                {f"epoch/{k}": v for k, v in epoch_metrics.items()},
+                step=global_train_step,
+            )
 
         base._save_json(output_dir / "metrics_history.json", history)
 
@@ -566,6 +663,9 @@ def run_recap_smolstar_train_val(cfg: RECAPSmolStarTrainingConfig) -> None:
     logging.info(
         f"Training complete. Best val conditioning accuracy: {best_val_cond_acc:.4f}"
     )
+
+    if wandb_run is not None:
+        wandb_run.finish()
 
 
 if __name__ == "__main__":

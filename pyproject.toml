@@ -415,4 +415,10 @@ ignore_errors = false
 
 [tool.ty.src]
 include = [
+    "src/lerobot/policies/smolstar06/",
+    "src/lerobot/rl/algorithms/RECAPSmolVLAValueNetwork.py",
+    "src/lerobot/rl/algorithms/RECAPTrainSmolStar.py",
+    "src/lerobot/rl/algorithms/RECAPTrainSmolVLANetwork.py",
+    "src/lerobot/rl/algorithms/RECAPTrainValueNetwork.py",
+    "src/lerobot/rl/algorithms/RECAPValueNetwork.py",
 ]
