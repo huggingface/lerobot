@@ -34,11 +34,6 @@ As described by Physical Intelligence, while AI has achieved remarkable success 
    pip install -e ".[pi]"
    ```
 
-   > [!NOTE]
-   > For lerobot 0.4.0, if you want to install pi tag, you will have to do: `pip install "lerobot[pi]@git+https://github.com/huggingface/lerobot.git"`.
-   >
-   > This will be solved in the next patch release
-
 ## Training Data and Capabilities
 
 π₀ is trained on the largest robot interaction dataset to date, combining three key data sources:
@@ -60,7 +55,7 @@ policy.type=pi0
 For training π₀, you can use the standard LeRobot training script with the appropriate configuration:
 
 ```bash
-python src/lerobot/scripts/lerobot_train.py \
+lerobot-train \
     --dataset.repo_id=your_dataset \
     --policy.type=pi0 \
     --output_dir=./outputs/pi0_training \

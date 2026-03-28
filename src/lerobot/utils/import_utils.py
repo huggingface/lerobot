@@ -75,6 +75,8 @@ _scipy_available = is_package_available("scipy")
 _reachy2_sdk_available = is_package_available("reachy2_sdk")
 _can_available = is_package_available("python-can", "can")
 _portal_available = is_package_available("portal")
+_unitree_sdk_available = is_package_available("unitree-sdk2py", "unitree_sdk2py")
+_pygame_available = is_package_available("pygame")
 
 
 def make_device_from_device_class(config: ChoiceRegistry) -> Any:

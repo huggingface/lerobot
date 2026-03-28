@@ -23,7 +23,7 @@ import cv2
 import numpy as np
 import requests
 
-from lerobot.processor import RobotAction, RobotObservation
+from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.errors import DeviceNotConnectedError
 
@@ -33,21 +33,40 @@ from .config_earthrover_mini_plus import EarthRoverMiniPlusConfig
 logger = logging.getLogger(__name__)
 
 # Action feature keys
-ACTION_LINEAR_VEL = "linear.vel"
-ACTION_ANGULAR_VEL = "angular.vel"
+ACTION_LINEAR_VEL = "linear_velocity"
+ACTION_ANGULAR_VEL = "angular_velocity"
 
-# Observation feature keys
+# Observation feature keys — cameras
 OBS_FRONT = "front"
 OBS_REAR = "rear"
-OBS_LINEAR_VEL = "linear.vel"
-OBS_BATTERY_LEVEL = "battery.level"
-OBS_ORIENTATION_DEG = "orientation.deg"
-OBS_GPS_LATITUDE = "gps.latitude"
-OBS_GPS_LONGITUDE = "gps.longitude"
-OBS_GPS_SIGNAL = "gps.signal"
-OBS_SIGNAL_LEVEL = "signal.level"
+
+# Observation feature keys — telemetry
+OBS_SPEED = "speed"
+OBS_BATTERY_LEVEL = "battery_level"
+OBS_ORIENTATION = "orientation"
+OBS_GPS_LATITUDE = "gps_latitude"
+OBS_GPS_LONGITUDE = "gps_longitude"
+OBS_GPS_SIGNAL = "gps_signal"
+OBS_SIGNAL_LEVEL = "signal_level"
 OBS_VIBRATION = "vibration"
-OBS_LAMP_STATE = "lamp.state"
+OBS_LAMP = "lamp"
+
+# Observation feature keys — IMU sensors
+OBS_ACCELEROMETER_X = "accelerometer_x"
+OBS_ACCELEROMETER_Y = "accelerometer_y"
+OBS_ACCELEROMETER_Z = "accelerometer_z"
+OBS_GYROSCOPE_X = "gyroscope_x"
+OBS_GYROSCOPE_Y = "gyroscope_y"
+OBS_GYROSCOPE_Z = "gyroscope_z"
+OBS_MAGNETOMETER_X = "magnetometer_filtered_x"
+OBS_MAGNETOMETER_Y = "magnetometer_filtered_y"
+OBS_MAGNETOMETER_Z = "magnetometer_filtered_z"
+
+# Observation feature keys — wheel RPMs
+OBS_WHEEL_RPM_0 = "wheel_rpm_0"
+OBS_WHEEL_RPM_1 = "wheel_rpm_1"
+OBS_WHEEL_RPM_2 = "wheel_rpm_2"
+OBS_WHEEL_RPM_3 = "wheel_rpm_3"
 
 
 class EarthRoverMiniPlus(Robot):
@@ -154,33 +173,60 @@ class EarthRoverMiniPlus(Robot):
             dict: Observation features with types/shapes:
                 - front: (480, 640, 3) - Front camera RGB image
                 - rear: (480, 640, 3) - Rear camera RGB image
-                - linear.vel: float - Current speed (0-1, SDK reports only positive speeds)
-                - battery.level: float - Battery level (0-1, normalized from 0-100)
-                - orientation.deg: float - Robot orientation (0-1, normalized from raw value)
-                - gps.latitude: float - GPS latitude coordinate
-                - gps.longitude: float - GPS longitude coordinate
-                - gps.signal: float - GPS signal strength (0-1, normalized from percentage)
-                - signal.level: float - Network signal level (0-1, normalized from 0-5)
+                - speed: float - Current speed (raw SDK value)
+                - battery_level: float - Battery level (0-100)
+                - orientation: float - Robot orientation in degrees
+                - gps_latitude: float - GPS latitude coordinate
+                - gps_longitude: float - GPS longitude coordinate
+                - gps_signal: float - GPS signal strength (percentage)
+                - signal_level: float - Network signal level (0-5)
                 - vibration: float - Vibration sensor reading
-                - lamp.state: float - Lamp state (0=off, 1=on)
+                - lamp: float - Lamp state (0=off, 1=on)
+                - accelerometer_x: float - Accelerometer X axis (raw SDK value)
+                - accelerometer_y: float - Accelerometer Y axis (raw SDK value)
+                - accelerometer_z: float - Accelerometer Z axis (raw SDK value)
+                - gyroscope_x: float - Gyroscope X axis (raw SDK value)
+                - gyroscope_y: float - Gyroscope Y axis (raw SDK value)
+                - gyroscope_z: float - Gyroscope Z axis (raw SDK value)
+                - magnetometer_filtered_x: float - Magnetometer X axis (raw SDK value)
+                - magnetometer_filtered_y: float - Magnetometer Y axis (raw SDK value)
+                - magnetometer_filtered_z: float - Magnetometer Z axis (raw SDK value)
+                - wheel_rpm_0: float - Wheel 0 RPM
+                - wheel_rpm_1: float - Wheel 1 RPM
+                - wheel_rpm_2: float - Wheel 2 RPM
+                - wheel_rpm_3: float - Wheel 3 RPM
         """
         return {
             # Cameras (height, width, channels)
             OBS_FRONT: (480, 640, 3),
             OBS_REAR: (480, 640, 3),
-            # Motion state
-            OBS_LINEAR_VEL: float,
-            # Robot state
+            # Telemetry
+            OBS_SPEED: float,
             OBS_BATTERY_LEVEL: float,
-            OBS_ORIENTATION_DEG: float,
-            # GPS
+            OBS_ORIENTATION: float,
             OBS_GPS_LATITUDE: float,
             OBS_GPS_LONGITUDE: float,
             OBS_GPS_SIGNAL: float,
-            # Sensors
             OBS_SIGNAL_LEVEL: float,
             OBS_VIBRATION: float,
-            OBS_LAMP_STATE: float,
+            OBS_LAMP: float,
+            # IMU — accelerometer
+            OBS_ACCELEROMETER_X: float,
+            OBS_ACCELEROMETER_Y: float,
+            OBS_ACCELEROMETER_Z: float,
+            # IMU — gyroscope
+            OBS_GYROSCOPE_X: float,
+            OBS_GYROSCOPE_Y: float,
+            OBS_GYROSCOPE_Z: float,
+            # IMU — magnetometer
+            OBS_MAGNETOMETER_X: float,
+            OBS_MAGNETOMETER_Y: float,
+            OBS_MAGNETOMETER_Z: float,
+            # Wheel RPMs
+            OBS_WHEEL_RPM_0: float,
+            OBS_WHEEL_RPM_1: float,
+            OBS_WHEEL_RPM_2: float,
+            OBS_WHEEL_RPM_3: float,
         }
 
     @cached_property
@@ -189,8 +235,8 @@ class EarthRoverMiniPlus(Robot):
 
         Returns:
             dict: Action features with types:
-                - linear.vel: float - Target linear velocity
-                - angular.vel: float - Target angular velocity
+                - linear_velocity: float - Target linear velocity (-1 to 1)
+                - angular_velocity: float - Target angular velocity (-1 to 1)
         """
         return {
             ACTION_LINEAR_VEL: float,
@@ -201,19 +247,29 @@ class EarthRoverMiniPlus(Robot):
     def get_observation(self) -> RobotObservation:
         """Get current robot observation from SDK.
 
+        Camera frames are retrieved from SDK endpoints /v2/front and /v2/rear.
+        Frames are decoded from base64 and converted from BGR to RGB format.
+        Robot telemetry is retrieved from /data endpoint.
+        Sensor arrays (accels, gyros, mags, rpms) each contain entries of
+        [values..., timestamp]; the latest reading from each array is used.
+
         Returns:
             RobotObservation: Observation containing:
                 - front: Front camera image (480, 640, 3) in RGB format
                 - rear: Rear camera image (480, 640, 3) in RGB format
-                - linear.vel: Current speed (0-1, SDK reports only positive speeds)
-                - battery.level: Battery level (0-1, normalized from 0-100)
-                - orientation.deg: Robot orientation (0-1, normalized from raw value)
-                - gps.latitude: GPS latitude coordinate
-                - gps.longitude: GPS longitude coordinate
-                - gps.signal: GPS signal strength (0-1, normalized from percentage)
-                - signal.level: Network signal level (0-1, normalized from 0-5)
-                - vibration: Vibration sensor reading
-                - lamp.state: Lamp state (0=off, 1=on)
+                - speed: float - Current speed (raw SDK value)
+                - battery_level: float - Battery level (0-100)
+                - orientation: float - Robot orientation in degrees
+                - gps_latitude: float - GPS latitude coordinate
+                - gps_longitude: float - GPS longitude coordinate
+                - gps_signal: float - GPS signal strength (percentage)
+                - signal_level: float - Network signal level (0-5)
+                - vibration: float - Vibration sensor reading
+                - lamp: float - Lamp state (0=off, 1=on)
+                - accelerometer_x/y/z: float - Accelerometer axes (raw SDK value)
+                - gyroscope_x/y/z: float - Gyroscope axes (raw SDK value)
+                - magnetometer_filtered_x/y/z: float - Magnetometer axes (raw SDK value)
+                - wheel_rpm_0/1/2/3: float - Wheel RPMs
 
         Raises:
             DeviceNotConnectedError: If robot is not connected
@@ -235,22 +291,41 @@ class EarthRoverMiniPlus(Robot):
         # Get robot state from SDK
         robot_data = self._get_robot_data()
 
-        # Motion state
-        observation[OBS_LINEAR_VEL] = robot_data["speed"] / 100.0  # Normalize 0-100 to 0-1
+        # Telemetry
+        observation[OBS_SPEED] = float(robot_data["speed"])
+        observation[OBS_BATTERY_LEVEL] = float(robot_data["battery"])
+        observation[OBS_ORIENTATION] = float(robot_data["orientation"])
+        observation[OBS_GPS_LATITUDE] = float(robot_data["latitude"])
+        observation[OBS_GPS_LONGITUDE] = float(robot_data["longitude"])
+        observation[OBS_GPS_SIGNAL] = float(robot_data["gps_signal"])
+        observation[OBS_SIGNAL_LEVEL] = float(robot_data["signal_level"])
+        observation[OBS_VIBRATION] = float(robot_data["vibration"])
+        observation[OBS_LAMP] = float(robot_data["lamp"])
 
-        # Robot state
-        observation[OBS_BATTERY_LEVEL] = robot_data["battery"] / 100.0  # Normalize 0-100 to 0-1
-        observation[OBS_ORIENTATION_DEG] = robot_data["orientation"] / 360.0  # Normalize to 0-1
+        # Accelerometer — latest reading from accels array [x, y, z, ts]
+        accel = self._latest_sensor_reading(robot_data, "accels", n_values=3)
+        observation[OBS_ACCELEROMETER_X] = accel[0]
+        observation[OBS_ACCELEROMETER_Y] = accel[1]
+        observation[OBS_ACCELEROMETER_Z] = accel[2]
 
-        # GPS data
-        observation[OBS_GPS_LATITUDE] = robot_data["latitude"]
-        observation[OBS_GPS_LONGITUDE] = robot_data["longitude"]
-        observation[OBS_GPS_SIGNAL] = robot_data["gps_signal"] / 100.0  # Normalize percentage to 0-1
+        # Gyroscope — latest reading from gyros array [x, y, z, ts]
+        gyro = self._latest_sensor_reading(robot_data, "gyros", n_values=3)
+        observation[OBS_GYROSCOPE_X] = gyro[0]
+        observation[OBS_GYROSCOPE_Y] = gyro[1]
+        observation[OBS_GYROSCOPE_Z] = gyro[2]
 
-        # Sensors
-        observation[OBS_SIGNAL_LEVEL] = robot_data["signal_level"] / 5.0  # Normalize 0-5 to 0-1
-        observation[OBS_VIBRATION] = robot_data["vibration"]
-        observation[OBS_LAMP_STATE] = float(robot_data["lamp"])  # 0 or 1
+        # Magnetometer — latest reading from mags array [x, y, z, ts]
+        mag = self._latest_sensor_reading(robot_data, "mags", n_values=3)
+        observation[OBS_MAGNETOMETER_X] = mag[0]
+        observation[OBS_MAGNETOMETER_Y] = mag[1]
+        observation[OBS_MAGNETOMETER_Z] = mag[2]
+
+        # Wheel RPMs — latest reading from rpms array [w0, w1, w2, w3, ts]
+        rpm = self._latest_sensor_reading(robot_data, "rpms", n_values=4)
+        observation[OBS_WHEEL_RPM_0] = rpm[0]
+        observation[OBS_WHEEL_RPM_1] = rpm[1]
+        observation[OBS_WHEEL_RPM_2] = rpm[2]
+        observation[OBS_WHEEL_RPM_3] = rpm[3]
 
         return observation
 
@@ -260,11 +335,12 @@ class EarthRoverMiniPlus(Robot):
 
         Args:
             action: Action dict with keys:
-                - linear.vel: Target linear velocity (-1 to 1)
-                - angular.vel: Target angular velocity (-1 to 1)
+                - linear_velocity: Target linear velocity (-1 to 1)
+                - angular_velocity: Target angular velocity (-1 to 1)
 
         Returns:
             RobotAction: The action that was sent (matches action_features keys)
+
         Raises:
             DeviceNotConnectedError: If robot is not connected
 
@@ -272,18 +348,14 @@ class EarthRoverMiniPlus(Robot):
             Actions are sent to SDK via POST /control endpoint.
             SDK expects commands in range [-1, 1].
         """
-
-        # Extract action values and convert to float
         linear = float(action.get(ACTION_LINEAR_VEL, 0.0))
         angular = float(action.get(ACTION_ANGULAR_VEL, 0.0))
 
-        # Send command to SDK
         try:
             self._send_command_to_sdk(linear, angular)
         except Exception as e:
             logger.error(f"Error sending action: {e}")
 
-        # Return action in format matching action_features
         return {
             ACTION_LINEAR_VEL: linear,
             ACTION_ANGULAR_VEL: angular,
@@ -394,11 +466,27 @@ class EarthRoverMiniPlus(Robot):
             logger.error(f"Error decoding image: {e}")
             return None
 
+    @staticmethod
+    def _latest_sensor_reading(robot_data: dict, key: str, n_values: int) -> list[float]:
+        """Extract the latest sensor reading from an SDK sensor array.
+
+        The SDK returns sensor arrays like ``accels``, ``gyros``, ``mags``,
+        ``rpms`` where each entry is ``[value_0, ..., value_n, timestamp]``.
+        This helper returns the *n_values* leading floats from the last entry,
+        falling back to zeros when the key is missing or the array is empty.
+        """
+        readings = robot_data.get(key)
+        if readings and len(readings) > 0:
+            latest = readings[-1]
+            return [float(v) for v in latest[:n_values]]
+        return [0.0] * n_values
+
     def _get_robot_data(self) -> dict:
         """Get robot telemetry data from SDK.
 
         Returns:
-            dict: Robot telemetry data including battery, speed, orientation, GPS, etc:
+            dict: Robot telemetry data including battery, speed, orientation, GPS,
+                and sensor arrays (accels, gyros, mags, rpms):
                 - Current data (if request succeeds)
                 - Cached data (if request fails but cache exists)
                 - Default values (if request fails and no cache exists yet)
@@ -420,19 +508,23 @@ class EarthRoverMiniPlus(Robot):
         # Fallback: use cache or default values
         if self._last_robot_data is not None:
             return self._last_robot_data
-        else:
-            # Return dict with default values (used only on first failure before any cache exists)
-            return {
-                "speed": 0,
-                "battery": 0,
-                "orientation": 0,
-                "latitude": 0.0,
-                "longitude": 0.0,
-                "gps_signal": 0,
-                "signal_level": 0,
-                "vibration": 0.0,
-                "lamp": 0,
-            }
+
+        # Return dict with default values (used only on first failure before any cache exists)
+        return {
+            "speed": 0,
+            "battery": 0,
+            "orientation": 0,
+            "latitude": 0.0,
+            "longitude": 0.0,
+            "gps_signal": 0,
+            "signal_level": 0,
+            "vibration": 0.0,
+            "lamp": 0,
+            "accels": [],
+            "gyros": [],
+            "mags": [],
+            "rpms": [],
+        }
 
     def _send_command_to_sdk(self, linear: float, angular: float, lamp: int = 0) -> bool:
         """Send control command to SDK.

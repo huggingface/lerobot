@@ -19,6 +19,8 @@
     title: Multi GPU training
   - local: peft_training
     title: Training with PEFT (e.g., LoRA)
+  - local: rename_map
+    title: Using Rename Map and Empty Cameras
   title: "Tutorials"
 - sections:
   - local: lerobot-dataset-v3
@@ -29,6 +31,8 @@
     title: Using the Dataset Tools
   - local: dataset_subtask
     title: Using Subtasks in the Dataset
+  - local: streaming_video_encoding
+    title: Streaming Video Encoding
   title: "Datasets"
 - sections:
   - local: act
@@ -45,6 +49,8 @@
     title: NVIDIA GR00T N1.5
   - local: xvla
     title: X-VLA
+  - local: multi_task_dit
+    title: Multitask DiT Policy
   - local: walloss
     title: WALL-OSS
   title: "Policies"

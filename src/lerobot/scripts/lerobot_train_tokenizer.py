@@ -204,15 +204,15 @@ def process_episode(args):
 
         for abs_idx in range(from_idx, to_idx):
             # map absolute index to relative index if needed
-            if dataset._absolute_to_relative_idx is not None:
-                if abs_idx not in dataset._absolute_to_relative_idx:
+            if dataset.reader._absolute_to_relative_idx is not None:
+                if abs_idx not in dataset.reader._absolute_to_relative_idx:
                     # this episode's frames aren't in the filtered dataset
                     return None
-                rel_idx = dataset._absolute_to_relative_idx[abs_idx]
+                rel_idx = dataset.reader._absolute_to_relative_idx[abs_idx]
             else:
                 rel_idx = abs_idx
 
-            frame = dataset.hf_dataset[rel_idx]
+            frame = dataset.get_raw_item(rel_idx)
 
             # get state (could be from observation.state or other state key)
             if state_key in frame:
@@ -306,7 +306,7 @@ def train_fast_tokenizer(
 
     # download the tokenizer source code (not pretrained weights)
     # we'll train a new tokenizer on our own data
-    base_tokenizer = AutoProcessor.from_pretrained("physical-intelligence/fast", trust_remote_code=True)
+    base_tokenizer = AutoProcessor.from_pretrained("lerobot/fast-action-tokenizer", trust_remote_code=True)
 
     # convert action_chunks array to list of arrays (expected by .fit())
     action_data_list = [action_chunks[i] for i in range(len(action_chunks))]

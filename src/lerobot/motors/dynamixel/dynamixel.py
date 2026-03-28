@@ -181,10 +181,10 @@ class DynamixelMotorsBus(SerialMotorsBus):
         for motor, m in self.motors.items():
             calibration[motor] = MotorCalibration(
                 id=m.id,
-                drive_mode=drive_modes[motor],
-                homing_offset=offsets[motor],
-                range_min=mins[motor],
-                range_max=maxes[motor],
+                drive_mode=int(drive_modes[motor]),
+                homing_offset=int(offsets[motor]),
+                range_min=int(mins[motor]),
+                range_max=int(maxes[motor]),
             )
 
         return calibration
@@ -198,7 +198,7 @@ class DynamixelMotorsBus(SerialMotorsBus):
         if cache:
             self.calibration = calibration_dict
 
-    def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
+    def disable_torque(self, motors: int | str | list[str] | None = None, num_retry: int = 0) -> None:
         for motor in self._get_motors_list(motors):
             self.write("Torque_Enable", motor, TorqueMode.DISABLED.value, num_retry=num_retry)
 
@@ -206,7 +206,7 @@ class DynamixelMotorsBus(SerialMotorsBus):
         addr, length = get_address(self.model_ctrl_table, model, "Torque_Enable")
         self._write(addr, length, motor, TorqueMode.DISABLED.value, num_retry=num_retry)
 
-    def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
+    def enable_torque(self, motors: int | str | list[str] | None = None, num_retry: int = 0) -> None:
         for motor in self._get_motors_list(motors):
             self.write("Torque_Enable", motor, TorqueMode.ENABLED.value, num_retry=num_retry)
 
@@ -235,7 +235,7 @@ class DynamixelMotorsBus(SerialMotorsBus):
         On Dynamixel Motors:
         Present_Position = Actual_Position + Homing_Offset
         """
-        half_turn_homings = {}
+        half_turn_homings: dict[NameOrID, Value] = {}
         for motor, pos in positions.items():
             model = self._get_motor_model(motor)
             max_res = self.model_resolution_table[model] - 1
@@ -258,6 +258,6 @@ class DynamixelMotorsBus(SerialMotorsBus):
             if raise_on_error:
                 raise ConnectionError(self.packet_handler.getTxRxResult(comm))
 
-            return
+            return None
 
         return {id_: data[0] for id_, data in data_list.items()}

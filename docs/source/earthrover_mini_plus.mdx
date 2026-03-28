@@ -13,7 +13,7 @@ The EarthRover Mini Plus is a fully open source mobile robot that connects throu
 ### Hardware
 
 - EarthRover Mini robot
-- Computer with Python 3.10 or newer
+- Computer with Python 3.12 or newer
 - Internet connection
 
 ### Setting Up the Frodobots SDK
@@ -170,13 +170,13 @@ Once you can drive the robot well, you can start recording data to train AI mode
 We use Hugging Face to store your data online. First, log in with your token from [Hugging Face settings](https://huggingface.co/settings/tokens):
 
 ```bash
-huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
+hf auth login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 ```
 
 Store your Hugging Face username:
 
 ```bash
-HF_USER=$(huggingface-cli whoami | head -n 1)
+HF_USER=$(hf auth whoami | awk -F': *' 'NR==1 {print $2}')
 echo $HF_USER
 ```
 
@@ -185,13 +185,16 @@ echo $HF_USER
 Use the standard recording command:
 
 ```bash
-python src/lerobot/scripts/lerobot_record.py \
+lerobot-record \
     --robot.type=earthrover_mini_plus \
     --teleop.type=keyboard_rover \
     --dataset.repo_id=your_username/dataset_name \
     --dataset.num_episodes=2 \
     --dataset.fps=10 \
     --dataset.single_task="Navigate around obstacles" \
+    --dataset.streaming_encoding=true \
+    --dataset.encoder_threads=2 \
+    # --dataset.vcodec=auto \
     --display_data=true
 ```
 
@@ -201,22 +204,26 @@ Replace `your_username/dataset_name` with your Hugging Face username and a name 
 
 Your dataset includes:
 
-**Your Actions (2 things)**:
+**Your Actions (2 features)**:
 
-- How much you moved forward/backward
-- How much you turned left/right
+- `linear_velocity`: How much you moved forward/backward
+- `angular_velocity`: How much you turned left/right
 
-**Robot Observations (12 things)**:
+**Robot Observations (24 features)**:
 
 - Front camera video
 - Rear camera video
 - Current speed
 - Battery level
-- Which way the robot is facing
-- GPS location (latitude, longitude, signal strength)
+- Orientation
+- GPS (latitude, longitude, signal strength)
 - Network signal strength
 - Vibration level
-- Lamp status (on/off)
+- Lamp state (on/off)
+- Accelerometer (x, y, z)
+- Gyroscope (x, y, z)
+- Magnetometer (x, y, z)
+- Wheel RPMs (4 wheels)
 
 ### Where Your Data Goes
 
