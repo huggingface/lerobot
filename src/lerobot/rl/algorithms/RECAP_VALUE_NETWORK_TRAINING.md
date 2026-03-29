@@ -49,6 +49,16 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
 
 Point `--value_network_checkpoint` at the checkpoint produced by Step 1.
 
+> **`c_fail` consistency:** The `c_fail` and `num_value_bins` values used
+> here *must* match those used to train the value network in Step 1,
+> because the return targets \(R_t\) are re-built from the same formula.
+> A mismatch produces meaningless advantages (\(A_t = R_t - V(o_t)\)).
+>
+> The training script **automatically reads `c_fail` and `num_value_bins`
+> from the value-network checkpoint** and overrides the CLI values if they
+> differ (with a logged warning). You can still pass `--c_fail` on the
+> command line, but it will be corrected to match the checkpoint.
+
 ```bash
 uv run python -m lerobot.rl.algorithms.RECAPTrainPiStar \
   --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
@@ -59,7 +69,6 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainPiStar \
   --learning_rate=1e-4 \
   --val_split_ratio=0.1 \
   --validate_every_n_train_steps=50 \
-  --c_fail=500.0 \
   --advantage_threshold=0.0 \
   --advantage_dropout=0.3 \
   --log_every_n_steps=10 \

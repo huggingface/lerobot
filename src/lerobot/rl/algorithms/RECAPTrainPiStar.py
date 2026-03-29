@@ -429,6 +429,24 @@ def _load_advantage_cache(path: str | Path) -> dict[int, float]:
     return lookup
 
 
+def _load_vn_train_config(checkpoint_path: str) -> dict:
+    """Load the value-network training config from its checkpoint.
+
+    Returns the ``train_config`` dict stored at training time, which
+    contains ``c_fail``, ``num_value_bins``, and other hyper-parameters
+    that must stay consistent between the value-network and PiStar
+    training stages.
+    """
+    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    train_cfg = ckpt.get("train_config", {})
+    if not train_cfg:
+        logging.warning(
+            "Value-network checkpoint does not contain a 'train_config' entry; "
+            "cannot auto-resolve c_fail / num_value_bins."
+        )
+    return train_cfg
+
+
 def _inject_advantages(
     batch: dict,
     advantage_lookup: dict[int, float],
@@ -677,6 +695,26 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
     labels_csv_path = _resolve_labels_csv(cfg)
     logging.info(f"Using episode labels from: {labels_csv_path}")
     success_by_episode = base._load_episode_success_map(labels_csv_path)
+
+    # Pull c_fail / num_value_bins from the value-network checkpoint so
+    # the return targets used here are guaranteed to match those used
+    # during value-network training.
+    vn_train_cfg = _load_vn_train_config(cfg.value_network_checkpoint)
+    if vn_train_cfg:
+        vn_c_fail = vn_train_cfg.get("c_fail")
+        vn_num_value_bins = vn_train_cfg.get("num_value_bins")
+        if vn_c_fail is not None and vn_c_fail != cfg.c_fail:
+            logging.warning(
+                f"Overriding c_fail from {cfg.c_fail} -> {vn_c_fail} "
+                f"to match value-network checkpoint"
+            )
+            cfg.c_fail = float(vn_c_fail)
+        if vn_num_value_bins is not None and vn_num_value_bins != cfg.num_value_bins:
+            logging.warning(
+                f"Overriding num_value_bins from {cfg.num_value_bins} -> {vn_num_value_bins} "
+                f"to match value-network checkpoint"
+            )
+            cfg.num_value_bins = int(vn_num_value_bins)
 
     frame_targets = base._build_frame_targets(
         dataset=full_dataset,
