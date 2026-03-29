@@ -48,6 +48,11 @@ python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
 ### Step 2 — Train the advantage-conditioned policy
 
 Point `--value_network_checkpoint` at the checkpoint produced by Step 1.
+This can be either a **local file path** to a `.pt` file, or a
+**HuggingFace model repo ID** (e.g. `jackvial/recap_value_0`). When a
+repo ID is given the script automatically downloads the checkpoint file
+specified by `--value_network_checkpoint_filename` (default:
+`checkpoints/epoch_0001.pt`).
 
 > **`c_fail` consistency:** The `c_fail` and `num_value_bins` values used
 > here *must* match those used to train the value network in Step 1,
@@ -63,7 +68,7 @@ Point `--value_network_checkpoint` at the checkpoint produced by Step 1.
 python -m lerobot.rl.algorithms.RECAPTrainPiStar \
   --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
   --output_dir="${HOME}/code/lerobot/outputs/recap_pistar" \
-  --value_network_checkpoint="${HOME}/code/lerobot/outputs/recap_value/checkpoints/last.pt" \
+  --value_network_checkpoint="jackvial/recap_value_0" \
   --epochs=5 \
   --batch_size=6 \
   --learning_rate=1e-4 \

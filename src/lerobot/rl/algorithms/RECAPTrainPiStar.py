@@ -53,6 +53,7 @@ class RECAPPiStarTrainingConfig:
     repo_id: str
     output_dir: str
     value_network_checkpoint: str
+    value_network_checkpoint_filename: str = "checkpoints/epoch_0001.pt"
     episode_labels_path: str | None = None
     root: str | None = None
     revision: str | None = None
@@ -120,6 +121,36 @@ def _init_wandb(cfg: RECAPPiStarTrainingConfig):
     )
     logging.info(f"W&B run: {run.url}")
     return run
+
+
+def _resolve_value_network_checkpoint(cfg: RECAPPiStarTrainingConfig) -> str:
+    """Resolve value_network_checkpoint to a local file path.
+
+    If the path points to an existing local file it is returned as-is.
+    Otherwise the string is treated as a HuggingFace model repo ID
+    (e.g. ``jackvial/recap_value_0``) and the checkpoint file given by
+    ``value_network_checkpoint_filename`` is downloaded via ``hf_hub_download``.
+    """
+    local = Path(cfg.value_network_checkpoint).expanduser()
+    if local.is_file():
+        logging.info(f"Using local value-network checkpoint: {local}")
+        return str(local)
+
+    from huggingface_hub import hf_hub_download
+
+    repo_id = cfg.value_network_checkpoint
+    filename = cfg.value_network_checkpoint_filename
+    logging.info(
+        f"Value-network checkpoint not found locally; "
+        f"downloading {filename} from HuggingFace repo '{repo_id}' ..."
+    )
+    local_path = hf_hub_download(
+        repo_id=repo_id,
+        filename=filename,
+        repo_type="model",
+    )
+    logging.info(f"Downloaded value-network checkpoint to {local_path}")
+    return local_path
 
 
 def _resolve_labels_csv(cfg: RECAPPiStarTrainingConfig) -> Path:
@@ -696,10 +727,13 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
     logging.info(f"Using episode labels from: {labels_csv_path}")
     success_by_episode = base._load_episode_success_map(labels_csv_path)
 
+    # Resolve value-network checkpoint: local path or HuggingFace repo ID
+    resolved_vn_checkpoint = _resolve_value_network_checkpoint(cfg)
+
     # Pull c_fail / num_value_bins from the value-network checkpoint so
     # the return targets used here are guaranteed to match those used
     # during value-network training.
-    vn_train_cfg = _load_vn_train_config(cfg.value_network_checkpoint)
+    vn_train_cfg = _load_vn_train_config(resolved_vn_checkpoint)
     if vn_train_cfg:
         vn_c_fail = vn_train_cfg.get("c_fail")
         vn_num_value_bins = vn_train_cfg.get("num_value_bins")
@@ -752,7 +786,7 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
         advantage_lookup = _precompute_advantages(
             full_dataset=full_dataset,
             frame_targets=frame_targets,
-            value_network_checkpoint=cfg.value_network_checkpoint,
+            value_network_checkpoint=resolved_vn_checkpoint,
             image_keys=image_keys,
             device=device,
             batch_size=cfg.vn_batch_size,
@@ -765,7 +799,7 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
                 cache_path,
                 advantage_lookup,
                 metadata={
-                    "value_network_checkpoint": cfg.value_network_checkpoint,
+                    "value_network_checkpoint": resolved_vn_checkpoint,
                     "c_fail": cfg.c_fail,
                     "repo_id": cfg.repo_id,
                 },
