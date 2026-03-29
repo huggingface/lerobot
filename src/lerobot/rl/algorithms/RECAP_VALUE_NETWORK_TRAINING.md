@@ -1,26 +1,72 @@
 # RECAP Value Network Training
 
-This document explains how to:
+Implementation of RECAP from the [π∗0.6: a VLA That Learns From Experience](https://www.pi.website/download/pistar06.pdf)
 
-1. Prepare a LeRobot dataset + success/fail labels for value training.
-2. Train the standalone RECAP value network.
-3. Train the advantage-conditioned SmolVLA policy (SmolStar06) using the frozen value network.
-4. Train the advantage-conditioned Pi0.5 policy (PiStar06) using the frozen value network.
+The pipeline is two training runs:
 
-There are two backbone variants:
+1. **Value network** — learns V(o_t) from episode success/fail labels.
+2. **PiStar06 policy** — fine-tunes Pi0.5 with advantage conditioning. The pretrained value network is used to determine at each step which advantage conditioning text should be added as input "Advantage: positive" or "Advantage: negative"
+3. **Inference** - The advantage conditioning effecitvely allows the model to learn two distributions, at infernece time we always append "Advantage: positive" to the text prompt to push the model toward selected from the good "Advantage: positive" distribution.
 
-| Variant | Training entrypoint | Model |
-|---------|-------------------|-------|
-| **pi0.5 (PaliGemma)** | `src/lerobot/rl/algorithms/RECAPTrainValueNetwork.py` | `src/lerobot/rl/algorithms/RECAPValueNetwork.py` |
-| **SmolVLA (SmolVLM2)** | `src/lerobot/rl/algorithms/RECAPTrainSmolVLANetwork.py` | `src/lerobot/rl/algorithms/RECAPSmolVLAValueNetwork.py` |
+## Quick Start
 
-The SmolVLA variant replaces the PaliGemma vision-language backbone with
-`HuggingFaceTB/SmolVLM2-500M-Video-Instruct`. It is smaller, faster to train, and
-does not require a pretrained checkpoint — weights can be loaded from HuggingFace
-directly via `--load_vlm_weights=true` or trained from scratch with
-`--load_vlm_weights=false`. Additional flags `--freeze_vision_encoder` and
-`--freeze_backbone` give fine-grained control over which parts of the SmolVLM2
-backbone are trainable.
+Everything below uses the public dataset
+`jackvial/so101_pickplace_recap_merged_v2` (episode labels included) and fits
+on a single **RTX 4070 TI SUPER** (16 GB VRAM).
+
+### Step 1 — Train the value network
+
+```bash
+uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
+  --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
+  --root="${HOME}/.cache/huggingface/lerobot" \
+  --output_dir="${HOME}/code/lerobot/outputs/recap_value" \
+  --epochs=2 \
+  --batch_size=4 \
+  --gradient_accumulation_steps=4 \
+  --learning_rate=1e-4 \
+  --num_workers=4 \
+  --val_split_ratio=0.1 \
+  --log_every_n_steps=100 \
+  --validate_every_n_train_steps=50 \
+  --plot_every_n_train_steps=200 \
+  --max_val_steps_per_step_validation=20 \
+  --c_fail=500.0 \
+  --num_value_bins=8 \
+  --num_vlm_layers=10 \
+  --paligemma_variant=gemma_2b \
+  --pretrained_path=lerobot/pi05_base \
+  --val_plot_num_episodes=4 \
+  --val_plot_num_frames=8 \
+  --val_plot_every_n_epochs=1 \
+  --model_precision="bfloat16" \
+  --freeze_vision_encoder=true \
+  --freeze_backbone=true \
+  --num_unfrozen_backbone_layers=3
+```
+
+### Step 2 — Train the advantage-conditioned policy
+
+Point `--value_network_checkpoint` at the checkpoint produced by Step 1.
+
+```bash
+uv run python -m lerobot.rl.algorithms.RECAPTrainPiStar \
+  --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
+  --output_dir="${HOME}/code/lerobot/outputs/recap_pistar" \
+  --value_network_checkpoint="${HOME}/code/lerobot/outputs/recap_value/checkpoints/last.pt" \
+  --epochs=5 \
+  --batch_size=6 \
+  --learning_rate=1e-4 \
+  --val_split_ratio=0.1 \
+  --validate_every_n_train_steps=50 \
+  --c_fail=500.0 \
+  --advantage_threshold=0.0 \
+  --advantage_dropout=0.3 \
+  --log_every_n_steps=10 \
+  --model_precision="bfloat16" \
+  --freeze_vision_encoder=true \
+  --advantage_cache_path="${HOME}/code/lerobot/outputs/advantage_cache.json"
+```
 
 ---
 
@@ -81,9 +127,9 @@ api.upload_file(
 )
 ```
 
-### 1.4 Expected reward/return construction
+### 1.4 Reward/return construction
 
-During preprocessing, the script builds paper-style targets from episode outcomes:
+During preprocessing, the script builds a reward and return sequence from episode outcomes:
 
 - Per-step reward:
   - non-terminal steps: `-1`
@@ -93,560 +139,3 @@ During preprocessing, the script builds paper-style targets from episode outcome
 - Return is normalized by per-task max episode length.
 - Normalized values are clamped to `[-1, 0]`.
 - Values are discretized into `B` bins (`--num_value_bins`, default `50`).
-
-This produces frame-level supervision targets:
-
-- continuous normalized return (`target_value`)
-- discrete return bin (`target_bin`)
-
----
-
-## 2) Training
-
-### 2.1 Quick start — pi0.5 backbone with pretrained weights (RTX 4070 TI SUPER)
-
-**Recommended approach.** Loads the `lerobot/pi05_base` checkpoint (gemma_2b
-PaliGemma backbone), freezes the vision encoder and most of the backbone, and
-selectively unfreezes the last few transformer layers so the model can learn
-task-relevant attention patterns. The small state projection, fusion head, and
-value head are always trainable. Pretrained features give the network a strong
-starting point, even with a high `c_fail`.
-
-Use `--num_vlm_layers` to truncate the text model — fewer layers means less
-memory and faster forward passes. 10 of the 18 available layers is a good
-starting point on 16 GB GPUs. Use `--num_unfrozen_backbone_layers` to
-selectively unfreeze the last N transformer layers when `--freeze_backbone=true`;
-this lets the model adapt its attention patterns while keeping the majority of
-the backbone frozen for memory efficiency. Use `--gradient_accumulation_steps`
-to simulate larger effective batch sizes without additional VRAM.
-
-Key pi0.5-specific flags:
-
-| Flag | Default | Effect |
-|------|---------|--------|
-| `--paligemma_variant` | `gemma_300m` | PaliGemma VLM variant (`gemma_300m` or `gemma_2b`) |
-| `--num_vlm_layers` | `18` | Number of text model layers to keep (truncates deeper layers) |
-| `--pretrained_path` | `None` | Path to pretrained pi0.5 weights (e.g., `lerobot/pi05_base`) |
-| `--freeze_vision_encoder` | `false` | Freeze the SigLIP vision encoder inside PaliGemma |
-| `--freeze_backbone` | `false` | Freeze the full PaliGemma backbone (only state/fusion/value heads train) |
-| `--num_unfrozen_backbone_layers` | `0` | When `freeze_backbone=true`, unfreeze the last N transformer layers |
-| `--gradient_accumulation_steps` | `1` | Accumulate gradients over N micro-batches before each optimizer step |
-| `--warmup_ratio` | `0.05` | Fraction of training steps used for linear LR warmup |
-| `--use_class_weights` | `true` | Apply inverse-frequency weights to cross-entropy loss |
-
-```bash
-uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
-  --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
-  --root="${HOME}/.cache/huggingface/lerobot" \
-  --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_merged_v2_value_pi05" \
-  --epochs=2 \
-  --batch_size=4 \
-  --gradient_accumulation_steps=4 \
-  --learning_rate=1e-4 \
-  --num_workers=4 \
-  --val_split_ratio=0.1 \
-  --log_every_n_steps=100 \
-  --validate_every_n_train_steps=50 \
-  --plot_every_n_train_steps=200 \
-  --max_val_steps_per_step_validation=20 \
-  --c_fail=500.0 \
-  --num_value_bins=8 \
-  --num_vlm_layers=10 \
-  --paligemma_variant=gemma_2b \
-  --pretrained_path=lerobot/pi05_base \
-  --val_plot_num_episodes=4 \
-  --val_plot_num_frames=8 \
-  --val_plot_every_n_epochs=1 \
-  --model_precision="bfloat16" \
-  --freeze_vision_encoder=true \
-  --freeze_backbone=true \
-  --num_unfrozen_backbone_layers=3
-```
-
-### 2.1.1 Alternative — train gemma_300m from scratch (no pretrained weights)
-
-If you don't have access to `lerobot/pi05_base`, or want a smaller model you
-can fine-tune end-to-end, use `gemma_300m` without `--pretrained_path`. This
-trains the full VLM (vision encoder frozen, text backbone trainable) from
-random initialisation.
-
-**Important tradeoffs vs the pretrained gemma_2b approach:**
-
-| | Pretrained gemma_2b (§2.1) | From-scratch gemma_300m |
-|---|---|---|
-| Pretrained features | Yes — strong visual features from day one | No — network must learn features from scratch |
-| Trainable params | ~10M (heads only) | ~578M (text backbone + heads) |
-| `c_fail` tolerance | High `c_fail` (500) works — pretrained features can discriminate observations even with skewed targets | Must use lower `c_fail` (≤24) so failure episodes produce varied target bins instead of all clamping to bin 0 |
-| Learning rate | 3e-3 works (small head, pretrained features) | Use 1e-4 with warmup — high LR destroys randomly-initialised features before they develop |
-| GPU memory (16 GB) | Fits at batch_size=2 | Fits at batch_size=6 |
-| Overfitting risk | Low (few trainable params) | High (578M params on ~12K frames) |
-
-```bash
-uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
-  --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
-  --root="${HOME}/.cache/huggingface/lerobot" \
-  --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_merged_v2_value_300m" \
-  --epochs=2 \
-  --batch_size=6 \
-  --learning_rate=1e-4 \
-  --num_workers=4 \
-  --val_split_ratio=0.1 \
-  --log_every_n_steps=100 \
-  --validate_every_n_train_steps=50 \
-  --plot_every_n_train_steps=200 \
-  --max_val_steps_per_step_validation=20 \
-  --c_fail=24.0 \
-  --num_value_bins=56 \
-  --num_vlm_layers=18 \
-  --paligemma_variant=gemma_300m \
-  --val_plot_num_episodes=4 \
-  --val_plot_num_frames=8 \
-  --val_plot_every_n_epochs=1 \
-  --model_precision="bfloat16" \
-  --freeze_vision_encoder=true \
-  --freeze_backbone=false \
-  --use_class_weights=true \
-  --warmup_ratio=0.05
-```
-
-### 2.2 Quick start — SmolVLA backbone (RTX 4070 TI SUPER)
-
-Uses SmolVLM2-500M as the vision-language backbone. The recommended configuration is
-to load pretrained SmolVLM2 weights (`--load_vlm_weights=true`), freeze the vision
-encoder (`--freeze_vision_encoder=true`), and train the language backbone
-(`--freeze_backbone=false`). This lets the model leverage pretrained visual features
-while adapting the language backbone to the value prediction task. SmolVLA is smaller
-than pi0.5, so you can use larger batch sizes and a higher learning rate.
-
-Key SmolVLA-specific flags:
-
-| Flag | Effect |
-|------|--------|
-| `--load_vlm_weights` | Load pretrained SmolVLM2 weights (`true`) or random init (`false`) |
-| `--freeze_vision_encoder` | Freeze the SigLIP vision encoder inside SmolVLM2 |
-| `--freeze_backbone` | Freeze the full SmolVLM2 language backbone (only the value head trains) |
-
-```bash
-uv run python -m lerobot.rl.algorithms.RECAPTrainSmolVLANetwork \
-  --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
-  --root="${HOME}/.cache/huggingface/lerobot" \
-  --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_value_300m_0" \
-  --epochs=2 \
-  --batch_size=6 \
-  --learning_rate=3e-3 \
-  --num_workers=4 \
-  --val_split_ratio=0.1 \
-  --log_every_n_steps=100 \
-  --validate_every_n_train_steps=50 \
-  --plot_every_n_train_steps=200 \
-  --max_val_steps_per_step_validation=20 \
-  --c_fail=500.0 \
-  --num_value_bins=56 \
-  --val_plot_num_episodes=4 \
-  --val_plot_num_frames=8 \
-  --val_plot_every_n_epochs=1 \
-  --load_vlm_weights=true \
-  --freeze_vision_encoder=true \
-  --freeze_backbone=false \
-  --model_precision="bfloat16"
-```
-
-### 2.3 Full smoke-test command (step-based val + plots, pi0.5)
-
-```bash
-uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
-  --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
-  --root="${HOME}/.cache/huggingface/lerobot" \
-  --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_merged_v2_value_smoketest_1" \
-  --epochs=1 \
-  --batch_size=2 \
-  --learning_rate=3e-3 \
-  --num_workers=4 \
-  --val_split_ratio=0.1 \
-  --max_train_steps_per_epoch=200 \
-  --max_val_steps_per_epoch=50 \
-  --log_every_n_steps=10 \
-  --validate_every_n_train_steps=25 \
-  --plot_every_n_train_steps=100 \
-  --max_val_steps_per_step_validation=10 \
-  --c_fail=500.0 \
-  --num_value_bins=16 \
-  --num_vlm_layers=10 \
-  --paligemma_variant="gemma_2b" \
-  --pretrained_path="lerobot/pi05_base" \
-  --val_plot_num_episodes=2 \
-  --val_plot_num_frames=8 \
-  --val_plot_every_n_epochs=1 \
-  --model_precision="bfloat16" \
-  --freeze_vision_encoder=true \
-  --freeze_backbone=true
-```
-
-### 2.4 Full smoke-test command (step-based val + plots, SmolVLA)
-
-```bash
-uv run python -m lerobot.rl.algorithms.RECAPTrainSmolVLANetwork \
-  --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
-  --root="${HOME}/.cache/huggingface/lerobot" \
-  --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_value_smolvla_smoketest_1" \
-  --epochs=1 \
-  --batch_size=2 \
-  --learning_rate=3e-4 \
-  --num_workers=4 \
-  --val_split_ratio=0.1 \
-  --max_train_steps_per_epoch=200 \
-  --max_val_steps_per_epoch=50 \
-  --log_every_n_steps=10 \
-  --validate_every_n_train_steps=25 \
-  --plot_every_n_train_steps=100 \
-  --max_val_steps_per_step_validation=10 \
-  --c_fail=500.0 \
-  --num_value_bins=16 \
-  --val_plot_num_episodes=2 \
-  --val_plot_num_frames=8 \
-  --val_plot_every_n_epochs=1 \
-  --load_vlm_weights=true \
-  --freeze_vision_encoder=true \
-  --model_precision="bfloat16"
-```
-
----
-
-## 3) Advantage-Conditioned Policy Training (SmolStar06)
-
-The RECAP pipeline has two phases:
-
-1. **Train a value network** (Sections 2.1–2.2 above) — produces a critic that
-   predicts expected returns from observations.
-2. **Train an advantage-conditioned policy** (this section) — uses the frozen
-   value network to label each training sample with a binarized advantage
-   indicator that is injected as a learned embedding directly into the action
-   expert's input pathway.
-
-At inference, the model conditions on the positive advantage embedding to
-produce higher-quality actions. No value network is needed at test time.
-
-### 3.1 How advantage conditioning works: RECAP paper vs SmolVLA
-
-The RECAP paper (pi-0.6) and SmolVLA use fundamentally different model
-architectures, which means the advantage conditioning must be implemented
-differently. Understanding this distinction is critical.
-
-#### 3.1.1 RECAP paper (pi-0.6): single-stream architecture
-
-pi-0.6 uses a **single-stream** architecture where the VLM backbone processes a
-unified token sequence. The advantage indicator appears as text tokens in that
-sequence, positioned after the sub-task prediction but before the action tokens:
-
-```
-[images] [language: "pick up the cube"] [sub-task: "grasp object"] [Advantage: positive] [action tokens]
-```
-
-Because the action expert shares the same causal sequence as the language model,
-the advantage text is the **most recent context** when the expert generates
-actions. Standard causal attention ensures the expert directly attends to the
-advantage tokens. At inference, you simply append `"Advantage: positive"` to the
-prompt and sample actions normally.
-
-#### 3.1.2 SmolVLA: two-stream architecture
-
-SmolVLA uses a **two-stream** architecture with separate processing stacks:
-
-- **Stream 0 (VLM)**: processes images, language tokens, and robot state
-- **Stream 1 (action expert)**: processes noisy actions and flow-matching timestep
-
-The two streams are connected only through **cross-attention** (and joint
-attention at every other layer). There is no shared token sequence where
-advantage text can be placed "right before the actions."
-
-If you append `"Advantage: positive"` as text tokens to the language prompt, the
-advantage signal enters the VLM stream (stream 0) and must survive the entire
-VLM transformer stack before reaching the action expert indirectly through
-cross-attention to VLM key/value states. In practice:
-
-1. The advantage is 4 tokens among 200+ prefix tokens (images produce many
-   tokens) — the signal is too diluted in the VLM's internal representations.
-2. The VLM has no training objective that encourages it to amplify the advantage
-   signal in its key/value states.
-3. The gradient from the flow-matching MSE loss must backpropagate through the
-   expert's cross-attention, through the VLM's K/V projections, through every
-   VLM layer, back to the advantage token embeddings — an extremely weak signal.
-4. **Result**: the model produces identical flow-matching loss regardless of
-   advantage label (`cond_acc=0.0`, `cond_gap=0.0`).
-
-#### 3.1.3 SmolStar06 solution: expert-side advantage embedding
-
-SmolStar06 injects the advantage signal as a **learned embedding** directly into
-the action expert's input pathway (`embed_suffix`), bypassing the VLM text
-processing entirely:
-
-```
-nn.Embedding(2, expert_hidden_size)  →  index 0 = negative, index 1 = positive
-```
-
-The embedding vector is added to the action-time embedding in `embed_suffix`,
-so the information path is:
-
-```
-advantage_indicator (True/False)
-    → nn.Embedding lookup → dense vector [expert_hidden_size]
-    → broadcast to [B, chunk_size, expert_hidden_size]
-    → ADD to action_time_emb in embed_suffix
-    → expert layers process this directly
-    → action_out_proj → predicted velocity v_t
-    → MSE loss against target u_t
-```
-
-The gradient path is **direct**: MSE loss → `action_out_proj` → expert layers →
-advantage embedding weights. The embedding is zero-initialized so it starts
-neutral, and the MSE loss immediately provides gradient signal.
-
-The VLM prefix (images, language, state) is processed normally with no advantage
-tokens — the expert still gets all language/visual information through
-cross-attention, exactly as in base SmolVLA. The advantage embedding is a
-**separate, dedicated channel** that does not compete with image and language
-tokens for attention bandwidth.
-
-### 3.2 Training
-
-For each training sample `(o_t, a_t)`:
-
-1. The deterministic return `R_t` is computed from the episode success/fail
-   label and the frame's position within the episode.
-2. The frozen value network predicts `V(o_t)`.
-3. Advantage `A = R_t - V(o_t)` measures whether the trajectory did better or
-   worse than expected.
-4. `A > threshold` → advantage embedding index 1 (positive).
-   `A ≤ threshold` → advantage embedding index 0 (negative).
-5. The advantage embedding vector is added to the action-time embedding in
-   `embed_suffix`, directly modulating the expert's denoising input.
-6. With 30% probability, the advantage embedding is zeroed out (dropout),
-   producing an unconditional forward pass. This enables optional
-   classifier-free guidance at test time with `cfg_beta > 1`.
-
-### 3.3 Quick start — SmolStar06 (RTX 4070 TI SUPER)
-
-Prerequisites:
-- A trained SmolVLA value network checkpoint (from Section 2.2). The example
-  below uses `outputs/so101_pickplace_recap_value`.
-- The same dataset and episode labels used for value network training.
-
-```bash
-uv run python -m lerobot.rl.algorithms.RECAPTrainSmolStar \
-  --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
-  --output_dir="${HOME}/code/lerobot/outputs/recap_smolstar_train_4" \
-  --value_network_checkpoint="${HOME}/code/lerobot/outputs/so101_pickplace_recap_value/checkpoints/last.pt" \
-  --epochs=5 \
-  --batch_size=6 \
-  --learning_rate=1e-4 \
-  --val_split_ratio=0.1 \
-  --validate_every_n_train_steps=200 \
-  --c_fail=500.0 \
-  --advantage_threshold=0.0 \
-  --advantage_dropout=0.3 \
-  --log_every_n_steps=10
-```
-
-### 3.4 SmolStar06-specific configuration flags
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `value_network_checkpoint` | `None` | Path to `.pt` checkpoint from RECAP value network training |
-| `episode_labels_path` | `None` | Path to `episode_labels.csv` with per-episode success/fail labels |
-| `c_fail` | `500.0` | Failure penalty (must match the value used for value network training) |
-| `advantage_threshold` | `0.0` | Binarization threshold: advantage > threshold → positive |
-| `advantage_dropout` | `0.3` | Probability of zeroing out the advantage embedding (for CFG training) |
-| `cfg_beta` | `1.0` | Classifier-free guidance scale at inference (1.0 = no CFG) |
-
----
-
-## 4) Weights & Biases Logging
-
-Both the value network and SmolStar06 training scripts support optional
-[Weights & Biases](https://wandb.ai/) logging. When enabled, all metrics that
-are logged to the console and saved to `metrics_history.json` are also sent to
-a W&B run in real time.
-
-### 4.1 Enabling W&B
-
-Pass `--wandb_project` to either training script. If omitted (the default),
-W&B is completely disabled — no import, no network calls.
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--wandb_project` | `None` | W&B project name. Setting this enables logging. |
-| `--wandb_entity` | `None` | W&B team/user entity (uses your default if unset). |
-| `--wandb_run_name` | `None` | Display name for the run (auto-generated if unset). |
-
-### 4.2 Metrics logged — value network
-
-| Key prefix | Metrics | When |
-|------------|---------|------|
-| `train/` | `loss`, `bin_acc`, `value_mae`, `window_loss`, `window_bin_acc`, `window_value_mae`, `samples_per_sec` | Every `log_every_n_steps` training steps |
-| `val/` | `loss`, `bin_acc`, `value_mae` | Every validation (step-based or epoch-end) |
-| `epoch/` | `train_loss`, `train_bin_acc`, `train_value_mae`, `val_loss`, `val_bin_acc`, `val_value_mae`, `lr` | End of each epoch |
-| `val_plots/` | Episode return plots (as `wandb.Image`) | When validation plots are saved |
-
-### 4.3 Metrics logged — SmolStar06 policy
-
-| Key prefix | Metrics | When |
-|------------|---------|------|
-| `train/` | `loss`, `lr`, `step_loss` | Every `log_every_n_steps` training steps |
-| `val/` | `val_loss`, `val_loss_pos`, `val_loss_neg`, `val_n_pos`, `val_n_neg`, `val_conditioning_accuracy`, `val_conditioning_gap`, `val_conditioning_gap_pos`, `val_conditioning_gap_neg`, `val_adv_episode_alignment`, `val_alignment_on_success`, `val_alignment_on_failure` | Every validation (step-based or epoch-end) |
-| `epoch/` | All of the above plus `epoch`, `train_loss`, `lr` | End of each epoch |
-
-### 4.4 Example commands
-
-Value network with W&B:
-
-```bash
-uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
-  --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
-  --output_dir="${HOME}/code/lerobot/outputs/recap_value_wandb" \
-  --epochs=2 \
-  --batch_size=2 \
-  --learning_rate=3e-3 \
-  --paligemma_variant="gemma_2b" \
-  --pretrained_path="lerobot/pi05_base" \
-  --num_vlm_layers=10 \
-  --model_precision="bfloat16" \
-  --freeze_vision_encoder=true \
-  --freeze_backbone=true \
-  --wandb_project="recap-value-network" \
-  --wandb_entity="my-team" \
-  --wandb_run_name="value-net-run-1"
-```
-
-SmolStar06 policy with W&B:
-
-```bash
-uv run python -m lerobot.rl.algorithms.RECAPTrainSmolStar \
-  --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
-  --output_dir="${HOME}/code/lerobot/outputs/recap_smolstar_train_5" \
-  --value_network_checkpoint="${HOME}/code/lerobot/outputs/so101_pickplace_recap_value/checkpoints/last.pt" \
-  --epochs=5 \
-  --batch_size=6 \
-  --learning_rate=1e-3 \
-  --val_split_ratio=0.1 \
-  --validate_every_n_train_steps=50 \
-  --c_fail=500.0 \
-  --advantage_threshold=0.0 \
-  --advantage_dropout=0.3 \
-  --log_every_n_steps=10 \
-  --wandb_project="recap-smolstar" \
-  --wandb_run_name="smolstar-run-5"
-```
-
----
-
-### 3.5 Inference
-
-At inference time, no value network is needed:
-
-- **`cfg_beta=1.0`** (default): The positive advantage embedding (index 1) is
-  added to every `embed_suffix` call during denoising. Language tokens are
-  unmodified. This produces actions conditioned on "better than average."
-- **`cfg_beta>1.0`** (optional): Classifier-free guidance runs two denoising
-  passes per Euler step — one with the positive advantage embedding
-  (conditioned) and one without any advantage embedding (unconditional) — then
-  interpolates the flow vectors:
-  `v = v_uncond + beta * (v_cond - v_uncond)`.
-
----
-
-## 4) Advantage-Conditioned Policy Training (PiStar06)
-
-PiStar06 applies the same RECAP advantage conditioning to a **Pi0.5 backbone**
-(PaliGemma + Gemma action expert) instead of SmolVLA. The advantage embedding
-is injected into the action expert's suffix (`embed_suffix`), identical to
-SmolStar06's approach.
-
-Because Pi0.5 uses a PaliGemma tokenizer while the SmolVLA value network uses
-a SmolVLM2 tokenizer, advantages are **pre-computed** before the training loop
-starts. The value network runs once over the full dataset, then each frame's
-advantage is injected into training batches via a lookup dict. This avoids
-maintaining dual tokenizers during training.
-
-### 4.1 How it works
-
-1. The training script loads the frozen SmolVLA value network and iterates
-   over the full dataset with a SmolVLM2 tokenizer to compute V(o_t) per frame.
-2. R_t is computed from episode success/fail labels (same as SmolStar06).
-3. Advantage A = R_t - V(o_t) is stored in a lookup dict keyed by frame index.
-4. During training, each batch receives pre-computed advantages before the
-   Pi0.5 preprocessor runs.
-5. The policy binarizes advantages (A > threshold → positive embedding) and
-   injects the learned embedding into the action expert's suffix input.
-
-### 4.2 Quick start — PiStar06 (RTX 4070 TI SUPER)
-
-Prerequisites:
-- A trained SmolVLA value network checkpoint (from Section 2.2). The example
-  below uses `outputs/so101_pickplace_recap_value`.
-- The same dataset and episode labels used for value network training.
-
-```bash
-uv run python -m lerobot.rl.algorithms.RECAPTrainPiStar \
-  --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
-  --output_dir="${HOME}/code/lerobot/outputs/recap_pistar_train_1" \
-  --value_network_checkpoint="${HOME}/code/lerobot/outputs/so101_pickplace_recap_value/checkpoints/last.pt" \
-  --epochs=5 \
-  --batch_size=6 \
-  --learning_rate=1e-4 \
-  --val_split_ratio=0.1 \
-  --validate_every_n_train_steps=50 \
-  --c_fail=500.0 \
-  --advantage_threshold=0.0 \
-  --advantage_dropout=0.3 \
-  --log_every_n_steps=10 \
-  --model_precision="bfloat16" \
-  --freeze_vision_encoder=true \
-  --advantage_cache_path="${HOME}/code/lerobot/outputs/advantage_cache.json"
-```
-
-Note: The default `paligemma_variant` is `gemma_300m`, which fits comfortably on
-an RTX 4070 TI SUPER with `batch_size=6`. The vision encoder is frozen while the
-full VLM backbone and action expert are fine-tuned. To use the larger `gemma_2b`
-variant, reduce `batch_size` to 1-2 and add `--gradient_checkpointing=true`.
-
-### 4.3 PiStar06-specific configuration flags
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `value_network_checkpoint` | `None` | Path to `.pt` checkpoint from RECAP SmolVLA value network training |
-| `pretrained_path` | `None` | Path to pretrained Pi0.5 weights (e.g., `lerobot/pi05_base`) |
-| `episode_labels_path` | `None` | Path to `episode_labels.csv` (auto-discovered from dataset if not set) |
-| `c_fail` | `500.0` | Failure penalty (must match the value used for value network training) |
-| `advantage_threshold` | `0.0` | Binarization threshold: advantage > threshold → positive |
-| `advantage_dropout` | `0.3` | Probability of zeroing out the advantage embedding (for CFG training) |
-| `cfg_beta` | `1.0` | Classifier-free guidance scale at inference (1.0 = no CFG) |
-| `model_precision` | `bfloat16` | Model precision (`bfloat16` or `float32`) |
-| `gradient_checkpointing` | `false` | Enable gradient checkpointing for memory optimization |
-| `paligemma_variant` | `gemma_300m` | PaliGemma VLM variant (`gemma_300m` or `gemma_2b`) |
-| `action_expert_variant` | `gemma_300m` | Gemma action expert variant |
-| `vn_batch_size` | `4` | Batch size for value network pre-computation |
-| `vn_image_size` | `512` | Image size for value network input |
-| `advantage_cache_path` | `None` | Path to cache pre-computed advantages (JSON); skips VN pre-computation on subsequent runs |
-
-### 4.4 PiStar06 with W&B
-
-```bash
-uv run python -m lerobot.rl.algorithms.RECAPTrainPiStar \
-  --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
-  --output_dir="${HOME}/code/lerobot/outputs/recap_pistar_train_1" \
-  --value_network_checkpoint="${HOME}/code/lerobot/outputs/so101_pickplace_recap_value/checkpoints/last.pt" \
-  --epochs=10 \
-  --batch_size=2 \
-  --learning_rate=1e-4 \
-  --val_split_ratio=0.1 \
-  --validate_every_n_train_steps=2000 \
-  --c_fail=500.0 \
-  --advantage_threshold=0.0 \
-  --advantage_dropout=0.3 \
-  --log_every_n_steps=10 \
-  --model_precision="bfloat16" \
-  --freeze_vision_encoder=true \
-  --advantage_cache_path="${HOME}/code/lerobot/outputs/advantage_cache.json" \
-  --wandb_project="recap-pistar" \
-  --wandb_run_name="pistar-run-gemma-300m-3"
-```
