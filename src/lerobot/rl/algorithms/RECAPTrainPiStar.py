@@ -428,8 +428,8 @@ def _run_validation(
         if max_steps is not None and step >= max_steps:
             break
 
-        batch = _inject_advantages(batch, advantage_lookup, device)
         batch = preprocessor(batch)
+        batch = _inject_advantages(batch, advantage_lookup, device)
 
         advantages, _ = policy._compute_advantages(batch)
         true_indicator = advantages > policy.config.advantage_threshold
@@ -778,8 +778,8 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
             if cfg.max_train_steps_per_epoch is not None and step >= cfg.max_train_steps_per_epoch:
                 break
 
-            batch = _inject_advantages(batch, advantage_lookup, device)
             batch = preprocessor(batch)
+            batch = _inject_advantages(batch, advantage_lookup, device)
             loss, output_dict = policy.forward(batch)
 
             optimizer.zero_grad()
