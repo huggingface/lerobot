@@ -424,7 +424,9 @@ def _run_validation(
     total_success_samples = 0
     total_failure_samples = 0
 
+    print("running validation...")
     for step, batch in enumerate(loader):
+        print("validation step: ", step)
         if max_steps is not None and step >= max_steps:
             break
 

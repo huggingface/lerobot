@@ -528,7 +528,7 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainPiStar \
   --batch_size=2 \
   --learning_rate=1e-4 \
   --val_split_ratio=0.1 \
-  --validate_every_n_train_steps=50 \
+  --validate_every_n_train_steps=500 \
   --c_fail=500.0 \
   --advantage_threshold=0.0 \
   --advantage_dropout=0.3 \
@@ -537,5 +537,5 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainPiStar \
   --freeze_vision_encoder=true \
   --advantage_cache_path="${HOME}/code/lerobot/outputs/advantage_cache.json" \
   --wandb_project="recap-pistar" \
-  --wandb_run_name="pistar-run-gemma-300m-0"
+  --wandb_run_name="pistar-run-gemma-300m-1"
 ```
