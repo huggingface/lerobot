@@ -32,7 +32,7 @@ classifier-free guidance (cfg_beta > 1) runs two prefix computations (with /
 without advantage text) and interpolates the flow vectors.
 
 Two-phase workflow:
-  1. Train a value network with RECAPTrainSmolVLANetwork (see RECAP_VALUE_NETWORK_TRAINING.md)
+  1. Train a value network with RECAPTrainSmolVLANetwork (see docs/recap.md)
   2. Train PiStar06Policy using pre-computed advantages from the frozen value network
 """
 
