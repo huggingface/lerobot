@@ -9,7 +9,7 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainPiStar \
   --output_dir="${HOME}/code/lerobot/outputs/recap_pistar_train_1" \
   --value_network_checkpoint="${HOME}/code/lerobot/outputs/so101_pickplace_recap_value/checkpoints/last.pt" \
   --epochs=10 \
-  --batch_size=2 \
+  --batch_size=10 \
   --learning_rate=1e-4 \
   --val_split_ratio=0.1 \
   --validate_every_n_train_steps=1000 \
