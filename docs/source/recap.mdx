@@ -17,7 +17,7 @@ on a single **RTX 4070 TI SUPER** (16 GB VRAM).
 ### Step 1 — Train the value network
 
 ```bash
-uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
+python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
   --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
   --root="${HOME}/.cache/huggingface/lerobot" \
   --output_dir="${HOME}/code/lerobot/outputs/recap_value" \
@@ -60,7 +60,7 @@ Point `--value_network_checkpoint` at the checkpoint produced by Step 1.
 > command line, but it will be corrected to match the checkpoint.
 
 ```bash
-uv run python -m lerobot.rl.algorithms.RECAPTrainPiStar \
+python -m lerobot.rl.algorithms.RECAPTrainPiStar \
   --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
   --output_dir="${HOME}/code/lerobot/outputs/recap_pistar" \
   --value_network_checkpoint="${HOME}/code/lerobot/outputs/recap_value/checkpoints/last.pt" \
