@@ -12,7 +12,7 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainPiStar \
   --batch_size=2 \
   --learning_rate=1e-4 \
   --val_split_ratio=0.1 \
-  --validate_every_n_train_steps=2000 \
+  --validate_every_n_train_steps=1000 \
   --c_fail=500.0 \
   --advantage_threshold=0.0 \
   --advantage_dropout=0.3 \
