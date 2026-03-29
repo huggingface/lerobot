@@ -72,7 +72,7 @@ class RECAPPiStarTrainingConfig:
     max_val_steps_per_epoch: int | None = None
     log_every_n_steps: int = 10
     validate_every_n_train_steps: int = 0
-    max_val_steps_per_step_validation: int | None = None
+    max_val_steps_per_step_validation: int | None = 50
 
     # RECAP advantage conditioning
     c_fail: float = 500.0
@@ -424,9 +424,9 @@ def _run_validation(
     total_success_samples = 0
     total_failure_samples = 0
 
-    print("running validation...")
+    cap = f"/{max_steps}" if max_steps is not None else ""
+    logging.info(f"Running validation (max_steps{cap})...")
     for step, batch in enumerate(loader):
-        print("validation step: ", step)
         if max_steps is not None and step >= max_steps:
             break
 

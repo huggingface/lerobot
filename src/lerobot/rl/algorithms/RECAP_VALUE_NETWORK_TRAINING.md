@@ -537,5 +537,5 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainPiStar \
   --freeze_vision_encoder=true \
   --advantage_cache_path="${HOME}/code/lerobot/outputs/advantage_cache.json" \
   --wandb_project="recap-pistar" \
-  --wandb_run_name="pistar-run-gemma-300m-1"
+  --wandb_run_name="pistar-run-gemma-300m-2"
 ```
