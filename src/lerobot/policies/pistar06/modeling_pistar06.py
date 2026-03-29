@@ -36,7 +36,6 @@ Two-phase workflow:
   2. Train PiStar06Policy using pre-computed advantages from the frozen value network
 """
 
-import copy
 import csv
 import logging
 from typing import Unpack
@@ -93,7 +92,9 @@ class PiStar06Policy(PI05Policy):
         """Pre-tokenize advantage strings with the PaliGemma tokenizer."""
         from transformers import AutoTokenizer
 
-        tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
+        # The tokenizer is identical across all PaliGemma model sizes (300M, 2B, 3B);
+        # only tokenizer config files are downloaded, not model weights.
+        tokenizer = AutoTokenizer.from_pretrained(self.config.paligemma_tokenizer_name)
         pos_ids = tokenizer.encode(" Advantage: positive", add_special_tokens=False)
         neg_ids = tokenizer.encode(" Advantage: negative", add_special_tokens=False)
 

@@ -82,7 +82,7 @@ class RECAPPiStarTrainingConfig:
     cfg_beta: float = 1.0
 
     # Pi0.5 model settings
-    paligemma_variant: str = "gemma_2b"
+    paligemma_variant: str = "gemma_300m"
     action_expert_variant: str = "gemma_300m"
     pretrained_path: str | None = None
     model_precision: str = "bfloat16"
@@ -272,7 +272,7 @@ def _precompute_advantages(
 
         stacked = torch.stack(img_list, dim=1)
         _, N, C, H, W = stacked.shape
-        if H != target_h or W != target_w:
+        if target_h != H or target_w != W:
             flat = stacked.reshape(B * N, C, H, W)
             flat = F.interpolate(flat, size=(target_h, target_w), mode="bilinear", align_corners=False)
             stacked = flat.reshape(B, N, C, target_h, target_w)

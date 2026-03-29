@@ -479,23 +479,24 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainPiStar \
   --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
   --output_dir="${HOME}/code/lerobot/outputs/recap_pistar_train_1" \
   --value_network_checkpoint="${HOME}/code/lerobot/outputs/so101_pickplace_recap_value/checkpoints/last.pt" \
-  --pretrained_path="lerobot/pi05_base" \
   --epochs=5 \
-  --batch_size=1 \
+  --batch_size=6 \
   --learning_rate=1e-4 \
   --val_split_ratio=0.1 \
-  --validate_every_n_train_steps=200 \
+  --validate_every_n_train_steps=50 \
   --c_fail=500.0 \
   --advantage_threshold=0.0 \
   --advantage_dropout=0.3 \
   --log_every_n_steps=10 \
   --model_precision="bfloat16" \
   --freeze_vision_encoder=true \
-  --gradient_checkpointing=true
+  --advantage_cache_path="${HOME}/code/lerobot/outputs/advantage_cache.json"
 ```
 
-Note: Pi0.5 is larger than SmolVLA, so batch sizes need to be smaller
-(typically 1-2 on an RTX 4070 TI SUPER). Gradient checkpointing is recommended.
+Note: The default `paligemma_variant` is `gemma_300m`, which fits comfortably on
+an RTX 4070 TI SUPER with `batch_size=6`. The vision encoder is frozen while the
+full VLM backbone and action expert are fine-tuned. To use the larger `gemma_2b`
+variant, reduce `batch_size` to 1-2 and add `--gradient_checkpointing=true`.
 
 ### 4.3 PiStar06-specific configuration flags
 
@@ -510,10 +511,11 @@ Note: Pi0.5 is larger than SmolVLA, so batch sizes need to be smaller
 | `cfg_beta` | `1.0` | Classifier-free guidance scale at inference (1.0 = no CFG) |
 | `model_precision` | `bfloat16` | Model precision (`bfloat16` or `float32`) |
 | `gradient_checkpointing` | `false` | Enable gradient checkpointing for memory optimization |
-| `paligemma_variant` | `gemma_2b` | PaliGemma VLM variant (`gemma_2b` or `gemma_300m`) |
+| `paligemma_variant` | `gemma_300m` | PaliGemma VLM variant (`gemma_300m` or `gemma_2b`) |
 | `action_expert_variant` | `gemma_300m` | Gemma action expert variant |
 | `vn_batch_size` | `4` | Batch size for value network pre-computation |
 | `vn_image_size` | `512` | Image size for value network input |
+| `advantage_cache_path` | `None` | Path to cache pre-computed advantages (JSON); skips VN pre-computation on subsequent runs |
 
 ### 4.4 PiStar06 with W&B
 
@@ -522,20 +524,18 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainPiStar \
   --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
   --output_dir="${HOME}/code/lerobot/outputs/recap_pistar_train_1" \
   --value_network_checkpoint="${HOME}/code/lerobot/outputs/so101_pickplace_recap_value/checkpoints/last.pt" \
-  --pretrained_path="lerobot/pi05_base" \
   --epochs=5 \
-  --batch_size=1 \
+  --batch_size=2 \
   --learning_rate=1e-4 \
   --val_split_ratio=0.1 \
-  --validate_every_n_train_steps=200 \
+  --validate_every_n_train_steps=50 \
   --c_fail=500.0 \
   --advantage_threshold=0.0 \
   --advantage_dropout=0.3 \
   --log_every_n_steps=10 \
   --model_precision="bfloat16" \
   --freeze_vision_encoder=true \
-  --gradient_checkpointing=true \
   --advantage_cache_path="${HOME}/code/lerobot/outputs/advantage_cache.json" \
   --wandb_project="recap-pistar" \
-  --wandb_run_name="pistar-run-1"
+  --wandb_run_name="pistar-run-gemma-300m-0"
 ```

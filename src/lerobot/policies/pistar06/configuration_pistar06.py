@@ -44,3 +44,6 @@ class PiStar06Config(PI05Config):
 
     # Episode labels CSV for on-the-fly return computation
     episode_labels_path: str | None = None
+
+    # PaliGemma tokenizer (shared across all PaliGemma model sizes)
+    paligemma_tokenizer_name: str = "google/paligemma-3b-pt-224"
