@@ -535,6 +535,7 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainPiStar \
   --model_precision="bfloat16" \
   --freeze_vision_encoder=true \
   --gradient_checkpointing=true \
+  --advantage_cache_path="${HOME}/code/lerobot/outputs/advantage_cache.json" \
   --wandb_project="recap-pistar" \
   --wandb_run_name="pistar-run-1"
 ```

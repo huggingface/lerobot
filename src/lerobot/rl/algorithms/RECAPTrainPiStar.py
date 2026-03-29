@@ -26,6 +26,7 @@ over the full dataset, then the advantage for each frame is injected into
 training/validation batches via a lookup dict keyed by absolute frame index.
 """
 
+import json
 import logging
 import time as time_module
 from dataclasses import asdict, dataclass
@@ -93,6 +94,9 @@ class RECAPPiStarTrainingConfig:
     vn_batch_size: int = 4
     vn_tokenizer_max_length: int = 64
     vn_image_size: int = 512
+
+    # Advantage caching (skip re-computation on subsequent runs)
+    advantage_cache_path: str | None = None
 
     # Weights & Biases (optional; set wandb_project to enable)
     wandb_project: str | None = None
@@ -330,6 +334,39 @@ def _precompute_advantages(
         torch.cuda.empty_cache()
 
     return advantage_lookup
+
+
+def _save_advantage_cache(
+    path: str | Path,
+    advantage_lookup: dict[int, float],
+    metadata: dict | None = None,
+) -> None:
+    """Save pre-computed advantages to a JSON file for reuse across runs."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "advantages": {str(k): v for k, v in advantage_lookup.items()},
+        "num_frames": len(advantage_lookup),
+        "mean_advantage": sum(advantage_lookup.values()) / max(1, len(advantage_lookup)),
+    }
+    if metadata:
+        payload["metadata"] = metadata
+    with open(path, "w") as f:
+        json.dump(payload, f)
+    logging.info(f"Saved advantage cache ({len(advantage_lookup)} frames) to {path}")
+
+
+def _load_advantage_cache(path: str | Path) -> dict[int, float]:
+    """Load pre-computed advantages from a JSON cache file."""
+    path = Path(path)
+    with open(path) as f:
+        payload = json.load(f)
+    lookup = {int(k): float(v) for k, v in payload["advantages"].items()}
+    logging.info(
+        f"Loaded advantage cache from {path}: {len(lookup)} frames, "
+        f"mean={sum(lookup.values()) / max(1, len(lookup)):.4f}"
+    )
+    return lookup
 
 
 def _inject_advantages(
@@ -578,25 +615,40 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
     )
 
     # ── 2. Pre-compute advantages using SmolVLA value network ────────────
-    image_keys = [
-        key for key in full_dataset.meta.features
-        if full_dataset.meta.features[key].get("dtype") == "image"
-        or "image" in key.lower()
-    ]
-    if not image_keys:
-        image_keys = list(full_dataset.meta.camera_keys)
-    logging.info(f"Image keys for value network: {image_keys}")
+    cache_path = Path(cfg.advantage_cache_path) if cfg.advantage_cache_path else None
+    if cache_path is not None and cache_path.is_file():
+        advantage_lookup = _load_advantage_cache(cache_path)
+    else:
+        image_keys = [
+            key for key in full_dataset.meta.features
+            if full_dataset.meta.features[key].get("dtype") == "image"
+            or "image" in key.lower()
+        ]
+        if not image_keys:
+            image_keys = list(full_dataset.meta.camera_keys)
+        logging.info(f"Image keys for value network: {image_keys}")
 
-    advantage_lookup = _precompute_advantages(
-        full_dataset=full_dataset,
-        frame_targets=frame_targets,
-        value_network_checkpoint=cfg.value_network_checkpoint,
-        image_keys=image_keys,
-        device=device,
-        batch_size=cfg.vn_batch_size,
-        vn_image_size=cfg.vn_image_size,
-        tokenizer_max_length=cfg.vn_tokenizer_max_length,
-    )
+        advantage_lookup = _precompute_advantages(
+            full_dataset=full_dataset,
+            frame_targets=frame_targets,
+            value_network_checkpoint=cfg.value_network_checkpoint,
+            image_keys=image_keys,
+            device=device,
+            batch_size=cfg.vn_batch_size,
+            vn_image_size=cfg.vn_image_size,
+            tokenizer_max_length=cfg.vn_tokenizer_max_length,
+        )
+
+        if cache_path is not None:
+            _save_advantage_cache(
+                cache_path,
+                advantage_lookup,
+                metadata={
+                    "value_network_checkpoint": cfg.value_network_checkpoint,
+                    "c_fail": cfg.c_fail,
+                    "repo_id": cfg.repo_id,
+                },
+            )
 
     # ── 3. Create separate datasets for train and val ────────────────────
     policy_cfg = _build_policy_config(cfg, full_dataset, labels_csv_path)

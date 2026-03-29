@@ -15,14 +15,21 @@
 """
 PiStar06: Advantage-Conditioned Pi0.5 Policy
 
-Wraps Pi0.5 with RECAP-style advantage conditioning. A frozen SmolVLA value
-network (trained separately) labels training data with per-sample advantages
-that are binarized and injected as a learned embedding directly into the action
-expert's input pathway (embed_suffix). This bypasses the VLM text processing
-and gives the advantage signal a direct gradient path to the flow-matching loss.
+Wraps Pi0.5 with RECAP-style advantage conditioning via text tokens.
+A frozen SmolVLA value network (trained separately) labels training data with
+per-sample advantages that are binarized into "Advantage: positive" or
+"Advantage: negative" text, which is appended to the language prompt before the
+VLM processes it.
 
-At inference, the model conditions on the positive advantage embedding to
-produce higher-quality actions.
+Pi0.5 uses a single-stream architecture where language tokens and action tokens
+share the same causal attention sequence.  The advantage text sits at the end of
+the language prefix, making it the most recent context when the action expert
+begins generating — exactly the mechanism described in the RECAP paper for
+pi-0.6.
+
+At inference the model always appends "Advantage: positive".  Optional
+classifier-free guidance (cfg_beta > 1) runs two prefix computations (with /
+without advantage text) and interpolates the flow vectors.
 
 Two-phase workflow:
   1. Train a value network with RECAPTrainSmolVLANetwork (see RECAP_VALUE_NETWORK_TRAINING.md)
@@ -36,30 +43,27 @@ from typing import Unpack
 
 import torch
 import torch.nn.functional as F  # noqa: N812
-from torch import Tensor, nn
+from torch import Tensor
 
 from lerobot.policies.pi05.modeling_pi05 import (
     ActionSelectKwargs,
     PI05Policy,
-    get_gemma_config,
     make_att_2d_masks,
-    pad_vector,
 )
 from lerobot.policies.pistar06.configuration_pistar06 import PiStar06Config
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
 
 
 class PiStar06Policy(PI05Policy):
-    """Advantage-conditioned Pi0.5 policy.
+    """Advantage-conditioned Pi0.5 policy using text-token injection.
 
     During training, pre-computed advantages (R_t - V(o_t)) are read from the
-    batch. The advantage is binarized and injected as a learned embedding
-    directly into the action expert's suffix input (embed_suffix), bypassing
-    the PaliGemma text processing entirely.
+    batch, binarized, and the corresponding text ("Advantage: positive" or
+    "Advantage: negative") is appended to the language tokens.  30 % of the
+    time (configurable) the advantage text is omitted entirely, training the
+    unconditional path for optional classifier-free guidance at test time.
 
-    During inference, the positive advantage embedding is always applied.
-    Optional classifier-free guidance (cfg_beta > 1) sharpens the distribution
-    by interpolating conditioned and unconditioned flow vectors.
+    During inference, "Advantage: positive" is always appended.
     """
 
     config: PiStar06Config
@@ -74,14 +78,7 @@ class PiStar06Policy(PI05Policy):
     ):
         super().__init__(config, **kwargs)
 
-        expert_config = get_gemma_config(config.action_expert_variant)
-        expert_hidden_size = expert_config.width
-        self.advantage_embedding = nn.Embedding(2, expert_hidden_size)
-        nn.init.zeros_(self.advantage_embedding.weight)
-        logging.info(
-            f"Advantage embedding initialized: nn.Embedding(2, {expert_hidden_size}), "
-            f"zero-initialized"
-        )
+        self._setup_advantage_tokens()
 
         self._episode_info: dict[int, dict] | None = None
         self._task_max_len: dict[str, int] | None = None
@@ -89,6 +86,83 @@ class PiStar06Policy(PI05Policy):
             self._setup_episode_metadata(dataset_meta, config.episode_labels_path)
 
         self._train_step_count = 0
+
+    # ── Advantage token setup ────────────────────────────────────────────
+
+    def _setup_advantage_tokens(self) -> None:
+        """Pre-tokenize advantage strings with the PaliGemma tokenizer."""
+        from transformers import AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
+        pos_ids = tokenizer.encode(" Advantage: positive", add_special_tokens=False)
+        neg_ids = tokenizer.encode(" Advantage: negative", add_special_tokens=False)
+
+        self.register_buffer(
+            "_positive_adv_token_ids",
+            torch.tensor(pos_ids, dtype=torch.long),
+            persistent=False,
+        )
+        self.register_buffer(
+            "_negative_adv_token_ids",
+            torch.tensor(neg_ids, dtype=torch.long),
+            persistent=False,
+        )
+        logging.info(
+            f"Advantage tokens: positive={pos_ids} ({len(pos_ids)} tokens), "
+            f"negative={neg_ids} ({len(neg_ids)} tokens)"
+        )
+
+    def _inject_advantage_text(
+        self,
+        tokens: Tensor,
+        masks: Tensor,
+        advantage_indicator: Tensor,
+        dropout_mask: Tensor | None,
+    ) -> tuple[Tensor, Tensor]:
+        """Append advantage text tokens to each sample's language sequence.
+
+        Finds the boundary between real content and right-padding in each row,
+        then writes the appropriate advantage token IDs there and extends the
+        attention mask accordingly.
+
+        Args:
+            tokens: [B, seq_len] token IDs (will be cloned).
+            masks:  [B, seq_len] attention mask (will be cloned).
+            advantage_indicator: [B] bool — True means positive advantage.
+            dropout_mask: [B] bool or None — True means *omit* advantage text
+                for that sample (unconditional pass for CFG training).
+
+        Returns:
+            Modified (tokens, masks) tensors.
+        """
+        tokens = tokens.clone()
+        masks = masks.clone()
+        seq_len = tokens.shape[1]
+
+        for i in range(tokens.shape[0]):
+            if dropout_mask is not None and dropout_mask[i]:
+                continue
+
+            content_len = int(masks[i].sum().item())
+            adv_ids = (
+                self._positive_adv_token_ids
+                if advantage_indicator[i]
+                else self._negative_adv_token_ids
+            )
+            n_adv = adv_ids.shape[0]
+
+            if content_len + n_adv > seq_len:
+                n_adv = seq_len - content_len
+                if n_adv <= 0:
+                    continue
+                adv_ids = adv_ids[:n_adv]
+
+            tokens[i, content_len : content_len + n_adv] = adv_ids
+            masks[i, content_len : content_len + n_adv] = 1
+
+        return tokens, masks
+
+    # ── Episode metadata ─────────────────────────────────────────────────
 
     def _setup_episode_metadata(self, dataset_meta, labels_path: str) -> None:
         """Load episode labels and build per-episode metadata for return computation."""
@@ -126,32 +200,7 @@ class PiStar06Policy(PI05Policy):
             f"{sum(1 for v in episode_info.values() if v['success'])} successful"
         )
 
-    def _build_advantage_embedding(
-        self,
-        advantage_indicator: Tensor,
-        dropout_mask: Tensor | None,
-        reference_emb: Tensor,
-    ) -> Tensor:
-        """Build the advantage embedding to add to the suffix.
-
-        Args:
-            advantage_indicator: [B] bool tensor (True=positive advantage).
-            dropout_mask: [B] bool tensor (True=drop advantage for this sample).
-            reference_emb: [B, chunk_size, expert_hidden] tensor to match shape and dtype.
-
-        Returns:
-            [B, chunk_size, expert_hidden] advantage embedding tensor.
-        """
-        indices = advantage_indicator.long()
-        adv_emb = self.advantage_embedding(indices)
-        adv_emb = adv_emb.unsqueeze(1).expand_as(reference_emb)
-        adv_emb = adv_emb.to(dtype=reference_emb.dtype)
-
-        if dropout_mask is not None:
-            keep_mask = (~dropout_mask).to(dtype=adv_emb.dtype)
-            adv_emb = adv_emb * keep_mask[:, None, None]
-
-        return adv_emb
+    # ── Advantage computation ────────────────────────────────────────────
 
     def _compute_advantages(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, float]]:
         """Read pre-computed advantages from the batch.
@@ -165,7 +214,7 @@ class PiStar06Policy(PI05Policy):
                 "The training script should pre-compute these using the SmolVLA value network."
             )
         adv = batch["advantage"]
-        diagnostics = {
+        diagnostics: dict[str, float] = {
             "advantage_mean": adv.mean().item(),
             "advantage_std": adv.std().item(),
         }
@@ -177,6 +226,8 @@ class PiStar06Policy(PI05Policy):
             diagnostics["V_t_std"] = batch["predicted_value"].std().item()
         return adv, diagnostics
 
+    # ── Training forward ─────────────────────────────────────────────────
+
     def _forward_with_advantage(
         self,
         batch: dict[str, Tensor],
@@ -185,10 +236,11 @@ class PiStar06Policy(PI05Policy):
         noise: Tensor | None = None,
         time: Tensor | None = None,
     ) -> Tensor:
-        """Flow-matching forward with advantage embedding injected into embed_suffix.
+        """Flow-matching forward with advantage text injected into language tokens.
 
-        Replicates PI05Pytorch.forward() but adds the advantage embedding to the
-        suffix embeddings before running the joint VLM+expert pass.
+        Appends "Advantage: positive/negative" to the language prompt, then runs
+        the standard Pi0.5 forward pass (embed_prefix → embed_suffix → joint
+        VLM+expert → action_out_proj → MSE loss).
 
         Returns:
             Per-element MSE losses of shape [B, chunk_size, action_dim].
@@ -197,6 +249,10 @@ class PiStar06Policy(PI05Policy):
         tokens = batch[OBS_LANGUAGE_TOKENS]
         masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
         actions = self.prepare_action(batch)
+
+        tokens, masks = self._inject_advantage_text(
+            tokens, masks, advantage_indicator, dropout_mask
+        )
 
         if noise is None:
             noise = self.model.sample_noise(actions.shape, actions.device)
@@ -210,14 +266,13 @@ class PiStar06Policy(PI05Policy):
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.model.embed_prefix(
             images, img_masks, tokens, masks
         )
-        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.model.embed_suffix(x_t, time)
-
-        adv_emb = self._build_advantage_embedding(advantage_indicator, dropout_mask, suffix_embs)
-        suffix_embs = suffix_embs + adv_emb
+        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.model.embed_suffix(
+            x_t, time
+        )
 
         if (
-            self.model.paligemma_with_expert.paligemma.model.language_model.layers[0].self_attn.q_proj.weight.dtype
-            == torch.bfloat16
+            self.model.paligemma_with_expert.paligemma.model.language_model
+            .layers[0].self_attn.q_proj.weight.dtype == torch.bfloat16
         ):
             suffix_embs = suffix_embs.to(dtype=torch.bfloat16)
             prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
@@ -227,7 +282,6 @@ class PiStar06Policy(PI05Policy):
 
         att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
         position_ids = torch.cumsum(pad_masks, dim=1) - 1
-
         att_2d_masks_4d = self.model._prepare_attention_masks_4d(att_2d_masks)
 
         (_, suffix_out), _ = self.model.paligemma_with_expert.forward(
@@ -242,8 +296,7 @@ class PiStar06Policy(PI05Policy):
         suffix_out = suffix_out[:, -self.config.chunk_size :]
         suffix_out = suffix_out.to(dtype=torch.float32)
         v_t = self.model.action_out_proj(suffix_out)
-        losses = F.mse_loss(u_t, v_t, reduction="none")
-        return losses
+        return F.mse_loss(u_t, v_t, reduction="none")
 
     def forward(  # ty: ignore[invalid-method-override]
         self, batch: dict[str, Tensor], noise=None, time=None, reduction: str = "mean"
@@ -253,8 +306,8 @@ class PiStar06Policy(PI05Policy):
         Steps:
           1. Read pre-computed per-sample advantages from batch
           2. Binarize: positive if advantage > threshold
-          3. Apply dropout (30% by default): zero out advantage embedding for CFG training
-          4. Inject advantage embedding into action expert suffix
+          3. Apply dropout (30 % default): omit advantage text for CFG training
+          4. Append advantage text tokens to the language prompt
           5. Run flow-matching forward and compute loss
         """
         advantage, adv_diagnostics = self._compute_advantages(batch)
@@ -266,7 +319,8 @@ class PiStar06Policy(PI05Policy):
         dropout_mask = None
         if self.training and self.config.advantage_dropout > 0:
             dropout_mask = (
-                torch.rand(advantage.shape[0], device=advantage.device) < self.config.advantage_dropout
+                torch.rand(advantage.shape[0], device=advantage.device)
+                < self.config.advantage_dropout
             )
 
         losses = self._forward_with_advantage(
@@ -304,69 +358,35 @@ class PiStar06Policy(PI05Policy):
             if self._train_step_count % 10 == 1:
                 parts = [f"[RECAP step {self._train_step_count}]"]
                 if "V_t_mean" in adv_diagnostics:
-                    parts.append(f"V(o_t)={adv_diagnostics['V_t_mean']:.4f}±{adv_diagnostics['V_t_std']:.4f}")
-                    parts.append(f"R_t={adv_diagnostics['R_t_mean']:.4f}±{adv_diagnostics['R_t_std']:.4f}")
-                parts.append(f"adv={adv_diagnostics['advantage_mean']:.4f}±{adv_diagnostics['advantage_std']:.4f}")
-                parts.append(f"emb=pos:{n_positive}/{n_total} drop:{n_dropped}/{n_total}")
+                    parts.append(
+                        f"V(o_t)={adv_diagnostics['V_t_mean']:.4f}"
+                        f"±{adv_diagnostics['V_t_std']:.4f}"
+                    )
+                    parts.append(
+                        f"R_t={adv_diagnostics['R_t_mean']:.4f}"
+                        f"±{adv_diagnostics['R_t_std']:.4f}"
+                    )
+                parts.append(
+                    f"adv={adv_diagnostics['advantage_mean']:.4f}"
+                    f"±{adv_diagnostics['advantage_std']:.4f}"
+                )
+                parts.append(f"text=pos:{n_positive}/{n_total} drop:{n_dropped}/{n_total}")
                 parts.append(f"thresh={self.config.advantage_threshold}")
                 logging.info("  ".join(parts))
 
         return loss, output_dict
 
-    def _denoise_step_with_advantage(
-        self,
-        x_t: Tensor,
-        prefix_pad_masks: Tensor,
-        past_key_values,
-        timestep: Tensor,
-        advantage_indicator: Tensor,
-    ) -> Tensor:
-        """Single denoising step with advantage embedding injected into suffix."""
-        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.model.embed_suffix(
-            x_t, timestep
-        )
-
-        adv_emb = self._build_advantage_embedding(advantage_indicator, None, suffix_embs)
-        suffix_embs = suffix_embs + adv_emb
-
-        suffix_len = suffix_pad_masks.shape[1]
-        batch_size = prefix_pad_masks.shape[0]
-        prefix_len = prefix_pad_masks.shape[1]
-
-        prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
-        suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
-        full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
-
-        prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
-        position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
-
-        full_att_2d_masks_4d = self.model._prepare_attention_masks_4d(full_att_2d_masks)
-        self.model.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"  # noqa: SLF001
-
-        past_key_values = copy.deepcopy(past_key_values)
-        outputs_embeds, _ = self.model.paligemma_with_expert.forward(
-            attention_mask=full_att_2d_masks_4d,
-            position_ids=position_ids,
-            past_key_values=past_key_values,
-            inputs_embeds=[None, suffix_embs],
-            use_cache=False,
-            adarms_cond=[None, adarms_cond],
-        )
-
-        suffix_out = outputs_embeds[1]
-        suffix_out = suffix_out[:, -self.config.chunk_size :]
-        suffix_out = suffix_out.to(dtype=torch.float32)
-        v_t = self.model.action_out_proj(suffix_out)
-        return v_t
+    # ── Inference ────────────────────────────────────────────────────────
 
     @torch.no_grad()
     def predict_action_chunk(
         self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]
     ) -> Tensor:
-        """Inference action sampling with positive advantage embedding.
+        """Inference with "Advantage: positive" appended to the prompt.
 
-        For cfg_beta > 1, runs classifier-free guidance by interpolating
-        conditioned and unconditioned flow vectors.
+        The advantage text becomes part of the prefix KV-cache, so the standard
+        ``PI05Pytorch.denoise_step`` is used for each Euler step — no custom
+        denoising method is needed.
         """
         self.eval()
 
@@ -380,6 +400,9 @@ class PiStar06Policy(PI05Policy):
         bsize = tokens.shape[0]
         device = tokens.device
 
+        positive_indicator = torch.ones(bsize, dtype=torch.bool, device=device)
+        tokens, masks = self._inject_advantage_text(tokens, masks, positive_indicator, None)
+
         actions_shape = (bsize, self.config.chunk_size, self.config.max_action_dim)
         noise = self.model.sample_noise(actions_shape, device)
 
@@ -388,7 +411,6 @@ class PiStar06Policy(PI05Policy):
         )
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
-
         prefix_att_2d_masks_4d = self.model._prepare_attention_masks_4d(prefix_att_2d_masks)
         self.model.paligemma_with_expert.paligemma.model.language_model.config._attn_implementation = "eager"  # noqa: SLF001
 
@@ -400,8 +422,6 @@ class PiStar06Policy(PI05Policy):
             use_cache=True,
         )
 
-        advantage_indicator = torch.ones(bsize, dtype=torch.bool, device=device)
-
         num_steps = self.config.num_inference_steps
         dt = -1.0 / num_steps
         x_t = noise
@@ -409,30 +429,28 @@ class PiStar06Policy(PI05Policy):
         for step in range(num_steps):
             time_val = 1.0 + step * dt
             time_tensor = torch.tensor(time_val, dtype=torch.float32, device=device).expand(bsize)
-
-            v_t = self._denoise_step_with_advantage(
-                x_t=x_t,
+            v_t = self.model.denoise_step(
                 prefix_pad_masks=prefix_pad_masks,
                 past_key_values=past_key_values,
+                x_t=x_t,
                 timestep=time_tensor,
-                advantage_indicator=advantage_indicator,
             )
             x_t = x_t + dt * v_t
 
-        actions = x_t
         original_action_dim = self.config.output_features[ACTION].shape[0]
-        actions = actions[:, :, :original_action_dim]
-        return actions
+        return x_t[:, :, :original_action_dim]
 
     def _predict_action_chunk_cfg(
         self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]
     ) -> Tensor:
         """Classifier-free guidance inference.
 
-        Runs two denoising passes per Euler step:
-          1. Conditioned: positive advantage embedding applied
-          2. Unconditioned: no advantage embedding (zero)
-        Interpolates: v = v_uncond + beta * (v_cond - v_uncond)
+        Two prefix computations:
+          1. Conditioned — "Advantage: positive" appended → KV-cache_cond
+          2. Unconditional — no advantage text → KV-cache_uncond
+
+        Each Euler step runs two ``denoise_step`` calls (one per cache) and
+        interpolates: v = v_uncond + beta * (v_cond - v_uncond).
         """
         images, img_masks = self._preprocess_images(batch)
         tokens = batch[OBS_LANGUAGE_TOKENS]
@@ -442,28 +460,43 @@ class PiStar06Policy(PI05Policy):
         device = tokens.device
         beta = self.config.cfg_beta
 
+        positive_indicator = torch.ones(bsize, dtype=torch.bool, device=device)
+        tokens_cond, masks_cond = self._inject_advantage_text(
+            tokens, masks, positive_indicator, None
+        )
+
         actions_shape = (bsize, self.config.chunk_size, self.config.max_action_dim)
         noise = self.model.sample_noise(actions_shape, device)
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.model.embed_prefix(
-            images, img_masks, tokens, masks
-        )
-        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
-        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
-
-        prefix_att_2d_masks_4d = self.model._prepare_attention_masks_4d(prefix_att_2d_masks)
         self.model.paligemma_with_expert.paligemma.model.language_model.config._attn_implementation = "eager"  # noqa: SLF001
 
-        _, past_key_values = self.model.paligemma_with_expert.forward(
-            attention_mask=prefix_att_2d_masks_4d,
-            position_ids=prefix_position_ids,
+        # Conditioned prefix (with advantage text)
+        prefix_embs_c, prefix_pad_masks_c, prefix_att_masks_c = self.model.embed_prefix(
+            images, img_masks, tokens_cond, masks_cond
+        )
+        att_2d_c = make_att_2d_masks(prefix_pad_masks_c, prefix_att_masks_c)
+        pos_ids_c = torch.cumsum(prefix_pad_masks_c, dim=1) - 1
+        _, past_kv_cond = self.model.paligemma_with_expert.forward(
+            attention_mask=self.model._prepare_attention_masks_4d(att_2d_c),
+            position_ids=pos_ids_c,
             past_key_values=None,
-            inputs_embeds=[prefix_embs, None],
+            inputs_embeds=[prefix_embs_c, None],
             use_cache=True,
         )
 
-        cond_indicator = torch.ones(bsize, dtype=torch.bool, device=device)
-        uncond_dropout = torch.ones(bsize, dtype=torch.bool, device=device)
+        # Unconditional prefix (no advantage text — original tokens)
+        prefix_embs_u, prefix_pad_masks_u, prefix_att_masks_u = self.model.embed_prefix(
+            images, img_masks, tokens, masks
+        )
+        att_2d_u = make_att_2d_masks(prefix_pad_masks_u, prefix_att_masks_u)
+        pos_ids_u = torch.cumsum(prefix_pad_masks_u, dim=1) - 1
+        _, past_kv_uncond = self.model.paligemma_with_expert.forward(
+            attention_mask=self.model._prepare_attention_masks_4d(att_2d_u),
+            position_ids=pos_ids_u,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs_u, None],
+            use_cache=True,
+        )
 
         num_steps = self.config.num_inference_steps
         dt = -1.0 / num_steps
@@ -473,53 +506,27 @@ class PiStar06Policy(PI05Policy):
             time_val = 1.0 + step * dt
             time_tensor = torch.tensor(time_val, dtype=torch.float32, device=device).expand(bsize)
 
-            v_cond = self._denoise_step_with_advantage(
+            v_cond = self.model.denoise_step(
+                prefix_pad_masks=prefix_pad_masks_c,
+                past_key_values=past_kv_cond,
                 x_t=x_t,
-                prefix_pad_masks=prefix_pad_masks,
-                past_key_values=past_key_values,
                 timestep=time_tensor,
-                advantage_indicator=cond_indicator,
             )
-
-            suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.model.embed_suffix(
-                x_t, time_tensor
+            v_uncond = self.model.denoise_step(
+                prefix_pad_masks=prefix_pad_masks_u,
+                past_key_values=past_kv_uncond,
+                x_t=x_t,
+                timestep=time_tensor,
             )
-            adv_emb = self._build_advantage_embedding(cond_indicator, uncond_dropout, suffix_embs)
-            uncond_suffix_embs = suffix_embs + adv_emb
-
-            suffix_len = suffix_pad_masks.shape[1]
-            prefix_len = prefix_pad_masks.shape[1]
-            prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(bsize, suffix_len, prefix_len)
-            suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
-            full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
-            prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
-            position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
-
-            full_att_2d_masks_4d = self.model._prepare_attention_masks_4d(full_att_2d_masks)
-            self.model.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"  # noqa: SLF001
-
-            past_kv_copy = copy.deepcopy(past_key_values)
-            outputs_embeds, _ = self.model.paligemma_with_expert.forward(
-                attention_mask=full_att_2d_masks_4d,
-                position_ids=position_ids,
-                past_key_values=past_kv_copy,
-                inputs_embeds=[None, uncond_suffix_embs],
-                use_cache=False,
-                adarms_cond=[None, adarms_cond],
-            )
-            suffix_out = outputs_embeds[1]
-            suffix_out = suffix_out[:, -self.config.chunk_size :]
-            suffix_out = suffix_out.to(dtype=torch.float32)
-            v_uncond = self.model.action_out_proj(suffix_out)
 
             v_t = v_uncond + beta * (v_cond - v_uncond)
             x_t = x_t + dt * v_t
 
-        actions = x_t
         original_action_dim = self.config.output_features[ACTION].shape[0]
-        actions = actions[:, :, :original_action_dim]
-        return actions
+        return x_t[:, :, :original_action_dim]
+
+    # ── Optimizer params ─────────────────────────────────────────────────
 
     def get_optim_params(self) -> list:  # ty: ignore[invalid-method-override]
-        """Return all trainable parameters (no frozen value network to exclude)."""
+        """Return all trainable parameters."""
         return [p for p in self.parameters() if p.requires_grad]
