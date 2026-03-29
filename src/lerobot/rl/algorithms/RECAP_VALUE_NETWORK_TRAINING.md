@@ -2,11 +2,11 @@
 
 Implementation of RECAP from the [π∗0.6: a VLA That Learns From Experience](https://www.pi.website/download/pistar06.pdf)
 
-The pipeline is two training runs:
+The pipeline is two training runs followed by advantage-conditioned inference:
 
 1. **Value network** — learns V(o_t) from episode success/fail labels.
-2. **PiStar06 policy** — fine-tunes Pi0.5 with advantage conditioning. The pretrained value network is used to determine at each step which advantage conditioning text should be added as input "Advantage: positive" or "Advantage: negative"
-3. **Inference** - The advantage conditioning effecitvely allows the model to learn two distributions, at infernece time we always append "Advantage: positive" to the text prompt to push the model toward selected from the good "Advantage: positive" distribution.
+2. **PiStar06 policy** — fine-tunes Pi0.5 with advantage conditioning. The pretrained value network is used to determine at each step which advantage conditioning text should be added as input "Advantage: positive" or "Advantage: negative".
+3. **Inference** — The advantage conditioning effectively allows the model to learn two distributions. At inference time we always append "Advantage: positive" to the text prompt to push the model toward the good distribution.
 
 ## Quick Start
 
@@ -32,7 +32,7 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
   --plot_every_n_train_steps=200 \
   --max_val_steps_per_step_validation=20 \
   --c_fail=500.0 \
-  --num_value_bins=8 \
+  --num_value_bins=50 \
   --num_vlm_layers=10 \
   --paligemma_variant=gemma_2b \
   --pretrained_path=lerobot/pi05_base \
