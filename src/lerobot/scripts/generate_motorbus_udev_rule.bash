@@ -126,7 +126,7 @@ chmod 644 "$UDEV_RULE_FILE"
 
 # Reload udev rules
 info "Reloading udev rules..."
-udevadm control --reload-rules && udevadm trigger
+udevadm control --reload-rules && udevadm trigger --subsystem-match=tty
 
 echo ""
 info "Setup complete! Your device should now be available as '/dev/$SYMLINK_NAME'"
