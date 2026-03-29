@@ -502,8 +502,10 @@ class DatasetWriter:
             "episode_index": episode_index,
             f"videos/{video_key}/chunk_index": chunk_idx,
             f"videos/{video_key}/file_index": file_idx,
-            f"videos/{video_key}/from_timestamp": latest_duration_in_s,
-            f"videos/{video_key}/to_timestamp": latest_duration_in_s + ep_duration_in_s,
+            # Round to microsecond precision to limit cumulative floating-point
+            # drift when many episode durations are summed (see #3177).
+            f"videos/{video_key}/from_timestamp": round(latest_duration_in_s, 6),
+            f"videos/{video_key}/to_timestamp": round(latest_duration_in_s + ep_duration_in_s, 6),
         }
         return metadata
 
