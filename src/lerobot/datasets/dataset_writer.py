@@ -51,6 +51,7 @@ from lerobot.datasets.utils import (
     update_chunk_file_indices,
 )
 from lerobot.datasets.video_utils import (
+    TIMESTAMP_ROUND_DECIMALS,
     StreamingVideoEncoder,
     concatenate_video_files,
     encode_video_frames,
@@ -504,8 +505,8 @@ class DatasetWriter:
             f"videos/{video_key}/file_index": file_idx,
             # Round to microsecond precision to limit cumulative floating-point
             # drift when many episode durations are summed (see #3177).
-            f"videos/{video_key}/from_timestamp": round(latest_duration_in_s, 6),
-            f"videos/{video_key}/to_timestamp": round(latest_duration_in_s + ep_duration_in_s, 6),
+            f"videos/{video_key}/from_timestamp": round(latest_duration_in_s, TIMESTAMP_ROUND_DECIMALS),
+            f"videos/{video_key}/to_timestamp": round(latest_duration_in_s + ep_duration_in_s, TIMESTAMP_ROUND_DECIMALS),
         }
         return metadata
 
