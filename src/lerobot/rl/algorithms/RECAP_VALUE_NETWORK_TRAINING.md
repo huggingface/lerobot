@@ -4,7 +4,8 @@ This document explains how to:
 
 1. Prepare a LeRobot dataset + success/fail labels for value training.
 2. Train the standalone RECAP value network.
-3. Train the advantage-conditioned policy (SmolStar06) using the frozen value network.
+3. Train the advantage-conditioned SmolVLA policy (SmolStar06) using the frozen value network.
+4. Train the advantage-conditioned Pi0.5 policy (PiStar06) using the frozen value network.
 
 There are two backbone variants:
 
@@ -439,3 +440,101 @@ At inference time, no value network is needed:
   (conditioned) and one without any advantage embedding (unconditional) — then
   interpolates the flow vectors:
   `v = v_uncond + beta * (v_cond - v_uncond)`.
+
+---
+
+## 4) Advantage-Conditioned Policy Training (PiStar06)
+
+PiStar06 applies the same RECAP advantage conditioning to a **Pi0.5 backbone**
+(PaliGemma + Gemma action expert) instead of SmolVLA. The advantage embedding
+is injected into the action expert's suffix (`embed_suffix`), identical to
+SmolStar06's approach.
+
+Because Pi0.5 uses a PaliGemma tokenizer while the SmolVLA value network uses
+a SmolVLM2 tokenizer, advantages are **pre-computed** before the training loop
+starts. The value network runs once over the full dataset, then each frame's
+advantage is injected into training batches via a lookup dict. This avoids
+maintaining dual tokenizers during training.
+
+### 4.1 How it works
+
+1. The training script loads the frozen SmolVLA value network and iterates
+   over the full dataset with a SmolVLM2 tokenizer to compute V(o_t) per frame.
+2. R_t is computed from episode success/fail labels (same as SmolStar06).
+3. Advantage A = R_t - V(o_t) is stored in a lookup dict keyed by frame index.
+4. During training, each batch receives pre-computed advantages before the
+   Pi0.5 preprocessor runs.
+5. The policy binarizes advantages (A > threshold → positive embedding) and
+   injects the learned embedding into the action expert's suffix input.
+
+### 4.2 Quick start — PiStar06 (RTX 4070 TI SUPER)
+
+Prerequisites:
+- A trained SmolVLA value network checkpoint (from Section 2.2). The example
+  below uses `outputs/so101_pickplace_recap_value`.
+- The same dataset and episode labels used for value network training.
+
+```bash
+uv run python -m lerobot.rl.algorithms.RECAPTrainPiStar \
+  --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
+  --output_dir="${HOME}/code/lerobot/outputs/recap_pistar_train_1" \
+  --value_network_checkpoint="${HOME}/code/lerobot/outputs/so101_pickplace_recap_value/checkpoints/last.pt" \
+  --pretrained_path="lerobot/pi05_base" \
+  --epochs=5 \
+  --batch_size=1 \
+  --learning_rate=1e-4 \
+  --val_split_ratio=0.1 \
+  --validate_every_n_train_steps=200 \
+  --c_fail=500.0 \
+  --advantage_threshold=0.0 \
+  --advantage_dropout=0.3 \
+  --log_every_n_steps=10 \
+  --model_precision="bfloat16" \
+  --freeze_vision_encoder=true \
+  --gradient_checkpointing=true
+```
+
+Note: Pi0.5 is larger than SmolVLA, so batch sizes need to be smaller
+(typically 1-2 on an RTX 4070 TI SUPER). Gradient checkpointing is recommended.
+
+### 4.3 PiStar06-specific configuration flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `value_network_checkpoint` | `None` | Path to `.pt` checkpoint from RECAP SmolVLA value network training |
+| `pretrained_path` | `None` | Path to pretrained Pi0.5 weights (e.g., `lerobot/pi05_base`) |
+| `episode_labels_path` | `None` | Path to `episode_labels.csv` (auto-discovered from dataset if not set) |
+| `c_fail` | `500.0` | Failure penalty (must match the value used for value network training) |
+| `advantage_threshold` | `0.0` | Binarization threshold: advantage > threshold → positive |
+| `advantage_dropout` | `0.3` | Probability of zeroing out the advantage embedding (for CFG training) |
+| `cfg_beta` | `1.0` | Classifier-free guidance scale at inference (1.0 = no CFG) |
+| `model_precision` | `bfloat16` | Model precision (`bfloat16` or `float32`) |
+| `gradient_checkpointing` | `false` | Enable gradient checkpointing for memory optimization |
+| `paligemma_variant` | `gemma_2b` | PaliGemma VLM variant (`gemma_2b` or `gemma_300m`) |
+| `action_expert_variant` | `gemma_300m` | Gemma action expert variant |
+| `vn_batch_size` | `4` | Batch size for value network pre-computation |
+| `vn_image_size` | `512` | Image size for value network input |
+
+### 4.4 PiStar06 with W&B
+
+```bash
+uv run python -m lerobot.rl.algorithms.RECAPTrainPiStar \
+  --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
+  --output_dir="${HOME}/code/lerobot/outputs/recap_pistar_train_1" \
+  --value_network_checkpoint="${HOME}/code/lerobot/outputs/so101_pickplace_recap_value/checkpoints/last.pt" \
+  --pretrained_path="lerobot/pi05_base" \
+  --epochs=5 \
+  --batch_size=1 \
+  --learning_rate=1e-4 \
+  --val_split_ratio=0.1 \
+  --validate_every_n_train_steps=200 \
+  --c_fail=500.0 \
+  --advantage_threshold=0.0 \
+  --advantage_dropout=0.3 \
+  --log_every_n_steps=10 \
+  --model_precision="bfloat16" \
+  --freeze_vision_encoder=true \
+  --gradient_checkpointing=true \
+  --wandb_project="recap-pistar" \
+  --wandb_run_name="pistar-run-1"
+```
