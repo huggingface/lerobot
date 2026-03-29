@@ -84,9 +84,9 @@ fi
 # Get device information
 # Anchor grep with ^ and use -m1 to avoid partial matches on similar property names
 # (e.g., ID_VENDOR_ID should not match a hypothetical ID_VENDOR_ID_FROM_DATABASE)
-VENDOR=$(udevadm info -n "$TTY_DEVICE" -q property | grep -m1 '^ID_VENDOR_ID=' | cut -d= -f2)
-PRODUCT=$(udevadm info -n "$TTY_DEVICE" -q property | grep -m1 '^ID_MODEL_ID=' | cut -d= -f2)
-SERIAL=$(udevadm info -n "$TTY_DEVICE" -q property | grep -m1 '^ID_SERIAL_SHORT=' | cut -d= -f2)
+VENDOR=$(udevadm info -n "$TTY_DEVICE" -q property | grep -m1 '^ID_VENDOR_ID=' | cut -d= -f2 || true)
+PRODUCT=$(udevadm info -n "$TTY_DEVICE" -q property | grep -m1 '^ID_MODEL_ID=' | cut -d= -f2 || true)
+SERIAL=$(udevadm info -n "$TTY_DEVICE" -q property | grep -m1 '^ID_SERIAL_SHORT=' | cut -d= -f2 || true)
 
 info "Detected device information:"
 echo "  Device: $TTY_DEVICE"
