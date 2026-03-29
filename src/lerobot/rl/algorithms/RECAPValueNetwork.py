@@ -23,7 +23,6 @@ from typing import TYPE_CHECKING, Literal
 import torch
 from torch import Tensor, nn
 
-from lerobot.utils.constants import OPENPI_ATTENTION_MASK_VALUE
 from lerobot.utils.import_utils import _transformers_available
 
 if TYPE_CHECKING or _transformers_available:
@@ -45,7 +44,6 @@ get_gemma_config = _load_get_gemma_config()
 
 
 PI05_VLM_KEY_PREFIX = "paligemma_with_expert.paligemma."
-PI05_PROJECTION_DIM = 2048
 
 
 @dataclass
@@ -58,8 +56,8 @@ class RECAPValueNetworkConfig:
     max_state_dim: int = 32
     freeze_vision_encoder: bool = False
     freeze_backbone: bool = False
-    freeze_embeddings: bool = False
-    num_value_bins: int = 201
+    num_vlm_layers: int = 18
+    num_value_bins: int = 50
     dropout: float = 0.1
     pretrained_path: str | None = None
 
@@ -79,17 +77,8 @@ class RECAPValueNetwork(nn.Module):
         if PaliGemmaForConditionalGeneration is None or CONFIG_MAPPING is None:
             raise ImportError("transformers is required to instantiate RECAPValueNetwork.")
 
-        if config.pretrained_path and config.paligemma_variant != "gemma_2b":
-            logging.warning(
-                f"pretrained_path is set but paligemma_variant={config.paligemma_variant!r}; "
-                "pi0.5 base uses gemma_2b for its VLM — overriding to gemma_2b."
-            )
-            config.paligemma_variant = "gemma_2b"
-
         self.config = config
         gemma_config = get_gemma_config(config.paligemma_variant)
-
-        projection_dim = PI05_PROJECTION_DIM if config.pretrained_path else gemma_config.width
 
         paligemma_config_hf = CONFIG_MAPPING["paligemma"]()
         paligemma_config_hf._vocab_size = 257152  # noqa: SLF001
@@ -105,7 +94,7 @@ class RECAPValueNetwork(nn.Module):
         paligemma_config_hf.text_config.vocab_size = 257152
         paligemma_config_hf.vision_config.image_size = config.image_size
         paligemma_config_hf.vision_config.intermediate_size = 4304
-        paligemma_config_hf.vision_config.projection_dim = projection_dim
+        paligemma_config_hf.vision_config.projection_dim = gemma_config.width
         paligemma_config_hf.vision_config.projector_hidden_act = "gelu_fast"
         paligemma_config_hf.vision_config.torch_dtype = "float32"
 
@@ -118,20 +107,25 @@ class RECAPValueNetwork(nn.Module):
         else:
             raise ValueError(f"Invalid precision: {config.precision}")
 
+        language_model = self._get_language_model()
+        if config.num_vlm_layers > 0:
+            total_layers = len(language_model.model.layers)
+            if config.num_vlm_layers > total_layers:
+                raise ValueError(
+                    f"num_vlm_layers={config.num_vlm_layers} exceeds model depth {total_layers}"
+                )
+            language_model.model.layers = language_model.model.layers[: config.num_vlm_layers]
+            logging.info(f"Using first {len(language_model.model.layers)} PaliGemma text layers for value network")
+
         if config.freeze_backbone:
             self.paligemma.eval()
             for param in self.paligemma.parameters():
                 param.requires_grad = False
-        else:
-            if config.freeze_vision_encoder:
-                vision_tower = self._get_vision_tower()
-                vision_tower.eval()
-                for param in vision_tower.parameters():
-                    param.requires_grad = False
-            if config.freeze_embeddings:
-                embed = self.paligemma.get_input_embeddings()
-                for param in embed.parameters():
-                    param.requires_grad = False
+        elif config.freeze_vision_encoder:
+            vision_tower = self._get_vision_tower()
+            vision_tower.eval()
+            for param in vision_tower.parameters():
+                param.requires_grad = False
 
         self.state_proj = nn.Linear(config.max_state_dim, gemma_config.width)
 
@@ -154,7 +148,13 @@ class RECAPValueNetwork(nn.Module):
             self._load_pretrained_vlm_weights(config.pretrained_path)
 
     def _load_pretrained_vlm_weights(self, pretrained_path: str) -> None:
-        """Load VLM weights from a pretrained pi0.5 checkpoint into the PaliGemma backbone."""
+        """Load VLM weights from a pretrained pi0.5 checkpoint into the PaliGemma backbone.
+
+        Keys are matched by stripping the ``paligemma_with_expert.`` prefix that the
+        full pi0.5 checkpoint uses.  Loading is non-strict so dimension mismatches
+        (e.g. loading a gemma_2b checkpoint into a gemma_300m model) are logged
+        rather than raising.
+        """
         from safetensors.torch import load_file
         from transformers.utils import cached_file
 
@@ -236,13 +236,6 @@ class RECAPValueNetwork(nn.Module):
             "Unsupported image feature output type from PaliGemma get_image_features: "
             f"{type(image_features_output)}"
         )
-
-    def _prepare_attention_masks_4d(self, att_2d_masks: Tensor, dtype: torch.dtype | None = None) -> Tensor:
-        att_2d_masks_4d = att_2d_masks[:, None, :, :]
-        result = torch.where(att_2d_masks_4d, 0.0, OPENPI_ATTENTION_MASK_VALUE)
-        if dtype is not None:
-            result = result.to(dtype=dtype)
-        return result
 
     def _build_prefix_embeddings(
         self,
@@ -339,16 +332,22 @@ class RECAPValueNetwork(nn.Module):
             attention_mask=attention_mask,
         )
 
-        att_2d_masks = prefix_pad_mask[:, None, :] & prefix_pad_mask[:, :, None]
-        att_4d_masks = self._prepare_attention_masks_4d(att_2d_masks, dtype=prefix_embs.dtype)
         position_ids = torch.cumsum(prefix_pad_mask, dim=1) - 1
+        position_ids = position_ids.masked_fill(~prefix_pad_mask, 0).long()
 
-        prefix_output = self._get_language_model().forward(
-            inputs_embeds=prefix_embs,
-            attention_mask=att_4d_masks,
-            position_ids=position_ids,
-            use_cache=False,
-        ).last_hidden_state
+        language_model = self._get_language_model()
+        text_dtype = next(language_model.parameters()).dtype
+        text_model_inputs = {
+            "inputs_embeds": prefix_embs.to(dtype=text_dtype),
+            "attention_mask": prefix_pad_mask,
+            "use_cache": False,
+        }
+        try:
+            text_model_inputs["position_ids"] = position_ids
+            prefix_output = language_model.forward(**text_model_inputs).last_hidden_state
+        except TypeError:
+            text_model_inputs.pop("position_ids", None)
+            prefix_output = language_model.forward(**text_model_inputs).last_hidden_state
 
         if state_token_len <= 0:
             raise ValueError(f"Expected at least one state token, got {state_token_len}")

@@ -92,7 +92,7 @@ During preprocessing, the script builds paper-style targets from episode outcome
 - Empirical return is computed via reverse cumulative sum.
 - Return is normalized by per-task max episode length.
 - Normalized values are clamped to `[-1, 0]`.
-- Values are discretized into `B` bins (`--num_value_bins`, default `201`).
+- Values are discretized into `B` bins (`--num_value_bins`, default `50`).
 
 This produces frame-level supervision targets:
 
@@ -105,34 +105,43 @@ This produces frame-level supervision targets:
 
 ### 2.1 Quick start — pi0.5 backbone (RTX 4070 TI SUPER)
 
-Uses the PaliGemma backbone with a pretrained pi0.5 checkpoint. The recommended
-configuration freezes the vision encoder and vocab embeddings (dead weight for value
-prediction) while training the Gemma text layers and value head (~315M trainable
-params out of ~990M total).
+Uses the PaliGemma backbone with the `gemma_300m` variant (1024-wide, 18-layer
+Gemma text model). The recommended configuration freezes the vision encoder
+while training the Gemma text layers and value head. Use `--num_vlm_layers` to
+truncate the text model for a lighter value network (default uses all 18 layers).
+
+Key pi0.5-specific flags:
+
+| Flag | Default | Effect |
+|------|---------|--------|
+| `--paligemma_variant` | `gemma_300m` | PaliGemma VLM variant (`gemma_300m` or `gemma_2b`) |
+| `--num_vlm_layers` | `18` | Number of text model layers to keep (truncates deeper layers) |
+| `--pretrained_path` | `None` | Optional path to pretrained pi0.5 weights (e.g., `lerobot/pi05_base`) |
+| `--freeze_vision_encoder` | `false` | Freeze the SigLIP vision encoder inside PaliGemma |
+| `--freeze_backbone` | `false` | Freeze the full PaliGemma backbone (only state/fusion/value heads train) |
 
 ```bash
 uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
   --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
   --root="${HOME}/.cache/huggingface/lerobot" \
-  --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_merged_v2_value_5" \
-  --pretrained_path="lerobot/pi05_base" \
+  --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_merged_v2_value_pi05" \
   --epochs=2 \
-  --batch_size=1 \
+  --batch_size=6 \
   --learning_rate=3e-3 \
   --num_workers=4 \
   --val_split_ratio=0.1 \
-  --log_every_n_steps=10 \
+  --log_every_n_steps=100 \
   --validate_every_n_train_steps=50 \
   --plot_every_n_train_steps=200 \
   --max_val_steps_per_step_validation=20 \
   --c_fail=500.0 \
   --num_value_bins=56 \
+  --num_vlm_layers=18 \
   --val_plot_num_episodes=4 \
   --val_plot_num_frames=8 \
   --val_plot_every_n_epochs=1 \
   --model_precision="bfloat16" \
   --freeze_vision_encoder=true \
-  --freeze_embeddings=true \
   --freeze_backbone=false
 ```
 
@@ -198,12 +207,41 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
   --max_val_steps_per_step_validation=10 \
   --c_fail=500.0 \
   --num_value_bins=16 \
+  --num_vlm_layers=18 \
   --val_plot_num_episodes=2 \
   --val_plot_num_frames=8 \
   --val_plot_every_n_epochs=1 \
   --paligemma_variant="gemma_300m" \
   --model_precision="bfloat16" \
   --freeze_vision_encoder=true
+```
+
+### 2.4 Full smoke-test command (step-based val + plots, SmolVLA)
+
+```bash
+uv run python -m lerobot.rl.algorithms.RECAPTrainSmolVLANetwork \
+  --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
+  --root="${HOME}/.cache/huggingface/lerobot" \
+  --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_value_smolvla_smoketest_1" \
+  --epochs=1 \
+  --batch_size=2 \
+  --learning_rate=3e-4 \
+  --num_workers=4 \
+  --val_split_ratio=0.1 \
+  --max_train_steps_per_epoch=200 \
+  --max_val_steps_per_epoch=50 \
+  --log_every_n_steps=10 \
+  --validate_every_n_train_steps=25 \
+  --plot_every_n_train_steps=100 \
+  --max_val_steps_per_step_validation=10 \
+  --c_fail=500.0 \
+  --num_value_bins=16 \
+  --val_plot_num_episodes=2 \
+  --val_plot_num_frames=8 \
+  --val_plot_every_n_epochs=1 \
+  --load_vlm_weights=true \
+  --freeze_vision_encoder=true \
+  --model_precision="bfloat16"
 ```
 
 ---
@@ -400,7 +438,10 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
   --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
   --output_dir="${HOME}/code/lerobot/outputs/recap_value_wandb" \
   --epochs=2 \
-  --batch_size=1 \
+  --batch_size=6 \
+  --model_precision="bfloat16" \
+  --freeze_vision_encoder=true \
+  --num_vlm_layers=18 \
   --wandb_project="recap-value-network" \
   --wandb_entity="my-team" \
   --wandb_run_name="value-net-run-1"

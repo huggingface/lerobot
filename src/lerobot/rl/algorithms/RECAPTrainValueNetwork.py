@@ -115,7 +115,7 @@ class RECAPValueTrainingConfig:
 
     # Value target construction
     c_fail: float = 24.0
-    num_value_bins: int = 201
+    num_value_bins: int = 50
 
     # Input processing
     text_tokenizer_name: str = "google/paligemma-3b-pt-224"
@@ -128,7 +128,7 @@ class RECAPValueTrainingConfig:
     model_precision: str = "float32"
     freeze_vision_encoder: bool = False
     freeze_backbone: bool = False
-    freeze_embeddings: bool = False
+    num_vlm_layers: int = 18
     dropout: float = 0.1
 
     # Pretrained VLM initialisation (e.g. "lerobot/pi05_base")
@@ -1097,7 +1097,7 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
         max_state_dim=cfg.max_state_dim,
         freeze_vision_encoder=cfg.freeze_vision_encoder,
         freeze_backbone=cfg.freeze_backbone,
-        freeze_embeddings=cfg.freeze_embeddings,
+        num_vlm_layers=cfg.num_vlm_layers,
         num_value_bins=cfg.num_value_bins,
         dropout=cfg.dropout,
         pretrained_path=cfg.pretrained_path,
