@@ -915,6 +915,7 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
             "metrics": epoch_metrics,
         }
         torch.save(checkpoint, checkpoints_dir / "last.pt")
+        torch.save(checkpoint, checkpoints_dir / f"epoch_{epoch}.pt")
 
         cond_acc = val_metrics["val_conditioning_accuracy"]
         if not (cond_acc != cond_acc) and cond_acc > best_val_cond_acc:  # noqa: PLR0124 (NaN check)
