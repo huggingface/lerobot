@@ -4,7 +4,7 @@
 #   tail -f train.log
 set -euo pipefail
 
-uv run python -m lerobot.rl.algorithms.RECAPTrainPiStar \
+python -m lerobot.rl.algorithms.RECAPTrainPiStar \
   --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
   --output_dir="${HOME}/code/lerobot/outputs/recap_pistar_train_1" \
   --value_network_checkpoint="${HOME}/code/lerobot/outputs/so101_pickplace_recap_value/checkpoints/last.pt" \
