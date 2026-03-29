@@ -426,7 +426,25 @@ def _run_validation(
 
     cap = f"/{max_steps}" if max_steps is not None else ""
     logging.info(f"Running validation (max_steps{cap})...")
-    for step, batch in enumerate(loader):
+    val_iter = iter(loader)
+    step = -1
+    skipped = 0
+    while True:
+        try:
+            batch = next(val_iter)
+        except StopIteration:
+            break
+        except RuntimeError as exc:
+            if not base._is_known_video_validation_error(exc):
+                raise
+            skipped += 1
+            logging.warning(
+                f"Skipping validation batch due to video decode error "
+                f"(skipped {skipped} so far): {exc}"
+            )
+            continue
+        step += 1
+
         if max_steps is not None and step >= max_steps:
             break
 
@@ -507,6 +525,9 @@ def _run_validation(
             total_gap_neg += gap[neg_mask].sum().item()
 
         total_samples += B
+
+    if skipped > 0:
+        logging.warning(f"Validation skipped {skipped} batches due to video decode errors")
 
     if total_samples == 0:
         return {
@@ -775,8 +796,26 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
         epoch_loss = 0.0
         epoch_samples = 0
         epoch_start = time_module.perf_counter()
+        skipped_batches = 0
 
-        for step, batch in enumerate(train_loader):
+        train_iter = iter(train_loader)
+        step = -1
+        while True:
+            try:
+                batch = next(train_iter)
+            except StopIteration:
+                break
+            except RuntimeError as exc:
+                if not base._is_known_video_validation_error(exc):
+                    raise
+                skipped_batches += 1
+                logging.warning(
+                    f"[Epoch {epoch}] Skipping training batch due to video decode error "
+                    f"(skipped {skipped_batches} so far): {exc}"
+                )
+                continue
+            step += 1
+
             if cfg.max_train_steps_per_epoch is not None and step >= cfg.max_train_steps_per_epoch:
                 break
 
@@ -840,6 +879,11 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
                 wandb_run.log(wandb_step_metrics, step=global_train_step)
 
         train_loss = epoch_loss / epoch_samples if epoch_samples > 0 else float("nan")
+
+        if skipped_batches > 0:
+            logging.warning(
+                f"[Epoch {epoch}] Skipped {skipped_batches} training batches due to video decode errors"
+            )
 
         # End-of-epoch validation
         try:

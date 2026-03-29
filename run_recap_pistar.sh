@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
+# Run in background with:
+#   nohup ./run_recap_pistar.sh > train.log 2>&1 &
+#   tail -f train.log
 set -euo pipefail
 
-LOG_DIR="${HOME}/code/lerobot/outputs/recap_pistar_train_1/logs"
-mkdir -p "$LOG_DIR"
-LOG_FILE="${LOG_DIR}/train_$(date +%Y%m%d_%H%M%S).log"
-
-echo "Logging to: $LOG_FILE"
-
-nohup uv run python -m lerobot.rl.algorithms.RECAPTrainPiStar \
+uv run python -m lerobot.rl.algorithms.RECAPTrainPiStar \
   --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
   --output_dir="${HOME}/code/lerobot/outputs/recap_pistar_train_1" \
   --value_network_checkpoint="${HOME}/code/lerobot/outputs/so101_pickplace_recap_value/checkpoints/last.pt" \
@@ -24,8 +21,4 @@ nohup uv run python -m lerobot.rl.algorithms.RECAPTrainPiStar \
   --freeze_vision_encoder=true \
   --advantage_cache_path="${HOME}/code/lerobot/outputs/advantage_cache.json" \
   --wandb_project="recap-pistar" \
-  --wandb_run_name="pistar-run-gemma-300m-3" \
-  > "$LOG_FILE" 2>&1 &
-
-echo "PID: $!"
-echo "Tail logs: tail -f $LOG_FILE"
+  --wandb_run_name="pistar-run-gemma-300m-3"
