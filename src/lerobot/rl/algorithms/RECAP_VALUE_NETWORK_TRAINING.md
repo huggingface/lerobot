@@ -103,12 +103,22 @@ This produces frame-level supervision targets:
 
 ## 2) Training
 
-### 2.1 Quick start — pi0.5 backbone (RTX 4070 TI SUPER)
+### 2.1 Quick start — pi0.5 backbone with pretrained weights (RTX 4070 TI SUPER)
 
-Uses the PaliGemma backbone with the `gemma_300m` variant (1024-wide, 18-layer
-Gemma text model). The recommended configuration freezes the vision encoder
-while training the Gemma text layers and value head. Use `--num_vlm_layers` to
-truncate the text model for a lighter value network (default uses all 18 layers).
+**Recommended approach.** Loads the `lerobot/pi05_base` checkpoint (gemma_2b
+PaliGemma backbone), freezes the vision encoder and most of the backbone, and
+selectively unfreezes the last few transformer layers so the model can learn
+task-relevant attention patterns. The small state projection, fusion head, and
+value head are always trainable. Pretrained features give the network a strong
+starting point, even with a high `c_fail`.
+
+Use `--num_vlm_layers` to truncate the text model — fewer layers means less
+memory and faster forward passes. 10 of the 18 available layers is a good
+starting point on 16 GB GPUs. Use `--num_unfrozen_backbone_layers` to
+selectively unfreeze the last N transformer layers when `--freeze_backbone=true`;
+this lets the model adapt its attention patterns while keeping the majority of
+the backbone frozen for memory efficiency. Use `--gradient_accumulation_steps`
+to simulate larger effective batch sizes without additional VRAM.
 
 Key pi0.5-specific flags:
 
@@ -116,9 +126,13 @@ Key pi0.5-specific flags:
 |------|---------|--------|
 | `--paligemma_variant` | `gemma_300m` | PaliGemma VLM variant (`gemma_300m` or `gemma_2b`) |
 | `--num_vlm_layers` | `18` | Number of text model layers to keep (truncates deeper layers) |
-| `--pretrained_path` | `None` | Optional path to pretrained pi0.5 weights (e.g., `lerobot/pi05_base`) |
+| `--pretrained_path` | `None` | Path to pretrained pi0.5 weights (e.g., `lerobot/pi05_base`) |
 | `--freeze_vision_encoder` | `false` | Freeze the SigLIP vision encoder inside PaliGemma |
 | `--freeze_backbone` | `false` | Freeze the full PaliGemma backbone (only state/fusion/value heads train) |
+| `--num_unfrozen_backbone_layers` | `0` | When `freeze_backbone=true`, unfreeze the last N transformer layers |
+| `--gradient_accumulation_steps` | `1` | Accumulate gradients over N micro-batches before each optimizer step |
+| `--warmup_ratio` | `0.05` | Fraction of training steps used for linear LR warmup |
+| `--use_class_weights` | `true` | Apply inverse-frequency weights to cross-entropy loss |
 
 ```bash
 uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
@@ -126,8 +140,9 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
   --root="${HOME}/.cache/huggingface/lerobot" \
   --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_merged_v2_value_pi05" \
   --epochs=2 \
-  --batch_size=6 \
-  --learning_rate=3e-3 \
+  --batch_size=4 \
+  --gradient_accumulation_steps=4 \
+  --learning_rate=1e-4 \
   --num_workers=4 \
   --val_split_ratio=0.1 \
   --log_every_n_steps=100 \
@@ -135,14 +150,63 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
   --plot_every_n_train_steps=200 \
   --max_val_steps_per_step_validation=20 \
   --c_fail=500.0 \
-  --num_value_bins=56 \
-  --num_vlm_layers=18 \
+  --num_value_bins=8 \
+  --num_vlm_layers=10 \
+  --paligemma_variant=gemma_2b \
+  --pretrained_path=lerobot/pi05_base \
   --val_plot_num_episodes=4 \
   --val_plot_num_frames=8 \
   --val_plot_every_n_epochs=1 \
   --model_precision="bfloat16" \
   --freeze_vision_encoder=true \
-  --freeze_backbone=false
+  --freeze_backbone=true \
+  --num_unfrozen_backbone_layers=3
+```
+
+### 2.1.1 Alternative — train gemma_300m from scratch (no pretrained weights)
+
+If you don't have access to `lerobot/pi05_base`, or want a smaller model you
+can fine-tune end-to-end, use `gemma_300m` without `--pretrained_path`. This
+trains the full VLM (vision encoder frozen, text backbone trainable) from
+random initialisation.
+
+**Important tradeoffs vs the pretrained gemma_2b approach:**
+
+| | Pretrained gemma_2b (§2.1) | From-scratch gemma_300m |
+|---|---|---|
+| Pretrained features | Yes — strong visual features from day one | No — network must learn features from scratch |
+| Trainable params | ~10M (heads only) | ~578M (text backbone + heads) |
+| `c_fail` tolerance | High `c_fail` (500) works — pretrained features can discriminate observations even with skewed targets | Must use lower `c_fail` (≤24) so failure episodes produce varied target bins instead of all clamping to bin 0 |
+| Learning rate | 3e-3 works (small head, pretrained features) | Use 1e-4 with warmup — high LR destroys randomly-initialised features before they develop |
+| GPU memory (16 GB) | Fits at batch_size=2 | Fits at batch_size=6 |
+| Overfitting risk | Low (few trainable params) | High (578M params on ~12K frames) |
+
+```bash
+uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
+  --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
+  --root="${HOME}/.cache/huggingface/lerobot" \
+  --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_merged_v2_value_300m" \
+  --epochs=2 \
+  --batch_size=6 \
+  --learning_rate=1e-4 \
+  --num_workers=4 \
+  --val_split_ratio=0.1 \
+  --log_every_n_steps=100 \
+  --validate_every_n_train_steps=50 \
+  --plot_every_n_train_steps=200 \
+  --max_val_steps_per_step_validation=20 \
+  --c_fail=24.0 \
+  --num_value_bins=56 \
+  --num_vlm_layers=18 \
+  --paligemma_variant=gemma_300m \
+  --val_plot_num_episodes=4 \
+  --val_plot_num_frames=8 \
+  --val_plot_every_n_epochs=1 \
+  --model_precision="bfloat16" \
+  --freeze_vision_encoder=true \
+  --freeze_backbone=false \
+  --use_class_weights=true \
+  --warmup_ratio=0.05
 ```
 
 ### 2.2 Quick start — SmolVLA backbone (RTX 4070 TI SUPER)
@@ -166,7 +230,7 @@ Key SmolVLA-specific flags:
 uv run python -m lerobot.rl.algorithms.RECAPTrainSmolVLANetwork \
   --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
   --root="${HOME}/.cache/huggingface/lerobot" \
-  --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_value" \
+  --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_value_300m_0" \
   --epochs=2 \
   --batch_size=6 \
   --learning_rate=3e-3 \
@@ -196,7 +260,7 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
   --output_dir="${HOME}/code/lerobot/outputs/so101_pickplace_recap_merged_v2_value_smoketest_1" \
   --epochs=1 \
   --batch_size=2 \
-  --learning_rate=3e-4 \
+  --learning_rate=3e-3 \
   --num_workers=4 \
   --val_split_ratio=0.1 \
   --max_train_steps_per_epoch=200 \
@@ -207,13 +271,15 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
   --max_val_steps_per_step_validation=10 \
   --c_fail=500.0 \
   --num_value_bins=16 \
-  --num_vlm_layers=18 \
+  --num_vlm_layers=10 \
+  --paligemma_variant="gemma_2b" \
+  --pretrained_path="lerobot/pi05_base" \
   --val_plot_num_episodes=2 \
   --val_plot_num_frames=8 \
   --val_plot_every_n_epochs=1 \
-  --paligemma_variant="gemma_300m" \
   --model_precision="bfloat16" \
-  --freeze_vision_encoder=true
+  --freeze_vision_encoder=true \
+  --freeze_backbone=true
 ```
 
 ### 2.4 Full smoke-test command (step-based val + plots, SmolVLA)
@@ -438,10 +504,14 @@ uv run python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
   --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
   --output_dir="${HOME}/code/lerobot/outputs/recap_value_wandb" \
   --epochs=2 \
-  --batch_size=6 \
+  --batch_size=2 \
+  --learning_rate=3e-3 \
+  --paligemma_variant="gemma_2b" \
+  --pretrained_path="lerobot/pi05_base" \
+  --num_vlm_layers=10 \
   --model_precision="bfloat16" \
   --freeze_vision_encoder=true \
-  --num_vlm_layers=18 \
+  --freeze_backbone=true \
   --wandb_project="recap-value-network" \
   --wandb_entity="my-team" \
   --wandb_run_name="value-net-run-1"

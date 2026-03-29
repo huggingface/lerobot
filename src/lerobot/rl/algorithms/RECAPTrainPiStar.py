@@ -84,6 +84,7 @@ class RECAPPiStarTrainingConfig:
     # Pi0.5 model settings
     paligemma_variant: str = "gemma_300m"
     action_expert_variant: str = "gemma_300m"
+    num_expert_layers: int = 0
     pretrained_path: str | None = None
     model_precision: str = "bfloat16"
     freeze_vision_encoder: bool = True
@@ -178,6 +179,7 @@ def _build_policy_config(
         output_features=output_features,
         paligemma_variant=cfg.paligemma_variant,
         action_expert_variant=cfg.action_expert_variant,
+        num_expert_layers=cfg.num_expert_layers,
         dtype=cfg.model_precision,
         freeze_vision_encoder=cfg.freeze_vision_encoder,
         train_expert_only=cfg.train_expert_only,

@@ -77,6 +77,19 @@ class PiStar06Policy(PI05Policy):
     ):
         super().__init__(config, **kwargs)
 
+        if config.num_expert_layers > 0:
+            expert_model = self.model.paligemma_with_expert.gemma_expert.model
+            total = len(expert_model.layers)
+            if config.num_expert_layers > total:
+                raise ValueError(
+                    f"num_expert_layers={config.num_expert_layers} exceeds "
+                    f"action expert depth {total}"
+                )
+            expert_model.layers = expert_model.layers[: config.num_expert_layers]
+            logging.info(
+                f"Truncated action expert to {config.num_expert_layers}/{total} layers"
+            )
+
         self._setup_advantage_tokens()
 
         self._episode_info: dict[int, dict] | None = None

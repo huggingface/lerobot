@@ -22,6 +22,7 @@ Fixed CSV schema expected by this script:
 
 import json
 import logging
+import math
 import random
 import time
 from collections.abc import Callable
@@ -96,10 +97,13 @@ class RECAPValueTrainingConfig:
 
     epochs: int = 10
     batch_size: int = 16
+    gradient_accumulation_steps: int = 1
     num_workers: int = 0
-    learning_rate: float = 3e-4
+    learning_rate: float = 3e-5
     weight_decay: float = 1e-4
+    warmup_ratio: float = 0.05
     max_grad_norm: float = 1.0
+    use_class_weights: bool = True
     val_split_ratio: float = 0.1
     seed: int = 42
     device: str = "auto"
@@ -128,6 +132,7 @@ class RECAPValueTrainingConfig:
     model_precision: str = "float32"
     freeze_vision_encoder: bool = False
     freeze_backbone: bool = False
+    num_unfrozen_backbone_layers: int = 0
     num_vlm_layers: int = 18
     dropout: float = 0.1
 
@@ -138,6 +143,42 @@ class RECAPValueTrainingConfig:
     wandb_project: str | None = None
     wandb_entity: str | None = None
     wandb_run_name: str | None = None
+
+
+def _compute_class_weights(frame_targets: list[FrameTarget], num_bins: int) -> torch.Tensor:
+    """Compute inverse-frequency class weights for the target bin distribution.
+
+    Bins with zero counts get a weight of 0 so they don't contribute to gradients.
+    The weights are normalized so their mean over non-empty bins equals 1.
+    """
+    counts = torch.zeros(num_bins, dtype=torch.float64)
+    for target in frame_targets:
+        counts[target.target_bin] += 1
+
+    weights = torch.zeros(num_bins, dtype=torch.float32)
+    non_empty = counts > 0
+    if non_empty.any():
+        inv_freq = 1.0 / counts[non_empty].float()
+        inv_freq = inv_freq / inv_freq.mean()
+        weights[non_empty] = inv_freq
+    return weights
+
+
+def _build_warmup_cosine_scheduler(
+    optimizer: torch.optim.Optimizer,
+    total_steps: int,
+    warmup_ratio: float,
+) -> torch.optim.lr_scheduler.LambdaLR:
+    """Linear warmup followed by cosine decay to 0."""
+    warmup_steps = max(1, int(total_steps * warmup_ratio))
+
+    def lr_lambda(current_step: int) -> float:
+        if current_step < warmup_steps:
+            return current_step / warmup_steps
+        progress = (current_step - warmup_steps) / max(1, total_steps - warmup_steps)
+        return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
 
 def _set_seed(seed: int) -> None:
@@ -806,6 +847,9 @@ def _run_epoch(
     collected_predictions: dict[int, list[ValidationFramePrediction]] | None = None,
     wandb_run: Any = None,
     global_step_offset: int = 0,
+    class_weights: torch.Tensor | None = None,
+    scheduler: torch.optim.lr_scheduler.LambdaLR | None = None,
+    gradient_accumulation_steps: int = 1,
 ) -> dict[str, float]:
     training = optimizer is not None
     model.train(mode=training)
@@ -829,6 +873,10 @@ def _run_epoch(
     epoch_start_time = time.perf_counter()
     window_start_time = epoch_start_time
 
+    grad_accum = max(1, gradient_accumulation_steps) if training else 1
+    if training and optimizer is not None:
+        optimizer.zero_grad(set_to_none=True)
+
     for step, batch in enumerate(loader):
         if max_steps is not None and step >= max_steps:
             break
@@ -845,15 +893,22 @@ def _run_epoch(
         value_logits = outputs["value_logits"]
         expected_value = outputs["expected_value"].squeeze(-1)
 
-        loss = F.cross_entropy(value_logits, batch["target_bin"])
+        ce_weight = class_weights.to(device=value_logits.device) if class_weights is not None else None
+        loss = F.cross_entropy(value_logits, batch["target_bin"], weight=ce_weight)
 
         if training:
             assert optimizer is not None
-            optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            if max_grad_norm > 0:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
-            optimizer.step()
+            scaled_loss = loss / grad_accum
+            scaled_loss.backward()
+
+            is_accumulation_boundary = (step_num % grad_accum == 0) or (step_num == total_steps)
+            if is_accumulation_boundary:
+                if max_grad_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
+                if scheduler is not None:
+                    scheduler.step()
 
         with torch.no_grad():
             batch_size = batch["target_bin"].shape[0]
@@ -1097,6 +1152,7 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
         max_state_dim=cfg.max_state_dim,
         freeze_vision_encoder=cfg.freeze_vision_encoder,
         freeze_backbone=cfg.freeze_backbone,
+        num_unfrozen_backbone_layers=cfg.num_unfrozen_backbone_layers,
         num_vlm_layers=cfg.num_vlm_layers,
         num_value_bins=cfg.num_value_bins,
         dropout=cfg.dropout,
@@ -1114,10 +1170,30 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
         lr=cfg.learning_rate,
         weight_decay=cfg.weight_decay,
     )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer,
-        T_max=max(1, cfg.epochs),
+
+    steps_per_epoch = len(train_loader)
+    if cfg.max_train_steps_per_epoch is not None:
+        steps_per_epoch = min(steps_per_epoch, cfg.max_train_steps_per_epoch)
+    grad_accum = max(1, cfg.gradient_accumulation_steps)
+    optimizer_steps_per_epoch = math.ceil(steps_per_epoch / grad_accum)
+    total_optimizer_steps = optimizer_steps_per_epoch * cfg.epochs
+    scheduler = _build_warmup_cosine_scheduler(
+        optimizer, total_steps=total_optimizer_steps, warmup_ratio=cfg.warmup_ratio,
     )
+    logging.info(
+        f"Using warmup+cosine schedule: {int(total_optimizer_steps * cfg.warmup_ratio)} warmup steps "
+        f"/ {total_optimizer_steps} total optimizer steps (grad_accum={grad_accum}), "
+        f"peak lr={cfg.learning_rate}"
+    )
+
+    class_weights: torch.Tensor | None = None
+    if cfg.use_class_weights:
+        class_weights = _compute_class_weights(train_targets, num_bins=cfg.num_value_bins)
+        non_zero_bins = (class_weights > 0).sum().item()
+        logging.info(
+            f"Using class-balanced CE weights over {non_zero_bins}/{cfg.num_value_bins} non-empty bins "
+            f"(weight range: {class_weights[class_weights > 0].min():.3f} – {class_weights[class_weights > 0].max():.3f})"
+        )
 
     best_val_loss = float("inf")
     history: list[dict] = []
@@ -1196,6 +1272,7 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
                 collect_episode_ids=None,
                 value_bin_support=model.value_bin_support,
                 collected_predictions=None,
+                class_weights=class_weights,
             )
         except Exception as error:  # noqa: BLE001
             if loader is step_val_loader or not _is_known_video_validation_error(error):
@@ -1219,6 +1296,7 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
                     collect_episode_ids=None,
                     value_bin_support=model.value_bin_support,
                     collected_predictions=None,
+                    class_weights=class_weights,
                 )
             except Exception as retry_error:  # noqa: BLE001
                 if not _is_known_video_validation_error(retry_error):
@@ -1353,6 +1431,9 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
             on_train_step_end=on_train_step_end,
             wandb_run=wandb_run,
             global_step_offset=global_train_step,
+            class_weights=class_weights,
+            scheduler=scheduler,
+            gradient_accumulation_steps=cfg.gradient_accumulation_steps,
         )
         should_plot_validation = (
             cfg.val_plot_num_episodes > 0
@@ -1367,7 +1448,6 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
             plot_subdir=f"epoch_{epoch:03d}" if should_plot_validation else None,
             loader=val_loader,
         )
-        scheduler.step()
 
         epoch_metrics = {
             "epoch": epoch,

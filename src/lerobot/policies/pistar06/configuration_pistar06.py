@@ -36,6 +36,9 @@ class PiStar06Config(PI05Config):
     advantage_threshold: float = 0.0
     advantage_dropout: float = 0.3
 
+    # Action expert layer truncation (0 = use all layers from the variant)
+    num_expert_layers: int = 0
+
     # Return computation (must match the c_fail used to train the value network)
     c_fail: float = 500.0
 

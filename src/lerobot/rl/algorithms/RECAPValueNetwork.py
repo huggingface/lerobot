@@ -56,6 +56,7 @@ class RECAPValueNetworkConfig:
     max_state_dim: int = 32
     freeze_vision_encoder: bool = False
     freeze_backbone: bool = False
+    num_unfrozen_backbone_layers: int = 0
     num_vlm_layers: int = 18
     num_value_bins: int = 50
     dropout: float = 0.1
@@ -108,19 +109,37 @@ class RECAPValueNetwork(nn.Module):
             raise ValueError(f"Invalid precision: {config.precision}")
 
         language_model = self._get_language_model()
+        # GemmaForCausalLM wraps GemmaModel in .model; GemmaModel has .layers directly
+        lm_inner = language_model.model if hasattr(language_model, "model") else language_model
         if config.num_vlm_layers > 0:
-            total_layers = len(language_model.model.layers)
+            total_layers = len(lm_inner.layers)
             if config.num_vlm_layers > total_layers:
                 raise ValueError(
                     f"num_vlm_layers={config.num_vlm_layers} exceeds model depth {total_layers}"
                 )
-            language_model.model.layers = language_model.model.layers[: config.num_vlm_layers]
-            logging.info(f"Using first {len(language_model.model.layers)} PaliGemma text layers for value network")
+            lm_inner.layers = lm_inner.layers[: config.num_vlm_layers]
+            logging.info(f"Using first {len(lm_inner.layers)} PaliGemma text layers for value network")
 
         if config.freeze_backbone:
             self.paligemma.eval()
             for param in self.paligemma.parameters():
                 param.requires_grad = False
+            if config.num_unfrozen_backbone_layers > 0:
+                num_layers = len(lm_inner.layers)
+                if config.num_unfrozen_backbone_layers > num_layers:
+                    raise ValueError(
+                        f"num_unfrozen_backbone_layers={config.num_unfrozen_backbone_layers} "
+                        f"exceeds available layers {num_layers}"
+                    )
+                unfrozen_layers = lm_inner.layers[-config.num_unfrozen_backbone_layers:]
+                for layer in unfrozen_layers:
+                    layer.train()
+                    for param in layer.parameters():
+                        param.requires_grad = True
+                logging.info(
+                    f"Unfreezing last {config.num_unfrozen_backbone_layers}/{num_layers} "
+                    f"backbone transformer layers"
+                )
         elif config.freeze_vision_encoder:
             vision_tower = self._get_vision_tower()
             vision_tower.eval()
