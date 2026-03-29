@@ -19,10 +19,9 @@ Standalone training loop with an episode-level train/val split and validation
 metrics that measure how well the model differentiates positive vs negative
 advantage distributions.
 
-Because PiStar06 (Pi0.5 backbone, PaliGemma tokenizer) and the SmolVLA value
-network (SmolVLM2 tokenizer) use different tokenizers, advantages are
-**pre-computed** before the training loop starts.  The value network runs once
-over the full dataset, then the advantage for each frame is injected into
+Advantages are **pre-computed** before the training loop starts using a frozen
+Pi0.5-based RECAPValueNetwork (PaliGemma backbone).  The value network runs
+once over the full dataset, then the advantage for each frame is injected into
 training/validation batches via a lookup dict keyed by absolute frame index.
 """
 
@@ -82,19 +81,21 @@ class RECAPPiStarTrainingConfig:
     cfg_beta: float = 1.0
 
     # Pi0.5 model settings
-    paligemma_variant: str = "gemma_300m"
+    paligemma_variant: str = "gemma_2b"
     action_expert_variant: str = "gemma_300m"
     num_expert_layers: int = 0
-    pretrained_path: str | None = None
+    pretrained_path: str = "lerobot/pi05_base"
     model_precision: str = "bfloat16"
     freeze_vision_encoder: bool = True
+    freeze_backbone: bool = False
+    num_unfrozen_backbone_layers: int = 0
     train_expert_only: bool = False
     gradient_checkpointing: bool = False
 
     # Value network pre-computation
     vn_batch_size: int = 4
-    vn_tokenizer_max_length: int = 64
-    vn_image_size: int = 512
+    vn_tokenizer_max_length: int = 96
+    vn_tokenizer_name: str = "google/paligemma-3b-pt-224"
 
     # Advantage caching (skip re-computation on subsequent runs)
     advantage_cache_path: str | None = None
@@ -193,6 +194,60 @@ def _build_policy_config(
     return policy_cfg
 
 
+# ── Backbone freezing ────────────────────────────────────────────────────────
+
+
+def _apply_backbone_freezing(policy, cfg: RECAPPiStarTrainingConfig) -> None:
+    """Freeze the PaliGemma VLM backbone, optionally unfreezing the last N layers.
+
+    Mirrors the partial-unfreeze pattern used in RECAPValueNetwork.
+    """
+    if not cfg.freeze_backbone:
+        return
+
+    paligemma = policy.model.paligemma_with_expert.paligemma
+    paligemma.eval()
+    for param in paligemma.parameters():
+        param.requires_grad = False
+
+    if cfg.num_unfrozen_backbone_layers > 0:
+        lm = paligemma.model.language_model
+        lm_inner = lm.model if hasattr(lm, "model") else lm
+        layers = lm_inner.layers
+        num_layers = len(layers)
+        if cfg.num_unfrozen_backbone_layers > num_layers:
+            raise ValueError(
+                f"num_unfrozen_backbone_layers={cfg.num_unfrozen_backbone_layers} "
+                f"exceeds available layers {num_layers}"
+            )
+        unfrozen = layers[-cfg.num_unfrozen_backbone_layers :]
+        for layer in unfrozen:
+            layer.train()
+            for param in layer.parameters():
+                param.requires_grad = True
+        logging.info(
+            f"Backbone frozen; unfreezing last {cfg.num_unfrozen_backbone_layers}/{num_layers} "
+            f"VLM language model layers"
+        )
+    else:
+        logging.info("Backbone fully frozen (all PaliGemma params)")
+
+
+def _restore_freeze_state(policy, cfg: RECAPPiStarTrainingConfig) -> None:
+    """Re-apply eval() to frozen backbone parts after a policy.train() call."""
+    if not cfg.freeze_backbone:
+        return
+
+    paligemma = policy.model.paligemma_with_expert.paligemma
+    paligemma.eval()
+
+    if cfg.num_unfrozen_backbone_layers > 0:
+        lm = paligemma.model.language_model
+        lm_inner = lm.model if hasattr(lm, "model") else lm
+        for layer in lm_inner.layers[-cfg.num_unfrozen_backbone_layers :]:
+            layer.train()
+
+
 # ── Advantage pre-computation ────────────────────────────────────────────────
 
 
@@ -204,24 +259,24 @@ def _precompute_advantages(
     image_keys: list[str],
     device: torch.device,
     batch_size: int = 4,
-    vn_image_size: int = 512,
-    tokenizer_max_length: int = 64,
+    tokenizer_max_length: int = 96,
+    fallback_tokenizer_name: str = "google/paligemma-3b-pt-224",
 ) -> dict[int, float]:
-    """Pre-compute per-frame advantages using the frozen SmolVLA value network.
+    """Pre-compute per-frame advantages using the frozen Pi0.5-based value network.
 
-    Iterates over the full dataset, runs the SmolVLA value network (with its own
-    SmolVLM2 tokenizer) to get V(o_t), combines with R_t from frame_targets, and
+    Iterates over the full dataset, runs the RECAPValueNetwork (PaliGemma backbone,
+    PaliGemma tokenizer) to get V(o_t), combines with R_t from frame_targets, and
     returns a dict mapping absolute frame index to advantage = R_t - V(o_t).
     """
-    from lerobot.rl.algorithms.RECAPSmolVLAValueNetwork import (
-        RECAPSmolVLAValueNetwork,
-        RECAPSmolVLAValueNetworkConfig,
+    from lerobot.rl.algorithms.RECAPValueNetwork import (
+        RECAPValueNetwork,
+        RECAPValueNetworkConfig,
     )
 
     logging.info(f"Loading value network from {value_network_checkpoint}")
     checkpoint = torch.load(value_network_checkpoint, map_location="cpu", weights_only=False)
-    vn_config = RECAPSmolVLAValueNetworkConfig(**checkpoint["model_config"])
-    vn = RECAPSmolVLAValueNetwork(vn_config)
+    vn_config = RECAPValueNetworkConfig(**checkpoint["model_config"])
+    vn = RECAPValueNetwork(vn_config)
     vn.load_state_dict(checkpoint["model_state_dict"])
     vn.eval()
     vn.to(device)
@@ -233,8 +288,14 @@ def _precompute_advantages(
 
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(vn_config.vlm_model_name)
-    logging.info(f"Loaded SmolVLM2 tokenizer from {vn_config.vlm_model_name}")
+    train_config = checkpoint.get("train_config", {})
+    tokenizer_name = train_config.get("text_tokenizer_name", fallback_tokenizer_name)
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+    if tokenizer.pad_token_id is None:
+        if tokenizer.eos_token_id is None:
+            raise ValueError("Tokenizer has no pad_token_id or eos_token_id.")
+        tokenizer.pad_token = tokenizer.eos_token
+    logging.info(f"Loaded PaliGemma tokenizer from {tokenizer_name}")
 
     full_dataset._ensure_hf_dataset_loaded()
     R_t_by_abs_index: dict[int, float] = {}
@@ -252,13 +313,12 @@ def _precompute_advantages(
 
     advantage_lookup: dict[int, float] = {}
     total_frames = 0
-    target_h, target_w = vn_image_size, vn_image_size
+    target_h, target_w = vn_config.image_size, vn_config.image_size
 
     for batch in loader:
         abs_indices = batch["index"]
         B = abs_indices.shape[0]
 
-        # Prepare images: stack camera views into [B, N_cam, 3, H, W]
         img_list = []
         for key in image_keys:
             if key not in batch:
@@ -280,7 +340,6 @@ def _precompute_advantages(
             stacked = flat.reshape(B, N, C, target_h, target_w)
         images = stacked.to(device)
 
-        # Prepare state
         state = batch[OBS_STATE]
         if state.ndim == 3:
             state = state[:, -1, :]
@@ -291,12 +350,11 @@ def _precompute_advantages(
             state = state[..., :max_state_dim]
         state = state.to(device)
 
-        # Tokenize language with SmolVLM2
         tasks = batch["task"]
         if isinstance(tasks, (list, tuple)):
-            task_strings = [str(t) for t in tasks]
+            task_strings = [base._build_critic_prompt(str(t)) for t in tasks]
         else:
-            task_strings = [str(tasks)]
+            task_strings = [base._build_critic_prompt(str(tasks))]
 
         tok_out = tokenizer(
             task_strings,
@@ -639,7 +697,7 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
         f"{len(val_ep_ids)} val episodes ({len(val_targets)} frames)"
     )
 
-    # ── 2. Pre-compute advantages using SmolVLA value network ────────────
+    # ── 2. Pre-compute advantages using Pi0.5-based value network ──────────
     cache_path = Path(cfg.advantage_cache_path) if cfg.advantage_cache_path else None
     if cache_path is not None and cache_path.is_file():
         advantage_lookup = _load_advantage_cache(cache_path)
@@ -660,8 +718,8 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
             image_keys=image_keys,
             device=device,
             batch_size=cfg.vn_batch_size,
-            vn_image_size=cfg.vn_image_size,
             tokenizer_max_length=cfg.vn_tokenizer_max_length,
+            fallback_tokenizer_name=cfg.vn_tokenizer_name,
         )
 
         if cache_path is not None:
@@ -712,6 +770,7 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
         del pretrained
 
     policy.to(device)
+    _apply_backbone_freezing(policy, cfg)
 
     num_trainable = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total = sum(p.numel() for p in policy.parameters())
@@ -795,6 +854,7 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
 
     for epoch in range(1, cfg.epochs + 1):
         policy.train()
+        _restore_freeze_state(policy, cfg)
         epoch_loss = 0.0
         epoch_samples = 0
         epoch_start = time_module.perf_counter()
@@ -876,6 +936,7 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
                     {f"val/{k}": v for k, v in step_val_metrics.items()}
                 )
                 policy.train()
+                _restore_freeze_state(policy, cfg)
 
             if wandb_run is not None and wandb_step_metrics:
                 wandb_run.log(wandb_step_metrics, step=global_train_step)
