@@ -44,6 +44,11 @@ from lerobot.utils.import_utils import get_safe_default_video_backend
 
 logger = logging.getLogger(__name__)
 
+# Decimal places used when rounding video timestamps to prevent cumulative
+# floating-point drift in concatenated videos (see #3177).  Microsecond
+# precision (6 decimals) is orders of magnitude finer than any video frame
+# interval while still eliminating accumulated float errors.
+TIMESTAMP_ROUND_DECIMALS: int = 6
 
 def decode_video_frames(
     video_path: Path | str,
