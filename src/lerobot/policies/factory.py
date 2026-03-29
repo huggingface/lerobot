@@ -37,7 +37,6 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.sac.configuration_sac import SACConfig
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
 from lerobot.policies.sarm.configuration_sarm import SARMConfig
-from lerobot.policies.smolstar06.configuration_smolstar06 import SmolStar06Config
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.policies.utils import validate_visual_features_consistency
@@ -116,10 +115,6 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
         return SmolVLAPolicy
-    elif name == "smolstar06":
-        from lerobot.policies.smolstar06.modeling_smolstar06 import SmolStar06Policy
-
-        return SmolStar06Policy
     elif name == "sarm":
         from lerobot.policies.sarm.modeling_sarm import SARMRewardModel
 
@@ -178,8 +173,6 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return SACConfig(**kwargs)
     elif policy_type == "smolvla":
         return SmolVLAConfig(**kwargs)
-    elif policy_type == "smolstar06":
-        return SmolStar06Config(**kwargs)
     elif policy_type == "reward_classifier":
         return RewardClassifierConfig(**kwargs)
     elif policy_type == "groot":
@@ -352,14 +345,6 @@ def make_pre_post_processors(
         from lerobot.policies.sac.reward_model.processor_classifier import make_classifier_processor
 
         processors = make_classifier_processor(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-        )
-
-    elif isinstance(policy_cfg, SmolStar06Config):
-        from lerobot.policies.smolstar06.processor_smolstar06 import make_smolstar06_pre_post_processors
-
-        processors = make_smolstar06_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
