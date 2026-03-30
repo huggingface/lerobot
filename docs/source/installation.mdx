@@ -70,7 +70,7 @@ conda install ffmpeg -c conda-forge
 ```
 
 > [!TIP]
-> This usually installs `ffmpeg 7.X` for your platform compiled with the `libsvtav1` encoder. If `libsvtav1` is not supported (check supported encoders with `ffmpeg -encoders`), you can:
+> This usually installs `ffmpeg 7.X` with the `libsvtav1` encoder. If you run into issues (e.g. `libsvtav1` missing — check with `ffmpeg -encoders` — or a version mismatch with `torchcodec`), you can:
 >
 > - _[On any platform]_ Explicitly install `ffmpeg 7.X` using:
 >
