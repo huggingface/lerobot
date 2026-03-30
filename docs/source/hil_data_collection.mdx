@@ -184,7 +184,7 @@ sudo setfacl -m u:$USER:rw /dev/input/by-id/usb-PCsensor_FootSwitch-event-kbd
 
 ### Step 3: Fine-tune the Policy
 
-Fine-tune on the combined demonstration + HIL data:
+Fine-tune on the **combined** dataset (`demo-dataset` + `hil-dataset` merged together):
 
 ```bash
 python src/lerobot/scripts/lerobot_train.py \
@@ -237,7 +237,7 @@ This HIL data collection approach builds on ideas from interactive imitation lea
 
 - **RaC** (Hu et al., 2025) scales this loop to long-horizon tasks by explicitly decomposing interventions into **recovery** (teleoperating back to a good state) and **correction** (demonstrating the right behavior from there). This decomposition is the protocol followed by the HIL scripts in `examples/hil`.
 
-- **RECAP** (Physical Intelligence, 2025) applies the same iterative collect-and-finetune loop at scale with VLA models, showing that even large pretrained policies benefit substantially from targeted human corrections on their own failure modes.
+- **π0.6/RECAP** (Physical Intelligence, 2025) applies the same iterative collect-and-finetune loop at scale with VLA models, showing that even large pretrained policies benefit substantially from targeted human corrections on their own failure modes. π0.6 is trained using RECAP.
 
 ```bibtex
 @article{ross2011dagger,

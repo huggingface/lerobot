@@ -158,7 +158,7 @@ class DatasetRecordConfig:
     repo_id: str
     # A short but accurate description of the task performed during the recording (e.g. "Pick the Lego block and drop it in the box on the right.")
     single_task: str
-    # Root directory where the dataset will be stored (e.g. 'dataset/path').
+    # Root directory where the dataset will be stored (e.g. 'dataset/path'). If None, defaults to $HF_LEROBOT_HOME/repo_id.
     root: str | Path | None = None
     # Limit the frames per second.
     fps: int = 30
@@ -348,6 +348,8 @@ def record_loop(
     # Calculate control interval based on interpolation
     use_interpolation = interpolator is not None and interpolator.enabled and policy is not None
     control_interval = interpolator.get_control_interval(fps) if interpolator else 1 / fps
+    # Pre-compute action key order outside the hot loop — it won't change mid-episode.
+    action_keys = sorted(robot.action_features) if use_interpolation else []
 
     no_action_count = 0
     timestamp = 0
@@ -377,7 +379,6 @@ def record_loop(
         if policy is not None and preprocessor is not None and postprocessor is not None:
             # With interpolation: only call policy when interpolator needs new action
             if use_interpolation:
-                action_keys = sorted(robot.action_features)
                 ran_inference = False
 
                 if interpolator.needs_new_action():
@@ -418,10 +419,13 @@ def record_loop(
                     robot_type=robot.robot_type,
                 )
                 act_processed_policy: RobotAction = make_robot_action(action_values, dataset.features)
+                # Applies a pipeline to the action, default is IdentityProcessor
                 robot_action_to_send = robot_action_processor((act_processed_policy, obs))
 
         elif policy is None and isinstance(teleop, Teleoperator):
             act = teleop.get_action()
+            if robot.name == "unitree_g1":
+                teleop.send_feedback(obs)
 
             # Applies a pipeline to the raw teleop action, default is IdentityProcessor
             act_processed_teleop = teleop_action_processor((act, obs))
@@ -608,10 +612,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
                 ):
                     log_say("Reset the environment", cfg.play_sounds)
-
-                    # reset g1 robot
-                    if robot.name == "unitree_g1":
-                        robot.reset()
 
                     record_loop(
                         robot=robot,

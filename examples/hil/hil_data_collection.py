@@ -1,8 +1,23 @@
 #!/usr/bin/env python
+
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Human-in-the-Loop (HIL) Data Collection with optional Real-Time Chunking (RTC).
 
-Implements the RaC paradigm (Hu et al., 2025) for LeRobot. By default uses synchronous
+Implements the RaC paradigm (https://arxiv.org/abs/2509.07953) for LeRobot. By default uses synchronous
 inference (best for fast models like ACT / Diffusion Policy). Set --rtc.enabled=true for
 asynchronous background inference (recommended for large models like Pi0 / Pi0.5 / SmolVLA).
 
@@ -48,6 +63,7 @@ Usage:
         --interpolation_multiplier=3
 """
 
+import copy
 import logging
 import math
 import time
@@ -258,7 +274,7 @@ def _start_pedal_listener(events: dict):
     try:
         from evdev import InputDevice, categorize, ecodes
     except ImportError:
-        logging.info("[Pedal] evdev not installed - pedal support disabled")
+        logging.warning("[Pedal] evdev not installed - pedal support disabled")
         return
 
     pedal_device = "/dev/input/by-id/usb-PCsensor_FootSwitch-event-kbd"
@@ -268,7 +284,7 @@ def _start_pedal_listener(events: dict):
     def pedal_reader():
         try:
             dev = InputDevice(pedal_device)
-            print(f"[Pedal] Connected: {dev.name}")
+            logger.info(f"[Pedal] Connected: {dev.name}")
 
             for ev in dev.read_loop():
                 if ev.type != ecodes.EV_KEY:
@@ -301,7 +317,7 @@ def _start_pedal_listener(events: dict):
         except PermissionError:
             logging.warning(f"[Pedal] Permission denied for {pedal_device}")
         except Exception as e:
-            logging.debug(f"[Pedal] Error: {e}")
+            logging.warning(f"[Pedal] Error: {e}")
 
     thread = threading.Thread(target=pedal_reader, daemon=True)
     thread.start()
@@ -310,6 +326,7 @@ def _start_pedal_listener(events: dict):
 def _rtc_inference_thread(
     policy: PreTrainedPolicy,
     obs_holder: dict,
+    obs_lock: Lock,
     hw_features: dict,
     preprocessor: PolicyProcessorPipeline,
     postprocessor: PolicyProcessorPipeline,
@@ -355,7 +372,8 @@ def _rtc_inference_thread(
             continue
 
         queue = queue_holder.get("queue")
-        obs = obs_holder.get("obs")
+        with obs_lock:
+            obs = copy.deepcopy(obs_holder.get("obs"))
         if queue is None or obs is None:
             time.sleep(0.01)
             continue
@@ -674,6 +692,7 @@ def _rollout_rtc(
     cfg: HILConfig,
     queue_holder: dict,
     obs_holder: dict,
+    obs_lock: Lock,
     policy_active: Event,
     compile_warmup_done: Event,
     hw_features: dict,
@@ -781,7 +800,8 @@ def _rollout_rtc(
             obs_filtered = {k: obs[k] for k in obs_state_names if k in obs}
             obs_filtered.update({k: obs[k] for k in obs_image_names if k in obs})
             obs_frame = build_dataset_frame(dataset.features, obs_filtered, prefix=OBS_STR)
-            obs_holder["obs"] = obs_filtered
+            with obs_lock:
+                obs_holder["obs"] = obs_filtered
             last_obs_poll_t = now_for_obs
 
         if events["correction_active"]:
@@ -1007,6 +1027,7 @@ def hil_collect(cfg: HILConfig) -> LeRobotDataset:
         # RTC-specific setup
         queue_holder = None
         obs_holder = None
+        obs_lock = Lock()
         hw_features = None
         if use_rtc:
             _start_pedal_listener(events)
@@ -1023,6 +1044,7 @@ def hil_collect(cfg: HILConfig) -> LeRobotDataset:
                 args=(
                     policy,
                     obs_holder,
+                    obs_lock,
                     hw_features,
                     preprocessor,
                     postprocessor,
@@ -1037,12 +1059,11 @@ def hil_collect(cfg: HILConfig) -> LeRobotDataset:
             rtc_thread.start()
 
         print_controls(rtc=use_rtc)
-        print(f"  Policy: {cfg.policy.pretrained_path}")
-        print(f"  Task: {cfg.dataset.single_task}")
-        print(f"  Interpolation: {cfg.interpolation_multiplier}x")
+        logger.info(f"  Policy: {cfg.policy.pretrained_path}")
+        logger.info(f"  Task: {cfg.dataset.single_task}")
+        logger.info(f"  Interpolation: {cfg.interpolation_multiplier}x")
         if use_rtc:
-            print(f"  RTC: enabled (execution_horizon={cfg.rtc.execution_horizon})")
-        print()
+            logger.info(f"  RTC: enabled (execution_horizon={cfg.rtc.execution_horizon})")
 
         with VideoEncodingManager(dataset):
             recorded = 0
@@ -1062,6 +1083,7 @@ def hil_collect(cfg: HILConfig) -> LeRobotDataset:
                         cfg=cfg,
                         queue_holder=queue_holder,
                         obs_holder=obs_holder,
+                        obs_lock=obs_lock,
                         policy_active=policy_active,
                         compile_warmup_done=compile_warmup_done,
                         hw_features=hw_features,

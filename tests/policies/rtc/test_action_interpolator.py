@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,36 +14,12 @@
 
 """Tests for ActionInterpolator and its interaction with ActionQueue (RTC)."""
 
-import importlib.util
-import sys
-from pathlib import Path
-
 import pytest
 import torch
 
-# Direct imports to avoid triggering the full lerobot.policies init chain,
-# which may fail on branches where some processor modules are absent.
-_rtc_dir = Path(__file__).resolve().parents[3] / "src" / "lerobot" / "policies" / "rtc"
-
-_spec_interp = importlib.util.spec_from_file_location(
-    "action_interpolator", _rtc_dir / "action_interpolator.py"
-)
-_mod_interp = importlib.util.module_from_spec(_spec_interp)
-_spec_interp.loader.exec_module(_mod_interp)
-ActionInterpolator = _mod_interp.ActionInterpolator
-
-_spec_cfg = importlib.util.spec_from_file_location("configuration_rtc", _rtc_dir / "configuration_rtc.py")
-_mod_cfg = importlib.util.module_from_spec(_spec_cfg)
-_spec_cfg.loader.exec_module(_mod_cfg)
-RTCConfig = _mod_cfg.RTCConfig
-
-sys.modules["lerobot.policies.rtc.configuration_rtc"] = _mod_cfg
-
-_spec_queue = importlib.util.spec_from_file_location("action_queue", _rtc_dir / "action_queue.py")
-_mod_queue = importlib.util.module_from_spec(_spec_queue)
-_spec_queue.loader.exec_module(_mod_queue)
-ActionQueue = _mod_queue.ActionQueue
-
+from lerobot.policies.rtc.action_interpolator import ActionInterpolator
+from lerobot.policies.rtc.action_queue import ActionQueue
+from lerobot.policies.rtc.configuration_rtc import RTCConfig
 
 # Fixtures
 

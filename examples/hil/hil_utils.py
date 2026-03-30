@@ -1,3 +1,17 @@
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Shared utilities for Human-in-the-Loop data collection scripts."""
 
 import logging
@@ -109,40 +123,40 @@ def init_keyboard_listener():
         try:
             if events["in_reset"]:
                 if key in [keyboard.Key.space, keyboard.Key.right]:
-                    print("\n[HIL] Starting next episode...")
+                    logger.info("[HIL] Starting next episode...")
                     events["start_next_episode"] = True
                 elif hasattr(key, "char") and key.char == "c":
                     events["start_next_episode"] = True
                 elif key == keyboard.Key.esc:
-                    print("[HIL] ESC - Stop recording, pushing to hub...")
+                    logger.info("[HIL] ESC - Stop recording, pushing to hub...")
                     events["stop_recording"] = True
                     events["start_next_episode"] = True
             else:
                 if key == keyboard.Key.space:
                     if not events["policy_paused"] and not events["correction_active"]:
-                        print("\n[HIL] ⏸ PAUSED - Press 'c' to take control or 'p' to resume policy")
+                        logger.info("[HIL] PAUSED - Press 'c' to take control or 'p' to resume policy")
                         events["policy_paused"] = True
                 elif hasattr(key, "char") and key.char == "c":
                     if events["policy_paused"] and not events["correction_active"]:
-                        print("\n[HIL] ▶ Taking control...")
+                        logger.info("[HIL] Taking control...")
                         events["start_next_episode"] = True
                 elif hasattr(key, "char") and key.char == "p":
                     if events["policy_paused"] or events["correction_active"]:
-                        print("\n[HIL] ⏵ Resuming policy...")
+                        logger.info("[HIL] Resuming policy...")
                         events["resume_policy"] = True
                 elif key == keyboard.Key.right:
-                    print("[HIL] → End episode")
+                    logger.info("[HIL] End episode")
                     events["exit_early"] = True
                 elif key == keyboard.Key.left:
-                    print("[HIL] ← Re-record episode")
+                    logger.info("[HIL] Re-record episode")
                     events["rerecord_episode"] = True
                     events["exit_early"] = True
                 elif key == keyboard.Key.esc:
-                    print("[HIL] ESC - Stop recording...")
+                    logger.info("[HIL] ESC - Stop recording...")
                     events["stop_recording"] = True
                     events["exit_early"] = True
         except Exception as e:
-            print(f"Key error: {e}")
+            logger.info(f"Key error: {e}")
 
     listener = keyboard.Listener(on_press=on_press)
     listener.start()

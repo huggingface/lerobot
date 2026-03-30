@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -89,8 +87,9 @@ class ActionInterpolator:
                 interp = self._prev + t * (action - self._prev)
                 self._buffer.append(interp)
         else:
-            self._buffer = [action]
-        self._prev = action
+            # First step: no previous action yet, so run at base FPS without interpolation.
+            self._buffer = [action.clone()]
+        self._prev = action.clone()
         self._idx = 0
 
     def get(self) -> Tensor | None:
