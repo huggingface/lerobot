@@ -170,14 +170,11 @@ class Qwen2VL(BaseVLM):
         ]
 
         text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        image_inputs, video_inputs = self.process_vision_info(messages, return_video_metadata=True)
-        videos, video_metadata = _unpack_video_inputs(video_inputs)
+        image_inputs, video_inputs = self.process_vision_info(messages)
         inputs = self.processor(
             text=[text],
             images=image_inputs,
-            videos=videos,
-            video_metadata=video_metadata,
-            do_sample_frames=False,
+            videos=video_inputs,
             padding=True,
             return_tensors="pt",
         ).to(self.device)
@@ -222,20 +219,17 @@ class Qwen2VL(BaseVLM):
             all_messages.append(messages)
 
         all_texts = []
-        all_video_tuples = []
+        all_video_inputs = []
 
         for messages in all_messages:
             text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            image_inputs, video_inputs = self.process_vision_info(messages, return_video_metadata=True)
+            image_inputs, video_inputs = self.process_vision_info(messages)
             all_texts.append(text)
-            all_video_tuples.extend(video_inputs or [])
+            all_video_inputs.extend(video_inputs or [])
 
-        videos, video_metadata = _unpack_video_inputs(all_video_tuples or None)
         inputs = self.processor(
             text=all_texts,
-            videos=videos,
-            video_metadata=video_metadata,
-            do_sample_frames=False,
+            videos=all_video_inputs or None,
             padding=True,
             return_tensors="pt",
         ).to(self.device)
@@ -350,8 +344,10 @@ class Qwen3VL(BaseVLM):
             text=[text],
             images=image_inputs,
             videos=videos,
-            video_metadata=video_metadata,
-            do_sample_frames=False,
+            videos_kwargs={
+                "video_metadata": video_metadata,
+                "do_sample_frames": False,
+            },
             padding=True,
             return_tensors="pt",
         ).to(self.device)
@@ -407,8 +403,10 @@ class Qwen3VL(BaseVLM):
         inputs = self.processor(
             text=all_texts,
             videos=videos,
-            video_metadata=video_metadata,
-            do_sample_frames=False,
+            videos_kwargs={
+                "video_metadata": video_metadata,
+                "do_sample_frames": False,
+            },
             padding=True,
             return_tensors="pt",
         ).to(self.device)
@@ -517,8 +515,10 @@ class Qwen35VL(BaseVLM):
             text=[text],
             images=image_inputs,
             videos=videos,
-            video_metadata=video_metadata,
-            do_sample_frames=False,
+            videos_kwargs={
+                "video_metadata": video_metadata,
+                "do_sample_frames": False,
+            },
             padding=True,
             return_tensors="pt",
         ).to(self.device)
@@ -575,8 +575,10 @@ class Qwen35VL(BaseVLM):
         inputs = self.processor(
             text=all_texts,
             videos=videos,
-            video_metadata=video_metadata,
-            do_sample_frames=False,
+            videos_kwargs={
+                "video_metadata": video_metadata,
+                "do_sample_frames": False,
+            },
             padding=True,
             return_tensors="pt",
         ).to(self.device)
