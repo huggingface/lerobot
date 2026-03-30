@@ -1,6 +1,6 @@
 # Installation
 
-This guide uses `conda` (via miniforge) to manage environments (recommended). If you prefer another environment manager (e.g. `uv`, `venv`), ensure you have Python >=3.12, then skip ahead to [Environment Setup](#step-2-environment-setup). You may also need `ffmpeg` — see [Install ffmpeg](#install-ffmpeg-for-video-decoding) for platform-specific instructions.
+This guide uses `conda` (via miniforge) to manage environments (recommended). If you prefer another environment manager (e.g. `uv`, `venv`), ensure you have Python >=3.12, then skip ahead to [Environment Setup](#step-2-environment-setup).
 
 ## Step 1 (`conda` only): Install [`miniforge`](https://conda-forge.org/download/)
 
@@ -20,7 +20,7 @@ Create a virtual environment with Python 3.12:
 conda create -y -n lerobot python=3.12
 ```
 </hfoption>
-<hfoption id="uv">
+<hfoption id="uv (PyTorch >= 2.10 only)">
 ```bash
 uv python install 3.12
 uv venv --python 3.12
@@ -29,6 +29,13 @@ uv venv --python 3.12
 </hfoptions>
 <!-- prettier-ignore-end -->
 
+> [!NOTE]
+> When installing LeRobot inside WSL (Windows Subsystem for Linux), make sure to also install `evdev` with the following command:
+>
+> ```bash
+> conda install evdev -c conda-forge
+> ```
+
 Then activate your virtual environment, you have to do this each time you open a shell to use lerobot:
 
 <!-- prettier-ignore-start -->
@@ -36,7 +43,7 @@ Then activate your virtual environment, you have to do this each time you open a
 <hfoption id="conda">```bash
 conda activate lerobot
 ```</hfoption>
-<hfoption id="uv">
+<hfoption id="uv (PyTorch >= 2.10 only)">
 ```bash
 # Linux/macOS
 source .venv/bin/activate
@@ -49,12 +56,10 @@ source .venv/bin/activate
 
 ### Install `ffmpeg` (for video decoding)
 
-LeRobot uses [TorchCodec](https://github.com/meta-pytorch/torchcodec) for video decoding, which requires `ffmpeg`.
+LeRobot uses [TorchCodec](https://github.com/meta-pytorch/torchcodec) for video decoding by default, which requires `ffmpeg`.
 
 > [!NOTE]
-> **Platform support:** TorchCodec is **not available** on macOS Intel (x86_64), Linux ARM (aarch64, arm64, armv7l), or Windows with PyTorch < 2.8. On these platforms, LeRobot automatically falls back to TorchVision's VideoReader — **you do not need to install `ffmpeg`** and can skip to [Step 3](#step-3-install-lerobot-).
->
-> For the full compatibility matrix, see the [TorchCodec installation table](https://github.com/meta-pytorch/torchcodec?tab=readme-ov-file#installing-cpu-only-torchcodec).
+> **Platform support:** TorchCodec is **not available** on macOS Intel (x86_64), Linux ARM (aarch64, arm64, armv7l), or Windows with PyTorch < 2.8. On these platforms, LeRobot automatically falls back to `pyav` — so you do not need to install `ffmpeg` and can skip to Step 3.
 
 If your platform supports TorchCodec, install `ffmpeg` using one of the methods below:
 
@@ -70,18 +75,14 @@ conda install ffmpeg -c conda-forge
 ```
 
 > [!TIP]
-> This usually installs `ffmpeg 7.X` with the `libsvtav1` encoder. If you run into issues (e.g. `libsvtav1` missing — check with `ffmpeg -encoders` — or a version mismatch with `torchcodec`), you can:
->
-> - _[On any platform]_ Explicitly install `ffmpeg 7.X` using:
+> This usually installs `ffmpeg 8.X` with the `libsvtav1` encoder. If you run into issues (e.g. `libsvtav1` missing — check with `ffmpeg -encoders` — or a version mismatch with `torchcodec`), you can explicitly install `ffmpeg 7.1.1` using:
 >
 > ```bash
 > conda install ffmpeg=7.1.1 -c conda-forge
 > ```
->
-> - _[On Linux only]_ If you want to bring your own ffmpeg: Install [ffmpeg build dependencies](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#GettheDependencies) and [compile ffmpeg from source with libsvtav1](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#libsvtav1), and make sure you use the corresponding ffmpeg binary to your install with `which ffmpeg`.
 
 </hfoption>
-<hfoption id="System package manager (PyTorch ≥ 2.10 only)">
+<hfoption id="uv (PyTorch >= 2.10 only)">
 
 Starting with **PyTorch ≥ 2.10** (TorchCodec ≥ 0.10), TorchCodec can dynamically link to a system-wide `ffmpeg` installation. This is useful when using `uv` or other non-`conda` environment managers:
 
@@ -99,13 +100,6 @@ brew install ffmpeg
 </hfoption>
 </hfoptions>
 <!-- prettier-ignore-end -->
-
-> [!NOTE]
-> When installing LeRobot inside WSL (Windows Subsystem for Linux), make sure to install `evdev` with the following command:
->
-> ```bash
-> conda install evdev -c conda-forge
-> ```
 
 ## Step 3: Install LeRobot 🤗
 
