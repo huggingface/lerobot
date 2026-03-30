@@ -48,23 +48,16 @@ source .venv/bin/activate
 <!-- prettier-ignore-end -->
 
 > [!NOTE]
-> When installing LeRobot inside WSL (Windows Subsystem for Linux), make sure to also install `evdev` with the following command:
-
-> <!-- prettier-ignore-start -->
-> <hfoptions id="install_evdev">
-> <hfoption id="conda">
+> When installing LeRobot inside WSL (Windows Subsystem for Linux), make sure to also install `evdev`:
+>
 > ```bash
+> # conda
 > conda install evdev -c conda-forge
-> ```
-> </hfoption>
-> <hfoption id="uv (PyTorch >= 2.10 only)">
-> ```bash
+>
+> # uv / pip
 > sudo apt install libevdev-dev
-> uv pip install evdev  # From the activated virtual environment
+> uv pip install evdev  
 > ```
-> </hfoption>
-> </hfoptions>
-> <!-- prettier-ignore-end -->
 
 ### Install `ffmpeg` (for video decoding)
 
