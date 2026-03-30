@@ -495,7 +495,9 @@ class Qwen35VL(BaseVLM):
             },
         ]
 
-        text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        text = self.processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
+        )
         image_inputs, video_inputs = self.process_vision_info(messages)
         inputs = self.processor(
             text=[text],
