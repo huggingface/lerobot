@@ -68,7 +68,6 @@ def get_sys_info() -> dict[str, str]:
         "Transformers version": get_package_version("transformers"),
         "Datasets version": get_package_version("datasets"),
         "Numpy version": get_package_version("numpy"),
-        "PyTorch version": get_package_version("torch"),
         "FFmpeg version": get_ffmpeg_version(),
     }
 
