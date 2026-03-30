@@ -179,7 +179,7 @@ class SACAlgorithm(RLAlgorithm):
             self._update_target_networks()
 
         batch = next(batch_iterator)
-        forward_batch = self._prepare_forward_batch(batch)
+        forward_batch = self._prepare_forward_batch(batch, include_complementary_info=False)
 
         loss_critic = self._compute_loss_critic(forward_batch)
         self.optimizers["critic"].zero_grad()
@@ -346,7 +346,9 @@ class SACAlgorithm(RLAlgorithm):
             ):
                 target_p.data.copy_(p.data * tau + target_p.data * (1.0 - tau))
 
-    def _prepare_forward_batch(self, batch: BatchType) -> dict[str, Any]:
+    def _prepare_forward_batch(
+        self, batch: BatchType, *, include_complementary_info: bool = True
+    ) -> dict[str, Any]:
         """Build the dict expected by loss computation from a sampled batch."""
         observations = batch["state"]
         next_observations = batch["next_state"]
@@ -363,7 +365,7 @@ class SACAlgorithm(RLAlgorithm):
             "observation_feature": observation_features,
             "next_observation_feature": next_observation_features,
         }
-        if "complementary_info" in batch:
+        if include_complementary_info and "complementary_info" in batch:
             forward_batch["complementary_info"] = batch["complementary_info"]
         return forward_batch
 
