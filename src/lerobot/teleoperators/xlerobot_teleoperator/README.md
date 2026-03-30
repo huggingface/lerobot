@@ -280,6 +280,6 @@ Defined in `keyboard_composite/teleop.py`, this variant keeps the same composite
 This makes it suitable for a single-arm Panthera build, a biwheel-base-only
 keyboard build, or a combined Panthera + biwheel keyboard setup.
 
-The keyboard rover output (`linear.vel`, `angular.vel`) is mapped to XLeRobot base keys (`x.vel`, `theta.vel`) so it works with `biwheel_base`/`biwheel_odrive` action interfaces. Panthera arm keyboard output is prefixed (`left_...` or `right_...`) for xlerobot arm routing.
+The keyboard rover output (`linear_velocity`, `angular_velocity`) is mapped to XLeRobot base keys (`x.vel`, `theta.vel`) so it works with `biwheel_base`/`biwheel_odrive` action interfaces. Panthera arm keyboard output is prefixed (`left_...` or `right_...`) for xlerobot arm routing.
 
 ---

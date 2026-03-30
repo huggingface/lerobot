@@ -147,8 +147,14 @@ class XLeRobotKeyboardComposite(Teleoperator):
 
     @staticmethod
     def _map_base_action(action: dict[str, Any]) -> dict[str, float]:
-        linear = action.get("x.vel", action.get("linear.vel", 0.0))
-        angular = action.get("theta.vel", action.get("angular.vel", 0.0))
+        linear = action.get(
+            "x.vel",
+            action.get("linear_velocity", 0.0),
+        )
+        angular = action.get(
+            "theta.vel",
+            action.get("angular_velocity", 0.0),
+        )
         return {"x.vel": float(linear), "theta.vel": float(angular)}
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
