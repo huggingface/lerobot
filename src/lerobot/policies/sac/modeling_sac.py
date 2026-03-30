@@ -99,7 +99,7 @@ class SACPolicy(
             encoder=self.encoder,
             network=MLP(input_dim=self.encoder.output_dim, **asdict(self.config.actor_network_kwargs)),
             action_dim=continuous_action_dim,
-            encoder_is_shared=False,
+            encoder_is_shared=self.config.shared_encoder,
             **asdict(self.config.policy_kwargs),
         )
 
