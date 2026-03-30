@@ -294,7 +294,9 @@ def add_actor_information_and_train(
     policy_parameters_push_frequency = cfg.policy.actor_learner_config.policy_parameters_push_frequency
     saving_checkpoint = cfg.save_checkpoint
     online_steps = cfg.policy.online_steps
-    async_prefetch = cfg.async_prefetch
+    async_prefetch = (
+        cfg.policy.async_prefetch if hasattr(cfg.policy, "async_prefetch") else cfg.async_prefetch
+    )
     queue_size = cfg.queue_size
 
     # Initialize logging for multiprocessing
