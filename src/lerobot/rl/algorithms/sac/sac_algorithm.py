@@ -107,6 +107,9 @@ class SACAlgorithm(RLAlgorithm):
             self.critic_target = torch.compile(self.critic_target)
 
         if self.config.num_discrete_actions is not None:
+            # Keep the discrete critic on the critic-side encoder so gripper-Q
+            # learning follows the same representation path as value learning.
+            self.policy.discrete_critic.encoder = self.critic_encoder
             self._init_discrete_critic_target()
 
     def _init_discrete_critic_target(self) -> None:

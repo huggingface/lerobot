@@ -107,9 +107,14 @@ class SACPolicy(
         if self.config.num_discrete_actions is None:
             self.discrete_critic = None
             return
+        # Match pre-refactor behavior: when encoders are not shared, keep the
+        # discrete critic off the actor encoder path.
+        discrete_encoder = self.encoder
+        if not self.config.shared_encoder:
+            discrete_encoder = SACObservationEncoder(self.config)
         self.discrete_critic = DiscreteCritic(
-            encoder=self.encoder,
-            input_dim=self.encoder.output_dim,
+            encoder=discrete_encoder,
+            input_dim=discrete_encoder.output_dim,
             output_dim=self.config.num_discrete_actions,
             **asdict(self.config.discrete_critic_network_kwargs),
         )
