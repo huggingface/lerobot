@@ -563,7 +563,7 @@ class ReplayBuffer:
         )
 
         # Start writing images if needed
-        lerobot_dataset.start_image_writer(num_processes=0, num_threads=3)
+        lerobot_dataset.writer.start_image_writer(num_processes=0, num_threads=3)
 
         # Convert transitions into episodes and frames
 
@@ -603,10 +603,10 @@ class ReplayBuffer:
                 lerobot_dataset.save_episode()
 
         # Save any remaining frames in the buffer
-        if lerobot_dataset.episode_buffer["size"] > 0:
+        if lerobot_dataset.has_pending_frames():
             lerobot_dataset.save_episode()
 
-        lerobot_dataset.stop_image_writer()
+        lerobot_dataset.writer.stop_image_writer()
         lerobot_dataset.finalize()
 
         return lerobot_dataset

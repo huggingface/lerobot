@@ -424,7 +424,7 @@ robot = SO100Follower(robot_config)
 robot.connect()
 
 dataset = LeRobotDataset("<hf_username>/<dataset_repo_id>", episodes=[episode_idx])
-actions = dataset.hf_dataset.select_columns("action")
+actions = dataset.select_columns("action")
 
 log_say(f"Replaying episode {episode_idx}")
 for idx in range(dataset.num_frames):
