@@ -60,8 +60,9 @@ from torch.multiprocessing import Event, Queue
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
-from lerobot.policies.factory import make_policy, make_pre_post_processors
+from lerobot.policies.factory import make_policy
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.sac.processor_sac import make_sac_pre_post_processors
 from lerobot.processor import TransitionKey
 from lerobot.rl.process import ProcessSignalHandler
 from lerobot.rl.queue import get_last_item_from_queue
@@ -255,8 +256,8 @@ def act_with_policy(
     policy = policy.eval()
     assert isinstance(policy, nn.Module)
 
-    preprocessor, postprocessor = make_pre_post_processors(
-        policy_cfg=cfg.policy,
+    preprocessor, _postprocessor = make_sac_pre_post_processors(
+        config=cfg.policy,
         dataset_stats=cfg.policy.dataset_stats,
     )
 
@@ -292,7 +293,8 @@ def act_with_policy(
         with policy_timer:
             normalized_observation = preprocessor.process_observation(observation)
             action = policy.select_action(batch=normalized_observation)
-            action = postprocessor.process_action(action)
+            # Keep raw policy action to mirror the known-good SAC normalization behavior.
+            # action = postprocessor.process_action(action)
         policy_fps = policy_timer.fps_last
 
         log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)

@@ -64,7 +64,8 @@ from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.policies.factory import make_policy, make_pre_post_processors
+from lerobot.policies.factory import make_policy
+from lerobot.policies.sac.processor_sac import make_sac_pre_post_processors
 from lerobot.rl.algorithms import make_algorithm
 from lerobot.rl.buffer import ReplayBuffer
 from lerobot.rl.data_sources import OnlineOfflineMixer
@@ -321,8 +322,8 @@ def add_actor_information_and_train(
         algorithm_name=cfg.algorithm,
     )
 
-    preprocessor, postprocessor = make_pre_post_processors(
-        policy_cfg=cfg.policy,
+    preprocessor, postprocessor = make_sac_pre_post_processors(
+        config=cfg.policy,
         dataset_stats=cfg.policy.dataset_stats,
     )
 
@@ -356,7 +357,6 @@ def add_actor_information_and_train(
         data_mixer=data_mixer,
         batch_size=total_batch_size,
         preprocessor=preprocessor,
-        action_dim=cfg.policy.output_features["action"].shape[0],
         async_prefetch=async_prefetch,
         queue_size=queue_size,
     )

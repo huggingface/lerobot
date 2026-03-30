@@ -17,39 +17,24 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Any
 
-import torch
-
 from lerobot.rl.algorithms.base import (
     BatchType,
     RLAlgorithm,
     TrainingStats,
 )
 from lerobot.rl.data_sources.data_mixer import DataMixer
-from lerobot.utils.constants import ACTION
 
 
-def preprocess_rl_batch(preprocessor: Any, batch: BatchType, *, action_dim: int | None = None) -> BatchType:
-    """Apply a policy preprocessor to an RL batch."""
+def preprocess_rl_batch(preprocessor: Any, batch: BatchType) -> BatchType:
+    """Apply policy preprocessing to RL observations only.
+
+    This mirrors the pre-refactor SAC learner behavior where actions are left
+    unchanged and only state/next_state observations are normalized.
+    """
     observations = batch["state"]
     next_observations = batch["next_state"]
-    actions = batch[ACTION]
-
-    extra_action = None
-    if action_dim is not None and actions.shape[-1] > action_dim:
-        extra_action = actions[..., action_dim:]
-        actions = actions[..., :action_dim]
-
-    obs_action = {**observations, ACTION: actions}
-    obs_action = preprocessor(obs_action)
-    batch["state"] = {k: v for k, v in obs_action.items() if k.startswith("observation.")}
-    batch[ACTION] = obs_action[ACTION]
-
-    if extra_action is not None:
-        batch[ACTION] = torch.cat([batch[ACTION], extra_action], dim=-1)
-
-    next_obs = {**next_observations}
-    next_obs = preprocessor(next_obs)
-    batch["next_state"] = {k: v for k, v in next_obs.items() if k.startswith("observation.")}
+    batch["state"] = preprocessor.process_observation(observations)
+    batch["next_state"] = preprocessor.process_observation(next_observations)
 
     return batch
 
@@ -57,21 +42,18 @@ def preprocess_rl_batch(preprocessor: Any, batch: BatchType, *, action_dim: int 
 class _PreprocessedIterator:
     """Iterator wrapper that preprocesses each sampled RL batch."""
 
-    __slots__ = ("_raw", "_preprocessor", "_action_dim")
+    __slots__ = ("_raw", "_preprocessor")
 
-    def __init__(
-        self, raw_iterator: Iterator[BatchType], preprocessor: Any, action_dim: int | None = None
-    ) -> None:
+    def __init__(self, raw_iterator: Iterator[BatchType], preprocessor: Any) -> None:
         self._raw = raw_iterator
         self._preprocessor = preprocessor
-        self._action_dim = action_dim
 
     def __iter__(self) -> _PreprocessedIterator:
         return self
 
     def __next__(self) -> BatchType:
         batch = next(self._raw)
-        return preprocess_rl_batch(self._preprocessor, batch, action_dim=self._action_dim)
+        return preprocess_rl_batch(self._preprocessor, batch)
 
 
 class RLTrainer:
@@ -87,7 +69,6 @@ class RLTrainer:
         batch_size: int,
         *,
         preprocessor: Any | None = None,
-        action_dim: int | None = None,
         async_prefetch: bool = True,
         queue_size: int = 2,
     ):
@@ -95,7 +76,6 @@ class RLTrainer:
         self.data_mixer = data_mixer
         self.batch_size = batch_size
         self._preprocessor = preprocessor
-        self._action_dim = action_dim
         self.async_prefetch = async_prefetch
         self.queue_size = queue_size
 
@@ -112,7 +92,7 @@ class RLTrainer:
             queue_size=self.queue_size,
         )
         if self._preprocessor is not None:
-            return _PreprocessedIterator(raw, self._preprocessor, self._action_dim)
+            return _PreprocessedIterator(raw, self._preprocessor)
         return raw
 
     def reset_data_iterator(self) -> None:
