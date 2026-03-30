@@ -33,9 +33,18 @@ Then activate your virtual environment, you have to do this each time you open a
 
 <!-- prettier-ignore-start -->
 <hfoptions id="activate_venv">
-<hfoption id="conda">```bash
+<hfoption id="conda">
+```bash
 conda activate lerobot
-```</hfoption>
+```
+
+> [!NOTE]
+> When installing LeRobot inside WSL (Windows Subsystem for Linux), make sure to also install `evdev`:
+>
+> ```bash
+> conda install evdev -c conda-forge
+> ```
+</hfoption>
 <hfoption id="uv (PyTorch >= 2.10 only)">
 ```bash
 # Linux/macOS
@@ -43,21 +52,17 @@ source .venv/bin/activate
 # Windows PowerShell
 .venv\Scripts\activate
 ```
-</hfoption>
-</hfoptions>
-<!-- prettier-ignore-end -->
 
 > [!NOTE]
 > When installing LeRobot inside WSL (Windows Subsystem for Linux), make sure to also install `evdev`:
 >
 > ```bash
-> # conda
-> conda install evdev -c conda-forge
->
-> # uv / pip
 > sudo apt install libevdev-dev
 > uv pip install evdev
 > ```
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->
 
 ### Install `ffmpeg` (for video decoding)
 
