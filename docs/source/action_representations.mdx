@@ -11,7 +11,7 @@ Before discussing action representations, it helps to understand the two coordin
 Joint-space actions directly specify target positions for each motor. For a 6-DOF arm with a gripper, a joint-space action might look like:
 
 ```
-action = [shoulder: 45.0, elbow: -30.0, wrist_pitch: 10.0, wrist_roll: 0.0, wrist_yaw: 5.0, gripper: 0.8]
+action = [shoulder_pan: 45.0, shoulder_lift: -20.0, elbow: -30.0, wrist_pitch: 10.0, wrist_roll: 0.0, wrist_yaw: 5.0, gripper: 0.8]
 ```
 
 Joint space is the default in LeRobot. It is simple, requires no kinematics model, and maps directly to motor commands. Most beginner setups (SO-100, Koch) use joint-space actions.
@@ -113,7 +113,7 @@ Here each step is relative to the one before it. To recover absolute positions y
 
 ### Visual Comparison
 
-The figure below (based on figure from [UMI, Chi et al., 2024](https://arxiv.org/abs/2402.10329)) illustrates the key difference. With **relative trajectory**, every action in the chunk points back to the same origin (current state), so a new inference step cleanly resets the reference. With **delta**, each action depends on the previous one, so errors accumulate. **Absolute** actions require a consistent global coordinate frame.
+The figure below (based on a figure from [UMI, Chi et al., 2024](https://arxiv.org/abs/2402.10329)) illustrates the key difference. With **relative trajectory**, every action in the chunk points back to the same origin (current state), so a new inference step cleanly resets the reference. With **delta**, each action depends on the previous one, so errors accumulate. **Absolute** actions require a consistent global coordinate frame.
 
 <img
   src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/action_representations_umi.png"
@@ -124,6 +124,8 @@ The figure below (based on figure from [UMI, Chi et al., 2024](https://arxiv.org
 ## Using Relative Actions in LeRobot
 
 LeRobot provides `RelativeActionsProcessorStep` to convert between absolute and relative actions inside the processor pipeline. This is how pi0, pi0.5, and pi0_fast support relative actions.
+
+> **Note:** All pi models (pi0, pi0.5, pi0*fast) apply relative conversion \_before* normalization (`relative → normalize`), so the normalizer always sees delta (relative) values. This means **relative action stats are required** for all of them when training with `use_relative_actions=true`. In pi0_fast the `RelativeActionsProcessorStep` only modifies the action — the state observation is unchanged — so `NormalizerProcessorStep` still runs before the state tokenizer and the tokenizer continues to receive normalized state as expected.
 
 ### How it works
 
@@ -141,7 +143,7 @@ model output → unnormalize → AbsoluteActionsProcessorStep → robot
 
 The `AbsoluteActionsProcessorStep` reads the cached current state from its paired `RelativeActionsProcessorStep`, so the two must be wired together (handled automatically by the policy factory).
 
-### Enabling relative actions for pi0/pi0.5
+### Enabling relative actions for the pi family (pi0, pi0.5, pi0_fast)
 
 **Step 1**: Precompute relative action statistics for your dataset:
 
@@ -165,6 +167,10 @@ lerobot-train \
 ```
 
 The `relative_exclude_joints` parameter specifies joints that should remain in absolute space. For example, gripper commands are typically binary (open/close) and don't benefit from relative encoding.
+
+### Combining relative actions with RTC
+
+[RTC (Real-Time Control)](https://arxiv.org/abs/2502.02820) runs policy inference at high frequency and sends actions to the robot as they are predicted rather than waiting for a full chunk. Relative actions and RTC are fully compatible: because every chunk in relative mode references the **same** current state (captured at the start of inference), each predicted action in the chunk remains a valid offset even if the robot has already moved. No special handling is needed — `RelativeActionsProcessorStep` caches the state once per inference call and `AbsoluteActionsProcessorStep` applies it to every action in the streamed output.
 
 ### Combining relative actions with EE space
 

@@ -144,7 +144,7 @@ def test_full_pipeline_roundtrip(dataset, action_dim):
     relative_step = RelativeActionsProcessorStep(enabled=True)
     normalizer = NormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
     unnormalizer = UnnormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
-    absolute_step = AbsoluteActionsProcessorStep(enabled=True, delta_step=relative_step)
+    absolute_step = AbsoluteActionsProcessorStep(enabled=True, relative_step=relative_step)
 
     original_actions = action_chunks[0].unsqueeze(0)
     state = states[0].unsqueeze(0)
@@ -304,7 +304,7 @@ def test_quantile_normalization_roundtrip(dataset, action_dim):
     relative_step = RelativeActionsProcessorStep(enabled=True)
     normalizer = NormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
     unnormalizer = UnnormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
-    absolute_step = AbsoluteActionsProcessorStep(enabled=True, delta_step=relative_step)
+    absolute_step = AbsoluteActionsProcessorStep(enabled=True, relative_step=relative_step)
 
     original_actions = action_chunks[0].unsqueeze(0)
     state = states[0].unsqueeze(0)

@@ -668,8 +668,10 @@ def compute_relative_action_stats(
         exclude_joints = []
 
     total_frames = len(hf_dataset)
-    sample_upper_bound = total_frames - chunk_size
-    if sample_upper_bound <= 0:
+    # +1 so the last valid start index (total_frames - chunk_size) is included,
+    # and datasets where total_frames == chunk_size are not rejected.
+    sample_upper_bound = total_frames - chunk_size + 1
+    if sample_upper_bound < 1:
         raise ValueError(
             f"Cannot compute relative action stats: total_frames={total_frames}, chunk_size={chunk_size}"
         )

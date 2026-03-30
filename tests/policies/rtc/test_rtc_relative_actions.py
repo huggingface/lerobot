@@ -85,7 +85,7 @@ def _make_relative_pipeline(action_dim=ACTION_DIM, norm_mode=NormalizationMode.M
     relative_step = RelativeActionsProcessorStep(enabled=True)
     normalizer = NormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
     unnormalizer = UnnormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
-    absolute_step = AbsoluteActionsProcessorStep(enabled=True, delta_step=relative_step)
+    absolute_step = AbsoluteActionsProcessorStep(enabled=True, relative_step=relative_step)
     return relative_step, normalizer, unnormalizer, absolute_step
 
 
@@ -432,7 +432,7 @@ class TestNonRelativePolicy:
 
     def test_disabled_relative_step_is_noop(self):
         relative_step = RelativeActionsProcessorStep(enabled=False)
-        absolute_step = AbsoluteActionsProcessorStep(enabled=False, delta_step=relative_step)
+        absolute_step = AbsoluteActionsProcessorStep(enabled=False, relative_step=relative_step)
 
         state = torch.randn(1, ACTION_DIM)
         actions = torch.randn(1, CHUNK_SIZE, ACTION_DIM)
@@ -457,7 +457,7 @@ class TestNonRelativePolicy:
 
         relative_step = RelativeActionsProcessorStep(enabled=False)
         unnormalizer = UnnormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
-        absolute_step = AbsoluteActionsProcessorStep(enabled=False, delta_step=relative_step)
+        absolute_step = AbsoluteActionsProcessorStep(enabled=False, relative_step=relative_step)
 
         rtc = RTCProcessor(_make_rtc_config())
         queue = ActionQueue(_make_rtc_config())

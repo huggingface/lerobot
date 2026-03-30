@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,6 +47,10 @@ def to_relative_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) ->
     """
     mask_t = torch.tensor(mask, dtype=actions.dtype, device=actions.device)
     dims = mask_t.shape[0]
+    # Align state to the same device/dtype as actions. _last_state is cached before
+    # DeviceProcessorStep moves the transition, so it can be on CPU while actions are on CUDA.
+    if state.device != actions.device or state.dtype != actions.dtype:
+        state = state.to(device=actions.device, dtype=actions.dtype)
     state_offset = state[..., :dims] * mask_t
     if actions.ndim == 3:
         state_offset = state_offset.unsqueeze(-2)
@@ -67,6 +69,10 @@ def to_absolute_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) ->
     """
     mask_t = torch.tensor(mask, dtype=actions.dtype, device=actions.device)
     dims = mask_t.shape[0]
+    # Align state to the same device/dtype as actions. _last_state is cached before
+    # DeviceProcessorStep moves the transition, so it can be on CPU while actions are on CUDA.
+    if state.device != actions.device or state.dtype != actions.dtype:
+        state = state.to(device=actions.device, dtype=actions.dtype)
     state_offset = state[..., :dims] * mask_t
     if actions.ndim == 3:
         state_offset = state_offset.unsqueeze(-2)
@@ -160,23 +166,23 @@ class AbsoluteActionsProcessorStep(ProcessorStep):
 
     Attributes:
         enabled: Whether to apply the absolute conversion.
-        delta_step: Reference to the paired RelativeActionsProcessorStep that caches state.
+        relative_step: Reference to the paired RelativeActionsProcessorStep that caches state.
     """
 
     enabled: bool = False
-    delta_step: RelativeActionsProcessorStep | None = field(default=None, repr=False)
+    relative_step: RelativeActionsProcessorStep | None = field(default=None, repr=False)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         if not self.enabled:
             return transition
 
-        if self.delta_step is None:
+        if self.relative_step is None:
             raise RuntimeError(
                 "AbsoluteActionsProcessorStep requires a paired RelativeActionsProcessorStep "
-                "but delta_step is None. Ensure delta_step is set when constructing the postprocessor."
+                "but relative_step is None. Ensure relative_step is set when constructing the postprocessor."
             )
 
-        if self.delta_step._last_state is None:
+        if self.relative_step._last_state is None:
             raise RuntimeError(
                 "AbsoluteActionsProcessorStep requires state from RelativeActionsProcessorStep "
                 "but no state has been cached. Ensure the preprocessor runs before the postprocessor."
@@ -187,8 +193,10 @@ class AbsoluteActionsProcessorStep(ProcessorStep):
         if action is None:
             return new_transition
 
-        mask = self.delta_step._build_mask(action.shape[-1])
-        new_transition[TransitionKey.ACTION] = to_absolute_actions(action, self.delta_step._last_state, mask)
+        mask = self.relative_step._build_mask(action.shape[-1])
+        new_transition[TransitionKey.ACTION] = to_absolute_actions(
+            action, self.relative_step._last_state, mask
+        )
         return new_transition
 
     def get_config(self) -> dict[str, Any]:

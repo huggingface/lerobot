@@ -133,14 +133,18 @@ def make_pi0_fast_pre_post_processors(
         action_names=getattr(config, "action_feature_names", None),
     )
 
-    # Pi0Fast order: normalize → relative → tokenize → model → absolute → unnormalize
-    # NOTE: Normalization MUST come before relative actions because the state tokenizer expects
-    # normalized state in [-1, 1] range for discretization. This means relative actions operate
-    # on normalized values, so AbsoluteActionsProcessorStep must come before
-    # UnnormalizerProcessorStep in the postprocessor.
+    # Pi0Fast order: relative → normalize → tokenize → model → unnormalize → absolute
+    # This matches pi0/pi0.5: RelativeActionsProcessorStep runs first on raw absolute actions,
+    # caching the raw state. NormalizerProcessorStep then normalizes the raw relative actions,
+    # so the normalizer (and action tokenizer) sees delta values — relative stats are required.
+    # NOTE: RelativeActionsProcessorStep only modifies the action in the transition; it reads
+    # state from the observation but does not change it. NormalizerProcessorStep still runs
+    # before Pi0FastPrepareStateAndLanguageTokenizerProcessorStep, so the state tokenizer
+    # continues to receive normalized state in [-1, 1] as expected.
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
         AddBatchDimensionProcessorStep(),
+        relative_step,
         NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
@@ -153,7 +157,6 @@ def make_pi0_fast_pre_post_processors(
             padding_side="right",
             padding="max_length",
         ),
-        relative_step,
         ActionTokenizerProcessorStep(
             action_tokenizer_name=config.action_tokenizer_name,
             max_action_tokens=config.max_action_tokens,
@@ -164,10 +167,10 @@ def make_pi0_fast_pre_post_processors(
     ]
 
     output_steps: list[ProcessorStep] = [
-        AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, delta_step=relative_step),
         UnnormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
+        AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step),
         DeviceProcessorStep(device="cpu"),
     ]
 

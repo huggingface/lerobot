@@ -158,7 +158,7 @@ def make_pi0_pre_post_processors(
         UnnormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
-        AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, delta_step=relative_step),
+        AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step),
         DeviceProcessorStep(device="cpu"),
     ]
 

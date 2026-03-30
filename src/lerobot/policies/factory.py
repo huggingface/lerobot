@@ -61,7 +61,13 @@ from lerobot.utils.constants import (
 def _reconnect_relative_absolute_steps(
     preprocessor: PolicyProcessorPipeline, postprocessor: PolicyProcessorPipeline
 ) -> None:
-    """Wire AbsoluteActionsProcessorStep.delta_step to the RelativeActionsProcessorStep after deserialization."""
+    """Wire AbsoluteActionsProcessorStep.relative_step to the RelativeActionsProcessorStep after deserialization.
+
+    After a policy is loaded from disk, the preprocessor and postprocessor are reconstructed
+    independently from their configs. AbsoluteActionsProcessorStep needs a live reference to
+    the RelativeActionsProcessorStep so it can read the cached state at inference time.
+    That reference is not serializable, so we re-establish it here after loading.
+    """
     from lerobot.processor.relative_action_processor import (
         AbsoluteActionsProcessorStep,
         RelativeActionsProcessorStep,
@@ -71,8 +77,8 @@ def _reconnect_relative_absolute_steps(
     if relative_step is None:
         return
     for step in postprocessor.steps:
-        if isinstance(step, AbsoluteActionsProcessorStep) and step.delta_step is None:
-            step.delta_step = relative_step
+        if isinstance(step, AbsoluteActionsProcessorStep) and step.relative_step is None:
+            step.relative_step = relative_step
 
 
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:

@@ -134,8 +134,6 @@ def make_pi05_pre_post_processors(
     )
 
     # OpenPI order: raw → relative → normalize → model → unnormalize → absolute
-    # NOTE: NormalizerProcessorStep MUST come before Pi05PrepareStateTokenizerProcessorStep
-    # because the tokenizer step expects normalized state in [-1, 1] range for discretization
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
         AddBatchDimensionProcessorStep(),
@@ -161,7 +159,7 @@ def make_pi05_pre_post_processors(
         UnnormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
-        AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, delta_step=relative_step),
+        AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step),
         DeviceProcessorStep(device="cpu"),
     ]
 

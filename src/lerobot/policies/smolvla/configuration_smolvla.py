@@ -57,7 +57,7 @@ class SmolVLAConfig(PreTrainedConfig):
 
     # Converts joint dimensions to relative values with respect to the current state before passing to the model.
     # Gripper dimensions will remain in absolute values.
-    use_relative_joint_actions_aloha: bool = False
+    use_delta_joint_actions_aloha: bool = False
 
     # Tokenizer
     tokenizer_max_length: int = 48
@@ -118,9 +118,9 @@ class SmolVLAConfig(PreTrainedConfig):
                 f"The chunk size is the upper bound for the number of action steps per model invocation. Got "
                 f"{self.n_action_steps} for `n_action_steps` and {self.chunk_size} for `chunk_size`."
             )
-        if self.use_relative_joint_actions_aloha:
+        if self.use_delta_joint_actions_aloha:
             raise NotImplementedError(
-                "`use_relative_joint_actions_aloha` is used by smolvla for aloha real models. It is not ported yet in LeRobot."
+                "`use_delta_joint_actions_aloha` is used by smolvla for aloha real models. It is not ported yet in LeRobot."
             )
 
     def validate_features(self) -> None:
