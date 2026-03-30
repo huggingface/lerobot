@@ -30,6 +30,14 @@ Quick links:
 
 <p align="center">
   <img
+    src="https://github.com/user-attachments/assets/b48a0a41-7422-4f10-8dc6-a66a2fd746ad"
+    alt="SO101 arms on XLeRobot"
+    style="max-height: 420px; width: auto;"
+  />
+</p>
+
+<p align="center">
+  <img
     src="https://raw.githubusercontent.com/Vector-Wangel/XLeRobot/main/hardware/odrive/media/full_assembly.png"
     alt="ODrive hoverboard wheels, Panthera arm, and Thor on XLeRobot"
     style="max-height: 420px; width: auto;"
