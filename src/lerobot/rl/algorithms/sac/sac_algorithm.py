@@ -391,13 +391,28 @@ class SACAlgorithm(RLAlgorithm):
         return self.optimizers
 
     def get_weights(self) -> dict[str, Any]:
-        """Policy state-dict to push to actors (includes actor + discrete critic)."""
-        return move_state_dict_to_device(self.policy.state_dict(), device="cpu")
+        """Policy state-dict to push to actors (includes actor + discrete critic).
+
+        Sends only the sub-module state dicts that the actor needs, avoiding the
+        3x duplication of shared-encoder parameters that ``policy.state_dict()``
+        would produce after ``move_state_dict_to_device`` clones every tensor.
+        """
+        state_dicts: dict[str, Any] = {
+            "policy": move_state_dict_to_device(self.policy.actor.state_dict(), device="cpu"),
+        }
+        if self.config.num_discrete_actions is not None and self.policy.discrete_critic is not None:
+            state_dicts["discrete_critic"] = move_state_dict_to_device(
+                self.policy.discrete_critic.state_dict(), device="cpu"
+            )
+        return state_dicts
 
     def load_weights(self, weights: dict[str, Any], device: str | torch.device = "cpu") -> None:
-        """Load policy state-dict received from the learner."""
-        state = move_state_dict_to_device(weights, device=device)
-        self.policy.load_state_dict(state)
+        """Load policy weights produced by ``get_weights()``."""
+        actor_sd = move_state_dict_to_device(weights["policy"], device=device)
+        self.policy.actor.load_state_dict(actor_sd)
+        if "discrete_critic" in weights and self.policy.discrete_critic is not None:
+            dc_sd = move_state_dict_to_device(weights["discrete_critic"], device=device)
+            self.policy.discrete_critic.load_state_dict(dc_sd)
 
     @torch.no_grad()
     def get_observation_features(
