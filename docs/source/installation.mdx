@@ -1,6 +1,6 @@
 # Installation
 
-This guide uses `conda` (via miniforge) to manage environments (recommended). If you prefer another environment manager (e.g. `uv`, `venv`), ensure you have Python >=3.12, then skip ahead to [Environment Setup](#step-2-environment-setup).
+This guide uses `conda` (via miniforge) to manage environments (recommended). If you prefer another environment manager (e.g. `uv`, `venv`), ensure you have Python >=3.12 and support PyTorch >= 2.10, then skip ahead to [Environment Setup](#step-2-environment-setup).
 
 ## Step 1 (`conda` only): Install [`miniforge`](https://conda-forge.org/download/)
 
@@ -29,13 +29,6 @@ uv venv --python 3.12
 </hfoptions>
 <!-- prettier-ignore-end -->
 
-> [!NOTE]
-> When installing LeRobot inside WSL (Windows Subsystem for Linux), make sure to also install `evdev` with the following command:
->
-> ```bash
-> conda install evdev -c conda-forge
-> ```
-
 Then activate your virtual environment, you have to do this each time you open a shell to use lerobot:
 
 <!-- prettier-ignore-start -->
@@ -53,6 +46,25 @@ source .venv/bin/activate
 </hfoption>
 </hfoptions>
 <!-- prettier-ignore-end -->
+
+> [!NOTE]
+> When installing LeRobot inside WSL (Windows Subsystem for Linux), make sure to also install `evdev` with the following command:
+
+> <!-- prettier-ignore-start -->
+> <hfoptions id="create_venv">
+> <hfoption id="conda">
+> ```bash
+> conda install evdev -c conda-forge
+> ```
+> </hfoption>
+> <hfoption id="uv (PyTorch >= 2.10 only)">
+> ```bash
+> sudo apt install libevdev-dev
+> uv pip install evdev  # From the activated virtual environment
+> ```
+> </hfoption>
+> </hfoptions>
+> <!-- prettier-ignore-end -->
 
 ### Install `ffmpeg` (for video decoding)
 
@@ -84,7 +96,7 @@ conda install ffmpeg -c conda-forge
 </hfoption>
 <hfoption id="uv (PyTorch >= 2.10 only)">
 
-Starting with **PyTorch ≥ 2.10** (TorchCodec ≥ 0.10), TorchCodec can dynamically link to a system-wide `ffmpeg` installation. This is useful when using `uv` or other non-`conda` environment managers:
+Starting with **PyTorch >= 2.10** (TorchCodec ≥ 0.10), TorchCodec can dynamically link to a system-wide `ffmpeg` installation. This is useful when using `uv` or other non-`conda` environment managers:
 
 ```bash
 # Ubuntu/Debian
@@ -95,7 +107,7 @@ brew install ffmpeg
 ```
 
 > [!IMPORTANT]
-> System-wide `ffmpeg` is **only supported with PyTorch ≥ 2.10** (TorchCodec ≥ 0.10). For older PyTorch versions, you **must** use `conda install ffmpeg -c conda-forge` instead.
+> System-wide `ffmpeg` is **only supported with PyTorch >= 2.10** (TorchCodec ≥ 0.10). For older PyTorch versions, you **must** use `conda install ffmpeg -c conda-forge` instead.
 
 </hfoption>
 </hfoptions>
