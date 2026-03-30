@@ -15,13 +15,14 @@
 # VLM Interface (Abstract Base Class for Modularity)
 
 import json
+import os
 import re
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-import cv2
 import torch
-from PIL import Image
+
+os.environ.setdefault("FORCE_QWENVL_VIDEO_READER", "torchvision")
 
 from lerobot.data_processing.data_annotations.subtask_annotations import Skill
 from lerobot.utils.constants import (
@@ -89,21 +90,6 @@ class BaseVLM(ABC):
         pass
 
 
-def _load_video_frames(video_path: Path) -> list[Image.Image]:
-    """Read all frames from a video as PIL Images, bypassing torchcodec's fps defaults."""
-    frames: list[Image.Image] = []
-    cap = cv2.VideoCapture(str(video_path))
-    try:
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            frames.append(Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)))
-    finally:
-        cap.release()
-    return frames
-
-
 def create_skill_segmentation_prompt(
     coarse_goal: str | None = None,
     subtask_labels: list[str] | None = None,
@@ -166,7 +152,7 @@ class Qwen2VL(BaseVLM):
             {
                 "role": "user",
                 "content": [
-                    {"type": "video", "video": _load_video_frames(video_path)},
+                    {"type": "video", "video": str(video_path), "fps": 1.0},
                     {
                         "type": "text",
                         "text": f"Video duration: {duration_str} (exactly {episode_duration:.1f} seconds). Segment into atomic skills. Last skill must end at {episode_duration:.1f}.",
@@ -215,7 +201,7 @@ class Qwen2VL(BaseVLM):
                 {
                     "role": "user",
                     "content": [
-                        {"type": "video", "video": _load_video_frames(video_path)},
+                        {"type": "video", "video": str(video_path), "fps": 1.0},
                         {
                             "type": "text",
                             "text": f"Video duration: {duration_str} (exactly {duration:.1f} seconds). Segment into atomic skills. Last skill must end at {duration:.1f}.",
@@ -339,7 +325,7 @@ class Qwen3VL(BaseVLM):
             {
                 "role": "user",
                 "content": [
-                    {"type": "video", "video": _load_video_frames(video_path)},
+                    {"type": "video", "video": str(video_path), "fps": 1.0},
                     {
                         "type": "text",
                         "text": f"Video duration: {duration_str} (exactly {episode_duration:.1f} seconds). Segment into atomic skills. Last skill must end at {episode_duration:.1f}.",
@@ -387,7 +373,7 @@ class Qwen3VL(BaseVLM):
                 {
                     "role": "user",
                     "content": [
-                        {"type": "video", "video": _load_video_frames(video_path)},
+                        {"type": "video", "video": str(video_path), "fps": 1.0},
                         {
                             "type": "text",
                             "text": f"Video duration: {duration_str} (exactly {duration:.1f} seconds). Segment into atomic skills. Last skill must end at {duration:.1f}.",
@@ -503,7 +489,7 @@ class Qwen35VL(BaseVLM):
             {
                 "role": "user",
                 "content": [
-                    {"type": "video", "video": _load_video_frames(video_path)},
+                    {"type": "video", "video": str(video_path), "fps": 1.0},
                     {
                         "type": "text",
                         "text": f"Video duration: {duration_str} (exactly {episode_duration:.1f} seconds). Segment into atomic skills. Last skill must end at {episode_duration:.1f}.",
@@ -551,7 +537,7 @@ class Qwen35VL(BaseVLM):
                 {
                     "role": "user",
                     "content": [
-                        {"type": "video", "video": _load_video_frames(video_path)},
+                        {"type": "video", "video": str(video_path), "fps": 1.0},
                         {
                             "type": "text",
                             "text": f"Video duration: {duration_str} (exactly {duration:.1f} seconds). Segment into atomic skills. Last skill must end at {duration:.1f}.",
