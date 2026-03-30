@@ -87,6 +87,17 @@ class BaseVLM(ABC):
         pass
 
 
+def _unpack_video_inputs(
+    video_inputs: list | None,
+) -> tuple[list | None, list[dict] | None]:
+    """Unpack (tensor, metadata) tuples returned by process_vision_info with return_video_metadata=True."""
+    if not video_inputs:
+        return None, None
+    videos = [v[0] for v in video_inputs]
+    metadata = [v[1] for v in video_inputs]
+    return videos, metadata
+
+
 def create_skill_segmentation_prompt(
     coarse_goal: str | None = None,
     subtask_labels: list[str] | None = None,
@@ -159,13 +170,14 @@ class Qwen2VL(BaseVLM):
         ]
 
         text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        image_inputs, video_inputs = self.process_vision_info(messages)
+        image_inputs, video_inputs = self.process_vision_info(messages, return_video_metadata=True)
+        videos, video_metadata = _unpack_video_inputs(video_inputs)
         inputs = self.processor(
             text=[text],
             images=image_inputs,
-            videos=video_inputs,
+            videos=videos,
+            video_metadata=video_metadata,
             do_sample_frames=False,
-            fps=1.0,
             padding=True,
             return_tensors="pt",
         ).to(self.device)
@@ -210,22 +222,20 @@ class Qwen2VL(BaseVLM):
             all_messages.append(messages)
 
         all_texts = []
-        all_image_inputs = []
-        all_video_inputs = []
+        all_video_tuples = []
 
         for messages in all_messages:
             text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            image_inputs, video_inputs = self.process_vision_info(messages)
+            image_inputs, video_inputs = self.process_vision_info(messages, return_video_metadata=True)
             all_texts.append(text)
-            all_image_inputs.extend(image_inputs or [])
-            all_video_inputs.extend(video_inputs or [])
+            all_video_tuples.extend(video_inputs or [])
 
+        videos, video_metadata = _unpack_video_inputs(all_video_tuples or None)
         inputs = self.processor(
             text=all_texts,
-            images=all_image_inputs if all_image_inputs else None,
-            videos=all_video_inputs if all_video_inputs else None,
+            videos=videos,
+            video_metadata=video_metadata,
             do_sample_frames=False,
-            fps=1.0,
             padding=True,
             return_tensors="pt",
         ).to(self.device)
@@ -334,13 +344,14 @@ class Qwen3VL(BaseVLM):
         ]
 
         text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        image_inputs, video_inputs = self.process_vision_info(messages)
+        image_inputs, video_inputs = self.process_vision_info(messages, return_video_metadata=True)
+        videos, video_metadata = _unpack_video_inputs(video_inputs)
         inputs = self.processor(
             text=[text],
             images=image_inputs,
-            videos=video_inputs,
+            videos=videos,
+            video_metadata=video_metadata,
             do_sample_frames=False,
-            fps=1.0,
             padding=True,
             return_tensors="pt",
         ).to(self.device)
@@ -384,22 +395,20 @@ class Qwen3VL(BaseVLM):
             all_messages.append(messages)
 
         all_texts = []
-        all_image_inputs = []
-        all_video_inputs = []
+        all_video_tuples = []
 
         for messages in all_messages:
             text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            image_inputs, video_inputs = self.process_vision_info(messages)
+            image_inputs, video_inputs = self.process_vision_info(messages, return_video_metadata=True)
             all_texts.append(text)
-            all_image_inputs.extend(image_inputs or [])
-            all_video_inputs.extend(video_inputs or [])
+            all_video_tuples.extend(video_inputs or [])
 
+        videos, video_metadata = _unpack_video_inputs(all_video_tuples or None)
         inputs = self.processor(
             text=all_texts,
-            images=all_image_inputs if all_image_inputs else None,
-            videos=all_video_inputs if all_video_inputs else None,
+            videos=videos,
+            video_metadata=video_metadata,
             do_sample_frames=False,
-            fps=1.0,
             padding=True,
             return_tensors="pt",
         ).to(self.device)
@@ -502,13 +511,14 @@ class Qwen35VL(BaseVLM):
         text = self.processor.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
         )
-        image_inputs, video_inputs = self.process_vision_info(messages)
+        image_inputs, video_inputs = self.process_vision_info(messages, return_video_metadata=True)
+        videos, video_metadata = _unpack_video_inputs(video_inputs)
         inputs = self.processor(
             text=[text],
             images=image_inputs,
-            videos=video_inputs,
+            videos=videos,
+            video_metadata=video_metadata,
             do_sample_frames=False,
-            fps=1.0,
             padding=True,
             return_tensors="pt",
         ).to(self.device)
@@ -551,24 +561,22 @@ class Qwen35VL(BaseVLM):
             all_messages.append(messages)
 
         all_texts = []
-        all_image_inputs = []
-        all_video_inputs = []
+        all_video_tuples = []
 
         for messages in all_messages:
             text = self.processor.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
             )
-            image_inputs, video_inputs = self.process_vision_info(messages)
+            image_inputs, video_inputs = self.process_vision_info(messages, return_video_metadata=True)
             all_texts.append(text)
-            all_image_inputs.extend(image_inputs or [])
-            all_video_inputs.extend(video_inputs or [])
+            all_video_tuples.extend(video_inputs or [])
 
+        videos, video_metadata = _unpack_video_inputs(all_video_tuples or None)
         inputs = self.processor(
             text=all_texts,
-            images=all_image_inputs if all_image_inputs else None,
-            videos=all_video_inputs if all_video_inputs else None,
+            videos=videos,
+            video_metadata=video_metadata,
             do_sample_frames=False,
-            fps=1.0,
             padding=True,
             return_tensors="pt",
         ).to(self.device)
