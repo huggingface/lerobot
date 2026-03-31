@@ -90,9 +90,14 @@ class SACPolicy(
 
         actions, _, _ = self.actor(batch, observations_features)
 
-        if self.config.num_discrete_actions is not None and self.discrete_critic is not None:
-            discrete_action_value = self.discrete_critic(batch, observations_features)
-            discrete_action = torch.argmax(discrete_action_value, dim=-1, keepdim=True)
+        if self.config.num_discrete_actions is not None:
+            if self.discrete_critic is not None:
+                discrete_action_value = self.discrete_critic(batch, observations_features)
+                discrete_action = torch.argmax(discrete_action_value, dim=-1, keepdim=True)
+            else:
+                discrete_action = torch.ones(
+                    (*actions.shape[:-1], 1), device=actions.device, dtype=actions.dtype
+                )
             actions = torch.cat([actions, discrete_action], dim=-1)
 
         return actions
