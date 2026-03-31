@@ -66,7 +66,7 @@ def download_episode_metadata(repo_id: str, episode: int) -> Path:
     Returns:
         Local cache path for the downloaded snapshot.
     """
-    logging.info("[1/5] Downloading metadata for %s (episode %d) …", repo_id, episode)
+    logging.info("[1/4] Downloading metadata for %s (episode %d) ...", repo_id, episode)
     local_path = Path(
         snapshot_download(
             repo_id=repo_id,
@@ -203,7 +203,7 @@ def download_video_file(repo_id: str, local_path: Path, video_rel: str) -> Path:
     if video_path.exists():
         logging.info("   Video already cached: %s", video_path)
         return video_path
-    logging.info("[2/5] Downloading video file %s …", video_rel)
+    logging.info("[2/4] Downloading video file %s ...", video_rel)
     snapshot_download(
         repo_id=repo_id,
         repo_type="dataset",
@@ -400,7 +400,7 @@ def composite_progress_video(
         num_frames = int(round(duration_seconds * fps))
 
         logging.info(
-            "   Video: %d×%d, %d frames @ %.1f fps (%.2fs)",
+            "   Video: %dx%d, %d frames @ %.1f fps (%.2fs)",
             frame_width,
             frame_height,
             num_frames,
@@ -426,7 +426,7 @@ def composite_progress_video(
         frame_indices = progress_data[:, 0].astype(int)
         progress_values = progress_data[:, 1].astype(float)
 
-        logging.info("[4/5] Compositing %d frames …", num_frames)
+        logging.info("[3/4] Compositing %d frames ...", num_frames)
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer = cv2.VideoWriter(str(output_path), fourcc, fps, (frame_width, frame_height))
 
@@ -467,7 +467,7 @@ def composite_progress_video(
             if drawn_count > 0:
                 score = float(progress_values[min(drawn_count, len(progress_values)) - 1])
                 score_text = f"{score:.2f}"
-                (text_width, text_height), _ = cv2.getTextSize(
+                (text_width, _), _ = cv2.getTextSize(
                     score_text, cv2.FONT_HERSHEY_SIMPLEX, SCORE_FONT_SCALE, 2
                 )
                 score_x = frame_width - text_width - 12
@@ -502,7 +502,7 @@ def composite_progress_video(
 
             writer.write(frame)
             if frame_idx % 100 == 0:
-                logging.info("   Frame %d/%d …", frame_idx, num_frames)
+                logging.info("   Frame %d/%d ...", frame_idx, num_frames)
 
         writer.release()
     finally:
@@ -512,20 +512,23 @@ def composite_progress_video(
     return output_path
 
 
-def convert_mp4_to_gif(mp4_path: Path, frame_width: int) -> Path:
+def convert_mp4_to_gif(mp4_path: Path) -> Path:
     """Convert an MP4 to an optimized GIF using ffmpeg palette generation.
 
     Args:
         mp4_path: Path to the source MP4 file.
-        frame_width: Width for the output GIF.
 
     Returns:
         Path to the generated GIF file.
     """
+    capture = cv2.VideoCapture(str(mp4_path))
+    frame_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+    capture.release()
+
     gif_path = mp4_path.with_suffix(".gif")
     palette_path = mp4_path.parent / "_palette.png"
 
-    logging.info("[5/5] Converting to GIF …")
+    logging.info("[4/4] Converting to GIF ...")
     result_palette = subprocess.run(  # nosec B607
         [
             "ffmpeg",
@@ -616,11 +619,7 @@ def process_dataset(
     )
 
     if create_gif:
-        capture = cv2.VideoCapture(str(final_path))
-        frame_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-        capture.release()
-        gif_path = convert_mp4_to_gif(final_path, frame_width)
-        final_path = gif_path
+        final_path = convert_mp4_to_gif(final_path)
 
     logging.info("Done: %s", final_path)
     return final_path
