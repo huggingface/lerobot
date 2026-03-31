@@ -4,7 +4,7 @@ Implementation of RECAP from the [π∗0.6: a VLA That Learns From Experience](h
 
 The pipeline is two training runs followed by advantage-conditioned inference:
 
-1. **Value network** — learns V(o_t) from episode success/fail labels.
+1. **Value network** — uses a PaliGemma VLM backbone (SigLIP vision tower + Gemma LM); learns V(o_t) from episode success/fail labels. Joint positions are discretized into the text prompt (Pi 0.5-style). Optionally initializes from pretrained Pi 0.5 weights.
 2. **PiStar06 policy** — fine-tunes Pi0.5 with advantage conditioning. The pretrained value network is used to determine at each step which advantage conditioning text should be added as input "Advantage: positive" or "Advantage: negative".
 3. **Inference** — The advantage conditioning effectively allows the model to learn two distributions. At inference time we always append "Advantage: positive" to the text prompt to push the model toward the good distribution.
 
@@ -17,10 +17,10 @@ on a single **RTX 4070 TI SUPER** (16 GB VRAM).
 ### Step 1 — Train the value network
 
 ```bash
-python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
+python -m lerobot.rl.algorithms.recap_train_value_network \
   --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
   --root="${HOME}/.cache/huggingface/lerobot" \
-  --output_dir="${HOME}/code/lerobot/outputs/recap_value" \
+  --output_dir="${HOME}/code/lerobot/outputs/recap_value_5" \
   --epochs=2 \
   --batch_size=4 \
   --gradient_accumulation_steps=4 \
@@ -36,6 +36,7 @@ python -m lerobot.rl.algorithms.RECAPTrainValueNetwork \
   --num_vlm_layers=10 \
   --paligemma_variant=gemma_2b \
   --pretrained_path=lerobot/pi05_base \
+  --value_head_depth=1 \
   --val_plot_num_episodes=4 \
   --val_plot_num_frames=8 \
   --val_plot_every_n_epochs=1 \
@@ -65,7 +66,7 @@ specified by `--value_network_checkpoint_filename` (default:
 > command line, but it will be corrected to match the checkpoint.
 
 ```bash
-python -m lerobot.rl.algorithms.RECAPTrainPiStar \
+python -m lerobot.rl.algorithms.recap_train_pi_star \
   --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
   --output_dir="${HOME}/code/lerobot/outputs/recap_pistar" \
   --value_network_checkpoint="jackvial/recap_value_0" \

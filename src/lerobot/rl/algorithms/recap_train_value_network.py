@@ -28,26 +28,20 @@ import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import Any, Literal, cast
 
 import numpy as np
 import pandas as pd
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
 from torch.utils.data import DataLoader, Dataset
 
 from lerobot.configs import parser
+from lerobot.configs.types import FeatureType
+from lerobot.datasets.feature_utils import dataset_to_policy_features
 from lerobot.datasets.lerobot_dataset import HF_LEROBOT_HOME, LeRobotDataset
-from lerobot.rl.algorithms.RECAPValueNetwork import RECAPValueNetwork, RECAPValueNetworkConfig
-from lerobot.utils.constants import OBS_STATE
-from lerobot.utils.import_utils import _transformers_available
-
-if TYPE_CHECKING or _transformers_available:
-    from transformers import AutoTokenizer, PreTrainedTokenizerBase
-else:
-    AutoTokenizer = None
-    PreTrainedTokenizerBase = object
-
+from lerobot.rl.algorithms.recap_utils import collect_images
+from lerobot.rl.algorithms.recap_value_network import RECAPValueNetwork, RECAPValueNetworkConfig
 
 CSV_EPISODE_INDEX_COLUMN = "episode_index"
 CSV_SUCCESS_COLUMN = "success"
@@ -103,7 +97,6 @@ class RECAPValueTrainingConfig:
     weight_decay: float = 1e-4
     warmup_ratio: float = 0.05
     max_grad_norm: float = 1.0
-    use_class_weights: bool = True
     val_split_ratio: float = 0.1
     seed: int = 42
     device: str = "auto"
@@ -122,18 +115,18 @@ class RECAPValueTrainingConfig:
     num_value_bins: int = 50
 
     # Input processing
-    text_tokenizer_name: str = "google/paligemma-3b-pt-224"
-    tokenizer_max_length: int = 96
+    tokenizer_max_length: int = 200
     image_size: int = 224
-    max_state_dim: int = 32
 
-    # Backbone sizing (paper-faithful PI0.5/PI05 base model without expert head)
+    # PaliGemma VLM backbone
     paligemma_variant: str = "gemma_300m"
+    tokenizer_name: str = "google/paligemma-3b-pt-224"
     model_precision: str = "float32"
     freeze_vision_encoder: bool = False
     freeze_backbone: bool = False
     num_unfrozen_backbone_layers: int = 0
     num_vlm_layers: int = 18
+    value_head_depth: int = 1
     dropout: float = 0.1
 
     # Pretrained VLM initialisation (e.g. "lerobot/pi05_base")
@@ -143,26 +136,6 @@ class RECAPValueTrainingConfig:
     wandb_project: str | None = None
     wandb_entity: str | None = None
     wandb_run_name: str | None = None
-
-
-def _compute_class_weights(frame_targets: list[FrameTarget], num_bins: int) -> torch.Tensor:
-    """Compute inverse-frequency class weights for the target bin distribution.
-
-    Bins with zero counts get a weight of 0 so they don't contribute to gradients.
-    The weights are normalized so their mean over non-empty bins equals 1.
-    """
-    counts = torch.zeros(num_bins, dtype=torch.float64)
-    for target in frame_targets:
-        counts[target.target_bin] += 1
-
-    weights = torch.zeros(num_bins, dtype=torch.float32)
-    non_empty = counts > 0
-    if non_empty.any():
-        inv_freq = 1.0 / counts[non_empty].float()
-        inv_freq = inv_freq / inv_freq.mean()
-        weights[non_empty] = inv_freq
-    return weights
-
 
 def _build_warmup_cosine_scheduler(
     optimizer: torch.optim.Optimizer,
@@ -520,24 +493,6 @@ def _split_train_val_targets(
     return train_targets, val_targets
 
 
-def _prepare_state_vector(state, max_state_dim: int) -> torch.Tensor:
-    if state is None:
-        state_tensor = torch.zeros(max_state_dim, dtype=torch.float32)
-    else:
-        state_tensor = torch.as_tensor(state, dtype=torch.float32).flatten()
-        if state_tensor.numel() >= max_state_dim:
-            state_tensor = state_tensor[:max_state_dim]
-        else:
-            pad_size = max_state_dim - state_tensor.numel()
-            state_tensor = F.pad(state_tensor, (0, pad_size), mode="constant", value=0.0)
-    return state_tensor
-
-
-def _build_critic_prompt(task: str) -> str:
-    cleaned_task = task.strip().replace("_", " ").replace("\n", " ").lower()
-    return f"Task: {cleaned_task};\n"
-
-
 def _to_chw_float_tensor(image) -> torch.Tensor:
     if isinstance(image, torch.Tensor):
         img = image.detach().clone().float()
@@ -584,20 +539,21 @@ def _collect_images(frame: dict, camera_keys: list[str], image_size: int) -> tor
 
 
 class RECAPFrameSupervisionDataset(Dataset):
-    """Frame-level dataset with paper-faithful return-bin supervision."""
+    """Frame-level dataset with paper-faithful return-bin supervision.
+
+    Returns raw LeRobot frames (with per-camera image keys) augmented with
+    value-training metadata.  Preprocessing (normalisation, state
+    discretisation, tokenisation) is handled externally by the pi05
+    preprocessor pipeline.
+    """
 
     def __init__(
         self,
         base_dataset: LeRobotDataset,
         frame_targets: list[FrameTarget],
-        max_state_dim: int,
-        image_size: int,
     ):
         self.base_dataset = base_dataset
         self.frame_targets = frame_targets
-        self.max_state_dim = max_state_dim
-        self.image_size = image_size
-        self.camera_keys = list(base_dataset.meta.camera_keys)
 
     def __len__(self) -> int:
         return len(self.frame_targets)
@@ -638,61 +594,67 @@ class RECAPFrameSupervisionDataset(Dataset):
                     f"{self._MAX_DECODE_RETRIES} random substitutes"
                 )
 
-        state_vector = _prepare_state_vector(frame.get(OBS_STATE), max_state_dim=self.max_state_dim)
-        task = str(frame.get("task", target.task))
-        prompt = _build_critic_prompt(task=task)
-        images = _collect_images(frame=frame, camera_keys=self.camera_keys, image_size=self.image_size)
-
-        return {
-            "images": images,
-            "state": state_vector,
-            "prompt": prompt,
-            "frame_index": target.frame_index,
-            "episode_index": target.episode_index,
-            "success": target.success,
-            "target_bin": target.target_bin,
-            "target_value": target.target_value,
-        }
+        frame["target_bin"] = target.target_bin
+        frame["target_value"] = target.target_value
+        frame["success"] = target.success
+        frame["frame_index"] = target.frame_index
+        return frame
 
 
-class RECAPBatchCollator:
-    """Collates frame samples and tokenizes prompts in batch."""
-
-    def __init__(self, tokenizer: PreTrainedTokenizerBase, max_length: int):
-        self.tokenizer = tokenizer
-        self.max_length = max_length
-
-    def __call__(self, samples: list[dict]) -> dict[str, torch.Tensor]:
-        prompts = [sample["prompt"] for sample in samples]
-        tokenized = self.tokenizer(
-            prompts,
-            padding="max_length",
-            truncation=True,
-            max_length=self.max_length,
-            return_tensors="pt",
-        )
-
-        return {
-            "images": torch.stack([sample["images"] for sample in samples], dim=0),
-            "state": torch.stack([sample["state"] for sample in samples], dim=0),
-            "input_ids": tokenized["input_ids"],
-            "attention_mask": tokenized["attention_mask"].bool(),
-            "frame_index": torch.tensor([sample["frame_index"] for sample in samples], dtype=torch.long),
-            "episode_index": torch.tensor([sample["episode_index"] for sample in samples], dtype=torch.long),
-            "success": torch.tensor([sample["success"] for sample in samples], dtype=torch.long),
-            "target_bin": torch.tensor([sample["target_bin"] for sample in samples], dtype=torch.long),
-            "target_value": torch.tensor([sample["target_value"] for sample in samples], dtype=torch.float32),
-        }
+_TRAINING_METADATA_KEYS = ("target_bin", "target_value", "success", "frame_index")
 
 
-def _move_batch_to_device(batch: dict[str, torch.Tensor], device: torch.device) -> dict[str, torch.Tensor]:
-    moved: dict[str, torch.Tensor] = {}
-    for key, value in batch.items():
-        if isinstance(value, torch.Tensor):
-            moved[key] = value.to(device)
-        else:
-            moved[key] = value
-    return moved
+def _build_preprocessor(
+    dataset: LeRobotDataset,
+    paligemma_variant: str,
+    model_precision: str,
+    device: str,
+):
+    """Build a pi05-compatible preprocessor for the value network.
+
+    This constructs a PI05Config with the dataset's features and uses
+    ``make_pi05_pre_post_processors`` to create the same preprocessing
+    pipeline used by the pi05 policy (normalise state, discretise state,
+    build prompt, tokenise, move to device).
+    """
+    from lerobot.policies.pi05.configuration_pi05 import PI05Config
+    from lerobot.policies.pi05.processor_pi05 import make_pi05_pre_post_processors
+
+    features = dataset_to_policy_features(dataset.meta.features)
+    output_features = {k: f for k, f in features.items() if f.type is FeatureType.ACTION}
+    input_features = {k: f for k, f in features.items() if k not in output_features}
+
+    policy_cfg = PI05Config(
+        input_features=input_features,
+        output_features=output_features,
+        paligemma_variant=paligemma_variant,
+        dtype=model_precision,
+        device=device,
+    )
+    preprocessor, _ = make_pi05_pre_post_processors(
+        config=policy_cfg,
+        dataset_stats=dataset.meta.stats,
+    )
+    return preprocessor
+
+
+def _preprocess_batch(batch: dict, preprocessor) -> dict:
+    """Apply the preprocessor while preserving training metadata keys."""
+    preserved = {}
+    for k in _TRAINING_METADATA_KEYS:
+        if k in batch:
+            v = batch[k]
+            preserved[k] = v
+    batch = preprocessor(batch)
+    for k, v in preserved.items():
+        if isinstance(v, torch.Tensor) and v.device != batch.get("observation.state", v).device:
+            device = next(
+                (bv.device for bv in batch.values() if isinstance(bv, torch.Tensor)),
+                v.device,
+            )
+            v = v.to(device)
+        batch[k] = v
+    return batch
 
 
 def _select_validation_plot_episode_ids(frame_targets: list[FrameTarget], max_episodes: int) -> list[int]:
@@ -834,6 +796,7 @@ def _init_wandb(cfg: RECAPValueTrainingConfig) -> Any:
 def _run_epoch(
     model: RECAPValueNetwork,
     loader: DataLoader,
+    preprocessor: Any,
     device: torch.device,
     optimizer: torch.optim.Optimizer | None,
     max_grad_norm: float,
@@ -847,7 +810,6 @@ def _run_epoch(
     collected_predictions: dict[int, list[ValidationFramePrediction]] | None = None,
     wandb_run: Any = None,
     global_step_offset: int = 0,
-    class_weights: torch.Tensor | None = None,
     scheduler: torch.optim.lr_scheduler.LambdaLR | None = None,
     gradient_accumulation_steps: int = 1,
 ) -> dict[str, float]:
@@ -882,19 +844,14 @@ def _run_epoch(
             break
         step_num = step + 1
 
-        batch = _move_batch_to_device(batch, device=device)
+        batch = _preprocess_batch(batch, preprocessor)
+        images = collect_images(batch, model.config.image_size)
 
-        outputs = model(
-            images=batch["images"],
-            state=batch["state"],
-            input_ids=batch["input_ids"],
-            attention_mask=batch["attention_mask"],
-        )
+        outputs = model(batch, images)
         value_logits = outputs["value_logits"]
         expected_value = outputs["expected_value"].squeeze(-1)
 
-        ce_weight = class_weights.to(device=value_logits.device) if class_weights is not None else None
-        loss = F.cross_entropy(value_logits, batch["target_bin"], weight=ce_weight)
+        loss = F.cross_entropy(value_logits, batch["target_bin"])
 
         if training:
             assert optimizer is not None
@@ -1044,9 +1001,6 @@ def _resolve_device(device_str: str) -> torch.device:
 @parser.wrap()
 def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
     """Train and validate RECAPValueNetwork with distributional return-bin supervision."""
-    if AutoTokenizer is None:
-        raise ImportError("transformers is required to run RECAPTrainValueNetwork.")
-
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
@@ -1087,28 +1041,21 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
         seed=cfg.seed,
     )
 
-    tokenizer = cast(PreTrainedTokenizerBase, AutoTokenizer.from_pretrained(cfg.text_tokenizer_name))
-    if tokenizer.pad_token_id is None:
-        if tokenizer.eos_token_id is None:
-            raise ValueError("Tokenizer has no pad_token_id or eos_token_id.")
-        tokenizer.pad_token = tokenizer.eos_token
-
-    collator = RECAPBatchCollator(
-        tokenizer=tokenizer,
-        max_length=cfg.tokenizer_max_length,
+    preprocessor = _build_preprocessor(
+        dataset=dataset,
+        paligemma_variant=cfg.paligemma_variant,
+        model_precision=cfg.model_precision,
+        device=str(device),
     )
+    logging.info("Created pi05 preprocessor for value network training")
 
     train_dataset = RECAPFrameSupervisionDataset(
         base_dataset=dataset,
         frame_targets=train_targets,
-        max_state_dim=cfg.max_state_dim,
-        image_size=cfg.image_size,
     )
     val_dataset = RECAPFrameSupervisionDataset(
         base_dataset=dataset,
         frame_targets=val_targets,
-        max_state_dim=cfg.max_state_dim,
-        image_size=cfg.image_size,
     )
 
     train_loader = DataLoader(
@@ -1116,7 +1063,6 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
         batch_size=cfg.batch_size,
         shuffle=True,
         num_workers=cfg.num_workers,
-        collate_fn=collator,
         pin_memory=(device.type == "cuda"),
         drop_last=False,
     )
@@ -1125,18 +1071,14 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
         batch_size=cfg.batch_size,
         shuffle=False,
         num_workers=cfg.num_workers,
-        collate_fn=collator,
         pin_memory=(device.type == "cuda"),
         drop_last=False,
     )
-    # Step-triggered validation can run while train DataLoader workers are active.
-    # Use a dedicated single-process loader to avoid nested video-decoder worker contention.
     step_val_loader = DataLoader(
         val_dataset,
         batch_size=cfg.batch_size,
         shuffle=False,
         num_workers=0,
-        collate_fn=collator,
         pin_memory=(device.type == "cuda"),
         drop_last=False,
     )
@@ -1149,12 +1091,13 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
         paligemma_variant=cfg.paligemma_variant,
         precision=model_precision,
         image_size=cfg.image_size,
-        max_state_dim=cfg.max_state_dim,
+        tokenizer_name=cfg.tokenizer_name,
         freeze_vision_encoder=cfg.freeze_vision_encoder,
         freeze_backbone=cfg.freeze_backbone,
         num_unfrozen_backbone_layers=cfg.num_unfrozen_backbone_layers,
         num_vlm_layers=cfg.num_vlm_layers,
         num_value_bins=cfg.num_value_bins,
+        value_head_depth=cfg.value_head_depth,
         dropout=cfg.dropout,
         pretrained_path=cfg.pretrained_path,
     )
@@ -1186,15 +1129,6 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
         f"peak lr={cfg.learning_rate}"
     )
 
-    class_weights: torch.Tensor | None = None
-    if cfg.use_class_weights:
-        class_weights = _compute_class_weights(train_targets, num_bins=cfg.num_value_bins)
-        non_zero_bins = (class_weights > 0).sum().item()
-        logging.info(
-            f"Using class-balanced CE weights over {non_zero_bins}/{cfg.num_value_bins} non-empty bins "
-            f"(weight range: {class_weights[class_weights > 0].min():.3f} – {class_weights[class_weights > 0].max():.3f})"
-        )
-
     best_val_loss = float("inf")
     history: list[dict] = []
     plot_episode_ids = _select_validation_plot_episode_ids(
@@ -1210,15 +1144,12 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
         val_plot_dataset = RECAPFrameSupervisionDataset(
             base_dataset=dataset,
             frame_targets=plot_targets,
-            max_state_dim=cfg.max_state_dim,
-            image_size=cfg.image_size,
         )
         val_plot_loader = DataLoader(
             val_plot_dataset,
             batch_size=cfg.batch_size,
             shuffle=False,
             num_workers=0,
-            collate_fn=collator,
             pin_memory=(device.type == "cuda"),
             drop_last=False,
         )
@@ -1262,6 +1193,7 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
             val_metrics_local = _run_epoch(
                 model=model,
                 loader=loader,
+                preprocessor=preprocessor,
                 device=device,
                 optimizer=None,
                 max_grad_norm=cfg.max_grad_norm,
@@ -1271,8 +1203,7 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
                 log_every_n_steps=cfg.log_every_n_steps,
                 collect_episode_ids=None,
                 value_bin_support=model.value_bin_support,
-                collected_predictions=None,
-                class_weights=class_weights,
+                collected_predictions=None
             )
         except Exception as error:  # noqa: BLE001
             if loader is step_val_loader or not _is_known_video_validation_error(error):
@@ -1286,6 +1217,7 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
                 val_metrics_local = _run_epoch(
                     model=model,
                     loader=step_val_loader,
+                    preprocessor=preprocessor,
                     device=device,
                     optimizer=None,
                     max_grad_norm=cfg.max_grad_norm,
@@ -1296,7 +1228,6 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
                     collect_episode_ids=None,
                     value_bin_support=model.value_bin_support,
                     collected_predictions=None,
-                    class_weights=class_weights,
                 )
             except Exception as retry_error:  # noqa: BLE001
                 if not _is_known_video_validation_error(retry_error):
@@ -1329,6 +1260,7 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
                 _run_epoch(
                     model=model,
                     loader=val_plot_loader,
+                    preprocessor=preprocessor,
                     device=device,
                     optimizer=None,
                     max_grad_norm=cfg.max_grad_norm,
@@ -1421,6 +1353,7 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
         train_metrics = _run_epoch(
             model=model,
             loader=train_loader,
+            preprocessor=preprocessor,
             device=device,
             optimizer=optimizer,
             max_grad_norm=cfg.max_grad_norm,
@@ -1431,7 +1364,6 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
             on_train_step_end=on_train_step_end,
             wandb_run=wandb_run,
             global_step_offset=global_train_step,
-            class_weights=class_weights,
             scheduler=scheduler,
             gradient_accumulation_steps=cfg.gradient_accumulation_steps,
         )

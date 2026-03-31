@@ -32,7 +32,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import torch
-import torch.nn.functional as F  # noqa: N812
 from torch.nn.utils import clip_grad_norm_
 from torch.utils.data import DataLoader
 
@@ -42,8 +41,9 @@ from lerobot.datasets.factory import resolve_delta_timestamps
 from lerobot.datasets.feature_utils import dataset_to_policy_features
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.sampler import EpisodeAwareSampler
-from lerobot.rl.algorithms import RECAPTrainValueNetwork as base
-from lerobot.utils.constants import ACTION, OBS_LANGUAGE_TOKENS, OBS_STATE
+from lerobot.policies.pistar06.modeling_pistar06 import PiStar06Policy
+from lerobot.rl.algorithms import recap_train_value_network as base
+from lerobot.utils.constants import ACTION, OBS_LANGUAGE_TOKENS
 
 
 @dataclass
@@ -95,8 +95,6 @@ class RECAPPiStarTrainingConfig:
 
     # Value network pre-computation
     vn_batch_size: int = 4
-    vn_tokenizer_max_length: int = 96
-    vn_tokenizer_name: str = "google/paligemma-3b-pt-224"
 
     # Advantage caching (skip re-computation on subsequent runs)
     advantage_cache_path: str | None = None
@@ -287,19 +285,17 @@ def _precompute_advantages(
     full_dataset: LeRobotDataset,
     frame_targets: list[base.FrameTarget],
     value_network_checkpoint: str,
-    image_keys: list[str],
+    preprocessor,
     device: torch.device,
     batch_size: int = 4,
-    tokenizer_max_length: int = 96,
-    fallback_tokenizer_name: str = "google/paligemma-3b-pt-224",
 ) -> dict[int, float]:
-    """Pre-compute per-frame advantages using the frozen Pi0.5-based value network.
+    """Pre-compute per-frame advantages using the frozen value network.
 
-    Iterates over the full dataset, runs the RECAPValueNetwork (PaliGemma backbone,
-    PaliGemma tokenizer) to get V(o_t), combines with R_t from frame_targets, and
-    returns a dict mapping absolute frame index to advantage = R_t - V(o_t).
+    Uses the same ``preprocessor`` that the policy training loop uses, so the
+    value network sees exactly the same input format it was trained on.
     """
-    from lerobot.rl.algorithms.RECAPValueNetwork import (
+    from lerobot.rl.algorithms.recap_utils import collect_images
+    from lerobot.rl.algorithms.recap_value_network import (
         RECAPValueNetwork,
         RECAPValueNetworkConfig,
     )
@@ -317,17 +313,6 @@ def _precompute_advantages(
         f"Value network loaded: {sum(p.numel() for p in vn.parameters()):,} params"
     )
 
-    from transformers import AutoTokenizer
-
-    train_config = checkpoint.get("train_config", {})
-    tokenizer_name = train_config.get("text_tokenizer_name", fallback_tokenizer_name)
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
-    if tokenizer.pad_token_id is None:
-        if tokenizer.eos_token_id is None:
-            raise ValueError("Tokenizer has no pad_token_id or eos_token_id.")
-        tokenizer.pad_token = tokenizer.eos_token
-    logging.info(f"Loaded PaliGemma tokenizer from {tokenizer_name}")
-
     full_dataset._ensure_hf_dataset_loaded()
     R_t_by_abs_index: dict[int, float] = {}
     for ft in frame_targets:
@@ -344,65 +329,14 @@ def _precompute_advantages(
 
     advantage_lookup: dict[int, float] = {}
     total_frames = 0
-    target_h, target_w = vn_config.image_size, vn_config.image_size
 
     for batch in loader:
         abs_indices = batch["index"]
         B = abs_indices.shape[0]
 
-        img_list = []
-        for key in image_keys:
-            if key not in batch:
-                continue
-            img = batch[key]
-            if img.ndim == 5:
-                img = img[:, -1]
-            img_list.append(img)
-
-        if not img_list:
-            total_frames += B
-            continue
-
-        stacked = torch.stack(img_list, dim=1)
-        _, N, C, H, W = stacked.shape
-        if target_h != H or target_w != W:
-            flat = stacked.reshape(B * N, C, H, W)
-            flat = F.interpolate(flat, size=(target_h, target_w), mode="bilinear", align_corners=False)
-            stacked = flat.reshape(B, N, C, target_h, target_w)
-        images = stacked.to(device)
-
-        state = batch[OBS_STATE]
-        if state.ndim == 3:
-            state = state[:, -1, :]
-        max_state_dim = vn_config.max_state_dim
-        if state.shape[-1] < max_state_dim:
-            state = F.pad(state, (0, max_state_dim - state.shape[-1]))
-        elif state.shape[-1] > max_state_dim:
-            state = state[..., :max_state_dim]
-        state = state.to(device)
-
-        tasks = batch["task"]
-        if isinstance(tasks, (list, tuple)):
-            task_strings = [base._build_critic_prompt(str(t)) for t in tasks]
-        else:
-            task_strings = [base._build_critic_prompt(str(tasks))]
-
-        tok_out = tokenizer(
-            task_strings,
-            padding="max_length",
-            max_length=tokenizer_max_length,
-            truncation=True,
-            return_tensors="pt",
-        )
-        input_ids = tok_out["input_ids"].to(device)
-        attention_mask = tok_out["attention_mask"].to(device)
-
-        outputs = vn(
-            images=images,
-            state=state,
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-        )
+        batch = preprocessor(batch)
+        images = collect_images(batch, vn.config.image_size)
+        outputs = vn(batch, images)
         V_t = outputs["expected_value"].squeeze(-1).cpu()
 
         for i in range(B):
@@ -769,29 +703,28 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
         f"{len(val_ep_ids)} val episodes ({len(val_targets)} frames)"
     )
 
-    # ── 2. Pre-compute advantages using Pi0.5-based value network ──────────
+    # ── 2. Build policy config and preprocessor ────────────────────────────
+    policy_cfg = _build_policy_config(cfg, full_dataset, labels_csv_path)
+
+    # ── 3. Pre-compute advantages using Pi0.5-based value network ────────
+    from lerobot.policies.pi05.processor_pi05 import make_pi05_pre_post_processors
+
+    vn_preprocessor, _ = make_pi05_pre_post_processors(
+        config=policy_cfg,
+        dataset_stats=full_dataset.meta.stats,
+    )
+
     cache_path = Path(cfg.advantage_cache_path) if cfg.advantage_cache_path else None
     if cache_path is not None and cache_path.is_file():
         advantage_lookup = _load_advantage_cache(cache_path)
     else:
-        image_keys = [
-            key for key in full_dataset.meta.features
-            if full_dataset.meta.features[key].get("dtype") == "image"
-            or "image" in key.lower()
-        ]
-        if not image_keys:
-            image_keys = list(full_dataset.meta.camera_keys)
-        logging.info(f"Image keys for value network: {image_keys}")
-
         advantage_lookup = _precompute_advantages(
             full_dataset=full_dataset,
             frame_targets=frame_targets,
             value_network_checkpoint=resolved_vn_checkpoint,
-            image_keys=image_keys,
+            preprocessor=vn_preprocessor,
             device=device,
             batch_size=cfg.vn_batch_size,
-            tokenizer_max_length=cfg.vn_tokenizer_max_length,
-            fallback_tokenizer_name=cfg.vn_tokenizer_name,
         )
 
         if cache_path is not None:
@@ -805,8 +738,7 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
                 },
             )
 
-    # ── 3. Create separate datasets for train and val ────────────────────
-    policy_cfg = _build_policy_config(cfg, full_dataset, labels_csv_path)
+    # ── 4. Create separate datasets for train and val ────────────────────
     delta_timestamps = resolve_delta_timestamps(policy_cfg, full_dataset.meta)
 
     train_dataset = LeRobotDataset(
@@ -824,8 +756,7 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
         delta_timestamps=delta_timestamps,
     )
 
-    # ── 4. Create policy ─────────────────────────────────────────────────
-    from lerobot.policies.pistar06.modeling_pistar06 import PiStar06Policy
+    # ── 5. Create policy ─────────────────────────────────────────────────
 
     policy = PiStar06Policy(config=policy_cfg, dataset_meta=train_dataset.meta)
 
@@ -848,9 +779,8 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
     num_total = sum(p.numel() for p in policy.parameters())
     logging.info(f"Trainable parameters: {num_trainable:,} / {num_total:,} total")
 
-    # ── 5. Create preprocessor ───────────────────────────────────────────
-    from lerobot.policies.pi05.processor_pi05 import make_pi05_pre_post_processors
-
+    # Reuse the same preprocessor created earlier for advantage pre-computation;
+    # rebuild with train_dataset stats for the actual training loop.
     preprocessor, _postprocessor = make_pi05_pre_post_processors(
         config=policy_cfg,
         dataset_stats=train_dataset.meta.stats,  # ty: ignore[invalid-argument-type]
@@ -897,7 +827,7 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
         drop_last=False,
     )
 
-    # ── 7. Optimizer and scheduler ───────────────────────────────────────
+    # ── 7. Optimizer and scheduler ──────────────────────────────────────
     trainable_params = policy.get_optim_params()
     optimizer = torch.optim.AdamW(
         trainable_params,
