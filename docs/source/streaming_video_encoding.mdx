@@ -78,6 +78,7 @@ Use HW encoding when:
 | --------------------- | --------- | -------------- | ------- | ---------------------------------------------------------------- |
 | `libsvtav1` (default) | High      | Smallest       | Best    | Default. Best compression but most CPU-intensive                 |
 | `h264`                | Medium    | ~30-50% larger | Good    | Software H.264. Lower CPU                                        |
+| `hevc`                | Medium    | Smallest       | Best    | Software HEVC (libx265). Comparable to libsvtav1                 |
 | HW encoders           | Very Low  | Largest        | Good    | Offloads to dedicated hardware. Best for CPU-constrained systems |
 
 ### Available HW Encoders
@@ -91,6 +92,7 @@ Use HW encoding when:
 | `h264_vaapi`        | Linux         | Intel/AMD GPU                                                                                    | `--dataset.vcodec=h264_vaapi`        |
 | `h264_qsv`          | Linux/Windows | Intel Quick Sync                                                                                 | `--dataset.vcodec=h264_qsv`          |
 | `auto`              | Any           | Probes the system for available HW encoders. Falls back to `libsvtav1` if no HW encoder is found | `--dataset.vcodec=auto`              |
+| `av1`               | Any           | Alias for `libsvtav1`                                                                            | `--dataset.vcodec=av1`               |
 
 > [!NOTE]
 > In order to use the HW accelerated encoders you might need to upgrade your GPU drivers.
@@ -98,7 +100,65 @@ Use HW encoding when:
 > [!NOTE]
 > `libsvtav1` is the default because it provides the best training performance; other vcodecs can reduce CPU usage and be faster, but they typically produce larger files and may affect training time.
 
-## 5. Troubleshooting
+## 5. Depth Map Video Features
+
+LeRobot supports storing depth maps as video streams alongside RGB cameras. Depth maps require different encoding parameters (e.g. lossless-friendly CRF, specific pixel formats) and may need a custom transform applied before encoding.
+
+### Per-Video-Key Encoding Parameters
+
+Each video feature can override the dataset-level encoding defaults via its `info` dict in the feature metadata:
+
+| Info key             | Description                               | Example value   |
+| -------------------- | ----------------------------------------- | --------------- |
+| `video.codec`        | Video codec for this feature              | `"libsvtav1"`   |
+| `video.crf`          | Constant rate factor (quality)            | `0`             |
+| `video.pix_fmt`      | Pixel format                              | `"yuv420p"`     |
+| `video.g`            | GOP size (keyframe interval)              | `2`             |
+| `video.preset`       | Encoder preset                            | `12`            |
+| `video.options`      | Arbitrary dict merged into ffmpeg options | `{"foo":"bar"}` |
+| `video.is_depth_map` | Mark this feature as a depth map          | `True`          |
+
+These override the dataset-level defaults so that, for example, a depth camera can use `crf=0` (lossless) while RGB cameras use `crf=30`.
+
+### Depth Map Encoding / Decoding Hooks
+
+Use `depth_map_encoding_fn` and `depth_map_decoding_fn` to apply a custom transform (e.g. log-scaling, quantization) before encoding and after decoding:
+
+```python
+import av
+import numpy as np
+def encode_depth(depth: np.ndarray) -> av.VideoFrame:
+    """Log-scale depth before encoding (reduces dynamic range)."""
+    depth = np.log1p(np.clip(depth, a_min=0, a_max=None))
+    frame = av.VideoFrame(width=64, height=96, format="yuv420p12le")
+    frame.planes[0].update(depth.astype(np.uint16).tobytes())
+    return frame
+
+def decode_depth(frame: np.ndarray) -> np.ndarray:
+    """Inverse of encode_depth."""
+    return np.expm1(np.clip(frame, a_min=0, a_max=None))
+
+# Recording
+dataset = LeRobotDataset.create(
+    repo_id="my/depth_dataset",
+    fps=30,
+    features=features,  # includes a video key with video.is_depth_map: True
+    root="data/depth_ds",
+    use_videos=True,
+    streaming_encoding=True,
+    depth_map_encoding_fn=encode_depth,
+    depth_map_decoding_fn=decode_depth,
+)
+
+# Reading (decode is applied automatically)
+dataset = LeRobotDataset(repo_id="my/depth_dataset")
+item = dataset[0]  # depth frames are decoded automatically
+```
+
+> [!IMPORTANT]
+> Depth map video features **require** `streaming_encoding=True`. The non-streaming image pipeline does not currently preserve depth maps correctly because it relies on RGB-oriented image writing and introduces lossy dtype casting/quantization of depth values. Calling `LeRobotDataset.create()` with depth map features and `streaming_encoding=False` raises a `ValueError`.
+
+## 6. Troubleshooting
 
 | Symptom                                                            | Likely Cause                                 | Fix                                                                                                                                                                                                                                                                                  |
 | ------------------------------------------------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
