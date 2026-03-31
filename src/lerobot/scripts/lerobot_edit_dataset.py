@@ -149,7 +149,7 @@ from lerobot.datasets.dataset_tools import (
     split_dataset,
 )
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.video_utils import get_video_info
+from lerobot.datasets.video_utils import get_video_duration_in_s, get_video_info
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.utils import init_logging
 
@@ -383,9 +383,18 @@ def handle_add_feature(cfg: EditDatasetConfig):
 
     features = {}
     dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+    tgt_frames = dataset.meta.episodes[-1]["dataset_to_index"]
+    tgt_fps = dataset.fps
 
     for f_name, f_path in zip(cfg.operation.feature_names, cfg.operation.feature_paths, strict=True):
         if f_path.endswith(".mp4"):
+            duration = get_video_duration_in_s(f_path)
+            src_frames = int(duration * tgt_fps)
+            if src_frames != tgt_frames:
+                raise ValueError(
+                    f"Feature {f_name} has {src_frames} frames, while dataset has {tgt_frames} frames"
+                )
+
             video_info = get_video_info(f_path)
             shape = (
                 video_info.pop("video.height"),
@@ -405,9 +414,13 @@ def handle_add_feature(cfg: EditDatasetConfig):
         else:
             f_dict = load_file(f_path)
             for k, v in f_dict.items():
+                if v.shape[1] != tgt_frames:  # TODO: interpolation to obtain target fps
+                    raise ValueError(
+                        f"Feature {k} has {v.shape[1]} frames, while dataset has {tgt_frames} frames"
+                    )
                 new_feature_info = {
                     "dtype": v.dtype.name,
-                    "shape": v.shape[1:],  # data must be provided with dimensions (episodes, other_dims)
+                    "shape": v.shape[1:],  # data must be provided with dimensions (frames, other_dims)
                     "names": None,  # TODO: names in the arguments
                     "fps": dataset.fps,
                 }

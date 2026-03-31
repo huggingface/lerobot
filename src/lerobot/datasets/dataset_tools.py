@@ -310,6 +310,7 @@ def modify_features(
             dataset,
             add_features={
                 "reward": (reward_array, {"dtype": "float32", "shape": [1], "names": None}),
+                "video": (video_path, {"dtype": "video", "shape": [96, 96, 3], "video_info": ...})
             },
             remove_features=["old_feature"],
             output_dir="./output",
@@ -357,7 +358,7 @@ def modify_features(
     video_keys_to_remove = [name for name in remove_features_list if name in dataset.meta.video_keys]
     remaining_video_keys = [k for k in dataset.meta.video_keys if k not in video_keys_to_remove]
 
-    video_keys_to_add = [k for k, v in add_features.items() if v[1]["dtype"] == "video"]
+    video_keys_to_add = [k for k, v in (add_features or {}).items() if v[1]["dtype"] == "video"]
     remaining_video_keys += video_keys_to_add
 
     new_meta = LeRobotDatasetMetadata.create(
