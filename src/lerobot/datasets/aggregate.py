@@ -418,8 +418,8 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
                     [dst_path, src_path],
                     dst_path,
                 )
-                # Update duration of this destination file
-                dst_file_durations[dst_key] = current_dst_duration + src_duration
+                # Read actual duration from concatenated video to avoid float drift
+                dst_file_durations[dst_key] = get_video_duration_in_s(dst_path)
 
             videos_idx[key]["episode_duration"] += src_duration
 
