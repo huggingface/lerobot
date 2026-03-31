@@ -229,6 +229,42 @@ holes on the back of the case cap.
   />
 </p>
 
+### Navigation Camera
+
+Use the front/back hub case to mount cameras.
+
+<p align="center">
+  <img
+    src="https://raw.githubusercontent.com/Vector-Wangel/XLeRobot/main/hardware/odrive/media/hub.png"
+    alt="Front and back hub case"
+    style="max-height: 420px; width: auto;"
+  />
+</p>
+
+<p align="center">
+  <img
+    src="https://raw.githubusercontent.com/Vector-Wangel/XLeRobot/main/hardware/odrive/media/realsense_mount.png"
+    alt="Realsense camera mount"
+    style="max-height: 420px; width: auto;"
+  />
+</p>
+
+<p align="center">
+  <img
+    src="https://raw.githubusercontent.com/Vector-Wangel/XLeRobot/main/hardware/odrive/media/webcam_mount.png"
+    alt="Webcam mount"
+    style="max-height: 420px; width: auto;"
+  />
+</p>
+
+The files for the hub and mounts are downloadable below.
+
+- [`realsense_adapter.step`](https://raw.githubusercontent.com/Vector-Wangel/XLeRobot/main/hardware/misc/realsense_adapter.step)
+- [`front_back_hub.step`](https://raw.githubusercontent.com/Vector-Wangel/XLeRobot/main/hardware/misc/front_back_hub.step)
+- [`cam_wedge_20.step`](https://raw.githubusercontent.com/Vector-Wangel/XLeRobot/main/hardware/misc/cam_wedge_20.step)
+- [`cam_wedge_15.step`](https://raw.githubusercontent.com/Vector-Wangel/XLeRobot/main/hardware/misc/cam_wedge_15.step)
+- [`cam_wedge_10.step`](https://raw.githubusercontent.com/Vector-Wangel/XLeRobot/main/hardware/misc/cam_wedge_10.step)
+
 ### Wiring Schematic
 
 TODO
