@@ -103,7 +103,8 @@ lerobot-edit-dataset \
     --operation.type recompute_stats \
     --operation.relative_action true \
     --operation.chunk_size 50 \
-    --operation.relative_exclude_joints "['gripper']"
+    --operation.relative_exclude_joints "['gripper']" \
+    --push_to_hub true
 ```
 
 Or equivalently in Python:
@@ -114,9 +115,10 @@ from lerobot.datasets.dataset_tools import recompute_stats
 
 dataset = LeRobotDataset("your_dataset")
 recompute_stats(dataset, relative_action=True, chunk_size=50, relative_exclude_joints=["gripper"])
+dataset.push_to_hub()
 ```
 
-The `chunk_size` should match your policy's `chunk_size` (default 50 for π₀). `relative_exclude_joints` lists joint names that should remain in absolute space (e.g. gripper commands).
+The `chunk_size` should match your policy's `chunk_size` (default 50 for π₀). `relative_exclude_joints` lists joint names that should remain in absolute space (e.g. gripper commands). Use `--push_to_hub true` to upload the updated stats to the Hub.
 
 Then train with relative actions enabled:
 

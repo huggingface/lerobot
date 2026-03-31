@@ -1543,6 +1543,7 @@ def recompute_stats(
     relative_action: bool = False,
     relative_exclude_joints: list[str] | None = None,
     chunk_size: int = 50,
+    num_workers: int = 0,
 ) -> LeRobotDataset:
     """Recompute stats.json from scratch by iterating all episodes.
 
@@ -1551,15 +1552,15 @@ def recompute_stats(
         skip_image_video: If True (default), only recompute stats for numeric features
             (action, state, etc.) and keep existing image/video stats unchanged.
         relative_action: If True, compute action stats in relative space by
-            sampling action chunks and subtracting the current state. This matches
-            the normalization distribution the model sees during training with
-            ``use_relative_actions=True``. Delegates to
-            :func:`compute_relative_action_stats` which samples random chunks — the
-            same method previously used inline during training.
+            iterating all valid action chunks and subtracting the current state.
+            This matches the normalization distribution the model sees during
+            training with ``use_relative_actions=True``.
         relative_exclude_joints: Joint names to exclude from relative conversion when
             relative_action=True. These dims keep absolute stats.
-        chunk_size: Action chunk size used for relative stats sampling. Should match
+        chunk_size: Action chunk size used for relative stats computation. Should match
             ``policy.chunk_size``. Only used when ``relative_action=True``.
+        num_workers: Number of parallel threads for relative action stats computation.
+            Values ≤1 mean single-threaded. Only used when ``relative_action=True``.
 
     Returns:
         The same dataset with updated stats.
@@ -1591,6 +1592,7 @@ def recompute_stats(
             features=features,
             chunk_size=chunk_size,
             exclude_joints=relative_exclude_joints,
+            num_workers=num_workers,
         )
         features_to_compute.pop(ACTION, None)
 

@@ -153,13 +153,15 @@ Recompute dataset statistics:
         --repo_id lerobot/pusht \
         --operation.type recompute_stats
 
-Recompute stats for relative actions before training:
+Recompute stats for relative actions and push to hub:
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --operation.type recompute_stats \
         --operation.relative_action true \
         --operation.chunk_size 50 \
-        --operation.relative_exclude_joints "['gripper']"
+        --operation.relative_exclude_joints "['gripper']" \
+        --operation.num_workers 4 \
+        --push_to_hub true
 
 Using JSON config file:
     lerobot-edit-dataset \
@@ -251,6 +253,7 @@ class RecomputeStatsConfig(OperationConfig):
     relative_action: bool = False
     relative_exclude_joints: list[str] | None = None
     chunk_size: int = 50
+    num_workers: int = 0
 
 
 @OperationConfig.register_subclass("info")
@@ -567,6 +570,7 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
         relative_action=cfg.operation.relative_action,
         relative_exclude_joints=cfg.operation.relative_exclude_joints,
         chunk_size=cfg.operation.chunk_size,
+        num_workers=cfg.operation.num_workers,
     )
 
     logging.info(f"Stats written to {dataset.root}")
