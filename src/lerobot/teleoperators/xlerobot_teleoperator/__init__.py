@@ -27,8 +27,6 @@ from .sub_teleoperators import (
     BiwheelKeyboardTeleopConfig,
     LeKiwiBaseTeleop,
     LeKiwiBaseTeleopConfig,
-    PantheraKeyboardEETeleop,
-    PantheraKeyboardEETeleopConfig,
     XLeRobotMountGamepadTeleop,
     XLeRobotMountGamepadTeleopConfig,
 )
@@ -44,8 +42,6 @@ __all__ = [
     "BiwheelKeyboardTeleopConfig",
     "LeKiwiBaseTeleop",
     "LeKiwiBaseTeleopConfig",
-    "PantheraKeyboardEETeleop",
-    "PantheraKeyboardEETeleopConfig",
     "XLeRobotMountGamepadTeleop",
     "XLeRobotMountGamepadTeleopConfig",
 ]

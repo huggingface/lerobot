@@ -27,7 +27,6 @@ from lerobot.configs import parser
 
 from ...config import TeleoperatorConfig
 from ...keyboard.configuration_keyboard import KeyboardRoverTeleopConfig
-from ..sub_teleoperators.panthera_keyboard_ee import PantheraKeyboardEETeleopConfig
 from ..sub_teleoperators.xlerobot_mount_gamepad.config import XLeRobotMountGamepadTeleopConfig
 
 DEFAULT_BASE_KEYBOARD_CONFIG = {
@@ -40,18 +39,13 @@ DEFAULT_BASE_KEYBOARD_CONFIG = {
     "min_angular_speed": 10.0,
 }
 
-PantheraArmKeyboardTeleopConfig = PantheraKeyboardEETeleopConfig
-
-
 @TeleoperatorConfig.register_subclass("xlerobot_keyboard_composite")
 @dataclass
 class XLeRobotKeyboardCompositeConfig(TeleoperatorConfig):
-    """Config for XLeRobot teleop with keyboard-controlled base and optional Panthera arm."""
+    """Config for XLeRobot teleop with keyboard-controlled base and optional mount gamepad."""
 
     _comment: str | None = None
     config_file: str | None = None
-    arm: dict[str, Any] | None = field(default_factory=dict)
-    arm_side: str = "left"
     base: dict[str, Any] | None = field(default_factory=dict)
     mount: dict[str, Any] | None = field(default_factory=dict)
 
@@ -59,10 +53,6 @@ class XLeRobotKeyboardCompositeConfig(TeleoperatorConfig):
         if self.config_file:
             self._load_from_config_file(self.config_file)
 
-        if self.arm_side not in ("left", "right"):
-            raise ValueError("xlerobot_keyboard_composite.arm_side must be either 'left' or 'right'.")
-
-        self.arm_config = self._coerce_arm_config(self.arm)
         self.base_config = self._coerce_base_config(self.base)
         self.mount_config = self._coerce_mount_config(self.mount)
 
@@ -72,22 +62,6 @@ class XLeRobotKeyboardCompositeConfig(TeleoperatorConfig):
         loaded = draccus.parse(config_class=TeleoperatorConfig, config_path=config_file, args=cli_overrides)
         self.__dict__.update(loaded.__dict__)
         self.config_file = config_file
-
-    def _coerce_arm_config(
-        self, value: PantheraArmKeyboardTeleopConfig | dict[str, Any] | None
-    ) -> PantheraArmKeyboardTeleopConfig | None:
-        if isinstance(value, PantheraKeyboardEETeleopConfig):
-            return value
-        if not value:
-            return None
-
-        data = dict(value)
-        arm_type = str(data.pop("type", "panthera_keyboard_ee"))
-        if arm_type == "panthera_keyboard_ee":
-            return PantheraKeyboardEETeleopConfig(**data)
-        raise ValueError(
-            "xlerobot_keyboard_composite.arm.type must be 'panthera_keyboard_ee'."
-        )
 
     def _coerce_base_config(
         self, value: KeyboardRoverTeleopConfig | dict[str, Any] | None

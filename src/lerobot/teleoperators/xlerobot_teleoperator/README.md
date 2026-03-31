@@ -2,13 +2,9 @@
 
 An example run with so101 arms: [video](https://youtu.be/OGI-Qtl3s6s)
 
-This package introduces the teleoperation stack for the modular `xlerobot` platform. It includes two composite teleoperators (`xlerobot_default_composite` and `xlerobot_keyboard_composite`) plus reusable sub-teleoperators for LeKiwi/BiWheel base control, mount pan/tilt, bimanual SO-101 leader arms, and single-arm Panthera keyboard control (cartesian).
+This package introduces the teleoperation stack for the modular `xlerobot` platform. It includes two composite teleoperators (`xlerobot_default_composite` and `xlerobot_keyboard_composite`) plus reusable sub-teleoperators for LeKiwi and BiWheel base control, mount pan and tilt, and bimanual SO-101 leader arms.
 
-The teleoperation stack is modular in the same way as the robot stack: you can
-compose only the sub-teleoperators you need for the hardware that is actually
-mounted. A deployment may use only a base teleop, base plus mount teleop, dual
-leader arms with gamepad base control, or a single Panthera arm with keyboard
-control.
+The teleoperation stack is modular in the same way as the robot stack: you can compose only the sub-teleoperators you need for the hardware that is actually mounted. A deployment may use only a base teleop, base plus mount teleop, or dual leader arms with gamepad base control.
 
 Quick links:
 
@@ -18,8 +14,6 @@ Quick links:
 - [Robot README](../../robots/xlerobot/README.md)
 - [Biwheel Base README](../../robots/xlerobot/sub_robots/biwheel_base/README.md)
 - [Biwheel Hardware Installation](../../robots/xlerobot/sub_robots/biwheel_base/README.md#hardware-installation)
-- [Panthera Arm README](../../robots/xlerobot/sub_robots/panthera_arm/README.md)
-- [Panthera Hardware Installation](../../robots/xlerobot/sub_robots/panthera_arm/README.md#hardware-installation)
 - [XLeRobot CLI Examples](../../robots/xlerobot/CLI_EXAMPLES.md)
 
 <p align="center">
@@ -39,9 +33,7 @@ src/lerobot/teleoperators/xlerobot_teleoperator/
 |-- configs/
 |   |-- base_only.json
 |   |-- xlerobot_default_composite_lekiwi.json
-|   |-- xlerobot_keyboard_composite_biwheel.json
-|   |-- xlerobot_keyboard_composite_panthera_left_ee.json
-|   `-- xlerobot_keyboard_composite_panthera_left_ee_with_base.json
+|   `-- xlerobot_keyboard_composite_biwheel.json
 |-- default_composite/
 |   |-- __init__.py
 |   |-- config.py
@@ -61,9 +53,6 @@ src/lerobot/teleoperators/xlerobot_teleoperator/
     |-- lekiwi_base_gamepad/
     |   |-- config_lekiwi_base_gamepad.py
     |   `-- teleop_lekiwi_base_gamepad.py
-    |-- panthera_keyboard_ee/
-    |   |-- config_panthera_keyboard_ee.py
-    |   `-- teleop_panthera_keyboard_ee.py
     `-- xlerobot_mount_gamepad/
         |-- config.py
         `-- teleop.py
@@ -71,17 +60,14 @@ src/lerobot/teleoperators/xlerobot_teleoperator/
 
 ## Composition Model
 
-The composite teleoperators are designed so each sub-teleoperator can be
-present or omitted depending on the robot build:
+The composite teleoperators are designed so each sub-teleoperator can be present or omitted depending on the robot build:
 
 - base teleop only
-- base + mount teleop
-- dual-arm + base + mount teleop
-- Panthera arm keyboard teleop with or without keyboard base teleop
+- base plus mount teleop
+- dual-arm plus base plus mount teleop
 
-`xlerobot_default_composite` is the gamepad/leader-arm-oriented composition.
-`xlerobot_keyboard_composite` is the keyboard-oriented composition used for the
-Panthera cartesian end-effector workflow and biwheel keyboard driving.
+`xlerobot_default_composite` is the gamepad and leader-arm oriented composition.
+`xlerobot_keyboard_composite` is the keyboard-oriented composition used for BiWheel keyboard driving and optional mount control.
 
 ## Default configs
 
@@ -108,31 +94,7 @@ lerobot-teleoperate \
   --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_keyboard_composite_biwheel.json
 ```
 
-Panthera arm keyboard teleop (Cartesian EE mapping) with xlerobot:
-
-```bash
-lerobot-teleoperate \
-  --robot.type=xlerobot \
-  --robot.config_file=src/lerobot/robots/xlerobot/configs/xlerobot_biwheel_odrive_panthera_left.json \
-  --teleop.type=xlerobot_keyboard_composite \
-  --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_keyboard_composite_panthera_left_ee.json
-```
-The provided robot config enables Panthera joint impedance + gravity/friction compensation.
-
-For Cartesian arm + keyboard base together, use:
-
-```bash
-lerobot-teleoperate \
-  --robot.type=xlerobot \
-  --robot.config_file=src/lerobot/robots/xlerobot/configs/xlerobot_biwheel_odrive_panthera_left.json \
-  --teleop.type=xlerobot_keyboard_composite \
-  --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_keyboard_composite_panthera_left_ee_with_base.json
-```
-
-This combines Panthera cartesian keyboard control with the biwheel keyboard base
-teleop in a single composite teleoperator.
-
-The original CLI-only setup still works too (no config files needed):
+The original CLI-only setup still works too:
 
 ```bash
 lerobot-teleoperate \
@@ -142,8 +104,7 @@ lerobot-teleoperate \
   --teleop.base='{"joystick_index": 0, "max_speed_mps": 0.6, "deadzone": 0.15, "yaw_speed_deg": 45}'
 ```
 
-For longer end-to-end inline examples, see
-[`../../robots/xlerobot/CLI_EXAMPLES.md`](../../robots/xlerobot/CLI_EXAMPLES.md).
+For longer end-to-end inline examples, see [`../../robots/xlerobot/CLI_EXAMPLES.md`](../../robots/xlerobot/CLI_EXAMPLES.md).
 
 ## Remote keyboard teleoperation with Rerun
 
@@ -168,9 +129,9 @@ Then run teleop on Thor with your local viewer machine IP:
 ```bash
 lerobot-teleoperate \
   --robot.type=xlerobot \
-  --robot.config_file=src/lerobot/robots/xlerobot/configs/xlerobot_biwheel_odrive_panthera_left.json \
+  --robot.config_file=src/lerobot/robots/xlerobot/configs/base_only.json \
   --teleop.type=xlerobot_keyboard_composite \
-  --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_keyboard_composite_panthera_left_ee_with_base.json \
+  --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_keyboard_composite_biwheel.json \
   --display_data=true \
   --fps=30 \
   --display_ip=<LOCAL_MACHINE_IP> \
@@ -186,7 +147,7 @@ brew install --cask xquartz
 open -a XQuartz
 ```
 
-Enable test extensions (includes `RECORD`), then restart XQuartz:
+Enable test extensions and restart XQuartz:
 
 ```bash
 defaults write org.xquartz.X11 enable_test_extensions -boolean true
@@ -200,13 +161,9 @@ Verify `RECORD` exists:
 /opt/X11/bin/xdpyinfo | grep -i RECORD
 ```
 
-If this prints nothing, `pynput` keyboard listeners can fail with
-`AttributeError: record_create_context`.
+If this prints nothing, `pynput` keyboard listeners can fail with `AttributeError: record_create_context`.
 
-Open `xterm` from XQuartz and use it for keyboard teleop control.
-Keyboard events (for teleop keys) for `pynput` are captured from the focused X11 window (`xterm`), not from regular macOS Terminal.
-
-However, you may still use any the regular macOS terminal for starting the apps below.
+Open `xterm` from XQuartz and use it for keyboard teleop control. Keyboard events for `pynput` are captured from the focused X11 window (`xterm`), not from regular macOS Terminal.
 
 Start Rerun on Mac and keep it running:
 
@@ -226,7 +183,7 @@ On Thor, confirm X11 forwarding is active:
 echo "$DISPLAY"
 ```
 
-It should be non-empty (for example `localhost:10.0`).
+It should be non-empty, for example `localhost:10.0`.
 
 Optional: tune Rerun micro-batching on Thor before starting teleop:
 
@@ -236,14 +193,14 @@ export RERUN_FLUSH_NUM_BYTES=65536
 export RERUN_FLUSH_NUM_ROWS=4096
 ```
 
-Then run teleop on Thor (direct to Mac IP):
+Then run teleop on Thor:
 
 ```bash
 lerobot-teleoperate \
   --robot.type=xlerobot \
-  --robot.config_file=src/lerobot/robots/xlerobot/configs/xlerobot_biwheel_odrive_panthera_left.json \
+  --robot.config_file=src/lerobot/robots/xlerobot/configs/base_only.json \
   --teleop.type=xlerobot_keyboard_composite \
-  --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_keyboard_composite_panthera_left_ee_with_base.json \
+  --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_keyboard_composite_biwheel.json \
   --display_data=true \
   --fps=30 \
   --display_ip=<MAC_LAN_IP> \
@@ -261,25 +218,19 @@ Defined in `default_composite/teleop.py`, this teleoperator merges:
 
 - A `BiSOLeader` instance (`arms_config`) for dual-arm control.
 - A base gamepad teleop (`base_config`) that can target either the LeKiwi or BiWheel drive via Xbox gamepad axes.
-- A mount gamepad teleop (`mount_config`) for pan/tilt camera motion.
+- A mount gamepad teleop (`mount_config`) for pan and tilt camera motion.
 
-Each of those sections is optional, so the composite can still be used for a
-reduced robot build that only has some of those components enabled.
+Each of those sections is optional, so the composite can still be used for a reduced robot build that only has some of those components enabled.
 
-Each sub-teleoperator contributes its action/feedback schema, and the composite exposes a single dictionary that policies, recorders, and replayers can consume. Script updates (`lerobot-record`, `lerobot-replay`, `lerobot-teleoperate`) already know about this new teleop type.
+Each sub-teleoperator contributes its action and feedback schema, and the composite exposes a single dictionary that policies, recorders, and replayers can consume. Script updates (`lerobot-record`, `lerobot-replay`, `lerobot-teleoperate`) already know about this teleop type.
 
 ## Keyboard composite (`xlerobot_keyboard_composite`)
 
 Defined in `keyboard_composite/teleop.py`, this variant keeps the same composite pattern while swapping the base controller:
 
-- An optional Panthera arm keyboard teleop (`arm_config`) with type `panthera_keyboard_ee`.
-- `arm_side` routes arm actions to either `left_` or `right_` action namespace.
 - A `KeyboardRoverTeleop` instance (`base_config`) from `lerobot.teleoperators.keyboard`.
-- An optional `XLeRobotMountGamepadTeleop` instance (`mount_config`) for pan/tilt.
+- An optional `XLeRobotMountGamepadTeleop` instance (`mount_config`) for pan and tilt.
 
-This makes it suitable for a single-arm Panthera build, a biwheel-base-only
-keyboard build, or a combined Panthera + biwheel keyboard setup.
+This makes it suitable for a BiWheel keyboard build or a combined base plus mount setup.
 
-The keyboard rover output (`linear_velocity`, `angular_velocity`) is mapped to XLeRobot base keys (`x.vel`, `theta.vel`) so it works with `biwheel_base`/`biwheel_odrive` action interfaces. Panthera arm keyboard output is prefixed (`left_...` or `right_...`) for xlerobot arm routing.
-
----
+The keyboard rover output (`linear_velocity`, `angular_velocity`) is mapped to XLeRobot base keys (`x.vel`, `theta.vel`) so it works with `biwheel_base` and `biwheel_odrive` action interfaces.

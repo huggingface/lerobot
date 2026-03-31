@@ -1,8 +1,6 @@
 {
   "_comment": "Use with --teleop.config_file=src/lerobot/teleoperators/xlerobot_teleoperator/configs/xlerobot_keyboard_composite_biwheel.json",
   "type": "xlerobot_keyboard_composite",
-  "arm_side": "left",
-  "arm": {},
   "base": {
     "linear_speed": 0.4,
     "angular_speed": 80.0,

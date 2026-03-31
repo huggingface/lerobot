@@ -113,10 +113,6 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
         from .xlerobot_teleoperator.sub_teleoperators.xlerobot_mount_gamepad import XLeRobotMountGamepadTeleop
 
         return XLeRobotMountGamepadTeleop(config)
-    elif config.type == "panthera_keyboard_ee":
-        from .xlerobot_teleoperator.sub_teleoperators.panthera_keyboard_ee import PantheraKeyboardEETeleop
-
-        return PantheraKeyboardEETeleop(config)
     elif config.type == "xlerobot_default_composite":
         from .xlerobot_teleoperator.default_composite import XLeRobotDefaultComposite
 

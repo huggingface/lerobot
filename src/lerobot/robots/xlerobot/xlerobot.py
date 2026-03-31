@@ -43,8 +43,6 @@ from .sub_robots.biwheel_base.config_biwheel_base import (
 )
 from .sub_robots.lekiwi_base.config import LeKiwiBaseConfig
 from .sub_robots.lekiwi_base.lekiwi_base import LeKiwiBase
-from .sub_robots.panthera_arm.config import PantheraArmConfig
-from .sub_robots.panthera_arm.panthera_arm import PantheraArm
 from .sub_robots.xlerobot_mount.config import XLeRobotMountConfig
 from .sub_robots.xlerobot_mount.xlerobot_mount import XLeRobotMount
 
@@ -87,20 +85,10 @@ class XLeRobot(Robot):
             cfg_dict = self._prepare_component_spec(component_name, spec_copy)
             arm_config = SO101FollowerConfig(**cfg_dict)
             return SO101Follower(arm_config)
-        if arm_type == "panthera_arm":
-            if spec_copy.get("shared_bus") is True:
-                raise ValueError(
-                    f"Component '{component_name}' uses 'panthera_arm' and must not use shared buses "
-                    "(different motor/driver stack). Set `shared_bus: false` and remove it from `shared_buses`."
-                )
-            spec_copy["shared_bus"] = False
-            cfg_dict = self._prepare_component_spec(component_name, spec_copy)
-            arm_config = PantheraArmConfig(**cfg_dict)
-            return PantheraArm(arm_config)
 
         raise ValueError(
             f"Unsupported arm type '{arm_type}' for {component_name}. "
-            "Supported: so101_follower, so100_follower, panthera_arm."
+            "Supported: so101_follower, so100_follower, so_follower."
         )
 
     def _build_base_robot(self) -> Robot | None:

@@ -171,4 +171,4 @@ lerobot-teleoperate \
 
 - `lekiwi_base` remains a supported option; these examples keep it intentionally.
 - Inline CLI configuration is flexible, but config files are easier to maintain for repeated runs.
-- For Panthera-specific setup, use the dedicated config-file examples in [`README.md`](./README.md) and `sub_robots/panthera_arm/README.md`.
+- For keyboard base control, use the config-file example in [`README.md`](./README.md) with `xlerobot_keyboard_composite_biwheel.json`.

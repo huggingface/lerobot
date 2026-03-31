@@ -69,7 +69,6 @@ from lerobot.robots import (  # noqa: F401
 from lerobot.robots.xlerobot.sub_robots import (  # noqa: F401
     biwheel_base,
     lekiwi_base,
-    panthera_arm,
     xlerobot_mount,
 )
 from lerobot.utils.constants import ACTION
