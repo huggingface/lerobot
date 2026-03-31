@@ -62,7 +62,7 @@ class RECAPPiStarTrainingConfig:
 
     epochs: int = 5
     batch_size: int = 6
-    num_workers: int = 4
+    num_workers: int = 0
     learning_rate: float = 1e-4
     weight_decay: float = 1e-4
     max_grad_norm: float = 1.0
@@ -396,15 +396,23 @@ def _load_advantage_cache(path: str | Path) -> dict[int, float]:
 
 
 def _load_vn_train_config(checkpoint_path: str) -> dict:
-    """Load the value-network training config from its checkpoint.
+    """Load the value-network training config.
 
-    Returns the ``train_config`` dict stored at training time, which
-    contains ``c_fail``, ``num_value_bins``, and other hyper-parameters
-    that must stay consistent between the value-network and PiStar
-    training stages.
+    Tries ``train_config.json`` next to the checkpoint first (lightweight).
+    Falls back to loading the full checkpoint only if the JSON is missing.
     """
+    ckpt_path = Path(checkpoint_path)
+    json_path = ckpt_path.parent.parent / "train_config.json"
+    if json_path.is_file():
+        with open(json_path) as f:
+            train_cfg = json.load(f)
+        logging.info(f"Loaded VN train config from {json_path}")
+        return train_cfg
+
     ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     train_cfg = ckpt.get("train_config", {})
+    del ckpt
+    gc.collect()
     if not train_cfg:
         logging.warning(
             "Value-network checkpoint does not contain a 'train_config' entry; "
@@ -708,17 +716,16 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
     policy_cfg = _build_policy_config(cfg, full_dataset, labels_csv_path)
 
     # ── 3. Pre-compute advantages using Pi0.5-based value network ────────
-    from lerobot.policies.pi05.processor_pi05 import make_pi05_pre_post_processors
-
-    vn_preprocessor, _ = make_pi05_pre_post_processors(
-        config=policy_cfg,
-        dataset_stats=full_dataset.meta.stats,
-    )
-
     cache_path = Path(cfg.advantage_cache_path) if cfg.advantage_cache_path else None
     if cache_path is not None and cache_path.is_file():
         advantage_lookup = _load_advantage_cache(cache_path)
     else:
+        from lerobot.policies.pi05.processor_pi05 import make_pi05_pre_post_processors
+
+        vn_preprocessor, _ = make_pi05_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=full_dataset.meta.stats,
+        )
         advantage_lookup = _precompute_advantages(
             full_dataset=full_dataset,
             frame_targets=frame_targets,
@@ -727,6 +734,7 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
             device=device,
             batch_size=cfg.vn_batch_size,
         )
+        del vn_preprocessor
 
         if cache_path is not None:
             _save_advantage_cache(
@@ -742,7 +750,7 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
     # ── 4. Create separate datasets for train and val ────────────────────
     delta_timestamps = resolve_delta_timestamps(policy_cfg, full_dataset.meta)
 
-    del full_dataset, vn_preprocessor, frame_targets, train_targets, val_targets, success_by_episode
+    del full_dataset, frame_targets, train_targets, val_targets, success_by_episode
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
