@@ -28,6 +28,7 @@ training/validation batches via a lookup dict keyed by absolute frame index.
 import gc
 import json
 import logging
+import resource
 import time as time_module
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -45,6 +46,17 @@ from lerobot.datasets.sampler import EpisodeAwareSampler
 from lerobot.policies.pistar06.modeling_pistar06 import PiStar06Policy
 from lerobot.rl.algorithms import recap_train_value_network as base
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_TOKENS
+
+
+def _log_memory(label: str) -> None:
+    """Log CPU RSS and CUDA memory at a named checkpoint."""
+    rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+    parts = [f"[MEM {label}] CPU_RSS={rss_mb:.0f}MB"]
+    if torch.cuda.is_available():
+        alloc = torch.cuda.memory_allocated() / (1024**2)
+        reserved = torch.cuda.memory_reserved() / (1024**2)
+        parts.append(f"CUDA_alloc={alloc:.0f}MB CUDA_reserved={reserved:.0f}MB")
+    logging.info(" ".join(parts))
 
 
 @dataclass
@@ -281,19 +293,50 @@ def _restore_freeze_state(policy, cfg: RECAPPiStarTrainingConfig) -> None:
 # ── Advantage pre-computation ────────────────────────────────────────────────
 
 
+def _make_vn_preprocessor(policy_cfg, dataset_stats):
+    """Build a lightweight preprocessor for VN advantage precomputation.
+
+    Omits DeviceProcessorStep (VN handles device transfer internally) and
+    AddBatchDimensionProcessorStep (DataLoader already batches).
+    """
+    from lerobot.policies.pi05.processor_pi05 import Pi05PrepareStateTokenizerProcessorStep
+    from lerobot.processor import (
+        NormalizerProcessorStep,
+        PolicyProcessorPipeline,
+        TokenizerProcessorStep,
+    )
+
+    steps = [
+        NormalizerProcessorStep(
+            features={**policy_cfg.input_features, **policy_cfg.output_features},
+            norm_map=policy_cfg.normalization_mapping,
+            stats=dataset_stats,
+        ),
+        Pi05PrepareStateTokenizerProcessorStep(max_state_dim=policy_cfg.max_state_dim),
+        TokenizerProcessorStep(
+            tokenizer_name="google/paligemma-3b-pt-224",
+            max_length=policy_cfg.tokenizer_max_length,
+            padding_side="right",
+            padding="max_length",
+        ),
+    ]
+    return PolicyProcessorPipeline(steps=steps, name="vn_preprocessor")
+
+
 @torch.no_grad()
 def _precompute_advantages(
     full_dataset: LeRobotDataset,
     frame_targets: list[base.FrameTarget],
     value_network_checkpoint: str,
-    preprocessor,
+    policy_cfg,
     device: torch.device,
     batch_size: int = 4,
 ) -> dict[int, float]:
     """Pre-compute per-frame advantages using the frozen value network.
 
-    Uses the same ``preprocessor`` that the policy training loop uses, so the
-    value network sees exactly the same input format it was trained on.
+    Builds a lightweight preprocessor internally that produces only the
+    fields consumed by ``RECAPValueNetwork`` (language tokens + images),
+    without moving every tensor to GPU.
     """
     from lerobot.rl.algorithms.recap_utils import collect_images
     from lerobot.rl.algorithms.recap_value_network import (
@@ -301,11 +344,15 @@ def _precompute_advantages(
         RECAPValueNetworkConfig,
     )
 
+    preprocessor = _make_vn_preprocessor(policy_cfg, full_dataset.meta.stats)
+
     logging.info(f"Loading value network from {value_network_checkpoint}")
     checkpoint = torch.load(value_network_checkpoint, map_location="cpu", weights_only=False)
     vn_config = RECAPValueNetworkConfig(**checkpoint["model_config"])
     vn = RECAPValueNetwork(vn_config)
     vn.load_state_dict(checkpoint["model_state_dict"])
+    del checkpoint
+    gc.collect()
     vn.eval()
     vn.to(device)
     for param in vn.parameters():
@@ -313,6 +360,7 @@ def _precompute_advantages(
     logging.info(
         f"Value network loaded: {sum(p.numel() for p in vn.parameters()):,} params"
     )
+    _log_memory("post-VN-load")
 
     full_dataset._ensure_hf_dataset_loaded()
     R_t_by_abs_index: dict[int, float] = {}
@@ -355,7 +403,8 @@ def _precompute_advantages(
         f"mean={sum(advantage_lookup.values()) / max(1, len(advantage_lookup)):.4f}"
     )
 
-    del vn
+    del vn, preprocessor
+    gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
@@ -714,27 +763,21 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
 
     # ── 2. Build policy config and preprocessor ────────────────────────────
     policy_cfg = _build_policy_config(cfg, full_dataset, labels_csv_path)
+    _log_memory("post-dataset-split")
 
     # ── 3. Pre-compute advantages using Pi0.5-based value network ────────
     cache_path = Path(cfg.advantage_cache_path) if cfg.advantage_cache_path else None
     if cache_path is not None and cache_path.is_file():
         advantage_lookup = _load_advantage_cache(cache_path)
     else:
-        from lerobot.policies.pi05.processor_pi05 import make_pi05_pre_post_processors
-
-        vn_preprocessor, _ = make_pi05_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=full_dataset.meta.stats,
-        )
         advantage_lookup = _precompute_advantages(
             full_dataset=full_dataset,
             frame_targets=frame_targets,
             value_network_checkpoint=resolved_vn_checkpoint,
-            preprocessor=vn_preprocessor,
+            policy_cfg=policy_cfg,
             device=device,
             batch_size=cfg.vn_batch_size,
         )
-        del vn_preprocessor
 
         if cache_path is not None:
             _save_advantage_cache(
@@ -746,6 +789,7 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
                     "repo_id": cfg.repo_id,
                 },
             )
+    _log_memory("post-advantage-precompute")
 
     # ── 4. Create separate datasets for train and val ────────────────────
     delta_timestamps = resolve_delta_timestamps(policy_cfg, full_dataset.meta)
@@ -771,8 +815,16 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
     )
 
     # ── 5. Create policy ─────────────────────────────────────────────────
-
-    policy = PiStar06Policy(config=policy_cfg, dataset_meta=train_dataset.meta)
+    # Initialize model weights in the target precision to halve peak memory
+    # and speed up weight init (random normal on smaller tensors).
+    target_dtype = torch.bfloat16 if cfg.model_precision == "bfloat16" else torch.float32
+    original_dtype = torch.get_default_dtype()
+    torch.set_default_dtype(target_dtype)
+    try:
+        policy = PiStar06Policy(config=policy_cfg, dataset_meta=train_dataset.meta)
+    finally:
+        torch.set_default_dtype(original_dtype)
+    _log_memory("post-policy-init")
 
     if cfg.pretrained_path is not None:
         logging.info(f"Loading pretrained Pi0.5 weights from {cfg.pretrained_path}")
@@ -784,9 +836,10 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
         fixed_sd = policy._fix_pytorch_state_dict_keys(raw_sd, policy.config)
         del raw_sd
 
-        remapped_sd = {}
-        for key, value in fixed_sd.items():
-            remapped_sd[f"model.{key}" if not key.startswith("model.") else key] = value
+        remapped_sd = {
+            (f"model.{k}" if not k.startswith("model.") else k): v
+            for k, v in fixed_sd.items()
+        }
         del fixed_sd
 
         missing, unexpected = policy.load_state_dict(remapped_sd, strict=False)
@@ -797,16 +850,18 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
             logging.info(f"Missing keys when loading pretrained: {len(missing)} (expected for advantage_embedding)")
         if unexpected:
             logging.warning(f"Unexpected keys when loading pretrained: {len(unexpected)}")
+    _log_memory("post-pretrained-load")
 
     policy.to(device)
     _apply_backbone_freezing(policy, cfg)
+    _log_memory("post-policy-to-device")
 
     num_trainable = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total = sum(p.numel() for p in policy.parameters())
     logging.info(f"Trainable parameters: {num_trainable:,} / {num_total:,} total")
 
-    # Reuse the same preprocessor created earlier for advantage pre-computation;
-    # rebuild with train_dataset stats for the actual training loop.
+    from lerobot.policies.pi05.processor_pi05 import make_pi05_pre_post_processors
+
     preprocessor, _postprocessor = make_pi05_pre_post_processors(
         config=policy_cfg,
         dataset_stats=train_dataset.meta.stats,  # ty: ignore[invalid-argument-type]
@@ -879,6 +934,7 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
         f"Starting training: {cfg.epochs} epochs, "
         f"{len(train_dataset)} train frames, {len(val_dataset)} val frames"
     )
+    _log_memory("pre-training-loop")
 
     for epoch in range(1, cfg.epochs + 1):
         policy.train()
@@ -922,6 +978,9 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
             epoch_loss += loss.item() * batch[ACTION].shape[0]
             epoch_samples += batch[ACTION].shape[0]
             global_train_step += 1
+
+            if global_train_step == 1:
+                _log_memory("first-train-step")
 
             wandb_step_metrics: dict[str, float] = {}
 

@@ -71,7 +71,7 @@ python -m lerobot.rl.algorithms.recap_train_pi_star \
   --output_dir="${HOME}/code/lerobot/outputs/recap_pistar_5" \
   --value_network_checkpoint="${HOME}/code/lerobot/outputs/recap_value_5/checkpoints/epoch_0001.pt" \
   --epochs=5 \
-  --batch_size=4 \
+  --batch_size=1 \
   --learning_rate=1e-4 \
   --val_split_ratio=0.1 \
   --validate_every_n_train_steps=50 \
