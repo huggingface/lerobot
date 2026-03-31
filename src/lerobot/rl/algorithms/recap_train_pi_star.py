@@ -89,8 +89,8 @@ class RECAPPiStarTrainingConfig:
     pretrained_path: str = "lerobot/pi05_base"
     model_precision: str = "bfloat16"
     freeze_vision_encoder: bool = True
-    freeze_backbone: bool = False
-    num_unfrozen_backbone_layers: int = 0
+    freeze_backbone: bool = True
+    num_unfrozen_backbone_layers: int = 3
     train_expert_only: bool = False
     gradient_checkpointing: bool = False
 
