@@ -552,7 +552,7 @@ def test_queue_interpolator_delay_skips_stale_actions():
     assert queue.get_action_index() == 3
 
     chunk2 = _make_chunk(10, offset=100.0)
-    queue.merge(chunk2, chunk2.clone(), real_delay=0, action_index_before_inference=0)
+    queue.merge(chunk2, chunk2.clone(), real_delay=3, action_index_before_inference=0)
 
     first_action = queue.get()
     assert first_action is not None

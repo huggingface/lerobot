@@ -130,7 +130,7 @@ class ActionQueue:
         with self.lock:
             if self.original_queue is None:
                 return None
-            return self.original_queue[self.last_index :]
+            return self.original_queue[self.last_index :].clone()
 
     def get_processed_left_over(self) -> Tensor | None:
         """Get leftover processed actions (the actions currently executed by the robot).
@@ -142,7 +142,7 @@ class ActionQueue:
         with self.lock:
             if self.queue is None:
                 return None
-            return self.queue[self.last_index :]
+            return self.queue[self.last_index :].clone()
 
     def merge(
         self,
@@ -164,10 +164,10 @@ class ActionQueue:
             action_index_before_inference: Index before inference started, for validation.
         """
         with self.lock:
-            effective_delay = self._check_delays(real_delay, action_index_before_inference)
+            delay = self._check_and_provide_delays(real_delay, action_index_before_inference)
 
             if self.cfg.enabled:
-                self._replace_actions_queue(original_actions, processed_actions, effective_delay)
+                self._replace_actions_queue(original_actions, processed_actions, delay)
                 return
 
             self._append_actions_queue(original_actions, processed_actions)
@@ -216,7 +216,9 @@ class ActionQueue:
 
         self.last_index = 0
 
-    def _check_delays(self, real_delay: int, action_index_before_inference: int | None = None) -> int:
+    def _check_and_provide_delays(
+        self, real_delay: int, action_index_before_inference: int | None = None
+    ) -> int:
         """Validate that computed delays match expectations.
 
         Compares the delay computed from inference latency with the actual
@@ -227,7 +229,7 @@ class ActionQueue:
             action_index_before_inference: Action index when inference started.
 
         Returns:
-            int: Effective delay (always based on real_delay).
+            int: Delay to use.
         """
         effective_delay = max(0, real_delay)
 
@@ -239,5 +241,6 @@ class ActionQueue:
                     indexes_diff,
                     real_delay,
                 )
+                return real_delay
 
         return effective_delay
