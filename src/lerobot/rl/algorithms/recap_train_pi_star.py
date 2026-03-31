@@ -741,6 +741,12 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
     # ── 4. Create separate datasets for train and val ────────────────────
     delta_timestamps = resolve_delta_timestamps(policy_cfg, full_dataset.meta)
 
+    del full_dataset, vn_preprocessor
+    import gc
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     train_dataset = LeRobotDataset(
         repo_id=cfg.repo_id,
         root=cfg.root,
