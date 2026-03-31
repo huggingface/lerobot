@@ -669,10 +669,22 @@ def update_policy_parameters(policy: PreTrainedPolicy, parameters_queue: Queue, 
         actor_state_dict = move_state_dict_to_device(state_dicts["policy"], device=device)
         policy.actor.load_state_dict(actor_state_dict)
 
-        if hasattr(policy, "discrete_critic") and "discrete_critic" in state_dicts:
+        if "discrete_critic" in state_dicts:
             discrete_critic_state_dict = move_state_dict_to_device(
                 state_dicts["discrete_critic"], device=device
             )
+            if policy.discrete_critic is None:
+                from dataclasses import asdict
+
+                from lerobot.policies.sac.modeling_sac import DiscreteCritic
+
+                encoder = policy.encoder_critic
+                policy.discrete_critic = DiscreteCritic(
+                    encoder=encoder,
+                    input_dim=encoder.output_dim,
+                    output_dim=policy.config.num_discrete_actions,
+                    **asdict(policy.config.discrete_critic_network_kwargs),
+                ).to(device)
             policy.discrete_critic.load_state_dict(discrete_critic_state_dict)
             logging.info("[ACTOR] Loaded discrete critic parameters from Learner.")
 
