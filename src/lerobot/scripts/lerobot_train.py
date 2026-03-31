@@ -238,11 +238,15 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     # Use accelerator's device
     device = accelerator.device
     if cfg.cudnn_deterministic:
+        import os as _os
+        _os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.use_deterministic_algorithms(True)
     else:
         torch.backends.cudnn.benchmark = True
-    torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cuda.matmul.allow_tf32 = True
 
     # Dataset loading synchronization: main process downloads first to avoid race conditions
     if is_main_process:
