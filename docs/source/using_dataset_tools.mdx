@@ -88,6 +88,47 @@ lerobot-edit-dataset \
     --operation.feature_names "['observation.images.top']"
 ```
 
+#### Add Features
+
+Add new features to an existing dataset. This allows you to extend a dataset with additional data such as new observations, actions, or video streams. The new features can be added from external files (e.g., safetensors for numerical data or MP4 videos for visual data).
+
+```bash
+# Add a new numerical feature from a safetensors file (modifies original dataset)
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type add_feature \
+    --operation.feature_names "['new_observation']" \
+    --operation.feature_paths "['/path/to/new_data.safetensors']"
+
+# Add a new video feature from an MP4 file and save to a new dataset
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --new_repo_id lerobot/pusht_with_video \
+    --operation.type add_feature \
+    --operation.feature_names "['observation.images.side']" \
+    --operation.feature_paths "['/path/to/side_camera.mp4']"
+
+# Add multiple features at once
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --new_repo_id lerobot/pusht_extended \
+    --operation.type add_feature \
+    --operation.feature_names "['new_action', 'extra_obs']" \
+    --operation.feature_paths "['/path/to/actions.safetensors', '/path/to/extra_obs.mp4']" \
+    --push_to_hub true
+```
+
+**Parameters:**
+
+- `feature_names`: List of names for the new features to add (e.g., `["observation.images.side", "action.new"]`)
+- `feature_paths`: List of paths to the external data files (safetensors for numerical data, MP4 for video). Must correspond 1:1 with `feature_names`
+
+**Notes:**
+
+- For video features (.mp4 files), the video must contain exactly the same number of frames as the total frames in the dataset.
+- For numerical data (.safetensors files), each array in the file must have shape `(frames, ...)` where `frames` matches the dataset's total frames. If the safetensors file contains multiple keys, each key becomes a separate feature (optionally prefixed with the corresponding feature_name if provided).
+- The feature type is automatically inferred from the file extension (.mp4 for video, otherwise numerical data).
+
 #### Convert to Video
 
 Convert an image-based dataset to video format, creating a new LeRobotDataset where images are stored as videos. This is useful for reducing storage requirements and improving data loading performance. The new dataset will have the exact same structure as the original, but with images encoded as MP4 videos in the proper LeRobot format.
@@ -193,8 +234,6 @@ lerobot-edit-dataset \
     --operation.episode_indices "[0, 2, 5]" \
     --push_to_hub true
 ```
-
-There is also a tool for adding features to a dataset that is not yet covered in `lerobot-edit-dataset`.
 
 # Dataset Visualization
 
