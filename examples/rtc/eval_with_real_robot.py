@@ -122,11 +122,11 @@ from lerobot.rl.process import ProcessSignalHandler
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    bi_openarm_follower,
     bi_so_follower,
     koch_follower,
     so_follower,
     unitree_g1,
-    bi_openarm_follower,
 )
 from lerobot.robots.utils import make_robot_from_config
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
@@ -335,7 +335,7 @@ def get_actions(
                     relative_step.action_names = list(cfg_names)
                 else:
                     relative_step.action_names = [
-                        k for k in robot.robot.action_features.keys() if k.endswith(".pos")
+                        k for k in robot.robot.action_features if k.endswith(".pos")
                     ]
             logger.info("[GET_ACTIONS] Relative actions enabled: will re-anchor RTC prefix")
 
@@ -384,7 +384,11 @@ def get_actions(
                 # Re-anchor leftover actions for relative-action policies.
                 # We need the *postprocessed* (absolute) leftover, not the original
                 # (normalized/relative) one that get_left_over() returns.
-                if prev_actions is not None and relative_step is not None and OBS_STATE in obs_with_policy_features:
+                if (
+                    prev_actions is not None
+                    and relative_step is not None
+                    and OBS_STATE in obs_with_policy_features
+                ):
                     with action_queue.lock:
                         if action_queue.queue is not None:
                             prev_actions_abs = action_queue.queue[action_queue.last_index :].clone()
@@ -454,7 +458,7 @@ def actor_control(
     try:
         logger.info("[ACTOR] Starting actor thread")
 
-        action_keys = [k for k in robot.action_features().keys() if k.endswith(".pos")]
+        action_keys = [k for k in robot.action_features() if k.endswith(".pos")]
 
         action_count = 0
         action_interval = 1.0 / cfg.fps
