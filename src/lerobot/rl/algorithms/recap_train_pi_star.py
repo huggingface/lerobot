@@ -25,6 +25,7 @@ once over the full dataset, then the advantage for each frame is injected into
 training/validation batches via a lookup dict keyed by absolute frame index.
 """
 
+import gc
 import json
 import logging
 import time as time_module
@@ -741,8 +742,7 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
     # ── 4. Create separate datasets for train and val ────────────────────
     delta_timestamps = resolve_delta_timestamps(policy_cfg, full_dataset.meta)
 
-    del full_dataset, vn_preprocessor
-    import gc
+    del full_dataset, vn_preprocessor, frame_targets, train_targets, val_targets, success_by_episode
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -768,15 +768,27 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
 
     if cfg.pretrained_path is not None:
         logging.info(f"Loading pretrained Pi0.5 weights from {cfg.pretrained_path}")
-        from lerobot.policies.pi05.modeling_pi05 import PI05Policy
+        from safetensors.torch import load_file
+        from transformers.utils import cached_file
 
-        pretrained = PI05Policy.from_pretrained(cfg.pretrained_path, config=policy_cfg, strict=False)
-        missing, unexpected = policy.load_state_dict(pretrained.state_dict(), strict=False)
+        resolved_file = cached_file(cfg.pretrained_path, "model.safetensors")
+        raw_sd = load_file(resolved_file)
+        fixed_sd = policy._fix_pytorch_state_dict_keys(raw_sd, policy.config)
+        del raw_sd
+
+        remapped_sd = {}
+        for key, value in fixed_sd.items():
+            remapped_sd[f"model.{key}" if not key.startswith("model.") else key] = value
+        del fixed_sd
+
+        missing, unexpected = policy.load_state_dict(remapped_sd, strict=False)
+        del remapped_sd
+        gc.collect()
+
         if missing:
             logging.info(f"Missing keys when loading pretrained: {len(missing)} (expected for advantage_embedding)")
         if unexpected:
             logging.warning(f"Unexpected keys when loading pretrained: {len(unexpected)}")
-        del pretrained
 
     policy.to(device)
     _apply_backbone_freezing(policy, cfg)
