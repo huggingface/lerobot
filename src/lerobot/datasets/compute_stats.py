@@ -704,7 +704,9 @@ def compute_relative_action_stats(
     action_dim = features[ACTION]["shape"][0]
     action_names = features.get(ACTION, {}).get("names")
     mask_step = RelativeActionsProcessorStep(
-        enabled=True, exclude_joints=exclude_joints, action_names=action_names,
+        enabled=True,
+        exclude_joints=exclude_joints,
+        action_names=action_names,
     )
     relative_mask = np.array(mask_step._build_mask(action_dim), dtype=np.float32)
 
@@ -726,7 +728,7 @@ def compute_relative_action_stats(
     )
 
     batch_size = 50_000
-    batches = [valid_starts[i:i + batch_size] for i in range(0, len(valid_starts), batch_size)]
+    batches = [valid_starts[i : i + batch_size] for i in range(0, len(valid_starts), batch_size)]
 
     running_stats = RunningQuantileStats()
 
@@ -737,7 +739,11 @@ def compute_relative_action_stats(
             futures = [
                 pool.submit(
                     _compute_relative_chunk_batch,
-                    batch, all_actions, all_states, chunk_size, relative_mask,
+                    batch,
+                    all_actions,
+                    all_states,
+                    chunk_size,
+                    relative_mask,
                 )
                 for batch in batches
             ]
