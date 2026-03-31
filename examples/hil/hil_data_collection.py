@@ -63,7 +63,6 @@ Usage:
         --interpolation_multiplier=3
 """
 
-import copy
 import logging
 import math
 import time
@@ -373,7 +372,7 @@ def _rtc_inference_thread(
 
         queue = queue_holder.get("queue")
         with obs_lock:
-            obs = copy.deepcopy(obs_holder.get("obs"))
+            obs = obs_holder.get("obs")
         if queue is None or obs is None:
             time.sleep(0.01)
             continue

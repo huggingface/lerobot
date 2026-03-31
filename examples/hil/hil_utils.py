@@ -180,9 +180,7 @@ def make_identity_processors():
 
 def reset_loop(robot: Robot, teleop: Teleoperator, events: dict, fps: int):
     """Reset period where human repositions environment."""
-    print("\n" + "=" * 60)
-    print("  [HIL] RESET")
-    print("=" * 60)
+    logger.info("[HIL] RESET")
 
     events["in_reset"] = True
     events["start_next_episode"] = False
@@ -191,7 +189,7 @@ def reset_loop(robot: Robot, teleop: Teleoperator, events: dict, fps: int):
     robot_pos = {k: v for k, v in obs.items() if k.endswith(".pos") and k in robot.observation_features}
     teleop_smooth_move_to(teleop, robot_pos, duration_s=2.0, fps=50)
 
-    print("  Press any key to enable teleoperation")
+    logger.info("Press any key to enable teleoperation")
     while not events["start_next_episode"] and not events["stop_recording"]:
         precise_sleep(0.05)
 
@@ -200,7 +198,7 @@ def reset_loop(robot: Robot, teleop: Teleoperator, events: dict, fps: int):
 
     events["start_next_episode"] = False
     teleop_disable_torque(teleop)
-    print("  Teleop enabled - press any key to start episode")
+    logger.info("Teleop enabled - press any key to start episode")
 
     while not events["start_next_episode"] and not events["stop_recording"]:
         loop_start = time.perf_counter()
@@ -218,14 +216,13 @@ def reset_loop(robot: Robot, teleop: Teleoperator, events: dict, fps: int):
 
 def print_controls(rtc: bool = False):
     """Print control instructions."""
-    print("\n" + "=" * 60)
-    print("  Human-in-the-Loop Data Collection" + (" (RTC)" if rtc else ""))
-    print("=" * 60)
-    print()
-    print("  Controls:")
-    print("    SPACE  - Pause policy")
-    print("    c      - Take control")
-    print("    p      - Resume policy after pause/correction")
-    print("    →      - End episode")
-    print("    ESC    - Stop and push to hub")
-    print("=" * 60 + "\n")
+    mode = "Human-in-the-Loop Data Collection" + (" (RTC)" if rtc else "")
+    logger.info(
+        "%s\n  Controls:\n"
+        "    SPACE  - Pause policy\n"
+        "    c      - Take control\n"
+        "    p      - Resume policy after pause/correction\n"
+        "    →      - End episode\n"
+        "    ESC    - Stop and push to hub",
+        mode,
+    )

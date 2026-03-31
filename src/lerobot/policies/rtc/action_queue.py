@@ -149,7 +149,7 @@ class ActionQueue:
         original_actions: Tensor,
         processed_actions: Tensor,
         real_delay: int,
-        action_index_before_inference: int | None = 0,
+        action_index_before_inference: int | None = None,
     ):
         """Merge new actions into the queue.
 
@@ -227,19 +227,17 @@ class ActionQueue:
             action_index_before_inference: Action index when inference started.
 
         Returns:
-            int: Effective delay used to merge actions. When available, this is
-                derived from queue consumption (index diff), which is more
-                accurate than latency quantization.
+            int: Effective delay (always based on real_delay).
         """
-        if action_index_before_inference is None:
-            return max(0, real_delay)
+        effective_delay = max(0, real_delay)
 
-        indexes_diff = max(0, self.last_index - action_index_before_inference)
-        if indexes_diff != real_delay:
-            # Let's check that action index difference (real delay calculated based on action queue)
-            # is the same as delay calculated based on inference latency
-            logger.debug(
-                f"[ACTION_QUEUE] Using index-based delay instead of latency-based delay. "
-                f"Indexes diff: {indexes_diff}, real delay: {real_delay}"
-            )
-        return indexes_diff
+        if action_index_before_inference is not None:
+            indexes_diff = max(0, self.last_index - action_index_before_inference)
+            if indexes_diff != real_delay:
+                logger.warning(
+                    "Indexes diff is not equal to real delay. indexes_diff=%d, real_delay=%d",
+                    indexes_diff,
+                    real_delay,
+                )
+
+        return effective_delay
