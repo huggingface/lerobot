@@ -13,6 +13,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+from pathlib import Path
+
+import av
 import numpy as np
 
 from lerobot.datasets.utils import load_image_as_numpy
@@ -624,3 +628,55 @@ def aggregate_stats(stats_list: list[dict[str, dict]]) -> dict[str, dict[str, np
         aggregated_stats[key] = aggregate_feature_stats(stats_with_key)
 
     return aggregated_stats
+
+
+def compute_mp4_video_stats(video_path: str | Path, quantile_list: list[float] | None = None) -> dict:
+    """
+    Safely computes statistics directly from an MP4 file using PyAV
+    """
+    if quantile_list is None:
+        quantile_list = DEFAULT_QUANTILES
+
+    av.logging.set_level(av.logging.ERROR)
+
+    with av.open(str(video_path)) as container:
+        stream = container.streams.video[0]
+        total_frames = stream.frames
+
+        # If stream.frames is not available, we estimate from duration and fps
+        if total_frames == 0 and stream.duration is not None:
+            total_frames = int(float(stream.duration * stream.time_base) * float(stream.average_rate))
+
+        if total_frames <= 0:
+            raise ValueError(f"Could not determine frame count for {video_path}")
+
+        sampled_indices = set(sample_indices(total_frames))
+
+        sampled_arrays = []
+
+        for frame_idx, frame in enumerate(container.decode(stream)):
+            if frame_idx in sampled_indices:
+                # Convert to numpy array in RGB format
+                img_array = frame.to_ndarray(format="rgb24")
+
+                # Convert to channel-first (H, W, C) -> (C, H, W)
+                img_array = np.transpose(img_array, (2, 0, 1))
+
+                # Apply downsampling
+                img_array = auto_downsample_height_width(img_array)
+
+                sampled_arrays.append(img_array)
+
+            if len(sampled_arrays) >= len(sampled_indices):
+                break
+
+    # Stack the sampled frames (N, C, H, W)
+    ep_ft_array = np.stack(sampled_arrays).astype(np.float32)
+
+    stats = get_feature_stats(ep_ft_array, axis=(0, 2, 3), keepdims=True, quantile_list=quantile_list)
+
+    normalized_stats = {k: v if k == "count" else np.squeeze(v / 255.0, axis=0) for k, v in stats.items()}
+
+    av.logging.set_level(av.logging.ERROR)
+
+    return normalized_stats

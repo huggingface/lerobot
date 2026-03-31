@@ -135,19 +135,17 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-import pickle as pkl
-
-
 import draccus
+from safetensors.numpy import load_file
 
 from lerobot.configs import parser
 from lerobot.datasets.dataset_tools import (
+    add_features,
     convert_image_to_video_dataset,
     delete_episodes,
     merge_datasets,
     modify_tasks,
     remove_feature,
-    add_features,
     split_dataset,
 )
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -186,13 +184,13 @@ class MergeConfig(OperationConfig):
 class RemoveFeatureConfig(OperationConfig):
     feature_names: list[str] | None = None
 
+
 @OperationConfig.register_subclass("add_feature")
 @dataclass
 class AddFeatureConfig(OperationConfig):
     feature_names: list[str] | None = None
     feature_paths: list[str] | None = None
-    # TODO: add codec, pix_fmt, num_workers
-    num_workers: int = 1
+
 
 @OperationConfig.register_subclass("modify_tasks")
 @dataclass
@@ -376,51 +374,48 @@ def handle_add_feature(cfg: EditDatasetConfig):
 
     if not cfg.operation.feature_names:
         raise ValueError("feature_names must be specified for add_feature operation")
-    
+
     if not cfg.operation.feature_paths:
         raise ValueError("feature_paths must be specified for add_feature operation")
-    
+
     if len(cfg.operation.feature_names) != len(cfg.operation.feature_paths):
         raise ValueError("feature_names and feature_paths must have the same length")
-    
-    # OPTIMIZATION HERE: use callable instead of array to optimize loading, ecc
-    # VIDEO HERE: detect file extention and treat it in a different way
-    #               =====> CREATE A LOADER FUNCTION THAT LOAD THE RIGHT WAY THE RIGHT FILE ??
+
     features = {}
-    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root) # need this to write fps
+    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
 
-    for f_name, f_path in zip(cfg.operation.feature_names, cfg.operation.feature_paths):                
-        """ if len(shape) <= 1:
-            raise ValueError("Data provided must have at least two dimensions: (episodes, other_dimensions)") """
-
+    for f_name, f_path in zip(cfg.operation.feature_names, cfg.operation.feature_paths, strict=True):
         if f_path.endswith(".mp4"):
-            video_info = get_video_info(f_path) # TODO: should the path be absolute??
+            video_info = get_video_info(f_path)
             shape = (
                 video_info.pop("video.height"),
                 video_info.pop("video.width"),
-                video_info.pop("video.channels")
+                video_info.pop("video.channels"),
             )
             new_feature_info = {
                 "dtype": "video",
                 "shape": shape,
                 "names": ["height", "width", "channels"],
-                "video_info": video_info
+                "video_info": video_info,
             }
             new_feature_info["video_info"]["video.fps"] = dataset.fps
             new_feature_value = f_path
+
+            features[f_name] = (new_feature_value, new_feature_info)
         else:
-            with open(f_path, 'rb') as file:    
-                f_arr = pkl.load(file)
-            new_feature_info = {
-                "dtype": f_arr.dtype.name,
-                "shape": f_arr.shape[1:], # consider only the shape of the data, excluding episodes (assume data are provided with shape (episodes, other_dims))
-                "names": None, # TODO: names in the arguments?
-                "fps": dataset.fps
-            }
-            new_feature_value = f_arr
-        
-        features[f_name] = (new_feature_value, new_feature_info)
-    
+            f_dict = load_file(f_path)
+            for k, v in f_dict.items():
+                new_feature_info = {
+                    "dtype": v.dtype.name,
+                    "shape": v.shape[1:],  # data must be provided with dimensions (episodes, other_dims)
+                    "names": None,  # TODO: names in the arguments
+                    "fps": dataset.fps,
+                }
+                new_feature_value = v
+                new_feature_key = f"{f_name}.{k}" if len(f_name) > 0 else k
+
+                features[new_feature_key] = (new_feature_value, new_feature_info)
+
     output_repo_id, output_dir = get_output_path(
         cfg.repo_id, cfg.new_repo_id, Path(cfg.root) if cfg.root else None
     )
