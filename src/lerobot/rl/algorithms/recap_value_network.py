@@ -149,6 +149,8 @@ class RECAPValueNetwork(nn.Module):
             persistent=True,
         )
 
+        # Value head as per Bryson Jones implementation
+        # https://github.com/brysonjones/open-value/blob/main/src/open_value_estimator/value_estimator.py
         value_head_layers: list[nn.Module] = []
         for i in range(config.value_head_depth):
             value_head_layers.append(nn.Linear(gemma_config.width if i == 0 else config.hidden_dim, config.hidden_dim))
