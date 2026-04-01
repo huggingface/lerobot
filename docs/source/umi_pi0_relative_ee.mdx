@@ -1,0 +1,138 @@
+# UMI Data with pi0 Relative EE Actions
+
+This guide explains how to prepare a UMI-collected dataset for training a pi0 policy with relative end-effector (EE) actions, and how to run inference with the trained model.
+
+**What we will do:**
+
+1. How to add `observation.state` to an existing UMI LeRobot dataset.
+2. How to train pi0 with `use_relative_actions=True`.
+3. How to evaluate the trained policy on a real robot.
+
+## Background
+
+[UMI (Universal Manipulation Interface)](https://umi-gripper.github.io) collects manipulation data with hand-held grippers, recovering 6-DoF EE poses via SLAM. UMI datasets stored in LeRobot format already contain `action` (absolute EE pose) and wrist-camera images. To train pi0 with relative actions, we need two additions:
+
+1. **`observation.state`** — the current EE pose the policy conditions on.
+2. **Relative action statistics** — so the normalizer sees `(action − state)` distributions.
+
+### Why relative actions?
+
+With relative actions, each action in a chunk is an **offset from the current state** rather than an absolute target:
+
+```
+relative_action[i] = absolute_action[t + i] − state[t]
+```
+
+This is the representation advocated by UMI (Chi et al., 2024). Compared to absolute actions it removes the need for a consistent global coordinate frame, and compared to delta actions (each step relative to the previous) it avoids error accumulation across the chunk. See the [Action Representations](action_representations) guide for a full comparison.
+
+## State-Action Offset
+
+UMI SLAM produces a single trajectory of EE poses stored as `action`. We derive `observation.state` from the same trajectory with a configurable offset:
+
+```
+state[t] = action[t - offset]
+```
+
+| Offset | `state[t]`    | Meaning                                                          |
+| ------ | ------------- | ---------------------------------------------------------------- |
+| 0      | `action[t]`   | State and action are the same pose at time t                     |
+| 1      | `action[t-1]` | State is the previous action — where the gripper already arrived |
+
+An offset of 1 is the typical UMI convention: at decision time the "current state" is where the gripper _already is_ (the result of the previous command), and the action is where it should go next. At episode boundaries where `t < offset`, we clamp to `action[0]`.
+
+## Step 1: Add State and Recompute Stats
+
+The conversion script in `examples/umi_pi0_relative_ee/convert_umi_dataset.py` handles both steps. Edit the constants at the top of the file:
+
+```python
+HF_DATASET_ID = "<hf_username>/<dataset_repo_id>"
+STATE_ACTION_OFFSET = 1
+RELATIVE_EXCLUDE_JOINTS = ["gripper"]
+CHUNK_SIZE = 50
+```
+
+Then run:
+
+```bash
+python examples/umi_pi0_relative_ee/convert_umi_dataset.py
+```
+
+This:
+
+- Loads your existing UMI LeRobot dataset.
+- Adds `observation.state` derived from the `action` column with the configured offset.
+- Calls `recompute_stats(relative_action=True)` to compute chunk-level relative action statistics.
+
+The `RELATIVE_EXCLUDE_JOINTS` parameter specifies joints that stay absolute. Gripper commands are typically binary or continuous open/close and don't benefit from relative encoding.
+
+<Tip>
+
+If your dataset already has `observation.state`, the script skips the feature-adding step and only recomputes relative action statistics.
+
+</Tip>
+
+## Step 2: Train
+
+No custom training script is needed — standard `lerobot-train` handles everything:
+
+```bash
+lerobot-train \
+    --dataset.repo_id=<hf_username>/<dataset_repo_id> \
+    --policy.type=pi0 \
+    --policy.pretrained_path=lerobot/pi0_base \
+    --policy.use_relative_actions=true \
+    --policy.relative_exclude_joints='["gripper"]'
+```
+
+Under the hood, the training pipeline:
+
+- Loads relative action stats from the dataset's `meta/stats.json`.
+- Configures `RelativeActionsProcessorStep` in the preprocessor (absolute → relative before normalization).
+- The model trains on normalized relative action values.
+
+See the [pi0 documentation](pi0) for all available training options.
+
+## Step 3: Evaluate
+
+The evaluation script in `examples/umi_pi0_relative_ee/evaluate.py` runs inference on a real robot (SO-100 with EE space):
+
+```bash
+python examples/umi_pi0_relative_ee/evaluate.py
+```
+
+Edit `HF_MODEL_ID`, `HF_DATASET_ID`, and robot configuration at the top of the file.
+
+The inference flow uses pi0's built-in processor pipeline — no custom wrappers needed:
+
+1. **Robot → FK** — Joint positions are converted to EE pose via `ForwardKinematicsJointsToEE`, producing `observation.state`.
+2. **Preprocessor** — `RelativeActionsProcessorStep` caches the raw `observation.state`, then `NormalizerProcessorStep` normalizes everything.
+3. **pi0 inference** — The model predicts a normalized relative action chunk.
+4. **Postprocessor** — `UnnormalizerProcessorStep` unnormalizes, then `AbsoluteActionsProcessorStep` adds the cached state back to get absolute EE targets.
+5. **IK → Robot** — `InverseKinematicsEEToJoints` converts absolute EE targets to joint commands.
+
+## How the Pieces Fit Together
+
+```
+Training:
+  dataset (absolute EE) → RelativeActionsProcessorStep → NormalizerProcessorStep → pi0 model
+
+Inference:
+  robot joints → FK → observation.state (absolute EE)
+                           ↓
+                   RelativeActionsProcessorStep (caches state)
+                           ↓
+                   NormalizerProcessorStep → pi0 model → relative action chunk
+                           ↓
+                   UnnormalizerProcessorStep
+                           ↓
+                   AbsoluteActionsProcessorStep (+ cached state → absolute EE)
+                           ↓
+                   IK → joint targets → robot
+```
+
+## References
+
+- [UMI: Universal Manipulation Interface](https://umi-gripper.github.io) — Chi et al., 2024. Defines relative trajectory actions.
+- [Action Representations](action_representations) — LeRobot guide comparing absolute, relative, and delta actions.
+- [pi0 documentation](pi0) — Full pi0 configuration including `use_relative_actions`.
+- [`examples/so100_to_so100_EE/`](https://github.com/huggingface/lerobot/tree/main/examples/so100_to_so100_EE) — EE-space evaluation example this builds on.

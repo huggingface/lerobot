@@ -21,6 +21,8 @@
     title: Training with PEFT (e.g., LoRA)
   - local: rename_map
     title: Using Rename Map and Empty Cameras
+  - local: umi_pi0_relative_ee
+    title: UMI Data with pi0 Relative EE Actions
   title: "Tutorials"
 - sections:
   - local: lerobot-dataset-v3
