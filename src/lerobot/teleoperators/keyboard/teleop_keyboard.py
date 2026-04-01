@@ -21,8 +21,11 @@ import time
 from queue import Queue
 from typing import Any
 
+import numpy as np
+
 from lerobot.types import RobotAction
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.errors import DeviceNotConnectedError
 
 from ..teleoperator import Teleoperator
 from ..utils import TeleopEvents
@@ -445,24 +448,28 @@ class KeyboardReachyMiniTeleop(KeyboardTeleop):
         super().__init__(config)
         self.config = config
         self.action = {
-            "body_rotation.pos": 0.0,
+            "ee.x": 0.0,
+            "ee.y": 0.0,
+            "ee.z": 0.0,
+            "ee.wx": 0.0,
+            "ee.wy": 0.0,
+            "ee.wz": 0.0,
             "right_antenna.pos": 0.0,
             "left_antenna.pos": 0.0,
         }
-        # Initialize stewart motors
-        for i in range(1, 7):
-            self.action[f"stewart_{i}.pos"] = 0.0
 
     @property
     def action_features(self) -> dict:
-        features = {
-            "body_rotation.pos": float,
+        return {
+            "ee.x": float,
+            "ee.y": float,
+            "ee.z": float,
+            "ee.wx": float,
+            "ee.wy": float,
+            "ee.wz": float,
             "right_antenna.pos": float,
             "left_antenna.pos": float,
         }
-        for i in range(1, 7):
-            features[f"stewart_{i}.pos"] = float
-        return features
 
     def get_action(self) -> dict[str, Any]:
         if not self.is_connected:
@@ -477,20 +484,29 @@ class KeyboardReachyMiniTeleop(KeyboardTeleop):
             if not val:
                 continue
             if key == "w":
-                # Move all stewart motors to simulate lifting/lowering (approximate)
-                for i in range(1, 7):
-                    self.action[f"stewart_{i}.pos"] += self.config.head_speed_deg
+                # Pitch forward
+                self.action["ee.wy"] += np.deg2rad(self.config.head_speed_deg)
             elif key == "s":
-                for i in range(1, 7):
-                    self.action[f"stewart_{i}.pos"] -= self.config.head_speed_deg
+                # Pitch backward
+                self.action["ee.wy"] -= np.deg2rad(self.config.head_speed_deg)
             elif key == "a":
-                self.action["body_rotation.pos"] += self.config.body_speed_deg
+                # Roll left
+                self.action["ee.wx"] += np.deg2rad(self.config.head_speed_deg)
             elif key == "d":
-                self.action["body_rotation.pos"] -= self.config.body_speed_deg
+                # Roll right
+                self.action["ee.wx"] -= np.deg2rad(self.config.head_speed_deg)
             elif key == "q":
-                self.action["left_antenna.pos"] += self.config.antenna_speed_deg
+                # Yaw left (maps to ee.wz which controls body_rotation via IK)
+                self.action["ee.wz"] += np.deg2rad(self.config.body_speed_deg)
             elif key == "e":
-                self.action["left_antenna.pos"] -= self.config.antenna_speed_deg
+                # Yaw right
+                self.action["ee.wz"] -= np.deg2rad(self.config.body_speed_deg)
+            elif key == "up":
+                # Move up
+                self.action["ee.z"] += 0.001 * self.config.head_speed_deg
+            elif key == "down":
+                # Move down
+                self.action["ee.z"] -= 0.001 * self.config.head_speed_deg
             elif key == "z":
                 self.action["right_antenna.pos"] += self.config.antenna_speed_deg
             elif key == "c":
