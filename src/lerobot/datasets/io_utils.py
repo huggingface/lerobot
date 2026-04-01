@@ -23,6 +23,7 @@ import pandas
 import pandas as pd
 import pyarrow.dataset as pa_ds
 import pyarrow.parquet as pq
+import soundfile as sf
 import torch
 from datasets import Dataset
 from datasets.table import embed_table_storage
@@ -278,6 +279,24 @@ def load_image_as_numpy(
     if np.issubdtype(dtype, np.floating):
         img_array /= 255.0
     return img_array
+
+
+def load_audio_from_path(fpath: str | Path) -> np.ndarray:
+    """Load an audio file from a path into a numpy array.
+
+    Args:
+        fpath (str | Path): Path to the audio file.
+
+    Returns:
+        np.ndarray: The audio as a numpy array.
+    """
+    audio_data, _ = sf.read(fpath, dtype="float32")
+
+    # Fill missing channel dimension when loading mono audio data
+    if audio_data.ndim == 1:
+        audio_data = np.expand_dims(audio_data, axis=1)
+
+    return audio_data
 
 
 def hf_transform_to_torch(items_dict: dict[str, list[Any]]) -> dict[str, list[torch.Tensor | str]]:

@@ -21,8 +21,10 @@ from pathlib import Path
 import datasets
 import torch
 
+from lerobot.datasets.audio_utils import decode_audio
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.feature_utils import (
+    DEFAULT_AUDIO_CHUNK_DURATION,
     check_delta_timestamps,
     get_delta_indices,
     get_hf_features_from_features,
@@ -130,7 +132,7 @@ class DatasetReader:
         return hf_dataset
 
     def _check_cached_episodes_sufficient(self) -> bool:
-        """Check if the cached dataset contains all requested episodes and their video files."""
+        """Check if the cached dataset contains all requested episodes and their video and audio files."""
         if self.hf_dataset is None or len(self.hf_dataset) == 0:
             return False
 
@@ -154,6 +156,13 @@ class DatasetReader:
                     if not video_path.exists():
                         return False
 
+        if len(self._meta.audio_keys) > 0:
+            for ep_idx in requested_episodes:
+                for audio_key in self._meta.audio_keys:
+                    audio_path = self.root / self._meta.get_compressed_audio_file_path(ep_idx, audio_key)
+                    if not audio_path.exists():
+                        return False
+
         return True
 
     def get_episodes_file_paths(self) -> list[Path]:
@@ -170,6 +179,15 @@ class DatasetReader:
                 for ep_idx in episodes
             ]
             fpaths += video_files
+
+        if len(self._meta.audio_keys) > 0:
+            audio_files = [
+                str(self._meta.get_compressed_audio_file_path(ep_idx, audio_key))
+                for audio_key in self._meta.audio_keys
+                for ep_idx in episodes
+            ]
+            fpaths += audio_files
+
         # episodes are stored in the same files, so we return unique paths only
         fpaths = list(set(fpaths))
         return fpaths
@@ -199,7 +217,7 @@ class DatasetReader:
         query_indices: dict[str, list[int]] | None = None,
     ) -> dict[str, list[float]]:
         query_timestamps = {}
-        for key in self._meta.video_keys:
+        for key in self._meta.video_keys + self._meta.audio_keys:
             if query_indices is not None and key in query_indices:
                 if self._absolute_to_relative_idx is not None:
                     relative_indices = [self._absolute_to_relative_idx[idx] for idx in query_indices[key]]
@@ -213,10 +231,10 @@ class DatasetReader:
         return query_timestamps
 
     def _query_hf_dataset(self, query_indices: dict[str, list[int]]) -> dict:
-        """Query dataset for indices across keys, skipping video keys."""
+        """Query dataset for indices across keys, skipping video and audio keys."""
         result: dict = {}
         for key, q_idx in query_indices.items():
-            if key in self._meta.video_keys:
+            if key in self._meta.video_keys or key in self._meta.audio_keys:
                 continue
             relative_indices = (
                 q_idx
@@ -246,6 +264,28 @@ class DatasetReader:
 
         return item
 
+    # TODO(CarolinePascal): add variable query durations
+    def _query_audio(
+        self, query_timestamps: dict[str, list[float]], query_duration: float, ep_idx: int
+    ) -> dict[str, torch.Tensor]:
+        ep = self.meta.episodes[ep_idx]
+        item = {}
+        for audio_key, query_ts in query_timestamps.items():
+            # Episodes are stored sequentially on a single mp4 to reduce the number of files.
+            # Thus we load the start timestamp of the episode on this mp4 and,
+            # shift the query timestamp accordingly.
+            from_timestamp = ep[f"audio/{audio_key}/from_timestamp"]
+            shifted_query_ts = [from_timestamp + ts for ts in query_ts]
+
+            audio_path = self.root / self.meta.get_audio_file_path(ep_idx, audio_key)
+            start_time_s = self.meta.features[audio_key]["info"].get("start_time_s", 0.0)
+            audio_chunk = decode_audio(
+                audio_path, shifted_query_ts, query_duration, start_time_s, self.audio_backend
+            )
+            item[audio_key] = audio_chunk.squeeze(0)
+
+        return item
+
     def get_item(self, idx) -> dict:
         """Core __getitem__ logic. Assumes hf_dataset is loaded.
 
@@ -265,11 +305,12 @@ class DatasetReader:
             for key, val in query_result.items():
                 item[key] = val
 
-        if len(self._meta.video_keys) > 0:
+        if len(self._meta.video_keys) > 0 or len(self._meta.audio_keys) > 0:
             current_ts = item["timestamp"].item()
             query_timestamps = self._get_query_timestamps(current_ts, query_indices)
             video_frames = self._query_videos(query_timestamps, ep_idx)
-            item = {**video_frames, **item}
+            audio_chunks = self._query_audio(query_timestamps, DEFAULT_AUDIO_CHUNK_DURATION, ep_idx)
+            item = {**video_frames, **audio_chunks, **item}
 
         if self._image_transforms is not None:
             image_keys = self._meta.camera_keys

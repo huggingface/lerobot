@@ -22,6 +22,8 @@ from PIL import Image as PILImage
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.datasets.utils import (
+    DEFAULT_AUDIO_FILE_SIZE_IN_MB,
+    DEFAULT_AUDIO_PATH,
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
@@ -47,7 +49,7 @@ def get_hf_features_from_features(features: dict) -> datasets.Features:
     """
     hf_features = {}
     for key, ft in features.items():
-        if ft["dtype"] == "video":
+        if ft["dtype"] == "video" or ft["dtype"] == "audio":
             continue
         elif ft["dtype"] == "image":
             hf_features[key] = datasets.Image()
@@ -110,7 +112,12 @@ def hw_to_dataset_features(
         for key, ftype in hw_features.items()
         if ftype is float or (isinstance(ftype, PolicyFeature) and ftype.type != FeatureType.VISUAL)
     }
-    cam_fts = {key: shape for key, shape in hw_features.items() if isinstance(shape, tuple)}
+    cam_fts = {
+        key: shape for key, shape in hw_features.items() if isinstance(shape, tuple) and len(shape) == 3
+    }
+    mic_fts = {
+        key: shape for key, shape in hw_features.items() if isinstance(shape, tuple) and len(shape) == 2
+    }
 
     if joint_fts and prefix == ACTION:
         features[prefix] = {
@@ -131,6 +138,14 @@ def hw_to_dataset_features(
             "dtype": "video" if use_video else "image",
             "shape": shape,
             "names": ["height", "width", "channels"],
+        }
+
+    for key, parameters in mic_fts.items():
+        features[f"{prefix}.audio.{key}"] = {
+            "dtype": "audio",
+            "shape": (len(parameters[1]),),
+            "names": ["channels"],
+            "info": {"sample_rate": parameters[0]},
         }
 
     _validate_feature_names(features)
@@ -162,6 +177,8 @@ def build_dataset_frame(
             frame[key] = np.array([values[name] for name in ft["names"]], dtype=np.float32)
         elif ft["dtype"] in ["image", "video"]:
             frame[key] = values[key.removeprefix(f"{prefix}.images.")]
+        elif ft["dtype"] == "audio":
+            frame[key] = values[key.removeprefix(f"{prefix}.audio.")]
 
     return frame
 
@@ -195,6 +212,10 @@ def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFea
             # Backward compatibility for "channel" which is an error introduced in LeRobotDataset v2.0 for ported datasets.
             if names[2] in ["channel", "channels"]:  # (h, w, c) -> (c, h, w)
                 shape = (shape[2], shape[0], shape[1])
+        elif ft["dtype"] == "audio":
+            type = FeatureType.AUDIO
+            if len(shape) != 2:
+                raise ValueError(f"Number of dimensions of {key} != 2 (shape={shape})")
         elif key == OBS_ENV_STATE:
             type = FeatureType.ENV
         elif key.startswith(OBS_STR):
@@ -273,6 +294,7 @@ def create_empty_dataset_info(
     chunks_size: int | None = None,
     data_files_size_in_mb: int | None = None,
     video_files_size_in_mb: int | None = None,
+    audio_files_size_in_mb: int | None = None,
 ) -> dict:
     """Create a template dictionary for a new dataset's `info.json`.
 
@@ -282,7 +304,10 @@ def create_empty_dataset_info(
         features (dict): The LeRobot features dictionary for the dataset.
         use_videos (bool): Whether the dataset will store videos.
         robot_type (str | None): The type of robot used, if any.
-
+        chunks_size (int | None): The number of files per chunk.
+        data_files_size_in_mb (int | None): The maximum size per data file in MB.
+        video_files_size_in_mb (int | None): The maximum size per video file in MB.
+        audio_files_size_in_mb (int | None): The maximum size per audio file in MB.
     Returns:
         dict: A dictionary with the initial dataset metadata.
     """
@@ -295,10 +320,12 @@ def create_empty_dataset_info(
         "chunks_size": chunks_size or DEFAULT_CHUNK_SIZE,
         "data_files_size_in_mb": data_files_size_in_mb or DEFAULT_DATA_FILE_SIZE_IN_MB,
         "video_files_size_in_mb": video_files_size_in_mb or DEFAULT_VIDEO_FILE_SIZE_IN_MB,
+        "audio_files_size_in_mb": audio_files_size_in_mb or DEFAULT_AUDIO_FILE_SIZE_IN_MB,
         "fps": fps,
         "splits": {},
         "data_path": DEFAULT_DATA_PATH,
         "video_path": DEFAULT_VIDEO_PATH if use_videos else None,
+        "audio_path": DEFAULT_AUDIO_PATH,
         "features": features,
     }
 
@@ -435,6 +462,8 @@ def validate_feature_dtype_and_shape(
         return validate_feature_numpy_array(name, expected_dtype, expected_shape, value)
     elif expected_dtype in ["image", "video"]:
         return validate_feature_image_or_video(name, expected_shape, value)
+    elif expected_dtype == "audio":
+        return validate_feature_audio(name, expected_shape, value)
     elif expected_dtype == "string":
         return validate_feature_string(name, value)
     else:
@@ -497,6 +526,33 @@ def validate_feature_image_or_video(
         pass
     else:
         error_message += f"The feature '{name}' is expected to be of type 'PIL.Image' or 'np.ndarray' channel first or channel last, but type '{type(value)}' provided instead.\n"
+
+    return error_message
+
+
+def validate_feature_audio(name: str, expected_shape: list[str], value: np.ndarray):
+    """Validate a feature that is expected to be an audio frame.
+
+    Args:
+        name (str): The name of the feature.
+        expected_shape (list[str]): The expected shape (C,).
+        value: The audio data to validate.
+
+    Returns:
+        str: An error message if validation fails, otherwise an empty string.
+    """
+    error_message = ""
+    if isinstance(value, np.ndarray):
+        actual_shape = value.shape
+        c = expected_shape
+        if (len(actual_shape) != 2 and len(actual_shape) != 1) or actual_shape[-1] != c[
+            -1
+        ]:  # The number of frames might be different
+            error_message += (
+                f"The feature '{name}' of shape '{actual_shape}' does not have the expected shape '{c}'.\n"
+            )
+    else:
+        error_message += f"The feature '{name}' is expected to be of type 'np.ndarray', but type '{type(value)}' provided instead.\n"
 
     return error_message
 

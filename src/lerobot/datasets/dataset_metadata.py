@@ -23,6 +23,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from huggingface_hub import snapshot_download
 
+from lerobot.datasets.audio_utils import get_audio_info
 from lerobot.datasets.compute_stats import aggregate_stats
 from lerobot.datasets.feature_utils import _validate_feature_names, create_empty_dataset_info
 from lerobot.datasets.io_utils import (
@@ -40,6 +41,7 @@ from lerobot.datasets.io_utils import (
 from lerobot.datasets.utils import (
     DEFAULT_EPISODES_PATH,
     DEFAULT_FEATURES,
+    DEFAULT_INITIAL_AUDIO_BUFFER_DURATION,
     INFO_PATH,
     check_version_compatibility,
     flatten_dict,
@@ -269,6 +271,32 @@ class LeRobotDatasetMetadata:
         fpath = self.video_path.format(video_key=vid_key, chunk_index=chunk_idx, file_index=file_idx)
         return Path(fpath)
 
+    def get_audio_file_path(self, ep_index: int, audio_key: str) -> Path:
+        """Return the relative audio file path for the given episode and audio key.
+
+        Args:
+            ep_index: Zero-based episode index.
+            audio_key: Feature key identifying the audio stream
+                (e.g. ``'observation.audio.microphone'``).
+
+        Returns:
+            Path to the audio file containing this episode's audio.
+
+        Raises:
+            IndexError: If ``ep_index`` is out of range.
+        """
+        if self.episodes is None:
+            self.episodes = load_episodes(self.root)
+        if ep_index >= len(self.episodes):
+            raise IndexError(
+                f"Episode index {ep_index} out of range. Episodes: {len(self.episodes) if self.episodes else 0}"
+            )
+        ep = self.episodes[ep_index]
+        chunk_idx = ep[f"audio/{audio_key}/chunk_index"]
+        file_idx = ep[f"audio/{audio_key}/file_index"]
+        fpath = self.audio_path.format(audio_key=audio_key, chunk_index=chunk_idx, file_index=file_idx)
+        return Path(fpath)
+
     @property
     def data_path(self) -> str:
         """Formattable string for the parquet files."""
@@ -278,6 +306,11 @@ class LeRobotDatasetMetadata:
     def video_path(self) -> str | None:
         """Formattable string for the video files."""
         return self.info["video_path"]
+
+    @property
+    def audio_path(self) -> str | None:
+        """Formattable string for the audio files."""
+        return self.info["audio_path"]
 
     @property
     def robot_type(self) -> str | None:
@@ -308,6 +341,11 @@ class LeRobotDatasetMetadata:
     def camera_keys(self) -> list[str]:
         """Keys to access visual modalities (regardless of their storage method)."""
         return [key for key, ft in self.features.items() if ft["dtype"] in ["video", "image"]]
+
+    @property
+    def audio_keys(self) -> list[str]:
+        """Keys to access audio modalities."""
+        return [key for key, ft in self.features.items() if ft["dtype"] == "audio"]
 
     @property
     def names(self) -> dict[str, list | dict]:
@@ -348,6 +386,11 @@ class LeRobotDatasetMetadata:
     def video_files_size_in_mb(self) -> int:
         """Max size of video file in mega bytes."""
         return self.info["video_files_size_in_mb"]
+
+    @property
+    def audio_files_size_in_mb(self) -> int:
+        """Max size of audio file in mega bytes."""
+        return self.info["audio_files_size_in_mb"]
 
     def get_task_index(self, task: str) -> int | None:
         """
@@ -515,11 +558,27 @@ class LeRobotDatasetMetadata:
                 video_path = self.root / self.video_path.format(video_key=key, chunk_index=0, file_index=0)
                 self.info["features"][key]["info"] = get_video_info(video_path)
 
+    def update_audio_info(self, audio_key: str | None = None) -> None:
+        """
+        Warning: this function writes info from first episode audio, implicitly assuming that all audio have
+        been encoded the same way. Also, this means it assumes the first episode exists.
+        """
+        if audio_key is not None and audio_key not in self.audio_keys:
+            raise ValueError(f"Audio key {audio_key} not found in dataset")
+
+        audio_keys = [audio_key] if audio_key is not None else self.audio_keys
+        for key in audio_keys:
+            if not self.features[key].get("info", None):
+                audio_path = self.root / self.audio_path.format(audio_key=key, chunk_index=0, file_index=0)
+                self.info["features"][key]["info"] = get_audio_info(audio_path)
+                self.info["features"][key]["info"]["start_time_s"] = DEFAULT_INITIAL_AUDIO_BUFFER_DURATION
+
     def update_chunk_settings(
         self,
         chunks_size: int | None = None,
         data_files_size_in_mb: int | None = None,
         video_files_size_in_mb: int | None = None,
+        audio_files_size_in_mb: int | None = None,
     ) -> None:
         """Update chunk and file size settings after dataset creation.
 
@@ -531,6 +590,7 @@ class LeRobotDatasetMetadata:
             chunks_size: Maximum number of files per chunk directory. If None, keeps current value.
             data_files_size_in_mb: Maximum size for data parquet files in MB. If None, keeps current value.
             video_files_size_in_mb: Maximum size for video files in MB. If None, keeps current value.
+            audio_files_size_in_mb: Maximum size for audio files in MB. If None, keeps current value.
         """
         if chunks_size is not None:
             if chunks_size <= 0:
@@ -547,6 +607,11 @@ class LeRobotDatasetMetadata:
                 raise ValueError(f"video_files_size_in_mb must be positive, got {video_files_size_in_mb}")
             self.info["video_files_size_in_mb"] = video_files_size_in_mb
 
+        if audio_files_size_in_mb is not None:
+            if audio_files_size_in_mb <= 0:
+                raise ValueError(f"audio_files_size_in_mb must be positive, got {audio_files_size_in_mb}")
+            self.info["audio_files_size_in_mb"] = audio_files_size_in_mb
+
         # Update the info file on disk
         write_info(self.info, self.root)
 
@@ -554,12 +619,13 @@ class LeRobotDatasetMetadata:
         """Get current chunk and file size settings.
 
         Returns:
-            Dict containing chunks_size, data_files_size_in_mb, and video_files_size_in_mb.
+            Dict containing chunks_size, data_files_size_in_mb, video_files_size_in_mb, and audio_files_size_in_mb.
         """
         return {
             "chunks_size": self.chunks_size,
             "data_files_size_in_mb": self.data_files_size_in_mb,
             "video_files_size_in_mb": self.video_files_size_in_mb,
+            "audio_files_size_in_mb": self.audio_files_size_in_mb,
         }
 
     def __repr__(self):
@@ -586,6 +652,7 @@ class LeRobotDatasetMetadata:
         chunks_size: int | None = None,
         data_files_size_in_mb: int | None = None,
         video_files_size_in_mb: int | None = None,
+        audio_files_size_in_mb: int | None = None,
     ) -> "LeRobotDatasetMetadata":
         """Create metadata for a new LeRobot dataset from scratch.
 
@@ -636,6 +703,7 @@ class LeRobotDatasetMetadata:
             chunks_size,
             data_files_size_in_mb,
             video_files_size_in_mb,
+            audio_files_size_in_mb,
         )
         if len(obj.video_keys) > 0 and not use_videos:
             raise ValueError(

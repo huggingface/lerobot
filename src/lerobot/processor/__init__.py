@@ -23,6 +23,7 @@ from lerobot.types import (
     TransitionKey,
 )
 
+from .audio_processor import AudioProcessorStep
 from .batch_processor import AddBatchDimensionProcessorStep
 from .converters import (
     batch_to_transition,
@@ -88,6 +89,7 @@ __all__ = [
     "ActionProcessorStep",
     "AddTeleopActionAsComplimentaryDataStep",
     "AddTeleopEventsAsInfoStep",
+    "AudioProcessorStep",
     "ComplementaryDataProcessorStep",
     "batch_to_transition",
     "create_transition",

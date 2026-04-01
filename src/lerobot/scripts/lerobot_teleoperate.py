@@ -62,6 +62,8 @@ from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # no
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.cameras.zmq.configuration_zmq import ZMQCameraConfig  # noqa: F401
 from lerobot.configs import parser
+from lerobot.microphones.portaudio.configuration_portaudio import PortAudioMicrophoneConfig  # noqa: F401
+from lerobot.microphones.touchlab.configuration_touchlab import TouchLabSensorConfig  # noqa: F401
 from lerobot.processor import (
     RobotAction,
     RobotObservation,
@@ -151,8 +153,18 @@ def teleop_loop(
         robot_action_processor: An optional pipeline to process actions before they are sent to the robot.
         robot_observation_processor: An optional pipeline to process raw observations from the robot.
     """
+    if display_data:
+        init_rerun(
+            session_name="teleoperation",
+            robot=robot,
+            reset_time=True,
+        )
 
     display_len = max(len(key) for key in robot.action_features)
+
+    for _, microphone in robot.microphones.items():
+        microphone.start_recording()
+
     start = time.perf_counter()
     while True:
         loop_start = time.perf_counter()
@@ -186,6 +198,7 @@ def teleop_loop(
                 observation=obs_transition,
                 action=teleop_action,
                 compress_images=display_compressed_images,
+                log_time=time.perf_counter() - start,
             )
 
             print("\n" + "-" * (display_len + 10))
@@ -202,7 +215,10 @@ def teleop_loop(
         move_cursor_up(1)
 
         if duration is not None and time.perf_counter() - start >= duration:
-            return
+            break
+
+    for _, microphone in robot.microphones.items():
+        microphone.stop_recording()
 
 
 @parser.wrap()

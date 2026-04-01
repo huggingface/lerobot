@@ -85,7 +85,7 @@ from lerobot.datasets.utils import (
     flatten_dict,
     update_chunk_file_indices,
 )
-from lerobot.datasets.video_utils import concatenate_video_files, get_video_duration_in_s
+from lerobot.datasets.video_utils import concatenate_media_files, get_media_duration_in_s
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.utils import init_logging
 
@@ -318,12 +318,12 @@ def convert_videos_of_camera(root: Path, new_root: Path, video_key: str, video_f
 
     for ep_path in tqdm.tqdm(ep_paths, desc=f"convert videos of {video_key}"):
         ep_size_in_mb = get_file_size_in_mb(ep_path)
-        ep_duration_in_s = get_video_duration_in_s(ep_path)
+        ep_duration_in_s = get_media_duration_in_s(ep_path, media_type="video")
 
         # Check if adding this episode would exceed the limit
         if size_in_mb + ep_size_in_mb >= video_file_size_in_mb and len(paths_to_cat) > 0:
             # Size limit would be exceeded, save current accumulation WITHOUT this episode
-            concatenate_video_files(
+            concatenate_media_files(
                 paths_to_cat,
                 new_root
                 / DEFAULT_VIDEO_PATH.format(video_key=video_key, chunk_index=chunk_idx, file_index=file_idx),
@@ -359,7 +359,7 @@ def convert_videos_of_camera(root: Path, new_root: Path, video_key: str, video_f
 
     # Write remaining videos if any
     if paths_to_cat:
-        concatenate_video_files(
+        concatenate_media_files(
             paths_to_cat,
             new_root
             / DEFAULT_VIDEO_PATH.format(video_key=video_key, chunk_index=chunk_idx, file_index=file_idx),
@@ -402,7 +402,12 @@ def generate_episode_metadata_dict(
         if len(ep_ids_set) != 1:
             raise ValueError(f"Number of episodes is not the same ({ep_ids_set}).")
 
-        ep_dict = {**ep_metadata, **ep_video, **ep_legacy_metadata, **flatten_dict({"stats": ep_stats})}
+        ep_dict = {
+            **ep_metadata,
+            **ep_video,
+            **ep_legacy_metadata,
+            **flatten_dict({"stats": ep_stats}),
+        }
         ep_dict["meta/episodes/chunk_index"] = 0
         ep_dict["meta/episodes/file_index"] = 0
         yield ep_dict
@@ -423,7 +428,10 @@ def convert_episodes_metadata(root, new_root, episodes_metadata, episodes_video_
 
     ds_episodes = Dataset.from_generator(
         lambda: generate_episode_metadata_dict(
-            episodes_legacy_metadata, episodes_metadata, episodes_stats, episodes_video_metadata
+            episodes_legacy_metadata,
+            episodes_metadata,
+            episodes_stats,
+            episodes_video_metadata,
         )
     )
     write_episodes(ds_episodes, new_root)

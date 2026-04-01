@@ -54,7 +54,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         revision: str | None = None,
         force_cache_sync: bool = False,
         download_videos: bool = True,
+        download_audio: bool = True,
         video_backend: str | None = None,
+        audio_backend: str | None = None,
         batch_encoding_size: int = 1,
         vcodec: str = "libsvtav1",
         streaming_encoding: bool = False,
@@ -91,6 +93,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                   task-conditioned training.
             - data (backed by datasets.Dataset), which reads values from parquet files.
             - videos (optional) from which frames are loaded to be synchronous with data from parquet files.
+            - audio (optional) from which audio is loaded to be synchronous with data from parquet files.
 
         A typical LeRobotDataset looks like this from its root path:
         .
@@ -116,19 +119,37 @@ class LeRobotDataset(torch.utils.data.Dataset):
         │   ├── info.json
         │   ├── stats.json
         │   └── tasks.parquet
-        └── videos
-            ├── observation.images.laptop
+        ├── videos
+        │   ├── observation.images.laptop
+        │   │   ├── chunk-000
+        │   │   │   ├── file-000.mp4
+        │   │   │   ├── file-001.mp4
+        │   │   │   └── ...
+        │   │   ├── chunk-001
+        │   │   │   └── ...
+        │   │   └── ...
+        │   ├── observation.images.phone
+        │   │   ├── chunk-000
+        │   │   │   ├── file-000.mp4
+        │   │   │   ├── file-001.mp4
+        │   │   │   └── ...
+        │   │   ├── chunk-001
+        │   │   │   └── ...
+        │   │   └── ...
+        │   └── ...
+        └── audio
+            ├── observation.audio.laptop
             │   ├── chunk-000
-            │   │   ├── file-000.mp4
-            │   │   ├── file-001.mp4
+            │   │   ├── file-000.m4a
+            │   │   ├── file-001.m4a
             │   │   └── ...
             │   ├── chunk-001
             │   │   └── ...
             │   └── ...
-            ├── observation.images.phone
+            ├── observation.audio.phone
             │   ├── chunk-000
-            │   │   ├── file-000.mp4
-            │   │   ├── file-001.mp4
+            │   │   ├── file-000.m4a
+            │   │   ├── file-001.m4a
             │   │   └── ...
             │   ├── chunk-001
             │   │   └── ...
@@ -169,8 +190,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
             download_videos (bool, optional): Flag to download the videos. Note that when set to True but the
                 video files are already present on local disk, they won't be downloaded again. Defaults to
                 True.
+            download_audio (bool, optional): Flag to download the audio. Defaults to True.
             video_backend (str | None, optional): Video backend to use for decoding videos. Defaults to torchcodec when available int the platform; otherwise, defaults to 'pyav'.
                 You can also use the 'pyav' decoder used by Torchvision, which used to be the default option, or 'video_reader' which is another decoder of Torchvision.
+            audio_backend (str | None, optional): Audio backend to use for decoding audio. Defaults to 'torchcodec'.
             batch_encoding_size (int, optional): Number of episodes to accumulate before batch encoding videos.
                 Set to 1 for immediate encoding (default), or higher for batched encoding. Defaults to 1.
             vcodec (str, optional): Video codec for encoding videos during recording. Options: 'h264', 'hevc',
@@ -198,6 +221,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.tolerance_s = tolerance_s
         self.revision = revision if revision else CODEBASE_VERSION
         self._video_backend = video_backend if video_backend else get_safe_default_codec()
+        self._audio_backend = audio_backend if audio_backend else "torchcodec"
         self._batch_encoding_size = batch_encoding_size
         self._vcodec = resolve_vcodec(vcodec)
         self._encoder_threads = encoder_threads
@@ -219,6 +243,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             episodes=episodes,
             tolerance_s=tolerance_s,
             video_backend=self._video_backend,
+            audio_backend=self._audio_backend,
             delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
         )
@@ -227,7 +252,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if force_cache_sync or not self.reader.try_load():
             if is_valid_version(self.revision):
                 self.revision = get_safe_version(self.repo_id, self.revision)
-            self._download(download_videos)
+            self._download(download_videos, download_audio)
             self.reader.load_and_activate()
 
         # Detect write-mode params for backward compatibility
@@ -281,6 +306,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 episodes=self.episodes,
                 tolerance_s=self.tolerance_s,
                 video_backend=self._video_backend,
+                audio_backend=self._audio_backend,
                 delta_timestamps=self.delta_timestamps,
                 image_transforms=self.image_transforms,
             )
@@ -484,6 +510,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         license: str | None = "apache-2.0",
         tag_version: bool = True,
         push_videos: bool = True,
+        push_audio: bool = True,
         private: bool = False,
         allow_patterns: list[str] | str | None = None,
         upload_large_folder: bool = False,
@@ -513,6 +540,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         ignore_patterns = ["images/"]
         if not push_videos:
             ignore_patterns.append("videos/")
+        if not push_audio:
+            ignore_patterns.append("audio/")
 
         hub_api = HfApi()
         hub_api.create_repo(
@@ -553,10 +582,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 hub_api.delete_tag(self.repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
             hub_api.create_tag(self.repo_id, tag=CODEBASE_VERSION, revision=branch, repo_type="dataset")
 
-    def _download(self, download_videos: bool = True) -> None:
+    def _download(self, download_videos: bool = True, download_audio: bool = True) -> None:
         """Downloads the dataset from the given 'repo_id' at the provided version."""
         ignore_patterns = None if download_videos else "videos/"
         files = None
+        ignore_patterns = []
+        if not download_videos:
+            ignore_patterns.append("videos/")
+        if not download_audio:
+            ignore_patterns.append("audio/")
         if self.episodes is not None:
             # Reader is guaranteed to exist here (created in __init__ before _download)
             files = self.reader.get_episodes_file_paths()
@@ -603,6 +637,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         image_writer_processes: int = 0,
         image_writer_threads: int = 0,
         video_backend: str | None = None,
+        audio_backend: str | None = None,
         batch_encoding_size: int = 1,
         vcodec: str = "libsvtav1",
         metadata_buffer_size: int = 10,

@@ -31,6 +31,7 @@ import PIL.Image
 import pyarrow.parquet as pq
 import torch
 
+from lerobot.datasets.audio_utils import encode_audio
 from lerobot.datasets.compute_stats import compute_episode_stats
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.feature_utils import (
@@ -48,14 +49,17 @@ from lerobot.datasets.io_utils import (
 from lerobot.datasets.utils import (
     DEFAULT_EPISODES_PATH,
     DEFAULT_IMAGE_PATH,
+    DEFAULT_RAW_AUDIO_PATH,
     update_chunk_file_indices,
 )
 from lerobot.datasets.video_utils import (
     StreamingVideoEncoder,
-    concatenate_video_files,
+    concatenate_media_files,
     encode_video_frames,
-    get_video_duration_in_s,
+    get_media_duration_in_s,
 )
+from lerobot.microphones.microphone import Microphone
+from lerobot.microphones.utils import async_microphones_start_recording
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +148,10 @@ class DatasetWriter:
     def _get_image_file_dir(self, episode_index: int, image_key: str) -> Path:
         return self._get_image_file_path(episode_index, image_key, frame_index=0).parent
 
+    def _get_raw_audio_file_path(self, episode_index: int, audio_key: str) -> Path:
+        fpath = DEFAULT_RAW_AUDIO_PATH.format(audio_key=audio_key, episode_index=episode_index)
+        return self.root / fpath
+
     def _save_image(
         self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path, compress_level: int = 1
     ) -> None:
@@ -208,10 +216,42 @@ class DatasetWriter:
                 compress_level = 1 if self._meta.features[key]["dtype"] == "video" else 6
                 self._save_image(frame[key], img_path, compress_level)
                 self.episode_buffer[key].append(str(img_path))
+            elif self.features[key]["dtype"] == "audio":
+                if (
+                    self._meta.robot_type == "lekiwi"
+                ):  # Raw data storage should only be triggered for LeKiwi robot, for which audio is stored chunk by chunk in a visual frame-like manner
+                    self.episode_buffer[key].append(frame[key])
+                else:  # Otherwise, only the audio file path is stored in the episode buffer
+                    if frame_index == 0:
+                        audio_path = self._get_raw_audio_file_path(
+                            episode_index=self.episode_buffer["episode_index"], audio_key=key
+                        )
+                        self.episode_buffer[key].append(str(audio_path))
             else:
                 self.episode_buffer[key].append(frame[key])
 
         self.episode_buffer["size"] += 1
+
+    def add_microphone_recording(self, microphone_key: str, microphone: Microphone) -> None:
+        """
+        Starts recording audio data provided by the microphone and directly writes it in a .wav file.
+        """
+
+        audio_file = self._get_raw_audio_file_path(self.num_episodes, "observation.audio." + microphone_key)
+        microphone.start_recording(output_file=audio_file)
+
+    def add_microphones_recordings(self, microphones: dict[str, Microphone]) -> None:
+        """
+        Starts recording audio data provided by multiple microphones and directly writes it in appropriate .wav files.
+        """
+
+        output_files = []
+        for microphone_key in microphones:
+            output_files.append(
+                self._get_raw_audio_file_path(self.num_episodes, "observation.audio." + microphone_key)
+            )
+
+        async_microphones_start_recording(microphones, output_files)
 
     def save_episode(
         self,
@@ -241,12 +281,19 @@ class DatasetWriter:
         for key, ft in self._meta.features.items():
             if key in ["index", "episode_index", "task_index"] or ft["dtype"] in ["image", "video"]:
                 continue
+            elif ft["dtype"] == "audio":
+                if (
+                    self._meta.robot_type == "lekiwi"
+                ):  # Raw data storage should only be triggered for LeKiwi robot, for which audio is stored chunk by chunk in a visual frame-like manner
+                    episode_buffer[key] = np.concatenate(episode_buffer[key], axis=0)
+                continue
             episode_buffer[key] = np.stack(episode_buffer[key])
 
         # Wait for image writer to end, so that episode stats over images can be computed
         self._wait_image_writer()
 
         has_video_keys = len(self._meta.video_keys) > 0
+        has_audio_keys = len(self._meta.audio_keys) > 0
         use_streaming = self._streaming_encoder is not None and has_video_keys
         use_batched_encoding = self._batch_encoding_size > 1
 
@@ -273,7 +320,7 @@ class DatasetWriter:
                         for k, v in video_stats.items()
                     }
                 ep_metadata.update(self._save_episode_video(video_key, episode_index, temp_path=temp_path))
-        elif has_video_keys and not use_batched_encoding:
+        elif (has_video_keys or has_audio_keys) and not use_batched_encoding:
             num_cameras = len(self._meta.video_keys)
             if parallel_encoding and num_cameras > 1:
                 with concurrent.futures.ProcessPoolExecutor(max_workers=num_cameras) as executor:
@@ -309,19 +356,28 @@ class DatasetWriter:
                 for video_key in self._meta.video_keys:
                     ep_metadata.update(self._save_episode_video(video_key, episode_index))
 
+            # TODO(Caroline): add parallel encoding for audio as well
+            for audio_key in self.meta.audio_keys:
+                ep_metadata.update(self._save_episode_audio(audio_key, episode_index))
+
         # `meta.save_episode` need to be executed after encoding the videos
         self._meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats, ep_metadata)
 
-        if has_video_keys and use_batched_encoding:
+        if (has_video_keys or has_audio_keys) and use_batched_encoding:
             self._episodes_since_last_encoding += 1
             if self._episodes_since_last_encoding == self._batch_encoding_size:
                 start_ep = self._meta.total_episodes - self._batch_encoding_size
                 end_ep = self._meta.total_episodes
-                self._batch_save_episode_video(start_ep, end_ep)
+                if has_video_keys:
+                    self._batch_save_episode_video(start_ep, end_ep)
+                if has_audio_keys:
+                    self._batch_save_episode_audio(start_ep, end_ep)
                 self._episodes_since_last_encoding = 0
 
         if episode_data is None:
-            self.clear_episode_buffer(delete_images=len(self._meta.image_keys) > 0)
+            self.clear_episode_buffer(
+                delete_images=len(self._meta.image_keys) > 0, delete_audio=len(self._meta.audio_keys) > 0
+            )
 
     def _batch_save_episode_video(self, start_episode: int, end_episode: int | None = None) -> None:
         """Batch save videos for multiple episodes."""
@@ -367,6 +423,59 @@ class DatasetWriter:
             episode_df = episode_df.combine_first(video_ep_df)
             episode_df.to_parquet(episode_df_path)
             self._meta.episodes = load_episodes(self._root)
+
+    def _batch_save_episode_audio(self, start_episode: int, end_episode: int | None = None) -> None:
+        """
+        Batch save audio for multiple episodes.
+
+        Args:
+            start_episode: Starting episode index (inclusive)
+            end_episode: Ending episode index (exclusive). If None, encodes all episodes from start_episode to the current episode.
+        """
+        if end_episode is None:
+            end_episode = self.num_episodes
+
+        logging.info(
+            f"Batch encoding {self.batch_encoding_size} audio for episodes {start_episode} to {end_episode - 1}"
+        )
+
+        chunk_idx = self.meta.episodes[start_episode]["data/chunk_index"]
+        file_idx = self.meta.episodes[start_episode]["data/file_index"]
+        episode_df_path = self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
+        episode_df = pd.read_parquet(episode_df_path)
+
+        for ep_idx in range(start_episode, end_episode):
+            logging.info(f"Encoding audio for episode {ep_idx}")
+
+            if (
+                self.meta.episodes[ep_idx]["data/chunk_index"] != chunk_idx
+                or self.meta.episodes[ep_idx]["data/file_index"] != file_idx
+            ):
+                # The current episode is in a new chunk or file.
+                # Save previous episode dataframe and update the Hugging Face dataset by reloading it.
+                episode_df.to_parquet(episode_df_path)
+                self.meta.episodes = load_episodes(self.root)
+
+                # Load new episode dataframe
+                chunk_idx = self.meta.episodes[ep_idx]["data/chunk_index"]
+                file_idx = self.meta.episodes[ep_idx]["data/file_index"]
+                episode_df_path = self.root / DEFAULT_EPISODES_PATH.format(
+                    chunk_index=chunk_idx, file_index=file_idx
+                )
+                episode_df = pd.read_parquet(episode_df_path)
+
+            # Save the current episode's video metadata to the dataframe
+            audio_ep_metadata = {}
+            for audio_key in self.meta.audio_keys:
+                audio_ep_metadata.update(self._save_episode_audio(audio_key, ep_idx))
+            audio_ep_metadata.pop("episode_index")
+            audio_ep_df = pd.DataFrame(audio_ep_metadata, index=[ep_idx]).convert_dtypes(
+                dtype_backend="pyarrow"
+            )  # allows NaN values along with integers
+
+            episode_df = episode_df.combine_first(audio_ep_df)
+            episode_df.to_parquet(episode_df_path)
+            self.meta.episodes = load_episodes(self.root)
 
     def _save_episode_data(self, episode_buffer: dict) -> dict:
         """Save episode data to a parquet file."""
@@ -445,7 +554,7 @@ class DatasetWriter:
             ep_path = temp_path
 
         ep_size_in_mb = get_file_size_in_mb(ep_path)
-        ep_duration_in_s = get_video_duration_in_s(ep_path)
+        ep_duration_in_s = get_media_duration_in_s(ep_path, media_type="video")
 
         if (
             episode_index == 0
@@ -485,7 +594,7 @@ class DatasetWriter:
                 shutil.move(str(ep_path), str(new_path))
                 latest_duration_in_s = 0.0
             else:
-                concatenate_video_files(
+                concatenate_media_files(
                     [latest_path, ep_path],
                     latest_path,
                 )
@@ -507,7 +616,91 @@ class DatasetWriter:
         }
         return metadata
 
-    def clear_episode_buffer(self, delete_images: bool = True) -> None:
+    def _encode_temporary_episode_audio(self, audio_key: str, episode_index: int) -> Path:
+        """
+        Use ffmpeg to convert raw audio files into m4a audio files.
+        Note: `encode_episode_audio` is a blocking call. Making it asynchronous shouldn't speedup encoding,
+        since audio encoding with ffmpeg is already using multithreading.
+        """
+        temp_path = Path(tempfile.mkdtemp(dir=self.root)) / f"{audio_key}_{episode_index:03d}.m4a"
+        raw_audio_file = self._get_raw_audio_file_path(episode_index, audio_key)
+        encode_audio(raw_audio_file, temp_path, overwrite=True)
+        raw_audio_file.unlink()
+        return temp_path
+
+    def _save_episode_audio(self, audio_key: str, episode_index: int) -> dict:
+        # Encode episode audio into a temporary audio file
+        ep_path = self._encode_temporary_episode_audio(audio_key, episode_index)
+        ep_size_in_mb = get_file_size_in_mb(ep_path)
+        ep_duration_in_s = get_media_duration_in_s(ep_path, media_type="audio")
+
+        if (
+            episode_index == 0
+            or self.meta.latest_episode is None
+            or f"audio/{audio_key}/chunk_index" not in self.meta.latest_episode
+        ):
+            # Initialize indices for a new dataset made of the first episode data
+            chunk_idx, file_idx = 0, 0
+            if self.meta.episodes is not None and len(self.meta.episodes) > 0:
+                # It means we are resuming recording, so we need to load the latest episode
+                # Update the indices to avoid overwriting the latest episode
+                old_chunk_idx = self.meta.episodes[-1][f"audio/{audio_key}/chunk_index"]
+                old_file_idx = self.meta.episodes[-1][f"audio/{audio_key}/file_index"]
+                chunk_idx, file_idx = update_chunk_file_indices(
+                    old_chunk_idx, old_file_idx, self.meta.chunks_size
+                )
+            latest_duration_in_s = 0.0
+            new_path = self.root / self.meta.audio_path.format(
+                audio_key=audio_key, chunk_index=chunk_idx, file_index=file_idx
+            )
+            new_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(ep_path), str(new_path))
+        else:
+            # Retrieve information from the latest updated audio file using latest_episode
+            latest_ep = self.meta.latest_episode
+            chunk_idx = latest_ep[f"audio/{audio_key}/chunk_index"][0]
+            file_idx = latest_ep[f"audio/{audio_key}/file_index"][0]
+
+            latest_path = self.root / self.meta.audio_path.format(
+                audio_key=audio_key, chunk_index=chunk_idx, file_index=file_idx
+            )
+            latest_size_in_mb = get_file_size_in_mb(latest_path)
+            latest_duration_in_s = latest_ep[f"audio/{audio_key}/to_timestamp"][0]
+
+            if latest_size_in_mb + ep_size_in_mb >= self.meta.audio_files_size_in_mb:
+                # Move temporary episode audio to a new audio file in the dataset
+                chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.meta.chunks_size)
+                new_path = self.root / self.meta.audio_path.format(
+                    audio_key=audio_key, chunk_index=chunk_idx, file_index=file_idx
+                )
+                new_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(ep_path), str(new_path))
+                latest_duration_in_s = 0.0
+            else:
+                # Update latest audio file
+                concatenate_media_files(
+                    [latest_path, ep_path],
+                    latest_path,
+                )
+
+        # Remove temporary directory
+        shutil.rmtree(str(ep_path.parent))
+
+        # Update audio info (only needed when first episode is encoded since it reads from episode 0)
+        if episode_index == 0:
+            self.meta.update_audio_info(audio_key)
+            write_info(self.meta.info, self.meta.root)  # ensure audio info always written properly
+
+        metadata = {
+            "episode_index": episode_index,
+            f"audio/{audio_key}/chunk_index": chunk_idx,
+            f"audio/{audio_key}/file_index": file_idx,
+            f"audio/{audio_key}/from_timestamp": latest_duration_in_s,
+            f"audio/{audio_key}/to_timestamp": latest_duration_in_s + ep_duration_in_s,
+        }
+        return metadata
+
+    def clear_episode_buffer(self, delete_images: bool = True, delete_audio: bool = True) -> None:
         """Discard the current episode buffer and optionally delete temp images.
 
         Args:
@@ -530,6 +723,15 @@ class DatasetWriter:
                 img_dir = self._get_image_file_dir(episode_index, cam_key)
                 if img_dir.is_dir():
                     shutil.rmtree(img_dir)
+
+        if delete_audio:
+            episode_index = self.episode_buffer["episode_index"]
+            if isinstance(episode_index, np.ndarray):
+                episode_index = episode_index.item() if episode_index.size == 1 else episode_index[0]
+            for audio_key in self.meta.audio_keys:
+                audio_file = self._get_raw_audio_file_path(episode_index, audio_key)
+                if audio_file.is_file():
+                    audio_file.unlink()
 
         self.episode_buffer = self._create_episode_buffer()
 
@@ -596,7 +798,7 @@ class DatasetWriter:
             self._streaming_encoder.cancel_episode()
 
     def cleanup_interrupted_episode(self, episode_index: int) -> None:
-        """Remove temporary image directories for an interrupted episode."""
+        """Remove temporary image and audio directories for an interrupted episode."""
         for key in self._meta.video_keys:
             img_dir = self._get_image_file_path(
                 episode_index=episode_index, image_key=key, frame_index=0
@@ -606,6 +808,14 @@ class DatasetWriter:
                     f"Cleaning up interrupted episode images for episode {episode_index}, camera {key}"
                 )
                 shutil.rmtree(img_dir)
+
+        for key in self._meta.audio_keys:
+            audio_file = self._get_raw_audio_file_path(episode_index=episode_index, audio_key=key)
+            if audio_file.exists():
+                logger.debug(
+                    f"Cleaning up interrupted episode audio for episode {episode_index}, microphone {key}"
+                )
+                audio_file.unlink()
 
     def finalize(self) -> None:
         """Flush all pending work and release all resources.

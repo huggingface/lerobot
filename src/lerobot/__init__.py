@@ -29,6 +29,7 @@ Example:
         print(lerobot.available_policies_per_env)
         print(lerobot.available_robots)
         print(lerobot.available_cameras)
+        print(lerobot.available_microphones)
         print(lerobot.available_motors)
     ```
 
@@ -172,6 +173,12 @@ available_robots = [
 available_cameras = [
     "opencv",
     "intelrealsense",
+]
+
+# lists all available microphones from `lerobot/microphones`
+available_microphones = [
+    "portaudio",
+    "touchlab",
 ]
 
 # lists all available motors from `lerobot/motors`

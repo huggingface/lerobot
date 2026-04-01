@@ -23,6 +23,7 @@ from typing import Any
 import numpy as np
 
 from lerobot.cameras.utils import make_cameras_from_configs
+from lerobot.microphones.utils import make_microphones_from_configs
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.feetech import (
     FeetechMotorsBus,
@@ -73,6 +74,7 @@ class LeKiwi(Robot):
         self.arm_motors = [motor for motor in self.bus.motors if motor.startswith("arm")]
         self.base_motors = [motor for motor in self.bus.motors if motor.startswith("base")]
         self.cameras = make_cameras_from_configs(config.cameras)
+        self.microphones = make_microphones_from_configs(config.microphones)
 
     @property
     def _state_ft(self) -> dict[str, type]:
@@ -97,9 +99,16 @@ class LeKiwi(Robot):
             cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) for cam in self.cameras
         }
 
+    @property
+    def _microphones_ft(self) -> dict[str, tuple]:
+        return {
+            mic: (self.config.microphones[mic].sample_rate, self.config.microphones[mic].channels)
+            for mic in self.microphones
+        }
+
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        return {**self._state_ft, **self._cameras_ft}
+        return {**self._state_ft, **self._cameras_ft, **self._microphones_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
@@ -107,7 +116,11 @@ class LeKiwi(Robot):
 
     @property
     def is_connected(self) -> bool:
-        return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
+        return (
+            self.bus.is_connected
+            and all(cam.is_connected for cam in self.cameras.values())
+            and all(mic.is_connected for mic in self.microphones.values())
+        )
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
@@ -120,6 +133,9 @@ class LeKiwi(Robot):
 
         for cam in self.cameras.values():
             cam.connect()
+
+        for mic in self.microphones.values():
+            mic.connect()
 
         self.configure()
         logger.info(f"{self} connected.")
@@ -364,6 +380,13 @@ class LeKiwi(Robot):
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
+        # Read audio frames from microphones
+        for mic_key, mic in self.microphones.items():
+            start = time.perf_counter()
+            obs_dict[mic_key] = mic.read()
+            dt_ms = (time.perf_counter() - start) * 1e3
+            logger.debug(f"{self} read {mic_key}: {dt_ms:.1f}ms")
+
         return obs_dict
 
     @check_if_not_connected
@@ -413,5 +436,7 @@ class LeKiwi(Robot):
         self.bus.disconnect(self.config.disable_torque_on_disconnect)
         for cam in self.cameras.values():
             cam.disconnect()
+        for mic in self.microphones.values():
+            mic.disconnect()
 
         logger.info(f"{self} disconnected.")

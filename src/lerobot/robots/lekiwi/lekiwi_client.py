@@ -18,6 +18,7 @@ import base64
 import json
 import logging
 from functools import cached_property
+from time import perf_counter
 
 import cv2
 import numpy as np
@@ -58,8 +59,9 @@ class LeKiwiClient(Robot):
         self.zmq_observation_socket = None
 
         self.last_frames = {}
-
         self.last_remote_state = {}
+        self.last_frame_timestamp = None
+        self.last_frame_delay = 0.0
 
         # Define three speed levels and a current index
         self.speed_levels = [
@@ -98,8 +100,12 @@ class LeKiwiClient(Robot):
         return {name: (cfg.height, cfg.width, 3) for name, cfg in self.config.cameras.items()}
 
     @cached_property
+    def _microphones_ft(self) -> dict[str, tuple]:
+        return {name: (cfg.sample_rate, cfg.channels) for name, cfg in self.config.microphones.items()}
+
+    @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        return {**self._state_ft, **self._cameras_ft}
+        return {**self._state_ft, **self._cameras_ft, **self._microphones_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
@@ -135,6 +141,7 @@ class LeKiwiClient(Robot):
         if self.zmq_observation_socket not in socks or socks[self.zmq_observation_socket] != zmq.POLLIN:
             raise DeviceNotConnectedError("Timeout waiting for LeKiwi Host to connect expired.")
 
+        self.last_frame_timestamp = perf_counter()
         self._is_connected = True
 
     def calibrate(self) -> None:
@@ -167,6 +174,8 @@ class LeKiwiClient(Robot):
         if last_msg is None:
             logging.warning("Poller indicated data, but failed to retrieve message.")
 
+        self.last_frame_delay = perf_counter() - self.last_frame_timestamp
+        self.last_frame_timestamp = perf_counter()
         return last_msg
 
     def _parse_observation_json(self, obs_string: str) -> RobotObservation | None:
@@ -203,14 +212,16 @@ class LeKiwiClient(Robot):
 
         obs_dict: RobotObservation = {**flat_state, OBS_STATE: state_vec}
 
-        # Decode images
+        # Decode images and audio data
         current_frames: dict[str, np.ndarray] = {}
-        for cam_name, image_b64 in observation.items():
-            if cam_name not in self._cameras_ft:
-                continue
-            frame = self._decode_image_from_b64(image_b64)
-            if frame is not None:
-                current_frames[cam_name] = frame
+        for frame_name, frame_data in observation.items():
+            if frame_name in self._cameras_ft:
+                image = self._decode_image_from_b64(frame_data)
+                if image is not None:
+                    current_frames[frame_name] = image
+            elif frame_name in self._microphones_ft:
+                if frame_data is not None:
+                    current_frames[frame_name] = frame_data
 
         return current_frames, obs_dict
 
@@ -254,17 +265,27 @@ class LeKiwiClient(Robot):
         """
         Capture observations from the remote robot: current follower arm positions,
         present wheel speeds (converted to body-frame velocities: x, y, theta),
-        and a camera frame. Receives over ZMQ, translate to body-frame vel
+        and cameras and microphones data. Receives over ZMQ, translate to body-frame vel
         """
 
         frames, obs_dict = self._get_data()
 
-        # Loop over each configured camera
-        for cam_name, frame in frames.items():
-            if frame is None:
-                logging.warning("Frame is None")
-                frame = np.zeros((640, 480, 3), dtype=np.uint8)
-            obs_dict[cam_name] = frame
+        # Loop over each configured camera and microphone
+        for frame_name, frame_data in frames.items():
+            if frame_data is None:
+                if frame_name in self._cameras_ft:
+                    logging.warning("Image frame is None")
+                    image = np.zeros((640, 480, 3), dtype=np.uint8)
+                    obs_dict[frame_name] = image
+                elif frame_name in self._microphones_ft:
+                    logging.warning("Audio frame is None")
+                    obs_dict[frame_name] = np.zeros(
+                        (
+                            int(self._microphones_ft[frame_name][0] * self.last_frame_delay),
+                            self._microphones_ft[frame_name][1],
+                        ),
+                        dtype=np.float32,
+                    )
 
         return obs_dict
 

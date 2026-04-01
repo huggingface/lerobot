@@ -486,42 +486,42 @@ def encode_video_frames(
         raise OSError(f"Video encoding did not work. File not found: {video_path}.")
 
 
-def concatenate_video_files(
-    input_video_paths: list[Path | str], output_video_path: Path, overwrite: bool = True
+def concatenate_media_files(
+    input_media_paths: list[Path | str], output_media_path: Path, overwrite: bool = True
 ):
     """
-    Concatenate multiple video files into a single video file using pyav.
+    Concatenate multiple media files (video & audio) into a single media file using pyav.
 
-    This function takes a list of video input file paths and concatenates them into a single
-    output video file. It uses ffmpeg's concat demuxer with stream copy mode for fast
+    This function takes a list of input media file paths and concatenates them into a single
+    output media file. It uses ffmpeg's concat demuxer with stream copy mode for fast
     concatenation without re-encoding.
 
     Args:
-        input_video_paths: Ordered list of input video file paths to concatenate.
-        output_video_path: Path to the output video file.
-        overwrite: Whether to overwrite the output video file if it already exists. Default is True.
+        input_media_paths: Ordered list of input media file paths to concatenate.
+        output_media_path: Path to the output media file.
+        overwrite: Whether to overwrite the output media file if it already exists. Default is True.
 
     Note:
-        - Creates a temporary directory for intermediate files that is cleaned up after use.
-        - Uses ffmpeg's concat demuxer which requires all input videos to have the same
+        - Creates a temporary .ffconcat file and container audio/video file that are cleaned up after use.
+        - Uses ffmpeg's concat demuxer which requires all input media files to have the same
           codec, resolution, and frame rate for proper concatenation.
     """
 
-    output_video_path = Path(output_video_path)
+    output_media_path = Path(output_media_path)
 
-    if output_video_path.exists() and not overwrite:
-        logger.warning(f"Video file already exists: {output_video_path}. Skipping concatenation.")
+    if output_media_path.exists() and not overwrite:
+        logging.warning(f"Media file already exists: {output_media_path}. Skipping concatenation.")
         return
 
-    output_video_path.parent.mkdir(parents=True, exist_ok=True)
+    output_media_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if len(input_video_paths) == 0:
-        raise FileNotFoundError("No input video paths provided.")
+    if len(input_media_paths) == 0:
+        raise FileNotFoundError("No input media paths provided.")
 
-    # Create a temporary .ffconcat file to list the input video paths
+    # Create a temporary .ffconcat file to list the input media paths
     with tempfile.NamedTemporaryFile(mode="w", suffix=".ffconcat", delete=False) as tmp_concatenate_file:
         tmp_concatenate_file.write("ffconcat version 1.0\n")
-        for input_path in input_video_paths:
+        for input_path in input_media_paths:
             tmp_concatenate_file.write(f"file '{str(input_path.resolve())}'\n")
         tmp_concatenate_file.flush()
         tmp_concatenate_path = tmp_concatenate_file.name
@@ -531,11 +531,12 @@ def concatenate_video_files(
         tmp_concatenate_path, mode="r", format="concat", options={"safe": "0"}
     )  # safe = 0 allows absolute paths as well as relative paths
 
-    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_named_file:
-        tmp_output_video_path = tmp_named_file.name
+    # Using an intermediate container to store the concatenated media file is necessary to avoid inplace concatenation read-write race conditions.
+    with tempfile.NamedTemporaryFile(suffix=output_media_path.suffix, delete=False) as tmp_named_file:
+        tmp_output_media_path = tmp_named_file.name
 
     output_container = av.open(
-        tmp_output_video_path, mode="w", options={"movflags": "faststart"}
+        tmp_output_media_path, mode="w", options={"movflags": "faststart"}
     )  # faststart is to move the metadata to the beginning of the file to speed up loading
 
     # Replicate input streams in output container
@@ -550,6 +551,7 @@ def concatenate_video_files(
             stream_map[input_stream.index].time_base = input_stream.time_base
 
     # Demux + remux packets (no re-encode)
+    last_dts = None
     for packet in input_container.demux():
         # Skip packets from un-mapped streams
         if packet.stream.index not in stream_map:
@@ -558,6 +560,16 @@ def concatenate_video_files(
         # Skip demux flushing packets
         if packet.dts is None:
             continue
+        else:
+            # Enforce strictly increasing decoding timestamps (DTS)
+            if last_dts is not None and packet.dts <= last_dts:
+                shift = last_dts - packet.dts + 1
+                packet.dts += shift
+                packet.pts += shift  # Presenting timestamps (PTS) are the same as DTS here
+                logging.warning(
+                    f"Non-monotonic DTS; previous: {last_dts}, current: {packet.dts - shift}; changing to {packet.dts}. This may result in incorrect timestamps in the output file."
+                )
+            last_dts = packet.dts
 
         output_stream = stream_map[packet.stream.index]
         packet.stream = output_stream
@@ -565,7 +577,7 @@ def concatenate_video_files(
 
     input_container.close()
     output_container.close()
-    shutil.move(tmp_output_video_path, output_video_path)
+    shutil.move(tmp_output_media_path, output_media_path)
     Path(tmp_concatenate_path).unlink()
 
 
@@ -947,38 +959,6 @@ with warnings.catch_warnings():
     register_feature(VideoFrame, "VideoFrame")
 
 
-def get_audio_info(video_path: Path | str) -> dict:
-    # Set logging level
-    logging.getLogger("libav").setLevel(av.logging.WARNING)
-
-    # Getting audio stream information
-    audio_info = {}
-    with av.open(str(video_path), "r") as audio_file:
-        try:
-            audio_stream = audio_file.streams.audio[0]
-        except IndexError:
-            # Reset logging level
-            av.logging.restore_default_callback()
-            return {"has_audio": False}
-
-        audio_info["audio.channels"] = audio_stream.channels
-        audio_info["audio.codec"] = audio_stream.codec.canonical_name
-        # In an ideal loseless case : bit depth x sample rate x channels = bit rate.
-        # In an actual compressed case, the bit rate is set according to the compression level : the lower the bit rate, the more compression is applied.
-        audio_info["audio.bit_rate"] = audio_stream.bit_rate
-        audio_info["audio.sample_rate"] = audio_stream.sample_rate  # Number of samples per second
-        # In an ideal loseless case : fixed number of bits per sample.
-        # In an actual compressed case : variable number of bits per sample (often reduced to match a given depth rate).
-        audio_info["audio.bit_depth"] = audio_stream.format.bits
-        audio_info["audio.channel_layout"] = audio_stream.layout.name
-        audio_info["has_audio"] = True
-
-    # Reset logging level
-    av.logging.restore_default_callback()
-
-    return audio_info
-
-
 def get_video_info(video_path: Path | str) -> dict:
     # Set logging level
     logging.getLogger("libav").setLevel(av.logging.WARNING)
@@ -1008,9 +988,6 @@ def get_video_info(video_path: Path | str) -> dict:
     # Reset logging level
     av.logging.restore_default_callback()
 
-    # Adding audio stream information
-    video_info.update(**get_audio_info(video_path))
-
     return video_info
 
 
@@ -1025,22 +1002,22 @@ def get_video_pixel_channels(pix_fmt: str) -> int:
         raise ValueError("Unknown format")
 
 
-def get_video_duration_in_s(video_path: Path | str) -> float:
+def get_media_duration_in_s(media_path: Path | str, media_type: str = "video") -> float:
     """
-    Get the duration of a video file in seconds using PyAV.
+    Get the duration of a media file (video & audio) in seconds using PyAV.
 
     Args:
-        video_path: Path to the video file.
+        media_path: Path to the media file.
 
     Returns:
-        Duration of the video in seconds.
+        Duration of the media file in seconds.
     """
-    with av.open(str(video_path)) as container:
-        # Get the first video stream
-        video_stream = container.streams.video[0]
+    with av.open(str(media_path)) as container:
+        # Get the first stream
+        stream = container.streams.video[0] if media_type == "video" else container.streams.audio[0]
         # Calculate duration: stream.duration * stream.time_base gives duration in seconds
-        if video_stream.duration is not None:
-            duration = float(video_stream.duration * video_stream.time_base)
+        if stream.duration is not None:
+            duration = float(stream.duration * stream.time_base)
         else:
             # Fallback to container duration if stream duration is not available
             duration = float(container.duration / av.time_base)
@@ -1049,12 +1026,12 @@ def get_video_duration_in_s(video_path: Path | str) -> float:
 
 class VideoEncodingManager:
     """
-    Context manager that ensures proper video encoding and data cleanup even if exceptions occur.
+    Context manager that ensures proper video and audio encoding and data cleanup even if exceptions occur.
 
     This manager handles:
     - Batch encoding for any remaining episodes when recording interrupted
-    - Cleaning up temporary image files from interrupted episodes
-    - Removing empty image directories
+    - Cleaning up temporary image and audio files from interrupted episodes
+    - Removing empty image and audio directories
 
     Args:
         dataset: The LeRobotDataset instance
@@ -1090,5 +1067,17 @@ class VideoEncodingManager:
                 logger.debug("Cleaned up empty images directory")
             else:
                 logger.debug(f"Images directory is not empty, containing {len(png_files)} PNG files")
+
+        # Clean up any remaining audio directory if it's empty
+        audio_dir = self.dataset.root / "raw_audio"
+        # Check for any remaining WAV files
+        wav_files = list(audio_dir.rglob("*.wav"))
+        if len(wav_files) == 0:
+            # Only remove the raw_audio directory if no WAV files remain
+            if audio_dir.exists():
+                shutil.rmtree(audio_dir)
+                logging.debug("Cleaned up empty audio directory")
+        else:
+            logging.debug(f"Audio directory is not empty, containing {len(wav_files)} WAV files")
 
         return False  # Don't suppress the original exception
