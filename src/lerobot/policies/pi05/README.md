@@ -17,6 +17,48 @@ It is designed as a **Vision-Language-Action model with open-world generalizatio
 
 ---
 
+## Relative Actions
+
+π₀.₅ supports training with **relative actions**, where the model learns relative offsets
+from the current robot state instead of absolute joint positions. This mirrors the
+relative-action transform in OpenPI (`DeltaActions`) and can improve performance.
+
+### How it works
+
+1. **During preprocessing**, absolute actions are converted to relative offsets:
+   `relative = action - state` (for selected joints).
+2. The relative actions are normalized using statistics computed from the relative distribution.
+3. **During postprocessing**, predicted relative actions are converted back to absolute:
+   `absolute = relative + state`.
+
+Joints listed in `relative_exclude_joints` (e.g., gripper) are kept absolute.
+
+### Configuration
+
+| Parameter                 | Type        | Default       | Description                                                      |
+| ------------------------- | ----------- | ------------- | ---------------------------------------------------------------- |
+| `use_relative_actions`    | `bool`      | `False`       | Enable relative-action training                                  |
+| `relative_exclude_joints` | `list[str]` | `["gripper"]` | Joint names to keep absolute (matched by substring)              |
+| `action_feature_names`    | `list[str]` | `None`        | Auto-populated from dataset metadata at runtime by `make_policy` |
+
+### Training example
+
+```bash
+python -m lerobot.scripts.lerobot_train \
+  --policy.type=pi05 \
+  --dataset.repo_id=your_org/your_dataset \
+  --policy.use_relative_actions=true \
+  --policy.relative_exclude_joints='["gripper"]'
+```
+
+When `use_relative_actions=true`, the training script automatically:
+
+- Computes relative action statistics from the dataset (sampled chunk-level relative actions)
+- Replaces the standard action stats with relative stats for normalization
+- Broadcasts these stats across all ranks in distributed training
+
+---
+
 ## Citation
 
 If you use this work, please cite both **OpenPI** and the π₀.₅ paper:
