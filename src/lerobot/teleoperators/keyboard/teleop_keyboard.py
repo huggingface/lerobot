@@ -511,6 +511,10 @@ class KeyboardReachyMiniTeleop(KeyboardTeleop):
                 self.action["right_antenna.pos"] += self.config.antenna_speed_deg
             elif key == "c":
                 self.action["right_antenna.pos"] -= self.config.antenna_speed_deg
+            elif key == "x":
+                self.action["left_antenna.pos"] += self.config.antenna_speed_deg
+            elif key == "v":
+                self.action["left_antenna.pos"] -= self.config.antenna_speed_deg
             elif key == "r":
                 self.action = dict.fromkeys(self.action, 0.0)
                 logging.info("Resetting action to zero.")

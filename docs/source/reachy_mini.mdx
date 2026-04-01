@@ -26,11 +26,15 @@ python -m lerobot.teleoperate \
 
 | Key | Action |
 | :---: | :--- |
-| **W** / **S** | Move head (Stewart platform) |
-| **A** / **D** | Body rotation |
-| **Q** / **E** | Left antenna |
+| **W** / **S** | Pitch (tilt head up/down) |
+| **A** / **D** | Roll (tilt head left/right) |
+| **Q** / **E** | Yaw (rotate body left/right) |
+| **Up** / **Down** | Z Height (move head up/down) |
 | **Z** / **C** | Right antenna |
+| **X** / **V** | Left antenna |
 | **R** | Reset to zero |
+
+*Note: The keyboard outputs Cartesian End-Effector (EE) coordinates. LeRobot automatically passes these through the `reachy_mini_ik_pipeline` (specifically the `ReachyInverseKinematicsEEToJoints` processor) to convert them into the 6 Stewart platform motor angles.*
 
 ### Recording
 
