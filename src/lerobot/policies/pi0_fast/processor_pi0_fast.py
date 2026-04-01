@@ -136,7 +136,7 @@ def make_pi0_fast_pre_post_processors(
     # Pi0Fast order: relative → normalize → tokenize → model → unnormalize → absolute
     # This matches pi0/pi0.5: RelativeActionsProcessorStep runs first on raw absolute actions,
     # caching the raw state. NormalizerProcessorStep then normalizes the raw relative actions,
-    # so the normalizer (and action tokenizer) sees delta values — relative stats are required.
+    # so the normalizer (and action tokenizer) sees delta values, relative stats are required.
     # NOTE: RelativeActionsProcessorStep only modifies the action in the transition; it reads
     # state from the observation but does not change it. NormalizerProcessorStep still runs
     # before Pi0FastPrepareStateAndLanguageTokenizerProcessorStep, so the state tokenizer

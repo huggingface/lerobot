@@ -138,31 +138,6 @@ Inference:
                    IK → joint targets → robot
 ```
 
-## Manual mode (without derive_state_from_action)
-
-If your dataset already has `observation.state` (or you want to add it separately), you can skip `derive_state_from_action` and use relative actions + relative state independently:
-
-```bash
-# Recompute stats
-lerobot-edit-dataset \
-    --repo_id <your_dataset> \
-    --operation.type recompute_stats \
-    --operation.relative_action true \
-    --operation.relative_state true \
-    --operation.state_obs_steps 2 \
-    --operation.chunk_size 50 \
-    --operation.relative_exclude_joints "['gripper']"
-
-# Train
-lerobot-train \
-    --dataset.repo_id=<your_dataset> \
-    --policy.type=pi0 \
-    --policy.use_relative_actions=true \
-    --policy.use_relative_state=true \
-    --policy.state_obs_steps=2 \
-    --policy.relative_exclude_joints='["gripper"]'
-```
-
 ## References
 
 - [UMI: Universal Manipulation Interface](https://umi-gripper.github.io) — Chi et al., 2024. Defines relative trajectory actions.
