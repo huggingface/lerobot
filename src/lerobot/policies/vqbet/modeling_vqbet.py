@@ -467,8 +467,8 @@ class VQBeTHead(nn.Module):
         self.vqvae_model.optimized_steps += 1
         # if we updated RVQ more than `n_vqvae_training_steps` steps, we freeze the RVQ part.
         if self.vqvae_model.optimized_steps >= n_vqvae_training_steps:
-            self.vqvae_model.discretized = torch.tensor(True)
-            self.vqvae_model.vq_layer.freeze_codebook = torch.tensor(True)
+            self.vqvae_model.discretized.fill_(True)
+            self.vqvae_model.vq_layer.freeze_codebook.fill_(True)
             print("Finished discretizing action data!")
             self.vqvae_model.eval()
             for param in self.vqvae_model.vq_layer.parameters():

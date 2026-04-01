@@ -42,20 +42,28 @@ import torch
 from tqdm import tqdm
 
 from lerobot.datasets.aggregate import aggregate_datasets
-from lerobot.datasets.compute_stats import aggregate_stats, compute_episode_stats, compute_mp4_video_stats
-from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
-from lerobot.datasets.utils import (
-    DATA_DIR,
-    DEFAULT_DATA_PATH,
-    DEFAULT_EPISODES_PATH,
+from lerobot.datasets.compute_stats import (
+    aggregate_stats,
+    compute_episode_stats,
+    compute_mp4_video_stats,
+    compute_relative_action_stats,
+)
+from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+from lerobot.datasets.io_utils import (
     get_parquet_file_size_in_mb,
     load_episodes,
     load_stats,
-    update_chunk_file_indices,
     write_episodes,
     write_info,
     write_stats,
     write_tasks,
+)
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.utils import (
+    DATA_DIR,
+    DEFAULT_DATA_PATH,
+    DEFAULT_EPISODES_PATH,
+    update_chunk_file_indices,
 )
 from lerobot.datasets.video_utils import (
     _get_codec_options,
@@ -64,7 +72,7 @@ from lerobot.datasets.video_utils import (
     get_video_duration_in_s,
     get_video_info,
 )
-from lerobot.utils.constants import HF_LEROBOT_HOME, OBS_IMAGE
+from lerobot.utils.constants import ACTION, HF_LEROBOT_HOME, OBS_IMAGE, OBS_STATE
 
 
 def _load_episode_with_stats(src_dataset: LeRobotDataset, episode_idx: int) -> dict:
@@ -100,8 +108,8 @@ def delete_episodes(
     Args:
         dataset: The source LeRobotDataset.
         episode_indices: List of episode indices to delete.
-        output_dir: Directory to save the new dataset. If None, uses default location.
-        repo_id: Repository ID for the new dataset. If None, appends "_modified" to original.
+        output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
+        repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
     """
     if not episode_indices:
         raise ValueError("No episodes to delete")
@@ -163,7 +171,7 @@ def split_dataset(
         dataset: The source LeRobotDataset to split.
         splits: Either a dict mapping split names to episode indices, or a dict mapping
                 split names to fractions (must sum to <= 1.0).
-        output_dir: Base directory for output datasets. If None, uses default location.
+        output_dir: Root directory where the split datasets will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id.
 
     Examples:
       Split by specific episodes
@@ -254,8 +262,8 @@ def merge_datasets(
 
     Args:
         datasets: List of LeRobotDatasets to merge.
-        output_repo_id: Repository ID for the merged dataset.
-        output_dir: Directory to save the merged dataset. If None, uses default location.
+        output_repo_id: Merged dataset identifier.
+        output_dir: Root directory where the merged dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/output_repo_id.
     """
     if not datasets:
         raise ValueError("No datasets to merge")
@@ -299,8 +307,8 @@ def modify_features(
         dataset: The source LeRobotDataset.
         add_features: Optional dict mapping feature names to (feature_values, feature_info) tuples.
         remove_features: Optional feature name(s) to remove. Can be a single string or list.
-        output_dir: Directory to save the new dataset. If None, uses default location.
-        repo_id: Repository ID for the new dataset. If None, appends "_modified" to original.
+        output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
+        repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
 
     Returns:
         New dataset with features modified.
@@ -413,8 +421,8 @@ def add_features(
     Args:
         dataset: The source LeRobotDataset.
         features: Dictionary mapping feature names to (feature_values, feature_info) tuples.
-        output_dir: Directory to save the new dataset. If None, uses default location.
-        repo_id: Repository ID for the new dataset. If None, appends "_modified" to original.
+        output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
+        repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
 
     Returns:
         New dataset with all features added.
@@ -450,8 +458,8 @@ def remove_feature(
     Args:
         dataset: The source LeRobotDataset.
         feature_names: Name(s) of features to remove. Can be a single string or list.
-        output_dir: Directory to save the new dataset. If None, uses default location.
-        repo_id: Repository ID for the new dataset. If None, appends "_modified" to original.
+        output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
+        repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
 
     Returns:
         New dataset with features removed.
@@ -911,7 +919,7 @@ def _copy_and_reindex_episodes_metadata(
 
         total_frames += src_episode["length"]
 
-    dst_meta._close_writer()
+    dst_meta.finalize()
 
     dst_meta.info.update(
         {
@@ -938,7 +946,8 @@ def _write_parquet(df: pd.DataFrame, path: Path, meta: LeRobotDatasetMetadata) -
 
     This ensures images are properly embedded and the file can be loaded correctly by HF datasets.
     """
-    from lerobot.datasets.utils import embed_images, get_hf_features_from_features
+    from lerobot.datasets.feature_utils import get_hf_features_from_features
+    from lerobot.datasets.io_utils import embed_images
 
     hf_features = get_hf_features_from_features(meta.features)
     ep_dataset = datasets.Dataset.from_dict(df.to_dict(orient="list"), features=hf_features, split="train")
@@ -1837,7 +1846,9 @@ def modify_tasks(
 
     # Collect all unique tasks and create new task mapping
     unique_tasks = sorted(set(episode_to_task.values()))
-    new_task_df = pd.DataFrame({"task_index": list(range(len(unique_tasks)))}, index=unique_tasks)
+    new_task_df = pd.DataFrame(
+        {"task_index": list(range(len(unique_tasks)))}, index=pd.Index(unique_tasks, name="task")
+    )
     task_to_index = {task: idx for idx, task in enumerate(unique_tasks)}
 
     logging.info(f"Modifying tasks in {dataset.repo_id}")
@@ -1889,9 +1900,117 @@ def modify_tasks(
     return dataset
 
 
+def recompute_stats(
+    dataset: LeRobotDataset,
+    skip_image_video: bool = True,
+    relative_action: bool = False,
+    relative_exclude_joints: list[str] | None = None,
+    chunk_size: int = 50,
+    num_workers: int = 0,
+) -> LeRobotDataset:
+    """Recompute stats.json from scratch by iterating all episodes.
+
+    Args:
+        dataset: The LeRobotDataset to recompute stats for.
+        skip_image_video: If True (default), only recompute stats for numeric features
+            (action, state, etc.) and keep existing image/video stats unchanged.
+        relative_action: If True, compute action stats in relative space by
+            iterating all valid action chunks and subtracting the current state.
+            This matches the normalization distribution the model sees during
+            training with ``use_relative_actions=True``.
+        relative_exclude_joints: Joint names to exclude from relative conversion when
+            relative_action=True. These dims keep absolute stats.
+        chunk_size: Action chunk size used for relative stats computation. Should match
+            ``policy.chunk_size``. Only used when ``relative_action=True``.
+        num_workers: Number of parallel threads for relative action stats computation.
+            Values ≤1 mean single-threaded. Only used when ``relative_action=True``.
+
+    Returns:
+        The same dataset with updated stats.
+    """
+    features = dataset.meta.features
+    meta_keys = {"index", "episode_index", "task_index", "frame_index", "timestamp"}
+    numeric_features = {
+        k: v
+        for k, v in features.items()
+        if v["dtype"] not in ["image", "video", "string"] and k not in meta_keys
+    }
+
+    if skip_image_video:
+        features_to_compute = numeric_features
+    else:
+        features_to_compute = {
+            k: v for k, v in features.items() if v["dtype"] != "string" and k not in meta_keys
+        }
+
+    # When relative_action is enabled, compute action stats via chunk-based sampling
+    # (matching what the model sees during training) and skip action in the
+    # per-episode pass below.
+    relative_action_stats = None
+    if relative_action and ACTION in features and OBS_STATE in features:
+        if relative_exclude_joints is None:
+            relative_exclude_joints = ["gripper"]
+        relative_action_stats = compute_relative_action_stats(
+            hf_dataset=dataset.hf_dataset,
+            features=features,
+            chunk_size=chunk_size,
+            exclude_joints=relative_exclude_joints,
+            num_workers=num_workers,
+        )
+        features_to_compute.pop(ACTION, None)
+
+    logging.info(f"Recomputing stats for features: {list(features_to_compute.keys())}")
+
+    data_dir = dataset.root / DATA_DIR
+    parquet_files = sorted(data_dir.glob("*/*.parquet"))
+    if not parquet_files:
+        raise ValueError(f"No parquet files found in {data_dir}")
+
+    all_episode_stats = []
+    numeric_keys = [k for k, v in features_to_compute.items() if v["dtype"] not in ["image", "video"]]
+
+    for parquet_path in tqdm(parquet_files, desc="Computing stats from data files"):
+        df = pd.read_parquet(parquet_path)
+
+        for ep_idx in sorted(df["episode_index"].unique()):
+            ep_df = df[df["episode_index"] == ep_idx]
+            episode_data = {}
+            for key in numeric_keys:
+                if key in ep_df.columns:
+                    values = ep_df[key].values
+                    if hasattr(values[0], "__len__"):
+                        episode_data[key] = np.stack(values)
+                    else:
+                        episode_data[key] = np.array(values)
+
+            ep_stats = compute_episode_stats(episode_data, features_to_compute)
+            all_episode_stats.append(ep_stats)
+
+    if features_to_compute and not all_episode_stats:
+        logging.warning("No episode stats computed")
+        return dataset
+
+    new_stats = aggregate_stats(all_episode_stats) if all_episode_stats else {}
+
+    if relative_action_stats is not None:
+        new_stats[ACTION] = relative_action_stats
+
+    # Merge: keep existing stats for features we didn't recompute
+    if dataset.meta.stats:
+        for key, value in dataset.meta.stats.items():
+            if key not in new_stats:
+                new_stats[key] = value
+
+    write_stats(new_stats, dataset.root)
+    dataset.meta.stats = new_stats
+
+    logging.info("Stats recomputed successfully")
+    return dataset
+
+
 def convert_image_to_video_dataset(
     dataset: LeRobotDataset,
-    output_dir: Path,
+    output_dir: Path | None = None,
     repo_id: str | None = None,
     vcodec: str = "libsvtav1",
     pix_fmt: str = "yuv420p",
@@ -1910,8 +2029,8 @@ def convert_image_to_video_dataset(
 
     Args:
         dataset: The source LeRobot dataset with images
-        output_dir: Directory to save the new video dataset
-        repo_id: Repository ID for the new dataset (default: original_id + "_video")
+        output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
+        repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
         vcodec: Video codec (default: libsvtav1)
         pix_fmt: Pixel format (default: yuv420p)
         g: Group of pictures size (default: 2)
@@ -1962,6 +2081,7 @@ def convert_image_to_video_dataset(
             # Video info will be updated after episodes are encoded
 
     # Create new metadata for video dataset
+    output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
     new_meta = LeRobotDatasetMetadata.create(
         repo_id=repo_id,
         fps=dataset.meta.fps,

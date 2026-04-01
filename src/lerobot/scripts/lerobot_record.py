@@ -83,10 +83,10 @@ from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraCon
 from lerobot.cameras.zmq.configuration_zmq import ZMQCameraConfig  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.datasets.feature_utils import build_dataset_frame, combine_feature_dicts
 from lerobot.datasets.image_writer import safe_stop_image_writer
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
-from lerobot.datasets.utils import build_dataset_frame, combine_feature_dicts
 from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -139,10 +139,10 @@ from lerobot.utils.control_utils import (
     sanity_check_dataset_name,
     sanity_check_dataset_robot_compatibility,
 )
+from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import (
-    get_safe_torch_device,
     init_logging,
     log_say,
 )
@@ -369,6 +369,8 @@ def record_loop(
             act_processed_policy: RobotAction = make_robot_action(action_values, dataset.features)
 
         elif policy is None and isinstance(teleop, Teleoperator):
+            if robot.name == "unitree_g1":
+                teleop.send_feedback(obs)
             act = teleop.get_action()
 
             # Applies a pipeline to the raw teleop action, default is IdentityProcessor
@@ -466,7 +468,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     try:
         if cfg.resume:
-            dataset = LeRobotDataset(
+            num_cameras = len(robot.cameras) if hasattr(robot, "cameras") else 0
+            dataset = LeRobotDataset.resume(
                 cfg.dataset.repo_id,
                 root=cfg.dataset.root,
                 batch_encoding_size=cfg.dataset.video_encoding_batch_size,
@@ -474,13 +477,11 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 streaming_encoding=cfg.dataset.streaming_encoding,
                 encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
                 encoder_threads=cfg.dataset.encoder_threads,
+                image_writer_processes=cfg.dataset.num_image_writer_processes if num_cameras > 0 else 0,
+                image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * num_cameras
+                if num_cameras > 0
+                else 0,
             )
-
-            if hasattr(robot, "cameras") and len(robot.cameras) > 0:
-                dataset.start_image_writer(
-                    num_processes=cfg.dataset.num_image_writer_processes,
-                    num_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot.cameras),
-                )
             sanity_check_dataset_robot_compatibility(dataset, robot, cfg.dataset.fps, dataset_features)
         else:
             # Create empty dataset or load existing saved episodes
@@ -555,10 +556,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
                 ):
                     log_say("Reset the environment", cfg.play_sounds)
-
-                    # reset g1 robot
-                    if robot.name == "unitree_g1":
-                        robot.reset()
 
                     record_loop(
                         robot=robot,

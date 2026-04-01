@@ -55,7 +55,7 @@ class WallXConfig(PreTrainedConfig):
     pretrained_name_or_path: str = "x-square-robot/wall-oss-flow"
 
     # Tokenizer settings
-    action_tokenizer_path: str | None = "physical-intelligence/fast"
+    action_tokenizer_path: str | None = "lerobot/fast-action-tokenizer"
 
     # Action prediction mode: "diffusion" or "fast"
     prediction_mode: str = "diffusion"
