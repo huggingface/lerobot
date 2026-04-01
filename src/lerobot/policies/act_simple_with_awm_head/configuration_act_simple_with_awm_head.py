@@ -118,6 +118,12 @@ class ACTSimpleWithAWMHeadConfig(PreTrainedConfig):
     use_planning: bool = False
     planning: PlanningConfig = field(default_factory=PlanningConfig)
 
+    # Deprecated — kept for checkpoint compatibility with older configs.
+    image_resize: int | None = None
+    wm_visual_pool: bool = False
+    wm_pool_size: int = 9
+    log_wm_action_sensitivity: bool = False
+
     def __post_init__(self):
         super().__post_init__()
 
