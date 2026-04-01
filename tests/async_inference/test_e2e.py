@@ -144,12 +144,18 @@ def test_async_inference_e2e(monkeypatch):
     client = RobotClient(client_config)
     assert client.start(), "Client failed initial handshake with the server"
 
-    # Track action chunks received without modifying RobotClient
-    action_chunks_received = {"count": 0}
+    # Track action chunks received and verify device type
+    action_chunks_received = {"count": 0, "actions_on_cpu": True}
     original_aggregate = client._aggregate_action_queues
 
     def counting_aggregate(*args, **kwargs):
         action_chunks_received["count"] += 1
+        # Check that all received actions are on CPU
+        if args:
+            for timed_action in args[0]:  # args[0] is the list of TimedAction
+                action_tensor = timed_action.get_action()
+                if action_tensor.device.type != "cpu":
+                    action_chunks_received["actions_on_cpu"] = False
         return original_aggregate(*args, **kwargs)
 
     monkeypatch.setattr(client, "_aggregate_action_queues", counting_aggregate)

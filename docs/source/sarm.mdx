@@ -4,6 +4,12 @@ SARM (Stage-Aware Reward Modeling) is a video-based reward modeling framework fo
 
 **Paper**: [SARM: Stage-Aware Reward Modeling for Long Horizon Robot Manipulation](https://arxiv.org/abs/2509.25358)
 
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot-sarm.png"
+  alt="An overview of SARM"
+  width="80%"
+/>
+
 ## Why Reward Models?
 
 Standard behavior cloning treats all demonstration frames equally, but real-world robot datasets are messy. They contain hesitations, corrections, and variable-quality trajectories. Reward models solve this by learning a generalizable notion of **task progress** from demonstrations: given video frames and a task description, they predict how close the robot is to completing the task (0→1). This learned "progress signal" can be used in multiple ways, two promising applications are: (1) **weighted imitation learning** (RA-BC), where high-progress frames receive more weight during policy training, and (2) **reinforcement learning**, where the reward model provides dense rewards for online or offline policy improvement.
@@ -263,7 +269,7 @@ This generates visualizations showing video frames with subtask boundaries overl
 Train with **no annotations** - uses linear progress from 0 to 1:
 
 ```bash
-python src/lerobot/scripts/lerobot_train.py \
+lerobot-train \
   --dataset.repo_id=your-username/your-dataset \
   --policy.type=sarm \
   --policy.annotation_mode=single_stage \
@@ -282,7 +288,7 @@ python src/lerobot/scripts/lerobot_train.py \
 Train with **dense annotations only** (sparse auto-generated):
 
 ```bash
-python src/lerobot/scripts/lerobot_train.py \
+lerobot-train \
   --dataset.repo_id=your-username/your-dataset \
   --policy.type=sarm \
   --policy.annotation_mode=dense_only \
@@ -301,7 +307,7 @@ python src/lerobot/scripts/lerobot_train.py \
 Train with **both sparse and dense annotations**:
 
 ```bash
-python src/lerobot/scripts/lerobot_train.py \
+lerobot-train \
   --dataset.repo_id=your-username/your-dataset \
   --policy.type=sarm \
   --policy.annotation_mode=dual \
@@ -462,7 +468,7 @@ This script:
 Once you have the progress file, train your policy with RA-BC weighting. The progress file is auto-detected from the dataset path (`sarm_progress.parquet`). Currently PI0, PI0.5 and SmolVLA are supported with RA-BC:
 
 ```bash
-python src/lerobot/scripts/lerobot_train.py \
+lerobot-train \
   --dataset.repo_id=your-username/your-dataset \
   --policy.type=pi0 \
   --use_rabc=true \

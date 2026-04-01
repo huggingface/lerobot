@@ -16,7 +16,6 @@
 
 import logging
 from collections import deque
-from typing import Any
 
 import numpy as np
 import torch
@@ -24,8 +23,8 @@ from torch import nn
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.datasets.utils import build_dataset_frame
-from lerobot.processor import PolicyAction, RobotAction, RobotObservation
+from lerobot.datasets.feature_utils import build_dataset_frame
+from lerobot.types import PolicyAction, RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_STR
 
 
@@ -140,7 +139,7 @@ def prepare_observation_for_inference(
 
 
 def build_inference_frame(
-    observation: dict[str, Any],
+    observation: RobotObservation,
     device: torch.device,
     ds_features: dict[str, dict],
     task: str | None = None,

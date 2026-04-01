@@ -8,6 +8,12 @@ X Square Robot’s WALL-OSS is now integrated into Hugging Face’s LeRobot ecos
 
 The WALL-OSS team is building the embodied foundation model to capture and compress the world's most valuable data: the continuous, high-fidelity stream of physical interaction. By creating a direct feedback loop between the model's decisions and the body's lived experience, the emergence of a truly generalizable intelligence is enabled—one that understands not just how the world works, but how to act effectively within it.
 
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/walloss-lerobot-paper.png"
+  alt="An overview of WALL-OSS"
+  width="85%"
+/>
+
 Technically, WALL-OSS introduces a tightly coupled multimodal architecture (tightly-coupled MoE structure) that integrates both discrete and continuous action modeling strategies. Through a two-stage training pipeline (Inspiration → Integration), the model gradually unifies semantic reasoning and high-frequency action generation. Its core innovations include:
 
 - **Embodied perception–enhanced multimodal pretraining**: Large-scale training on unified vision–language–action data to strengthen spatial, causal, and manipulation understanding.
@@ -39,7 +45,7 @@ policy.type=wall_x
 For training WallX, you can use the standard LeRobot training script with the appropriate configuration:
 
 ```bash
-python src/lerobot/scripts/lerobot_train.py \
+lerobot-train \
     --dataset.repo_id=your_dataset \
     --policy.type=wall_x \
     --output_dir=./outputs/wallx_training \

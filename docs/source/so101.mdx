@@ -1,5 +1,18 @@
 # SO-101
 
+<div style="display: flex; align-items: center; gap: 10px;">
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/SO101_Follower.webp"
+    alt="SO-101"
+    width="60%"
+  />
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/SO101_Leader.webp"
+    alt="SO-101"
+    width="60%"
+  />
+</div>
+
 In the steps below, we explain how to assemble our flagship robot, the SO-101.
 
 ## Source the parts
@@ -125,7 +138,7 @@ lerobot-setup-motors \
 
 <!-- prettier-ignore-start -->
 ```python
-from lerobot.robots.so101_follower import SO101Follower, SO101FollowerConfig
+from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
 
 config = SO101FollowerConfig(
     port="/dev/tty.usbmodem585A0076841",
@@ -201,7 +214,7 @@ lerobot-setup-motors \
 
 <!-- prettier-ignore-start -->
 ```python
-from lerobot.teleoperators.so101_leader import SO101Leader, SO101LeaderConfig
+from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 
 config = SO101LeaderConfig(
     port="/dev/tty.usbmodem585A0076841",
@@ -223,10 +236,10 @@ It is advisable to install one 3-pin cable in the motor after placing them befor
 
 ### Joint 1
 
+- Install both motor horns. Secure the top horn with a M3x6mm screw. No screws are required for the bottom horn.
 - Place the first motor into the base.
 - Fasten the motor with 4 M2x6mm screws (smallest screws). Two from the top and two from the bottom.
 - Slide over the first motor holder and fasten it using two M2x6mm screws (one on each side).
-- Install both motor horns, securing the top horn with a M3x6mm screw.
 - Attach the shoulder part.
 - Tighten the shoulder part with 4 M3x6mm screws on top and 4 M3x6mm screws on the bottom
 - Add the shoulder motor holder.
@@ -242,9 +255,9 @@ It is advisable to install one 3-pin cable in the motor after placing them befor
 
 ### Joint 2
 
+- Install both motor horns. Secure the top horn with a M3x6mm screw. No screws are required for the bottom horn.
 - Slide the second motor in from the top.
 - Fasten the second motor with 4 M2x6mm screws.
-- Attach both motor horns to motor 2, again use the M3x6mm horn screw.
 - Attach the upper arm with 4 M3x6mm screws on each side.
 
 <div class="video-container">
@@ -258,8 +271,8 @@ It is advisable to install one 3-pin cable in the motor after placing them befor
 
 ### Joint 3
 
-- Insert motor 3 and fasten using 4 M2x6mm screws
-- Attach both motor horns to motor 3 and secure one again with a M3x6mm horn screw.
+- Install both motor horns. Secure the top horn with a M3x6mm screw. No screws are required for the bottom horn.
+- Insert motor 3 and fasten using 4 M2x6mm screws.
 - Connect the forearm to motor 3 using 4 M3x6mm screws on each side.
 
 <div class="video-container">
@@ -273,9 +286,10 @@ It is advisable to install one 3-pin cable in the motor after placing them befor
 
 ### Joint 4
 
+- Install both motor horns. Secure the top horn with a M3x6mm screw. No screws are required for the bottom horn.
 - Slide over motor holder 4.
 - Slide in motor 4.
-- Fasten motor 4 with 4 M2x6mm screws and attach its motor horns, use a M3x6mm horn screw.
+- Fasten motor 4 with 4 M2x6mm screws.
 
 <div class="video-container">
   <video controls width="600">
@@ -308,7 +322,7 @@ It is advisable to install one 3-pin cable in the motor after placing them befor
 
 - Attach the gripper to motor 5, attach it to the motor horn on the wrist using 4 M3x6mm screws.
 - Insert the gripper motor and secure it with 2 M2x6mm screws on each side.
-- Attach the motor horns and again use a M3x6mm horn screw.
+- Install both motor horns on the gripper motor. Secure the top horn with a M3x6mm screw; no screws are required for the bottom horn.
 - Install the gripper claw and secure it with 4 M3x6mm screws on both sides.
 
 <div class="video-container">
@@ -364,7 +378,7 @@ lerobot-calibrate \
 
 <!-- prettier-ignore-start -->
 ```python
-from lerobot.robots.so101_follower import SO101FollowerConfig, SO101Follower
+from lerobot.robots.so_follower import SO101FollowerConfig, SO101Follower
 
 config = SO101FollowerConfig(
     port="/dev/tty.usbmodem585A0076891",
@@ -413,7 +427,7 @@ lerobot-calibrate \
 
 <!-- prettier-ignore-start -->
 ```python
-from lerobot.teleoperators.so101_leader import SO101LeaderConfig, SO101Leader
+from lerobot.teleoperators.so_leader import SO101LeaderConfig, SO101Leader
 
 config = SO101LeaderConfig(
     port="/dev/tty.usbmodem58760431551",
