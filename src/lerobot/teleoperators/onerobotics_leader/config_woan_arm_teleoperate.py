@@ -21,15 +21,15 @@ from lerobot.teleoperators.config import TeleoperatorConfig
 
 
 @dataclass
-class WoanTeleopLeaderConfigBase(RobotConfig):
-    """Base configuration for the Woan teleoperation leader arm."""
+class OneroTeleopLeaderConfigBase(RobotConfig):
+    """Base configuration for the Onero teleoperation leader arm."""
 
-    # Connection default settings for woanarm_api_py
+    # Connection default settings for oneroarm_api_py
     port: str = "/dev/ttyACM0"
     baud_rate: int = 961200
     robot_model: str = "a1_r"
     version: str = "A1"
-    woan_description_path: str = "/home/woan/WoanLerobotAdapter/woan_arm/woan_description"
+    onero_description_path: str = "/home/onero/OneroLerobotAdapter/onero_arm/onero_description"
     slcan_type: str = "damiao"  # "damiao" or "canable"
     is_teleop_leader: bool = True
 
@@ -48,9 +48,9 @@ class WoanTeleopLeaderConfigBase(RobotConfig):
             self.id = self.robot_model
 
 
-@TeleoperatorConfig.register_subclass("woan_teleop_leader")
+@TeleoperatorConfig.register_subclass("onero_teleop_leader")
 @dataclass
-class WoanTeleopLeaderConfig(TeleoperatorConfig, WoanTeleopLeaderConfigBase):
-    """Registered config combining Woan teleop leader defaults with Teleoperator registry."""
+class OneroTeleopLeaderConfig(TeleoperatorConfig, OneroTeleopLeaderConfigBase):
+    """Registered config combining Onero teleop leader defaults with Teleoperator registry."""
 
     pass

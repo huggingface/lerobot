@@ -21,21 +21,21 @@ from lerobot.cameras.configs import CameraConfig
 from lerobot.robots.config import RobotConfig
 
 
-@RobotConfig.register_subclass("woan_arm")
+@RobotConfig.register_subclass("onero_arm")
 @dataclass
-class WoanRobotConfig(RobotConfig):
+class OneroRobotConfig(RobotConfig):
     """
-    Configuration for the Woan Robot Arm adapter.
+    Configuration for the Onero Robot Arm adapter.
     Inherits standard fields (id, type, calibration_dir, etc.) from RobotConfig.
     """
 
-    # Connection default settings for woanarm_api_py
+    # Connection default settings for oneroarm_api_py
     port: str = "/dev/ttyACM0"  # e.g., "/dev/ttyACM0", use 'ls /dev/tty*' to find the correct port
     baud_rate: int = 961200
     robot_model: str = "x1_r"
     version: str = "v3.2"
-    woan_description_path: str = (
-        "/path/to/woan_description"  # Path to Woan description package, including urdf and meshes
+    onero_description_path: str = (
+        "/path/to/onero_description"  # Path to Onero description package, including urdf and meshes
     )
     slcan_type: str = "damiao"  # "damiao" or "canable"
     is_teleop_leader: bool = False
@@ -61,12 +61,12 @@ class WoanRobotConfig(RobotConfig):
             self.id = self.robot_model
 
 
-@RobotConfig.register_subclass("woan_teleop_follower")
+@RobotConfig.register_subclass("onero_teleop_follower")
 @dataclass
-class WoanTeleopFollowerConfig(WoanRobotConfig):
+class OneroTeleopFollowerConfig(OneroRobotConfig):
     """
-    Configuration for the Woan Robot Arm Teleoperation Follower adapter.
-    Inherits from WoanRobotConfig and sets is_teleop_leader to False by default.
+    Configuration for the Onero Robot Arm Teleoperation Follower adapter.
+    Inherits from OneroRobotConfig and sets is_teleop_leader to False by default.
     """
 
     use_velocity: bool = True  # Teleop follower typically uses velocity for feedfoward control

@@ -26,32 +26,32 @@ import torch
 import transforms3d as t3d
 
 # Adapt imports to your environment.
-# Assuming woanarm_api_py is available in python path
-import woanarm_api_py as woanarm
-import woangripper_api_py as woangripper
+# Assuming oneroarm_api_py is available in python path
+import oneroarm_api_py as oneroarm
+import onerogripper_api_py as onerogripper
 
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
-from .config_woan_arm import WoanRobotConfig
+from .config_onero_arm import OneroRobotConfig
 
-logger = logging.getLogger("woan_arm")
+logger = logging.getLogger("onero_arm")
 
 
-class WoanAdapter:
+class OneroAdapter:
     """
-    Adapter for Woan Robot Arm (7-DOF) to be used with LeRobot.
+    Adapter for Onero Robot Arm (7-DOF) to be used with LeRobot.
     """
 
-    config_class = WoanRobotConfig
-    name = "woan_arm"
+    config_class = OneroRobotConfig
+    name = "onero_arm"
 
-    def __init__(self, config: WoanRobotConfig):
+    def __init__(self, config: OneroRobotConfig):
         """
-        Initialize the WoanAdapter with the given configuration.
+        Initialize the OneroAdapter with the given configuration.
 
         Args:
-            config (WoanRobotConfig): Configuration object containing device path and other settings.
+            config (OneroRobotConfig): Configuration object containing device path and other settings.
         """
         from lerobot.robots.robot import Robot
 
@@ -70,11 +70,11 @@ class WoanAdapter:
             self.cameras = make_cameras_from_configs(config.cameras)
 
     def __str__(self) -> str:
-        return f"woan {self.config.id}"
+        return f"onero {self.config.id}"
 
     def connect(self) -> None:
         """
-        Connect to the Woan Arm robot.
+        Connect to the Onero Arm robot.
 
         Establish communication with the robot arm hardware using the configuration provided.
         Enables motors upon successful connection. For follower arms, optionally moves to an
@@ -89,13 +89,13 @@ class WoanAdapter:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
         # 1. Setup API Config
-        api_config = woanarm.WoanConfig()
+        api_config = oneroarm.OneroConfig()
         api_config.device = self.config.port
         api_config.baud_rate = self.config.baud_rate
 
         api_config.robot_model = self.config.robot_model
         api_config.version = self.config.version
-        api_config.model_description_path = self.config.woan_description_path
+        api_config.model_description_path = self.config.onero_description_path
         api_config.slcan_type = self.config.slcan_type
         # Set other defaults or from config if needed
         api_config.dof = self.dof
@@ -103,7 +103,7 @@ class WoanAdapter:
 
         try:
             # 2. Initialize and Connect Arm
-            self._arm = woanarm.WoanArm(api_config)
+            self._arm = oneroarm.OneroArm(api_config)
 
             # 3. Enable Motors
             if not self._arm.enable_motors():
@@ -111,7 +111,7 @@ class WoanAdapter:
 
             if self.config.enable_gripper:
                 # 4. Optionally Initialize Gripper
-                self._gripper = woangripper.GripperControl()
+                self._gripper = onerogripper.GripperControl()
                 if not self._gripper.initialize(self.config.port, self.config.slcan_type):
                     logger.warning("Failed to initialize gripper, continuing without it.")
                 else:
@@ -133,7 +133,7 @@ class WoanAdapter:
 
     def disconnect(self) -> None:
         """
-        Disconnect from the Woan Arm robot.
+        Disconnect from the Onero Arm robot.
 
         Disables motors and tears down the connection to the hardware.
         """
@@ -239,11 +239,11 @@ class WoanAdapter:
     # --- Utility Functions: Complex Data Conversion ---
 
     def _parse_pose(self, raw_pose) -> Any:
-        """Convert various input formats to a woanarm.Pose object"""
-        if isinstance(raw_pose, woanarm.Pose):
+        """Convert various input formats to a oneroarm.Pose object"""
+        if isinstance(raw_pose, oneroarm.Pose):
             return raw_pose
 
-        target_pose = woanarm.Pose()
+        target_pose = oneroarm.Pose()
         pose_arr = np.array(raw_pose)
 
         if pose_arr.size == 7:
@@ -361,7 +361,7 @@ class WoanAdapter:
         return True
 
 
-class WoanTeleopFollower(WoanAdapter):
+class OneroTeleopFollower(OneroAdapter):
     """
     Specialized Adapter for Teleoperation scenarios.
 

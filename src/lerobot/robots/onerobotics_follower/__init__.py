@@ -15,7 +15,7 @@
 # limitations under the License.
 
 
-from .config_woan_arm import WoanRobotConfig, WoanTeleopFollowerConfig
-from .woan_arm import WoanAdapter, WoanTeleopFollower
+from .config_onero_arm import OneroRobotConfig, OneroTeleopFollowerConfig
+from .onero_arm import OneroAdapter, OneroTeleopFollower
 
-__all__ = ["WoanAdapter", "WoanRobotConfig", "WoanTeleopFollower", "WoanTeleopFollowerConfig"]
+__all__ = ["OneroAdapter", "OneroRobotConfig", "OneroTeleopFollower", "OneroTeleopFollowerConfig"]

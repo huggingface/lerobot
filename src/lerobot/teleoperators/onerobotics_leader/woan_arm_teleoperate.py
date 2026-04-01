@@ -16,33 +16,33 @@
 
 import logging
 
-import woangripper_api_py as woangripper
+import onerogripper_api_py as onerogripper
 
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.utils.errors import DeviceNotConnectedError
 
-from ...robots.onerobotics_follower.woan_arm import WoanAdapter
-from .config_woan_arm_teleoperate import WoanTeleopLeaderConfig
+from ...robots.onerobotics_follower.onero_arm import OneroAdapter
+from .config_onero_arm_teleoperate import OneroTeleopLeaderConfig
 
-logger = logging.getLogger("woan_arm")
+logger = logging.getLogger("onero_arm")
 
 
-class WoanTeleopLeader(Teleoperator):
+class OneroTeleopLeader(Teleoperator):
     """
-    Teleoperator wrapper for the Woan leader arm.
+    Teleoperator wrapper for the Onero leader arm.
 
     This class implements the `Teleoperator` interface and delegates low-level
-    robot interactions to a `WoanAdapter` instance. Using composition keeps
+    robot interactions to a `OneroAdapter` instance. Using composition keeps
     the teleoperator visible to the rest of the system as a `Teleoperator`.
     """
 
-    config_class = WoanTeleopLeaderConfig
-    name = "woan_teleop_leader"
+    config_class = OneroTeleopLeaderConfig
+    name = "onero_teleop_leader"
 
-    def __init__(self, config: WoanTeleopLeaderConfig):
+    def __init__(self, config: OneroTeleopLeaderConfig):
         super().__init__(config)
         self.config = config
-        self._adapter = WoanAdapter(config)
+        self._adapter = OneroAdapter(config)
         self._gripper_joystick = None
 
     @property
@@ -70,7 +70,7 @@ class WoanTeleopLeader(Teleoperator):
                 self._adapter._arm.ArmGravityCompensation()
                 logger.info(f"{self} gravity compensation started.")
                 if self.config.enable_gripper_joystick:
-                    self._gripper_joystick = woangripper.GripperControl()
+                    self._gripper_joystick = onerogripper.GripperControl()
                     if not self._gripper_joystick.initialize_joystick(
                         self.config.port, self.config.slcan_type
                     ):
