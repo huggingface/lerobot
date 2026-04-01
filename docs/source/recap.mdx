@@ -66,12 +66,13 @@ specified by `--value_network_checkpoint_filename` (default:
 > command line, but it will be corrected to match the checkpoint.
 
 ```bash
-python -m lerobot.rl.algorithms.recap_train_pi_star \
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python -m lerobot.rl.algorithms.recap_train_pi_star \
   --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
-  --output_dir="${HOME}/code/lerobot/outputs/recap_pistar_6" \
+  --output_dir="${HOME}/code/lerobot/outputs/recap_pistar_7" \
   --value_network_checkpoint="${HOME}/code/lerobot/outputs/recap_value_5/checkpoints/epoch_0001.pt" \
   --epochs=5 \
-  --batch_size=2 \
+  --batch_size=16 \
+  --gradient_checkpointing=true \
   --learning_rate=1e-4 \
   --val_split_ratio=0.1 \
   --validate_every_n_train_steps=50 \
