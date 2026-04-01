@@ -175,7 +175,7 @@ class PiGemmaRMSNorm(nn.Module):
             return normed.type_as(x), None
         if cond.shape[-1] != self.cond_dim:
             raise ValueError(f"Expected cond dim {self.cond_dim}, got {cond.shape[-1]}")
-        modulation = self.dense(cond)
+        modulation = self.dense(cond.to(dtype=self.dense.weight.dtype))
         if len(x.shape) == 3:
             modulation = modulation.unsqueeze(1)
         scale, shift, gate = modulation.chunk(3, dim=-1)
@@ -1101,9 +1101,8 @@ class PiStar06Pytorch(nn.Module):
 
     def embed_suffix(self, noisy_actions, timestep):
         """Embed noisy_actions, timestep to prepare for Expert Gemma processing."""
-        target_dtype = self.action_in_proj.weight.dtype
-        noisy_actions = noisy_actions.to(dtype=target_dtype)
-        timestep = timestep.to(dtype=target_dtype)
+        model_dtype = self.action_in_proj.weight.dtype
+        noisy_actions = noisy_actions.to(dtype=model_dtype)
 
         embs = []
         pad_masks = []
@@ -1116,7 +1115,7 @@ class PiStar06Pytorch(nn.Module):
             max_period=self.config.max_period,
             device=timestep.device,
         )
-        time_emb = time_emb.type(dtype=timestep.dtype)
+        time_emb = time_emb.to(dtype=model_dtype)
 
         def action_proj_func(noisy_actions):
             return self.action_in_proj(noisy_actions)
@@ -1210,14 +1209,15 @@ class PiStar06Pytorch(nn.Module):
         )
 
         suffix_out = suffix_out[:, -self.config.chunk_size :]
-        suffix_out = suffix_out.to(dtype=torch.float32)
 
         def action_out_proj_func(suffix_out):
-            return self.action_out_proj(suffix_out)
+            return self.action_out_proj(
+                suffix_out.to(dtype=self.action_out_proj.weight.dtype)
+            )
 
         v_t = self._apply_checkpoint(action_out_proj_func, suffix_out)
 
-        return F.mse_loss(u_t, v_t, reduction="none")
+        return F.mse_loss(u_t.float(), v_t.float(), reduction="none")
 
     @torch.no_grad()
     def sample_actions(
@@ -1355,8 +1355,8 @@ class PiStar06Pytorch(nn.Module):
 
         suffix_out = outputs_embeds[1]
         suffix_out = suffix_out[:, -self.config.chunk_size :]
-        suffix_out = suffix_out.to(dtype=torch.float32)
-        return self.action_out_proj(suffix_out)
+        suffix_out = suffix_out.to(dtype=self.action_out_proj.weight.dtype)
+        return self.action_out_proj(suffix_out).float()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1899,9 +1899,10 @@ class PiStar06Policy(PreTrainedPolicy):
         )
 
         suffix_out = suffix_out[:, -self.config.chunk_size :]
-        suffix_out = suffix_out.to(dtype=torch.float32)
-        v_t = self.model.action_out_proj(suffix_out)
-        return F.mse_loss(u_t, v_t, reduction="none")
+        v_t = self.model.action_out_proj(
+            suffix_out.to(dtype=self.model.action_out_proj.weight.dtype)
+        )
+        return F.mse_loss(u_t.float(), v_t.float(), reduction="none")
 
     def forward(
         self,
