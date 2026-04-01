@@ -151,20 +151,33 @@ def visualize_dataset(
 
             # display each dimension of action space (e.g. actuators command)
             if ACTION in batch:
-                action_features = [*range(batch[ACTION].shape[1])]
-                if ACTION in features:
-                    action_features = features[ACTION]["names"]
+                action_data = batch[ACTION]
 
-                for feature_name, val in zip(action_features, batch[ACTION][i], strict=True):
+                action_names = [*range(action_data.shape[1])]
+
+                names = features.get(ACTION, {}).get("names")
+                if isinstance(names, list):
+                    action_names = names
+                elif isinstance(names, dict):
+                    action_names = next(iter(names.values()))
+
+                for feature_name, val in zip(action_names, batch[ACTION][i], strict=True):
                     rr.log(f"{ACTION}/{feature_name}", rr.Scalars(val.item()))
 
             # display each dimension of observed state space (e.g. agent position in joint space)
             if OBS_STATE in batch:
-                obs_features = [*range(batch[OBS_STATE].shape[1])]
-                if OBS_STATE in features:
-                    obs_features = features[OBS_STATE]["names"]
+                obs_data = batch[OBS_STATE]
 
-                for feature_name, val in zip(obs_features, batch[OBS_STATE][i], strict=True):
+                # Defaults to series index
+                obs_names = [*range(obs_data.shape[1])]
+
+                names = features.get(OBS_STATE, {}).get("names")
+                if isinstance(names, list):
+                    obs_names = names
+                elif isinstance(names, dict):
+                    obs_names = next(iter(names.values()))
+
+                for feature_name, val in zip(obs_names, batch[OBS_STATE][i], strict=True):
                     rr.log(f"state/{feature_name}", rr.Scalars(val.item()))
 
             if DONE in batch:
