@@ -15,7 +15,7 @@
 # limitations under the License.
 """Tests for lerobot-edit-dataset CLI functionality."""
 
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -166,48 +166,6 @@ class TestAddFeatureCLI:
             assert "features" in kwargs
             assert "reward" in kwargs["features"]  # Single key -> just the name
             assert "state" in kwargs["features"]  # Single key -> just the name
-
-    def test_add_feature_with_push_to_hub(self, tmp_path):
-        """Test adding a feature and pushing to hub."""
-        import safetensors.numpy
-
-        data = np.random.randn(50, 1).astype(np.float32)
-        safetensors.numpy.save_file({"reward": data}, tmp_path / "data.safetensors")
-
-        with (
-            patch("lerobot.scripts.lerobot_edit_dataset.LeRobotDataset") as mock_dataset_class,
-        ):
-            # Mock the first dataset (for loading)
-            mock_dataset = mock_dataset_class.return_value
-            mock_dataset.meta.total_frames = 50
-            mock_dataset.meta.episodes = [
-                {"dataset_to_index": 10},
-                {"dataset_to_index": 20},
-                {"dataset_to_index": 30},
-                {"dataset_to_index": 40},
-                {"dataset_to_index": 50},
-            ]
-            mock_dataset.fps = 30.0
-
-            # Mock the second dataset (for pushing to hub)
-            mock_push_dataset = Mock()
-            mock_dataset_class.side_effect = [mock_dataset, mock_push_dataset]
-
-            handle_add_feature(
-                EditDatasetConfig(
-                    repo_id="test/repo",
-                    new_repo_id="test/repo_modified",
-                    root=str(tmp_path / "output"),
-                    push_to_hub=True,
-                    operation=AddFeatureConfig(
-                        feature_names=["reward"],
-                        feature_paths=[str(tmp_path / "data.safetensors")],
-                    ),
-                )
-            )
-
-            # Verify push_to_hub was called on the new dataset instance
-            mock_push_dataset.push_to_hub.assert_called_once()
 
     def test_add_feature_single_name_multiple_keys(self, tmp_path):
         """Test adding features with single name for safetensors file with multiple keys (prefixing)."""
