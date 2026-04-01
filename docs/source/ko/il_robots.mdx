@@ -1,0 +1,626 @@
+# 실세계 로봇의 모방 학습
+
+이 튜토리얼에서는 실제 로봇을 자율적으로 제어하는 신경망을 학습시키는 방법을 설명합니다.
+
+**배울 내용:**
+
+1. 데이터셋을 녹화하고 시각화하는 방법
+2. 데이터를 사용하여 정책을 학습하고 평가를 위해 준비하는 방법
+3. 정책을 평가하고 결과를 시각화하는 방법
+
+다음 단계를 따라가면, 아래 비디오에서 보여주는 것처럼 레고 블록을 집어서 상자에 넣는 등의 작업을 높은 성공률로 재현할 수 있습니다.
+
+<details>
+<summary><strong>비디오: 레고 블록 집기 작업</strong></summary>
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot_task.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+</details>
+
+이 튜토리얼은 특정 로봇에 종속되지 않습니다: 지원되는 모든 플랫폼에 맞게 조정할 수 있는 명령어와 API 코드 스니펫을 안내합니다.
+
+데이터 수집 시, 리더 암이나 키보드 같은 "텔레오퍼레이션" 장치를 사용하여 로봇을 원격 조작하고 동작 궤적(trajectory)을 녹화합니다.
+
+충분한 궤적을 수집한 후, 이 궤적을 모방하도록 신경망을 학습시키고, 학습된 모델을 배포하여 로봇이 자율적으로 작업을 수행할 수 있게 합니다.
+
+진행 중 문제가 발생하면, [Discord 커뮤니티](https://discord.com/invite/s3KuuzsPFb)에서 지원을 받으세요.
+
+## 설정 및 캘리브레이션
+
+로봇과 텔레오퍼레이션 장치의 설정 및 캘리브레이션을 아직 하지 않았다면, 로봇별 튜토리얼을 따라 진행하세요.
+
+## 텔레오퍼레이션
+
+이 예제에서는 SO101 로봇의 텔레오퍼레이션 방법을 시연합니다. 각 명령에 대해 대응하는 API 예제도 제공합니다.
+
+로봇에 할당된 `id`는 캘리브레이션 파일을 저장하는 데 사용됩니다. 동일한 셋업에서 텔레오퍼레이션, 녹화, 평가 시 동일한 `id`를 사용하는 것이 중요합니다.
+
+<hfoptions id="teleoperate_so101">
+<hfoption id="Command">
+```bash
+lerobot-teleoperate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --robot.id=my_awesome_follower_arm \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/tty.usbmodem58760431551 \
+    --teleop.id=my_awesome_leader_arm
+```
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.teleoperators.so_leader import SO101LeaderConfig, SO101Leader
+from lerobot.robots.so_follower import SO101FollowerConfig, SO101Follower
+
+robot_config = SO101FollowerConfig(
+    port="/dev/tty.usbmodem58760431541",
+    id="my_red_robot_arm",
+)
+
+teleop_config = SO101LeaderConfig(
+    port="/dev/tty.usbmodem58760431551",
+    id="my_blue_leader_arm",
+)
+
+robot = SO101Follower(robot_config)
+teleop_device = SO101Leader(teleop_config)
+robot.connect()
+teleop_device.connect()
+
+while True:
+    action = teleop_device.get_action()
+    robot.send_action(action)
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+텔레오퍼레이션 명령은 자동으로 다음을 수행합니다:
+
+1. 누락된 캘리브레이션을 식별하고 캘리브레이션 절차를 시작합니다.
+2. 로봇과 텔레오퍼레이션 장치를 연결하고 텔레오퍼레이션을 시작합니다.
+
+## 카메라
+
+카메라를 설정에 추가하려면, [카메라 가이드](./cameras#setup-cameras)를 따르세요.
+
+## 카메라를 활용한 텔레오퍼레이션
+
+`rerun`을 사용하면, 카메라 피드와 관절 위치를 동시에 시각화하면서 텔레오퍼레이션을 다시 수행할 수 있습니다. 이 예제에서는 Koch 암을 사용합니다.
+
+<hfoptions id="teleoperate_koch_camera">
+<hfoption id="Command">
+```bash
+lerobot-teleoperate \
+    --robot.type=koch_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --robot.id=my_awesome_follower_arm \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
+    --teleop.type=koch_leader \
+    --teleop.port=/dev/tty.usbmodem58760431551 \
+    --teleop.id=my_awesome_leader_arm \
+    --display_data=true
+```
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.teleoperators.koch_leader import KochLeaderConfig, KochLeader
+from lerobot.robots.koch_follower import KochFollowerConfig, KochFollower
+
+camera_config = {
+    "front": OpenCVCameraConfig(index_or_path=0, width=1920, height=1080, fps=30)
+}
+
+robot_config = KochFollowerConfig(
+    port="/dev/tty.usbmodem585A0076841",
+    id="my_red_robot_arm",
+    cameras=camera_config
+)
+
+teleop_config = KochLeaderConfig(
+    port="/dev/tty.usbmodem58760431551",
+    id="my_blue_leader_arm",
+)
+
+robot = KochFollower(robot_config)
+teleop_device = KochLeader(teleop_config)
+robot.connect()
+teleop_device.connect()
+
+while True:
+    observation = robot.get_observation()
+    action = teleop_device.get_action()
+    robot.send_action(action)
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+## 데이터셋 녹화
+
+텔레오퍼레이션에 익숙해지면, 첫 데이터셋을 녹화할 수 있습니다.
+
+데이터셋 업로드를 위해 Hugging Face Hub 기능을 사용합니다. Hub를 이전에 사용한 적이 없다면, 쓰기 권한 토큰을 사용하여 CLI에서 로그인할 수 있는지 확인하세요. 이 토큰은 [Hugging Face 설정](https://huggingface.co/settings/tokens)에서 생성할 수 있습니다.
+
+다음 명령을 실행하여 CLI에 토큰을 추가하세요:
+
+```bash
+hf auth login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
+```
+
+그런 다음 Hugging Face 레포지토리 이름을 변수에 저장합니다:
+
+```bash
+HF_USER=$(NO_COLOR=1 hf auth whoami | awk -F': *' 'NR==1 {print $2}')
+echo $HF_USER
+```
+
+이제 데이터셋을 녹화할 수 있습니다. 5개의 에피소드를 녹화하고 Hub에 업로드하려면, 아래 코드를 로봇에 맞게 수정하고 명령 또는 API 예제를 실행하세요.
+
+<hfoptions id="record">
+<hfoption id="Command">
+```bash
+lerobot-record \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem585A0076841 \
+    --robot.id=my_awesome_follower_arm \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/tty.usbmodem58760431551 \
+    --teleop.id=my_awesome_leader_arm \
+    --display_data=true \
+    --dataset.repo_id=${HF_USER}/record-test \
+    --dataset.num_episodes=5 \
+    --dataset.single_task="Grab the black cube" \
+    --dataset.streaming_encoding=true \
+    # --dataset.vcodec=auto \
+    --dataset.encoder_threads=2
+```
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.utils import hw_to_dataset_features
+from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
+from lerobot.teleoperators.so_leader.config_so100_leader import SO100LeaderConfig
+from lerobot.teleoperators.so_leader.so100_leader import SO100Leader
+from lerobot.utils.control_utils import init_keyboard_listener
+from lerobot.utils.utils import log_say
+from lerobot.utils.visualization_utils import init_rerun
+from lerobot.scripts.lerobot_record import record_loop
+from lerobot.processor import make_default_processors
+
+NUM_EPISODES = 5
+FPS = 30
+EPISODE_TIME_SEC = 60
+RESET_TIME_SEC = 10
+TASK_DESCRIPTION = "My task description"
+
+# 로봇 설정 생성
+robot_config = SO100FollowerConfig(
+    id="my_awesome_follower_arm",
+    cameras={
+        "front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS) # 선택사항: OpenCV 비동기 오류 해결을 위해 fourcc="MJPG" 사용
+    },
+    port="/dev/tty.usbmodem58760434471",
+)
+
+teleop_config = SO100LeaderConfig(
+    id="my_awesome_leader_arm",
+    port="/dev/tty.usbmodem585A0077581",
+)
+
+# 로봇 및 텔레오퍼레이터 초기화
+robot = SO100Follower(robot_config)
+teleop = SO100Leader(teleop_config)
+
+# 데이터셋 피처 설정
+action_features = hw_to_dataset_features(robot.action_features, "action")
+obs_features = hw_to_dataset_features(robot.observation_features, "observation")
+dataset_features = {**action_features, **obs_features}
+
+# 데이터셋 생성
+dataset = LeRobotDataset.create(
+    repo_id="<hf_username>/<dataset_repo_id>",
+    fps=FPS,
+    features=dataset_features,
+    robot_type=robot.name,
+    use_videos=True,
+    image_writer_threads=4,
+)
+
+# 키보드 리스너 및 rerun 시각화 초기화
+_, events = init_keyboard_listener()
+init_rerun(session_name="recording")
+
+# 로봇 및 텔레오퍼레이터 연결
+robot.connect()
+teleop.connect()
+
+# 필요한 프로세서 생성
+teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
+
+episode_idx = 0
+while episode_idx < NUM_EPISODES and not events["stop_recording"]:
+    log_say(f"Recording episode {episode_idx + 1} of {NUM_EPISODES}")
+
+    record_loop(
+        robot=robot,
+        events=events,
+        fps=FPS,
+        teleop_action_processor=teleop_action_processor,
+        robot_action_processor=robot_action_processor,
+        robot_observation_processor=robot_observation_processor,
+        teleop=teleop,
+        dataset=dataset,
+        control_time_s=EPISODE_TIME_SEC,
+        single_task=TASK_DESCRIPTION,
+        display_data=True,
+    )
+
+    # 중지하거나 재녹화하지 않는 경우 환경 리셋
+    if not events["stop_recording"] and (episode_idx < NUM_EPISODES - 1 or events["rerecord_episode"]):
+        log_say("Reset the environment")
+        record_loop(
+            robot=robot,
+            events=events,
+            fps=FPS,
+            teleop_action_processor=teleop_action_processor,
+            robot_action_processor=robot_action_processor,
+            robot_observation_processor=robot_observation_processor,
+            teleop=teleop,
+            control_time_s=RESET_TIME_SEC,
+            single_task=TASK_DESCRIPTION,
+            display_data=True,
+        )
+
+    if events["rerecord_episode"]:
+        log_say("Re-recording episode")
+        events["rerecord_episode"] = False
+        events["exit_early"] = False
+        dataset.clear_episode_buffer()
+        continue
+
+    dataset.save_episode()
+    episode_idx += 1
+
+# 정리
+log_say("Stop recording")
+robot.disconnect()
+teleop.disconnect()
+dataset.push_to_hub()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+#### 데이터셋 업로드
+
+로컬에서 데이터셋은 다음 폴더에 저장됩니다: `~/.cache/huggingface/lerobot/{repo-id}`. 데이터 녹화가 끝나면, 데이터셋이 Hugging Face 페이지(예: `https://huggingface.co/datasets/${HF_USER}/so101_test`)에 업로드됩니다. 다음을 실행하여 확인할 수 있습니다:
+
+```bash
+echo https://huggingface.co/datasets/${HF_USER}/so101_test
+```
+
+데이터셋에는 커뮤니티가 쉽게 찾을 수 있도록 `LeRobot` 태그가 자동으로 추가되며, 커스텀 태그(예: `tutorial`)도 추가할 수 있습니다.
+
+Hub에서 다른 LeRobot 데이터셋은 `LeRobot` [태그](https://huggingface.co/datasets?other=LeRobot)를 검색하여 찾을 수 있습니다.
+
+로컬 데이터셋을 수동으로 Hub에 푸시할 수도 있습니다:
+
+```bash
+hf upload ${HF_USER}/record-test ~/.cache/huggingface/lerobot/{repo-id} --repo-type dataset
+```
+
+#### 녹화 함수
+
+`record` 함수는 로봇 동작 중 데이터를 캡처하고 관리하기 위한 도구 모음을 제공합니다:
+
+##### 1. 데이터 저장
+
+- 데이터는 `LeRobotDataset` 형식으로 저장되며, 녹화 중 디스크에 기록됩니다.
+- 기본적으로 녹화 후 데이터셋이 Hugging Face 페이지에 푸시됩니다.
+  - 업로드를 비활성화하려면 `--dataset.push_to_hub=False`를 사용하세요.
+
+##### 2. 체크포인트 및 재개
+
+- 녹화 중 체크포인트가 자동으로 생성됩니다.
+- 문제가 발생하면 동일한 명령에 `--resume=true`를 추가하여 재개할 수 있습니다. 녹화를 재개할 때, `--dataset.num_episodes`는 데이터셋의 목표 총 에피소드 수가 아닌 **추가로 녹화할 에피소드 수**로 설정해야 합니다!
+- 처음부터 다시 녹화하려면, 데이터셋 디렉토리를 **수동으로 삭제**하세요.
+
+##### 3. 녹화 파라미터
+
+명령줄 인수를 사용하여 데이터 녹화 흐름을 설정합니다:
+
+- `--dataset.episode_time_s=60`
+  각 에피소드의 녹화 시간 (기본값: **60초**).
+- `--dataset.reset_time_s=60`
+  각 에피소드 후 환경 리셋 시간 (기본값: **60초**).
+- `--dataset.num_episodes=50`
+  녹화할 총 에피소드 수 (기본값: **50**).
+
+##### 4. 녹화 중 키보드 제어
+
+키보드 단축키로 데이터 녹화 흐름을 제어합니다:
+
+- **오른쪽 화살표(`→`)** 누르기: 현재 에피소드 또는 리셋 시간을 조기 종료하고 다음으로 이동합니다.
+- **왼쪽 화살표(`←`)** 누르기: 현재 에피소드를 취소하고 재녹화합니다.
+- **Escape(`ESC`)** 누르기: 세션을 즉시 중지하고, 비디오를 인코딩하고, 데이터셋을 업로드합니다.
+
+#### 데이터 수집 팁
+
+데이터 녹화에 익숙해지면, 학습을 위한 더 큰 데이터셋을 만들 수 있습니다. 좋은 시작 작업은 다양한 위치에서 물체를 잡아서 상자에 넣는 것입니다. 위치당 10개의 에피소드로, 최소 50개의 에피소드를 녹화하는 것을 권장합니다. 카메라를 고정하고, 녹화 전반에 걸쳐 일관된 집기 동작을 유지하세요. 또한 조작하는 물체가 카메라에 보이는지 확인하세요. 좋은 기준은 카메라 이미지만 보고 작업을 직접 수행할 수 있어야 한다는 것입니다.
+
+이후 섹션에서 신경망을 학습합니다. 안정적인 집기 성능을 달성한 후, 추가 집기 위치, 다른 집기 기법, 카메라 위치 변경 등 데이터 수집 시 더 많은 변형을 도입할 수 있습니다.
+
+너무 빠르게 변형을 추가하면 결과에 악영향을 줄 수 있으니 주의하세요.
+
+이 중요한 주제를 더 깊이 알고 싶다면, 좋은 데이터셋을 만드는 방법에 대해 작성한 [블로그 글](https://huggingface.co/blog/lerobot-datasets#what-makes-a-good-dataset)를 확인하세요.
+
+#### 문제 해결:
+
+- Linux에서, 데이터 녹화 중 왼쪽/오른쪽 화살표 키와 Escape 키가 작동하지 않으면, `$DISPLAY` 환경 변수가 설정되어 있는지 확인하세요. [pynput 제한사항](https://pynput.readthedocs.io/en/latest/limitations.html#linux)을 참조하세요.
+
+## 데이터셋 시각화
+
+`--control.push_to_hub=true`로 데이터셋을 Hub에 업로드했다면, 다음 명령으로 얻은 repo id를 복사-붙여넣기하여 [온라인에서 데이터셋을 시각화](https://huggingface.co/spaces/lerobot/visualize_dataset)할 수 있습니다:
+
+```bash
+echo ${HF_USER}/so101_test
+```
+
+## 에피소드 재생
+
+유용한 기능으로 `replay` 함수가 있습니다. 녹화한 에피소드나 다른 데이터셋의 에피소드를 재생할 수 있습니다. 이 함수는 로봇 동작의 반복성을 테스트하고, 동일 모델의 로봇 간 전이 가능성을 평가하는 데 도움이 됩니다.
+
+아래 명령 또는 API 예제로 로봇에서 첫 번째 에피소드를 재생할 수 있습니다:
+
+<hfoptions id="replay">
+<hfoption id="Command">
+```bash
+lerobot-replay \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --robot.id=my_awesome_follower_arm \
+    --dataset.repo_id=${HF_USER}/record-test \
+    --dataset.episode=0 # 재생할 에피소드를 선택하세요
+```
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+import time
+
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.robots.so_follower.config_so100_follower import SO100FollowerConfig
+from lerobot.robots.so_follower.so100_follower import SO100Follower
+from lerobot.utils.robot_utils import precise_sleep
+from lerobot.utils.utils import log_say
+
+episode_idx = 0
+
+robot_config = SO100FollowerConfig(port="/dev/tty.usbmodem58760434471", id="my_awesome_follower_arm")
+
+robot = SO100Follower(robot_config)
+robot.connect()
+
+dataset = LeRobotDataset("<hf_username>/<dataset_repo_id>", episodes=[episode_idx])
+actions = dataset.hf_dataset.select_columns("action")
+
+log_say(f"Replaying episode {episode_idx}")
+for idx in range(dataset.num_frames):
+    t0 = time.perf_counter()
+
+    action = {
+        name: float(actions[idx]["action"][i]) for i, name in enumerate(dataset.features["action"]["names"])
+    }
+    robot.send_action(action)
+
+    precise_sleep(max(1.0 / dataset.fps - (time.perf_counter() - t0), 0.0))
+
+robot.disconnect()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+로봇이 녹화한 것과 유사한 움직임을 재현해야 합니다. 예를 들어, [Trossen Robotics](https://www.trossenrobotics.com)의 Aloha 로봇에서 `replay`를 사용하는 [이 비디오](https://x.com/RemiCadene/status/1793654950905680090)를 확인해보세요.
+
+## 정책 학습
+
+로봇을 제어하는 정책을 학습하려면, [`lerobot-train`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/scripts/lerobot_train.py) 스크립트를 사용합니다. 몇 가지 인수가 필요합니다. 예시 명령입니다:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=${HF_USER}/so101_test \
+  --policy.type=act \
+  --output_dir=outputs/train/act_so101_test \
+  --job_name=act_so101_test \
+  --policy.device=cuda \
+  --wandb.enable=true \
+  --policy.repo_id=${HF_USER}/my_policy
+```
+
+명령어를 하나씩 설명하겠습니다:
+
+1. `--dataset.repo_id=${HF_USER}/so101_test`로 데이터셋을 인수로 제공했습니다.
+2. `policy.type=act`로 정책을 지정했습니다. 이는 [`configuration_act.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/configuration_act.py)에서 설정을 불러옵니다. 중요한 점은, 이 정책이 데이터셋에 저장된 모터 상태, 모터 액션, 카메라(예: `laptop`, `phone`) 수에 자동으로 맞춰진다는 것입니다.
+3. `policy.device=cuda`를 제공했는데, Nvidia GPU에서 학습하기 때문입니다. Apple Silicon에서는 `policy.device=mps`를 사용할 수 있습니다.
+4. 학습 그래프 시각화를 위해 `wandb.enable=true`로 [Weights and Biases](https://docs.wandb.ai/quickstart)를 사용합니다. 이는 선택사항이지만, 사용하려면 `wandb login`을 실행하여 로그인해야 합니다.
+
+학습에는 몇 시간이 소요됩니다. 체크포인트는 `outputs/train/act_so101_test/checkpoints`에서 찾을 수 있습니다.
+
+체크포인트에서 학습을 재개하려면, `act_so101_test` 정책의 `last` 체크포인트에서 재개하는 예시 명령입니다:
+
+```bash
+lerobot-train \
+  --config_path=outputs/train/act_so101_test/checkpoints/last/pretrained_model/train_config.json \
+  --resume=true
+```
+
+학습 후 모델을 Hub에 푸시하지 않으려면 `--policy.push_to_hub=false`를 사용하세요.
+
+추가로, 모델에 `tags`를 지정하거나 `license`를 설정하거나 모델 레포를 `private`으로 만들 수 있습니다: `--policy.private=true --policy.tags=\[ppo,rl\] --policy.license=mit`
+
+#### Google Colab으로 학습
+
+로컬 컴퓨터에 강력한 GPU가 없다면, [ACT 학습 노트북](./notebooks#training-act)을 따라 Google Colab을 활용할 수 있습니다.
+
+#### 정책 체크포인트 업로드
+
+학습이 완료되면, 최신 체크포인트를 다음으로 업로드하세요:
+
+```bash
+hf upload ${HF_USER}/act_so101_test \
+  outputs/train/act_so101_test/checkpoints/last/pretrained_model
+```
+
+중간 체크포인트도 업로드할 수 있습니다:
+
+```bash
+CKPT=010000
+hf upload ${HF_USER}/act_so101_test${CKPT} \
+  outputs/train/act_so101_test/checkpoints/${CKPT}/pretrained_model
+```
+
+## 추론 실행 및 정책 평가
+
+[`lerobot-record`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/scripts/lerobot_record.py)의 `record` 스크립트에 정책 체크포인트를 입력으로 사용하여, 추론을 실행하고 정책을 평가할 수 있습니다. 예를 들어, 추론을 실행하고 10개의 평가 에피소드를 녹화하는 명령 또는 API 예제입니다:
+
+<hfoptions id="eval">
+<hfoption id="Command">
+```bash
+lerobot-record  \
+  --robot.type=so100_follower \
+  --robot.port=/dev/ttyACM1 \
+  --robot.cameras="{ up: {type: opencv, index_or_path: /dev/video10, width: 640, height: 480, fps: 30}, side: {type: intelrealsense, serial_number_or_name: 233522074606, width: 640, height: 480, fps: 30}}" \
+  --robot.id=my_awesome_follower_arm \
+  --display_data=false \
+  --dataset.repo_id=${HF_USER}/eval_so100 \
+  --dataset.single_task="Put lego brick into the transparent box" \
+  --dataset.streaming_encoding=true \
+  --dataset.encoder_threads=2 \
+  # --dataset.vcodec=auto \
+  # <- 에피소드 사이에 텔레오퍼레이션을 하려면 아래 옵션 사용 \
+  # --teleop.type=so100_leader \
+  # --teleop.port=/dev/ttyACM0 \
+  # --teleop.id=my_awesome_leader_arm \
+  --policy.path=${HF_USER}/my_policy
+```
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.utils import hw_to_dataset_features
+from lerobot.policies.act.modeling_act import ACTPolicy
+from lerobot.policies.factory import make_pre_post_processors
+from lerobot.robots.so_follower.config_so100_follower import SO100FollowerConfig
+from lerobot.robots.so_follower.so100_follower import SO100Follower
+from lerobot.scripts.lerobot_record import record_loop
+from lerobot.utils.control_utils import init_keyboard_listener
+from lerobot.utils.utils import log_say
+from lerobot.utils.visualization_utils import init_rerun
+
+
+NUM_EPISODES = 5
+FPS = 30
+EPISODE_TIME_SEC = 60
+TASK_DESCRIPTION = "My task description"
+HF_MODEL_ID = "<hf_username>/<model_repo_id>"
+HF_DATASET_ID = "<hf_username>/<eval_dataset_repo_id>"
+
+# 로봇 설정 생성
+camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
+robot_config = SO100FollowerConfig(
+    port="/dev/tty.usbmodem58760434471", id="my_awesome_follower_arm", cameras=camera_config
+)
+
+# 로봇 초기화
+robot = SO100Follower(robot_config)
+
+# 정책 초기화
+policy = ACTPolicy.from_pretrained(HF_MODEL_ID)
+
+# 데이터셋 피처 설정
+action_features = hw_to_dataset_features(robot.action_features, "action")
+obs_features = hw_to_dataset_features(robot.observation_features, "observation")
+dataset_features = {**action_features, **obs_features}
+
+# 데이터셋 생성
+dataset = LeRobotDataset.create(
+    repo_id=HF_DATASET_ID,
+    fps=FPS,
+    features=dataset_features,
+    robot_type=robot.name,
+    use_videos=True,
+    image_writer_threads=4,
+)
+
+# 키보드 리스너 및 rerun 시각화 초기화
+_, events = init_keyboard_listener()
+init_rerun(session_name="recording")
+
+# 로봇 연결
+robot.connect()
+
+preprocessor, postprocessor = make_pre_post_processors(
+    policy_cfg=policy,
+    pretrained_path=HF_MODEL_ID,
+    dataset_stats=dataset.meta.stats,
+)
+
+for episode_idx in range(NUM_EPISODES):
+    log_say(f"Running inference, recording eval episode {episode_idx + 1} of {NUM_EPISODES}")
+
+    # 정책 추론 루프 실행
+    record_loop(
+        robot=robot,
+        events=events,
+        fps=FPS,
+        policy=policy,
+        preprocessor=preprocessor,
+        postprocessor=postprocessor,
+        dataset=dataset,
+        control_time_s=EPISODE_TIME_SEC,
+        single_task=TASK_DESCRIPTION,
+        display_data=True,
+    )
+
+    dataset.save_episode()
+
+# 정리
+robot.disconnect()
+dataset.push_to_hub()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+보시다시피, 학습 데이터셋을 녹화할 때 사용한 명령과 거의 동일합니다. 두 가지가 변경되었습니다:
+
+1. 정책 체크포인트 경로를 나타내는 `--control.policy.path` 인수가 추가되었습니다(예: `outputs/train/eval_act_so101_test/checkpoints/last/pretrained_model`). 모델 체크포인트를 Hub에 업로드한 경우, 모델 레포지토리를 사용할 수도 있습니다(예: `${HF_USER}/act_so101_test`).
+2. 추론을 실행 중임을 나타내기 위해 데이터셋 이름이 `eval`로 시작합니다(예: `${HF_USER}/eval_act_so101_test`).

@@ -1,0 +1,117 @@
+# SmolVLA
+
+SmolVLA는 Hugging Face의 로보틱스용 경량 파운데이션 모델입니다. LeRobot 데이터셋으로 쉽게 파인튜닝할 수 있도록 설계되어, 여러분의 개발을 가속화해 줍니다!
+
+<p align="center">
+  <img
+    src="https://cdn-uploads.huggingface.co/production/uploads/640e21ef3c82bd463ee5a76d/aooU0a3DMtYmy_1IWMaIM.png"
+    alt="SmolVLA 아키텍처"
+    width="500"
+  />
+  <br />
+  <em>
+    그림 1. SmolVLA는 (i) 다중 카메라 뷰, (ii) 로봇의 현재 센서-모터 상태, (iii)
+    자연어 지시를 입력으로 받아, 액션 청크를 생성할 때 액션 전문가(action
+    expert)를 조건화하는 데 사용되는 컨텍스트 특징으로 인코딩합니다.
+  </em>
+</p>
+
+## 환경 설정
+
+1. [설치 가이드](./installation)를 따라 LeRobot을 설치하세요.
+2. 다음 명령으로 SmolVLA 의존성을 설치하세요:
+
+   ```bash
+   pip install -e ".[smolvla]"
+   ```
+
+## 데이터셋 수집
+
+SmolVLA는 베이스 모델이므로, 사용 환경에서 최적의 성능을 위해서는 자체 데이터로 파인튜닝이 필요합니다.
+시작점으로, 작업의 에피소드를 약 50개 녹화하는 것을 권장합니다. 시작하려면 가이드를 따르세요: [데이터셋 녹화](./il_robots)
+
+<Tip>
+
+데이터셋에 포함하는 각 변형(예: 큐브 집기-놓기 작업에서 테이블 위의 큐브 위치)에 대해 충분한 시연이 있는지 확인하세요.
+
+[SmolVLA 논문](https://huggingface.co/papers/2506.01844)에서 사용된 아래 링크의 데이터셋을 참고하시기 바랍니다:
+
+🔗 [SVLA SO100 PickPlace](https://huggingface.co/spaces/lerobot/visualize_dataset?path=%2Flerobot%2Fsvla_so100_pickplace%2Fepisode_0)
+
+이 데이터셋에서는 5개의 서로 다른 큐브 위치에 걸쳐 50개의 에피소드를 녹화했습니다. 각 위치에 대해 10개의 집기-놓기 상호작용 에피소드를 수집했습니다. 이처럼 각 변형을 여러 번 반복하는 구조가 모델의 일반화를 향상시키는 데 도움이 되었습니다. 25개의 에피소드로 유사한 데이터셋을 시도해봤지만, 충분하지 않아 성능이 좋지 않았습니다. 따라서 데이터의 품질과 양은 확실히 핵심 요소입니다.
+데이터셋을 Hub에 업로드한 후, 파인튜닝 스크립트를 사용하여 SmolVLA를 여러분의 애플리케이션에 맞게 조정할 수 있습니다.
+
+</Tip>
+
+## SmolVLA를 자체 데이터로 파인튜닝
+
+사전학습된 450M 모델인 [`smolvla_base`](https://hf.co/lerobot/smolvla_base)를 사용하여 자체 데이터로 파인튜닝하세요.
+모델을 20k 스텝 학습하는 데 단일 A100 GPU에서 약 4시간이 소요됩니다. 성능과 사용 사례에 따라 스텝 수를 조정해야 합니다.
+
+GPU 장치가 없다면, 아래 Google Colab 노트북을 사용하여 학습할 수 있습니다. [![Google Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/notebooks/blob/main/lerobot/training-smolvla.ipynb)
+
+`--dataset.repo_id`를 사용하여 데이터셋을 학습 스크립트에 전달하세요. 설치를 테스트하려면, [SmolVLA 논문](https://huggingface.co/papers/2506.01844)을 위해 수집한 데이터셋 중 하나를 사용하는 아래 명령을 실행하세요.
+
+```bash
+cd lerobot && lerobot-train \
+  --policy.path=lerobot/smolvla_base \
+  --dataset.repo_id=${HF_USER}/mydataset \
+  --batch_size=64 \
+  --steps=20000 \
+  --output_dir=outputs/train/my_smolvla \
+  --job_name=my_smolvla_training \
+  --policy.device=cuda \
+  --wandb.enable=true
+```
+
+<Tip>
+  작은 배치 크기로 시작하여, 로딩 시간이 짧게 유지되는 한 GPU가 허용하는
+  범위에서 점진적으로 늘릴 수 있습니다.
+</Tip>
+
+파인튜닝은 예술입니다. 파인튜닝에 사용할 수 있는 전체 옵션을 확인하려면 다음을 실행하세요:
+
+```bash
+lerobot-train --help
+```
+
+<p align="center">
+  <img
+    src="https://cdn-uploads.huggingface.co/production/uploads/640e21ef3c82bd463ee5a76d/S-3vvVCulChREwHDkquoc.gif"
+    alt="작업 변형에 따른 SmolVLA 비교"
+    width="500"
+  />
+  <br />
+  <em>
+    그림 2: 작업 변형에 따른 SmolVLA 비교. 왼쪽에서 오른쪽으로: (1) 큐브
+    집기-놓기 카운팅, (2) 큐브 집기-놓기 카운팅, (3) 외란 하에서의 큐브
+    집기-놓기 카운팅, (4) 실제 SO101을 사용한 레고 블록 집기-놓기의 일반화.
+  </em>
+</p>
+
+## 파인튜닝된 모델 평가 및 실시간 실행
+
+에피소드 녹화와 마찬가지로, HuggingFace Hub에 로그인하는 것이 권장됩니다. 관련 단계를 따르세요: [데이터셋 녹화](./il_robots).
+로그인한 후, 다음과 같이 사용 환경에서 추론을 실행할 수 있습니다:
+
+```bash
+lerobot-record \
+  --robot.type=so101_follower \
+  --robot.port=/dev/ttyACM0 \ # <- 사용하는 포트로 변경
+  --robot.id=my_blue_follower_arm \ # <- 사용하는 로봇 ID로 변경
+  --robot.cameras="{ front: {type: opencv, index_or_path: 8, width: 640, height: 480, fps: 30}}" \ # <- 사용하는 카메라로 변경
+  --dataset.single_task="Grasp a lego block and put it in the bin." \ # <- 데이터셋 녹화 시 사용한 동일한 작업 설명 사용
+  --dataset.repo_id=${HF_USER}/eval_DATASET_NAME_test \  # <- HF Hub의 데이터셋 이름
+  --dataset.episode_time_s=50 \
+  --dataset.num_episodes=10 \
+  --dataset.streaming_encoding=true \
+  --dataset.encoder_threads=2 \
+  # --dataset.vcodec=auto \
+  # <- 에피소드 사이에 텔레오퍼레이션을 하려면 아래 옵션 사용 \
+  # --teleop.type=so100_leader \
+  # --teleop.port=/dev/ttyACM0 \
+  # --teleop.id=my_red_leader_arm \
+  --policy.path=HF_USER/FINETUNE_MODEL_NAME # <- 파인튜닝된 모델 사용
+```
+
+평가 환경에 따라, 평가 스위트에 녹화할 에피소드의 길이와 수를 설정할 수 있습니다.
