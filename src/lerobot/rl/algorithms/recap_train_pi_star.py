@@ -147,6 +147,11 @@ def _resolve_value_network_checkpoint(cfg: RECAPPiStarTrainingConfig) -> str:
         logging.info(f"Using local value-network checkpoint: {local}")
         return str(local)
 
+    if local.is_absolute() or cfg.value_network_checkpoint.startswith((".", "~", "/")):
+        raise FileNotFoundError(
+            f"Value-network checkpoint path looks like a local path but does not exist: {local}"
+        )
+
     from huggingface_hub import hf_hub_download
 
     repo_id = cfg.value_network_checkpoint

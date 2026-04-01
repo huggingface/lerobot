@@ -39,6 +39,7 @@ import copy
 import csv
 import logging
 import math
+import resource
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypedDict, Unpack
@@ -94,6 +95,15 @@ from lerobot.utils.constants import (
 )
 
 DEFAULT_IMAGE_SIZE = 224
+
+
+def _log_mem(label: str) -> None:
+    rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+    parts = [f"[PI_GEMMA_MEM {label}] RSS={rss_mb:.0f}MB"]
+    if torch.cuda.is_available():
+        alloc = torch.cuda.memory_allocated() / (1024**2)
+        parts.append(f"CUDA_alloc={alloc:.0f}MB")
+    logging.info(" ".join(parts))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -763,11 +773,15 @@ class PaliGemmaWithExpertModel(nn.Module):
             ),
         )
 
+        _log_mem("PaliGemmaWithExpert: before paligemma init")
         self.paligemma = PaliGemmaDirect(config=vlm_config_hf)
+        _log_mem("PaliGemmaWithExpert: after paligemma init")
         self.gemma_expert = ActionExpertDirect(config=action_expert_config_hf)
+        _log_mem("PaliGemmaWithExpert: after gemma_expert init")
         self.gemma_expert.model.embed_tokens = None
 
         self.to_bfloat16_for_selected_params(precision)
+        _log_mem("PaliGemmaWithExpert: after dtype conversion")
         self._set_requires_grad()
 
     def to_bfloat16_for_selected_params(
@@ -954,6 +968,7 @@ class PiStar06Pytorch(nn.Module):
                 f"invalid resolution: {config.image_resolution}"
             )
 
+        _log_mem("PiStar06Pytorch: before PaliGemmaWithExpert init")
         self.paligemma_with_expert = PaliGemmaWithExpertModel(
             paligemma_config,
             action_expert_config,
@@ -963,6 +978,7 @@ class PiStar06Pytorch(nn.Module):
             freeze_vision_encoder=config.freeze_vision_encoder,
             train_expert_only=config.train_expert_only,
         )
+        _log_mem("PiStar06Pytorch: after PaliGemmaWithExpert init")
 
         self.action_in_proj = nn.Linear(
             config.max_action_dim, action_expert_config.width
@@ -1085,6 +1101,10 @@ class PiStar06Pytorch(nn.Module):
 
     def embed_suffix(self, noisy_actions, timestep):
         """Embed noisy_actions, timestep to prepare for Expert Gemma processing."""
+        target_dtype = self.action_in_proj.weight.dtype
+        noisy_actions = noisy_actions.to(dtype=target_dtype)
+        timestep = timestep.to(dtype=target_dtype)
+
         embs = []
         pad_masks = []
         att_masks = []
@@ -1370,13 +1390,16 @@ class PiStar06Policy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
 
+        _log_mem("PiStar06Policy: before model init")
         self.init_rtc_processor()
         self.model = PiStar06Pytorch(config, rtc_processor=self.rtc_processor)
+        _log_mem("PiStar06Policy: after model init")
 
         if config.gradient_checkpointing:
             self.model.gradient_checkpointing_enable()
 
         self.model.to(config.device)
+        _log_mem("PiStar06Policy: after model.to(device)")
 
         if config.num_expert_layers > 0:
             expert_model = self.model.paligemma_with_expert.gemma_expert.model
@@ -1443,6 +1466,7 @@ class PiStar06Policy(PreTrainedPolicy):
             )
 
         model = cls(config, **kwargs)
+        _log_mem("from_pretrained: after model construction")
 
         try:
             print(f"Loading model from: {pretrained_name_or_path}")
@@ -1463,6 +1487,7 @@ class PiStar06Policy(PreTrainedPolicy):
                 from safetensors.torch import load_file
 
                 original_state_dict = load_file(resolved_file)
+                _log_mem("from_pretrained: after loading safetensors")
                 print("Loaded state dict from model.safetensors")
             except Exception as e:
                 print(f"Could not load state dict from remote files: {e}")
@@ -1489,6 +1514,7 @@ class PiStar06Policy(PreTrainedPolicy):
             missing_keys, unexpected_keys = model.load_state_dict(
                 remapped_state_dict, strict=strict
             )
+            _log_mem("from_pretrained: after load_state_dict")
 
             if missing_keys:
                 print(
