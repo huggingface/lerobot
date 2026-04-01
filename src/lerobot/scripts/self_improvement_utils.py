@@ -6,8 +6,7 @@ collect trajectories, finetune, and re-evaluate a BC + world-model policy.
 Building blocks
 ───────────────
   eval_and_collect()       Local GPU eval → (metrics, episodes)  [inner loop]
-  evaluate_final()         Submit SLURM multi-seed eval jobs (non-blocking)
-  collect_eval_results()   Aggregate results after eval jobs complete
+  evaluate_final()         Final inline eval (250 episodes) → (metrics, eval_dir)
   TrajectoryBuffer         Stores trajectories, filters by success/failure
   finetune()               End-to-end training on success data + pretrain replay
   finetune_wm()            WM-only training on all/failure data + pretrain replay
@@ -33,7 +32,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import subprocess
 import time
 from pathlib import Path
 
@@ -41,7 +39,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import Tensor
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import ConcatDataset, DataLoader, Dataset
 
 logger = logging.getLogger(__name__)
 
@@ -169,37 +167,34 @@ def eval_and_collect(
 def evaluate_final(
     policy_path: str,
     env_type: str = "pusht",
-    seeds: tuple[int, ...] = (1000, 2000, 3000, 4000, 5000),
-    n_episodes_per_seed: int = 50,
-    compute_script: str = "compute_inference.sh",
+    n_episodes: int = 250,
+    seed: int = 1000,
+    device: str = "cuda",
+    use_planning: bool = False,
+    planning_algorithm: str = "gcp",
     output_dir: str | None = None,
-    policy_overrides: list[str] | None = None,
-) -> tuple[dict[int, str], str]:
-    """Submit parallel SLURM eval jobs (non-blocking).
+) -> tuple[dict, str]:
+    """Run a final evaluation inline (no SLURM submission).
 
-    Submits one ``lerobot-eval`` job per seed and **returns immediately**
-    with the SLURM job IDs.  The caller (autoresearch agent) is responsible
-    for babysitting the jobs via ``squeue`` and calling
-    :func:`collect_eval_results` once they complete.
-
-    5 seeds × 50 episodes → 250 total episodes, SE ≈ 3.2%, CI ≈ ±6.3%.
+    Runs *n_episodes* rollouts on the current GPU and saves results to
+    *output_dir*.
 
     Args:
         policy_path: Path to pretrained_model directory.
         env_type: Gymnasium environment identifier (default ``"pusht"``).
-        seeds: Random seeds — one SLURM job per seed.
-        n_episodes_per_seed: Episodes evaluated per seed.
-        compute_script: SLURM wrapper script (e.g. ``"compute_inference.sh"``).
-        output_dir: Root directory for per-seed results.  Auto-generated from
+        n_episodes: Total number of evaluation episodes (default 250).
+        seed: Random seed for env resets.
+        device: Torch device for inference.
+        use_planning: Enable latent-space planning at test time.
+        planning_algorithm: ``"mppi"`` or ``"gcp"``.
+        output_dir: Directory for results.  Auto-generated from
             *policy_path* if ``None``.
-        policy_overrides: Extra ``lerobot-eval`` CLI flags, e.g.
-            ``["--policy.use_planning=true"]``.
 
     Returns:
-        (job_ids, eval_dir):
-            *job_ids* — dict mapping seed → SLURM job ID string.
-            *eval_dir* — path to the directory containing per-seed outputs.
-            Pass *eval_dir* to :func:`collect_eval_results` after jobs finish.
+        (metrics, eval_dir):
+            *metrics* — dict with ``pc_success``, ``avg_sum_reward``,
+            ``n_episodes``, and ``per_episode`` list.
+            *eval_dir* — path to the directory containing saved results.
     """
     if output_dir is None:
         parent = Path(policy_path).parent
@@ -207,86 +202,28 @@ def evaluate_final(
     eval_dir = Path(output_dir)
     eval_dir.mkdir(parents=True, exist_ok=True)
 
-    # ── clear inherited SLURM env vars to avoid CPU-binding errors ─
-    for key in list(os.environ.keys()):
-        if key.startswith("SLURM_"):
-            del os.environ[key]
+    metrics, episodes = eval_and_collect(
+        policy_path,
+        env_type=env_type,
+        n_episodes=n_episodes,
+        seed=seed,
+        device=device,
+        use_planning=use_planning,
+        planning_algorithm=planning_algorithm,
+    )
 
-    # ── submit one job per seed ──────────────────────────────────
-    job_ids: dict[int, str] = {}
-    for seed in seeds:
-        seed_dir = eval_dir / f"seed_{seed}"
-        seed_dir.mkdir(parents=True, exist_ok=True)
+    # ── persist results ─────────────────────────────────────────
+    results_file = eval_dir / "eval_info.json"
+    serializable = {k: v for k, v in metrics.items() if k != "per_episode"}
+    serializable["per_episode"] = [
+        {k: v for k, v in ep.items() if not isinstance(v, (torch.Tensor, np.ndarray))}
+        for ep in metrics.get("per_episode", [])
+    ]
+    with open(results_file, "w") as f:
+        json.dump(serializable, f, indent=2)
+    logger.info("Saved eval results → %s", results_file)
 
-        cmd = [
-            "sbatch", compute_script,
-            "lerobot-eval",
-            f"--policy.path={policy_path}",
-            f"--env.type={env_type}",
-            f"--eval.n_episodes={n_episodes_per_seed}",
-            f"--eval.batch_size={n_episodes_per_seed}",
-            f"--seed={seed}",
-            f"--output_dir={seed_dir}",
-            "--policy.device=cuda",
-        ]
-        if policy_overrides:
-            cmd.extend(policy_overrides)
-
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        job_id = result.stdout.strip().split()[-1]
-        job_ids[seed] = job_id
-        logger.info("Submitted eval seed=%d → job %s", seed, job_id)
-
-    return job_ids, str(eval_dir)
-
-
-def collect_eval_results(
-    eval_dir: str,
-    seeds: tuple[int, ...] = (1000, 2000, 3000, 4000, 5000),
-) -> dict:
-    """Aggregate results from completed multi-seed eval jobs.
-
-    Call this **after** all SLURM jobs from :func:`evaluate_final` have
-    finished.  Reads ``eval_info.json`` from each seed directory and
-    computes mean ± std success rate.
-
-    Args:
-        eval_dir: Path returned by :func:`evaluate_final`.
-        seeds: The same seeds that were passed to :func:`evaluate_final`.
-
-    Returns:
-        dict with ``mean_success``, ``std_success``, ``mean_eval_ep_s``,
-        ``per_seed`` breakdown, and ``n_seeds``.
-    """
-    eval_path = Path(eval_dir)
-    per_seed: dict[int, dict] = {}
-    for seed in seeds:
-        metrics_file = eval_path / f"seed_{seed}" / "eval_info.json"
-        if metrics_file.exists():
-            with open(metrics_file) as f:
-                per_seed[seed] = json.load(f)
-        else:
-            logger.warning("No results for seed %d at %s", seed, metrics_file)
-
-    success_rates = []
-    ep_speeds = []
-    for info in per_seed.values():
-        overall = info.get("overall", info.get("aggregated", {}))
-        if "pc_success" in overall:
-            success_rates.append(overall["pc_success"])
-        if "eval_ep_s" in overall:
-            ep_speeds.append(overall["eval_ep_s"])
-
-    return {
-        "mean_success": float(np.mean(success_rates)) if success_rates else 0.0,
-        "std_success": float(np.std(success_rates)) if success_rates else 0.0,
-        "mean_eval_ep_s": float(np.mean(ep_speeds)) if ep_speeds else 0.0,
-        "per_seed": {
-            str(s): info.get("overall", info.get("aggregated", {}))
-            for s, info in per_seed.items()
-        },
-        "n_seeds": len(success_rates),
-    }
+    return metrics, str(eval_dir)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -718,6 +655,150 @@ _WM_STRICT_PREFIXES = (
 )
 
 
+def _find_training_state_dir(policy_path: str) -> Path | None:
+    """Locate the ``training_state/`` directory relative to a policy path.
+
+    Checks ``policy_path/training_state`` first (self-improvement checkpoints),
+    then ``policy_path/../training_state`` (pretrain checkpoints where the
+    model lives in a ``pretrained_model/`` subdirectory).
+    """
+    for candidate in [
+        Path(policy_path) / "training_state",
+        Path(policy_path).parent / "training_state",
+    ]:
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def _load_optimizer_state_if_available(
+    optimizer: torch.optim.Optimizer,
+    policy: torch.nn.Module,
+    policy_path: str,
+) -> torch.optim.Optimizer:
+    """Load per-parameter Adam state (momentum/variance) from the checkpoint.
+
+    Matches parameters by name so that this works even when the saved
+    optimizer used a different number of param groups (e.g. pretrain used
+    ``get_optim_params()`` with 2 groups, finetune uses 1).  Keeps the
+    current optimizer's ``param_groups`` and LR unchanged.
+
+    Returns the optimizer unchanged if no saved state is found.
+    """
+    from safetensors.torch import load_file
+    from lerobot.datasets.utils import unflatten_dict
+
+    ts_dir = _find_training_state_dir(policy_path)
+    if ts_dir is None:
+        logger.warning("No training_state dir found near %s — starting with fresh optimizer", policy_path)
+        return optimizer
+
+    state_file = ts_dir / "optimizer_state.safetensors"
+    if not state_file.exists():
+        logger.warning("No optimizer_state.safetensors in %s — starting fresh", ts_dir)
+        return optimizer
+
+    logger.info("Loading optimizer state from %s", ts_dir)
+    flat_state = load_file(state_file)
+    nested = unflatten_dict(flat_state)
+    saved_state = nested.get("state", {})
+    saved_state = {int(k): v for k, v in saved_state.items()}
+
+    # ── Reconstruct saved index→name mapping ────────────────────
+    # Detect the param ordering from the saved optimizer_param_groups.json.
+    # Pretrain checkpoints use get_optim_params() (2 groups: non-backbone,
+    # backbone).  Self-improvement checkpoints use a flat list(parameters())
+    # (1 group).  We read the JSON to determine which layout was used.
+    param_name_to_obj = dict(policy.named_parameters())
+
+    saved_n_groups = 1
+    pg_file = ts_dir / "optimizer_param_groups.json"
+    if pg_file.exists():
+        import json as _json
+        with open(pg_file) as f:
+            saved_n_groups = len(_json.load(f))
+
+    saved_idx_to_name: dict[int, str] = {}
+    if saved_n_groups > 1 and hasattr(policy, "get_optim_params"):
+        # Pretrain layout: indices follow get_optim_params() group order
+        groups = policy.get_optim_params()
+        idx = 0
+        for group in groups:
+            for p in group["params"]:
+                for name, obj in param_name_to_obj.items():
+                    if obj is p:
+                        saved_idx_to_name[idx] = name
+                        break
+                idx += 1
+
+    # Single-group or fallback: indices follow named_parameters() order
+    if not saved_idx_to_name:
+        for idx, (name, _) in enumerate(policy.named_parameters()):
+            saved_idx_to_name[idx] = name
+
+    # ── Build current index→name mapping ────────────────────────
+    current_param_ids: list[int] = []
+    for group in optimizer.state_dict()["param_groups"]:
+        current_param_ids.extend(group["params"])
+
+    current_id_to_name: dict[int, str] = {}
+    param_id_iter = iter(current_param_ids)
+    for group in optimizer.param_groups:
+        for p in group["params"]:
+            pid = next(param_id_iter)
+            for name, obj in param_name_to_obj.items():
+                if obj is p:
+                    current_id_to_name[pid] = name
+                    break
+
+    # ── Transfer state by name ──────────────────────────────────
+    name_to_saved_state = {
+        saved_idx_to_name[idx]: s for idx, s in saved_state.items()
+        if idx in saved_idx_to_name
+    }
+
+    new_state: dict[int, dict] = {}
+    n_loaded = 0
+    for pid, name in current_id_to_name.items():
+        if name in name_to_saved_state:
+            new_state[pid] = name_to_saved_state[name]
+            n_loaded += 1
+
+    current_sd = optimizer.state_dict()
+    current_sd["state"] = new_state
+    optimizer.load_state_dict(current_sd)
+    logger.info("Loaded optimizer state for %d / %d params (matched by name)",
+                n_loaded, len(current_param_ids))
+    return optimizer
+
+
+def _save_optimizer_state(optimizer: torch.optim.Optimizer, save_dir: Path) -> None:
+    """Save optimizer state into ``save_dir/training_state/``."""
+    from lerobot.optim.optimizers import save_optimizer_state
+
+    ts_dir = save_dir / "training_state"
+    ts_dir.mkdir(parents=True, exist_ok=True)
+    save_optimizer_state(optimizer, ts_dir)
+    logger.info("Saved optimizer state → %s", ts_dir)
+
+
+def _common_keys_collate(batch: list[dict[str, Tensor]]) -> dict[str, Tensor]:
+    """Collate function that keeps only tensor keys present in ALL samples.
+
+    Used by the "naive" mixing strategy where a ConcatDataset combines
+    LeRobotDataset samples (many metadata keys, some strings) with
+    _FinetuneDataset samples (only model-relevant tensor keys).
+    """
+    common_keys = set(batch[0].keys())
+    for sample in batch[1:]:
+        common_keys &= set(sample.keys())
+    return {
+        k: torch.stack([s[k] for s in batch])
+        for k in common_keys
+        if isinstance(batch[0][k], Tensor)
+    }
+
+
 def _cat_batches(b1: dict[str, Tensor], b2: dict[str, Tensor]) -> dict[str, Tensor]:
     """Concatenate two batch dicts along the batch dimension."""
     out: dict[str, Tensor] = {}
@@ -759,10 +840,13 @@ def finetune(
     policy_path: str,
     buffer: TrajectoryBuffer,
     commit_hash: str,
+    output_dir: str | None = None,
     n_steps: int = 500,
     lr: float = 5e-6,
     batch_size: int = 8,
+    mixing: str = "ratio",
     pretrain_ratio: float = 0.5,
+    load_optimizer: bool = False,
     grad_clip_norm: float = 10.0,
     device: str = "cuda",
     log_interval: int = 10,
@@ -777,17 +861,32 @@ def finetune(
     with pretrain replay.  Intended to settle the encoder representations
     before WM-only adaptation via :func:`finetune_wm`.
 
-    Batch composition: ``pretrain_ratio`` of each batch comes from the pretrain
-    dataset, the rest from successful online episodes.
+    Mixing strategies (controlled by ``mixing``):
+
+    - ``"naive"``: Concatenate online successes with the pretrain dataset into
+      a single dataset and sample uniformly.  Online data is visited sparsely
+      (proportional to its size relative to pretrain).  ``pretrain_ratio`` is
+      ignored.
+
+    - ``"ratio"``: Each mini-batch is explicitly composed of
+      ``pretrain_ratio`` pretrain samples + ``(1 - pretrain_ratio)`` online
+      samples, drawn from two separate data loaders.
 
     Args:
         policy_path: Path to pretrained_model directory.
         buffer: :class:`TrajectoryBuffer` — successes are extracted automatically.
-        commit_hash: Git commit hash for checkpoint namespacing.
+        commit_hash: Git commit hash / experiment slug for checkpoint namespacing.
+        output_dir: Root directory for checkpoints.  Defaults to
+            ``Path(policy_path).parent / "self_improvement"`` if ``None``.
+            Checkpoints are saved to ``output_dir / commit_hash / step_N /``.
         n_steps: Number of gradient update steps.
         lr: Learning rate (default 5e-6, slightly aggressive for success data).
-        batch_size: Total batch size (split between pretrain and online).
+        batch_size: Total batch size.
+        mixing: ``"naive"`` or ``"ratio"`` (see above).
         pretrain_ratio: Fraction of each batch from pretrain data (default 0.5).
+            Only used when ``mixing="ratio"``.
+        load_optimizer: If ``True``, load Adam momentum/variance state from the
+            checkpoint at *policy_path* instead of starting fresh.
         grad_clip_norm: Max gradient norm for clipping.
         device: Torch device.
         log_interval: Log metrics to wandb every N steps.
@@ -807,48 +906,66 @@ def finetune(
     policy.train()
     chunk_size = policy_cfg.chunk_size
 
-    # ── online dataset (success-only) ────────────────────────────
+    # ── datasets ─────────────────────────────────────────────────
     online_ds = buffer.as_dataset(mode="success_only", chunk_size=chunk_size)
-    pretrain_bs = max(1, round(batch_size * pretrain_ratio))
-    online_bs = max(1, batch_size - pretrain_bs)
-
-    online_loader = DataLoader(
-        online_ds, batch_size=online_bs, shuffle=True, num_workers=0,
-        pin_memory=(device == "cuda"), drop_last=True,
-    )
-
-    # ── pretrain replay + validation ─────────────────────────────
     pretrain_train_ds, pretrain_val_ds = load_pretrain_datasets(chunk_size=chunk_size)
-    pretrain_loader = DataLoader(
-        pretrain_train_ds, batch_size=pretrain_bs, shuffle=True, num_workers=0,
-        pin_memory=(device == "cuda"), drop_last=True,
-    )
+
     val_loader = DataLoader(
         pretrain_val_ds, batch_size=batch_size, shuffle=True, num_workers=0,
         pin_memory=(device == "cuda"), drop_last=True,
     )
-
-    online_iter = cycle(online_loader)
-    pretrain_iter = cycle(pretrain_loader)
     val_iter = cycle(val_loader)
 
-    logger.info(
-        "finetune: %d online success samples, %d pretrain samples, "
-        "batch=%d (pretrain=%d + online=%d), lr=%.1e, steps=%d",
-        len(online_ds), len(pretrain_train_ds), batch_size, pretrain_bs, online_bs, lr, n_steps,
-    )
+    if mixing == "naive":
+        # ── NAIVE: concatenate online + pretrain, sample uniformly ──
+        combined_ds = ConcatDataset([pretrain_train_ds, online_ds])
+        train_loader = DataLoader(
+            combined_ds, batch_size=batch_size, shuffle=True, num_workers=0,
+            pin_memory=(device == "cuda"), drop_last=True,
+            collate_fn=_common_keys_collate,
+        )
+        train_iter = cycle(train_loader)
+        logger.info(
+            "finetune [naive]: %d pretrain + %d online success = %d combined samples, "
+            "batch=%d, lr=%.1e, steps=%d",
+            len(pretrain_train_ds), len(online_ds), len(combined_ds), batch_size, lr, n_steps,
+        )
+    elif mixing == "ratio":
+        # ── RATIO: fixed pretrain/online split per batch ────────────
+        pretrain_bs = max(1, round(batch_size * pretrain_ratio))
+        online_bs = max(1, batch_size - pretrain_bs)
+        online_loader = DataLoader(
+            online_ds, batch_size=online_bs, shuffle=True, num_workers=0,
+            pin_memory=(device == "cuda"), drop_last=True,
+        )
+        pretrain_loader = DataLoader(
+            pretrain_train_ds, batch_size=pretrain_bs, shuffle=True, num_workers=0,
+            pin_memory=(device == "cuda"), drop_last=True,
+        )
+        online_iter = cycle(online_loader)
+        pretrain_iter = cycle(pretrain_loader)
+        logger.info(
+            "finetune [ratio]: %d online success samples, %d pretrain samples, "
+            "batch=%d (pretrain=%d + online=%d), lr=%.1e, steps=%d",
+            len(online_ds), len(pretrain_train_ds), batch_size, pretrain_bs, online_bs, lr, n_steps,
+        )
+    else:
+        raise ValueError(f"Unknown mixing={mixing!r}. Choose 'naive' or 'ratio'.")
 
     # ── optimizer (all params trainable) ─────────────────────────
     trainable_params = list(policy.parameters())
     n_trainable = sum(p.numel() for p in trainable_params)
     logger.info("finetune: %d trainable params (full model)", n_trainable)
     optimizer = torch.optim.AdamW(trainable_params, lr=lr)
+    if load_optimizer:
+        optimizer = _load_optimizer_state_if_available(optimizer, policy, policy_path)
 
     # ── training loop ────────────────────────────────────────────
     for step in range(1, n_steps + 1):
-        pretrain_batch = next(pretrain_iter)
-        online_batch = next(online_iter)
-        batch = _cat_batches(pretrain_batch, online_batch)
+        if mixing == "naive":
+            batch = next(train_iter)
+        else:  # "ratio"
+            batch = _cat_batches(next(pretrain_iter), next(online_iter))
         batch = preprocessor(batch)
 
         loss, info = policy.forward(batch)
@@ -878,7 +995,10 @@ def finetune(
         if wandb_run is not None and step % health_interval == 0:
             # Effective rank on a fresh batch
             with torch.no_grad():
-                health_batch = next(online_iter)
+                if mixing == "naive":
+                    health_batch = next(train_iter)
+                else:
+                    health_batch = next(online_iter)
                 health_batch = preprocessor(health_batch)
                 _, h_info = _wm_forward_with_diagnostics(policy, health_batch)
             wandb_run.log({
@@ -897,27 +1017,31 @@ def finetune(
 
     # ── save checkpoint ──────────────────────────────────────────
     new_global_step = global_step + n_steps
-    save_dir = (
-        Path(policy_path).parent / "self_improvement" / commit_hash / f"step_{new_global_step}"
-    )
-    save_dir.mkdir(parents=True, exist_ok=True)
-    policy.save_pretrained(save_dir)
-    preprocessor.save_pretrained(save_dir)
-    postprocessor.save_pretrained(save_dir)
-    logger.info("Saved finetuned model → %s", save_dir)
+    base = Path(output_dir) if output_dir else Path(policy_path).parent / "self_improvement"
+    ckpt_dir = base / commit_hash / f"step_{new_global_step}"
+    model_dir = ckpt_dir / "pretrained_model"
+    model_dir.mkdir(parents=True, exist_ok=True)
+    policy.save_pretrained(model_dir)
+    preprocessor.save_pretrained(model_dir)
+    postprocessor.save_pretrained(model_dir)
+    _save_optimizer_state(optimizer, ckpt_dir)
+    logger.info("Saved finetuned model → %s", model_dir)
 
-    return str(save_dir), new_global_step
+    return str(model_dir), new_global_step
 
 
 def finetune_wm(
     policy_path: str,
     buffer: TrajectoryBuffer,
     commit_hash: str,
+    output_dir: str | None = None,
     n_steps: int = 500,
     lr: float = 1e-6,
     batch_size: int = 8,
+    mixing: str = "ratio",
     pretrain_ratio: float = 0.6,
     online_mode: str = "all",
+    load_optimizer: bool = False,
     grad_clip_norm: float = 10.0,
     device: str = "cuda",
     log_interval: int = 10,
@@ -932,19 +1056,34 @@ def finetune_wm(
     freezes ``wm_cross_attn_proj`` so the WM decoder sees the same key-value
     space as during pretraining and only adjusts query/action processing.
 
-    Batch composition: ``pretrain_ratio`` from pretrain, rest from online data
-    (defaults to all trajectories including failures for OOD state coverage).
+    Mixing strategies (controlled by ``mixing``):
+
+    - ``"naive"``: Concatenate online episodes with the pretrain dataset into
+      a single dataset and sample uniformly.  Online data is visited sparsely
+      (proportional to its size relative to pretrain).  ``pretrain_ratio`` is
+      ignored.
+
+    - ``"ratio"``: Each mini-batch is explicitly composed of
+      ``pretrain_ratio`` pretrain samples + ``(1 - pretrain_ratio)`` online
+      samples, drawn from two separate data loaders.
 
     Args:
         policy_path: Path to pretrained_model directory.
         buffer: :class:`TrajectoryBuffer` with online episodes.
-        commit_hash: Git commit hash for checkpoint namespacing.
+        commit_hash: Git commit hash / experiment slug for checkpoint namespacing.
+        output_dir: Root directory for checkpoints.  Defaults to
+            ``Path(policy_path).parent / "self_improvement"`` if ``None``.
         n_steps: Number of gradient update steps.
         lr: Learning rate (default 1e-6, conservative for WM-only).
-        batch_size: Total batch size (split between pretrain and online).
+        batch_size: Total batch size.
+        mixing: ``"naive"`` or ``"ratio"`` (see above).
         pretrain_ratio: Fraction of each batch from pretrain data (default 0.6).
+            Only used when ``mixing="ratio"``.
         online_mode: ``"all"``, ``"success_only"``, or ``"failure_only"``
             for the online portion of each batch.
+        load_optimizer: If ``True``, load Adam momentum/variance state from the
+            checkpoint at *policy_path*.  Note: only WM-subset state is used;
+            the saved state must have matching parameter structure.
         grad_clip_norm: Max gradient norm for clipping.
         device: Torch device.
         log_interval: Log metrics to wandb every N steps.
@@ -977,46 +1116,65 @@ def finetune_wm(
     )
     policy.train()
 
-    # ── online dataset ───────────────────────────────────────────
+    # ── datasets ─────────────────────────────────────────────────
     online_ds = buffer.as_dataset(mode=online_mode, chunk_size=chunk_size)
-    pretrain_bs = max(1, round(batch_size * pretrain_ratio))
-    online_bs = max(1, batch_size - pretrain_bs)
-
-    online_loader = DataLoader(
-        online_ds, batch_size=online_bs, shuffle=True, num_workers=0,
-        pin_memory=(device == "cuda"), drop_last=True,
-    )
-
-    # ── pretrain replay + validation ─────────────────────────────
     pretrain_train_ds, pretrain_val_ds = load_pretrain_datasets(chunk_size=chunk_size)
-    pretrain_loader = DataLoader(
-        pretrain_train_ds, batch_size=pretrain_bs, shuffle=True, num_workers=0,
-        pin_memory=(device == "cuda"), drop_last=True,
-    )
+
     val_loader = DataLoader(
         pretrain_val_ds, batch_size=batch_size, shuffle=True, num_workers=0,
         pin_memory=(device == "cuda"), drop_last=True,
     )
-
-    online_iter = cycle(online_loader)
-    pretrain_iter = cycle(pretrain_loader)
     val_iter = cycle(val_loader)
 
-    logger.info(
-        "finetune_wm: %d online %s samples, %d pretrain samples, "
-        "batch=%d (pretrain=%d + online=%d), lr=%.1e, steps=%d",
-        len(online_ds), online_mode, len(pretrain_train_ds),
-        batch_size, pretrain_bs, online_bs, lr, n_steps,
-    )
+    if mixing == "naive":
+        # ── NAIVE: concatenate online + pretrain, sample uniformly ──
+        combined_ds = ConcatDataset([pretrain_train_ds, online_ds])
+        train_loader = DataLoader(
+            combined_ds, batch_size=batch_size, shuffle=True, num_workers=0,
+            pin_memory=(device == "cuda"), drop_last=True,
+            collate_fn=_common_keys_collate,
+        )
+        train_iter = cycle(train_loader)
+        logger.info(
+            "finetune_wm [naive]: %d pretrain + %d online %s = %d combined samples, "
+            "batch=%d, lr=%.1e, steps=%d",
+            len(pretrain_train_ds), len(online_ds), online_mode, len(combined_ds),
+            batch_size, lr, n_steps,
+        )
+    elif mixing == "ratio":
+        # ── RATIO: fixed pretrain/online split per batch ────────────
+        pretrain_bs = max(1, round(batch_size * pretrain_ratio))
+        online_bs = max(1, batch_size - pretrain_bs)
+        online_loader = DataLoader(
+            online_ds, batch_size=online_bs, shuffle=True, num_workers=0,
+            pin_memory=(device == "cuda"), drop_last=True,
+        )
+        pretrain_loader = DataLoader(
+            pretrain_train_ds, batch_size=pretrain_bs, shuffle=True, num_workers=0,
+            pin_memory=(device == "cuda"), drop_last=True,
+        )
+        online_iter = cycle(online_loader)
+        pretrain_iter = cycle(pretrain_loader)
+        logger.info(
+            "finetune_wm [ratio]: %d online %s samples, %d pretrain samples, "
+            "batch=%d (pretrain=%d + online=%d), lr=%.1e, steps=%d",
+            len(online_ds), online_mode, len(pretrain_train_ds),
+            batch_size, pretrain_bs, online_bs, lr, n_steps,
+        )
+    else:
+        raise ValueError(f"Unknown mixing={mixing!r}. Choose 'naive' or 'ratio'.")
 
     # ── optimizer ────────────────────────────────────────────────
     optimizer = torch.optim.AdamW(trainable_params, lr=lr)
+    if load_optimizer:
+        optimizer = _load_optimizer_state_if_available(optimizer, policy, policy_path)
 
     # ── training loop ────────────────────────────────────────────
     for step in range(1, n_steps + 1):
-        pretrain_batch = next(pretrain_iter)
-        online_batch = next(online_iter)
-        batch = _cat_batches(pretrain_batch, online_batch)
+        if mixing == "naive":
+            batch = next(train_iter)
+        else:  # "ratio"
+            batch = _cat_batches(next(pretrain_iter), next(online_iter))
         batch = preprocessor(batch)
 
         loss, info = _wm_forward_with_diagnostics(policy, batch)
@@ -1045,7 +1203,10 @@ def finetune_wm(
 
         if wandb_run is not None and step % health_interval == 0:
             with torch.no_grad():
-                health_batch = next(online_iter)
+                if mixing == "naive":
+                    health_batch = next(train_iter)
+                else:
+                    health_batch = next(online_iter)
                 health_batch = preprocessor(health_batch)
                 _, h_info = _wm_forward_with_diagnostics(policy, health_batch)
             # Compute effective rank
@@ -1099,13 +1260,14 @@ def finetune_wm(
 
     # ── save checkpoint ──────────────────────────────────────────
     new_global_step = global_step + n_steps
-    save_dir = (
-        Path(policy_path).parent / "self_improvement" / commit_hash / f"step_{new_global_step}"
-    )
-    save_dir.mkdir(parents=True, exist_ok=True)
-    policy.save_pretrained(save_dir)
-    preprocessor.save_pretrained(save_dir)
-    postprocessor.save_pretrained(save_dir)
-    logger.info("Saved WM-finetuned model → %s", save_dir)
+    base = Path(output_dir) if output_dir else Path(policy_path).parent / "self_improvement"
+    ckpt_dir = base / commit_hash / f"step_{new_global_step}"
+    model_dir = ckpt_dir / "pretrained_model"
+    model_dir.mkdir(parents=True, exist_ok=True)
+    policy.save_pretrained(model_dir)
+    preprocessor.save_pretrained(model_dir)
+    postprocessor.save_pretrained(model_dir)
+    _save_optimizer_state(optimizer, ckpt_dir)
+    logger.info("Saved WM-finetuned model → %s", model_dir)
 
-    return str(save_dir), new_global_step
+    return str(model_dir), new_global_step

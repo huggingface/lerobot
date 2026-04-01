@@ -8,9 +8,22 @@ Usage:
 """
 
 import logging
+import os
 import sys
 
+import torch
 import wandb
+
+# ═════════════════════════════════════════════════════════════════
+# Determinism — must be set before any CUDA operations
+# ═════════════════════════════════════════════════════════════════
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+torch.backends.cuda.matmul.allow_tf32 = False
+torch.use_deterministic_algorithms(True)
+
+from lerobot.utils.random_utils import set_seed
 
 from lerobot.scripts.self_improvement_utils import (
     TrajectoryBuffer,
@@ -28,6 +41,8 @@ POLICY = (
     "/storage/home/hcoda1/6/vgiridhar6/forks/lerobot/outputs/"
     "act_simple_awm_pusht_wm1.0_l2norm_improved_decoder/checkpoints/last/pretrained_model"
 )
+from pathlib import Path
+OUTPUT_DIR = str(Path(POLICY).parent / "self_improvement")
 
 # ═════════════════════════════════════════════════════════════════
 # Config — edit these for each experiment
@@ -39,8 +54,11 @@ FINETUNE_LR = 5e-6          # LR for end-to-end finetune
 FINETUNE_WM_STEPS = 100     # steps for WM-only finetune
 FINETUNE_WM_LR = 1e-6       # LR for WM-only finetune
 BATCH_SIZE = 8
-PRETRAIN_RATIO_FT = 0.5     # pretrain fraction for finetune
-PRETRAIN_RATIO_WM = 0.6     # pretrain fraction for finetune_wm
+MIXING = "naive"            # "naive" = concat online+pretrain, uniform sample
+                            # "ratio" = fixed pretrain/online split per batch
+PRETRAIN_RATIO_FT = 0.5     # pretrain fraction for finetune    (only if MIXING="ratio")
+PRETRAIN_RATIO_WM = 0.6     # pretrain fraction for finetune_wm (only if MIXING="ratio")
+LOAD_OPTIMIZER = True       # load Adam state from checkpoint (False = fresh optimizer)
 WM_ONLINE_MODE = "all"      # "all", "success_only", or "failure_only"
 
 # ═════════════════════════════════════════════════════════════════
@@ -59,8 +77,10 @@ run = wandb.init(
         "finetune_wm_steps": FINETUNE_WM_STEPS,
         "finetune_wm_lr": FINETUNE_WM_LR,
         "batch_size": BATCH_SIZE,
+        "mixing": MIXING,
         "pretrain_ratio_ft": PRETRAIN_RATIO_FT,
         "pretrain_ratio_wm": PRETRAIN_RATIO_WM,
+        "load_optimizer": LOAD_OPTIMIZER,
         "wm_online_mode": WM_ONLINE_MODE,
     },
 )
@@ -68,6 +88,7 @@ run = wandb.init(
 # ═════════════════════════════════════════════════════════════════
 # Self-improvement loop
 # ═════════════════════════════════════════════════════════════════
+set_seed(1000)
 buf = TrajectoryBuffer()
 ckpt = POLICY
 global_step = 0
@@ -99,10 +120,13 @@ for iteration in range(N_ITERS):
         logger.info("Finetuning end-to-end on %d successes...", buf.n_success)
         ckpt, global_step = finetune(
             ckpt, buf, commit_hash=COMMIT,
+            output_dir=OUTPUT_DIR,
             n_steps=FINETUNE_STEPS,
             lr=FINETUNE_LR,
             batch_size=BATCH_SIZE,
+            mixing=MIXING,
             pretrain_ratio=PRETRAIN_RATIO_FT,
+            load_optimizer=LOAD_OPTIMIZER,
             wandb_run=run,
             global_step=global_step,
         )
@@ -118,11 +142,14 @@ for iteration in range(N_ITERS):
         logger.info("Finetuning WM-only on %d %s episodes...", n_online, WM_ONLINE_MODE)
         ckpt, global_step = finetune_wm(
             ckpt, buf, commit_hash=COMMIT,
+            output_dir=OUTPUT_DIR,
             n_steps=FINETUNE_WM_STEPS,
             lr=FINETUNE_WM_LR,
             batch_size=BATCH_SIZE,
+            mixing=MIXING,
             pretrain_ratio=PRETRAIN_RATIO_WM,
             online_mode=WM_ONLINE_MODE,
+            load_optimizer=LOAD_OPTIMIZER,
             wandb_run=run,
             global_step=global_step,
         )
@@ -133,13 +160,20 @@ for iteration in range(N_ITERS):
 # ═════════════════════════════════════════════════════════════════
 # Final evaluation (non-blocking SLURM jobs)
 # ═════════════════════════════════════════════════════════════════
-logger.info("Submitting final multi-seed evaluation...")
-job_ids, eval_dir = evaluate_final(ckpt, compute_script="compute_inference.sh", policy_overrides=[
-    "--policy.use_planning=true",
-    "--policy.planning.algorithm=gcp",
-])
-print(f"EVAL_JOBS: {job_ids}")
+logger.info("Running final evaluation (250 episodes)...")
+final_metrics, eval_dir = evaluate_final(
+    ckpt,
+    n_episodes=250,
+    use_planning=True,
+    planning_algorithm="gcp",
+)
+print(f"EVAL_RESULTS: {final_metrics.get('pc_success', 0):.1f}% success")
 print(f"EVAL_DIR: {eval_dir}")
 
-run.log({"final/checkpoint": ckpt, "final/global_step": global_step}, step=global_step)
+run.log({
+    "final/checkpoint": ckpt,
+    "final/global_step": global_step,
+    "final/pc_success": final_metrics.get("pc_success", 0),
+    "final/avg_sum_reward": final_metrics.get("avg_sum_reward", 0),
+}, step=global_step)
 wandb.finish()
