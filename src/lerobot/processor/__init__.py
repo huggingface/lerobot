@@ -14,20 +14,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .audio_processor import AudioProcessorStep
-from .batch_processor import AddBatchDimensionProcessorStep
-from .converters import (
-    batch_to_transition,
-    create_transition,
-    transition_to_batch,
-)
-from .core import (
+from lerobot.types import (
     EnvAction,
     EnvTransition,
     PolicyAction,
     RobotAction,
     RobotObservation,
     TransitionKey,
+)
+
+from .audio_processor import AudioProcessorStep
+from .batch_processor import AddBatchDimensionProcessorStep
+from .converters import (
+    batch_to_transition,
+    create_transition,
+    transition_to_batch,
 )
 from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
 from .device_processor import DeviceProcessorStep
@@ -45,6 +46,7 @@ from .hil_processor import (
     AddTeleopActionAsComplimentaryDataStep,
     AddTeleopEventsAsInfoStep,
     GripperPenaltyProcessorStep,
+    GymHILAdapterProcessorStep,
     ImageCropResizeProcessorStep,
     InterventionActionProcessorStep,
     RewardClassifierProcessorStep,
@@ -74,6 +76,12 @@ from .policy_robot_bridge import (
     PolicyActionToRobotActionProcessorStep,
     RobotActionToPolicyActionProcessorStep,
 )
+from .relative_action_processor import (
+    AbsoluteActionsProcessorStep,
+    RelativeActionsProcessorStep,
+    to_absolute_actions,
+    to_relative_actions,
+)
 from .rename_processor import RenameObservationsProcessorStep
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
 
@@ -89,6 +97,7 @@ __all__ = [
     "DoneProcessorStep",
     "EnvAction",
     "EnvTransition",
+    "GymHILAdapterProcessorStep",
     "GripperPenaltyProcessorStep",
     "hotswap_stats",
     "IdentityProcessorStep",
@@ -99,6 +108,8 @@ __all__ = [
     "make_default_teleop_action_processor",
     "make_default_robot_action_processor",
     "make_default_robot_observation_processor",
+    "AbsoluteActionsProcessorStep",
+    "RelativeActionsProcessorStep",
     "MapDeltaActionToRobotActionStep",
     "MapTensorToDeltaActionDictStep",
     "NormalizerProcessorStep",
@@ -128,6 +139,8 @@ __all__ = [
     "transition_to_batch",
     "TransitionKey",
     "TruncatedProcessorStep",
+    "to_absolute_actions",
+    "to_relative_actions",
     "UnnormalizerProcessorStep",
     "VanillaObservationProcessorStep",
 ]

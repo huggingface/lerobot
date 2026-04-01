@@ -15,7 +15,6 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from typing import TypeAlias
 
 from lerobot.cameras import CameraConfig
 from lerobot.microphones import MicrophoneConfig
@@ -44,7 +43,7 @@ class SOFollowerConfig:
     microphones: dict[str, MicrophoneConfig] = field(default_factory=dict)
 
     # Set to `True` for backward compatibility with previous policies/dataset
-    use_degrees: bool = False
+    use_degrees: bool = True
 
 
 @RobotConfig.register_subclass("so101_follower")
@@ -54,5 +53,5 @@ class SOFollowerRobotConfig(RobotConfig, SOFollowerConfig):
     pass
 
 
-SO100FollowerConfig: TypeAlias = SOFollowerRobotConfig
-SO101FollowerConfig: TypeAlias = SOFollowerRobotConfig
+SO100FollowerConfig = SOFollowerRobotConfig
+SO101FollowerConfig = SOFollowerRobotConfig

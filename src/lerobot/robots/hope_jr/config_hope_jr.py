@@ -17,7 +17,6 @@
 from dataclasses import dataclass, field
 
 from lerobot.cameras import CameraConfig
-from lerobot.microphones import MicrophoneConfig
 
 from ..config import RobotConfig
 
@@ -31,8 +30,6 @@ class HopeJrHandConfig(RobotConfig):
     disable_torque_on_disconnect: bool = True
 
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
-
-    microphones: dict[str, MicrophoneConfig] = field(default_factory=dict)
 
     def __post_init__(self):
         super().__post_init__()
@@ -52,5 +49,3 @@ class HopeJrArmConfig(RobotConfig):
     max_relative_target: float | dict[str, float] | None = None
 
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
-
-    microphones: dict[str, MicrophoneConfig] = field(default_factory=dict)

@@ -19,7 +19,7 @@ from pathlib import Path
 import draccus
 
 from lerobot.motors import MotorCalibration
-from lerobot.processor import RobotAction, RobotObservation
+from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, ROBOTS
 
 from .config import RobotConfig
@@ -57,6 +57,32 @@ class Robot(abc.ABC):
 
     def __str__(self) -> str:
         return f"{self.id} {self.__class__.__name__}"
+
+    def __enter__(self):
+        """
+        Context manager entry.
+        Automatically connects to the camera.
+        """
+        self.connect()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        """
+        Context manager exit.
+        Automatically disconnects, ensuring resources are released even on error.
+        """
+        self.disconnect()
+
+    def __del__(self) -> None:
+        """
+        Destructor safety net.
+        Attempts to disconnect if the object is garbage collected without cleanup.
+        """
+        try:
+            if self.is_connected:
+                self.disconnect()
+        except Exception:  # nosec B110
+            pass
 
     # TODO(aliberts): create a proper Feature class for this that links with datasets
     @property

@@ -24,7 +24,7 @@ from lerobot.motors.calibration_gui import RangeFinderGUI
 from lerobot.motors.feetech import (
     FeetechMotorsBus,
 )
-from lerobot.processor import RobotAction, RobotObservation
+from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..robot import Robot
@@ -140,16 +140,9 @@ class HopeJrArm(Robot):
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
-            obs_dict[cam_key] = cam.async_read()
+            obs_dict[cam_key] = cam.read_latest()
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
-
-        # Read audio frames from microphones
-        for mic_key, mic in self.microphones.items():
-            start = time.perf_counter()
-            obs_dict[mic_key] = mic.read()
-            dt_ms = (time.perf_counter() - start) * 1e3
-            logger.debug(f"{self} read {mic_key}: {dt_ms:.1f}ms")
 
         return obs_dict
 

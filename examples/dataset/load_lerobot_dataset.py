@@ -32,7 +32,8 @@ import torch
 from huggingface_hub import HfApi
 
 import lerobot
-from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
+from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 
 def main():
@@ -87,9 +88,8 @@ def main():
     # The previous metadata class is contained in the 'meta' attribute of the dataset:
     print(dataset.meta)
 
-    # LeRobotDataset actually wraps an underlying Hugging Face dataset
-    # (see https://huggingface.co/docs/datasets for more information).
-    print(dataset.hf_dataset)
+    # You can inspect the dataset using its repr:
+    print(dataset)
 
     # LeRobot datasets also subclasses PyTorch datasets so you can do everything you know and love from working
     # with the latter, like iterating through the dataset.

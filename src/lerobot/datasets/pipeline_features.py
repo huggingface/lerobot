@@ -17,8 +17,9 @@ from collections.abc import Sequence
 from typing import Any
 
 from lerobot.configs.types import PipelineFeatureType
-from lerobot.datasets.utils import hw_to_dataset_features
-from lerobot.processor import DataProcessorPipeline, RobotAction, RobotObservation
+from lerobot.datasets.feature_utils import hw_to_dataset_features
+from lerobot.processor import DataProcessorPipeline
+from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE, OBS_STR
 
 
@@ -43,11 +44,11 @@ def create_initial_features(
     return features
 
 
-# Helper to filter state/action keys based on regex patterns.
-def should_keep(key: str, patterns: tuple[str]) -> bool:
+# Helper to filter state/action keys based on compiled regex patterns.
+def should_keep(key: str, patterns: tuple[re.Pattern] | None) -> bool:
     if patterns is None:
         return True
-    return any(re.search(pat, key) for pat in patterns)
+    return any(pat.search(key) for pat in patterns)
 
 
 def strip_prefix(key: str, prefixes_to_strip: tuple[str]) -> str:
@@ -88,6 +89,8 @@ def aggregate_pipeline_dataset_features(
     Returns:
         A dictionary of features formatted for a Hugging Face LeRobot Dataset.
     """
+    compiled_patterns = tuple(re.compile(p) for p in patterns) if patterns is not None else None
+
     all_features = pipeline.transform_features(initial_features)
 
     # Intermediate storage for categorized and filtered features.
@@ -119,7 +122,7 @@ def aggregate_pipeline_dataset_features(
             # 2. Apply filtering rules.
             if is_image and not use_videos:
                 continue
-            if not is_image and not should_keep(key, patterns):
+            if not is_image and not should_keep(key, compiled_patterns):
                 continue
 
             # 3. Add the feature to the appropriate group with a clean name.

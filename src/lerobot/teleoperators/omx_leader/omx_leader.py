@@ -103,7 +103,7 @@ class OmxLeader(Teleoperator):
             self.calibration[motor] = MotorCalibration(
                 id=m.id,
                 drive_mode=drive_modes[motor],
-                homing_offset=0,
+                homing_offset=0 if motor != "gripper" else 100,
                 range_min=0,
                 range_max=4095,
             )
@@ -123,12 +123,20 @@ class OmxLeader(Teleoperator):
                 # point
                 self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
 
+            if motor == "gripper":
+                self.bus.write("Drive_Mode", motor, DriveMode.INVERTED.value)
+            else:
+                self.bus.write("Drive_Mode", motor, DriveMode.NON_INVERTED.value)
+
         # Use 'position control current based' for gripper to be limited by the limit of the current.
         # For the follower gripper, it means it can grasp an object without forcing too much even tho,
         # its goal position is a complete grasp (both gripper fingers are ordered to join and reach a touch).
         # For the leader gripper, it means we can use it as a physical trigger, since we can force with our finger
         # to make it move, and it will move back to its original target position when we release the force.
         self.bus.write("Operating_Mode", "gripper", OperatingMode.CURRENT_POSITION.value)
+        self.bus.write("Current_Limit", "gripper", 100)
+        self.bus.write("Goal_Current", "gripper", 100)
+        self.bus.write("Homing_Offset", "gripper", 100)
         # Set gripper's goal pos in current position mode so that we can use it as a trigger.
         self.bus.enable_torque("gripper")
         if self.is_calibrated:

@@ -32,8 +32,9 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_FEATURES
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import prepare_observation_for_inference
-from lerobot.processor import PolicyAction, PolicyProcessorPipeline
+from lerobot.processor import PolicyProcessorPipeline
 from lerobot.robots import Robot
+from lerobot.types import PolicyAction
 
 
 @cache
@@ -189,7 +190,7 @@ def sanity_check_dataset_name(repo_id, policy_cfg):
     # Check if dataset_name starts with "eval_" but policy is missing
     if dataset_name.startswith("eval_") and policy_cfg is None:
         raise ValueError(
-            f"Your dataset name begins with 'eval_' ({dataset_name}), but no policy is provided ({policy_cfg.type})."
+            f"Your dataset name begins with 'eval_' ({dataset_name}), but no policy is provided."
         )
 
     # Check if dataset_name does not start with "eval_" but policy is provided

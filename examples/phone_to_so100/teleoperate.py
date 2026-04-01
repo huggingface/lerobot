@@ -16,7 +16,7 @@
 import time
 
 from lerobot.model.kinematics import RobotKinematics
-from lerobot.processor import RobotAction, RobotObservation, RobotProcessorPipeline
+from lerobot.processor import RobotProcessorPipeline
 from lerobot.processor.converters import (
     robot_action_observation_to_transition,
     transition_to_robot_action,
@@ -31,6 +31,7 @@ from lerobot.robots.so_follower.robot_kinematic_processor import (
 from lerobot.teleoperators.phone.config_phone import PhoneConfig, PhoneOS
 from lerobot.teleoperators.phone.phone_processor import MapPhoneActionToRobotAction
 from lerobot.teleoperators.phone.teleop_phone import Phone
+from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 

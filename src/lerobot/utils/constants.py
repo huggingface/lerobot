@@ -27,6 +27,9 @@ OBS_AUDIO = OBS_STR + ".audio"
 OBS_LANGUAGE = OBS_STR + ".language"
 OBS_LANGUAGE_TOKENS = OBS_LANGUAGE + ".tokens"
 OBS_LANGUAGE_ATTENTION_MASK = OBS_LANGUAGE + ".attention_mask"
+OBS_LANGUAGE_SUBTASK = OBS_STR + ".subtask"
+OBS_LANGUAGE_SUBTASK_TOKENS = OBS_LANGUAGE_SUBTASK + ".tokens"
+OBS_LANGUAGE_SUBTASK_ATTENTION_MASK = OBS_LANGUAGE_SUBTASK + ".attention_mask"
 
 ACTION = "action"
 ACTION_PREFIX = ACTION + "."
@@ -63,6 +66,10 @@ if "LEROBOT_HOME" in os.environ:
 # cache dir
 default_cache_path = Path(HF_HOME) / "lerobot"
 HF_LEROBOT_HOME = Path(os.getenv("HF_LEROBOT_HOME", default_cache_path)).expanduser()
+# LeRobot's own revision-safe Hub cache (NOT the system-wide ~/.cache/huggingface/hub/).
+# Used as the ``cache_dir`` argument to ``snapshot_download`` so that different
+# dataset revisions are stored in isolated snapshot directories.
+HF_LEROBOT_HUB_CACHE = HF_LEROBOT_HOME / "hub"
 
 # calibration dir
 default_calibration_path = HF_LEROBOT_HOME / "calibration"
