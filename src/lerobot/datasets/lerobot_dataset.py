@@ -18,12 +18,13 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 
-import datasets
 import torch
 import torch.utils
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.errors import RevisionNotFoundError
 
+import datasets
+from lerobot.datasets.compute_stats import aggregate_stats
 from lerobot.datasets.dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from lerobot.datasets.dataset_reader import DatasetReader
 from lerobot.datasets.dataset_writer import DatasetWriter
@@ -34,10 +35,11 @@ from lerobot.datasets.utils import (
 )
 from lerobot.datasets.video_utils import (
     StreamingVideoEncoder,
+    VideoFrame,
     get_safe_default_codec,
     resolve_vcodec,
 )
-from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
+from lerobot.utils.constants import HF_LEROBOT_HOME, HF_LEROBOT_HUB_CACHE
 
 logger = logging.getLogger(__name__)
 
@@ -194,6 +196,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         super().__init__()
         self.repo_id = repo_id
         self._requested_root = Path(root) if root else None
+        self.reader = None
         self.set_image_transforms(image_transforms)
         self.delta_timestamps = delta_timestamps
         self.episodes = episodes
@@ -476,12 +479,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
             f"    Features: '{feature_keys}',\n"
             f"}})"
         )
-     
+
     def set_image_transforms(self, image_transforms: Callable | None) -> None:
         """Replace the transform applied to visual observations."""
         if image_transforms is not None and not callable(image_transforms):
             raise TypeError("image_transforms must be callable or None.")
         self.image_transforms = image_transforms
+        if self.reader is not None:
+            self.reader._image_transforms = image_transforms
 
     def clear_image_transforms(self) -> None:
         """Remove the transform applied to visual observations."""
