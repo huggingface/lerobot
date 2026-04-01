@@ -40,16 +40,27 @@ state[t] = action[t - offset]
 
 An offset of 1 is the typical UMI convention: at decision time the "current state" is where the gripper _already is_ (the result of the previous command), and the action is where it should go next. At episode boundaries where `t < offset`, we clamp to `action[0]`.
 
-## Step 1: Add State and Recompute Stats
+## Step 1: Add `observation.state`
 
-The conversion script in `examples/umi_pi0_relative_ee/convert_umi_dataset.py` handles both steps. Edit the constants at the top of the file:
+pi0 with `use_relative_actions=True` needs `observation.state` in the dataset to compute `action - state` on the fly. The script in `examples/umi_pi0_relative_ee/convert_umi_dataset.py` adds it. Edit the constants at the top:
 
 ```python
 HF_DATASET_ID = "<hf_username>/<dataset_repo_id>"
+
+# Option A: Copy an existing feature as observation.state
+STATE_SOURCE_FEATURE = "observation.joints"  # or "observation.pose", etc.
+
+# Option B: Derive from action with offset (set STATE_SOURCE_FEATURE = None)
+STATE_SOURCE_FEATURE = None
 STATE_ACTION_OFFSET = 1
-RELATIVE_EXCLUDE_JOINTS = ["gripper"]
-CHUNK_SIZE = 50
 ```
+
+**Choosing the state source:**
+
+- If your dataset already has a feature in the same space as `action` (e.g. `observation.joints` for joint-space actions, or `observation.pose` for EE-space actions), set `STATE_SOURCE_FEATURE` to copy it.
+- If your dataset only has a single trajectory (like raw UMI EE data where action = the EE poses), set `STATE_SOURCE_FEATURE = None` and use `STATE_ACTION_OFFSET` to derive state from the action column with a time offset.
+
+`observation.state` **must have the same shape as `action`** — the relative conversion computes `action - state` element-wise.
 
 Then run:
 
@@ -57,21 +68,29 @@ Then run:
 python examples/umi_pi0_relative_ee/convert_umi_dataset.py
 ```
 
-This:
-
-- Loads your existing UMI LeRobot dataset.
-- Adds `observation.state` derived from the `action` column with the configured offset.
-- Calls `recompute_stats(relative_action=True)` to compute chunk-level relative action statistics.
-
-The `RELATIVE_EXCLUDE_JOINTS` parameter specifies joints that stay absolute. Gripper commands are typically binary or continuous open/close and don't benefit from relative encoding.
-
 <Tip>
 
-If your dataset already has `observation.state`, the script skips the feature-adding step and only recomputes relative action statistics.
+If your dataset already has `observation.state`, the script exits early — nothing to do.
 
 </Tip>
 
-## Step 2: Train
+## Step 2: Recompute Relative Action Stats
+
+Use the built-in CLI to recompute dataset statistics in relative space:
+
+```bash
+lerobot-edit-dataset \
+    --repo_id <your_dataset> \
+    --operation.type recompute_stats \
+    --operation.relative_action true \
+    --operation.chunk_size 50 \
+    --operation.relative_exclude_joints "['gripper']" \
+    --push_to_hub true
+```
+
+The `relative_exclude_joints` parameter specifies joints that stay absolute. Gripper commands are typically binary or continuous open/close and don't benefit from relative encoding. Leave it as `"[]"` to convert all dimensions to relative.
+
+## Step 3: Train
 
 No custom training script is needed — standard `lerobot-train` handles everything:
 
@@ -92,7 +111,7 @@ Under the hood, the training pipeline:
 
 See the [pi0 documentation](pi0) for all available training options.
 
-## Step 3: Evaluate
+## Step 4: Evaluate
 
 The evaluation script in `examples/umi_pi0_relative_ee/evaluate.py` runs inference on a real robot (SO-100 with EE space):
 
