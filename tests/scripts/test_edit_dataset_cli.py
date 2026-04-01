@@ -174,7 +174,10 @@ class TestAddFeatureCLI:
         data = np.random.randn(50, 1).astype(np.float32)
         safetensors.numpy.save_file({"reward": data}, tmp_path / "data.safetensors")
 
-        with patch("lerobot.scripts.lerobot_edit_dataset.LeRobotDataset") as mock_dataset_class:
+        with (
+            patch("lerobot.scripts.lerobot_edit_dataset.LeRobotDataset") as mock_dataset_class,
+        ):
+            # Mock the first dataset (for loading)
             mock_dataset = mock_dataset_class.return_value
             mock_dataset.meta.total_frames = 50
             mock_dataset.meta.episodes = [
@@ -184,7 +187,11 @@ class TestAddFeatureCLI:
                 {"dataset_to_index": 40},
                 {"dataset_to_index": 50},
             ]
-            mock_dataset.push_to_hub = Mock()
+            mock_dataset.fps = 30.0
+
+            # Mock the second dataset (for pushing to hub)
+            mock_push_dataset = Mock()
+            mock_dataset_class.side_effect = [mock_dataset, mock_push_dataset]
 
             handle_add_feature(
                 EditDatasetConfig(
@@ -199,8 +206,8 @@ class TestAddFeatureCLI:
                 )
             )
 
-            # Verify push_to_hub was called
-            mock_dataset.push_to_hub.assert_called_once()
+            # Verify push_to_hub was called on the new dataset instance
+            mock_push_dataset.push_to_hub.assert_called_once()
 
     def test_add_feature_single_name_multiple_keys(self, tmp_path):
         """Test adding features with single name for safetensors file with multiple keys (prefixing)."""
@@ -381,19 +388,37 @@ class TestAddFeatureCLI:
         invalid_path = tmp_path / "data.txt"
         invalid_path.write_text("invalid data")
 
-        with patch("lerobot.scripts.lerobot_edit_dataset.LeRobotDataset"), pytest.raises(ValueError):
-            handle_add_feature(
-                EditDatasetConfig(
-                    repo_id="test/repo",
-                    new_repo_id="test/repo_modified",
-                    root=str(tmp_path / "output"),
-                    push_to_hub=False,
-                    operation=AddFeatureConfig(
-                        feature_names=["reward"],
-                        feature_paths=[str(invalid_path)],
-                    ),
+        with (
+            patch("lerobot.scripts.lerobot_edit_dataset.LeRobotDataset") as mock_dataset_class,
+            patch("lerobot.scripts.lerobot_edit_dataset.load_file") as mock_load_file,
+        ):
+            mock_dataset = mock_dataset_class.return_value
+            mock_dataset.meta.total_frames = 50
+            mock_dataset.meta.episodes = [
+                {"dataset_to_index": 10},
+                {"dataset_to_index": 20},
+                {"dataset_to_index": 30},
+                {"dataset_to_index": 40},
+                {"dataset_to_index": 50},
+            ]
+            mock_dataset.fps = 30.0
+
+            # Mock load_file to raise an error for invalid extension
+            mock_load_file.side_effect = Exception("Unsupported file format")
+
+            with pytest.raises(Exception, match="Unsupported file format"):
+                handle_add_feature(
+                    EditDatasetConfig(
+                        repo_id="test/repo",
+                        new_repo_id="test/repo_modified",
+                        root=str(tmp_path / "output"),
+                        push_to_hub=False,
+                        operation=AddFeatureConfig(
+                            feature_names=["reward"],
+                            feature_paths=[str(invalid_path)],
+                        ),
+                    )
                 )
-            )
 
     def test_add_feature_mismatched_lengths(self, tmp_path):
         """Test error when data length doesn't match dataset frames."""

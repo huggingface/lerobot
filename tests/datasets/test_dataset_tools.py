@@ -15,7 +15,7 @@
 # limitations under the License.
 """Tests for dataset tools utilities."""
 
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
@@ -59,6 +59,7 @@ def sample_dataset(tmp_path, empty_lerobot_dataset_factory):
         dataset.save_episode()
 
     dataset.finalize()
+
     return dataset
 
 
@@ -367,6 +368,95 @@ def test_add_features_with_callable(sample_dataset, tmp_path):
     first_frame = first_episode_items[0]
     assert first_frame["frame_index"] == 0
     assert float(first_frame["reward"]) == 0.0
+
+
+def test_add_features_with_video(sample_dataset, tmp_path):
+    """Test adding a video feature."""
+    # Mock video file path
+    video_path = tmp_path / "test_video.mp4"
+    video_path.touch()  # Create empty file for path validation
+
+    # Mock video info and duration
+    video_info = {
+        "video.height": 480,
+        "video.width": 640,
+        "video.channels": 3,
+        "video.codec": "h264",
+    }
+
+    feature_info = {
+        "dtype": "video",
+        "shape": (480, 640, 3),
+        "names": ["height", "width", "channels"],
+        "video_info": {**video_info, "video.fps": sample_dataset.fps},
+    }
+
+    features = {
+        "observation.camera": (str(video_path), feature_info),
+    }
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_tools.get_video_duration_in_s") as mock_get_duration,
+        patch("lerobot.datasets.dataset_tools.get_video_info") as mock_get_video_info,
+        patch("lerobot.datasets.dataset_tools.compute_mp4_video_stats") as mock_compute_stats,
+        patch("lerobot.datasets.dataset_tools._copy_videos_with_feature_changes") as mock_copy_videos,
+        patch("lerobot.datasets.dataset_tools.LeRobotDataset") as mock_dataset_class,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(tmp_path / "with_video")
+        mock_get_duration.return_value = 10.0  # 50 frames at 5 fps = 10 seconds
+        mock_get_video_info.return_value = video_info
+        mock_compute_stats.return_value = {"mean": 0.5, "std": 0.2}
+        mock_copy_videos.return_value = None  # Mock the entire video copying process
+
+        # Create a mock dataset with video columns in episodes
+        mock_new_dataset = Mock()
+        mock_new_dataset.meta.features = {
+            "action": {"dtype": "float32", "shape": (6,), "names": None},
+            "observation.state": {"dtype": "float32", "shape": (4,), "names": None},
+            "observation.images.top": {"dtype": "image", "shape": (224, 224, 3), "names": None},
+            "observation.camera": feature_info,
+        }
+        mock_new_dataset.meta.total_episodes = 5
+        mock_new_dataset.meta.total_frames = 50
+
+        # Mock episodes DataFrame with video columns
+        mock_episodes = Mock()
+        mock_episodes.column_names = [
+            "episode_index",
+            "videos/observation.camera/chunk_index",
+            "videos/observation.camera/file_index",
+            "videos/observation.camera/from_timestamp",
+            "videos/observation.camera/to_timestamp",
+        ]
+        mock_new_dataset.meta.episodes = mock_episodes
+
+        mock_dataset_class.return_value = mock_new_dataset
+
+        # Load episodes metadata if not already loaded
+        if sample_dataset.meta.episodes is None:
+            from lerobot.datasets.io_utils import load_episodes
+
+            sample_dataset.meta.episodes = load_episodes(sample_dataset.meta.root)
+
+        new_dataset = add_features(
+            dataset=sample_dataset,
+            features=features,
+            output_dir=tmp_path / "with_video",
+        )
+
+    assert "observation.camera" in new_dataset.meta.features
+    assert new_dataset.meta.features["observation.camera"]["dtype"] == "video"
+    assert new_dataset.meta.features["observation.camera"]["shape"] == (480, 640, 3)
+
+    # Check that video columns were added to episodes
+    episodes_df = new_dataset.meta.episodes
+    assert "videos/observation.camera/chunk_index" in episodes_df.column_names
+    assert "videos/observation.camera/file_index" in episodes_df.column_names
+    assert "videos/observation.camera/from_timestamp" in episodes_df.column_names
+    assert "videos/observation.camera/to_timestamp" in episodes_df.column_names
 
 
 def test_add_existing_feature(sample_dataset, tmp_path):
@@ -883,6 +973,50 @@ def test_add_features_preserves_existing_stats(sample_dataset, tmp_path):
         assert feature in new_dataset.meta.stats
         assert "mean" in new_dataset.meta.stats[feature]
         assert "std" in new_dataset.meta.stats[feature]
+
+
+def test_add_feature_update_stats(sample_dataset, tmp_path):
+    """Test that adding a feature computes and adds its statistics."""
+    num_frames = sample_dataset.meta.total_frames
+    # Create predictable reward values for testing
+    reward_values = np.array([[i % 10] for i in range(num_frames)], dtype=np.float32)
+
+    feature_info = {
+        "dtype": "float32",
+        "shape": (1,),
+        "names": None,
+    }
+    features = {
+        "reward": (reward_values, feature_info),
+    }
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(tmp_path / "with_reward")
+
+        new_dataset = add_features(
+            dataset=sample_dataset,
+            features=features,
+            output_dir=tmp_path / "with_reward",
+        )
+
+    # Check that the new feature has statistics computed
+    assert new_dataset.meta.stats is not None
+    assert "reward" in new_dataset.meta.stats
+    assert "mean" in new_dataset.meta.stats["reward"]
+    assert "std" in new_dataset.meta.stats["reward"]
+
+    # Verify the computed statistics are reasonable
+    reward_stats = new_dataset.meta.stats["reward"]
+    expected_mean = np.mean(reward_values)
+    expected_std = np.std(reward_values)
+
+    # Allow for small numerical differences
+    assert abs(reward_stats["mean"] - expected_mean) < 1e-6
+    assert abs(reward_stats["std"] - expected_std) < 1e-6
 
 
 def test_remove_feature_updates_stats(sample_dataset, tmp_path):

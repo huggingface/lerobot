@@ -549,7 +549,10 @@ def handle_add_feature(cfg: EditDatasetConfig):
                 features[new_feature_key] = (new_feature_value, new_feature_info)
 
     output_repo_id, output_dir = get_output_path(
-        cfg.repo_id, cfg.new_repo_id, Path(cfg.root) if cfg.root else None
+        cfg.repo_id,
+        cfg.new_repo_id,
+        cfg.root,
+        cfg.new_root,
     )
 
     if cfg.new_repo_id is None:

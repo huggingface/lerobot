@@ -388,7 +388,7 @@ def modify_features(
     )
 
     if new_meta.video_keys:
-        new_meta.load_metadata()
+        new_meta._load_metadata()
         _copy_videos_with_feature_changes(
             dataset,
             new_meta,
@@ -1245,7 +1245,7 @@ def _copy_videos_with_feature_changes(
     tmp_videos_root = new_meta.root / "tmp_videos"
 
     target_fps = dataset.fps
-    target_vcodec = dataset.vcodec if dataset.vcodec is not None else vcodec
+    target_vcodec = dataset._vcodec if dataset._vcodec is not None else vcodec
     video_options = _get_codec_options(target_vcodec)
 
     if fast_decode:
