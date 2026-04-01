@@ -457,13 +457,16 @@ lerobot/
 │   │   ├── env_config.json          # Sim environment config
 │   │   ├── record_config.json       # Sim recording config
 │   │   └── train_config.json        # Sim training config (SAC + MPS)
-│   └── real/                        # (create for Phase 3)
-│       ├── env_config.json          # Real robot env config
-│       └── train_config.json        # Real robot training config
+│   └── real/                        # Phase 3: Real robot configs
+│       ├── env_config.json          # Real robot env + recording config
+│       └── train_config.json        # Real robot SAC training config
+├── SO101/
+│   └── so101_new_calib.urdf         # SO-101 URDF for inverse kinematics
 ├── scripts/
 │   └── auto_record_demos.py         # Automated demo recording script
 ├── outputs/
 │   └── train/                       # Training checkpoints & logs
 └── docs/
-    └── HIL-SERL_REPRODUCTION_GUIDE.md  # This file
+    ├── HIL-SERL_REPRODUCTION_GUIDE.md  # This file
+    └── SIM_TO_REAL_PLAN.md             # Detailed sim-to-real deployment plan
 ```
