@@ -19,6 +19,8 @@ import time
 from functools import cached_property
 from typing import TypeAlias
 
+import numpy as np
+
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.feetech import (
@@ -69,9 +71,13 @@ class SOFollower(Robot):
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
-        return {
-            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) for cam in self.cameras
-        }
+        ft: dict[str, tuple] = {}
+        for cam in self.cameras:
+            cfg = self.config.cameras[cam]
+            ft[cam] = (cfg.height, cfg.width, 3)
+            if getattr(cfg, "use_depth", False):
+                ft[f"{cam}_depth"] = (cfg.height, cfg.width, 1)
+        return ft
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
@@ -184,12 +190,22 @@ class SOFollower(Robot):
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
-        # Capture images from cameras
+        # Capture images (and optional depth) from cameras
         for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
             obs_dict[cam_key] = cam.read_latest()
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+
+            cam_cfg = self.config.cameras[cam_key]
+            if getattr(cam_cfg, "use_depth", False) and hasattr(cam, "read_depth"):
+                start = time.perf_counter()
+                depth = cam.read_depth()
+                if depth.ndim == 2:
+                    depth = np.expand_dims(depth, axis=-1)
+                obs_dict[f"{cam_key}_depth"] = depth
+                dt_ms = (time.perf_counter() - start) * 1e3
+                logger.debug(f"{self} read {cam_key}_depth: {dt_ms:.1f}ms")
 
         return obs_dict
 

@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 
 from lerobot.cameras import CameraConfig
 
-from ..config import RobotConfig
+from ..config import RobotConfig, parse_max_relative_target_cli
 
 
 @RobotConfig.register_subclass("hope_jr_hand")
@@ -46,6 +46,10 @@ class HopeJrArmConfig(RobotConfig):
     # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
     # Set this to a positive scalar to have the same value for all motors, or a dictionary that maps motor
     # names to the max_relative_target value for that motor.
-    max_relative_target: float | dict[str, float] | None = None
+    max_relative_target: str = ""
 
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.max_relative_target = parse_max_relative_target_cli(self.max_relative_target)

@@ -29,7 +29,7 @@ class Reachy2RobotConfig(RobotConfig):
     max_relative_target: float | None = None
 
     # IP address of the Reachy 2 robot
-    ip_address: str | None = "localhost"
+    ip_address: str = "localhost"
     # Port of the Reachy 2 robot
     port: int = 50065
 

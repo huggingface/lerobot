@@ -1,0 +1,99 @@
+# =============================================================================
+# Robot Manipulation System Configuration
+# LeRobot + OAK-D + LLM Reasoning
+# =============================================================================
+
+camera:
+  device_id: ""          # OAK-D MX ID (empty = auto-detect)
+  rgb_resolution: [640, 480]
+  fps: 30
+  use_depth: true
+  depth_preset: FAST_ACCURACY
+  stereo_confidence_threshold: 200
+  warmup_s: 2
+
+robot:
+  type: so100_follower
+  port: ""               # USB port (e.g. /dev/ttyACM0) — empty for auto-detect
+  urdf: SO101/so101_new_calib.urdf
+  ee_frame: gripper_frame_link
+  home_joints: [0.0, -90.0, 90.0, -90.0, 0.0]  # degrees
+  gripper_max_width_mm: 80.0
+  use_degrees: true
+  disable_torque_on_disconnect: true
+  cameras:
+    front:
+      type: oakd
+      fps: 30
+      width: 640
+      height: 480
+      use_depth: true
+
+# Camera-to-robot extrinsic calibration
+hand_eye_transform:
+  # "x,y,z,rx,ry,rz" — translation in meters, rotation as rotvec (radians)
+  camera_to_robot_tf: "0.4,0,0.1,0,0,0"
+  camera_frame_convention: opencv   # opencv: X-right Y-down Z-forward
+  camera_mount: fixed               # "fixed" (world camera) or "gripper" (eye-in-hand)
+  # Eye-in-hand only: camera_optical → ee_frame transform
+  gripper_camera_tf: "0,0,0,0,0,0"
+
+perception:
+  vlm:
+    backend: gemini        # gemini | claude | local | cloud
+    model_id: microsoft/Florence-2-base   # for local backend
+    cloud_model: gpt-4o                    # for cloud/gemini backend
+    api_key: ""            # set via GEMINI_API_KEY or OPENAI_API_KEY env var
+  confidence_threshold: 0.7
+  depth_roi_size: 5
+  # Temporal depth fusion: median over N frames (1 = no fusion)
+  depth_fusion_frames: 3
+  # HSV color filter: drop VLM boxes that don't match query color (0 = off)
+  color_filter_min_fraction: 0.08
+  # Reject detections farther than this in camera frame (meters, 0 = off)
+  perception_min_depth_m: 0.05
+  perception_max_depth_m: 5.0
+  perception_bbox_fallback_if_mask_far_m: 2.0
+  max_object_cam_distance_m: 5.0
+
+reasoning:
+  model: gemini-2.5-flash
+  api_key: ""              # set via GEMINI_API_KEY env var
+  base_url: ""
+  use_gemini: true
+  temperature: 0.1
+  max_tokens: 500
+
+motion:
+  use_cartesian_interp: true
+  cartesian_step_m: 0.003
+  min_steps_per_segment: 12
+  inter_step_sleep_s: 0.05
+  settle_timeout_s: 4.5
+  settle_threshold_deg: 2.0
+
+workspace:
+  # Reachable envelope (meters, from robot base)
+  min_reach_m: 0.10
+  max_reach_m: 0.42
+  min_grasp_z_m: 0.01
+  max_grasp_z_m: 0.35
+  arm_base_xyz: [0, 0, 0]
+  pre_grasp_height: 0.06
+  lift_height: 0.08
+
+lerobot:
+  policy: act              # act | diffusion
+  dataset_repo_id: ""      # HuggingFace repo ID for dataset
+  dataset_root: ./data/episodes
+  checkpoint_path: ./checkpoints/
+  fps: 30
+  episode_time_s: 60
+  num_episodes: 50
+
+logging:
+  console_level: INFO
+  log_jsonl_path: ""       # structured trace file (empty = disabled)
+  display_data: false      # Rerun viewer for RGB+depth
+  display_sim3d: false     # Rerun 3D robot visualization
+  show_viz: true           # OpenCV preview window

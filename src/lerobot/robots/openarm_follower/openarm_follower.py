@@ -69,14 +69,14 @@ class OpenArmFollower(Robot):
             data_bitrate=self.config.can_data_bitrate if self.config.use_can_fd else None,
         )
 
-        if config.side is not None:
+        if config.side:
             if config.side == "left":
                 config.joint_limits = LEFT_DEFAULT_JOINTS_LIMITS
             elif config.side == "right":
                 config.joint_limits = RIGHT_DEFAULT_JOINTS_LIMITS
             else:
                 raise ValueError(
-                    "config.side must be either 'left', 'right' (for default values) or 'None' (for CLI values)"
+                    "config.side must be either 'left', 'right' (for default values) or unset (for CLI values)"
                 )
         else:
             logger.info(

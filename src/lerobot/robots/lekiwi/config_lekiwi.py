@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from lerobot.cameras.configs import CameraConfig, Cv2Rotation
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 
-from ..config import RobotConfig
+from ..config import RobotConfig, parse_max_relative_target_cli
 
 
 def lekiwi_cameras_config() -> dict[str, CameraConfig]:
@@ -41,12 +41,16 @@ class LeKiwiConfig(RobotConfig):
     # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
     # Set this to a positive scalar to have the same value for all motors, or a dictionary that maps motor
     # names to the max_relative_target value for that motor.
-    max_relative_target: float | dict[str, float] | None = None
+    max_relative_target: str = ""
 
     cameras: dict[str, CameraConfig] = field(default_factory=lekiwi_cameras_config)
 
     # Set to `True` for backward compatibility with previous policies/dataset
     use_degrees: bool = False
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.max_relative_target = parse_max_relative_target_cli(self.max_relative_target)
 
 
 @dataclass

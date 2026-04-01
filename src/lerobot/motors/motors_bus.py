@@ -486,6 +486,13 @@ class SerialMotorsBus(MotorsBusBase):
             error_lines.append("\nFull found motor list (id: model_number):")
             error_lines.append(pformat(found_models, indent=4, sort_dicts=False))
 
+            if not found_models:
+                error_lines.append(
+                    "\nNo motors responded. Try: lerobot-scan-motors --port=<your_port> "
+                    "to check if motors respond at a different baud rate. "
+                    "Then run lerobot-setup-motors to configure them."
+                )
+
             raise RuntimeError("\n".join(error_lines))
 
     @abc.abstractmethod

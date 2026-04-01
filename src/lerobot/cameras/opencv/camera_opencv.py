@@ -200,7 +200,7 @@ class OpenCVCamera(Camera):
         """
 
         # Set FOURCC first (if specified) as it can affect available FPS/resolution options
-        if self.config.fourcc is not None:
+        if self.config.fourcc:
             self._validate_fourcc()
         if self.videocapture is None:
             raise DeviceNotConnectedError(f"{self} videocapture is not initialized")

@@ -27,8 +27,11 @@ from numpy.typing import NDArray  # type: ignore  # TODO: add type stubs for num
 
 try:
     import pyrealsense2 as rs  # type: ignore  # TODO: add type stubs for pyrealsense2
+    _rs_available = True
 except Exception as e:
     logging.info(f"Could not import realsense: {e}")
+    rs = None  # type: ignore[name-defined]
+    _rs_available = False
 
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.errors import DeviceNotConnectedError
@@ -211,10 +214,10 @@ class RealSenseCamera(Camera):
             where each dictionary contains 'type', 'id' (serial number), 'name',
             firmware version, USB type, and other available specs, and the default profile properties (width, height, fps, format).
 
-        Raises:
-            OSError: If pyrealsense2 is not installed.
-            ImportError: If pyrealsense2 is not installed.
+        Returns an empty list if pyrealsense2 is not installed or not available (e.g. on macOS).
         """
+        if not _rs_available or rs is None:
+            return []
         found_cameras_info = []
         context = rs.context()
         devices = context.query_devices()
@@ -264,13 +267,13 @@ class RealSenseCamera(Camera):
             )
 
         if len(found_devices) > 1:
-            serial_numbers = [dev["serial_number"] for dev in found_devices]
+            serial_numbers = [dev["id"] for dev in found_devices]
             raise ValueError(
                 f"Multiple RealSense cameras found with name '{name}'. "
                 f"Please use a unique serial number instead. Found SNs: {serial_numbers}"
             )
 
-        serial_number = str(found_devices[0]["serial_number"])
+        serial_number = str(found_devices[0]["id"])
         return serial_number
 
     def _configure_rs_pipeline_config(self, rs_config: Any) -> None:
@@ -318,6 +321,49 @@ class RealSenseCamera(Camera):
             else:
                 self.width, self.height = actual_width, actual_height
                 self.capture_width, self.capture_height = actual_width, actual_height
+
+    @check_if_not_connected
+    def get_depth_intrinsics(self) -> dict[str, float | int]:
+        """
+        Returns depth camera intrinsics for the current output (after rotation).
+
+        Use these with the depth map from read_depth() to build point clouds.
+        RealSense depth is in millimeters; depth_scale converts to meters.
+
+        Returns:
+            Dict with keys: fx, fy, cx, cy, width, height, depth_scale.
+        """
+        if not self.use_depth or self.rs_profile is None:
+            raise RuntimeError(
+                "Depth stream must be enabled and camera connected to get depth intrinsics."
+            )
+        depth_stream = self.rs_profile.get_stream(rs.stream.depth).as_video_stream_profile()
+        intr = depth_stream.get_intrinsics()
+        depth_sensor = self.rs_profile.get_device().first_depth_sensor()
+        depth_scale = float(depth_sensor.get_depth_scale())
+        w = depth_stream.width()
+        h = depth_stream.height()
+        fx, fy = float(intr.fx), float(intr.fy)
+        cx, cy = float(intr.ppx), float(intr.ppy)
+        if self.rotation == cv2.ROTATE_90_CLOCKWISE:
+            fx, fy = fy, fx
+            cx, cy = h - 1 - cy, cx
+            w, h = h, w
+        elif self.rotation == cv2.ROTATE_90_COUNTERCLOCKWISE:
+            fx, fy = fy, fx
+            cx, cy = cy, w - 1 - cx
+            w, h = h, w
+        elif self.rotation == cv2.ROTATE_180:
+            cx, cy = w - 1 - cx, h - 1 - cy
+        return {
+            "fx": fx,
+            "fy": fy,
+            "cx": cx,
+            "cy": cy,
+            "width": w,
+            "height": h,
+            "depth_scale": depth_scale,
+        }
 
     @check_if_not_connected
     def read_depth(self, timeout_ms: int = 200) -> NDArray[Any]:

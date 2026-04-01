@@ -21,7 +21,7 @@ from functools import wraps
 from pathlib import Path
 from pkgutil import ModuleInfo
 from types import ModuleType
-from typing import Any, TypeVar, cast
+from typing import Any, TypeVar, cast, get_type_hints
 
 import draccus
 
@@ -31,6 +31,35 @@ F = TypeVar("F", bound=Callable[..., object])
 
 PATH_KEY = "path"
 PLUGIN_DISCOVERY_SUFFIX = "discover_packages_path"
+
+
+def _normalize_cli_args(args: Sequence[str]) -> list[str]:
+    """Normalize common CLI flag styles.
+
+    Draccus uses dataclass field names as flags, which commonly contain underscores
+    (e.g. --dry_run). Users often pass hyphenated versions (e.g. --dry-run).
+    This converts '-' to '_' in the flag name portion only (preserving values).
+    Works for both top-level flags and nested flags like --robot.disable-torque=true.
+    """
+
+    normalized: list[str] = []
+    for arg in args:
+        if not arg.startswith("--"):
+            normalized.append(arg)
+            continue
+
+        # Split into "--flag" and optional "=value" without touching value.
+        if "=" in arg:
+            flag, value = arg.split("=", 1)
+            suffix = "=" + value
+        else:
+            flag, suffix = arg, ""
+
+        flag_body = flag[2:]
+        flag_body = ".".join(seg.replace("-", "_") for seg in flag_body.split("."))
+        normalized.append("--" + flag_body + suffix)
+
+    return normalized
 
 
 def get_cli_overrides(field_name: str, args: Sequence[str] | None = None) -> list[str] | None:
@@ -207,12 +236,15 @@ def wrap(config_path: Path | None = None) -> Callable[[F], F]:
         @wraps(fn)
         def wrapper_inner(*args: Any, **kwargs: Any) -> Any:
             argspec = inspect.getfullargspec(fn)
-            argtype = argspec.annotations[argspec.args[0]]
+            # NOTE: With `from __future__ import annotations`, function annotations are stored
+            # as strings. Draccus expects an actual dataclass type, so resolve hints here.
+            type_hints = get_type_hints(fn, globalns=getattr(fn, "__globals__", None), localns=None)
+            argtype = type_hints.get(argspec.args[0], argspec.annotations.get(argspec.args[0]))
             if len(args) > 0 and type(args[0]) is argtype:
                 cfg = args[0]
                 args = args[1:]
             else:
-                cli_args = sys.argv[1:]
+                cli_args = _normalize_cli_args(sys.argv[1:])
                 plugin_args = parse_plugin_args(PLUGIN_DISCOVERY_SUFFIX, cli_args)
                 for plugin_cli_arg, plugin_path in plugin_args.items():
                     try:

@@ -23,7 +23,7 @@ from ..config import TeleoperatorConfig
 @dataclass
 class Reachy2TeleoperatorConfig(TeleoperatorConfig):
     # IP address of the Reachy 2 robot used as teleoperator
-    ip_address: str | None = "localhost"
+    ip_address: str = "localhost"
 
     # Whether to use the present position of the joints as actions
     # if False, the goal position of the joints will be used

@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 
 from lerobot.cameras import CameraConfig
 
-from ..config import RobotConfig
+from ..config import RobotConfig, parse_max_relative_target_cli
 
 LEFT_DEFAULT_JOINTS_LIMITS: dict[str, tuple[float, float]] = {
     "joint_1": (-75.0, 75.0),
@@ -52,8 +52,8 @@ class OpenArmFollowerConfigBase:
     # Linux: "can0", "can1", etc.
     port: str
 
-    # side of the arm: "left" or "right". If "None" default values will be used
-    side: str | None = None
+    # side of the arm: "left" or "right". Empty string = unset (use CLI / custom joint limits).
+    side: str = ""
 
     # CAN interface type: "socketcan" (Linux), "slcan" (serial), or "auto" (auto-detect)
     can_interface: str = "socketcan"
@@ -67,8 +67,8 @@ class OpenArmFollowerConfigBase:
     disable_torque_on_disconnect: bool = True
 
     # Safety limit for relative target positions
-    # Set to a positive scalar for all motors, or a dict mapping motor names to limits
-    max_relative_target: float | dict[str, float] | None = None
+    # Set to a positive scalar for all motors, or a dict mapping motor names to limits (JSON string).
+    max_relative_target: str = ""
 
     # Camera configurations
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
@@ -101,7 +101,7 @@ class OpenArmFollowerConfigBase:
     position_kd: list[float] = field(default_factory=lambda: [5.0, 5.0, 3.0, 5.0, 0.3, 0.3, 0.3, 0.3])
 
     # Values for joint limits. Can be overridden via CLI (for custom values) or by setting config.side to either 'left' or 'right'.
-    # If config.side is left set to None and no CLI values are passed, the default joint limit values are small for safety.
+    # If config.side is left unset and no CLI values are passed, the default joint limit values are small for safety.
     joint_limits: dict[str, tuple[float, float]] = field(
         default_factory=lambda: {
             "joint_1": (-5.0, 5.0),
@@ -115,8 +115,13 @@ class OpenArmFollowerConfigBase:
         }
     )
 
+    def __post_init__(self) -> None:
+        self.max_relative_target = parse_max_relative_target_cli(self.max_relative_target)
+
 
 @RobotConfig.register_subclass("openarm_follower")
 @dataclass
 class OpenArmFollowerConfig(RobotConfig, OpenArmFollowerConfigBase):
-    pass
+    def __post_init__(self) -> None:
+        OpenArmFollowerConfigBase.__post_init__(self)
+        RobotConfig.__post_init__(self)

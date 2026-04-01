@@ -61,7 +61,7 @@ class Reachy2CameraConfig(CameraConfig):
     name: str
     image_type: str
     color_mode: ColorMode = ColorMode.RGB
-    ip_address: str | None = "localhost"
+    ip_address: str = "localhost"
     port: int = 50065
 
     def __post_init__(self) -> None:

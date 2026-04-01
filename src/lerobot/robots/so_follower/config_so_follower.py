@@ -19,7 +19,7 @@ from typing import TypeAlias
 
 from lerobot.cameras import CameraConfig
 
-from ..config import RobotConfig
+from ..config import RobotConfig, parse_max_relative_target_cli
 
 
 @dataclass
@@ -34,7 +34,12 @@ class SOFollowerConfig:
     # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
     # Set this to a positive scalar to have the same value for all motors, or a dictionary that maps motor
     # names to the max_relative_target value for that motor.
-    max_relative_target: float | dict[str, float] | None = None
+    #
+    # Note: this is declared as a plain string for CLI compatibility with Draccus/argparse.
+    # Accepted formats:
+    # - scalar: "5.0"
+    # - json dict: '{"shoulder_pan": 5.0, "elbow_flex": 3.0}'
+    max_relative_target: str = ""
 
     # cameras
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
@@ -47,7 +52,13 @@ class SOFollowerConfig:
 @RobotConfig.register_subclass("so100_follower")
 @dataclass
 class SOFollowerRobotConfig(RobotConfig, SOFollowerConfig):
-    pass
+    def __post_init__(self) -> None:
+        # Let parent classes run their post-init (if any)
+        post_init = getattr(super(), "__post_init__", None)
+        if callable(post_init):
+            post_init()
+
+        self.max_relative_target = parse_max_relative_target_cli(self.max_relative_target)
 
 
 SO100FollowerConfig: TypeAlias = SOFollowerRobotConfig

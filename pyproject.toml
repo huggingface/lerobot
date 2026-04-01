@@ -125,7 +125,15 @@ intelrealsense = [
     "pyrealsense2>=2.55.1.6486,<2.57.0 ; sys_platform != 'darwin'",
     "pyrealsense2-macosx>=2.54,<2.55.0 ; sys_platform == 'darwin'",
 ]
+oakd = ["depthai>=2.25.0.0"]
 realsense-mesh = ["lerobot[intelrealsense]", "open3d>=0.18.0,<0.20.0"]
+perception = [
+    "lerobot[transformers-dep]",
+    "lerobot[kinematics]",
+    "scipy>=1.11.2,<1.16.0",
+    "openai>=1.0.0,<2.0.0",
+    "anthropic>=0.39.0,<1.0.0",
+]
 phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0", "fastapi<1.0"]
 
 # Policies
@@ -136,7 +144,7 @@ wallx = [
     "torchdiffeq==0.2.5",
     "qwen_vl_utils==0.0.11"
 ]
-pi = ["transformers @ git+https://github.com/huggingface/transformers.git@fix/lerobot_openpi", "scipy>=1.10.1,<1.15"]
+pi = ["transformers @ git+https://github.com/huggingface/transformers.git@fix/lerobot_openpi", "scipy>=1.11.2,<1.15"]
 smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "accelerate>=1.7.0,<2.0.0", "safetensors>=0.4.3,<1.0.0"]
 groot = [
     "lerobot[transformers-dep]",
@@ -156,6 +164,8 @@ hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.13,<0.2.0", "lerobot[grpci
 # Features
 async = ["lerobot[grpcio-dep]", "matplotlib>=3.10.3,<4.0.0"]
 peft = ["lerobot[transformers-dep]", "peft>=0.18.0,<1.0.0"]
+# MCP server for agentic manipulation (stdio + optional SSE like DimOS HTTP MCP)
+agentic-mcp = ["mcp>=1.4.0,<2.0.0", "uvicorn>=0.30.0,<0.36.0"]
 
 # Development
 dev = ["pre-commit>=3.7.0,<5.0.0", "debugpy>=1.8.1,<1.9.0", "lerobot[grpcio-dep]", "grpcio-tools==1.73.1", "mypy>=1.19.1"]
@@ -177,6 +187,8 @@ all = [
     "lerobot[reachy2]",
     "lerobot[kinematics]",
     "lerobot[intelrealsense]",
+    "lerobot[oakd]",
+    "lerobot[perception]",
     # "lerobot[wallx]",
     # "lerobot[pi]", TODO(Pepijn): Update pi to transformers v5
     "lerobot[smolvla]",
@@ -201,10 +213,12 @@ lerobot-calibrate="lerobot.scripts.lerobot_calibrate:main"
 lerobot-find-cameras="lerobot.scripts.lerobot_find_cameras:main"
 lerobot-preview-cameras="lerobot.scripts.lerobot_preview_cameras:main"
 lerobot-realsense-mesh="lerobot.scripts.lerobot_realsense_mesh:main"
+lerobot-stereo-mesh="lerobot.scripts.lerobot_stereo_mesh:main"
 lerobot-find-port="lerobot.scripts.lerobot_find_port:main"
 lerobot-record="lerobot.scripts.lerobot_record:main"
 lerobot-replay="lerobot.scripts.lerobot_replay:main"
 lerobot-setup-motors="lerobot.scripts.lerobot_setup_motors:main"
+lerobot-scan-motors="lerobot.scripts.lerobot_scan_motors:main"
 lerobot-teleoperate="lerobot.scripts.lerobot_teleoperate:main"
 lerobot-eval="lerobot.scripts.lerobot_eval:main"
 lerobot-train="lerobot.scripts.lerobot_train:main"
@@ -215,6 +229,12 @@ lerobot-find-joint-limits="lerobot.scripts.lerobot_find_joint_limits:main"
 lerobot-imgtransform-viz="lerobot.scripts.lerobot_imgtransform_viz:main"
 lerobot-edit-dataset="lerobot.scripts.lerobot_edit_dataset:main"
 lerobot-setup-can="lerobot.scripts.lerobot_setup_can:main"
+lerobot-auto-manipulate="lerobot.scripts.lerobot_auto_manipulate:main"
+lerobot-agentic-manipulate="lerobot.scripts.lerobot_agentic_manipulate:main"
+lerobot-agentic-mcp="lerobot.scripts.lerobot_agentic_mcp:main"
+lerobot-localize-objects="lerobot.scripts.lerobot_localize_objects:main"
+lerobot-track-tags="lerobot.scripts.lerobot_track_tags:main"
+lerobot-make-tag="lerobot.scripts.lerobot_make_tag:main"
 
 # ---------------- Tool Configurations ----------------
 [tool.setuptools.package-data]

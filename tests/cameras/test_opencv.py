@@ -246,8 +246,8 @@ def test_fourcc_configuration():
         camera = OpenCVCamera(config)
         assert camera.config.fourcc == fourcc
 
-    # Test invalid FOURCC codes
-    invalid_fourcc_codes = ["ABC", "ABCDE", ""]
+    # Test invalid FOURCC codes (empty string = unset / auto-detect, not an error)
+    invalid_fourcc_codes = ["ABC", "ABCDE"]
 
     for fourcc in invalid_fourcc_codes:
         with pytest.raises(ValueError):

@@ -12,7 +12,73 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+
 import numpy as np
+
+
+def _resolve_urdf_path(urdf_path: str) -> str:
+    """Resolve to a path placo can load (directory containing robot.urdf).
+
+    placo.RobotWrapper always looks for robot.urdf inside the given path (it
+    appends /robot.urdf), so we must pass a directory that contains a file
+    named robot.urdf. If the user passes a path to a .urdf file (e.g. so101.urdf),
+    we pass its parent directory and ensure robot.urdf exists there (symlink to
+    the given file if needed).
+    """
+    path = os.path.abspath(os.path.expanduser(urdf_path))
+    if os.path.isfile(path):
+        parent = os.path.dirname(path)
+        robot_urdf = os.path.join(parent, "robot.urdf")
+        if not os.path.isfile(robot_urdf):
+            try:
+                os.symlink(os.path.basename(path), robot_urdf)
+            except OSError:
+                pass  # e.g. permission or already exists as broken link
+        if os.path.isfile(robot_urdf):
+            return parent
+        raise ValueError(
+            f"Could not use {path}: placo requires a directory containing robot.urdf. "
+            f"Rename to {os.path.join(parent, 'robot.urdf')} or pass the directory: --urdf={parent}"
+        )
+    if os.path.isdir(path):
+        robot_urdf = os.path.join(path, "robot.urdf")
+        if os.path.isfile(robot_urdf):
+            return path
+        for name in ("so101.urdf", "so101_new_calib.urdf", "model.urdf"):
+            candidate = os.path.join(path, name)
+            if os.path.isfile(candidate):
+                try:
+                    os.symlink(name, robot_urdf)
+                except OSError:
+                    pass
+                if os.path.isfile(robot_urdf):
+                    return path
+        raise ValueError(
+            f"URDF path is a directory but no robot.urdf / so101.urdf / model.urdf found: {path}. "
+            "Add a .urdf file or pass a path to an existing .urdf file, e.g. --urdf=./SO101/so101.urdf"
+        )
+    # Path is missing (e.g. user passed ./SO101/so101.urdf but only so101_new_calib.urdf exists).
+    # Try parent directory with known URDF names.
+    parent = os.path.dirname(path)
+    if os.path.isdir(parent):
+        robot_urdf = os.path.join(parent, "robot.urdf")
+        for name in ("so101.urdf", "so101_new_calib.urdf", "model.urdf"):
+            candidate = os.path.join(parent, name)
+            if os.path.isfile(candidate):
+                try:
+                    os.symlink(name, robot_urdf)
+                except OSError:
+                    pass
+                if os.path.isfile(robot_urdf):
+                    return parent
+    hint = ""
+    if "SO101" in path or "so101" in path.lower():
+        hint = " For SO101, download so101_new_calib.urdf from https://github.com/TheRobotStudio/SO-ARM100 and put it in SO101/."
+    raise ValueError(
+        f"URDF path does not exist: {path}. "
+        f"Pass a path to an existing .urdf file or a directory containing robot.urdf.{hint}"
+    )
 
 
 class RobotKinematics:
@@ -40,7 +106,9 @@ class RobotKinematics:
                 "Please install the optional dependencies of `kinematics` in the package."
             ) from e
 
-        self.robot = placo.RobotWrapper(urdf_path)
+        resolved = _resolve_urdf_path(urdf_path)
+        self.urdf_dir = resolved
+        self.robot = placo.RobotWrapper(resolved)
         self.solver = placo.KinematicsSolver(self.robot)
         self.solver.mask_fbase(True)  # Fix the base
 
@@ -52,6 +120,24 @@ class RobotKinematics:
         # Initialize frame task for IK
         self.tip_frame = self.solver.add_frame_task(self.target_frame_name, np.eye(4))
 
+        self._viz_chain: list[str] = [target_frame_name]
+        try:
+            from lerobot.utils.urdf_chain import kinematic_chain_links, robot_urdf_file_in_dir
+
+            urdf_file = robot_urdf_file_in_dir(resolved)
+            chain = kinematic_chain_links(urdf_file, target_frame_name)
+            if chain:
+                self._viz_chain = chain
+        except Exception:
+            pass
+
+    def set_joint_positions(self, joint_pos_deg: np.ndarray) -> None:
+        """Apply arm joint angles (degrees) and update placo kinematics."""
+        joint_pos_rad = np.deg2rad(joint_pos_deg[: len(self.joint_names)])
+        for i, joint_name in enumerate(self.joint_names):
+            self.robot.set_joint(joint_name, joint_pos_rad[i])
+        self.robot.update_kinematics()
+
     def forward_kinematics(self, joint_pos_deg: np.ndarray) -> np.ndarray:
         """
         Compute forward kinematics for given joint configuration given the target frame name in the constructor.
@@ -62,19 +148,20 @@ class RobotKinematics:
         Returns:
             4x4 transformation matrix of the end-effector pose
         """
-
-        # Convert degrees to radians
-        joint_pos_rad = np.deg2rad(joint_pos_deg[: len(self.joint_names)])
-
-        # Update joint positions in placo robot
-        for i, joint_name in enumerate(self.joint_names):
-            self.robot.set_joint(joint_name, joint_pos_rad[i])
-
-        # Update kinematics
-        self.robot.update_kinematics()
-
-        # Get the transformation matrix
+        self.set_joint_positions(joint_pos_deg)
         return self.robot.get_T_world_frame(self.target_frame_name)
+
+    def get_link_transforms_chain(self, joint_pos_deg: np.ndarray) -> list[tuple[str, np.ndarray]]:
+        """World poses for the URDF chain from base to end-effector (for 3D debug viz)."""
+        self.set_joint_positions(joint_pos_deg)
+        out: list[tuple[str, np.ndarray]] = []
+        for name in self._viz_chain:
+            try:
+                T = self.robot.get_T_world_frame(name)
+                out.append((name, np.asarray(T, dtype=np.float64)))
+            except Exception:
+                continue
+        return out
 
     def inverse_kinematics(
         self,

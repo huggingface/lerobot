@@ -21,10 +21,13 @@ import draccus
 
 @dataclass(kw_only=True)
 class TeleoperatorConfig(draccus.ChoiceRegistry, abc.ABC):
-    # Allows to distinguish between different teleoperators of the same type
-    id: str | None = None
-    # Directory to store calibration file
-    calibration_dir: Path | None = None
+    # Allows to distinguish between different teleoperators of the same type.
+    # Use empty string to mean "no id" for CLI/Draccus compatibility.
+    id: str = ""
+    # Directory to store calibration file.
+    # Kept as string for CLI/Draccus compatibility and converted to Path at runtime
+    # by teleoperator implementations.
+    calibration_dir: str = ""
 
     @property
     def type(self) -> str:
