@@ -14,12 +14,23 @@
 
 from __future__ import annotations
 
+import logging
+import resource
 from typing import TYPE_CHECKING
 
 import torch
 from torch import nn
 
 from lerobot.utils.import_utils import _transformers_available
+
+
+def _log_mem(label: str) -> None:
+    rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+    parts = [f"[PI_GEMMA_MEM {label}] RSS={rss_mb:.0f}MB"]
+    if torch.cuda.is_available():
+        alloc = torch.cuda.memory_allocated() / (1024**2)
+        parts.append(f"CUDA_alloc={alloc:.0f}MB")
+    logging.info(" ".join(parts))
 
 if TYPE_CHECKING or _transformers_available:
     from transformers.cache_utils import DynamicCache
@@ -196,7 +207,9 @@ class PiGemmaModel(GemmaModel):  # type: ignore[misc]
     """
 
     def __init__(self, config: GemmaConfig, **kwargs):
+        _log_mem("PiGemmaModel: before super().__init__ (creates standard GemmaModel layers)")
         super().__init__(config, **kwargs)
+        _log_mem("PiGemmaModel: after super().__init__ (standard layers allocated, about to replace)")
         # if not getattr(config, "use_adarms", False):
         #     return
         cond_dim = getattr(config, "adarms_cond_dim", None)
@@ -205,6 +218,7 @@ class PiGemmaModel(GemmaModel):  # type: ignore[misc]
             [pi_gemma_decoder_layer_base(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
         self.norm = PiGemmaRMSNorm(config.hidden_size, eps=config.rms_norm_eps, cond_dim=cond_dim)
+        _log_mem("PiGemmaModel: after replacing layers with PiGemma layers")
 
     def forward(
         self,
@@ -327,24 +341,33 @@ class PiGemmaForCausalLM(GemmaForCausalLM):  # type: ignore[misc]
     """
 
     def __init__(self, config: GemmaConfig, **kwargs):
+        _log_mem("PiGemmaForCausalLM: before super().__init__ (creates standard GemmaForCausalLM)")
         super().__init__(config, **kwargs)
+        _log_mem("PiGemmaForCausalLM: after super().__init__ (about to replace with PiGemmaModel)")
         self.model = PiGemmaModel(config)
+        _log_mem("PiGemmaForCausalLM: done")
 
 
 class PaliGemmaModelWithPiGemma(PaliGemmaModel):
     """PaliGemmaModel whose language_model is PiGemmaModel (custom decoder with PiGemmaRMSNorm and gated residuals)."""
 
     def __init__(self, config):
+        _log_mem("PaliGemmaModelWithPiGemma: before super().__init__ (creates full PaliGemmaModel)")
         super().__init__(config)
+        _log_mem("PaliGemmaModelWithPiGemma: after super().__init__ (about to replace language_model)")
         self.language_model = PiGemmaModel(config.text_config)
+        _log_mem("PaliGemmaModelWithPiGemma: done")
 
 
 class PaliGemmaForConditionalGenerationWithPiGemma(PaliGemmaForConditionalGeneration):
     """PaliGemmaForConditionalGeneration using PiGemma decoder for the language model."""
 
     def __init__(self, config):
+        _log_mem("PaliGemmaForCondGenWithPiGemma: before super().__init__ (creates full PaliGemmaForConditionalGeneration)")
         super().__init__(config)
+        _log_mem("PaliGemmaForCondGenWithPiGemma: after super().__init__ (about to replace self.model)")
         self.model = PaliGemmaModelWithPiGemma(config)
+        _log_mem("PaliGemmaForCondGenWithPiGemma: done")
 
     # Make modules available through conditional class for BC
     @property
