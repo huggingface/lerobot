@@ -74,9 +74,51 @@ def compute_relative_action_stats(
         rel = action.clone()
         rel[..., :min_dim] -= current_pos[:, None, :min_dim]
         all_rel.append(rel)
-    
+
     all_rel = torch.cat(all_rel, dim=0)
     return all_rel.mean(dim=0), all_rel.std(dim=0).clamp(min=1e-6)
+
+
+def compute_global_relative_stats(
+    dataloader,
+    state_key: str = "observation.state",
+    convert_state: bool = True,
+    num_batches: int | None = None,
+) -> dict[str, torch.Tensor]:
+    """Compute global mean/std for relative actions (and state) across all timesteps.
+
+    Returns stats compatible with the standard MEAN_STD normalizer (shape = action_dim).
+    """
+    all_rel_actions = []
+    all_rel_states = []
+    for i, batch in enumerate(dataloader):
+        if num_batches is not None and i >= num_batches:
+            break
+        action, state = batch["action"], batch[state_key]
+        current_pos = state[:, -1, :] if state.dim() == 3 else state
+
+        min_dim = min(action.shape[-1], current_pos.shape[-1])
+        rel = action.clone()
+        rel[..., :min_dim] -= current_pos[:, None, :min_dim]
+        all_rel_actions.append(rel.reshape(-1, rel.shape[-1]))
+
+        if convert_state:
+            if state.dim() == 3:
+                rel_state = state - current_pos[:, None, :]
+            else:
+                rel_state = torch.zeros_like(state)
+            all_rel_states.append(rel_state.reshape(-1, rel_state.shape[-1]))
+
+    all_rel_actions = torch.cat(all_rel_actions, dim=0)
+    result = {
+        "action_mean": all_rel_actions.mean(dim=0),
+        "action_std": all_rel_actions.std(dim=0).clamp(min=1e-6),
+    }
+    if convert_state and all_rel_states:
+        all_rel_states = torch.cat(all_rel_states, dim=0)
+        result["state_mean"] = all_rel_states.mean(dim=0)
+        result["state_std"] = all_rel_states.std(dim=0).clamp(min=1e-6)
+    return result
 
 
 def convert_to_relative(
