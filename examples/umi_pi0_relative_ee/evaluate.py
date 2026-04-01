@@ -17,17 +17,20 @@
 """
 Inference script for a pi0 model trained with **relative EE actions**.
 
-This uses the built-in ``RelativeActionsProcessorStep`` and
-``AbsoluteActionsProcessorStep`` that are already wired into pi0's
-processor pipeline when ``use_relative_actions=True``.
+This uses the built-in ``DeriveStateFromActionStep`` (no-op at inference),
+``RelativeActionsProcessorStep``, ``AbsoluteActionsProcessorStep``, and
+``RelativeStateProcessorStep`` that are already wired into pi0's processor
+pipeline.
 
 The inference loop:
   1. Reads joint positions from the robot.
   2. Converts to EE pose via forward kinematics (FK).
      This produces ``observation.state`` with the current EE pose.
   3. The pi0 preprocessor:
-     a) ``RelativeActionsProcessorStep`` caches the raw state.
-     b) ``NormalizerProcessorStep`` normalizes state and actions.
+     a) ``DeriveStateFromActionStep`` — no-op (state comes from robot).
+     b) ``RelativeActionsProcessorStep`` caches the raw state.
+     c) ``RelativeStateProcessorStep`` buffers prev state, stacks, subtracts.
+     d) ``NormalizerProcessorStep`` normalizes state and actions.
   4. pi0 predicts relative action chunk.
   5. The pi0 postprocessor:
      a) ``UnnormalizerProcessorStep`` unnormalizes.
@@ -51,6 +54,7 @@ from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.policies.pi0.modeling_pi0 import PI0Policy
 from lerobot.processor import (
+    RelativeStateProcessorStep,
     RobotProcessorPipeline,
     make_default_teleop_action_processor,
 )
@@ -79,6 +83,11 @@ TASK_DESCRIPTION = "manipulation task"
 HF_MODEL_ID = "<hf_username>/<model_repo_id>"
 HF_DATASET_ID = "<hf_username>/<dataset_repo_id>"
 
+# Latency compensation: skip this many steps from the start of each predicted
+# action chunk. Formula: ceil(total_latency_ms / (1000 / FPS)).
+# E.g. at 10Hz with ~200ms total system latency: ceil(200 / 100) = 2.
+LATENCY_SKIP_STEPS = 0
+
 # EE feature keys produced by ForwardKinematicsJointsToEE
 EE_KEYS = ["x", "y", "z", "wx", "wy", "wz", "gripper_pos"]
 
@@ -94,6 +103,7 @@ def main():
     robot = SO100Follower(robot_config)
 
     policy = PI0Policy.from_pretrained(HF_MODEL_ID)
+    policy.config.latency_skip_steps = LATENCY_SKIP_STEPS
 
     kinematics_solver = RobotKinematics(
         urdf_path="./SO101/so101_new_calib.urdf",
@@ -151,15 +161,17 @@ def main():
 
     # Build pre/post processors from the trained model.
     # The pi0 processor pipeline already includes:
-    #   pre:  ... → RelativeActionsProcessorStep → NormalizerProcessorStep
+    #   pre:  ... → RelativeStateProcessorStep → RelativeActionsProcessorStep → NormalizerProcessorStep
     #   post: UnnormalizerProcessorStep → AbsoluteActionsProcessorStep → ...
-    # These handle the relative ↔ absolute conversion automatically.
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=policy,
         pretrained_path=HF_MODEL_ID,
         dataset_stats=dataset.meta.stats,
         preprocessor_overrides={"device_processor": {"device": str(policy.config.device)}},
     )
+
+    # Find the relative state step (if present) so we can reset its buffer between episodes.
+    _relative_state_steps = [s for s in preprocessor.steps if isinstance(s, RelativeStateProcessorStep)]
 
     robot.connect()
 
@@ -173,6 +185,10 @@ def main():
         print("Starting evaluate loop...")
         for episode_idx in range(NUM_EPISODES):
             log_say(f"Running inference, recording eval episode {episode_idx + 1} of {NUM_EPISODES}")
+
+            # Reset relative state buffer so velocity is zero at episode start
+            for step in _relative_state_steps:
+                step.reset()
 
             record_loop(
                 robot=robot,

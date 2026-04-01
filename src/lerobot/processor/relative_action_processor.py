@@ -30,10 +30,13 @@ from .pipeline import ProcessorStep, ProcessorStepRegistry
 __all__ = [
     "MapDeltaActionToRobotActionStep",
     "MapTensorToDeltaActionDictStep",
+    "DeriveStateFromActionStep",
     "RelativeActionsProcessorStep",
     "AbsoluteActionsProcessorStep",
+    "RelativeStateProcessorStep",
     "to_relative_actions",
     "to_absolute_actions",
+    "to_relative_state",
 ]
 
 
@@ -81,6 +84,41 @@ def to_absolute_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) ->
     return actions
 
 
+@ProcessorStepRegistry.register("derive_state_from_action_processor")
+@dataclass
+class DeriveStateFromActionStep(ProcessorStep):
+    """Derives 2-step observation.state from the action chunk (UMI-style).
+
+    Expects action with one extra leading timestep: [B, chunk_size+1, D]
+    from action_delta_indices = [-1, 0, 1, ..., chunk_size-1].
+    Extracts [action[t-1], action[t]] as state and strips the extra timestep.
+    No-op during inference (state comes from robot).
+    """
+
+    enabled: bool = False
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        if not self.enabled:
+            return transition
+        action = transition.get(TransitionKey.ACTION)
+        if action is None or action.ndim < 3:
+            return transition
+        new_transition = transition.copy()
+        new_obs = dict(new_transition.get(TransitionKey.OBSERVATION, {}))
+        new_obs[OBS_STATE] = action[..., :2, :]
+        new_transition[TransitionKey.ACTION] = action[..., 1:, :]
+        new_transition[TransitionKey.OBSERVATION] = new_obs
+        return new_transition
+
+    def get_config(self) -> dict[str, Any]:
+        return {"enabled": self.enabled}
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
 @ProcessorStepRegistry.register("delta_actions_processor")
 @dataclass
 class RelativeActionsProcessorStep(ProcessorStep):
@@ -124,7 +162,14 @@ class RelativeActionsProcessorStep(ProcessorStep):
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         observation = transition.get(TransitionKey.OBSERVATION, {})
-        state = observation.get(OBS_STATE) if observation else None
+        raw_state = observation.get(OBS_STATE) if observation else None
+
+        # When state_delta_indices loads multi-timestep state [B, n_obs, D],
+        # use only the current (last) timestep for relative action conversion.
+        if raw_state is not None:
+            state = raw_state[..., -1, :] if raw_state.ndim >= 3 else raw_state
+        else:
+            state = None
 
         # Always cache state for the paired AbsoluteActionsProcessorStep
         if state is not None:
@@ -147,6 +192,120 @@ class RelativeActionsProcessorStep(ProcessorStep):
             "enabled": self.enabled,
             "exclude_joints": self.exclude_joints,
             "action_names": self.action_names,
+        }
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
+def to_relative_state(state: Tensor, mask: Sequence[bool]) -> Tensor:
+    """Convert multi-timestep absolute state to relative (offset from current timestep).
+
+    Each timestep becomes: ``state[..., t, :] - state[..., -1, :]`` for masked dims.
+    The last (current) timestep becomes zeros for masked dims.
+
+    Args:
+        state: (..., n_obs, state_dim) — last timestep is the reference (current).
+        mask: Which dims to convert. Can be shorter than state_dim.
+    """
+    mask_t = torch.tensor(mask, dtype=state.dtype, device=state.device)
+    dims = mask_t.shape[0]
+    current = state[..., -1:, :]  # (..., 1, state_dim)
+    state = state.clone()
+    state[..., :dims] -= current[..., :dims] * mask_t
+    return state
+
+
+@ProcessorStepRegistry.register("relative_state_processor")
+@dataclass
+class RelativeStateProcessorStep(ProcessorStep):
+    """Converts observation.state to relative (offset from current timestep).
+
+    UMI-style relative proprioception: each state timestep is expressed as
+    an offset from the current EE pose, providing velocity information.
+
+    During training (multi-timestep input from ``state_delta_indices``):
+        ``state[..., t, :] -= state[..., -1, :]`` — subtract current from all.
+
+    During inference (single timestep): buffers the previous state and stacks
+    ``[previous, current]`` before applying the relative conversion, producing
+    the same ``[n_obs, D]`` shape the model expects.
+
+    Attributes:
+        enabled: Whether to apply the relative conversion.
+        exclude_joints: Joint/dim names to keep absolute.
+        state_names: State dimension names from dataset metadata.
+    """
+
+    enabled: bool = False
+    exclude_joints: list[str] = field(default_factory=list)
+    state_names: list[str] | None = None
+    _previous_state: torch.Tensor | None = field(default=None, init=False, repr=False)
+
+    def _build_mask(self, state_dim: int) -> list[bool]:
+        if not self.exclude_joints or self.state_names is None:
+            return [True] * state_dim
+
+        exclude_tokens = [str(name).lower() for name in self.exclude_joints if name]
+        if not exclude_tokens:
+            return [True] * state_dim
+
+        mask = []
+        for name in self.state_names[:state_dim]:
+            state_name = str(name).lower()
+            is_excluded = any(token == state_name or token in state_name for token in exclude_tokens)
+            mask.append(not is_excluded)
+
+        if len(mask) < state_dim:
+            mask.extend([True] * (state_dim - len(mask)))
+
+        return mask
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        if not self.enabled:
+            return transition
+
+        observation = transition.get(TransitionKey.OBSERVATION, {})
+        state = observation.get(OBS_STATE) if observation else None
+
+        if state is None:
+            return transition
+
+        new_transition = transition.copy()
+        new_obs = dict(new_transition.get(TransitionKey.OBSERVATION, {}))
+        mask = self._build_mask(state.shape[-1])
+
+        if state.ndim >= 3:
+            # [B, n_obs, D] — multi-timestep (training with state_delta_indices)
+            relative = to_relative_state(state, mask)
+            new_obs[OBS_STATE] = relative.flatten(start_dim=-2)  # [B, n_obs*D]
+        elif state.ndim == 2:
+            # [B, D] — single timestep (inference): buffer previous and stack
+            current = state
+            if self._previous_state is None:
+                self._previous_state = current.clone()
+            prev = self._previous_state
+            if prev.device != current.device or prev.dtype != current.dtype:
+                prev = prev.to(device=current.device, dtype=current.dtype)
+            stacked = torch.stack([prev, current], dim=-2)  # [B, 2, D]
+            relative = to_relative_state(stacked, mask)
+            new_obs[OBS_STATE] = relative.flatten(start_dim=-2)  # [B, 2*D]
+            self._previous_state = current.clone()
+
+        new_transition[TransitionKey.OBSERVATION] = new_obs
+        return new_transition
+
+    def reset(self) -> None:
+        """Reset the state buffer. Call at episode boundaries during inference."""
+        self._previous_state = None
+
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "exclude_joints": self.exclude_joints,
+            "state_names": self.state_names,
         }
 
     def transform_features(

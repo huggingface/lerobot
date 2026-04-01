@@ -77,9 +77,12 @@ from .policy_robot_bridge import (
 )
 from .relative_action_processor import (
     AbsoluteActionsProcessorStep,
+    DeriveStateFromActionStep,
     RelativeActionsProcessorStep,
+    RelativeStateProcessorStep,
     to_absolute_actions,
     to_relative_actions,
+    to_relative_state,
 )
 from .rename_processor import RenameObservationsProcessorStep
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
@@ -107,7 +110,9 @@ __all__ = [
     "make_default_robot_action_processor",
     "make_default_robot_observation_processor",
     "AbsoluteActionsProcessorStep",
+    "DeriveStateFromActionStep",
     "RelativeActionsProcessorStep",
+    "RelativeStateProcessorStep",
     "MapDeltaActionToRobotActionStep",
     "MapTensorToDeltaActionDictStep",
     "NormalizerProcessorStep",
@@ -139,6 +144,7 @@ __all__ = [
     "TruncatedProcessorStep",
     "to_absolute_actions",
     "to_relative_actions",
+    "to_relative_state",
     "UnnormalizerProcessorStep",
     "VanillaObservationProcessorStep",
 ]

@@ -115,6 +115,17 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     def reward_delta_indices(self) -> list | None:  # type: ignore[type-arg]    #TODO: No implementation
         raise NotImplementedError
 
+    @property
+    def state_delta_indices(self) -> list | None:  # type: ignore[type-arg]
+        """Delta indices specifically for observation.state.
+
+        When not None, overrides ``observation_delta_indices`` for the
+        ``observation.state`` key only. Useful for loading state history
+        (e.g. ``[-1, 0]`` for UMI-style relative proprioception) without
+        also loading multiple image timesteps.
+        """
+        return None
+
     @abc.abstractmethod
     def get_optimizer_preset(self) -> OptimizerConfig:
         raise NotImplementedError
