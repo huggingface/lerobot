@@ -105,6 +105,7 @@ class RECAPPiStarTrainingConfig:
     num_unfrozen_backbone_layers: int = 3
     train_expert_only: bool = False
     gradient_checkpointing: bool = False
+    gradient_accumulation_steps: int = 1
 
     # Value network pre-computation
     vn_batch_size: int = 4
@@ -590,25 +591,26 @@ def _run_validation(
         noise = torch.randn_like(padded_actions)
         fm_time = torch.rand(B, device=device)
 
-        # Pass 1: correct advantage embedding (no dropout)
-        losses_correct = policy._forward_with_advantage(
-            batch, true_indicator, dropout_mask=None, noise=noise, time=fm_time
-        )
-        original_action_dim = policy.config.output_features[ACTION].shape[0]
-        losses_correct = losses_correct[:, :, :original_action_dim]
-        actions_is_pad = batch.get("action_is_pad")
-        if actions_is_pad is not None:
-            losses_correct = losses_correct * (~actions_is_pad).unsqueeze(-1)
-        loss_correct = losses_correct.mean(dim=(1, 2))
+        with torch.no_grad(), torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+            # Pass 1: correct advantage embedding (no dropout)
+            losses_correct = policy._forward_with_advantage(
+                batch, true_indicator, dropout_mask=None, noise=noise, time=fm_time
+            )
+            original_action_dim = policy.config.output_features[ACTION].shape[0]
+            losses_correct = losses_correct[:, :, :original_action_dim]
+            actions_is_pad = batch.get("action_is_pad")
+            if actions_is_pad is not None:
+                losses_correct = losses_correct * (~actions_is_pad).unsqueeze(-1)
+            loss_correct = losses_correct.mean(dim=(1, 2))
 
-        # Pass 2: flipped advantage embedding (no dropout)
-        losses_wrong = policy._forward_with_advantage(
-            batch, ~true_indicator, dropout_mask=None, noise=noise, time=fm_time
-        )
-        losses_wrong = losses_wrong[:, :, :original_action_dim]
-        if actions_is_pad is not None:
-            losses_wrong = losses_wrong * (~actions_is_pad).unsqueeze(-1)
-        loss_wrong = losses_wrong.mean(dim=(1, 2))
+            # Pass 2: flipped advantage embedding (no dropout)
+            losses_wrong = policy._forward_with_advantage(
+                batch, ~true_indicator, dropout_mask=None, noise=noise, time=fm_time
+            )
+            losses_wrong = losses_wrong[:, :, :original_action_dim]
+            if actions_is_pad is not None:
+                losses_wrong = losses_wrong * (~actions_is_pad).unsqueeze(-1)
+            loss_wrong = losses_wrong.mean(dim=(1, 2))
 
         total_loss += loss_correct.sum().item()
         n_pos = pos_mask.sum().item()
@@ -972,15 +974,22 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
 
             batch = preprocessor(batch)
             batch = _inject_advantages(batch, advantage_lookup, device)
-            loss, output_dict = policy.forward(batch)
 
-            optimizer.zero_grad()
+            with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+                loss, output_dict = policy.forward(batch)
+                if cfg.gradient_accumulation_steps > 1:
+                    loss = loss / cfg.gradient_accumulation_steps
+
             loss.backward()
-            if cfg.max_grad_norm > 0:
-                clip_grad_norm_(trainable_params, cfg.max_grad_norm)
-            optimizer.step()
 
-            epoch_loss += loss.item() * batch[ACTION].shape[0]
+            if (step + 1) % cfg.gradient_accumulation_steps == 0 or step == len(train_loader) - 1:
+                if cfg.max_grad_norm > 0:
+                    clip_grad_norm_(trainable_params, cfg.max_grad_norm)
+                optimizer.step()
+                optimizer.zero_grad()
+
+            unscaled_loss = loss.item() * (cfg.gradient_accumulation_steps if cfg.gradient_accumulation_steps > 1 else 1)
+            epoch_loss += unscaled_loss * batch[ACTION].shape[0]
             epoch_samples += batch[ACTION].shape[0]
             global_train_step += 1
 

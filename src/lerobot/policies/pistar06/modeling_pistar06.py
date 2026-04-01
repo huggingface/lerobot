@@ -619,14 +619,10 @@ def compute_layer_complete(
     query_states = torch.cat(query_states, dim=2)
     key_states = torch.cat(key_states, dim=2)
     value_states = torch.cat(value_states, dim=2)
-    dummy_tensor = torch.zeros(
-        query_states.shape[0],
-        query_states.shape[2],
-        query_states.shape[-1],
-        device=query_states.device,
-        dtype=query_states.dtype,
+    cos, sin = paligemma.model.language_model.rotary_emb(
+        torch.empty(1, device=query_states.device, dtype=query_states.dtype),
+        position_ids,
     )
-    cos, sin = paligemma.model.language_model.rotary_emb(dummy_tensor, position_ids)
     query_states, key_states = modeling_gemma.apply_rotary_pos_emb(
         query_states, key_states, cos, sin, unsqueeze_dim=1
     )
@@ -652,7 +648,7 @@ def compute_layer_complete(
             att_output = att_output.to(layer.self_attn.o_proj.weight.dtype)
         out_emb = layer.self_attn.o_proj(att_output[:, start_pos:end_pos])
         out_emb = _gated_residual(hidden_states, out_emb, gates[i])
-        after_first_residual = out_emb.clone()
+        after_first_residual = out_emb
         out_emb, gate = layernorm_forward(
             layer.post_attention_layernorm, out_emb, adarms_cond[i]
         )
@@ -1065,11 +1061,18 @@ class PiStar06Pytorch(nn.Module):
         att_masks = []
 
         for img, img_mask in zip(images, img_masks, strict=True):
+            vision_frozen = not any(
+                p.requires_grad
+                for p in self.paligemma_with_expert.paligemma.model.vision_tower.parameters()
+            )
+            if vision_frozen:
+                with torch.no_grad():
+                    img_emb = self.paligemma_with_expert.embed_image(img)
+            else:
+                def image_embed_func(img):
+                    return self.paligemma_with_expert.embed_image(img)
 
-            def image_embed_func(img):
-                return self.paligemma_with_expert.embed_image(img)
-
-            img_emb = self._apply_checkpoint(image_embed_func, img)
+                img_emb = self._apply_checkpoint(image_embed_func, img)
             bsize, num_img_embs = img_emb.shape[:2]
 
             embs.append(img_emb)
@@ -1932,14 +1935,14 @@ class PiStar06Policy(PreTrainedPolicy):
         original_action_dim = self.config.output_features[ACTION].shape[0]
         losses = losses[:, :, :original_action_dim]
         loss_dict: dict[str, float] = {}
-        loss_dict["losses_after_forward"] = losses.clone().mean().item()
+        loss_dict["losses_after_forward"] = losses.mean().item()
 
         actions_is_pad = batch.get("action_is_pad")
         if actions_is_pad is not None:
             in_episode_bound = ~actions_is_pad
             losses = losses * in_episode_bound.unsqueeze(-1)
             loss_dict["losses_after_in_ep_bound"] = (
-                losses.clone().mean().item()
+                losses.mean().item()
             )
 
         if reduction == "none":
