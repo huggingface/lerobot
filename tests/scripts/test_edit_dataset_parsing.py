@@ -18,6 +18,7 @@ import draccus
 import pytest
 
 from lerobot.scripts.lerobot_edit_dataset import (
+    AddFeatureConfig,
     ConvertImageToVideoConfig,
     DeleteEpisodesConfig,
     EditDatasetConfig,
@@ -45,6 +46,7 @@ class TestOperationTypeParsing:
             ("split", SplitConfig),
             ("merge", MergeConfig),
             ("remove_feature", RemoveFeatureConfig),
+            ("add_feature", AddFeatureConfig),
             ("modify_tasks", ModifyTasksConfig),
             ("convert_image_to_video", ConvertImageToVideoConfig),
             ("info", InfoConfig),
@@ -63,6 +65,7 @@ class TestOperationTypeParsing:
             ("split", SplitConfig),
             ("merge", MergeConfig),
             ("remove_feature", RemoveFeatureConfig),
+            ("add_feature", AddFeatureConfig),
             ("modify_tasks", ModifyTasksConfig),
             ("convert_image_to_video", ConvertImageToVideoConfig),
             ("info", InfoConfig),

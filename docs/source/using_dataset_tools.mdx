@@ -116,17 +116,52 @@ lerobot-edit-dataset \
     --operation.feature_names "['new_action', 'extra_obs']" \
     --operation.feature_paths "['/path/to/actions.safetensors', '/path/to/extra_obs.mp4']" \
     --push_to_hub true
+
+# Advanced naming: Use a single name for a safetensors file with multiple keys (creates prefixed features)
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type add_feature \
+    --operation.feature_names "['sensor_data']" \
+    --operation.feature_paths "['/path/to/sensor_data.safetensors']"
+# If sensor_data.safetensors contains keys 'temperature' and 'pressure', this creates:
+# - sensor_data.temperature
+# - sensor_data.pressure
+
+# Advanced naming: Override safetensors keys with a custom list of names
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type add_feature \
+    --operation.feature_names "[['temp_sensor', 'press_sensor']]" \
+    --operation.feature_paths "['/path/to/sensor_data.safetensors']"
+# If sensor_data.safetensors contains keys 'temperature' and 'pressure', this creates:
+# - temp_sensor (with temperature data)
+# - press_sensor (with pressure data)
+
+# Advanced naming: Mix empty strings and custom names in a list (fallback to original keys)
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type add_feature \
+    --operation.feature_names "[['', 'custom_pressure']]" \
+    --operation.feature_paths "['/path/to/sensor_data.safetensors']"
+# If sensor_data.safetensors contains keys 'temperature' and 'pressure', this creates:
+# - temperature (original key, since empty string)
+# - custom_pressure (with pressure data)
 ```
 
 **Parameters:**
 
-- `feature_names`: List of names for the new features to add (e.g., `["observation.images.side", "action.new"]`)
+- `feature_names`: List of names for the new features to add. Can be strings or lists of strings for advanced naming control (see examples above)
 - `feature_paths`: List of paths to the external data files (safetensors for numerical data, MP4 for video). Must correspond 1:1 with `feature_names`
 
 **Notes:**
 
 - For video features (.mp4 files), the video must contain exactly the same number of frames as the total frames in the dataset.
-- For numerical data (.safetensors files), each array in the file must have shape `(frames, ...)` where `frames` matches the dataset's total frames. If the safetensors file contains multiple keys, each key becomes a separate feature (optionally prefixed with the corresponding feature_name if provided).
+- For numerical data (.safetensors files), each array in the file must have shape `(frames, ...)` where `frames` matches the dataset's total frames.
+- **Naming Strategy**:
+  - If `feature_names` contains a single string for a safetensors file with one key, uses that string as the feature name.
+  - If `feature_names` contains a single string for a safetensors file with multiple keys, prefixes each key with that string (e.g., `"prefix.key"`).
+  - If `feature_names` contains a list of strings, each string overrides the corresponding safetensors key (empty strings fall back to the original key).
+  - For video files, only single strings are allowed as feature names.
 - The feature type is automatically inferred from the file extension (.mp4 for video, otherwise numerical data).
 
 #### Convert to Video

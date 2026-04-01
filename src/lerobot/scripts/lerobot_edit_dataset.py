@@ -188,7 +188,7 @@ class RemoveFeatureConfig(OperationConfig):
 @OperationConfig.register_subclass("add_feature")
 @dataclass
 class AddFeatureConfig(OperationConfig):
-    feature_names: list[str] | None = None
+    feature_names: list[str | list[str]] | None = None
     feature_paths: list[str] | None = None
 
 
@@ -388,11 +388,19 @@ def handle_add_feature(cfg: EditDatasetConfig):
 
     for f_name, f_path in zip(cfg.operation.feature_names, cfg.operation.feature_paths, strict=True):
         if f_path.endswith(".mp4"):
+            if not isinstance(f_name, str):
+                raise ValueError(
+                    f"A list of string was provided for the feature name of '{f_path}'. For video features you must provide strings for naming."
+                )
+            if not f_name:
+                raise ValueError(
+                    f"An empty string was provided for the feature name of '{f_path}'. You must specify a valid feature name."
+                )
             duration = get_video_duration_in_s(f_path)
             src_frames = int(duration * tgt_fps)
             if src_frames != tgt_frames:
                 raise ValueError(
-                    f"Feature {f_name} has {src_frames} frames, while dataset has {tgt_frames} frames"
+                    f"Feature {f_name} has {src_frames} frames, while dataset has {tgt_frames} frames."
                 )
 
             video_info = get_video_info(f_path)
@@ -413,10 +421,12 @@ def handle_add_feature(cfg: EditDatasetConfig):
             features[f_name] = (new_feature_value, new_feature_info)
         else:
             f_dict = load_file(f_path)
-            for k, v in f_dict.items():
-                if v.shape[1] != tgt_frames:  # TODO: interpolation to obtain target fps
+            num_keys = len(f_dict)
+
+            for idx, (k, v) in enumerate(f_dict.items()):
+                if v.shape[0] != tgt_frames:  # TODO: interpolation to obtain target fps
                     raise ValueError(
-                        f"Feature {k} has {v.shape[1]} frames, while dataset has {tgt_frames} frames"
+                        f"Feature {k} has {v.shape[0]} frames, while dataset has {tgt_frames} frames"
                     )
                 new_feature_info = {
                     "dtype": v.dtype.name,
@@ -425,7 +435,20 @@ def handle_add_feature(cfg: EditDatasetConfig):
                     "fps": dataset.fps,
                 }
                 new_feature_value = v
-                new_feature_key = f"{f_name}.{k}" if len(f_name) > 0 else k
+
+                if isinstance(f_name, str) and f_name:
+                    # use f_name if there's only one key and f_name is provided
+                    new_feature_key = f_name if num_keys == 1 else f"{f_name}.{k}"
+                elif isinstance(f_name, list):
+                    # Prevent silent failures if the user provides the wrong number of names
+                    if len(f_name) != num_keys:
+                        raise ValueError(
+                            f"List of feature names has length {len(f_name)}, but the file contains {num_keys} tensors."
+                        )
+                    # use f_name provided if present, if not use key
+                    new_feature_key = f_name[idx] if f_name[idx] else k
+                else:
+                    new_feature_key = k
 
                 features[new_feature_key] = (new_feature_value, new_feature_info)
 

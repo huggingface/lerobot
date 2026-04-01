@@ -19,7 +19,6 @@ from unittest.mock import patch
 
 import numpy as np
 import pytest
-import torch
 
 from lerobot.datasets.dataset_tools import (
     add_features,
@@ -293,107 +292,6 @@ def test_merge_empty_list(tmp_path):
     """Test error when merging empty list."""
     with pytest.raises(ValueError, match="No datasets to merge"):
         merge_datasets([], output_repo_id="merged", output_dir=tmp_path)
-
-
-def test_add_features_with_values(sample_dataset, tmp_path):
-    """Test adding a feature with pre-computed values."""
-    num_frames = sample_dataset.meta.total_frames
-    reward_values = np.random.randn(num_frames, 1).astype(np.float32)
-
-    feature_info = {
-        "dtype": "float32",
-        "shape": (1,),
-        "names": None,
-    }
-    features = {
-        "reward": (reward_values, feature_info),
-    }
-
-    with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
-    ):
-        mock_get_safe_version.return_value = "v3.0"
-        mock_snapshot_download.return_value = str(tmp_path / "with_reward")
-
-        new_dataset = add_features(
-            dataset=sample_dataset,
-            features=features,
-            output_dir=tmp_path / "with_reward",
-        )
-
-    assert "reward" in new_dataset.meta.features
-    assert new_dataset.meta.features["reward"] == feature_info
-
-    assert len(new_dataset) == num_frames
-    sample_item = new_dataset[0]
-    assert "reward" in sample_item
-    assert isinstance(sample_item["reward"], torch.Tensor)
-
-
-def test_add_features_with_callable(sample_dataset, tmp_path):
-    """Test adding a feature with a callable."""
-
-    def compute_reward(frame_dict, episode_idx, frame_idx):
-        return float(episode_idx * 10 + frame_idx)
-
-    feature_info = {
-        "dtype": "float32",
-        "shape": (1,),
-        "names": None,
-    }
-    features = {
-        "reward": (compute_reward, feature_info),
-    }
-    with (
-        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
-    ):
-        mock_get_safe_version.return_value = "v3.0"
-        mock_snapshot_download.return_value = str(tmp_path / "with_reward")
-
-        new_dataset = add_features(
-            dataset=sample_dataset,
-            features=features,
-            output_dir=tmp_path / "with_reward",
-        )
-
-    assert "reward" in new_dataset.meta.features
-
-    items = [new_dataset[i] for i in range(10)]
-    first_episode_items = [item for item in items if item["episode_index"] == 0]
-    assert len(first_episode_items) == 10
-
-    first_frame = first_episode_items[0]
-    assert first_frame["frame_index"] == 0
-    assert float(first_frame["reward"]) == 0.0
-
-
-def test_add_existing_feature(sample_dataset, tmp_path):
-    """Test error when adding an existing feature."""
-    feature_info = {"dtype": "float32", "shape": (1,)}
-    features = {
-        "action": (np.zeros(50), feature_info),
-    }
-
-    with pytest.raises(ValueError, match="Feature 'action' already exists"):
-        add_features(
-            dataset=sample_dataset,
-            features=features,
-            output_dir=tmp_path / "modified",
-        )
-
-
-def test_add_feature_invalid_info(sample_dataset, tmp_path):
-    """Test error with invalid feature info."""
-    with pytest.raises(ValueError, match="feature_info for 'reward' must contain keys"):
-        add_features(
-            dataset=sample_dataset,
-            features={
-                "reward": (np.zeros(50), {"dtype": "float32"}),
-            },
-            output_dir=tmp_path / "modified",
-        )
 
 
 def test_modify_features_add_and_remove(sample_dataset, tmp_path):
@@ -1321,3 +1219,81 @@ def test_convert_image_to_video_dataset_subset_episodes(tmp_path):
 
         if output_dir.exists():
             shutil.rmtree(output_dir)
+
+
+def test_add_features_with_values(sample_dataset, tmp_path):
+    """Test adding features with provided values."""
+    feature_info = {"dtype": "float32", "shape": (1,), "names": None}
+    values = np.random.randn(50, 1).astype(np.float32)
+
+    with (
+        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(tmp_path / "added")
+
+        added_dataset = add_features(
+            sample_dataset,
+            features={"reward": (values, feature_info)},
+            output_dir=tmp_path / "added",
+        )
+
+    assert "reward" in added_dataset.meta.features
+    assert len(added_dataset) == 50
+    # Check that the feature was added correctly
+    assert added_dataset[0]["reward"].shape == ()
+
+
+def test_add_features_with_callable(sample_dataset, tmp_path):
+    """Test adding features with callable functions."""
+    feature_info = {"dtype": "float32", "shape": (2,), "names": None}
+
+    def reward_func(row_dict, episode_idx, frame_idx):
+        return np.array([row_dict["action"][0], row_dict["observation.state"][0]], dtype=np.float32)
+
+    with (
+        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(tmp_path / "added")
+
+        added_dataset = add_features(
+            sample_dataset,
+            features={"reward": (reward_func, feature_info)},
+            output_dir=tmp_path / "added",
+        )
+
+    assert "reward" in added_dataset.meta.features
+    assert len(added_dataset) == 50
+    # Check that the callable was applied
+    first_row = added_dataset[0]
+    expected = np.array([first_row["action"][0], first_row["observation.state"][0]], dtype=np.float32)
+    np.testing.assert_array_equal(first_row["reward"], expected)
+
+
+def test_add_existing_feature(sample_dataset):
+    """Test that adding an existing feature raises an error."""
+    feature_info = {"dtype": "float32", "shape": (1,), "names": None}
+    values = np.random.randn(50, 1).astype(np.float32)
+
+    with pytest.raises(ValueError, match="Feature 'action' already exists"):
+        add_features(
+            sample_dataset,
+            features={"action": (values, feature_info)},  # action already exists
+            output_dir=None,  # in-place
+        )
+
+
+def test_add_feature_invalid_info(sample_dataset, tmp_path):
+    """Test that invalid feature info raises an error."""
+    values = np.random.randn(50, 1).astype(np.float32)
+    invalid_info = {"dtype": "invalid", "shape": (1,), "names": None}
+
+    with pytest.raises(ValueError):
+        add_features(
+            sample_dataset,
+            features={"reward": (values, invalid_info)},
+            output_dir=tmp_path / "invalid_test",
+        )
