@@ -57,6 +57,7 @@ def eval_and_collect(
     device: str = "cuda",
     use_planning: bool = False,
     planning_algorithm: str = "gcp",
+    planning_overrides: dict | None = None,
 ) -> tuple[dict, list[dict]]:
     """Evaluate on the current GPU and return metrics + trajectory data.
 
@@ -72,6 +73,9 @@ def eval_and_collect(
         device: Torch device for inference.
         use_planning: Enable latent-space planning at test time.
         planning_algorithm: ``"mppi"`` or ``"gcp"``.
+        planning_overrides: Optional dict of planning hyperparams to override,
+            e.g. ``{"lr": 0.3, "n_iters": 20, "lr_decay": 1.0}``.
+            Keys must match :class:`PlanningConfig` field names.
 
     Returns:
         (metrics, episodes):
@@ -105,6 +109,12 @@ def eval_and_collect(
     if use_planning:
         policy_cfg.use_planning = True
         policy_cfg.planning.algorithm = planning_algorithm
+        if planning_overrides:
+            for key, value in planning_overrides.items():
+                if hasattr(policy_cfg.planning, key):
+                    setattr(policy_cfg.planning, key, value)
+                else:
+                    logger.warning("Unknown planning override: %s=%r", key, value)
 
     policy = make_policy(cfg=policy_cfg, env_cfg=env_cfg)
     policy.eval()
@@ -172,6 +182,7 @@ def evaluate_final(
     device: str = "cuda",
     use_planning: bool = False,
     planning_algorithm: str = "gcp",
+    planning_overrides: dict | None = None,
     output_dir: str | None = None,
 ) -> tuple[dict, str]:
     """Run a final evaluation inline (no SLURM submission).
@@ -187,6 +198,8 @@ def evaluate_final(
         device: Torch device for inference.
         use_planning: Enable latent-space planning at test time.
         planning_algorithm: ``"mppi"`` or ``"gcp"``.
+        planning_overrides: Optional dict of planning hyperparams, forwarded
+            to :func:`eval_and_collect`.
         output_dir: Directory for results.  Auto-generated from
             *policy_path* if ``None``.
 
@@ -210,6 +223,7 @@ def evaluate_final(
         device=device,
         use_planning=use_planning,
         planning_algorithm=planning_algorithm,
+        planning_overrides=planning_overrides,
     )
 
     # ── persist results ─────────────────────────────────────────

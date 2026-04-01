@@ -47,11 +47,12 @@ OUTPUT_DIR = str(Path(POLICY).parent / "self_improvement")
 # ═════════════════════════════════════════════════════════════════
 # Config — edit these for each experiment
 # ═════════════════════════════════════════════════════════════════
-N_ITERS = 1                 # number of eval→finetune→finetune_wm cycles
+# ── Self-improvement loop ──────────────────────────────────────
+N_ITERS = 1                 # 0 = eval-only (skip loop), 1+ = collect→finetune cycles
 N_COLLECT_EPISODES = 50     # episodes per eval_and_collect
-FINETUNE_STEPS = 100        # steps for end-to-end finetune (on successes)
+FINETUNE_STEPS = 100        # 0 = skip end-to-end finetune
 FINETUNE_LR = 5e-6          # LR for end-to-end finetune
-FINETUNE_WM_STEPS = 100     # steps for WM-only finetune
+FINETUNE_WM_STEPS = 0       # 0 = skip WM-only finetune
 FINETUNE_WM_LR = 1e-6       # LR for WM-only finetune
 BATCH_SIZE = 8
 MIXING = "naive"            # "naive" = concat online+pretrain, uniform sample
@@ -60,6 +61,12 @@ PRETRAIN_RATIO_FT = 0.5     # pretrain fraction for finetune    (only if MIXING=
 PRETRAIN_RATIO_WM = 0.6     # pretrain fraction for finetune_wm (only if MIXING="ratio")
 LOAD_OPTIMIZER = True       # load Adam state from checkpoint (False = fresh optimizer)
 WM_ONLINE_MODE = "all"      # "all", "success_only", or "failure_only"
+
+# ── Final eval ─────────────────────────────────────────────────
+EVAL_N_EPISODES = 250       # episodes for final evaluation
+EVAL_USE_PLANNING = False   # True to enable GBP/MPPI planning at eval time
+EVAL_PLANNING_ALGORITHM = "gcp"  # "gcp" or "mppi"
+EVAL_PLANNING_OVERRIDES = {}     # e.g. {"lr": 0.3, "lr_decay": 1.0, "n_iters": 20}
 
 # ═════════════════════════════════════════════════════════════════
 # WandB init
@@ -82,6 +89,10 @@ run = wandb.init(
         "pretrain_ratio_wm": PRETRAIN_RATIO_WM,
         "load_optimizer": LOAD_OPTIMIZER,
         "wm_online_mode": WM_ONLINE_MODE,
+        "eval_n_episodes": EVAL_N_EPISODES,
+        "eval_use_planning": EVAL_USE_PLANNING,
+        "eval_planning_algorithm": EVAL_PLANNING_ALGORITHM,
+        "eval_planning_overrides": EVAL_PLANNING_OVERRIDES,
     },
 )
 
@@ -116,7 +127,7 @@ for iteration in range(N_ITERS):
     }, step=global_step)
 
     # ── 2. End-to-end finetune on successes ──────────────────────
-    if buf.n_success >= BATCH_SIZE:
+    if FINETUNE_STEPS > 0 and buf.n_success >= BATCH_SIZE:
         logger.info("Finetuning end-to-end on %d successes...", buf.n_success)
         ckpt, global_step = finetune(
             ckpt, buf, commit_hash=COMMIT,
@@ -131,14 +142,14 @@ for iteration in range(N_ITERS):
             global_step=global_step,
         )
         logger.info("Finetune done → %s (global_step=%d)", ckpt, global_step)
-    else:
+    elif FINETUNE_STEPS > 0:
         logger.warning("Too few successes (%d) for finetune, skipping", buf.n_success)
 
     # ── 3. WM-only finetune on suboptimal data ──────────────────
     n_online = buf.n_total if WM_ONLINE_MODE == "all" else (
         buf.n_fail if WM_ONLINE_MODE == "failure_only" else buf.n_success
     )
-    if n_online >= BATCH_SIZE:
+    if FINETUNE_WM_STEPS > 0 and n_online >= BATCH_SIZE:
         logger.info("Finetuning WM-only on %d %s episodes...", n_online, WM_ONLINE_MODE)
         ckpt, global_step = finetune_wm(
             ckpt, buf, commit_hash=COMMIT,
@@ -154,18 +165,19 @@ for iteration in range(N_ITERS):
             global_step=global_step,
         )
         logger.info("Finetune_wm done → %s (global_step=%d)", ckpt, global_step)
-    else:
+    elif FINETUNE_WM_STEPS > 0:
         logger.warning("Too few %s episodes (%d) for finetune_wm, skipping", WM_ONLINE_MODE, n_online)
 
 # ═════════════════════════════════════════════════════════════════
 # Final evaluation (non-blocking SLURM jobs)
 # ═════════════════════════════════════════════════════════════════
-logger.info("Running final evaluation (250 episodes)...")
+logger.info("Running final evaluation (%d episodes)...", EVAL_N_EPISODES)
 final_metrics, eval_dir = evaluate_final(
     ckpt,
-    n_episodes=250,
-    use_planning=True,
-    planning_algorithm="gcp",
+    n_episodes=EVAL_N_EPISODES,
+    use_planning=EVAL_USE_PLANNING,
+    planning_algorithm=EVAL_PLANNING_ALGORITHM,
+    planning_overrides=EVAL_PLANNING_OVERRIDES or None,
 )
 print(f"EVAL_RESULTS: {final_metrics.get('pc_success', 0):.1f}% success")
 print(f"EVAL_DIR: {eval_dir}")
