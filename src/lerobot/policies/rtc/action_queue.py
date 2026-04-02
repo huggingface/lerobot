@@ -164,7 +164,7 @@ class ActionQueue:
             action_index_before_inference: Index before inference started, for validation.
         """
         with self.lock:
-            delay = self._check_and_provide_delays(real_delay, action_index_before_inference)
+            delay = self._check_and_resolve_delays(real_delay, action_index_before_inference)
 
             if self.cfg.enabled:
                 self._replace_actions_queue(original_actions, processed_actions, delay)
@@ -216,7 +216,7 @@ class ActionQueue:
 
         self.last_index = 0
 
-    def _check_and_provide_delays(
+    def _check_and_resolve_delays(
         self, real_delay: int, action_index_before_inference: int | None = None
     ) -> int:
         """Validate that computed delays match expectations.
