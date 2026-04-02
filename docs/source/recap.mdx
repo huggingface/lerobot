@@ -174,9 +174,8 @@ advantage conditioning.
 ```bash
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python -m lerobot.rl.algorithms.recap_train_pi_star \
   --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
-  --output_dir="${HOME}/code/lerobot/outputs/recap_pistar" \
-  --pretrained_path="${HOME}/code/lerobot/outputs/recap_baseline/pretrained" \
-  --value_network_checkpoint="${HOME}/code/lerobot/outputs/recap_value_9/checkpoints/epoch_0001.pt" \
+  --output_dir="${HOME}/code/lerobot/outputs/recap_pistart" \
+  --value_network_pretrained_path="jackvial/recap-value-network-so101-pickplace" \
   --epochs=5 \
   --batch_size=8 \
   --gradient_checkpointing=true \

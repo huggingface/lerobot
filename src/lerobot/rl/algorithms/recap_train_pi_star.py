@@ -67,6 +67,7 @@ class RECAPPiStarTrainingConfig:
     output_dir: str
     value_network_checkpoint: str = ""
     value_network_checkpoint_filename: str = "checkpoints/epoch_0001.pt"
+    value_network_pretrained_path: str | None = None
     episode_labels_path: str | None = None
     root: str | None = None
     revision: str | None = None
@@ -179,6 +180,79 @@ def _resolve_value_network_checkpoint(cfg: RECAPPiStarTrainingConfig) -> str:
     )
     logging.info(f"Downloaded value-network checkpoint to {local_path}")
     return local_path
+
+
+def _resolve_pretrained_file(path_or_repo_id: str, filename: str) -> str:
+    """Resolve a file from a local directory or HuggingFace repo.
+
+    If ``path_or_repo_id`` is a local directory containing ``filename``,
+    return the local path.  Otherwise treat it as a HuggingFace model repo
+    ID and download the file.
+    """
+    local_dir = Path(path_or_repo_id).expanduser()
+    if local_dir.is_dir():
+        local_file = local_dir / filename
+        if local_file.is_file():
+            return str(local_file)
+        raise FileNotFoundError(
+            f"Local directory {local_dir} exists but is missing {filename}"
+        )
+
+    from huggingface_hub import hf_hub_download
+
+    logging.info(f"Downloading {filename} from HuggingFace repo '{path_or_repo_id}' ...")
+    return hf_hub_download(repo_id=path_or_repo_id, filename=filename, repo_type="model")
+
+
+def _load_value_network_from_pretrained(path_or_repo_id: str) -> "RECAPValueNetwork":
+    """Load a RECAPValueNetwork from a pretrained path (local dir or HF repo).
+
+    Expects the standard HuggingFace layout with ``config.json`` and
+    ``model.safetensors`` (as produced by ``push_value_network_to_hub.py``).
+    """
+    from dataclasses import fields as dc_fields
+
+    from safetensors.torch import load_file
+
+    from lerobot.rl.algorithms.recap_value_network import (
+        RECAPValueNetwork,
+        RECAPValueNetworkConfig,
+    )
+
+    config_path = _resolve_pretrained_file(path_or_repo_id, "config.json")
+    with open(config_path) as f:
+        config_dict = json.load(f)
+
+    valid_keys = {f.name for f in dc_fields(RECAPValueNetworkConfig)}
+    filtered = {k: v for k, v in config_dict.items() if k in valid_keys}
+    filtered["pretrained_path"] = None
+    config = RECAPValueNetworkConfig(**filtered)
+
+    model = RECAPValueNetwork(config)
+    weights_path = _resolve_pretrained_file(path_or_repo_id, "model.safetensors")
+    state_dict = load_file(weights_path)
+    model.load_state_dict(state_dict)
+    logging.info(
+        f"Loaded value network from pretrained path '{path_or_repo_id}': "
+        f"{sum(p.numel() for p in model.parameters()):,} params"
+    )
+    return model
+
+
+def _load_vn_train_config_from_pretrained(path_or_repo_id: str) -> dict:
+    """Load train_config.json from a pretrained value-network path or HF repo."""
+    try:
+        config_path = _resolve_pretrained_file(path_or_repo_id, "train_config.json")
+    except (FileNotFoundError, Exception):
+        logging.warning(
+            f"Could not find train_config.json in '{path_or_repo_id}'; "
+            "cannot auto-resolve c_fail / num_value_bins."
+        )
+        return {}
+    with open(config_path) as f:
+        train_cfg = json.load(f)
+    logging.info(f"Loaded VN train config from pretrained path '{path_or_repo_id}'")
+    return train_cfg
 
 
 def _resolve_labels_csv(cfg: RECAPPiStarTrainingConfig) -> Path:
@@ -345,16 +419,21 @@ def _make_vn_preprocessor(policy_cfg, dataset_stats):
 def _precompute_advantages(
     full_dataset: LeRobotDataset,
     frame_targets: list[base.FrameTarget],
-    value_network_checkpoint: str,
+    value_network_checkpoint: str | None,
     policy_cfg,
     device: torch.device,
     batch_size: int = 4,
+    value_network: "RECAPValueNetwork | None" = None,
 ) -> tuple[dict[int, float], dict[int, int]]:
     """Pre-compute per-frame advantages using the frozen value network.
 
     Builds a lightweight preprocessor internally that produces only the
     fields consumed by ``RECAPValueNetwork`` (language tokens + images),
     without moving every tensor to GPU.
+
+    The value network can be provided directly via ``value_network`` (e.g.
+    loaded from a pretrained HF repo), or loaded from a legacy ``.pt``
+    checkpoint via ``value_network_checkpoint``.
     """
     from lerobot.rl.algorithms.recap_utils import collect_images
     from lerobot.rl.algorithms.recap_value_network import (
@@ -364,13 +443,21 @@ def _precompute_advantages(
 
     preprocessor = _make_vn_preprocessor(policy_cfg, full_dataset.meta.stats)
 
-    logging.info(f"Loading value network from {value_network_checkpoint}")
-    checkpoint = torch.load(value_network_checkpoint, map_location="cpu", weights_only=False)
-    vn_config = RECAPValueNetworkConfig(**checkpoint["model_config"])
-    vn = RECAPValueNetwork(vn_config)
-    vn.load_state_dict(checkpoint["model_state_dict"])
-    del checkpoint
-    gc.collect()
+    if value_network is not None:
+        vn = value_network
+    elif value_network_checkpoint is not None:
+        logging.info(f"Loading value network from {value_network_checkpoint}")
+        checkpoint = torch.load(value_network_checkpoint, map_location="cpu", weights_only=False)
+        vn_config = RECAPValueNetworkConfig(**checkpoint["model_config"])
+        vn = RECAPValueNetwork(vn_config)
+        vn.load_state_dict(checkpoint["model_state_dict"])
+        del checkpoint
+        gc.collect()
+    else:
+        raise ValueError(
+            "Either value_network or value_network_checkpoint must be provided"
+        )
+
     vn.eval()
     vn.to(device)
     for param in vn.parameters():
@@ -776,18 +863,25 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
     success_by_episode = base._load_episode_success_map(labels_csv_path)
 
     if cfg.enable_advantage_conditioning:
-        if not cfg.value_network_checkpoint:
+        use_pretrained_vn = cfg.value_network_pretrained_path is not None
+        if not use_pretrained_vn and not cfg.value_network_checkpoint:
             raise ValueError(
-                "value_network_checkpoint is required when enable_advantage_conditioning=True"
+                "Either value_network_pretrained_path or value_network_checkpoint "
+                "is required when enable_advantage_conditioning=True"
             )
 
-        # Resolve value-network checkpoint: local path or HuggingFace repo ID
-        resolved_vn_checkpoint = _resolve_value_network_checkpoint(cfg)
+        if use_pretrained_vn:
+            vn_train_cfg = _load_vn_train_config_from_pretrained(
+                cfg.value_network_pretrained_path
+            )
+            resolved_vn_checkpoint = None
+        else:
+            resolved_vn_checkpoint = _resolve_value_network_checkpoint(cfg)
+            vn_train_cfg = _load_vn_train_config(resolved_vn_checkpoint)
 
-        # Pull c_fail / num_value_bins from the value-network checkpoint so
+        # Pull c_fail / num_value_bins from the value-network config so
         # the return targets used here are guaranteed to match those used
         # during value-network training.
-        vn_train_cfg = _load_vn_train_config(resolved_vn_checkpoint)
         if vn_train_cfg:
             vn_c_fail = vn_train_cfg.get("c_fail")
             vn_num_value_bins = vn_train_cfg.get("num_value_bins")
@@ -839,6 +933,12 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
         if cache_path is not None and cache_path.is_file():
             advantage_lookup, _ = _load_advantage_cache(cache_path)
         else:
+            vn_model = None
+            if use_pretrained_vn:
+                vn_model = _load_value_network_from_pretrained(
+                    cfg.value_network_pretrained_path
+                )
+
             advantage_lookup, episode_lookup = _precompute_advantages(
                 full_dataset=full_dataset,
                 frame_targets=frame_targets,
@@ -846,15 +946,17 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
                 policy_cfg=policy_cfg,
                 device=device,
                 batch_size=cfg.vn_batch_size,
+                value_network=vn_model,
             )
 
+            vn_source = cfg.value_network_pretrained_path or resolved_vn_checkpoint
             if cache_path is not None:
                 _save_advantage_cache(
                     cache_path,
                     advantage_lookup,
                     episode_lookup=episode_lookup,
                     metadata={
-                        "value_network_checkpoint": resolved_vn_checkpoint,
+                        "value_network_checkpoint": vn_source,
                         "c_fail": cfg.c_fail,
                         "repo_id": cfg.repo_id,
                         "success_by_episode": success_by_episode
@@ -915,9 +1017,14 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
     if cfg.pretrained_path is not None:
         logging.info(f"Loading pretrained Pi0.5 weights from {cfg.pretrained_path}")
         from safetensors.torch import load_file
-        from transformers.utils import cached_file
 
-        resolved_file = cached_file(cfg.pretrained_path, "model.safetensors")
+        local_safetensors = Path(cfg.pretrained_path).expanduser() / "model.safetensors"
+        if local_safetensors.is_file():
+            resolved_file = str(local_safetensors)
+        else:
+            from transformers.utils import cached_file
+
+            resolved_file = cached_file(cfg.pretrained_path, "model.safetensors")
         raw_sd = load_file(resolved_file)
         fixed_sd = policy._fix_pytorch_state_dict_keys(raw_sd, policy.config)
         del raw_sd
