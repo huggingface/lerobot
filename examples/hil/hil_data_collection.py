@@ -434,11 +434,7 @@ def _rtc_inference_thread(
                 preprocessed = preprocessor(obs_batch)
 
                 if prev_actions is not None and relative_step is not None and OBS_STATE in obs_batch:
-                    with queue.lock:
-                        if queue.queue is not None:
-                            prev_actions_absolute = queue.queue[queue.last_index :].clone()
-                        else:
-                            prev_actions_absolute = None
+                    prev_actions_absolute = queue.get_processed_left_over()
                     if prev_actions_absolute is not None and prev_actions_absolute.numel() > 0:
                         prev_actions = _reanchor_relative_rtc_prefix(
                             prev_actions_absolute=prev_actions_absolute,

@@ -39,6 +39,8 @@ LEFT_MOTORS_TO_FLIP = ["joint_1", "joint_3", "joint_4", "joint_5", "joint_6", "j
 JOINT_REMAP = {"joint_6": "joint_7", "joint_7": "joint_6"}
 JOINT_REMAP_REVERSE = {"joint_7": "joint_6", "joint_6": "joint_7"}
 
+GRIPPER_TELEOP_TO_DEGREES = -0.65
+
 
 class OpenArmMini(Teleoperator):
     """
@@ -290,13 +292,13 @@ class OpenArmMini(Teleoperator):
             target = JOINT_REMAP.get(motor, motor)
             if motor == "gripper":
                 # Convert gripper from teleop 0-100 to openarms degrees: 0→0°, 100→-65°
-                action[f"right_{target}.pos"] = val * -0.65
+                action[f"right_{target}.pos"] = val * GRIPPER_TELEOP_TO_DEGREES
             else:
                 action[f"right_{target}.pos"] = -val if motor in RIGHT_MOTORS_TO_FLIP else val
         for motor, val in left_positions.items():
             target = JOINT_REMAP.get(motor, motor)
             if motor == "gripper":
-                action[f"left_{target}.pos"] = val * -0.65
+                action[f"left_{target}.pos"] = val * GRIPPER_TELEOP_TO_DEGREES
             else:
                 action[f"left_{target}.pos"] = -val if motor in LEFT_MOTORS_TO_FLIP else val
 
@@ -329,7 +331,7 @@ class OpenArmMini(Teleoperator):
                 target = JOINT_REMAP_REVERSE.get(base, base)
                 if base == "gripper":
                     # Convert robot degrees to teleop 0-100: 0°→0, -65°→100
-                    right_goals[target] = val / -0.65
+                    right_goals[target] = val / GRIPPER_TELEOP_TO_DEGREES
                 else:
                     # Un-flip using the ORIGINAL motor name (target = leader motor)
                     right_goals[target] = -val if target in RIGHT_MOTORS_TO_FLIP else val
@@ -337,7 +339,7 @@ class OpenArmMini(Teleoperator):
                 base = motor_name.removeprefix("left_")
                 target = JOINT_REMAP_REVERSE.get(base, base)
                 if base == "gripper":
-                    left_goals[target] = val / -0.65
+                    left_goals[target] = val / GRIPPER_TELEOP_TO_DEGREES
                 else:
                     left_goals[target] = -val if target in LEFT_MOTORS_TO_FLIP else val
 
