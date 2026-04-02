@@ -96,16 +96,26 @@ class OpenArmsFollower(Robot):
         # Initialize Pinocchio robot model for dynamics (optional)
         self.pin_robot = None
         try:
-            # Load URDF - try external path first (with meshes), then repository
             import os
-            from os.path import expanduser, dirname
-            
-            # Try external URDF with meshes first
-            external_urdf_path = expanduser("~/Documents/openarm_description/openarm_bimanual_pybullet.urdf")
-            if os.path.exists(external_urdf_path):
+            from os.path import dirname
+
+            # Prefer the URDF bundled in the repository
+            repo_urdf_path = os.path.join(
+                dirname(__file__), "urdf", "openarm_bimanual_pybullet.urdf"
+            )
+            external_urdf_path = os.path.expanduser(
+                "~/Documents/openarm_description/openarm_bimanual_pybullet.urdf"
+            )
+
+            if os.path.exists(repo_urdf_path):
+                urdf_path = repo_urdf_path
+            elif os.path.exists(external_urdf_path):
                 urdf_path = external_urdf_path
+            else:
+                urdf_path = None
+
+            if urdf_path is not None:
                 urdf_dir = dirname(urdf_path)
-            
                 self.pin_robot = pin.RobotWrapper.BuildFromURDF(urdf_path, urdf_dir)
                 self.pin_robot.data = self.pin_robot.model.createData()
                 logger.info(f"Loaded OpenArms URDF for dynamics computation from {urdf_path}")
