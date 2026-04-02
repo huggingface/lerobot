@@ -2,10 +2,10 @@
 
 Pipeline per iteration:
     1. Evaluate current policy & collect on-policy trajectories.
-    2. Package trajectories into a LeRobotDataset.
-    3. Merge with pretrain data into a single dataset.
-    4. Call ``lerobot-train --resume`` with the merged dataset to continue
-       training from the current step.
+    2. Package trajectories into a LeRobotDataset on disk.
+    3. Call ``lerobot-train --resume --online_dataset_root=<path>`` to
+       continue training on the pretrain + online data (concatenated at
+       load time — no data copying).
 
 Usage:
     python -u src/lerobot/scripts/self_improvement.py <commit_hash>
@@ -151,8 +151,7 @@ def eval_and_collect(
 
 def run_finetune(
     config_path: str,
-    merged_dataset_repo_id: str,
-    merged_dataset_root: str,
+    online_dataset_root: str,
     total_steps: int,
     output_dir: str,
     commit: str,
@@ -160,21 +159,21 @@ def run_finetune(
     batch_size: int = 8,
     log_freq: int = 50,
     save_freq: int | None = None,
-    bc_mask_mode: str = "none",
 ) -> str:
     """Call ``lerobot-train --resume`` as a subprocess.
 
+    The pretrain dataset is loaded from the checkpoint's saved config.
+    The online dataset is concatenated via ``--online_dataset_root``.
+
     Returns the path to the last checkpoint's pretrained_model directory.
     """
-    finetune_steps = total_steps  # save_freq = at the end
-    actual_save_freq = save_freq if save_freq is not None else finetune_steps
+    actual_save_freq = save_freq if save_freq is not None else total_steps
 
     cmd = [
         sys.executable, "-m", "lerobot.scripts.lerobot_train",
         f"--config_path={config_path}",
         "--resume=true",
-        f"--dataset.repo_id={merged_dataset_repo_id}",
-        f"--dataset.root={merged_dataset_root}",
+        f"--online_dataset_root={online_dataset_root}",
         f"--steps={total_steps}",
         f"--output_dir={output_dir}",
         f"--job_name=self-improve-{commit[:7]}",
@@ -219,7 +218,6 @@ def run_finetune(
 
 def main():
     from lerobot.scripts.self_improvement_data import (
-        create_merged_dataset,
         episodes_to_lerobot_dataset,
         get_pretrain_info,
         read_training_step,
@@ -230,7 +228,6 @@ def main():
     # ── Resolve paths ────────────────────────────────────────
     policy_dir = Path(POLICY)
     checkpoint_dir = policy_dir.parent  # e.g. .../checkpoints/last/
-    config_path = str(policy_dir / "train_config.json")
     base_output = str(checkpoint_dir / "self_improvement" / COMMIT[:8])
 
     # ── Pretrain info ────────────────────────────────────────
@@ -267,7 +264,7 @@ def main():
             metrics["pc_success"], n_success, n_fail,
         )
 
-        # ── 2. Package online data ──────────────────────────
+        # ── 2. Package online data as LeRobotDataset ─────────
         iter_dir = Path(base_output) / f"iter_{iteration}"
         online_root = iter_dir / "online_dataset"
         online_ds = episodes_to_lerobot_dataset(
@@ -280,30 +277,17 @@ def main():
             bc_mask_mode=BC_MASK_MODE,
         )
 
-        # ── 3. Merge pretrain + online ───────────────────────
-        merged_root = iter_dir / "merged_dataset"
-        merged_path, merge_time = create_merged_dataset(
-            pretrain_repo_id=PRETRAIN_DATASET_REPO_ID,
-            online_dataset=online_ds,
-            output_repo_id=f"self_improve/merged_iter{iteration}",
-            output_root=merged_root,
-            task_description=TASK_DESCRIPTION,
-            pretrain_root=PRETRAIN_DATASET_ROOT,
-            bc_mask_mode=BC_MASK_MODE,
-        )
-        logger.info("Merge took %.1f seconds", merge_time)
-
-        # ── 4. Finetune via lerobot-train ────────────────────
+        # ── 3. Finetune via lerobot-train ────────────────────
+        # No merge needed — lerobot-train concatenates the pretrain
+        # dataset (from the checkpoint config) with the online dataset
+        # via --online_dataset_root.
         total_steps = current_step + FINETUNE_STEPS
         ft_output_dir = str(iter_dir / "train")
-
-        # Use the current checkpoint's train_config as the base
         ft_config_path = str(Path(ckpt) / "train_config.json")
 
         ckpt = run_finetune(
             config_path=ft_config_path,
-            merged_dataset_repo_id=f"self_improve/merged_iter{iteration}",
-            merged_dataset_root=str(merged_path),
+            online_dataset_root=str(online_ds.root),
             total_steps=total_steps,
             output_dir=ft_output_dir,
             commit=COMMIT,
@@ -311,7 +295,6 @@ def main():
             batch_size=BATCH_SIZE,
             log_freq=LOG_FREQ,
             save_freq=SAVE_FREQ,
-            bc_mask_mode=BC_MASK_MODE,
         )
         current_step = total_steps
         logger.info("Finetune done → %s (step %d)", ckpt, current_step)
@@ -329,6 +312,8 @@ def main():
         planning_overrides=EVAL_PLANNING_OVERRIDES or None,
     )
     print(f"EVAL_RESULTS: {final_metrics.get('pc_success', 0):.1f}% success")
+    print(f"EVAL_AVG_MAX_REWARD: {final_metrics.get('avg_max_reward', 0):.4f}")
+    print(f"EVAL_EP_S: {final_metrics.get('eval_ep_s', 0):.3f}")
     print(f"CHECKPOINT: {ckpt}")
 
 

@@ -82,6 +82,12 @@ class TrainPipelineConfig(HubMixin):
     # than the one saved in the checkpoint's optimizer state.
     override_lr: float | None = None
 
+    # Path to an additional online LeRobotDataset to concatenate with the
+    # primary dataset for self-improvement finetuning.  When set, training
+    # samples from both the primary and online datasets.  Normalization
+    # statistics come from the primary dataset only.
+    online_dataset_root: str | None = None
+
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
     checkpoint_path: Path | None = field(init=False, default=None)

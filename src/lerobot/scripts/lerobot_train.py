@@ -29,7 +29,7 @@ from torch.optim import Optimizer
 
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.datasets.factory import make_dataset
+from lerobot.datasets.factory import make_dataset, resolve_delta_timestamps
 from lerobot.datasets.sampler import EpisodeAwareSampler
 from lerobot.datasets.utils import cycle
 from lerobot.envs.factory import make_env, make_env_pre_post_processors
@@ -54,6 +54,67 @@ from lerobot.utils.utils import (
     has_method,
     init_logging,
 )
+
+
+class _FinetuneDataset(torch.utils.data.Dataset):
+    """Concatenates a primary dataset with an online dataset for finetuning.
+
+    Delegates metadata (``meta``, ``episodes``, ``features``) to the primary
+    dataset so that normalization statistics and policy initialisation remain
+    unchanged.  If the online dataset contains ``bc_loss_mask`` but the primary
+    does not, a mask of 1.0 is injected into primary samples automatically.
+    """
+
+    def __init__(self, primary, online):
+        self._primary = primary
+        self._online = online
+        self._inject_bc_mask = (
+            "bc_loss_mask" in online.features and "bc_loss_mask" not in primary.features
+        )
+        # Determine common keys so the collate function never sees
+        # mismatched dicts (e.g. pretrain has next.reward, online doesn't).
+        p_sample = primary[0]
+        o_sample = online[0]
+        self._keep_keys = set(p_sample.keys()) & set(o_sample.keys())
+        if self._inject_bc_mask:
+            self._keep_keys.add("bc_loss_mask")
+
+    # ---- torch Dataset interface ----
+    def __len__(self):
+        return len(self._primary) + len(self._online)
+
+    def __getitem__(self, idx):
+        if idx < len(self._primary):
+            item = self._primary[idx]
+            if self._inject_bc_mask:
+                item["bc_loss_mask"] = torch.tensor([1.0])
+        else:
+            item = self._online[idx - len(self._primary)]
+            # Ensure bc_loss_mask is 1-d (HF datasets may load scalars)
+            if "bc_loss_mask" in item and item["bc_loss_mask"].ndim == 0:
+                item["bc_loss_mask"] = item["bc_loss_mask"].unsqueeze(0)
+        return {k: v for k, v in item.items() if k in self._keep_keys}
+
+    # ---- Properties expected by train() ----
+    @property
+    def meta(self):
+        return self._primary.meta
+
+    @property
+    def num_frames(self):
+        return self._primary.num_frames + self._online.num_frames
+
+    @property
+    def num_episodes(self):
+        return self._primary.num_episodes + self._online.num_episodes
+
+    @property
+    def episodes(self):
+        return self._primary.episodes
+
+    @property
+    def features(self):
+        return self._primary.features
 
 
 def _log_wm_visualizations(policy, batch, step, output_dir, wandb_logger):
@@ -258,6 +319,25 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     # Now all other processes can safely load the dataset
     if not is_main_process:
         dataset = make_dataset(cfg)
+
+    # Concatenate online dataset for self-improvement finetuning
+    if cfg.online_dataset_root:
+        from lerobot.datasets.lerobot_dataset import LeRobotDataset as _LRD
+
+        delta_timestamps = resolve_delta_timestamps(cfg.policy, dataset.meta)
+        online_ds = _LRD(
+            repo_id="online",
+            root=cfg.online_dataset_root,
+            delta_timestamps=delta_timestamps,
+            video_backend=cfg.dataset.video_backend,
+            tolerance_s=cfg.tolerance_s,
+        )
+        if is_main_process:
+            logging.info(
+                "Concatenating online dataset: %d episodes, %d frames from %s",
+                online_ds.num_episodes, online_ds.num_frames, cfg.online_dataset_root,
+            )
+        dataset = _FinetuneDataset(dataset, online_ds)
 
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,

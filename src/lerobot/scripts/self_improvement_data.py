@@ -1,12 +1,11 @@
 """Data packaging for self-improvement pipeline v2.
 
-Convert eval rollout trajectories into a proper LeRobotDataset and
-merge with pretrain data for continued training via lerobot-train.
+Convert eval rollout trajectories into a proper LeRobotDataset for
+continued training via lerobot-train.
 """
 
 import logging
 import shutil
-import time
 from pathlib import Path
 
 import numpy as np
@@ -71,7 +70,7 @@ def episodes_to_lerobot_dataset(
     """Convert eval rollout episodes into a :class:`LeRobotDataset` on disk.
 
     Args:
-        episodes: List of episode dicts (from ``_episodes_from_eval_info``).
+        episodes: List of episode dicts (from :func:`episodes_from_eval_info`).
             Each dict has ``observations`` (dict of tensors), ``actions``
             (tensor), ``rewards`` (tensor), and ``success`` (bool).
         repo_id: Dataset identifier, e.g. ``"self_improve/online_iter0"``.
@@ -135,230 +134,6 @@ def episodes_to_lerobot_dataset(
         len(episodes), n_success, n_fail, dataset.num_frames, dataset.root,
     )
     return dataset
-
-
-# ──────────────────────────────────────────────────────────────────
-# Merged dataset (pretrain + online)
-# ──────────────────────────────────────────────────────────────────
-
-def create_merged_dataset(
-    pretrain_repo_id: str,
-    online_dataset: LeRobotDataset,
-    output_repo_id: str,
-    output_root: Path,
-    task_description: str,
-    pretrain_root: str | Path | None = None,
-    bc_mask_mode: str = "none",
-    video_backend: str = "pyav",
-) -> tuple[Path, float]:
-    """Merge pretrain and online datasets into one :class:`LeRobotDataset`.
-
-    Creates a new dataset on disk by iterating frame-by-frame through both
-    source datasets.  Images are stored as PNGs (no video encoding).
-
-    Args:
-        pretrain_repo_id: HuggingFace repo id for the pretrain dataset.
-        online_dataset: The online :class:`LeRobotDataset` (from
-            :func:`episodes_to_lerobot_dataset`).
-        output_repo_id: Repo id for the merged dataset.
-        output_root: Local directory for the merged dataset.
-        task_description: Fallback task string (used only if the pretrain
-            dataset doesn't provide one per frame).
-        pretrain_root: Optional local root for the pretrain dataset.
-        bc_mask_mode: ``"none"`` or ``"failure"``.
-        video_backend: Video backend for decoding pretrain video frames.
-
-    Returns:
-        ``(merged_root, elapsed_seconds)``
-    """
-    t0 = time.time()
-
-    # ── Load pretrain (no delta_timestamps, no transforms) ──────
-    pretrain = LeRobotDataset(
-        repo_id=pretrain_repo_id,
-        root=pretrain_root,
-        video_backend=video_backend,
-    )
-
-    # ── Determine merged features ───────────────────────────────
-    # Keep only training-relevant features (drops next.reward, next.done, etc.)
-    merged_features = _training_features(_features_as_images(pretrain.features))
-    if bc_mask_mode != "none" and "bc_loss_mask" not in merged_features:
-        merged_features["bc_loss_mask"] = {"dtype": "float32", "shape": (1,), "names": None}
-
-    if output_root.exists():
-        shutil.rmtree(output_root)
-
-    merged = LeRobotDataset.create(
-        repo_id=output_repo_id,
-        fps=pretrain.fps,
-        features=merged_features,
-        root=output_root,
-        use_videos=False,
-    )
-
-    # ── Copy pretrain episodes (batch video decoding for speed) ──
-    logger.info(
-        "Copying %d pretrain episodes (%d frames)...",
-        pretrain.num_episodes, pretrain.num_frames,
-    )
-    _copy_pretrain_episodes_fast(
-        pretrain=pretrain,
-        dst=merged,
-        target_features=merged_features,
-        bc_mask_value=1.0,
-        bc_mask_mode=bc_mask_mode,
-        task_description=task_description,
-    )
-
-    # ── Copy online episodes (small, frame-by-frame is fine) ───
-    logger.info(
-        "Copying %d online episodes (%d frames)...",
-        online_dataset.num_episodes, online_dataset.num_frames,
-    )
-    _copy_dataset_episodes(
-        src=online_dataset,
-        dst=merged,
-        target_features=merged_features,
-        bc_mask_value=None,  # already in the online dataset
-        bc_mask_mode=bc_mask_mode,
-        fallback_task=task_description,
-    )
-
-    merged.finalize()
-    elapsed = time.time() - t0
-    logger.info(
-        "Merged dataset created in %.1f s — %d episodes, %d frames → %s",
-        elapsed, merged.num_episodes, merged.num_frames, merged.root,
-    )
-    return merged.root, elapsed
-
-
-def _copy_pretrain_episodes_fast(
-    pretrain: LeRobotDataset,
-    dst: LeRobotDataset,
-    target_features: dict,
-    bc_mask_value: float,
-    bc_mask_mode: str,
-    task_description: str,
-) -> None:
-    """Copy pretrain episodes using batch video decoding for speed.
-
-    Instead of calling ``__getitem__`` per frame (slow: each call seeks in the
-    video), we decode all frames for each episode at once using the video
-    decoder directly, and read non-video features from the parquet in batch.
-    """
-    from lerobot.datasets.video_utils import decode_video_frames
-
-    # Ensure HF dataset is loaded for parquet access
-    pretrain._ensure_hf_dataset_loaded()
-    hf_ds = pretrain.hf_dataset
-
-    video_keys = list(pretrain.meta.video_keys)
-    non_video_keys = [
-        k for k in target_features
-        if k not in _METADATA_KEYS
-        and k != "bc_loss_mask"
-        and k not in video_keys
-        and target_features[k].get("dtype") not in ("image", "video")
-    ]
-
-    # Get task string from metadata
-    task_str = task_description
-    if pretrain.meta.tasks is not None and len(pretrain.meta.tasks) > 0:
-        task_str = pretrain.meta.tasks.iloc[0].name
-
-    for ep_idx in range(pretrain.num_episodes):
-        ep = pretrain.meta.episodes[ep_idx]
-        ep_from = int(ep["dataset_from_index"])
-        ep_to = int(ep["dataset_to_index"])
-        n_frames = ep_to - ep_from
-
-        # ── Batch-read non-video features from parquet ────────
-        batch = {k: hf_ds[ep_from:ep_to][k] for k in non_video_keys if k in hf_ds.column_names}
-
-        # ── Batch-decode video frames ─────────────────────────
-        video_frames: dict[str, torch.Tensor] = {}
-        for vid_key in video_keys:
-            if vid_key not in target_features:
-                continue
-            video_path = pretrain.root / pretrain.meta.get_video_file_path(ep_idx, vid_key)
-            from_ts = ep.get(f"videos/{vid_key}/from_timestamp", 0.0)
-            timestamps = [from_ts + t / pretrain.fps for t in range(n_frames)]
-            frames = decode_video_frames(
-                video_path, timestamps, pretrain.tolerance_s, pretrain.video_backend,
-            )  # (n_frames, C, H, W)
-            video_frames[vid_key] = frames
-
-        # ── Write frames to merged dataset ────────────────────
-        for t in range(n_frames):
-            frame: dict = {"task": task_str}
-            for vid_key, frames_tensor in video_frames.items():
-                frame[vid_key] = _to_hwc(frames_tensor[t].cpu())
-            for key in non_video_keys:
-                if key in batch:
-                    val = batch[key][t]
-                    if isinstance(val, torch.Tensor):
-                        val = val.cpu()
-                    frame[key] = val
-            if bc_mask_mode != "none" and "bc_loss_mask" in target_features:
-                frame["bc_loss_mask"] = np.array([bc_mask_value], dtype=np.float32)
-            dst.add_frame(frame)
-
-        dst.save_episode()
-
-        if (ep_idx + 1) % 50 == 0:
-            logger.info("  ... copied %d / %d pretrain episodes", ep_idx + 1, pretrain.num_episodes)
-
-
-def _copy_dataset_episodes(
-    src: LeRobotDataset,
-    dst: LeRobotDataset,
-    target_features: dict,
-    bc_mask_value: float | None,
-    bc_mask_mode: str,
-    fallback_task: str,
-) -> None:
-    """Copy all episodes from *src* into *dst* via ``add_frame``/``save_episode``."""
-    current_ep: int | None = None
-    for i in range(len(src)):
-        item = src[i]
-        ep_idx = item["episode_index"].item() if isinstance(item["episode_index"], torch.Tensor) else item["episode_index"]
-
-        # Episode boundary → save previous episode
-        if current_ep is not None and ep_idx != current_ep:
-            dst.save_episode()
-        current_ep = ep_idx
-
-        # Build frame dict
-        task_str = item.get("task", fallback_task)
-        frame: dict = {"task": task_str}
-        for key in target_features:
-            if key in _METADATA_KEYS or key == "bc_loss_mask":
-                continue
-            if key in item:
-                val = item[key]
-                if isinstance(val, torch.Tensor):
-                    val = val.cpu()
-                if target_features[key].get("dtype") in ("image", "video"):
-                    val = _to_hwc(val)
-                frame[key] = val
-
-        if bc_mask_mode != "none" and "bc_loss_mask" in target_features:
-            if "bc_loss_mask" in item:
-                val = item["bc_loss_mask"]
-                if isinstance(val, torch.Tensor):
-                    val = val.cpu().numpy()
-                val = np.atleast_1d(np.asarray(val, dtype=np.float32))
-                frame["bc_loss_mask"] = val
-            elif bc_mask_value is not None:
-                frame["bc_loss_mask"] = np.array([bc_mask_value], dtype=np.float32)
-
-        dst.add_frame(frame)
-
-    # Save last episode
-    if current_ep is not None:
-        dst.save_episode()
 
 
 # ──────────────────────────────────────────────────────────────────

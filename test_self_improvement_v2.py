@@ -47,7 +47,6 @@ def main():
     # ── Step 1: Import and check ─────────────────────────────
     from lerobot.scripts.self_improvement_data import (
         episodes_to_lerobot_dataset,
-        create_merged_dataset,
         get_pretrain_info,
         read_training_step,
     )
@@ -78,29 +77,9 @@ def main():
     )
     logger.info("Online: %d episodes, %d frames", online_ds.num_episodes, online_ds.num_frames)
 
-    # ── Step 4: Merge datasets ───────────────────────────────
-    logger.info("Creating merged dataset...")
-    merged_path, merge_time = create_merged_dataset(
-        pretrain_repo_id=PRETRAIN_REPO_ID,
-        online_dataset=online_ds,
-        output_repo_id="test/merged",
-        output_root=TEST_DIR / "merged_dataset",
-        task_description=pretrain_info["task_description"],
-        bc_mask_mode="failure",
-        video_backend="pyav",
-    )
-    logger.info("Merge took %.1fs", merge_time)
-
-    # Verify merged dataset
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
-    merged = LeRobotDataset("test/merged", root=merged_path)
-    expected_eps = pretrain_info["num_episodes"] + online_ds.num_episodes
-    expected_frames = pretrain_info["num_frames"] + online_ds.num_frames
-    assert merged.num_episodes == expected_eps, f"{merged.num_episodes} != {expected_eps}"
-    assert merged.num_frames == expected_frames, f"{merged.num_frames} != {expected_frames}"
-    logger.info("Merged: %d episodes, %d frames ✓", merged.num_episodes, merged.num_frames)
-
-    # ── Step 5: Finetune via lerobot-train --resume ──────────
+    # ── Step 4: Finetune via lerobot-train --resume ────────────
+    # No merge step — lerobot-train concatenates pretrain + online
+    # via --online_dataset_root (instant, no data copying).
     logger.info("Starting finetune (%d steps)...", FINETUNE_STEPS)
     total_steps = pretrain_step + FINETUNE_STEPS
     ft_output_dir = str(TEST_DIR / "train")
@@ -108,8 +87,7 @@ def main():
 
     ckpt = run_finetune(
         config_path=config_path,
-        merged_dataset_repo_id="test/merged",
-        merged_dataset_root=str(merged_path),
+        online_dataset_root=str(online_ds.root),
         total_steps=total_steps,
         output_dir=ft_output_dir,
         commit="test1234",
