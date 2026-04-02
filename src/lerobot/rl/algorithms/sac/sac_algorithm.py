@@ -136,7 +136,6 @@ class SACAlgorithm(RLAlgorithm):
         self._optimization_step: int = 0
 
         self._init_critics()
-        self.policy.init_actor()
         self._init_temperature()
 
         self._device = torch.device(self.policy.config.device)
@@ -150,8 +149,7 @@ class SACAlgorithm(RLAlgorithm):
         """Create all critic networks using ``policy.encoder_critic``.
 
         Order: critic_ensemble → critic_target → discrete_critic →
-        discrete_critic_target.  Then ``policy.init_actor()`` is called
-        so the full RNG sequence is: encoder → critics → actor.
+        discrete_critic_target.
         """
         encoder = self.policy.encoder_critic
         action_dim = self.policy.config.output_features[ACTION].shape[0]

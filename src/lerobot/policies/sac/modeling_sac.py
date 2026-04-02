@@ -38,11 +38,6 @@ class SACPolicy(
     """SAC policy owning encoder and actor — everything needed to act.
 
     Critics, targets, temperature, and training logic live in ``SACAlgorithm``.
-    The algorithm calls ``init_actor()`` after creating critics so the RNG
-    init order matches the known-good baseline:
-    encoder → critics → discrete_critic → actor.
-
-    On the actor process (no algorithm), call ``init_actor()`` directly.
     """
 
     config_class = SACConfig
@@ -58,18 +53,15 @@ class SACPolicy(
 
         self._init_encoders()
         self.discrete_critic = None
+        self._actor_initialized = False
+        self.init_actor()
 
     # ------------------------------------------------------------------
-    # Deferred actor init (called by algorithm or actor process)
+    # Actor init
     # ------------------------------------------------------------------
 
     def init_actor(self) -> None:
-        """Create the actor network.
-
-        Called by ``SACAlgorithm`` after critic creation so the RNG order is:
-        encoder → critics → discrete_critic → actor.
-        On the actor process (no algorithm), call after ``make_policy()``.
-        """
+        """Create actor network once."""
         # NOTE: The actor select only the continuous action part
         continuous_action_dim = self.config.output_features[ACTION].shape[0]
         self.actor = Policy(
