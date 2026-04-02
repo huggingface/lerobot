@@ -67,11 +67,11 @@ class ErgoCubBimanualController:
             urdf_file = resolve_ergocub_urdf()
             
             if use_left_hand:
-                left_joint_names = ["torso_roll", "torso_pitch", "torso_yaw", "l_shoulder_pitch", "l_shoulder_roll", "l_shoulder_yaw", "l_elbow", "l_wrist_yaw", "l_wrist_roll", "l_wrist_pitch"]
+                left_joint_names = [ "torso_yaw_joint", "l_shoulder_pitch", "l_shoulder_roll", "l_shoulder_yaw", "l_elbow", "l_wrist_yaw", "l_wrist_roll", "l_wrist_pitch"]
                 self.kinematics_solvers["left"] = RobotKinematics(urdf_file, "l_hand_palm", left_joint_names)
                 
             if use_right_hand:
-                right_joint_names = ["torso_roll", "torso_pitch", "torso_yaw", "r_shoulder_pitch", "r_shoulder_roll", "r_shoulder_yaw", "r_elbow", "r_wrist_yaw", "r_wrist_roll", "r_wrist_pitch"]
+                right_joint_names = ["torso_yaw_joint", "r_shoulder_pitch", "r_shoulder_roll", "r_shoulder_yaw", "r_elbow", "r_wrist_yaw", "r_wrist_roll", "r_wrist_pitch"]
                 self.kinematics_solvers["right"] = RobotKinematics(urdf_file, "r_hand_palm", right_joint_names)
     
     @property
@@ -153,9 +153,9 @@ class ErgoCubBimanualController:
         # Read torso encoders
         torso_bottle = self.torso_encoders_port.read(False)
         if torso_bottle:
-            torso_encoders = [torso_bottle.get(i).asFloat64() for i in range(min(3, torso_bottle.size()))]
+            torso_encoders = [torso_bottle.get(i).asFloat64() for i in range(torso_bottle.size())][-1:]
         else:
-            torso_encoders = [0.0, 0.0, 0.0]
+            torso_encoders = [0.0]
         self._latest_torso_encoders = torso_encoders
         
         # Read and compute poses for each hand
@@ -180,10 +180,12 @@ class ErgoCubBimanualController:
             
             # Combine torso + hand encoders
             joint_positions = np.array(torso_encoders + hand_encoders)
+            # joint_positions = np.deg2rad(joint_positions)
             
             # Compute forward kinematics
             if side in self.kinematics_solvers:
                 pose_matrix = self.kinematics_solvers[side].forward_kinematics(joint_positions)
+                # pose_matrix[2, 3] += 0.2
                 position = pose_matrix[:3, 3]
                 rotation_6d = matrix_to_rotation_6d(torch.tensor(pose_matrix[:3, :3], dtype=torch.float32)).numpy().flatten()
                 
@@ -206,7 +208,7 @@ class ErgoCubBimanualController:
         """Return latest torso/arm joint values read from YARP state ports."""
         joints: dict[str, float] = {}
 
-        torso_names = ["torso_roll", "torso_pitch", "torso_yaw"]
+        torso_names = ["torso_yaw_joint"]
         for i, name in enumerate(torso_names):
             if self._latest_torso_encoders is not None and i < len(self._latest_torso_encoders):
                 joints[name] = float(self._latest_torso_encoders[i])

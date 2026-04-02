@@ -46,7 +46,8 @@
       "preLaunchTask": "clear-test",
       "args": [
         "--config_path=cfgs/eval/eval_gr00t.yaml"
-      ]
+      ],
+      "justMyCode": false
     },
     {
       "name": "Train",

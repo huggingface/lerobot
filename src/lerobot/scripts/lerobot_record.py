@@ -412,8 +412,15 @@ def record_loop(
             dataset.add_frame(frame)
 
         if display_data:
+            current_state = robot.bus.read_state()
+            # current_state['left_hand.position.z'] += 0.5
+            # current_state['right_hand.position.z'] += 0.5
+            action_values["left_hand.position.z"] += 0.5
+            action_values["right_hand.position.z"] += 0.5
+            action_values["left_hand.position.x"] += 0.10
+            action_values["right_hand.position.x"] += 0.10
             rerun_logger = log_rerun_data_ergocub if robot.name == "ergocub" else log_rerun_data
-            rerun_logger(observation=obs_processed, action=action_values, compress_images=display_compressed_images, robot=robot)
+            rerun_logger(observation=current_state, action=action_values, compress_images=display_compressed_images, robot=robot)
 
         dt_s = time.perf_counter() - start_loop_t
 

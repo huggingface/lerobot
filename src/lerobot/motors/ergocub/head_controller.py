@@ -62,14 +62,11 @@ class ErgoCubHeadController:
         # Initialize kinematics solver with torso + neck joints using shared resolver
         urdf_file = resolve_ergocub_urdf()
         joint_names = [
-            "torso_roll",
-            "torso_pitch",
-            "torso_yaw",
-            "neck_pitch",
-            "neck_roll",
-            "neck_yaw",
+            "torso_yaw_joint",
+            "neck_pitch_joint",
+            "neck_yaw_joint",
         ]
-        self.kinematics_solver = RobotKinematics(urdf_file, "head", joint_names)
+        self.kinematics_solver = RobotKinematics(urdf_file, "head_link", joint_names)
     
     @property
     def is_connected(self) -> bool:
@@ -179,12 +176,12 @@ class ErgoCubHeadController:
         """Return latest torso and neck joint values read from YARP state ports."""
         joints: dict[str, float] = {}
 
-        torso_names = ["torso_roll", "torso_pitch", "torso_yaw"]
+        torso_names = ["torso_yaw_joint"]
         for i, name in enumerate(torso_names):
             if self._latest_torso_encoders is not None and i < len(self._latest_torso_encoders):
                 joints[name] = float(self._latest_torso_encoders[i])
 
-        neck_names = ["neck_pitch", "neck_roll", "neck_yaw"]
+        neck_names = ["neck_pitch_joint", "neck_yaw_joint"]
         for i, name in enumerate(neck_names):
             if self._latest_neck_encoders is not None and i < len(self._latest_neck_encoders):
                 joints[name] = float(self._latest_neck_encoders[i])

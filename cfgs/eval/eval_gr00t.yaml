@@ -1,4 +1,4 @@
-<<: !include ../robots/ergocub.yaml
+<<: !include ../robots/r1.yaml
 
 dataset:
   repo_id: HSP-IIT/eval_test
@@ -11,8 +11,8 @@ dataset:
 
 policy:
   type: groot
-  pretrained_path: HSP-IIT/groot-HRI3_emo
+  pretrained_path: HSP-IIT/groot-HRI3
   n_action_steps: 10
 
 resume: false
-display_data: false
+display_data: true

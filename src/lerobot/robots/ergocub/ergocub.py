@@ -57,16 +57,16 @@ class ErgoCub(Robot):
         self._safety_control_acquired = False
 
         # Emotions RPC support
-        self._emotion_cmd_port = yarp.Port()
-        self._emotion_local_port_name: str | None = None
-        self._emotion_remote_port_name = "/ergoCubEmotions/rpc"
-        self._last_emotion_label: str | None = None
-        self._emotion_map = {
-            0: "neutral",
-            1: "happy",
-            2: "alert",
-            3: "shy",
-        }
+        #self._emotion_cmd_port = yarp.Port()
+        #self._emotion_local_port_name: str | None = None
+        #self._emotion_remote_port_name = "/ergoCubEmotions/rpc"
+        #self._last_emotion_label: str | None = None
+        #self._emotion_map = {
+        #    0: "neutral",
+        #    1: "happy",
+        #    2: "alert",
+        #    3: "shy",
+        #}
 
         # Reset event publisher
         self._reset_event_port = yarp.BufferedPortBottle()
@@ -109,17 +109,17 @@ class ErgoCub(Robot):
         self.bus.connect()
 
         # Connect emotions RPC client (blocks until server is available)
-        self._emotion_local_port_name = f"{self.config.local_prefix}/{self.session_id}/emotions/rpc:o"
-        if not self._emotion_cmd_port.open(self._emotion_local_port_name):
-            raise ConnectionError(f"Failed to open emotions RPC port {self._emotion_local_port_name}")
+        # self._emotion_local_port_name = f"{self.config.local_prefix}/{self.session_id}/emotions/rpc:o"
+        # if not self._emotion_cmd_port.open(self._emotion_local_port_name):
+        #     raise ConnectionError(f"Failed to open emotions RPC port {self._emotion_local_port_name}")
 
         if not self._reset_event_port.open(self._reset_event_port_name):
             raise ConnectionError(f"Failed to open reset event port {self._reset_event_port_name}")
 
-        if not "Sim" in self.config.remote_prefix:
-            while not yarp.Network.connect(self._emotion_local_port_name, self._emotion_remote_port_name):
-                print("ergoCubEmotions: waiting for connection")
-                time.sleep(1)
+        # if not "Sim" in self.config.remote_prefix:
+        #     while not yarp.Network.connect(self._emotion_local_port_name, self._emotion_remote_port_name):
+        #         print("ergoCubEmotions: waiting for connection")
+        #         time.sleep(1)
 
         self._is_connected = True
 
@@ -150,8 +150,8 @@ class ErgoCub(Robot):
         # Disconnect motor bus
         self.bus.disconnect()
 
-        if self._emotion_cmd_port is not None:
-            self._emotion_cmd_port.close()
+        # if self._emotion_cmd_port is not None:
+        #     self._emotion_cmd_port.close()
 
         if self._reset_event_port is not None:
             self._reset_event_port.close()
@@ -197,9 +197,13 @@ class ErgoCub(Robot):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         action = dict(action)
+        action['left_hand.position.z'] += 0.5
+        action['right_hand.position.z'] += 0.5
+        action["left_hand.position.x"] += 0.10
+        action["right_hand.position.x"] += 0.10
 
         # Optional emotion command key from policy output.
-        emotion_value = action.pop("emotions", action.pop("emotion", None))
+        #emotion_value = action.pop("emotions", action.pop("emotion", None))
 
         # If using relative mode, convert incoming deltas to absolute targets
         if not self.absolute:
@@ -223,49 +227,49 @@ class ErgoCub(Robot):
         self.bus.send_commands(action)
 
         # Forward emotion to /ergoCubEmotions/rpc (ignore unsupported values).
-        if emotion_value is not None and "Sim" not in self.config.remote_prefix:
-            self._send_emotion_command(emotion_value)
+        # if emotion_value is not None and "Sim" not in self.config.remote_prefix:
+        #     self._send_emotion_command(emotion_value)
 
         return action
 
-    def _send_emotion_command(self, emotion_value: Any) -> None:
-        try:
-            value = float(emotion_value)
-        except (TypeError, ValueError):
-            logger.warning("Invalid emotion value %r, expected numeric in [0, 1]", emotion_value)
-            return
+    # def _send_emotion_command(self, emotion_value: Any) -> None:
+    #     try:
+    #         value = float(emotion_value)
+    #     except (TypeError, ValueError):
+    #         logger.warning("Invalid emotion value %r, expected numeric in [0, 1]", emotion_value)
+    #         return
 
-        # Equal bins in [0, 1]:
-        # 0 -> [0.00, 0.25), 1 -> [0.25, 0.50), 2 -> [0.50, 0.75), 3 -> [0.75, 1.00]
-        value = float(np.clip(value, 0.0, 1.0))
-        if value < 0.25:
-            emotion_idx = 0
-        elif value < 0.50:
-            emotion_idx = 1
-        elif value < 0.75:
-            emotion_idx = 2
-        else:
-            emotion_idx = 3
+    #     # Equal bins in [0, 1]:
+    #     # 0 -> [0.00, 0.25), 1 -> [0.25, 0.50), 2 -> [0.50, 0.75), 3 -> [0.75, 1.00]
+    #     value = float(np.clip(value, 0.0, 1.0))
+    #     if value < 0.25:
+    #         emotion_idx = 0
+    #     elif value < 0.50:
+    #         emotion_idx = 1
+    #     elif value < 0.75:
+    #         emotion_idx = 2
+    #     else:
+    #         emotion_idx = 3
 
-        emotion_label = self._emotion_map.get(emotion_idx)
-        if emotion_label is None:
-            return
+    #     emotion_label = self._emotion_map.get(emotion_idx)
+    #     if emotion_label is None:
+    #         return
 
-        # Avoid sending duplicated commands at control frequency.
-        if emotion_label == self._last_emotion_label:
-            return
+    #     # Avoid sending duplicated commands at control frequency.
+    #     if emotion_label == self._last_emotion_label:
+    #         return
 
-        cmd = yarp.Bottle()
-        cmd.addString("setEmotion")
-        cmd.addString(emotion_label)
+    #     cmd = yarp.Bottle()
+    #     cmd.addString("setEmotion")
+    #     cmd.addString(emotion_label)
 
-        reply = yarp.Bottle()
-        ok = self._emotion_cmd_port.write(cmd, reply)
-        if not ok:
-            logger.warning("Failed to send emotion command '%s'", emotion_label)
-            return
+    #     reply = yarp.Bottle()
+    #     ok = self._emotion_cmd_port.write(cmd, reply)
+    #     if not ok:
+    #         logger.warning("Failed to send emotion command '%s'", emotion_label)
+    #         return
 
-        self._last_emotion_label = emotion_label
+    #     self._last_emotion_label = emotion_label
     
     def reset(self) -> None:
         """Reset the robot to a default state."""

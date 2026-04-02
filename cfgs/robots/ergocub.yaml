@@ -11,4 +11,4 @@ robot:
       fps: 30
   control_boards: [bimanual, head]
   state_boards: [bimanual, head]
-  position_tolerance: 0.2
+  position_tolerance: 0.22
