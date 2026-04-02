@@ -253,6 +253,7 @@ def act_with_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
     )
+    policy.init_actor()
     policy = policy.eval()
     assert isinstance(policy, nn.Module)
 

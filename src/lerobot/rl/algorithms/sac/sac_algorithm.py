@@ -71,6 +71,7 @@ class SACAlgorithm(RLAlgorithm):
         self._device = get_device_from_parameters(self.policy)
 
         self._init_critics()
+        self.policy.init_actor()
         self._init_temperature()
         self._move_to_device()
 

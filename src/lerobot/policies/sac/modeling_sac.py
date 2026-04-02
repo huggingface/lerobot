@@ -57,9 +57,24 @@ class SACPolicy(
         config.validate_features()
         self.config = config
 
-        continuous_action_dim = config.output_features[ACTION].shape[0]
         self._init_encoders()
+        self._actor_initialized = False
+
+    def init_actor(self) -> None:
+        """Create the actor network.
+
+        Called by ``SACAlgorithm`` **after** critic creation so that the
+        RNG init order matches the known-good monolithic policy:
+        encoder → critics → discrete_critics → actor → temperature.
+
+        On the actor process (no algorithm), call this explicitly after
+        ``make_policy()``.
+        """
+        if self._actor_initialized:
+            return
+        continuous_action_dim = self.config.output_features[ACTION].shape[0]
         self._init_actor(continuous_action_dim)
+        self._actor_initialized = True
 
     def get_optim_params(self) -> dict:
         return {
