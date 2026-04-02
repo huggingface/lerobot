@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 # ═════════════════════════════════════════════════════════════════
 # Config — edit these for each experiment
 # ═════════════════════════════════════════════════════════════════
-COMMIT = sys.argv[1]
+COMMIT = sys.argv[1] if len(sys.argv) > 1 else "unknown"
 
 # ── Pretrain checkpoint (the starting point) ──────────────────
 POLICY = (
