@@ -81,6 +81,8 @@ class SACPolicy(
             encoder_is_shared=self.shared_encoder,
             **asdict(self.config.policy_kwargs),
         )
+        if self.config.use_torch_compile:
+            self.actor = torch.compile(self.actor)
         self.target_entropy = self.config.target_entropy
         if self.target_entropy is None:
             dim = continuous_action_dim + (1 if self.config.num_discrete_actions is not None else 0)
