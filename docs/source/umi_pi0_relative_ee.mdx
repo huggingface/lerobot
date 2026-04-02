@@ -1,16 +1,28 @@
 # UMI Data with pi0 Relative EE Actions
 
-This guide explains how to prepare a UMI-collected dataset for training a pi0 policy with relative end-effector (EE) actions, and how to run inference with the trained model.
+This guide explains how to train a pi0 policy with UMI-style relative end-effector (EE) actions and deploy it on a real OpenArm robot.
 
 **What we will do:**
 
-1. Recompute dataset statistics for relative actions and state.
-2. Train pi0 with `derive_state_from_action=true` (full UMI pipeline).
-3. Evaluate the trained policy on a real robot.
+1. Prepare the dataset (EE pose + gripper in the action column).
+2. Recompute statistics for relative actions.
+3. Train pi0 with `derive_state_from_action=true`.
+4. Evaluate the trained policy on a real robot.
 
 ## Background
 
-[UMI (Universal Manipulation Interface)](https://umi-gripper.github.io) collects manipulation data with hand-held grippers, recovering 6-DoF EE poses via SLAM. UMI datasets stored in LeRobot format already contain `action` (absolute EE pose) and wrist-camera images. To train pi0 with relative actions, we need **relative action statistics** — so the normalizer sees `(action − state)` distributions.
+[UMI (Universal Manipulation Interface)](https://umi-gripper.github.io) collects manipulation data with hand-held grippers, recovering 6-DoF EE poses via SLAM. The key insight from UMI (Chi et al., 2024) is that the action space must include **both EE trajectory and gripper width**, and actions should be expressed as **relative trajectories** (offsets from the current pose).
+
+### Dataset layout
+
+The dataset should have this structure:
+
+| Feature                   | Shape     | Content                                                  |
+| ------------------------- | --------- | -------------------------------------------------------- |
+| `observation.images.cam0` | `[3,H,W]` | Wrist camera image                                       |
+| `action`                  | `[8]`     | `[x, y, z, ax, ay, az, proximal, distal]` (EE + gripper) |
+
+No separate `observation.pose` or `observation.joints` columns are needed — the model derives its proprioception state directly from the action column (`derive_state_from_action=true`).
 
 ### Why relative actions?
 
@@ -20,107 +32,134 @@ With relative actions, each action in a chunk is an **offset from the current st
 relative_action[i] = absolute_action[t + i] − state[t]
 ```
 
-This is the representation advocated by UMI (Chi et al., 2024). Compared to absolute actions it removes the need for a consistent global coordinate frame, and compared to delta actions (each step relative to the previous) it avoids error accumulation across the chunk. See the [Action Representations](action_representations) guide for a full comparison.
+UMI ablations show this is critical: absolute actions achieve only 25% success vs 100% for relative trajectory on the cup arrangement task. Compared to delta actions (each step relative to the previous), relative trajectory avoids error accumulation. See the [Action Representations](action_representations) guide for details.
 
-### Full UMI mode: `derive_state_from_action`
+### `derive_state_from_action`
 
-When `derive_state_from_action=true`, pi0 automatically derives `observation.state` from the action column on the fly — no separate state column or dataset conversion step needed. Under the hood:
+When `derive_state_from_action=true`, pi0 derives `observation.state` from the action column during training — no separate state column needed. Under the hood:
 
-- `action_delta_indices` extends to `[-1, 0, 1, ..., 49]` (one extra leading timestep).
+- `action_delta_indices` extends to `[-1, 0, 1, ..., chunk_size-1]` (one extra leading timestep).
 - `DeriveStateFromActionStep` extracts `[action[t-1], action[t]]` as a 2-step state and strips the extra timestep from the action chunk.
 - `RelativeActionsProcessorStep` converts actions to offsets from `state[t]`.
 - `RelativeStateProcessorStep` converts the 2-step state to relative proprioception (velocity + zeros) and flattens.
 
-This single flag implies `use_relative_state=true` and `state_obs_steps=2`.
+This implies `use_relative_state=true` and `state_obs_steps=2`.
 
-During **inference**, state comes from the robot (via FK), so `DeriveStateFromActionStep` is a no-op. `RelativeStateProcessorStep` buffers the previous state and applies the same conversion automatically.
+During **inference**, `DeriveStateFromActionStep` is a no-op — state comes from the robot via forward kinematics. `RelativeStateProcessorStep` buffers the previous state and applies the same conversion automatically.
 
 ## Step 1: Recompute Stats
 
-Use the built-in CLI to recompute dataset statistics for relative actions and derive-state-from-action:
+After preparing the dataset with EE pose in the action column, recompute statistics with `derive_state_from_action=true`. This computes relative action and state stats so the normalizer sees offset distributions:
 
 ```bash
 lerobot-edit-dataset \
-    --repo_id <your_dataset> \
-    --operation.type recompute_stats \
-    --operation.relative_action true \
-    --operation.derive_state_from_action true \
-    --operation.chunk_size 50 \
-    --operation.relative_exclude_joints "['gripper']" \
-    --push_to_hub true
+    --repo-id=glannuzel/grabette-dataset \
+    --operation=recompute_stats \
+    --operation.relative_action=true \
+    --operation.relative_exclude_joints='["proximal", "distal"]' \
+    --operation.derive_state_from_action=true \
+    --operation.chunk_size=30 \
+    --push_to_hub=true
 ```
 
-The `derive_state_from_action` flag tells `recompute_stats` to read from the action column (instead of `observation.state`) when computing relative state stats. It automatically enables `relative_state=true` and `state_obs_steps=2`.
-
-The `relative_exclude_joints` parameter specifies joints that stay absolute. Gripper commands are typically binary or continuous open/close and don't benefit from relative encoding. Leave it as `"[]"` to convert all dimensions to relative.
+| Flag                            | Purpose                                                                         |
+| ------------------------------- | ------------------------------------------------------------------------------- |
+| `relative_action=true`          | Compute stats on `action − state` (relative actions)                            |
+| `relative_exclude_joints`       | Keep gripper dims absolute (they don't benefit from relative encoding)          |
+| `derive_state_from_action=true` | Derive state from action column (implies `relative_state`, `state_obs_steps=2`) |
+| `chunk_size=30`                 | Must match training chunk size                                                  |
 
 ## Step 2: Train
 
-No custom training script is needed — standard `lerobot-train` handles everything:
-
 ```bash
-lerobot-train \
-    --dataset.repo_id=<hf_username>/<dataset_repo_id> \
+#!/bin/bash
+set -euo pipefail
+
+export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}
+
+DATASET="glannuzel/grabette-dataset"
+NUM_PROCESSES=8
+
+echo "=== Training pi0 on $DATASET (UMI relative EE, ${NUM_PROCESSES} GPUs) ==="
+accelerate launch --multi_gpu --num_processes=$NUM_PROCESSES \
+    -m lerobot.scripts.lerobot_train \
+    --dataset.repo_id="$DATASET" \
+    --dataset.video_backend=pyav \
     --policy.type=pi0 \
     --policy.pretrained_path=lerobot/pi0_base \
+    --policy.repo_id=pepijn/grabette-umi-pi0 \
+    --policy.chunk_size=30 \
+    --policy.n_action_steps=30 \
     --policy.derive_state_from_action=true \
-    --policy.use_relative_actions=true \
-    --policy.relative_exclude_joints='["gripper"]'
+    --use_relative_actions=true \
+    --policy.relative_exclude_joints='["proximal", "distal"]' \
+    --batch_size=32 \
+    --steps=5000 \
+    --policy.scheduler_decay_steps=5000 \
+    --policy.dtype=bfloat16 \
+    --policy.compile_model=false \
+    --policy.gradient_checkpointing=true \
+    --policy.device=cuda \
+    --output_dir=/fsx/pepijn/outputs/grabette-umi \
+    --job_name=grabette-umi-v2 \
+    --wandb.enable=true \
+    --wandb.disable_artifact=true \
+    --wandb.project=grabette-umi \
+    --log_freq=100 \
+    --save_freq=5000
 ```
 
-`derive_state_from_action=true` auto-enables `use_relative_state=true` and `state_obs_steps=2`.
+Key flags:
 
-Under the hood, the training pipeline:
+| Flag                            | Purpose                                                                |
+| ------------------------------- | ---------------------------------------------------------------------- |
+| `derive_state_from_action=true` | Derive proprioception from action column (full UMI mode)               |
+| `use_relative_actions=true`     | Actions are offsets from current state                                 |
+| `relative_exclude_joints`       | `["proximal", "distal"]` — gripper stays absolute, EE pose is relative |
+| `chunk_size=30`                 | Action horizon: 30 steps (~0.65s at 46 FPS)                            |
+| `n_action_steps=30`             | Execute full chunk before replanning                                   |
 
-- Loads relative action stats and relative state stats from the dataset's `meta/stats.json`.
-- Extends `action_delta_indices` to `[-1, 0, 1, ..., 49]` to load one extra leading timestep.
-- `DeriveStateFromActionStep` extracts the 2-step state from the action chunk and strips the extra timestep.
-- `RelativeActionsProcessorStep` converts actions to offsets from `state[t]`.
-- `RelativeStateProcessorStep` converts the 2-step state to relative offsets from the current timestep, then flattens.
-- `NormalizerProcessorStep` normalizes everything.
-- The model trains on normalized relative values.
-
-See the [pi0 documentation](pi0) for all available training options.
+Note: `derive_state_from_action=true` automatically implies `use_relative_state=true` and `state_obs_steps=2`. No `rename_map` is needed since there are no separate observation columns to rename.
 
 ## Step 3: Evaluate
 
-The evaluation script in `examples/umi_pi0_relative_ee/evaluate.py` runs inference on a real robot (SO-100 with EE space):
+The evaluation script in `examples/umi_pi0_relative_ee/evaluate.py` runs inference on a real OpenArm robot:
 
 ```bash
 python examples/umi_pi0_relative_ee/evaluate.py
 ```
 
-Edit `HF_MODEL_ID`, `HF_DATASET_ID`, and robot configuration at the top of the file.
+Edit `HF_MODEL_ID`, camera index, and robot configuration at the top of the file.
+
+### How inference works
+
+At inference, the training dataset has no `observation.state` — it was derived from actions. The evaluate script provides `observation.state` from the robot via forward kinematics:
+
+1. **Robot → FK** — Arm joint positions → EE pose `[x,y,z,ax,ay,az]`, gripper → `[proximal, distal]`. Combined into `observation.state` (8D).
+2. **Preprocessor** (loaded from checkpoint) — `DeriveStateFromActionStep` is a no-op. `RelativeStateProcessorStep` buffers previous state, stacks `[prev, current]`, subtracts current → velocity info. `RelativeActionsProcessorStep` caches state. `NormalizerProcessorStep` normalizes.
+3. **pi0 inference** — Predicts normalized relative action chunk (30 steps).
+4. **Postprocessor** — `UnnormalizerProcessorStep` unnormalizes, `AbsoluteActionsProcessorStep` adds cached state → absolute EE targets.
+5. **IK → Robot** — Absolute `[x,y,z,ax,ay,az]` → arm joint targets with full 6-DOF IK (orientation weight = 1.0). `[proximal, distal]` → direct gripper position commands.
 
 ### Latency compensation
 
-For real robot deployment, you may want to skip the first few steps of each predicted action chunk to compensate for system latency. Set `LATENCY_SKIP_STEPS` in the evaluate script:
+Set `LATENCY_SKIP_STEPS` to skip the first few predicted action steps, compensating for system latency:
 
 ```python
-LATENCY_SKIP_STEPS = 0  # ceil(total_latency_ms / (1000 / FPS))
+LATENCY_SKIP_STEPS = 7  # ceil(total_latency_ms / (1000 / FPS))
 ```
 
-For example, at 10Hz with ~200ms total latency, set `LATENCY_SKIP_STEPS = 2`.
-
-The inference flow uses pi0's built-in processor pipeline — no custom wrappers needed:
-
-1. **Robot → FK** — Joint positions are converted to EE pose via `ForwardKinematicsJointsToEE`, producing `observation.state`.
-2. **Preprocessor** — `DeriveStateFromActionStep` is a no-op (state comes from robot). `RelativeStateProcessorStep` buffers previous state, stacks, and converts to relative. `RelativeActionsProcessorStep` caches state. `NormalizerProcessorStep` normalizes.
-3. **pi0 inference** — The model predicts a normalized relative action chunk.
-4. **Postprocessor** — `UnnormalizerProcessorStep` unnormalizes, then `AbsoluteActionsProcessorStep` adds the cached state back to get absolute EE targets.
-5. **IK → Robot** — `InverseKinematicsEEToJoints` converts absolute EE targets to joint commands.
+At 46 FPS (~22ms/step) with ~150ms total latency: `ceil(150/22) ≈ 7`. Start with 0 for a safe first test.
 
 ## Replay Viewer
 
-Before running on hardware, you can visualize any dataset episode in a browser-based 3D viewer. The viewer shows the EE trajectory overlaid on the OpenArm URDF model, making it easy to sanity-check recorded data or debug unexpected behavior.
+Visualize any dataset episode in a browser-based 3D viewer before running on hardware. The viewer shows the EE trajectory overlaid on the OpenArm URDF model.
 
 ### Quick start
 
 ```bash
 python examples/umi_pi0_relative_ee/replay.py
 ```
-
-This extracts the trajectory from episode 0 of the default dataset, starts a local HTTP server, and opens the viewer at [http://localhost:8765/replay_viewer.html](http://localhost:8765/replay_viewer.html).
 
 ### Options
 
@@ -131,64 +170,53 @@ This extracts the trajectory from episode 0 of the default dataset, starts a loc
 | `--port`    | `8765`                       | HTTP server port                     |
 | `--force`   | off                          | Re-extract trajectory even if cached |
 
-Example with a different dataset and episode:
-
-```bash
-python examples/umi_pi0_relative_ee/replay.py \
-    --repo-id myuser/my-dataset \
-    --episode 3 \
-    --port 8766
-```
-
 ### Viewer controls
 
-The panel in the top-left corner shows live EE coordinates (x, y, z, ax, ay, az) and gripper state for the current frame. Below that are transport controls:
+The panel in the top-left corner shows live EE coordinates and gripper state. Transport controls:
 
 - **Play / Pause** — toggle automatic playback.
-- **Step buttons** (◀ ▶) — advance or rewind one frame at a time.
-- **Reset** (⟳) — jump back to frame 0.
-- **Scrubber** — drag to seek to any frame.
-- **Speed selector** — 0.25×, 0.5×, 1×, 2×, or 4× playback speed.
-
-The 3D scene uses orbit controls — click and drag to rotate, scroll to zoom, right-click drag to pan.
+- **Step buttons** (◀ ▶) — advance or rewind one frame.
+- **Reset** (⟳) — jump to frame 0.
+- **Scrubber** — drag to seek.
+- **Speed selector** — 0.25× to 4× playback speed.
 
 ### Color legend
 
 | Color              | Meaning                                       |
 | ------------------ | --------------------------------------------- |
 | Red sphere         | Current EE position                           |
-| Yellow trail       | Past trajectory (frames already visited)      |
-| Dark trail         | Future trajectory (frames ahead)              |
+| Yellow trail       | Past trajectory                               |
+| Dark trail         | Future trajectory                             |
 | Orange ring + axes | URDF `ee_target` frame (zero-joint reference) |
-
-The trajectory is automatically re-centered so that frame 0 aligns with the robot's `openarm_right_ee_target` link in the zero-joint pose.
 
 ## How the Pieces Fit Together
 
 ```
-Training (full UMI mode: derive_state_from_action=true):
-  DataLoader (action: B,51,D)
-      → DeriveStateFromActionStep (state = action[:,:2,:], action = action[:,1:,:])
-      → RelativeActionsProcessorStep (action -= state[:,-1,:])
-      → RelativeStateProcessorStep (state offsets from current, flatten → B,2*D)
-      → NormalizerProcessorStep → pi0 model
+Training (derive_state_from_action=true):
+  DataLoader loads action: [B, 31, 8]  (chunk_size=30 + 1 leading)
+      → DeriveStateFromActionStep
+          state  = action[:, :2, :]     → [B, 2, 8]
+          action = action[:, 1:, :]     → [B, 30, 8]
+      → RelativeActionsProcessorStep    (action -= state[:, -1, :])
+      → RelativeStateProcessorStep      (state offsets from current, flatten → [B, 16])
+      → NormalizerProcessorStep         → pi0 model
 
 Inference:
-  robot joints → FK → observation.state (absolute EE)
-                           ↓
-                   DeriveStateFromActionStep (no-op)
-                           ↓
-                   RelativeActionsProcessorStep (caches state)
-                           ↓
-                   RelativeStateProcessorStep (buffers prev, stacks, subtracts, flattens)
-                           ↓
-                   NormalizerProcessorStep → pi0 model → relative action chunk
-                           ↓
-                   UnnormalizerProcessorStep
-                           ↓
-                   AbsoluteActionsProcessorStep (+ cached state → absolute EE)
-                           ↓
-                   IK → joint targets → robot
+  arm joints → FK → observation.state [8D: x,y,z,ax,ay,az,prox,dist]
+                        ↓
+                DeriveStateFromActionStep (no-op)
+                        ↓
+                RelativeActionsProcessorStep (caches state)
+                        ↓
+                RelativeStateProcessorStep (buffers prev, stacks, subtracts, flattens)
+                        ↓
+                NormalizerProcessorStep → pi0 model → relative action chunk [30, 8]
+                        ↓
+                UnnormalizerProcessorStep
+                        ↓
+                AbsoluteActionsProcessorStep (+ cached state → absolute EE)
+                        ↓
+                IK → joint targets → robot
 ```
 
 ## References
