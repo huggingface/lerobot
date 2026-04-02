@@ -21,7 +21,7 @@ to keep the computation graph identical to the known-good monolithic policy.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import asdict
 from typing import Any
 
@@ -34,10 +34,11 @@ from torch.optim import Optimizer
 
 from lerobot.policies.sac.modeling_sac import (
     DISCRETE_DIMENSION_INDEX,
-    CriticEnsemble,
-    CriticHead,
+    MLP,
     DiscreteCritic,
+    SACObservationEncoder,
     SACPolicy,
+    orthogonal_init,
 )
 from lerobot.policies.utils import get_device_from_parameters
 from lerobot.rl.algorithms.base import (
@@ -48,6 +49,71 @@ from lerobot.rl.algorithms.base import (
 from lerobot.rl.algorithms.sac.configuration_sac import SACAlgorithmConfig
 from lerobot.utils.constants import ACTION
 from lerobot.utils.transition import move_state_dict_to_device
+
+
+class CriticHead(nn.Module):
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dims: list[int],
+        activations: Callable[[torch.Tensor], torch.Tensor] | str = nn.SiLU(),
+        activate_final: bool = False,
+        dropout_rate: float | None = None,
+        init_final: float | None = None,
+        final_activation: Callable[[torch.Tensor], torch.Tensor] | str | None = None,
+    ):
+        super().__init__()
+        self.net = MLP(
+            input_dim=input_dim,
+            hidden_dims=hidden_dims,
+            activations=activations,
+            activate_final=activate_final,
+            dropout_rate=dropout_rate,
+            final_activation=final_activation,
+        )
+        self.output_layer = nn.Linear(in_features=hidden_dims[-1], out_features=1)
+        if init_final is not None:
+            nn.init.uniform_(self.output_layer.weight, -init_final, init_final)
+            nn.init.uniform_(self.output_layer.bias, -init_final, init_final)
+        else:
+            orthogonal_init()(self.output_layer.weight)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.output_layer(self.net(x))
+
+
+class CriticEnsemble(nn.Module):
+    """CriticEnsemble wraps multiple CriticHead modules into an ensemble."""
+
+    def __init__(
+        self,
+        encoder: SACObservationEncoder,
+        ensemble: list[CriticHead],
+        init_final: float | None = None,
+    ):
+        super().__init__()
+        self.encoder = encoder
+        self.init_final = init_final
+        self.critics = nn.ModuleList(ensemble)
+
+    def forward(
+        self,
+        observations: dict[str, torch.Tensor],
+        actions: torch.Tensor,
+        observation_features: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        device = get_device_from_parameters(self)
+        observations = {k: v.to(device) for k, v in observations.items()}
+
+        obs_enc = self.encoder(observations, cache=observation_features)
+        inputs = torch.cat([obs_enc, actions], dim=-1)
+
+        q_values = []
+        for critic in self.critics:
+            q_values.append(critic(inputs))
+
+        q_values = torch.stack([q.squeeze(-1) for q in q_values], dim=0)
+        return q_values
 
 
 class SACAlgorithm(RLAlgorithm):
@@ -71,26 +137,30 @@ class SACAlgorithm(RLAlgorithm):
         self._device = get_device_from_parameters(self.policy)
 
         self._init_critics()
+        self.policy.init_actor()
         self._init_temperature()
         self._move_to_device()
 
     # ------------------------------------------------------------------
-    # Module initialisation — uses policy.encoder_critic directly
+    # Module initialisation
     # ------------------------------------------------------------------
 
     def _init_critics(self) -> None:
-        """Build targets on top of the policy's base critics.
+        """Create all critic networks using ``policy.encoder_critic``.
 
-        The policy already created ``critic_ensemble`` (possibly compiled)
-        and ``discrete_critic`` during ``__init__`` to preserve RNG order.
-        We reference them here and create the corresponding target networks.
+        Order: critic_ensemble → critic_target → discrete_critic →
+        discrete_critic_target.  Then ``policy.init_actor()`` is called
+        so the full RNG sequence is: encoder → critics → actor.
         """
         encoder = self.policy.encoder_critic
-
-        self.critic_ensemble = self.policy.critic_ensemble
-
         action_dim = self.policy.config.output_features[ACTION].shape[0]
         input_dim = encoder.output_dim + action_dim
+
+        heads = [
+            CriticHead(input_dim=input_dim, **asdict(self.config.critic_network_kwargs))
+            for _ in range(self.config.num_critics)
+        ]
+        self.critic_ensemble = CriticEnsemble(encoder=encoder, ensemble=heads)
 
         target_heads = [
             CriticHead(input_dim=input_dim, **asdict(self.config.critic_network_kwargs))
@@ -99,16 +169,21 @@ class SACAlgorithm(RLAlgorithm):
         self.critic_target = CriticEnsemble(encoder=encoder, ensemble=target_heads)
         self.critic_target.load_state_dict(self.critic_ensemble.state_dict())
 
-        if self.config.use_torch_compile:
-            self.critic_target = torch.compile(self.critic_target)
-
         if self.config.num_discrete_actions is not None:
             self._init_discrete_critics()
 
+        if self.config.use_torch_compile:
+            self.critic_ensemble = torch.compile(self.critic_ensemble)
+            self.critic_target = torch.compile(self.critic_target)
+
     def _init_discrete_critics(self) -> None:
         encoder = self.policy.encoder_critic
-        self.discrete_critic = self.policy.discrete_critic
-
+        self.discrete_critic = DiscreteCritic(
+            encoder=encoder,
+            input_dim=encoder.output_dim,
+            output_dim=self.config.num_discrete_actions,
+            **asdict(self.config.discrete_critic_network_kwargs),
+        )
         self.discrete_critic_target = DiscreteCritic(
             encoder=encoder,
             input_dim=encoder.output_dim,
@@ -116,6 +191,7 @@ class SACAlgorithm(RLAlgorithm):
             **asdict(self.config.discrete_critic_network_kwargs),
         )
         self.discrete_critic_target.load_state_dict(self.discrete_critic.state_dict())
+        self.policy.discrete_critic = self.discrete_critic
 
     def _init_temperature(self) -> None:
         temp_init = self.config.temperature_init

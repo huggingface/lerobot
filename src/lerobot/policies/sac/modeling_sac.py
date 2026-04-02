@@ -35,15 +35,14 @@ DISCRETE_DIMENSION_INDEX = -1  # Gripper is always the last dimension
 class SACPolicy(
     PreTrainedPolicy,
 ):
-    """SAC policy owning encoder, base critics, and actor.
+    """SAC policy owning encoder and actor — everything needed to act.
 
-    Init order matches the known-good ``b421c8c2``:
-    encoder → critic_ensemble → discrete_critic → actor.
+    Critics, targets, temperature, and training logic live in ``SACAlgorithm``.
+    The algorithm calls ``init_actor()`` after creating critics so the RNG
+    init order matches the known-good baseline:
+    encoder → critics → discrete_critic → actor.
 
-    The ``SACAlgorithm`` references the base critics created here, then
-    builds targets, torch.compile, temperature, and all loss methods on top.
-    This lets the algorithm be reused with other policy architectures while
-    keeping identical RNG initialisation.
+    On the actor process (no algorithm), call ``init_actor()`` directly.
     """
 
     config_class = SACConfig
@@ -57,10 +56,36 @@ class SACPolicy(
         config.validate_features()
         self.config = config
 
-        continuous_action_dim = config.output_features[ACTION].shape[0]
         self._init_encoders()
-        self._init_critics(continuous_action_dim)
-        self._init_actor(continuous_action_dim)
+        self.discrete_critic = None
+        self._actor_initialized = False
+
+    # ------------------------------------------------------------------
+    # Deferred actor init (called by algorithm or actor process)
+    # ------------------------------------------------------------------
+
+    def init_actor(self) -> None:
+        """Create the actor network.
+
+        Called by ``SACAlgorithm`` after critic creation so the RNG order is:
+        encoder → critics → discrete_critic → actor.
+        On the actor process (no algorithm), call after ``make_policy()``.
+        """
+        if self._actor_initialized:
+            return
+        continuous_action_dim = self.config.output_features[ACTION].shape[0]
+        self.actor = Policy(
+            encoder=self.encoder_actor,
+            network=MLP(input_dim=self.encoder_actor.output_dim, **asdict(self.config.actor_network_kwargs)),
+            action_dim=continuous_action_dim,
+            encoder_is_shared=self.shared_encoder,
+            **asdict(self.config.policy_kwargs),
+        )
+        self.target_entropy = self.config.target_entropy
+        if self.target_entropy is None:
+            dim = continuous_action_dim + (1 if self.config.num_discrete_actions is not None else 0)
+            self.target_entropy = -np.prod(dim) / 2
+        self._actor_initialized = True
 
     # ------------------------------------------------------------------
     # Inference
@@ -92,8 +117,13 @@ class SACPolicy(
         actions, _, _ = self.actor(batch, observations_features)
 
         if self.config.num_discrete_actions is not None:
-            discrete_action_value = self.discrete_critic(batch, observations_features)
-            discrete_action = torch.argmax(discrete_action_value, dim=-1, keepdim=True)
+            if self.discrete_critic is not None:
+                discrete_action_value = self.discrete_critic(batch, observations_features)
+                discrete_action = torch.argmax(discrete_action_value, dim=-1, keepdim=True)
+            else:
+                discrete_action = torch.ones(
+                    (*actions.shape[:-1], 1), device=actions.device, dtype=actions.dtype
+                )
             actions = torch.cat([actions, discrete_action], dim=-1)
 
         return actions
@@ -106,7 +136,7 @@ class SACPolicy(
         return {"action": actions, "log_prob": log_probs, "action_mean": means}
 
     # ------------------------------------------------------------------
-    # Initialisation (order matches b421c8c2: encoder → critics → actor)
+    # Encoder init
     # ------------------------------------------------------------------
 
     def _init_encoders(self):
@@ -115,49 +145,6 @@ class SACPolicy(
         self.encoder_actor = (
             self.encoder_critic if self.shared_encoder else SACObservationEncoder(self.config)
         )
-
-    def _init_critics(self, continuous_action_dim):
-        """Create base critic ensemble and optional discrete critic.
-
-        These are created in the policy to preserve RNG init order.
-        The ``SACAlgorithm`` will reference them, add targets, torch.compile,
-        and training logic on top.
-        """
-        heads = [
-            CriticHead(
-                input_dim=self.encoder_critic.output_dim + continuous_action_dim,
-                **asdict(self.config.critic_network_kwargs),
-            )
-            for _ in range(self.config.num_critics)
-        ]
-        self.critic_ensemble = CriticEnsemble(encoder=self.encoder_critic, ensemble=heads)
-
-        if self.config.use_torch_compile:
-            self.critic_ensemble = torch.compile(self.critic_ensemble)
-
-        if self.config.num_discrete_actions is not None:
-            self.discrete_critic = DiscreteCritic(
-                encoder=self.encoder_critic,
-                input_dim=self.encoder_critic.output_dim,
-                output_dim=self.config.num_discrete_actions,
-                **asdict(self.config.discrete_critic_network_kwargs),
-            )
-        else:
-            self.discrete_critic = None
-
-    def _init_actor(self, continuous_action_dim):
-        self.actor = Policy(
-            encoder=self.encoder_actor,
-            network=MLP(input_dim=self.encoder_actor.output_dim, **asdict(self.config.actor_network_kwargs)),
-            action_dim=continuous_action_dim,
-            encoder_is_shared=self.shared_encoder,
-            **asdict(self.config.policy_kwargs),
-        )
-
-        self.target_entropy = self.config.target_entropy
-        if self.target_entropy is None:
-            dim = continuous_action_dim + (1 if self.config.num_discrete_actions is not None else 0)
-            self.target_entropy = -np.prod(dim) / 2
 
 
 # ======================================================================
@@ -318,71 +305,6 @@ class MLP(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)
-
-
-class CriticHead(nn.Module):
-    def __init__(
-        self,
-        input_dim: int,
-        hidden_dims: list[int],
-        activations: Callable[[torch.Tensor], torch.Tensor] | str = nn.SiLU(),
-        activate_final: bool = False,
-        dropout_rate: float | None = None,
-        init_final: float | None = None,
-        final_activation: Callable[[torch.Tensor], torch.Tensor] | str | None = None,
-    ):
-        super().__init__()
-        self.net = MLP(
-            input_dim=input_dim,
-            hidden_dims=hidden_dims,
-            activations=activations,
-            activate_final=activate_final,
-            dropout_rate=dropout_rate,
-            final_activation=final_activation,
-        )
-        self.output_layer = nn.Linear(in_features=hidden_dims[-1], out_features=1)
-        if init_final is not None:
-            nn.init.uniform_(self.output_layer.weight, -init_final, init_final)
-            nn.init.uniform_(self.output_layer.bias, -init_final, init_final)
-        else:
-            orthogonal_init()(self.output_layer.weight)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.output_layer(self.net(x))
-
-
-class CriticEnsemble(nn.Module):
-    """CriticEnsemble wraps multiple CriticHead modules into an ensemble."""
-
-    def __init__(
-        self,
-        encoder: SACObservationEncoder,
-        ensemble: list[CriticHead],
-        init_final: float | None = None,
-    ):
-        super().__init__()
-        self.encoder = encoder
-        self.init_final = init_final
-        self.critics = nn.ModuleList(ensemble)
-
-    def forward(
-        self,
-        observations: dict[str, torch.Tensor],
-        actions: torch.Tensor,
-        observation_features: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        device = get_device_from_parameters(self)
-        observations = {k: v.to(device) for k, v in observations.items()}
-
-        obs_enc = self.encoder(observations, cache=observation_features)
-        inputs = torch.cat([obs_enc, actions], dim=-1)
-
-        q_values = []
-        for critic in self.critics:
-            q_values.append(critic(inputs))
-
-        q_values = torch.stack([q.squeeze(-1) for q in q_values], dim=0)
-        return q_values
 
 
 class DiscreteCritic(nn.Module):
