@@ -296,33 +296,15 @@ class GrootPolicy(PreTrainedPolicy):
     # Internal helpers
     # -------------------------
     def _handle_flash_attention_compatibility(self) -> None:
-        """Handle Flash Attention compatibility issues by setting environment variables.
+        """Handle Flash Attention compatibility issues.
 
-        This addresses the common 'undefined symbol' error that occurs when Flash Attention
-        is compiled against a different PyTorch version than what's currently installed.
+        Checks for FlashAttention-4 (CuTeDSL) first, then falls back to FlashAttention-2.
         """
+        from lerobot.utils.flash_attn_compat import get_flash_attn_version, is_flash_attn_available, is_flash_attn_fa4
 
-        # Set environment variables to handle Flash Attention compatibility
-        # These help with symbol resolution issues
-        os.environ.setdefault("FLASH_ATTENTION_FORCE_BUILD", "0")
-        os.environ.setdefault("FLASH_ATTENTION_SKIP_CUDA_BUILD", "0")
-
-        # Try to import flash_attn and handle failures gracefully
-        try:
-            import flash_attn
-
-            print(f"[GROOT] Flash Attention version: {flash_attn.__version__}")
-        except ImportError as e:
-            print(f"[GROOT] Flash Attention not available: {e}")
+        if is_flash_attn_available():
+            backend = "FA4 (CuTeDSL)" if is_flash_attn_fa4() else "FA2"
+            print(f"[GROOT] Flash Attention version: {get_flash_attn_version()} ({backend})")
+        else:
+            print("[GROOT] Flash Attention not available")
             print("[GROOT] Will use fallback attention mechanism")
-        except Exception as e:
-            if "undefined symbol" in str(e):
-                print(f"[GROOT] Flash Attention compatibility issue detected: {e}")
-                print("[GROOT] This is likely due to PyTorch/Flash Attention version mismatch")
-                print("[GROOT] Consider reinstalling Flash Attention with compatible version:")
-                print("  pip uninstall flash-attn")
-                print("  pip install --no-build-isolation flash-attn==2.6.3")
-                print("[GROOT] Continuing with fallback attention mechanism")
-            else:
-                print(f"[GROOT] Flash Attention error: {e}")
-                print("[GROOT] Continuing with fallback attention mechanism")

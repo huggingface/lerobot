@@ -28,19 +28,18 @@ This approach allows the model to be highly adaptable through post-training for 
 
 ## Installation Requirements
 
-As of today, GR00T N1.5 requires flash attention for it's internal working.
+GR00T N1.5 requires [FlashAttention-4 (CuTeDSL)](https://github.com/Dao-AILab/flash-attention/tree/main/flash_attn/cute) for its internal working.
 
 We are working on making this optional, but in the meantime that means that we require an extra installation step and it can only be used in CUDA enabled devices.
 
 1. Following the Environment Setup of our [Installation Guide](./installation). **Attention** don't install `lerobot` in this step.
-2. Install [Flash Attention](https://github.com/Dao-AILab/flash-attention) by running:
+2. Install [FlashAttention-4](https://github.com/Dao-AILab/flash-attention) by running:
 
 ```bash
 # Check https://pytorch.org/get-started/locally/ for your system
 pip install "torch>=2.2.1,<2.8.0" "torchvision>=0.21.0,<0.23.0" # --index-url https://download.pytorch.org/whl/cu1XX
-pip install ninja "packaging>=24.2,<26.0" # flash attention dependencies
-pip install "flash-attn>=2.5.9,<3.0.0" --no-build-isolation
-python -c "import flash_attn; print(f'Flash Attention {flash_attn.__version__} imported successfully')"
+pip install flash-attn-4
+python -c "from flash_attn.cute import flash_attn_func; print('FlashAttention-4 imported successfully')"
 ```
 
 3. Install LeRobot by running:
