@@ -412,7 +412,30 @@ class _FinetuneDataset(Dataset):
             obs_is_pad[1] = True  # future observation beyond episode end
         batch["observation.state_is_pad"] = obs_is_pad
 
+        # ── episode outcome (for per-sample BC masking) ──────────
+        batch["is_success"] = torch.tensor(ep["success"], dtype=torch.bool)
+
         return batch
+
+
+class _WithSuccessFlag(Dataset):
+    """Wraps a dataset to inject ``is_success=True`` for pretrain replay samples.
+
+    Used by :func:`finetune` with ``bc_mask_mode="failure"`` and ``mixing="naive"``
+    so that ``_common_keys_collate`` keeps the ``is_success`` key (which is only
+    present natively in :class:`_FinetuneDataset`).
+    """
+
+    def __init__(self, ds: Dataset) -> None:
+        self.ds = ds
+
+    def __len__(self) -> int:
+        return len(self.ds)
+
+    def __getitem__(self, idx: int):
+        sample = self.ds[idx]
+        sample["is_success"] = torch.tensor(True, dtype=torch.bool)
+        return sample
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -860,6 +883,8 @@ def finetune(
     batch_size: int = 8,
     mixing: str = "ratio",
     pretrain_ratio: float = 0.5,
+    online_mode: str = "success_only",
+    bc_mask_mode: str = "none",
     load_optimizer: bool = False,
     grad_clip_norm: float = 10.0,
     device: str = "cuda",
@@ -899,6 +924,22 @@ def finetune(
         mixing: ``"naive"`` or ``"ratio"`` (see above).
         pretrain_ratio: Fraction of each batch from pretrain data (default 0.5).
             Only used when ``mixing="ratio"``.
+        online_mode: ``"success_only"`` (default), ``"all"``, or
+            ``"failure_only"`` — which buffer episodes to include in the
+            online portion of training data.
+        bc_mask_mode: Controls per-sample BC (action) loss masking while
+            keeping WM loss active on all samples.  All params remain
+            trainable (unlike :func:`finetune_wm` which freezes non-WM).
+
+            - ``"none"`` (default) — full BC + WM loss on every sample.
+            - ``"failure"`` — zero BC loss on failure episodes, full loss on
+              successes.  Typically used with ``online_mode="all"`` so the
+              WM trains on all data while the policy only learns from
+              successes.
+            - ``"all"`` — zero BC loss on *every* sample (including
+              successes and pretrain replay).  Effectively WM-only
+              training through the e2e pipeline with all params trainable
+              and gradients flowing through the full graph.
         load_optimizer: If ``True``, load Adam momentum/variance state from the
             checkpoint at *policy_path* instead of starting fresh.
         grad_clip_norm: Max gradient norm for clipping.
@@ -921,8 +962,15 @@ def finetune(
     chunk_size = policy_cfg.chunk_size
 
     # ── datasets ─────────────────────────────────────────────────
-    online_ds = buffer.as_dataset(mode="success_only", chunk_size=chunk_size)
+    online_ds = buffer.as_dataset(mode=online_mode, chunk_size=chunk_size)
     pretrain_train_ds, pretrain_val_ds = load_pretrain_datasets(chunk_size=chunk_size)
+
+    # When bc_mask_mode="failure", pretrain samples need an is_success flag
+    # so _common_keys_collate keeps the key during naive mixing.
+    # (For "all" mode we don't need per-sample flags — the whole batch is masked.)
+    pretrain_for_train = (
+        _WithSuccessFlag(pretrain_train_ds) if bc_mask_mode == "failure" else pretrain_train_ds
+    )
 
     val_loader = DataLoader(
         pretrain_val_ds, batch_size=batch_size, shuffle=True, num_workers=0,
@@ -932,7 +980,7 @@ def finetune(
 
     if mixing == "naive":
         # ── NAIVE: concatenate online + pretrain, sample uniformly ──
-        combined_ds = ConcatDataset([pretrain_train_ds, online_ds])
+        combined_ds = ConcatDataset([pretrain_for_train, online_ds])
         train_loader = DataLoader(
             combined_ds, batch_size=batch_size, shuffle=True, num_workers=0,
             pin_memory=(device == "cuda"), drop_last=True,
@@ -940,9 +988,10 @@ def finetune(
         )
         train_iter = cycle(train_loader)
         logger.info(
-            "finetune [naive]: %d pretrain + %d online success = %d combined samples, "
-            "batch=%d, lr=%.1e, steps=%d",
-            len(pretrain_train_ds), len(online_ds), len(combined_ds), batch_size, lr, n_steps,
+            "finetune [naive]: %d pretrain + %d online %s = %d combined samples, "
+            "batch=%d, lr=%.1e, steps=%d, bc_mask_mode=%s",
+            len(pretrain_train_ds), len(online_ds), online_mode, len(combined_ds),
+            batch_size, lr, n_steps, bc_mask_mode,
         )
     elif mixing == "ratio":
         # ── RATIO: fixed pretrain/online split per batch ────────────
@@ -953,15 +1002,16 @@ def finetune(
             pin_memory=(device == "cuda"), drop_last=True,
         )
         pretrain_loader = DataLoader(
-            pretrain_train_ds, batch_size=pretrain_bs, shuffle=True, num_workers=0,
+            pretrain_for_train, batch_size=pretrain_bs, shuffle=True, num_workers=0,
             pin_memory=(device == "cuda"), drop_last=True,
         )
         online_iter = cycle(online_loader)
         pretrain_iter = cycle(pretrain_loader)
         logger.info(
-            "finetune [ratio]: %d online success samples, %d pretrain samples, "
-            "batch=%d (pretrain=%d + online=%d), lr=%.1e, steps=%d",
-            len(online_ds), len(pretrain_train_ds), batch_size, pretrain_bs, online_bs, lr, n_steps,
+            "finetune [ratio]: %d online %s samples, %d pretrain samples, "
+            "batch=%d (pretrain=%d + online=%d), lr=%.1e, steps=%d, bc_mask_mode=%s",
+            len(online_ds), online_mode, len(pretrain_train_ds),
+            batch_size, pretrain_bs, online_bs, lr, n_steps, bc_mask_mode,
         )
     else:
         raise ValueError(f"Unknown mixing={mixing!r}. Choose 'naive' or 'ratio'.")
@@ -981,6 +1031,17 @@ def finetune(
         else:  # "ratio"
             batch = _cat_batches(next(pretrain_iter), next(online_iter))
         batch = preprocessor(batch)
+
+        # Inject per-sample BC mask.
+        if bc_mask_mode == "failure" and "is_success" in batch:
+            # 1.0 for success/pretrain, 0.0 for failure episodes.
+            batch["bc_loss_mask"] = batch["is_success"].to(
+                dtype=torch.float32, device=device,
+            )
+        elif bc_mask_mode == "all":
+            # 0.0 everywhere — WM-only loss, all params trainable.
+            B = batch["action"].shape[0]
+            batch["bc_loss_mask"] = torch.zeros(B, dtype=torch.float32, device=device)
 
         loss, info = policy.forward(batch)
 

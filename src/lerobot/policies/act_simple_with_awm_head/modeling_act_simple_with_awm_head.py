@@ -500,10 +500,17 @@ class ACTSimpleWithAWMHeadPolicy(PreTrainedPolicy):
         actions_hat, wm_tensors = self.model(curr_batch, next_batch)
 
         # BC loss: L1 on continuous actions, masked by action padding.
-        action_loss = (
+        action_loss_unreduced = (
             F.l1_loss(curr_batch[ACTION], actions_hat, reduction="none")
             * ~curr_batch["action_is_pad"].unsqueeze(-1)
-        ).mean()
+        )  # (B, T, action_dim)
+
+        # Optional per-sample BC mask — zero out action loss for e.g. failure episodes.
+        bc_loss_mask = batch.get("bc_loss_mask")
+        if bc_loss_mask is not None:
+            action_loss_unreduced = action_loss_unreduced * bc_loss_mask.view(-1, 1, 1)
+
+        action_loss = action_loss_unreduced.mean()
 
         # WM loss.
         z_pred, z_target, decoded_curr, gt_curr_img = wm_tensors

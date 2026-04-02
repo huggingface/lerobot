@@ -60,6 +60,10 @@ MIXING = "naive"            # "naive" = concat online+pretrain, uniform sample
 PRETRAIN_RATIO_FT = 0.5     # pretrain fraction for finetune    (only if MIXING="ratio")
 PRETRAIN_RATIO_WM = 0.6     # pretrain fraction for finetune_wm (only if MIXING="ratio")
 LOAD_OPTIMIZER = True       # load Adam state from checkpoint (False = fresh optimizer)
+FINETUNE_ONLINE_MODE = "success_only"  # "success_only", "all", or "failure_only" for e2e finetune
+BC_MASK_MODE = "none"       # "none"    = full BC+WM loss on all episodes (default)
+                            # "failure" = zero BC loss on failure episodes, full on successes
+                            # "all"     = zero BC loss on ALL episodes (WM-only loss, all params trainable)
 WM_ONLINE_MODE = "all"      # "all", "success_only", or "failure_only"
 
 # ── Final eval ─────────────────────────────────────────────────
@@ -88,6 +92,8 @@ run = wandb.init(
         "pretrain_ratio_ft": PRETRAIN_RATIO_FT,
         "pretrain_ratio_wm": PRETRAIN_RATIO_WM,
         "load_optimizer": LOAD_OPTIMIZER,
+        "finetune_online_mode": FINETUNE_ONLINE_MODE,
+        "bc_mask_mode": BC_MASK_MODE,
         "wm_online_mode": WM_ONLINE_MODE,
         "eval_n_episodes": EVAL_N_EPISODES,
         "eval_use_planning": EVAL_USE_PLANNING,
@@ -126,9 +132,15 @@ for iteration in range(N_ITERS):
         "eval/buffer_n_fail": buf.n_fail,
     }, step=global_step)
 
-    # ── 2. End-to-end finetune on successes ──────────────────────
-    if FINETUNE_STEPS > 0 and buf.n_success >= BATCH_SIZE:
-        logger.info("Finetuning end-to-end on %d successes...", buf.n_success)
+    # ── 2. End-to-end finetune ─────────────────────────────────────
+    n_ft_online = (
+        buf.n_total if FINETUNE_ONLINE_MODE == "all"
+        else buf.n_fail if FINETUNE_ONLINE_MODE == "failure_only"
+        else buf.n_success
+    )
+    if FINETUNE_STEPS > 0 and n_ft_online >= BATCH_SIZE:
+        logger.info("Finetuning e2e on %d %s episodes (bc_mask_mode=%s)...",
+                     n_ft_online, FINETUNE_ONLINE_MODE, BC_MASK_MODE)
         ckpt, global_step = finetune(
             ckpt, buf, commit_hash=COMMIT,
             output_dir=OUTPUT_DIR,
@@ -137,13 +149,16 @@ for iteration in range(N_ITERS):
             batch_size=BATCH_SIZE,
             mixing=MIXING,
             pretrain_ratio=PRETRAIN_RATIO_FT,
+            online_mode=FINETUNE_ONLINE_MODE,
+            bc_mask_mode=BC_MASK_MODE,
             load_optimizer=LOAD_OPTIMIZER,
             wandb_run=run,
             global_step=global_step,
         )
         logger.info("Finetune done → %s (global_step=%d)", ckpt, global_step)
     elif FINETUNE_STEPS > 0:
-        logger.warning("Too few successes (%d) for finetune, skipping", buf.n_success)
+        logger.warning("Too few %s episodes (%d) for finetune, skipping",
+                        FINETUNE_ONLINE_MODE, n_ft_online)
 
     # ── 3. WM-only finetune on suboptimal data ──────────────────
     n_online = buf.n_total if WM_ONLINE_MODE == "all" else (
