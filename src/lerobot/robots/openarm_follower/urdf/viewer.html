@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>OpenArm URDF Viewer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a2e; overflow: hidden; font-family: 'IBM Plex Mono', monospace; }
+  canvas { display: block; }
+  #info {
+    position: absolute; top: 16px; left: 16px;
+    color: #e0e0e0; font-size: 13px; line-height: 1.6;
+    background: rgba(0,0,0,0.7); padding: 14px 18px; border-radius: 8px;
+    border: 1px solid #333; max-width: 340px; z-index: 10;
+  }
+  #info h2 { font-size: 15px; color: #fff; margin-bottom: 8px; }
+  .legend { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+  .dot-red { background: #ff4444; }
+  .dot-green { background: #44ff44; }
+  .dot-blue { background: #4488ff; }
+  #frame-select { margin-top: 10px; }
+  #frame-select button {
+    background: #333; color: #e0e0e0; border: 1px solid #555;
+    padding: 6px 10px; margin: 2px; border-radius: 4px; cursor: pointer;
+    font-family: inherit; font-size: 12px;
+  }
+  #frame-select button:hover { background: #555; }
+  #frame-select button.active { background: #4488ff; color: #fff; border-color: #4488ff; }
+  #status { margin-top: 8px; font-size: 11px; color: #888; }
+</style>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<div id="info">
+  <h2>OpenArm Right Arm — EE Frame Options</h2>
+  <div class="legend"><span class="dot dot-red"></span> openarm_right_link7 (wrist output)</div>
+  <div class="legend"><span class="dot" style="background:#ffaa00"></span> openarm_right_ee_target (+5cm)</div>
+  <div class="legend"><span class="dot dot-green"></span> openarm_right_hand (+10cm)</div>
+  <div class="legend"><span class="dot dot-blue"></span> openarm_right_hand_tcp (+18cm)</div>
+  <div id="frame-select">
+    <button onclick="focusFrame('link7')" class="active">link7</button>
+    <button onclick="focusFrame('ee_target')">ee_target</button>
+    <button onclick="focusFrame('hand')">hand</button>
+    <button onclick="focusFrame('tcp')">hand_tcp</button>
+  </div>
+  <div id="status">Loading URDF...</div>
+  <p style="margin-top:8px;font-size:11px;color:#888;">Drag to orbit · Scroll to zoom · Right-drag to pan</p>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+    "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+
+const statusEl = document.getElementById('status');
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1a2e);
+
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.01, 100);
+camera.position.set(0.8, 1.0, 1.8);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0, 0.9);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.update();
+
+// Lighting
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+dirLight.position.set(3, 5, 4);
+scene.add(dirLight);
+scene.add(new THREE.DirectionalLight(0x8888ff, 0.4).translateX(-2).translateY(1).translateZ(-3));
+
+// Ground grid
+scene.add(new THREE.GridHelper(4, 40, 0x333355, 0x222244));
+scene.add(new THREE.AxesHelper(0.3));
+
+// Parse URDF manually — build the kinematic tree and load STL meshes
+const stlLoader = new STLLoader();
+const robotGroup = new THREE.Group();
+scene.add(robotGroup);
+
+async function loadURDF() {
+  const resp = await fetch('./openarm_bimanual_pybullet.urdf');
+  const text = await resp.text();
+  const parser = new DOMParser();
+  const xml = parser.parseFromString(text, 'text/xml');
+
+  // Parse links and joints
+  const links = {};
+  const joints = [];
+
+  for (const linkEl of xml.querySelectorAll('link')) {
+    const name = linkEl.getAttribute('name');
+    const group = new THREE.Group();
+    group.name = name;
+
+    // Try to load visual mesh
+    const visual = linkEl.querySelector('visual');
+    if (visual) {
+      const meshEl = visual.querySelector('mesh');
+      const originEl = visual.querySelector('origin');
+      if (meshEl) {
+        const filename = meshEl.getAttribute('filename');
+        const scaleStr = meshEl.getAttribute('scale');
+        const scale = scaleStr ? scaleStr.split(' ').map(Number) : [1, 1, 1];
+
+        let xyz = [0, 0, 0];
+        if (originEl && originEl.getAttribute('xyz')) {
+          xyz = originEl.getAttribute('xyz').split(' ').map(Number);
+        }
+
+        if (filename.endsWith('.stl')) {
+          try {
+            const geo = await new Promise((resolve, reject) => {
+              stlLoader.load(filename, resolve, undefined, reject);
+            });
+            const mat = new THREE.MeshStandardMaterial({
+              color: 0x6688aa,
+              metalness: 0.3,
+              roughness: 0.6,
+              transparent: true,
+              opacity: 0.7,
+            });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.scale.set(scale[0], scale[1], scale[2]);
+            mesh.position.set(xyz[0], xyz[1], xyz[2]);
+            group.add(mesh);
+          } catch (e) {
+            // Mesh file not found, skip
+          }
+        }
+      }
+    }
+
+    links[name] = group;
+  }
+
+  // Parse joints and build hierarchy
+  for (const jointEl of xml.querySelectorAll('joint')) {
+    const name = jointEl.getAttribute('name');
+    const type = jointEl.getAttribute('type');
+    const parentName = jointEl.querySelector('parent').getAttribute('link');
+    const childName = jointEl.querySelector('child').getAttribute('link');
+    const originEl = jointEl.querySelector('origin');
+
+    let xyz = [0, 0, 0];
+    let rpy = [0, 0, 0];
+    if (originEl) {
+      if (originEl.getAttribute('xyz')) xyz = originEl.getAttribute('xyz').split(' ').map(Number);
+      if (originEl.getAttribute('rpy')) rpy = originEl.getAttribute('rpy').split(' ').map(Number);
+    }
+
+    joints.push({ name, type, parentName, childName, xyz, rpy });
+  }
+
+  // Build tree
+  const rootLinks = new Set(Object.keys(links));
+  for (const j of joints) {
+    rootLinks.delete(j.childName);
+  }
+
+  for (const j of joints) {
+    const parent = links[j.parentName];
+    const child = links[j.childName];
+    if (parent && child) {
+      child.position.set(j.xyz[0], j.xyz[1], j.xyz[2]);
+      if (j.rpy[0] || j.rpy[1] || j.rpy[2]) {
+        child.rotation.set(j.rpy[0], j.rpy[1], j.rpy[2], 'XYZ');
+      }
+      parent.add(child);
+    }
+  }
+
+  // Add root links to scene
+  for (const name of rootLinks) {
+    if (links[name]) robotGroup.add(links[name]);
+  }
+
+  // Place markers at the three EE frame candidates
+  const targets = {
+    link7: 'openarm_right_link7',
+    ee_target: 'openarm_right_ee_target',
+    hand: 'openarm_right_hand',
+    tcp: 'openarm_right_hand_tcp',
+  };
+  const colors = { link7: 0xff4444, ee_target: 0xffaa00, hand: 0x44ff44, tcp: 0x4488ff };
+  const labels = { link7: 'link7', ee_target: 'ee_target', hand: 'hand', tcp: 'hand_tcp' };
+
+  for (const [key, linkName] of Object.entries(targets)) {
+    const link = links[linkName];
+    if (!link) continue;
+
+    // Marker sphere
+    const sphere = new THREE.Mesh(
+      new THREE.SphereGeometry(0.018, 16, 16),
+      new THREE.MeshStandardMaterial({ color: colors[key], emissive: colors[key], emissiveIntensity: 0.6 })
+    );
+    link.add(sphere);
+
+    // Ring around sphere for visibility
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(0.03, 0.003, 8, 32),
+      new THREE.MeshStandardMaterial({ color: colors[key], emissive: colors[key], emissiveIntensity: 0.4 })
+    );
+    link.add(ring);
+
+    // Axes helper
+    link.add(new THREE.AxesHelper(0.08));
+
+    // Sprite label
+    const canvas = document.createElement('canvas');
+    canvas.width = 512; canvas.height = 80;
+    const ctx = canvas.getContext('2d');
+    ctx.font = 'bold 36px IBM Plex Mono, monospace';
+    ctx.fillStyle = '#' + colors[key].toString(16).padStart(6, '0');
+    ctx.fillText(labels[key], 4, 50);
+    const tex = new THREE.CanvasTexture(canvas);
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false }));
+    sprite.scale.set(0.3, 0.05, 1);
+    sprite.position.set(0.06, 0.0, 0.03);
+    link.add(sprite);
+  }
+
+  // Dashed lines between markers (in world space)
+  robotGroup.updateMatrixWorld(true);
+  const positions = {};
+  for (const [key, linkName] of Object.entries(targets)) {
+    const link = links[linkName];
+    if (link) {
+      const wp = new THREE.Vector3();
+      link.getWorldPosition(wp);
+      positions[key] = wp;
+    }
+  }
+
+  function addDashedLine(from, to) {
+    const geo = new THREE.BufferGeometry().setFromPoints([from, to]);
+    const mat = new THREE.LineDashedMaterial({ color: 0xaaaaaa, dashSize: 0.012, gapSize: 0.008 });
+    const line = new THREE.Line(geo, mat);
+    line.computeLineDistances();
+    scene.add(line);
+  }
+  if (positions.link7 && positions.hand) addDashedLine(positions.link7, positions.hand);
+  if (positions.hand && positions.tcp) addDashedLine(positions.hand, positions.tcp);
+
+  // Store for focus buttons
+  window._framePositions = positions;
+  window._links = links;
+  window._targets = targets;
+
+  // Focus on the hand area
+  if (positions.hand) {
+    controls.target.copy(positions.hand);
+    camera.position.set(positions.hand.x + 0.5, positions.hand.y + 0.4, positions.hand.z + 0.5);
+    controls.update();
+  }
+
+  const meshCount = robotGroup.children.length;
+  statusEl.textContent = `Loaded. Right arm chain visible with ${Object.keys(links).length} links.`;
+}
+
+window.focusFrame = function(key) {
+  const pos = window._framePositions?.[key];
+  if (!pos) return;
+  controls.target.copy(pos);
+  camera.position.set(pos.x + 0.35, pos.y + 0.25, pos.z + 0.35);
+  controls.update();
+  document.querySelectorAll('#frame-select button').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+};
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+loadURDF().catch(err => {
+  statusEl.textContent = `Error: ${err.message}`;
+  console.error(err);
+});
+</script>
+</body>
+</html>

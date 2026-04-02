@@ -86,11 +86,12 @@ HF_MODEL_ID = "pepijn223/grabette-umi-pi0"
 # E.g. at 10Hz with ~200ms total system latency: ceil(200 / 100) = 2.
 LATENCY_SKIP_STEPS = 0
 
-# EE feature keys produced by ForwardKinematicsJointsToEE
-EE_KEYS = ["x", "y", "z", "wx", "wy", "wz", "gripper_pos"]
+# EE feature keys produced by ForwardKinematicsJointsToEE (arm pose only).
+# Gripper joints use absolute position control, not EE-relative.
+EE_KEYS = ["x", "y", "z", "wx", "wy", "wz"]
 
-URDF_PATH = "./SO101/so101_new_calib.urdf"
-URDF_EE_FRAME = "gripper_frame_link"
+URDF_PATH = "src/lerobot/robots/openarm_follower/urdf/openarm_bimanual_pybullet.urdf"
+URDF_EE_FRAME = "openarm_right_link7"
 
 
 def main():
@@ -101,38 +102,47 @@ def main():
         side="right",
         cameras=camera_config,
         max_relative_target=8.0,
+        gripper_port="/dev/ttyUSB0",
     )
     robot = OpenArmFollower(robot_config)
 
     policy = PI0Policy.from_pretrained(HF_MODEL_ID)
     policy.config.latency_skip_steps = LATENCY_SKIP_STEPS
 
-    motor_names = list(robot.bus.motors.keys())
+    arm_motor_names = list(robot.bus.motors.keys())
+    gripper_motor_names = list(robot.gripper_bus.motors.keys())
 
     kinematics_solver = RobotKinematics(
         urdf_path=URDF_PATH,
         target_frame_name=URDF_EE_FRAME,
-        joint_names=motor_names,
+        joint_names=arm_motor_names,
     )
 
-    # FK: joint observation → EE observation (produces observation.state)
+    # The policy starts from the robot's current EE pose (via FK below).
+    # Relative actions are predicted as deltas from that pose, so no manual
+    # re-centering is needed — the starting point is always the live EE tip.
+
+    # FK: joint observation → EE observation (produces observation.state).
+    # gripper_names=[] means proximal/distal pass through as absolute positions.
     robot_joints_to_ee_processor = RobotProcessorPipeline[RobotObservation, RobotObservation](
         steps=[
             ForwardKinematicsJointsToEE(
                 kinematics=kinematics_solver,
-                motor_names=motor_names,
+                motor_names=arm_motor_names,
+                gripper_names=[],
             )
         ],
         to_transition=observation_to_transition,
         to_output=transition_to_observation,
     )
 
-    # IK: EE action → joint targets
+    # IK: EE action → joint targets. Gripper actions are absolute and pass through.
     robot_ee_to_joints_processor = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
         steps=[
             InverseKinematicsEEToJoints(
                 kinematics=kinematics_solver,
-                motor_names=motor_names,
+                motor_names=arm_motor_names,
+                gripper_names=[],
                 initial_guess_current_joints=True,
             ),
         ],
@@ -162,7 +172,13 @@ def main():
             aggregate_pipeline_dataset_features(
                 pipeline=make_default_teleop_action_processor(),
                 initial_features=create_initial_features(
-                    action={f"ee.{k}": PolicyFeature(type=FeatureType.ACTION, shape=(1,)) for k in EE_KEYS}
+                    action={
+                        **{f"ee.{k}": PolicyFeature(type=FeatureType.ACTION, shape=(1,)) for k in EE_KEYS},
+                        **{
+                            f"{g}.pos": PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+                            for g in gripper_motor_names
+                        },
+                    }
                 ),
                 use_videos=True,
             ),

@@ -110,6 +110,59 @@ The inference flow uses pi0's built-in processor pipeline — no custom wrappers
 4. **Postprocessor** — `UnnormalizerProcessorStep` unnormalizes, then `AbsoluteActionsProcessorStep` adds the cached state back to get absolute EE targets.
 5. **IK → Robot** — `InverseKinematicsEEToJoints` converts absolute EE targets to joint commands.
 
+## Replay Viewer
+
+Before running on hardware, you can visualize any dataset episode in a browser-based 3D viewer. The viewer shows the EE trajectory overlaid on the OpenArm URDF model, making it easy to sanity-check recorded data or debug unexpected behavior.
+
+### Quick start
+
+```bash
+python examples/umi_pi0_relative_ee/replay.py
+```
+
+This extracts the trajectory from episode 0 of the default dataset, starts a local HTTP server, and opens the viewer at [http://localhost:8765/replay_viewer.html](http://localhost:8765/replay_viewer.html).
+
+### Options
+
+| Flag        | Default                      | Description                          |
+| ----------- | ---------------------------- | ------------------------------------ |
+| `--repo-id` | `glannuzel/grabette-dataset` | HuggingFace dataset repo to load     |
+| `--episode` | `0`                          | Episode index to replay              |
+| `--port`    | `8765`                       | HTTP server port                     |
+| `--force`   | off                          | Re-extract trajectory even if cached |
+
+Example with a different dataset and episode:
+
+```bash
+python examples/umi_pi0_relative_ee/replay.py \
+    --repo-id myuser/my-dataset \
+    --episode 3 \
+    --port 8766
+```
+
+### Viewer controls
+
+The panel in the top-left corner shows live EE coordinates (x, y, z, ax, ay, az) and gripper state for the current frame. Below that are transport controls:
+
+- **Play / Pause** — toggle automatic playback.
+- **Step buttons** (◀ ▶) — advance or rewind one frame at a time.
+- **Reset** (⟳) — jump back to frame 0.
+- **Scrubber** — drag to seek to any frame.
+- **Speed selector** — 0.25×, 0.5×, 1×, 2×, or 4× playback speed.
+
+The 3D scene uses orbit controls — click and drag to rotate, scroll to zoom, right-click drag to pan.
+
+### Color legend
+
+| Color              | Meaning                                       |
+| ------------------ | --------------------------------------------- |
+| Red sphere         | Current EE position                           |
+| Yellow trail       | Past trajectory (frames already visited)      |
+| Dark trail         | Future trajectory (frames ahead)              |
+| Orange ring + axes | URDF `ee_target` frame (zero-joint reference) |
+
+The trajectory is automatically re-centered so that frame 0 aligns with the robot's `openarm_right_ee_target` link in the zero-joint pose.
+
 ## How the Pieces Fit Together
 
 ```

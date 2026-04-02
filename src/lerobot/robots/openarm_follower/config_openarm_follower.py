@@ -28,7 +28,8 @@ LEFT_DEFAULT_JOINTS_LIMITS: dict[str, tuple[float, float]] = {
     "joint_5": (-85.0, 85.0),
     "joint_6": (-40.0, 40.0),
     "joint_7": (-80.0, 80.0),
-    "gripper": (-65.0, 0.0),
+    "proximal": (0.0, 100.0),
+    "distal": (0.0, 100.0),
 }
 
 RIGHT_DEFAULT_JOINTS_LIMITS: dict[str, tuple[float, float]] = {
@@ -39,7 +40,8 @@ RIGHT_DEFAULT_JOINTS_LIMITS: dict[str, tuple[float, float]] = {
     "joint_5": (-85.0, 85.0),
     "joint_6": (-40.0, 40.0),
     "joint_7": (-80.0, 80.0),
-    "gripper": (-65.0, 0.0),
+    "proximal": (0.0, 100.0),
+    "distal": (0.0, 100.0),
 }
 
 
@@ -73,13 +75,8 @@ class OpenArmFollowerConfigBase:
     # Camera configurations
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
-    # Motor configuration for OpenArms (7 DOF per arm)
+    # Arm motor configuration (7 DOF, Damiao on CAN bus)
     # Maps motor names to (send_can_id, recv_can_id, motor_type)
-    # Based on: https://docs.openarm.dev/software/setup/configure-test
-    # OpenArms uses 4 types of motors:
-    # - DM8009 (DM-J8009P-2EC) for shoulders (high torque)
-    # - DM4340P and DM4340 for shoulder rotation and elbow
-    # - DM4310 (DM-J4310-2EC V1.1) for wrist and gripper
     motor_config: dict[str, tuple[int, int, str]] = field(
         default_factory=lambda: {
             "joint_1": (0x01, 0x11, "dm8009"),  # J1 - Shoulder pan (DM8009)
@@ -89,19 +86,18 @@ class OpenArmFollowerConfigBase:
             "joint_5": (0x05, 0x15, "dm4310"),  # J5 - Wrist roll (DM4310)
             "joint_6": (0x06, 0x16, "dm4310"),  # J6 - Wrist pitch (DM4310)
             "joint_7": (0x07, 0x17, "dm4310"),  # J7 - Wrist rotation (DM4310)
-            "gripper": (0x08, 0x18, "dm4310"),  # J8 - Gripper (DM4310)
         }
     )
 
-    # MIT control parameters for position control (used in send_action)
-    # List of 8 values: [joint_1, joint_2, joint_3, joint_4, joint_5, joint_6, joint_7, gripper]
-    position_kp: list[float] = field(
-        default_factory=lambda: [240.0, 240.0, 240.0, 240.0, 24.0, 31.0, 25.0, 25.0]
-    )
-    position_kd: list[float] = field(default_factory=lambda: [5.0, 5.0, 3.0, 5.0, 0.3, 0.3, 0.3, 0.3])
+    # UMI-style gripper (Feetech STS3215 on serial bus)
+    gripper_port: str = "/dev/ttyUSB0"
+    gripper_motor_ids: dict[str, int] = field(default_factory=lambda: {"proximal": 1, "distal": 2})
 
-    # Values for joint limits. Can be overridden via CLI (for custom values) or by setting config.side to either 'left' or 'right'.
-    # If config.side is left set to None and no CLI values are passed, the default joint limit values are small for safety.
+    # MIT control parameters for the 7 arm joints
+    position_kp: list[float] = field(default_factory=lambda: [240.0, 240.0, 240.0, 240.0, 24.0, 31.0, 25.0])
+    position_kd: list[float] = field(default_factory=lambda: [5.0, 5.0, 3.0, 5.0, 0.3, 0.3, 0.3])
+
+    # Joint limits. Can be overridden via CLI or by setting config.side to 'left' or 'right'.
     joint_limits: dict[str, tuple[float, float]] = field(
         default_factory=lambda: {
             "joint_1": (-5.0, 5.0),
@@ -111,7 +107,8 @@ class OpenArmFollowerConfigBase:
             "joint_5": (-5.0, 5.0),
             "joint_6": (-5.0, 5.0),
             "joint_7": (-5.0, 5.0),
-            "gripper": (-5.0, 0.0),
+            "proximal": (0.0, 100.0),
+            "distal": (0.0, 100.0),
         }
     )
 
