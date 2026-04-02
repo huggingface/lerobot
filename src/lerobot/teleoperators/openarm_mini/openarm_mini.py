@@ -32,7 +32,7 @@ from .config_openarm_mini import OpenArmMiniConfig
 logger = logging.getLogger(__name__)
 
 # Motors whose direction is inverted during readout
-RIGHT_MOTORS_TO_FLIP = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"]
+RIGHT_MOTORS_TO_FLIP = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_7"]
 LEFT_MOTORS_TO_FLIP = ["joint_1", "joint_3", "joint_4", "joint_5", "joint_6", "joint_7"]
 
 # Leader joint 6 maps to follower joint 7 and vice versa
