@@ -296,15 +296,5 @@ class GrootPolicy(PreTrainedPolicy):
     # Internal helpers
     # -------------------------
     def _handle_flash_attention_compatibility(self) -> None:
-        """Handle Flash Attention compatibility issues.
-
-        Checks for FlashAttention-4 (CuTeDSL) first, then falls back to FlashAttention-2.
-        """
-        from lerobot.utils.flash_attn_compat import get_flash_attn_version, is_flash_attn_available, is_flash_attn_fa4
-
-        if is_flash_attn_available():
-            backend = "FA4 (CuTeDSL)" if is_flash_attn_fa4() else "FA2"
-            print(f"[GROOT] Flash Attention version: {get_flash_attn_version()} ({backend})")
-        else:
-            print("[GROOT] Flash Attention not available")
-            print("[GROOT] Will use fallback attention mechanism")
+        """Verify FlashAttention-4 (CuTeDSL) is available."""
+        from lerobot.utils.flash_attn_compat import flash_attn_func  # noqa: F401

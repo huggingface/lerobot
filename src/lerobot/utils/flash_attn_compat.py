@@ -1,65 +1,25 @@
-"""Compatibility layer for FlashAttention (FA4 CuTeDSL / FA2 fallback).
+"""FlashAttention-4 (CuTeDSL) imports and related utilities.
 
-Provides a unified import point for flash attention functions and related utilities
-(bert_padding, rotary embeddings) that works with both the new FlashAttention-4
-CuTeDSL package (flash-attn-4) and the legacy FlashAttention-2 package (flash-attn).
-
-FA4 is preferred when available; FA2 is used as a fallback.
+Provides a single import point for flash attention functions and padding/rotary
+helpers used across policies. Requires the ``flash-attn-4`` package.
 """
-
-import logging
 
 import torch
 import torch.nn.functional as F
+from flash_attn.cute import flash_attn_func, flash_attn_varlen_func
 
-logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Flash attention function imports — prefer FA4, fall back to FA2
-# ---------------------------------------------------------------------------
-
-_FLASH_ATTN_VERSION: str = "none"
-_FLASH_ATTN_FA4: bool = False
-
-flash_attn_func = None
-flash_attn_varlen_func = None
-
-try:
-    from flash_attn.cute import flash_attn_func, flash_attn_varlen_func  # type: ignore[assignment]
-    from flash_attn.cute import __version__ as _fa4_version
-
-    _FLASH_ATTN_VERSION = _fa4_version
-    _FLASH_ATTN_FA4 = True
-    logger.debug("Using FlashAttention-4 (CuTeDSL) %s", _FLASH_ATTN_VERSION)
-except ImportError:
-    try:
-        from flash_attn import flash_attn_func, flash_attn_varlen_func  # type: ignore[assignment]
-        import flash_attn as _fa2_mod
-
-        _FLASH_ATTN_VERSION = getattr(_fa2_mod, "__version__", "unknown")
-        logger.debug("Using FlashAttention-2 %s", _FLASH_ATTN_VERSION)
-    except ImportError:
-        logger.debug("No FlashAttention package found")
-
-
-def is_flash_attn_available() -> bool:
-    """Return True if any FlashAttention backend (FA4 or FA2) is importable."""
-    return flash_attn_func is not None
-
-
-def is_flash_attn_fa4() -> bool:
-    """Return True if FlashAttention-4 (CuTeDSL) is the active backend."""
-    return _FLASH_ATTN_FA4
-
-
-def get_flash_attn_version() -> str:
-    return _FLASH_ATTN_VERSION
+__all__ = [
+    "flash_attn_func",
+    "flash_attn_varlen_func",
+    "index_first_axis",
+    "unpad_input",
+    "pad_input",
+    "apply_rotary_emb",
+]
 
 
 # ---------------------------------------------------------------------------
-# bert_padding utilities (formerly flash_attn.bert_padding)
-#
-# Pure-PyTorch replacements so we don't depend on FA2's compiled extensions.
+# bert_padding utilities (pure-PyTorch, no compiled extensions needed)
 # ---------------------------------------------------------------------------
 
 
@@ -113,7 +73,7 @@ def pad_input(
 
 
 # ---------------------------------------------------------------------------
-# Rotary embedding helper (formerly flash_attn.layers.rotary.apply_rotary_emb)
+# Rotary embedding helper
 # ---------------------------------------------------------------------------
 
 
