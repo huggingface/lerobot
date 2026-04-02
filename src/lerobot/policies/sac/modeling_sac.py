@@ -59,6 +59,8 @@ class SACPolicy(
         self._init_encoders()
         self.discrete_critic = None
         self._actor_initialized = False
+        self._actor_compiled = False
+        self._inference_image_encoder_compiled = False
 
     # ------------------------------------------------------------------
     # Deferred actor init (called by algorithm or actor process)
@@ -81,13 +83,45 @@ class SACPolicy(
             encoder_is_shared=self.shared_encoder,
             **asdict(self.config.policy_kwargs),
         )
-        if self.config.use_torch_compile:
-            self.actor = torch.compile(self.actor)
         self.target_entropy = self.config.target_entropy
         if self.target_entropy is None:
             dim = continuous_action_dim + (1 if self.config.num_discrete_actions is not None else 0)
             self.target_entropy = -np.prod(dim) / 2
         self._actor_initialized = True
+        self._maybe_compile_actor()
+
+    def _maybe_compile_actor(self) -> None:
+        """Compile actor only when it is already on the configured device."""
+        if not self.config.use_torch_compile or not self._actor_initialized or self._actor_compiled:
+            return
+        actor_device = get_device_from_parameters(self.actor)
+        expected_device = torch.device(self.config.device)
+        if actor_device != expected_device:
+            return
+        self.actor = torch.compile(self.actor)
+        self._actor_compiled = True
+
+    def _maybe_compile_inference_image_encoder(self) -> None:
+        """Compile the image encoder used by select_action() cache extraction."""
+        if not self.config.use_torch_compile or self._inference_image_encoder_compiled:
+            return
+        if self.config.vision_encoder_name is not None:
+            return
+        if not self.encoder_actor.has_images:
+            return
+        actor_device = get_device_from_parameters(self.encoder_actor)
+        expected_device = torch.device(self.config.device)
+        if actor_device != expected_device:
+            return
+        self.encoder_actor.image_encoder = torch.compile(self.encoder_actor.image_encoder)
+        self._inference_image_encoder_compiled = True
+
+    def to(self, *args, **kwargs):
+        module = super().to(*args, **kwargs)
+        self._maybe_compile_inference_image_encoder()
+        if self._actor_initialized:
+            self._maybe_compile_actor()
+        return module
 
     # ------------------------------------------------------------------
     # Inference
