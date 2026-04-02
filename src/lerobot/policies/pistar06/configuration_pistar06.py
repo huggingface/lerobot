@@ -32,7 +32,18 @@ class PiStar06Config(PI05Config):
     # Frozen value network checkpoint (path to .pt file from RECAP training)
     value_network_checkpoint: str | None = None
 
-    # Advantage conditioning
+    # Master switch for advantage conditioning.  When False the policy
+    # behaves like vanilla Pi0.5 (no advantage text is injected during
+    # training or inference).  Persisted in config.json so inference
+    # automatically matches the training regime.
+    enable_advantage_conditioning: bool = True
+
+    # Advantage conditioning -- threshold controls which frames get
+    # "Advantage: positive" text (advantage > threshold).  The paper sets this
+    # to a per-task percentile (~30% positive in pre-training, ~40% in
+    # fine-tuning).  In the training script this is auto-computed from the
+    # advantage distribution via advantage_threshold_percentile; the value here
+    # is the resolved scalar used at runtime.
     advantage_threshold: float = 0.0
     advantage_dropout: float = 0.3
 

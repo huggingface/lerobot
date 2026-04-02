@@ -65,7 +65,7 @@ class RECAPPiStarTrainingConfig:
 
     repo_id: str
     output_dir: str
-    value_network_checkpoint: str
+    value_network_checkpoint: str = ""
     value_network_checkpoint_filename: str = "checkpoints/epoch_0001.pt"
     episode_labels_path: str | None = None
     root: str | None = None
@@ -87,10 +87,21 @@ class RECAPPiStarTrainingConfig:
     validate_every_n_train_steps: int = 0
     max_val_steps_per_step_validation: int | None = 50
 
+    # Master switch: set to False to train vanilla Pi0.5 without advantage
+    # text injection (baseline for ablation experiments).
+    enable_advantage_conditioning: bool = True
+
     # RECAP advantage conditioning
     c_fail: float = 500.0
     num_value_bins: int = 56
+    # Per-frame advantage threshold: only frames with advantage > threshold get
+    # "Advantage: positive" text.  The paper (Appendix A.4) sets this to a
+    # per-task percentile so that ~30% of frames are positive during pre-training
+    # and ~40% during fine-tuning.  Use advantage_threshold_percentile to compute
+    # this automatically from the advantage distribution; when set it overrides
+    # advantage_threshold after advantages are pre-computed.
     advantage_threshold: float = 0.0
+    advantage_threshold_percentile: float | None = 70.0
     advantage_dropout: float = 0.3
     cfg_beta: float = 1.0
 
@@ -238,6 +249,7 @@ def _build_policy_config(
         advantage_threshold=cfg.advantage_threshold,
         advantage_dropout=cfg.advantage_dropout,
         cfg_beta=cfg.cfg_beta,
+        enable_advantage_conditioning=cfg.enable_advantage_conditioning,
     )
     return policy_cfg
 
@@ -337,7 +349,7 @@ def _precompute_advantages(
     policy_cfg,
     device: torch.device,
     batch_size: int = 4,
-) -> dict[int, float]:
+) -> tuple[dict[int, float], dict[int, int]]:
     """Pre-compute per-frame advantages using the frozen value network.
 
     Builds a lightweight preprocessor internally that produces only the
@@ -383,10 +395,12 @@ def _precompute_advantages(
     )
 
     advantage_lookup: dict[int, float] = {}
+    episode_lookup: dict[int, int] = {}
     total_frames = 0
 
     for batch in loader:
         abs_indices = batch["index"]
+        ep_indices = batch["episode_index"]
         B = abs_indices.shape[0]
 
         batch = preprocessor(batch)
@@ -399,6 +413,7 @@ def _precompute_advantages(
             R_t = R_t_by_abs_index.get(abs_idx)
             if R_t is not None:
                 advantage_lookup[abs_idx] = R_t - V_t[i].item()
+                episode_lookup[abs_idx] = int(ep_indices[i].item())
 
         total_frames += B
         if total_frames % 500 == 0:
@@ -414,12 +429,13 @@ def _precompute_advantages(
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    return advantage_lookup
+    return advantage_lookup, episode_lookup
 
 
 def _save_advantage_cache(
     path: str | Path,
     advantage_lookup: dict[int, float],
+    episode_lookup: dict[int, int] | None = None,
     metadata: dict | None = None,
 ) -> None:
     """Save pre-computed advantages to a JSON file for reuse across runs."""
@@ -430,6 +446,8 @@ def _save_advantage_cache(
         "num_frames": len(advantage_lookup),
         "mean_advantage": sum(advantage_lookup.values()) / max(1, len(advantage_lookup)),
     }
+    if episode_lookup is not None:
+        payload["episode_labels"] = {str(k): v for k, v in episode_lookup.items()}
     if metadata:
         payload["metadata"] = metadata
     with open(path, "w") as f:
@@ -437,17 +455,48 @@ def _save_advantage_cache(
     logging.info(f"Saved advantage cache ({len(advantage_lookup)} frames) to {path}")
 
 
-def _load_advantage_cache(path: str | Path) -> dict[int, float]:
+def _load_advantage_cache(path: str | Path) -> tuple[dict[int, float], dict[int, int] | None]:
     """Load pre-computed advantages from a JSON cache file."""
     path = Path(path)
     with open(path) as f:
         payload = json.load(f)
     lookup = {int(k): float(v) for k, v in payload["advantages"].items()}
+    episode_lookup = None
+    if "episode_labels" in payload:
+        episode_lookup = {int(k): int(v) for k, v in payload["episode_labels"].items()}
     logging.info(
         f"Loaded advantage cache from {path}: {len(lookup)} frames, "
         f"mean={sum(lookup.values()) / max(1, len(lookup)):.4f}"
     )
-    return lookup
+    return lookup, episode_lookup
+
+
+def _compute_advantage_threshold(
+    advantage_lookup: dict[int, float],
+    percentile: float,
+) -> float:
+    """Compute an advantage threshold from the Nth percentile of the distribution.
+
+    Following the paper (Appendix A.4): during pre-training the threshold is set
+    so that ~30% of frames are positive (percentile=70); during fine-tuning ~40%
+    are positive (percentile=60).
+    """
+    import numpy as np
+
+    values = np.array(list(advantage_lookup.values()))
+    threshold = float(np.percentile(values, percentile))
+    pct_positive = float((values > threshold).sum()) / len(values) * 100
+
+    logging.info(
+        f"Advantage distribution ({len(values)} frames): "
+        f"mean={values.mean():.5f} std={values.std():.5f} "
+        f"min={values.min():.5f} max={values.max():.5f}"
+    )
+    logging.info(
+        f"Auto-threshold from {percentile:.0f}th percentile: {threshold:.5f} "
+        f"({pct_positive:.1f}% of frames will be positive)"
+    )
+    return threshold
 
 
 def _load_vn_train_config(checkpoint_path: str) -> dict:
@@ -726,28 +775,40 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
     logging.info(f"Using episode labels from: {labels_csv_path}")
     success_by_episode = base._load_episode_success_map(labels_csv_path)
 
-    # Resolve value-network checkpoint: local path or HuggingFace repo ID
-    resolved_vn_checkpoint = _resolve_value_network_checkpoint(cfg)
+    if cfg.enable_advantage_conditioning:
+        if not cfg.value_network_checkpoint:
+            raise ValueError(
+                "value_network_checkpoint is required when enable_advantage_conditioning=True"
+            )
 
-    # Pull c_fail / num_value_bins from the value-network checkpoint so
-    # the return targets used here are guaranteed to match those used
-    # during value-network training.
-    vn_train_cfg = _load_vn_train_config(resolved_vn_checkpoint)
-    if vn_train_cfg:
-        vn_c_fail = vn_train_cfg.get("c_fail")
-        vn_num_value_bins = vn_train_cfg.get("num_value_bins")
-        if vn_c_fail is not None and vn_c_fail != cfg.c_fail:
-            logging.warning(
-                f"Overriding c_fail from {cfg.c_fail} -> {vn_c_fail} "
-                f"to match value-network checkpoint"
-            )
-            cfg.c_fail = float(vn_c_fail)
-        if vn_num_value_bins is not None and vn_num_value_bins != cfg.num_value_bins:
-            logging.warning(
-                f"Overriding num_value_bins from {cfg.num_value_bins} -> {vn_num_value_bins} "
-                f"to match value-network checkpoint"
-            )
-            cfg.num_value_bins = int(vn_num_value_bins)
+        # Resolve value-network checkpoint: local path or HuggingFace repo ID
+        resolved_vn_checkpoint = _resolve_value_network_checkpoint(cfg)
+
+        # Pull c_fail / num_value_bins from the value-network checkpoint so
+        # the return targets used here are guaranteed to match those used
+        # during value-network training.
+        vn_train_cfg = _load_vn_train_config(resolved_vn_checkpoint)
+        if vn_train_cfg:
+            vn_c_fail = vn_train_cfg.get("c_fail")
+            vn_num_value_bins = vn_train_cfg.get("num_value_bins")
+            if vn_c_fail is not None and vn_c_fail != cfg.c_fail:
+                logging.warning(
+                    f"Overriding c_fail from {cfg.c_fail} -> {vn_c_fail} "
+                    f"to match value-network checkpoint"
+                )
+                cfg.c_fail = float(vn_c_fail)
+            if vn_num_value_bins is not None and vn_num_value_bins != cfg.num_value_bins:
+                logging.warning(
+                    f"Overriding num_value_bins from {cfg.num_value_bins} -> {vn_num_value_bins} "
+                    f"to match value-network checkpoint"
+                )
+                cfg.num_value_bins = int(vn_num_value_bins)
+    else:
+        logging.info(
+            "Advantage conditioning DISABLED — training vanilla Pi0.5 "
+            "(no value network, no advantage text injection)"
+        )
+        cfg.advantage_dropout = 1.0
 
     frame_targets = base._build_frame_targets(
         dataset=full_dataset,
@@ -773,30 +834,48 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
     _log_memory("post-dataset-split")
 
     # ── 3. Pre-compute advantages using Pi0.5-based value network ────────
-    cache_path = Path(cfg.advantage_cache_path) if cfg.advantage_cache_path else None
-    if cache_path is not None and cache_path.is_file():
-        advantage_lookup = _load_advantage_cache(cache_path)
-    else:
-        advantage_lookup = _precompute_advantages(
-            full_dataset=full_dataset,
-            frame_targets=frame_targets,
-            value_network_checkpoint=resolved_vn_checkpoint,
-            policy_cfg=policy_cfg,
-            device=device,
-            batch_size=cfg.vn_batch_size,
-        )
-
-        if cache_path is not None:
-            _save_advantage_cache(
-                cache_path,
-                advantage_lookup,
-                metadata={
-                    "value_network_checkpoint": resolved_vn_checkpoint,
-                    "c_fail": cfg.c_fail,
-                    "repo_id": cfg.repo_id,
-                },
+    if cfg.enable_advantage_conditioning:
+        cache_path = Path(cfg.advantage_cache_path) if cfg.advantage_cache_path else None
+        if cache_path is not None and cache_path.is_file():
+            advantage_lookup, _ = _load_advantage_cache(cache_path)
+        else:
+            advantage_lookup, episode_lookup = _precompute_advantages(
+                full_dataset=full_dataset,
+                frame_targets=frame_targets,
+                value_network_checkpoint=resolved_vn_checkpoint,
+                policy_cfg=policy_cfg,
+                device=device,
+                batch_size=cfg.vn_batch_size,
             )
-    _log_memory("post-advantage-precompute")
+
+            if cache_path is not None:
+                _save_advantage_cache(
+                    cache_path,
+                    advantage_lookup,
+                    episode_lookup=episode_lookup,
+                    metadata={
+                        "value_network_checkpoint": resolved_vn_checkpoint,
+                        "c_fail": cfg.c_fail,
+                        "repo_id": cfg.repo_id,
+                        "success_by_episode": success_by_episode
+                    },
+                )
+        _log_memory("post-advantage-precompute")
+
+        # ── 3b. Auto-compute advantage threshold from percentile ─────────
+        if cfg.advantage_threshold_percentile is not None:
+            cfg.advantage_threshold = _compute_advantage_threshold(
+                advantage_lookup, cfg.advantage_threshold_percentile
+            )
+            policy_cfg.advantage_threshold = cfg.advantage_threshold
+        else:
+            logging.info(
+                f"Using fixed advantage_threshold={cfg.advantage_threshold:.5f} "
+                f"(advantage_threshold_percentile is None)"
+            )
+    else:
+        advantage_lookup: dict[int, float] = {}
+        logging.info("Skipping advantage pre-computation (advantage conditioning disabled)")
 
     # ── 4. Create separate datasets for train and val ────────────────────
     delta_timestamps = resolve_delta_timestamps(policy_cfg, full_dataset.meta)
@@ -1134,6 +1213,12 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
     logging.info(
         f"Training complete. Best val conditioning accuracy: {best_val_cond_acc:.4f}"
     )
+
+    # ── 9. Export in HuggingFace pretrained format for inference ──────────
+    pretrained_dir = output_dir / "pretrained"
+    pretrained_dir.mkdir(parents=True, exist_ok=True)
+    policy.save_pretrained(pretrained_dir)
+    logging.info(f"Saved pretrained model to {pretrained_dir}")
 
     if wandb_run is not None:
         wandb_run.finish()

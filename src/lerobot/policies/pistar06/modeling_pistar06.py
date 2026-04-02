@@ -2027,12 +2027,13 @@ class PiStar06Policy(PreTrainedPolicy):
         bsize = tokens.shape[0]
         device = tokens.device
 
-        positive_indicator = torch.ones(
-            bsize, dtype=torch.bool, device=device
-        )
-        tokens, masks = self._inject_advantage_text(
-            tokens, masks, positive_indicator, None
-        )
+        if self.config.enable_advantage_conditioning:
+            positive_indicator = torch.ones(
+                bsize, dtype=torch.bool, device=device
+            )
+            tokens, masks = self._inject_advantage_text(
+                tokens, masks, positive_indicator, None
+            )
 
         actions_shape = (
             bsize,
@@ -2095,12 +2096,15 @@ class PiStar06Policy(PreTrainedPolicy):
         device = tokens.device
         beta = self.config.cfg_beta
 
-        positive_indicator = torch.ones(
-            bsize, dtype=torch.bool, device=device
-        )
-        tokens_cond, masks_cond = self._inject_advantage_text(
-            tokens, masks, positive_indicator, None
-        )
+        if self.config.enable_advantage_conditioning:
+            positive_indicator = torch.ones(
+                bsize, dtype=torch.bool, device=device
+            )
+            tokens_cond, masks_cond = self._inject_advantage_text(
+                tokens, masks, positive_indicator, None
+            )
+        else:
+            tokens_cond, masks_cond = tokens, masks
 
         actions_shape = (
             bsize,
