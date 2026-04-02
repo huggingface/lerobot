@@ -377,7 +377,11 @@ def _rtc_inference_thread(
     warmup_required = max(1, int(cfg.compile_warmup_inferences)) if cfg.use_torch_compile else 0
 
     relative_step = next(
-        (step for step in preprocessor.steps if isinstance(step, RelativeActionsProcessorStep) and step.enabled),
+        (
+            step
+            for step in preprocessor.steps
+            if isinstance(step, RelativeActionsProcessorStep) and step.enabled
+        ),
         None,
     )
     normalizer_step = next(
