@@ -18,7 +18,7 @@
 Edit LeRobot datasets using various transformation tools.
 
 This script allows you to delete episodes, split datasets, merge datasets,
-remove features, modify tasks, and convert image datasets to video format.
+remove features, modify tasks, recompute stats, and convert image datasets to video format.
 When new_repo_id is specified, creates a new dataset.
 
 Path semantics (v2): --root and --new_root are exact dataset folders containing
@@ -148,6 +148,21 @@ Show dataset information without feature details:
         --operation.type info \
         --operation.show_features false
 
+Recompute dataset statistics:
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht \
+        --operation.type recompute_stats
+
+Recompute stats for relative actions and push to hub:
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht \
+        --operation.type recompute_stats \
+        --operation.relative_action true \
+        --operation.chunk_size 50 \
+        --operation.relative_exclude_joints "['gripper']" \
+        --operation.num_workers 4 \
+        --push_to_hub true
+
 Using JSON config file:
     lerobot-edit-dataset \
         --config_path path/to/edit_config.json
@@ -168,6 +183,7 @@ from lerobot.datasets.dataset_tools import (
     delete_episodes,
     merge_datasets,
     modify_tasks,
+    recompute_stats,
     remove_feature,
     split_dataset,
 )
@@ -228,6 +244,16 @@ class ConvertImageToVideoConfig(OperationConfig):
     num_workers: int = 4
     max_episodes_per_batch: int | None = None
     max_frames_per_batch: int | None = None
+
+
+@OperationConfig.register_subclass("recompute_stats")
+@dataclass
+class RecomputeStatsConfig(OperationConfig):
+    skip_image_video: bool = True
+    relative_action: bool = False
+    relative_exclude_joints: list[str] | None = None
+    chunk_size: int = 50
+    num_workers: int = 0
 
 
 @OperationConfig.register_subclass("info")
@@ -525,6 +551,35 @@ def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
         logging.info("Dataset saved locally (not pushed to hub)")
 
 
+def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
+    if not isinstance(cfg.operation, RecomputeStatsConfig):
+        raise ValueError("Operation config must be RecomputeStatsConfig")
+
+    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+
+    logging.info(f"Recomputing stats for {cfg.repo_id}")
+    if cfg.operation.relative_action:
+        logging.info(
+            f"Relative action stats enabled (chunk_size={cfg.operation.chunk_size}, "
+            f"exclude_joints={cfg.operation.relative_exclude_joints})"
+        )
+
+    recompute_stats(
+        dataset,
+        skip_image_video=cfg.operation.skip_image_video,
+        relative_action=cfg.operation.relative_action,
+        relative_exclude_joints=cfg.operation.relative_exclude_joints,
+        chunk_size=cfg.operation.chunk_size,
+        num_workers=cfg.operation.num_workers,
+    )
+
+    logging.info(f"Stats written to {dataset.root}")
+
+    if cfg.push_to_hub:
+        logging.info(f"Pushing to hub as {dataset.meta.repo_id}...")
+        dataset.push_to_hub()
+
+
 def _get_dataset_size(repo_path):
     import os
 
@@ -596,6 +651,8 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
         handle_modify_tasks(cfg)
     elif operation_type == "convert_image_to_video":
         handle_convert_image_to_video(cfg)
+    elif operation_type == "recompute_stats":
+        handle_recompute_stats(cfg)
     elif operation_type == "info":
         handle_info(cfg)
     else:
