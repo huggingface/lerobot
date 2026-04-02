@@ -63,6 +63,26 @@ Usage:
         --robot.cameras="{ gripper: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, front: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
         --task="Move green small object into the purple platform" \
         --duration=120
+
+    # Run RTC with bi_openarm_follower (dual-arm OpenArms) and pi0.5 policy
+    python examples/rtc/eval_with_real_robot.py \
+        --policy.path=lerobot-data-collection/folding_final \
+        --robot.type=bi_openarm_follower \
+        --robot.cameras='{left_wrist: {type: opencv, index_or_path: "/dev/video4", width: 1280, height: 720, fps: 30}, base: {type: opencv, index_or_path: "/dev/video2", width: 640, height: 480, fps: 30}, right_wrist: {type: opencv, index_or_path: "/dev/video0", width: 1280, height: 720, fps: 30}}' \
+        --robot.left_arm_config.port=can1 \
+        --robot.left_arm_config.side=left \
+        --robot.left_arm_config.can_interface=socketcan \
+        --robot.right_arm_config.port=can0 \
+        --robot.right_arm_config.side=right \
+        --robot.right_arm_config.can_interface=socketcan \
+        --task="Fold the T-shirt properly" \
+        --fps=30 \
+        --duration=2000 \
+        --rtc.enabled=true \
+        --rtc.execution_horizon=20 \
+        --rtc.max_guidance_weight=5.0 \
+        --rtc.prefix_attention_schedule=LINEAR \
+        --device=cuda
 """
 
 import logging
@@ -87,21 +107,29 @@ from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 from lerobot.policies.rtc.action_queue import ActionQueue
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.policies.rtc.latency_tracker import LatencyTracker
+from lerobot.processor import (
+    NormalizerProcessorStep,
+    RelativeActionsProcessorStep,
+    TransitionKey,
+    create_transition,
+)
 from lerobot.processor.factory import (
     make_default_robot_action_processor,
     make_default_robot_observation_processor,
 )
+from lerobot.processor.relative_action_processor import to_relative_actions
 from lerobot.rl.process import ProcessSignalHandler
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    bi_openarm_follower,
     bi_so_follower,
     koch_follower,
     so_follower,
     unitree_g1,
 )
 from lerobot.robots.utils import make_robot_from_config
-from lerobot.utils.constants import OBS_IMAGES
+from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
 from lerobot.utils.hub import HubMixin
 from lerobot.utils.utils import init_logging
 
@@ -212,6 +240,35 @@ def is_image_key(k: str) -> bool:
     return k.startswith(OBS_IMAGES)
 
 
+def _reanchor_relative_rtc_prefix(
+    prev_actions_absolute: Tensor,
+    current_state: Tensor,
+    relative_step: RelativeActionsProcessorStep,
+    normalizer_step: NormalizerProcessorStep | None,
+    policy_device: torch.device | str,
+) -> Tensor:
+    """Convert absolute leftovers into model-space for relative-action RTC policies.
+
+    When a policy uses relative actions, the RTC prefix (leftover actions from
+    the previous chunk) is stored in absolute space. Before feeding it back to
+    the policy we need to re-express it relative to the *current* robot state
+    and then re-normalize.
+    """
+    state = current_state.detach().cpu()
+    if state.dim() == 1:
+        state = state.unsqueeze(0)
+
+    action_cpu = prev_actions_absolute.detach().cpu()
+    mask = relative_step._build_mask(action_cpu.shape[-1])
+    relative_actions = to_relative_actions(action_cpu, state, mask)
+
+    transition = create_transition(action=relative_actions)
+    if normalizer_step is not None:
+        transition = normalizer_step(transition)
+
+    return transition[TransitionKey.ACTION].to(policy_device)
+
+
 def get_actions(
     policy,
     robot: RobotWrapper,
@@ -237,7 +294,15 @@ def get_actions(
         fps = cfg.fps
         time_per_chunk = 1.0 / fps
 
-        dataset_features = hw_to_dataset_features(robot.observation_features(), "observation")
+        # Only keep .pos joints + camera streams if the policy was trained on positions,
+        # not the full pos/vel/torque state the robot exposes.
+        observation_features_hw = {
+            key: value
+            for key, value in robot.observation_features().items()
+            if key.endswith(".pos") or isinstance(value, tuple)
+        }
+
+        dataset_features = hw_to_dataset_features(observation_features_hw, "observation")
         policy_device = policy.config.device
 
         # Load preprocessor and postprocessor from pretrained files
@@ -254,6 +319,25 @@ def get_actions(
         )
 
         logger.info("[GET_ACTIONS] Preprocessor/postprocessor loaded successfully with embedded stats")
+
+        relative_step = next(
+            (s for s in preprocessor.steps if isinstance(s, RelativeActionsProcessorStep) and s.enabled),
+            None,
+        )
+        normalizer_step = next(
+            (s for s in preprocessor.steps if isinstance(s, NormalizerProcessorStep)),
+            None,
+        )
+        if relative_step is not None:
+            if relative_step.action_names is None:
+                cfg_names = getattr(cfg.policy, "action_feature_names", None)
+                if cfg_names:
+                    relative_step.action_names = list(cfg_names)
+                else:
+                    relative_step.action_names = [
+                        k for k in robot.robot.action_features if k.endswith(".pos")
+                    ]
+            logger.info("[GET_ACTIONS] Relative actions enabled: will re-anchor RTC prefix")
 
         get_actions_threshold = cfg.action_queue_size_to_get_new_actions
 
@@ -296,6 +380,28 @@ def get_actions(
                 )
 
                 preproceseded_obs = preprocessor(obs_with_policy_features)
+
+                # Re-anchor leftover actions for relative-action policies.
+                # We need the *postprocessed* (absolute) leftover, not the original
+                # (normalized/relative) one that get_left_over() returns.
+                if (
+                    prev_actions is not None
+                    and relative_step is not None
+                    and OBS_STATE in obs_with_policy_features
+                ):
+                    with action_queue.lock:
+                        if action_queue.queue is not None:
+                            prev_actions_abs = action_queue.queue[action_queue.last_index :].clone()
+                        else:
+                            prev_actions_abs = None
+                    if prev_actions_abs is not None and prev_actions_abs.numel() > 0:
+                        prev_actions = _reanchor_relative_rtc_prefix(
+                            prev_actions_absolute=prev_actions_abs,
+                            current_state=obs_with_policy_features[OBS_STATE],
+                            relative_step=relative_step,
+                            normalizer_step=normalizer_step,
+                            policy_device=policy_device,
+                        )
 
                 # Generate actions WITH RTC
                 actions = policy.predict_action_chunk(
@@ -352,6 +458,8 @@ def actor_control(
     try:
         logger.info("[ACTOR] Starting actor thread")
 
+        action_keys = [k for k in robot.action_features() if k.endswith(".pos")]
+
         action_count = 0
         action_interval = 1.0 / cfg.fps
 
@@ -363,7 +471,7 @@ def actor_control(
 
             if action is not None:
                 action = action.cpu()
-                action_dict = {key: action[i].item() for i, key in enumerate(robot.action_features())}
+                action_dict = {key: action[i].item() for i, key in enumerate(action_keys)}
                 action_processed = robot_action_processor((action_dict, None))
                 robot.send_action(action_processed)
 

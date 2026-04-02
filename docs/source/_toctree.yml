@@ -87,6 +87,8 @@
     title: Processors for Robots and Teleoperators
   - local: env_processor
     title: Environment Processors
+  - local: action_representations
+    title: Action Representations
   title: "Robot Processors"
 - sections:
   - local: so101
