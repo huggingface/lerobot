@@ -253,7 +253,8 @@ def act_with_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
     )
-    policy = policy.eval()
+    policy.init_actor()
+    policy = policy.to(device).eval()
     assert isinstance(policy, nn.Module)
 
     preprocessor, _postprocessor = make_sac_pre_post_processors(

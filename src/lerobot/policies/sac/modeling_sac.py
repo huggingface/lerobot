@@ -54,14 +54,15 @@ class SACPolicy(
         self._init_encoders()
         self.discrete_critic = None
         self._actor_initialized = False
-        self.init_actor()
 
     # ------------------------------------------------------------------
-    # Actor init
+    # Deferred actor init (called by algorithm or actor process)
     # ------------------------------------------------------------------
 
     def init_actor(self) -> None:
         """Create actor network once."""
+        if self._actor_initialized:
+            return
         # NOTE: The actor select only the continuous action part
         continuous_action_dim = self.config.output_features[ACTION].shape[0]
         self.actor = Policy(
@@ -75,6 +76,7 @@ class SACPolicy(
         if self.target_entropy is None:
             dim = continuous_action_dim + (1 if self.config.num_discrete_actions is not None else 0)
             self.target_entropy = -np.prod(dim) / 2
+        self._actor_initialized = True
 
     # ------------------------------------------------------------------
     # Inference
