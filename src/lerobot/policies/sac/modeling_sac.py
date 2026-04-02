@@ -35,15 +35,15 @@ DISCRETE_DIMENSION_INDEX = -1  # Gripper is always the last dimension
 class SACPolicy(
     PreTrainedPolicy,
 ):
-    """SAC policy that owns the encoder and actor networks.
+    """SAC policy owning encoder, base critics, and actor.
 
-    Critics, targets, temperature, and all loss computation live in the
-    ``SACAlgorithm`` so the training loop can be reused with other policy
-    architectures (e.g. PI0).
+    Init order matches the known-good ``b421c8c2``:
+    encoder → critic_ensemble → discrete_critic → actor.
 
-    The encoder and actor are initialised here so the ``SACAlgorithm`` can
-    reference ``policy.encoder_critic`` when building critics, preserving a
-    single module tree and identical RNG init order.
+    The ``SACAlgorithm`` references the base critics created here, then
+    builds targets, torch.compile, temperature, and all loss methods on top.
+    This lets the algorithm be reused with other policy architectures while
+    keeping identical RNG initialisation.
     """
 
     config_class = SACConfig
@@ -57,24 +57,14 @@ class SACPolicy(
         config.validate_features()
         self.config = config
 
+        continuous_action_dim = config.output_features[ACTION].shape[0]
         self._init_encoders()
-        self._actor_initialized = False
-
-    def init_actor(self) -> None:
-        """Create the actor network.
-
-        Called by ``SACAlgorithm`` **after** critic creation so that the
-        RNG init order matches the known-good monolithic policy:
-        encoder → critics → discrete_critics → actor → temperature.
-
-        On the actor process (no algorithm), call this explicitly after
-        ``make_policy()``.
-        """
-        if self._actor_initialized:
-            return
-        continuous_action_dim = self.config.output_features[ACTION].shape[0]
+        self._init_critics(continuous_action_dim)
         self._init_actor(continuous_action_dim)
-        self._actor_initialized = True
+
+    # ------------------------------------------------------------------
+    # Inference
+    # ------------------------------------------------------------------
 
     def get_optim_params(self) -> dict:
         return {
@@ -94,11 +84,7 @@ class SACPolicy(
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        """Select action for inference/evaluation.
-
-        NOTE: ``discrete_critic`` is set by the algorithm after construction.
-        On the actor process (inference-only) it is populated via weight push.
-        """
+        """Select action for inference/evaluation."""
         observations_features = None
         if self.shared_encoder and self.actor.encoder.has_images:
             observations_features = self.actor.encoder.get_cached_image_features(batch)
@@ -106,13 +92,8 @@ class SACPolicy(
         actions, _, _ = self.actor(batch, observations_features)
 
         if self.config.num_discrete_actions is not None:
-            if self.discrete_critic is not None:
-                discrete_action_value = self.discrete_critic(batch, observations_features)
-                discrete_action = torch.argmax(discrete_action_value, dim=-1, keepdim=True)
-            else:
-                discrete_action = torch.ones(
-                    (*actions.shape[:-1], 1), device=actions.device, dtype=actions.dtype
-                )
+            discrete_action_value = self.discrete_critic(batch, observations_features)
+            discrete_action = torch.argmax(discrete_action_value, dim=-1, keepdim=True)
             actions = torch.cat([actions, discrete_action], dim=-1)
 
         return actions
@@ -125,17 +106,41 @@ class SACPolicy(
         return {"action": actions, "log_prob": log_probs, "action_mean": means}
 
     # ------------------------------------------------------------------
-    # Initialisation helpers
+    # Initialisation (order matches b421c8c2: encoder → critics → actor)
     # ------------------------------------------------------------------
 
     def _init_encoders(self):
-        """Initialize shared or separate encoders for actor and critic."""
         self.shared_encoder = self.config.shared_encoder
         self.encoder_critic = SACObservationEncoder(self.config)
         self.encoder_actor = (
             self.encoder_critic if self.shared_encoder else SACObservationEncoder(self.config)
         )
-        self.discrete_critic = None
+
+    def _init_critics(self, continuous_action_dim):
+        """Create base critic ensemble and optional discrete critic.
+
+        These are created in the policy to preserve RNG init order.
+        The ``SACAlgorithm`` will reference them, add targets, torch.compile,
+        and training logic on top.
+        """
+        heads = [
+            CriticHead(
+                input_dim=self.encoder_critic.output_dim + continuous_action_dim,
+                **asdict(self.config.critic_network_kwargs),
+            )
+            for _ in range(self.config.num_critics)
+        ]
+        self.critic_ensemble = CriticEnsemble(encoder=self.encoder_critic, ensemble=heads)
+
+        if self.config.num_discrete_actions is not None:
+            self.discrete_critic = DiscreteCritic(
+                encoder=self.encoder_critic,
+                input_dim=self.encoder_critic.output_dim,
+                output_dim=self.config.num_discrete_actions,
+                **asdict(self.config.discrete_critic_network_kwargs),
+            )
+        else:
+            self.discrete_critic = None
 
     def _init_actor(self, continuous_action_dim):
         self.actor = Policy(
@@ -153,7 +158,7 @@ class SACPolicy(
 
 
 # ======================================================================
-# Neural network building blocks (unchanged from known-good baseline)
+# Neural network building blocks
 # ======================================================================
 
 

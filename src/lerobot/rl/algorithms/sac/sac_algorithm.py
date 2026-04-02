@@ -71,7 +71,6 @@ class SACAlgorithm(RLAlgorithm):
         self._device = get_device_from_parameters(self.policy)
 
         self._init_critics()
-        self.policy.init_actor()
         self._init_temperature()
         self._move_to_device()
 
@@ -80,20 +79,18 @@ class SACAlgorithm(RLAlgorithm):
     # ------------------------------------------------------------------
 
     def _init_critics(self) -> None:
-        """Build critic ensemble, targets, and optional discrete critic.
+        """Build targets on top of the policy's base critics.
 
-        Uses ``policy.encoder_critic`` directly so critics share the exact
-        same encoder object that the policy created during ``__init__``.
+        The policy already created ``critic_ensemble`` and ``discrete_critic``
+        during its ``__init__`` (preserving the known-good RNG order).
+        We reference them here, create targets, and optionally torch.compile.
         """
         encoder = self.policy.encoder_critic
+
+        self.critic_ensemble = self.policy.critic_ensemble
+
         action_dim = self.policy.config.output_features[ACTION].shape[0]
         input_dim = encoder.output_dim + action_dim
-
-        heads = [
-            CriticHead(input_dim=input_dim, **asdict(self.config.critic_network_kwargs))
-            for _ in range(self.config.num_critics)
-        ]
-        self.critic_ensemble = CriticEnsemble(encoder=encoder, ensemble=heads)
 
         target_heads = [
             CriticHead(input_dim=input_dim, **asdict(self.config.critic_network_kwargs))
@@ -111,12 +108,8 @@ class SACAlgorithm(RLAlgorithm):
 
     def _init_discrete_critics(self) -> None:
         encoder = self.policy.encoder_critic
-        self.discrete_critic = DiscreteCritic(
-            encoder=encoder,
-            input_dim=encoder.output_dim,
-            output_dim=self.config.num_discrete_actions,
-            **asdict(self.config.discrete_critic_network_kwargs),
-        )
+        self.discrete_critic = self.policy.discrete_critic
+
         self.discrete_critic_target = DiscreteCritic(
             encoder=encoder,
             input_dim=encoder.output_dim,
@@ -124,7 +117,6 @@ class SACAlgorithm(RLAlgorithm):
             **asdict(self.config.discrete_critic_network_kwargs),
         )
         self.discrete_critic_target.load_state_dict(self.discrete_critic.state_dict())
-        self.policy.discrete_critic = self.discrete_critic
 
     def _init_temperature(self) -> None:
         temp_init = self.config.temperature_init
