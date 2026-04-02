@@ -2,7 +2,7 @@
 
 Meta-World is an open-source simulation benchmark for **multi-task and meta reinforcement learning** in continuous-control robotic manipulation. It bundles 50 diverse manipulation tasks using everyday objects and a common tabletop Sawyer arm, providing a standardized playground to test whether algorithms can learn many different tasks and generalize quickly to new ones.
 
-- Paper: [Meta-World: A Benchmark and Evaluation for Multi-Task and Meta Reinforcement Learning](https://arxiv.org/abs/1910.10897)
+- Paper: [Meta-World+: An Improved, Standardized, RL Benchmark](https://arxiv.org/abs/1910.10897)
 - GitHub: [Farama-Foundation/Metaworld](https://github.com/Farama-Foundation/Metaworld)
 - Project website: [metaworld.farama.org](https://metaworld.farama.org)
 
@@ -12,13 +12,13 @@ Meta-World is an open-source simulation benchmark for **multi-task and meta rein
 
 Meta-World provides 50 tasks organized into difficulty groups. In LeRobot, you can evaluate on individual tasks, difficulty groups, or the full MT50 suite:
 
-| Group      | CLI name             | Tasks | Description                                            |
-| ---------- | -------------------- | ----- | ------------------------------------------------------ |
-| Easy       | `easy`               | 28    | Tasks with simple dynamics and single-step goals       |
-| Medium     | `medium`             | 11    | Tasks requiring multi-step reasoning                   |
-| Hard       | `hard`               | 6     | Tasks with complex contacts and precise manipulation   |
-| Very Hard  | `very_hard`          | 5     | The most challenging tasks in the suite                |
-| MT50 (all) | Comma-separated list | 50    | All 50 tasks — the most challenging multi-task setting |
+| Group      | CLI name             | Tasks  | Description                                            |
+| ---------- | -------------------- | ------ | ------------------------------------------------------ |
+| Easy       | `easy`               | Subset | Tasks with simple dynamics and single-step goals       |
+| Medium     | `medium`             | Subset | Tasks requiring multi-step reasoning                   |
+| Hard       | `hard`               | Subset | Tasks with complex contacts and precise manipulation   |
+| Very Hard  | `very_hard`          | Subset | The most challenging tasks in the suite                |
+| MT50 (all) | Comma-separated list | 50     | All 50 tasks — the most challenging multi-task setting |
 
 You can also pass individual task names directly (e.g., `assembly-v3`, `dial-turn-v3`).
 
