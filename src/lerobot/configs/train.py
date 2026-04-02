@@ -77,6 +77,11 @@ class TrainPipelineConfig(HubMixin):
     rabc_epsilon: float = 1e-6  # Small constant for numerical stability
     rabc_head_mode: str | None = "sparse"  # For dual-head models: "sparse" or "dense"
 
+    # Override the learning rate after loading optimizer state on resume.
+    # Useful for self-improvement / finetuning where you want a different LR
+    # than the one saved in the checkpoint's optimizer state.
+    override_lr: float | None = None
+
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
     checkpoint_path: Path | None = field(init=False, default=None)

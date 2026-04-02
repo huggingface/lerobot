@@ -354,6 +354,13 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if cfg.resume:
         step, optimizer, lr_scheduler = load_training_state(cfg.checkpoint_path, optimizer, lr_scheduler)
 
+    # Apply LR override after loading optimizer state (useful for finetuning with a different LR)
+    if cfg.override_lr is not None:
+        for param_group in optimizer.param_groups:
+            param_group["lr"] = cfg.override_lr
+        if is_main_process:
+            logging.info(f"Overriding learning rate to {cfg.override_lr}")
+
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total_params = sum(p.numel() for p in policy.parameters())
 
