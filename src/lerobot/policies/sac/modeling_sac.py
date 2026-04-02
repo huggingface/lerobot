@@ -58,9 +58,6 @@ class SACPolicy(
 
         self._init_encoders()
         self.discrete_critic = None
-        self._actor_initialized = False
-        self._actor_compiled = False
-        self._inference_image_encoder_compiled = False
 
     # ------------------------------------------------------------------
     # Deferred actor init (called by algorithm or actor process)
@@ -73,8 +70,7 @@ class SACPolicy(
         encoder → critics → discrete_critic → actor.
         On the actor process (no algorithm), call after ``make_policy()``.
         """
-        if self._actor_initialized:
-            return
+        # NOTE: The actor select only the continuous action part
         continuous_action_dim = self.config.output_features[ACTION].shape[0]
         self.actor = Policy(
             encoder=self.encoder_actor,
@@ -87,41 +83,6 @@ class SACPolicy(
         if self.target_entropy is None:
             dim = continuous_action_dim + (1 if self.config.num_discrete_actions is not None else 0)
             self.target_entropy = -np.prod(dim) / 2
-        self._actor_initialized = True
-        self._maybe_compile_actor()
-
-    def _maybe_compile_actor(self) -> None:
-        """Compile actor only when it is already on the configured device."""
-        if not self.config.use_torch_compile or not self._actor_initialized or self._actor_compiled:
-            return
-        actor_device = get_device_from_parameters(self.actor)
-        expected_device = torch.device(self.config.device)
-        if actor_device != expected_device:
-            return
-        self.actor = torch.compile(self.actor)
-        self._actor_compiled = True
-
-    def _maybe_compile_inference_image_encoder(self) -> None:
-        """Compile the image encoder used by select_action() cache extraction."""
-        if not self.config.use_torch_compile or self._inference_image_encoder_compiled:
-            return
-        if self.config.vision_encoder_name is not None:
-            return
-        if not self.encoder_actor.has_images:
-            return
-        actor_device = get_device_from_parameters(self.encoder_actor)
-        expected_device = torch.device(self.config.device)
-        if actor_device != expected_device:
-            return
-        self.encoder_actor.image_encoder = torch.compile(self.encoder_actor.image_encoder)
-        self._inference_image_encoder_compiled = True
-
-    def to(self, *args, **kwargs):
-        module = super().to(*args, **kwargs)
-        self._maybe_compile_inference_image_encoder()
-        if self._actor_initialized:
-            self._maybe_compile_actor()
-        return module
 
     # ------------------------------------------------------------------
     # Inference
@@ -153,13 +114,8 @@ class SACPolicy(
         actions, _, _ = self.actor(batch, observations_features)
 
         if self.config.num_discrete_actions is not None:
-            if self.discrete_critic is not None:
-                discrete_action_value = self.discrete_critic(batch, observations_features)
-                discrete_action = torch.argmax(discrete_action_value, dim=-1, keepdim=True)
-            else:
-                discrete_action = torch.ones(
-                    (*actions.shape[:-1], 1), device=actions.device, dtype=actions.dtype
-                )
+            discrete_action_value = self.discrete_critic(batch, observations_features)
+            discrete_action = torch.argmax(discrete_action_value, dim=-1, keepdim=True)
             actions = torch.cat([actions, discrete_action], dim=-1)
 
         return actions
