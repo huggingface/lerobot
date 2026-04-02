@@ -132,6 +132,9 @@ class SACPolicy(
         ]
         self.critic_ensemble = CriticEnsemble(encoder=self.encoder_critic, ensemble=heads)
 
+        if self.config.use_torch_compile:
+            self.critic_ensemble = torch.compile(self.critic_ensemble)
+
         if self.config.num_discrete_actions is not None:
             self.discrete_critic = DiscreteCritic(
                 encoder=self.encoder_critic,

@@ -81,9 +81,9 @@ class SACAlgorithm(RLAlgorithm):
     def _init_critics(self) -> None:
         """Build targets on top of the policy's base critics.
 
-        The policy already created ``critic_ensemble`` and ``discrete_critic``
-        during its ``__init__`` (preserving the known-good RNG order).
-        We reference them here, create targets, and optionally torch.compile.
+        The policy already created ``critic_ensemble`` (possibly compiled)
+        and ``discrete_critic`` during ``__init__`` to preserve RNG order.
+        We reference them here and create the corresponding target networks.
         """
         encoder = self.policy.encoder_critic
 
@@ -100,7 +100,6 @@ class SACAlgorithm(RLAlgorithm):
         self.critic_target.load_state_dict(self.critic_ensemble.state_dict())
 
         if self.config.use_torch_compile:
-            self.critic_ensemble = torch.compile(self.critic_ensemble)
             self.critic_target = torch.compile(self.critic_target)
 
         if self.config.num_discrete_actions is not None:
