@@ -682,7 +682,6 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
     def embed_suffix(self, noisy_actions, timestep):
         """Embed noisy_actions, timestep to prepare for Expert Gemma processing."""
-        pad_masks = []
         att_masks = []
 
         # Embed timestep using sine-cosine positional encoding
@@ -711,13 +710,10 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         adarms_cond = time_emb
 
         bsize, action_time_dim = action_emb.shape[:2]
-        action_time_mask = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=timestep.device)
-        pad_masks.append(action_time_mask)
+        pad_masks = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=timestep.device)
 
         # Set attention masks so that image, language and state inputs do not attend to action tokens
         att_masks += [1] + ([0] * (self.config.chunk_size - 1))
-
-        pad_masks = torch.cat(pad_masks, dim=1)
         att_masks = torch.tensor(att_masks, dtype=action_emb.dtype, device=action_emb.device)
         att_masks = att_masks[None, :].expand(bsize, len(att_masks))
 
