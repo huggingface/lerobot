@@ -134,11 +134,12 @@ class SACAlgorithm(RLAlgorithm):
         self.config = config
         self.optimizers: dict[str, Optimizer] = {}
         self._optimization_step: int = 0
-        self._device = get_device_from_parameters(self.policy)
 
         self._init_critics()
         self.policy.init_actor()
         self._init_temperature()
+
+        self._device = torch.device(self.policy.config.device)
         self._move_to_device()
 
     # ------------------------------------------------------------------
@@ -198,6 +199,7 @@ class SACAlgorithm(RLAlgorithm):
         self.log_alpha = nn.Parameter(torch.tensor([math.log(temp_init)]))
 
     def _move_to_device(self) -> None:
+        self.policy.to(self._device)
         self.critic_ensemble.to(self._device)
         self.critic_target.to(self._device)
         self.log_alpha = nn.Parameter(self.log_alpha.data.to(self._device))
