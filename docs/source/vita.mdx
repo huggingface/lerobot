@@ -1,0 +1,62 @@
+# VITA Reward Model
+
+VITA is a reward modeling approach based on test-time adaptation over multimodal embeddings. In this integration, a frozen backbone provides image/text features, and the reward model adapts a lightweight fast-weight module online while traversing a trajectory.
+
+**Paper**: [VITA: Test-Time Adaptation for Vision-Language Reward Modeling](https://arxiv.org/abs/2506.10085)
+
+## Current scope
+
+This implementation provides the paper-aligned core inside LeRobot's reward-model foundation:
+
+- Frozen multimodal backbone interface (pluggable; default expects precomputed features)
+- Multimodal latent `z_t = [image_t ; text_t]`
+- Three learned projections `P_K`, `P_V`, `P_Q`
+- Adaptation module `f_adapt` with per-episode fast weights
+- Self-supervised adaptation loss `MSE(f_adapt(P_K z_t), P_V z_t)`
+- Sequential adaptation updates at inference
+- Reward prediction head on adapted `P_Q z_t`
+- Explicit adaptation reset API and `episode_start`-based reset in batch inference
+
+## Not in scope yet
+
+- Full paper training recipe and large-scale benchmarks
+- Native heavyweight vision-language backbone wiring (this PR keeps a lightweight injectable interface)
+- Advanced adaptation schedules beyond the current fixed-step update rule
+
+## Paper-to-code mapping
+
+| Paper component | LeRobot implementation |
+| --- | --- |
+| Frozen backbone encoder | `VitaBackbone` interface in `src/lerobot/rewards/vita/modeling_vita.py` |
+| Multimodal latent `z_t` | Concatenation of image/text embeddings in `VitaRewardModel.compute_reward` |
+| `P_K`, `P_V`, `P_Q` | `key_projection`, `value_projection`, `query_projection` |
+| Adaptation module `f_adapt` | `VitaAdaptationModule` in `src/lerobot/rewards/vita/adaptation.py` |
+| Adaptation loss | MSE in `VitaAdaptationModule.adaptation_step` |
+| Fast weights | `VitaAdaptationState.fast_weights` |
+| Reward head | `reward_head` in `VitaRewardModel` |
+
+## Minimal usage
+
+```python
+import torch
+
+from lerobot.rewards.factory import make_reward_model
+from lerobot.rewards.vita.configuration_vita import VitaConfig
+
+config = VitaConfig(
+    image_feature_dim=128,
+    text_feature_dim=128,
+    adaptation_dim=128,
+)
+model = make_reward_model(config)
+
+batch = {
+    "image_features": torch.randn(4, 128),
+    "text_features": torch.randn(4, 128),
+    "episode_start": torch.tensor([True, False, False, True]),
+}
+rewards = model.compute_reward(batch)
+
+# Explicit reset between episodes if needed.
+model.reset()
+```
