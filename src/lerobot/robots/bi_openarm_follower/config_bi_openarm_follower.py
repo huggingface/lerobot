@@ -23,7 +23,7 @@ from ..config import RobotConfig
 
 
 @RobotConfig.register_subclass("bi_openarm_follower")
-@dataclass
+@dataclass(kw_only=True)
 class BiOpenArmFollowerConfig(RobotConfig):
     """Configuration class for Bi OpenArm Follower robots."""
 
