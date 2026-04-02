@@ -96,9 +96,11 @@ class BiOpenArmFollower(Robot):
         left_arm_motors_ft = self.left_arm._motors_ft
         right_arm_motors_ft = self.right_arm._motors_ft
 
+        # Right first, then left — matches the teleoperator (OpenArmMini) ordering
+        # and the dataset feature names recorded during data collection.
         return {
-            **{f"left_{k}": v for k, v in left_arm_motors_ft.items()},
             **{f"right_{k}": v for k, v in right_arm_motors_ft.items()},
+            **{f"left_{k}": v for k, v in left_arm_motors_ft.items()},
         }
 
     @property
@@ -150,13 +152,15 @@ class BiOpenArmFollower(Robot):
         left_cam_keys = set(self.left_arm.cameras.keys())
         right_cam_keys = set(self.right_arm.cameras.keys())
 
-        left_obs = self.left_arm.get_observation()
-        for key, value in left_obs.items():
-            obs_dict[key if key in left_cam_keys else f"left_{key}"] = value
-
+        # Right first, then left — matches the teleoperator (OpenArmMini) ordering
+        # and the dataset feature names recorded during data collection.
         right_obs = self.right_arm.get_observation()
         for key, value in right_obs.items():
             obs_dict[key if key in right_cam_keys else f"right_{key}"] = value
+
+        left_obs = self.left_arm.get_observation()
+        for key, value in left_obs.items():
+            obs_dict[key if key in left_cam_keys else f"left_{key}"] = value
 
         return obs_dict
 
@@ -183,7 +187,7 @@ class BiOpenArmFollower(Robot):
         prefixed_sent_action_left = {f"left_{key}": value for key, value in sent_action_left.items()}
         prefixed_sent_action_right = {f"right_{key}": value for key, value in sent_action_right.items()}
 
-        return {**prefixed_sent_action_left, **prefixed_sent_action_right}
+        return {**prefixed_sent_action_right, **prefixed_sent_action_left}
 
     @check_if_not_connected
     def disconnect(self):

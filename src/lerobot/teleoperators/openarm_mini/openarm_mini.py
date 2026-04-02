@@ -95,6 +95,8 @@ class OpenArmMini(Teleoperator):
 
     @property
     def action_features(self) -> dict[str, type]:
+        # Right first, then left — matches the robot (BiOpenArmFollower) ordering
+        # and the dataset feature names recorded during data collection.
         features: dict[str, type] = {}
         for motor in self.bus_right.motors:
             features[f"right_{motor}.pos"] = float
@@ -276,6 +278,8 @@ class OpenArmMini(Teleoperator):
         right_positions = self.bus_right.sync_read("Present_Position")
         left_positions = self.bus_left.sync_read("Present_Position")
 
+        # Right first, then left — matches the robot (BiOpenArmFollower) ordering
+        # and the dataset feature names recorded during data collection.
         action: dict[str, Any] = {}
         for motor, val in right_positions.items():
             action[f"right_{motor}.pos"] = -val if motor in RIGHT_MOTORS_TO_FLIP else val
