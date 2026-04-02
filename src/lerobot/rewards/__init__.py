@@ -14,8 +14,10 @@
 
 from .classifier.configuration_classifier import RewardClassifierConfig as RewardClassifierConfig
 from .sarm.configuration_sarm import SARMConfig as SARMConfig
+from .vita.configuration_vita import VitaConfig as VitaConfig
 
 __all__ = [
     "RewardClassifierConfig",
     "SARMConfig",
+    "VitaConfig",
 ]

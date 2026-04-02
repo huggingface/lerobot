@@ -26,6 +26,7 @@ def test_reward_model_config_registry():
     known = RewardModelConfig.get_known_choices()
     assert "reward_classifier" in known
     assert "sarm" in known
+    assert "vita" in known
 
 
 def test_reward_model_config_lookup():
