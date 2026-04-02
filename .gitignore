@@ -186,3 +186,7 @@ outputs
 *.urdf
 *.xml
 *.part
+
+# Local experiment prompts (not tracked)
+prompt_run_and_eval.md
+results_self_improvement_deterministic.tsv
