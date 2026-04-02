@@ -15,7 +15,9 @@
 # limitations under the License.
 
 """
-Inference script for a pi0 model trained with **relative EE actions**.
+Inference script for a pi0 model trained with **relative EE actions** on an OpenArm robot.
+
+Single right OpenArm follower with one wrist camera.
 
 This uses the built-in ``DeriveStateFromActionStep`` (no-op at inference),
 ``RelativeActionsProcessorStep``, ``AbsoluteActionsProcessorStep``, and
@@ -23,7 +25,7 @@ This uses the built-in ``DeriveStateFromActionStep`` (no-op at inference),
 pipeline.
 
 The inference loop:
-  1. Reads joint positions from the robot.
+  1. Reads joint positions from the robot (7-DOF arm + gripper).
   2. Converts to EE pose via forward kinematics (FK).
      This produces ``observation.state`` with the current EE pose.
   3. The pi0 preprocessor:
@@ -36,8 +38,6 @@ The inference loop:
      a) ``UnnormalizerProcessorStep`` unnormalizes.
      b) ``AbsoluteActionsProcessorStep`` adds cached state → absolute EE.
   6. IK converts absolute EE → joint targets → robot.
-
-Based on the so100_to_so100_EE/evaluate.py example.
 
 Usage:
     python evaluate.py
@@ -64,7 +64,7 @@ from lerobot.processor.converters import (
     transition_to_observation,
     transition_to_robot_action,
 )
-from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
+from lerobot.robots.openarm_follower import OpenArmFollower, OpenArmFollowerConfig
 from lerobot.robots.so_follower.robot_kinematic_processor import (
     ForwardKinematicsJointsToEE,
     InverseKinematicsEEToJoints,
@@ -75,13 +75,11 @@ from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
 
-NUM_EPISODES = 5
-FPS = 10
+FPS = 30
 EPISODE_TIME_SEC = 60
-TASK_DESCRIPTION = "manipulation task"
+TASK_DESCRIPTION = "red cube"
 
-HF_MODEL_ID = "<hf_username>/<model_repo_id>"
-HF_DATASET_ID = "<hf_username>/<dataset_repo_id>"
+HF_MODEL_ID = "pepijn223/grabette-umi-pi0"
 
 # Latency compensation: skip this many steps from the start of each predicted
 # action chunk. Formula: ceil(total_latency_ms / (1000 / FPS)).
@@ -91,24 +89,30 @@ LATENCY_SKIP_STEPS = 0
 # EE feature keys produced by ForwardKinematicsJointsToEE
 EE_KEYS = ["x", "y", "z", "wx", "wy", "wz", "gripper_pos"]
 
+URDF_PATH = "./SO101/so101_new_calib.urdf"
+URDF_EE_FRAME = "gripper_frame_link"
+
 
 def main():
-    camera_config = {"wrist": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
-    robot_config = SO100FollowerConfig(
-        port="/dev/tty.usbmodem5A460814411",
-        id="my_awesome_follower_arm",
+    camera_config = {"cam0": OpenCVCameraConfig(index_or_path=0, width=960, height=720, fps=FPS)}
+    robot_config = OpenArmFollowerConfig(
+        port="can0",
+        id="right_openarm",
+        side="right",
         cameras=camera_config,
-        use_degrees=True,
+        max_relative_target=8.0,
     )
-    robot = SO100Follower(robot_config)
+    robot = OpenArmFollower(robot_config)
 
     policy = PI0Policy.from_pretrained(HF_MODEL_ID)
     policy.config.latency_skip_steps = LATENCY_SKIP_STEPS
 
+    motor_names = list(robot.bus.motors.keys())
+
     kinematics_solver = RobotKinematics(
-        urdf_path="./SO101/so101_new_calib.urdf",
-        target_frame_name="gripper_frame_link",
-        joint_names=list(robot.bus.motors.keys()),
+        urdf_path=URDF_PATH,
+        target_frame_name=URDF_EE_FRAME,
+        joint_names=motor_names,
     )
 
     # FK: joint observation → EE observation (produces observation.state)
@@ -116,7 +120,7 @@ def main():
         steps=[
             ForwardKinematicsJointsToEE(
                 kinematics=kinematics_solver,
-                motor_names=list(robot.bus.motors.keys()),
+                motor_names=motor_names,
             )
         ],
         to_transition=observation_to_transition,
@@ -128,7 +132,7 @@ def main():
         steps=[
             InverseKinematicsEEToJoints(
                 kinematics=kinematics_solver,
-                motor_names=list(robot.bus.motors.keys()),
+                motor_names=motor_names,
                 initial_guess_current_joints=True,
             ),
         ],
@@ -136,14 +140,23 @@ def main():
         to_output=transition_to_robot_action,
     )
 
-    # Dataset handle for stats (used by preprocessor/postprocessor)
+    # OpenArm observations include .vel and .torque per motor; the EE policy
+    # pipeline only needs .pos (converted to EE by FK) and camera features.
+    obs_features = {
+        k: v
+        for k, v in robot.observation_features.items()
+        if not (k.endswith(".vel") or k.endswith(".torque"))
+    }
+
+    # A dataset object is needed for its .features and .meta.stats even when
+    # not recording — record_loop uses them for building observation/action frames.
     dataset = LeRobotDataset.create(
-        repo_id=HF_DATASET_ID,
+        repo_id="tmp/openarm_eval_scratch",
         fps=FPS,
         features=combine_feature_dicts(
             aggregate_pipeline_dataset_features(
                 pipeline=robot_joints_to_ee_processor,
-                initial_features=create_initial_features(observation=robot.observation_features),
+                initial_features=create_initial_features(observation=obs_features),
                 use_videos=True,
             ),
             aggregate_pipeline_dataset_features(
@@ -159,10 +172,6 @@ def main():
         image_writer_threads=4,
     )
 
-    # Build pre/post processors from the trained model.
-    # The pi0 processor pipeline already includes:
-    #   pre:  ... → RelativeStateProcessorStep → RelativeActionsProcessorStep → NormalizerProcessorStep
-    #   post: UnnormalizerProcessorStep → AbsoluteActionsProcessorStep → ...
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=policy,
         pretrained_path=HF_MODEL_ID,
@@ -170,73 +179,39 @@ def main():
         preprocessor_overrides={"device_processor": {"device": str(policy.config.device)}},
     )
 
-    # Find the relative state step (if present) so we can reset its buffer between episodes.
     _relative_state_steps = [s for s in preprocessor.steps if isinstance(s, RelativeStateProcessorStep)]
 
     robot.connect()
 
     listener, events = init_keyboard_listener()
-    init_rerun(session_name="umi_pi0_relative_ee_evaluate")
+    init_rerun(session_name="openarm_umi_pi0_relative_ee_evaluate")
 
     try:
         if not robot.is_connected:
             raise ValueError("Robot is not connected!")
 
-        print("Starting evaluate loop...")
-        for episode_idx in range(NUM_EPISODES):
-            log_say(f"Running inference, recording eval episode {episode_idx + 1} of {NUM_EPISODES}")
+        log_say("Starting policy execution")
+        for step in _relative_state_steps:
+            step.reset()
 
-            # Reset relative state buffer so velocity is zero at episode start
-            for step in _relative_state_steps:
-                step.reset()
-
-            record_loop(
-                robot=robot,
-                events=events,
-                fps=FPS,
-                policy=policy,
-                preprocessor=preprocessor,
-                postprocessor=postprocessor,
-                dataset=dataset,
-                control_time_s=EPISODE_TIME_SEC,
-                single_task=TASK_DESCRIPTION,
-                display_data=True,
-                teleop_action_processor=make_default_teleop_action_processor(),
-                robot_action_processor=robot_ee_to_joints_processor,
-                robot_observation_processor=robot_joints_to_ee_processor,
-            )
-
-            if not events["stop_recording"] and (
-                (episode_idx < NUM_EPISODES - 1) or events["rerecord_episode"]
-            ):
-                log_say("Reset the environment")
-                record_loop(
-                    robot=robot,
-                    events=events,
-                    fps=FPS,
-                    control_time_s=EPISODE_TIME_SEC,
-                    single_task=TASK_DESCRIPTION,
-                    display_data=True,
-                    teleop_action_processor=make_default_teleop_action_processor(),
-                    robot_action_processor=robot_ee_to_joints_processor,
-                    robot_observation_processor=robot_joints_to_ee_processor,
-                )
-
-            if events["rerecord_episode"]:
-                log_say("Re-record episode")
-                events["rerecord_episode"] = False
-                events["exit_early"] = False
-                dataset.clear_episode_buffer()
-                continue
-
-            dataset.save_episode()
+        record_loop(
+            robot=robot,
+            events=events,
+            fps=FPS,
+            policy=policy,
+            preprocessor=preprocessor,
+            postprocessor=postprocessor,
+            dataset=dataset,
+            control_time_s=EPISODE_TIME_SEC,
+            single_task=TASK_DESCRIPTION,
+            display_data=True,
+            teleop_action_processor=make_default_teleop_action_processor(),
+            robot_action_processor=robot_ee_to_joints_processor,
+            robot_observation_processor=robot_joints_to_ee_processor,
+        )
     finally:
-        log_say("Stop recording")
         robot.disconnect()
         listener.stop()
-
-        dataset.finalize()
-        dataset.push_to_hub()
 
 
 if __name__ == "__main__":
