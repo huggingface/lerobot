@@ -61,6 +61,36 @@ Usage:
         --dataset.single_task="Fold the T-shirt properly" \
         --dataset.fps=30 \
         --interpolation_multiplier=3
+
+    # RTC with bi_openarm_follower + OpenArm Mini teleop and pi0.5 policy
+    python examples/hil/hil_data_collection.py \
+        --policy.path=lerobot-data-collection/folding_final \
+        --robot.type=bi_openarm_follower \
+        --robot.cameras='{left_wrist: {type: opencv, index_or_path: "/dev/video4", width: 1280, height: 720, fps: 30}, base: {type: opencv, index_or_path: "/dev/video2", width: 640, height: 480, fps: 30}, right_wrist: {type: opencv, index_or_path: "/dev/video0", width: 1280, height: 720, fps: 30}}' \
+        --robot.left_arm_config.port=can0 \
+        --robot.left_arm_config.side=left \
+        --robot.left_arm_config.can_interface=socketcan \
+        --robot.left_arm_config.disable_torque_on_disconnect=true \
+        --robot.left_arm_config.max_relative_target=8.0 \
+        --robot.right_arm_config.port=can1 \
+        --robot.right_arm_config.side=right \
+        --robot.right_arm_config.can_interface=socketcan \
+        --robot.right_arm_config.disable_torque_on_disconnect=true \
+        --robot.right_arm_config.max_relative_target=8.0 \
+        --teleop.type=openarm_mini \
+        --teleop.port_left=/dev/ttyACM1 \
+        --teleop.port_right=/dev/ttyACM0 \
+        --dataset.repo_id=lerobot-data-collection/hil_folding \
+        --dataset.single_task="Fold the T-shirt properly" \
+        --dataset.fps=30 \
+        --dataset.num_episodes=50 \
+        --rtc.enabled=true \
+        --rtc.execution_horizon=20 \
+        --rtc.max_guidance_weight=5.0 \
+        --rtc.prefix_attention_schedule=LINEAR \
+        --interpolation_multiplier=3 \
+        --calibrate=true \
+        --device=cuda
 """
 
 import logging
@@ -96,13 +126,13 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc import ActionInterpolator, ActionQueue, LatencyTracker, RTCConfig
 from lerobot.policies.utils import make_robot_action
 from lerobot.processor import (
-    DeltaActionsProcessorStep,
     NormalizerProcessorStep,
     PolicyProcessorPipeline,
+    RelativeActionsProcessorStep,
     TransitionKey,
     create_transition,
-    to_delta_actions,
 )
+from lerobot.processor.relative_action_processor import to_relative_actions
 from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import Robot, RobotConfig, make_robot_from_config
 from lerobot.robots.bi_openarm_follower.config_bi_openarm_follower import BiOpenArmFollowerConfig
@@ -170,15 +200,15 @@ def _set_openarm_max_relative_target_if_missing(
             robot_cfg.right_arm_config.max_relative_target = max_relative_target
 
 
-def _reanchor_delta_rtc_prefix(
+def _reanchor_relative_rtc_prefix(
     prev_actions_absolute: torch.Tensor,
     current_state: torch.Tensor,
-    delta_step: DeltaActionsProcessorStep | None,
+    relative_step: RelativeActionsProcessorStep | None,
     normalizer_step: NormalizerProcessorStep | None,
     policy_device: torch.device | str,
 ) -> torch.Tensor:
-    """Convert absolute leftovers into model space for delta-action RTC policies."""
-    if delta_step is None:
+    """Convert absolute leftovers into model space for relative-action RTC policies."""
+    if relative_step is None:
         return prev_actions_absolute.to(policy_device)
 
     state = current_state.detach().cpu()
@@ -186,10 +216,10 @@ def _reanchor_delta_rtc_prefix(
         state = state.unsqueeze(0)
 
     action_cpu = prev_actions_absolute.detach().cpu()
-    mask = delta_step._build_mask(action_cpu.shape[-1])
-    delta_actions = to_delta_actions(action_cpu, state, mask)
+    mask = relative_step._build_mask(action_cpu.shape[-1])
+    relative_actions = to_relative_actions(action_cpu, state, mask)
 
-    transition = create_transition(action=delta_actions)
+    transition = create_transition(action=relative_actions)
     if normalizer_step is not None:
         transition = normalizer_step(transition)
 
@@ -346,24 +376,24 @@ def _rtc_inference_thread(
     inference_count = 0
     warmup_required = max(1, int(cfg.compile_warmup_inferences)) if cfg.use_torch_compile else 0
 
-    delta_step = next(
-        (step for step in preprocessor.steps if isinstance(step, DeltaActionsProcessorStep) and step.enabled),
+    relative_step = next(
+        (step for step in preprocessor.steps if isinstance(step, RelativeActionsProcessorStep) and step.enabled),
         None,
     )
     normalizer_step = next(
         (step for step in preprocessor.steps if isinstance(step, NormalizerProcessorStep)),
         None,
     )
-    if delta_step is not None:
-        if delta_step.action_names is None:
+    if relative_step is not None:
+        if relative_step.action_names is None:
             cfg_action_names = getattr(cfg.policy, "action_feature_names", None)
             if cfg_action_names:
-                delta_step.action_names = list(cfg_action_names)
+                relative_step.action_names = list(cfg_action_names)
             else:
                 fallback_action_names = obs_holder.get("action_feature_names")
                 if fallback_action_names:
-                    delta_step.action_names = list(fallback_action_names)
-        logger.info("[RTC] Delta actions enabled: re-anchoring RTC prefix to current state")
+                    relative_step.action_names = list(fallback_action_names)
+        logger.info("[RTC] Relative actions enabled: re-anchoring RTC prefix to current state")
 
     while not shutdown_event.is_set():
         if not policy_active.is_set():
@@ -399,13 +429,17 @@ def _rtc_inference_thread(
 
                 preprocessed = preprocessor(obs_batch)
 
-                if prev_actions is not None and delta_step is not None and OBS_STATE in obs_batch:
-                    prev_actions_absolute = queue.get_processed_left_over()
+                if prev_actions is not None and relative_step is not None and OBS_STATE in obs_batch:
+                    with queue.lock:
+                        if queue.queue is not None:
+                            prev_actions_absolute = queue.queue[queue.last_index :].clone()
+                        else:
+                            prev_actions_absolute = None
                     if prev_actions_absolute is not None and prev_actions_absolute.numel() > 0:
-                        prev_actions = _reanchor_delta_rtc_prefix(
+                        prev_actions = _reanchor_relative_rtc_prefix(
                             prev_actions_absolute=prev_actions_absolute,
                             current_state=obs_batch[OBS_STATE],
-                            delta_step=delta_step,
+                            relative_step=relative_step,
                             normalizer_step=normalizer_step,
                             policy_device=policy_device,
                         )

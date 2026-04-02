@@ -35,6 +35,10 @@ logger = logging.getLogger(__name__)
 RIGHT_MOTORS_TO_FLIP = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"]
 LEFT_MOTORS_TO_FLIP = ["joint_1", "joint_3", "joint_4", "joint_5", "joint_6", "joint_7"]
 
+# Leader joint 6 maps to follower joint 7 and vice versa
+JOINT_REMAP = {"joint_6": "joint_7", "joint_7": "joint_6"}
+JOINT_REMAP_REVERSE = {"joint_7": "joint_6", "joint_6": "joint_7"}
+
 
 class OpenArmMini(Teleoperator):
     """
@@ -280,15 +284,67 @@ class OpenArmMini(Teleoperator):
 
         # Right first, then left — matches the robot (BiOpenArmFollower) ordering
         # and the dataset feature names recorded during data collection.
+        # Joint 6↔7 remap: leader joint_6 → follower joint_7 and vice versa.
         action: dict[str, Any] = {}
         for motor, val in right_positions.items():
-            action[f"right_{motor}.pos"] = -val if motor in RIGHT_MOTORS_TO_FLIP else val
+            target = JOINT_REMAP.get(motor, motor)
+            if motor == "gripper":
+                # Convert gripper from teleop 0-100 to openarms degrees: 0→0°, 100→-65°
+                action[f"right_{target}.pos"] = val * -0.65
+            else:
+                action[f"right_{target}.pos"] = -val if motor in RIGHT_MOTORS_TO_FLIP else val
         for motor, val in left_positions.items():
-            action[f"left_{motor}.pos"] = -val if motor in LEFT_MOTORS_TO_FLIP else val
+            target = JOINT_REMAP.get(motor, motor)
+            if motor == "gripper":
+                action[f"left_{target}.pos"] = val * -0.65
+            else:
+                action[f"left_{target}.pos"] = -val if motor in LEFT_MOTORS_TO_FLIP else val
 
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
         return action
+
+    def enable_torque(self) -> None:
+        """Enable torque on both arms for position control."""
+        self.bus_right.enable_torque()
+        self.bus_left.enable_torque()
+
+    def disable_torque(self) -> None:
+        """Disable torque on both arms for free movement."""
+        self.bus_right.disable_torque()
+        self.bus_left.disable_torque()
+
+    def write_goal_positions(self, positions: dict[str, float]) -> None:
+        """Write goal positions to motors (inverse of get_action flip/gripper/remap logic)."""
+        right_goals: dict[str, float] = {}
+        left_goals: dict[str, float] = {}
+
+        for key, val in positions.items():
+            if not key.endswith(".pos"):
+                continue
+            motor_name = key.removesuffix(".pos")
+            if motor_name.startswith("right_"):
+                base = motor_name.removeprefix("right_")
+                # Reverse remap: follower joint_7 → leader joint_6 and vice versa
+                target = JOINT_REMAP_REVERSE.get(base, base)
+                if base == "gripper":
+                    # Convert robot degrees to teleop 0-100: 0°→0, -65°→100
+                    right_goals[target] = val / -0.65
+                else:
+                    # Un-flip using the ORIGINAL motor name (target = leader motor)
+                    right_goals[target] = -val if target in RIGHT_MOTORS_TO_FLIP else val
+            elif motor_name.startswith("left_"):
+                base = motor_name.removeprefix("left_")
+                target = JOINT_REMAP_REVERSE.get(base, base)
+                if base == "gripper":
+                    left_goals[target] = val / -0.65
+                else:
+                    left_goals[target] = -val if target in LEFT_MOTORS_TO_FLIP else val
+
+        if right_goals:
+            self.bus_right.sync_write("Goal_Position", right_goals)
+        if left_goals:
+            self.bus_left.sync_write("Goal_Position", left_goals)
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
         raise NotImplementedError("Feedback is not yet implemented for OpenArm Mini.")
