@@ -23,7 +23,6 @@ import torch
 # Determinism — must be set before any CUDA operations
 # ═════════════════════════════════════════════════════════════════
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 torch.backends.cuda.matmul.allow_tf32 = False
 torch.use_deterministic_algorithms(True)
@@ -41,14 +40,14 @@ COMMIT = sys.argv[1] if len(sys.argv) > 1 else "unknown"
 # ── Pretrain checkpoint (the starting point) ──────────────────
 POLICY = (
     "/storage/home/hcoda1/6/vgiridhar6/forks/lerobot/outputs/"
-    "act_simple_awm_pusht_wm1.0_l2norm_improved_decoder/checkpoints/last/pretrained_model"
+    "act_simple_awm_pusht_wm1.0_l2norm_truly_deterministic/checkpoints/100000/pretrained_model"
 )
 PRETRAIN_DATASET_REPO_ID = "lerobot/pusht"
 PRETRAIN_DATASET_ROOT = None  # None = use HF cache
 TASK_DESCRIPTION = "Push the T-shaped block onto the target."
 
 # ── Self-improvement loop ─────────────────────────────────────
-N_ITERS = 1                   # Number of collect→finetune cycles
+N_ITERS = 0                   # Number of collect→finetune cycles
 N_COLLECT_EPISODES = 50       # Episodes per eval_and_collect
 FINETUNE_STEPS = 100          # Training steps per iteration
 FINETUNE_LR = 5e-6            # LR for finetuning (None = keep pretrain LR)
@@ -89,6 +88,7 @@ def eval_and_collect(
     """
     from lerobot.configs.policies import PreTrainedConfig
     from lerobot.envs.factory import make_env, make_env_config, make_env_pre_post_processors
+    from lerobot.envs.goal_provider import make_goal_provider
     from lerobot.policies.factory import make_policy, make_pre_post_processors
     from lerobot.scripts.lerobot_eval import eval_policy
     from lerobot.scripts.self_improvement_data import episodes_from_eval_info
@@ -124,6 +124,9 @@ def eval_and_collect(
         env_cfg=env_cfg, policy_cfg=policy_cfg,
     )
 
+    # ── Goal provider (needed for GBP/MPPI planning) ──────────
+    goal_provider = make_goal_provider("pusht") if use_planning else None
+
     # ── Run evaluation ───────────────────────────────────────
     with torch.no_grad():
         info = eval_policy(
@@ -136,6 +139,7 @@ def eval_and_collect(
             n_episodes=n_episodes,
             return_episode_data=True,
             start_seed=seed,
+            goal_provider=goal_provider,
         )
 
     vec_env.close()

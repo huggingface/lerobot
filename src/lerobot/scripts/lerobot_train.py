@@ -301,7 +301,6 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if cfg.cudnn_deterministic:
         import os as _os
         _os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-        torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
         torch.backends.cuda.matmul.allow_tf32 = False
         torch.use_deterministic_algorithms(True)
