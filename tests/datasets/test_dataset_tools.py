@@ -1281,6 +1281,54 @@ def test_convert_image_to_video_dataset(tmp_path):
         if output_dir.exists():
             shutil.rmtree(output_dir)
 
+def test_add_image_features_with_multi_dimensional_shapes(sample_dataset, tmp_path):
+    """Test adding image features with multi-dimensional shapes (N, H, W, C).
+    
+    Regression test for arrow length mismatches when adding image tensor features
+    via add_features. Verifies that the multi-dimensional assignment branch correctly
+    handles image features and that the dataset can be reloaded without errors.
+    """
+    num_frames = sample_dataset.meta.total_frames
+    H, W, C = 64, 64, 3  # Image dimensions
+    
+    # Create synthetic image array with shape (num_frames, H, W, C)
+    image_array = np.random.randint(0, 255, size=(num_frames, H, W, C), dtype=np.uint8)
+    
+    feature_info = {
+        "dtype": "image",
+        "shape": (H, W, C),
+        "names": ["height", "width", "channels"],
+    }
+    features = {
+        "observation.images.new_camera": (image_array, feature_info),
+    }
+    
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(tmp_path / "with_images")
+        
+        # Add image features to dataset
+        new_dataset = add_features(
+            dataset=sample_dataset,
+            features=features,
+            output_dir=tmp_path / "with_images",
+        )
+    
+    # Verify feature was added correctly
+    assert "observation.images.new_camera" in new_dataset.meta.features
+    assert new_dataset.meta.features["observation.images.new_camera"] == feature_info
+    assert len(new_dataset) == num_frames
+    
+    # Test that we can load several frames without Arrow errors
+    for frame_idx in [0, 1, len(new_dataset) // 2, len(new_dataset) - 1]:
+        frame_item = new_dataset[frame_idx]
+        assert "observation.images.new_camera" in frame_item
+        assert isinstance(frame_item["observation.images.new_camera"], torch.Tensor)
+        assert frame_item["observation.images.new_camera"].shape == (H, W, C)
+
 
 def test_convert_image_to_video_dataset_subset_episodes(tmp_path):
     """Test converting only specific episodes from lerobot/pusht_image to video format."""
