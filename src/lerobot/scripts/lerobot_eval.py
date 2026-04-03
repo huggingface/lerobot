@@ -49,6 +49,7 @@ You can learn about the CLI options for this script in the `EvalPipelineConfig` 
 import concurrent.futures as cf
 import json
 import logging
+import math
 import threading
 import time
 from collections import defaultdict
@@ -90,6 +91,14 @@ from lerobot.utils.utils import (
     init_logging,
     inside_slurm,
 )
+
+
+def _shard_episodes(n_episodes: int, shard_id: int, num_shards: int) -> list[int]:
+    """Return the episode indices assigned to this shard (round-robin distribution).
+
+    Example: _shard_episodes(10, 1, 4) -> [1, 5, 9]
+    """
+    return list(range(shard_id, n_episodes, num_shards))
 
 
 def rollout(
@@ -553,6 +562,14 @@ def eval_main(cfg: EvalPipelineConfig):
     # Create environment-specific preprocessor and postprocessor (e.g., for LIBERO environments)
     env_preprocessor, env_postprocessor = make_env_pre_post_processors(env_cfg=cfg.env, policy_cfg=cfg.policy)
 
+    # Sharding: each shard runs a subset of n_episodes with non-overlapping seeds.
+    shard_id = cfg.eval.shard_id
+    num_shards = cfg.eval.num_shards
+    episodes_for_shard = _shard_episodes(cfg.eval.n_episodes, shard_id, num_shards)
+    n_per_shard = len(episodes_for_shard)
+    # Shift the seed so each shard gets a different, non-overlapping seed range.
+    shard_seed = (cfg.seed or 0) + shard_id * math.ceil(cfg.eval.n_episodes / num_shards)
+
     with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext():
         info = eval_policy_all(
             envs=envs,
@@ -561,10 +578,10 @@ def eval_main(cfg: EvalPipelineConfig):
             env_postprocessor=env_postprocessor,
             preprocessor=preprocessor,
             postprocessor=postprocessor,
-            n_episodes=cfg.eval.n_episodes,
+            n_episodes=n_per_shard,
             max_episodes_rendered=10,
             videos_dir=Path(cfg.output_dir) / "videos",
-            start_seed=cfg.seed,
+            start_seed=shard_seed,
             max_parallel_tasks=cfg.env.max_parallel_tasks,
         )
         print("Overall Aggregated Metrics:")
@@ -577,8 +594,13 @@ def eval_main(cfg: EvalPipelineConfig):
     # Close all vec envs
     close_envs(envs)
 
-    # Save info
-    with open(Path(cfg.output_dir) / "eval_info.json", "w") as f:
+    # Save info — use shard-specific filename when running in parallel mode.
+    if num_shards > 1:
+        out_path = Path(cfg.output_dir) / f"shard_{shard_id}_of_{num_shards}.json"
+    else:
+        out_path = Path(cfg.output_dir) / "eval_info.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w") as f:
         json.dump(info, f, indent=2)
 
     logging.info("End of eval")
