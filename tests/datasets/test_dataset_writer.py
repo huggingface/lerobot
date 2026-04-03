@@ -15,9 +15,11 @@
 # limitations under the License.
 """Contract tests for DatasetWriter."""
 
+import time
 from pathlib import Path
 from unittest.mock import patch
 
+import av
 import numpy as np
 import pytest
 import torch
@@ -90,6 +92,28 @@ def test_encode_video_worker_default_vcodec(tmp_path):
         _encode_video_worker(video_key, 0, tmp_path, fps=30)
 
     assert captured_kwargs["vcodec"] == "libsvtav1"
+
+
+def test_encode_video_worker_forwards_extra_kwargs(tmp_path):
+    """_encode_video_worker forwards extra encoding kwargs like pix_fmt and crf."""
+    video_key = "observation.images.laptop"
+    fpath = DEFAULT_IMAGE_PATH.format(image_key=video_key, episode_index=0, frame_index=0)
+    img_dir = tmp_path / Path(fpath).parent
+    img_dir.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (64, 64), color="red").save(img_dir / "frame-000000.png")
+
+    captured_kwargs = {}
+
+    def mock_encode(imgs_dir, video_path, fps, **kwargs):
+        captured_kwargs.update(kwargs)
+        Path(video_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(video_path).touch()
+
+    with patch("lerobot.datasets.dataset_writer.encode_video_frames", side_effect=mock_encode):
+        _encode_video_worker(video_key, 0, tmp_path, fps=30, pix_fmt="yuv420p", crf=20)
+
+    assert captured_kwargs["pix_fmt"] == "yuv420p"
+    assert captured_kwargs["crf"] == 20
 
 
 # ── add_frame contracts ──────────────────────────────────────────────
@@ -203,6 +227,109 @@ def test_finalize_is_idempotent(tmp_path):
 
     dataset.finalize()
     dataset.finalize()  # second call should not raise
+
+
+def test_depth_map_encoding_in_streaming_mode(tmp_path):
+    """Depth map frames are transformed by depth_map_encoding_fn before streaming encoding."""
+    depth_key = "observation.images.depth"
+    features = {
+        depth_key: {
+            "dtype": "video",
+            "shape": (64, 96, 1),
+            "names": ["height", "width", "channels"],
+            "info": {
+                "video.fps": DEFAULT_FPS,
+                "video.codec": "hevc",
+                "video.pix_fmt": "yuv420p12le",
+                "video.is_depth_map": True,
+            },
+        },
+        "state": {"dtype": "float32", "shape": (2,), "names": None},
+    }
+
+    encoding_called = {"count": 0}
+
+    def fake_depth_encoding_fn(depth: np.ndarray) -> av.VideoFrame:
+        encoding_called["count"] += 1
+        frame = av.VideoFrame(width=64, height=96, format="yuv420p12le")
+        frame.planes[0].update(depth[..., 0].astype(np.uint16).tobytes())
+        return frame
+
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID,
+        fps=DEFAULT_FPS,
+        features=features,
+        root=tmp_path / "ds",
+        use_videos=True,
+        streaming_encoding=True,
+        depth_map_encoding_fn=fake_depth_encoding_fn,
+    )
+
+    for _ in range(5):
+        dataset.add_frame(
+            {
+                depth_key: np.random.random((64, 96, 1)).astype(np.float32),
+                "state": torch.randn(2),
+                "task": "test",
+            }
+        )
+    # sleep to allow streaming encoder threads to process frames
+    timeout = time.monotonic() + 5
+    while encoding_called["count"] != 5 and time.monotonic() < timeout:
+        time.sleep(0.01)
+    assert encoding_called["count"] == 5
+    dataset.save_episode()
+    dataset.finalize()
+
+
+def test_non_depth_frames_not_encoded(tmp_path):
+    """Non-depth video frames are NOT transformed by depth_map_encoding_fn."""
+    cam_key = "observation.images.cam"
+    features = {
+        cam_key: {
+            "dtype": "video",
+            "shape": (64, 96, 3),
+            "names": ["height", "width", "channels"],
+            "info": {
+                "video.fps": DEFAULT_FPS,
+                "video.codec": "libsvtav1",
+                "video.pix_fmt": "yuv420p",
+                "video.is_depth_map": False,
+            },
+        },
+        "state": {"dtype": "float32", "shape": (2,), "names": None},
+    }
+
+    encoding_called = {"count": 0}
+
+    def fake_depth_encoding_fn(depth: np.ndarray) -> av.VideoFrame:
+        encoding_called["count"] += 1
+        frame = av.VideoFrame(width=64, height=96, format="yuv420p12le")
+        frame.planes[0].update(depth.tobytes())
+        return frame
+
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID,
+        fps=DEFAULT_FPS,
+        features=features,
+        root=tmp_path / "ds",
+        use_videos=True,
+        streaming_encoding=True,
+        depth_map_encoding_fn=fake_depth_encoding_fn,
+    )
+
+    for _ in range(3):
+        dataset.add_frame(
+            {
+                cam_key: np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8),
+                "state": torch.randn(2),
+                "task": "test",
+            }
+        )
+
+    assert encoding_called["count"] == 0
+    dataset.save_episode()
+    dataset.finalize()
 
 
 def test_finalize_then_read_roundtrip(tmp_path):

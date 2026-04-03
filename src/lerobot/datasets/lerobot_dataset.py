@@ -18,7 +18,9 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 
+import av
 import datasets
+import numpy as np
 import torch
 import torch.utils
 from huggingface_hub import HfApi, snapshot_download
@@ -27,6 +29,7 @@ from huggingface_hub.errors import RevisionNotFoundError
 from lerobot.datasets.dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from lerobot.datasets.dataset_reader import DatasetReader
 from lerobot.datasets.dataset_writer import DatasetWriter
+from lerobot.datasets.feature_utils import get_video_feature_encoding_kwargs
 from lerobot.datasets.utils import (
     create_lerobot_dataset_card,
     get_safe_version,
@@ -60,6 +63,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         streaming_encoding: bool = False,
         encoder_queue_maxsize: int = 30,
         encoder_threads: int | None = None,
+        depth_map_encoding_fn: Callable[[np.ndarray], av.VideoFrame] | None = None,
+        depth_map_decoding_fn: Callable[[np.ndarray], np.ndarray] | None = None,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -183,8 +188,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
             encoder_threads (int | None, optional): Number of threads per encoder instance. None lets the
                 codec auto-detect (default). Lower values reduce CPU usage per encoder. Maps to 'lp' (via svtav1-params) for
                 libsvtav1 and 'threads' for h264/hevc.
-
-        Note:
+            depth_map_encoding_fn (Callable | None, optional): Optional function to encode depth maps before saving.
+                This can be used to apply transformations like log scaling or quantization.
+                The function should take a numpy array as input and return an av.VideoFrame, which will be fed directly to the video encoder.
+            depth_map_decoding_fn (Callable | None, optional): Optional function to decode depth maps after loading.
+                This should be the inverse of the encoding function provided in depth_map_encoding_fn, if any.
+                The function should take a numpy array as input (e.g. the raw decoded video frame) and return a numpy array representing the decoded depth map.
             Write-mode parameters (``streaming_encoding``, ``batch_encoding_size``) passed to
             ``__init__`` are deprecated. Use :meth:`create` for new datasets or :meth:`resume`
             to append to existing ones.
@@ -201,6 +210,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._batch_encoding_size = batch_encoding_size
         self._vcodec = resolve_vcodec(vcodec)
         self._encoder_threads = encoder_threads
+        self._depth_map_encoding_fn = depth_map_encoding_fn
+        self._depth_map_decoding_fn = depth_map_decoding_fn
 
         if self._requested_root is not None:
             self._requested_root.mkdir(exist_ok=True, parents=True)
@@ -212,6 +223,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.root = self.meta.root
         self.revision = self.meta.revision
 
+        self._video_feature_encoding_kwargs = self.get_all_video_feature_encoding_kwargs()
+
         # Create reader (hf_dataset loaded below)
         self.reader = DatasetReader(
             meta=self.meta,
@@ -221,6 +234,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             video_backend=self._video_backend,
             delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
+            depth_map_decoding_fn=depth_map_decoding_fn,
+            video_feature_encoding_kwargs=self._video_feature_encoding_kwargs,
         )
 
         # Load actual data
@@ -241,10 +256,16 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 DeprecationWarning,
                 stacklevel=2,
             )
+            self.ensure_depth_streaming_encoding(streaming_encoding)
             streaming_enc = None
             if streaming_encoding and len(self.meta.video_keys) > 0:
                 streaming_enc = self._build_streaming_encoder(
-                    self.meta.fps, self._vcodec, encoder_queue_maxsize, encoder_threads
+                    self.meta.fps,
+                    self._vcodec,
+                    encoder_queue_maxsize,
+                    encoder_threads,
+                    self._video_feature_encoding_kwargs,
+                    depth_map_encoding_fn,
                 )
             self.writer = DatasetWriter(
                 meta=self.meta,
@@ -254,6 +275,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 batch_encoding_size=batch_encoding_size,
                 streaming_encoder=streaming_enc,
                 initial_frames=self.meta.total_frames,
+                video_feature_encoding_kwargs=self._video_feature_encoding_kwargs,
             )
         else:
             self.writer = None
@@ -283,6 +305,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 video_backend=self._video_backend,
                 delta_timestamps=self.delta_timestamps,
                 image_transforms=self.image_transforms,
+                depth_map_decoding_fn=self._depth_map_decoding_fn,
+                video_feature_encoding_kwargs=self._video_feature_encoding_kwargs,
             )
         return self.reader
 
@@ -292,6 +316,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         vcodec: str,
         encoder_queue_maxsize: int,
         encoder_threads: int | None,
+        video_feature_encoding_kwargs: dict[str, dict] | None = None,
+        depth_map_encoding_fn: Callable[[np.ndarray], av.VideoFrame] | None = None,
     ) -> StreamingVideoEncoder:
         return StreamingVideoEncoder(
             fps=fps,
@@ -302,6 +328,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             preset=None,
             queue_maxsize=encoder_queue_maxsize,
             encoder_threads=encoder_threads,
+            video_feature_encoding_kwargs=video_feature_encoding_kwargs,
+            depth_map_encoding_fn=depth_map_encoding_fn,
         )
 
     # ── Metadata properties ───────────────────────────────────────────
@@ -475,6 +503,35 @@ class LeRobotDataset(torch.utils.data.Dataset):
             f"}})"
         )
 
+    def ensure_depth_streaming_encoding(self, streaming_encoding: bool) -> None:
+        """
+        Ensure that if any depth map video keys are present, streaming encoding is enabled.
+        This is necessary because the non-streaming encoding pipeline is RGB-oriented and does not
+            reliably preserve depth maps: it can impose image channel/dtype constraints and introduce
+            dtype casting or quantization of depth values.
+        """
+        depth_video_keys = [
+            k
+            for k in self.meta.video_keys
+            if self._video_feature_encoding_kwargs[k].get("video.is_depth_map", False)
+        ]
+        if depth_video_keys and not streaming_encoding:
+            raise ValueError(
+                f"Depth map video keys {depth_video_keys} require streaming_encoding=True. "
+                "The non-streaming image pipeline does not currently preserve depth maps correctly because it relies on RGB-oriented image writing and introduces lossy dtype casting/quantization of depth values."
+            )
+
+    def get_all_video_feature_encoding_kwargs(self) -> dict[str, dict]:
+        """
+        Retrieve per-video-key encoding kwargs from the dataset metadata.
+        This allows for custom encoding settings (e.g. crf, preset) to be specified on a per-video basis directly in the dataset info,
+            which can be useful for modalities like depth maps that may require different encoding parameters than RGB videos.
+        """
+        video_feature_encoding_kwargs = {}
+        for key in self.meta.video_keys:
+            video_feature_encoding_kwargs[key] = get_video_feature_encoding_kwargs(self.features.get(key, {}))
+        return video_feature_encoding_kwargs
+
     # ── Hub methods (stay on facade) ──────────────────────────────────
 
     def push_to_hub(
@@ -609,6 +666,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         streaming_encoding: bool = False,
         encoder_queue_maxsize: int = 30,
         encoder_threads: int | None = None,
+        depth_map_encoding_fn: Callable | None = None,
+        depth_map_decoding_fn: Callable | None = None,
     ) -> "LeRobotDataset":
         """Create a new LeRobotDataset from scratch for recording data.
 
@@ -642,6 +701,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
             encoder_queue_maxsize: Max buffered frames per camera when using
                 streaming encoding.
             encoder_threads: Threads per encoder instance. ``None`` for auto.
+            depth_map_encoding_fn (Callable | None, optional): Optional function to encode depth maps before saving.
+                This can be used to apply transformations like log scaling or quantization.
+            depth_map_decoding_fn (Callable | None, optional): Optional function to decode depth maps after loading.
+                This should be the inverse of the encoding function provided in depth_map_encoding_fn, if any.
 
         Returns:
             A new :class:`LeRobotDataset` in write mode.
@@ -669,14 +732,25 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj._batch_encoding_size = batch_encoding_size
         obj._vcodec = vcodec
         obj._encoder_threads = encoder_threads
+        obj._depth_map_encoding_fn = depth_map_encoding_fn
+        obj._depth_map_decoding_fn = depth_map_decoding_fn
+        obj._video_feature_encoding_kwargs = obj.get_all_video_feature_encoding_kwargs()
 
         # Reader is lazily created on first access (write-only mode)
         obj.reader = None
 
         # Create writer
+        obj.ensure_depth_streaming_encoding(streaming_encoding)
         streaming_enc = None
         if streaming_encoding and len(obj.meta.video_keys) > 0:
-            streaming_enc = cls._build_streaming_encoder(fps, vcodec, encoder_queue_maxsize, encoder_threads)
+            streaming_enc = cls._build_streaming_encoder(
+                fps,
+                vcodec,
+                encoder_queue_maxsize,
+                encoder_threads,
+                obj._video_feature_encoding_kwargs,
+                depth_map_encoding_fn,
+            )
         obj.writer = DatasetWriter(
             meta=obj.meta,
             root=obj.root,
@@ -684,6 +758,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             encoder_threads=encoder_threads,
             batch_encoding_size=batch_encoding_size,
             streaming_encoder=streaming_enc,
+            video_feature_encoding_kwargs=obj._video_feature_encoding_kwargs,
         )
 
         if image_writer_processes or image_writer_threads:
@@ -709,6 +784,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         streaming_encoding: bool = False,
         encoder_queue_maxsize: int = 30,
         encoder_threads: int | None = None,
+        depth_map_encoding_fn: Callable | None = None,
+        depth_map_decoding_fn: Callable | None = None,
     ) -> "LeRobotDataset":
         """Resume recording on an existing dataset.
 
@@ -738,6 +815,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 capture.
             encoder_queue_maxsize: Max buffered frames per camera for streaming.
             encoder_threads: Threads per encoder instance. ``None`` for auto.
+            depth_map_encoding_fn (Callable | None, optional): Optional function to encode depth maps before saving.
+                This can be used to apply transformations like log scaling or quantization.
+            depth_map_decoding_fn (Callable | None, optional): Optional function to decode depth maps after loading.
+                This should be the inverse of the encoding function provided in depth_map_encoding_fn, if any.
 
         Returns:
             A :class:`LeRobotDataset` in write mode, ready to append episodes.
@@ -761,6 +842,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj._batch_encoding_size = batch_encoding_size
         obj._vcodec = vcodec
         obj._encoder_threads = encoder_threads
+        obj._depth_map_encoding_fn = depth_map_encoding_fn
+        obj._depth_map_decoding_fn = depth_map_decoding_fn
 
         if obj._requested_root is not None:
             obj._requested_root.mkdir(exist_ok=True, parents=True)
@@ -770,15 +853,22 @@ class LeRobotDataset(torch.utils.data.Dataset):
             obj.repo_id, obj._requested_root, obj.revision, force_cache_sync=force_cache_sync
         )
         obj.root = obj.meta.root
+        obj._video_feature_encoding_kwargs = obj.get_all_video_feature_encoding_kwargs()
 
         # Reader is lazily created on first access (write-only mode)
         obj.reader = None
 
         # Create writer for appending
+        obj.ensure_depth_streaming_encoding(streaming_encoding)
         streaming_enc = None
         if streaming_encoding and len(obj.meta.video_keys) > 0:
             streaming_enc = cls._build_streaming_encoder(
-                obj.meta.fps, vcodec, encoder_queue_maxsize, encoder_threads
+                obj.meta.fps,
+                vcodec,
+                encoder_queue_maxsize,
+                encoder_threads,
+                obj._video_feature_encoding_kwargs,
+                depth_map_encoding_fn,
             )
         obj.writer = DatasetWriter(
             meta=obj.meta,
@@ -788,6 +878,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             batch_encoding_size=batch_encoding_size,
             streaming_encoder=streaming_enc,
             initial_frames=obj.meta.total_frames,
+            video_feature_encoding_kwargs=obj._video_feature_encoding_kwargs,
         )
 
         if image_writer_processes or image_writer_threads:

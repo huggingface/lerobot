@@ -49,6 +49,8 @@ class DatasetReader:
         video_backend: str,
         delta_timestamps: dict[str, list[float]] | None,
         image_transforms: Callable | None,
+        depth_map_decoding_fn: Callable | None = None,
+        video_feature_encoding_kwargs: dict[str, dict] | None = None,
     ):
         """Initialize the reader with metadata, filtering, and transform config.
 
@@ -66,6 +68,8 @@ class DatasetReader:
                 relative timestamp offsets for temporal context windows.
             image_transforms: Optional torchvision v2 transform applied to
                 visual features.
+            depth_map_decoding_fn (Callable | None, optional): Optional function to decode depth maps after loading.
+            video_feature_encoding_kwargs: Optional dict mapping video feature keys to their encoding kwargs.
         """
         self._meta = meta
         self.root = root
@@ -73,7 +77,8 @@ class DatasetReader:
         self._tolerance_s = tolerance_s
         self._video_backend = video_backend
         self._image_transforms = image_transforms
-
+        self._depth_map_decoding_fn = depth_map_decoding_fn
+        self._video_feature_encoding_kwargs = video_feature_encoding_kwargs
         self.hf_dataset: datasets.Dataset | None = None
         self._absolute_to_relative_idx: dict[int, int] | None = None
 
@@ -242,6 +247,12 @@ class DatasetReader:
 
             video_path = self.root / self._meta.get_video_file_path(ep_idx, vid_key)
             frames = decode_video_frames(video_path, shifted_query_ts, self._tolerance_s, self._video_backend)
+            is_depth = (
+                self._video_feature_encoding_kwargs is not None
+                and self._video_feature_encoding_kwargs[vid_key].get("video.is_depth_map", False)
+            )
+            if is_depth and self._depth_map_decoding_fn is not None:
+                frames = self._depth_map_decoding_fn(frames)
             item[vid_key] = frames.squeeze(0)
 
         return item

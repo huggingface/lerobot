@@ -554,3 +554,20 @@ def validate_episode_buffer(episode_buffer: dict, total_episodes: int, features:
             f"In episode_buffer not in features: {buffer_keys - set(features)}"
             f"In features not in episode_buffer: {set(features) - buffer_keys}"
         )
+
+
+def get_video_feature_encoding_kwargs(info: dict) -> dict:
+    """
+    Given a features info dict from metadata, locate and extract video information (e.g. vcodec, fps).
+    Maintains backward compatibility with older datasets that stored video information in places other than features/info.
+    This method assumes one video.codec field exists in the info dict, and all other video information is stored in the same location.
+    If no video.codec field is found, returns an empty dict.
+    """
+    if "video.codec" in info:
+        return info
+    for v in info.values():
+        if isinstance(v, dict):
+            result = get_video_feature_encoding_kwargs(v)
+            if "video.codec" in result:
+                return result
+    return {}
