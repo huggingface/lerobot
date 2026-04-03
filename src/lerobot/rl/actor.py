@@ -175,31 +175,38 @@ def actor_cli(cfg: TrainRLServerPipelineConfig):
     interactions_process.start()
     receive_policy_process.start()
 
-    act_with_policy(
-        cfg=cfg,
-        shutdown_event=shutdown_event,
-        parameters_queue=parameters_queue,
-        transitions_queue=transitions_queue,
-        interactions_queue=interactions_queue,
-    )
-    logging.info("[ACTOR] Policy process joined")
+    try:
+        act_with_policy(
+            cfg=cfg,
+            shutdown_event=shutdown_event,
+            parameters_queue=parameters_queue,
+            transitions_queue=transitions_queue,
+            interactions_queue=interactions_queue,
+        )
+        logging.info("[ACTOR] act_with_policy completed normally")
+    except Exception:
+        logging.exception("[ACTOR] act_with_policy crashed with an unhandled exception")
+        shutdown_event.set()
+        raise
+    finally:
+        logging.info("[ACTOR] Closing queues")
+        transitions_queue.close()
+        interactions_queue.close()
+        parameters_queue.close()
 
-    logging.info("[ACTOR] Closing queues")
-    transitions_queue.close()
-    interactions_queue.close()
-    parameters_queue.close()
+        transitions_process.join()
+        logging.info("[ACTOR] Transitions process joined")
+        interactions_process.join()
+        logging.info("[ACTOR] Interactions process joined")
+        receive_policy_process.join()
+        logging.info("[ACTOR] Receive policy process joined")
 
-    transitions_process.join()
-    logging.info("[ACTOR] Transitions process joined")
-    interactions_process.join()
-    logging.info("[ACTOR] Interactions process joined")
-    receive_policy_process.join()
-    logging.info("[ACTOR] Receive policy process joined")
+        logging.info("[ACTOR] Cancelling queue join threads")
+        transitions_queue.cancel_join_thread()
+        interactions_queue.cancel_join_thread()
+        parameters_queue.cancel_join_thread()
 
-    logging.info("[ACTOR] join queues")
-    transitions_queue.cancel_join_thread()
-    interactions_queue.cancel_join_thread()
-    parameters_queue.cancel_join_thread()
+        logging.info("[ACTOR] Actor process exited")
 
     logging.info("[ACTOR] queues closed")
 
