@@ -21,13 +21,17 @@ import time
 from queue import Queue
 from typing import Any
 
+import numpy as np
+
 from lerobot.types import RobotAction
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.errors import DeviceNotConnectedError
 
 from ..teleoperator import Teleoperator
 from ..utils import TeleopEvents
 from .configuration_keyboard import (
     KeyboardEndEffectorTeleopConfig,
+    KeyboardReachyMiniTeleopConfig,
     KeyboardRoverTeleopConfig,
     KeyboardTeleopConfig,
 )
@@ -430,3 +434,92 @@ class KeyboardRoverTeleop(KeyboardTeleop):
             "linear_velocity": linear_velocity,
             "angular_velocity": angular_velocity,
         }
+
+
+class KeyboardReachyMiniTeleop(KeyboardTeleop):
+    """
+    Teleop class to use keyboard inputs for Reachy Mini control.
+    """
+
+    config_class = KeyboardReachyMiniTeleopConfig
+    name = "keyboard_reachy_mini"
+
+    def __init__(self, config: KeyboardReachyMiniTeleopConfig):
+        super().__init__(config)
+        self.config = config
+        self.action = {
+            "ee.x": 0.0,
+            "ee.y": 0.0,
+            "ee.z": 0.0,
+            "ee.wx": 0.0,
+            "ee.wy": 0.0,
+            "ee.wz": 0.0,
+            "right_antenna.pos": 0.0,
+            "left_antenna.pos": 0.0,
+        }
+
+    @property
+    def action_features(self) -> dict:
+        return {
+            "ee.x": float,
+            "ee.y": float,
+            "ee.z": float,
+            "ee.wx": float,
+            "ee.wy": float,
+            "ee.wz": float,
+            "right_antenna.pos": float,
+            "left_antenna.pos": float,
+        }
+
+    def get_action(self) -> dict[str, Any]:
+        if not self.is_connected:
+            raise DeviceNotConnectedError(
+                "KeyboardTeleop is not connected. You need to run `connect()` before `get_action()`."
+            )
+
+        self._drain_pressed_keys()
+
+        # Generate action based on current key states
+        for key, val in self.current_pressed.items():
+            if not val:
+                continue
+            if key == "w":
+                # Pitch forward
+                self.action["ee.wy"] += np.deg2rad(self.config.head_speed_deg)
+            elif key == "s":
+                # Pitch backward
+                self.action["ee.wy"] -= np.deg2rad(self.config.head_speed_deg)
+            elif key == "a":
+                # Roll left
+                self.action["ee.wx"] += np.deg2rad(self.config.head_speed_deg)
+            elif key == "d":
+                # Roll right
+                self.action["ee.wx"] -= np.deg2rad(self.config.head_speed_deg)
+            elif key == "q":
+                # Yaw left (maps to ee.wz which controls body_rotation via IK)
+                self.action["ee.wz"] += np.deg2rad(self.config.body_speed_deg)
+            elif key == "e":
+                # Yaw right
+                self.action["ee.wz"] -= np.deg2rad(self.config.body_speed_deg)
+            elif key == "up":
+                # Move up
+                self.action["ee.z"] += 0.001 * self.config.head_speed_deg
+            elif key == "down":
+                # Move down
+                self.action["ee.z"] -= 0.001 * self.config.head_speed_deg
+            elif key == "z":
+                self.action["right_antenna.pos"] += self.config.antenna_speed_deg
+            elif key == "c":
+                self.action["right_antenna.pos"] -= self.config.antenna_speed_deg
+            elif key == "x":
+                self.action["left_antenna.pos"] += self.config.antenna_speed_deg
+            elif key == "v":
+                self.action["left_antenna.pos"] -= self.config.antenna_speed_deg
+            elif key == "r":
+                self.action = dict.fromkeys(self.action, 0.0)
+                logging.info("Resetting action to zero.")
+
+        # Remove released keys from current_pressed
+        self.current_pressed = {k: v for k, v in self.current_pressed.items() if v}
+
+        return self.action

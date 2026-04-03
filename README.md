@@ -57,7 +57,7 @@ action = model.select_action(obs)
 robot.send_action(action)
 ```
 
-**Supported Hardware:** SO100, LeKiwi, Koch, HopeJR, OMX, EarthRover, Reachy2, Gamepads, Keyboards, Phones, OpenARM, Unitree G1.
+**Supported Hardware:** SO100, LeKiwi, Koch, HopeJR, OMX, EarthRover, Reachy2, ReachyMini, Gamepads, Keyboards, Phones, OpenARM, Unitree G1.
 
 While these devices are natively integrated into the LeRobot codebase, the library is designed to be extensible. You can easily implement the Robot interface to utilize LeRobot's data collection, training, and visualization tools for your own custom robot.
 
