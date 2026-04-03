@@ -129,12 +129,20 @@ class DiffusionConfig(PreTrainedConfig):
     use_group_norm: bool = True
     spatial_softmax_num_keypoints: int = 32
     use_separate_rgb_encoder_per_camera: bool = False
-    # Unet.
+    # Noise prediction network selection: "unet" or "dit"
+    noise_pred_net_type: str = "unet"
+    # Unet (used when noise_pred_net_type == "unet").
     down_dims: tuple[int, ...] = (512, 1024, 2048)
     kernel_size: int = 5
     n_groups: int = 8
     diffusion_step_embed_dim: int = 128
     use_film_scale_modulation: bool = True
+    # DiT / adaLN-Zero transformer (used when noise_pred_net_type == "dit").
+    # diffusion_step_embed_dim above is reused for the timestep MLP.
+    dit_num_layers: int = 6
+    dit_num_heads: int = 8
+    dit_hidden_dim: int = 256
+    dit_mlp_ratio: float = 4.0
     # Noise scheduler.
     noise_scheduler_type: str = "DDPM"
     num_train_timesteps: int = 100
@@ -180,14 +188,22 @@ class DiffusionConfig(PreTrainedConfig):
                 f"Got {self.noise_scheduler_type}."
             )
 
-        # Check that the horizon size and U-Net downsampling is compatible.
-        # U-Net downsamples by 2 with each stage.
-        downsampling_factor = 2 ** len(self.down_dims)
-        if self.horizon % downsampling_factor != 0:
+        supported_noise_pred_net_types = ["unet", "dit"]
+        if self.noise_pred_net_type not in supported_noise_pred_net_types:
             raise ValueError(
-                "The horizon should be an integer multiple of the downsampling factor (which is determined "
-                f"by `len(down_dims)`). Got {self.horizon=} and {self.down_dims=}"
+                f"`noise_pred_net_type` must be one of {supported_noise_pred_net_types}. "
+                f"Got {self.noise_pred_net_type}."
             )
+
+        # Check that the horizon size and U-Net downsampling is compatible.
+        # U-Net downsamples by 2 with each stage. (Not required for DiT.)
+        if self.noise_pred_net_type == "unet":
+            downsampling_factor = 2 ** len(self.down_dims)
+            if self.horizon % downsampling_factor != 0:
+                raise ValueError(
+                    "The horizon should be an integer multiple of the downsampling factor (which is determined "
+                    f"by `len(down_dims)`). Got {self.horizon=} and {self.down_dims=}"
+                )
 
     def get_optimizer_preset(self) -> AdamConfig:
         return AdamConfig(

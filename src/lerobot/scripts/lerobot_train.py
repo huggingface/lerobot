@@ -323,6 +323,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
+        logging.info(str(policy))
+        logging.info(f"Total params: {num_total_params:,} | Learnable: {num_learnable_params:,}")
+
     # create dataloader for offline training
     if hasattr(cfg.policy, "drop_n_last_frames"):
         shuffle = False

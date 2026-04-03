@@ -180,7 +180,13 @@ class DiffusionModel(nn.Module):
         if self.config.env_state_feature:
             global_cond_dim += self.config.env_state_feature.shape[0]
 
-        self.unet = DiffusionConditionalUnet1d(config, global_cond_dim=global_cond_dim * config.n_obs_steps)
+        net_cond_dim = global_cond_dim * config.n_obs_steps
+        if config.noise_pred_net_type == "unet":
+            self.unet = DiffusionConditionalUnet1d(config, global_cond_dim=net_cond_dim)
+        elif config.noise_pred_net_type == "dit":
+            self.unet = DiffusionTransformerDiT(config, global_cond_dim=net_cond_dim)
+        else:
+            raise ValueError(f"Unsupported noise_pred_net_type: {config.noise_pred_net_type}")
 
         self.noise_scheduler = _make_noise_scheduler(
             config.noise_scheduler_type,
@@ -561,6 +567,140 @@ class DiffusionSinusoidalPosEmb(nn.Module):
         emb = x.unsqueeze(-1) * emb.unsqueeze(0)
         emb = torch.cat((emb.sin(), emb.cos()), dim=-1)
         return emb
+
+
+class DiffusionDiTAdaLNBlock(nn.Module):
+    """Single adaLN-Zero DiT block for 1D action sequences.
+
+    Implements the adaLN-Zero variant from "Scalable Diffusion Models with Transformers"
+    (https://huggingface.co/papers/2212.09748). Conditioning (timestep + global obs) is
+    used to predict per-channel shift, scale, and gate parameters for both the self-attention
+    and MLP sub-layers. All output projections and the adaLN linear are zero-initialized so
+    that each block starts as an identity at the beginning of training.
+    """
+
+    def __init__(self, hidden_dim: int, num_heads: int, mlp_ratio: float = 4.0):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(hidden_dim, elementwise_affine=False, eps=1e-6)
+        self.attn = nn.MultiheadAttention(hidden_dim, num_heads, batch_first=True)
+        self.norm2 = nn.LayerNorm(hidden_dim, elementwise_affine=False, eps=1e-6)
+        mlp_hidden = int(hidden_dim * mlp_ratio)
+        self.mlp = nn.Sequential(
+            nn.Linear(hidden_dim, mlp_hidden),
+            nn.GELU(),
+            nn.Linear(mlp_hidden, hidden_dim),
+        )
+        # Produces 6 * hidden_dim: (shift1, scale1, gate1, shift2, scale2, gate2)
+        self.adaLN_modulation = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(hidden_dim, 6 * hidden_dim),
+        )
+        # Zero-init: at t=0 all gates=0, blocks are identity residuals
+        nn.init.zeros_(self.adaLN_modulation[-1].weight)
+        nn.init.zeros_(self.adaLN_modulation[-1].bias)
+        nn.init.zeros_(self.attn.out_proj.weight)
+        nn.init.zeros_(self.attn.out_proj.bias)
+        nn.init.zeros_(self.mlp[-1].weight)
+        nn.init.zeros_(self.mlp[-1].bias)
+
+    def forward(self, x: Tensor, c: Tensor) -> Tensor:
+        """
+        Args:
+            x: (B, T, hidden_dim) sequence of action tokens.
+            c: (B, hidden_dim) conditioning vector (timestep + obs).
+        Returns:
+            (B, T, hidden_dim)
+        """
+        mods = self.adaLN_modulation(c).unsqueeze(1).chunk(6, dim=-1)
+        shift1, scale1, gate1, shift2, scale2, gate2 = mods
+
+        x_mod = (1 + scale1) * self.norm1(x) + shift1
+        attn_out, _ = self.attn(x_mod, x_mod, x_mod)
+        x = x + gate1 * attn_out
+
+        x_mod = (1 + scale2) * self.norm2(x) + shift2
+        x = x + gate2 * self.mlp(x_mod)
+        return x
+
+
+class DiffusionTransformerDiT(nn.Module):
+    """adaLN-Zero DiT denoising network for 1D action sequences.
+
+    Replaces the UNet as the noise prediction backbone. The action sequence
+    (B, T, action_dim) is projected to hidden_dim tokens, processed by a stack
+    of adaLN-Zero transformer blocks conditioned on (timestep_emb + global_cond),
+    then projected back to action_dim.
+    """
+
+    def __init__(self, config: "DiffusionConfig", global_cond_dim: int):
+        super().__init__()
+        hidden_dim = config.dit_hidden_dim
+        action_dim = config.action_feature.shape[0]
+
+        # Project action tokens into transformer hidden dim
+        self.input_proj = nn.Linear(action_dim, hidden_dim)
+
+        # Learned positional embeddings (fixed to horizon length)
+        self.pos_emb = nn.Parameter(torch.zeros(1, config.horizon, hidden_dim))
+        nn.init.normal_(self.pos_emb, std=0.02)
+
+        # Timestep MLP — reuses diffusion_step_embed_dim for consistency with UNet
+        self.timestep_mlp = nn.Sequential(
+            DiffusionSinusoidalPosEmb(config.diffusion_step_embed_dim),
+            nn.Linear(config.diffusion_step_embed_dim, config.diffusion_step_embed_dim * 4),
+            nn.Mish(),
+            nn.Linear(config.diffusion_step_embed_dim * 4, hidden_dim),
+        )
+
+        # Project global conditioning (flattened obs) to hidden_dim and add to timestep emb
+        self.global_cond_proj = nn.Linear(global_cond_dim, hidden_dim) if global_cond_dim > 0 else None
+
+        # adaLN-Zero transformer blocks
+        self.blocks = nn.ModuleList(
+            [
+                DiffusionDiTAdaLNBlock(hidden_dim, config.dit_num_heads, config.dit_mlp_ratio)
+                for _ in range(config.dit_num_layers)
+            ]
+        )
+
+        # Final layer: adaLN norm + linear projection back to action_dim
+        self.final_norm = nn.LayerNorm(hidden_dim, elementwise_affine=False, eps=1e-6)
+        self.final_adaLN_modulation = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(hidden_dim, 2 * hidden_dim),
+        )
+        self.final_proj = nn.Linear(hidden_dim, action_dim)
+        # Zero-init final projection for stable training start
+        nn.init.zeros_(self.final_adaLN_modulation[-1].weight)
+        nn.init.zeros_(self.final_adaLN_modulation[-1].bias)
+        nn.init.zeros_(self.final_proj.weight)
+        nn.init.zeros_(self.final_proj.bias)
+
+    def forward(self, x: Tensor, timestep: Tensor, global_cond: Tensor | None = None) -> Tensor:
+        """
+        Args:
+            x: (B, T, action_dim) noisy action sequence.
+            timestep: (B,) diffusion timestep indices.
+            global_cond: (B, global_cond_dim) flattened obs conditioning, or None.
+        Returns:
+            (B, T, action_dim) predicted noise (or sample).
+        """
+        # Embed and add positional encoding
+        x = self.input_proj(x) + self.pos_emb[:, : x.shape[1]]
+
+        # Build conditioning vector: timestep + global obs
+        c = self.timestep_mlp(timestep)
+        if global_cond is not None and self.global_cond_proj is not None:
+            c = c + self.global_cond_proj(global_cond)
+
+        for block in self.blocks:
+            x = block(x, c)
+
+        # Final adaLN + projection
+        shift, scale = self.final_adaLN_modulation(c).unsqueeze(1).chunk(2, dim=-1)
+        x = (1 + scale) * self.final_norm(x) + shift
+        x = self.final_proj(x)
+        return x
 
 
 class DiffusionConv1dBlock(nn.Module):
