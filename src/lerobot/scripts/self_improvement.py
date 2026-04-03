@@ -59,9 +59,9 @@ SAVE_FREQ = None              # None = save only at end of finetune
 
 # ── Final eval ────────────────────────────────────────────────
 EVAL_N_EPISODES = 250         # Final evaluation episodes
-EVAL_USE_PLANNING = False
-EVAL_PLANNING_ALGORITHM = "gcp"
-EVAL_PLANNING_OVERRIDES = {}
+EVAL_USE_PLANNING = True
+EVAL_PLANNING_ALGORITHM = "gbp"
+EVAL_PLANNING_OVERRIDES = {"lr": 0.3, "n_iters": 20}
 
 # ── WandB ─────────────────────────────────────────────────────
 WANDB_PROJECT = "awm"
