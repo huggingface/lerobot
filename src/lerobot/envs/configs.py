@@ -75,13 +75,14 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     def create_envs(
         self,
         n_envs: int,
-        use_async_envs: bool = False,
+        use_async_envs: bool = True,
     ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
         """Create {suite: {task_id: VectorEnv}}.
 
         Default: single-task env via gym.make(). Multi-task benchmarks override.
+        AsyncVectorEnv is the default for n_envs > 1; auto-downgraded to Sync for n_envs=1.
         """
-        env_cls = gym.vector.AsyncVectorEnv if use_async_envs else gym.vector.SyncVectorEnv
+        env_cls = gym.vector.AsyncVectorEnv if (use_async_envs and n_envs > 1) else gym.vector.SyncVectorEnv
 
         if self.gym_id not in gym_registry:
             print(f"gym id '{self.gym_id}' not found, attempting to import '{self.package_name}'...")
@@ -399,12 +400,12 @@ class LiberoEnv(EnvConfig):
             kwargs["task_ids"] = self.task_ids
         return kwargs
 
-    def create_envs(self, n_envs: int, use_async_envs: bool = False):
+    def create_envs(self, n_envs: int, use_async_envs: bool = True):
         from lerobot.envs.libero import create_libero_envs
 
         if self.task is None:
             raise ValueError("LiberoEnv requires a task to be specified")
-        env_cls = gym.vector.AsyncVectorEnv if use_async_envs else gym.vector.SyncVectorEnv
+        env_cls = gym.vector.AsyncVectorEnv if (use_async_envs and n_envs > 1) else gym.vector.SyncVectorEnv
         return create_libero_envs(
             task=self.task,
             n_envs=n_envs,
@@ -468,12 +469,12 @@ class MetaworldEnv(EnvConfig):
             "render_mode": self.render_mode,
         }
 
-    def create_envs(self, n_envs: int, use_async_envs: bool = False):
+    def create_envs(self, n_envs: int, use_async_envs: bool = True):
         from lerobot.envs.metaworld import create_metaworld_envs
 
         if self.task is None:
             raise ValueError("MetaWorld requires a task to be specified")
-        env_cls = gym.vector.AsyncVectorEnv if use_async_envs else gym.vector.SyncVectorEnv
+        env_cls = gym.vector.AsyncVectorEnv if (use_async_envs and n_envs > 1) else gym.vector.SyncVectorEnv
         return create_metaworld_envs(
             task=self.task,
             n_envs=n_envs,
