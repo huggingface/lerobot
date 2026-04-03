@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
@@ -45,6 +44,8 @@ from lerobot.utils.constants import (
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
 
+_BIN_EDGES = np.linspace(-1, 1, 257)[:-1]
+
 
 @ProcessorStepRegistry.register(name="pi05_prepare_state_tokenizer_processor_step")
 @dataclass
@@ -66,24 +67,21 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
         if tasks is None:
             raise ValueError("No task found in complementary data")
 
-        # TODO: check if this necessary
-        state = deepcopy(state)
+        # Collapse temporal dim if present: [B, T, D] → [B, D]
+        if state.ndim == 3:
+            state = state[:, -1, :]
 
-        # State should already be normalized to [-1, 1] by the NormalizerProcessorStep that runs before this step
-        # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
-        state_np = state.cpu().numpy()
-        discretized_states = np.digitize(state_np, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
+        # State should already be normalized to [-1, 1] by the NormalizerProcessorStep
+        state_np = state.detach().cpu().numpy()
+        discretized_states = np.digitize(state_np, bins=_BIN_EDGES) - 1
 
         full_prompts = []
         for i, task in enumerate(tasks):
             cleaned_text = task.strip().replace("_", " ").replace("\n", " ")
             state_str = " ".join(map(str, discretized_states[i]))
-            full_prompt = f"Task: {cleaned_text}, State: {state_str};\nAction: "
-            full_prompts.append(full_prompt)
+            full_prompts.append(f"Task: {cleaned_text}, State: {state_str};\nAction: ")
 
         transition[TransitionKey.COMPLEMENTARY_DATA][self.task_key] = full_prompts
-        # Normalize state to [-1, 1] range if needed (assuming it's already normalized by normalizer processor step!!)
-        # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
         return transition
 
     def transform_features(

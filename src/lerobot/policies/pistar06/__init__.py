@@ -1,6 +1,4 @@
-#!/usr/bin/env python
-
-# Copyright 2025 Nvidia and The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,13 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .configuration_groot import GrootConfig
+from .configuration_pistar06 import PiStar06Config
+from .modeling_pistar06 import PiStar06Policy
 
-try:
-    from .modeling_groot import GrootPolicy
-    from .processor_groot import make_groot_pre_post_processors
-except Exception:  # noqa: BLE001
-    GrootPolicy = None  # type: ignore[assignment,misc]
-    make_groot_pre_post_processors = None  # type: ignore[assignment]
-
-__all__ = ["GrootConfig", "GrootPolicy", "make_groot_pre_post_processors"]
+__all__ = ["PiStar06Config", "PiStar06Policy"]
