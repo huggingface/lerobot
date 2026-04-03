@@ -21,11 +21,15 @@ from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import (
     add_start_docstrings,
     add_start_docstrings_to_model_forward,
-    is_flash_attn_2_available,
-    is_flash_attn_greater_or_equal_2_10,
     is_torchdynamo_compiling,
     logging,
     replace_return_docstrings,
+)
+
+from lerobot.utils.flash_attn_compat import (
+    apply_rotary_emb,
+    flash_attn_func,
+    flash_attn_varlen_func,
 )
 
 from .configuration_qwen2_5_vl import Qwen2_5_VLConfig, Qwen2_5_VLVisionConfig
@@ -38,20 +42,6 @@ class _SlidingWindowCachePlaceholder:
 
 
 SlidingWindowCache = _SlidingWindowCachePlaceholder
-
-if is_flash_attn_2_available():
-    from flash_attn import flash_attn_func, flash_attn_varlen_func
-    from flash_attn.layers.rotary import apply_rotary_emb
-else:
-    flash_attn_varlen_func = None
-    apply_rotary_emb = None
-    flash_attn_func = None
-
-
-if is_flash_attn_2_available():
-    pass
-else:
-    flash_attn_varlen_func = None
 
 
 logger = logging.get_logger(__name__)
@@ -886,11 +876,7 @@ class Qwen2_5_VLFlashAttention2(Qwen2_5_VLAttention):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-
-        # TODO: Should be removed once Flash Attention for RoCm is bumped to 2.1.
-        # flash_attn<2.1 generates top-left aligned causal mask, while what is needed here is bottom-right alignment, that was made default for flash_attn>=2.1. This attribute is used to handle this difference. Reference: https://github.com/Dao-AILab/flash-attention/releases/tag/v2.1.0.
-        # Beware that with flash_attn<2.1, using q_seqlen != k_seqlen (except for the case q_seqlen == 1) produces a wrong mask (top-left).
-        self._flash_attn_uses_top_left_mask = not is_flash_attn_greater_or_equal_2_10()
+        self._flash_attn_uses_top_left_mask = False
 
     def forward(
         self,
@@ -931,7 +917,6 @@ class Qwen2_5_VLFlashAttention2(Qwen2_5_VLAttention):
         # repeat k/v heads if n_kv_heads < n_heads
         # key_states = repeat_kv(key_states, self.num_key_value_groups)
         # value_states = repeat_kv(value_states, self.num_key_value_groups)
-        dropout_rate = 0.0 if not self.training else self.attention_dropout
 
         # In PEFT, usually we cast the layer norms in float32 for training stability reasons
         # therefore the input hidden states gets silently casted in float32. Hence, we need
@@ -965,8 +950,6 @@ class Qwen2_5_VLFlashAttention2(Qwen2_5_VLAttention):
             query_states,
             key_states,
             value_states,
-            dropout_rate,
-            softmax_scale=None,
             causal=self.is_causal,
         )
 

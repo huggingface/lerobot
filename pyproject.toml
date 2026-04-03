@@ -153,9 +153,9 @@ groot = [
     "timm>=1.0.0,<1.1.0",
     "safetensors>=0.4.3,<1.0.0",
     "Pillow>=10.0.0,<13.0.0",
-    "decord>=0.6.0,<1.0.0; (platform_machine == 'AMD64' or platform_machine == 'x86_64')",
+    "decord2",
     "ninja>=1.11.1,<2.0.0",
-    "flash-attn>=2.5.9,<3.0.0 ; sys_platform != 'darwin'"
+    "flash-attn-4 ; sys_platform != 'darwin'"
 ]
 sarm = ["lerobot[transformers-dep]", "faker>=33.0.0,<35.0.0", "lerobot[matplotlib-dep]", "lerobot[qwen-vl-utils-dep]"]
 xvla = ["lerobot[transformers-dep]"]
@@ -194,7 +194,7 @@ all = [
     "lerobot[wallx]",
     "lerobot[pi]",
     "lerobot[smolvla]",
-    # "lerobot[groot]", TODO(Steven): Gr00t requires specific installation instructions for flash-attn
+    # "lerobot[groot]", TODO(Steven): Gr00t requires flash-attn-4 (CUDA-only)
     "lerobot[xvla]",
     "lerobot[hilserl]",
     "lerobot[async]",
