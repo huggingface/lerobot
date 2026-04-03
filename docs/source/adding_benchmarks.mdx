@@ -138,7 +138,7 @@ Each `EnvConfig` subclass declares two dicts that tell the policy what to expect
 Create a `gym.Env` subclass that wraps the third-party simulator:
 
 ```python
-class MyBenchmarkConfig(EnvConfig):
+class MyBenchmarkEnv(gym.Env):
     metadata = {"render_modes": ["rgb_array"], "render_fps": <fps>}
 
     def __init__(self, task_suite, task_id, ...):
