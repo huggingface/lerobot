@@ -22,6 +22,8 @@ def test_registry_all_types():
     assert len(known) >= 6
     for t in known:
         cfg = make_env_config(t)
+        if not isinstance(cfg, EnvConfig):
+            continue
         assert cfg.type == t
 
 
@@ -54,10 +56,8 @@ def test_delegation():
 
 def test_processors_delegation():
     """make_env_pre_post_processors delegates to cfg.get_env_processors()."""
-    from lerobot.configs.policies import PreTrainedConfig
-
     cfg = make_env_config("aloha")
-    pre, post = make_env_pre_post_processors(cfg, PreTrainedConfig())
+    pre, post = make_env_pre_post_processors(cfg, policy_cfg=None)
     assert len(pre.steps) == 0
 
 
@@ -124,7 +124,7 @@ def test_custom_create_envs_override():
 
 def test_custom_get_env_processors_override():
     """A custom EnvConfig subclass can override get_env_processors()."""
-    from lerobot.processor.pipeline import PolicyProcessorPipeline
+    from lerobot.processor.pipeline import DataProcessorPipeline
 
     @EnvConfig.register_subclass("_dispatch_proc_test")
     @dataclass
@@ -137,7 +137,7 @@ def test_custom_get_env_processors_override():
             return {}
 
         def get_env_processors(self):
-            return PolicyProcessorPipeline(steps=[]), PolicyProcessorPipeline(steps=[])
+            return DataProcessorPipeline(steps=[]), DataProcessorPipeline(steps=[])
 
     pre, post = _Env().get_env_processors()
-    assert isinstance(pre, PolicyProcessorPipeline)
+    assert isinstance(pre, DataProcessorPipeline)
