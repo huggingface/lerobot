@@ -302,6 +302,15 @@ Add your benchmark to the "Benchmarks" section:
   title: "Benchmarks"
 ```
 
+## Verifying your integration
+
+After completing the steps above, confirm that everything works:
+
+1. **Install** — `pip install -e ".[mybenchmark]"` and verify the dependency group installs cleanly.
+2. **Smoke test env creation** — call `make_env()` with your config in Python, check that the returned dict has the expected `{suite: {task_id: VectorEnv}}` shape, and that `reset()` returns observations with the right keys.
+3. **Run a full eval** — `lerobot-eval --env.type=<name> --env.task=<task> --eval.n_episodes=1 --eval.batch_size=1 --policy.path=<any_compatible_policy>` to exercise the full pipeline end-to-end.
+4. **Check success detection** — verify that `info["is_success"]` flips to `True` when the task is actually completed. This is what the eval loop uses to compute success rates.
+
 ## Writing a benchmark doc page
 
 Each benchmark `.mdx` page should include:
