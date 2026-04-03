@@ -184,7 +184,7 @@ Register a config dataclass so users can select your benchmark with `--env.type=
 ```python
 @EnvConfig.register_subclass("<benchmark_name>")
 @dataclass
-class MyBenchmarkEnv(EnvConfig):
+class MyBenchmarkEnvConfig(EnvConfig):
     task: str = "<default_task>"
     fps: int = <fps>
     obs_type: str = "pixels_agent_pos"
