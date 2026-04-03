@@ -254,6 +254,10 @@ class RecomputeStatsConfig(OperationConfig):
     relative_exclude_joints: list[str] | None = None
     chunk_size: int = 50
     num_workers: int = 0
+    relative_state: bool = False
+    relative_exclude_state_joints: list[str] | None = None
+    state_obs_steps: int = 2
+    derive_state_from_action: bool = False
 
 
 @OperationConfig.register_subclass("info")
@@ -563,6 +567,14 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
             f"Relative action stats enabled (chunk_size={cfg.operation.chunk_size}, "
             f"exclude_joints={cfg.operation.relative_exclude_joints})"
         )
+    if cfg.operation.relative_state:
+        logging.info(
+            f"Relative state stats enabled (state_obs_steps={cfg.operation.state_obs_steps}, "
+            f"exclude_state_joints={cfg.operation.relative_exclude_state_joints})"
+        )
+
+    if cfg.operation.derive_state_from_action:
+        logging.info("Derive state from action enabled (implies relative_state=True, state_obs_steps=2)")
 
     recompute_stats(
         dataset,
@@ -571,6 +583,10 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
         relative_exclude_joints=cfg.operation.relative_exclude_joints,
         chunk_size=cfg.operation.chunk_size,
         num_workers=cfg.operation.num_workers,
+        relative_state=cfg.operation.relative_state,
+        relative_exclude_state_joints=cfg.operation.relative_exclude_state_joints,
+        state_obs_steps=cfg.operation.state_obs_steps,
+        derive_state_from_action=cfg.operation.derive_state_from_action,
     )
 
     logging.info(f"Stats written to {dataset.root}")

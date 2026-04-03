@@ -255,19 +255,16 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
     """
     Computes desired joint positions from a target end-effector pose using inverse kinematics (IK).
 
-    This step translates a Cartesian command (position and orientation of the end-effector) into
-    the corresponding joint-space commands for each motor.
-
     Attributes:
         kinematics: The robot's kinematic model for inverse kinematics.
-        motor_names: A list of motor names for which to compute joint positions.
-        q_curr: Internal state storing the last joint positions, used as an initial guess for the IK solver.
+        motor_names: Arm joint names for IK computation.
+        gripper_names: Gripper joint name(s). ee.gripper_pos is written to all of them.
         initial_guess_current_joints: If True, use the robot's current joint state as the IK guess.
-            If False, use the solution from the previous step.
     """
 
     kinematics: RobotKinematics
     motor_names: list[str]
+    gripper_names: list[str] = field(default_factory=lambda: ["gripper"])
     q_curr: np.ndarray | None = field(default=None, init=False, repr=False)
     initial_guess_current_joints: bool = True
 
@@ -278,55 +275,66 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
         wx = action.pop("ee.wx")
         wy = action.pop("ee.wy")
         wz = action.pop("ee.wz")
-        gripper_pos = action.pop("ee.gripper_pos")
 
-        if None in (x, y, z, wx, wy, wz, gripper_pos):
-            raise ValueError(
-                "Missing required end-effector pose components: ee.x, ee.y, ee.z, ee.wx, ee.wy, ee.wz, ee.gripper_pos must all be present in action"
-            )
+        ee_keys = [x, y, z, wx, wy, wz]
+
+        if self.gripper_names:
+            gripper_pos = action.pop("ee.gripper_pos")
+            ee_keys.append(gripper_pos)
+        if None in ee_keys:
+            raise ValueError("Missing required end-effector pose components in action")
 
         observation = self.transition.get(TransitionKey.OBSERVATION).copy()
         if observation is None:
-            raise ValueError("Joints observation is require for computing robot kinematics")
+            raise ValueError("Joints observation is required for computing robot kinematics")
 
         q_raw = np.array(
-            [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
+            [
+                float(v)
+                for k, v in observation.items()
+                if isinstance(k, str) and k.endswith(".pos") and k.removesuffix(".pos") in self.motor_names
+            ],
             dtype=float,
         )
-        if q_raw is None:
-            raise ValueError("Joints observation is require for computing robot kinematics")
 
-        if self.initial_guess_current_joints:  # Use current joints as initial guess
+        if self.initial_guess_current_joints:
             self.q_curr = q_raw
-        else:  # Use previous ik solution as initial guess
+        else:
             if self.q_curr is None:
                 self.q_curr = q_raw
 
-        # Build desired 4x4 transform from pos + rotvec (twist)
         t_des = np.eye(4, dtype=float)
         t_des[:3, :3] = Rotation.from_rotvec([wx, wy, wz]).as_matrix()
         t_des[:3, 3] = [x, y, z]
 
-        # Compute inverse kinematics
         q_target = self.kinematics.inverse_kinematics(self.q_curr, t_des)
         self.q_curr = q_target
 
-        # TODO: This is sentitive to order of motor_names = q_target mapping
         for i, name in enumerate(self.motor_names):
-            if name != "gripper":
-                action[f"{name}.pos"] = float(q_target[i])
-            else:
-                action["gripper.pos"] = float(gripper_pos)
+            action[f"{name}.pos"] = float(q_target[i])
 
+        if self.gripper_names:
+            for gname in self.gripper_names:
+                action[f"{gname}.pos"] = float(gripper_pos)
+
+        # When gripper_names is empty, gripper keys (e.g. proximal.pos, distal.pos)
+        # are already in the action dict as absolute positions — left untouched.
         return action
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        for feat in ["x", "y", "z", "wx", "wy", "wz", "gripper_pos"]:
+        ee_feats = ["x", "y", "z", "wx", "wy", "wz"]
+        if self.gripper_names:
+            ee_feats.append("gripper_pos")
+        for feat in ee_feats:
             features[PipelineFeatureType.ACTION].pop(f"ee.{feat}", None)
 
         for name in self.motor_names:
+            features[PipelineFeatureType.ACTION][f"{name}.pos"] = PolicyFeature(
+                type=FeatureType.ACTION, shape=(1,)
+            )
+        for name in self.gripper_names:
             features[PipelineFeatureType.ACTION][f"{name}.pos"] = PolicyFeature(
                 type=FeatureType.ACTION, shape=(1,)
             )
@@ -334,7 +342,6 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
         return features
 
     def reset(self):
-        """Resets the initial guess for the IK solver."""
         self.q_curr = None
 
 
@@ -402,24 +409,39 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
 
 
 def compute_forward_kinematics_joints_to_ee(
-    joints: dict[str, Any], kinematics: RobotKinematics, motor_names: list[str]
+    joints: dict[str, Any],
+    kinematics: RobotKinematics,
+    motor_names: list[str],
+    gripper_names: list[str] | None = None,
 ) -> dict[str, Any]:
+    if gripper_names is None:
+        gripper_names = ["gripper"]
+
     motor_joint_values = [joints[f"{n}.pos"] for n in motor_names]
 
     q = np.array(motor_joint_values, dtype=float)
     t = kinematics.forward_kinematics(q)
     pos = t[:3, 3]
     tw = Rotation.from_matrix(t[:3, :3]).as_rotvec()
-    gripper_pos = joints["gripper.pos"]
+
     for n in motor_names:
         joints.pop(f"{n}.pos")
+
     joints["ee.x"] = float(pos[0])
     joints["ee.y"] = float(pos[1])
     joints["ee.z"] = float(pos[2])
     joints["ee.wx"] = float(tw[0])
     joints["ee.wy"] = float(tw[1])
     joints["ee.wz"] = float(tw[2])
-    joints["ee.gripper_pos"] = float(gripper_pos)
+
+    # When gripper_names is non-empty, fold them into ee.gripper_pos (e.g. SO100).
+    # When empty, gripper joints pass through as-is (absolute position control).
+    if gripper_names:
+        gripper_pos = joints[f"{gripper_names[0]}.pos"]
+        for n in gripper_names:
+            joints.pop(f"{n}.pos", None)
+        joints["ee.gripper_pos"] = float(gripper_pos)
+
     return joints
 
 
@@ -429,27 +451,33 @@ class ForwardKinematicsJointsToEEObservation(ObservationProcessorStep):
     """
     Computes the end-effector pose from joint positions using forward kinematics (FK).
 
-    This step is typically used to add the robot's Cartesian pose to the observation space,
-    which can be useful for visualization or as an input to a policy.
-
     Attributes:
         kinematics: The robot's kinematic model.
+        motor_names: Arm joint names used for FK computation.
+        gripper_names: Gripper joint name(s) to fold into ee.gripper_pos.
+            Empty list means gripper joints pass through as absolute positions.
     """
 
     kinematics: RobotKinematics
     motor_names: list[str]
+    gripper_names: list[str] = field(default_factory=lambda: ["gripper"])
 
     def observation(self, observation: RobotObservation) -> RobotObservation:
-        return compute_forward_kinematics_joints_to_ee(observation, self.kinematics, self.motor_names)
+        return compute_forward_kinematics_joints_to_ee(
+            observation, self.kinematics, self.motor_names, self.gripper_names
+        )
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        # We only use the ee pose in the dataset, so we don't need the joint positions
         for n in self.motor_names:
             features[PipelineFeatureType.OBSERVATION].pop(f"{n}.pos", None)
-        # We specify the dataset features of this step that we want to be stored in the dataset
-        for k in ["x", "y", "z", "wx", "wy", "wz", "gripper_pos"]:
+        ee_keys = ["x", "y", "z", "wx", "wy", "wz"]
+        if self.gripper_names:
+            for n in self.gripper_names:
+                features[PipelineFeatureType.OBSERVATION].pop(f"{n}.pos", None)
+            ee_keys.append("gripper_pos")
+        for k in ee_keys:
             features[PipelineFeatureType.OBSERVATION][f"ee.{k}"] = PolicyFeature(
                 type=FeatureType.STATE, shape=(1,)
             )
@@ -462,27 +490,33 @@ class ForwardKinematicsJointsToEEAction(RobotActionProcessorStep):
     """
     Computes the end-effector pose from joint positions using forward kinematics (FK).
 
-    This step is typically used to add the robot's Cartesian pose to the observation space,
-    which can be useful for visualization or as an input to a policy.
-
     Attributes:
         kinematics: The robot's kinematic model.
+        motor_names: Arm joint names used for FK computation.
+        gripper_names: Gripper joint name(s) to fold into ee.gripper_pos.
+            Empty list means gripper joints pass through as absolute positions.
     """
 
     kinematics: RobotKinematics
     motor_names: list[str]
+    gripper_names: list[str] = field(default_factory=lambda: ["gripper"])
 
     def action(self, action: RobotAction) -> RobotAction:
-        return compute_forward_kinematics_joints_to_ee(action, self.kinematics, self.motor_names)
+        return compute_forward_kinematics_joints_to_ee(
+            action, self.kinematics, self.motor_names, self.gripper_names
+        )
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        # We only use the ee pose in the dataset, so we don't need the joint positions
         for n in self.motor_names:
             features[PipelineFeatureType.ACTION].pop(f"{n}.pos", None)
-        # We specify the dataset features of this step that we want to be stored in the dataset
-        for k in ["x", "y", "z", "wx", "wy", "wz", "gripper_pos"]:
+        ee_keys = ["x", "y", "z", "wx", "wy", "wz"]
+        if self.gripper_names:
+            for n in self.gripper_names:
+                features[PipelineFeatureType.ACTION].pop(f"{n}.pos", None)
+            ee_keys.append("gripper_pos")
+        for k in ee_keys:
             features[PipelineFeatureType.ACTION][f"ee.{k}"] = PolicyFeature(
                 type=FeatureType.STATE, shape=(1,)
             )
@@ -494,13 +528,14 @@ class ForwardKinematicsJointsToEEAction(RobotActionProcessorStep):
 class ForwardKinematicsJointsToEE(ProcessorStep):
     kinematics: RobotKinematics
     motor_names: list[str]
+    gripper_names: list[str] = field(default_factory=lambda: ["gripper"])
 
     def __post_init__(self):
         self.joints_to_ee_action_processor = ForwardKinematicsJointsToEEAction(
-            kinematics=self.kinematics, motor_names=self.motor_names
+            kinematics=self.kinematics, motor_names=self.motor_names, gripper_names=self.gripper_names
         )
         self.joints_to_ee_observation_processor = ForwardKinematicsJointsToEEObservation(
-            kinematics=self.kinematics, motor_names=self.motor_names
+            kinematics=self.kinematics, motor_names=self.motor_names, gripper_names=self.gripper_names
         )
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
@@ -524,13 +559,13 @@ class ForwardKinematicsJointsToEE(ProcessorStep):
 @dataclass
 class InverseKinematicsRLStep(ProcessorStep):
     """
-    Computes desired joint positions from a target end-effector pose using inverse kinematics (IK).
-
-    This is modified from the InverseKinematicsEEToJoints step to be used in the RL pipeline.
+    IK step for the RL pipeline. Same logic as InverseKinematicsEEToJoints but
+    operates on EnvTransition directly and stores the IK solution.
     """
 
     kinematics: RobotKinematics
     motor_names: list[str]
+    gripper_names: list[str] = field(default_factory=lambda: ["gripper"])
     q_curr: np.ndarray | None = field(default=None, init=False, repr=False)
     initial_guess_current_joints: bool = True
 
@@ -538,7 +573,7 @@ class InverseKinematicsRLStep(ProcessorStep):
         new_transition = dict(transition)
         action = new_transition.get(TransitionKey.ACTION)
         if action is None:
-            raise ValueError("Action is required for InverseKinematicsEEToJoints")
+            raise ValueError("Action is required for InverseKinematicsRLStep")
         action = dict(action)
 
         x = action.pop("ee.x")
@@ -547,45 +582,46 @@ class InverseKinematicsRLStep(ProcessorStep):
         wx = action.pop("ee.wx")
         wy = action.pop("ee.wy")
         wz = action.pop("ee.wz")
-        gripper_pos = action.pop("ee.gripper_pos")
 
-        if None in (x, y, z, wx, wy, wz, gripper_pos):
-            raise ValueError(
-                "Missing required end-effector pose components: ee.x, ee.y, ee.z, ee.wx, ee.wy, ee.wz, ee.gripper_pos must all be present in action"
-            )
+        ee_keys = [x, y, z, wx, wy, wz]
+        if self.gripper_names:
+            gripper_pos = action.pop("ee.gripper_pos")
+            ee_keys.append(gripper_pos)
+        if None in ee_keys:
+            raise ValueError("Missing required end-effector pose components in action")
 
         observation = new_transition.get(TransitionKey.OBSERVATION).copy()
         if observation is None:
-            raise ValueError("Joints observation is require for computing robot kinematics")
+            raise ValueError("Joints observation is required for computing robot kinematics")
 
         q_raw = np.array(
-            [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
+            [
+                float(v)
+                for k, v in observation.items()
+                if isinstance(k, str) and k.endswith(".pos") and k.removesuffix(".pos") in self.motor_names
+            ],
             dtype=float,
         )
-        if q_raw is None:
-            raise ValueError("Joints observation is require for computing robot kinematics")
 
-        if self.initial_guess_current_joints:  # Use current joints as initial guess
+        if self.initial_guess_current_joints:
             self.q_curr = q_raw
-        else:  # Use previous ik solution as initial guess
+        else:
             if self.q_curr is None:
                 self.q_curr = q_raw
 
-        # Build desired 4x4 transform from pos + rotvec (twist)
         t_des = np.eye(4, dtype=float)
         t_des[:3, :3] = Rotation.from_rotvec([wx, wy, wz]).as_matrix()
         t_des[:3, 3] = [x, y, z]
 
-        # Compute inverse kinematics
         q_target = self.kinematics.inverse_kinematics(self.q_curr, t_des)
         self.q_curr = q_target
 
-        # TODO: This is sentitive to order of motor_names = q_target mapping
         for i, name in enumerate(self.motor_names):
-            if name != "gripper":
-                action[f"{name}.pos"] = float(q_target[i])
-            else:
-                action["gripper.pos"] = float(gripper_pos)
+            action[f"{name}.pos"] = float(q_target[i])
+
+        if self.gripper_names:
+            for gname in self.gripper_names:
+                action[f"{gname}.pos"] = float(gripper_pos)
 
         new_transition[TransitionKey.ACTION] = action
         complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
@@ -596,10 +632,17 @@ class InverseKinematicsRLStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        for feat in ["x", "y", "z", "wx", "wy", "wz", "gripper_pos"]:
+        ee_feats = ["x", "y", "z", "wx", "wy", "wz"]
+        if self.gripper_names:
+            ee_feats.append("gripper_pos")
+        for feat in ee_feats:
             features[PipelineFeatureType.ACTION].pop(f"ee.{feat}", None)
 
         for name in self.motor_names:
+            features[PipelineFeatureType.ACTION][f"{name}.pos"] = PolicyFeature(
+                type=FeatureType.ACTION, shape=(1,)
+            )
+        for name in self.gripper_names:
             features[PipelineFeatureType.ACTION][f"{name}.pos"] = PolicyFeature(
                 type=FeatureType.ACTION, shape=(1,)
             )
@@ -607,5 +650,4 @@ class InverseKinematicsRLStep(ProcessorStep):
         return features
 
     def reset(self):
-        """Resets the initial guess for the IK solver."""
         self.q_curr = None

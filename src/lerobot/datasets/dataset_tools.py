@@ -41,6 +41,7 @@ from lerobot.datasets.compute_stats import (
     aggregate_stats,
     compute_episode_stats,
     compute_relative_action_stats,
+    compute_relative_state_stats,
 )
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.io_utils import (
@@ -1544,6 +1545,10 @@ def recompute_stats(
     relative_exclude_joints: list[str] | None = None,
     chunk_size: int = 50,
     num_workers: int = 0,
+    relative_state: bool = False,
+    relative_exclude_state_joints: list[str] | None = None,
+    state_obs_steps: int = 2,
+    derive_state_from_action: bool = False,
 ) -> LeRobotDataset:
     """Recompute stats.json from scratch by iterating all episodes.
 
@@ -1561,10 +1566,22 @@ def recompute_stats(
             ``policy.chunk_size``. Only used when ``relative_action=True``.
         num_workers: Number of parallel threads for relative action stats computation.
             Values ≤1 mean single-threaded. Only used when ``relative_action=True``.
+        relative_state: If True, compute observation.state stats in relative space
+            (multi-timestep offsets from current). This matches the normalization
+            the model sees during training with ``use_relative_state=True``.
+        relative_exclude_state_joints: State dim names to exclude from relative conversion.
+        state_obs_steps: Number of observation timesteps for relative state stats.
+            Should match ``policy.state_obs_steps``. Only used when ``relative_state=True``.
+        derive_state_from_action: If True, compute relative state stats from the
+            action column instead of observation.state. Implies ``relative_state=True``
+            and ``state_obs_steps=2``.
 
     Returns:
         The same dataset with updated stats.
     """
+    if derive_state_from_action:
+        relative_state = True
+        state_obs_steps = 2
     features = dataset.meta.features
     meta_keys = {"index", "episode_index", "task_index", "frame_index", "timestamp"}
     numeric_features = {
@@ -1595,6 +1612,20 @@ def recompute_stats(
             num_workers=num_workers,
         )
         features_to_compute.pop(ACTION, None)
+
+    # When relative_state is enabled, compute state stats over the flattened
+    # multi-timestep relative representation (matching what the model sees).
+    relative_state_stats = None
+    if relative_state and (OBS_STATE in features or derive_state_from_action):
+        source_key = ACTION if derive_state_from_action else OBS_STATE
+        relative_state_stats = compute_relative_state_stats(
+            hf_dataset=dataset.hf_dataset,
+            features=features,
+            state_obs_steps=state_obs_steps,
+            exclude_joints=relative_exclude_state_joints,
+            source_key=source_key,
+        )
+        features_to_compute.pop(OBS_STATE, None)
 
     logging.info(f"Recomputing stats for features: {list(features_to_compute.keys())}")
 
@@ -1631,6 +1662,9 @@ def recompute_stats(
 
     if relative_action_stats is not None:
         new_stats[ACTION] = relative_action_stats
+
+    if relative_state_stats is not None:
+        new_stats[OBS_STATE] = relative_state_stats
 
     # Merge: keep existing stats for features we didn't recompute
     if dataset.meta.stats:
