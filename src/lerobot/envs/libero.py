@@ -150,7 +150,17 @@ class LiberoEnv(gym.Env):
 
         self.init_state_id = self.episode_index  # tie each sub-env to a fixed init state
 
-        self._env = self._make_envs_task(task_suite, self.task_id)
+        # Extract task metadata without allocating GPU resources (safe before fork).
+        task = task_suite.get_task(task_id)
+        self.task = task.name
+        self.task_description = task.language
+        self._task_bddl_file = os.path.join(
+            get_libero_path("bddl_files"), task.problem_folder, task.bddl_file
+        )
+        self._env: OffScreenRenderEnv | None = (
+            None  # deferred — created on first reset() inside the worker subprocess
+        )
+
         default_steps = 500
         self._max_episode_steps = (
             TASK_SUITE_MAX_STEPS.get(task_suite_name, default_steps)
@@ -221,28 +231,32 @@ class LiberoEnv(gym.Env):
             low=ACTION_LOW, high=ACTION_HIGH, shape=(ACTION_DIM,), dtype=np.float32
         )
 
+    def _ensure_env(self) -> None:
+        """Create the underlying OffScreenRenderEnv on first use.
+
+        Called inside the worker subprocess after fork(), so each worker gets
+        its own clean EGL context rather than inheriting a stale one from the
+        parent process (which causes EGL_BAD_CONTEXT crashes with AsyncVectorEnv).
+        """
+        if self._env is not None:
+            return
+        env = OffScreenRenderEnv(
+            bddl_file_name=self._task_bddl_file,
+            camera_heights=self.observation_height,
+            camera_widths=self.observation_width,
+        )
+        env.reset()
+        self._env = env
+
     def render(self):
+        self._ensure_env()
         raw_obs = self._env.env._get_observations()
         image = self._format_raw_obs(raw_obs)["pixels"]["image"]
         image = image[::-1, ::-1]  # flip both H and W for visualization
         return image
 
-    def _make_envs_task(self, task_suite: Any, task_id: int = 0):
-        task = task_suite.get_task(task_id)
-        self.task = task.name
-        self.task_description = task.language
-        task_bddl_file = os.path.join(get_libero_path("bddl_files"), task.problem_folder, task.bddl_file)
-
-        env_args = {
-            "bddl_file_name": task_bddl_file,
-            "camera_heights": self.observation_height,
-            "camera_widths": self.observation_width,
-        }
-        env = OffScreenRenderEnv(**env_args)
-        env.reset()
-        return env
-
     def _format_raw_obs(self, raw_obs: RobotObservation) -> RobotObservation:
+        assert self._env is not None, "_format_raw_obs called before _ensure_env()"
         images = {}
         for camera_name in self.camera_name:
             image = raw_obs[camera_name]
@@ -294,6 +308,7 @@ class LiberoEnv(gym.Env):
         )
 
     def reset(self, seed=None, **kwargs):
+        self._ensure_env()
         super().reset(seed=seed)
         self._env.seed(seed)
         raw_obs = self._env.reset()
@@ -320,6 +335,8 @@ class LiberoEnv(gym.Env):
         return observation, info
 
     def step(self, action: np.ndarray) -> tuple[RobotObservation, float, bool, bool, dict[str, Any]]:
+        self._ensure_env()
+        assert self._env is not None
         if action.ndim != 1:
             raise ValueError(
                 f"Expected action to be 1-D (shape (action_dim,)), "
@@ -350,7 +367,8 @@ class LiberoEnv(gym.Env):
         return observation, reward, terminated, truncated, info
 
     def close(self):
-        self._env.close()
+        if self._env is not None:
+            self._env.close()
 
 
 def _make_env_fns(
