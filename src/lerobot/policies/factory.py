@@ -24,13 +24,14 @@ import torch
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType
-from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
-from lerobot.datasets.utils import dataset_to_policy_features
+from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+from lerobot.datasets.feature_utils import dataset_to_policy_features
 from lerobot.envs.configs import EnvConfig
 from lerobot.envs.utils import env_to_policy_features
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.groot.configuration_groot import GrootConfig
+from lerobot.policies.multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -43,18 +44,42 @@ from lerobot.policies.utils import validate_visual_features_consistency
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.policies.wall_x.configuration_wall_x import WallXConfig
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig
-from lerobot.processor import PolicyAction, PolicyProcessorPipeline
+from lerobot.processor import PolicyProcessorPipeline
 from lerobot.processor.converters import (
     batch_to_transition,
     policy_action_to_transition,
     transition_to_batch,
     transition_to_policy_action,
 )
+from lerobot.types import PolicyAction
 from lerobot.utils.constants import (
     ACTION,
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
+
+
+def _reconnect_relative_absolute_steps(
+    preprocessor: PolicyProcessorPipeline, postprocessor: PolicyProcessorPipeline
+) -> None:
+    """Wire AbsoluteActionsProcessorStep.relative_step to the RelativeActionsProcessorStep after deserialization.
+
+    After a policy is loaded from disk, the preprocessor and postprocessor are reconstructed
+    independently from their configs. AbsoluteActionsProcessorStep needs a live reference to
+    the RelativeActionsProcessorStep so it can read the cached state at inference time.
+    That reference is not serializable, so we re-establish it here after loading.
+    """
+    from lerobot.processor.relative_action_processor import (
+        AbsoluteActionsProcessorStep,
+        RelativeActionsProcessorStep,
+    )
+
+    relative_step = next((s for s in preprocessor.steps if isinstance(s, RelativeActionsProcessorStep)), None)
+    if relative_step is None:
+        return
+    for step in postprocessor.steps:
+        if isinstance(step, AbsoluteActionsProcessorStep) and step.relative_step is None:
+            step.relative_step = relative_step
 
 
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:
@@ -66,8 +91,7 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
 
     Args:
         name: The name of the policy. Supported names are "tdmpc", "diffusion", "act",
-              "vqbet", "pi0", "pi05", "sac", "reward_classifier", "smolvla", "wall_x".
-
+            "multi_task_dit", "vqbet", "pi0", "pi05", "sac", "reward_classifier", "smolvla", "wall_x".
     Returns:
         The policy class corresponding to the given name.
 
@@ -86,6 +110,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.act.modeling_act import ACTPolicy
 
         return ACTPolicy
+    elif name == "multi_task_dit":
+        from lerobot.policies.multi_task_dit.modeling_multi_task_dit import MultiTaskDiTPolicy
+
+        return MultiTaskDiTPolicy
     elif name == "vqbet":
         from lerobot.policies.vqbet.modeling_vqbet import VQBeTPolicy
 
@@ -146,8 +174,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
 
     Args:
         policy_type: The type of the policy. Supported types include "tdmpc",
-                     "diffusion", "act", "vqbet", "pi0", "pi05", "sac", "smolvla",
-                     "reward_classifier", "wall_x".
+                     "multi_task_dit", "diffusion", "act", "vqbet", "pi0", "pi05", "sac",
+                     "smolvla", "reward_classifier", "wall_x".
         **kwargs: Keyword arguments to be passed to the configuration class constructor.
 
     Returns:
@@ -162,6 +190,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return DiffusionConfig(**kwargs)
     elif policy_type == "act":
         return ACTConfig(**kwargs)
+    elif policy_type == "multi_task_dit":
+        return MultiTaskDiTConfig(**kwargs)
     elif policy_type == "vqbet":
         return VQBeTConfig(**kwargs)
     elif policy_type == "pi0":
@@ -262,26 +292,26 @@ def make_pre_post_processors(
             kwargs["preprocessor_overrides"] = preprocessor_overrides
             kwargs["postprocessor_overrides"] = postprocessor_overrides
 
-        return (
-            PolicyProcessorPipeline.from_pretrained(
-                pretrained_model_name_or_path=pretrained_path,
-                config_filename=kwargs.get(
-                    "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
-                ),
-                overrides=kwargs.get("preprocessor_overrides", {}),
-                to_transition=batch_to_transition,
-                to_output=transition_to_batch,
+        preprocessor = PolicyProcessorPipeline.from_pretrained(
+            pretrained_model_name_or_path=pretrained_path,
+            config_filename=kwargs.get(
+                "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
             ),
-            PolicyProcessorPipeline.from_pretrained(
-                pretrained_model_name_or_path=pretrained_path,
-                config_filename=kwargs.get(
-                    "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
-                ),
-                overrides=kwargs.get("postprocessor_overrides", {}),
-                to_transition=policy_action_to_transition,
-                to_output=transition_to_policy_action,
-            ),
+            overrides=kwargs.get("preprocessor_overrides", {}),
+            to_transition=batch_to_transition,
+            to_output=transition_to_batch,
         )
+        postprocessor = PolicyProcessorPipeline.from_pretrained(
+            pretrained_model_name_or_path=pretrained_path,
+            config_filename=kwargs.get(
+                "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
+            ),
+            overrides=kwargs.get("postprocessor_overrides", {}),
+            to_transition=policy_action_to_transition,
+            to_output=transition_to_policy_action,
+        )
+        _reconnect_relative_absolute_steps(preprocessor, postprocessor)
+        return preprocessor, postprocessor
 
     # Create a new processor based on policy type
     if isinstance(policy_cfg, TDMPCConfig):
@@ -304,6 +334,16 @@ def make_pre_post_processors(
         from lerobot.policies.act.processor_act import make_act_pre_post_processors
 
         processors = make_act_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, MultiTaskDiTConfig):
+        from lerobot.policies.multi_task_dit.processor_multi_task_dit import (
+            make_multi_task_dit_pre_post_processors,
+        )
+
+        processors = make_multi_task_dit_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
@@ -469,6 +509,13 @@ def make_policy(
     cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     if not cfg.input_features:
         cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
+
+    # Store action feature names for relative_exclude_joints support
+    if ds_meta is not None and hasattr(cfg, "action_feature_names"):
+        action_names = ds_meta.features.get(ACTION, {}).get("names")
+        if action_names is not None:
+            cfg.action_feature_names = list(action_names)
+
     kwargs["config"] = cfg
 
     # Pass dataset_stats to the policy if available (needed for some policies like SARM)

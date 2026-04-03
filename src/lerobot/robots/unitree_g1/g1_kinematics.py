@@ -16,13 +16,11 @@
 
 import logging
 import os
-import sys
+from collections import deque
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
-parent2_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.append(parent2_dir)
 
 
 class WeightedMovingFilter:
@@ -31,18 +29,14 @@ class WeightedMovingFilter:
         self._weights = np.array(weights)
         self._data_size = data_size
         self._filtered_data = np.zeros(self._data_size)
-        self._data_queue = []
+        self._data_queue = deque(maxlen=self._window_size)
 
     def _apply_filter(self):
         if len(self._data_queue) < self._window_size:
             return self._data_queue[-1]
 
         data_array = np.array(self._data_queue)
-        temp_filtered_data = np.zeros(self._data_size)
-        for i in range(self._data_size):
-            temp_filtered_data[i] = np.convolve(data_array[:, i], self._weights, mode="valid")[-1]
-
-        return temp_filtered_data
+        return data_array.T @ self._weights
 
     def add_data(self, new_data):
         assert len(new_data) == self._data_size
@@ -51,9 +45,6 @@ class WeightedMovingFilter:
             new_data, self._data_queue[-1]
         ):  # skip duplicate data
             return
-
-        if len(self._data_queue) >= self._window_size:
-            self._data_queue.pop(0)
 
         self._data_queue.append(new_data)
         self._filtered_data = self._apply_filter()
@@ -71,8 +62,6 @@ class G1_29_ArmIK:  # noqa: N801
         from pinocchio import casadi as cpin
 
         self._pin = pin
-        np.set_printoptions(precision=5, suppress=True, linewidth=200)
-
         self.unit_test = unit_test
 
         self.repo_path = snapshot_download("lerobot/unitree-g1-mujoco")
@@ -249,49 +238,34 @@ class G1_29_ArmIK:  # noqa: N801
         self.opti.set_value(self.param_tf_r, right_wrist)
         self.opti.set_value(self.var_q_last, self.init_data)  # for smooth
 
+        converged = True
         try:
             self.opti.solve()
-
             sol_q = self.opti.value(self.var_q)
-            self.smooth_filter.add_data(sol_q)
-            sol_q = self.smooth_filter.filtered_data
-
-            if current_lr_arm_motor_dq is not None:
-                v = current_lr_arm_motor_dq * 0.0
-            else:
-                v = (sol_q - self.init_data) * 0.0
-
-            self.init_data = sol_q
-
-            sol_tauff = self._pin.rnea(
-                self.reduced_robot.model,
-                self.reduced_robot.data,
-                sol_q,
-                v,
-                np.zeros(self.reduced_robot.model.nv),
-            )
-
-            return sol_q, sol_tauff
-
         except Exception as e:
-            logger.error(f"ERROR in convergence, plotting debug info.{e}")
-
+            converged = False
+            logger.error(f"IK convergence error: {e}")
             sol_q = self.opti.debug.value(self.var_q)
-            self.smooth_filter.add_data(sol_q)
-            sol_q = self.smooth_filter.filtered_data
 
-            if current_lr_arm_motor_dq is not None:
-                v = current_lr_arm_motor_dq * 0.0
-            else:
-                v = (sol_q - self.init_data) * 0.0
+        self.smooth_filter.add_data(sol_q)
+        sol_q = self.smooth_filter.filtered_data
+        self.init_data = sol_q
 
-            self.init_data = sol_q
-
+        if not converged:
             logger.error(
                 f"sol_q:{sol_q} \nmotorstate: \n{current_lr_arm_motor_q} \nleft_pose: \n{left_wrist} \nright_pose: \n{right_wrist}"
             )
-
             return current_lr_arm_motor_q, np.zeros(self.reduced_robot.model.nv)
+
+        sol_tauff = self._pin.rnea(
+            self.reduced_robot.model,
+            self.reduced_robot.data,
+            sol_q,
+            np.zeros(self.reduced_robot.model.nv),
+            np.zeros(self.reduced_robot.model.nv),
+        )
+
+        return sol_q, sol_tauff
 
     def solve_tau(self, current_lr_arm_motor_q=None, current_lr_arm_motor_dq=None):
         try:
