@@ -23,12 +23,17 @@ This module provides utilities for:
 - Merging datasets (wrapper around aggregate functionality)
 """
 
+import concurrent
+import gc
 import logging
+import os
 import shutil
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from fractions import Fraction
 from pathlib import Path
 
+import av
 import datasets
 import numpy as np
 import pandas as pd
@@ -40,12 +45,15 @@ from lerobot.datasets.aggregate import aggregate_datasets
 from lerobot.datasets.compute_stats import (
     aggregate_stats,
     compute_episode_stats,
+    compute_mp4_video_stats,
     compute_relative_action_stats,
 )
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.io_utils import (
     get_parquet_file_size_in_mb,
     load_episodes,
+    load_stats,
+    write_episodes,
     write_info,
     write_stats,
     write_tasks,
@@ -53,13 +61,17 @@ from lerobot.datasets.io_utils import (
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import (
     DATA_DIR,
-    DEFAULT_CHUNK_SIZE,
-    DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
     DEFAULT_EPISODES_PATH,
     update_chunk_file_indices,
 )
-from lerobot.datasets.video_utils import encode_video_frames, get_video_info
+from lerobot.datasets.video_utils import (
+    _get_codec_options,
+    concatenate_video_files,
+    encode_video_frames,
+    get_video_duration_in_s,
+    get_video_info,
+)
 from lerobot.utils.constants import ACTION, HF_LEROBOT_HOME, OBS_IMAGE, OBS_STATE
 
 
@@ -306,6 +318,7 @@ def modify_features(
             dataset,
             add_features={
                 "reward": (reward_array, {"dtype": "float32", "shape": [1], "names": None}),
+                "video": (video_path, {"dtype": "video", "shape": [96, 96, 3], "video_info": ...})
             },
             remove_features=["old_feature"],
             output_dir="./output",
@@ -353,6 +366,9 @@ def modify_features(
     video_keys_to_remove = [name for name in remove_features_list if name in dataset.meta.video_keys]
     remaining_video_keys = [k for k in dataset.meta.video_keys if k not in video_keys_to_remove]
 
+    video_keys_to_add = [k for k, v in (add_features or {}).items() if v[1]["dtype"] == "video"]
+    remaining_video_keys += video_keys_to_add
+
     new_meta = LeRobotDatasetMetadata.create(
         repo_id=repo_id,
         fps=dataset.meta.fps,
@@ -362,6 +378,8 @@ def modify_features(
         use_videos=len(remaining_video_keys) > 0,
     )
 
+    _copy_episodes_metadata_and_stats(dataset, new_meta)
+
     _copy_data_with_feature_changes(
         dataset=dataset,
         new_meta=new_meta,
@@ -370,7 +388,13 @@ def modify_features(
     )
 
     if new_meta.video_keys:
-        _copy_videos(dataset, new_meta, exclude_keys=video_keys_to_remove if video_keys_to_remove else None)
+        new_meta._load_metadata()
+        _copy_videos_with_feature_changes(
+            dataset,
+            new_meta,
+            add_features=add_features,
+            exclude_keys=video_keys_to_remove if video_keys_to_remove else None,
+        )
 
     new_dataset = LeRobotDataset(
         repo_id=repo_id,
@@ -942,6 +966,7 @@ def _save_data_chunk(
     meta: LeRobotDatasetMetadata,
     chunk_idx: int = 0,
     file_idx: int = 0,
+    update_file: bool = True,
 ) -> tuple[int, int, dict[int, dict]]:
     """Save a data chunk and return updated indices and episode metadata.
 
@@ -965,8 +990,8 @@ def _save_data_chunk(
         }
 
     file_size = get_parquet_file_size_in_mb(path)
-    if file_size >= DEFAULT_DATA_FILE_SIZE_IN_MB * 0.9:
-        chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, DEFAULT_CHUNK_SIZE)
+    if file_size >= meta.data_files_size_in_mb * 0.9 and update_file:
+        chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, meta.chunks_size)
 
     return chunk_idx, file_idx, episode_metadata
 
@@ -977,7 +1002,7 @@ def _copy_data_with_feature_changes(
     add_features: dict[str, tuple] | None = None,
     remove_features: list[str] | None = None,
 ) -> None:
-    """Copy data while adding or removing features."""
+    """Copy data while adding or removing features, dynamically chunking based on size limits."""
     data_dir = dataset.root / DATA_DIR
     parquet_files = sorted(data_dir.glob("*/*.parquet"))
 
@@ -986,47 +1011,128 @@ def _copy_data_with_feature_changes(
 
     frame_idx = 0
 
+    chunk_idx = 0
+    file_idx = 0
+    current_chunk_dfs = []
+
+    current_frames_in_buffer = 0
+    bytes_per_frame = None
+
+    all_episodes_metadata = {}
+    all_episodes_stats = []
+
     for src_path in tqdm(parquet_files, desc="Processing data files"):
         df = pd.read_parquet(src_path).reset_index(drop=True)
 
-        relative_path = src_path.relative_to(dataset.root)
-        chunk_dir = relative_path.parts[1]
-        file_name = relative_path.parts[2]
+        for ep_idx in tqdm(
+            df["episode_index"].unique(), desc=f"Processing episodes of {src_path.stem}", leave=False
+        ):
+            # slice first (minimal memory footprint)
+            ep_df = df[df["episode_index"] == ep_idx].copy()
 
-        chunk_idx = int(chunk_dir.split("-")[1])
-        file_idx = int(file_name.split("-")[1].split(".")[0])
+            # modify features on the slice
+            if remove_features:
+                ep_df = ep_df.drop(columns=remove_features, errors="ignore")
 
-        if remove_features:
-            df = df.drop(columns=remove_features, errors="ignore")
-
-        if add_features:
-            end_idx = frame_idx + len(df)
-            for feature_name, (values, _) in add_features.items():
-                if callable(values):
-                    feature_values = []
-                    for _, row in df.iterrows():
-                        ep_idx = row["episode_index"]
-                        frame_in_ep = row["frame_index"]
-                        value = values(row.to_dict(), ep_idx, frame_in_ep)
-                        if isinstance(value, np.ndarray) and value.size == 1:
-                            value = value.item()
-                        feature_values.append(value)
-                    df[feature_name] = feature_values
-                else:
-                    feature_slice = values[frame_idx:end_idx]
-                    if len(feature_slice.shape) > 1 and feature_slice.shape[1] == 1:
-                        df[feature_name] = feature_slice.flatten()
+            if add_features:
+                episode_data_for_stats = {}
+                features_for_stats = {}
+                end_idx = frame_idx + len(ep_df)
+                for feature_name, (values, feature_info) in add_features.items():
+                    if feature_info["dtype"] in ["video", "image"]:
+                        continue
+                    if callable(values):
+                        feature_values = []
+                        for _, row in ep_df.iterrows():
+                            val = values(row.to_dict(), ep_idx, row["frame_index"])
+                            if isinstance(val, np.ndarray) and val.size == 1:
+                                val = val.item()
+                            feature_values.append(val)
+                        ep_df[feature_name] = feature_values
                     else:
-                        df[feature_name] = feature_slice
-            frame_idx = end_idx
+                        feature_slice = values[frame_idx:end_idx]
+                        if len(feature_slice.shape) > 1 and feature_slice.shape[1] == 1:
+                            # (100, 1)    -> (100,)
+                            # (10, 1, 5)  -> (10, 5)
+                            ep_df[feature_name] = list(feature_slice.squeeze(axis=1))
+                        else:
+                            ep_df[feature_name] = list(feature_slice)
 
-        # Write using the same chunk/file structure as source
-        dst_path = new_meta.root / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
-        dst_path.parent.mkdir(parents=True, exist_ok=True)
+                    episode_data_for_stats[feature_name] = np.stack(ep_df[feature_name].values)
+                    features_for_stats[feature_name] = feature_info
 
-        _write_parquet(df, dst_path, new_meta)
+                if episode_data_for_stats:
+                    episode_feature_stats = compute_episode_stats(
+                        episode_data=episode_data_for_stats, features=features_for_stats
+                    )
+                    all_episodes_stats.append(episode_feature_stats)
 
-    _copy_episodes_metadata_and_stats(dataset, new_meta)
+                frame_idx = end_idx
+
+            if bytes_per_frame is None and len(ep_df) > 0:
+                # get the one row dimension of the dataset to estimate the size
+                bytes_per_frame = 0
+                single_row_df = ep_df.iloc[0:1]
+
+                for col in ep_df.columns:
+                    val = single_row_df[col].iloc[0]
+
+                    # if the object knows its exact C-buffer size, use nbytes
+                    if hasattr(val, "nbytes"):
+                        bytes_per_frame += val.nbytes
+                    else:
+                        # else, fallback on pandas deep-scan
+                        bytes_per_frame += single_row_df[[col]].memory_usage(deep=True).sum()
+
+            current_chunk_dfs.append(ep_df)
+            current_frames_in_buffer += len(ep_df)
+
+            total_mem_bytes = current_frames_in_buffer * (bytes_per_frame or 0)
+            estimated_mb = total_mem_bytes / (1024 * 1024)
+
+            # flush if too big
+            if estimated_mb >= new_meta.data_files_size_in_mb * 0.9:
+                combined_df = pd.concat(current_chunk_dfs, ignore_index=True)
+
+                # _save_data_chunk natively writes the file and iterates the file_idx for the next loop
+                chunk_idx, file_idx, ep_meta = _save_data_chunk(
+                    combined_df, new_meta, chunk_idx, file_idx, update_file=False
+                )
+                chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, new_meta.chunks_size)
+
+                all_episodes_metadata.update(ep_meta)
+
+                # nuclear deallocation
+                del combined_df
+                current_chunk_dfs.clear()
+                current_frames_in_buffer = 0
+                gc.collect()
+
+        # nuclear deallocation
+        del df
+        gc.collect()
+
+    # flush any remaining episodes left in the buffer at the end
+    if current_chunk_dfs:
+        combined_df = pd.concat(current_chunk_dfs, ignore_index=True)
+        chunk_idx, file_idx, ep_meta = _save_data_chunk(combined_df, new_meta, chunk_idx, file_idx)
+        all_episodes_metadata.update(ep_meta)
+
+        del combined_df
+        gc.collect()
+
+    logging.info("Updating episode metadata to reflect new data chunking")
+    episodes_ds = load_episodes(new_meta.root)
+    episodes_ds = episodes_ds.map(lambda row: {**row, **all_episodes_metadata.get(row["episode_index"], {})})
+    new_meta.episodes = episodes_ds
+    write_episodes(episodes_ds, new_meta.root)
+
+    logging.info("Updating new features stats")
+    all_episodes_stats = aggregate_stats(all_episodes_stats)
+    stats = load_stats(new_meta.root)
+    stats.update(all_episodes_stats)
+    new_meta.stats = stats
+    write_stats(stats, new_meta.root)
 
 
 def _copy_videos(
@@ -1053,6 +1159,263 @@ def _copy_videos(
             dst_path = dst_meta.root / src_path
             dst_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(src_dataset.root / src_path, dst_path)
+
+    logging.info(f"{', '.join([k for k in src_dataset.meta.video_keys if k not in exclude_keys])} copied")
+    logging.info(f"{', '.join(exclude_keys)} not copied")
+
+
+def _encode_episode_slice_worker(
+    source_path: str,
+    out_path: str,
+    start_frame: int,
+    end_frame: int,
+    target_fps: int,
+    target_vcodec: str,
+    video_options: dict,
+    pix_fmt: str,
+) -> None:
+    """Worker function to encode a single episode slice in a separate process."""
+    # Silence PyAV within this specific process
+    logging.getLogger("libav").setLevel(av.logging.ERROR)
+
+    frames_to_write = end_frame - start_frame
+    start_time_s = start_frame / target_fps
+
+    with av.open(out_path, "w") as output_container:
+        output_stream = output_container.add_stream(target_vcodec, target_fps, options=video_options)
+        output_stream.pix_fmt = pix_fmt
+        output_stream.time_base = Fraction(1, target_fps)
+
+        with av.open(source_path, "r") as input_container:
+            input_stream = input_container.streams.video[0]
+            output_stream.width = input_stream.width
+            output_stream.height = input_stream.height
+
+            seek_target = int(start_time_s * av.time_base)
+            input_container.seek(seek_target, backward=True, any_frame=False)
+
+            frames_written = 0
+
+            for frame in input_container.decode(input_stream):
+                frame_time_s = float(frame.time) if frame.time is not None else 0.0
+
+                if frame_time_s < start_time_s - 1e-4:
+                    continue
+
+                frame.pts = frames_written
+                frame.time_base = Fraction(1, target_fps)
+
+                packets = output_stream.encode(frame)
+                for packet in packets:
+                    output_container.mux(packet)
+
+                frames_written += 1
+                if frames_written >= frames_to_write:
+                    break
+
+        packets = output_stream.encode()
+        for packet in packets:
+            output_container.mux(packet)
+
+
+def _copy_videos_with_feature_changes(
+    dataset: LeRobotDataset,
+    new_meta: LeRobotDatasetMetadata,
+    add_features: dict[str, tuple] | None = None,
+    exclude_keys: list[str] | None = None,
+    encoder_threads: int | None = None,
+    max_workers: int | None = None,
+    fast_decode: int = 0,
+    vcodec: str | None = None,
+    pix_fmt: str = "yuv420p",
+) -> None:
+    """Copy video files, optionally excluding certain keys."""
+    logging.info("Copying existing video features in the dataset")
+    _copy_videos(dataset, new_meta, exclude_keys)
+    os.environ["SVT_LOG"] = "1"
+
+    logging.info("Adding new video features in the dataset")
+    if add_features is None:
+        return
+    add_video_features = {fn: (p, fi) for fn, (p, fi) in add_features.items() if fi["dtype"] == "video"}
+    if len(add_video_features) == 0:
+        logging.info("No video features to add")
+        return
+
+    tmp_videos_root = new_meta.root / "tmp_videos"
+
+    target_fps = dataset.fps
+    target_vcodec = dataset._vcodec if dataset._vcodec is not None else vcodec
+    video_options = _get_codec_options(target_vcodec)
+
+    if fast_decode:
+        key = "svtav1-params" if target_vcodec == "libsvtav1" else "tune"
+        value = f"fast-decode={fast_decode}" if target_vcodec == "libsvtav1" else "fastdecode"
+        video_options[key] = value
+
+    logging.getLogger("libav").setLevel(av.logging.ERROR)
+
+    max_threads_per_encoder = 2
+    max_concurrent_workers = 12
+
+    total_cores = os.cpu_count() or 4
+
+    if max_workers is None and encoder_threads is None:
+        # if not set, prioritize workers over encoder (throughput over single video parallelization)
+        encoder_threads = max_threads_per_encoder
+        max_workers = max(1, min(total_cores // encoder_threads, max_concurrent_workers))
+
+    elif max_workers is None and encoder_threads is not None:
+        max_workers = max(1, min(total_cores // encoder_threads, max_concurrent_workers))
+
+    elif max_workers is not None and encoder_threads is None:
+        encoder_threads = max(1, min(total_cores // max_workers, max_threads_per_encoder))
+
+    if encoder_threads is not None:
+        if target_vcodec == "libsvtav1":
+            lp_param = f"lp={encoder_threads}"
+            if "svtav1-params" in video_options:
+                video_options["svtav1-params"] += f":{lp_param}"
+            else:
+                video_options["svtav1-params"] = lp_param
+        else:
+            video_options["threads"] = str(encoder_threads)
+
+    if (target_vcodec == "libsvtav1" or target_vcodec == "hevc") and pix_fmt == "yuv444p":
+        logging.warning(
+            f"Incompatible pixel format 'yuv444p' for codec {target_vcodec}, auto-selecting format 'yuv420p'"
+        )
+        pix_fmt = "yuv420p"
+
+    max_size_mb = dataset.meta.video_files_size_in_mb
+    chunks_size = dataset.meta.chunks_size
+
+    num_episodes = len(dataset.meta.episodes)
+
+    for feature_name, (path, _) in add_video_features.items():
+        ep_paths = []
+
+        # create tmp videos directory
+        tmp_videos = tmp_videos_root / feature_name
+        tmp_videos.mkdir(parents=True, exist_ok=True)
+
+        # create per episode sliced videos using multiprocessing
+        futures = []
+
+        # create per episode sliced videos
+        with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+            for episode in dataset.meta.episodes:
+                out_path = tmp_videos / f"episode_{episode['episode_index']}.mp4"
+                ep_paths.append(out_path)
+
+                start_frame = episode["dataset_from_index"]
+                end_frame = episode["dataset_to_index"]
+
+                future = executor.submit(
+                    _encode_episode_slice_worker,
+                    str(path),
+                    str(out_path),
+                    start_frame,
+                    end_frame,
+                    target_fps,
+                    target_vcodec,
+                    video_options,
+                    pix_fmt,
+                )
+                futures.append(future)
+
+            for future in tqdm(
+                concurrent.futures.as_completed(futures),
+                total=len(futures),
+                desc=f"Creating tmp per episode videos of {feature_name}",
+            ):
+                try:
+                    future.result()
+                except Exception as e:
+                    logging.error(f"Error slicing an episode: {e}")
+                    raise
+
+        # used to create episodes metadata
+        col_chunk = [0] * num_episodes
+        col_file = [0] * num_episodes
+        col_from = [0.0] * num_episodes
+        col_to = [0.0] * num_episodes
+
+        chunk_idx = 0
+        file_idx = 0
+
+        cum_size_mb = 0.0
+        start_idx = 0
+        from_timestep = 0
+
+        all_episodes_stats = []
+
+        for ep_idx in tqdm(range(num_episodes), desc=f"Organizing {feature_name} videos in chunk and files"):
+            ep_path = tmp_videos / f"episode_{ep_idx}.mp4"
+            ep_size_mb = os.path.getsize(ep_path) / (1024 * 1024)
+
+            # if is the first iteration or the current ep_file fit in the file-xxx
+            if cum_size_mb == 0 or cum_size_mb + ep_size_mb <= max_size_mb:  # and ep_idx != (num_episodes-1):
+                # update cum_size in order to do the same check for the following episode
+                cum_size_mb += ep_size_mb
+
+                col_from[ep_idx] = from_timestep
+                col_to[ep_idx] = from_timestep + get_video_duration_in_s(ep_path)
+                from_timestep = col_to[ep_idx]
+            # the current ep_file do not fit in the file-xxx
+            else:
+                # concatenate and save videos until ep_idx (excluded)
+                out_path = new_meta.root / new_meta.video_path.format(
+                    video_key=feature_name, chunk_index=chunk_idx, file_index=file_idx
+                )
+                concatenate_video_files(ep_paths[start_idx:ep_idx], out_path)
+                chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, chunks_size)
+                # set the cumulative size to include the current ep_file
+                cum_size_mb = ep_size_mb
+                # start the following concatenation from the current ep_file
+                start_idx = ep_idx
+
+                col_from[ep_idx] = 0.0
+                col_to[ep_idx] = get_video_duration_in_s(ep_path)
+                from_timestep = col_to[ep_idx]
+
+            col_file[ep_idx] = file_idx
+            col_chunk[ep_idx] = chunk_idx
+
+            stats = compute_mp4_video_stats(ep_path)
+            all_episodes_stats.append({feature_name: stats})
+
+        # save the last videos
+        out_path = new_meta.root / new_meta.video_path.format(
+            video_key=feature_name, chunk_index=chunk_idx, file_index=file_idx
+        )
+        concatenate_video_files(ep_paths[start_idx:num_episodes], out_path)
+
+        logging.info(f"Adding {feature_name} index information into new dataset metadata")
+        # update episodes
+        episodes_ds = new_meta.episodes
+        episodes_ds = episodes_ds.add_column(f"videos/{feature_name}/chunk_index", col_chunk)
+        episodes_ds = episodes_ds.add_column(f"videos/{feature_name}/file_index", col_file)
+        episodes_ds = episodes_ds.add_column(f"videos/{feature_name}/from_timestamp", col_from)
+        episodes_ds = episodes_ds.add_column(f"videos/{feature_name}/to_timestamp", col_to)
+        new_meta.episodes = episodes_ds
+
+        shutil.rmtree(tmp_videos)
+
+    shutil.rmtree(tmp_videos_root)
+
+    # restore logging
+    av.logging.restore_default_callback()
+
+    logging.info("Updating episode metadata to reflect new data chunking")
+    write_episodes(new_meta.episodes, new_meta.root)
+
+    logging.info("Updating new features stats")
+    final_stats = aggregate_stats(all_episodes_stats)
+    stats = load_stats(new_meta.root)
+    stats.update(final_stats)
+    new_meta.stats = stats
+    write_stats(stats, new_meta.root)
 
 
 def _copy_episodes_metadata_and_stats(
