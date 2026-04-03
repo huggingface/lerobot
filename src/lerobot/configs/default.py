@@ -69,6 +69,11 @@ class EvalConfig:
     # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
     # Defaults to True; automatically downgraded to SyncVectorEnv when batch_size=1.
     use_async_envs: bool = True
+    # Sharding: split n_episodes across independent processes.
+    # shard_id=0, num_shards=1 is the default (no sharding, existing behaviour).
+    # Set via lerobot_eval_parallel or manually: --eval.shard_id=K --eval.num_shards=N
+    shard_id: int = 0
+    num_shards: int = 1
 
     def __post_init__(self) -> None:
         if self.batch_size > self.n_episodes:
@@ -79,6 +84,12 @@ class EvalConfig:
                 "This might significantly slow down evaluation. To fix this, you should update your command "
                 f"to increase the number of episodes to match the batch size (e.g. `eval.n_episodes={self.batch_size}`), "
                 f"or lower the batch size (e.g. `eval.batch_size={self.n_episodes}`)."
+            )
+        if self.num_shards < 1:
+            raise ValueError(f"`num_shards` must be >= 1, got {self.num_shards}")
+        if not (0 <= self.shard_id < self.num_shards):
+            raise ValueError(
+                f"`shard_id` must be in [0, num_shards), got shard_id={self.shard_id}, num_shards={self.num_shards}"
             )
 
 
