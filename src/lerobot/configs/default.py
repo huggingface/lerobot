@@ -67,7 +67,8 @@ class EvalConfig:
     # `batch_size` specifies the number of environments to use in a gym.vector.VectorEnv.
     batch_size: int = 50
     # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
-    use_async_envs: bool = False
+    # Defaults to True; automatically downgraded to SyncVectorEnv when batch_size=1.
+    use_async_envs: bool = True
 
     def __post_init__(self) -> None:
         if self.batch_size > self.n_episodes:

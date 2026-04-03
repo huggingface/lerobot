@@ -73,7 +73,6 @@ from lerobot.configs import parser
 from lerobot.configs.eval import EvalPipelineConfig
 from lerobot.envs.factory import make_env, make_env_pre_post_processors
 from lerobot.envs.utils import (
-    add_envs_task,
     check_env_attributes_and_types,
     close_envs,
     preprocess_observation,
@@ -166,9 +165,9 @@ def rollout(
         if return_observations:
             all_observations.append(deepcopy(observation))
 
-        # Infer "task" from attributes of environments.
-        # TODO: works with SyncVectorEnv but not AsyncVectorEnv
-        observation = add_envs_task(env, observation)
+        # Infer "task" from sub-environments.
+        # env.call() works with both SyncVectorEnv and AsyncVectorEnv.
+        observation["task"] = env.call("task")
 
         # Apply environment-specific preprocessing (e.g., LiberoProcessorStep for LIBERO)
         observation = env_preprocessor(observation)
