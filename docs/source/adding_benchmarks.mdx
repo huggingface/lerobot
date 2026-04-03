@@ -234,7 +234,7 @@ elif "<benchmark_name>" in cfg.type:
 If your benchmark needs an env processor, add it in `make_env_pre_post_processors()`:
 
 ```python
-if isinstance(env_cfg, MyBenchmarkEnv) or "<benchmark_name>" in env_cfg.type:
+if isinstance(env_cfg, MyBenchmarkEnvConfig) or "<benchmark_name>" in env_cfg.type:
     preprocessor_steps.append(MyBenchmarkProcessorStep())
 ```
 
