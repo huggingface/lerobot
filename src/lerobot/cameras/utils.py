@@ -42,6 +42,11 @@ def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> dict[s
 
             cameras[key] = Reachy2Camera(cfg)
 
+        elif cfg.type == "openmv":
+            from .openmv.camera_openmv import OpenMVCamera
+
+            cameras[key] = OpenMVCamera(cfg)
+
         elif cfg.type == "zmq":
             from .zmq.camera_zmq import ZMQCamera
 
