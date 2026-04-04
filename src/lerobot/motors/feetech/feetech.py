@@ -19,6 +19,7 @@ from pprint import pformat
 
 from ..encoding_utils import decode_sign_magnitude, encode_sign_magnitude
 from ..motors_bus import Motor, MotorCalibration, NameOrID, SerialMotorsBus, Value, get_address
+from .auto_calibration import FeetechCalibrationMixin
 from .tables import (
     FIRMWARE_MAJOR_VERSION,
     FIRMWARE_MINOR_VERSION,
@@ -95,7 +96,7 @@ def patch_setPacketTimeout(self, packet_length):  # noqa: N802
     self.packet_timeout = (self.tx_time_per_byte * packet_length) + (self.tx_time_per_byte * 3.0) + 50
 
 
-class FeetechMotorsBus(SerialMotorsBus):
+class FeetechMotorsBus(FeetechCalibrationMixin, SerialMotorsBus):
     """
     The FeetechMotorsBus class allows to efficiently read and write to the attached motors. It relies on the
     python feetech sdk to communicate with the motors, which is itself based on the dynamixel sdk.
