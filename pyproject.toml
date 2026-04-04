@@ -71,9 +71,9 @@ dependencies = [
     "cmake>=3.29.0.1,<4.2.0",
     "packaging>=24.2,<26.0",
 
-    "torch>=2.2.1,<2.11.0",
-    "torchcodec>=0.2.1,<0.11.0; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')",
-    "torchvision>=0.21.0,<0.26.0",
+    "torch>=2.7,<2.11.0",
+    "torchcodec>=0.3.0,<0.11.0; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')", # NOTE: Windows support starts at version 0.7 (needs torch==2.8), ffmpeg>=8 support starts at version 0.8.1 (needs torch==2.9), system-wide ffmpeg support starts at version 0.10 (needs torch==2.10).
+    "torchvision>=0.22.0,<0.26.0",
 
     "einops>=0.8.0,<0.9.0",
     "opencv-python-headless>=4.9.0,<4.14.0",
