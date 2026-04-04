@@ -471,7 +471,7 @@ class GrootEagleEncodeStep(ProcessorStep):
                 flat = rearrange(vt, "t v c h w -> (t v) h w c")
             images = [Image.fromarray(flat[i]) for i in range(t * v)]
             # Format language as string list representation to match Original GROOT
-            lang_formatted = str([lang])
+            lang_formatted = str([comp["task"][b]])
             text_content = [{"type": "text", "text": lang_formatted}]
             image_content = [{"type": "image", "image": img} for img in images]
             conv = [{"role": "user", "content": image_content + text_content}]
