@@ -79,6 +79,8 @@ class ACTConfig(PreTrainedConfig):
         dropout: Dropout to use in the transformer layers (see code for details).
         kl_weight: The weight to use for the KL-divergence component of the loss if the variational objective
             is enabled. Loss is then calculated as: `reconstruction_loss + kl_weight * kld_loss`.
+        compile_model: Enables compiling with `torch.compile` for faster policy training and inference. This compiles both the `forward()` and `select_action()` methods.
+        compile_mode: The compilation mode used by `torch.compile` for the policy forward function.
     """
 
     # Input / output structure.
@@ -127,6 +129,8 @@ class ACTConfig(PreTrainedConfig):
     optimizer_lr: float = 1e-5
     optimizer_weight_decay: float = 1e-4
     optimizer_lr_backbone: float = 1e-5
+    compile_model: bool = False
+    compile_mode: str = "default"
 
     def __post_init__(self):
         super().__post_init__()
