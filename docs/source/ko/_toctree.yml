@@ -1,0 +1,134 @@
+- sections:
+  - local: index
+    title: LeRobot
+  - local: installation
+    title: 설치 방법
+  title: 시작하기
+- sections:
+  - local: il_robots
+    title: 실세계 로봇의 모방 학습
+  - local: in_translation
+    title: (번역중) 나만의 정책 가져오기
+  - local: in_translation
+    title: (번역중) 나만의 하드웨어 가져오기
+  - local: in_translation
+    title: (번역중) 강화학습으로 로봇 훈련하기
+  - local: in_translation
+    title: (번역중) 시뮬레이션에서 강화학습 훈련하기
+  - local: in_translation
+    title: (번역중) 멀티 GPU 훈련
+  - local: in_translation
+    title: "(번역중) PEFT를 활용한 훈련 (예: LoRA)"
+  title: "튜토리얼"
+- sections:
+  - local: in_translation
+    title: (번역중) LeRobotDataset 사용하기
+  - local: in_translation
+    title: (번역중) 대규모 데이터셋 포팅
+  - local: in_translation
+    title: (번역중) 데이터셋 도구 사용하기
+  - local: in_translation
+    title: (번역중) 데이터셋에서 서브태스크 사용하기
+  - local: in_translation
+    title: (번역중) 스트리밍 비디오 인코딩
+  title: "데이터셋"
+- sections:
+  - local: act
+    title: ACT
+  - local: smolvla
+    title: SmolVLA
+  - local: pi0
+    title: π₀ (Pi0)
+  - local: in_translation
+    title: (번역중) π₀-FAST (Pi0Fast)
+  - local: in_translation
+    title: (번역중) π₀.₅ (Pi05)
+  - local: in_translation
+    title: (번역중) NVIDIA GR00T N1.5
+  - local: in_translation
+    title: (번역중) X-VLA
+  - local: in_translation
+    title: (번역중) WALL-OSS
+  title: "정책"
+- sections:
+  - local: in_translation
+    title: (번역중) SARM
+  title: "보상 모델"
+- sections:
+  - local: in_translation
+    title: (번역중) 비동기 추론 사용하기
+  - local: in_translation
+    title: (번역중) 실시간 청킹 (RTC)
+  title: "추론"
+- sections:
+  - local: in_translation
+    title: (번역중) Hub에서 환경 가져오기
+  - local: in_translation
+    title: (번역중) 시뮬레이션에서 로봇 제어 및 훈련 (LeIsaac)
+  - local: in_translation
+    title: (번역중) NVIDIA IsaacLab Arena 환경
+  - local: in_translation
+    title: (번역중) Libero 사용하기
+  - local: in_translation
+    title: (번역중) MetaWorld 사용하기
+  title: "시뮬레이션"
+- sections:
+  - local: in_translation
+    title: (번역중) 로봇 프로세서 소개
+  - local: in_translation
+    title: (번역중) 프로세서 파이프라인 디버그
+  - local: in_translation
+    title: (번역중) 나만의 프로세서 구현하기
+  - local: in_translation
+    title: (번역중) 로봇 및 텔레오퍼레이터용 프로세서
+  - local: in_translation
+    title: (번역중) 환경 프로세서
+  title: "로봇 프로세서"
+- sections:
+  - local: in_translation
+    title: (번역중) SO-101
+  - local: in_translation
+    title: (번역중) SO-100
+  - local: in_translation
+    title: (번역중) Koch v1.1
+  - local: in_translation
+    title: (번역중) LeKiwi
+  - local: in_translation
+    title: (번역중) Hope Jr
+  - local: in_translation
+    title: (번역중) Reachy 2
+  - local: in_translation
+    title: (번역중) Unitree G1
+  - local: in_translation
+    title: (번역중) Earth Rover Mini
+  - local: in_translation
+    title: (번역중) OMX
+  - local: in_translation
+    title: (번역중) OpenArm
+  title: "로봇"
+- sections:
+  - local: in_translation
+    title: (번역중) 스마트폰
+  title: "텔레오퍼레이터"
+- sections:
+  - local: in_translation
+    title: (번역중) 카메라
+  title: "센서"
+- sections:
+  - local: in_translation
+    title: (번역중) PyTorch 가속기
+  title: "지원 하드웨어"
+- sections:
+  - local: in_translation
+    title: (번역중) 노트북
+  - local: in_translation
+    title: (번역중) Feetech 펌웨어 업데이트
+  - local: in_translation
+    title: (번역중) Damiao 모터 및 CAN 버스
+  title: "리소스"
+- sections:
+  - local: in_translation
+    title: (번역중) LeRobot에 기여하기
+  - local: in_translation
+    title: (번역중) 하위 호환성
+  title: "소개"
