@@ -497,7 +497,7 @@ class XVLARotation6DToAxisAngleProcessorStep(ProcessorStep):
         # Convert to numpy for processing
         device = action.device
         dtype = action.dtype
-        action_np = action.cpu().numpy()
+        action_np = action.cpu().float().numpy()
 
         # Extract components
         # action shape: (B, D) where D >= 10
