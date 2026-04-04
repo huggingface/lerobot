@@ -311,20 +311,27 @@ def _import_hub_module(local_file: str, repo_id: str) -> Any:
     return module
 
 
-def _call_make_env(module: Any, n_envs: int, use_async_envs: bool, cfg: EnvConfig | None) -> Any:
+def _call_make_env(module: Any, n_envs: int, use_async_envs: bool, cfg: EnvConfig | None, **kwargs) -> Any:
     """
-    Ensure module exposes make_env and call it.
+    Ensure module exposes make_env and call it with any additional kwargs.
+
+    Args:
+        module: The imported hub module containing make_env.
+        n_envs: Number of parallel environments.
+        use_async_envs: Whether to use AsyncVectorEnv or SyncVectorEnv.
+        **kwargs: Additional keyword arguments to pass to the hub's make_env function.
+            Common examples include config_path, config_overrides, etc.
     """
     if not hasattr(module, "make_env"):
         raise AttributeError(
-            f"The hub module {getattr(module, '__name__', 'hub_module')} must expose `make_env(n_envs=int, use_async_envs=bool)`."
+            f"The hub module {getattr(module, '__name__', 'hub_module')} must expose `make_env(n_envs=int, use_async_envs=bool, **kwargs)`."
         )
     entry_fn = module.make_env
     # Only pass cfg if it's not None (i.e., when an EnvConfig was provided, not a string hub ID)
     if cfg is not None:
-        return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs, cfg=cfg)
+        return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs, cfg=cfg, **kwargs)
     else:
-        return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs)
+        return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs, **kwargs)
 
 
 def _normalize_hub_result(result: Any) -> dict[str, dict[int, gym.vector.VectorEnv]]:
