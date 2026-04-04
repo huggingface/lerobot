@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -21,6 +22,7 @@ import numpy as np
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.model.kinematics import RobotKinematics
+from lerobot.model.manipulability import compute_manipulability, extract_translational_jacobian
 from lerobot.processor import (
     EnvTransition,
     ObservationProcessorStep,
@@ -32,6 +34,8 @@ from lerobot.processor import (
     TransitionKey,
 )
 from lerobot.utils.rotation import Rotation
+
+logger = logging.getLogger(__name__)
 
 
 @ProcessorStepRegistry.register("ee_reference_and_delta")
@@ -609,3 +613,74 @@ class InverseKinematicsRLStep(ProcessorStep):
     def reset(self):
         """Resets the initial guess for the IK solver."""
         self.q_curr = None
+
+
+@ProcessorStepRegistry.register("manipulability_metrics")
+@dataclass
+class ManipulabilityMetrics(ObservationProcessorStep):
+    """Computes σ_min(Jv) and cond(Jv) from the translational Jacobian each frame.
+
+    Reads joint positions from the observation, computes the 6×nv frame Jacobian
+    via RobotKinematics (Placo), extracts the 3×n_arm translational sub-matrix,
+    and writes manipulability metrics to the observation dict.
+
+    Attributes:
+        kinematics: The robot's kinematic model (shares the same placo.RobotWrapper).
+        motor_names: Motor names matching the URDF joint order.
+        arm_joint_names: Subset of motor_names for arm joints (excludes gripper).
+        sigma_min_warn: Warning threshold for σ_min.
+        sigma_min_critical: Critical threshold for σ_min (below this, near-singular).
+    """
+
+    kinematics: RobotKinematics
+    motor_names: list[str]
+    arm_joint_names: list[str] = field(default_factory=list)
+    sigma_min_warn: float = 0.015
+    sigma_min_critical: float = 0.006
+
+    def __post_init__(self):
+        if not self.arm_joint_names:
+            self.arm_joint_names = [n for n in self.motor_names if n != "gripper"]
+
+    def observation(self, observation: RobotObservation) -> RobotObservation:
+        q_deg = np.array(
+            [
+                float(v)
+                for k, v in observation.items()
+                if isinstance(k, str)
+                and k.endswith(".pos")
+                and k.removesuffix(".pos") in self.motor_names
+            ],
+            dtype=float,
+        )
+
+        j_arm = self.kinematics.compute_frame_jacobian(
+            q_deg, joint_names=self.arm_joint_names
+        )
+        jv = extract_translational_jacobian(j_arm)
+        result = compute_manipulability(jv)
+
+        observation["manipulability.sigma_min"] = result.sigma_min
+        observation["manipulability.cond"] = result.condition_number
+
+        if result.sigma_min < self.sigma_min_critical:
+            logger.warning(
+                f"CRITICAL near-singularity: σ_min={result.sigma_min:.4f}, "
+                f"cond={result.condition_number:.1f}"
+            )
+        elif result.sigma_min < self.sigma_min_warn:
+            logger.warning(
+                f"Near-singularity warning: σ_min={result.sigma_min:.4f}, "
+                f"cond={result.condition_number:.1f}"
+            )
+
+        return observation
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        for feat in ["sigma_min", "cond"]:
+            features[PipelineFeatureType.OBSERVATION][f"manipulability.{feat}"] = PolicyFeature(
+                type=FeatureType.STATE, shape=(1,)
+            )
+        return features
