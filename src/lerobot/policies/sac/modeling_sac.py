@@ -53,8 +53,8 @@ class SACPolicy(
         self.config = config
 
         self._init_encoders()
-        self._init_actor()
         self.discrete_critic = None
+        self._actor_initialized = False
 
     def get_optim_params(self) -> dict:
         return {
@@ -124,7 +124,9 @@ class SACPolicy(
             self.encoder_critic if self.shared_encoder else SACObservationEncoder(self.config)
         )
 
-    def _init_actor(self):
+    def init_actor(self):
+        if self._actor_initialized:
+            return
         continuous_action_dim = self.config.output_features[ACTION].shape[0]
         self.actor = Policy(
             encoder=self.encoder_actor,
@@ -137,6 +139,7 @@ class SACPolicy(
         if self.target_entropy is None:
             dim = continuous_action_dim + (1 if self.config.num_discrete_actions is not None else 0)
             self.target_entropy = -np.prod(dim) / 2
+        self._actor_initialized = True
 
 
 class SACObservationEncoder(nn.Module):

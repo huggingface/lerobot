@@ -124,6 +124,7 @@ class SACAlgorithm(RLAlgorithm):
         self._optimization_step: int = 0
 
         self._init_critics()
+        self.policy.init_actor()
         self._init_temperature()
 
         self._device = torch.device(self.policy.config.device)
