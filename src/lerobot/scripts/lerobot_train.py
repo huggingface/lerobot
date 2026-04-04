@@ -252,10 +252,22 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     # Wait for all processes to finish policy creation before continuing
     accelerator.wait_for_everyone()
 
+    processor_pretrained_path = cfg.policy.pretrained_path
+    if (
+        getattr(cfg.policy, "use_relative_actions", False)
+        and processor_pretrained_path is not None
+        and not cfg.resume
+    ):
+        logging.warning(
+            "use_relative_actions=true with pretrained processors can skip relative transforms if "
+            "the checkpoint processors do not define them. Building processors from current policy config."
+        )
+        processor_pretrained_path = None
+
     # Create processors - only provide dataset_stats if not resuming from saved processors
     processor_kwargs = {}
     postprocessor_kwargs = {}
-    if (cfg.policy.pretrained_path and not cfg.resume) or not cfg.policy.pretrained_path:
+    if (processor_pretrained_path and not cfg.resume) or not processor_pretrained_path:
         # Only provide dataset_stats when not resuming from saved processor state
         processor_kwargs["dataset_stats"] = dataset.meta.stats
 
@@ -263,7 +275,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if cfg.policy.type == "sarm":
         processor_kwargs["dataset_meta"] = dataset.meta
 
-    if cfg.policy.pretrained_path is not None:
+    if processor_pretrained_path is not None:
         processor_kwargs["preprocessor_overrides"] = {
             "device_processor": {"device": device.type},
             "normalizer_processor": {
@@ -285,7 +297,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy,
-        pretrained_path=cfg.policy.pretrained_path,
+        pretrained_path=processor_pretrained_path,
         **processor_kwargs,
         **postprocessor_kwargs,
     )

@@ -752,8 +752,7 @@ def replay_trajectory(
         episodes=[cfg.dataset.replay_episode],
         download_videos=False,
     )
-    episode_frames = dataset.hf_dataset.filter(lambda x: x["episode_index"] == cfg.dataset.replay_episode)
-    actions = episode_frames.select_columns(ACTION)
+    actions = dataset.select_columns(ACTION)
 
     _, info = env.reset()
 
