@@ -73,6 +73,8 @@
     title: Control & Train Robots in Sim (LeIsaac)
   title: "Simulation"
 - sections:
+  - local: adding_benchmarks
+    title: Adding a New Benchmark
   - local: libero
     title: LIBERO
   - local: metaworld
