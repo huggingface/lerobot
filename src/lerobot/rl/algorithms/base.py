@@ -11,11 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Base classes for RL algorithms.
-
-Defines the abstract interface that every algorithm must implement, a registry
-for algorithm configs, and a dataclass for training statistics.
-"""
 
 from __future__ import annotations
 
@@ -39,7 +34,6 @@ BatchType = dict[str, Any]
 class TrainingStats:
     """Returned by ``algorithm.update()`` for logging and checkpointing."""
 
-    # Generic containers for all algorithms
     losses: dict[str, float] = field(default_factory=dict)
     grad_norms: dict[str, float] = field(default_factory=dict)
     extra: dict[str, float] = field(default_factory=dict)

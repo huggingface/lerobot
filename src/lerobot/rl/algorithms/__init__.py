@@ -30,24 +30,6 @@ def make_algorithm(
     *,
     algorithm_name: str,
 ) -> RLAlgorithm:
-    """Construct an :class:`RLAlgorithm` from a policy and its config.
-
-    Algorithm selection is explicit via ``algorithm_name`` (from
-    ``cfg.algorithm``).
-
-    This is fully registry-driven — adding a new algorithm only requires
-    registering an ``RLAlgorithmConfig`` subclass; no changes here.
-
-    The returned algorithm has **no optimizers** yet.  On the learner side,
-    call ``algorithm.make_optimizers()`` afterwards to create them.  On the
-    actor side (inference-only), leave them empty.
-
-    Args:
-        policy: Instantiated policy (e.g. ``SACPolicy``).
-        policy_cfg: The policy's ``PreTrainedConfig`` with the hyper-parameters
-            expected by the algorithm config's ``from_policy_config`` class-method.
-        algorithm_name: Algorithm registry key to instantiate.
-    """
     known = RLAlgorithmConfig.get_known_choices()
     if algorithm_name not in known:
         raise ValueError(f"No RLAlgorithmConfig registered for '{algorithm_name}'. Known: {list(known)}")

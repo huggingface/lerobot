@@ -38,7 +38,6 @@ class SACPolicy(
     """SAC policy — encoder, actor, and optional discrete critic for inference.
 
     Critics, targets, temperature, and training logic live in ``SACAlgorithm``.
-    The algorithm sets ``policy.discrete_critic`` for actor-side inference.
     """
 
     config_class = SACConfig
