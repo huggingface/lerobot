@@ -98,9 +98,11 @@ def create_sinusoidal_pos_embedding(  # see openpi `create_sinusoidal_pos_embedd
 
 
 def sample_beta(alpha, beta, bsize, device):  # see openpi `sample_beta` (exact copy)
-    # Beta sampling uses _sample_dirichlet which isn't implemented for MPS, so sample on CPU
-    alpha_t = torch.tensor(alpha, dtype=torch.float32)
-    beta_t = torch.tensor(beta, dtype=torch.float32)
+    # _sample_dirichlet is not implemented for MPS, so fall back to CPU sampling there.
+    # For CUDA (and CPU), sample directly on-device to avoid breaking torch.compile cudagraphs.
+    sample_device = "cpu" if (isinstance(device, torch.device) and device.type == "mps") or device == "mps" else device
+    alpha_t = torch.tensor(alpha, dtype=torch.float32, device=sample_device)
+    beta_t = torch.tensor(beta, dtype=torch.float32, device=sample_device)
     dist = torch.distributions.Beta(alpha_t, beta_t)
     return dist.sample((bsize,)).to(device)
 
