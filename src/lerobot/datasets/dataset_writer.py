@@ -474,7 +474,7 @@ class DatasetWriter:
                 video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
             )
             latest_size_in_mb = get_file_size_in_mb(latest_path)
-            latest_duration_in_s = latest_ep[f"videos/{video_key}/to_timestamp"][0]
+            latest_duration_in_s = get_video_duration_in_s(latest_path)
 
             if latest_size_in_mb + ep_size_in_mb >= self._meta.video_files_size_in_mb:
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self._meta.chunks_size)
@@ -489,6 +489,9 @@ class DatasetWriter:
                     [latest_path, ep_path],
                     latest_path,
                 )
+                # Read actual duration from concatenated video to avoid float drift
+                total_duration_in_s = get_video_duration_in_s(latest_path)
+                ep_duration_in_s = total_duration_in_s - latest_duration_in_s
 
         # Remove temporary directory
         shutil.rmtree(str(ep_path.parent))
