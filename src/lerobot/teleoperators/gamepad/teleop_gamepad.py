@@ -18,8 +18,6 @@ import sys
 from enum import IntEnum
 from typing import Any
 
-import numpy as np
-
 from lerobot.types import RobotAction
 from lerobot.utils.decorators import check_if_not_connected
 
@@ -78,12 +76,12 @@ class GamepadTeleop(Teleoperator):
     def connect(self) -> None:
         # use HidApi for macos
         if sys.platform == "darwin":
-            # NOTE: On macOS, pygame doesn’t reliably detect input from some controllers so we fall back to hidapi
+            # NOTE: On macOS, pygame doesn't reliably detect input from some controllers so we fall back to hidapi
             from .gamepad_utils import GamepadControllerHID as Gamepad
         else:
             from .gamepad_utils import GamepadController as Gamepad
 
-        self.gamepad = Gamepad()
+        self.gamepad = Gamepad(device_name=self.config.device_name)
         self.gamepad.start()
 
     @check_if_not_connected
@@ -95,12 +93,12 @@ class GamepadTeleop(Teleoperator):
         delta_x, delta_y, delta_z = self.gamepad.get_deltas()
 
         # Create action from gamepad input
-        gamepad_action = np.array([delta_x, delta_y, delta_z], dtype=np.float32)
-
         action_dict = {
-            "delta_x": gamepad_action[0],
-            "delta_y": gamepad_action[1],
-            "delta_z": gamepad_action[2],
+            "delta_x": float(delta_x),
+            "delta_y": float(delta_y),
+            "delta_z": float(delta_z),
+            "delta_wx": float(self.gamepad.right_x),
+            "delta_wz": float(self.gamepad.wrist_roll_command),
         }
 
         # Default gripper action is to stay
