@@ -68,6 +68,10 @@ class EvalConfig:
     batch_size: int = 50
     # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
     use_async_envs: bool = False
+    # `process_isolated` runs environments in a subprocess with GPU access disabled (CUDA_VISIBLE_DEVICES=""
+    # and MUJOCO_GL=osmesa). This prevents the PyTorch CUDA context and the EGL rendering context from
+    # competing for limited GPU memory, enabling evaluation on GPUs with <=8 GB VRAM.
+    process_isolated: bool = False
 
     def __post_init__(self) -> None:
         if self.batch_size > self.n_episodes:
