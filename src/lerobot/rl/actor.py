@@ -83,7 +83,6 @@ from lerobot.utils.random_utils import set_seed
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.transition import (
     Transition,
-    move_state_dict_to_device,
     move_transition_to_device,
 )
 from lerobot.utils.utils import (
@@ -653,38 +652,11 @@ def interactions_stream(
 
 
 def update_policy_parameters(policy: PreTrainedPolicy, parameters_queue: Queue, device):
-    """Load the latest policy weights from the learner.
-
-    Expects the dict produced by ``SACAlgorithm.get_weights()`` which sends
-    actor and discrete-critic state dicts separately to avoid duplicating the
-    shared encoder over gRPC.
-    """
     bytes_state_dict = get_last_item_from_queue(parameters_queue, block=False)
     if bytes_state_dict is not None:
         logging.info("[ACTOR] Load new parameters from Learner.")
         state_dicts = bytes_to_state_dict(bytes_state_dict)
-
-        actor_state_dict = move_state_dict_to_device(state_dicts["policy"], device=device)
-        policy.actor.load_state_dict(actor_state_dict)
-
-        if "discrete_critic" in state_dicts:
-            discrete_critic_state_dict = move_state_dict_to_device(
-                state_dicts["discrete_critic"], device=device
-            )
-            if policy.discrete_critic is None:
-                from dataclasses import asdict
-
-                from lerobot.policies.sac.modeling_sac import DiscreteCritic
-
-                encoder = policy.encoder_critic
-                policy.discrete_critic = DiscreteCritic(
-                    encoder=encoder,
-                    input_dim=encoder.output_dim,
-                    output_dim=policy.config.num_discrete_actions,
-                    **asdict(policy.config.discrete_critic_network_kwargs),
-                ).to(device)
-            policy.discrete_critic.load_state_dict(discrete_critic_state_dict)
-            logging.info("[ACTOR] Loaded discrete critic parameters from Learner.")
+        policy.load_actor_weights(state_dicts, device=device)
 
 
 #  Utilities functions

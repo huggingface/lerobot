@@ -17,6 +17,7 @@
 
 from collections.abc import Callable
 from dataclasses import asdict
+from typing import Any
 
 import numpy as np
 import torch
@@ -98,6 +99,23 @@ class SACPolicy(
         observation_features = batch.get("observation_feature") if isinstance(batch, dict) else None
         actions, log_probs, means = self.actor(observations, observation_features)
         return {"action": actions, "log_prob": log_probs, "action_mean": means}
+
+    def load_actor_weights(self, state_dicts: dict[str, Any], device: str | torch.device = "cpu") -> None:
+        from lerobot.utils.transition import move_state_dict_to_device
+
+        actor_sd = move_state_dict_to_device(state_dicts["policy"], device=device)
+        self.actor.load_state_dict(actor_sd)
+
+        if "discrete_critic" in state_dicts:
+            dc_sd = move_state_dict_to_device(state_dicts["discrete_critic"], device=device)
+            if self.discrete_critic is None:
+                self.discrete_critic = DiscreteCritic(
+                    encoder=self.encoder_critic,
+                    input_dim=self.encoder_critic.output_dim,
+                    output_dim=self.config.num_discrete_actions,
+                    **asdict(self.config.discrete_critic_network_kwargs),
+                ).to(device)
+            self.discrete_critic.load_state_dict(dc_sd)
 
     def _init_encoders(self):
         self.shared_encoder = self.config.shared_encoder
