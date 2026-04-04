@@ -408,6 +408,48 @@ The video below shows how to perform the calibration. First you need to move the
   </video>
 </div>
 
+#### Auto Calibrate (Follower)
+
+As an alternative to manual calibration, you can use the automatic calibration script for the follower arm.
+This drives each joint to its mechanical limits at low torque to find the full range of motion automatically — no manual movement required.
+
+> [!WARNING]
+> The arm will move on its own during auto-calibration. Make sure the workspace is clear and the arm is free to move without obstruction.
+
+```bash
+lerobot-auto-calibrate-feetech \
+    --port /dev/tty.usbmodem58760431551 \
+    --save \
+    --robot-id my_awesome_follower_arm
+```
+
+The script runs a 5-stage process:
+
+| Stage | Description |
+|-------|-------------|
+| 0 | **Initialize** — stops all servos, enables torque, configures PID/acceleration |
+| 2 | **Unfold** — extends joints 2–4 to avoid self-collision during calibration |
+| 3 | **Calibrate joints 2–6** — probes mechanical limits in order (5→6→4→3→2) |
+| 4 | **Calibrate joint 1** (shoulder_pan) and return to center |
+| 5 | **Confirm** — waits for user confirmation, then releases torque |
+
+##### Arguments
+
+| Argument | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `--port` | Yes | — | Serial port path (e.g. `/dev/ttyUSB0` or `/dev/tty.usbmodemXXX`) |
+| `--save` | No | off | Write calibration to servo EEPROM and save to the local calibration file |
+| `--robot-id` | No | `default` | Robot ID for the calibration file path (matches `config.id` at runtime) |
+| `--motor` | No | all | Calibrate only a single motor by name (e.g. `shoulder_pan`) — skips unfolding |
+| `--velocity-limit` | No | 1000 | Velocity for probing mechanical limits (Goal_Velocity in constant-speed mode) |
+| `--timeout` | No | 20.0 | Timeout in seconds per direction when probing limits |
+| `--unfold-angle` | No | 45.0 | Unfold angle in degrees — set to `0` to skip the unfold stage |
+| `--unfold-timeout` | No | 6.0 | Timeout in seconds for each unfold movement |
+| `--unfold-only` | No | off | Only run initialization + unfold (stages 0+2), skip calibration — useful for debugging |
+
+> [!TIP]
+> For questions about auto-calibration, join the [Maker-Mods Discord](https://discord.gg/4QNq2CpJ).
+
 #### Leader
 
 Do the same steps to calibrate the leader arm, run the following command or API example:
