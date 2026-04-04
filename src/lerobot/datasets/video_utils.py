@@ -39,6 +39,12 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
+# Decimal places used when rounding video timestamps to prevent cumulative
+# floating-point drift in concatenated videos (see #3177).  Microsecond
+# precision (6 decimals) is orders of magnitude finer than any video frame
+# interval while still eliminating accumulated float errors.
+TIMESTAMP_ROUND_DECIMALS: int = 6
+
 # List of hardware encoders to probe for auto-selection. Availability depends on the platform and FFmpeg build.
 # Determines the order of preference for auto-selection when vcodec="auto" is used.
 HW_ENCODERS = [

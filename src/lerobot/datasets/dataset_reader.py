@@ -31,7 +31,7 @@ from lerobot.datasets.io_utils import (
     hf_transform_to_torch,
     load_nested_dataset,
 )
-from lerobot.datasets.video_utils import decode_video_frames
+from lerobot.datasets.video_utils import TIMESTAMP_ROUND_DECIMALS, decode_video_frames
 
 
 class DatasetReader:
@@ -238,7 +238,10 @@ class DatasetReader:
         item = {}
         for vid_key, query_ts in query_timestamps.items():
             from_timestamp = ep[f"videos/{vid_key}/from_timestamp"]
-            shifted_query_ts = [from_timestamp + ts for ts in query_ts]
+            # Round to microsecond precision to prevent cumulative floating-point
+            # drift when from_timestamp is the sum of many episode durations
+            # (see https://github.com/huggingface/lerobot/issues/3177).
+            shifted_query_ts = [round(from_timestamp + ts, TIMESTAMP_ROUND_DECIMALS) for ts in query_ts]
 
             video_path = self.root / self._meta.get_video_file_path(ep_idx, vid_key)
             frames = decode_video_frames(video_path, shifted_query_ts, self._tolerance_s, self._video_backend)
