@@ -68,7 +68,7 @@ def build_scene_from_rgb_depth(
                 "Color filter would remove all %d VLM detection(s); keeping unfiltered boxes.",
                 n_vlm,
             )
-    logger.info("VLM detections: %d objects: %s", len(detections), [d.label for d in detections])
+    n_vlm = len(detections)
     try:
         detections_json = [
             {
@@ -78,14 +78,26 @@ def build_scene_from_rgb_depth(
             }
             for det in detections
         ]
-        logger.info("Detections JSON: %s", json.dumps(detections_json))
+        logger.debug("VLM raw detections JSON: %s", json.dumps(detections_json))
     except Exception:
         pass
 
     objects: list[SceneObject] = []
     detections_with_state: list[tuple[Any, dict[str, np.ndarray]]] = []
+    _min_side, _min_area = 10, 400
+    out_idx = 0
 
-    for j, det in enumerate(detections):
+    for det in detections:
+        if hasattr(det, "bbox_xyxy"):
+            x1, y1, x2, y2 = det.bbox_xyxy
+            bw, bh = int(x2) - int(x1), int(y2) - int(y1)
+            if bw < _min_side or bh < _min_side or bw * bh < _min_area:
+                logger.debug(
+                    "Skip %r: bbox too small %s",
+                    getattr(det, "label", "?"),
+                    det.bbox_xyxy,
+                )
+                continue
         mask = det.mask
         if mask is None:
             continue
@@ -105,8 +117,8 @@ def build_scene_from_rgb_depth(
                     else:
                         take_fb = n_fb < n_center and n_fb <= cap
                     if take_fb:
-                        logger.info(
-                            "BBox depth fallback for %r (mask |center|=%.2fm → %.2fm)",
+                        logger.debug(
+                            "BBox depth fallback %r: mask |c|=%.2fm → bbox_roi %.2fm",
                             det.label,
                             n_center if not np.allclose(center, 0) else 0.0,
                             n_fb,
@@ -116,10 +128,16 @@ def build_scene_from_rgb_depth(
         size = state["obj_size_xyz"]
         dist = state["obj_distance"]
         if np.allclose(center, 0):
+            bb = getattr(det, "bbox_xyxy", ())
+            logger.warning(
+                "[perceive] drop %r: no depth in mask/bbox (bbox=%s) — check alignment / stereo holes",
+                det.label,
+                bb,
+            )
             continue
         objects.append(
             SceneObject(
-                index=j,
+                index=out_idx,
                 label=det.label,
                 center_xyz=(float(center[0]), float(center[1]), float(center[2])),
                 size_xyz=(float(size[0]), float(size[1]), float(size[2])),
@@ -127,6 +145,22 @@ def build_scene_from_rgb_depth(
             )
         )
         detections_with_state.append((det, state))
+        out_idx += 1
 
     scene = SceneObservation(objects=objects, task=query)
+    if objects:
+        parts = []
+        for det, st in detections_with_state:
+            d_m = float(st["obj_distance"][0])
+            bb = getattr(det, "bbox_xyxy", ())
+            parts.append(f"{getattr(det, 'label', '?')!r} d={d_m:.2f}m bbox={bb}")
+        logger.info("[perceive] VLM %d box(es) → %d with 3D │ %s", n_vlm, len(objects), " │ ".join(parts))
+    elif n_vlm > 0:
+        logger.warning(
+            "[perceive] VLM returned %d box(es) but none got valid depth (see DEBUG for skips)",
+            n_vlm,
+        )
+    else:
+        logger.info("[perceive] VLM: no boxes")
+
     return scene, detections_with_state

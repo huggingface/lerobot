@@ -51,6 +51,8 @@ class OAKDCameraConfig(CameraConfig):
             ``DEFAULT``). Unknown names fall back to ``FAST_ACCURACY``.
         stereo_confidence_threshold: Confidence 0--255 (higher = stricter). Use ``-1``
             to skip calling ``setConfidenceThreshold`` (SDK default).
+        stereo_extended_disparity: Enable extended disparity for **closer** minimum range
+            (needed for many eye-in-hand / near-table setups). Slightly more computation.
 
     Note:
         - Depth alignment to RGB requires left-right check to be enabled
@@ -65,6 +67,7 @@ class OAKDCameraConfig(CameraConfig):
     warmup_s: int = 2
     stereo_preset: str = "FAST_ACCURACY"
     stereo_confidence_threshold: int = 200
+    stereo_extended_disparity: bool = False
 
     def __post_init__(self) -> None:
         self.color_mode = ColorMode(self.color_mode)

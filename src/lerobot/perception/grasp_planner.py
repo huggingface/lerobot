@@ -45,6 +45,25 @@ class Waypoint:
     gripper_width_pct: float = 100.0
 
 
+@dataclass
+class InteractionStrategy:
+    """Tunable heuristics for physical interactions (no force sensing assumed)."""
+
+    # Approach / grasp
+    grasp_clearance_m: float = 0.008
+    """How far above the object top to stop before closing (meters)."""
+    grasp_seat_m: float = 0.004
+    """Extra downward motion after closing to "seat" the grasp (meters)."""
+    min_top_extent_m: float = 0.008
+    """Minimum assumed half-height when size is noisy (meters)."""
+
+    # Place / drop
+    place_clearance_m: float = 0.010
+    """How far above target Z to open the gripper (meters)."""
+    place_settle_pause_s: float = 0.12
+    """Pause after opening so object can detach (seconds)."""
+
+
 def _make_pose(position: np.ndarray, rotation_matrix: np.ndarray) -> np.ndarray:
     """Build a 4x4 homogeneous transform from position (3,) and rotation (3,3)."""
     tf = np.eye(4, dtype=np.float64)
@@ -143,6 +162,7 @@ class GraspPlanner:
         min_grasp_z_m: float = 0.01,
         max_grasp_z_m: float = 0.35,
         approach_xy_retract_m: float = 0.055,
+        interaction: InteractionStrategy | None = None,
         default_orientation: np.ndarray | None = None,
     ):
         self.cam_to_robot_tf = camera_to_robot_tf if camera_to_robot_tf is not None else np.eye(4)
@@ -159,6 +179,7 @@ class GraspPlanner:
         self.max_reach_m = float(max_reach_m)
         self.min_grasp_z_m = float(min_grasp_z_m)
         self.max_grasp_z_m = float(max_grasp_z_m)
+        self.interaction = interaction or InteractionStrategy()
         self.default_orientation = default_orientation if default_orientation is not None else _top_down_rotation()
 
     def set_camera_to_robot_tf(self, tf: np.ndarray) -> None:
@@ -221,20 +242,29 @@ class GraspPlanner:
         """
         center_robot_raw = self._to_robot_frame(np.asarray(obj_center_xyz, dtype=np.float64))
         center_robot = self._project_to_reachable_workspace(center_robot_raw)
-        size = np.asarray(obj_size_xyz, dtype=np.float64)
+        size_cam = np.asarray(obj_size_xyz, dtype=np.float64).reshape(3)
         strategy = _classify_object(obj_label)
 
-        logger.info(
-            "Planning pick for '%s' at raw=%s projected=%s strategy='%s'",
+        logger.debug(
+            "Planning pick %r raw=%s projected=%s strategy=%s",
             obj_label,
             center_robot_raw,
             center_robot,
             strategy,
         )
+        logger.info(
+            "[plan] pick %r %s │ base xyz=(%.3f, %.3f, %.3f) m │ |raw|=%.3f m",
+            obj_label,
+            strategy,
+            float(center_robot[0]),
+            float(center_robot[1]),
+            float(center_robot[2]),
+            float(np.linalg.norm(center_robot_raw)),
+        )
 
         if strategy == "top_down":
             orientation = _top_down_rotation()
-            grasp_width = float(max(size[0], size[1]))
+            grasp_width = float(max(size_cam[0], size_cam[1]))
         elif strategy == "side":
             approach = center_robot.copy()
             approach[2] = 0.0
@@ -243,18 +273,42 @@ class GraspPlanner:
             else:
                 approach = np.array([1.0, 0.0, 0.0])
             orientation = _side_approach_rotation(approach)
-            grasp_width = float(size[2]) if size[2] > 0.01 else float(max(size[0], size[1]))
+            grasp_width = (
+                float(size_cam[2]) if size_cam[2] > 0.01 else float(max(size_cam[0], size_cam[1]))
+            )
         elif strategy == "pinch":
             orientation = _top_down_rotation()
-            grasp_width = float(min(size[0], size[1]))
+            grasp_width = float(min(size_cam[0], size_cam[1]))
         else:
             orientation = self.default_orientation
-            grasp_width = float(max(size[0], size[1]))
+            grasp_width = float(max(size_cam[0], size_cam[1]))
 
         grip_close_pct = _gripper_pct_for_width(grasp_width, self.max_aperture)
         pre_open_pct = _pregrasp_gripper_pct(grip_close_pct)
 
-        # High approach, optionally retracted in XY toward the arm base, then align XY, then descend (top-down arc).
+        # Compute a safe "interaction surface" in base Z.
+        # For top-down grasps, the prior implementation targeted the *object center*, which tends to slam
+        # the tool into the object. Instead, target the object's top surface + clearance.
+        R = self.cam_to_robot_tf[:3, :3]
+        size_base = np.abs(R @ size_cam.reshape(3))
+        half_z = float(0.5 * size_base[2])
+        half_z = max(half_z, float(self.interaction.min_top_extent_m))
+        top_z = float(center_robot[2] + half_z)
+
+        grasp_pos = center_robot.copy()
+        if strategy in ("top_down", "pinch"):
+            grasp_pos[2] = float(
+                np.clip(
+                    top_z + float(self.interaction.grasp_clearance_m),
+                    self.min_grasp_z_m,
+                    self.max_grasp_z_m,
+                )
+            )
+        else:
+            # Side grasps keep the original center target (still projected into workspace).
+            grasp_pos = center_robot.copy()
+
+        # High approach, optionally retracted in XY toward the arm base, then align XY, then descend.
         approach_far_pos = center_robot.copy()
         approach_far_pos[2] += max(self.pre_grasp_height * 2.0, self.pre_grasp_height + 0.04)
         retract_m = self.approach_xy_retract_m
@@ -264,11 +318,11 @@ class GraspPlanner:
             u_xy = d_xy / nd_xy
             approach_far_pos[:2] = center_robot[:2] + u_xy * retract_m
 
-        pre_grasp_pos = center_robot.copy()
-        pre_grasp_pos[2] += self.pre_grasp_height
+        pre_grasp_pos = grasp_pos.copy()
+        pre_grasp_pos[2] += float(self.pre_grasp_height)
 
-        mid_grasp_pos = center_robot.copy()
-        mid_grasp_pos[2] += self.pre_grasp_height * 0.4
+        mid_grasp_pos = grasp_pos.copy()
+        mid_grasp_pos[2] += float(max(self.pre_grasp_height * 0.35, 0.018))
 
         waypoints: list[Waypoint] = []
 
@@ -307,13 +361,43 @@ class GraspPlanner:
         )
         waypoints.append(wp_mid)
 
-        wp_grasp = Waypoint(
-            pose_4x4=_make_pose(center_robot.copy(), orientation),
+        # Interaction: do NOT close while descending into the object. Instead:
+        # 1) stop at a hover grasp pose (top surface + clearance) while open
+        # 2) close in place (no translation) to actually use the gripper
+        # 3) optionally "seat" downward a few mm after closing
+        wp_grasp_hover = Waypoint(
+            pose_4x4=_make_pose(grasp_pos.copy(), orientation),
+            gripper_open=True,
+            gripper_width_pct=pre_open_pct,
+            label="grasp_hover",
+        )
+        waypoints.append(wp_grasp_hover)
+
+        wp_close = Waypoint(
+            pose_4x4=_make_pose(grasp_pos.copy(), orientation),
             gripper_open=False,
             gripper_width_pct=grip_close_pct,
-            label="grasp",
+            label="close_gripper",
         )
-        waypoints.append(wp_grasp)
+        waypoints.append(wp_close)
+
+        if strategy in ("top_down", "pinch") and float(self.interaction.grasp_seat_m) > 0:
+            seat_pos = grasp_pos.copy()
+            seat_pos[2] = float(
+                np.clip(
+                    seat_pos[2] - float(self.interaction.grasp_seat_m),
+                    self.min_grasp_z_m,
+                    self.max_grasp_z_m,
+                )
+            )
+            waypoints.append(
+                Waypoint(
+                    pose_4x4=_make_pose(seat_pos, orientation),
+                    gripper_open=False,
+                    gripper_width_pct=grip_close_pct,
+                    label="seat_grasp",
+                )
+            )
 
         post_grasp_pos = center_robot.copy()
         post_grasp_pos[2] += self.lift_height
@@ -351,7 +435,8 @@ class GraspPlanner:
         Returns:
             Ordered list of Waypoints: pre_place -> place -> retreat.
         """
-        target_robot = self._to_robot_frame(np.asarray(target_xyz, dtype=np.float64))
+        target_robot_raw = self._to_robot_frame(np.asarray(target_xyz, dtype=np.float64))
+        target_robot = self._project_to_reachable_workspace(target_robot_raw)
         approach_h = approach_height_m if approach_height_m is not None else self.pre_grasp_height
         orientation = _top_down_rotation()
 
@@ -364,8 +449,16 @@ class GraspPlanner:
             label="pre_place",
         )
 
+        place_pos = target_robot.copy()
+        place_pos[2] = float(
+            np.clip(
+                place_pos[2] + float(self.interaction.place_clearance_m),
+                self.min_grasp_z_m,
+                self.max_grasp_z_m,
+            )
+        )
         wp_place = Waypoint(
-            pose_4x4=_make_pose(target_robot.copy(), orientation),
+            pose_4x4=_make_pose(place_pos, orientation),
             gripper_open=True,
             gripper_width_pct=88.0,
             label="place",

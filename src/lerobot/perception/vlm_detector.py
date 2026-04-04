@@ -368,7 +368,10 @@ class _CloudVLMBackend:
         for item in items:
             label = str(item.get("label", "unknown"))
             bbox = item.get("bbox", [0, 0, 0, 0])
-            x1, y1, x2, y2 = self._sanitize_bbox(bbox, rgb.shape[1], rgb.shape[0])
+            sanitized = self._sanitize_bbox(bbox, rgb.shape[1], rgb.shape[0])
+            if sanitized is None:
+                continue
+            x1, y1, x2, y2 = sanitized
             # For cloud/Gemini/Claude backends, use a lightweight, dependency-free
             # mask refinement to avoid tight coupling to specific SAM model APIs.
             mask = mask_from_bbox_grabcut(rgb, (x1, y1, x2, y2))
@@ -376,7 +379,7 @@ class _CloudVLMBackend:
 
         return detections
 
-    def _sanitize_bbox(self, bbox: object, img_w: int, img_h: int) -> tuple[int, int, int, int]:
+    def _sanitize_bbox(self, bbox: object, img_w: int, img_h: int) -> tuple[int, int, int, int] | None:
         """Convert a bbox payload into a valid in-bounds xyxy box.
 
         Cloud VLMs sometimes return coordinates in a wrong scale (e.g. assuming a
@@ -433,11 +436,22 @@ class _CloudVLMBackend:
         y1 = max(0, min(img_h - 1, y1))
         y2 = max(0, min(img_h - 1, y2))
 
-        # Ensure non-degenerate box (GrabCut expects some area).
-        if x2 - x1 < 4:
-            x2 = min(img_w - 1, x1 + 4)
-        if y2 - y1 < 4:
-            y2 = min(img_h - 1, y1 + 4)
+        bw, bh = x2 - x1, y2 - y1
+        # Do not fabricate a tiny corner box: that used to force 4×4px at (0,0) and broke depth.
+        _min_side, _min_area = 10, 400
+        if bw < _min_side or bh < _min_side or bw * bh < _min_area:
+            logger.warning(
+                "Cloud VLM bbox rejected after sanitize (too small for depth/mask): "
+                "raw=%s → xyxy=(%d,%d,%d,%d) on %dx%d",
+                bbox,
+                x1,
+                y1,
+                x2,
+                y2,
+                img_w,
+                img_h,
+            )
+            return None
 
         return x1, y1, x2, y2
 

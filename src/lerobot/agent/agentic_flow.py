@@ -114,6 +114,99 @@ Rules:
 - Use "retry" when you want the system to re-detect or try again.
 - Reply with ONLY the JSON line, no other text."""
 
+JSON_STATE_SYSTEM_PROMPT = """You are a robot manipulation assistant. You receive a JSON message describing the current task and objects estimated by a VLM plus depth (camera optical frame, meters). Depth and masks are often noisy.
+
+Your job:
+1) Copy the "objects" list and REFINE it: you may adjust center_xyz and size_xyz slightly when estimates are implausible (e.g. bbox covers the full image, distance inconsistent with the task, obvious outlier). Stay in the same coordinate frame (camera optical, meters). Keep the same "index" values as in the input unless you explicitly renumber every object consistently.
+2) Choose the next robot action in the same JSON object.
+
+Output exactly ONE JSON object (no markdown fences, no prose). Schema:
+{
+  "objects": [
+    {
+      "index": 0,
+      "label": "string",
+      "center_xyz": [x, y, z],
+      "size_xyz": [sx, sy, sz],
+      "distance_m": number,
+      "notes": "optional short string"
+    }
+  ],
+  "action": "pick" | "place" | "done" | "fail" | "retry",
+  "object_index": null or integer (required for pick),
+  "place_xyz": null or [x, y, z],
+  "success": null or boolean (for done),
+  "reason": null or string (for fail/retry/done)
+}
+
+Rules:
+- Prefer "pick" with the correct object_index when the task is to grasp something and a matching object exists in "objects".
+- Use "done" only when the task is finished.
+- Use "fail" when impossible; "retry" to suggest re-detection.
+- The executor will use YOUR refined center_xyz/size_xyz for the chosen pick index when possible."""
+
+
+def extract_first_json_object(text: str) -> dict[str, Any] | None:
+    """Parse the first top-level JSON object from a model response (handles ```json fences)."""
+    s = (text or "").strip()
+    if "```" in s:
+        parts = s.split("```")
+        for p in parts:
+            p2 = p.strip()
+            if p2.lower().startswith("json"):
+                p2 = p2[4:].lstrip()
+            if p2.startswith("{") and "}" in p2:
+                try:
+                    return json.loads(p2)
+                except json.JSONDecodeError:
+                    continue
+    start = s.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    for i in range(start, len(s)):
+        if s[i] == "{":
+            depth += 1
+        elif s[i] == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(s[start : i + 1])
+                except json.JSONDecodeError:
+                    return None
+    return None
+
+
+def build_vlm_scene_json_payload(
+    task: str,
+    detections_with_state: list[tuple[Any, dict[str, Any]]],
+) -> dict[str, Any]:
+    """Structured scene for json_state reasoning: VLM labels + lifted 3D (+ optional bbox)."""
+    import numpy as np
+
+    objects: list[dict[str, Any]] = []
+    for i, (det, st) in enumerate(detections_with_state):
+        c = np.asarray(st["obj_center_xyz"], dtype=np.float64).reshape(3)
+        sz = np.asarray(st["obj_size_xyz"], dtype=np.float64).reshape(3)
+        dist = float(np.asarray(st["obj_distance"], dtype=np.float64).reshape(-1)[0])
+        o: dict[str, Any] = {
+            "index": i,
+            "label": str(getattr(det, "label", "object")),
+            "center_xyz": [float(c[0]), float(c[1]), float(c[2])],
+            "size_xyz": [float(sz[0]), float(sz[1]), float(sz[2])],
+            "distance_m": dist,
+        }
+        if hasattr(det, "bbox_xyxy"):
+            bx = getattr(det, "bbox_xyxy")
+            o["bbox_xyxy"] = [int(bx[0]), int(bx[1]), int(bx[2]), int(bx[3])]
+        objects.append(o)
+    return {
+        "task": task,
+        "coordinate_frame": "camera_optical_meters",
+        "perception_source": "VLM labels + depth/mask lift (noisy; refine if needed)",
+        "objects": objects,
+    }
+
 
 class ReasoningAgent:
     """LLM-based agent that reasons over scene observations and returns structured actions.
@@ -189,6 +282,56 @@ class ReasoningAgent:
             logger.warning("Failed to parse agent JSON: %s", e)
             return AgentAction(action="fail", reason=f"Invalid JSON: {e}")
         action_name = data.get("action", "").lower()
+        if action_name not in ("pick", "place", "done", "fail", "retry"):
+            return AgentAction(action="fail", reason=f"Unknown action: {action_name}")
+
+        obj_index = data.get("object_index")
+        if obj_index is not None:
+            obj_index = int(obj_index)
+        place_xyz = data.get("place_xyz")
+        if place_xyz is not None:
+            place_xyz = tuple(float(x) for x in place_xyz[:3])
+        success = data.get("success")
+        reason = data.get("reason")
+
+        return AgentAction(
+            action=action_name,
+            object_index=obj_index,
+            place_xyz=place_xyz,
+            success=success,
+            reason=reason,
+        )
+
+    def reason_json_state(self, payload: dict[str, Any]) -> tuple[AgentAction, dict[str, Any] | None]:
+        """Reason over a JSON scene payload; model returns updated objects + action. Uses JSON_STATE_SYSTEM_PROMPT."""
+        from openai import OpenAI
+
+        client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+        user_content = json.dumps(payload, ensure_ascii=False, indent=2)
+        self.last_scene_text = user_content
+        self.last_raw_response_text = None
+
+        response = client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": JSON_STATE_SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ],
+            max_tokens=1024,
+            temperature=0.0,
+        )
+        text = (response.choices[0].message.content or "").strip()
+        self.last_raw_response_text = text
+        data = extract_first_json_object(text)
+        if data is None:
+            logger.warning("json_state: could not parse JSON from response: %s", text[:300])
+            return AgentAction(action="fail", reason="Invalid json_state response: no JSON"), None
+        action = self._parse_action_from_dict(data)
+        return action, data
+
+    def _parse_action_from_dict(self, data: dict[str, Any]) -> AgentAction:
+        """Map action fields from a combined json_state response."""
+        action_name = (data.get("action") or "").lower()
         if action_name not in ("pick", "place", "done", "fail", "retry"):
             return AgentAction(action="fail", reason=f"Unknown action: {action_name}")
 

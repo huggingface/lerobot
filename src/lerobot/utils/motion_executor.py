@@ -169,7 +169,7 @@ def execute_waypoint(
         if is_last:
             gripper_open = bool(wp.gripper_open)
             gripper_pct = float(wp.gripper_width_pct)
-        elif label == "grasp" and not wp.gripper_open:
+        elif label in ("grasp", "close_gripper", "seat_grasp") and not wp.gripper_open:
             # Stay open while moving into the grasp pose; close only on the last micro-step.
             gripper_open = True
             gripper_pct = float(np.clip(float(wp.gripper_width_pct) + 25.0, 45.0, 82.0))
@@ -197,7 +197,7 @@ def execute_waypoint(
                 dt=motion.settle_dt,
             )
             if not ok:
-                logger.warning("  Segment end did not fully converge; continuing.")
+                logger.warning("[motion] segment did not converge within timeout; continuing")
         else:
             robot.send_action(action)
             time.sleep(motion.inter_step_sleep_s)
@@ -207,7 +207,7 @@ def execute_waypoint(
             dtype=np.float64,
         )
 
-    if getattr(wp, "label", "") == "grasp" and not wp.gripper_open:
+    if getattr(wp, "label", "") in ("grasp", "close_gripper", "seat_grasp") and not wp.gripper_open:
         time.sleep(0.45)
     elif getattr(wp, "label", "") == "place" and wp.gripper_open:
         time.sleep(0.28)
@@ -266,7 +266,7 @@ def execute_waypoint_microsteps(
         if is_last:
             gripper_open = bool(wp.gripper_open)
             gripper_pct = float(wp.gripper_width_pct)
-        elif label == "grasp" and not wp.gripper_open:
+        elif label in ("grasp", "close_gripper", "seat_grasp") and not wp.gripper_open:
             gripper_open = True
             gripper_pct = float(np.clip(float(wp.gripper_width_pct) + 25.0, 45.0, 82.0))
         elif label == "place" and wp.gripper_open:
@@ -293,7 +293,7 @@ def execute_waypoint_microsteps(
                 dt=motion.settle_dt,
             )
             if not ok:
-                logger.warning("  Segment end did not fully converge; continuing.")
+                logger.warning("[motion] segment did not converge within timeout; continuing")
         else:
             robot.send_action(action)
             time.sleep(motion.inter_step_sleep_s)
@@ -303,7 +303,7 @@ def execute_waypoint_microsteps(
 
     done = microstep_index >= n
     if done:
-        if getattr(wp, "label", "") == "grasp" and not wp.gripper_open:
+        if getattr(wp, "label", "") in ("grasp", "close_gripper", "seat_grasp") and not wp.gripper_open:
             time.sleep(0.45)
         elif getattr(wp, "label", "") == "place" and wp.gripper_open:
             time.sleep(0.28)

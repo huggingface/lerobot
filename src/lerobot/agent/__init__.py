@@ -25,6 +25,7 @@ from .agentic_flow import (
     SceneObject,
     SceneObservation,
     build_scene_summary,
+    build_vlm_scene_json_payload,
 )
 from .manipulation_skills import (
     MANIPULATION_SKILL_METAS,
@@ -39,6 +40,7 @@ __all__ = [
     "SceneObject",
     "SceneObservation",
     "build_scene_summary",
+    "build_vlm_scene_json_payload",
     "build_skills_system_appendix",
     "list_skills_json",
 ]

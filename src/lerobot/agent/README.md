@@ -27,6 +27,8 @@ The runtime loop in `lerobot_agentic_manipulate.py` repeats roughly:
 
 **Timing:** The main loop can run at camera rate. **VLM detection** and **LLM reasoning** are throttled by timers (`detect_period_s`, `reason_period_s`) so the expensive models are not called every frame. Optional **tracking** can update the box between VLM calls. **`agent_step_mode`**: **`macro`** runs a full pick/place plan per LLM step; **`micro`** advances **one waypoint per loop tick** so motion stays smooth without re-querying the LLM every tick.
 
+For a strict **perceive → decide → small act → perceive** loop, use **`--agent-step-mode=micro`** with **`--vlm-every-agent-step=true`** (full VLM every iteration; does not pause VLM during micro motion) and optionally **`--llm-every-agent-step=true`** (LLM every iteration). That is much slower but matches a classic reactive closed loop. Raise **`--max-agent-steps`** if the task needs more iterations.
+
 **Logging:** Optional JSONL traces record scene + LLM action per reasoning step. Rerun can show camera streams and a 3D scene (`--display_data`, `--display_sim3d`).
 
 For a diagram of perception → grasp → IK, see `../perception/PIPELINE.md`.

@@ -185,7 +185,7 @@ class OAKDCamera(Camera):
             stereo.setOutputSize(w, h)
             stereo.setLeftRightCheck(True)
             stereo.setSubpixel(True)
-            stereo.setExtendedDisparity(False)
+            stereo.setExtendedDisparity(bool(getattr(self.config, "stereo_extended_disparity", False)))
             # Median filter supports max 1024 disparity levels; presets use 5 subpixel bits (~3040
             # levels) which triggers "Maximum disparity exceeds 1024" and disables the filter.
             # Use 3 fractional bits so median filter stays enabled for less noisy depth.

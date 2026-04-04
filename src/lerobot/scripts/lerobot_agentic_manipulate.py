@@ -63,6 +63,18 @@ See how often the reasoning LLM runs vs. motion waypoints::
 
     --agent-step-mode=micro
     --log-loop-status-interval-s=2
+
+At INFO, lines are tagged ``[agentic]``, ``[perceive]``, ``[plan]``, ``[motion]``. This entry point also quiets
+per-request HTTP and one-shot Rerun/STL messages unless you use ``--log-console-level=DEBUG``.
+
+Closed-loop “look again after each small move” (full VLM + LLM every iteration; slow but predictable)::
+
+    --agent-step-mode=micro --vlm-every-agent-step=true --llm-every-agent-step=true
+
+If perception goes empty **during** a micro pick, the arm **retreats one planned waypoint** (then re-observes) instead of immediately failing::
+
+    # defaults: recover_on_lost_sight=true, lost_sight_max_retreats_per_pick=8
+    --recover-on-lost-sight=false   # disable
     # verbose: every control tick (requires DEBUG console)
     --log-loop-tick-debug=true --log-console-level=DEBUG
 
@@ -80,6 +92,10 @@ Bad depth / huge reaches (camera-frame centers like 10m) are usually a broken ma
     # optional size (m): --manual-object-size-xyz="0.04,0.04,0.04"
 
 Micro waypoint mode no longer calls the LLM every tick by default; use ``--micro-reason-each-waypoint=true`` for that.
+
+**JSON state reasoning** (VLM seeds poses; LLM edits the same JSON, then motion uses the refined pose)::
+
+    --agent-reasoning-strategy=json_state
 """
 
 from __future__ import annotations
@@ -101,6 +117,7 @@ from lerobot.agent import (
     ReasoningAgent,
     SceneObject,
     SceneObservation,
+    build_vlm_scene_json_payload,
 )
 from lerobot.cameras.oakd.configuration_oakd import OAKDCameraConfig  # noqa: F401
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
@@ -184,6 +201,11 @@ class AgenticManipulateConfig:
     # Pull first approach waypoint toward the arm base in XY (m), then align over object, then descend.
     approach_xy_retract_m: float = 0.055
 
+    # Interaction tuning (prevents "slam into object" by avoiding center-as-grasp-target).
+    grasp_clearance_m: float = 0.008
+    grasp_seat_m: float = 0.004
+    place_clearance_m: float = 0.010
+
     # Motion: Cartesian micro-steps (recommended) vs joint lerp between IK solutions.
     motion_use_cartesian: bool = True
     # Slower/safer defaults for real hardware.
@@ -234,6 +256,11 @@ class AgenticManipulateConfig:
     mcp_port: int = 9990
     mcp_mount_path: str = "/"
 
+    # How the reasoning LLM consumes perception:
+    # - "summary": plain-text scene (default).
+    # - "json_state": VLM+depth scene as JSON; model returns updated objects + action; pick uses refined center/size.
+    agent_reasoning_strategy: str = "summary"  # "summary" | "json_state"
+
     # Agent/action loop granularity:
     # - "macro": one agent action triggers a full pick/place execution (current behavior).
     # - "micro": agent must re-affirm the action every waypoint (approach_far → align_xy → pre_grasp → ...).
@@ -244,6 +271,16 @@ class AgenticManipulateConfig:
     micro_reason_each_waypoint: bool = False
     # If true (default), skip expensive VLM runs while a micro pick is still executing waypoints.
     micro_pause_vlm_during_motion: bool = True
+    # If true: run full VLM detection every main-loop iteration (fresh image every step). Implies VLM is not
+    # paused during micro motion. Pair with agent_step_mode=micro for small actions; use llm_every_agent_step
+    # to also query the LLM every iteration (otherwise reason_period_s still throttles the LLM).
+    vlm_every_agent_step: bool = False
+    # If true: call the reasoning LLM every loop iteration (ignores reason_period_s except the first forced step).
+    llm_every_agent_step: bool = False
+    # Micro pick only: if the scene has no objects mid-pick, move the arm back one planned waypoint (re-acquire FOV)
+    # instead of immediately asking the LLM to fail. Capped per pick to avoid infinite retreat.
+    recover_on_lost_sight: bool = True
+    lost_sight_max_retreats_per_pick: int = 8
 
     # Optional: fix grasp target from measured / known pose (planner still expects camera-frame center internally).
     manual_object_xyz: str = ""
@@ -300,6 +337,31 @@ def _scene_from_det_pairs(pairs: list, task: str) -> SceneObservation:
             )
         )
     return SceneObservation(objects=objects, task=task)
+
+
+def _refined_object_pose_from_json_state(
+    refined_state: dict | None, object_index: int
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Return (center_xyz, size_xyz) in camera frame from last json_state model output, if valid."""
+    if not refined_state:
+        return None
+    objs = refined_state.get("objects")
+    if not isinstance(objs, list):
+        return None
+    for o in objs:
+        if not isinstance(o, dict):
+            continue
+        if int(o.get("index", -1)) != int(object_index):
+            continue
+        c = o.get("center_xyz")
+        s = o.get("size_xyz")
+        if c is None or s is None or len(c) < 3 or len(s) < 3:
+            return None
+        return (
+            np.array([float(c[0]), float(c[1]), float(c[2])], dtype=np.float32),
+            np.array([float(s[0]), float(s[1]), float(s[2])], dtype=np.float32),
+        )
+    return None
 
 
 def _filter_detections_by_cam_distance(
@@ -392,6 +454,79 @@ def camera_opencv_to_robot_rotation(flip_lateral: bool = False) -> np.ndarray:
 def colorize_depth(depth_mm: np.ndarray, max_range_mm: int = 2000) -> np.ndarray:
     """Convert uint16 depth (mm) to BGR for display."""
     return colorize_depth_mm_u16(depth_mm, max_range_mm=max_range_mm)
+
+
+def _agentic_reduce_third_party_log_noise() -> None:
+    """Hide per-request HTTP and one-shot viewer/STL INFO lines unless you raise log level."""
+    for name in (
+        "httpx",
+        "httpcore",
+        "openai",
+        "openai._base_client",
+        "lerobot.utils.urdf_visual_meshes",
+        "lerobot.utils.visualization_utils",
+    ):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
+def _micro_retreat_previous_waypoint(
+    robot,
+    kinematics,
+    waypoints: list,
+    motor_names: list[str],
+    motion_exec: MotionExecutionConfig,
+    current_wp_index: int,
+) -> tuple[int, int]:
+    """Move toward the previous pick waypoint pose. Returns (new_wp_index, active_wp_micro_i=0)."""
+    if current_wp_index <= 0 or not waypoints:
+        return current_wp_index, 0
+    new_i = current_wp_index - 1
+    wp = waypoints[new_i]
+    obs_r = robot.get_observation()
+    cur_j = np.array([float(obs_r[f"{m}.pos"]) for m in motor_names], dtype=np.float64)
+    execute_waypoint(robot, kinematics, wp, motor_names, motion_exec, current_joints=cur_j)
+    return new_i, 0
+
+
+def _scene_from_tracker_bbox(
+    rgb_curr: np.ndarray,
+    depth_fused: np.ndarray,
+    tracked_bbox_xyxy: tuple[int, int, int, int],
+    tracked_label: str,
+    compute_object_state,
+    intrinsics: dict,
+    task: str,
+) -> tuple[SceneObservation, list[tuple[object, dict]]]:
+    """Build scene from an existing 2D track + depth (same path as the no-VLM loop tick)."""
+    from lerobot.perception.vlm_detector import mask_from_bbox_grabcut
+
+    mask = mask_from_bbox_grabcut(rgb_curr, tracked_bbox_xyxy)
+    state = compute_object_state(depth_fused, mask, intrinsics)
+    center = state["obj_center_xyz"]
+    size = state["obj_size_xyz"]
+    dist = state["obj_distance"]
+    if np.allclose(center, 0):
+        return SceneObservation(objects=[], task=task), []
+
+    class _DetLike:
+        def __init__(self, label: str, bbox_xyxy: tuple[int, int, int, int]):
+            self.label = label
+            self.bbox_xyxy = bbox_xyxy
+
+    det_like = _DetLike(tracked_label or "tracked_object", tracked_bbox_xyxy)
+    objects = [
+        SceneObject(
+            index=0,
+            label=tracked_label or "tracked_object",
+            center_xyz=(float(center[0]), float(center[1]), float(center[2])),
+            size_xyz=(float(size[0]), float(size[1]), float(size[2])),
+            distance_m=float(dist[0]),
+        )
+    ]
+    return (
+        SceneObservation(objects=objects, task=task),
+        [(det_like, state)],
+    )
 
 
 def _observe_from_images(
@@ -551,6 +686,7 @@ def _log_agentic_sim3d_once(
 def agentic_manipulate(cfg: AgenticManipulateConfig):
     """Run the agentic loop: observe → reason → act until done/fail or max steps."""
     init_logging(console_level=cfg.log_console_level or "INFO")
+    _agentic_reduce_third_party_log_noise()
 
     from lerobot.model.kinematics import RobotKinematics
     from lerobot.perception.grasp_planner import GraspPlanner
@@ -575,13 +711,12 @@ def agentic_manipulate(cfg: AgenticManipulateConfig):
         cam_to_robot[:3, :3] = R
         cam_to_robot[:3, 3] = t
     elif mount == "gripper" and (cfg.camera_frame_convention or "").lower() == "opencv":
-        logger.info(
-            "camera_mount=gripper: using gripper_camera_tf as camera(optical)→%s; "
-            "camera_frame_convention=opencv does not replace rotation (calib should be in optical frame).",
+        logger.debug(
+            "camera_mount=gripper: gripper_camera_tf = camera(optical)→%s (opencv conv.; calib in optical frame)",
             cfg.ee_frame,
         )
 
-    logger.info("Initializing VLM detector...")
+    logger.debug("Initializing VLM detector...")
     detector = VLMDetector(
         backend=cfg.vlm.backend,
         model_id=cfg.vlm.model_id,
@@ -591,7 +726,7 @@ def agentic_manipulate(cfg: AgenticManipulateConfig):
         cloud_base_url=cfg.vlm.cloud_base_url or None,
     )
 
-    logger.info("Initializing reasoning agent...")
+    logger.debug("Initializing reasoning agent...")
     reasoning_agent = ReasoningAgent(
         api_key=cfg.agent.api_key or None,
         base_url=cfg.agent.base_url or None,
@@ -599,7 +734,7 @@ def agentic_manipulate(cfg: AgenticManipulateConfig):
         is_gemini=cfg.agent.use_gemini,
     )
 
-    logger.info("Initializing grasp planner...")
+    logger.debug("Initializing grasp planner...")
     planner_init_tf = cam_to_robot if mount == "fixed" else np.eye(4, dtype=np.float64)
     planner = GraspPlanner(
         camera_to_robot_tf=planner_init_tf,
@@ -612,6 +747,10 @@ def agentic_manipulate(cfg: AgenticManipulateConfig):
         max_grasp_z_m=cfg.max_grasp_z_m,
         approach_xy_retract_m=cfg.approach_xy_retract_m,
     )
+    # Apply interaction heuristics from config (clearance, gentle "seat", and place clearance).
+    planner.interaction.grasp_clearance_m = float(cfg.grasp_clearance_m)
+    planner.interaction.grasp_seat_m = float(cfg.grasp_seat_m)
+    planner.interaction.place_clearance_m = float(cfg.place_clearance_m)
 
     motion_exec = MotionExecutionConfig(
         use_cartesian_interp=cfg.motion_use_cartesian,
@@ -622,15 +761,25 @@ def agentic_manipulate(cfg: AgenticManipulateConfig):
         settle_timeout_s=cfg.motion_settle_timeout_s,
     )
 
-    logger.info(f"Loading kinematics from URDF: {cfg.urdf}")
+    reason_strategy = (cfg.agent_reasoning_strategy or "summary").lower().strip()
+    if reason_strategy not in ("summary", "json_state"):
+        raise ValueError(
+            f"agent_reasoning_strategy must be 'summary' or 'json_state', got {cfg.agent_reasoning_strategy!r}"
+        )
+    if reason_strategy == "json_state":
+        logger.info(
+            "agent_reasoning_strategy=json_state: LLM receives/returns JSON (VLM seed → model refines poses → motion)."
+        )
+
+    logger.debug("Loading kinematics from URDF: %s", cfg.urdf)
     kinematics = RobotKinematics(
         urdf_path=cfg.urdf,
         target_frame_name=cfg.ee_frame,
         joint_names=SO100_MOTOR_NAMES,
     )
     if mount == "gripper":
-        logger.info(
-            "Eye-in-hand: updating camera→base each frame as FK(q) @ T_cam→%s (gripper_camera_tf).",
+        logger.debug(
+            "Eye-in-hand: T_base_cam = FK(q) @ T_cam→%s each frame",
             cfg.ee_frame,
         )
 
@@ -663,7 +812,7 @@ def agentic_manipulate(cfg: AgenticManipulateConfig):
             "depth_scale": 0.001,
         }
     else:
-        logger.info("Connecting robot...")
+        logger.debug("Connecting robot...")
         robot = make_robot_from_config(cfg.robot)
         robot.connect()
 
@@ -700,21 +849,21 @@ def agentic_manipulate(cfg: AgenticManipulateConfig):
             show_camera_stream=bool(cfg.display_data),
             show_sim3d=bool(cfg.display_sim3d),
         )
-        if cfg.display_data:
+        if cfg.display_data or cfg.display_sim3d:
             logger.info(
-                "Rerun logging enabled (observation.%s, observation.%s_depth_color).",
-                cfg.camera_key,
-                cfg.camera_key,
-            )
-        if cfg.display_sim3d:
-            logger.info(
-                "Rerun 3D sim: look for the 'SO101 + scene (base frame)' view — "
-                "sim3d/robot/* (arm + EE axes), sim3d/workspace/ground_grid, sim3d/objects/*, sim3d/plan/*."
+                "[agentic] Rerun │ stream=%s │ sim3d=%s",
+                bool(cfg.display_data),
+                bool(cfg.display_sim3d),
             )
 
     try:
-        logger.info("Task: %s", cfg.task)
-        logger.info("Starting agentic loop (observe → reason → act)%s...\n", " [dry run, no motion]" if cfg.dry_run else "")
+        logger.info(
+            "[agentic] run │ task=%r │ step_mode=%s │ vlm=%s%s",
+            cfg.task,
+            (cfg.agent_step_mode or "macro").lower().strip(),
+            cfg.vlm.backend,
+            " [dry run]" if cfg.dry_run else "",
+        )
 
         color_fn = cfg.color_filter_min_fraction if cfg.color_filter_min_fraction > 0 else None
         depth_history: deque[np.ndarray] = deque(maxlen=max(1, int(cfg.depth_fusion_frames)))
@@ -726,10 +875,10 @@ def agentic_manipulate(cfg: AgenticManipulateConfig):
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             jsonl_path = os.path.abspath(f"agentic_manipulate_{ts}.jsonl")
         jsonl_f = open(jsonl_path, "a", encoding="utf-8")
-        logger.info("Writing trace log to %s", jsonl_path)
+        logger.info("[agentic] trace JSONL → %s", jsonl_path)
 
         for attempt in range(cfg.max_attempts):
-            logger.info("=== Attempt %d/%d ===", attempt + 1, cfg.max_attempts)
+            logger.info("[agentic] attempt %d/%d", attempt + 1, cfg.max_attempts)
 
             depth_history.clear()
             last_plan_ee_positions = None
@@ -753,6 +902,8 @@ def agentic_manipulate(cfg: AgenticManipulateConfig):
             active_wp_micro_i: int = 0
             force_reason_next: bool = True
             last_loop_status_log_t: float = 0.0
+            refined_json_state: dict | None = None
+            lost_sight_retreat_count: int = 0
 
             # Main loop: track at camera FPS, detect+reason on timers.
             step = 0
@@ -818,15 +969,17 @@ def agentic_manipulate(cfg: AgenticManipulateConfig):
                         tracked_bbox_xyxy = None
 
                 pause_vlm = (
-                    bool(cfg.micro_pause_vlm_during_motion)
+                    not bool(cfg.vlm_every_agent_step)
+                    and bool(cfg.micro_pause_vlm_during_motion)
                     and step_mode == "micro"
                     and active_waypoints is not None
                     and active_wp_i < len(active_waypoints)
                 )
-                # Periodic detection (slow).
-                if (not pause_vlm) and (
+                vlm_due = bool(cfg.vlm_every_agent_step) or (
                     (now - last_detect_t) >= float(cfg.detect_period_s) or tracked_bbox_xyxy is None
-                ):
+                )
+                # Periodic detection (slow), or every step if vlm_every_agent_step.
+                if (not pause_vlm) and vlm_due:
                     scene, detections_with_state, _, _ = _observe_from_images(
                         rgb_curr,
                         depth_fused,
@@ -855,40 +1008,43 @@ def agentic_manipulate(cfg: AgenticManipulateConfig):
                         else:
                             tracker = None
 
+                    if (
+                        scene.is_empty()
+                        and cfg.enable_tracking
+                        and tracked_bbox_xyxy is not None
+                    ):
+                        fb_scene, fb_dets = _scene_from_tracker_bbox(
+                            rgb_curr,
+                            depth_fused,
+                            tracked_bbox_xyxy,
+                            tracked_label,
+                            compute_object_state,
+                            intrinsics,
+                            cfg.task,
+                        )
+                        if not fb_scene.is_empty():
+                            logger.info(
+                                "[perceive] tracker fallback (VLM had no valid 3D) bbox=%s",
+                                tracked_bbox_xyxy,
+                            )
+                            scene, detections_with_state = fb_scene, fb_dets
+
                     last_detect_t = now
                 else:
                     # Build a minimal scene from tracker bbox + depth if we didn't run detection this tick.
-                    objects: list[SceneObject] = []
-                    detections_with_state = []
                     if tracked_bbox_xyxy is not None:
-                        # Use GrabCut on the tracked box for a mask, then compute 3D.
-                        from lerobot.perception.vlm_detector import mask_from_bbox_grabcut
-
-                        mask = mask_from_bbox_grabcut(rgb_curr, tracked_bbox_xyxy)
-                        state = compute_object_state(depth_fused, mask, intrinsics)
-                        center = state["obj_center_xyz"]
-                        size = state["obj_size_xyz"]
-                        dist = state["obj_distance"]
-                        if not np.allclose(center, 0):
-                            objects.append(
-                                SceneObject(
-                                    index=0,
-                                    label=tracked_label or "tracked_object",
-                                    center_xyz=(float(center[0]), float(center[1]), float(center[2])),
-                                    size_xyz=(float(size[0]), float(size[1]), float(size[2])),
-                                    distance_m=float(dist[0]),
-                                )
-                            )
-                            # Fake a det-like object with bbox/label for downstream drawing/picking.
-                            class _DetLike:
-                                def __init__(self, label, bbox_xyxy):
-                                    self.label = label
-                                    self.bbox_xyxy = bbox_xyxy
-
-                            det_like = _DetLike(tracked_label or "tracked_object", tracked_bbox_xyxy)
-                            detections_with_state.append((det_like, state))
-
-                    scene = SceneObservation(objects=objects, task=cfg.task)
+                        scene, detections_with_state = _scene_from_tracker_bbox(
+                            rgb_curr,
+                            depth_fused,
+                            tracked_bbox_xyxy,
+                            tracked_label,
+                            compute_object_state,
+                            intrinsics,
+                            cfg.task,
+                        )
+                    else:
+                        scene = SceneObservation(objects=[], task=cfg.task)
+                        detections_with_state = []
 
                 detections_with_state, scene = _filter_detections_by_cam_distance(
                     detections_with_state, cfg.task, float(cfg.max_object_cam_distance_m)
@@ -918,9 +1074,10 @@ def agentic_manipulate(cfg: AgenticManipulateConfig):
                     }
                     detections_with_state = [(_ManualDet(img_w, img_h), st0)]
                     scene = _scene_from_det_pairs(detections_with_state, cfg.task)
-                    logger.info(
-                        "No objects after distance filter; using manual_object placeholder (apply --manual-object-xyz)."
-                    )
+                    logger.info("[perceive] using --manual-object-* placeholder (distance filter empty)")
+
+                if not scene.is_empty():
+                    lost_sight_retreat_count = 0
 
                 # Visualization.
                 if cfg.show_viz and rgb_curr.size > 0:
@@ -962,8 +1119,12 @@ def agentic_manipulate(cfg: AgenticManipulateConfig):
                     except Exception:
                         pass
 
-                # Periodic reasoning (slow).
-                should_reason = force_reason_next or ((now - last_reason_t) >= float(cfg.reason_period_s))
+                # Periodic reasoning (slow), or every step if llm_every_agent_step.
+                should_reason = (
+                    bool(cfg.llm_every_agent_step)
+                    or force_reason_next
+                    or ((now - last_reason_t) >= float(cfg.reason_period_s))
+                )
                 if cfg.log_loop_tick_debug:
                     dt_llm_s = (now - last_reason_t) if last_reason_t > 0 else None
                     micro_tail = ""
@@ -984,20 +1145,57 @@ def agentic_manipulate(cfg: AgenticManipulateConfig):
                     )
 
                 if should_reason:
+                    if (
+                        cfg.recover_on_lost_sight
+                        and not cfg.dry_run
+                        and step_mode == "micro"
+                        and scene.is_empty()
+                        and active_waypoints is not None
+                        and active_action == "pick"
+                        and active_wp_i > 0
+                        and lost_sight_retreat_count < int(cfg.lost_sight_max_retreats_per_pick)
+                    ):
+                        lost_sight_retreat_count += 1
+                        try:
+                            active_wp_i, active_wp_micro_i = _micro_retreat_previous_waypoint(
+                                robot,
+                                kinematics,
+                                active_waypoints,
+                                SO100_MOTOR_NAMES,
+                                motion_exec,
+                                active_wp_i,
+                            )
+                            logger.warning(
+                                "[agentic] lost sight (empty scene) → retreated to wp %d/%d %s (recovery %d/%d)",
+                                active_wp_i + 1,
+                                len(active_waypoints),
+                                getattr(active_waypoints[active_wp_i], "label", "?"),
+                                lost_sight_retreat_count,
+                                int(cfg.lost_sight_max_retreats_per_pick),
+                            )
+                        except Exception as e:
+                            logger.warning("[motion] lost-sight retreat failed: %s", e)
+                        force_reason_next = True
+                        continue
+
                     llm_trigger = "forced" if force_reason_next else "timer"
                     force_reason_next = False
                     dt_since_llm = (now - last_reason_t) if last_reason_t > 0 else None
-                    logger.info(
-                        "--- Agent step %d [%s] llm_trigger=%s dt_since_last_llm=%s (reason_period_s=%.2f) ---",
-                        step,
-                        step_mode,
-                        llm_trigger,
-                        f"{dt_since_llm:.2f}s" if dt_since_llm is not None else "first",
-                        float(cfg.reason_period_s),
-                    )
-                    if scene.is_empty():
-                        logger.warning("No objects in scene; asking agent.")
-                    action = reasoning_agent.reason(scene, scene_text_override=None)
+                    n_scene_before = len(scene.objects)
+                    if reason_strategy == "json_state":
+                        if not detections_with_state:
+                            logger.debug("json_state: empty detections; LLM still called")
+                        payload = build_vlm_scene_json_payload(cfg.task, detections_with_state)
+                        if refined_json_state is not None:
+                            payload["previous_model_state"] = refined_json_state
+                        action, parsed_state = reasoning_agent.reason_json_state(payload)
+                        if parsed_state and isinstance(parsed_state.get("objects"), list):
+                            refined_json_state = {
+                                "task": cfg.task,
+                                "objects": list(parsed_state["objects"]),
+                            }
+                    else:
+                        action = reasoning_agent.reason(scene, scene_text_override=None)
                     last_action = action
                     last_reason_t = now
 
@@ -1031,6 +1229,10 @@ def agentic_manipulate(cfg: AgenticManipulateConfig):
                                 },
                             },
                         }
+                        if reason_strategy == "json_state":
+                            rec["agent"]["reasoning_strategy"] = "json_state"
+                            if refined_json_state is not None:
+                                rec["agent"]["refined_json_state"] = refined_json_state
                         if cfg.log_scene_text:
                             rec["agent"]["scene_text"] = reasoning_agent.last_scene_text
                         if cfg.log_llm_raw:
@@ -1040,16 +1242,27 @@ def agentic_manipulate(cfg: AgenticManipulateConfig):
                     except Exception as e:
                         logger.debug("Failed to write JSONL log: %s", e)
 
-                    logger.info(
-                        "Agent action: %s (object_index=%s, place_xyz=%s, reason=%s)",
-                        action.action,
-                        action.object_index,
-                        action.place_xyz,
-                        action.reason,
+                    dt_part = "first" if dt_since_llm is None else f"{dt_since_llm:.1f}s"
+                    act_tail = action.action
+                    if action.action == "done" and action.success is not None:
+                        act_tail += f" success={action.success}"
+                    if action.object_index is not None:
+                        act_tail += f" #{action.object_index}"
+                    if action.place_xyz is not None:
+                        px, py, pz = action.place_xyz
+                        act_tail += f" place=({px:.3f},{py:.3f},{pz:.3f})"
+                    if action.reason:
+                        act_tail += f" — {action.reason}"
+                    log_line = (
+                        f"step {step}/{cfg.max_agent_steps} {step_mode} │ "
+                        f"LLM {llm_trigger} Δt={dt_part} │ scene n={n_scene_before} │ → {act_tail}"
                     )
+                    _lvl = logging.INFO
+                    if action.action == "fail" or (n_scene_before == 0 and action.action in ("pick", "place")):
+                        _lvl = logging.WARNING
+                    logger.log(_lvl, "[agentic] %s", log_line)
 
                     if action.action == "done":
-                        logger.info("Agent says done (success=%s).", action.success)
                         _log_agentic_sim3d_once(
                             cfg,
                             dry_run=cfg.dry_run,
@@ -1064,7 +1277,38 @@ def agentic_manipulate(cfg: AgenticManipulateConfig):
                         )
                         break
                     if action.action == "fail":
-                        logger.warning("Agent failed: %s", action.reason or "no reason")
+                        if (
+                            cfg.recover_on_lost_sight
+                            and not cfg.dry_run
+                            and step_mode == "micro"
+                            and n_scene_before == 0
+                            and active_waypoints is not None
+                            and active_action == "pick"
+                            and active_wp_i > 0
+                            and lost_sight_retreat_count < int(cfg.lost_sight_max_retreats_per_pick)
+                        ):
+                            lost_sight_retreat_count += 1
+                            try:
+                                active_wp_i, active_wp_micro_i = _micro_retreat_previous_waypoint(
+                                    robot,
+                                    kinematics,
+                                    active_waypoints,
+                                    SO100_MOTOR_NAMES,
+                                    motion_exec,
+                                    active_wp_i,
+                                )
+                                logger.warning(
+                                    "[agentic] LLM fail on empty scene → retreated to wp %d/%d %s (%d/%d)",
+                                    active_wp_i + 1,
+                                    len(active_waypoints),
+                                    getattr(active_waypoints[active_wp_i], "label", "?"),
+                                    lost_sight_retreat_count,
+                                    int(cfg.lost_sight_max_retreats_per_pick),
+                                )
+                            except Exception as e:
+                                logger.warning("[motion] retreat after LLM fail failed: %s", e)
+                            force_reason_next = True
+                            continue
                         _log_agentic_sim3d_once(
                             cfg,
                             dry_run=cfg.dry_run,
@@ -1079,7 +1323,7 @@ def agentic_manipulate(cfg: AgenticManipulateConfig):
                         )
                         break
                     if action.action == "retry":
-                        logger.info("Agent retry: %s", action.reason or "")
+                        refined_json_state = None
                         tracker = None
                         tracked_bbox_xyxy = None
                         _log_agentic_sim3d_once(
@@ -1119,6 +1363,19 @@ def agentic_manipulate(cfg: AgenticManipulateConfig):
                             continue
                         det, state = detections_with_state[idx]
 
+                        center = np.asarray(state["obj_center_xyz"], dtype=np.float32).reshape(3)
+                        size = np.asarray(state["obj_size_xyz"], dtype=np.float32).reshape(3)
+                        if reason_strategy == "json_state":
+                            rp = _refined_object_pose_from_json_state(refined_json_state, idx)
+                            if rp is not None:
+                                center, size = rp
+                                logger.info(
+                                    "Pick geometry from json_state refinement (object %d): center=%s size=%s",
+                                    idx,
+                                    center,
+                                    size,
+                                )
+
                         # Optionally re-init tracker to the agent-chosen object.
                         if cfg.enable_tracking and cfg.track_agent_choice and hasattr(det, "bbox_xyxy"):
                             tracked_bbox_xyxy = _clamp_xyxy(det.bbox_xyxy, img_w, img_h)
@@ -1134,8 +1391,6 @@ def agentic_manipulate(cfg: AgenticManipulateConfig):
                                 except Exception:
                                     tracker = None
 
-                        center = np.asarray(state["obj_center_xyz"], dtype=np.float32).reshape(3)
-                        size = np.asarray(state["obj_size_xyz"], dtype=np.float32).reshape(3)
                         center, size = _apply_manual_object_geometry(cfg, planner, idx, center, size)
                         waypoints = planner.plan_pick(center, size, det.label)
                         last_plan_ee_positions = np.stack(
@@ -1166,10 +1421,18 @@ def agentic_manipulate(cfg: AgenticManipulateConfig):
                             )
                             break
 
-                        logger.info("Executing pick: object %d '%s' at %s", idx, det.label, center)
                         if step_mode == "macro":
+                            cx, cy, cz = (float(center[0]), float(center[1]), float(center[2]))
+                            logger.info(
+                                "[motion] pick %r │ base (%.3f,%.3f,%.3f) │ macro ×%d wps",
+                                det.label,
+                                cx,
+                                cy,
+                                cz,
+                                len(waypoints),
+                            )
                             execute_waypoints(robot, kinematics, waypoints, SO100_MOTOR_NAMES, motion_exec)
-                            logger.info("Pick complete.")
+                            logger.debug("[motion] macro pick sequence done")
                             if cfg.place_target:
                                 place_xyz = np.array(
                                     [float(v) for v in cfg.place_target.split(",")],
@@ -1210,12 +1473,16 @@ def agentic_manipulate(cfg: AgenticManipulateConfig):
                             active_wp_i = 0
                             active_wp_micro_i = 0
                         wp = active_waypoints[active_wp_i]
+                        cx, cy, cz = (float(center[0]), float(center[1]), float(center[2]))
                         logger.info(
-                            "Micro-step pick: executing waypoint %d/%d (%s) for '%s'",
+                            "[motion] pick %r │ base (%.3f,%.3f,%.3f) │ wp %d/%d %s",
+                            det.label,
+                            cx,
+                            cy,
+                            cz,
                             active_wp_i + 1,
                             len(active_waypoints),
-                            getattr(wp, "label", "waypoint"),
-                            active_object_label,
+                            getattr(wp, "label", "?"),
                         )
                         max_ms = int(max(1, cfg.micro_max_microsteps_per_decision))
                         _j, _mi, _done = execute_waypoint_microsteps(
@@ -1254,7 +1521,7 @@ def agentic_manipulate(cfg: AgenticManipulateConfig):
                             active_wp_micro_i = 0
                         pick_focus_for_viz = active_object_index
                         if active_waypoints is not None and active_wp_i >= len(active_waypoints):
-                            logger.info("Pick complete (micro).")
+                            logger.debug("[motion] micro pick waypoint finished")
                             active_action = None
                             active_waypoints = None
                             active_object_index = None
@@ -1362,7 +1629,7 @@ def agentic_manipulate(cfg: AgenticManipulateConfig):
                     time.sleep(0.03)
 
             else:
-                logger.info("Max agent steps reached.")
+                logger.info("[agentic] max steps (%d) reached", cfg.max_agent_steps)
             break
 
     except KeyboardInterrupt:
@@ -1382,7 +1649,10 @@ def agentic_manipulate(cfg: AgenticManipulateConfig):
             except Exception:
                 pass
         if robot is not None:
-            robot.disconnect()
+            try:
+                robot.disconnect()
+            except Exception as e:
+                logger.warning("[agentic] disconnect (bus may already be dead): %s", e)
 
 
 def main():
