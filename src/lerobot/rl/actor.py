@@ -253,7 +253,6 @@ def act_with_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
     )
-    policy.init_actor()
     policy = policy.to(device).eval()
     assert isinstance(policy, nn.Module)
 
@@ -294,8 +293,6 @@ def act_with_policy(
         with policy_timer:
             normalized_observation = preprocessor.process_observation(observation)
             action = policy.select_action(batch=normalized_observation)
-            # Keep raw policy action to mirror the known-good SAC normalization behavior.
-            # action = postprocessor.process_action(action)
         policy_fps = policy_timer.fps_last
 
         log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)

@@ -35,9 +35,10 @@ DISCRETE_DIMENSION_INDEX = -1  # Gripper is always the last dimension
 class SACPolicy(
     PreTrainedPolicy,
 ):
-    """SAC policy owning encoder and actor — everything needed to act.
+    """SAC policy — encoder, actor, and optional discrete critic for inference.
 
     Critics, targets, temperature, and training logic live in ``SACAlgorithm``.
+    The algorithm sets ``policy.discrete_critic`` for actor-side inference.
     """
 
     config_class = SACConfig
@@ -52,35 +53,8 @@ class SACPolicy(
         self.config = config
 
         self._init_encoders()
+        self._init_actor()
         self.discrete_critic = None
-        self._actor_initialized = False
-
-    # ------------------------------------------------------------------
-    # Deferred actor init (called by algorithm or actor process)
-    # ------------------------------------------------------------------
-
-    def init_actor(self) -> None:
-        """Create actor network once."""
-        if self._actor_initialized:
-            return
-        # NOTE: The actor select only the continuous action part
-        continuous_action_dim = self.config.output_features[ACTION].shape[0]
-        self.actor = Policy(
-            encoder=self.encoder_actor,
-            network=MLP(input_dim=self.encoder_actor.output_dim, **asdict(self.config.actor_network_kwargs)),
-            action_dim=continuous_action_dim,
-            encoder_is_shared=self.shared_encoder,
-            **asdict(self.config.policy_kwargs),
-        )
-        self.target_entropy = self.config.target_entropy
-        if self.target_entropy is None:
-            dim = continuous_action_dim + (1 if self.config.num_discrete_actions is not None else 0)
-            self.target_entropy = -np.prod(dim) / 2
-        self._actor_initialized = True
-
-    # ------------------------------------------------------------------
-    # Inference
-    # ------------------------------------------------------------------
 
     def get_optim_params(self) -> dict:
         return {
@@ -100,7 +74,7 @@ class SACPolicy(
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        """Select action for inference/evaluation."""
+        """Select full action for environment (continuous + optional discrete)."""
         observations_features = None
         if self.shared_encoder and self.actor.encoder.has_images:
             observations_features = self.actor.encoder.get_cached_image_features(batch)
@@ -112,8 +86,6 @@ class SACPolicy(
                 discrete_action_value = self.discrete_critic(batch, observations_features)
                 discrete_action = torch.argmax(discrete_action_value, dim=-1, keepdim=True)
             else:
-                # Actor may run before learner sends discrete-critic weights.
-                # Use "stay" gripper action (1) as a safe startup fallback.
                 discrete_action = torch.ones(
                     (*actions.shape[:-1], 1), device=actions.device, dtype=actions.dtype
                 )
@@ -128,10 +100,6 @@ class SACPolicy(
         actions, log_probs, means = self.actor(observations, observation_features)
         return {"action": actions, "log_prob": log_probs, "action_mean": means}
 
-    # ------------------------------------------------------------------
-    # Encoder init
-    # ------------------------------------------------------------------
-
     def _init_encoders(self):
         self.shared_encoder = self.config.shared_encoder
         self.encoder_critic = SACObservationEncoder(self.config)
@@ -139,10 +107,19 @@ class SACPolicy(
             self.encoder_critic if self.shared_encoder else SACObservationEncoder(self.config)
         )
 
-
-# ======================================================================
-# Neural network building blocks
-# ======================================================================
+    def _init_actor(self):
+        continuous_action_dim = self.config.output_features[ACTION].shape[0]
+        self.actor = Policy(
+            encoder=self.encoder_actor,
+            network=MLP(input_dim=self.encoder_actor.output_dim, **asdict(self.config.actor_network_kwargs)),
+            action_dim=continuous_action_dim,
+            encoder_is_shared=self.shared_encoder,
+            **asdict(self.config.policy_kwargs),
+        )
+        self.target_entropy = self.config.target_entropy
+        if self.target_entropy is None:
+            dim = continuous_action_dim + (1 if self.config.num_discrete_actions is not None else 0)
+            self.target_entropy = -np.prod(dim) / 2
 
 
 class SACObservationEncoder(nn.Module):

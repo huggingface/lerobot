@@ -136,23 +136,13 @@ class SACAlgorithm(RLAlgorithm):
         self._optimization_step: int = 0
 
         self._init_critics()
-        self.policy.init_actor()
         self._init_temperature()
 
         self._device = torch.device(self.policy.config.device)
         self._move_to_device()
 
-    # ------------------------------------------------------------------
-    # Module initialisation
-    # ------------------------------------------------------------------
-
     def _init_critics(self) -> None:
-        """Create all critic networks using ``policy.encoder_critic``.
-
-        Order: critic_ensemble → critic_target → discrete_critic →
-        discrete_critic_target.  Then ``policy.init_actor()`` is called
-        so RNG order stays: encoder → critics → actor.
-        """
+        """Create all critic networks using ``policy.encoder_critic``."""
         encoder = self.policy.encoder_critic
         action_dim = self.policy.config.output_features[ACTION].shape[0]
         input_dim = encoder.output_dim + action_dim
@@ -170,29 +160,31 @@ class SACAlgorithm(RLAlgorithm):
         self.critic_target = CriticEnsemble(encoder=encoder, ensemble=target_heads)
         self.critic_target.load_state_dict(self.critic_ensemble.state_dict())
 
+        self.discrete_critic = None
+        self.discrete_critic_target = None
         if self.config.num_discrete_actions is not None:
-            self._init_discrete_critics()
+            self.discrete_critic, self.discrete_critic_target = self._init_discrete_critics(encoder)
+            self.policy.discrete_critic = self.discrete_critic
 
         if self.config.use_torch_compile:
             self.critic_ensemble = torch.compile(self.critic_ensemble)
             self.critic_target = torch.compile(self.critic_target)
 
-    def _init_discrete_critics(self) -> None:
-        encoder = self.policy.encoder_critic
-        self.discrete_critic = DiscreteCritic(
+    def _init_discrete_critics(self, encoder: SACObservationEncoder) -> tuple[DiscreteCritic, DiscreteCritic]:
+        discrete_critic = DiscreteCritic(
             encoder=encoder,
             input_dim=encoder.output_dim,
             output_dim=self.config.num_discrete_actions,
             **asdict(self.config.discrete_critic_network_kwargs),
         )
-        self.discrete_critic_target = DiscreteCritic(
+        discrete_critic_target = DiscreteCritic(
             encoder=encoder,
             input_dim=encoder.output_dim,
             output_dim=self.config.num_discrete_actions,
             **asdict(self.config.discrete_critic_network_kwargs),
         )
-        self.discrete_critic_target.load_state_dict(self.discrete_critic.state_dict())
-        self.policy.discrete_critic = self.discrete_critic
+        discrete_critic_target.load_state_dict(discrete_critic.state_dict())
+        return discrete_critic, discrete_critic_target
 
     def _init_temperature(self) -> None:
         temp_init = self.config.temperature_init
@@ -203,21 +195,13 @@ class SACAlgorithm(RLAlgorithm):
         self.critic_ensemble.to(self._device)
         self.critic_target.to(self._device)
         self.log_alpha = nn.Parameter(self.log_alpha.data.to(self._device))
-        if hasattr(self, "discrete_critic"):
+        if self.discrete_critic is not None and self.discrete_critic_target is not None:
             self.discrete_critic.to(self._device)
             self.discrete_critic_target.to(self._device)
-
-    # ------------------------------------------------------------------
-    # Properties
-    # ------------------------------------------------------------------
 
     @property
     def temperature(self) -> float:
         return self.log_alpha.exp().item()
-
-    # ------------------------------------------------------------------
-    # Training loop
-    # ------------------------------------------------------------------
 
     def update(self, batch_iterator: Iterator[BatchType]) -> TrainingStats:
         """One full SAC update with UTD critic warm-up.
@@ -298,10 +282,6 @@ class SACAlgorithm(RLAlgorithm):
 
         self._optimization_step += 1
         return stats
-
-    # ------------------------------------------------------------------
-    # Loss methods — call policy.actor() DIRECTLY (never policy(batch))
-    # ------------------------------------------------------------------
 
     def _compute_loss_critic(self, batch: dict[str, Any]) -> Tensor:
         observations = batch["state"]
@@ -391,10 +371,6 @@ class SACAlgorithm(RLAlgorithm):
 
         return (-self.log_alpha.exp() * (log_probs + self.policy.target_entropy)).mean()
 
-    # ------------------------------------------------------------------
-    # Target network update
-    # ------------------------------------------------------------------
-
     def _update_target_networks(self) -> None:
         tau = self.config.critic_target_update_weight
         for target_p, p in zip(
@@ -408,10 +384,6 @@ class SACAlgorithm(RLAlgorithm):
                 strict=True,
             ):
                 target_p.data.copy_(p.data * tau + target_p.data * (1.0 - tau))
-
-    # ------------------------------------------------------------------
-    # Batch preparation
-    # ------------------------------------------------------------------
 
     def _prepare_forward_batch(
         self, batch: BatchType, *, include_complementary_info: bool = True
@@ -435,10 +407,6 @@ class SACAlgorithm(RLAlgorithm):
             forward_batch["complementary_info"] = batch["complementary_info"]
         return forward_batch
 
-    # ------------------------------------------------------------------
-    # Optimizers
-    # ------------------------------------------------------------------
-
     def make_optimizers(self) -> dict[str, Optimizer]:
         actor_params = self.policy.get_optim_params()["actor"]
         self.optimizers = {
@@ -454,10 +422,6 @@ class SACAlgorithm(RLAlgorithm):
 
     def get_optimizers(self) -> dict[str, Optimizer]:
         return self.optimizers
-
-    # ------------------------------------------------------------------
-    # Weight transfer
-    # ------------------------------------------------------------------
 
     def get_weights(self) -> dict[str, Any]:
         """Send actor + discrete-critic state dicts (avoids encoder duplication)."""
@@ -476,10 +440,6 @@ class SACAlgorithm(RLAlgorithm):
         if "discrete_critic" in weights and self.config.num_discrete_actions is not None:
             dc_sd = move_state_dict_to_device(weights["discrete_critic"], device=device)
             self.discrete_critic.load_state_dict(dc_sd)
-
-    # ------------------------------------------------------------------
-    # Observation feature caching
-    # ------------------------------------------------------------------
 
     @torch.no_grad()
     def get_observation_features(
