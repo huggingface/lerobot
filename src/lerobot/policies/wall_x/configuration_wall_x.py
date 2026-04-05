@@ -61,7 +61,7 @@ class WallXConfig(PreTrainedConfig):
     prediction_mode: str = "diffusion"
 
     # Attention Implementation, options: "eager", "flash_attention_2", "sdpa"
-    # NOTE: flash-attn==2.7.4.post1 is required for flash_attention_2 implementation
+    # NOTE: flash-attn-4 (FlashAttention-4 CuTeDSL) is required for flash_attention_2 implementation
     attn_implementation: str = "eager"
 
     # ==================== Optimizer Presets ====================
