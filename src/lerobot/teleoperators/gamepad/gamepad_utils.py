@@ -202,13 +202,11 @@ class GamepadController(InputController):
     BUTTON_Y = 3
     BUTTON_LB = 4
     BUTTON_RB = 5
-    BUTTON_R3 = 10
-
     # Stick axes
     AXIS_LEFT_X = 0
     AXIS_LEFT_Y = 1
-    AXIS_RIGHT_X = 3
-    AXIS_RIGHT_Y = 4
+    AXIS_RIGHT_X = 2
+    AXIS_RIGHT_Y = 3
 
     # Default trigger buttons
     BUTTON_LT = 6
@@ -226,6 +224,8 @@ class GamepadController(InputController):
         self.is_xbox = False
         self._xbox360_profile = False
         self._invert_left_x = False
+        self._invert_left_y = True
+        self._invert_right_y = True
 
     def _detect_xbox(self, name):
         name_lower = name.lower()
@@ -247,14 +247,26 @@ class GamepadController(InputController):
         joystick_name = self.joystick.get_name()
         self.is_xbox = self._detect_xbox(joystick_name)
         self._xbox360_profile = joystick_name == "Xbox 360 Controller"
-        self._invert_left_x = self._xbox360_profile
+        if self._xbox360_profile:
+            # gym-hil "Xbox 360 Controller" profile
+            self.AXIS_RIGHT_X = 3
+            self.AXIS_RIGHT_Y = 4
+            self.BUTTON_LT = self.XBOX_BUTTON_LT
+            self.BUTTON_RT = self.XBOX_BUTTON_RT
+            self._invert_left_x = True
+        else:
+            # gym-hil default profile
+            self.AXIS_RIGHT_X = 2
+            self.AXIS_RIGHT_Y = 3
+            self.BUTTON_LT = 6
+            self.BUTTON_RT = 7
+            self._invert_left_x = False
         logging.info(f"Initialized gamepad: {joystick_name} (xbox={self.is_xbox})")
 
         print("Gamepad controls:")
         print("  Left analog stick: Move in X-Y plane")
         print("  Right analog stick (vertical): Move in Z axis")
         print("  RB: Intervention toggle")
-        print("  R3 (right stick click): Close gripper")
         print("  LT / RT: Close / Open gripper")
         print("  Y: End episode with SUCCESS")
         print("  A: End episode with FAILURE")
@@ -280,21 +292,17 @@ class GamepadController(InputController):
                     self.episode_end_status = TeleopEvents.FAILURE
                 elif event.button == self.BUTTON_X:
                     self.episode_end_status = TeleopEvents.RERECORD_EPISODE
-                elif event.button == self.BUTTON_R3 or event.button == (
-                    self.XBOX_BUTTON_LT if self._xbox360_profile else self.BUTTON_LT
-                ):
+                elif event.button == self.BUTTON_LT:
                     self.close_gripper_command = True
-                elif event.button == (self.XBOX_BUTTON_RT if self._xbox360_profile else self.BUTTON_RT):
+                elif event.button == self.BUTTON_RT:
                     self.open_gripper_command = True
 
             elif event.type == pygame.JOYBUTTONUP:
                 if event.button in [self.BUTTON_Y, self.BUTTON_A, self.BUTTON_X]:
                     self.episode_end_status = None
-                elif event.button == self.BUTTON_R3 or event.button == (
-                    self.XBOX_BUTTON_LT if self._xbox360_profile else self.BUTTON_LT
-                ):
+                elif event.button == self.BUTTON_LT:
                     self.close_gripper_command = False
-                elif event.button == (self.XBOX_BUTTON_RT if self._xbox360_profile else self.BUTTON_RT):
+                elif event.button == self.BUTTON_RT:
                     self.open_gripper_command = False
 
             if self.joystick.get_button(self.BUTTON_RB):
@@ -316,10 +324,14 @@ class GamepadController(InputController):
 
             if self._invert_left_x:
                 x_input = -x_input
+            if self._invert_left_y:
+                y_input = -y_input
+            if self._invert_right_y:
+                z_input = -z_input
 
-            delta_x = -y_input * self.y_step_size
+            delta_x = y_input * self.y_step_size
             delta_y = x_input * self.x_step_size
-            delta_z = -z_input * self.z_step_size
+            delta_z = z_input * self.z_step_size
 
             return delta_x, delta_y, delta_z
 
