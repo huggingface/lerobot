@@ -202,6 +202,7 @@ class GamepadController(InputController):
     BUTTON_Y = 3
     BUTTON_LB = 4
     BUTTON_RB = 5
+    BUTTON_R3 = 10
 
     # Stick axes
     AXIS_LEFT_X = 0
@@ -253,6 +254,7 @@ class GamepadController(InputController):
         print("  Left analog stick: Move in X-Y plane")
         print("  Right analog stick (vertical): Move in Z axis")
         print("  RB: Intervention toggle")
+        print("  R3 (right stick click): Close gripper")
         print("  LT / RT: Close / Open gripper")
         print("  Y: End episode with SUCCESS")
         print("  A: End episode with FAILURE")
@@ -278,7 +280,9 @@ class GamepadController(InputController):
                     self.episode_end_status = TeleopEvents.FAILURE
                 elif event.button == self.BUTTON_X:
                     self.episode_end_status = TeleopEvents.RERECORD_EPISODE
-                elif event.button == (self.XBOX_BUTTON_LT if self._xbox360_profile else self.BUTTON_LT):
+                elif event.button == self.BUTTON_R3 or event.button == (
+                    self.XBOX_BUTTON_LT if self._xbox360_profile else self.BUTTON_LT
+                ):
                     self.close_gripper_command = True
                 elif event.button == (self.XBOX_BUTTON_RT if self._xbox360_profile else self.BUTTON_RT):
                     self.open_gripper_command = True
@@ -286,7 +290,9 @@ class GamepadController(InputController):
             elif event.type == pygame.JOYBUTTONUP:
                 if event.button in [self.BUTTON_Y, self.BUTTON_A, self.BUTTON_X]:
                     self.episode_end_status = None
-                elif event.button == (self.XBOX_BUTTON_LT if self._xbox360_profile else self.BUTTON_LT):
+                elif event.button == self.BUTTON_R3 or event.button == (
+                    self.XBOX_BUTTON_LT if self._xbox360_profile else self.BUTTON_LT
+                ):
                     self.close_gripper_command = False
                 elif event.button == (self.XBOX_BUTTON_RT if self._xbox360_profile else self.BUTTON_RT):
                     self.open_gripper_command = False
