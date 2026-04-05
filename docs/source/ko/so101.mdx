@@ -13,37 +13,43 @@
   />
 </div>
 
-In the steps below, we explain how to assemble our flagship robot, the SO-101.
+아래 스텝에서 flagship robot인 SO-101을 어떻게 조립하는지 설명을 찾아볼 수 있습니다. 
 
-## Source the parts
+## 부품 준비하기
 
-Follow this [README](https://github.com/TheRobotStudio/SO-ARM100). It contains the bill of materials, with a link to source the parts, as well as the instructions to 3D print the parts.
-And advise if it's your first time printing or if you don't own a 3D printer.
+시작하기에 앞서, [README 파일](https://github.com/TheRobotStudio/SO-ARM100)을 읽으시면 도움이 됩니다. 
 
-## Install LeRobot 🤗
+부품 목록(Bill of Materials)과 구매 링크, 그리고 3D 프린팅 방법이 담겨 있습니다. 
+3D 프린터를 처음 사용하시거나 3D 프린터가 없으신 분들을 위한 안내 또한 포함되어 있습니다. 
 
-To install LeRobot, follow our [Installation Guide](./installation)
+## LeRobot 설치하기 🤗
 
-In addition to these instructions, you need to install the Feetech SDK:
+LeRobot을 설치하려면, [설치 가이드](./installation)를 참고해 주세요. 
+
+기본 설치 외에 Feetech SDK도 추가로 설치해야합니다 :
 
 ```bash
 pip install -e ".[feetech]"
 ```
 
-## Step-by-Step Assembly Instructions
+## 단계별 조립 가이드 
 
-The follower arm uses 6x STS3215 motors with 1/345 gearing. The leader, however, uses three differently geared motors to make sure it can both sustain its own weight and it can be moved without requiring much force. Which motor is needed for which joint is shown in the table below.
+팔로워암은 1/345 기어비를 가진 STS3215 모터 6개를 사용합니다. 
 
-| Leader-Arm Axis     | Motor | Gear Ratio |
+반면 리더암은 자체 무게를 버티면서 큰 힘을 필요로 하지 않게 가볍게 조작할 수 있도록, 세 종류의 다른 기어비 모터를 사용합니다. 
+
+어떤 관절에 어떤 모터가 필요한지 아래 표에서 찾을 수 있습니다.
+
+| 리더암 축       | 모터   |    기어비   |
 | ------------------- | :---: | :--------: |
-| Base / Shoulder Pan |   1   |  1 / 191   |
-| Shoulder Lift       |   2   |  1 / 345   |
-| Elbow Flex          |   3   |  1 / 191   |
-| Wrist Flex          |   4   |  1 / 147   |
-| Wrist Roll          |   5   |  1 / 147   |
-| Gripper             |   6   |  1 / 147   |
+| 베이스 / 숄더 팬 |   1   |  1 / 191   |
+| 숄더 리프트       |   2   |  1 / 345   |
+| 엘보 플렉스          |   3   |  1 / 191   |
+| 손목 굽힘          |   4   |  1 / 147   |
+| 손목 회전          |   5   |  1 / 147   |
+| 그리퍼             |   6   |  1 / 147   |
 
-## Configure the motors
+## 모터 설정
 
 ### 1. Find the USB ports associated with each arm
 
