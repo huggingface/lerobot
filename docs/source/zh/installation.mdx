@@ -1,17 +1,17 @@
-# Installation
+# 安裝
 
-This guide uses `conda` (via miniforge) to manage environments (recommended). If you prefer another environment manager (e.g. `uv`, `venv`), ensure you have Python >=3.12 and `ffmpeg` installed with the `libsvtav1` encoder, then skip ahead to [Environment Setup](#step-2-environment-setup).
+本指南使用 `conda`（透過 miniforge）來管理環境（推薦）。若您偏好其他環境管理工具（例如 `uv`、`venv`），請確保您使用 Python >=3.12 以及包含 `libsvtav1` 編碼器的 `ffmpeg`，然後直接跳至[環境設定](#step-2-environment-setup)。
 
-## Step 1 (`conda` only): Install [`miniforge`](https://conda-forge.org/download/)
+## 步驟 1（僅限 conda）：安裝 [`miniforge`](https://conda-forge.org/download/)
 
 ```bash
 wget "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh"
 bash Miniforge3-$(uname)-$(uname -m).sh
 ```
 
-## Step 2: Environment Setup
+## 步驟 2：環境設定
 
-Create a virtual environment with Python 3.12:
+建立 Python 3.12 的虛擬環境：
 
 <!-- prettier-ignore-start -->
 <hfoptions id="create_venv">
@@ -29,7 +29,7 @@ uv venv --python 3.12
 </hfoptions>
 <!-- prettier-ignore-end -->
 
-Then activate your virtual environment, you have to do this each time you open a shell to use lerobot:
+接著啟動虛擬環境，每次開啟新的 shell 要使用 lerobot 時都需要執行此步驟：
 
 <!-- prettier-ignore-start -->
 <hfoptions id="activate_venv">
@@ -38,7 +38,7 @@ conda activate lerobot
 ```</hfoption>
 <hfoption id="uv">
 ```bash
-# Linux/macOSsource
+# Linux/macOS
 source .venv/bin/activate
 # Windows PowerShell
 source .venv\Scripts\Activate.ps1
@@ -47,46 +47,46 @@ source .venv\Scripts\Activate.ps1
 </hfoptions>
 <!-- prettier-ignore-end -->
 
-When using `conda`, install `ffmpeg` in your environment:
+使用 `conda` 時，需在環境中安裝 `ffmpeg`：
 
 ```bash
 conda install ffmpeg -c conda-forge
-ffmpeg -version  # ffmpeg 8.X is not yet supported !
+ffmpeg -version  # 尚不支援 ffmpeg 8.X！
 ```
 
 > [!TIP]
-> This usually installs `ffmpeg 7.X` for your platform compiled with the `libsvtav1` encoder. If `libsvtav1` is not supported (check supported encoders with `ffmpeg -encoders`), you can:
+> 通常此指令會為您的平台安裝透過 `libsvtav1` 編碼器編譯的 `ffmpeg 7.X`。若 `libsvtav1` 不支援（可透過 `ffmpeg -encoders` 查看支援的編碼器），您可以：
 >
-> - _[On any platform]_ Explicitly install `ffmpeg 7.X` using:
+> - _[適用所有平台]_ 使用以下指令明確安裝 `ffmpeg 7.X` ：
 >
 > ```bash
 > conda install ffmpeg=7.1.1 -c conda-forge
 > ```
 >
-> - _[On Linux only]_ If you want to bring your own ffmpeg: Install [ffmpeg build dependencies](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#GettheDependencies) and [compile ffmpeg from source with libsvtav1](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#libsvtav1), and make sure you use the corresponding ffmpeg binary to your install with `which ffmpeg`.
+> - _[僅限 Linux]_ 若您想自行提供 ffmpeg：請安裝 [ffmpeg 建置相依套件](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#GettheDependencies)並[從原始碼以 libsvtav1 編譯 ffmpeg](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#libsvtav1)，並確保使用 `which ffmpeg` 確認您安裝所對應的 ffmpeg 二進位檔。
 
 > [!NOTE]
-> When installing LeRobot inside WSL (Windows Subsystem for Linux), make sure to install `evdev` with the following command:
+> 在 WSL（Windows Subsystem for Linux）中安裝 LeRobot 時，請務必使用以下指令安裝 `evdev`：
 >
 > ```bash
 > conda install evdev -c conda-forge
 > ```
 
 > [!IMPORTANT]
-> If you are using `uv` you will have to install `ffmpeg` system-wide (outside of the virtual environment). You rely on `uv` and `torchcodec` ability to dynamically link to the system `ffmpeg`.
+> 若您使用 `uv`，則必須在系統層級（虛擬環境外部）安裝 `ffmpeg`。您需要依賴 `uv` 與 `torchcodec` 動態連結至系統的 `ffmpeg`。
 
-## Step 3: Install LeRobot 🤗
+## 步驟 3：安裝 LeRobot 🤗
 
-### From Source
+### 以原始碼安裝
 
-First, clone the repository and navigate into the directory:
+首先，複製儲存庫並進入該目錄：
 
 ```bash
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
 ```
 
-Then, install the library in editable mode. This is useful if you plan to contribute to the code.
+接著，以可編輯模式安裝此函式庫。如果您打算對程式碼做出貢獻，這種方式會非常有幫助。
 
 <!-- prettier-ignore-start -->
 <hfoptions id="install_lerobot_src">
@@ -103,10 +103,10 @@ uv pip install -e .
 </hfoptions>
 <!-- prettier-ignore-end -->
 
-### Installation from PyPI
+### 從 PyPI 安裝
 
-**Core Library:**
-Install the base package with:
+**核心函式庫：**
+使用以下指令安裝基本套件：
 
 <!-- prettier-ignore-start -->
 <hfoptions id="install_lerobot_pypi">
@@ -123,61 +123,61 @@ uv pip install lerobot
 </hfoptions>
 <!-- prettier-ignore-end -->
 
-_This installs only the default dependencies._
+_此方式僅安裝預設相依套件。_
 
-**Extra Features:**
-To install additional functionality, use one of the following (If you are using `uv`, replace `pip install` with `uv pip install` in the commands below.):
+**額外功能：**
+若要安裝額外功能，請使用以下其中一項指令（若您使用 `uv`，請將下列指令中的 `pip install` 替換為 `uv pip install`）：
 
 ```bash
-pip install 'lerobot[all]'          # All available features
-pip install 'lerobot[aloha,pusht]'  # Specific features (Aloha & Pusht)
-pip install 'lerobot[feetech]'      # Feetech motor support
+pip install 'lerobot[all]'          # 所有可用功能
+pip install 'lerobot[aloha,pusht]'  # 指定功能（Aloha 與 Pusht）
+pip install 'lerobot[feetech]'      # Feetech 馬達支援
 ```
 
-_Replace `[...]` with your desired features._
+_將 `[...]` 替換為您所需的功能。_
 
-**Available Tags:**
-For a full list of optional dependencies, see:
+**可用標籤：**
+如需完整的選用相依套件清單，請參閱：
 https://pypi.org/project/lerobot/
 
-### Troubleshooting
+### 疑難排解
 
-If you encounter build errors, you may need to install additional dependencies: `cmake`, `build-essential`, and `ffmpeg libs`.
-To install these for Linux run:
+若您遇到建置錯誤，可能需要安裝額外相依套件：`cmake`、`build-essential` 以及 `ffmpeg libs`。
+若要在 Linux 上安裝這些套件，請執行：
 
 ```bash
 sudo apt-get install cmake build-essential python3-dev pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev
 ```
 
-For other systems, see: [Compiling PyAV](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
+對於其他作業系統請參閱：[編譯 PyAV](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
 
-## Optional dependencies
+## 選用的相依套件
 
-LeRobot provides optional extras for specific functionalities. Multiple extras can be combined (e.g., `.[aloha,feetech]`). For all available extras, refer to `pyproject.toml`. If you are using `uv`, replace `pip install` with `uv pip install` in the commands below.
+LeRobot 為特定功能提供可選用的擴充套件。多個擴充套件可以組合使用（例如 `.[aloha,feetech]`）。如需所有可用的擴充套件，請參閱 `pyproject.toml`。若您使用 `uv`，請將下列指令中的 `pip install` 替換為 `uv pip install`。
 
-### Simulations
+### 模擬環境
 
-Install environment packages: `aloha` ([gym-aloha](https://github.com/huggingface/gym-aloha)), or `pusht` ([gym-pusht](https://github.com/huggingface/gym-pusht))
-Example:
-
-```bash
-pip install -e ".[aloha]" # or "[pusht]" for example
-```
-
-### Motor Control
-
-For Koch v1.1 install the Dynamixel SDK, for SO100/SO101/Moss install the Feetech SDK.
+安裝環境套件：`aloha`（[gym-aloha](https://github.com/huggingface/gym-aloha)）或 `pusht`（[gym-pusht](https://github.com/huggingface/gym-pusht)）
+範例：
 
 ```bash
-pip install -e ".[feetech]" # or "[dynamixel]" for example
+pip install -e ".[aloha]" # 或例如 "[pusht]"
 ```
 
-### Experiment Tracking
+### 馬達控制
 
-To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tracking, log in with
+針對 Koch v1.1 請安裝 Dynamixel SDK，對於 SO100/SO101/Moss 則安裝 Feetech SDK。
+
+```bash
+pip install -e ".[feetech]" # 或例如 "[dynamixel]"
+```
+
+### 實驗追蹤
+
+若要使用 [Weights and Biases](https://docs.wandb.ai/quickstart) 進行實驗追蹤，請使用以下指令登入：
 
 ```bash
 wandb login
 ```
 
-You can now assemble your robot if it's not ready yet, look for your robot type on the left. Then follow the link below to use Lerobot with your robot.
+如果你的機器人尚未組裝完成，現在可以開始組裝了。請在左側找到你的機器人型號，然後點擊連結，搭配你的機器人使用 LeRobot。
