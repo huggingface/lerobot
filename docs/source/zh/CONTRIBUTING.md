@@ -1,28 +1,28 @@
-# How to contribute to 🤗 LeRobot
+# 如何為 🤗 LeRobot 做出貢獻
 
-Everyone is welcome to contribute, and we value everybody's contribution. Code is not the only way to help the community. Answering questions, helping others, reaching out, and improving the documentation are immensely valuable.
+歡迎所有人貢獻，我們重視每個人的貢獻。撰寫程式碼並非協助社群的唯一方式。回答問題、協助他人、積極聯繫，以及改善文件說明，都是極具價值的貢獻。
 
-Whichever way you choose to contribute, please be mindful to respect our [code of conduct](https://github.com/huggingface/lerobot/blob/main/CODE_OF_CONDUCT.md) and our [AI policy](https://github.com/huggingface/lerobot/blob/main/AI_POLICY.md).
+無論您選擇以何種方式貢獻，請遵守我們的[行為準則](https://github.com/huggingface/lerobot/blob/main/CODE_OF_CONDUCT.md)與 [AI 政策](https://github.com/huggingface/lerobot/blob/main/AI_POLICY.md)。
 
-## Ways to Contribute
+## 貢獻方式
 
-You can contribute in many ways:
+您可以透過多種方式做出貢獻：
 
-- **Fixing issues:** Resolve bugs or improve existing code.
-- **New features:** Develop new features.
-- **Extend:** Implement new models/policies, robots, or simulation environments and upload datasets to the Hugging Face Hub.
-- **Documentation:** Improve examples, guides, and docstrings.
-- **Feedback:** Submit tickets related to bugs or desired new features.
+- **修復問題：** 解決錯誤或改善現有的程式碼。
+- **新功能：** 開發新功能。
+- **擴充：** 實作新的模型／策略、機器人或模擬環境，並將資料集上傳至 Hugging Face Hub。
+- **文件：** 改善範例、指南與文件字串。
+- **意見回饋：** 提交與錯誤或所需新功能相關的工單。
 
-If you are unsure where to start, join our [Discord Channel](https://discord.gg/q8Dzzpym3f).
+若您不確定從何開始，歡迎加入我們的 [Discord Channel](https://discord.gg/q8Dzzpym3f) 頻道。
 
-## Development Setup
+## 開發環境設定
 
-To contribute code, you need to set up a development environment.
+若要貢獻程式碼，您需要建立一個開發環境。
 
-### 1. Fork and Clone
+### 1. Fork 與 Clone
 
-Fork the repository on GitHub, then clone your fork:
+在 GitHub 上 fork 儲存庫，然後 clone 您的 fork：
 
 ```bash
 git clone https://github.com/<your-handle>/lerobot.git
@@ -30,54 +30,54 @@ cd lerobot
 git remote add upstream https://github.com/huggingface/lerobot.git
 ```
 
-### 2. Environment Installation
+### 2. 環境安裝
 
-Please follow our [Installation Guide](https://huggingface.co/docs/lerobot/installation) for the environment setup & installation from source.
+請參閱我們的[安裝指南](https://huggingface.co/docs/lerobot/installation)，進行環境設定並以原始碼安裝。
 
-## Running Tests & Quality Checks
+## 執行測試 & 品質檢查
 
-### Code Style (Pre-commit)
+### 程式碼風格（Pre-commit）
 
-Install `pre-commit` hooks to run checks automatically before you commit:
+安裝 `pre-commit` hooks，以在提交前自動執行檢查：
 
 ```bash
 pre-commit install
 ```
 
-To run checks manually on all files:
+若要對所有檔案手動執行檢查：
 
 ```bash
 pre-commit run --all-files
 ```
 
-### Running Tests
+### 執行測試
 
-We use `pytest`. First, ensure you have test artifacts by installing **git-lfs**:
+我們使用 `pytest`。首先，請安裝 **git-lfs** 以確保您擁有測試所需的構件：
 
 ```bash
 git lfs install
 git lfs pull
 ```
 
-Run the full suite (this may require extras installed):
+執行完整測試套件（可能需要安裝額外套件）：
 
 ```bash
 pytest -sv ./tests
 ```
 
-Or run a specific test file during development:
+或在開發期間執行特定測試檔案：
 
 ```bash
 pytest -sv tests/test_specific_feature.py
 ```
 
-## Submitting Issues & Pull Requests
+## 提交 Issues & Pull Requests
 
 Use the templates for required fields and examples.
 
-- **Issues:** Follow the [ticket template](https://github.com/huggingface/lerobot/blob/main/.github/ISSUE_TEMPLATE/bug-report.yml).
-- **Pull requests:** Rebase on `upstream/main`, use a descriptive branch (don't work on `main`), run `pre-commit` and tests locally, and follow the [PR template](https://github.com/huggingface/lerobot/blob/main/.github/PULL_REQUEST_TEMPLATE.md).
+- **Issues:** 請遵循 [工單模板](https://github.com/huggingface/lerobot/blob/main/.github/ISSUE_TEMPLATE/bug-report.yml).
+- **Pull requests:** 以 `upstream/main` 進行 Rebase，使用具描述性的分支名稱（請勿直接在 `main` 上工作），在本地端執行 `pre-commit` 與測試，並遵循 [PR 模板](https://github.com/huggingface/lerobot/blob/main/.github/PULL_REQUEST_TEMPLATE.md。
 
-One member of the LeRobot team will then review your contribution.
+LeRobot 團隊的成員將審查您的貢獻。
 
-Thank you for contributing to LeRobot!
+感謝您為 LeRobot 做出貢獻！
