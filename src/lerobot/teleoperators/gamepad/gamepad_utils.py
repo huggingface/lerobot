@@ -191,8 +191,8 @@ class KeyboardController(InputController):
 class GamepadController(InputController):
     """Generate motion deltas from gamepad input using pygame.
 
-    Supports Xbox controllers on Linux where LT/RT are analog axes (not buttons).
-    Auto-detects Xbox gamepads by name and adjusts accordingly.
+    Matches gym-hil button/axis conventions for Linux gamepads, including
+    Xbox mappings.
     """
 
     # Face buttons (same across most controllers on Linux)
@@ -209,10 +209,13 @@ class GamepadController(InputController):
     AXIS_RIGHT_X = 3
     AXIS_RIGHT_Y = 4
 
-    # Xbox on Linux: LT/RT are axes 2/5, range -1 (released) to +1 (fully pressed)
-    AXIS_LT = 2
-    AXIS_RT = 5
-    TRIGGER_THRESHOLD = 0.5
+    # Default trigger buttons
+    BUTTON_LT = 6
+    BUTTON_RT = 7
+
+    # Xbox (gym-hil mapping on Linux)
+    XBOX_BUTTON_LT = 9
+    XBOX_BUTTON_RT = 10
 
     def __init__(self, x_step_size=1.0, y_step_size=1.0, z_step_size=1.0, deadzone=0.1):
         super().__init__(x_step_size, y_step_size, z_step_size)
@@ -220,6 +223,8 @@ class GamepadController(InputController):
         self.joystick = None
         self.intervention_flag = False
         self.is_xbox = False
+        self._xbox360_profile = False
+        self._invert_left_x = False
 
     def _detect_xbox(self, name):
         name_lower = name.lower()
@@ -240,6 +245,8 @@ class GamepadController(InputController):
         self.joystick.init()
         joystick_name = self.joystick.get_name()
         self.is_xbox = self._detect_xbox(joystick_name)
+        self._xbox360_profile = joystick_name == "Xbox 360 Controller"
+        self._invert_left_x = self._xbox360_profile
         logging.info(f"Initialized gamepad: {joystick_name} (xbox={self.is_xbox})")
 
         print("Gamepad controls:")
@@ -271,25 +278,23 @@ class GamepadController(InputController):
                     self.episode_end_status = TeleopEvents.FAILURE
                 elif event.button == self.BUTTON_X:
                     self.episode_end_status = TeleopEvents.RERECORD_EPISODE
+                elif event.button == (self.XBOX_BUTTON_LT if self._xbox360_profile else self.BUTTON_LT):
+                    self.close_gripper_command = True
+                elif event.button == (self.XBOX_BUTTON_RT if self._xbox360_profile else self.BUTTON_RT):
+                    self.open_gripper_command = True
 
-            elif event.type == pygame.JOYBUTTONUP and event.button in [
-                self.BUTTON_Y,
-                self.BUTTON_A,
-                self.BUTTON_X,
-            ]:
-                self.episode_end_status = None
+            elif event.type == pygame.JOYBUTTONUP:
+                if event.button in [self.BUTTON_Y, self.BUTTON_A, self.BUTTON_X]:
+                    self.episode_end_status = None
+                elif event.button == (self.XBOX_BUTTON_LT if self._xbox360_profile else self.BUTTON_LT):
+                    self.close_gripper_command = False
+                elif event.button == (self.XBOX_BUTTON_RT if self._xbox360_profile else self.BUTTON_RT):
+                    self.open_gripper_command = False
 
             if self.joystick.get_button(self.BUTTON_RB):
                 self.intervention_flag = True
             else:
                 self.intervention_flag = False
-
-        # Xbox on Linux: LT/RT are analog axes, not buttons
-        if self.is_xbox:
-            lt_value = self.joystick.get_axis(self.AXIS_LT)
-            rt_value = self.joystick.get_axis(self.AXIS_RT)
-            self.close_gripper_command = lt_value > self.TRIGGER_THRESHOLD
-            self.open_gripper_command = rt_value > self.TRIGGER_THRESHOLD
 
     def get_deltas(self):
         import pygame
@@ -302,6 +307,9 @@ class GamepadController(InputController):
             x_input = 0 if abs(x_input) < self.deadzone else x_input
             y_input = 0 if abs(y_input) < self.deadzone else y_input
             z_input = 0 if abs(z_input) < self.deadzone else z_input
+
+            if self._invert_left_x:
+                x_input = -x_input
 
             delta_x = -y_input * self.y_step_size
             delta_y = x_input * self.x_step_size
