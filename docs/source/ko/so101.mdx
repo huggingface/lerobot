@@ -51,9 +51,9 @@ pip install -e ".[feetech]"
 
 ## 모터 설정
 
-### 1. Find the USB ports associated with each arm
+### 1. 각 암에 연결된 USB 포트 찾기 
 
-To find the port for each bus servo adapter, connect MotorBus to your computer via USB and power. Run the following script and disconnect the MotorBus when prompted:
+버스 서보 어댑터의 포트를 찾으려면, MotorBus를 USB로 컴퓨터에 연결하고 전원을 켠 뒤 아래 스크립트를 실행하세요. 안내가 나오면 MotorBus의 USB 케이블을 분리하면 됩니다 : 
 
 ```bash
 lerobot-find-port
@@ -62,60 +62,60 @@ lerobot-find-port
 <hfoptions id="example">
 <hfoption id="Mac">
 
-Example output:
+실행 예시:
 
 ```
 Finding all available ports for the MotorBus.
 ['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
 Remove the USB cable from your MotorsBus and press Enter when done.
 
-[...Disconnect corresponding leader or follower arm and press Enter...]
+[...리더 또는 팔로워 암을 분리하고 Enter를 누르세요...]
 
 The port of this MotorsBus is /dev/tty.usbmodem575E0032081
-Reconnect the USB cable.
+Reconnect the USB cable. 
 ```
 
-Where the found port is: `/dev/tty.usbmodem575E0032081` corresponding to your leader or follower arm.
+여기서 찾은 포트 `/dev/tty.usbmodem575E0032081`이 리더 또는 팔로워 암에 해당하는 포트입니다. 
 
 </hfoption>
 <hfoption id="Linux">
 
-On Linux, you might need to give access to the USB ports by running:
+Linux에서는 USB 포트 접근 권한을 먼저 부여해야 할 수 있습니다:
 
 ```bash
 sudo chmod 666 /dev/ttyACM0
 sudo chmod 666 /dev/ttyACM1
 ```
 
-Example output:
+실행 예시: 
 
 ```
 Finding all available ports for the MotorBus.
 ['/dev/ttyACM0', '/dev/ttyACM1']
 Remove the usb cable from your MotorsBus and press Enter when done.
 
-[...Disconnect corresponding leader or follower arm and press Enter...]
+[...리더 또는 팔로워 암을 분리하고 Enter를 누르세요...]
 
 The port of this MotorsBus is /dev/ttyACM1
 Reconnect the USB cable.
 ```
 
-Where the found port is: `/dev/ttyACM1` corresponding to your leader or follower arm.
+여기서 찾은 포트 `/dev/ttyACM1`이 리더 또는 팔로워 암에 해당하는 포트입니다. 
 
 </hfoption>
 </hfoptions>
 
-### 2. Set the motors ids and baudrates
+### 2. 모터 ID와 보드레이트(baudrates) 설정
 
-Each motor is identified by a unique id on the bus. When brand new, motors usually come with a default id of `1`. For the communication to work properly between the motors and the controller, we first need to set a unique, different id to each motor. Additionally, the speed at which data is transmitted on the bus is determined by the baudrate. In order to talk to each other, the controller and all the motors need to be configured with the same baudrate.
+버스에 연결된 각 모터는 고유한 ID로 구분됩니다. 새 모터는 보통 `1`. 모터와 컨트롤러 간 통신이 제대로 이루어지려면, 먼저 각 모터에 서로 다른 고유 ID를 부여해야 합니다. 또한 버스에서 데이터가 전송되는 속도는 보드레이트(baudrate)로 결정되는데, 컨트롤러와 모든 모터가 같은 보드레이트로 맞춰져야 서로 통신할 수 있습니다.
 
-To that end, we first need to connect to each motor individually with the controller in order to set these. Since we will write these parameters in the non-volatile section of the motors' internal memory (EEPROM), we'll only need to do this once.
+이를 위해 컨트롤러를 모터 하나하나에 개별 연결해서 설정을 잡아줘야 합니다. 이 설정 값들은 모터 내부 메모리(EEPROM)의 비휘발성 영역에 저장되기 때문에 한 번만 하면 됩니다.
 
-If you are repurposing motors from another robot, you will probably also need to perform this step as the ids and baudrate likely won't match.
+다른 로봇에서 쓰던 모터를 재활용하는 경우, ID나 보드레이트가 맞지 않을 수 있으니 이 단계를 다시 진행해야 합니다. 
 
-The video below shows the sequence of steps for setting the motor ids.
+아래 영상에서 모터 ID를 설정하는 전체 과정을 확인할 수 있습니다.
 
-##### Setup motors video
+##### 모터 설정 영상 
 
 <div class="video-container">
   <video controls width="600">
@@ -126,9 +126,9 @@ The video below shows the sequence of steps for setting the motor ids.
   </video>
 </div>
 
-#### Follower
+#### 팔로워 암
 
-Connect the usb cable from your computer and the power supply to the follower arm's controller board. Then, run the following command or run the API example with the port you got from the previous step. You'll also need to give your leader arm a name with the `id` parameter.
+컴퓨터와 전원 공급 장치를 팔로워 암의 컨트롤러 보드에 USB로 연결하세요. 그런 다음 아래 명령어를 실행하거나 API 예시를 사용하되, 이전 단계에서 찾은 포트를 입력하세요. `id` 파라미터로 리더 암의 이름도 지정해야 합니다.
 
 <hfoptions id="setup_motors">
 <hfoption id="Command">
@@ -136,7 +136,7 @@ Connect the usb cable from your computer and the power supply to the follower ar
 ```bash
 lerobot-setup-motors \
     --robot.type=so101_follower \
-    --robot.port=/dev/tty.usbmodem585A0076841  # <- paste here the port found at previous step
+    --robot.port=/dev/tty.usbmodem585A0076841  # <- 이전 단계에서 찾은 포트를 여기에 붙여넣으세요
 ```
 
 </hfoption>
@@ -158,53 +158,53 @@ follower.setup_motors()
 </hfoption>
 </hfoptions>
 
-You should see the following instruction
+아래와 같은 안내 메시지를 확인할 수 있어야 합니다. 
 
 ```bash
 Connect the controller board to the 'gripper' motor only and press enter.
 ```
 
-As instructed, plug the gripper's motor. Make sure it's the only motor connected to the board, and that the motor itself is not yet daisy-chained to any other motor. As you press `[Enter]`, the script will automatically set the id and baudrate for that motor.
+안내에 따라 그리퍼 모터를 연결하세요. 이 모터만 보드에 연결되어 있어야 하고, 다른 모터와 데이지 체인으로 이어져 있으면 안 됩니다. `[Enter]`를 누르면 스크립트가 자동으로 해당 모터의 ID와 보드레이트를 설정합니다.
 
 <details>
-<summary>Troubleshooting</summary>
+<summary>문제 해결</summary>
 
-If you get an error at that point, check your cables and make sure they are plugged in properly:
+이 단계에서 오류가 발생하면 케이블 연결 상태를 확인해 주세요:
 
 <ul>
-  <li>Power supply</li>
-  <li>USB cable between your computer and the controller board</li>
-  <li>The 3-pin cable from the controller board to the motor</li>
+  <li>전원 공급 케이블</li>
+  <li>컴퓨터와 컨트롤러 보드 사이의 USB 케이블</li>
+  <li>컨트롤러 보드에서 모터로 이어지는 3핀 케이블</li>
 </ul>
 
-If you are using a Waveshare controller board, make sure that the two jumpers are set on the `B` channel (USB).
+Waveshare 컨트롤러 보드를 사용 중이라면, 점퍼 두 개가 `B` 채널(USB)에 설정되어 있는지 확인하세요.
 
 </details>
 
-You should then see the following message:
+그러면 아래 메시지가 표시됩니다:
 
 ```bash
 'gripper' motor id set to 6
 ```
 
-Followed by the next instruction:
+이어서 다음 안내가 나타납니다:
 
 ```bash
 Connect the controller board to the 'wrist_roll' motor only and press enter.
 ```
 
-You can disconnect the 3-pin cable from the controller board, but you can leave it connected to the gripper motor on the other end, as it will already be in the right place. Now, plug in another 3-pin cable to the wrist roll motor and connect it to the controller board. As with the previous motor, make sure it is the only motor connected to the board and that the motor itself isn't connected to any other one.
+컨트롤러 보드에서 3핀 케이블을 분리해도 되지만, 그리퍼 모터 쪽 끝은 그대로 두어도 됩니다. 어차피 나중에 딱 맞는 자리에 위치하게 됩니다. 이제 손목 회전(wrist roll) 모터에 새 3핀 케이블을 꽂고 컨트롤러 보드에 연결하세요. 앞서와 마찬가지로, 이 모터만 보드에 연결되어 있어야 하고 다른 모터와 이어지면 안 됩니다. 
 
-Repeat the operation for each motor as instructed.
+나머지 모터도 안내에 따라 동일하게 반복하세요.
 
-> [!TIP]
-> Check your cabling at each step before pressing Enter. For instance, the power supply cable might disconnect as you manipulate the board.
+> [!팁]
+> 각 스텝마다 Enter를 누르기 전에 케이블 연결 상태를 확인하세요. 보드를 조작하다 보면 전원 케이블이 빠지는 경우가 있습니다.
 
-When you are done, the script will simply finish, at which point the motors are ready to be used. You can now plug the 3-pin cable from each motor to the next one, and the cable from the first motor (the 'shoulder pan' with id=1) to the controller board, which can now be attached to the base of the arm.
+모든 모터 설정이 끝나면 스크립트가 자동으로 종료되며, 모터를 사용할 준비가 완료됩니다. 이제 각 모터를 3핀 케이블로 순서대로 연결하셔도 되며, 첫 번째 모터(id=1인 'shoulder pan')에서 나온 케이블을 컨트롤러 보드에 연결하셔도 됩니다. 이제 컨트롤러 보드를 암의 베이스에 고정할 수 있습니다. 
 
-#### Leader
+#### 리더 암
 
-Do the same steps for the leader arm.
+리더 암도 동일한 방법으로 진행하시면 됩니다.
 
 <hfoptions id="setup_motors">
 <hfoption id="Command">
@@ -212,7 +212,7 @@ Do the same steps for the leader arm.
 ```bash
 lerobot-setup-motors \
     --teleop.type=so101_leader \
-    --teleop.port=/dev/tty.usbmodem575E0031751  # <- paste here the port found at previous step
+    --teleop.port=/dev/tty.usbmodem575E0031751  # # <- 이전 단계에서 찾은 포트를 여기에 붙여넣으세요
 ```
 
 </hfoption>
@@ -234,21 +234,22 @@ leader.setup_motors()
 </hfoption>
 </hfoptions>
 
-### Clean Parts
+### 부품 정리
 
-Remove all support material from the 3D-printed parts. The easiest way to do this is using a small screwdriver to get underneath the support material.
+3D 프린팅된 부품에서 서포트 재료를 모두 제거하세요. 작은 드라이버로 서포트 아래를 파고들면 쉽게 제거할 수 있습니다.
 
-It is advisable to install one 3-pin cable in the motor after placing them before continuing assembly.
 
-### Joint 1
+조립을 계속하기 전에, 각 모터를 자리에 넣은 뒤 3핀 케이블을 하나 먼저 연결해 두는 것을 권장합니다.
 
-- Install both motor horns. Secure the top horn with a M3x6mm screw. No screws are required for the bottom horn.
-- Place the first motor into the base.
-- Fasten the motor with 4 M2x6mm screws (smallest screws). Two from the top and two from the bottom.
-- Slide over the first motor holder and fasten it using two M2x6mm screws (one on each side).
-- Attach the shoulder part.
-- Tighten the shoulder part with 4 M3x6mm screws on top and 4 M3x6mm screws on the bottom
-- Add the shoulder motor holder.
+### 관절 1
+
+- 모터 혼(horn) 두 개를 장착하세요. 위쪽 혼은 M3x6mm 나사로 고정하고, 아래쪽 혼은 나사가 필요 없습니다.
+- 첫 번째 모터를 베이스에 넣으세요.
+- 가장 작은 M2x6mm 나사 4개로 모터를 고정하세요 (위에서 2개, 아래에서 2개).
+- 첫 번째 모터 홀더를 밀어 넣고 M2x6mm 나사 2개로 양쪽을 고정하세요.
+- 숄더 파트를 부착하세요.
+- 숄더 파트를 위 4개, 아래 4개의 M3x6mm 나사로 조이세요.
+- 숄더 모터 홀더를 추가하세요.
 
 <div class="video-container">
   <video controls width="600">
@@ -259,7 +260,7 @@ It is advisable to install one 3-pin cable in the motor after placing them befor
   </video>
 </div>
 
-### Joint 2
+### 관절 2
 
 - Install both motor horns. Secure the top horn with a M3x6mm screw. No screws are required for the bottom horn.
 - Slide the second motor in from the top.
