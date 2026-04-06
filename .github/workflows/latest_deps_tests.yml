@@ -12,16 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# This workflow handles full testing with unboud dependencies versions.
-name: Unbound Dependency Tests
+# This workflow tests the project against the latest upstream dependencies
+# (within pyproject.toml constraints) and opens a PR to update uv.lock
+# if the tests pass and the lockfile has changed.
+name: Latest Dependency Tests
 
 on:
   # Allows running this workflow manually from the Actions tab
   workflow_dispatch:
 
-  # Run on the 1st and 15th of every month at 09:00 UTC
-  # schedule:
-  #  - cron: '0 2 1,15 * *'
+  # Runs at 03:00 UTC
+  schedule:
+    - cron: "0 3 * * *"
 
 permissions:
   contents: read
@@ -30,20 +32,60 @@ permissions:
 env:
   UV_VERSION: "0.8.0"
   PYTHON_VERSION: "3.12"
-  DOCKER_IMAGE_NAME: huggingface/lerobot-gpu:unbound
+  DOCKER_IMAGE_NAME: huggingface/lerobot-gpu:latest-deps
 
-# Ensures that only the latest action is built, canceling older runs.
+# Ensures that only the latest run is active, canceling older runs.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: ${{ github.workflow }}
   cancel-in-progress: true
 
 jobs:
 
-  # This job runs the E2E tests + pytest with all unbound extras
-  full-tests:
-    name: Full Unbound Tests
+  # This job upgrades the lockfile and checks if dependencies have changed
+  upgrade-lock:
+    name: Upgrade Lockfile
     runs-on: ubuntu-latest
     if: github.repository == 'huggingface/lerobot'
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup uv and Python
+        uses: astral-sh/setup-uv@v6 # zizmor: ignore[unpinned-uses]
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Upgrade uv.lock
+        run: uv lock --upgrade
+
+      - name: Check for changes
+        id: diff
+        run: |
+          if git diff --quiet uv.lock; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "uv.lock is up to date — no dependency changes."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "uv.lock has changed — running tests."
+          fi
+
+      - name: Upload updated lockfile
+        if: steps.diff.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: uv-lock
+          path: uv.lock
+
+  # This job runs the full test suite with the upgraded dependencies
+  cpu-tests:
+    name: CPU Tests (Latest Deps)
+    needs: [upgrade-lock]
+    if: needs.upgrade-lock.outputs.changed == 'true'
+    runs-on: ubuntu-latest
     env:
       MUJOCO_GL: egl
       HF_HOME: /mnt/cache/.cache/huggingface
@@ -54,6 +96,11 @@ jobs:
         with:
           lfs: true
           persist-credentials: false
+
+      - name: Download updated lockfile
+        uses: actions/download-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: uv-lock
 
       # NOTE(Steven): Mount to `/mnt` to avoid the limited storage on `/home`. Consider cleaning default SDKs or using self-hosted runners for more space.
       # (As of 2024-06-10, the runner's `/home` has only 6.2 GB free—8% of its 72 GB total.)
@@ -73,34 +120,30 @@ jobs:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Unbound dependencies
-        run: |
-          sed -i 's/,[[:space:]]*<[0-9\.]*//g' pyproject.toml
-          echo "Dependencies unbound:" && cat pyproject.toml
-
       - name: Install lerobot with all extras
-        run: uv sync --extra all # TODO(Steven): Make flash-attn optional
+        run: uv sync --locked --extra all # TODO(Steven): Make flash-attn optional
+
       - name: Login to Hugging Face
         if: env.HF_USER_TOKEN != ''
         run: |
           uv run hf auth login --token "$HF_USER_TOKEN" --add-to-git-credential
           uv run hf auth whoami
+
       - name: Run pytest (all extras)
-        run: uv run pytest tests -vv
+        run: uv run pytest tests -vv --maxfail=10
 
       - name: Run end-to-end tests
         run: uv run make test-end-to-end
 
-  # This job builds a GPU enabled image for testing
+  # This job builds a GPU-enabled Docker image with the upgraded dependencies
   build-and-push-docker:
     name: Build and Push Docker
+    needs: [upgrade-lock]
+    if: needs.upgrade-lock.outputs.changed == 'true'
     runs-on:
       group: aws-general-8-plus
-    if: github.repository == 'huggingface/lerobot'
     outputs:
       image_tag: ${{ env.DOCKER_IMAGE_NAME }}
-    env:
-      GITHUB_REF: ${{ github.ref }}
     steps:
       - name: Install Git LFS
         run: |
@@ -111,6 +154,12 @@ jobs:
         with:
           lfs: true
           persist-credentials: false
+
+      - name: Download updated lockfile
+        uses: actions/download-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: uv-lock
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3 # zizmor: ignore[unpinned-uses]
         with:
@@ -127,13 +176,10 @@ jobs:
           file: ./docker/Dockerfile.internal
           push: true
           tags: ${{ env.DOCKER_IMAGE_NAME }}
-          build-args: |
-            UNBOUND_DEPS=true
 
-  # This job runs pytest with all unbound extras in a GPU enabled host
-  # It runs everytime a test image is created
+  # This job runs pytest with all extras on a GPU-enabled host
   gpu-tests:
-    name: GPU Unbound Tests
+    name: GPU Tests (Latest Deps)
     needs: [build-and-push-docker]
     runs-on:
       group: aws-g6-4xlarge-plus
@@ -159,15 +205,67 @@ jobs:
         run: |
           hf auth login --token "$HF_USER_TOKEN" --add-to-git-credential
           hf auth whoami
+      - name: Fix ptxas permissions
+        run: chmod +x /lerobot/.venv/lib/python3.12/site-packages/triton/backends/nvidia/bin/ptxas
       - name: Run pytest on GPU
-        run: pytest tests -vv
+        run: pytest tests -vv --maxfail=10
       - name: Run end-to-end tests
         run: make test-end-to-end
 
-  # This job deletes the test image recently created
-  # It runs everytime after the gpu-tests have finished
-  delete-unbound-image:
-    name: Delete Unbound Image
+  # This job creates or updates a PR with the upgraded lockfile
+  open-pr:
+    name: Open PR
+    needs: [cpu-tests, gpu-tests, upgrade-lock]
+    if: success() && needs.upgrade-lock.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    # NOTE: PRs created with GITHUB_TOKEN won't trigger pull_request workflows.
+    # CI will run when a reviewer approves the PR (via pull_request_review trigger).
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Download updated lockfile
+        uses: actions/download-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: uv-lock
+
+      - name: Create or update PR
+        run: |
+          set -euo pipefail
+          BRANCH="auto/update-uv-lock"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+
+          git checkout -B "$BRANCH"
+          git add uv.lock
+          git commit -m "chore(dependencies): update uv.lock"
+          git push --force-with-lease --set-upstream origin "$BRANCH"
+
+          # Create PR only if one doesn't already exist for this branch
+          EXISTING_PR=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number')
+          if [ -z "$EXISTING_PR" ]; then
+            gh pr create \
+              --title "chore(dependencies): update uv.lock" \
+              --body "Automated update of \`uv.lock\` after successful latest dependency tests (CPU + GPU).
+
+          This PR upgrades all dependencies to their latest versions within the ranges specified in \`pyproject.toml\`." \
+              --head "$BRANCH" \
+              --base main
+          else
+            echo "PR #$EXISTING_PR already exists, branch has been updated."
+          fi
+
+  # This job deletes the temporary Docker image after tests complete
+  cleanup-docker:
+    name: Cleanup Docker Image
     needs: [gpu-tests, build-and-push-docker]
     if: always() && needs.build-and-push-docker.result == 'success'
     runs-on: ubuntu-latest
@@ -180,8 +278,7 @@ jobs:
           IMAGE_FULL: ${{ needs.build-and-push-docker.outputs.image_tag }}
         run: |
           IMAGE_NAME=$(echo "$IMAGE_FULL" | cut -d':' -f1)
-          IMAGE_TAG=$(echo "$IMAGE_FULL" | cut -d':' -f2)
-
+          IMAGE_TAG=$(echo "$IMAGE_FULL" | cut -d':' -f2-)
           echo "Attempting to delete image: $IMAGE_NAME:$IMAGE_TAG"
 
           TOKEN=$(curl -s -H "Content-Type: application/json" \
