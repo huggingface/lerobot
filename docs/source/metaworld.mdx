@@ -1,32 +1,111 @@
 # Meta-World
 
-Meta-World is a well-designed, open-source simulation benchmark for multi-task and meta reinforcement learning in continuous-control robotic manipulation. It gives researchers a shared, realistic playground to test whether algorithms can _learn many different tasks_ and _generalize quickly to new ones_ — two central challenges for real-world robotics.
+Meta-World is an open-source simulation benchmark for **multi-task and meta reinforcement learning** in continuous-control robotic manipulation. It bundles 50 diverse manipulation tasks using everyday objects and a common tabletop Sawyer arm, providing a standardized playground to test whether algorithms can learn many different tasks and generalize quickly to new ones.
 
-- 📄 [MetaWorld paper](https://arxiv.org/pdf/1910.10897)
-- 💻 [Original MetaWorld repo](https://github.com/Farama-Foundation/Metaworld)
+- Paper: [Meta-World: A Benchmark and Evaluation for Multi-Task and Meta Reinforcement Learning](https://arxiv.org/abs/1910.10897)
+- GitHub: [Farama-Foundation/Metaworld](https://github.com/Farama-Foundation/Metaworld)
+- Project website: [metaworld.farama.org](https://metaworld.farama.org)
 
 ![MetaWorld MT10 demo](https://meta-world.github.io/figures/ml45.gif)
 
-## Why Meta-World matters
+## Available tasks
 
-- **Diverse, realistic tasks.** Meta-World bundles a large suite of simulated manipulation tasks (50 in the MT50 suite) using everyday objects and a common tabletop Sawyer arm. This diversity exposes algorithms to a wide variety of dynamics, contacts and goal specifications while keeping a consistent control and observation structure.
-- **Focus on generalization and multi-task learning.** By evaluating across task distributions that share structure but differ in goals and objects, Meta-World reveals whether an agent truly learns transferable skills rather than overfitting to a narrow task.
-- **Standardized evaluation protocol.** It provides clear evaluation modes and difficulty splits, so different methods can be compared fairly across easy, medium, hard and very-hard regimes.
-- **Empirical insight.** Past evaluations on Meta-World show impressive progress on some fronts, but also highlight that current multi-task and meta-RL methods still struggle with large, diverse task sets. That gap points to important research directions.
+Meta-World provides 50 tasks organized into difficulty groups. In LeRobot, you can evaluate on individual tasks, difficulty groups, or the full MT50 suite:
 
-## What it enables in LeRobot
+| Group      | CLI name             | Tasks | Description                                            |
+| ---------- | -------------------- | ----- | ------------------------------------------------------ |
+| Easy       | `easy`               | 28    | Tasks with simple dynamics and single-step goals       |
+| Medium     | `medium`             | 11    | Tasks requiring multi-step reasoning                   |
+| Hard       | `hard`               | 6     | Tasks with complex contacts and precise manipulation   |
+| Very Hard  | `very_hard`          | 5     | The most challenging tasks in the suite                |
+| MT50 (all) | Comma-separated list | 50    | All 50 tasks — the most challenging multi-task setting |
 
-In LeRobot, you can evaluate any policy or vision-language-action (VLA) model on Meta-World tasks and get a clear success-rate measure. The integration is designed to be straightforward:
+You can also pass individual task names directly (e.g., `assembly-v3`, `dial-turn-v3`).
 
-- We provide a LeRobot-ready dataset for Meta-World (MT50) on the HF Hub: `https://huggingface.co/datasets/lerobot/metaworld_mt50`.
-  - This dataset is formatted for the MT50 evaluation that uses all 50 tasks (the most challenging multi-task setting).
-  - MT50 gives the policy a one-hot task vector and uses fixed object/goal positions for consistency.
+We provide a LeRobot-ready dataset for Meta-World MT50 on the HF Hub: [lerobot/metaworld_mt50](https://huggingface.co/datasets/lerobot/metaworld_mt50). This dataset is formatted for the MT50 evaluation that uses all 50 tasks with fixed object/goal positions and one-hot task vectors for consistency.
 
-- Task descriptions and the exact keys required for evaluation are available in the repo/dataset — use these to ensure your policy outputs the right success signals.
+## Installation
 
-## Quick start, train a SmolVLA policy on Meta-World
+After following the LeRobot installation instructions:
 
-Example command to train a SmolVLA policy on a subset of tasks:
+```bash
+pip install -e ".[metaworld]"
+```
+
+<Tip warning={true}>
+If you encounter an `AssertionError: ['human', 'rgb_array', 'depth_array']` when running Meta-World environments, this is a mismatch between Meta-World and your Gymnasium version. Fix it with:
+
+```bash
+pip install "gymnasium==1.1.0"
+```
+
+</Tip>
+
+## Evaluation
+
+### Default evaluation (recommended)
+
+Evaluate on the medium difficulty split (a good balance of coverage and compute):
+
+```bash
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=metaworld \
+  --env.task=medium \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10
+```
+
+### Single-task evaluation
+
+Evaluate on a specific task:
+
+```bash
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=metaworld \
+  --env.task=assembly-v3 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10
+```
+
+### Multi-task evaluation
+
+Evaluate across multiple tasks or difficulty groups:
+
+```bash
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=metaworld \
+  --env.task=assembly-v3,dial-turn-v3,handle-press-side-v3 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10
+```
+
+- `--env.task` accepts explicit task lists (comma-separated) or difficulty groups (e.g., `easy`, `medium`, `hard`, `very_hard`).
+- `--eval.batch_size` controls how many environments run in parallel.
+- `--eval.n_episodes` sets how many episodes to run per task.
+
+### Policy inputs and outputs
+
+**Observations:**
+
+- `observation.image` — single camera view (`corner2`), 480x480 HWC uint8
+- `observation.state` — 4-dim proprioceptive state (end-effector position + gripper)
+
+**Actions:**
+
+- Continuous control in `Box(-1, 1, shape=(4,))` — 3D end-effector delta + 1D gripper
+
+### Recommended evaluation episodes
+
+For reproducible benchmarking, use **10 episodes per task**. For the full MT50 suite this gives 500 total episodes. If you care about generalization, run on the full MT50 — it is intentionally challenging and reveals strengths/weaknesses better than a few narrow tasks.
+
+## Training
+
+### Example training command
+
+Train a SmolVLA policy on a subset of Meta-World tasks:
 
 ```bash
 lerobot-train \
@@ -44,37 +123,8 @@ lerobot-train \
   --eval_freq=1000
 ```
 
-Notes:
-
-- `--env.task` accepts explicit task lists (comma separated) or difficulty groups (e.g., `env.task="hard"`).
-- Adjust `batch_size`, `steps`, and `eval_freq` to match your compute budget.
-- **Gymnasium Assertion Error**: if you encounter an error like
-  `AssertionError: ['human', 'rgb_array', 'depth_array']` when running MetaWorld environments, this comes from a mismatch between MetaWorld and your Gymnasium version.
-  We recommend using:
-
-```bash
-  pip install "gymnasium==1.1.0"
-```
-
-to ensure proper compatibility.
-
-## Quick start — evaluate a trained policy
-
-To evaluate a trained policy on the Meta-World medium difficulty split:
-
-```bash
-lerobot-eval \
-  --policy.path="your-policy-id" \
-  --env.type=metaworld \
-  --env.task=medium \
-  --eval.batch_size=1 \
-  --eval.n_episodes=2
-```
-
-This will run episodes and return per-task success rates using the standard Meta-World evaluation keys.
-
 ## Practical tips
 
-- If you care about generalization, run on the full MT50 suite — it’s intentionally challenging and reveals strengths/weaknesses better than a few narrow tasks.
-- Use the one-hot task conditioning for multi-task training (MT10 / MT50 conventions) so policies have explicit task context.
+- Use the one-hot task conditioning for multi-task training (MT10/MT50 conventions) so policies have explicit task context.
 - Inspect the dataset task descriptions and the `info["is_success"]` keys when writing post-processing or logging so your success metrics line up with the benchmark.
+- Adjust `batch_size`, `steps`, and `eval_freq` to match your compute budget.
