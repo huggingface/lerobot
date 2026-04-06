@@ -226,10 +226,8 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-    # NOTE: PRs created with GITHUB_TOKEN won't trigger pull_request workflows.
-    # CI will run when a reviewer approves the PR (via pull_request_review trigger).
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.UPDATE_LOCK_TOKEN }}
     steps:
       - uses: actions/checkout@v6
         with:
