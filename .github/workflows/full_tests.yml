@@ -29,6 +29,7 @@ on:
       - "tests/**"
       - ".github/workflows/**"
       - "pyproject.toml"
+      - "uv.lock"
       - "Makefile"
 
 permissions:
@@ -86,7 +87,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install lerobot with all extras
-        run: uv sync --extra all # TODO(Steven): Make flash-attn optional
+        run: uv sync --locked --extra all # TODO(Steven): Make flash-attn optional
 
       - name: Login to Hugging Face
         if: env.HF_USER_TOKEN != ''

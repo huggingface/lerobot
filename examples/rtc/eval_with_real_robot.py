@@ -69,15 +69,20 @@ Usage:
         --policy.path=lerobot-data-collection/folding_final \
         --robot.type=bi_openarm_follower \
         --robot.cameras='{left_wrist: {type: opencv, index_or_path: "/dev/video4", width: 1280, height: 720, fps: 30}, base: {type: opencv, index_or_path: "/dev/video2", width: 640, height: 480, fps: 30}, right_wrist: {type: opencv, index_or_path: "/dev/video0", width: 1280, height: 720, fps: 30}}' \
-        --robot.left_arm_config.port=can1 \
+        --robot.left_arm_config.port=can0 \
         --robot.left_arm_config.side=left \
         --robot.left_arm_config.can_interface=socketcan \
-        --robot.right_arm_config.port=can0 \
+        --robot.left_arm_config.disable_torque_on_disconnect=true \
+        --robot.left_arm_config.max_relative_target=8.0 \
+        --robot.right_arm_config.port=can1 \
         --robot.right_arm_config.side=right \
         --robot.right_arm_config.can_interface=socketcan \
+        --robot.right_arm_config.disable_torque_on_disconnect=true \
+        --robot.right_arm_config.max_relative_target=8.0 \
         --task="Fold the T-shirt properly" \
         --fps=30 \
         --duration=2000 \
+        --interpolation_multiplier=3 \
         --rtc.enabled=true \
         --rtc.execution_horizon=20 \
         --rtc.max_guidance_weight=5.0 \
@@ -104,9 +109,7 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import RTCAttentionSchedule
 from lerobot.datasets.feature_utils import build_dataset_frame, hw_to_dataset_features
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
-from lerobot.policies.rtc.action_queue import ActionQueue
-from lerobot.policies.rtc.configuration_rtc import RTCConfig
-from lerobot.policies.rtc.latency_tracker import LatencyTracker
+from lerobot.policies.rtc import ActionInterpolator, ActionQueue, LatencyTracker, RTCConfig
 from lerobot.processor import (
     NormalizerProcessorStep,
     RelativeActionsProcessorStep,
@@ -181,6 +184,7 @@ class RTCDemoConfig(HubMixin):
     # Demo parameters
     duration: float = 30.0  # Duration to run the demo (seconds)
     fps: float = 10.0  # Action execution frequency (Hz)
+    interpolation_multiplier: int = 1  # Control rate multiplier (1=off, 2=2x, 3=3x)
 
     # Compute device
     device: str | None = None  # Device to run on (cuda, cpu, auto)
@@ -461,20 +465,23 @@ def actor_control(
         action_keys = [k for k in robot.action_features() if k.endswith(".pos")]
 
         action_count = 0
-        action_interval = 1.0 / cfg.fps
+        interpolator = ActionInterpolator(multiplier=cfg.interpolation_multiplier)
+        action_interval = interpolator.get_control_interval(cfg.fps)
 
         while not shutdown_event.is_set():
             start_time = time.perf_counter()
 
-            # Try to get an action from the queue with timeout
-            action = action_queue.get()
+            if interpolator.needs_new_action():
+                new_action = action_queue.get()
+                if new_action is not None:
+                    interpolator.add(new_action.cpu())
 
+            action = interpolator.get()
             if action is not None:
                 action = action.cpu()
                 action_dict = {key: action[i].item() for i, key in enumerate(action_keys)}
                 action_processed = robot_action_processor((action_dict, None))
                 robot.send_action(action_processed)
-
                 action_count += 1
 
             dt_s = time.perf_counter() - start_time
