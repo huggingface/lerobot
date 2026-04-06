@@ -237,6 +237,7 @@ jobs:
 
       - name: Create or update PR
         run: |
+          set -euo pipefail
           BRANCH="auto/update-uv-lock"
 
           git config user.name "github-actions[bot]"
@@ -246,7 +247,7 @@ jobs:
           git checkout -B "$BRANCH"
           git add uv.lock
           git commit -m "chore(dependencies): update uv.lock"
-          git push --set-upstream origin "$BRANCH"
+          git push --force-with-lease --set-upstream origin "$BRANCH"
 
           # Create PR only if one doesn't already exist for this branch
           EXISTING_PR=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number')
