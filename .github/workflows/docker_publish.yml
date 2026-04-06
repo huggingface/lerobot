@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# This workflow handles nightly testing & docker images publishing.
-name: Nightly
+# This workflow handles Docker image publishing & testing.
+name: Docker Publish & Test
 permissions:
   contents: read
 
@@ -39,8 +39,8 @@ concurrency:
 
 jobs:
   # This job builds a CPU image for testing & distribution
-  build-docker-cpu-nightly:
-    name: Build CPU Docker for Nightly
+  build-docker-cpu:
+    name: Build CPU Docker
     runs-on:
       group: aws-general-8-plus
     if: github.repository == 'huggingface/lerobot'
@@ -74,8 +74,8 @@ jobs:
           tags: ${{ env.DOCKER_IMAGE_NAME_CPU }}
 
   # This job builds a GPU image for testing & distribution
-  build-docker-gpu-nightly:
-    name: Build GPU Docker for Nightly
+  build-docker-gpu:
+    name: Build GPU Docker
     runs-on:
       group: aws-general-8-plus
     if: github.repository == 'huggingface/lerobot'
@@ -109,9 +109,9 @@ jobs:
           tags: ${{ env.DOCKER_IMAGE_NAME_GPU }}
 
   # This job runs the E2E tests + pytest with all extras in the CPU image
-  nightly-cpu-tests:
-    name: Nightly CPU Tests
-    needs: [build-docker-cpu-nightly]
+  cpu-tests:
+    name: CPU Tests
+    needs: [build-docker-cpu]
     runs-on:
       group: aws-g6-4xlarge-plus
     env:
@@ -121,7 +121,7 @@ jobs:
       TRITON_CACHE_DIR: /home/user_lerobot/.cache/triton
       HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
     container:
-      image: ${{ needs.build-docker-cpu-nightly.outputs.image_tag }} # zizmor: ignore[unpinned-images]
+      image: ${{ needs.build-docker-cpu.outputs.image_tag }} # zizmor: ignore[unpinned-images]
       options: --shm-size "16gb"
       credentials:
         username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
@@ -142,9 +142,9 @@ jobs:
         run: make test-end-to-end
 
   # This job runs the E2E tests + pytest with all extras in the GPU image
-  nightly-gpu-tests:
-    name: Nightly GPU Tests
-    needs: [build-docker-gpu-nightly]
+  gpu-tests:
+    name: GPU Tests
+    needs: [build-docker-gpu]
     runs-on:
       group: aws-g6-4xlarge-plus
     env:
@@ -154,7 +154,7 @@ jobs:
       TRITON_CACHE_DIR: /home/user_lerobot/.cache/triton
       HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
     container:
-      image: ${{ needs.build-docker-gpu-nightly.outputs.image_tag }} # zizmor: ignore[unpinned-images]
+      image: ${{ needs.build-docker-gpu.outputs.image_tag }} # zizmor: ignore[unpinned-images]
       options: --gpus all --shm-size "16gb"
       credentials:
         username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
@@ -175,9 +175,9 @@ jobs:
         run: make test-end-to-end
 
   # This job runs multi-GPU training tests with 4 GPUs
-  nightly-multi-gpu-tests:
-    name: Nightly Multi-GPU Tests
-    needs: [build-docker-gpu-nightly]
+  multi-gpu-tests:
+    name: Multi-GPU Tests
+    needs: [build-docker-gpu]
     runs-on:
       group: aws-g4dn-12xlarge  # Instance with 4 GPUs
     env:
@@ -188,7 +188,7 @@ jobs:
       CUDA_VISIBLE_DEVICES: "0,1,2,3"
       HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
     container:
-      image: ${{ needs.build-docker-gpu-nightly.outputs.image_tag }} # zizmor: ignore[unpinned-images]
+      image: ${{ needs.build-docker-gpu.outputs.image_tag }} # zizmor: ignore[unpinned-images]
       options: --gpus all --shm-size "16gb"
       credentials:
         username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
