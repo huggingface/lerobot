@@ -33,6 +33,7 @@ import zmq
 
 from lerobot.cameras.configs import ColorMode
 from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
+from lerobot.utils.utils import init_logging
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +178,6 @@ class ImageServer:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    init_logging()
     config = {"fps": 30, "cameras": {"head_camera": {"device_id": 4, "shape": [480, 640]}}}
     ImageServer(config, port=5555).run()

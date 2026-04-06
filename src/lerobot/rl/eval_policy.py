@@ -29,10 +29,11 @@ from lerobot.teleoperators import (
     gamepad,  # noqa: F401
     so_leader,  # noqa: F401
 )
+from lerobot.utils.utils import init_logging
 
 from .gym_manipulator import make_robot_env
 
-logging.basicConfig(level=logging.INFO)
+init_logging()
 
 
 def eval_policy(env, policy, n_episodes):
