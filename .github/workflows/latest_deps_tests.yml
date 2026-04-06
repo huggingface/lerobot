@@ -25,9 +25,6 @@ on:
   schedule:
     - cron: "0 3 * * *"
 
-permissions:
-  contents: read
-
 # Sets up the environment variables
 env:
   UV_VERSION: "0.8.0"
@@ -46,6 +43,8 @@ jobs:
     name: Upgrade Lockfile
     runs-on: ubuntu-latest
     if: github.repository == 'huggingface/lerobot'
+    permissions:
+      contents: read
     outputs:
       changed: ${{ steps.diff.outputs.changed }}
     steps:
@@ -86,6 +85,8 @@ jobs:
     needs: [upgrade-lock]
     if: needs.upgrade-lock.outputs.changed == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     env:
       MUJOCO_GL: egl
       HF_HOME: /mnt/cache/.cache/huggingface
@@ -140,6 +141,8 @@ jobs:
     name: Build and Push Docker
     needs: [upgrade-lock]
     if: needs.upgrade-lock.outputs.changed == 'true'
+    permissions:
+      contents: read
     runs-on:
       group: aws-general-8-plus
     outputs:
@@ -181,6 +184,8 @@ jobs:
   gpu-tests:
     name: GPU Tests (Latest Deps)
     needs: [build-and-push-docker]
+    permissions:
+      contents: read
     runs-on:
       group: aws-g6-4xlarge-plus
     env:
@@ -268,6 +273,8 @@ jobs:
     name: Cleanup Docker Image
     needs: [gpu-tests, build-and-push-docker]
     if: always() && needs.build-and-push-docker.result == 'success'
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Get Docker Hub Token and Delete Image
