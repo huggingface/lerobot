@@ -107,7 +107,7 @@ Reconnect the USB cable.
 
 ### 2. 모터 ID와 보드레이트(baudrates) 설정
 
-버스에 연결된 각 모터는 고유한 ID로 구분됩니다. 새 모터는 보통 `1`. 모터와 컨트롤러 간 통신이 제대로 이루어지려면, 먼저 각 모터에 서로 다른 고유 ID를 부여해야 합니다. 또한 버스에서 데이터가 전송되는 속도는 보드레이트(baudrate)로 결정되는데, 컨트롤러와 모든 모터가 같은 보드레이트로 맞춰져야 서로 통신할 수 있습니다.
+버스에 연결된 각 모터는 고유한 ID로 구분됩니다. 새 모터는 보통 기본 ID가 `1`로 설정되어 있습니다. 모터와 컨트롤러 간 통신이 제대로 이루어지려면, 먼저 각 모터에 서로 다른 고유 ID를 부여해야 합니다. 또한 버스에서 데이터가 전송되는 속도는 보드레이트(baudrate)로 결정되는데, 컨트롤러와 모든 모터가 같은 보드레이트로 맞춰져야 서로 통신할 수 있습니다.
 
 이를 위해 컨트롤러를 모터 하나하나에 개별 연결해서 설정을 잡아줘야 합니다. 이 설정 값들은 모터 내부 메모리(EEPROM)의 비휘발성 영역에 저장되기 때문에 한 번만 하면 됩니다.
 
@@ -197,7 +197,7 @@ Connect the controller board to the 'wrist_roll' motor only and press enter.
 
 나머지 모터도 안내에 따라 동일하게 반복합니다.
 
-> [!팁]
+> [!TIP]
 > 각 스텝마다 Enter를 누르기 전에 케이블 연결 상태를 확인하십시오. 보드를 조작하다 보면 전원 케이블이 빠지는 경우가 있습니다.
 
 모든 모터 설정이 끝나면 스크립트가 자동으로 종료되며, 모터를 사용할 준비가 완료됩니다. 이제 각 모터를 3핀 케이블로 순서대로 연결하셔도 되며, 첫 번째 모터(id=1인 'shoulder pan')에서 나온 케이블을 컨트롤러 보드에 연결하셔도 됩니다. 이제 컨트롤러 보드를 암의 베이스에 고정할 수 있습니다. 
@@ -212,7 +212,7 @@ Connect the controller board to the 'wrist_roll' motor only and press enter.
 ```bash
 lerobot-setup-motors \
     --teleop.type=so101_leader \
-    --teleop.port=/dev/tty.usbmodem575E0031751  # # <- 이전 단계에서 찾은 포트를 여기에 붙여넣으세요
+    --teleop.port=/dev/tty.usbmodem575E0031751  # <- 이전 단계에서 찾은 포트를 여기에 붙여넣으세요
 ```
 
 </hfoption>
@@ -402,7 +402,6 @@ follower.disconnect()
 </hfoption>
 </hfoptions>
 
-The video below shows how to perform the calibration. First you need to move the robot to the position where all joints are in the middle of their ranges. Then after pressing enter you have to move each joint through its full range of motion.
 아래 영상은 캘리브레이션 방법을 설명합니다. 먼저, 로봇의 모든 관절이 가동 범위의 중앙에 오도록 위치를 맞추어야 합니다. Enter를 누른 후에는 각 관절을 최대 가동 범위까지 움직여야 합니다.
 
 
@@ -455,5 +454,5 @@ leader.disconnect()
 
 축하합니다 🎉 로봇이 스스로 작업을 학습할 준비가 모두 완료되었습니다. 아래 튜토리얼을 따라 학습을 시작하십시오: [실제 로봇으로 시작하기](./il_robots)
 
-> [!팁]
+> [!TIP]
 > 궁금한 점이 있거나 도움이 필요하시면 [Discord](https://discord.com/invite/s3KuuzsPFb)에서 문의하십시오.
