@@ -1,34 +1,34 @@
-# Train RL in Simulation
+# 在模擬環境中訓練 RL
 
-This guide explains how to use the `gym_hil` simulation environments as an alternative to real robots when working with the LeRobot framework for Human-In-the-Loop (HIL) reinforcement learning.
+本指南說明如何使用 gym_hil 模擬環境作為真實機器人的替代方案，搭配 LeRobot 框架進人在迴圈中（Human-In-the-Loop, HIL）的強化學習。
 
-`gym_hil` is a package that provides Gymnasium-compatible simulation environments specifically designed for Human-In-the-Loop reinforcement learning. These environments allow you to:
+`gym_hil` 是一個提供 Gymnasium 相容模擬環境的套件，專為人在迴圈中的強化學習所設計。這些環境讓您可以：
 
-- Train policies in simulation to test the RL stack before training on real robots
+- 在模擬中訓練策略，以便在真實機器人上訓練之前測試 RL 堆疊
 
-- Collect demonstrations in sim using external devices like gamepads or keyboards
-- Perform human interventions during policy learning
+- 使用外部裝置（如遊戲手把或鍵盤）在模擬中收集示範資料
+- 在策略學習過程中執行人為介入
 
-Currently, the main environment is a Franka Panda robot simulation based on MuJoCo, with tasks like picking up a cube.
+目前，主要環境是基於 MuJoCo 的 Franka Panda 機器人模擬，包含撿取方塊等任務。
 
-## Installation
+## 安裝
 
-First, install the `gym_hil` package within the LeRobot environment:
+先，在 LeRobot 環境中安裝 `gym_hil` 套件：
 
 ```bash
 pip install -e ".[hilserl]"
 ```
 
-## What do I need?
+## 我需要什麼？
 
-- A gamepad or keyboard to control the robot
-- A Nvidia GPU
+- 一個遊戲手把或鍵盤來控制機器人
+- 一張 Nvidia GPU
 
-## Configuration
+## 配置
 
-To use `gym_hil` with LeRobot, you need to create a configuration file. An example is provided [here](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/rl/gym_hil/env_config.json). Key configuration sections include:
+若要搭配 LeRobot 使用 `gym_hil`，您需要建立一個配置檔案。範例請參考[此處](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/rl/gym_hil/env_config.json)。主要配置片段包括：
 
-### Environment Type and Task
+### 環境類型與任務
 
 ```json
 {
@@ -42,13 +42,13 @@ To use `gym_hil` with LeRobot, you need to create a configuration file. An examp
 }
 ```
 
-Available tasks:
+可用任務：
 
-- `PandaPickCubeBase-v0`: Basic environment
-- `PandaPickCubeGamepad-v0`: With gamepad control
-- `PandaPickCubeKeyboard-v0`: With keyboard control
+- `PandaPickCubeBase-v0`：基礎環境
+- `PandaPickCubeGamepad-v0`：搭配遊戲手把控制
+- `PandaPickCubeKeyboard-v0`：搭配鍵盤控制
 
-### Processor Configuration
+### 處理器配置
 
 ```json
 {
@@ -77,26 +77,26 @@ Available tasks:
 }
 ```
 
-Important parameters:
+重要參數：
 
-- `gripper.gripper_penalty`: Penalty for excessive gripper movement
-- `gripper.use_gripper`: Whether to enable gripper control
-- `inverse_kinematics.end_effector_step_sizes`: Size of the steps in the x,y,z axes of the end-effector
-- `control_mode`: Set to `"gamepad"` to use a gamepad controller
+- `gripper.gripper_penalty`：夾爪過度移動的懲罰值
+- `gripper.use_gripper`：是否啟用夾爪控制
+- `inverse_kinematics.end_effector_step_sizes`：末端執行器在 x、y、z 軸的步進大小
+- `control_mode`：設定為 `"gamepad"` 以使用遊戲手把控制器
 
-## Running with HIL RL of LeRobot
+## 搭配 LeRobot 的 HILRL 執行
 
-### Basic Usage
+### 基本用法
 
-To run the environment, set mode to null:
+若要執行環境，將 mode 設為 null：
 
 ```bash
 python -m lerobot.rl.gym_manipulator --config_path path/to/gym_hil_env.json
 ```
 
-### Recording a Dataset
+### 錄製資料集
 
-To collect a dataset, set the mode to `record` whilst defining the repo_id and number of episodes to record:
+若要收集資料集，將 mode 設為 `record`，同時定義 repo_id 和要錄製的回合數：
 
 ```json
 {
@@ -121,28 +121,28 @@ To collect a dataset, set the mode to `record` whilst defining the repo_id and n
 python -m lerobot.rl.gym_manipulator --config_path path/to/gym_hil_env.json
 ```
 
-### Training a Policy
+### 訓練策略
 
-To train a policy, checkout the configuration example available [here](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/rl/gym_hil/train_config.json) and run the actor and learner servers:
+若要訓練策略，請參考[此處](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/rl/gym_hil/train_config.json)提供的組態範例，然後跑執行者與學習者伺服器：
 
 ```bash
 python -m lerobot.rl.actor --config_path path/to/train_gym_hil_env.json
 ```
 
-In a different terminal, run the learner server:
+在另一個終端機中，執行學習者伺服器：
 
 ```bash
 python -m lerobot.rl.learner --config_path path/to/train_gym_hil_env.json
 ```
 
-The simulation environment provides a safe and repeatable way to develop and test your Human-In-the-Loop reinforcement learning components before deploying to real robots.
+模擬環境提供了一個安全且可重複的方式，讓您在部署到真實機器人之前，開發和測試人在迴圈中的強化學習的各個元件。
 
-Congrats 🎉, you have finished this tutorial!
+恭喜 🎉，您已完成本教學！
 
 > [!TIP]
-> If you have any questions or need help, please reach out on [Discord](https://discord.com/invite/s3KuuzsPFb).
+> 如果您有任何問題或需要協助，請透過 [Discord](https://discord.com/invite/s3KuuzsPFb) 與我們聯繫。
 
-Paper citation:
+論文引用：
 
 ```
 @article{luo2024precise,
