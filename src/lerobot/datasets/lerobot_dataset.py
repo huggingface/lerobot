@@ -18,12 +18,12 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 
+import datasets
 import torch
 import torch.utils
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.errors import RevisionNotFoundError
 
-import datasets
 from lerobot.datasets.dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from lerobot.datasets.dataset_reader import DatasetReader
 from lerobot.datasets.dataset_writer import DatasetWriter
