@@ -760,7 +760,19 @@ def eval_policy_all(
     )
 
     if max_parallel_tasks <= 1:
-        for task_group, task_id, env in tasks:
+        prefetch_thread: threading.Thread | None = None
+        for i, (task_group, task_id, env) in enumerate(tasks):
+            if prefetch_thread is not None:
+                prefetch_thread.join()
+                prefetch_thread = None
+
+            # Prefetch next task's AsyncVectorEnv workers while this task runs.
+            if i + 1 < len(tasks):
+                next_env = tasks[i + 1][2]
+                if hasattr(next_env, "_ensure"):
+                    prefetch_thread = threading.Thread(target=next_env._ensure, daemon=True)
+                    prefetch_thread.start()
+
             try:
                 tg, tid, metrics = task_runner(task_group, task_id, env)
                 _accumulate_to(tg, metrics)
