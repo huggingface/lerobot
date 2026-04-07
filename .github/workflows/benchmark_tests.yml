@@ -30,6 +30,7 @@ on:
       - feat/async-vector-env
     paths:
       - "src/lerobot/envs/**"
+      - "src/lerobot/scripts/lerobot_eval.py"
       - "docker/Dockerfile.benchmark.*"
       - ".github/workflows/benchmark_tests.yml"
 
@@ -38,6 +39,7 @@ on:
       - main
     paths:
       - "src/lerobot/envs/**"
+      - "src/lerobot/scripts/lerobot_eval.py"
       - "docker/Dockerfile.benchmark.*"
       - ".github/workflows/benchmark_tests.yml"
 
