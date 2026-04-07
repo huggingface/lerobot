@@ -167,7 +167,7 @@ def rollout(
 
         # Infer "task" from sub-environments.
         # env.call() works with both SyncVectorEnv and AsyncVectorEnv.
-        observation["task"] = env.call("task")
+        observation["task"] = list(env.call("task"))
 
         # Apply environment-specific preprocessing (e.g., LiberoProcessorStep for LIBERO)
         observation = env_preprocessor(observation)
@@ -754,23 +754,27 @@ def eval_policy_all(
     )
 
     if max_parallel_tasks <= 1:
-        # sequential path (single accumulator path on the main thread)
-        # NOTE: keeping a single-threaded accumulator avoids concurrent list appends or locks
         for task_group, task_id, env in tasks:
-            tg, tid, metrics = task_runner(task_group, task_id, env)
-            _accumulate_to(tg, metrics)
-            per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
+            try:
+                tg, tid, metrics = task_runner(task_group, task_id, env)
+                _accumulate_to(tg, metrics)
+                per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
+            finally:
+                env.close()
     else:
-        # threaded path: submit all tasks, consume completions on main thread and accumulate there
         with cf.ThreadPoolExecutor(max_workers=max_parallel_tasks) as executor:
             fut2meta = {}
             for task_group, task_id, env in tasks:
                 fut = executor.submit(task_runner, task_group, task_id, env)
-                fut2meta[fut] = (task_group, task_id)
+                fut2meta[fut] = (task_group, task_id, env)
             for fut in cf.as_completed(fut2meta):
-                tg, tid, metrics = fut.result()
-                _accumulate_to(tg, metrics)
-                per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
+                tg, tid, env = fut2meta[fut]
+                try:
+                    tg, tid, metrics = fut.result()
+                    _accumulate_to(tg, metrics)
+                    per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
+                finally:
+                    env.close()
 
     # compute aggregated metrics helper (robust to lists/scalars)
     def _agg_from_list(xs):
