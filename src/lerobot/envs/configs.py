@@ -44,6 +44,13 @@ from lerobot.utils.constants import (
 )
 
 
+def _make_vec_env_cls(use_async: bool, n_envs: int):
+    """Return the right VectorEnv constructor."""
+    if use_async and n_envs > 1:
+        return gym.vector.AsyncVectorEnv
+    return gym.vector.SyncVectorEnv
+
+
 @dataclass
 class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     task: str | None = None
@@ -405,7 +412,7 @@ class LiberoEnv(EnvConfig):
 
         if self.task is None:
             raise ValueError("LiberoEnv requires a task to be specified")
-        env_cls = gym.vector.AsyncVectorEnv if (use_async_envs and n_envs > 1) else gym.vector.SyncVectorEnv
+        env_cls = _make_vec_env_cls(use_async_envs, n_envs)
         return create_libero_envs(
             task=self.task,
             n_envs=n_envs,
@@ -474,7 +481,7 @@ class MetaworldEnv(EnvConfig):
 
         if self.task is None:
             raise ValueError("MetaWorld requires a task to be specified")
-        env_cls = gym.vector.AsyncVectorEnv if (use_async_envs and n_envs > 1) else gym.vector.SyncVectorEnv
+        env_cls = _make_vec_env_cls(use_async_envs, n_envs)
         return create_metaworld_envs(
             task=self.task,
             n_envs=n_envs,

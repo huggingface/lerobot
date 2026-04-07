@@ -90,7 +90,7 @@ def test_base_create_envs():
         envs = _Env().create_envs(n_envs=2)
         assert "_dispatch_base_test" in envs
         env = envs["_dispatch_base_test"][0]
-        assert isinstance(env, gym.vector.SyncVectorEnv)
+        assert isinstance(env, gym.vector.VectorEnv)
         assert env.num_envs == 2
         env.close()
     finally:
