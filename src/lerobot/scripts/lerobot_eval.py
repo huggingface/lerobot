@@ -165,9 +165,15 @@ def rollout(
         if return_observations:
             all_observations.append(deepcopy(observation))
 
-        # Infer "task" from sub-environments.
+        # Infer "task" from sub-environments (prefer natural language description).
         # env.call() works with both SyncVectorEnv and AsyncVectorEnv.
-        observation["task"] = list(env.call("task"))
+        try:
+            observation["task"] = list(env.call("task_description"))
+        except Exception:
+            try:
+                observation["task"] = list(env.call("task"))
+            except Exception:
+                observation["task"] = [""] * env.num_envs
 
         # Apply environment-specific preprocessing (e.g., LiberoProcessorStep for LIBERO)
         observation = env_preprocessor(observation)
