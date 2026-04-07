@@ -96,7 +96,20 @@ smolvla_preprocessor, smolvla_postprocessor = make_pre_post_processors(smolvla_c
 # Or use ACT policy with the same LIBERO environment
 libero_preprocessor, libero_postprocessor = make_env_pre_post_processors(libero_cfg)
 act_preprocessor, act_postprocessor = make_pre_post_processors(act_cfg)
-```
+```python
+# Use SmolVLA policy with LIBERO environment
+libero_preprocessor, libero_postprocessor = make_env_pre_post_processors(
+    env_cfg=libero_cfg,
+    policy_cfg=smolvla_cfg,
+)
+smolvla_preprocessor, smolvla_postprocessor = make_pre_post_processors(smolvla_cfg)
+
+# Or use ACT policy with the same LIBERO environment
+libero_preprocessor, libero_postprocessor = make_env_pre_post_processors(
+    env_cfg=libero_cfg,
+    policy_cfg=act_cfg,
+)
+act_preprocessor, act_postprocessor = make_pre_post_processors(act_cfg)
 
 ### 3. **Easier Experimentation**
 
