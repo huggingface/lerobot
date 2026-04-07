@@ -203,7 +203,10 @@ def eval_main(cfg: EvalPipelineConfig):
     )
 
     # Create environment processors (NEW!)
-    env_preprocessor, env_postprocessor = make_env_pre_post_processors(env_cfg=cfg.env)
+    env_preprocessor, env_postprocessor = make_env_pre_post_processors(
+        env_cfg=cfg.env,
+        policy_cfg=cfg.policy,
+    )
 
     # Run evaluation with both processor types
     eval_policy_all(
