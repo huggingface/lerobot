@@ -381,6 +381,12 @@ class LiberoEnv(EnvConfig):
         else:
             raise ValueError(f"Unsupported obs_type: {self.obs_type}")
 
+        if self.camera_name_mapping is not None:
+            mapped_agentview = self.camera_name_mapping.get("agentview_image", "image")
+            mapped_eye_in_hand = self.camera_name_mapping.get("robot0_eye_in_hand_image", "image2")
+            self.features_map[LIBERO_KEY_PIXELS_AGENTVIEW] = f"{OBS_IMAGES}.{mapped_agentview}"
+            self.features_map[LIBERO_KEY_PIXELS_EYE_IN_HAND] = f"{OBS_IMAGES}.{mapped_eye_in_hand}"
+
     @property
     def gym_kwargs(self) -> dict:
         kwargs: dict[str, Any] = {"obs_type": self.obs_type, "render_mode": self.render_mode}
@@ -403,6 +409,7 @@ class LiberoEnv(EnvConfig):
             env_cls=env_cls,
             control_mode=self.control_mode,
             episode_length=self.episode_length,
+            camera_name_mapping=self.camera_name_mapping,
         )
 
     def get_env_processors(self):
