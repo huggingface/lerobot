@@ -24,9 +24,9 @@
 
 ## LeRobot 설치하기 🤗
 
-LeRobot을 설치하려면, [설치 가이드](./installation)를 참고해 주세요. 
+LeRobot을 설치하려면, [설치 가이드](./installation)를 참고하십시오. 
 
-기본 설치 외에 Feetech SDK도 추가로 설치해야합니다 :
+기본 설치 외에 Feetech SDK도 추가로 설치해야 합니다 :
 
 ```bash
 pip install -e ".[feetech]"
@@ -53,7 +53,7 @@ pip install -e ".[feetech]"
 
 ### 1. 각 암에 연결된 USB 포트 찾기 
 
-버스 서보 어댑터의 포트를 찾으려면, MotorBus를 USB로 컴퓨터에 연결하고 전원을 켠 뒤 아래 스크립트를 실행하세요. 안내가 나오면 MotorBus의 USB 케이블을 분리하면 됩니다 : 
+버스 서보 어댑터의 포트를 찾으려면, MotorBus를 USB로 컴퓨터에 연결하고 전원을 켠 뒤 아래 스크립트를 실행하십시오. 안내가 나오면 MotorBus의 USB 케이블을 분리하면 됩니다 : 
 
 ```bash
 lerobot-find-port
@@ -128,7 +128,7 @@ Reconnect the USB cable.
 
 #### 팔로워 암
 
-컴퓨터와 전원 공급 장치를 팔로워 암의 컨트롤러 보드에 USB로 연결하세요. 그런 다음 아래 명령어를 실행하거나 API 예시를 사용하되, 이전 단계에서 찾은 포트를 입력하세요. `id` 파라미터로 리더 암의 이름도 지정해야 합니다.
+컴퓨터와 전원 공급 장치를 팔로워 암의 컨트롤러 보드에 USB로 연결합니다. 그런 다음 아래 명령어를 실행하거나 API 예시를 사용하되, 이전 단계에서 찾은 포트를 입력합니다. `id` 파라미터로 리더 암의 이름도 지정해야 합니다.
 
 <hfoptions id="setup_motors">
 <hfoption id="Command">
@@ -164,12 +164,12 @@ follower.setup_motors()
 Connect the controller board to the 'gripper' motor only and press enter.
 ```
 
-안내에 따라 그리퍼 모터를 연결하세요. 이 모터만 보드에 연결되어 있어야 하고, 다른 모터와 데이지 체인으로 이어져 있으면 안 됩니다. `[Enter]`를 누르면 스크립트가 자동으로 해당 모터의 ID와 보드레이트를 설정합니다.
+안내에 따라 그리퍼 모터를 연결합니다. 이 모터만 보드에 연결되어 있어야 하고, 다른 모터와 데이지 체인으로 이어져 있으면 안 됩니다. `[Enter]`를 누르면 스크립트가 자동으로 해당 모터의 ID와 보드레이트를 설정합니다.
 
 <details>
 <summary>문제 해결</summary>
 
-이 단계에서 오류가 발생하면 케이블 연결 상태를 확인해 주세요:
+이 단계에서 오류가 발생하면 케이블 연결 상태를 확인하십시오:
 
 <ul>
   <li>전원 공급 케이블</li>
@@ -177,7 +177,7 @@ Connect the controller board to the 'gripper' motor only and press enter.
   <li>컨트롤러 보드에서 모터로 이어지는 3핀 케이블</li>
 </ul>
 
-Waveshare 컨트롤러 보드를 사용 중이라면, 점퍼 두 개가 `B` 채널(USB)에 설정되어 있는지 확인하세요.
+Waveshare 컨트롤러 보드를 사용 중이라면, 점퍼 두 개가 `B` 채널(USB)에 설정되어 있는지 확인하십시오.
 
 </details>
 
@@ -195,10 +195,10 @@ Connect the controller board to the 'wrist_roll' motor only and press enter.
 
 컨트롤러 보드에서 3핀 케이블을 분리해도 되지만, 그리퍼 모터 쪽 끝은 그대로 두어도 됩니다. 어차피 나중에 딱 맞는 자리에 위치하게 됩니다. 이제 손목 회전(wrist roll) 모터에 새 3핀 케이블을 꽂고 컨트롤러 보드에 연결하세요. 앞서와 마찬가지로, 이 모터만 보드에 연결되어 있어야 하고 다른 모터와 이어지면 안 됩니다. 
 
-나머지 모터도 안내에 따라 동일하게 반복하세요.
+나머지 모터도 안내에 따라 동일하게 반복합니다.
 
 > [!팁]
-> 각 스텝마다 Enter를 누르기 전에 케이블 연결 상태를 확인하세요. 보드를 조작하다 보면 전원 케이블이 빠지는 경우가 있습니다.
+> 각 스텝마다 Enter를 누르기 전에 케이블 연결 상태를 확인하십시오. 보드를 조작하다 보면 전원 케이블이 빠지는 경우가 있습니다.
 
 모든 모터 설정이 끝나면 스크립트가 자동으로 종료되며, 모터를 사용할 준비가 완료됩니다. 이제 각 모터를 3핀 케이블로 순서대로 연결하셔도 되며, 첫 번째 모터(id=1인 'shoulder pan')에서 나온 케이블을 컨트롤러 보드에 연결하셔도 됩니다. 이제 컨트롤러 보드를 암의 베이스에 고정할 수 있습니다. 
 
@@ -236,20 +236,20 @@ leader.setup_motors()
 
 ### 부품 정리
 
-3D 프린팅된 부품에서 서포트 재료를 모두 제거하세요. 작은 드라이버로 서포트 아래를 파고들면 쉽게 제거할 수 있습니다.
+3D 프린팅된 부품에서 서포트 재료를 모두 제거합니다. 작은 드라이버로 서포트 아래를 파고들면 쉽게 제거할 수 있습니다.
 
 
 조립을 계속하기 전에, 각 모터를 자리에 넣은 뒤 3핀 케이블을 하나 먼저 연결해 두는 것을 권장합니다.
 
 ### 관절 1
 
-- 모터 혼(horn) 두 개를 장착하세요. 위쪽 혼은 M3x6mm 나사로 고정하고, 아래쪽 혼은 나사가 필요 없습니다.
-- 첫 번째 모터를 베이스에 넣으세요.
-- 가장 작은 M2x6mm 나사 4개로 모터를 고정하세요 (위에서 2개, 아래에서 2개).
-- 첫 번째 모터 홀더를 밀어 넣고 M2x6mm 나사 2개로 양쪽을 고정하세요.
-- 숄더 파트를 부착하세요.
-- 숄더 파트를 위 4개, 아래 4개의 M3x6mm 나사로 조이세요.
-- 숄더 모터 홀더를 추가하세요.
+- 모터 혼(horn) 두 개를 장착합니다. 위쪽 혼은 M3x6mm 나사로 고정하고, 아래쪽 혼은 나사가 필요 없습니다.
+- 첫 번째 모터를 베이스에 넣습니다.
+- 가장 작은 M2x6mm 나사 4개로 모터를 고정합니다(위에서 2개, 아래에서 2개).
+- 첫 번째 모터 홀더를 밀어 넣고 M2x6mm 나사 2개로 양쪽을 고정합니다.
+- 숄더 파트를 부착합니다.
+- 숄더 파트를 위 4개, 아래 4개의 M3x6mm 나사로 조입니다.
+- 숄더 모터 홀더를 추가합니다.
 
 <div class="video-container">
   <video controls width="600">
@@ -262,10 +262,10 @@ leader.setup_motors()
 
 ### 관절 2
 
-- Install both motor horns. Secure the top horn with a M3x6mm screw. No screws are required for the bottom horn.
-- Slide the second motor in from the top.
-- Fasten the second motor with 4 M2x6mm screws.
-- Attach the upper arm with 4 M3x6mm screws on each side.
+- 모터 혼 두 개를 장착합니다. 위쪽 혼은 M3x6mm 나사로 고정하고, 아래쪽 혼은 나사가 필요 없습니다.
+- 두 번째 모터를 위에서 밀어 넣습니다.
+- M2x6mm 나사 4개로 두 번째 모터를 고정합니다.
+- 위쪽 암을 양쪽 각각 M3x6mm 나사 4개로 부착합니다.
 
 <div class="video-container">
   <video controls width="600">
@@ -276,11 +276,11 @@ leader.setup_motors()
   </video>
 </div>
 
-### Joint 3
+### 관절 3
 
-- Install both motor horns. Secure the top horn with a M3x6mm screw. No screws are required for the bottom horn.
-- Insert motor 3 and fasten using 4 M2x6mm screws.
-- Connect the forearm to motor 3 using 4 M3x6mm screws on each side.
+- 모터 혼 두 개를 장착합니다. 위쪽 혼은 M3x6mm 나사로 고정하고, 아래쪽 혼은 나사가 필요 없습니다.
+- 모터 3을 삽입하고 M2x6mm 나사 4개로 고정합니다.
+- 포암(forearm)을 모터 3에 양쪽 각각 M3x6mm 나사 4개로 연결합니다.
 
 <div class="video-container">
   <video controls width="600">
@@ -291,12 +291,12 @@ leader.setup_motors()
   </video>
 </div>
 
-### Joint 4
-
-- Install both motor horns. Secure the top horn with a M3x6mm screw. No screws are required for the bottom horn.
-- Slide over motor holder 4.
-- Slide in motor 4.
-- Fasten motor 4 with 4 M2x6mm screws.
+### 관절 4
+ 
+- 모터 혼 두 개를 장착합니다. 위쪽 혼은 M3x6mm 나사로 고정하고, 아래쪽 혼은 나사가 필요 없습니다.
+- 모터 홀더 4를 밀어 넣습니다.
+- 모터 4를 삽입합니다.
+- M2x6mm 나사 4개로 모터 4를 고정합니다.
 
 <div class="video-container">
   <video controls width="600">
@@ -307,11 +307,11 @@ leader.setup_motors()
   </video>
 </div>
 
-### Joint 5
-
-- Insert motor 5 into the wrist holder and secure it with 2 M2x6mm front screws.
-- Install only one motor horn on the wrist motor and secure it with a M3x6mm horn screw.
-- Secure the wrist to motor 4 using 4 M3x6mm screws on both sides.
+### 관절 5
+ 
+- 모터 5를 손목 홀더에 삽입하고 M2x6mm 나사 2개로 앞쪽을 고정합니다.
+- 손목 모터에 모터 혼을 하나만 장착하고 M3x6mm 혼 나사로 고정합니다.
+- M3x6mm 나사 4개로 손목을 모터 4의 양쪽에 고정합니다.
 
 <div class="video-container">
   <video controls width="600">
@@ -322,15 +322,15 @@ leader.setup_motors()
   </video>
 </div>
 
-### Gripper / Handle
+### 그리퍼 / 핸들
 
 <hfoptions id="assembly">
 <hfoption id="Follower">
 
-- Attach the gripper to motor 5, attach it to the motor horn on the wrist using 4 M3x6mm screws.
-- Insert the gripper motor and secure it with 2 M2x6mm screws on each side.
-- Install both motor horns on the gripper motor. Secure the top horn with a M3x6mm screw; no screws are required for the bottom horn.
-- Install the gripper claw and secure it with 4 M3x6mm screws on both sides.
+- 그리퍼를 모터 5에 부착하고, 손목의 모터 혼에 M3x6mm 나사 4개로 연결합니다.
+- 그리퍼 모터를 삽입하고 양쪽 각각 M2x6mm 나사 2개로 고정합니다.
+- 그리퍼 모터에 모터 혼 두 개를 장착합니다. 위쪽 혼은 M3x6mm 나사로 고정하고, 아래쪽 혼은 나사가 필요 없습니다.
+- 그리퍼 클로(claw)를 설치하고 양쪽에 M3x6mm 나사 4개로 고정합니다.
 
 <div class="video-container">
   <video controls width="600">
@@ -344,10 +344,10 @@ leader.setup_motors()
 </hfoption>
 <hfoption id="Leader">
 
-- Mount the leader holder onto the wrist and secure it with 4 M3x6mm screws.
-- Attach the handle to motor 5 using 1 M2x6mm screw.
-- Insert the gripper motor, secure it with 2 M2x6mm screws on each side, attach a motor horn using a M3x6mm horn screw.
-- Attach the follower trigger with 4 M3x6mm screws.
+- 리더 홀더를 손목에 장착하고 M3x6mm 나사 4개로 고정합니다.
+- 핸들을 M2x6mm 나사 1개로 모터 5에 연결합니다.
+- 그리퍼 모터를 삽입하고 양쪽 각각 M2x6mm 나사 2개로 고정한 뒤, M3x6mm 혼 나사로 모터 혼을 부착합니다.
+- 팔로워 트리거를 M3x6mm 나사 4개로 부착합니다.
 
 <div class="video-container">
   <video controls width="600">
@@ -361,14 +361,14 @@ leader.setup_motors()
 </hfoption>
 </hfoptions>
 
-## Calibrate
+## 캘리브레이션
+ 
+다음으로, 리더 암과 팔로워 암이 동일한 물리적 위치에 있을 때 같은 위치 값을 가지도록 로봇을 캘리브레이션해야 합니다.
+캘리브레이션은 매우 중요한 과정입니다. 한 로봇으로 학습(training)한 신경망이 다른 로봇에서도 동작할 수 있도록 해주기 때문입니다.
 
-Next, you'll need to calibrate your robot to ensure that the leader and follower arms have the same position values when they are in the same physical position.
-The calibration process is very important because it allows a neural network trained on one robot to work on another.
+#### 팔로워 암
 
-#### Follower
-
-Run the following command or API example to calibrate the follower arm:
+아래 명령어 또는 API 예시를 실행하여 팔로워 암을 캘리브레이션합니다:
 
 <hfoptions id="calibrate_follower">
 <hfoption id="Command">
@@ -376,8 +376,8 @@ Run the following command or API example to calibrate the follower arm:
 ```bash
 lerobot-calibrate \
     --robot.type=so101_follower \
-    --robot.port=/dev/tty.usbmodem58760431551 \ # <- The port of your robot
-    --robot.id=my_awesome_follower_arm # <- Give the robot a unique name
+    --robot.port=/dev/tty.usbmodem58760431551 \ # <- 로봇의 포트를 입력하세요
+    --robot.id=my_awesome_follower_arm # <- 로봇에 고유한 이름을 지정하세요
 ```
 
 </hfoption>
@@ -403,8 +403,10 @@ follower.disconnect()
 </hfoptions>
 
 The video below shows how to perform the calibration. First you need to move the robot to the position where all joints are in the middle of their ranges. Then after pressing enter you have to move each joint through its full range of motion.
+아래 영상은 캘리브레이션 방법을 설명합니다. 먼저, 로봇의 모든 관절이 가동 범위의 중앙에 오도록 위치를 맞추어야 합니다. Enter를 누른 후에는 각 관절을 최대 가동 범위까지 움직여야 합니다.
 
-##### Calibration video
+
+##### 캘리브레이션 영상
 
 <div class="video-container">
   <video controls width="600">
@@ -415,9 +417,9 @@ The video below shows how to perform the calibration. First you need to move the
   </video>
 </div>
 
-#### Leader
+#### 리더 
 
-Do the same steps to calibrate the leader arm, run the following command or API example:
+리더 암도 동일한 방법으로 캘리브레이션합니다. 아래 명령어 또는 API 예시를 실행합니다:
 
 <hfoptions id="calibrate_leader">
 <hfoption id="Command">
@@ -425,8 +427,8 @@ Do the same steps to calibrate the leader arm, run the following command or API 
 ```bash
 lerobot-calibrate \
     --teleop.type=so101_leader \
-    --teleop.port=/dev/tty.usbmodem58760431551 \ # <- The port of your robot
-    --teleop.id=my_awesome_leader_arm # <- Give the robot a unique name
+    --teleop.port=/dev/tty.usbmodem58760431551 \ # <- 로봇의 포트를 입력하세요 
+    --teleop.id=my_awesome_leader_arm # <- 로봇에 고유한 이름을 지정하세요 
 ```
 
 </hfoption>
@@ -451,7 +453,7 @@ leader.disconnect()
 </hfoption>
 </hfoptions>
 
-Congrats 🎉, your robot is all set to learn a task on its own. Start training it by following this tutorial: [Getting started with real-world robots](./il_robots)
+축하합니다 🎉 로봇이 스스로 작업을 학습할 준비가 모두 완료되었습니다. 아래 튜토리얼을 따라 학습을 시작하십시오: [실제 로봇으로 시작하기](./il_robots)
 
-> [!TIP]
-> If you have any questions or need help, please reach out on [Discord](https://discord.com/invite/s3KuuzsPFb).
+> [!팁]
+> 궁금한 점이 있거나 도움이 필요하시면 [Discord](https://discord.com/invite/s3KuuzsPFb)에서 문의하십시오.
