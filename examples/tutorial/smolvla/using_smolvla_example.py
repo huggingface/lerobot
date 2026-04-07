@@ -1,7 +1,7 @@
 import torch
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.datasets.utils import hw_to_dataset_features
+from lerobot.datasets.feature_utils import hw_to_dataset_features
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 from lerobot.policies.utils import build_inference_frame, make_robot_action

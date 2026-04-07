@@ -41,6 +41,13 @@ class PI0FastConfig(PreTrainedConfig):
     max_action_dim: int = 32
     max_action_tokens: int = 256
 
+    # Relative actions: converts absolute actions to relative (relative to state).
+    use_relative_actions: bool = False
+    # Joint names to exclude from relative (kept absolute). Empty list = all dims relative.
+    relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+    # Populated at runtime from dataset metadata by make_policy.
+    action_feature_names: list[str] | None = None
+
     # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None
 

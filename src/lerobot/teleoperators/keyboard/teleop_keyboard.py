@@ -21,7 +21,7 @@ import time
 from queue import Queue
 from typing import Any
 
-from lerobot.processor import RobotAction
+from lerobot.types import RobotAction
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..teleoperator import Teleoperator
@@ -343,8 +343,8 @@ class KeyboardRoverTeleop(KeyboardTeleop):
     def action_features(self) -> dict:
         """Return action format for rover (linear and angular velocities)."""
         return {
-            "linear.vel": float,
-            "angular.vel": float,
+            "linear_velocity": float,
+            "angular_velocity": float,
         }
 
     @property
@@ -368,7 +368,7 @@ class KeyboardRoverTeleop(KeyboardTeleop):
         Get the current action based on pressed keys.
 
         Returns:
-            RobotAction with 'linear.vel' and 'angular.vel' keys
+            RobotAction with 'linear_velocity' and 'angular_velocity' keys.
         """
         before_read_t = time.perf_counter()
 
@@ -429,6 +429,6 @@ class KeyboardRoverTeleop(KeyboardTeleop):
         self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
 
         return {
-            "linear.vel": linear_velocity,
-            "angular.vel": angular_velocity,
+            "linear_velocity": linear_velocity,
+            "angular_velocity": angular_velocity,
         }
