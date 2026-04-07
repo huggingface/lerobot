@@ -103,6 +103,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
 
         try:
             from gymnasium.vector import AutoresetMode
+
             vec = env_cls([_make_one for _ in range(n_envs)], autoreset_mode=AutoresetMode.SAME_STEP)
         except ImportError:
             vec = env_cls([_make_one for _ in range(n_envs)])
