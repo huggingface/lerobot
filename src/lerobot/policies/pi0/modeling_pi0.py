@@ -449,7 +449,7 @@ class PaliGemmaWithExpertModel(
         return features
 
     def embed_language_tokens(self, tokens: torch.Tensor):
-        return self.paligemma.model.language_model.get_inputs_embeddings()(tokens)
+        return self.paligemma.model.language_model.get_input_embeddings()(tokens)
 
     def forward(
         self,
