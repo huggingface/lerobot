@@ -413,17 +413,25 @@ class _LazyAsyncVectorEnv:
     AsyncVectorEnv on first reset(), keeping peak process count = n_envs.
     """
 
-    def __init__(self, env_fns: list[Callable]):
+    def __init__(
+        self,
+        env_fns: list[Callable],
+        observation_space: spaces.Space | None = None,
+        action_space: spaces.Space | None = None,
+    ):
         self._env_fns = env_fns
         self._env: gym.vector.AsyncVectorEnv | None = None
         self.num_envs = len(env_fns)
-        # Instantiate one env to expose spaces (no GPU — _ensure_env is lazy).
-        tmp = env_fns[0]()
-        self.observation_space = tmp.observation_space
-        self.action_space = tmp.action_space
-        self.single_observation_space = tmp.observation_space
-        self.single_action_space = tmp.action_space
-        tmp.close()
+        if observation_space is not None and action_space is not None:
+            self.observation_space = observation_space
+            self.action_space = action_space
+        else:
+            tmp = env_fns[0]()
+            self.observation_space = tmp.observation_space
+            self.action_space = tmp.action_space
+            tmp.close()
+        self.single_observation_space = self.observation_space
+        self.single_action_space = self.action_space
 
     def _ensure(self):
         if self._env is None:
@@ -507,6 +515,11 @@ def create_libero_envs(
         if not selected:
             raise ValueError(f"No tasks selected for suite '{suite_name}' (available: {total}).")
 
+        # All tasks in a suite share identical observation/action spaces.
+        # Probe once and reuse to avoid creating a temp env per task.
+        cached_obs_space: spaces.Space | None = None
+        cached_act_space: spaces.Space | None = None
+
         for tid in selected:
             fns = _make_env_fns(
                 suite=suite,
@@ -521,7 +534,11 @@ def create_libero_envs(
                 camera_name_mapping=camera_name_mapping,
             )
             if is_async:
-                out[suite_name][tid] = _LazyAsyncVectorEnv(fns)
+                lazy = _LazyAsyncVectorEnv(fns, cached_obs_space, cached_act_space)
+                if cached_obs_space is None:
+                    cached_obs_space = lazy.observation_space
+                    cached_act_space = lazy.action_space
+                out[suite_name][tid] = lazy
             else:
                 out[suite_name][tid] = env_cls(fns)
             print(f"Built vec env | suite={suite_name} | task_id={tid} | n_envs={n_envs}")
