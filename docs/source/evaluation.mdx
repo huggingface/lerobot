@@ -98,15 +98,6 @@ For multi-task benchmarks (e.g. LIBERO with 10 tasks), environments are wrapped 
 | Out of GPU memory | Decrease `batch_size`, or use `--policy.use_amp=true` |
 | Debugging / single-stepping | `--eval.batch_size=1 --eval.use_async_envs=false` |
 
-### Benchmarks
-
-Measured with `pepijn223/smolvla_libero` on `libero_spatial` (10 tasks, 100 episodes total):
-
-| Configuration | Wall time | GPU util |
-|---|---|---|
-| `batch_size=1` (sync) | ~400s | 0–8% |
-| `batch_size=10` (async) | ~189s | 0–99% |
-
 ## Output
 
 Results are written to `output_dir` (default: `outputs/eval/<date>/<time>_<job_name>/`):
@@ -149,7 +140,7 @@ lerobot-eval \
     --eval.n_episodes=10
 ```
 
-## Programmatic usage
+## API usage
 
 You can call the eval functions directly from Python:
 
