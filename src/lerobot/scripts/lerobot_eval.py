@@ -193,8 +193,14 @@ def rollout(
 
         # VectorEnv stores is_success in `info["final_info"][env_index]["is_success"]`. "final_info" isn't
         # available if none of the envs finished.
-        if "final_info" in info and isinstance(info["final_info"], dict):
-            successes = info["final_info"]["is_success"].tolist()
+        if "final_info" in info:
+            final_info = info["final_info"]
+            if not isinstance(final_info, dict):
+                raise RuntimeError(
+                    "Unsupported `final_info` format: expected dict (Gymnasium >= 1.0). "
+                    "You're likely using an older version of gymnasium (< 1.0). Please upgrade."
+                )
+            successes = final_info["is_success"].tolist()
         elif "is_success" in info:
             is_success = info["is_success"]
             successes = (
