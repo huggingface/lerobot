@@ -1,18 +1,18 @@
-# HIL-SERL Real Robot Training Workflow Guide
+# HIL-SERL 實體機器人訓練工作流程指南
 
-In this tutorial you will go through the full Human-in-the-Loop Sample-Efficient Reinforcement Learning (HIL-SERL) workflow using LeRobot. You will master training a policy with RL on a real robot in just a few hours.
+在本教學中，您將使用 LeRobot 完整體驗人在迴圈中的樣本高效強化學習（Human-in-the-Loop Sample-Efficient Reinforcement Learning，HIL-SERL）工作流程。您將在短短幾小時內，掌握透過強化學習在實體機器人上訓練一個策略。
 
-HIL-SERL is a sample-efficient reinforcement learning algorithm that combines human demonstrations with online learning and human interventions. The approach starts from a small set of human demonstrations, uses them to train a reward classifier, and then employs an actor-learner architecture where humans can intervene during policy execution to guide exploration and correct unsafe behaviors. In this tutorial, you'll use a gamepad to provide interventions and control the robot during the learning process.
+HIL-SERL 是一種樣本高效的強化學習演算法，結合了人類示範、線上學習與人類介入。該方法從少量的人類示範開始，利用這些示範訓練一個獎勵分類器，然後採用行動者-學習者架構，讓人類可以在策略執行過程中隨時介入，以引導探索並修正不安全的行為。在本教學中，您將使用遊戲手把來提供介入操作並控制機器人的學習過程。
 
-It combines three key ingredients:
+它結合了三個關鍵要素：
 
-1. **Offline demonstrations & reward classifier:** a handful of human-teleop episodes plus a vision-based success detector give the policy a shaped starting point.
+1. **離線示範與獎勵分類器：** 少量的人類遙操作回合加上基於視覺的成功偵測器，為策略提供一個塑造過的起始點。
 
-2. **On-robot actor / learner loop with human interventions:** a distributed Soft Actor Critic (SAC) learner updates the policy while an actor explores on the physical robot; the human can jump in at any time to correct dangerous or unproductive behaviour.
+2. **機器人上的演員/學習者迴圈與人類介入：** 分散式的 Soft Actor Critic（SAC）行動者探索實體機器人的同時更新策略；人類可以隨時介入以修正危險或無效的行為。
 
-3. **Safety & efficiency tools:** joint/end-effector (EE) bounds, crop region of interest (ROI) preprocessing and WandB monitoring keep the data useful and the hardware safe.
+3. **安全與效率工具：** 關節/末端執行器（EE）界限、裁切感興趣區域（ROI）前處理以及 WandB 監控，確保資料有用以及硬體安全。
 
-Together these elements let HIL-SERL reach near-perfect task success and faster cycle times than imitation-only baselines.
+這些要素結合在一起，使 HIL-SERL 能達到近乎完美的任務成功率，且循環時間比純模仿學習的基線更快。
 
 <p align="center">
   <img
@@ -27,148 +27,148 @@ Together these elements let HIL-SERL reach near-perfect task success and faster 
   <i>HIL-SERL workflow, Luo et al. 2024</i>
 </p>
 
-This guide provides step-by-step instructions for training a robot policy using LeRobot's HilSerl implementation to train on a real robot.
+本指南提供逐步說明，教您如何使用 LeRobot 的 HilSerl 實作在實體機器人上訓練機器人策略。
 
-## What do I need?
+## 我需要什麼？
 
-- A gamepad (recommended) or keyboard to control the robot
-- A Nvidia GPU
-- A real robot with a follower and leader arm (optional if you use the keyboard or the gamepad)
-- A URDF file for the robot for the kinematics package (check `lerobot/model/kinematics.py`)
+- 一個遊戲手把（建議）或鍵盤來控制機器人
+- 一張 Nvidia GPU
+- 一個配備從動臂和主動臂的實體機器人（如果使用鍵盤或遊戲手把則為選配）
+- 機器人的 URDF 檔案，供運動學套件使用（請參考 `lerobot/model/kinematics.py`）
 
-## What kind of tasks can I train?
+## 我可以訓練什麼類型的任務？
 
-One can use HIL-SERL to train on a variety of manipulation tasks. Some recommendations:
+您可以使用 HIL-SERL 訓練各種操作任務。以下是一些建議：
 
-- Start with a simple task to understand how the system works.
-  - Push cube to a goal region
-  - Pick and lift cube with the gripper
-- Avoid extremely long horizon tasks. Focus on tasks that can be completed in 5-10 seconds.
-- Once you have a good idea of how the system works, you can try more complex tasks and longer horizons.
-  - Pick and place cube
-  - Bimanual tasks to pick objects with two arms
-  - Hand-over tasks to transfer objects from one arm to another
-  - Go crazy!
+- 從簡單的任務開始，以了解系統的運作方式。
+  - 將方塊推到目標區域
+  - 用夾爪夾取並抬起方塊
+- 避免極長時間範圍的任務。專注於可以在 5-10 秒內完成的任務。
+- 一旦您對系統的運作方式有了良好的了解，就可以嘗試更複雜的任務和更長的時間範圍。
+  - 夾取並放置方塊
+  - 使用雙臂夾取物體的雙臂任務
+  - 從一隻手臂轉移物體到另一隻手臂的交接任務
+  - 盡情發揮！
 
-## Install LeRobot with HIL-SERL
+## 安裝帶有 HIL-SERL 的 LeRobot
 
-To install LeRobot with HIL-SERL, you need to install the `hilserl` extra.
+要安裝帶有 HIL-SERL 的 LeRobot，您需要安裝 `hilserl` 額外套件。
 
 ```bash
 pip install -e ".[hilserl]"
 ```
 
-## Real Robot Training Workflow
+## 實體機器人訓練工作流程
 
-### Understanding Configuration
+### 了解配置
 
-The training process begins with proper configuration for the HILSerl environment. The main configuration class is `GymManipulatorConfig` in `lerobot/rl/gym_manipulator.py`, which contains nested `HILSerlRobotEnvConfig` and `DatasetConfig`. The configuration is organized into focused, nested sub-configs:
+訓練過程從 HILSerl 環境的正確配置開始。主要的配置類別是 `lerobot/rl/gym_manipulator.py` 中的 `GymManipulatorConfig`，其中包含巢狀的 `HILSerlRobotEnvConfig` 和 `DatasetConfig`。配置被組織成清晰的巢狀子配置：
 
 <!-- prettier-ignore-start -->
 ```python
 class GymManipulatorConfig:
-    env: HILSerlRobotEnvConfig    # Environment configuration (nested)
-    dataset: DatasetConfig    # Dataset recording/replay configuration (nested)
-    mode: str | None = None    # "record", "replay", or None (for training)
-    device: str = "cpu"    # Compute device
+    env: HILSerlRobotEnvConfig    # 環境配置（巢狀）
+    dataset: DatasetConfig    # 資料集記錄/重播配置（巢狀）
+    mode: str | None = None    # "record"、"replay" 或 None（用於訓練）
+    device: str = "cpu"    # 運算裝置
 
 class HILSerlRobotEnvConfig(EnvConfig):
-    robot: RobotConfig | None = None    # Main robot agent (defined in `lerobot/robots`)
-    teleop: TeleoperatorConfig | None = None    # Teleoperator agent, e.g., gamepad or leader arm
-    processor: HILSerlProcessorConfig    # Processing pipeline configuration (nested)
-    name: str = "real_robot"    # Environment name
-    task: str | None = None    # Task identifier
-    fps: int = 10    # Control frequency
+    robot: RobotConfig | None = None    # 主要機器人代理（定義於 lerobot/robots）
+    teleop: TeleoperatorConfig | None = None    # 遙操作代理，例如遊戲手把或主動臂
+    processor: HILSerlProcessorConfig    # 處理管線配置（巢狀）
+    name: str = "real_robot"    # 環境名稱
+    task: str | None = None    # 任務識別碼
+    fps: int = 10    # 控制頻率
 
-# Nested processor configuration
+# 巢狀處理器配置
 class HILSerlProcessorConfig:
-    control_mode: str = "gamepad"    # Control mode
-    observation: ObservationConfig | None = None    # Observation processing settings
-    image_preprocessing: ImagePreprocessingConfig | None = None    # Image crop/resize settings
-    gripper: GripperConfig | None = None    # Gripper control and penalty settings
-    reset: ResetConfig | None = None    # Environment reset and timing settings
-    inverse_kinematics: InverseKinematicsConfig | None = None    # IK processing settings
-    reward_classifier: RewardClassifierConfig | None = None    # Reward classifier settings
-    max_gripper_pos: float | None = 100.0    # Maximum gripper position
+    control_mode: str = "gamepad"    # 控制模式
+    observation: ObservationConfig | None = None    # 觀測處理設定
+    image_preprocessing: ImagePreprocessingConfig | None = None    # 影像裁切/縮放設定
+    gripper: GripperConfig | None = None    # 夾爪控制與懲罰設定
+    reset: ResetConfig | None = None    # 環境重置與計時設定
+    inverse_kinematics: InverseKinematicsConfig | None = None    # 逆運動學處理設定
+    reward_classifier: RewardClassifierConfig | None = None    # 獎勵分類器設定
+    max_gripper_pos: float | None = 100.0    # 最大夾爪位置
 
-# Sub-configuration classes
+# 子配置類
 class ObservationConfig:
-    add_joint_velocity_to_observation: bool = False    # Add joint velocities to state
-    add_current_to_observation: bool = False    # Add motor currents to state
-    display_cameras: bool = False    # Display camera feeds during execution
+    add_joint_velocity_to_observation: bool = False    # 將關節速度加入狀態
+    add_current_to_observation: bool = False    # 將馬達電流加入狀態
+    display_cameras: bool = False    # 執行期間顯示相機畫面
 
 class ImagePreprocessingConfig:
-    crop_params_dict: dict[str, tuple[int, int, int, int]] | None = None    # Image cropping parameters
-    resize_size: tuple[int, int] | None = None    # Target image size
+    crop_params_dict: dict[str, tuple[int, int, int, int]] | None = None    # 影像裁切參數
+    resize_size: tuple[int, int] | None = None    # 目標影像大小
 
 class GripperConfig:
-    use_gripper: bool = True    # Enable gripper control
-    gripper_penalty: float = 0.0    # Penalty for inappropriate gripper usage
+    use_gripper: bool = True    # 啟用夾爪控制
+    gripper_penalty: float = 0.0    # 不當使用夾爪的懲罰
 
 class ResetConfig:
-    fixed_reset_joint_positions: Any | None = None    # Joint positions for reset
-    reset_time_s: float = 5.0    # Time to wait during reset
-    control_time_s: float = 20.0    # Maximum episode duration
-    terminate_on_success: bool = True    # Whether to terminate episodes on success detection
+    fixed_reset_joint_positions: Any | None = None    # 重置時的關節位置
+    reset_time_s: float = 5.0    # 重置期間的等待時間
+    control_time_s: float = 20.0    # 最大回合持續時間
+    terminate_on_success: bool = True    # 偵測到成功時是否終止回合
 
 class InverseKinematicsConfig:
-    urdf_path: str | None = None    # Path to robot URDF file
-    target_frame_name: str | None = None    # End-effector frame name
-    end_effector_bounds: dict[str, list[float]] | None = None    # EE workspace bounds
-    end_effector_step_sizes: dict[str, float] | None = None    # EE step sizes per axis
+    urdf_path: str | None = None # 機器人 URDF 檔案路徑
+    target_frame_name: str | None = None # 末端執行器座標系名稱
+    end_effector_bounds: dict[str, list[float]] | None = None # 末端執行器工作空間界限
+    end_effector_step_sizes: dict[str, float] | None = None # 各軸的末端執行器步進大小
 
 class RewardClassifierConfig:
-    pretrained_path: str | None = None    # Path to pretrained reward classifier
-    success_threshold: float = 0.5    # Success detection threshold
-    success_reward: float = 1.0    # Reward value for successful episodes
+    pretrained_path: str | None = None    # 預訓練獎勵分類器路徑
+    success_threshold: float = 0.5    # 成功偵測閾值
+    success_reward: float = 1.0    # 成功回合的獎勵值
 
-# Dataset configuration
+# 資料集配置
 class DatasetConfig:
-    repo_id: str    # LeRobot dataset repository ID
-    task: str    # Task identifier
-    root: str | None = None    # Local dataset root directory
-    num_episodes_to_record: int = 5    # Number of episodes for recording
-    replay_episode: int | None = None    # Episode index for replay
-    push_to_hub: bool = False    # Whether to push datasets to Hub
+    repo_id: str    # LeRobot 資料集儲存庫 ID
+    task: str    # 任務識別碼
+    root: str | None = None    # 本地資料集根目錄
+    num_episodes_to_record: int = 5    # 錄製的回合數
+    replay_episode: int | None = None    # 重播的回合索引
+    push_to_hub: bool = False    # 是否將資料集推送到 Hub
 ```
 <!-- prettier-ignore-end -->
 
-### Processor Pipeline Architecture
+### 處理器管線架構
 
-HIL-SERL uses a modular processor pipeline architecture that processes robot observations and actions through a series of composable steps. The pipeline is divided into two main components:
+HIL-SERL 使用模組化的處理器管線架構，透過一系列可組合的步驟來處理機器人觀測和動作。管線分為兩個主要組件：
 
-#### Environment Processor Pipeline
+#### 環境處理器管線
 
-The environment processor (`env_processor`) handles incoming observations and environment state:
+環境處理器（`env_processor`）處理傳入的觀測和環境狀態：
 
-1. **VanillaObservationProcessorStep**: Converts raw robot observations into standardized format
-2. **JointVelocityProcessorStep** (optional): Adds joint velocity information to observations
-3. **MotorCurrentProcessorStep** (optional): Adds motor current readings to observations
-4. **ForwardKinematicsJointsToEE** (optional): Computes end-effector pose from joint positions
-5. **ImageCropResizeProcessorStep** (optional): Crops and resizes camera images
-6. **TimeLimitProcessorStep** (optional): Enforces episode time limits
-7. **GripperPenaltyProcessorStep** (optional): Applies penalties for inappropriate gripper usage
-8. **RewardClassifierProcessorStep** (optional): Automated reward detection using vision models
-9. **AddBatchDimensionProcessorStep**: Converts data to batch format for neural network processing
-10. **DeviceProcessorStep**: Moves data to the specified compute device (CPU/GPU)
+1. **VanillaObservationProcessorStep**：將原始機器人觀測轉換為標準化格式
+2. **JointVelocityProcessorStep**（選配）：將關節速度資訊加入觀測
+3. **MotorCurrentProcessorStep**（選配）：將馬達電流讀數加入觀測
+4. **ForwardKinematicsJointsToEE**（選配）：從關節位置計算末端執行器姿態
+5. **ImageCropResizeProcessorStep**（選配）：裁切和調整攝影機影像大小
+6. **TimeLimitProcessorStep**（選配）：強制執行回合時間限制
+7. **GripperPenaltyProcessorStep**（選配）：對不當使用夾爪施加懲罰
+8. **RewardClassifierProcessorStep**（選配）：使用視覺模型自動偵測獎勵
+9. **AddBatchDimensionProcessorStep**：將資料轉換為批次格式以供神經網路處理
+10. **DeviceProcessorStep**：將資料移至指定的計算裝置（CPU/GPU）
 
-#### Action Processor Pipeline
+#### 動作處理器管線
 
-The action processor (`action_processor`) handles outgoing actions and human interventions:
+動作處理器（`action_processor`）處理輸出的動作和人類介入：
 
-1. **AddTeleopActionAsComplimentaryDataStep**: Captures teleoperator actions for logging
-2. **AddTeleopEventsAsInfoStep**: Records intervention events and episode control signals
-3. **InterventionActionProcessorStep**: Handles human interventions and episode termination
-4. **Inverse Kinematics Pipeline** (when enabled):
-   - **MapDeltaActionToRobotActionStep**: Converts delta actions to robot action format
-   - **EEReferenceAndDelta**: Computes end-effector reference and delta movements
-   - **EEBoundsAndSafety**: Enforces workspace safety bounds
-   - **InverseKinematicsEEToJoints**: Converts end-effector actions to joint targets
-   - **GripperVelocityToJoint**: Handles gripper control commands
+1. **AddTeleopActionAsComplimentaryDataStep**：擷取遙操作動作以供記錄
+2. **AddTeleopEventsAsInfoStep**：記錄介入事件和回合控制訊號
+3. **InterventionActionProcessorStep**：處理人類介入和回合終止
+4. **逆運動學管線**（啟用時）：
+   - **MapDeltaActionToRobotActionStep**：將差量動作轉換為機器人動作格式
+   - **EEReferenceAndDelta**：計算末端執行器參考和差量移動
+   - **EEBoundsAndSafety**：強制執行工作空間安全邊界
+   - **InverseKinematicsEEToJoints**：將末端執行器動作轉換為關節目標
+   - **GripperVelocityToJoint**：處理夾爪控制命令
 
-#### Configuration Examples
+#### 配置範例
 
-**Basic Observation Processing**:
+**基本的觀測處理**：
 
 ```json
 {
@@ -184,7 +184,7 @@ The action processor (`action_processor`) handles outgoing actions and human int
 }
 ```
 
-**Image Processing**:
+**影像處理**：
 
 ```json
 {
@@ -202,7 +202,7 @@ The action processor (`action_processor`) handles outgoing actions and human int
 }
 ```
 
-**Inverse Kinematics Setup**:
+**逆運動學設定**：
 
 ```json
 {
@@ -226,13 +226,13 @@ The action processor (`action_processor`) handles outgoing actions and human int
 }
 ```
 
-### Advanced Observation Processing
+### 進階的觀測處理
 
-The HIL-SERL framework supports additional observation processing features that can improve policy learning:
+HIL-SERL 框架支援額外的觀測處理功能，可以改善策略的學習：
 
-#### Joint Velocity Processing
+#### 關節速度處理
 
-Enable joint velocity estimation to provide the policy with motion information:
+啟用關節速度估計，為策略提供運動資訊：
 
 ```json
 {
@@ -246,15 +246,15 @@ Enable joint velocity estimation to provide the policy with motion information:
 }
 ```
 
-This processor:
+此處理器：
 
-- Estimates joint velocities using finite differences between consecutive joint position readings
-- Adds velocity information to the observation state vector
-- Useful for policies that need motion awareness for dynamic tasks
+- 使用連續關節位置讀數之間的有限差分來估計關節速度
+- 將速度資訊加入觀測狀態向量
+- 對於需要運動感知的動態任務很有用
 
-#### Motor Current Processing
+#### 馬達電流處理
 
-Monitor motor currents to detect contact forces and load conditions:
+監控馬達電流以偵測接觸力和負載條件：
 
 ```json
 {
@@ -268,16 +268,16 @@ Monitor motor currents to detect contact forces and load conditions:
 }
 ```
 
-This processor:
+此處理器：
 
-- Reads motor current values from the robot's control system
-- Adds current measurements to the observation state vector
-- Helps detect contact events, object weights, and mechanical resistance
-- Useful for contact-rich manipulation tasks
+- 從機器人的控制系統讀取馬達電流值
+- 將電流量測加入觀測狀態向量
+- 有助於偵測接觸事件、物體重量和機械阻力
+- 對於接觸充分的操作任務很有用
 
-#### Combined Observation Processing
+#### 組合觀測處理
 
-You can enable multiple observation processing features simultaneously:
+您可以同時啟用多個觀測處理功能：
 
 ```json
 {
@@ -293,18 +293,18 @@ You can enable multiple observation processing features simultaneously:
 }
 ```
 
-**Note**: Enabling additional observation features increases the state space dimensionality, which may require adjusting your policy network architecture and potentially collecting more training data.
+**注意**：啟用額外的觀測功能會增加狀態空間的維度，這可能需要調整您的策略網路架構，並可能需要收集更多訓練資料。
 
-### Finding Robot Workspace Bounds
+### 尋找機器人工作空間邊界
 
-Before collecting demonstrations, you need to determine the appropriate operational bounds for your robot.
+在收集示範之前，您需要確定機器人的適當操作邊界。
 
-This helps simplify the problem of learning on the real robot in two ways: 1) by limiting the robot's operational space to a specific region that solves the task and avoids unnecessary or unsafe exploration, and 2) by allowing training in end-effector space rather than joint space. Empirically, learning in joint space for reinforcement learning in manipulation is often a harder problem - some tasks are nearly impossible to learn in joint space but become learnable when the action space is transformed to end-effector coordinates.
+這有助於透過兩種方式簡化在實體機器人上學習的問題：1）將機器人的操作空間限制在能解決任務的特定區域，避免不必要或不安全的探索；2）允許在末端執行器空間而非關節空間中進行訓練。根據經驗，對於強化學習中的操作任務，在關節空間中學習通常是更困難的問題——有些任務在關節空間中幾乎不可能學習，但當動作空間轉換為末端效應器座標時就變得可學習。
 
-**Using lerobot-find-joint-limits**
+**使用 lerobot-find-joint-limits**
 
-This script helps you find the safe operational bounds for your robot's end-effector. Given that you have a follower and leader arm, you can use the script to find the bounds for the follower arm that will be applied during training.
-Bounding the action space will reduce the redundant exploration of the agent and guarantees safety.
+此腳本幫助您找到機器人末端執行器的安全操作邊界。假設您有從臂和主臂，您可以使用此腳本找到從臂的邊界，這些邊界將在訓練期間應用。
+限定動作空間將減少代理的冗餘探索並保證安全。
 
 ```bash
 lerobot-find-joint-limits \
@@ -316,19 +316,19 @@ lerobot-find-joint-limits \
   --teleop.id=blue
 ```
 
-**Workflow**
+**工作流程**
 
-1. Run the script and move the robot through the space that solves the task
-2. The script will record the minimum and maximum end-effector positions and the joint angles and prints them to the console, for example:
+1. 執行腳本並在要解決任務的空間中移動機器人
+2. 腳本會記錄末端執行器位置的最小值和最大值以及關節角度，並將它們列印到控制台，例如：
    ```
    Max ee position [0.2417 0.2012 0.1027]
    Min ee position [0.1663 -0.0823 0.0336]
    Max joint positions [-20.0, -20.0, -20.0, -20.0, -20.0, -20.0]
    Min joint positions [50.0, 50.0, 50.0, 50.0, 50.0, 50.0]
    ```
-3. Use these values in the configuration of your teleoperation device (TeleoperatorConfig) under the `end_effector_bounds` field
+3. 將這些值用於遙操作裝置（TeleoperatorConfig）配置中的 `end_effector_bounds` 欄位
 
-**Example Configuration**
+**配置範例**
 
 ```json
 "end_effector_bounds": {
@@ -337,21 +337,21 @@ lerobot-find-joint-limits \
 }
 ```
 
-### Collecting Demonstrations
+### 收集示範
 
-With the bounds defined, you can safely collect demonstrations for training. Training RL with off-policy algorithm allows us to use offline datasets collected in order to improve the efficiency of the learning process.
+定義好邊界後，您可以安全地收集訓練示範。使用 off-policy 演算法進行 RL 訓練允許我們使用離線收集的資料集來提高學習效率。
 
-**Setting Up Record Mode**
+**設定錄製模式**
 
-Create a configuration file for recording demonstrations (or edit an existing one like [env_config.json](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/rl/env_config.json)):
+建立一個用於錄製示範的配置檔案（或編輯現有的檔案，如 [env_config.json](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/rl/env_config.json)）：
 
-1. Set `mode` to `"record"` at the root level
-2. Specify a unique `repo_id` for your dataset in the `dataset` section (e.g., "username/task_name")
-3. Set `num_episodes_to_record` in the `dataset` section to the number of demonstrations you want to collect
-4. Set `env.processor.image_preprocessing.crop_params_dict` to `{}` initially (we'll determine crops later)
-5. Configure `env.robot`, `env.teleop`, and other hardware settings in the `env` section
+1. 在根層級將 `mode` 設為 `"record"`
+2. 在 `dataset` 區段中為您的資料集指定唯一的 `repo_id`（例如 "username/task_name"）
+3. 在 `dataset` 區段中將 `num_episodes_to_record` 設為您想收集的示範數量
+4. 先將 `env.processor.image_preprocessing.crop_params_dict` 設為 `{}`（我們稍後會決定裁切參數）
+5. 在 `env` 區段中配置 `env.robot`、`env.teleop` 和其他硬體設定
 
-Example configuration section:
+配置範例片段：
 
 ```json
 {
@@ -378,10 +378,10 @@ Example configuration section:
       }
     },
     "robot": {
-      // ... robot configuration ...
+      // ... 機器人配置 ...
     },
     "teleop": {
-      // ... teleoperator configuration ...
+      // ... 遙操作器配置 ...
     }
   },
   "dataset": {
@@ -397,31 +397,31 @@ Example configuration section:
 }
 ```
 
-### Using a Teleoperation Device
+### 使用遙操作裝置
 
-Along with your robot, you will need a teleoperation device to control it in order to collect datasets of your task and perform interventions during the online training.
-We support using a gamepad or a keyboard or the leader arm of the robot.
+除了機器人之外，您還需要一個遙操作裝置來控制它，以便收集任務的資料集並在線上訓練期間執行介入。
+我們支援使用遊戲手把、鍵盤或機器人的主臂。
 
-HIL-Serl learns actions in the end-effector space of the robot. Therefore, the teleoperation will control the end-effector's x,y,z displacements.
+HIL-Serl 在機器人的末端執行器空間中學習動作。因此，遙操作將控制末端執行器的 x、y、z 位移。
 
-For that we need to define a version of the robot that takes actions in the end-effector space. Check the robot class `SO100FollowerEndEffector` and its configuration `SO100FollowerEndEffectorConfig` for the default parameters related to the end-effector space.
+為此，我們需要定義一個在末端執行器空間中接受動作的機器人版本。請查看機器人類別 `SO100FollowerEndEffector` 及其配置 `SO100FollowerEndEffectorConfig` 以了解與末端執行器空間相關的預設參數。 Check the robot class `SO100FollowerEndEffector` and its configuration `SO100FollowerEndEffectorConfig` for the default parameters related to the end-effector space.
 
 <!-- prettier-ignore-start -->
 ```python
 class SO100FollowerEndEffectorConfig(SO100FollowerConfig):
-    """Configuration for the SO100FollowerEndEffector robot."""
+    """SO100FollowerEndEffector 機器人的配置。"""
 
-    # Default bounds for the end-effector position (in meters)
-    end_effector_bounds: dict[str, list[float]] = field( # bounds for the end-effector in x,y,z direction
+    # 末端執行器位置的預設邊界（單位：公尺）
+    end_effector_bounds: dict[str, list[float]] = field( # 末端執行器在 x,y,z 方向的邊界
         default_factory=lambda: {
-            "min": [-1.0, -1.0, -1.0],  # min x, y, z
-            "max": [1.0, 1.0, 1.0],  # max x, y, z
+            "min": [-1.0, -1.0, -1.0],  # 最小 x, y, z
+            "max": [1.0, 1.0, 1.0],  # 最大 x, y, z
         }
     )
 
-    max_gripper_pos: float = 50 # maximum gripper position that the gripper will be open at
+    max_gripper_pos: float = 50 # 夾爪開啟的最大位置
 
-    end_effector_step_sizes: dict[str, float] = field( # maximum step size for the end-effector in x,y,z direction
+    end_effector_step_sizes: dict[str, float] = field( # 末端執行器在 x,y,z 方向的最大步長
         default_factory=lambda: {
             "x": 0.02,
             "y": 0.02,
@@ -431,13 +431,13 @@ class SO100FollowerEndEffectorConfig(SO100FollowerConfig):
 ```
 <!-- prettier-ignore-end -->
 
-The `Teleoperator` defines the teleoperation device. You can check the list of available teleoperators in `lerobot/teleoperators`.
+`Teleoperator` 定義遙操作裝置。您可以在 `lerobot/teleoperators` 中查看可用的遙操作器列表。
 
-**Setting up the Gamepad**
+**設定遊戲手把**
 
-The gamepad provides a very convenient way to control the robot and the episode state.
+遊戲手把提供了一種非常方便的方式來控制機器人和回合狀態。
 
-To setup the gamepad, you need to set the `control_mode` to `"gamepad"` and define the `teleop` section in the configuration file.
+要設定遊戲手把，您需要將 `control_mode` 設為 `"gamepad"` 並在配置檔案中定義 `teleop` 區段。
 
 ```json
 {
@@ -465,14 +465,14 @@ To setup the gamepad, you need to set the `control_mode` to `"gamepad"` and defi
   ></img>
 </p>
 <p align="center">
-  <i>Gamepad button mapping for robot control and episode management</i>
+  <i>遊戲手把上的機器人控制和回合管理按鍵對應</i>
 </p>
 
-**Setting up the SO101 leader**
+**設定 SO101 主臂**
 
-The SO101 leader arm has reduced gears that allows it to move and track the follower arm during exploration. Therefore, taking over is much smoother than the gearless SO100.
+SO101 主臂具有減速齒輪，使其能夠在探索期間移動並追蹤從臂。因此，接管控制比無齒輪的 SO100 更加順暢。
 
-To setup the SO101 leader, you need to set the `control_mode` to `"leader"` and define the `teleop` section in the configuration file.
+要設定 SO101 主臂，您需要將 `control_mode` 設為 `"leader"` 並在配置檔案中定義 `teleop` 片段。
 
 ```json
 {
@@ -492,11 +492,11 @@ To setup the SO101 leader, you need to set the `control_mode` to `"leader"` and 
 }
 ```
 
-In order to annotate the success/failure of the episode, **you will need** to use a keyboard to press `s` for success, `esc` for failure.
-During the online training, press `space` to take over the policy and `space` again to give the control back to the policy.
+為了標註回合的成功/失敗，**您需要**使用鍵盤按 `s` 表示成功，按 `esc` 表示失敗。
+在線上訓練期間，按 `space` 接管策略控制，再按 `space` 將控制權交回策略。
 
 <details>
-<summary><strong>Video: SO101 leader teleoperation</strong></summary>
+<summary><strong>影片：SO101 主臂遙操作</strong></summary>
 
 <div class="video-container">
   <video controls width="600">
@@ -507,55 +507,55 @@ During the online training, press `space` to take over the policy and `space` ag
   </video>
 </div>
 
-<p align="center"><i>SO101 leader teleoperation example, the leader tracks the follower, press `space` to intervene</i></p>
+<p align="center"><i>SO101 主臂遙操作範例，主臂追蹤從臂，按 `space` 進行介入</i></p>
 </details>
 
-**Recording Demonstrations**
+**錄製示範**
 
-Start the recording process, an example of the config file can be found [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/env_config_so100.json):
+開始錄製流程，配置檔案範例可在[此處](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/env_config_so100.json)找到：
 
 ```bash
 python -m lerobot.rl.gym_manipulator --config_path src/lerobot/configs/env_config_so100.json
 ```
 
-During recording:
+錄製期間：
 
-1. The robot will reset to the initial position defined in the configuration file `env.processor.reset.fixed_reset_joint_positions`
-2. Complete the task successfully
-3. The episode ends with a reward of 1 when you press the "success" button
-4. If the time limit is reached, or the fail button is pressed, the episode ends with a reward of 0
-5. You can rerecord an episode by pressing the "rerecord" button
-6. The process automatically continues to the next episode
-7. After recording all episodes, the dataset is pushed to the Hugging Face Hub (optional) and saved locally
+1. 機器人將重置到配置檔案 `env.processor.reset.fixed_reset_joint_positions` 中定義的初始位置
+2. 成功完成任務
+3. 當您按下「成功」按鈕時，回合以獎勵 1 結束
+4. 如果達到時間限制或按下失敗按鈕，回合以獎勵 0 結束
+5. 您可以按下「重新錄製」按鈕重新錄製一個回合
+6. 流程會自動繼續到下一個回合
+7. 錄製完所有回合後，資料集會推送到 Hugging Face Hub（選配）並儲存在本地
 
-### Processing the Dataset
+### 處理資料集
 
-After collecting demonstrations, process them to determine optimal camera crops.
-Reinforcement learning is sensitive to background distractions, so it is important to crop the images to the relevant workspace area.
+收集示範後，處理它們以確定最佳的攝影機裁切參數。
+強化學習對背景干擾很敏感，因此將影像裁切到相關的工作空間區域非常重要。
 
-Visual RL algorithms learn directly from pixel inputs, making them vulnerable to irrelevant visual information. Background elements like changing lighting, shadows, people moving, or objects outside the workspace can confuse the learning process. Good ROI selection should:
+基於視覺的 RL 演算法直接從像素輸入學習，使其容易受到無關視覺資訊的影響。背景元素如變化的光線、陰影、移動的人或工作空間外的物體都可能干擾學習過程。好的 ROI 選擇應該：
 
-- Include only the essential workspace where the task happens
-- Capture the robot's end-effector and all objects involved in the task
-- Exclude unnecessary background elements and distractions
+- 僅包含任務發生的必要工作空間
+- 捕捉機器人的末端效應氣和任務涉及的所有物體
+- 排除不必要的背景元素和干擾
 
-Note: If you already know the crop parameters, you can skip this step and just set the `crop_params_dict` in the configuration file during recording.
+注意：如果您已經知道裁切參數，可以跳過此步驟，直接在錄製期間的配置檔案中設定 `crop_params_dict`。
 
-**Determining Crop Parameters**
+**確定裁切參數**
 
-Use the `crop_dataset_roi.py` script to interactively select regions of interest in your camera images:
+使用 `crop_dataset_roi.py` 腳本互動式地選擇攝影機影像中的感興趣區域：
 
 ```bash
 python -m lerobot.rl.crop_dataset_roi --repo-id username/pick_lift_cube
 ```
 
-1. For each camera view, the script will display the first frame
-2. Draw a rectangle around the relevant workspace area
-3. Press 'c' to confirm the selection
-4. Repeat for all camera views
-5. The script outputs cropping parameters and creates a new cropped dataset
+1. 對於每個攝影機視角，腳本將顯示第一幀
+2. 在相關的工作空間區域周圍繪製矩形
+3. 按 'c' 確認選擇
+4. 對所有攝影機視角重複操作
+5. 腳本輸出裁切參數並建立新的裁切資料集
 
-Example output:
+輸出範例：
 
 ```
 Selected Rectangular Regions of Interest (top, left, height, width):
@@ -571,12 +571,12 @@ observation.images.front: [180, 250, 120, 150]
 </p>
 
 <p align="center">
-  <i>Interactive cropping tool for selecting regions of interest</i>
+  <i>用於選擇感興趣區域的互動式裁切工具</i>
 </p>
 
-**Updating Configuration**
+**更新配置**
 
-Add these crop parameters to your training configuration:
+將這些裁切參數加入您的訓練配置：
 
 ```json
 {
@@ -594,44 +594,44 @@ Add these crop parameters to your training configuration:
 }
 ```
 
-**Recommended image resolution**
+**建議的影像解析度**
 
-Most vision-based policies have been validated on square inputs of either **128×128** (default) or **64×64** pixels. We therefore advise setting the resize_size parameter to [128, 128] – or [64, 64] if you need to save GPU memory and bandwidth. Other resolutions are possible but have not been extensively tested.
+大多數基於視覺的策略已在 **128×128**（預設）或 **64×64** 像素的方形輸入上驗證。因此，我們建議將 resize_size 參數設為 [128, 128]——如果您需要節省 GPU 記憶體和頻寬，則設為 [64, 64]。其他解析度是可行的，但尚未經過充分測試。
 
-### Training a Reward Classifier
+### 訓練獎勵分類器
 
-The reward classifier plays an important role in the HIL-SERL workflow by automating reward assignment and automatically detecting episode success. Instead of manually defining reward functions or relying on human feedback for every timestep, the reward classifier learns to predict success/failure from visual observations. This enables the RL algorithm to learn efficiently by providing consistent and automated reward signals based on the robot's camera inputs.
+獎勵分類器在 HIL-SERL 工作流程中扮演重要角色，透過自動化獎勵分配和自動偵測回合成功。與其手動定義獎勵函數或每個時間步都依賴人類回饋，獎勵分類器學習從視覺觀測中預測成功/失敗。這使得 RL 演算法能夠根據機器人攝影機輸入提供一致且自動化的獎勵訊號，從而高效學習。
 
-This guide explains how to train a reward classifier for human-in-the-loop reinforcement learning implementation of LeRobot. Reward classifiers learn to predict the reward value given a state which can be used in an RL setup to train a policy.
+本指南說明如何訓練 LeRobot 人機協作強化學習實作中的獎勵分類器。獎勵分類器學習在給定狀態下預測獎勵值，可用於 RL 設定中訓練策略。
 
-**Note**: Training a reward classifier is optional. You can start the first round of RL experiments by annotating the success manually with your gamepad or keyboard device.
+**注意**：訓練獎勵分類器是選配的。您可以透過使用遊戲手把或鍵盤裝置手動標註成功來開始第一輪 RL 實驗。
 
-The reward classifier implementation in `modeling_classifier.py` uses a pretrained vision model to process the images. It can output either a single value for binary rewards to predict success/fail cases or multiple values for multi-class settings.
+`modeling_classifier.py` 中的獎勵分類器實作使用預訓練的視覺模型來處理影像。它可以輸出單一值用於二元獎勵以預測成功/失敗情況，或輸出多個值用於多類別設定。
 
-**Collecting a Dataset for the reward classifier**
+**為獎勵分類器收集資料集**
 
-Before training, you need to collect a dataset with labeled examples. The `record_dataset` function in `gym_manipulator.py` enables the process of collecting a dataset of observations, actions, and rewards.
+在訓練之前，您需要收集帶有標註的資料集。`gym_manipulator.py` 中的 `record_dataset` 函數可以收集觀測、動作和獎勵的資料集。
 
-To collect a dataset, you need to modify some parameters in the environment configuration based on HILSerlRobotEnvConfig.
+要收集資料集，您需要根據 HILSerlRobotEnvConfig 修改環境配置中的一些參數。
 
 ```bash
 python -m lerobot.rl.gym_manipulator --config_path src/lerobot/configs/reward_classifier_train_config.json
 ```
 
-**Key Parameters for Data Collection**
+**資料收集的關鍵參數**
 
-- **mode**: set it to `"record"` to collect a dataset (at root level)
-- **dataset.repo_id**: `"hf_username/dataset_name"`, name of the dataset and repo on the hub
-- **dataset.num_episodes_to_record**: Number of episodes to record
-- **env.processor.reset.terminate_on_success**: Whether to automatically terminate episodes when success is detected (default: `true`)
-- **env.fps**: Number of frames per second to record
-- **dataset.push_to_hub**: Whether to push the dataset to the hub
+- **mode**：設為 `"record"` 以收集資料集（在根層級）
+- **dataset.repo_id**：`"hf_username/dataset_name"`，資料集名稱和 Hub 上的儲存庫名稱
+- **dataset.num_episodes_to_record**：要錄製的回合數
+- **env.processor.reset.terminate_on_success**：是否在偵測到成功時自動終止回合（預設：`true`）
+- **env.fps**：每秒錄製的幀數
+- **dataset.push_to_hub**：是否將資料集推送到 Hub
 
-The `env.processor.reset.terminate_on_success` parameter allows you to control episode termination behavior. When set to `false`, episodes will continue even after success is detected, allowing you to collect more positive examples with the reward=1 label. This is crucial for training reward classifiers as it provides more success state examples in your dataset. When set to `true` (default), episodes terminate immediately upon success detection.
+`env.processor.reset.terminate_on_success` 參數允許您控制回合終止行為。設為 `false` 時，即使偵測到成功，回合也會繼續，允許您收集更多帶有 reward=1 標籤的正面範例。這對於訓練獎勵分類器至關重要，因為它在您的資料集中提供更多成功狀態的範例。設為 `true`（預設）時，回合會在偵測到成功時立即終止。
 
-**Important**: For reward classifier training, set `terminate_on_success: false` to collect sufficient positive examples. For regular HIL-SERL training, keep it as `true` to enable automatic episode termination when the task is completed successfully.
+**重要**：對於獎勵分類器訓練，將 `terminate_on_success` 設為 `false` 以收集足夠的正面範例。對於一般的 HIL-SERL 訓練，保持為 `true` 以在任務成功完成時啟用自動回合終止。
 
-Example configuration section for data collection:
+資料收集的配置範例片段：
 
 ```json
 {
@@ -650,10 +650,10 @@ Example configuration section for data collection:
       }
     },
     "robot": {
-      // ... robot configuration ...
+      // ... 機器人配置 ...
     },
     "teleop": {
-      // ... teleoperator configuration ...
+      // ... 遙操作器配置 ...
     }
   },
   "dataset": {
@@ -669,19 +669,19 @@ Example configuration section for data collection:
 }
 ```
 
-**Reward Classifier Configuration**
+**獎勵分類器配置**
 
-The reward classifier is configured using `configuration_classifier.py`. Here are the key parameters:
+獎勵分類器使用 `configuration_classifier.py` 進行配置。以下是關鍵參數：
 
-- **model_name**: Base model architecture (e.g., we mainly use `"helper2424/resnet10"`)
-- **model_type**: `"cnn"` or `"transformer"`
-- **num_cameras**: Number of camera inputs
-- **num_classes**: Number of output classes (typically 2 for binary success/failure)
-- **hidden_dim**: Size of hidden representation
-- **dropout_rate**: Regularization parameter
-- **learning_rate**: Learning rate for optimizer
+- **model_name**：基礎模型架構（例如，我們主要使用 `"helper2424/resnet10"`）
+- **model_type**：`"cnn"` 或 `"transformer"`
+- **num_cameras**：攝影機輸入數量
+- **num_classes**：輸出類別數（通常為 2，用於二元成功/失敗）
+- **hidden_dim**：隱藏表示的大小
+- **dropout_rate**：正則化參數
+- **learning_rate**：最佳化器的學習率
 
-Example configuration for training the [reward classifier](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/reward_classifier_train_config.json):
+訓練[獎勵分類器](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/reward_classifier_train_config.json)的配置範例：
 
 ```json
 {
@@ -710,17 +710,17 @@ Example configuration for training the [reward classifier](https://huggingface.c
 }
 ```
 
-**Training the Classifier**
+**訓練分類器**
 
-To train the classifier, use the `train.py` script with your configuration:
+要訓練分類器，使用 `train.py` 腳本搭配您的配置：
 
 ```bash
 lerobot-train --config_path path/to/reward_classifier_train_config.json
 ```
 
-**Deploying and Testing the Model**
+**部署和測試模型**
 
-To use your trained reward classifier, configure the `HILSerlRobotEnvConfig` to use your model:
+要使用您訓練好的獎勵分類器，配置 `HILSerlRobotEnvConfig` 以使用您的模型：
 
 <!-- prettier-ignore-start -->
 ```python
@@ -731,15 +731,15 @@ config = GymManipulatorConfig(
                 pretrained_path="path_to_your_pretrained_trained_model"
             )
         ),
-        # Other environment parameters
+        # 其他環境參數
     ),
     dataset=DatasetConfig(...),
-    mode=None  # For training
+    mode=None  # 用於訓練
 )
 ```
 <!-- prettier-ignore-end -->
 
-or set the argument in the json config file.
+或在 json 配置檔案中設定參數。
 
 ```json
 {
@@ -758,96 +758,96 @@ or set the argument in the json config file.
 }
 ```
 
-Run `gym_manipulator.py` to test the model.
+執行 gym_manipulator.py 來測試模型。
 
 ```bash
 python -m lerobot.rl.gym_manipulator --config_path path/to/env_config.json
 ```
 
-The reward classifier will automatically provide rewards based on the visual input from the robot's cameras.
+獎勵分類器將根據機器人攝影機的視覺輸入自動提供獎勵。
 
-**Example Workflow for training the reward classifier**
+**訓練獎勵分類器的範例工作流程**
 
-1. **Create the configuration files**:
-   Create the necessary json configuration files for the reward classifier and the environment. Check the examples [here](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/reward_classifier/config.json).
+1. **建立配置檔案**：
+   建立獎勵分類器和環境必要的 json 配置檔案。請查看[此處](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/reward_classifier/config.json)的範例。
 
-2. **Collect a dataset**:
+2. **收集資料集**：
 
    ```bash
    python -m lerobot.rl.gym_manipulator --config_path src/lerobot/configs/env_config.json
    ```
 
-3. **Train the classifier**:
+3. **訓練分類器**：
 
    ```bash
    lerobot-train --config_path src/lerobot/configs/reward_classifier_train_config.json
    ```
 
-4. **Test the classifier**:
+4. **測試分類器**：
    ```bash
    python -m lerobot.rl.gym_manipulator --config_path src/lerobot/configs/env_config.json
    ```
 
-### Training with Actor-Learner
+### 使用執行者-學習者架構進行訓練
 
-The LeRobot system uses a distributed actor-learner architecture for training. This architecture decouples robot interactions from the learning process, allowing them to run concurrently without blocking each other. The actor server handles robot observations and actions, sending interaction data to the learner server. The learner server performs gradient descent and periodically updates the actor's policy weights. You will need to start two processes: a learner and an actor.
+LeRobot 系統使用分散式執行者-學習者架構進行訓練。此架構將機器人互動與學習過程解耦，使它們能夠並行執行而不互相阻塞。執行者伺服器處理機器人觀測和動作，將互動資料發送給學習者伺服器。學習者伺服器執行梯度下降並定期更新執行者的策略權重。您需要啟動兩個處理程序：一個學習者和一個執行者。
 
-**Configuration Setup**
+**配置設定**
 
-Create a training configuration file (example available [here](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/rl/train_config.json)). The training config is based on the main `TrainRLServerPipelineConfig` class in `lerobot/configs/train.py`.
+建立訓練配置檔案（範例可在[此處](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/rl/train_config.json)取得）。訓練配置基於 `lerobot/configs/train.py` 中的主要 `TrainRLServerPipelineConfig` 類。
 
-1. Configure the policy settings (`type="sac"`, `device`, etc.)
-2. Set `dataset` to your cropped dataset
-3. Configure environment settings with crop parameters
-4. Check the other parameters related to SAC in [configuration_sac.py](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/sac/configuration_sac.py#L79).
-5. Verify that the `policy` config is correct with the right `input_features` and `output_features` for your task.
+1. 配置策略設定（`type="sac"`、`device` 等）
+2. 將 `dataset` 設為您裁切過的資料集
+3. 配置環境設定和裁切參數
+4. 檢查 [configuration_sac.py](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/sac/configuration_sac.py#L79) 中與 SAC 相關的其他參數。
+5. 驗證 `policy` 配置中的 `input_features` 和 `output_features` 對於您的任務是正確的。
 
-**Starting the Learner**
+**啟動學習者**
 
-First, start the learner server process:
+首先，啟動學習者伺服器處理程序：
 
 ```bash
 python -m lerobot.rl.learner --config_path src/lerobot/configs/train_config_hilserl_so100.json
 ```
 
-The learner:
+學習者：
 
-- Initializes the policy network
-- Prepares replay buffers
-- Opens a `gRPC` server to communicate with actors
-- Processes transitions and updates the policy
+- 初始化策略的網路
+- 準備經驗重播緩衝區
+- 開啟 `gRPC` 伺服器並與執行者通訊
+- 處理策略的轉移與更新
 
-**Starting the Actor**
+**啟動執行者**
 
-In a separate terminal, start the actor process with the same configuration:
+在另一個終端中，使用相同的配置啟動執行者處理程序：
 
 ```bash
 python -m lerobot.rl.actor --config_path src/lerobot/configs/train_config_hilserl_so100.json
 ```
 
-The actor:
+執行者：
 
-- Connects to the learner via `gRPC`
-- Initializes the environment
-- Execute rollouts of the policy to collect experience
-- Sends transitions to the learner
-- Receives updated policy parameters
+- 透過 `gRPC` 連接到學習者
+- 初始化環境
+- 執行策略的展開以收集經驗
+- 將轉移發送給學習者
+- 接收更新後的策略參數
 
-**Training Flow**
+**訓練流程**
 
-The training proceeds automatically:
+訓練會自動進行：
 
-1. The actor executes the policy in the environment
-2. Transitions are collected and sent to the learner
-3. The learner updates the policy based on these transitions
-4. Updated policy parameters are sent back to the actor
-5. The process continues until the specified step limit is reached
+1. 執行者在環境中執行策略
+2. 收集轉移並發送給學習者
+3. 學習者根據這些轉移更新策略
+4. 更新後的策略參數發送回執行者
+5. 過程持續進行直到達到指定的步數限制
 
-**Human in the Loop**
+**人在迴圈中**
 
-- The key to learning efficiently is to have human interventions to provide corrective feedback and completing the task to aide the policy learning and exploration.
-- To perform human interventions, you can press the upper right trigger button on the gamepad (or the `space` key on the keyboard). This will pause the policy actions and allow you to take over.
-- A successful experiment is one where the human has to intervene at the start but then reduces the amount of interventions as the policy improves. You can monitor the intervention rate in the `wandb` dashboard.
+- 高效學習的關鍵是透過人類介入提供修正回饋並完成任務，以協助策略學習和探索。
+- 要進行人類介入，您可以按遊戲手把上的右上方扳機按鈕（或鍵盤上的 `space` 鍵）。這將暫停策略動作，允許您接管控制。
+- 成功的實驗是在開始時人類需要頻繁介入，但隨著策略改善逐漸減少介入次數。您可以在 `wandb` 儀表板中監控介入率。
 
 <p align="center">
   <img
@@ -859,28 +859,26 @@ The training proceeds automatically:
 </p>
 
 <p align="center">
-  <i>
-    Example showing how human interventions help guide policy learning over time
-  </i>
+  <i>顯示人為介入如何隨時間引導策略學習的範例</i>
 </p>
 
-- The figure shows the plot of the episodic reward over interaction step. The figure shows the effect of human interventions on the policy learning.
-- The orange curve is an experiment without any human interventions. While the pink and blue curves are experiments with human interventions.
-- We can observe that the number of steps where the policy starts achieving the maximum reward is cut by a quarter when human interventions are present.
+- 該圖顯示了回合獎勵隨互動步數變化的曲線。圖中展示了人為介入對策略學習的影響。
+- 橘色曲線是沒有任何人為介入的實驗。而粉色和藍色曲線是有人類介入的實驗。
+- 我們可以觀察到，當有人為介入時，策略開始達到最大獎勵所需的步數減少了四分之一。
 
-**Monitoring and Debugging**
+**監控與除錯**
 
-If you have `wandb.enable` set to `true` in your configuration, you can monitor training progress in real-time through the [Weights & Biases](https://wandb.ai/site/) dashboard.
+如果您在配置中將 `wandb.enable` 設為 `true`，您可以透過 [Weights & Biases](https://wandb.ai/site/) 儀表板即時監控訓練進度。
 
-### Guide to Human Interventions
+### 人為介入指南
 
-The learning process is very sensitive to the intervention strategy. It will takes a few runs to understand how to intervene effectively. Some tips and hints:
+學習過程對介入策略非常敏感。需要幾次嘗試才能理解如何有效地介入。一些提示和建議：
 
-- Allow the policy to explore for a few episodes at the start of training.
-- Avoid intervening for long periods of time. Try to intervene in situation to correct the robot's behaviour when it goes off track.
-- Once the policy starts achieving the task, even if its not perfect, you can limit your interventions to simple quick actions like a simple grasping commands.
+- 在訓練開始時允許策略自行探索幾個回合。
+- 避免長時間介入。盡量在機器人行為偏離軌道時進行介入以糾正行為。
+- 一旦策略開始完成任務，即使不完美，您可以將介入限制在簡單的快速動作，例如簡單的抓取命令。
 
-The ideal behaviour is that your intervention rate should drop gradually during training as shown in the figure below.
+理想的行為是您的介入率應該在訓練過程中逐漸下降，如下圖所示。
 
 <p align="center">
   <img
@@ -892,26 +890,23 @@ The ideal behaviour is that your intervention rate should drop gradually during 
 </p>
 
 <p align="center">
-  <i>
-    Plot of the intervention rate during a training run on a pick and lift cube
-    task
-  </i>
+  <i>抓取並提起方塊任務訓練過程中的介入率曲線</i>
 </p>
 
-### Key hyperparameters to tune
+### 需要調整的關鍵超參數
 
-Some configuration values have a disproportionate impact on training stability and speed:
+某些配置值對訓練穩定性和速度具有不成比例的影響：
 
-- **`temperature_init`** (`policy.temperature_init`) – initial entropy temperature in SAC. Higher values encourage more exploration; lower values make the policy more deterministic early on. A good starting point is `1e-2`. We observed that setting it too high can make human interventions ineffective and slow down learning.
-- **`policy_parameters_push_frequency`** (`policy.actor_learner_config.policy_parameters_push_frequency`) – interval in _seconds_ between two weight pushes from the learner to the actor. The default is `4 s`. Decrease to **1-2 s** to provide fresher weights (at the cost of more network traffic); increase only if your connection is slow, as this will reduce sample efficiency.
-- **`storage_device`** (`policy.storage_device`) – device on which the learner keeps the policy parameters. If you have spare GPU memory, set this to `"cuda"` (instead of the default `"cpu"`). Keeping the weights on-GPU removes CPU→GPU transfer overhead and can significantly increase the number of learner updates per second.
+- **`temperature_init`**（`policy.temperature_init`）——SAC 中的初始熵溫度。較高的值鼓勵更多探索；較低的值使策略在早期更具確定性。一個好的起始點是 `1e-2`。我們觀察到設定過高會使人為介入無效並減慢學習速度。
+- **`policy_parameters_push_frequency`**（`policy.actor_learner_config.policy_parameters_push_frequency`）——從學習者向執行者推送兩次權重之間的間隔（以*秒*為單位）。預設值為 `4 s`。減少到 **1-2 s** 以提供更新鮮的權重（但會增加更多網路流量）；僅在連線速度慢時才增加此值，因為這會降低樣本效率。
+- **`storage_device`**（`policy.storage_device`）——學習者保存策略參數的裝置。如果您有多餘的 GPU 記憶體，將其設為 `"cuda"`（而非預設的 `"cpu"`）。將權重保留在 GPU 上可以消除 CPU→GPU 傳輸的開銷，並能顯著增加每秒學習者更新的次數。
 
-Congrats 🎉, you have finished this tutorial!
+恭喜 🎉，您已完成本教程！
 
 > [!TIP]
-> If you have any questions or need help, please reach out on [Discord](https://discord.com/invite/s3KuuzsPFb).
+> 如果您有任何問題或需要協助，請在 [Discord](https://discord.com/invite/s3KuuzsPFb) 上聯繫我們。
 
-Paper citation:
+論文引用：
 
 ```
 @article{luo2024precise,
