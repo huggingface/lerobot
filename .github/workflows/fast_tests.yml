@@ -65,7 +65,7 @@ jobs:
       HF_LEROBOT_HOME: /mnt/cache/.cache/huggingface/lerobot
       HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           persist-credentials: false
           lfs: true
@@ -83,7 +83,7 @@ jobs:
           libusb-1.0-0-dev speech-dispatcher libgeos-dev portaudio19-dev
 
       - name: Setup uv and Python
-        uses: astral-sh/setup-uv@v6 # zizmor: ignore[unpinned-uses]
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
         with:
           enable-cache: true
           version: ${{ env.UV_VERSION }}
