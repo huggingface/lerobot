@@ -435,9 +435,7 @@ class _LazyAsyncVectorEnv:
 
     def _ensure(self):
         if self._env is None:
-            self._env = gym.vector.AsyncVectorEnv(
-                self._env_fns, context="forkserver", shared_memory=True
-            )
+            self._env = gym.vector.AsyncVectorEnv(self._env_fns, context="forkserver", shared_memory=True)
 
     def reset(self, **kwargs):
         self._ensure()
