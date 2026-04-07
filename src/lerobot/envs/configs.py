@@ -454,3 +454,64 @@ class IsaaclabArenaEnv(HubEnvConfig):
     @property
     def gym_kwargs(self) -> dict:
         return {}
+
+@EnvConfig.register_subclass("robocasa")
+@dataclass
+class RoboCasaEnv(EnvConfig):
+    task: str | None = None  # Task name (required)
+    fps: int = 20
+    render_mode: str = "rgb_array"
+    obs_type: str = "pixels_agent_pos"
+    camera_name: str = "robot0_agentview_left,robot0_eye_in_hand,robot0_agentview_right"
+    observation_height: int = 256
+    observation_width: int = 256
+    split: str | None = None  # Optional Robocasa dataset split {None, "all", "pretrain", "target"}
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(12,)),
+        }
+    )
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            ACTION: ACTION,
+            "agent_pos": OBS_STATE,
+            "pixels/robot0_agentview_left": "observation.images.robot0_agentview_left",
+            "pixels/robot0_agentview_right": "observation.images.robot0_agentview_right",
+            "pixels/robot0_eye_in_hand": "observation.images.robot0_eye_in_hand",
+        }
+    )
+
+    def __post_init__(self):
+        if self.obs_type == "pixels":
+            self.features["pixels/robot0_agentview_left"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+            self.features["pixels/robot0_agentview_right"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+            self.features["pixels/robot0_eye_in_hand"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+        elif self.obs_type == "pixels_agent_pos":
+            self.features["pixels/robot0_agentview_left"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+            self.features["pixels/robot0_agentview_right"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+            self.features["pixels/robot0_eye_in_hand"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(16,))
+
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            "obs_type": self.obs_type,   
+            "render_mode": self.render_mode,
+            "observation_width": self.observation_width,
+            "observation_height": self.observation_height,
+            "camera_name": self.camera_name,
+            "split": self.split,
+        }
