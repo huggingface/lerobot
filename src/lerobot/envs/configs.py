@@ -22,7 +22,6 @@ from typing import Any
 import draccus
 import gymnasium as gym
 from gymnasium.envs.registration import registry as gym_registry
-from gymnasium.vector import AutoresetMode
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.robots import RobotConfig
@@ -102,7 +101,11 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         def _make_one():
             return gym.make(self.gym_id, disable_env_checker=self.disable_env_checker, **self.gym_kwargs)
 
-        vec = env_cls([_make_one for _ in range(n_envs)], autoreset_mode=AutoresetMode.SAME_STEP)
+        try:
+            from gymnasium.vector import AutoresetMode
+            vec = env_cls([_make_one for _ in range(n_envs)], autoreset_mode=AutoresetMode.SAME_STEP)
+        except ImportError:
+            vec = env_cls([_make_one for _ in range(n_envs)])
         return {self.type: {0: vec}}
 
     def get_env_processors(self):
