@@ -176,6 +176,12 @@ aloha = ["gym-aloha>=0.1.2,<0.2.0", "lerobot[scipy-dep]"]
 pusht = ["gym-pusht>=0.1.5,<0.2.0", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version in gym-pusht instead
 libero = ["lerobot[transformers-dep]", "hf-libero>=0.1.3,<0.2.0; sys_platform == 'linux'", "lerobot[scipy-dep]"]
 metaworld = ["metaworld==3.0.0", "lerobot[scipy-dep]"]
+robomme = [
+    # Linux only: ManiSkill (robomme dep) requires Vulkan/SAPIEN which are Linux-only.
+    # Note: robomme pins gymnasium==0.29.1 and numpy<2.0.0 via mani-skill.
+    # For Docker eval, use docker/Dockerfile.eval-robomme which applies safe overrides.
+    "robomme @ git+https://github.com/RoboMME/robomme_benchmark.git@main ; sys_platform == 'linux'",
+]
 
 # All
 all = [

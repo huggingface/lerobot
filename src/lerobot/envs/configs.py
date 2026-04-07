@@ -495,6 +495,60 @@ class MetaworldEnv(EnvConfig):
         )
 
 
+@EnvConfig.register_subclass("robomme")
+@dataclass
+class RoboMMEEnv(EnvConfig):
+    """RoboMME memory-augmented manipulation benchmark (ManiSkill/SAPIEN).
+
+    16 tasks across 4 suites: Counting, Permanence, Reference, Imitation.
+    Dataset: pepijn223/robomme_data_lerobot (LeRobot v3.0, 1,600 episodes).
+    Benchmark: https://github.com/RoboMME/robomme_benchmark
+
+    Requires: pip install 'lerobot[robomme]' (Linux only).
+    """
+
+    task: str = "PickXtimes"
+    fps: int = 10
+    episode_length: int = 300
+    action_space: str = "joint_angle"  # or "ee_pose" (7-D)
+    dataset_split: str = "test"  # "train" | "val" | "test"
+    task_ids: list[int] | None = None
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(8,)),
+            "front_rgb": PolicyFeature(type=FeatureType.VISUAL, shape=(256, 256, 3)),
+            "wrist_rgb": PolicyFeature(type=FeatureType.VISUAL, shape=(256, 256, 3)),
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(8,)),
+        }
+    )
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            ACTION: ACTION,
+            "front_rgb": f"{OBS_IMAGES}.front",
+            "wrist_rgb": f"{OBS_IMAGES}.wrist",
+            OBS_STATE: OBS_STATE,
+        }
+    )
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {}  # not used — create_envs() bypasses gym.make()
+
+    def create_envs(self, n_envs: int, use_async_envs: bool = True):
+        from lerobot.envs.robomme import create_robomme_envs
+
+        env_cls = gym.vector.AsyncVectorEnv if (use_async_envs and n_envs > 1) else gym.vector.SyncVectorEnv
+        return create_robomme_envs(
+            task=self.task,
+            n_envs=n_envs,
+            action_space_type=self.action_space,
+            dataset=self.dataset_split,
+            episode_length=self.episode_length,
+            task_ids=self.task_ids,
+            env_cls=env_cls,
+        )
+
+
 @EnvConfig.register_subclass("isaaclab_arena")
 @dataclass
 class IsaaclabArenaEnv(HubEnvConfig):

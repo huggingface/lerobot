@@ -1,0 +1,119 @@
+# RoboMME Benchmark
+
+[RoboMME](https://robomme.github.io) is a memory-augmented manipulation benchmark built on ManiSkill (SAPIEN). It evaluates a robot's ability to retain and use information across an episode — counting, object permanence, reference, and imitation.
+
+- **16 tasks** across 4 memory-skill suites
+- **1,600 training demos** (100 per task, 50 val, 50 test)
+- **Dataset**: [`pepijn223/robomme_data_lerobot`](https://huggingface.co/datasets/pepijn223/robomme_data_lerobot) — LeRobot v3.0, 768K frames at 10 fps
+- **Simulator**: ManiSkill / SAPIEN, Panda arm, Linux only
+
+> **Related work**: The initial integration of RoboMME into LeRobot was prototyped in
+> [`feat/robomme-integration`](https://github.com/huggingface/lerobot/tree/feat/robomme-integration).
+> This PR rebases that work onto `feat/async-vector-env`, adopts the `create_envs()` dispatch
+> pattern, and adds the `LazyVectorEnv` helper for large task-count benchmarks.
+
+## Tasks
+
+| Suite                             | Tasks                                                         |
+| --------------------------------- | ------------------------------------------------------------- |
+| **Counting** (temporal memory)    | BinFill, PickXtimes, SwingXtimes, StopCube                    |
+| **Permanence** (spatial memory)   | VideoUnmask, VideoUnmaskSwap, ButtonUnmask, ButtonUnmaskSwap  |
+| **Reference** (object memory)     | PickHighlight, VideoRepick, VideoPlaceButton, VideoPlaceOrder |
+| **Imitation** (procedural memory) | MoveCube, InsertPeg, PatternLock, RouteStick                  |
+
+## Installation
+
+> RoboMME requires **Linux** (ManiSkill/SAPIEN uses Vulkan rendering). Docker is recommended to isolate dependency conflicts.
+
+### Native (Linux)
+
+```bash
+pip install 'lerobot[robomme]'
+```
+
+> **Dependency note**: `robomme` pulls in `mani-skill` which pins `gymnasium==0.29.1` and `numpy<2.0.0`. These conflict with lerobot's default pins. On Linux you can pin both in your env; see the Docker approach below to avoid conflicts entirely.
+
+### Docker (recommended)
+
+```bash
+# Build base image first (from repo root)
+docker build -f docker/Dockerfile.eval-base -t lerobot-eval-base .
+
+# Build RoboMME eval image (applies gymnasium + numpy pin overrides)
+docker build -f docker/Dockerfile.eval-robomme -t lerobot-robomme .
+```
+
+The `Dockerfile.eval-robomme` overrides `gymnasium==0.29.1` and `numpy==1.26.4` after lerobot's install. Both versions are runtime-safe for lerobot's actual API usage.
+
+## Running Evaluation
+
+```bash
+lerobot-eval \
+    --policy.path=<your_policy_repo> \
+    --env.type=robomme \
+    --env.task=PickXtimes \
+    --env.dataset_split=test \
+    --eval.batch_size=1 \
+    --eval.n_episodes=50
+```
+
+### Key CLI options for `env.type=robomme`
+
+| Option               | Default       | Description                                        |
+| -------------------- | ------------- | -------------------------------------------------- |
+| `env.task`           | `PickXtimes`  | Any of the 16 task names above                     |
+| `env.dataset_split`  | `test`        | `train`, `val`, or `test`                          |
+| `env.action_space`   | `joint_angle` | `joint_angle` (8-D) or `ee_pose` (7-D)             |
+| `env.episode_length` | `300`         | Max steps per episode                              |
+| `env.task_ids`       | `null`        | List of episode indices to evaluate (null = `[0]`) |
+
+## Dataset
+
+The dataset [`pepijn223/robomme_data_lerobot`](https://huggingface.co/datasets/pepijn223/robomme_data_lerobot) is in **LeRobot v3.0 format** and can be loaded directly:
+
+```python
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+
+dataset = LeRobotDataset("pepijn223/robomme_data_lerobot")
+```
+
+### Dataset features
+
+| Feature            | Shape         | Description                     |
+| ------------------ | ------------- | ------------------------------- |
+| `image`            | (256, 256, 3) | Front camera RGB                |
+| `wrist_image`      | (256, 256, 3) | Wrist camera RGB                |
+| `actions`          | (8,)          | Joint angles + gripper          |
+| `state`            | (8,)          | Joint positions + gripper state |
+| `simple_subgoal`   | str           | High-level language annotation  |
+| `grounded_subgoal` | str           | Grounded language annotation    |
+| `episode_index`    | int           | Episode ID                      |
+| `frame_index`      | int           | Frame within episode            |
+
+### Feature key alignment (training)
+
+The env wrapper exposes `front_rgb` and `wrist_rgb` as observation keys. The `features_map` in `RoboMMEEnv` maps these to `obs_images.front` and `obs_images.wrist` for the policy.
+
+The dataset uses `image` and `wrist_image` as column names. When fine-tuning from the dataset, you may need to rename columns to match your policy's expected input keys:
+
+```python
+dataset = LeRobotDataset("pepijn223/robomme_data_lerobot")
+# rename dataset columns if needed:
+# dataset.hf_dataset = dataset.hf_dataset.rename_column("image", "front_rgb")
+```
+
+## Action Spaces
+
+| Type          | Dim | Description                                               |
+| ------------- | --- | --------------------------------------------------------- |
+| `joint_angle` | 8   | 7 joint angles + 1 gripper (−1 closed, +1 open, absolute) |
+| `ee_pose`     | 7   | xyz + roll/pitch/yaw + gripper                            |
+
+Set via `--env.action_space=joint_angle` (default) or `--env.action_space=ee_pose`.
+
+## Platform Notes
+
+- **Linux only**: ManiSkill requires SAPIEN/Vulkan. macOS and Windows are not supported.
+- **GPU recommended**: Rendering is CPU-capable but slow; CUDA + Vulkan gives full speed.
+- **gymnasium / numpy conflict**: See installation note above. Docker image handles this automatically.
+- **ManiSkill fork**: `robomme` depends on a specific ManiSkill fork (`YinpeiDai/ManiSkill`), pulled in automatically via the `robomme` package.
