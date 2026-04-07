@@ -151,9 +151,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 ``$HF_LEROBOT_HOME/hub``.
             episodes (list[int] | None, optional): If specified, this will only load episodes specified by
                 their episode_index in this list. Defaults to None.
-            image_transforms (Callable | None, optional): You can pass standard v2 image transforms from
-                torchvision.transforms.v2 here which will be applied to visual modalities (whether they come
-                from videos or images). Defaults to None.
+            image_transforms (Callable | None, optional):
+                Transform applied to visual modalities inside `__getitem__` after image decoding / tensor
+                conversion. This works for both image-backed and video-backed observations and can later be
+                updated with `set_image_transforms()` or cleared with `clear_image_transforms()`.
+                Defaults to None.
             delta_timestamps (dict[list[float]] | None, optional): _description_. Defaults to None.
             tolerance_s (float, optional): Tolerance in seconds used to ensure data timestamps are actually in
                 sync with the fps value. It is used at the init of the dataset to make sure that each
@@ -192,7 +194,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         super().__init__()
         self.repo_id = repo_id
         self._requested_root = Path(root) if root else None
-        self.image_transforms = image_transforms
+        self.reader = None
+        self.set_image_transforms(image_transforms)
         self.delta_timestamps = delta_timestamps
         self.episodes = episodes
         self.tolerance_s = tolerance_s
@@ -474,6 +477,18 @@ class LeRobotDataset(torch.utils.data.Dataset):
             f"    Features: '{feature_keys}',\n"
             f"}})"
         )
+
+    def set_image_transforms(self, image_transforms: Callable | None) -> None:
+        """Replace the transform applied to visual observations."""
+        if image_transforms is not None and not callable(image_transforms):
+            raise TypeError("image_transforms must be callable or None.")
+        self.image_transforms = image_transforms
+        if self.reader is not None:
+            self.reader._image_transforms = image_transforms
+
+    def clear_image_transforms(self) -> None:
+        """Remove the transform applied to visual observations."""
+        self.set_image_transforms(None)
 
     # ── Hub methods (stay on facade) ──────────────────────────────────
 
