@@ -301,7 +301,7 @@ After completing the steps above, confirm that everything works:
 
 1. **Install** — `pip install -e ".[mybenchmark]"` and verify the dependency group installs cleanly.
 2. **Smoke test env creation** — call `make_env()` with your config in Python, check that the returned dict has the expected `{suite: {task_id: VectorEnv}}` shape, and that `reset()` returns observations with the right keys.
-3. **Run a full eval** — `lerobot-eval --env.type=<name> --env.task=<task> --eval.n_episodes=1 --eval.batch_size=1 --policy.path=<any_compatible_policy>` to exercise the full pipeline end-to-end.
+3. **Run a full eval** — `lerobot-eval --env.type=<name> --env.task=<task> --eval.n_episodes=1 --policy.path=<any_compatible_policy>` to exercise the full pipeline end-to-end. (`batch_size` defaults to auto-tuning based on CPU cores; pass `--eval.batch_size=1` to force a single environment.)
 4. **Check success detection** — verify that `info["is_success"]` flips to `True` when the task is actually completed. This is what the eval loop uses to compute success rates.
 
 ## Writing a benchmark doc page
@@ -313,7 +313,7 @@ Each benchmark `.mdx` page should include:
 - **Overview image or GIF.**
 - **Available tasks** — table of task suites with counts and brief descriptions.
 - **Installation** — `pip install -e ".[<benchmark>]"` plus any extra steps (env vars, system packages).
-- **Evaluation** — recommended `lerobot-eval` command with `n_episodes` and `batch_size` for reproducible results. Include single-task and multi-task examples if applicable.
+- **Evaluation** — recommended `lerobot-eval` command with `n_episodes` for reproducible results. `batch_size` defaults to auto; only specify it if needed. Include single-task and multi-task examples if applicable. See the [Evaluation guide](evaluation) for details.
 - **Policy inputs and outputs** — observation keys with shapes, action space description.
 - **Recommended evaluation episodes** — how many episodes per task is standard.
 - **Training** — example `lerobot-train` command.
