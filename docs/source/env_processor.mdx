@@ -338,7 +338,22 @@ def make_env_pre_post_processors(env_cfg: EnvConfig):
 
     postprocessor = PolicyProcessorPipeline(steps=[])
     return preprocessor, postprocessor
-```
+### 2. Update Your `EnvConfig` Subclass
+
+```python
+# In src/lerobot/envs/configs.py
+@EnvConfig.register_subclass("myenv")
+@dataclass
+class MyEnvConfig(EnvConfig):
+    # ... task/features/gym kwargs ...
+
+    def get_env_processors(self):
+        from lerobot.processor.pipeline import PolicyProcessorPipeline
+
+        return (
+            PolicyProcessorPipeline(steps=[MyEnvProcessorStep()]),
+            PolicyProcessorPipeline(steps=[]),
+        )
 
 ### 3. Use in Evaluation
 
