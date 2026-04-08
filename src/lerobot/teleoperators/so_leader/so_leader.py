@@ -106,9 +106,13 @@ class SOLeader(Teleoperator):
             f"Move all joints except '{full_turn_motor}' sequentially through their "
             "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
         )
+        current_pos = self.bus.read("Present_Position", full_turn_motor, normalize=False)
+        if isinstance(current_pos, dict):
+            current_pos = current_pos[full_turn_motor]
         range_mins, range_maxes = self.bus.record_ranges_of_motion(unknown_range_motors)
-        range_mins[full_turn_motor] = 0
-        range_maxes[full_turn_motor] = 4095
+        safe_delta = min(current_pos - 0, 4095 - current_pos, 2048)
+        range_mins[full_turn_motor] = current_pos - safe_delta
+        range_maxes[full_turn_motor] = current_pos + safe_delta
 
         self.calibration = {}
         for motor, m in self.bus.motors.items():
