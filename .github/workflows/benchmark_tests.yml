@@ -103,6 +103,7 @@ jobs:
             --shm-size=4g \
             -e HF_HOME=/tmp/hf \
             -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
+            -e LIBERO_DATA_FOLDER=/tmp/libero_data \
             lerobot-benchmark-libero:ci \
             bash -c "
               hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
