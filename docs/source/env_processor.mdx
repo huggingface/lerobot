@@ -25,31 +25,28 @@ raw_observation = env.step(action)
 # 2. Convert numpy to torch, normalize images [0,1]
 observation = preprocess_observation(raw_observation)
 
-# 3. Add task metadata (for multi-task environments)
-observation = add_envs_task(env, observation)
-
-# 4. ENVIRONMENT-SPECIFIC preprocessing (NEW!)
+# 3. ENVIRONMENT-SPECIFIC preprocessing (NEW!)
 #    - Flatten robot states
 #    - Rotate images to match dataset conventions
 #    - Handle environment-specific coordinate systems
 observation = env_preprocessor(observation)
 
-# 5. POLICY-SPECIFIC preprocessing
+# 4. POLICY-SPECIFIC preprocessing
 #    - Normalize with dataset statistics
 #    - Add batch dimensions
 #    - Move to GPU
 #    - Tokenize language instructions
 observation = preprocessor(observation)
 
-# 6. Policy inference
+# 5. Policy inference
 action = policy.select_action(observation)
 
-# 7. POLICY-SPECIFIC postprocessing
+# 6. POLICY-SPECIFIC postprocessing
 #    - Unnormalize actions
 #    - Remove batch dimensions
 action = postprocessor(action)
 
-# 8. ENVIRONMENT-SPECIFIC postprocessing (NEW!)
+# 7. ENVIRONMENT-SPECIFIC postprocessing (NEW!)
 #    - Convert action formats if needed
 #    - Apply environment-specific constraints
 action_transition = {"action": action}
