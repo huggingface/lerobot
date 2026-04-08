@@ -28,18 +28,18 @@ lerobot-eval \
 
 ## Key flags
 
-| Flag | Default | Description |
-|---|---|---|
-| `--policy.path` | required | Hub repo ID or local path to a pretrained model |
-| `--env.type` | required | Benchmark name (`pusht`, `libero`, `metaworld`, etc.) |
-| `--env.task` | varies | Task or suite name (e.g. `libero_spatial`, `libero_10`) |
-| `--eval.n_episodes` | `50` | Total episodes to run (across all tasks) |
-| `--eval.batch_size` | `0` (auto) | Number of parallel environments. `0` = auto-tune from CPU cores |
-| `--eval.use_async_envs` | `true` | Use `AsyncVectorEnv` (parallel stepping). Auto-downgrades to sync when `batch_size=1` |
-| `--policy.device` | `cuda` | Inference device |
-| `--policy.use_amp` | `false` | Mixed-precision inference (saves VRAM, faster on Ampere+) |
-| `--seed` | `1000` | Random seed for reproducibility |
-| `--output_dir` | auto-generated | Where to write results and videos |
+| Flag                    | Default        | Description                                                                           |
+| ----------------------- | -------------- | ------------------------------------------------------------------------------------- |
+| `--policy.path`         | required       | Hub repo ID or local path to a pretrained model                                       |
+| `--env.type`            | required       | Benchmark name (`pusht`, `libero`, `metaworld`, etc.)                                 |
+| `--env.task`            | varies         | Task or suite name (e.g. `libero_spatial`, `libero_10`)                               |
+| `--eval.n_episodes`     | `50`           | Total episodes to run (across all tasks)                                              |
+| `--eval.batch_size`     | `0` (auto)     | Number of parallel environments. `0` = auto-tune from CPU cores                       |
+| `--eval.use_async_envs` | `true`         | Use `AsyncVectorEnv` (parallel stepping). Auto-downgrades to sync when `batch_size=1` |
+| `--policy.device`       | `cuda`         | Inference device                                                                      |
+| `--policy.use_amp`      | `false`        | Mixed-precision inference (saves VRAM, faster on Ampere+)                             |
+| `--seed`                | `1000`         | Random seed for reproducibility                                                       |
+| `--output_dir`          | auto-generated | Where to write results and videos                                                     |
 
 ### Environment-specific flags
 
@@ -59,15 +59,16 @@ See each benchmark's documentation ([LIBERO](libero), [Meta-World](metaworld)) f
 
 `batch_size` controls how many environments run in parallel within a single `VectorEnv`:
 
-| `batch_size` | Behavior |
-|---|---|
+| `batch_size`  | Behavior                                                             |
+| ------------- | -------------------------------------------------------------------- |
 | `0` (default) | Auto-tune: `floor(cpu_cores × 0.7)`, capped by `n_episodes` and `64` |
-| `1` | Single environment, synchronous. Useful for debugging |
-| `N` | N environments step in parallel via `AsyncVectorEnv` |
+| `1`           | Single environment, synchronous. Useful for debugging                |
+| `N`           | N environments step in parallel via `AsyncVectorEnv`                 |
 
 When `batch_size > 1` and `use_async_envs=true`, each environment runs in its own subprocess via Gymnasium's `AsyncVectorEnv`. This parallelizes the simulation stepping (the main bottleneck), while the policy runs a single batched forward pass on GPU.
 
 **Example:** On a 16-core machine with `n_episodes=100`:
+
 - Auto batch_size = `floor(16 × 0.7)` = `11`
 - 11 environments step simultaneously → ~11× faster than sequential
 
@@ -91,12 +92,12 @@ For multi-task benchmarks (e.g. LIBERO with 10 tasks), environments are wrapped 
 
 ### Tuning for speed
 
-| Situation | Recommendation |
-|---|---|
-| Slow eval, low GPU utilization | Increase `batch_size` (or leave at auto) |
-| Out of memory (system RAM) | Decrease `batch_size` |
-| Out of GPU memory | Decrease `batch_size`, or use `--policy.use_amp=true` |
-| Debugging / single-stepping | `--eval.batch_size=1 --eval.use_async_envs=false` |
+| Situation                      | Recommendation                                        |
+| ------------------------------ | ----------------------------------------------------- |
+| Slow eval, low GPU utilization | Increase `batch_size` (or leave at auto)              |
+| Out of memory (system RAM)     | Decrease `batch_size`                                 |
+| Out of GPU memory              | Decrease `batch_size`, or use `--policy.use_amp=true` |
+| Debugging / single-stepping    | `--eval.batch_size=1 --eval.use_async_envs=false`     |
 
 ## Output
 
@@ -107,14 +108,14 @@ Results are written to `output_dir` (default: `outputs/eval/<date>/<time>_<job_n
 
 ### Metrics
 
-| Metric | Description |
-|---|---|
-| `pc_success` | Success rate (%). Based on `info["is_success"]` from the environment |
-| `avg_sum_reward` | Mean cumulative reward per episode |
-| `avg_max_reward` | Mean peak reward per episode |
-| `n_episodes` | Total episodes evaluated |
-| `eval_s` | Total wall-clock time |
-| `eval_ep_s` | Mean wall-clock time per episode |
+| Metric           | Description                                                          |
+| ---------------- | -------------------------------------------------------------------- |
+| `pc_success`     | Success rate (%). Based on `info["is_success"]` from the environment |
+| `avg_sum_reward` | Mean cumulative reward per episode                                   |
+| `avg_max_reward` | Mean peak reward per episode                                         |
+| `n_episodes`     | Total episodes evaluated                                             |
+| `eval_s`         | Total wall-clock time                                                |
+| `eval_ep_s`      | Mean wall-clock time per episode                                     |
 
 ## Multi-task evaluation
 
