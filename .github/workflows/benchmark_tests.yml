@@ -106,6 +106,7 @@ jobs:
             --shm-size=4g \
             -e HF_HOME=/tmp/hf \
             -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
+            -e HF_HUB_DOWNLOAD_TIMEOUT=300 \
             lerobot-benchmark-libero:ci \
             bash -c "
               hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
@@ -158,6 +159,7 @@ jobs:
             --shm-size=4g \
             -e HF_HOME=/tmp/hf \
             -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
+            -e HF_HUB_DOWNLOAD_TIMEOUT=300 \
             lerobot-benchmark-metaworld:ci \
             bash -c "
               hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
@@ -168,6 +170,7 @@ jobs:
                 --eval.batch_size=1 \
                 --eval.n_episodes=1 \
                 --eval.use_async_envs=false \
-                --policy.device=cuda
-                # TODO: add --env.rename_map once implemented
+                --policy.device=cuda \
+                '--rename_map={\"observation.image\": \"observation.images.camera1\"}' \
+                --policy.empty_cameras=2
             "
