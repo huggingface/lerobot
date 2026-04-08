@@ -1,3 +1,5 @@
+这是 rnc 的第一次 PR 模拟演习，冲冲冲！
+
 <p align="center">
   <img alt="LeRobot, Hugging Face Robotics Library" src="./media/readme/lerobot-logo-thumbnail.png" width="100%">
 </p>
