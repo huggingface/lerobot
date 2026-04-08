@@ -3,27 +3,18 @@ name: Claude Code Review
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
-    # Optional: Only run on specific file changes
-    # paths:
-    #   - "src/**/*.ts"
-    #   - "src/**/*.tsx"
-    #   - "src/**/*.js"
-    #   - "src/**/*.jsx"
 
 jobs:
   claude-review:
-    # Optional: Filter by PR author
-    # if: |
-    #   github.event.pull_request.user.login == 'external-contributor' ||
-    #   github.event.pull_request.user.login == 'new-developer' ||
-    #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
-
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: write
       issues: read
       id-token: write
+      actions: read
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout repository
@@ -37,8 +28,20 @@ jobs:
         uses: anthropics/claude-code-action@26ddc358fe3befff50c5ec2f80304c90c763f6f8 # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
-          plugins: 'code-review@claude-code-plugins'
-          prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
+          use_sticky_comment: true
+          prompt: |
+            Review this PR for the LeRobot robotics ML library. Provide structured, actionable feedback.
+
+            Focus areas (in priority order):
+            1. **Correctness**: Logic errors, off-by-ones, wrong tensor shapes, incorrect loss functions
+            2. **Type safety**: All new/modified Python code must pass `mypy --strict`; check for missing annotations
+            3. **Backwards compatibility**: Does this break `LeRobotDataset`, `Policy`, `Robot`, `Teleoperator`, or `Env` public APIs?
+            4. **Tests**: New features must have tests; no silent behavioral changes
+            5. **Code style**: Explicit over magic, minimal LOC, no unnecessary abstractions, no decorative comments
+            6. **HF integration**: Dataset streaming, `push_to_hub`, HF Hub compatibility preserved?
+            7. **pre-commit**: Would `pre-commit run -a` pass? (ruff, mypy, typos, zizmor)
+
+            Format findings as P1 (must fix) / P2 (should fix) / P3 (nice to have).
+            Skip P3 if the PR is already high quality.
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
