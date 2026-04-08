@@ -30,14 +30,15 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           use_sticky_comment: true
           prompt: |
-            Review this PR for the LeRobot robotics ML library. Provide structured, actionable feedback.
+            Read `.github/CLAUDE.md` for lerobot-specific conventions, then review this PR.
+            Provide structured, actionable feedback.
 
             Focus areas (in priority order):
             1. **Correctness**: Logic errors, off-by-ones, wrong tensor shapes, incorrect loss functions
             2. **Type safety**: All new/modified Python code must pass `mypy --strict`; check for missing annotations
-            3. **Backwards compatibility**: Does this break `LeRobotDataset`, `Policy`, `Robot`, `Teleoperator`, or `Env` public APIs?
+            3. **Backwards compatibility**: Does this break `LeRobotDataset`, `Policy`, `Robot`, `Teleoperator`, `Env`, or `Processor` public APIs?
             4. **Tests**: New features must have tests; no silent behavioral changes
-            5. **Code style**: Explicit over magic, minimal LOC, no unnecessary abstractions, no decorative comments
+            5. **Code style**: Explicit over magic, no unnecessary abstractions, no decorative comments
             6. **HF integration**: Dataset streaming, `push_to_hub`, HF Hub compatibility preserved?
             7. **pre-commit**: Would `pre-commit run -a` pass? (ruff, mypy, typos, zizmor)
 

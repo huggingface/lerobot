@@ -53,7 +53,6 @@ jobs:
           additional_permissions: |
             actions: read
 
-          # Optional: Add claude_args to customize behavior and configuration
+          claude_args: '--system-prompt "Read .github/CLAUDE.md for lerobot-specific conventions before responding."'
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
-          # claude_args: '--allowed-tools Bash(gh pr:*)'
