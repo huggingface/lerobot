@@ -65,7 +65,7 @@ RUN uv venv --python python${PYTHON_VERSION}
 COPY --chown=user_lerobot:user_lerobot setup.py pyproject.toml uv.lock README.md MANIFEST.in ./
 COPY --chown=user_lerobot:user_lerobot src/ src/
 
-RUN uv sync --locked --extra libero --no-cache
+RUN uv sync --locked --extra libero --extra smolvla --no-cache
 
 # Pre-create libero's config file pointing to the bundled package assets.
 # libero/libero/__init__.py calls input() when ~/.libero/config.yaml is missing.
