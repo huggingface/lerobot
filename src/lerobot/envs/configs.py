@@ -109,12 +109,17 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         def _make_one():
             return gym.make(self.gym_id, disable_env_checker=self.disable_env_checker, **self.gym_kwargs)
 
+        extra_kwargs: dict = {}
+        if env_cls is gym.vector.AsyncVectorEnv:
+            extra_kwargs["context"] = "forkserver"
         try:
             from gymnasium.vector import AutoresetMode
 
-            vec = env_cls([_make_one for _ in range(n_envs)], autoreset_mode=AutoresetMode.SAME_STEP)
+            vec = env_cls(
+                [_make_one for _ in range(n_envs)], autoreset_mode=AutoresetMode.SAME_STEP, **extra_kwargs
+            )
         except ImportError:
-            vec = env_cls([_make_one for _ in range(n_envs)])
+            vec = env_cls([_make_one for _ in range(n_envs)], **extra_kwargs)
         return {self.type: {0: vec}}
 
     def get_env_processors(self):
