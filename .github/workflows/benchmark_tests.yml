@@ -14,7 +14,7 @@
 
 # Integration tests: build an isolated Docker image per benchmark and run a
 # 1-episode smoke eval. Each benchmark gets its own image so incompatible
-# dependency trees (e.g. hf-libero vs metaworld==3.0.0) can never collide.
+# dependency trees (e.g. hf-libero vs metaworld==3.0.0 vs mani-skill) can never collide.
 #
 # To add a new benchmark:
 #   1. Add docker/Dockerfile.benchmark.<name>  (install only lerobot[<name>])
@@ -246,4 +246,94 @@ jobs:
         with:
           name: metaworld-metrics
           path: /tmp/metaworld-artifacts/metrics.json
+          if-no-files-found: warn
+
+  # ── ROBOMME ───────────────────────────────────────────────────────────────
+  # Isolated image: lerobot[robomme] only (mani-skill, SAPIEN, Vulkan chain)
+  # Note: robomme is a git dep (not in uv.lock) — image uses uv sync without --locked.
+  # Note: mani-skill pins gymnasium==0.29.1 + numpy<2.0.0; Dockerfile overrides post-install.
+  # TODO: update --policy.path once a robomme-trained policy is published on the Hub.
+  robomme-integration-test:
+    name: RoboMME — build image + 1-episode eval
+    runs-on:
+      group: aws-g6-4xlarge-plus
+    env:
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          lfs: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          cache-binary: false
+
+      - name: Build RoboMME benchmark image
+        uses: docker/build-push-action@v6 # zizmor: ignore[unpinned-uses]
+        with:
+          context: .
+          file: docker/Dockerfile.benchmark.robomme
+          push: false
+          load: true
+          tags: lerobot-benchmark-robomme:ci
+          cache-from: type=local,src=/tmp/.buildx-cache-robomme
+          cache-to: type=local,dest=/tmp/.buildx-cache-robomme,mode=max
+
+      - name: Run RoboMME smoke eval (1 episode)
+        run: |
+          # Named container (no --rm) so we can docker cp artifacts out.
+          # Output to /tmp — user_lerobot cannot write to root-level dirs.
+          docker run --name robomme-eval --gpus all \
+            --shm-size=4g \
+            -e HF_HOME=/tmp/hf \
+            -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
+            -e HF_HUB_DOWNLOAD_TIMEOUT=300 \
+            lerobot-benchmark-robomme:ci \
+            bash -c "
+              hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
+              lerobot-eval \
+                --policy.path=pepijn223/smolvla_robomme \
+                --env.type=robomme \
+                --env.task=PickXtimes \
+                --env.dataset_split=test \
+                --eval.batch_size=1 \
+                --eval.n_episodes=1 \
+                --eval.use_async_envs=false \
+                --policy.device=cuda \
+                --output_dir=/tmp/eval-artifacts
+            "
+
+      - name: Copy RoboMME artifacts from container
+        if: always()
+        run: |
+          mkdir -p /tmp/robomme-artifacts
+          docker cp robomme-eval:/tmp/eval-artifacts/. /tmp/robomme-artifacts/ 2>/dev/null || true
+          docker rm -f robomme-eval || true
+
+      - name: Parse RoboMME eval metrics
+        if: always()
+        run: |
+          python3 scripts/ci/parse_eval_metrics.py \
+            --artifacts-dir /tmp/robomme-artifacts \
+            --env robomme \
+            --task PickXtimes \
+            --policy pepijn223/smolvla_robomme
+
+      - name: Upload RoboMME rollout video
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: robomme-rollout-video
+          path: /tmp/robomme-artifacts/videos/
+          if-no-files-found: warn
+
+      - name: Upload RoboMME eval metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: robomme-metrics
+          path: /tmp/robomme-artifacts/metrics.json
           if-no-files-found: warn

@@ -1,0 +1,95 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Isolated benchmark image for RoboMME integration tests.
+# Installs only lerobot[robomme] so its dep tree (mani-skill, SAPIEN, robomme)
+# cannot conflict with other benchmarks.
+#
+# Key differences vs libero/metaworld:
+#   - Vulkan ICD loader required (ManiSkill/SAPIEN renderer)
+#   - uv sync without --locked (robomme is a git dep, not in uv.lock)
+#   - gymnasium==0.29.1 + numpy==1.26.4 overridden post-install (mani-skill pins)
+#
+# Build:  docker build -f docker/Dockerfile.benchmark.robomme -t lerobot-benchmark-robomme .
+# Run:    docker run --gpus all --rm lerobot-benchmark-robomme lerobot-eval ...
+
+ARG CUDA_VERSION=12.4.1
+ARG OS_VERSION=22.04
+FROM nvidia/cuda:${CUDA_VERSION}-base-ubuntu${OS_VERSION}
+
+ARG PYTHON_VERSION=3.12
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PATH=/lerobot/.venv/bin:$PATH \
+    CUDA_VISIBLE_DEVICES=0 \
+    DEVICE=cuda \
+    # ManiSkill uses Vulkan; set ICD path for headless GPU rendering
+    VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
+
+# System deps — same base as Dockerfile.internal, plus Vulkan loader for ManiSkill/SAPIEN
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common build-essential git curl \
+    libglib2.0-0 libgl1-mesa-glx libegl1-mesa ffmpeg \
+    libusb-1.0-0-dev speech-dispatcher libgeos-dev portaudio19-dev \
+    cmake pkg-config ninja-build \
+    # Vulkan: required by ManiSkill/SAPIEN renderer
+    libvulkan1 \
+    vulkan-tools \
+    libvulkan-dev \
+    mesa-vulkan-drivers \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+       python${PYTHON_VERSION} \
+       python${PYTHON_VERSION}-venv \
+       python${PYTHON_VERSION}-dev \
+    && curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && mv /root/.local/bin/uv /usr/local/bin/uv \
+    && useradd --create-home --shell /bin/bash user_lerobot \
+    && usermod -aG sudo user_lerobot \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /lerobot
+RUN chown -R user_lerobot:user_lerobot /lerobot
+USER user_lerobot
+
+ENV HOME=/home/user_lerobot \
+    HF_HOME=/home/user_lerobot/.cache/huggingface \
+    HF_LEROBOT_HOME=/home/user_lerobot/.cache/huggingface/lerobot \
+    TORCH_HOME=/home/user_lerobot/.cache/torch \
+    TRITON_CACHE_DIR=/home/user_lerobot/.cache/triton
+
+RUN uv venv --python python${PYTHON_VERSION}
+
+# Install only lerobot[robomme] — completely isolated from libero/metaworld dep trees.
+# Note: --locked is intentionally omitted because robomme is a git dep and is not
+# pinned in uv.lock; the install is still reproducible via the pinned git URL.
+COPY --chown=user_lerobot:user_lerobot setup.py pyproject.toml uv.lock README.md MANIFEST.in ./
+COPY --chown=user_lerobot:user_lerobot src/ src/
+
+RUN uv sync --extra robomme --no-cache
+
+# mani-skill (robomme dep) pins gymnasium==0.29.1 and numpy<2.0.0.
+# These conflict with lerobot's defaults but are safe to override at runtime:
+#   - gymnasium 0.29.x has the same 5-tuple step() API as 1.x (since gym 0.26)
+#   - numpy 1.26.4 is API-compatible with lerobot's actual usage
+RUN printf 'gymnasium==0.29.1\nnumpy==1.26.4\n' > /tmp/robomme_override.txt \
+    && uv pip install --no-cache --override /tmp/robomme_override.txt ".[robomme]" \
+    && python -c "import robomme; print('robomme import OK')"
+
+RUN chmod +x /lerobot/.venv/lib/python${PYTHON_VERSION}/site-packages/triton/backends/nvidia/bin/ptxas
+
+COPY --chown=user_lerobot:user_lerobot . .
+
+CMD ["/bin/bash"]

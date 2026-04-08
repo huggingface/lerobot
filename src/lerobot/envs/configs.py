@@ -537,7 +537,7 @@ class RoboMMEEnv(EnvConfig):
     def create_envs(self, n_envs: int, use_async_envs: bool = True):
         from lerobot.envs.robomme import create_robomme_envs
 
-        env_cls = gym.vector.AsyncVectorEnv if (use_async_envs and n_envs > 1) else gym.vector.SyncVectorEnv
+        env_cls = _make_vec_env_cls(use_async_envs, n_envs)
         return create_robomme_envs(
             task=self.task,
             n_envs=n_envs,
