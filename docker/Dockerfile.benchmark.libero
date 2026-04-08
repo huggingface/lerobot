@@ -67,15 +67,19 @@ COPY --chown=user_lerobot:user_lerobot src/ src/
 
 RUN uv sync --locked --extra libero --extra smolvla --no-cache
 
-# Pre-create libero's config file pointing to the bundled package assets.
-# libero/libero/__init__.py calls input() when ~/.libero/config.yaml is missing.
-# We use importlib.util.find_spec (does NOT execute libero, so no prompt) to locate
-# the package, then write the config to the correct bundled paths.
+# Pre-download lerobot/libero-assets from HF Hub so nothing is fetched at
+# runtime (which times out on CI). Point the libero config at the cached path.
+# libero/libero/__init__.py calls input() when ~/.libero/config.yaml is missing,
+# so we write the config before any libero import can happen.
 RUN LIBERO_DIR=$(python${PYTHON_VERSION} -c \
       "import importlib.util, os; s=importlib.util.find_spec('libero'); \
        print(os.path.join(os.path.dirname(s.origin), 'libero'))") && \
     mkdir -p /home/user_lerobot/.libero && \
-    printf "assets: ${LIBERO_DIR}/assets\nbddl_files: ${LIBERO_DIR}/bddl_files\ndatasets: ${LIBERO_DIR}/../datasets\ninit_states: ${LIBERO_DIR}/init_files\n" \
+    python${PYTHON_VERSION} -c "\
+from huggingface_hub import snapshot_download; \
+snapshot_download(repo_id='lerobot/libero-assets', repo_type='dataset', \
+                  local_dir='/home/user_lerobot/.libero/assets')" && \
+    printf "assets: /home/user_lerobot/.libero/assets\nbddl_files: ${LIBERO_DIR}/bddl_files\ndatasets: ${LIBERO_DIR}/../datasets\ninit_states: ${LIBERO_DIR}/init_files\n" \
     > /home/user_lerobot/.libero/config.yaml
 
 RUN chmod +x /lerobot/.venv/lib/python${PYTHON_VERSION}/site-packages/triton/backends/nvidia/bin/ptxas
