@@ -16,6 +16,7 @@ These are the load-bearing types. Handle them with care — breaking changes her
 | `Robot`          | `src/lerobot/robots/`        | Hardware abstraction; carries `_output_pipeline`             |
 | `Teleoperator`   | `src/lerobot/teleoperators/` | Leader-side hardware abstraction; carries `_output_pipeline` |
 | `Env`            | `src/lerobot/envs/`          | Gym-like robotics environments                               |
+| `Processor`      | `src/lerobot/processor/`     | Data transformation pipelines attached to robots/teleops     |
 
 **Never break their public APIs without a migration note and explicit user approval.**
 
