@@ -43,5 +43,6 @@ jobs:
 
             Format findings as P1 (must fix) / P2 (should fix) / P3 (nice to have).
             Skip P3 if the PR is already high quality.
+          claude_args: '--model claude-opus-4-6'
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
