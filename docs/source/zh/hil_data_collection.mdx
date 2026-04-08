@@ -1,87 +1,87 @@
-# Human-In-the-Loop Data Collection
+# 人在迴圈中的資料收集
 
-Human-In-the-Loop (HIL) data collection lets you improve a trained policy by deploying it on a real robot while a human operator monitors and intervenes when needed. The intervention data (recovery movements and corrections) is recorded alongside autonomous segments, producing a richer training dataset that teaches the policy how to handle failures.
-
----
-
-## Why Human-In-the-Loop?
-
-Standard behavioral cloning trains policies on successful demonstrations only. During deployment, small errors can compound and push the robot into states never seen during training (distribution shift). HIL data collection addresses this by:
-
-- Running the trained policy on the real robot
-- Having a human intervene when the robot is about to fail
-- Recording the human's recovery and correction as training data
-- Fine-tuning the policy on the combined dataset
-
-This produces a policy that not only knows how to perform the task, but also how to recover when things go wrong.
+人在迴圈中（Human-In-the-Loop, HIL）的資料收集讓您能透過將已訓練的策略部署到真實機器人上，同時由人類操作員監控並在需要時介入，來改進該策略。介入資料（恢復動作與修正動作）會與自主運行片段一併記錄，產生更豐富的訓練資料集，教導策略如何處理失敗情況。
 
 ---
 
-## How It Works
+## 為什麼需要人在迴圈中的機制？
 
-During a HIL session, the human operator follows this loop within each episode:
+標準的行為複製僅在成功的示範上訓練策略。在部署期間，微小的誤差可能會不斷累積，將機器人推入訓練期間從未見過的狀態（分佈偏移）。HIL 資料收集透過以下方式解決此問題：
 
-1. **Watch** the policy run autonomously
-2. **Pause** when failure is imminent, the robot holds its position
-3. **Take control** and teleoperate the robot back to a good state (recovery), then correct the behavior
-4. **Return control to the policy**, the policy resumes autonomous execution
-5. Repeat steps 2–4 as many times as needed during the episode
-6. **End the episode** when the task is complete, save and move on to the next rollout
+- 在真實機器人上執行已訓練的策略
+- 當機器人即將失敗時由人為介入
+- 將人為的恢復與修正動作記錄為訓練資料
+- 使用合併的資料集微調策略
 
-Both autonomous and human-controlled segments are recorded. The policy and human can alternate control multiple times within a single episode, and the episode continues from the current state after each handoff (no reset required just because intervention happened). This captures autonomous execution, recovery, and correction in one continuous trajectory. After collection, the combined dataset (original demonstrations + HIL data) is used to fine-tune the policy.
+這將產生一個不僅知道如何執行任務，還知道如何在出錯時恢復的策略。
 
-This process can be repeated iteratively: deploy, collect, fine-tune, repeat. Each round targets the current policy's failure modes.
+---
+
+## 運作方式
+
+在 HIL 進行期間，人類操作員在每個回合中遵循以下循環：
+
+1. **觀察**策略自主運行
+2. 當即將發生失敗時**暫停**，機器人保持當前位置
+3. **接管控制**並遙控操作機器人回到良好狀態（恢復），然後修正行為
+4. **將控制權交還給策略**，策略恢復自主執行
+5. 在回合內根據需要重複步驟 2–4 任意次數
+6. 當任務完成時**結束回合**，儲存並進入下一個推演
+
+自主與人為控制的片段都會被記錄。策略和人類可以在單一回合內多次交替控制，每次交接後回合會從當前狀態繼續（不需要因為發生介入而重置）。這在一條連續軌跡中捕捉了自主執行、恢復和修正。收集完成後，合併的資料集（原始示範 + HIL 資料）用於微調策略。
+
+此過程可以迭代重複：部署、收集、微調、再重複。每一輪針對當前策略的失敗模式。
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  Policy v0 (trained on demos)                                           │
+│  策略 v0（在示範上訓練）                                                   │
 │       ↓                                                                 │
-│  HIL Collection (target current failure modes) → Fine-tune → Policy v1  │
+│  HIL 收集（針對當前失敗模式）→ 微調 → 策略 v1                                │
 │       ↓                                                                 │
-│  HIL Collection (target new failure modes) → Fine-tune → Policy v2      │
+│  HIL 收集（針對新的失敗模式）→ 微調 → 策略 v2                                │
 │       ↓                                                                 │
-│  ... (repeat until satisfactory performance)                            │
+│  ...（重複直到效能令人滿意）                                                │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Hardware Requirements
+## 硬體需求
 
-### Teleoperator Requirements
+### 遙操作器需求
 
-The `examples/hil` HIL scripts require **teleoperators with active motors** that can:
+`examples/hil` 中的 HIL 腳本需要**具有主動馬達的遙操作器**，能夠：
 
-- Enable/disable torque programmatically
-- Move to target positions (to mirror the robot state when pausing)
+- 以程式方式啟用/停用扭力
+- 移動到目標位置（在暫停時鏡像機器人狀態）
 
-**Compatible teleoperators in the current `examples/hil` scripts:**
+**當前 `examples/hil` 腳本中相容的遙操作器：**
 
 - `openarm_mini` - OpenArm Mini
-- `so_leader` - SO100 / SO101 leader arm
+- `so_leader` - SO100 / SO101 的領導臂
 
 > [!IMPORTANT]
-> The provided `examples/hil` commands default to `bi_openarm_follower` + `openarm_mini`.
-> `so_follower` + `so_leader` configs are also registered and can be used via CLI flags.
+> 提供的 `examples/hil` 指令預設使用 `bi_openarm_follower` + `openarm_mini`。
+> `so_follower` + `so_leader` 的配置也已註冊，可透過 CLI flags 使用。
 
 ---
 
-## Script
+## 腳本
 
-A single script handles both synchronous and RTC-based inference. Toggle RTC with `--rtc.enabled=true`:
+單一腳本可同時處理同步與 RTC 推論。透過 `--rtc.enabled=true` 切換 RTC：
 
-| Mode                     | Flag                 | Models                |
-| ------------------------ | -------------------- | --------------------- |
-| Standard (default)       | _(no flag needed)_   | ACT, Diffusion Policy |
-| Real-Time Chunking (RTC) | `--rtc.enabled=true` | Pi0, Pi0.5, SmolVLA   |
+| 模式            | 旗標                 | 模型                  |
+| --------------- | -------------------- | --------------------- |
+| 標準（預設）    | _（不需要旗標）_     | ACT、Diffusion Policy |
+| 即時分塊（RTC） | `--rtc.enabled=true` | Pi0、Pi0.5、SmolVLA   |
 
 ---
 
-## Step-by-Step Guide
+## 逐步指南
 
-### Step 1: Pre-train a Base Policy
+### 步驟 1：預訓練基礎策略
 
-First, train a policy on your demonstration dataset:
+首先，在您的示範資料集上訓練策略：
 
 ```bash
 python src/lerobot/scripts/lerobot_train.py \
@@ -92,9 +92,9 @@ python src/lerobot/scripts/lerobot_train.py \
     --steps=50000
 ```
 
-### Step 2: Collect HIL Data
+### 步驟 2：收集 HIL 資料
 
-**Standard inference (ACT, Diffusion Policy):**
+**標準推論（ACT、Diffusion Policy）：**
 
 ```bash
 python examples/hil/hil_data_collection.py \
@@ -116,9 +116,9 @@ python examples/hil/hil_data_collection.py \
     --interpolation_multiplier=2
 ```
 
-**With RTC for large models (Pi0, Pi0.5, SmolVLA):**
+**搭配 RTC 用於大型模型（Pi0、Pi0.5、SmolVLA）：**
 
-For models with high inference latency, enable RTC for smooth execution:
+對於推論延遲較高的模型，啟用 RTC 以實現流暢執行：
 
 ```bash
 python examples/hil/hil_data_collection.py \
@@ -144,47 +144,47 @@ python examples/hil/hil_data_collection.py \
     --interpolation_multiplier=3
 ```
 
-**Controls (Conceptual):**
+**操控方式（概念說明）：**
 
-The interaction model is:
+互動模式如下：
 
-- **Pause input**: pause autonomous policy execution
-- **Takeover input**: transfer control to the human operator and record intervention data
-- **Return-to-policy input**: hand control back to the policy and continue the same episode
-- **Episode control inputs**: save/re-record/stop/reset as needed
+- **暫停輸入**：暫停自主策略執行
+- **接管輸入**：將控制權轉移給人類操作員並記錄介入資料
+- **交還策略輸入**：將控制權交還給策略並繼續同一回合
+- **回合控制輸入**：根據需要儲存/重新錄製/停止/重置
 
-Exact key/pedal bindings can differ across scripts and hardware integrations. Use each script's printed controls as the source of truth for the concrete mapping on your setup.
+實際的按鍵/踏板對應可能因腳本和硬體整合而異。請以每個腳本印出的操控說明作為您設定上具體對應關係的依據。
 
-**The HIL Protocol:**
+HIL 協定：
 
-1. Watch the policy run autonomously (teleop is idle/free)
-2. When you see imminent failure, trigger the **pause input**
-   - Policy stops
-   - Teleoperator moves to match robot position (torque enabled)
-   - No frames recorded during pause
-3. Trigger the **takeover input** to take control
-   - Teleoperator torque disabled, free to move
-   - **Recovery**: Teleoperate the robot back to a good state
-   - **Correction**: Correct the behavior
-   - All movements are recorded
-4. Trigger the **return-to-policy input**
-   - Policy resumes autonomous execution from the current state
-   - You can intervene again at any time (repeat steps 2–4)
-5. End and save the episode when the task is complete (or episode time limit is reached)
-6. **Reset**: Teleop moves to robot position, you can move the robot to the starting position
-7. Start the next episode
+1. 觀察策略自主運行（遙操作器處於閒置/自由狀態）
+2. 當您看到即將發生失敗時，觸發**暫停輸入**
+   - 策略停止
+   - 遙操作器移動以匹配機器人位置（扭力啟用）
+   - 暫停期間不記錄影格
+3. 觸發**接管輸入**以接管控制
+   - 遙操作器扭力停用，可自由移動
+   - **恢復**：遙控操作機器人回到良好狀態
+   - **修正**：修正行為
+   - 所有動作都會被記錄
+4. 觸發**交還策略輸入**
+   - 策略從當前狀態恢復自主執行
+   - 您可以隨時再次介入（重複步驟 2–4）
+5. 當任務完成時結束並儲存回合（或達到回合時間限制）
+6. **重置**：遙操作器移動到機器人位置，您可以將機器人移動到起始位置
+7. 開始下一個回合
 
-**Foot Pedal Setup (Linux):**
+**腳踏板設定（Linux）：**
 
-If using a USB foot pedal (PCsensor FootSwitch), ensure access:
+如果使用 USB 腳踏板（PCsensor FootSwitch），請確保存取權限：
 
 ```bash
 sudo setfacl -m u:$USER:rw /dev/input/by-id/usb-PCsensor_FootSwitch-event-kbd
 ```
 
-### Step 3: Fine-tune the Policy
+### 步驟 3：微調策略
 
-Fine-tune on the **combined** dataset (`demo-dataset` + `hil-dataset` merged together):
+在**合併的**資料集（`demo-dataset` + `hil-dataset` 合併在一起）上進行微調：
 
 ```bash
 python src/lerobot/scripts/lerobot_train.py \
@@ -195,49 +195,50 @@ python src/lerobot/scripts/lerobot_train.py \
     --steps=20000
 ```
 
-Then deploy the fine-tuned policy and repeat from Step 2 to target its remaining failure modes.
+然後部署微調後的策略，從步驟 2 重新開始，針對其剩餘的失敗模式進行改進。
 
 ---
 
-## Tips for Effective HIL Collection
+## 有效 HIL 收集的技巧
 
-### When to Intervene
+### 何時介入
 
-Intervene when you see:
+當您觀察到以下情況時介入：
 
-- Robot about to make an irreversible mistake
-- Robot hesitating or showing uncertain behavior
-- Robot deviating from the expected trajectory
+機器人即將犯下不可逆的錯誤
 
-### Recovery: Teleoperating Back to a Good State
+- 機器人猶豫不決或表現出不確定的行為
+- 機器人偏離預期軌跡
 
-During recovery, teleoperate the robot back to a state where:
+恢復：遙操作回到良好狀態
 
-- The robot is in a familiar, in-distribution configuration
-- The current subtask can still be completed
-- The recovery trajectory itself is informative training data
+在恢復階段，遙操作機器人回到以下狀態：
 
-### Quality of Corrections
+- 機器人處於熟悉的、分佈內的配置
+- 當前子任務仍然可以完成
+- 恢復軌跡本身就是有資訊量的訓練資料
 
-During correction:
+### 修正的品質
 
-- Provide **confident, clean** trajectories
-- Complete the current subtask fully
-- Don't overcorrect or add unnecessary movements
+在修正階段：
+
+- 提供**自信、乾淨的**軌跡
+- 完整地完成當前子任務
+- 不要過度修正或添加不必要的動作
 
 ---
 
-## Related Work
+## 相關工作
 
-This HIL data collection approach builds on ideas from interactive imitation learning:
+此 HIL 資料收集方法建立在互動式模仿學習的理念之上：
 
-- **DAgger** (Ross et al., 2011) introduced the core idea: instead of only training on expert demonstrations, query the expert for corrections on states the _learner_ visits. This breaks the compounding-error cycle of standard behavioral cloning by iteratively collecting on-policy data.
+- **DAgger** (Ross et al., 2011) 引入了核心理念：不只在專家示範上訓練，而是在學習者所造訪的狀態上查詢專家的修正。這透過迭代收集 on-policy資料，打破了標準行為複製的累積誤差循環。
 
-- **HG-DAgger** (Kelly et al., 2019) made this practical for robotics: a human expert monitors the robot and only intervenes when needed, rather than labeling every state. The gating between autonomous and human control is exactly the pause → takeover → return-to-policy loop used in the scripts here.
+- **HG-DAgger** (Kelly et al., 2019) 使其在機器人領域變得實用：人類專家監控機器人，僅在需要時介入，而非標註每一個狀態。自主與人類控制之間的切換正是此處腳本所使用的暫停 → 接管 → 交還策略循環。
 
-- **RaC** (Hu et al., 2025) scales this loop to long-horizon tasks by explicitly decomposing interventions into **recovery** (teleoperating back to a good state) and **correction** (demonstrating the right behavior from there). This decomposition is the protocol followed by the HIL scripts in `examples/hil`.
+- **RaC** (Hu et al., 2025) 透過將介入明確分解為**恢復**（遙控操作回到良好狀態）和**修正**（從該處示範正確行為），將此循環擴展至長期任務。此分解方式即為 `examples/hil` 中 HIL 腳本所遵循的協定。
 
-- **π0.6/RECAP** (Physical Intelligence, 2025) applies the same iterative collect-and-finetune loop at scale with VLA models, showing that even large pretrained policies benefit substantially from targeted human corrections on their own failure modes. π0.6 is trained using RECAP.
+- **π0.6/RECAP** (Physical Intelligence, 2025) 將相同的迭代收集與微調循環大規模應用於 VLA 模型，展示即使是大型預訓練策略也能從針對自身失敗模式的人類修正中獲得顯著改善。π0.6 使用 RECAP 進行訓練。
 
 ```bibtex
 @article{ross2011dagger,
