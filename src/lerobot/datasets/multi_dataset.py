@@ -89,12 +89,24 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                 )
                 self.disabled_features.update(extra_keys)
 
-        self.image_transforms = image_transforms
         self.delta_timestamps = delta_timestamps
         # TODO(rcadene, aliberts): We should not perform this aggregation for datasets
         # with multiple robots of different ranges. Instead we should have one normalization
         # per robot.
         self.stats = aggregate_stats([dataset.meta.stats for dataset in self._datasets])
+        self.set_image_transforms(image_transforms)
+
+    def set_image_transforms(self, image_transforms: Callable | None) -> None:
+        """Replace the transform for this dataset and its children."""
+        if image_transforms is not None and not callable(image_transforms):
+            raise TypeError("image_transforms must be callable or None.")
+        self.image_transforms = image_transforms
+        for dataset in getattr(self, "_datasets", []):
+            dataset.set_image_transforms(self.image_transforms)
+
+    def clear_image_transforms(self) -> None:
+        """Remove the transform from this dataset and its children."""
+        self.set_image_transforms(None)
 
     @property
     def repo_id_to_index(self):

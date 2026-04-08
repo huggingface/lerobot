@@ -201,6 +201,11 @@ def rollout(
                     "You're likely using an older version of gymnasium (< 1.0). Please upgrade."
                 )
             successes = final_info["is_success"].tolist()
+        elif "is_success" in info:
+            is_success = info["is_success"]
+            successes = (
+                is_success.tolist() if hasattr(is_success, "tolist") else [bool(is_success)] * env.num_envs
+            )
         else:
             successes = [False] * env.num_envs
 
