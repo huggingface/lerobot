@@ -90,11 +90,17 @@ The same policy can work with different environment processors, and the same env
 
 ```python
 # Use SmolVLA policy with LIBERO environment
-libero_preprocessor, libero_postprocessor = make_env_pre_post_processors(libero_cfg)
+# Use SmolVLA policy with LIBERO environment
+libero_preprocessor, libero_postprocessor = make_env_pre_post_processors(
+    env_cfg=libero_cfg,
+    policy_cfg=smolvla_cfg,
+)
 smolvla_preprocessor, smolvla_postprocessor = make_pre_post_processors(smolvla_cfg)
-
 # Or use ACT policy with the same LIBERO environment
-libero_preprocessor, libero_postprocessor = make_env_pre_post_processors(libero_cfg)
+libero_preprocessor, libero_postprocessor = make_env_pre_post_processors(
+    env_cfg=libero_cfg,
+    policy_cfg=act_cfg,
+)
 act_preprocessor, act_postprocessor = make_pre_post_processors(act_cfg)
 ```
 
@@ -322,6 +328,22 @@ class MyEnvConfig(EnvConfig):
     def get_env_processors(self):
         from lerobot.processor.pipeline import PolicyProcessorPipeline
 
+        return (
+            PolicyProcessorPipeline(steps=[MyEnvProcessorStep()]),
+            PolicyProcessorPipeline(steps=[]),
+        )
+```
+
+### 2. Update Your `EnvConfig` Subclass
+
+```python
+# In src/lerobot/envs/configs.py
+@EnvConfig.register_subclass("myenv")
+@dataclass
+class MyEnvConfig(EnvConfig):
+    # ... task/features/gym kwargs ...
+    def get_env_processors(self):
+        from lerobot.processor.pipeline import PolicyProcessorPipeline
         return (
             PolicyProcessorPipeline(steps=[MyEnvProcessorStep()]),
             PolicyProcessorPipeline(steps=[]),
