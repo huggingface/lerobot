@@ -102,7 +102,7 @@ jobs:
 
       - name: Run Libero smoke eval (1 episode)
         run: |
-          mkdir -p /tmp/libero-artifacts
+          mkdir -p /tmp/libero-artifacts && chmod 777 /tmp/libero-artifacts
           docker run --rm --gpus all \
             --shm-size=4g \
             -e HF_HOME=/tmp/hf \
@@ -166,7 +166,7 @@ jobs:
 
       - name: Run MetaWorld smoke eval (1 episode)
         run: |
-          mkdir -p /tmp/metaworld-artifacts
+          mkdir -p /tmp/metaworld-artifacts && chmod 777 /tmp/metaworld-artifacts
           docker run --rm --gpus all \
             --shm-size=4g \
             -e HF_HOME=/tmp/hf \
