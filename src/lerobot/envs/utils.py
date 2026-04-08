@@ -29,7 +29,6 @@ from torch import Tensor
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.envs.configs import EnvConfig
-from lerobot.types import RobotObservation
 from lerobot.utils.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, OBS_STR
 from lerobot.utils.utils import get_channel_first_image_shape
 
@@ -204,28 +203,6 @@ def check_env_attributes_and_types(env: gym.vector.VectorEnv) -> None:
                 UserWarning,
                 stacklevel=2,
             )
-
-
-def add_envs_task(env: gym.vector.VectorEnv, observation: RobotObservation) -> RobotObservation:
-    """Adds task feature to the observation dict with respect to the first environment attribute."""
-    if _sub_env_has_attr(env, "task_description"):
-        task_result = list(env.call("task_description"))
-
-        if not all(isinstance(item, str) for item in task_result):
-            raise TypeError("All items in task_description result must be strings")
-
-        observation["task"] = task_result
-    elif _sub_env_has_attr(env, "task"):
-        task_result = list(env.call("task"))
-
-        if not all(isinstance(item, str) for item in task_result):
-            raise TypeError("All items in task result must be strings")
-
-        observation["task"] = task_result
-    else:
-        num_envs = observation[list(observation.keys())[0]].shape[0]
-        observation["task"] = ["" for _ in range(num_envs)]
-    return observation
 
 
 def _close_single_env(env: Any) -> None:
