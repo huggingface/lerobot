@@ -69,23 +69,10 @@ RUN uv sync --locked --extra libero --no-cache
 
 # Pre-create libero's config file so it never prompts for a dataset path at runtime.
 # libero/libero/__init__.py calls input() when ~/.libero/config.yaml is missing.
-# We replicate what get_default_path_dict() would write, without importing libero.
-RUN python${PYTHON_VERSION} -c "
-import os, yaml, importlib.util
-spec = importlib.util.find_spec('libero')
-pkg_dir = os.path.dirname(spec.origin)
-libero_dir = os.path.join(pkg_dir, 'libero')
-paths = {
-    'bddl_files': os.path.join(libero_dir, 'bddl_files'),
-    'init_states': os.path.join(libero_dir, 'init_files'),
-    'datasets':    os.path.join(libero_dir, '../datasets'),
-    'assets':      os.path.join(libero_dir, 'assets'),
-}
-config_dir = os.path.expanduser('~/.libero')
-os.makedirs(config_dir, exist_ok=True)
-with open(os.path.join(config_dir, 'config.yaml'), 'w') as f:
-    yaml.dump(paths, f)
-"
+# Any valid YAML satisfies the existence check; actual paths only matter for dataset loading.
+RUN mkdir -p /home/user_lerobot/.libero && \
+    printf 'assets: /tmp/libero_assets\nbddl_files: /tmp/libero_bddl\ndatasets: /tmp/libero_datasets\ninit_states: /tmp/libero_init\n' \
+    > /home/user_lerobot/.libero/config.yaml
 
 RUN chmod +x /lerobot/.venv/lib/python${PYTHON_VERSION}/site-packages/triton/backends/nvidia/bin/ptxas
 
