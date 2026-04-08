@@ -316,24 +316,6 @@ class MyEnvProcessorStep(ObservationProcessorStep):
         return processed
 ```
 
-### 2. Update the Factory
-
-```python
-# In src/lerobot/envs/configs.py
-@EnvConfig.register_subclass("myenv")
-@dataclass
-class MyEnvConfig(EnvConfig):
-    # ... task/features/gym kwargs ...
-
-    def get_env_processors(self):
-        from lerobot.processor.pipeline import PolicyProcessorPipeline
-
-        return (
-            PolicyProcessorPipeline(steps=[MyEnvProcessorStep()]),
-            PolicyProcessorPipeline(steps=[]),
-        )
-```
-
 ### 2. Update Your `EnvConfig` Subclass
 
 ```python
@@ -342,8 +324,10 @@ class MyEnvConfig(EnvConfig):
 @dataclass
 class MyEnvConfig(EnvConfig):
     # ... task/features/gym kwargs ...
+
     def get_env_processors(self):
         from lerobot.processor.pipeline import PolicyProcessorPipeline
+
         return (
             PolicyProcessorPipeline(steps=[MyEnvProcessorStep()]),
             PolicyProcessorPipeline(steps=[]),
