@@ -29,6 +29,7 @@ from gymnasium import spaces
 from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
 
+from lerobot.envs.utils import _LazyAsyncVectorEnv
 from lerobot.types import RobotObservation
 
 
@@ -401,62 +402,6 @@ def _make_env_fns(
     for episode_index in range(n_envs):
         fns.append(partial(_make_env, episode_index, **gym_kwargs))
     return fns
-
-
-class _LazyAsyncVectorEnv:
-    """Wrapper that defers AsyncVectorEnv creation until first use.
-
-    Creating all tasks' AsyncVectorEnvs upfront spawns N_tasks × n_envs worker
-    processes, all of which allocate EGL/GPU resources immediately. Since tasks
-    are evaluated sequentially, only one task's workers need to be alive at a
-    time. This wrapper stores the factory functions and creates the real
-    AsyncVectorEnv on first reset(), keeping peak process count = n_envs.
-    """
-
-    def __init__(
-        self,
-        env_fns: list[Callable],
-        observation_space: spaces.Space | None = None,
-        action_space: spaces.Space | None = None,
-    ):
-        self._env_fns = env_fns
-        self._env: gym.vector.AsyncVectorEnv | None = None
-        self.num_envs = len(env_fns)
-        if observation_space is not None and action_space is not None:
-            self.observation_space = observation_space
-            self.action_space = action_space
-        else:
-            tmp = env_fns[0]()
-            self.observation_space = tmp.observation_space
-            self.action_space = tmp.action_space
-            tmp.close()
-        self.single_observation_space = self.observation_space
-        self.single_action_space = self.action_space
-
-    def _ensure(self):
-        if self._env is None:
-            self._env = gym.vector.AsyncVectorEnv(self._env_fns, context="forkserver", shared_memory=True)
-
-    def reset(self, **kwargs):
-        self._ensure()
-        return self._env.reset(**kwargs)
-
-    def step(self, actions):
-        self._ensure()
-        return self._env.step(actions)
-
-    def call(self, name, *args, **kwargs):
-        self._ensure()
-        return self._env.call(name, *args, **kwargs)
-
-    def get_attr(self, name):
-        self._ensure()
-        return self._env.get_attr(name)
-
-    def close(self):
-        if self._env is not None:
-            self._env.close()
-            self._env = None
 
 
 # ---- Main API ----------------------------------------------------------------
