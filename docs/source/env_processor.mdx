@@ -145,7 +145,7 @@ class LiberoVelocityProcessorStep(ObservationProcessorStep):
         state = torch.cat([eef_pos, eef_axisangle, eef_vel,
                           gripper_pos, gripper_vel], dim=-1)  # 14D
         return state
-````
+```
 
 ### 4. **Cleaner Environment Code**
 
