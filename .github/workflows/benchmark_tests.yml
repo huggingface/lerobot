@@ -133,6 +133,16 @@ jobs:
                 --output_dir=/artifacts
             "
 
+      - name: Fix Libero artifact permissions
+        if: always()
+        run: |
+          # New files written by user_lerobot inside the container inherit a
+          # restrictive umask; re-chmod as root so the runner can read them.
+          docker run --rm --user root \
+            -v /tmp/libero-artifacts:/artifacts \
+            lerobot-benchmark-libero:ci \
+            bash -c "chmod -R 777 /artifacts"
+
       - name: Parse Libero eval metrics
         if: always()
         run: |
@@ -221,6 +231,14 @@ jobs:
                 --policy.empty_cameras=2 \
                 --output_dir=/artifacts
             "
+
+      - name: Fix MetaWorld artifact permissions
+        if: always()
+        run: |
+          docker run --rm --user root \
+            -v /tmp/metaworld-artifacts:/artifacts \
+            lerobot-benchmark-metaworld:ci \
+            bash -c "chmod -R 777 /artifacts"
 
       - name: Parse MetaWorld eval metrics
         if: always()
