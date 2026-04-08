@@ -164,7 +164,9 @@ def make_env(
     if n_envs < 1:
         raise ValueError("`n_envs` must be at least 1")
 
-    env_cls = partial(gym.vector.AsyncVectorEnv, context="spawn") if use_async_envs else gym.vector.SyncVectorEnv
+    env_cls = (
+        partial(gym.vector.AsyncVectorEnv, context="spawn") if use_async_envs else gym.vector.SyncVectorEnv
+    )
 
     if "libero" in cfg.type:
         from lerobot.envs.libero import create_libero_envs
