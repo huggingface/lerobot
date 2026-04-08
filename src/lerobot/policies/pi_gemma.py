@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import torch
+from accelerate import init_empty_weights
 from torch import nn
 
 from lerobot.utils.import_utils import _transformers_available
@@ -196,9 +197,11 @@ class PiGemmaModel(GemmaModel):  # type: ignore[misc]
     """
 
     def __init__(self, config: GemmaConfig, **kwargs):
-        super().__init__(config, **kwargs)
-        # if not getattr(config, "use_adarms", False):
-        #     return
+        with init_empty_weights(include_buffers=False):
+            super().__init__(config, **kwargs)
+
+        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, config.pad_token_id)
+
         cond_dim = getattr(config, "adarms_cond_dim", None)
         pi_gemma_decoder_layer_base = _get_pi_gemma_decoder_layer_base()
         self.layers = nn.ModuleList(
@@ -327,15 +330,26 @@ class PiGemmaForCausalLM(GemmaForCausalLM):  # type: ignore[misc]
     """
 
     def __init__(self, config: GemmaConfig, **kwargs):
-        super().__init__(config, **kwargs)
+        with init_empty_weights(include_buffers=False):
+            super().__init__(config, **kwargs)
+
         self.model = PiGemmaModel(config)
+        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.tie_weights()
 
 
 class PaliGemmaModelWithPiGemma(PaliGemmaModel):
     """PaliGemmaModel whose language_model is PiGemmaModel (custom decoder with PiGemmaRMSNorm and gated residuals)."""
 
     def __init__(self, config):
-        super().__init__(config)
+        from transformers import AutoModel
+        from transformers.models.paligemma.modeling_paligemma import PaliGemmaMultiModalProjector
+
+        with init_empty_weights(include_buffers=False):
+            super().__init__(config)
+
+        self.vision_tower = AutoModel.from_config(config.vision_config)
+        self.multi_modal_projector = PaliGemmaMultiModalProjector(config)
         self.language_model = PiGemmaModel(config.text_config)
 
 
@@ -343,8 +357,12 @@ class PaliGemmaForConditionalGenerationWithPiGemma(PaliGemmaForConditionalGenera
     """PaliGemmaForConditionalGeneration using PiGemma decoder for the language model."""
 
     def __init__(self, config):
-        super().__init__(config)
+        with init_empty_weights(include_buffers=False):
+            super().__init__(config)
+
         self.model = PaliGemmaModelWithPiGemma(config)
+        self.lm_head = nn.Linear(config.text_config.hidden_size, config.text_config.vocab_size, bias=False)
+        self.tie_weights()
 
     # Make modules available through conditional class for BC
     @property
