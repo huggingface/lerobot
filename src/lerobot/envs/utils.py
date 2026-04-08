@@ -130,14 +130,6 @@ def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:
     return policy_features
 
 
-def _get_sub_env_attr(env: gym.vector.VectorEnv, attr: str, index: int = 0):
-    """Retrieve an attribute from a sub-environment, works for both Sync and Async."""
-    try:
-        return env.get_attr(attr)[index]
-    except (AttributeError, Exception):
-        return None
-
-
 def _sub_env_has_attr(env: gym.vector.VectorEnv, attr: str) -> bool:
     try:
         env.get_attr(attr)
