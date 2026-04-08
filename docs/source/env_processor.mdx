@@ -90,11 +90,17 @@ The same policy can work with different environment processors, and the same env
 
 ```python
 # Use SmolVLA policy with LIBERO environment
-libero_preprocessor, libero_postprocessor = make_env_pre_post_processors(libero_cfg)
+# Use SmolVLA policy with LIBERO environment
+libero_preprocessor, libero_postprocessor = make_env_pre_post_processors(
+    env_cfg=libero_cfg,
+    policy_cfg=smolvla_cfg,
+)
 smolvla_preprocessor, smolvla_postprocessor = make_pre_post_processors(smolvla_cfg)
-
 # Or use ACT policy with the same LIBERO environment
-libero_preprocessor, libero_postprocessor = make_env_pre_post_processors(libero_cfg)
+libero_preprocessor, libero_postprocessor = make_env_pre_post_processors(
+    env_cfg=libero_cfg,
+    policy_cfg=act_cfg,
+)
 act_preprocessor, act_postprocessor = make_pre_post_processors(act_cfg)
 ```
 
@@ -151,7 +157,7 @@ observation = {
 
 ### Factory Function
 
-The `make_env_pre_post_processors` function follows the same pattern as `make_pre_post_processors` for policies:
+The `make_env_pre_post_processors` function delegates to `env_cfg.get_env_processors()`:
 
 ```python
 from lerobot.envs.factory import make_env_pre_post_processors
@@ -159,46 +165,30 @@ from lerobot.envs.configs import LiberoEnv, PushtEnv
 
 # For LIBERO: Returns LiberoProcessorStep in preprocessor
 libero_cfg = LiberoEnv(task="libero_spatial", camera_name=["agentview"])
-env_preprocessor, env_postprocessor = make_env_pre_post_processors(libero_cfg)
+env_preprocessor, env_postprocessor = make_env_pre_post_processors(libero_cfg, policy_cfg)
 
 # For other environments: Returns identity processors (no-op)
 pusht_cfg = PushtEnv()
-env_preprocessor, env_postprocessor = make_env_pre_post_processors(pusht_cfg)
+env_preprocessor, env_postprocessor = make_env_pre_post_processors(pusht_cfg, policy_cfg)
 ```
 
-### Implementation in `envs/factory.py`
+### How It Works
+
+Each `EnvConfig` subclass can override `get_env_processors()` to return benchmark-specific
+processor pipelines. The base class returns identity (no-op) processors by default.
 
 ```python
-def make_env_pre_post_processors(
-    env_cfg: EnvConfig,
-) -> tuple[
-    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-]:
-    """
-    Create preprocessor and postprocessor pipelines for environment observations.
-
-    Args:
-        env_cfg: The configuration of the environment.
-
-    Returns:
-        A tuple containing:
-            - preprocessor: Pipeline that processes environment observations
-            - postprocessor: Pipeline that processes environment outputs
-    """
-    # For LIBERO environments, add the LiberoProcessorStep to preprocessor
-    if isinstance(env_cfg, LiberoEnv) or "libero" in env_cfg.type:
-        preprocessor = PolicyProcessorPipeline(steps=[LiberoProcessorStep()])
-    else:
-        # For all other environments, return an identity preprocessor
-        preprocessor = PolicyProcessorPipeline(steps=[])
-
-    # Postprocessor is currently identity for all environments
-    # Future: Could add environment-specific action transformations
-    postprocessor = PolicyProcessorPipeline(steps=[])
-
-    return preprocessor, postprocessor
+# In your EnvConfig subclass:
+def get_env_processors(self):
+    from lerobot.processor.pipeline import PolicyProcessorPipeline
+    return (
+        PolicyProcessorPipeline(steps=[MyProcessorStep()]),
+        PolicyProcessorPipeline(steps=[]),
+    )
 ```
+
+The factory function `make_env_pre_post_processors` simply delegates to this method,
+with a special case for `XVLAConfig` policies which override the env processors entirely.
 
 ### Integration in Evaluation
 
@@ -219,7 +209,10 @@ def eval_main(cfg: EvalPipelineConfig):
     )
 
     # Create environment processors (NEW!)
-    env_preprocessor, env_postprocessor = make_env_pre_post_processors(env_cfg=cfg.env)
+    env_preprocessor, env_postprocessor = make_env_pre_post_processors(
+        env_cfg=cfg.env,
+        policy_cfg=cfg.policy,
+    )
 
     # Run evaluation with both processor types
     eval_policy_all(
@@ -323,21 +316,22 @@ class MyEnvProcessorStep(ObservationProcessorStep):
         return processed
 ```
 
-### 2. Update the Factory
+### 2. Update Your `EnvConfig` Subclass
 
 ```python
-# In src/lerobot/envs/factory.py
+# In src/lerobot/envs/configs.py
+@EnvConfig.register_subclass("myenv")
+@dataclass
+class MyEnvConfig(EnvConfig):
+    # ... task/features/gym kwargs ...
 
-def make_env_pre_post_processors(env_cfg: EnvConfig):
-    if isinstance(env_cfg, LiberoEnv) or "libero" in env_cfg.type:
-        preprocessor = PolicyProcessorPipeline(steps=[LiberoProcessorStep()])
-    elif isinstance(env_cfg, MyEnvConfig) or "myenv" in env_cfg.type:
-        preprocessor = PolicyProcessorPipeline(steps=[MyEnvProcessorStep()])
-    else:
-        preprocessor = PolicyProcessorPipeline(steps=[])
+    def get_env_processors(self):
+        from lerobot.processor.pipeline import PolicyProcessorPipeline
 
-    postprocessor = PolicyProcessorPipeline(steps=[])
-    return preprocessor, postprocessor
+        return (
+            PolicyProcessorPipeline(steps=[MyEnvProcessorStep()]),
+            PolicyProcessorPipeline(steps=[]),
+        )
 ```
 
 ### 3. Use in Evaluation
