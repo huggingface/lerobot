@@ -216,6 +216,100 @@ jobs:
           path: /tmp/libero-train-smoke-artifacts/eval/
           if-no-files-found: warn
 
+  # ── LIBERO-plus ───────────────────────────────────────────────────────────
+  # Isolated image: lerobot[libero_plus] only (LIBERO-plus from GitHub, mujoco)
+  libero-plus-integration-test:
+    name: LIBERO-plus — build image + 1-episode eval
+    runs-on:
+      group: aws-g6-4xlarge-plus
+    env:
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+          lfs: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          cache-binary: false
+
+      - name: Build LIBERO-plus benchmark image
+        uses: docker/build-push-action@v6 # zizmor: ignore[unpinned-uses]
+        with:
+          context: .
+          file: docker/Dockerfile.benchmark.libero_plus
+          push: false
+          load: true
+          tags: lerobot-benchmark-libero-plus:ci
+          cache-from: type=local,src=/tmp/.buildx-cache-libero-plus
+          cache-to: type=local,dest=/tmp/.buildx-cache-libero-plus,mode=max
+
+      - name: Login to Hugging Face
+        if: env.HF_USER_TOKEN != ''
+        run: |
+          docker run --rm \
+            -e HF_HOME=/tmp/hf \
+            lerobot-benchmark-libero-plus:ci \
+            bash -c "hf auth login --token '$HF_USER_TOKEN' --add-to-git-credential && hf auth whoami"
+
+      - name: Run LIBERO-plus smoke eval (1 episode)
+        run: |
+          docker run --name libero-plus-eval --gpus all \
+            --shm-size=4g \
+            -e HF_HOME=/tmp/hf \
+            -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
+            -e HF_HUB_DOWNLOAD_TIMEOUT=300 \
+            lerobot-benchmark-libero-plus:ci \
+            bash -c "
+              hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
+              lerobot-eval \
+                --policy.path=pepijn223/smolvla_libero \
+                --env.type=libero_plus \
+                --env.task=libero_spatial \
+                --eval.batch_size=1 \
+                --eval.n_episodes=1 \
+                --eval.use_async_envs=false \
+                --policy.device=cuda \
+                '--env.camera_name_mapping={\"agentview_image\": \"camera1\", \"robot0_eye_in_hand_image\": \"camera2\"}' \
+                --policy.empty_cameras=1 \
+                --output_dir=/tmp/eval-artifacts
+            "
+
+      - name: Copy LIBERO-plus artifacts from container
+        if: always()
+        run: |
+          mkdir -p /tmp/libero-plus-artifacts
+          docker cp libero-plus-eval:/tmp/eval-artifacts/. /tmp/libero-plus-artifacts/ 2>/dev/null || true
+          docker rm -f libero-plus-eval || true
+
+      - name: Parse LIBERO-plus eval metrics
+        if: always()
+        run: |
+          python3 scripts/ci/parse_eval_metrics.py \
+            --artifacts-dir /tmp/libero-plus-artifacts \
+            --env libero_plus \
+            --task libero_spatial \
+            --policy pepijn223/smolvla_libero
+
+      - name: Upload LIBERO-plus rollout video
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: libero-plus-rollout-video
+          path: /tmp/libero-plus-artifacts/videos/
+          if-no-files-found: warn
+
+      - name: Upload LIBERO-plus eval metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: libero-plus-metrics
+          path: /tmp/libero-plus-artifacts/metrics.json
+          if-no-files-found: warn
+
   # ── METAWORLD ─────────────────────────────────────────────────────────────
   # Isolated image: lerobot[metaworld] only (metaworld==3.0.0, mujoco>=3 chain)
   metaworld-integration-test:
