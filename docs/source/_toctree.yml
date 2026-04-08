@@ -73,8 +73,6 @@
     title: Control & Train Robots in Sim (LeIsaac)
   title: "Simulation"
 - sections:
-  - local: evaluation
-    title: Evaluation (lerobot-eval)
   - local: adding_benchmarks
     title: Adding a New Benchmark
   - local: libero
