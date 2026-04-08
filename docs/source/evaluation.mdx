@@ -1,0 +1,162 @@
+# Evaluation
+
+`lerobot-eval` runs a trained policy on a simulation benchmark and reports success rate, reward, and (optionally) episode videos. It handles environment creation, batched rollouts, and metric aggregation automatically.
+
+## Quick start
+
+Evaluate a Hub-hosted policy on LIBERO:
+
+```bash
+lerobot-eval \
+    --policy.path=pepijn223/smolvla_libero \
+    --env.type=libero \
+    --env.task=libero_spatial \
+    --eval.n_episodes=10 \
+    --policy.device=cuda
+```
+
+Evaluate a local checkpoint:
+
+```bash
+lerobot-eval \
+    --policy.path=outputs/train/act_pusht/checkpoints/005000/pretrained_model \
+    --env.type=pusht \
+    --eval.n_episodes=10
+```
+
+`batch_size` defaults to **auto** (based on CPU cores). The script picks the right number of parallel environments for your machine.
+
+## Key flags
+
+| Flag                    | Default        | Description                                                                           |
+| ----------------------- | -------------- | ------------------------------------------------------------------------------------- |
+| `--policy.path`         | required       | Hub repo ID or local path to a pretrained model                                       |
+| `--env.type`            | required       | Benchmark name (`pusht`, `libero`, `metaworld`, etc.)                                 |
+| `--env.task`            | varies         | Task or suite name (e.g. `libero_spatial`, `libero_10`)                               |
+| `--eval.n_episodes`     | `50`           | Total episodes to run (across all tasks)                                              |
+| `--eval.batch_size`     | `0` (auto)     | Number of parallel environments. `0` = auto-tune from CPU cores                       |
+| `--eval.use_async_envs` | `true`         | Use `AsyncVectorEnv` (parallel stepping). Auto-downgrades to sync when `batch_size=1` |
+| `--policy.device`       | `cuda`         | Inference device                                                                      |
+| `--policy.use_amp`      | `false`        | Mixed-precision inference (saves VRAM, faster on Ampere+)                             |
+| `--seed`                | `1000`         | Random seed for reproducibility                                                       |
+| `--output_dir`          | auto-generated | Where to write results and videos                                                     |
+
+### Environment-specific flags
+
+Some benchmarks accept additional flags through `--env.*`:
+
+```bash
+# LIBERO: map simulator camera names to policy feature names
+--env.camera_name_mapping='{"agentview_image": "camera1", "robot0_eye_in_hand_image": "camera2"}'
+
+# Fill unused camera slots with zeros
+--policy.empty_cameras=1
+```
+
+See each benchmark's documentation ([LIBERO](libero), [Meta-World](metaworld)) for benchmark-specific flags.
+
+## How batch_size works
+
+`batch_size` controls how many environments run in parallel within a single `VectorEnv`:
+
+| `batch_size`  | Behavior                                                             |
+| ------------- | -------------------------------------------------------------------- |
+| `0` (default) | Auto-tune: `floor(cpu_cores × 0.7)`, capped by `n_episodes` and `64` |
+| `1`           | Single environment, synchronous. Useful for debugging                |
+| `N`           | N environments step in parallel via `AsyncVectorEnv`                 |
+
+When `batch_size > 1` and `use_async_envs=true`, each environment runs in its own subprocess via Gymnasium's `AsyncVectorEnv`. This parallelizes the simulation stepping (the main bottleneck), while the policy runs a single batched forward pass on GPU.
+
+**Example:** On a 16-core machine with `n_episodes=100`:
+
+- Auto batch_size = `floor(16 × 0.7)` = `11`
+- 11 environments step simultaneously → ~11× faster than sequential
+
+## Performance
+
+### AsyncVectorEnv (default)
+
+`AsyncVectorEnv` spawns one subprocess per environment. Each subprocess has its own simulator instance. While the policy computes actions on GPU, all environments step in parallel on CPU:
+
+```
+GPU:  [inference]....[inference]....[inference]....
+CPU:  [step × N]....................[step × N]......
+      ↑ parallel                   ↑ parallel
+```
+
+For GPU-based simulators (LIBERO, Meta-World), the environments use **lazy initialization**: the GPU/EGL context is created inside the worker subprocess on first `reset()`, not in the parent process. This avoids `EGL_BAD_CONTEXT` crashes from inheriting stale GPU handles across `fork()`.
+
+### Lazy task loading
+
+For multi-task benchmarks (e.g. LIBERO with 10 tasks), environments are wrapped in `_LazyAsyncVectorEnv` which defers worker creation until the task is actually evaluated. This keeps peak process count = `batch_size` instead of `n_tasks × batch_size`. After each task completes, workers are closed to free resources.
+
+### Tuning for speed
+
+| Situation                      | Recommendation                                        |
+| ------------------------------ | ----------------------------------------------------- |
+| Slow eval, low GPU utilization | Increase `batch_size` (or leave at auto)              |
+| Out of memory (system RAM)     | Decrease `batch_size`                                 |
+| Out of GPU memory              | Decrease `batch_size`, or use `--policy.use_amp=true` |
+| Debugging / single-stepping    | `--eval.batch_size=1 --eval.use_async_envs=false`     |
+
+## Output
+
+Results are written to `output_dir` (default: `outputs/eval/<date>/<time>_<job_name>/`):
+
+- `eval_info.json` — full metrics: per-episode, per-task, per-group, and overall aggregates
+- `videos/` — episode recordings (when `--eval.n_episodes_to_render > 0`)
+
+### Metrics
+
+| Metric           | Description                                                          |
+| ---------------- | -------------------------------------------------------------------- |
+| `pc_success`     | Success rate (%). Based on `info["is_success"]` from the environment |
+| `avg_sum_reward` | Mean cumulative reward per episode                                   |
+| `avg_max_reward` | Mean peak reward per episode                                         |
+| `n_episodes`     | Total episodes evaluated                                             |
+| `eval_s`         | Total wall-clock time                                                |
+| `eval_ep_s`      | Mean wall-clock time per episode                                     |
+
+## Multi-task evaluation
+
+For benchmarks with multiple tasks (LIBERO suites, Meta-World MT50), `lerobot-eval` automatically:
+
+1. Creates environments for all tasks in the selected suite(s)
+2. Evaluates each task sequentially (one task's workers at a time)
+3. Aggregates metrics per-task, per-group (suite), and overall
+
+```bash
+# Evaluate all 10 tasks in libero_spatial
+lerobot-eval \
+    --policy.path=pepijn223/smolvla_libero \
+    --env.type=libero \
+    --env.task=libero_spatial \
+    --eval.n_episodes=10
+
+# Evaluate multiple suites
+lerobot-eval \
+    --policy.path=pepijn223/smolvla_libero \
+    --env.type=libero \
+    --env.task="libero_spatial,libero_object" \
+    --eval.n_episodes=10
+```
+
+## API usage
+
+You can call the eval functions directly from Python:
+
+```python
+from lerobot.envs.factory import make_env
+from lerobot.policies.factory import make_policy
+from lerobot.scripts.lerobot_eval import eval_policy
+
+envs = make_env(env_cfg, n_envs=10)
+policy = make_policy(cfg=policy_cfg, env_cfg=env_cfg)
+
+metrics = eval_policy(
+    env=envs["libero_spatial"][0],
+    policy=policy,
+    n_episodes=10,
+)
+print(metrics["pc_success"])
+```
