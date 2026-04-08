@@ -1,20 +1,20 @@
 - sections:
   - local: il_robots
-    title: Imitation Learning for Robots
+    title: 機器人的模仿學習
   - local: bring_your_own_policies
-    title: Bring Your Own Policies
+    title: 自備策略
   - local: integrate_hardware
-    title: Bring Your Own Hardware
+    title: 自備硬體
   - local: hilserl
-    title: Train a Robot with RL
+    title: 使用強化學習訓練機器人
   - local: hilserl_sim
-    title: Train RL in Simulation
+    title: 在模擬環境中訓練強化學習
   - local: multi_gpu_training
-    title: Multi GPU training
+    title: 多 GPU 訓練
   - local: hil_data_collection
-    title: Human In the Loop Data Collection
+    title: 人在迴圈中的資料收集
   - local: peft_training
-    title: Training with PEFT (e.g., LoRA)
+    title: 使用 PEFT 訓練（例如 LoRA）
   - local: rename_map
-    title: Using Rename Map and Empty Cameras
-  title: "Tutorials"
+    title: 使用重新命名映射與空攝影機
+  title: "教學"
