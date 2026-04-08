@@ -16,7 +16,7 @@
 import importlib.util
 import os
 import warnings
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from functools import singledispatch
 from typing import Any
 
@@ -136,6 +136,62 @@ def _sub_env_has_attr(env: gym.vector.VectorEnv, attr: str) -> bool:
         return True
     except (AttributeError, Exception):
         return False
+
+
+class _LazyAsyncVectorEnv:
+    """Defers AsyncVectorEnv creation until first use.
+
+    Creating all tasks' AsyncVectorEnvs upfront spawns N_tasks × n_envs worker
+    processes, all of which allocate EGL/GPU resources immediately. Since tasks
+    are evaluated sequentially, only one task's workers need to be alive at a
+    time. This wrapper stores the factory functions and creates the real
+    AsyncVectorEnv on first reset()/step()/call(), keeping peak process count = n_envs.
+    """
+
+    def __init__(
+        self,
+        env_fns: list[Callable],
+        observation_space=None,
+        action_space=None,
+    ):
+        self._env_fns = env_fns
+        self._env: gym.vector.AsyncVectorEnv | None = None
+        self.num_envs = len(env_fns)
+        if observation_space is not None and action_space is not None:
+            self.observation_space = observation_space
+            self.action_space = action_space
+        else:
+            tmp = env_fns[0]()
+            self.observation_space = tmp.observation_space
+            self.action_space = tmp.action_space
+            tmp.close()
+        self.single_observation_space = self.observation_space
+        self.single_action_space = self.action_space
+
+    def _ensure(self) -> None:
+        if self._env is None:
+            self._env = gym.vector.AsyncVectorEnv(self._env_fns, context="forkserver", shared_memory=True)
+
+    def reset(self, **kwargs):
+        self._ensure()
+        return self._env.reset(**kwargs)
+
+    def step(self, actions):
+        self._ensure()
+        return self._env.step(actions)
+
+    def call(self, name, *args, **kwargs):
+        self._ensure()
+        return self._env.call(name, *args, **kwargs)
+
+    def get_attr(self, name):
+        self._ensure()
+        return self._env.get_attr(name)
+
+    def close(self) -> None:
+        if self._env is not None:
+            self._env.close()
+            self._env = None
 
 
 def check_env_attributes_and_types(env: gym.vector.VectorEnv) -> None:

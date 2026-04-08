@@ -25,6 +25,7 @@ import metaworld.policies as policies
 import numpy as np
 from gymnasium import spaces
 
+from lerobot.envs.utils import _LazyAsyncVectorEnv
 from lerobot.types import RobotObservation
 
 # ---- Load configuration data from the external JSON file ----
@@ -306,6 +307,9 @@ def create_metaworld_envs(
 
     print(f"Creating Meta-World envs | task_groups={task_groups} | n_envs(per task)={n_envs}")
 
+    is_async = env_cls is gym.vector.AsyncVectorEnv
+    cached_obs_space = None
+    cached_act_space = None
     out: dict[str, dict[int, Any]] = defaultdict(dict)
 
     for group in task_groups:
@@ -318,7 +322,14 @@ def create_metaworld_envs(
             # build n_envs factories
             fns = [(lambda tn=task_name: MetaworldEnv(task=tn, **gym_kwargs)) for _ in range(n_envs)]
 
-            out[group][tid] = env_cls(fns)
+            if is_async:
+                lazy = _LazyAsyncVectorEnv(fns, cached_obs_space, cached_act_space)
+                if cached_obs_space is None:
+                    cached_obs_space = lazy.observation_space
+                    cached_act_space = lazy.action_space
+                out[group][tid] = lazy
+            else:
+                out[group][tid] = env_cls(fns)
 
     # return a plain dict for consistency
     return {group: dict(task_map) for group, task_map in out.items()}
