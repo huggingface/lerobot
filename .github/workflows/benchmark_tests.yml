@@ -106,7 +106,9 @@ jobs:
 
       - name: Run Libero smoke eval (1 episode)
         run: |
-          # Use a named container (no --rm) so we can docker cp artifacts out.
+          # Named container (no --rm) so we can docker cp artifacts out.
+          # Output to /tmp inside the container — user_lerobot cannot create
+          # root-level dirs like /artifacts.
           docker run --name libero-eval --gpus all \
             --shm-size=4g \
             -e HF_HOME=/tmp/hf \
@@ -125,14 +127,14 @@ jobs:
                 --policy.device=cuda \
                 '--env.camera_name_mapping={\"agentview_image\": \"camera1\", \"robot0_eye_in_hand_image\": \"camera2\"}' \
                 --policy.empty_cameras=1 \
-                --output_dir=/artifacts
+                --output_dir=/tmp/eval-artifacts
             "
 
       - name: Copy Libero artifacts from container
         if: always()
         run: |
           mkdir -p /tmp/libero-artifacts
-          docker cp libero-eval:/artifacts/. /tmp/libero-artifacts/ 2>/dev/null || true
+          docker cp libero-eval:/tmp/eval-artifacts/. /tmp/libero-artifacts/ 2>/dev/null || true
           docker rm -f libero-eval || true
 
       - name: Parse Libero eval metrics
@@ -211,14 +213,14 @@ jobs:
                 --policy.device=cuda \
                 '--rename_map={\"observation.image\": \"observation.images.camera1\"}' \
                 --policy.empty_cameras=2 \
-                --output_dir=/artifacts
+                --output_dir=/tmp/eval-artifacts
             "
 
       - name: Copy MetaWorld artifacts from container
         if: always()
         run: |
           mkdir -p /tmp/metaworld-artifacts
-          docker cp metaworld-eval:/artifacts/. /tmp/metaworld-artifacts/ 2>/dev/null || true
+          docker cp metaworld-eval:/tmp/eval-artifacts/. /tmp/metaworld-artifacts/ 2>/dev/null || true
           docker rm -f metaworld-eval || true
 
       - name: Parse MetaWorld eval metrics
