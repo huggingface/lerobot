@@ -102,11 +102,13 @@ jobs:
 
       - name: Run Libero smoke eval (1 episode)
         run: |
+          mkdir -p /tmp/libero-artifacts
           docker run --rm --gpus all \
             --shm-size=4g \
             -e HF_HOME=/tmp/hf \
             -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
             -e HF_HUB_DOWNLOAD_TIMEOUT=300 \
+            -v /tmp/libero-artifacts:/artifacts \
             lerobot-benchmark-libero:ci \
             bash -c "
               hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
@@ -119,8 +121,17 @@ jobs:
                 --eval.use_async_envs=false \
                 --policy.device=cuda \
                 '--env.camera_name_mapping={\"agentview_image\": \"camera1\", \"robot0_eye_in_hand_image\": \"camera2\"}' \
-                --policy.empty_cameras=1
+                --policy.empty_cameras=1 \
+                --output_dir=/artifacts
             "
+
+      - name: Upload Libero rollout video
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: libero-rollout-video
+          path: /tmp/libero-artifacts/videos/
+          if-no-files-found: warn
 
   # ── METAWORLD ─────────────────────────────────────────────────────────────
   # Isolated image: lerobot[metaworld] only (metaworld==3.0.0, mujoco>=3 chain)
@@ -155,11 +166,13 @@ jobs:
 
       - name: Run MetaWorld smoke eval (1 episode)
         run: |
+          mkdir -p /tmp/metaworld-artifacts
           docker run --rm --gpus all \
             --shm-size=4g \
             -e HF_HOME=/tmp/hf \
             -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
             -e HF_HUB_DOWNLOAD_TIMEOUT=300 \
+            -v /tmp/metaworld-artifacts:/artifacts \
             lerobot-benchmark-metaworld:ci \
             bash -c "
               hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
@@ -172,5 +185,14 @@ jobs:
                 --eval.use_async_envs=false \
                 --policy.device=cuda \
                 '--rename_map={\"observation.image\": \"observation.images.camera1\"}' \
-                --policy.empty_cameras=2
+                --policy.empty_cameras=2 \
+                --output_dir=/artifacts
             "
+
+      - name: Upload MetaWorld rollout video
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: metaworld-rollout-video
+          path: /tmp/metaworld-artifacts/videos/
+          if-no-files-found: warn
