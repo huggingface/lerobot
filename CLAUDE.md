@@ -26,7 +26,6 @@ These are the load-bearing types. Handle them with care — breaking changes her
 
 ### Code quality
 
-- Minimize added LOC. Every line must earn its place.
 - Explicit over magic — no hidden control flow, no implicit state.
 - No deep inheritance trees. Prefer composition.
 - No decorative comment separators (`===`, `---`, etc.).
