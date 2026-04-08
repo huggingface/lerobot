@@ -458,9 +458,6 @@ class _LazyAsyncVectorEnv:
             self._env.close()
             self._env = None
 
-    def __del__(self):
-        self.close()
-
 
 # ---- Main API ----------------------------------------------------------------
 
