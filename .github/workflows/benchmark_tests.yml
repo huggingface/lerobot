@@ -25,6 +25,10 @@ on:
   # Run manually from the Actions tab
   workflow_dispatch:
 
+  # Run on the 1st of every month at 02:00 UTC.
+  schedule:
+    - cron: "0 2 1 * *"
+
   push:
     branches:
       - feat/benchmark-ci
