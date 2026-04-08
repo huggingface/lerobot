@@ -104,23 +104,14 @@ jobs:
             lerobot-benchmark-libero:ci \
             bash -c "hf auth login --token '$HF_USER_TOKEN' --add-to-git-credential && hf auth whoami"
 
-      - name: Prepare Libero artifact directory
-        run: |
-          mkdir -p /tmp/libero-artifacts
-          # Grant write access from inside the container to handle any host/container UID mismatch.
-          docker run --rm --user root \
-            -v /tmp/libero-artifacts:/artifacts \
-            lerobot-benchmark-libero:ci \
-            bash -c "mkdir -p /artifacts/videos && chmod -R 777 /artifacts"
-
       - name: Run Libero smoke eval (1 episode)
         run: |
-          docker run --rm --gpus all \
+          # Use a named container (no --rm) so we can docker cp artifacts out.
+          docker run --name libero-eval --gpus all \
             --shm-size=4g \
             -e HF_HOME=/tmp/hf \
             -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
             -e HF_HUB_DOWNLOAD_TIMEOUT=300 \
-            -v /tmp/libero-artifacts:/artifacts \
             lerobot-benchmark-libero:ci \
             bash -c "
               hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
@@ -137,15 +128,12 @@ jobs:
                 --output_dir=/artifacts
             "
 
-      - name: Fix Libero artifact permissions
+      - name: Copy Libero artifacts from container
         if: always()
         run: |
-          # New files written by user_lerobot inside the container inherit a
-          # restrictive umask; re-chmod as root so the runner can read them.
-          docker run --rm --user root \
-            -v /tmp/libero-artifacts:/artifacts \
-            lerobot-benchmark-libero:ci \
-            bash -c "chmod -R 777 /artifacts"
+          mkdir -p /tmp/libero-artifacts
+          docker cp libero-eval:/artifacts/. /tmp/libero-artifacts/ 2>/dev/null || true
+          docker rm -f libero-eval || true
 
       - name: Upload Libero rollout video
         if: always()
@@ -186,23 +174,13 @@ jobs:
           cache-from: type=local,src=/tmp/.buildx-cache-metaworld
           cache-to: type=local,dest=/tmp/.buildx-cache-metaworld,mode=max
 
-      - name: Prepare MetaWorld artifact directory
-        run: |
-          mkdir -p /tmp/metaworld-artifacts
-          # Grant write access from inside the container to handle any host/container UID mismatch.
-          docker run --rm --user root \
-            -v /tmp/metaworld-artifacts:/artifacts \
-            lerobot-benchmark-metaworld:ci \
-            bash -c "mkdir -p /artifacts/videos && chmod -R 777 /artifacts"
-
       - name: Run MetaWorld smoke eval (1 episode)
         run: |
-          docker run --rm --gpus all \
+          docker run --name metaworld-eval --gpus all \
             --shm-size=4g \
             -e HF_HOME=/tmp/hf \
             -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
             -e HF_HUB_DOWNLOAD_TIMEOUT=300 \
-            -v /tmp/metaworld-artifacts:/artifacts \
             lerobot-benchmark-metaworld:ci \
             bash -c "
               hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
@@ -219,13 +197,12 @@ jobs:
                 --output_dir=/artifacts
             "
 
-      - name: Fix MetaWorld artifact permissions
+      - name: Copy MetaWorld artifacts from container
         if: always()
         run: |
-          docker run --rm --user root \
-            -v /tmp/metaworld-artifacts:/artifacts \
-            lerobot-benchmark-metaworld:ci \
-            bash -c "chmod -R 777 /artifacts"
+          mkdir -p /tmp/metaworld-artifacts
+          docker cp metaworld-eval:/artifacts/. /tmp/metaworld-artifacts/ 2>/dev/null || true
+          docker rm -f metaworld-eval || true
 
       - name: Upload MetaWorld rollout video
         if: always()
