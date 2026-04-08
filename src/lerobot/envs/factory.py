@@ -58,7 +58,7 @@ def make_env_pre_post_processors(
 def make_env(
     cfg: EnvConfig | str,
     n_envs: int = 1,
-    use_async_envs: bool = True,
+    use_async_envs: bool = False,
     hub_cache_dir: str | None = None,
     trust_remote_code: bool = False,
 ) -> dict[str, dict[int, gym.vector.VectorEnv]]:

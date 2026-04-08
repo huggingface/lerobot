@@ -82,7 +82,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     def create_envs(
         self,
         n_envs: int,
-        use_async_envs: bool = True,
+        use_async_envs: bool = False,
     ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
         """Create {suite: {task_id: VectorEnv}}.
 
@@ -417,7 +417,7 @@ class LiberoEnv(EnvConfig):
             kwargs["task_ids"] = self.task_ids
         return kwargs
 
-    def create_envs(self, n_envs: int, use_async_envs: bool = True):
+    def create_envs(self, n_envs: int, use_async_envs: bool = False):
         from lerobot.envs.libero import create_libero_envs
 
         if self.task is None:
@@ -486,7 +486,7 @@ class MetaworldEnv(EnvConfig):
             "render_mode": self.render_mode,
         }
 
-    def create_envs(self, n_envs: int, use_async_envs: bool = True):
+    def create_envs(self, n_envs: int, use_async_envs: bool = False):
         from lerobot.envs.metaworld import create_metaworld_envs
 
         if self.task is None:
