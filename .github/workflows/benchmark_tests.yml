@@ -100,9 +100,17 @@ jobs:
             lerobot-benchmark-libero:ci \
             bash -c "hf auth login --token '$HF_USER_TOKEN' --add-to-git-credential && hf auth whoami"
 
+      - name: Prepare Libero artifact directory
+        run: |
+          mkdir -p /tmp/libero-artifacts
+          # Grant write access from inside the container to handle any host/container UID mismatch.
+          docker run --rm --user root \
+            -v /tmp/libero-artifacts:/artifacts \
+            lerobot-benchmark-libero:ci \
+            bash -c "mkdir -p /artifacts/videos && chmod -R 777 /artifacts"
+
       - name: Run Libero smoke eval (1 episode)
         run: |
-          mkdir -p /tmp/libero-artifacts && chmod 777 /tmp/libero-artifacts
           docker run --rm --gpus all \
             --shm-size=4g \
             -e HF_HOME=/tmp/hf \
@@ -128,7 +136,7 @@ jobs:
       - name: Parse Libero eval metrics
         if: always()
         run: |
-          python scripts/ci/parse_eval_metrics.py \
+          python3 scripts/ci/parse_eval_metrics.py \
             --artifacts-dir /tmp/libero-artifacts \
             --env libero \
             --task libero_spatial \
@@ -181,9 +189,17 @@ jobs:
           cache-from: type=local,src=/tmp/.buildx-cache-metaworld
           cache-to: type=local,dest=/tmp/.buildx-cache-metaworld,mode=max
 
+      - name: Prepare MetaWorld artifact directory
+        run: |
+          mkdir -p /tmp/metaworld-artifacts
+          # Grant write access from inside the container to handle any host/container UID mismatch.
+          docker run --rm --user root \
+            -v /tmp/metaworld-artifacts:/artifacts \
+            lerobot-benchmark-metaworld:ci \
+            bash -c "mkdir -p /artifacts/videos && chmod -R 777 /artifacts"
+
       - name: Run MetaWorld smoke eval (1 episode)
         run: |
-          mkdir -p /tmp/metaworld-artifacts && chmod 777 /tmp/metaworld-artifacts
           docker run --rm --gpus all \
             --shm-size=4g \
             -e HF_HOME=/tmp/hf \
@@ -209,7 +225,7 @@ jobs:
       - name: Parse MetaWorld eval metrics
         if: always()
         run: |
-          python scripts/ci/parse_eval_metrics.py \
+          python3 scripts/ci/parse_eval_metrics.py \
             --artifacts-dir /tmp/metaworld-artifacts \
             --env metaworld \
             --task metaworld-push-v3 \
