@@ -164,7 +164,7 @@ jobs:
               lerobot-eval \
                 --policy.path=pepijn223/smolvla_metaworld \
                 --env.type=metaworld \
-                --env.task=metaworld-push-v2 \
+                --env.task=metaworld-push-v3 \
                 --eval.batch_size=1 \
                 --eval.n_episodes=1 \
                 --eval.use_async_envs=false \
