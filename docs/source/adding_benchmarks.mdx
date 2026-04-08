@@ -122,15 +122,17 @@ Each `EnvConfig` subclass declares two dicts that tell the policy what to expect
 
 ### Checklist
 
-| File                                     | Required | Why                                                          |
-| ---------------------------------------- | -------- | ------------------------------------------------------------ |
-| `src/lerobot/envs/<benchmark>.py`        | Yes      | Wraps the simulator as a standard gym.Env                    |
-| `src/lerobot/envs/configs.py`            | Yes      | Registers your benchmark and its `create_envs()` for the CLI |
-| `src/lerobot/processor/env_processor.py` | Optional | Custom observation/action transforms                         |
-| `src/lerobot/envs/utils.py`              | Optional | Only if you need new raw observation keys                    |
-| `pyproject.toml`                         | Yes      | Declares benchmark-specific dependencies                     |
-| `docs/source/<benchmark>.mdx`            | Yes      | User-facing documentation page                               |
-| `docs/source/_toctree.yml`               | Yes      | Adds your page to the docs sidebar                           |
+| File                                      | Required | Why                                                          |
+| ----------------------------------------- | -------- | ------------------------------------------------------------ |
+| `src/lerobot/envs/<benchmark>.py`         | Yes      | Wraps the simulator as a standard gym.Env                    |
+| `src/lerobot/envs/configs.py`             | Yes      | Registers your benchmark and its `create_envs()` for the CLI |
+| `src/lerobot/processor/env_processor.py`  | Optional | Custom observation/action transforms                         |
+| `src/lerobot/envs/utils.py`               | Optional | Only if you need new raw observation keys                    |
+| `pyproject.toml`                          | Yes      | Declares benchmark-specific dependencies                     |
+| `docs/source/<benchmark>.mdx`             | Yes      | User-facing documentation page                               |
+| `docs/source/_toctree.yml`                | Yes      | Adds your page to the docs sidebar                           |
+| `docker/Dockerfile.benchmark.<benchmark>` | Yes      | Isolated Docker image for CI smoke tests                     |
+| `.github/workflows/benchmark_tests.yml`   | Yes      | CI job that builds the image and runs a 1-episode smoke eval |
 
 ### 1. The gym.Env wrapper (`src/lerobot/envs/<benchmark>.py`)
 
@@ -295,6 +297,78 @@ Add your benchmark to the "Benchmarks" section:
   title: "Benchmarks"
 ```
 
+### 7. CI smoke test (`docker/` + `.github/workflows/benchmark_tests.yml`)
+
+Each benchmark must have an isolated Docker image and a CI job that runs a 1-episode eval. This catches install-time regressions (broken transitive deps, import errors, interactive prompts) before they reach users.
+
+**Create `docker/Dockerfile.benchmark.<benchmark>`** — copy an existing one and change only the extra name:
+
+```dockerfile
+# Isolated benchmark image — installs lerobot[<benchmark>] only.
+# Build: docker build -f docker/Dockerfile.benchmark.<benchmark> -t lerobot-benchmark-<benchmark> .
+ARG CUDA_VERSION=12.4.1
+ARG OS_VERSION=22.04
+FROM nvidia/cuda:${CUDA_VERSION}-base-ubuntu${OS_VERSION}
+ARG PYTHON_VERSION=3.12
+# ... (same system deps as Dockerfile.benchmark.libero) ...
+RUN uv sync --locked --extra <benchmark> --no-cache
+```
+
+Each benchmark gets its own image so its dependency tree (pinned simulator packages, specific mujoco/scipy versions) cannot conflict with other benchmarks.
+
+**Add a job to `.github/workflows/benchmark_tests.yml`** — copy an existing job block and adjust:
+
+```yaml
+<benchmark>-integration-test:
+  name: <Benchmark> — build image + 1-episode eval
+  runs-on:
+    group: aws-g6-4xlarge-plus
+  env:
+    HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
+  steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        persist-credentials: false
+        lfs: true
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3 # zizmor: ignore[unpinned-uses]
+      with:
+        cache-binary: false
+    - name: Build <Benchmark> image
+      uses: docker/build-push-action@v6 # zizmor: ignore[unpinned-uses]
+      with:
+        context: .
+        file: docker/Dockerfile.benchmark.<benchmark>
+        push: false
+        load: true
+        tags: lerobot-benchmark-<benchmark>:ci
+        cache-from: type=local,src=/tmp/.buildx-cache-<benchmark>
+        cache-to: type=local,dest=/tmp/.buildx-cache-<benchmark>,mode=max
+    - name: Run <Benchmark> smoke eval (1 episode)
+      run: |
+        docker run --rm --gpus all \
+          --shm-size=4g \
+          -e HF_HOME=/tmp/hf \
+          -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
+          lerobot-benchmark-<benchmark>:ci \
+          bash -c "
+            hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
+            lerobot-eval \
+              --policy.path=<hub_policy_path> \
+              --env.type=<benchmark> \
+              --env.task=<task> \
+              --eval.batch_size=1 \
+              --eval.n_episodes=1 \
+              --eval.use_async_envs=false \
+              --policy.device=cuda
+          "
+```
+
+**Tips:**
+
+- If the benchmark library prompts for user input on import (like LIBERO asking for a dataset folder), pass the relevant env var in the `docker run` command (e.g. `-e LIBERO_DATA_FOLDER=/tmp/libero_data`).
+- The job is scoped to only trigger on changes to `src/lerobot/envs/**`, `src/lerobot/scripts/lerobot_eval.py`, and the Dockerfiles — it won't run on unrelated PRs.
+
 ## Verifying your integration
 
 After completing the steps above, confirm that everything works:
@@ -303,6 +377,7 @@ After completing the steps above, confirm that everything works:
 2. **Smoke test env creation** — call `make_env()` with your config in Python, check that the returned dict has the expected `{suite: {task_id: VectorEnv}}` shape, and that `reset()` returns observations with the right keys.
 3. **Run a full eval** — `lerobot-eval --env.type=<name> --env.task=<task> --eval.n_episodes=1 --policy.path=<any_compatible_policy>` to exercise the full pipeline end-to-end. (`batch_size` defaults to auto-tuning based on CPU cores; pass `--eval.batch_size=1` to force a single environment.)
 4. **Check success detection** — verify that `info["is_success"]` flips to `True` when the task is actually completed. This is what the eval loop uses to compute success rates.
+5. **Add CI smoke test** — follow step 7 above to add a Dockerfile and CI job. This ensures the install stays green as dependencies evolve.
 
 ## Writing a benchmark doc page
 
