@@ -226,3 +226,39 @@ class IsaaclabArenaProcessorStep(ObservationProcessorStep):
 
     def observation(self, observation):
         return self._process_observation(observation)
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="robotwin_processor")
+class RoboTwinProcessorStep(ObservationProcessorStep):
+    """Processes RoboTwin 2.0 observations into LeRobot format.
+
+    ``preprocess_observation`` (in ``envs/utils.py``) already converts the raw
+    gymnasium output to standard LeRobot keys:
+    - ``pixels.{cam}`` → ``observation.images.{cam}``  (float32, [0,1], BCHW)
+    - ``agent_pos``     → ``observation.state``
+
+    This step is therefore a pass-through that exists for consistency with other
+    benchmark processors and to serve as an extension point (e.g. for adding
+    image normalization or proprioception post-processing).
+    """
+
+    def _process_observation(self, observation: dict) -> dict:
+        processed_obs = {}
+        for key, val in observation.items():
+            if key.startswith(f"{OBS_IMAGES}."):
+                processed_obs[key] = val
+        if OBS_STATE in observation:
+            state = observation[OBS_STATE]
+            if not isinstance(state, torch.Tensor):
+                state = torch.as_tensor(state)
+            processed_obs[OBS_STATE] = state.float()
+        return processed_obs
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+    def observation(self, observation: dict) -> dict:
+        return self._process_observation(observation)
