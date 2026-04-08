@@ -223,7 +223,8 @@ class LiberoEnv(gym.Env):
 
     def render(self):
         raw_obs = self._env.env._get_observations()
-        image = self._format_raw_obs(raw_obs)["pixels"]["image"]
+        pixels = self._format_raw_obs(raw_obs)["pixels"]
+        image = next(iter(pixels.values()))
         image = image[::-1, ::-1]  # flip both H and W for visualization
         return image
 
@@ -339,12 +340,6 @@ class LiberoEnv(gym.Env):
         )
         observation = self._format_raw_obs(raw_obs)
         if terminated:
-            info["final_info"] = {
-                "task": self.task,
-                "task_id": self.task_id,
-                "done": bool(done),
-                "is_success": bool(is_success),
-            }
             self.reset()
         truncated = False
         return observation, reward, terminated, truncated, info
@@ -364,6 +359,7 @@ def _make_env_fns(
     init_states: bool,
     gym_kwargs: Mapping[str, Any],
     control_mode: str,
+    camera_name_mapping: dict[str, str] | None = None,
 ) -> list[Callable[[], LiberoEnv]]:
     """Build n_envs factory callables for a single (suite, task_id)."""
 
@@ -379,6 +375,7 @@ def _make_env_fns(
             episode_index=episode_index,
             n_envs=n_envs,
             control_mode=control_mode,
+            camera_name_mapping=camera_name_mapping,
             **local_kwargs,
         )
 
@@ -400,6 +397,7 @@ def create_libero_envs(
     env_cls: Callable[[Sequence[Callable[[], Any]]], Any] | None = None,
     control_mode: str = "relative",
     episode_length: int | None = None,
+    camera_name_mapping: dict[str, str] | None = None,
 ) -> dict[str, dict[int, Any]]:
     """
     Create vectorized LIBERO environments with a consistent return shape.
@@ -449,6 +447,7 @@ def create_libero_envs(
                 init_states=init_states,
                 gym_kwargs=gym_kwargs,
                 control_mode=control_mode,
+                camera_name_mapping=camera_name_mapping,
             )
             out[suite_name][tid] = env_cls(fns)
             print(f"Built vec env | suite={suite_name} | task_id={tid} | n_envs={n_envs}")
