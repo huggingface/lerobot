@@ -187,6 +187,10 @@ class _LazyAsyncVectorEnv:
         self._ensure()
         return self._env.get_attr(name)
 
+    def __getattr__(self, name: str):
+        self._ensure()
+        return getattr(self._env, name)
+
     def close(self) -> None:
         if self._env is not None:
             self._env.close()
