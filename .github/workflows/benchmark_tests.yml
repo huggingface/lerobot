@@ -162,6 +162,60 @@ jobs:
           path: /tmp/libero-artifacts/metrics.json
           if-no-files-found: warn
 
+      # ── LIBERO TRAIN+EVAL SMOKE ──────────────────────────────────────────────
+      # Train SmolVLA for 1 step (batch_size=1, dataset episode 0 only) then
+      # immediately runs eval inside the training loop (eval_freq=1, 1 episode).
+      # Tests the full train→eval-within-training pipeline end-to-end.
+      - name: Run Libero train+eval smoke (1 step, eval_freq=1)
+        run: |
+          docker run --name libero-train-smoke --gpus all \
+            --shm-size=4g \
+            -e HF_HOME=/tmp/hf \
+            -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
+            -e HF_HUB_DOWNLOAD_TIMEOUT=300 \
+            lerobot-benchmark-libero:ci \
+            bash -c "
+              hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
+              accelerate launch --num_processes=1 \$(which lerobot-train) \
+                --policy.path=lerobot/smolvla_base \
+                --policy.load_vlm_weights=true \
+                --policy.scheduler_decay_steps=25000 \
+                --policy.freeze_vision_encoder=false \
+                --policy.train_expert_only=false \
+                --dataset.repo_id=lerobot/libero \
+                --dataset.episodes=[0] \
+                --dataset.use_imagenet_stats=false \
+                --env.type=libero \
+                --env.task=libero_spatial \
+                '--env.camera_name_mapping={\"agentview_image\": \"camera1\", \"robot0_eye_in_hand_image\": \"camera2\"}' \
+                --policy.empty_cameras=1 \
+                --output_dir=/tmp/train-smoke \
+                --steps=1 \
+                --batch_size=1 \
+                --eval_freq=1 \
+                --eval.n_episodes=1 \
+                --eval.batch_size=1 \
+                --eval.use_async_envs=false \
+                --save_freq=1 \
+                --policy.push_to_hub=false \
+                '--rename_map={\"observation.images.image\": \"observation.images.camera1\", \"observation.images.image2\": \"observation.images.camera2\"}'
+            "
+
+      - name: Copy Libero train-smoke artifacts from container
+        if: always()
+        run: |
+          mkdir -p /tmp/libero-train-smoke-artifacts
+          docker cp libero-train-smoke:/tmp/train-smoke/. /tmp/libero-train-smoke-artifacts/ 2>/dev/null || true
+          docker rm -f libero-train-smoke || true
+
+      - name: Upload Libero train-smoke eval video
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: libero-train-smoke-video
+          path: /tmp/libero-train-smoke-artifacts/eval/
+          if-no-files-found: warn
+
   # ── METAWORLD ─────────────────────────────────────────────────────────────
   # Isolated image: lerobot[metaworld] only (metaworld==3.0.0, mujoco>=3 chain)
   metaworld-integration-test:
