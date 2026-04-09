@@ -33,9 +33,9 @@ class DatasetConfig:
     episodes: list[int] | None = None
     image_transforms: ImageTransformsConfig = field(default_factory=ImageTransformsConfig)
     revision: str | None = None
-    use_imagenet_stats: bool = True
+    use_imagenet_stats: bool = False
     video_backend: str = field(default_factory=get_safe_default_codec)
-    streaming: bool = False
+    streaming: bool = True
 
     def __post_init__(self) -> None:
         if self.episodes is not None:

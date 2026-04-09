@@ -46,13 +46,13 @@ class TrainPipelineConfig(HubMixin):
     # `dir` is the directory of an existing run with at least one checkpoint in it.
     # Note that when resuming a run, the default behavior is to use the configuration from the checkpoint,
     # regardless of what's provided with the training command at the time of resumption.
-    resume: bool = False
+    resume: bool = True
     # `seed` is used for training (eg: model initialization, dataset shuffling)
     # AND for the evaluation environments.
     seed: int | None = 1000
     # Set to True to use deterministic cuDNN algorithms for reproducibility.
     # This disables cudnn.benchmark and may reduce training speed by ~10-20 percent.
-    cudnn_deterministic: bool = False
+    cudnn_deterministic: bool = True
     # Number of workers for the dataloader.
     num_workers: int = 4
     batch_size: int = 8
@@ -60,10 +60,10 @@ class TrainPipelineConfig(HubMixin):
     eval_freq: int = 20_000
     log_freq: int = 200
     tolerance_s: float = 1e-4
-    save_checkpoint: bool = True
+    save_checkpoint: bool = False
     # Checkpoint is saved every `save_freq` training iterations and after the last training step.
     save_freq: int = 20_000
-    use_policy_training_preset: bool = True
+    use_policy_training_preset: bool = False
     optimizer: OptimizerConfig | None = None
     scheduler: LRSchedulerConfig | None = None
     eval: EvalConfig = field(default_factory=EvalConfig)
