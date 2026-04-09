@@ -98,17 +98,22 @@ class SOLeader(Teleoperator):
             self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
         input(f"Move {self} to the middle of its range of motion and press ENTER....")
-        homing_offsets = self.bus.set_half_turn_homings()
 
         full_turn_motor = "wrist_roll"
-        unknown_range_motors = [motor for motor in self.bus.motors if motor != full_turn_motor]
+
+        current_pos = self.bus.read("Present_Position", full_turn_motor, normalize=False)
+        if isinstance(current_pos, dict):
+            current_pos = current_pos[full_turn_motor]
+
+        other_motors = [motor for motor in self.bus.motors if motor != full_turn_motor]
+        homing_offsets = self.bus.set_half_turn_homings(other_motors)
+        homing_offsets[full_turn_motor] = 0
+
+        unknown_range_motors = other_motors
         print(
             f"Move all joints except '{full_turn_motor}' sequentially through their "
             "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
         )
-        current_pos = self.bus.read("Present_Position", full_turn_motor, normalize=False)
-        if isinstance(current_pos, dict):
-            current_pos = current_pos[full_turn_motor]
         range_mins, range_maxes = self.bus.record_ranges_of_motion(unknown_range_motors)
         safe_delta = min(current_pos - 0, 4095 - current_pos, 2048)
         range_mins[full_turn_motor] = current_pos - safe_delta
