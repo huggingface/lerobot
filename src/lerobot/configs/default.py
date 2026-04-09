@@ -65,20 +65,27 @@ class WandBConfig:
 class EvalConfig:
     n_episodes: int = 50
     # `batch_size` specifies the number of environments to use in a gym.vector.VectorEnv.
-    batch_size: int = 50
+    # Set to 0 for auto-tuning based on available CPU cores and n_episodes.
+    batch_size: int = 0
     # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
-    use_async_envs: bool = False
+    # Defaults to True; automatically downgraded to SyncVectorEnv when batch_size=1.
+    use_async_envs: bool = True
 
     def __post_init__(self) -> None:
+        if self.batch_size == 0:
+            self.batch_size = self._auto_batch_size()
         if self.batch_size > self.n_episodes:
-            raise ValueError(
-                "The eval batch size is greater than the number of eval episodes "
-                f"({self.batch_size} > {self.n_episodes}). As a result, {self.batch_size} "
-                f"eval environments will be instantiated, but only {self.n_episodes} will be used. "
-                "This might significantly slow down evaluation. To fix this, you should update your command "
-                f"to increase the number of episodes to match the batch size (e.g. `eval.n_episodes={self.batch_size}`), "
-                f"or lower the batch size (e.g. `eval.batch_size={self.n_episodes}`)."
-            )
+            self.batch_size = self.n_episodes
+
+    def _auto_batch_size(self) -> int:
+        """Pick batch_size based on CPU cores, capped by n_episodes."""
+        import math
+        import os
+
+        cpu_cores = os.cpu_count() or 4
+        # Each async env worker needs ~1 core; leave headroom for main process + inference.
+        by_cpu = max(1, math.floor(cpu_cores * 0.7))
+        return min(by_cpu, self.n_episodes, 64)
 
 
 @dataclass
