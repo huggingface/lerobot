@@ -1,0 +1,94 @@
+{
+    "env": {
+        "type": "gym_manipulator",
+        "name": "real_robot",
+        "task": "pick_cube",
+        "fps": 10,
+        "robot": {
+            "type": "so101_follower",
+            "port": "/dev/ttyACM0",
+            "id": "my_follower",
+            "cameras": {
+                "front": {
+                    "type": "opencv",
+                    "index_or_path": 0,
+                    "width": 640,
+                    "height": 480,
+                    "fps": 30
+                },
+                "wrist": {
+                    "type": "opencv",
+                    "index_or_path": 2,
+                    "width": 640,
+                    "height": 480,
+                    "fps": 30
+                }
+            }
+        },
+        "teleop": {
+            "type": "so101_leader",
+            "port": "/dev/ttyACM1",
+            "id": "my_leader"
+        },
+        "processor": {
+            "control_mode": "leader",
+            "gripper": {
+                "use_gripper": true,
+                "gripper_penalty": -0.02
+            },
+            "observation": {
+                "add_ee_pose_to_observation": true,
+                "display_cameras": true
+            },
+            "image_preprocessing": {
+                "crop_params_dict": {},
+                "resize_size": [128, 128]
+            },
+            "inverse_kinematics": {
+                "urdf_path": "SO101/so101_new_calib.urdf",
+                "target_frame_name": "gripper_frame_link",
+                "end_effector_bounds": {
+                    "min": [-0.15, -0.15, 0.01],
+                    "max": [0.25, 0.15, 0.30]
+                },
+                "end_effector_step_sizes": {
+                    "x": 0.005,
+                    "y": 0.005,
+                    "z": 0.005
+                }
+            },
+            "reset": {
+                "fixed_reset_joint_positions": [0.0, -30.0, 90.0, -60.0, 0.0, 0.0],
+                "reset_time_s": 5.0,
+                "control_time_s": 15.0,
+                "terminate_on_success": true
+            }
+        },
+        "features": {
+            "observation.images.front": {
+                "type": "VISUAL",
+                "shape": [3, 128, 128]
+            },
+            "observation.images.wrist": {
+                "type": "VISUAL",
+                "shape": [3, 128, 128]
+            },
+            "observation.state": {
+                "type": "STATE",
+                "shape": [9]
+            },
+            "action": {
+                "type": "ACTION",
+                "shape": [4]
+            }
+        }
+    },
+    "dataset": {
+        "repo_id": "LIJianxuanLeo/real_pick_cube",
+        "task": "pick_cube",
+        "num_episodes_to_record": 25,
+        "push_to_hub": false
+    },
+    "mode": "record",
+    "device": "cpu"
+}
