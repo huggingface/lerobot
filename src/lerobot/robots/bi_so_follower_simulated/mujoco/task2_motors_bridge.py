@@ -39,11 +39,13 @@ class Task2SharedBackend:
         self.sim = Task2Sim(
             xml_path=self.xml_path,
             robot_dofs=robot_dofs,
+            render_size=render_size,
             launch_viewer=launch_viewer,
             show_sites=True,
         )
         self.model = self.sim.model
         self.data = self.sim.data
+        self.render_size = render_size
 
         self.robot_dofs = int(robot_dofs)
         self.nu = int(self.model.nu)
@@ -54,12 +56,6 @@ class Task2SharedBackend:
 
         self._ctrl_target = np.zeros(self.nu, dtype=float)
         # self._apply_startup_pose()
-
-        if render_size is None:
-            self._renderer = None
-        else:
-            height, width = render_size
-            self._renderer = mujoco.Renderer(self.model, height=height, width=width)
 
         self._lock = threading.Lock()
         self._running = False
@@ -175,21 +171,13 @@ class Task2SharedBackend:
                 images={name: image.copy() for name, image in self._state.images.items()},
             )
 
-    def _render_images(self) -> dict[str, np.ndarray]:
-        if self._renderer is None:
-            return {}
-
-        images: dict[str, np.ndarray] = {}
-        for camera_name in ("camera_front", "camera_top", "front", "top"):
-            camera_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, camera_name)
-            if camera_id < 0:
-                continue
-            self._renderer.update_scene(self.data, camera=camera_name)
-            images[camera_name] = self._renderer.render().copy()
-        return images
-
     def _loop(self) -> None:
+        '''
+            the renderer has to be initialised here otherwise it will give a Context error
+            initialisation and rendering should be done in the same thread
+        '''
         dt = float(self.model.opt.timestep) * int(self.sim.substeps)
+        self.sim._renderer = mujoco.Renderer(self.model, height = self.render_size[1], width = self.render_size[0])
 
         while True:
             with self._lock:
@@ -203,7 +191,7 @@ class Task2SharedBackend:
 
             with self._lock:
                 self._state.qpos_deg = np.rad2deg(self._read_actuated_joint_qpos_rad()).astype(np.float32)
-                self._state.images = self._render_images()
+                self._state.images = self.sim.get_images()
 
             if self.realtime:
                 elapsed = time.time() - tick_start

@@ -14,6 +14,7 @@ class Task2Sim:
         self,
         xml_path: str | Path,
         robot_dofs: int = 6,
+        render_size: tuple[int, int] | None = (480, 640),
         cube_raise_z: float = 0.05,
         substeps: int = 1,
         launch_viewer: bool = True,
@@ -38,12 +39,18 @@ class Task2Sim:
         self.num_arms = max(1, int(self.model.nu) // self.robot_dofs)
         self.active_arm = 0
         self.viewer = None
+        self.images = {}
 
-        if use_home_pose and home_qpos is not None:
-            self.apply_home_pose(home_qpos, home_ctrl)
+        if render_size is None:
+            self._renderer = None
+        else:
+            height, width = render_size
+
+        # if use_home_pose and home_qpos is not None:
+        #     self.apply_home_pose(home_qpos, home_ctrl)
 
         self._raise_cube_if_possible(float(cube_raise_z))
-        mujoco.mj_forward(self.model, self.data)
+        # mujoco.mj_forward(self.model, self.data)
 
         if launch_viewer:
             self.viewer = mujoco.viewer.launch_passive(
@@ -121,9 +128,26 @@ class Task2Sim:
 
         mujoco.mj_forward(self.model, self.data)
 
+    def _render_images(self):
+        if self._renderer is None:
+            return {}
+
+        for camera_name in ("camera_front", "camera_top", "front", "top", "camera_vizu", "vizu"):
+            camera_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, camera_name)
+            if camera_id < 0:
+                print(camera_name)
+                continue
+            self._renderer.update_scene(self.data, camera=camera_name)
+            renderer_var = self._renderer.render().copy()
+            self.images[camera_name] = renderer_var
+        
+    def get_images(self):
+        return self.images
+
     def step(self) -> None:
         for _ in range(self.substeps):
             mujoco.mj_step(self.model, self.data)
+            self._render_images()
         if self.viewer is not None:
             self.viewer.sync()
 
