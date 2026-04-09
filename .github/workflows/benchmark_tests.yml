@@ -83,12 +83,7 @@ jobs:
         with:
           cache-binary: false
 
-      # Authenticate to Docker Hub to avoid anonymous pull rate limits
-      # (100 pulls/6h anonymous vs 200 pulls/6h authenticated).
       - name: Login to Docker Hub
-        if: env.DOCKERHUB_LEROBOT_USERNAME != ''
-        env:
-          DOCKERHUB_LEROBOT_USERNAME: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
         uses: docker/login-action@v3 # zizmor: ignore[unpinned-uses]
         with:
           username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
