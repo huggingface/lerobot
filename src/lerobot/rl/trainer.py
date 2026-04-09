@@ -22,37 +22,6 @@ from lerobot.rl.algorithms.configs import TrainingStats
 from lerobot.rl.data_sources.data_mixer import DataMixer
 
 
-def preprocess_rl_batch(preprocessor: Any, batch: BatchType) -> BatchType:
-    """Apply policy preprocessing to RL observations only.
-
-    This mirrors the pre-refactor SAC learner behavior where actions are left
-    unchanged and only state/next_state observations are normalized.
-    """
-    observations = batch["state"]
-    next_observations = batch["next_state"]
-    batch["state"] = preprocessor.process_observation(observations)
-    batch["next_state"] = preprocessor.process_observation(next_observations)
-
-    return batch
-
-
-class _PreprocessedIterator:
-    """Iterator wrapper that preprocesses each sampled RL batch."""
-
-    __slots__ = ("_raw", "_preprocessor")
-
-    def __init__(self, raw_iterator: Iterator[BatchType], preprocessor: Any) -> None:
-        self._raw = raw_iterator
-        self._preprocessor = preprocessor
-
-    def __iter__(self) -> _PreprocessedIterator:
-        return self
-
-    def __next__(self) -> BatchType:
-        batch = next(self._raw)
-        return preprocess_rl_batch(self._preprocessor, batch)
-
-
 class RLTrainer:
     """Unified training step orchestrator.
 
@@ -101,3 +70,34 @@ class RLTrainer:
         if self._iterator is None:
             self._iterator = self._build_data_iterator()
         return self.algorithm.update(self._iterator)
+
+
+def preprocess_rl_batch(preprocessor: Any, batch: BatchType) -> BatchType:
+    """Apply policy preprocessing to RL observations only.
+
+    This mirrors the pre-refactor SAC learner behavior where actions are left
+    unchanged and only state/next_state observations are normalized.
+    """
+    observations = batch["state"]
+    next_observations = batch["next_state"]
+    batch["state"] = preprocessor.process_observation(observations)
+    batch["next_state"] = preprocessor.process_observation(next_observations)
+
+    return batch
+
+
+class _PreprocessedIterator:
+    """Iterator wrapper that preprocesses each sampled RL batch."""
+
+    __slots__ = ("_raw", "_preprocessor")
+
+    def __init__(self, raw_iterator: Iterator[BatchType], preprocessor: Any) -> None:
+        self._raw = raw_iterator
+        self._preprocessor = preprocessor
+
+    def __iter__(self) -> _PreprocessedIterator:
+        return self
+
+    def __next__(self) -> BatchType:
+        batch = next(self._raw)
+        return preprocess_rl_batch(self._preprocessor, batch)

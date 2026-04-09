@@ -36,10 +36,7 @@ DISCRETE_DIMENSION_INDEX = -1  # Gripper is always the last dimension
 class SACPolicy(
     PreTrainedPolicy,
 ):
-    """SAC policy — encoder, actor, and optional discrete critic for inference.
-
-    Critics, targets, temperature, and training logic live in ``SACAlgorithm``.
-    """
+    """SAC policy."""
 
     config_class = SACConfig
     name = "sac"
@@ -66,15 +63,18 @@ class SACPolicy(
         }
 
     def reset(self):
+        """Reset the policy"""
         pass
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+        """Predict a chunk of actions given environment observations."""
         raise NotImplementedError("SACPolicy does not support action chunking. It returns single actions!")
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        """Select full action for environment (continuous + optional discrete)."""
+        """Select action for inference/evaluation"""
+
         observations_features = None
         if self.shared_encoder and self.actor.encoder.has_images:
             observations_features = self.actor.encoder.get_cached_image_features(batch)
@@ -118,6 +118,7 @@ class SACPolicy(
             self.discrete_critic.load_state_dict(dc_sd)
 
     def _init_encoders(self):
+        """Initialize shared or separate encoders for actor and critic."""
         self.shared_encoder = self.config.shared_encoder
         self.encoder_critic = SACObservationEncoder(self.config)
         self.encoder_actor = (
@@ -125,6 +126,8 @@ class SACPolicy(
         )
 
     def _init_actor(self):
+        """Initialize policy actor network and default target entropy."""
+        # NOTE: The actor select only the continuous action part
         continuous_action_dim = self.config.output_features[ACTION].shape[0]
         self.actor = Policy(
             encoder=self.encoder_actor,
@@ -133,6 +136,7 @@ class SACPolicy(
             encoder_is_shared=self.shared_encoder,
             **asdict(self.config.policy_kwargs),
         )
+
         self.target_entropy = self.config.target_entropy
         if self.target_entropy is None:
             dim = continuous_action_dim + (1 if self.config.num_discrete_actions is not None else 0)
@@ -236,12 +240,48 @@ class SACObservationEncoder(nn.Module):
         )
 
     def get_cached_image_features(self, obs: dict[str, Tensor]) -> dict[str, Tensor]:
+        """Extract and optionally cache image features from observations.
+
+        This function processes image observations through the vision encoder once and returns
+        the resulting features.
+        When the image encoder is shared between actor and critics AND frozen, these features can be safely cached and
+        reused across policy components (actor, critic, discrete_critic), avoiding redundant forward passes.
+
+        Performance impact:
+        - The vision encoder forward pass is typically the main computational bottleneck during training and inference
+        - Caching these features can provide 2-4x speedup in training and inference
+
+        Usage patterns:
+        - Called in select_action()
+        - Called in learner.py's get_observation_features() to pre-compute features for all policy components
+        - Called internally by forward()
+
+        Args:
+            obs: Dictionary of observation tensors containing image keys
+
+        Returns:
+            Dictionary mapping image keys to their corresponding encoded features
+        """
         batched = torch.cat([obs[k] for k in self.image_keys], dim=0)
         out = self.image_encoder(batched)
         chunks = torch.chunk(out, len(self.image_keys), dim=0)
         return dict(zip(self.image_keys, chunks, strict=False))
 
     def _encode_images(self, cache: dict[str, Tensor], detach: bool) -> Tensor:
+        """Encode image features from cached observations.
+
+        This function takes pre-encoded image features from the cache and applies spatial embeddings and post-encoders.
+        It also supports detaching the encoded features if specified.
+
+        Args:
+            cache (dict[str, Tensor]): The cached image features.
+            detach (bool): Usually when the encoder is shared between actor and critics,
+            we want to detach the encoded features on the policy side to avoid backprop through the encoder.
+            More detail here `https://cdn.aaai.org/ojs/17276/17276-13-20770-1-2-20210518.pdf`
+
+        Returns:
+            Tensor: The encoded image features.
+        """
         feats = []
         for k, feat in cache.items():
             safe_key = k.replace(".", "_")
@@ -258,7 +298,25 @@ class SACObservationEncoder(nn.Module):
 
 
 class MLP(nn.Module):
-    """Multi-layer perceptron builder."""
+    """Multi-layer perceptron builder.
+
+    Dynamically constructs a sequence of layers based on `hidden_dims`:
+      1) Linear (in_dim -> out_dim)
+      2) Optional Dropout if `dropout_rate` > 0 and (not final layer or `activate_final`)
+      3) LayerNorm on the output features
+      4) Activation (standard for intermediate layers, `final_activation` for last layer if `activate_final`)
+
+    Arguments:
+        input_dim (int): Size of input feature dimension.
+        hidden_dims (list[int]): Sizes for each hidden layer.
+        activations (Callable or str): Activation to apply between layers.
+        activate_final (bool): Whether to apply activation at the final layer.
+        dropout_rate (Optional[float]): Dropout probability applied before normalization and activation.
+        final_activation (Optional[Callable or str]): Activation for the final layer when `activate_final` is True.
+
+    For each layer, `in_dim` is updated to the previous `out_dim`. All constructed modules are
+    stored in `self.net` as an `nn.Sequential` container.
+    """
 
     def __init__(
         self,
@@ -275,9 +333,11 @@ class MLP(nn.Module):
         total = len(hidden_dims)
 
         for idx, out_dim in enumerate(hidden_dims):
+            # 1) linear transform
             layers.append(nn.Linear(in_dim, out_dim))
 
             is_last = idx == total - 1
+            # 2-4) optionally add dropout, normalization, and activation
             if not is_last or activate_final:
                 if dropout_rate and dropout_rate > 0:
                     layers.append(nn.Dropout(p=dropout_rate))
@@ -359,10 +419,12 @@ class Policy(nn.Module):
         self.use_tanh_squash = use_tanh_squash
         self.encoder_is_shared = encoder_is_shared
 
+        # Find the last Linear layer's output dimension
         for layer in reversed(network.net):
             if isinstance(layer, nn.Linear):
                 out_features = layer.out_features
                 break
+        # Mean layer
         self.mean_layer = nn.Linear(out_features, action_dim)
         if init_final is not None:
             nn.init.uniform_(self.mean_layer.weight, -init_final, init_final)
@@ -370,6 +432,7 @@ class Policy(nn.Module):
         else:
             orthogonal_init()(self.mean_layer.weight)
 
+        # Standard deviation layer or parameter
         if fixed_std is None:
             self.std_layer = nn.Linear(out_features, action_dim)
             if init_final is not None:
@@ -383,23 +446,41 @@ class Policy(nn.Module):
         observations: torch.Tensor,
         observation_features: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        # We detach the encoder if it is shared to avoid backprop through it
+        # This is important to avoid the encoder to be updated through the policy
         obs_enc = self.encoder(observations, cache=observation_features, detach=self.encoder_is_shared)
 
+        # Get network outputs
         outputs = self.network(obs_enc)
         means = self.mean_layer(outputs)
 
+        # Compute standard deviations
         if self.fixed_std is None:
             log_std = self.std_layer(outputs)
-            std = torch.exp(log_std)
-            std = torch.clamp(std, self.std_min, self.std_max)
+            std = torch.exp(log_std)  # Match JAX "exp"
+            std = torch.clamp(std, self.std_min, self.std_max)  # Match JAX default clip
         else:
             std = self.fixed_std.expand_as(means)
 
+        # Build transformed distribution
         dist = TanhMultivariateNormalDiag(loc=means, scale_diag=std)
+
+        # Sample actions (reparameterized)
         actions = dist.rsample()
+
+        # Compute log_probs
         log_probs = dist.log_prob(actions)
 
         return actions, log_probs, means
+
+    def get_features(self, observations: torch.Tensor) -> torch.Tensor:
+        """Get encoded features from observations"""
+        device = get_device_from_parameters(self)
+        observations = observations.to(device)
+        if self.encoder is not None:
+            with torch.inference_mode():
+                return self.encoder(observations)
+        return observations
 
 
 class DefaultImageEncoder(nn.Module):
@@ -408,22 +489,42 @@ class DefaultImageEncoder(nn.Module):
         image_key = next(key for key in config.input_features if is_image_feature(key))
         self.image_enc_layers = nn.Sequential(
             nn.Conv2d(
-                config.input_features[image_key].shape[0], config.image_encoder_hidden_dim, 7, stride=2
+                in_channels=config.input_features[image_key].shape[0],
+                out_channels=config.image_encoder_hidden_dim,
+                kernel_size=7,
+                stride=2,
             ),
             nn.ReLU(),
-            nn.Conv2d(config.image_encoder_hidden_dim, config.image_encoder_hidden_dim, 5, stride=2),
+            nn.Conv2d(
+                in_channels=config.image_encoder_hidden_dim,
+                out_channels=config.image_encoder_hidden_dim,
+                kernel_size=5,
+                stride=2,
+            ),
             nn.ReLU(),
-            nn.Conv2d(config.image_encoder_hidden_dim, config.image_encoder_hidden_dim, 3, stride=2),
+            nn.Conv2d(
+                in_channels=config.image_encoder_hidden_dim,
+                out_channels=config.image_encoder_hidden_dim,
+                kernel_size=3,
+                stride=2,
+            ),
             nn.ReLU(),
-            nn.Conv2d(config.image_encoder_hidden_dim, config.image_encoder_hidden_dim, 3, stride=2),
+            nn.Conv2d(
+                in_channels=config.image_encoder_hidden_dim,
+                out_channels=config.image_encoder_hidden_dim,
+                kernel_size=3,
+                stride=2,
+            ),
             nn.ReLU(),
         )
 
     def forward(self, x):
-        return self.image_enc_layers(x)
+        x = self.image_enc_layers(x)
+        return x
 
 
 def freeze_image_encoder(image_encoder: nn.Module):
+    """Freeze all parameters in the encoder"""
     for param in image_encoder.parameters():
         param.requires_grad = False
 
@@ -431,14 +532,17 @@ def freeze_image_encoder(image_encoder: nn.Module):
 class PretrainedImageEncoder(nn.Module):
     def __init__(self, config: SACConfig):
         super().__init__()
+
         self.image_enc_layers, self.image_enc_out_shape = self._load_pretrained_vision_encoder(config)
 
     def _load_pretrained_vision_encoder(self, config: SACConfig):
+        """Set up CNN encoder"""
         from transformers import AutoModel
 
         self.image_enc_layers = AutoModel.from_pretrained(config.vision_encoder_name, trust_remote_code=True)
+
         if hasattr(self.image_enc_layers.config, "hidden_sizes"):
-            self.image_enc_out_shape = self.image_enc_layers.config.hidden_sizes[-1]
+            self.image_enc_out_shape = self.image_enc_layers.config.hidden_sizes[-1]  # Last channel dimension
         elif hasattr(self.image_enc_layers, "fc"):
             self.image_enc_out_shape = self.image_enc_layers.fc.in_features
         else:
@@ -446,7 +550,8 @@ class PretrainedImageEncoder(nn.Module):
         return self.image_enc_layers, self.image_enc_out_shape
 
     def forward(self, x):
-        return self.image_enc_layers(x).last_hidden_state
+        enc_feat = self.image_enc_layers(x).last_hidden_state
+        return enc_feat
 
 
 def orthogonal_init():
@@ -455,57 +560,105 @@ def orthogonal_init():
 
 class SpatialLearnedEmbeddings(nn.Module):
     def __init__(self, height, width, channel, num_features=8):
+        """
+        PyTorch implementation of learned spatial embeddings
+
+        Args:
+            height: Spatial height of input features
+            width: Spatial width of input features
+            channel: Number of input channels
+            num_features: Number of output embedding dimensions
+        """
         super().__init__()
         self.height = height
         self.width = width
         self.channel = channel
         self.num_features = num_features
+
         self.kernel = nn.Parameter(torch.empty(channel, height, width, num_features))
+
         nn.init.kaiming_normal_(self.kernel, mode="fan_in", nonlinearity="linear")
 
     def forward(self, features):
-        features_expanded = features.unsqueeze(-1)
-        kernel_expanded = self.kernel.unsqueeze(0)
-        output = (features_expanded * kernel_expanded).sum(dim=(2, 3))
-        output = output.view(output.size(0), -1)
+        """
+        Forward pass for spatial embedding
+
+        Args:
+            features: Input tensor of shape [B, C, H, W] where B is batch size,
+                     C is number of channels, H is height, and W is width
+        Returns:
+            Output tensor of shape [B, C*F] where F is the number of features
+        """
+
+        features_expanded = features.unsqueeze(-1)  # [B, C, H, W, 1]
+        kernel_expanded = self.kernel.unsqueeze(0)  # [1, C, H, W, F]
+
+        # Element-wise multiplication and spatial reduction
+        output = (features_expanded * kernel_expanded).sum(dim=(2, 3))  # Sum over H,W dimensions
+
+        # Reshape to combine channel and feature dimensions
+        output = output.view(output.size(0), -1)  # [B, C*F]
+
         return output
 
 
 class RescaleFromTanh(Transform):
     def __init__(self, low: float = -1, high: float = 1):
         super().__init__()
+
         self.low = low
+
         self.high = high
 
     def _call(self, x):
+        # Rescale from (-1, 1) to (low, high)
+
         return 0.5 * (x + 1.0) * (self.high - self.low) + self.low
 
     def _inverse(self, y):
+        # Rescale from (low, high) back to (-1, 1)
+
         return 2.0 * (y - self.low) / (self.high - self.low) - 1.0
 
     def log_abs_det_jacobian(self, x, y):
+        # log|d(rescale)/dx| = sum(log(0.5 * (high - low)))
+
         scale = 0.5 * (self.high - self.low)
+
         return torch.sum(torch.log(scale), dim=-1)
 
 
 class TanhMultivariateNormalDiag(TransformedDistribution):
     def __init__(self, loc, scale_diag, low=None, high=None):
         base_dist = MultivariateNormal(loc, torch.diag_embed(scale_diag))
+
         transforms = [TanhTransform(cache_size=1)]
+
         if low is not None and high is not None:
             low = torch.as_tensor(low)
+
             high = torch.as_tensor(high)
+
             transforms.insert(0, RescaleFromTanh(low, high))
+
         super().__init__(base_dist, transforms)
 
     def mode(self):
+        # Mode is mean of base distribution, passed through transforms
+
         x = self.base_dist.mean
+
         for transform in self.transforms:
             x = transform(x)
+
         return x
 
     def stddev(self):
-        x = self.base_dist.stddev
+        std = self.base_dist.stddev
+
+        x = std
+
         for transform in self.transforms:
             x = transform(x)
+
         return x

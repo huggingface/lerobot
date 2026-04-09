@@ -248,6 +248,9 @@ def act_with_policy(
 
     logging.info("make_policy")
 
+    ### Instantiate the policy in both the actor and learner processes
+    ### To avoid sending a SACPolicy object through the port, we create a policy instance
+    ### on both sides, the learner sends the updated parameters every n steps to update the actor's parameters
     policy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
@@ -656,6 +659,16 @@ def update_policy_parameters(policy: PreTrainedPolicy, parameters_queue: Queue, 
     if bytes_state_dict is not None:
         logging.info("[ACTOR] Load new parameters from Learner.")
         state_dicts = bytes_to_state_dict(bytes_state_dict)
+
+        # TODO: check encoder parameter synchronization possible issues:
+        # 1. When shared_encoder=True, we're loading stale encoder params from actor's state_dict
+        #    instead of the updated encoder params from critic (which is optimized separately)
+        # 2. When freeze_vision_encoder=True, we waste bandwidth sending/loading frozen params
+        # 3. Need to handle encoder params correctly for both actor and discrete_critic
+        # Potential fixes:
+        # - Send critic's encoder state when shared_encoder=True
+        # - Skip encoder params entirely when freeze_vision_encoder=True
+        # - Ensure discrete_critic gets correct encoder state (currently uses encoder_critic)
         policy.load_actor_weights(state_dicts, device=device)
 
 

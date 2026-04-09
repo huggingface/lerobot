@@ -19,7 +19,6 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 import torch
-from torch import Tensor
 from torch.optim import Optimizer
 
 from lerobot.rl.algorithms.configs import RLAlgorithmConfig, TrainingStats
@@ -104,14 +103,4 @@ class RLAlgorithm(abc.ABC):
 
     @abc.abstractmethod
     def load_weights(self, weights: dict[str, Any], device: str | torch.device = "cpu") -> None:
-        """Load policy state-dict received from the learner (inverse of ``get_weights``)."""
-
-    @torch.no_grad()
-    def get_observation_features(
-        self, observations: Tensor, next_observations: Tensor
-    ) -> tuple[Tensor | None, Tensor | None]:
-        """Pre-compute observation features (e.g. frozen encoder cache).
-
-        Returns ``(None, None)`` when caching is not applicable.
-        """
-        return None, None
+        """Load policy state-dict received from the learner."""
