@@ -309,7 +309,7 @@ def test_learner_algorithm_wiring():
     make_optimizers() creates the right optimizers, update() works, and
     get_weights() output is serializable."""
     from lerobot.policies.sac.modeling_sac import SACPolicy
-    from lerobot.rl.algorithms import make_algorithm
+    from lerobot.rl.algorithms.factory import make_algorithm
     from lerobot.rl.algorithms.sac import SACAlgorithm
     from lerobot.transport.utils import state_to_bytes
 
@@ -396,7 +396,7 @@ def test_initial_and_periodic_weight_push_consistency():
     """Both initial and periodic weight pushes should use algorithm.get_weights()
     and produce identical structures."""
     from lerobot.policies.sac.modeling_sac import SACPolicy
-    from lerobot.rl.algorithms import make_algorithm
+    from lerobot.rl.algorithms.factory import make_algorithm
     from lerobot.transport.utils import bytes_to_state_dict, state_to_bytes
 
     state_dim = 10
@@ -434,7 +434,7 @@ def test_initial_and_periodic_weight_push_consistency():
 def test_actor_side_algorithm_select_action_and_load_weights():
     """Simulate actor: create algorithm without optimizers, select_action, load_weights."""
     from lerobot.policies.sac.modeling_sac import SACPolicy
-    from lerobot.rl.algorithms import make_algorithm
+    from lerobot.rl.algorithms.factory import make_algorithm
     from lerobot.rl.algorithms.sac import SACAlgorithm
 
     state_dim = 10

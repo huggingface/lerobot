@@ -66,7 +66,7 @@ from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.factory import make_policy
 from lerobot.policies.sac.processor_sac import make_sac_pre_post_processors
-from lerobot.rl.algorithms import make_algorithm
+from lerobot.rl.algorithms.factory import make_algorithm
 from lerobot.rl.buffer import ReplayBuffer
 from lerobot.rl.data_sources import OnlineOfflineMixer
 from lerobot.rl.process import ProcessSignalHandler

@@ -16,13 +16,13 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Iterator
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-import draccus
 import torch
 from torch import Tensor
 from torch.optim import Optimizer
+
+from lerobot.rl.algorithms.configs import RLAlgorithmConfig, TrainingStats
 
 if TYPE_CHECKING:
     from lerobot.rl.data_sources.data_mixer import DataMixer
@@ -30,49 +30,18 @@ if TYPE_CHECKING:
 BatchType = dict[str, Any]
 
 
-@dataclass
-class TrainingStats:
-    """Returned by ``algorithm.update()`` for logging and checkpointing."""
-
-    losses: dict[str, float] = field(default_factory=dict)
-    grad_norms: dict[str, float] = field(default_factory=dict)
-    extra: dict[str, float] = field(default_factory=dict)
-
-    def to_log_dict(self) -> dict[str, float]:
-        """Flatten all stats into a single dict for logging."""
-
-        d: dict[str, float] = {}
-        for name, val in self.losses.items():
-            d[name] = val
-        for name, val in self.grad_norms.items():
-            d[f"{name}_grad_norm"] = val
-        for name, val in self.extra.items():
-            d[name] = val
-        return d
-
-
-@dataclass
-class RLAlgorithmConfig(draccus.ChoiceRegistry):
-    """Registry for algorithm configs."""
-
-    def build_algorithm(self, policy: torch.nn.Module) -> RLAlgorithm:
-        """Construct the :class:`RLAlgorithm` for this config.
-
-        Must be overridden by every registered config subclass.
-        """
-        raise NotImplementedError(f"{type(self).__name__} must implement build_algorithm()")
-
-    @classmethod
-    def from_policy_config(cls, policy_cfg: Any) -> RLAlgorithmConfig:
-        """Build an algorithm config from a policy config.
-
-        Must be overridden by every registered config subclass.
-        """
-        raise NotImplementedError(f"{cls.__name__} must implement from_policy_config()")
-
-
 class RLAlgorithm(abc.ABC):
     """Base for all RL algorithms."""
+
+    config_class: type[RLAlgorithmConfig] | None = None
+    name: str | None = None
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        if not getattr(cls, "config_class", None):
+            raise TypeError(f"Class {cls.__name__} must define 'config_class'")
+        if not getattr(cls, "name", None):
+            raise TypeError(f"Class {cls.__name__} must define 'name'")
 
     @abc.abstractmethod
     def update(self, batch_iterator: Iterator[BatchType]) -> TrainingStats:

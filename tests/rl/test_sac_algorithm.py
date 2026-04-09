@@ -21,8 +21,8 @@ import torch
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.sac.configuration_sac import SACConfig
 from lerobot.policies.sac.modeling_sac import SACPolicy
-from lerobot.rl.algorithms import make_algorithm
-from lerobot.rl.algorithms.base import RLAlgorithmConfig, TrainingStats
+from lerobot.rl.algorithms.configs import RLAlgorithmConfig, TrainingStats
+from lerobot.rl.algorithms.factory import make_algorithm
 from lerobot.rl.algorithms.sac import SACAlgorithm, SACAlgorithmConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_STATE
 from lerobot.utils.random_utils import set_seed

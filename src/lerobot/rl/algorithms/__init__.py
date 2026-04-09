@@ -12,38 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
-
-import torch
-
-from lerobot.rl.algorithms.base import (
-    RLAlgorithm,
-    RLAlgorithmConfig,
-    TrainingStats,
-)
-from lerobot.rl.algorithms.sac import SACAlgorithm, SACAlgorithmConfig
-
-
-def make_algorithm(
-    policy: torch.nn.Module,
-    policy_cfg,
-    *,
-    algorithm_name: str,
-) -> RLAlgorithm:
-    known = RLAlgorithmConfig.get_known_choices()
-    if algorithm_name not in known:
-        raise ValueError(f"No RLAlgorithmConfig registered for '{algorithm_name}'. Known: {list(known)}")
-
-    config_cls = RLAlgorithmConfig.get_choice_class(algorithm_name)
-    algo_config = config_cls.from_policy_config(policy_cfg)
-    return algo_config.build_algorithm(policy)
-
+from lerobot.rl.algorithms.sac import SACAlgorithm as SACAlgorithm, SACAlgorithmConfig as SACAlgorithmConfig
 
 __all__ = [
-    "RLAlgorithm",
-    "RLAlgorithmConfig",
-    "TrainingStats",
     "SACAlgorithm",
     "SACAlgorithmConfig",
-    "make_algorithm",
 ]

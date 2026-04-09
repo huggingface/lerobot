@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 import torch
 
 from lerobot.policies.sac.configuration_sac import CriticNetworkConfig
-from lerobot.rl.algorithms.base import RLAlgorithmConfig
+from lerobot.rl.algorithms.configs import RLAlgorithmConfig
 
 if TYPE_CHECKING:
     from lerobot.rl.algorithms.sac.sac_algorithm import SACAlgorithm

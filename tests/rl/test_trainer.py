@@ -17,12 +17,20 @@
 import torch
 from torch import Tensor
 
-from lerobot.rl.algorithms.base import RLAlgorithm, TrainingStats
+from lerobot.rl.algorithms.base import RLAlgorithm
+from lerobot.rl.algorithms.configs import TrainingStats
 from lerobot.rl.trainer import RLTrainer
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 
-class _CountingAlgorithm(RLAlgorithm):
+class _DummyRLAlgorithmConfig:
+    """Dummy config for testing."""
+
+
+class _DummyRLAlgorithm(RLAlgorithm):
+    config_class = _DummyRLAlgorithmConfig
+    name = "dummy_rl_algorithm"
+
     def __init__(self):
         self.configure_calls = 0
         self.update_calls = 0
@@ -73,7 +81,7 @@ class _SimpleMixer:
 
 
 def test_trainer_lazy_iterator_lifecycle_and_reset():
-    algo = _CountingAlgorithm()
+    algo = _DummyRLAlgorithm()
     mixer = _SimpleMixer()
     trainer = RLTrainer(algorithm=algo, data_mixer=mixer, batch_size=4)
 
@@ -95,7 +103,7 @@ def test_trainer_lazy_iterator_lifecycle_and_reset():
 
 
 def test_trainer_set_data_mixer_resets_by_default():
-    algo = _CountingAlgorithm()
+    algo = _DummyRLAlgorithm()
     mixer_a = _SimpleMixer()
     mixer_b = _SimpleMixer()
     trainer = RLTrainer(algorithm=algo, data_mixer=mixer_a, batch_size=2)
@@ -109,7 +117,7 @@ def test_trainer_set_data_mixer_resets_by_default():
 
 
 def test_algorithm_optimization_step_contract_defaults():
-    algo = _CountingAlgorithm()
+    algo = _DummyRLAlgorithm()
     assert algo.optimization_step == 0
     algo.optimization_step = 11
     assert algo.optimization_step == 11

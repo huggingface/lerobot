@@ -35,11 +35,8 @@ from lerobot.policies.sac.modeling_sac import (
     orthogonal_init,
 )
 from lerobot.policies.utils import get_device_from_parameters
-from lerobot.rl.algorithms.base import (
-    BatchType,
-    RLAlgorithm,
-    TrainingStats,
-)
+from lerobot.rl.algorithms.base import BatchType, RLAlgorithm
+from lerobot.rl.algorithms.configs import TrainingStats
 from lerobot.rl.algorithms.sac.configuration_sac import SACAlgorithmConfig
 from lerobot.utils.constants import ACTION
 from lerobot.utils.transition import move_state_dict_to_device
@@ -112,6 +109,9 @@ class CriticEnsemble(nn.Module):
 
 class SACAlgorithm(RLAlgorithm):
     """Soft Actor-Critic. Owns critics, targets, temperature, and loss computation."""
+
+    config_class = SACAlgorithmConfig
+    name = "sac"
 
     def __init__(
         self,
