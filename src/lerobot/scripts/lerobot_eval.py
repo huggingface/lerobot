@@ -238,7 +238,6 @@ def rollout(
     # Track the final observation.
     if return_observations:
         observation = preprocess_observation(observation)
-        observation = add_envs_task(env, observation)
         observation = env_preprocessor(observation)
         all_observations.append(deepcopy({k: v for k, v in observation.items() if isinstance(v, Tensor)}))
 
