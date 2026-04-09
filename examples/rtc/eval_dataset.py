@@ -17,9 +17,14 @@
 """
 Evaluate Real-Time Chunking (RTC) performance on dataset samples.
 
-This script takes two random samples from a dataset:
+This script takes two samples from a dataset:
 - Uses actions from the first sample as previous chunk
 - Generates new actions for the second sample with and without RTC
+
+Sampling modes:
+- Random (default): Two independent random samples
+- Correlated (--sample_correlation_shift): Second sample is shifted from first by N steps
+  to test temporal correlation and sigma effects
 
 It compares action predictions with and without RTC on dataset samples,
 measuring consistency and ground truth alignment.
@@ -31,17 +36,29 @@ Usage:
         --dataset.repo_id=<USER>/check_rtc \
         --rtc.execution_horizon=8 \
         --device=mps \
-        --rtc.max_guidance_weight=10.0 \
         --rtc.prefix_attention_schedule=EXP \
+        --random_chunks=true \
         --seed=10
+
+    uv run python examples/rtc/eval_dataset.py \
+        --policy.path=lerobot/pi05_libero_finetuned \
+        --rtc.max_guidance_weight=11 \
+        --dataset.repo_id=HuggingFaceVLA/libero \
+        --rtc.execution_horizon=10 \
+        --device=mps \
+        --seed=10 \
+        --random_chunks=true \
+        --rtc.sigma_d=1
 
     # Basic usage with pi0.5 policy
     uv run python examples/rtc/eval_dataset.py \
         --policy.path=lerobot/pi05_libero_finetuned \
         --dataset.repo_id=HuggingFaceVLA/libero \
         --rtc.execution_horizon=10 \
-        --device=mps
-        --seed=10
+        --device=mps \
+        --seed=10 \
+        --sample_correlation_shift=10 \
+        --rtc.sigma_d=1.0 \
 
     # Basic usage with pi0.5 policy with cuda device
     uv run python examples/rtc/eval_dataset.py \
@@ -62,6 +79,16 @@ Usage:
         --dataset.repo_id=<USER>/so101_cube_in_cup \
         --rtc.execution_horizon=8 \
         --device=cuda
+
+    # With sample correlation shift to test temporal correlation (sigma effect)
+    # Second sample is taken as first_sample_index + shift
+    uv run python examples/rtc/eval_dataset.py \
+        --policy.path=lerobot/pi05_libero_finetuned \
+        --dataset.repo_id=HuggingFaceVLA/libero \
+        --rtc.execution_horizon=10 \
+        --device=mps \
+        --sample_correlation_shift=5 \
+        --seed=10
 
     # With torch.compile for faster inference (PyTorch 2.0+)
     # Note: CUDA graphs disabled by default due to in-place ops in denoising loop
@@ -100,6 +127,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 import torch
+import time
 
 try:
     import matplotlib.pyplot as plt
@@ -162,11 +190,14 @@ class RTCEvalConfig(HubMixin):
         default_factory=lambda: RTCConfig(
             enabled=True,
             execution_horizon=20,
-            max_guidance_weight=10.0,
             prefix_attention_schedule=RTCAttentionSchedule.EXP,
             debug=True,
             debug_maxlen=1000,
         )
+    )
+    use_ccr: bool = field(
+        default=False,
+        metadata={"help": "Use CCR for action smoothing"},
     )
 
     # Device configuration
@@ -192,6 +223,11 @@ class RTCEvalConfig(HubMixin):
         metadata={"help": "Inference delay for RTC"},
     )
 
+    num_inference_steps: int | None = field(
+        default=None,
+        metadata={"help": "Number of flow matching inference steps. If None, uses policy default."},
+    )
+
     # Torch compile configuration
     use_torch_compile: bool = field(
         default=False,
@@ -213,6 +249,19 @@ class RTCEvalConfig(HubMixin):
         metadata={
             "help": "Disable CUDA graphs in torch.compile. Required due to in-place tensor "
             "operations in denoising loop (x_t += dt * v_t) which cause tensor aliasing issues."
+        },
+    )
+
+    next_inference_after: int = field(
+        default=10,
+        metadata={"help": "How many steps after the previous "},
+    )
+
+    random_chunks: bool = field(
+        default=False,
+        metadata={
+            "help": "The shift between the two chunks to be evaluated. It's used to check bigger difference between previons action chunk"
+            "and newly generated chunk."
         },
     )
 
@@ -274,6 +323,14 @@ class RTCEvaluator:
                 "device_processor": {"device": self.device},
             },
         )
+        
+        # print preprocessor and postprocessor steps for debugging
+        logging.info("Preprocessor steps:")
+        for step in self.preprocessor.steps:
+            logging.info(f"  - {step}")
+        logging.info("Postprocessor steps:")
+        for step in self.postprocessor.steps:
+            logging.info(f"  - {step}")
 
         logging.info("=" * 80)
         logging.info("Ready to run evaluation with sequential policy loading:")
@@ -304,6 +361,17 @@ class RTCEvaluator:
         if self.cfg.policy.type == "pi05" or self.cfg.policy.type == "pi0":
             config.compile_model = self.cfg.use_torch_compile
 
+        # Override number of flow matching steps if specified
+        if self.cfg.num_inference_steps is not None:
+            if self.cfg.policy.type == "smolvla":
+                config.num_steps = self.cfg.num_inference_steps
+                logging.info(f"  Overriding num_steps for SmolVLA: {self.cfg.num_inference_steps}")
+            elif self.cfg.policy.type in ["pi0", "pi05"]:
+                config.num_inference_steps = self.cfg.num_inference_steps
+                logging.info(
+                    f"  Overriding num_inference_steps for {self.cfg.policy.type}: {self.cfg.num_inference_steps}"
+                )
+
         policy = policy_class.from_pretrained(self.cfg.policy.pretrained_path, config=config)
         policy = policy.to(self.device)
         policy.eval()
@@ -316,6 +384,7 @@ class RTCEvaluator:
             prefix_attention_schedule=self.cfg.rtc.prefix_attention_schedule,
             debug=rtc_debug,
             debug_maxlen=self.cfg.rtc.debug_maxlen,
+            sigma_d=self.cfg.rtc.sigma_d,
         )
         policy.config.rtc_config = rtc_config
         policy.init_rtc_processor()
@@ -434,13 +503,45 @@ class RTCEvaluator:
         logging.info("=" * 80)
         logging.info("Starting RTC evaluation")
         logging.info(f"Inference delay: {self.cfg.inference_delay}")
+        if self.cfg.num_inference_steps is not None:
+            logging.info(f"Number of flow matching steps: {self.cfg.num_inference_steps}")
+        else:
+            logging.info("Number of flow matching steps: Using policy default")
         logging.info("=" * 80)
 
-        # Load two random samples from dataset
-        data_loader = torch.utils.data.DataLoader(self.dataset, batch_size=1, shuffle=True)
-        loader_iter = iter(data_loader)
-        first_sample = next(loader_iter)
-        second_sample = next(loader_iter)
+        # Correlated sampling: second sample is shifted from first
+        shift = self.cfg.next_inference_after
+        logging.info(f"Using correlated sampling: second sample shifted by {shift} from first sample")
+
+        # Get random first index
+        first_idx = random.randint(0, len(self.dataset) - 1)
+
+        # Calculate second index with shift, ensuring it's within bounds
+        second_idx = first_idx + shift
+
+        if self.cfg.random_chunks:
+            second_idx = random.randint(first_idx + 1, len(self.dataset) - 1)
+
+        if second_idx < 0 or second_idx >= len(self.dataset):
+            raise ValueError(
+                f"Second sample index {second_idx} is out of bounds [0, {len(self.dataset) - 1}]. "
+                f"First index: {first_idx}, shift: {shift}. "
+                f"Please use a smaller shift value or adjust the seed."
+            )
+
+        logging.info(f"First sample index: {first_idx}, Second sample index: {second_idx}")
+
+        # Get samples directly from dataset
+        first_sample = self.dataset[first_idx]
+        second_sample = self.dataset[second_idx]
+
+        # Add batch dimension (dataset returns unbatched samples)
+        first_sample = {
+            k: v.unsqueeze(0) if isinstance(v, torch.Tensor) else v for k, v in first_sample.items()
+        }
+        second_sample = {
+            k: v.unsqueeze(0) if isinstance(v, torch.Tensor) else v for k, v in second_sample.items()
+        }
 
         preprocessed_first_sample = self.preprocessor(first_sample)
         preprocessed_second_sample = self.preprocessor(second_sample)
@@ -462,7 +563,13 @@ class RTCEvaluator:
         with torch.no_grad():
             prev_chunk_left_over = policy_prev_chunk_policy.predict_action_chunk(
                 preprocessed_first_sample,
-            )[:, :25, :].squeeze(0)
+            )
+            prev_chunk_left_over_org = prev_chunk_left_over[:, shift:, :].squeeze(0).clone()
+            
+            # resume orignal actions
+            prev_chunk_left_over = self.postprocessor(prev_chunk_left_over)
+            prev_chunk_left_over = prev_chunk_left_over[:, shift:, :].squeeze(0)
+
         logging.info(f"  Generated prev_chunk shape: {prev_chunk_left_over.shape}")
 
         # Destroy policy_prev_chunk to free memory for large models
@@ -489,11 +596,16 @@ class RTCEvaluator:
         noise = policy_no_rtc_policy.model.sample_noise(noise_size, self.device)
         noise_clone = noise.clone()
         policy_no_rtc_policy.rtc_processor.reset_tracker()
+        t0 = time.perf_counter()
         with torch.no_grad():
             no_rtc_actions = policy_no_rtc_policy.predict_action_chunk(
                 preprocessed_second_sample,
-                noise=noise,
+                noise=noise_clone,
             )
+            # resume orignal actions
+            no_rtc_actions = self.postprocessor(no_rtc_actions)
+            
+        logging.info(f"  Generated no_rtc_actions in {time.perf_counter() - t0:.4f} seconds")
         no_rtc_tracked_steps = policy_no_rtc_policy.rtc_processor.tracker.get_all_steps()
         logging.info(f"  Tracked {len(no_rtc_tracked_steps)} steps without RTC")
         logging.info(f"  Generated no_rtc_actions shape: {no_rtc_actions.shape}")
@@ -513,19 +625,35 @@ class RTCEvaluator:
         # Initialize policy 3
         policy_rtc_policy = self._init_policy(
             name="policy_rtc",
-            rtc_enabled=True,
+            rtc_enabled=self.cfg.rtc.enabled,
             rtc_debug=True,
         )
         policy_rtc_policy.rtc_processor.reset_tracker()
+        t0 = time.perf_counter()
+    
+        use_relative_actions = getattr(self.cfg.policy, "use_relative_actions", False)
+        if use_relative_actions:
+            prev_actions = prev_chunk_left_over
+            second_sample["action"] = prev_actions
+            preprocessed_second_sample = self.preprocessor(second_sample)
+            prev_actions = preprocessed_second_sample["action"]
+            
+        else:
+            prev_actions = prev_chunk_left_over_org
+        
         with torch.no_grad():
             rtc_actions = policy_rtc_policy.predict_action_chunk(
                 preprocessed_second_sample,
                 noise=noise_clone,
                 inference_delay=self.cfg.inference_delay,
-                prev_chunk_left_over=prev_chunk_left_over,
+                prev_chunk_left_over=prev_actions,
                 execution_horizon=self.cfg.rtc.execution_horizon,
             )
+            # resume orignal actions
+            rtc_actions = self.postprocessor(rtc_actions)
+
         rtc_tracked_steps = policy_rtc_policy.rtc_processor.get_all_debug_steps()
+        logging.info(f"  Generated rtc_actions in {time.perf_counter() - t0:.4f} seconds")
         logging.info(f"  Tracked {len(rtc_tracked_steps)} steps with RTC")
         logging.info(f"  Generated rtc_actions shape: {rtc_actions.shape}")
 
@@ -583,7 +711,7 @@ class RTCEvaluator:
                 start_from=0,
                 color="red",
                 label="Previous Chunk (Ground Truth)",
-                linewidth=2.5,
+                linewidth=2,
                 alpha=0.8,
             )
 
@@ -605,7 +733,7 @@ class RTCEvaluator:
                 start_from=0,
                 color="green",
                 label="RTC",
-                linewidth=2,
+                linewidth=2.5,
                 alpha=0.7,
             )
 
