@@ -67,6 +67,9 @@ jobs:
   # Isolated image: lerobot[libero] only (hf-libero, dm-control, mujoco chain)
   libero-integration-test:
     name: Libero — build image + 1-episode eval
+    permissions:
+      contents: read
+      packages: write
     runs-on:
       group: aws-g6-4xlarge-plus
     env:
@@ -89,10 +92,17 @@ jobs:
           username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
           password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
 
-      # Build the benchmark-specific image. Layer cache pushed to Docker Hub
-      # (type=registry, no size limit — GHA cache is capped at 10GB which is
-      # too small for CUDA+PyTorch images). The Dockerfile separates dep-install
-      # from source-copy, so code-only changes skip the slow uv-sync layer.
+      - name: Login to GHCR (for layer cache)
+        uses: docker/login-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build the benchmark-specific image. Layer cache pushed to GHCR
+      # (type=registry, no size limit, GITHUB_TOKEN has automatic write access).
+      # The Dockerfile separates dep-install from source-copy, so code-only
+      # changes skip the slow uv-sync layer.
       - name: Build Libero benchmark image
         uses: docker/build-push-action@v6 # zizmor: ignore[unpinned-uses]
         with:
@@ -101,8 +111,8 @@ jobs:
           push: false
           load: true
           tags: lerobot-benchmark-libero:ci
-          cache-from: type=registry,ref=huggingface/lerobot-benchmark-cache:libero
-          cache-to: type=registry,ref=huggingface/lerobot-benchmark-cache:libero,mode=max
+          cache-from: type=registry,ref=ghcr.io/huggingface/lerobot/cache-benchmark:libero
+          cache-to: type=registry,ref=ghcr.io/huggingface/lerobot/cache-benchmark:libero,mode=max
 
       - name: Login to Hugging Face
         if: env.HF_USER_TOKEN != ''
@@ -231,6 +241,9 @@ jobs:
   # Isolated image: lerobot[metaworld] only (metaworld==3.0.0, mujoco>=3 chain)
   metaworld-integration-test:
     name: MetaWorld — build image + 1-episode eval
+    permissions:
+      contents: read
+      packages: write
     runs-on:
       group: aws-g6-4xlarge-plus
     env:
@@ -264,8 +277,8 @@ jobs:
           push: false
           load: true
           tags: lerobot-benchmark-metaworld:ci
-          cache-from: type=registry,ref=huggingface/lerobot-benchmark-cache:metaworld
-          cache-to: type=registry,ref=huggingface/lerobot-benchmark-cache:metaworld,mode=max
+          cache-from: type=registry,ref=ghcr.io/huggingface/lerobot/cache-benchmark:metaworld
+          cache-to: type=registry,ref=ghcr.io/huggingface/lerobot/cache-benchmark:metaworld,mode=max
 
       - name: Run MetaWorld smoke eval (1 episode)
         run: |
