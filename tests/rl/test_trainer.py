@@ -75,7 +75,7 @@ class _SimpleMixer:
 def test_trainer_lazy_iterator_lifecycle_and_reset():
     algo = _CountingAlgorithm()
     mixer = _SimpleMixer()
-    trainer = RLTrainer(algorithm=algo, data_mixer=mixer, batch_size=4, async_prefetch=False)
+    trainer = RLTrainer(algorithm=algo, data_mixer=mixer, batch_size=4)
 
     # First call builds iterator once.
     trainer.training_step()
@@ -98,7 +98,7 @@ def test_trainer_set_data_mixer_resets_by_default():
     algo = _CountingAlgorithm()
     mixer_a = _SimpleMixer()
     mixer_b = _SimpleMixer()
-    trainer = RLTrainer(algorithm=algo, data_mixer=mixer_a, batch_size=2, async_prefetch=False)
+    trainer = RLTrainer(algorithm=algo, data_mixer=mixer_a, batch_size=2)
 
     trainer.training_step()
     assert algo.configure_calls == 1

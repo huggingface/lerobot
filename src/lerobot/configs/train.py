@@ -222,7 +222,3 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
     mixer: str = "online_offline"
     # Fraction sampled from online replay when using OnlineOfflineMixer
     online_ratio: float = 0.5
-
-    # RL trainer iterator
-    async_prefetch: bool = True
-    queue_size: int = 2

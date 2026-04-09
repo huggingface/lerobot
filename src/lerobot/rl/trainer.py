@@ -69,15 +69,11 @@ class RLTrainer:
         batch_size: int,
         *,
         preprocessor: Any | None = None,
-        async_prefetch: bool = True,
-        queue_size: int = 2,
     ):
         self.algorithm = algorithm
         self.data_mixer = data_mixer
         self.batch_size = batch_size
         self._preprocessor = preprocessor
-        self.async_prefetch = async_prefetch
-        self.queue_size = queue_size
 
         self._iterator: Iterator[BatchType] | None = None
 
@@ -88,8 +84,6 @@ class RLTrainer:
         raw = self.algorithm.configure_data_iterator(
             data_mixer=self.data_mixer,
             batch_size=self.batch_size,
-            async_prefetch=self.async_prefetch,
-            queue_size=self.queue_size,
         )
         if self._preprocessor is not None:
             return _PreprocessedIterator(raw, self._preprocessor)

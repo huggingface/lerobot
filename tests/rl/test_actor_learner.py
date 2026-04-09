@@ -387,7 +387,6 @@ def test_learner_algorithm_wiring():
         algorithm=algorithm,
         data_mixer=data_mixer,
         batch_size=batch_size,
-        async_prefetch=False,
     )
     trainer_stats = trainer.training_step()
     assert "critic" in trainer_stats.losses
