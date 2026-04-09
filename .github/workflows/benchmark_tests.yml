@@ -128,6 +128,9 @@ jobs:
                 '--env.camera_name_mapping={\"agentview_image\": \"camera1\", \"robot0_eye_in_hand_image\": \"camera2\"}' \
                 --policy.empty_cameras=1 \
                 --output_dir=/tmp/eval-artifacts
+              python3 /lerobot/scripts/ci/extract_task_descriptions.py \
+                --env libero --task libero_spatial \
+                --output /tmp/eval-artifacts/task_descriptions.json 2>/dev/null || true
             "
 
       - name: Copy Libero artifacts from container
@@ -268,6 +271,9 @@ jobs:
                 '--rename_map={\"observation.image\": \"observation.images.camera1\"}' \
                 --policy.empty_cameras=2 \
                 --output_dir=/tmp/eval-artifacts
+              python3 /lerobot/scripts/ci/extract_task_descriptions.py \
+                --env metaworld --task metaworld-push-v3 \
+                --output /tmp/eval-artifacts/task_descriptions.json 2>/dev/null || true
             "
 
       - name: Copy MetaWorld artifacts from container

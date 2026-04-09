@@ -95,6 +95,17 @@ def main() -> int:
             file=sys.stderr,
         )
 
+    task_descriptions: dict[str, str] = {}
+    task_desc_path = artifacts_dir / "task_descriptions.json"
+    if task_desc_path.exists():
+        try:
+            task_descriptions = json.loads(task_desc_path.read_text())
+        except json.JSONDecodeError as exc:
+            print(
+                f"[parse_eval_metrics] Warning: could not parse task_descriptions.json: {exc}",
+                file=sys.stderr,
+            )
+
     metrics = {
         "env": args.env,
         "task": args.task,
@@ -103,6 +114,7 @@ def main() -> int:
         "n_episodes": n_episodes,
         "avg_sum_reward": avg_sum_reward,
         "eval_s": eval_s,
+        "task_descriptions": task_descriptions,
     }
 
     out_path = artifacts_dir / "metrics.json"
