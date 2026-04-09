@@ -169,10 +169,10 @@ def rollout(
         # env.call() works with both SyncVectorEnv and AsyncVectorEnv.
         try:
             observation["task"] = list(env.call("task_description"))
-        except Exception:
+        except (AttributeError, NotImplementedError):
             try:
                 observation["task"] = list(env.call("task"))
-            except Exception:
+            except (AttributeError, NotImplementedError):
                 observation["task"] = [""] * env.num_envs
 
         # Apply environment-specific preprocessing (e.g., LiberoProcessorStep for LIBERO)
