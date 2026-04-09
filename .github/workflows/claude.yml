@@ -62,7 +62,8 @@ jobs:
       - name: Run Claude Code
         if: success()
         id: claude
-        uses: anthropics/claude-code-action@26ddc358fe3befff50c5ec2f80304c90c763f6f8  # v1
+        # TODO(Steven): Update once https://github.com/anthropics/claude-code-action/issues/1187 is shipped
+        uses: anthropics/claude-code-action@1eddb334cfa79fdb21ecbe2180ca1a016e8e7d47  # v1.0.88
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           track_progress: true
