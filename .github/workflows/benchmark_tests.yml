@@ -137,12 +137,29 @@ jobs:
           docker cp libero-eval:/tmp/eval-artifacts/. /tmp/libero-artifacts/ 2>/dev/null || true
           docker rm -f libero-eval || true
 
+      - name: Parse Libero eval metrics
+        if: always()
+        run: |
+          python3 scripts/ci/parse_eval_metrics.py \
+            --artifacts-dir /tmp/libero-artifacts \
+            --env libero \
+            --task libero_spatial \
+            --policy pepijn223/smolvla_libero
+
       - name: Upload Libero rollout video
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: libero-rollout-video
           path: /tmp/libero-artifacts/videos/
+          if-no-files-found: warn
+
+      - name: Upload Libero eval metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: libero-metrics
+          path: /tmp/libero-artifacts/metrics.json
           if-no-files-found: warn
 
   # ── METAWORLD ─────────────────────────────────────────────────────────────
@@ -206,10 +223,27 @@ jobs:
           docker cp metaworld-eval:/tmp/eval-artifacts/. /tmp/metaworld-artifacts/ 2>/dev/null || true
           docker rm -f metaworld-eval || true
 
+      - name: Parse MetaWorld eval metrics
+        if: always()
+        run: |
+          python3 scripts/ci/parse_eval_metrics.py \
+            --artifacts-dir /tmp/metaworld-artifacts \
+            --env metaworld \
+            --task metaworld-push-v3 \
+            --policy pepijn223/smolvla_metaworld
+
       - name: Upload MetaWorld rollout video
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: metaworld-rollout-video
           path: /tmp/metaworld-artifacts/videos/
+          if-no-files-found: warn
+
+      - name: Upload MetaWorld eval metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: metaworld-metrics
+          path: /tmp/metaworld-artifacts/metrics.json
           if-no-files-found: warn
