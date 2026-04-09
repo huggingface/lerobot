@@ -89,9 +89,10 @@ jobs:
           username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
           password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
 
-      # Build the benchmark-specific image. Layer cache uses GHA cache (persists
-      # across runners). The Dockerfile separates dep-install from source-copy,
-      # so code-only changes skip the slow uv-sync layer entirely.
+      # Build the benchmark-specific image. Layer cache pushed to Docker Hub
+      # (type=registry, no size limit — GHA cache is capped at 10GB which is
+      # too small for CUDA+PyTorch images). The Dockerfile separates dep-install
+      # from source-copy, so code-only changes skip the slow uv-sync layer.
       - name: Build Libero benchmark image
         uses: docker/build-push-action@v6 # zizmor: ignore[unpinned-uses]
         with:
@@ -100,8 +101,8 @@ jobs:
           push: false
           load: true
           tags: lerobot-benchmark-libero:ci
-          cache-from: type=gha,scope=benchmark-libero
-          cache-to: type=gha,scope=benchmark-libero,mode=max
+          cache-from: type=registry,ref=huggingface/lerobot-benchmark-cache:libero
+          cache-to: type=registry,ref=huggingface/lerobot-benchmark-cache:libero,mode=max
 
       - name: Login to Hugging Face
         if: env.HF_USER_TOKEN != ''
@@ -263,8 +264,8 @@ jobs:
           push: false
           load: true
           tags: lerobot-benchmark-metaworld:ci
-          cache-from: type=gha,scope=benchmark-metaworld
-          cache-to: type=gha,scope=benchmark-metaworld,mode=max
+          cache-from: type=registry,ref=huggingface/lerobot-benchmark-cache:metaworld
+          cache-to: type=registry,ref=huggingface/lerobot-benchmark-cache:metaworld,mode=max
 
       - name: Run MetaWorld smoke eval (1 episode)
         run: |
