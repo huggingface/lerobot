@@ -18,6 +18,7 @@ import re
 from itertools import chain
 from pathlib import Path
 
+import datasets
 import numpy as np
 import pytest
 import torch
@@ -30,7 +31,10 @@ import lerobot
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.factory import make_dataset
-from lerobot.datasets.feature_utils import get_hf_features_from_features, hw_to_dataset_features
+from lerobot.datasets.feature_utils import (
+    get_hf_features_from_features,
+    hw_to_dataset_features,
+)
 from lerobot.datasets.image_writer import image_array_to_pil_image
 from lerobot.datasets.io_utils import hf_transform_to_torch
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -133,7 +137,8 @@ def test_add_frame_missing_task(tmp_path, empty_lerobot_dataset_factory):
     features = {"state": {"dtype": "float32", "shape": (1,), "names": None}}
     dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
     with pytest.raises(
-        ValueError, match="Feature mismatch in `frame` dictionary:\nMissing features: {'task'}\n"
+        ValueError,
+        match="Feature mismatch in `frame` dictionary:\nMissing features: {'task'}\n",
     ):
         dataset.add_frame({"state": torch.randn(1)})
 
@@ -142,7 +147,8 @@ def test_add_frame_missing_feature(tmp_path, empty_lerobot_dataset_factory):
     features = {"state": {"dtype": "float32", "shape": (1,), "names": None}}
     dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
     with pytest.raises(
-        ValueError, match="Feature mismatch in `frame` dictionary:\nMissing features: {'state'}\n"
+        ValueError,
+        match="Feature mismatch in `frame` dictionary:\nMissing features: {'state'}\n",
     ):
         dataset.add_frame({"task": "Dummy task"})
 
@@ -151,7 +157,8 @@ def test_add_frame_extra_feature(tmp_path, empty_lerobot_dataset_factory):
     features = {"state": {"dtype": "float32", "shape": (1,), "names": None}}
     dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
     with pytest.raises(
-        ValueError, match="Feature mismatch in `frame` dictionary:\nExtra features: {'extra'}\n"
+        ValueError,
+        match="Feature mismatch in `frame` dictionary:\nExtra features: {'extra'}\n",
     ):
         dataset.add_frame({"state": torch.randn(1), "task": "Dummy task", "extra": "dummy_extra"})
 
@@ -160,7 +167,8 @@ def test_add_frame_wrong_type(tmp_path, empty_lerobot_dataset_factory):
     features = {"state": {"dtype": "float32", "shape": (1,), "names": None}}
     dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
     with pytest.raises(
-        ValueError, match="The feature 'state' of dtype 'float16' is not of the expected dtype 'float32'.\n"
+        ValueError,
+        match="The feature 'state' of dtype 'float16' is not of the expected dtype 'float32'.\n",
     ):
         dataset.add_frame({"state": torch.randn(1, dtype=torch.float16), "task": "Dummy task"})
 
@@ -280,6 +288,31 @@ def test_add_frame_state_numpy(tmp_path, empty_lerobot_dataset_factory):
     dataset.finalize()
 
     assert dataset[0]["state"].ndim == 0
+
+
+def test_save_episode_shape_1_numeric_is_scalarized_before_hf_encoding(
+    tmp_path, empty_lerobot_dataset_factory, monkeypatch
+):
+    features = {"state": {"dtype": "float32", "shape": (1,), "names": None}}
+    dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
+    dataset.add_frame({"state": np.array([1.0], dtype=np.float32), "task": "Dummy task"})
+    dataset.add_frame({"state": np.array([2.0], dtype=np.float32), "task": "Dummy task"})
+
+    captured = {}
+    original_from_dict = datasets.Dataset.from_dict
+
+    def _from_dict_spy(cls, mapping, *args, **kwargs):
+        captured["state"] = mapping["state"]
+        return original_from_dict(mapping, *args, **kwargs)
+
+    monkeypatch.setattr(datasets.Dataset, "from_dict", classmethod(_from_dict_spy))
+
+    dataset.save_episode()
+
+    assert "state" in captured
+    assert isinstance(captured["state"], np.ndarray)
+    assert captured["state"].shape == (2,)
+    np.testing.assert_allclose(captured["state"], np.array([1.0, 2.0], dtype=np.float32))
 
 
 def test_add_frame_string(tmp_path, empty_lerobot_dataset_factory):
@@ -424,7 +457,11 @@ def test_tmp_image_deletion(tmp_path, empty_lerobot_dataset_factory):
     # Image feature: images should be deleted after saving episode
     image_key = "image"
     features_image = {
-        image_key: {"dtype": "image", "shape": DUMMY_CHW, "names": ["channels", "height", "width"]}
+        image_key: {
+            "dtype": "image",
+            "shape": DUMMY_CHW,
+            "names": ["channels", "height", "width"],
+        }
     }
     ds_img = empty_lerobot_dataset_factory(root=tmp_path / "img", features=features_image)
     ds_img.add_frame({"image": np.random.rand(*DUMMY_CHW), "task": "Dummy task"})
@@ -438,7 +475,11 @@ def test_tmp_video_deletion(tmp_path, empty_lerobot_dataset_factory):
     # Video feature: when batch_encoding_size == 1 temporary images should be deleted
     vid_key = "video"
     features_video = {
-        vid_key: {"dtype": "video", "shape": DUMMY_CHW, "names": ["channels", "height", "width"]}
+        vid_key: {
+            "dtype": "video",
+            "shape": DUMMY_CHW,
+            "names": ["channels", "height", "width"],
+        }
     }
 
     ds_vid = empty_lerobot_dataset_factory(root=tmp_path / "vid", features=features_video)
@@ -456,11 +497,22 @@ def test_tmp_mixed_deletion(tmp_path, empty_lerobot_dataset_factory):
     image_key = "image"
     vid_key = "video"
     features_mixed = {
-        image_key: {"dtype": "image", "shape": DUMMY_CHW, "names": ["channels", "height", "width"]},
-        vid_key: {"dtype": "video", "shape": DUMMY_HWC, "names": ["height", "width", "channels"]},
+        image_key: {
+            "dtype": "image",
+            "shape": DUMMY_CHW,
+            "names": ["channels", "height", "width"],
+        },
+        vid_key: {
+            "dtype": "video",
+            "shape": DUMMY_HWC,
+            "names": ["height", "width", "channels"],
+        },
     }
     ds_mixed = empty_lerobot_dataset_factory(
-        root=tmp_path / "mixed", features=features_mixed, batch_encoding_size=2, streaming_encoding=False
+        root=tmp_path / "mixed",
+        features=features_mixed,
+        batch_encoding_size=2,
+        streaming_encoding=False,
     )
     ds_mixed.add_frame(
         {
@@ -794,12 +846,26 @@ def test_update_chunk_settings(tmp_path, empty_lerobot_dataset_factory):
         OBS_STATE: {
             "dtype": "float32",
             "shape": (6,),
-            "names": ["shoulder_pan", "shoulder_lift", "elbow", "wrist_1", "wrist_2", "wrist_3"],
+            "names": [
+                "shoulder_pan",
+                "shoulder_lift",
+                "elbow",
+                "wrist_1",
+                "wrist_2",
+                "wrist_3",
+            ],
         },
         ACTION: {
             "dtype": "float32",
             "shape": (6,),
-            "names": ["shoulder_pan", "shoulder_lift", "elbow", "wrist_1", "wrist_2", "wrist_3"],
+            "names": [
+                "shoulder_pan",
+                "shoulder_lift",
+                "elbow",
+                "wrist_1",
+                "wrist_2",
+                "wrist_3",
+            ],
         },
     }
 
@@ -903,12 +969,20 @@ def test_update_chunk_settings_video_dataset(tmp_path):
             "shape": (480, 640, 3),
             "names": ["height", "width", "channels"],
         },
-        ACTION: {"dtype": "float32", "shape": (6,), "names": ["j1", "j2", "j3", "j4", "j5", "j6"]},
+        ACTION: {
+            "dtype": "float32",
+            "shape": (6,),
+            "names": ["j1", "j2", "j3", "j4", "j5", "j6"],
+        },
     }
 
     # Create video dataset
     dataset = LeRobotDataset.create(
-        repo_id=DUMMY_REPO_ID, fps=30, features=features, root=tmp_path / "video_test", use_videos=True
+        repo_id=DUMMY_REPO_ID,
+        fps=30,
+        features=features,
+        root=tmp_path / "video_test",
+        use_videos=True,
     )
 
     # Test that video-specific settings work
@@ -982,7 +1056,13 @@ def test_multi_episode_metadata_consistency(tmp_path, empty_lerobot_dataset_fact
 
     for episode_idx in range(num_episodes):
         for _ in range(frames_per_episode[episode_idx]):
-            dataset.add_frame({"state": torch.randn(3), ACTION: torch.randn(2), "task": tasks[episode_idx]})
+            dataset.add_frame(
+                {
+                    "state": torch.randn(3),
+                    ACTION: torch.randn(2),
+                    "task": tasks[episode_idx],
+                }
+            )
         dataset.save_episode()
 
     dataset.finalize()
@@ -1122,7 +1202,12 @@ def test_episode_boundary_integrity(tmp_path, empty_lerobot_dataset_factory):
 
     for episode_idx in range(num_episodes):
         for frame_idx in range(frames_per_episode[episode_idx]):
-            dataset.add_frame({"state": torch.tensor([float(frame_idx)]), "task": f"episode_{episode_idx}"})
+            dataset.add_frame(
+                {
+                    "state": torch.tensor([float(frame_idx)]),
+                    "task": f"episode_{episode_idx}",
+                }
+            )
         dataset.save_episode()
 
     dataset.finalize()
@@ -1431,7 +1516,13 @@ def test_lerobot_dataset_vcodec_validation():
         LeRobotDataset.create(
             repo_id="test/invalid_codec",
             fps=30,
-            features={"observation.state": {"dtype": "float32", "shape": (2,), "names": ["x", "y"]}},
+            features={
+                "observation.state": {
+                    "dtype": "float32",
+                    "shape": (2,),
+                    "names": ["x", "y"],
+                }
+            },
             vcodec="invalid_codec",
         )
 

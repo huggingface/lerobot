@@ -72,7 +72,12 @@ def _encode_video_worker(
     fpath = DEFAULT_IMAGE_PATH.format(image_key=video_key, episode_index=episode_index, frame_index=0)
     img_dir = (root / fpath).parent
     encode_video_frames(
-        img_dir, temp_path, fps, vcodec=vcodec, overwrite=True, encoder_threads=encoder_threads
+        img_dir,
+        temp_path,
+        fps,
+        vcodec=vcodec,
+        overwrite=True,
+        encoder_threads=encoder_threads,
     )
     shutil.rmtree(img_dir)
     return temp_path
@@ -145,7 +150,10 @@ class DatasetWriter:
         return self._get_image_file_path(episode_index, image_key, frame_index=0).parent
 
     def _save_image(
-        self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path, compress_level: int = 1
+        self,
+        image: torch.Tensor | np.ndarray | PIL.Image.Image,
+        fpath: Path,
+        compress_level: int = 1,
     ) -> None:
         if self.image_writer is None:
             if isinstance(image, torch.Tensor):
@@ -201,7 +209,9 @@ class DatasetWriter:
                 self.episode_buffer[key].append(None)
             elif self._meta.features[key]["dtype"] in ["image", "video"]:
                 img_path = self._get_image_file_path(
-                    episode_index=self.episode_buffer["episode_index"], image_key=key, frame_index=frame_index
+                    episode_index=self.episode_buffer["episode_index"],
+                    image_key=key,
+                    frame_index=frame_index,
                 )
                 if frame_index == 0:
                     img_path.parent.mkdir(parents=True, exist_ok=True)
@@ -239,9 +249,19 @@ class DatasetWriter:
         episode_buffer["task_index"] = np.array([self._meta.get_task_index(task) for task in tasks])
 
         for key, ft in self._meta.features.items():
-            if key in ["index", "episode_index", "task_index"] or ft["dtype"] in ["image", "video"]:
+            if key in ["index", "episode_index", "task_index"] or ft["dtype"] in [
+                "image",
+                "video",
+            ]:
                 continue
-            episode_buffer[key] = np.stack(episode_buffer[key])
+            stacked_values = np.stack(episode_buffer[key])
+
+            # `shape=(1,)` numeric features are serialized as `datasets.Value`, which expects scalars.
+            # Normalizing to `(N,)` keeps save semantics stable across dependency versions.
+            if tuple(ft["shape"]) == (1,) and ft["dtype"] != "string":
+                stacked_values = stacked_values.reshape(episode_length)
+
+            episode_buffer[key] = stacked_values
 
         # Wait for image writer to end, so that episode stats over images can be computed
         self._wait_image_writer()
@@ -564,7 +584,12 @@ class DatasetWriter:
     def _encode_temporary_episode_video(self, video_key: str, episode_index: int) -> Path:
         """Use ffmpeg to convert frames stored as png into mp4 videos."""
         return _encode_video_worker(
-            video_key, episode_index, self._root, self._meta.fps, self._vcodec, self._encoder_threads
+            video_key,
+            episode_index,
+            self._root,
+            self._meta.fps,
+            self._vcodec,
+            self._encoder_threads,
         )
 
     def close_writer(self) -> None:
