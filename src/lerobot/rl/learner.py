@@ -267,7 +267,7 @@ def add_actor_information_and_train(
     - Transfers transitions from the actor to the replay buffer.
     - Logs received interaction messages.
     - Ensures training begins only when the replay buffer has a sufficient number of transitions.
-    - Delegates training updates to an ``RLAlgorithm`` (currently ``SACAlgorithm``).
+    - Delegates training updates to an ``RLAlgorithm``.
     - Periodically pushes updated weights to actors.
     - Logs training statistics, including loss values and optimization frequency.
 
