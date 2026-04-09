@@ -83,8 +83,9 @@ jobs:
         with:
           cache-binary: false
 
-      # Build the benchmark-specific image; layer cache lives in the runner's
-      # local Docker daemon — reused across re-runs on the same machine.
+      # Build the benchmark-specific image. Layer cache uses GHA cache (persists
+      # across runners). The Dockerfile separates dep-install from source-copy,
+      # so code-only changes skip the slow uv-sync layer entirely.
       - name: Build Libero benchmark image
         uses: docker/build-push-action@v6 # zizmor: ignore[unpinned-uses]
         with:
@@ -93,8 +94,8 @@ jobs:
           push: false
           load: true
           tags: lerobot-benchmark-libero:ci
-          cache-from: type=local,src=/tmp/.buildx-cache-libero
-          cache-to: type=local,dest=/tmp/.buildx-cache-libero,mode=max
+          cache-from: type=gha,scope=benchmark-libero
+          cache-to: type=gha,scope=benchmark-libero,mode=max
 
       - name: Login to Hugging Face
         if: env.HF_USER_TOKEN != ''
@@ -247,8 +248,8 @@ jobs:
           push: false
           load: true
           tags: lerobot-benchmark-metaworld:ci
-          cache-from: type=local,src=/tmp/.buildx-cache-metaworld
-          cache-to: type=local,dest=/tmp/.buildx-cache-metaworld,mode=max
+          cache-from: type=gha,scope=benchmark-metaworld
+          cache-to: type=gha,scope=benchmark-metaworld,mode=max
 
       - name: Run MetaWorld smoke eval (1 episode)
         run: |

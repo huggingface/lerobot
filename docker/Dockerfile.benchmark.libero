@@ -61,9 +61,11 @@ ENV HOME=/home/user_lerobot \
 
 RUN uv venv --python python${PYTHON_VERSION}
 
-# Install only lerobot[libero] — completely isolated from metaworld's dep tree
+# ── Dependency layer (cached unless pyproject.toml / uv.lock change) ────────
+# Copy only the files uv needs to resolve deps, plus a minimal package stub
+# so the editable install can succeed without the full source tree.
 COPY --chown=user_lerobot:user_lerobot setup.py pyproject.toml uv.lock README.md MANIFEST.in ./
-COPY --chown=user_lerobot:user_lerobot src/ src/
+RUN mkdir -p src/lerobot && touch src/lerobot/__init__.py src/lerobot/py.typed
 
 RUN uv sync --locked --extra libero --extra smolvla --no-cache
 
@@ -84,6 +86,7 @@ snapshot_download(repo_id='lerobot/libero-assets', repo_type='dataset', \
 
 RUN chmod +x /lerobot/.venv/lib/python${PYTHON_VERSION}/site-packages/triton/backends/nvidia/bin/ptxas
 
+# ── Source layer (rebuilds in seconds on code-only changes) ─────────────────
 COPY --chown=user_lerobot:user_lerobot . .
 
 CMD ["/bin/bash"]
