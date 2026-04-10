@@ -1,0 +1,458 @@
+# SO-101
+
+<div style="display: flex; align-items: center; gap: 10px;">
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/SO101_Follower.webp"
+    alt="SO-101"
+    width="60%"
+  />
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/SO101_Leader.webp"
+    alt="SO-101"
+    width="60%"
+  />
+</div>
+
+아래 스텝에서 flagship robot인 SO-101을 어떻게 조립하는지 설명을 찾아볼 수 있습니다. 
+
+## 부품 준비하기
+
+시작하기에 앞서, [README 파일](https://github.com/TheRobotStudio/SO-ARM100)을 읽으시면 도움이 됩니다. 
+
+부품 목록(Bill of Materials)과 구매 링크, 그리고 3D 프린팅 방법이 담겨 있습니다. 
+3D 프린터를 처음 사용하시거나 3D 프린터가 없으신 분들을 위한 안내 또한 포함되어 있습니다. 
+
+## LeRobot 설치하기 🤗
+
+LeRobot을 설치하려면, [설치 가이드](./installation)를 참고하십시오. 
+
+기본 설치 외에 Feetech SDK도 추가로 설치해야 합니다 :
+
+```bash
+pip install -e ".[feetech]"
+```
+
+## 단계별 조립 가이드 
+
+팔로워암은 1/345 기어비를 가진 STS3215 모터 6개를 사용합니다. 
+
+반면 리더암은 자체 무게를 버티면서 큰 힘을 필요로 하지 않게 가볍게 조작할 수 있도록, 세 종류의 다른 기어비 모터를 사용합니다. 
+
+어떤 관절에 어떤 모터가 필요한지 아래 표에서 찾을 수 있습니다.
+
+| 리더암 축       | 모터   |    기어비   |
+| ------------------- | :---: | :--------: |
+| 베이스 / 숄더 팬 |   1   |  1 / 191   |
+| 숄더 리프트       |   2   |  1 / 345   |
+| 엘보 플렉스          |   3   |  1 / 191   |
+| 손목 굽힘          |   4   |  1 / 147   |
+| 손목 회전          |   5   |  1 / 147   |
+| 그리퍼             |   6   |  1 / 147   |
+
+## 모터 설정
+
+### 1. 각 암에 연결된 USB 포트 찾기 
+
+버스 서보 어댑터의 포트를 찾으려면, MotorBus를 USB로 컴퓨터에 연결하고 전원을 켠 뒤 아래 스크립트를 실행하십시오. 안내가 나오면 MotorBus의 USB 케이블을 분리하면 됩니다 : 
+
+```bash
+lerobot-find-port
+```
+
+<hfoptions id="example">
+<hfoption id="Mac">
+
+실행 예시:
+
+```
+Finding all available ports for the MotorBus.
+['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
+Remove the USB cable from your MotorsBus and press Enter when done.
+
+[...리더 또는 팔로워 암을 분리하고 Enter를 누르세요...]
+
+The port of this MotorsBus is /dev/tty.usbmodem575E0032081
+Reconnect the USB cable. 
+```
+
+여기서 찾은 포트 `/dev/tty.usbmodem575E0032081`이 리더 또는 팔로워 암에 해당하는 포트입니다. 
+
+</hfoption>
+<hfoption id="Linux">
+
+Linux에서는 USB 포트 접근 권한을 먼저 부여해야 할 수 있습니다:
+
+```bash
+sudo chmod 666 /dev/ttyACM0
+sudo chmod 666 /dev/ttyACM1
+```
+
+실행 예시: 
+
+```
+Finding all available ports for the MotorBus.
+['/dev/ttyACM0', '/dev/ttyACM1']
+Remove the usb cable from your MotorsBus and press Enter when done.
+
+[...리더 또는 팔로워 암을 분리하고 Enter를 누르세요...]
+
+The port of this MotorsBus is /dev/ttyACM1
+Reconnect the USB cable.
+```
+
+여기서 찾은 포트 `/dev/ttyACM1`이 리더 또는 팔로워 암에 해당하는 포트입니다. 
+
+</hfoption>
+</hfoptions>
+
+### 2. 모터 ID와 보드레이트(baudrates) 설정
+
+버스에 연결된 각 모터는 고유한 ID로 구분됩니다. 새 모터는 보통 기본 ID가 `1`로 설정되어 있습니다. 모터와 컨트롤러 간 통신이 제대로 이루어지려면, 먼저 각 모터에 서로 다른 고유 ID를 부여해야 합니다. 또한 버스에서 데이터가 전송되는 속도는 보드레이트(baudrate)로 결정되는데, 컨트롤러와 모든 모터가 같은 보드레이트로 맞춰져야 서로 통신할 수 있습니다.
+
+이를 위해 컨트롤러를 모터 하나하나에 개별 연결해서 설정을 잡아줘야 합니다. 이 설정 값들은 모터 내부 메모리(EEPROM)의 비휘발성 영역에 저장되기 때문에 한 번만 하면 됩니다.
+
+다른 로봇에서 쓰던 모터를 재활용하는 경우, ID나 보드레이트가 맞지 않을 수 있으니 이 단계를 다시 진행해야 합니다. 
+
+아래 영상에서 모터 ID를 설정하는 전체 과정을 확인할 수 있습니다.
+
+##### 모터 설정 영상 
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/setup_motors_so101_2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+#### 팔로워 암
+
+컴퓨터와 전원 공급 장치를 팔로워 암의 컨트롤러 보드에 USB로 연결합니다. 그런 다음 아래 명령어를 실행하거나 API 예시를 사용하되, 이전 단계에서 찾은 포트를 입력합니다. `id` 파라미터로 리더 암의 이름도 지정해야 합니다.
+
+<hfoptions id="setup_motors">
+<hfoption id="Command">
+
+```bash
+lerobot-setup-motors \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem585A0076841  # <- 이전 단계에서 찾은 포트를 여기에 붙여넣으세요
+```
+
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
+
+config = SO101FollowerConfig(
+    port="/dev/tty.usbmodem585A0076841",
+    id="my_awesome_follower_arm",
+)
+follower = SO101Follower(config)
+follower.setup_motors()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+아래와 같은 안내 메시지를 확인할 수 있어야 합니다. 
+
+```bash
+Connect the controller board to the 'gripper' motor only and press enter.
+```
+
+안내에 따라 그리퍼 모터를 연결합니다. 이 모터만 보드에 연결되어 있어야 하고, 다른 모터와 데이지 체인으로 이어져 있으면 안 됩니다. `[Enter]`를 누르면 스크립트가 자동으로 해당 모터의 ID와 보드레이트를 설정합니다.
+
+<details>
+<summary>문제 해결</summary>
+
+이 단계에서 오류가 발생하면 케이블 연결 상태를 확인하십시오:
+
+<ul>
+  <li>전원 공급 케이블</li>
+  <li>컴퓨터와 컨트롤러 보드 사이의 USB 케이블</li>
+  <li>컨트롤러 보드에서 모터로 이어지는 3핀 케이블</li>
+</ul>
+
+Waveshare 컨트롤러 보드를 사용 중이라면, 점퍼 두 개가 `B` 채널(USB)에 설정되어 있는지 확인하십시오.
+
+</details>
+
+그러면 아래 메시지가 표시됩니다:
+
+```bash
+'gripper' motor id set to 6
+```
+
+이어서 다음 안내가 나타납니다:
+
+```bash
+Connect the controller board to the 'wrist_roll' motor only and press enter.
+```
+
+컨트롤러 보드에서 3핀 케이블을 분리해도 되지만, 그리퍼 모터 쪽 끝은 그대로 두어도 됩니다. 어차피 나중에 딱 맞는 자리에 위치하게 됩니다. 이제 손목 회전(wrist roll) 모터에 새 3핀 케이블을 꽂고 컨트롤러 보드에 연결하세요. 앞서와 마찬가지로, 이 모터만 보드에 연결되어 있어야 하고 다른 모터와 이어지면 안 됩니다. 
+
+나머지 모터도 안내에 따라 동일하게 반복합니다.
+
+> [!TIP]
+> 각 스텝마다 Enter를 누르기 전에 케이블 연결 상태를 확인하십시오. 보드를 조작하다 보면 전원 케이블이 빠지는 경우가 있습니다.
+
+모든 모터 설정이 끝나면 스크립트가 자동으로 종료되며, 모터를 사용할 준비가 완료됩니다. 이제 각 모터를 3핀 케이블로 순서대로 연결하셔도 되며, 첫 번째 모터(id=1인 'shoulder pan')에서 나온 케이블을 컨트롤러 보드에 연결하셔도 됩니다. 이제 컨트롤러 보드를 암의 베이스에 고정할 수 있습니다. 
+
+#### 리더 암
+
+리더 암도 동일한 방법으로 진행하시면 됩니다.
+
+<hfoptions id="setup_motors">
+<hfoption id="Command">
+
+```bash
+lerobot-setup-motors \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/tty.usbmodem575E0031751  # <- 이전 단계에서 찾은 포트를 여기에 붙여넣으세요
+```
+
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
+
+config = SO101LeaderConfig(
+    port="/dev/tty.usbmodem585A0076841",
+    id="my_awesome_leader_arm",
+)
+leader = SO101Leader(config)
+leader.setup_motors()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+### 부품 정리
+
+3D 프린팅된 부품에서 서포트 재료를 모두 제거합니다. 작은 드라이버로 서포트 아래를 파고들면 쉽게 제거할 수 있습니다.
+
+
+조립을 계속하기 전에, 각 모터를 자리에 넣은 뒤 3핀 케이블을 하나 먼저 연결해 두는 것을 권장합니다.
+
+### 관절 1
+
+- 모터 혼(horn) 두 개를 장착합니다. 위쪽 혼은 M3x6mm 나사로 고정하고, 아래쪽 혼은 나사가 필요 없습니다.
+- 첫 번째 모터를 베이스에 넣습니다.
+- 가장 작은 M2x6mm 나사 4개로 모터를 고정합니다(위에서 2개, 아래에서 2개).
+- 첫 번째 모터 홀더를 밀어 넣고 M2x6mm 나사 2개로 양쪽을 고정합니다.
+- 숄더 파트를 부착합니다.
+- 숄더 파트를 위 4개, 아래 4개의 M3x6mm 나사로 조입니다.
+- 숄더 모터 홀더를 추가합니다.
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint1_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+### 관절 2
+
+- 모터 혼 두 개를 장착합니다. 위쪽 혼은 M3x6mm 나사로 고정하고, 아래쪽 혼은 나사가 필요 없습니다.
+- 두 번째 모터를 위에서 밀어 넣습니다.
+- M2x6mm 나사 4개로 두 번째 모터를 고정합니다.
+- 위쪽 암을 양쪽 각각 M3x6mm 나사 4개로 부착합니다.
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint2_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+### 관절 3
+
+- 모터 혼 두 개를 장착합니다. 위쪽 혼은 M3x6mm 나사로 고정하고, 아래쪽 혼은 나사가 필요 없습니다.
+- 모터 3을 삽입하고 M2x6mm 나사 4개로 고정합니다.
+- 포암(forearm)을 모터 3에 양쪽 각각 M3x6mm 나사 4개로 연결합니다.
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint3_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+### 관절 4
+ 
+- 모터 혼 두 개를 장착합니다. 위쪽 혼은 M3x6mm 나사로 고정하고, 아래쪽 혼은 나사가 필요 없습니다.
+- 모터 홀더 4를 밀어 넣습니다.
+- 모터 4를 삽입합니다.
+- M2x6mm 나사 4개로 모터 4를 고정합니다.
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint4_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+### 관절 5
+ 
+- 모터 5를 손목 홀더에 삽입하고 M2x6mm 나사 2개로 앞쪽을 고정합니다.
+- 손목 모터에 모터 혼을 하나만 장착하고 M3x6mm 혼 나사로 고정합니다.
+- M3x6mm 나사 4개로 손목을 모터 4의 양쪽에 고정합니다.
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint5_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+### 그리퍼 / 핸들
+
+<hfoptions id="assembly">
+<hfoption id="Follower">
+
+- 그리퍼를 모터 5에 부착하고, 손목의 모터 혼에 M3x6mm 나사 4개로 연결합니다.
+- 그리퍼 모터를 삽입하고 양쪽 각각 M2x6mm 나사 2개로 고정합니다.
+- 그리퍼 모터에 모터 혼 두 개를 장착합니다. 위쪽 혼은 M3x6mm 나사로 고정하고, 아래쪽 혼은 나사가 필요 없습니다.
+- 그리퍼 클로(claw)를 설치하고 양쪽에 M3x6mm 나사 4개로 고정합니다.
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Gripper_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+</hfoption>
+<hfoption id="Leader">
+
+- 리더 홀더를 손목에 장착하고 M3x6mm 나사 4개로 고정합니다.
+- 핸들을 M2x6mm 나사 1개로 모터 5에 연결합니다.
+- 그리퍼 모터를 삽입하고 양쪽 각각 M2x6mm 나사 2개로 고정한 뒤, M3x6mm 혼 나사로 모터 혼을 부착합니다.
+- 팔로워 트리거를 M3x6mm 나사 4개로 부착합니다.
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Leader_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+</hfoption>
+</hfoptions>
+
+## 캘리브레이션
+ 
+다음으로, 리더 암과 팔로워 암이 동일한 물리적 위치에 있을 때 같은 위치 값을 가지도록 로봇을 캘리브레이션해야 합니다.
+캘리브레이션은 매우 중요한 과정입니다. 한 로봇으로 학습(training)한 신경망이 다른 로봇에서도 동작할 수 있도록 해주기 때문입니다.
+
+#### 팔로워 암
+
+아래 명령어 또는 API 예시를 실행하여 팔로워 암을 캘리브레이션합니다:
+
+<hfoptions id="calibrate_follower">
+<hfoption id="Command">
+
+```bash
+lerobot-calibrate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem58760431551 \ # <- 로봇의 포트를 입력하세요
+    --robot.id=my_awesome_follower_arm # <- 로봇에 고유한 이름을 지정하세요
+```
+
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.robots.so_follower import SO101FollowerConfig, SO101Follower
+
+config = SO101FollowerConfig(
+    port="/dev/tty.usbmodem585A0076891",
+    id="my_awesome_follower_arm",
+)
+
+follower = SO101Follower(config)
+follower.connect(calibrate=False)
+follower.calibrate()
+follower.disconnect()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+아래 영상은 캘리브레이션 방법을 설명합니다. 먼저, 로봇의 모든 관절이 가동 범위의 중앙에 오도록 위치를 맞추어야 합니다. Enter를 누른 후에는 각 관절을 최대 가동 범위까지 움직여야 합니다.
+
+
+##### 캘리브레이션 영상
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/calibrate_so101_2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+#### 리더 암
+
+리더 암도 동일한 방법으로 캘리브레이션합니다. 아래 명령어 또는 API 예시를 실행합니다:
+
+<hfoptions id="calibrate_leader">
+<hfoption id="Command">
+
+```bash
+lerobot-calibrate \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/tty.usbmodem58760431551 \ # <- 로봇의 포트를 입력하세요 
+    --teleop.id=my_awesome_leader_arm # <- 로봇에 고유한 이름을 지정하세요 
+```
+
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.teleoperators.so_leader import SO101LeaderConfig, SO101Leader
+
+config = SO101LeaderConfig(
+    port="/dev/tty.usbmodem58760431551",
+    id="my_awesome_leader_arm",
+)
+
+leader = SO101Leader(config)
+leader.connect(calibrate=False)
+leader.calibrate()
+leader.disconnect()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+축하합니다 🎉 로봇이 스스로 작업을 학습할 준비가 모두 완료되었습니다. 아래 튜토리얼을 따라 학습을 시작하십시오: [실제 로봇으로 시작하기](./il_robots)
+
+> [!TIP]
+> 궁금한 점이 있거나 도움이 필요하시면 [Discord](https://discord.com/invite/s3KuuzsPFb)에서 문의하십시오.
