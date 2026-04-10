@@ -75,13 +75,7 @@ RUN uv pip install --no-cache -e ".[libero_plus,smolvla]"
 # missing; write the config first so any import is non-interactive.
 # LIBERO-plus installs with a nested package structure, so find_spec('libero')
 # may return a namespace package without .origin. Use glob to locate bddl_files.
-RUN LIBERO_DIR=$(python${PYTHON_VERSION} -c "\
-import site, os, glob
-for sp in site.getsitepackages():
-    matches = glob.glob(os.path.join(sp, 'libero', '**', 'bddl_files'), recursive=True)
-    if matches:
-        print(os.path.dirname(matches[0]))
-        break") && \
+RUN LIBERO_DIR=$(python${PYTHON_VERSION} -c "import site,os,glob; [print(os.path.dirname(m)) or exit() for sp in site.getsitepackages() for m in glob.glob(os.path.join(sp,'libero','**','bddl_files'),recursive=True)]") && \
     mkdir -p /home/user_lerobot/.libero && \
     python${PYTHON_VERSION} -c "\
 from huggingface_hub import snapshot_download; \
