@@ -176,11 +176,11 @@ def convert_lerobot_dataset_to_cropped_lerobot_dataset(
 
     Args:
         original_dataset (LeRobotDataset): The source dataset.
-        crop_params_dict (Dict[str, Tuple[int, int, int, int]]):
+        crop_params_dict (dict[str, Tuple[int, int, int, int]]):
             A dictionary mapping observation keys to crop parameters (top, left, height, width).
         new_repo_id (str): Repository id for the new dataset.
         new_dataset_root (str): The root directory where the new dataset will be written.
-        resize_size (Tuple[int, int], optional): The target size (height, width) after cropping.
+        resize_size (tuple[int, int], optional): The target size (height, width) after cropping.
             Defaults to (128, 128).
 
     Returns:

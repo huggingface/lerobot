@@ -214,3 +214,11 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
     # NOTE: In RL, we don't need an offline dataset
     # TODO: Make `TrainPipelineConfig.dataset` optional
     dataset: DatasetConfig | None = None  # type: ignore[assignment] # because the parent class has made it's type non-optional
+
+    # Algorithm name registered in RLAlgorithmConfig registry
+    algorithm: str = "sac"
+
+    # Data mixer strategy name. Currently supports "online_offline"
+    mixer: str = "online_offline"
+    # Fraction sampled from online replay when using OnlineOfflineMixer
+    online_ratio: float = 0.5

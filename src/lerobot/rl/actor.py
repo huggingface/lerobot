@@ -61,7 +61,9 @@ from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.policies.factory import make_policy
-from lerobot.policies.sac.modeling_sac import SACPolicy
+from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.sac.processor_sac import make_sac_pre_post_processors
+from lerobot.processor import TransitionKey
 from lerobot.rl.process import ProcessSignalHandler
 from lerobot.rl.queue import get_last_item_from_queue
 from lerobot.robots import so_follower  # noqa: F401
@@ -76,13 +78,11 @@ from lerobot.transport.utils import (
     send_bytes_in_chunks,
     transitions_to_bytes,
 )
-from lerobot.types import TransitionKey
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.transition import (
     Transition,
-    move_state_dict_to_device,
     move_transition_to_device,
 )
 from lerobot.utils.utils import (
@@ -251,12 +251,17 @@ def act_with_policy(
     ### Instantiate the policy in both the actor and learner processes
     ### To avoid sending a SACPolicy object through the port, we create a policy instance
     ### on both sides, the learner sends the updated parameters every n steps to update the actor's parameters
-    policy: SACPolicy = make_policy(
+    policy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
     )
-    policy = policy.eval()
+    policy = policy.to(device).eval()
     assert isinstance(policy, nn.Module)
+
+    preprocessor, _postprocessor = make_sac_pre_post_processors(
+        config=cfg.policy,
+        dataset_stats=cfg.policy.dataset_stats,
+    )
 
     obs, info = online_env.reset()
     env_processor.reset()
@@ -288,8 +293,8 @@ def act_with_policy(
 
         # Time policy inference and check if it meets FPS requirement
         with policy_timer:
-            # Extract observation from transition for policy
-            action = policy.select_action(batch=observation)
+            normalized_observation = preprocessor.process_observation(observation)
+            action = policy.select_action(batch=normalized_observation)
         policy_fps = policy_timer.fps_last
 
         log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)
@@ -649,7 +654,7 @@ def interactions_stream(
 #  Policy functions
 
 
-def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device):
+def update_policy_parameters(policy: PreTrainedPolicy, parameters_queue: Queue, device):
     bytes_state_dict = get_last_item_from_queue(parameters_queue, block=False)
     if bytes_state_dict is not None:
         logging.info("[ACTOR] Load new parameters from Learner.")
@@ -664,18 +669,7 @@ def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device)
         # - Send critic's encoder state when shared_encoder=True
         # - Skip encoder params entirely when freeze_vision_encoder=True
         # - Ensure discrete_critic gets correct encoder state (currently uses encoder_critic)
-
-        # Load actor state dict
-        actor_state_dict = move_state_dict_to_device(state_dicts["policy"], device=device)
-        policy.actor.load_state_dict(actor_state_dict)
-
-        # Load discrete critic if present
-        if hasattr(policy, "discrete_critic") and "discrete_critic" in state_dicts:
-            discrete_critic_state_dict = move_state_dict_to_device(
-                state_dicts["discrete_critic"], device=device
-            )
-            policy.discrete_critic.load_state_dict(discrete_critic_state_dict)
-            logging.info("[ACTOR] Loaded discrete critic parameters from Learner.")
+        policy.load_actor_weights(state_dicts, device=device)
 
 
 #  Utilities functions

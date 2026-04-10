@@ -15,16 +15,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
 from collections.abc import Callable
 from dataclasses import asdict
-from typing import Literal
+from typing import Any
 
-import einops
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 from torch.distributions import MultivariateNormal, TanhTransform, Transform, TransformedDistribution
 
@@ -39,6 +36,8 @@ DISCRETE_DIMENSION_INDEX = -1  # Gripper is always the last dimension
 class SACPolicy(
     PreTrainedPolicy,
 ):
+    """SAC policy."""
+
     config_class = SACConfig
     name = "sac"
 
@@ -50,26 +49,18 @@ class SACPolicy(
         config.validate_features()
         self.config = config
 
-        # Determine action dimension and initialize all components
-        continuous_action_dim = config.output_features[ACTION].shape[0]
         self._init_encoders()
-        self._init_critics(continuous_action_dim)
-        self._init_actor(continuous_action_dim)
-        self._init_temperature()
+        self._init_actor()
+        self.discrete_critic = None
 
     def get_optim_params(self) -> dict:
-        optim_params = {
+        return {
             "actor": [
                 p
                 for n, p in self.actor.named_parameters()
                 if not n.startswith("encoder") or not self.shared_encoder
             ],
-            "critic": self.critic_ensemble.parameters(),
-            "temperature": self.log_alpha,
         }
-        if self.config.num_discrete_actions is not None:
-            optim_params["discrete_critic"] = self.discrete_critic.parameters()
-        return optim_params
 
     def reset(self):
         """Reset the policy"""
@@ -91,304 +82,40 @@ class SACPolicy(
         actions, _, _ = self.actor(batch, observations_features)
 
         if self.config.num_discrete_actions is not None:
-            discrete_action_value = self.discrete_critic(batch, observations_features)
-            discrete_action = torch.argmax(discrete_action_value, dim=-1, keepdim=True)
+            if self.discrete_critic is not None:
+                discrete_action_value = self.discrete_critic(batch, observations_features)
+                discrete_action = torch.argmax(discrete_action_value, dim=-1, keepdim=True)
+            else:
+                discrete_action = torch.ones(
+                    (*actions.shape[:-1], 1), device=actions.device, dtype=actions.dtype
+                )
             actions = torch.cat([actions, discrete_action], dim=-1)
 
         return actions
 
-    def critic_forward(
-        self,
-        observations: dict[str, Tensor],
-        actions: Tensor,
-        use_target: bool = False,
-        observation_features: Tensor | None = None,
-    ) -> Tensor:
-        """Forward pass through a critic network ensemble
+    def forward(self, batch: dict[str, Tensor | dict[str, Tensor]]) -> dict[str, Tensor]:
+        """Actor-only forward. Returns continuous actions + log_probs."""
+        observations = batch.get("state", batch)
+        observation_features = batch.get("observation_feature") if isinstance(batch, dict) else None
+        actions, log_probs, means = self.actor(observations, observation_features)
+        return {"action": actions, "log_prob": log_probs, "action_mean": means}
 
-        Args:
-            observations: Dictionary of observations
-            actions: Action tensor
-            use_target: If True, use target critics, otherwise use ensemble critics
+    def load_actor_weights(self, state_dicts: dict[str, Any], device: str | torch.device = "cpu") -> None:
+        from lerobot.utils.transition import move_state_dict_to_device
 
-        Returns:
-            Tensor of Q-values from all critics
-        """
+        actor_sd = move_state_dict_to_device(state_dicts["policy"], device=device)
+        self.actor.load_state_dict(actor_sd)
 
-        critics = self.critic_target if use_target else self.critic_ensemble
-        q_values = critics(observations, actions, observation_features)
-        return q_values
-
-    def discrete_critic_forward(
-        self, observations, use_target=False, observation_features=None
-    ) -> torch.Tensor:
-        """Forward pass through a discrete critic network
-
-        Args:
-            observations: Dictionary of observations
-            use_target: If True, use target critics, otherwise use ensemble critics
-            observation_features: Optional pre-computed observation features to avoid recomputing encoder output
-
-        Returns:
-            Tensor of Q-values from the discrete critic network
-        """
-        discrete_critic = self.discrete_critic_target if use_target else self.discrete_critic
-        q_values = discrete_critic(observations, observation_features)
-        return q_values
-
-    def forward(
-        self,
-        batch: dict[str, Tensor | dict[str, Tensor]],
-        model: Literal["actor", "critic", "temperature", "discrete_critic"] = "critic",
-    ) -> dict[str, Tensor]:
-        """Compute the loss for the given model
-
-        Args:
-            batch: Dictionary containing:
-                - action: Action tensor
-                - reward: Reward tensor
-                - state: Observations tensor dict
-                - next_state: Next observations tensor dict
-                - done: Done mask tensor
-                - observation_feature: Optional pre-computed observation features
-                - next_observation_feature: Optional pre-computed next observation features
-            model: Which model to compute the loss for ("actor", "critic", "discrete_critic", or "temperature")
-
-        Returns:
-            The computed loss tensor
-        """
-        # Extract common components from batch
-        actions: Tensor = batch[ACTION]
-        observations: dict[str, Tensor] = batch["state"]
-        observation_features: Tensor = batch.get("observation_feature")
-
-        if model == "critic":
-            # Extract critic-specific components
-            rewards: Tensor = batch["reward"]
-            next_observations: dict[str, Tensor] = batch["next_state"]
-            done: Tensor = batch["done"]
-            next_observation_features: Tensor = batch.get("next_observation_feature")
-
-            loss_critic = self.compute_loss_critic(
-                observations=observations,
-                actions=actions,
-                rewards=rewards,
-                next_observations=next_observations,
-                done=done,
-                observation_features=observation_features,
-                next_observation_features=next_observation_features,
-            )
-
-            return {"loss_critic": loss_critic}
-
-        if model == "discrete_critic" and self.config.num_discrete_actions is not None:
-            # Extract critic-specific components
-            rewards: Tensor = batch["reward"]
-            next_observations: dict[str, Tensor] = batch["next_state"]
-            done: Tensor = batch["done"]
-            next_observation_features: Tensor = batch.get("next_observation_feature")
-            complementary_info = batch.get("complementary_info")
-            loss_discrete_critic = self.compute_loss_discrete_critic(
-                observations=observations,
-                actions=actions,
-                rewards=rewards,
-                next_observations=next_observations,
-                done=done,
-                observation_features=observation_features,
-                next_observation_features=next_observation_features,
-                complementary_info=complementary_info,
-            )
-            return {"loss_discrete_critic": loss_discrete_critic}
-        if model == "actor":
-            return {
-                "loss_actor": self.compute_loss_actor(
-                    observations=observations,
-                    observation_features=observation_features,
-                )
-            }
-
-        if model == "temperature":
-            return {
-                "loss_temperature": self.compute_loss_temperature(
-                    observations=observations,
-                    observation_features=observation_features,
-                )
-            }
-
-        raise ValueError(f"Unknown model type: {model}")
-
-    def update_target_networks(self):
-        """Update target networks with exponential moving average"""
-        for target_param, param in zip(
-            self.critic_target.parameters(),
-            self.critic_ensemble.parameters(),
-            strict=True,
-        ):
-            target_param.data.copy_(
-                param.data * self.config.critic_target_update_weight
-                + target_param.data * (1.0 - self.config.critic_target_update_weight)
-            )
-        if self.config.num_discrete_actions is not None:
-            for target_param, param in zip(
-                self.discrete_critic_target.parameters(),
-                self.discrete_critic.parameters(),
-                strict=True,
-            ):
-                target_param.data.copy_(
-                    param.data * self.config.critic_target_update_weight
-                    + target_param.data * (1.0 - self.config.critic_target_update_weight)
-                )
-
-    @property
-    def temperature(self) -> float:
-        """Return the current temperature value, always in sync with log_alpha."""
-        return self.log_alpha.exp().item()
-
-    def compute_loss_critic(
-        self,
-        observations,
-        actions,
-        rewards,
-        next_observations,
-        done,
-        observation_features: Tensor | None = None,
-        next_observation_features: Tensor | None = None,
-    ) -> Tensor:
-        with torch.no_grad():
-            next_action_preds, next_log_probs, _ = self.actor(next_observations, next_observation_features)
-
-            # 2- compute q targets
-            q_targets = self.critic_forward(
-                observations=next_observations,
-                actions=next_action_preds,
-                use_target=True,
-                observation_features=next_observation_features,
-            )
-
-            # subsample critics to prevent overfitting if use high UTD (update to date)
-            # TODO: Get indices before forward pass to avoid unnecessary computation
-            if self.config.num_subsample_critics is not None:
-                indices = torch.randperm(self.config.num_critics)
-                indices = indices[: self.config.num_subsample_critics]
-                q_targets = q_targets[indices]
-
-            # critics subsample size
-            min_q, _ = q_targets.min(dim=0)  # Get values from min operation
-            if self.config.use_backup_entropy:
-                min_q = min_q - (self.temperature * next_log_probs)
-
-            td_target = rewards + (1 - done) * self.config.discount * min_q
-
-        # 3- compute predicted qs
-        if self.config.num_discrete_actions is not None:
-            # NOTE: We only want to keep the continuous action part
-            # In the buffer we have the full action space (continuous + discrete)
-            # We need to split them before concatenating them in the critic forward
-            actions: Tensor = actions[:, :DISCRETE_DIMENSION_INDEX]
-        q_preds = self.critic_forward(
-            observations=observations,
-            actions=actions,
-            use_target=False,
-            observation_features=observation_features,
-        )
-
-        # 4- Calculate loss
-        # Compute state-action value loss (TD loss) for all of the Q functions in the ensemble.
-        td_target_duplicate = einops.repeat(td_target, "b -> e b", e=q_preds.shape[0])
-        # You compute the mean loss of the batch for each critic and then to compute the final loss you sum them up
-        critics_loss = (
-            F.mse_loss(
-                input=q_preds,
-                target=td_target_duplicate,
-                reduction="none",
-            ).mean(dim=1)
-        ).sum()
-        return critics_loss
-
-    def compute_loss_discrete_critic(
-        self,
-        observations,
-        actions,
-        rewards,
-        next_observations,
-        done,
-        observation_features=None,
-        next_observation_features=None,
-        complementary_info=None,
-    ):
-        # NOTE: We only want to keep the discrete action part
-        # In the buffer we have the full action space (continuous + discrete)
-        # We need to split them before concatenating them in the critic forward
-        actions_discrete: Tensor = actions[:, DISCRETE_DIMENSION_INDEX:].clone()
-        actions_discrete = torch.round(actions_discrete)
-        actions_discrete = actions_discrete.long()
-
-        discrete_penalties: Tensor | None = None
-        if complementary_info is not None:
-            discrete_penalties: Tensor | None = complementary_info.get("discrete_penalty")
-
-        with torch.no_grad():
-            # For DQN, select actions using online network, evaluate with target network
-            next_discrete_qs = self.discrete_critic_forward(
-                next_observations, use_target=False, observation_features=next_observation_features
-            )
-            best_next_discrete_action = torch.argmax(next_discrete_qs, dim=-1, keepdim=True)
-
-            # Get target Q-values from target network
-            target_next_discrete_qs = self.discrete_critic_forward(
-                observations=next_observations,
-                use_target=True,
-                observation_features=next_observation_features,
-            )
-
-            # Use gather to select Q-values for best actions
-            target_next_discrete_q = torch.gather(
-                target_next_discrete_qs, dim=1, index=best_next_discrete_action
-            ).squeeze(-1)
-
-            # Compute target Q-value with Bellman equation
-            rewards_discrete = rewards
-            if discrete_penalties is not None:
-                rewards_discrete = rewards + discrete_penalties
-            target_discrete_q = rewards_discrete + (1 - done) * self.config.discount * target_next_discrete_q
-
-        # Get predicted Q-values for current observations
-        predicted_discrete_qs = self.discrete_critic_forward(
-            observations=observations, use_target=False, observation_features=observation_features
-        )
-
-        # Use gather to select Q-values for taken actions
-        predicted_discrete_q = torch.gather(predicted_discrete_qs, dim=1, index=actions_discrete).squeeze(-1)
-
-        # Compute MSE loss between predicted and target Q-values
-        discrete_critic_loss = F.mse_loss(input=predicted_discrete_q, target=target_discrete_q)
-        return discrete_critic_loss
-
-    def compute_loss_temperature(self, observations, observation_features: Tensor | None = None) -> Tensor:
-        """Compute the temperature loss"""
-        # calculate temperature loss
-        with torch.no_grad():
-            _, log_probs, _ = self.actor(observations, observation_features)
-        temperature_loss = (-self.log_alpha.exp() * (log_probs + self.target_entropy)).mean()
-        return temperature_loss
-
-    def compute_loss_actor(
-        self,
-        observations,
-        observation_features: Tensor | None = None,
-    ) -> Tensor:
-        actions_pi, log_probs, _ = self.actor(observations, observation_features)
-
-        q_preds = self.critic_forward(
-            observations=observations,
-            actions=actions_pi,
-            use_target=False,
-            observation_features=observation_features,
-        )
-        min_q_preds = q_preds.min(dim=0)[0]
-
-        actor_loss = ((self.temperature * log_probs) - min_q_preds).mean()
-        return actor_loss
+        if "discrete_critic" in state_dicts:
+            dc_sd = move_state_dict_to_device(state_dicts["discrete_critic"], device=device)
+            if self.discrete_critic is None:
+                self.discrete_critic = DiscreteCritic(
+                    encoder=self.encoder_critic,
+                    input_dim=self.encoder_critic.output_dim,
+                    output_dim=self.config.num_discrete_actions,
+                    **asdict(self.config.discrete_critic_network_kwargs),
+                ).to(device)
+            self.discrete_critic.load_state_dict(dc_sd)
 
     def _init_encoders(self):
         """Initialize shared or separate encoders for actor and critic."""
@@ -398,54 +125,10 @@ class SACPolicy(
             self.encoder_critic if self.shared_encoder else SACObservationEncoder(self.config)
         )
 
-    def _init_critics(self, continuous_action_dim):
-        """Build critic ensemble, targets, and optional discrete critic."""
-        heads = [
-            CriticHead(
-                input_dim=self.encoder_critic.output_dim + continuous_action_dim,
-                **asdict(self.config.critic_network_kwargs),
-            )
-            for _ in range(self.config.num_critics)
-        ]
-        self.critic_ensemble = CriticEnsemble(encoder=self.encoder_critic, ensemble=heads)
-        target_heads = [
-            CriticHead(
-                input_dim=self.encoder_critic.output_dim + continuous_action_dim,
-                **asdict(self.config.critic_network_kwargs),
-            )
-            for _ in range(self.config.num_critics)
-        ]
-        self.critic_target = CriticEnsemble(encoder=self.encoder_critic, ensemble=target_heads)
-        self.critic_target.load_state_dict(self.critic_ensemble.state_dict())
-
-        if self.config.use_torch_compile:
-            self.critic_ensemble = torch.compile(self.critic_ensemble)
-            self.critic_target = torch.compile(self.critic_target)
-
-        if self.config.num_discrete_actions is not None:
-            self._init_discrete_critics()
-
-    def _init_discrete_critics(self):
-        """Build discrete discrete critic ensemble and target networks."""
-        self.discrete_critic = DiscreteCritic(
-            encoder=self.encoder_critic,
-            input_dim=self.encoder_critic.output_dim,
-            output_dim=self.config.num_discrete_actions,
-            **asdict(self.config.discrete_critic_network_kwargs),
-        )
-        self.discrete_critic_target = DiscreteCritic(
-            encoder=self.encoder_critic,
-            input_dim=self.encoder_critic.output_dim,
-            output_dim=self.config.num_discrete_actions,
-            **asdict(self.config.discrete_critic_network_kwargs),
-        )
-
-        # TODO: (maractingi, azouitine) Compile the discrete critic
-        self.discrete_critic_target.load_state_dict(self.discrete_critic.state_dict())
-
-    def _init_actor(self, continuous_action_dim):
+    def _init_actor(self):
         """Initialize policy actor network and default target entropy."""
         # NOTE: The actor select only the continuous action part
+        continuous_action_dim = self.config.output_features[ACTION].shape[0]
         self.actor = Policy(
             encoder=self.encoder_actor,
             network=MLP(input_dim=self.encoder_actor.output_dim, **asdict(self.config.actor_network_kwargs)),
@@ -458,11 +141,6 @@ class SACPolicy(
         if self.target_entropy is None:
             dim = continuous_action_dim + (1 if self.config.num_discrete_actions is not None else 0)
             self.target_entropy = -np.prod(dim) / 2
-
-    def _init_temperature(self) -> None:
-        """Set up temperature parameter (log_alpha)."""
-        temp_init = self.config.temperature_init
-        self.log_alpha = nn.Parameter(torch.tensor([math.log(temp_init)]))
 
 
 class SACObservationEncoder(nn.Module):
@@ -674,84 +352,6 @@ class MLP(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)
-
-
-class CriticHead(nn.Module):
-    def __init__(
-        self,
-        input_dim: int,
-        hidden_dims: list[int],
-        activations: Callable[[torch.Tensor], torch.Tensor] | str = nn.SiLU(),
-        activate_final: bool = False,
-        dropout_rate: float | None = None,
-        init_final: float | None = None,
-        final_activation: Callable[[torch.Tensor], torch.Tensor] | str | None = None,
-    ):
-        super().__init__()
-        self.net = MLP(
-            input_dim=input_dim,
-            hidden_dims=hidden_dims,
-            activations=activations,
-            activate_final=activate_final,
-            dropout_rate=dropout_rate,
-            final_activation=final_activation,
-        )
-        self.output_layer = nn.Linear(in_features=hidden_dims[-1], out_features=1)
-        if init_final is not None:
-            nn.init.uniform_(self.output_layer.weight, -init_final, init_final)
-            nn.init.uniform_(self.output_layer.bias, -init_final, init_final)
-        else:
-            orthogonal_init()(self.output_layer.weight)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.output_layer(self.net(x))
-
-
-class CriticEnsemble(nn.Module):
-    """
-    CriticEnsemble wraps multiple CriticHead modules into an ensemble.
-
-    Args:
-        encoder (SACObservationEncoder): encoder for observations.
-        ensemble (List[CriticHead]): list of critic heads.
-        init_final (float | None): optional initializer scale for final layers.
-
-    Forward returns a tensor of shape (num_critics, batch_size) containing Q-values.
-    """
-
-    def __init__(
-        self,
-        encoder: SACObservationEncoder,
-        ensemble: list[CriticHead],
-        init_final: float | None = None,
-    ):
-        super().__init__()
-        self.encoder = encoder
-        self.init_final = init_final
-        self.critics = nn.ModuleList(ensemble)
-
-    def forward(
-        self,
-        observations: dict[str, torch.Tensor],
-        actions: torch.Tensor,
-        observation_features: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        device = get_device_from_parameters(self)
-        # Move each tensor in observations to device
-        observations = {k: v.to(device) for k, v in observations.items()}
-
-        obs_enc = self.encoder(observations, cache=observation_features)
-
-        inputs = torch.cat([obs_enc, actions], dim=-1)
-
-        # Loop through critics and collect outputs
-        q_values = []
-        for critic in self.critics:
-            q_values.append(critic(inputs))
-
-        # Stack outputs to match expected shape [num_critics, batch_size]
-        q_values = torch.stack([q.squeeze(-1) for q in q_values], dim=0)
-        return q_values
 
 
 class DiscreteCritic(nn.Module):
