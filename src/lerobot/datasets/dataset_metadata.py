@@ -180,6 +180,16 @@ class LeRobotDatasetMetadata:
         self.episodes = load_episodes(self.root)
         self.stats = load_stats(self.root)
 
+    def ensure_readable(self) -> None:
+        """Guarantee metadata is fully loaded for read operations.
+
+        Idempotent — when metadata is already in memory this is a single
+        ``is None`` check.  Call this before transitioning from write to
+        read mode on the same instance.
+        """
+        if self.episodes is None:
+            self._load_metadata()
+
     def _pull_from_repo(
         self,
         allow_patterns: list[str] | str | None = None,

@@ -278,6 +278,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def _ensure_reader(self) -> DatasetReader:
         """Lazily create the reader on first access."""
         if self.reader is None:
+            self.meta.ensure_readable()
             self.reader = DatasetReader(
                 meta=self.meta,
                 root=self.root,
