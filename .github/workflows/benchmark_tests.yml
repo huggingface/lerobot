@@ -31,7 +31,6 @@ on:
 
   push:
     branches:
-      - feat/benchmark-ci
       - main
     paths:
       - "src/lerobot/envs/**"
@@ -100,14 +99,6 @@ jobs:
           push: false
           load: true
           tags: lerobot-benchmark-libero:ci
-
-      - name: Login to Hugging Face
-        if: env.HF_USER_TOKEN != ''
-        run: |
-          docker run --rm \
-            -e HF_HOME=/tmp/hf \
-            lerobot-benchmark-libero:ci \
-            bash -c "hf auth login --token '$HF_USER_TOKEN' --add-to-git-credential && hf auth whoami"
 
       - name: Run Libero smoke eval (1 episode)
         run: |

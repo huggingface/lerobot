@@ -19,6 +19,9 @@ Reads eval_info.json written by lerobot-eval --output_dir and extracts the
 key metrics needed by the health dashboard. Handles both single-task and
 multi-task eval output formats.
 
+NOTE: This script runs on the bare CI runner (not inside Docker), so it
+must use only Python stdlib modules. Do not add third-party imports.
+
 Usage:
     python scripts/ci/parse_eval_metrics.py \\
         --artifacts-dir /tmp/libero-artifacts \\
@@ -54,12 +57,19 @@ def _extract_metrics(info: dict) -> tuple[float | None, int | None, float | None
         n = agg.get("n_episodes")
         reward = agg.get("avg_sum_reward")
         eval_s = agg.get("eval_s")
+
+        def _safe_float(v: float | int | None) -> float | None:
+            if v is None:
+                return None
+            f = float(v)
+            return None if math.isnan(f) else f
+
         if pc is not None and not math.isnan(pc):
             return (
                 float(pc),
                 int(n) if n is not None else None,
-                float(reward) if reward is not None else None,
-                float(eval_s) if eval_s is not None else None,
+                _safe_float(reward),
+                _safe_float(eval_s),
             )
 
     return None, None, None, None
