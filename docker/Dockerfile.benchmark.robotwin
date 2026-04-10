@@ -54,7 +54,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        python${PYTHON_VERSION} \
        python${PYTHON_VERSION}-venv \
        python${PYTHON_VERSION}-dev \
-    && curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && curl -LsSf https://astral.sh/uv/0.8.0/install.sh | sh \
     && mv /root/.local/bin/uv /usr/local/bin/uv \
     && useradd --create-home --shell /bin/bash user_lerobot \
     && usermod -aG sudo user_lerobot \
@@ -77,7 +77,8 @@ COPY --chown=user_lerobot:user_lerobot setup.py pyproject.toml uv.lock README.md
 COPY --chown=user_lerobot:user_lerobot src/ src/
 
 # Install lerobot base only (no benchmark extras — RoboTwin is source-only).
-RUN uv sync --locked --no-cache
+# Use uv pip install (not uv sync --locked) to avoid cross-extra conflicts.
+RUN uv pip install --no-cache -e "."
 
 # ── 2. Install RoboTwin 2.0 simulator stack ────────────────────────────────
 # Clone at a pinned commit for reproducibility.
@@ -91,7 +92,9 @@ USER user_lerobot
 # (lerobot uses 1.x; RoboTwin's API is wrapped so 0.29 is not needed), scipy
 # (version-pinned by lerobot), huggingface_hub (pinned by lerobot), wandb,
 # azure, openai, pyglet (UI only).
-RUN uv pip install --no-cache \
+# Pin --python-version to 3.12 — sapien 3.0.0b1 has no wheel for cp314 and
+# uv resolves for all Python versions supported by the project by default.
+RUN uv pip install --no-cache --python-version 3.12 \
     "sapien==3.0.0b1" \
     "mplib==0.2.1" \
     "transforms3d==0.4.2" \
