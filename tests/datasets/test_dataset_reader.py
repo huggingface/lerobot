@@ -143,6 +143,32 @@ def test_image_transforms_are_applied(tmp_path, lerobot_dataset_factory):
         assert transform_called["count"] >= 1
 
 
+def test_set_image_transforms_updates_reader_behavior(tmp_path, lerobot_dataset_factory):
+    """Reader setters update and clear visual transforms without replacing the reader."""
+    transform_called = {"count": 0}
+
+    def sentinel_transform(img):
+        transform_called["count"] += 1
+        return img
+
+    dataset = lerobot_dataset_factory(
+        root=tmp_path / "ds",
+        total_episodes=1,
+        total_frames=5,
+        use_videos=False,
+    )
+    reader = dataset.reader
+
+    reader.set_image_transforms(sentinel_transform)
+    reader.get_item(0)
+    assert transform_called["count"] >= 1
+
+    calls_after_set = transform_called["count"]
+    reader.clear_image_transforms()
+    reader.get_item(0)
+    assert transform_called["count"] == calls_after_set
+
+
 # ── File paths ───────────────────────────────────────────────────────
 
 
