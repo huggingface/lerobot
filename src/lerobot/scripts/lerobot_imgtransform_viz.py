@@ -36,7 +36,7 @@ import draccus
 from torchvision.transforms import ToPILImage
 
 from lerobot.configs.default import DatasetConfig
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 from lerobot.transforms import (
     ImageTransforms,
     ImageTransformsConfig,

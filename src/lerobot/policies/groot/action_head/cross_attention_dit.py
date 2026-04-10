@@ -16,15 +16,20 @@
 
 import torch
 import torch.nn.functional as F  # noqa: N812
-from diffusers import ConfigMixin, ModelMixin
-from diffusers.configuration_utils import register_to_config
-from diffusers.models.attention import Attention, FeedForward
-from diffusers.models.embeddings import (
+
+from lerobot.utils.import_utils import require_package
+
+require_package("diffusers", extra="training")
+
+from diffusers import ConfigMixin, ModelMixin  # noqa: E402
+from diffusers.configuration_utils import register_to_config  # noqa: E402
+from diffusers.models.attention import Attention, FeedForward  # noqa: E402
+from diffusers.models.embeddings import (  # noqa: E402
     SinusoidalPositionalEmbedding,
     TimestepEmbedding,
     Timesteps,
 )
-from torch import nn
+from torch import nn  # noqa: E402
 
 
 class TimestepEncoder(nn.Module):

@@ -70,10 +70,11 @@ def is_package_available(
 
 
 def get_safe_default_codec():
+    logger = logging.getLogger(__name__)
     if importlib.util.find_spec("torchcodec"):
         return "torchcodec"
     else:
-        logging.warning(
+        logger.warning(
             "'torchcodec' is not available in your platform, falling back to 'pyav' as a default decoder"
         )
         return "pyav"

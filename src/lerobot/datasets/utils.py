@@ -17,9 +17,7 @@ import contextlib
 import importlib.resources
 import json
 import logging
-from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
 
 import datasets
 import numpy as np
@@ -279,27 +277,6 @@ def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> 
     upper_versions = [v for v in hub_versions if v > target_version]
     assert len(upper_versions) > 0
     raise ForwardCompatibilityError(repo_id, min(upper_versions))
-
-
-def cycle(iterable: Any) -> Iterator[Any]:
-    """Create a dataloader-safe cyclical iterator.
-
-    This is an equivalent of `itertools.cycle` but is safe for use with
-    PyTorch DataLoaders with multiple workers.
-    See https://github.com/pytorch/pytorch/issues/23900 for details.
-
-    Args:
-        iterable: The iterable to cycle over.
-
-    Yields:
-        Items from the iterable, restarting from the beginning when exhausted.
-    """
-    iterator = iter(iterable)
-    while True:
-        try:
-            yield next(iterator)
-        except StopIteration:
-            iterator = iter(iterable)
 
 
 def create_branch(repo_id: str, *, branch: str, repo_type: str | None = None) -> None:

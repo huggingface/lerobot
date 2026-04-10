@@ -29,19 +29,24 @@ import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
 import torchvision
-from diffusers.schedulers.scheduling_ddim import DDIMScheduler
-from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
-from torch import Tensor, nn
 
-from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.utils import (
+from lerobot.utils.import_utils import require_package
+
+require_package("diffusers", extra="training")
+
+from diffusers.schedulers.scheduling_ddim import DDIMScheduler  # noqa: E402
+from diffusers.schedulers.scheduling_ddpm import DDPMScheduler  # noqa: E402
+from torch import Tensor, nn  # noqa: E402
+
+from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig  # noqa: E402
+from lerobot.policies.pretrained import PreTrainedPolicy  # noqa: E402
+from lerobot.policies.utils import (  # noqa: E402
     get_device_from_parameters,
     get_dtype_from_parameters,
     get_output_shape,
     populate_queues,
 )
-from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE  # noqa: E402
 
 
 class DiffusionPolicy(PreTrainedPolicy):

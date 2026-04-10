@@ -22,11 +22,12 @@ import select
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
 from copy import copy, deepcopy
 from datetime import datetime
 from pathlib import Path
 from statistics import mean
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -250,6 +251,27 @@ def unflatten_dict(d: dict, sep: str = "/") -> dict:
             d_inner = d_inner[part]
         d_inner[parts[-1]] = value
     return outdict
+
+
+def cycle(iterable: Any) -> Iterator[Any]:
+    """Create a dataloader-safe cyclical iterator.
+
+    This is an equivalent of `itertools.cycle` but is safe for use with
+    PyTorch DataLoaders with multiple workers.
+    See https://github.com/pytorch/pytorch/issues/23900 for details.
+
+    Args:
+        iterable: The iterable to cycle over.
+
+    Yields:
+        Items from the iterable, restarting from the beginning when exhausted.
+    """
+    iterator = iter(iterable)
+    while True:
+        try:
+            yield next(iterator)
+        except StopIteration:
+            iterator = iter(iterable)
 
 
 class SuppressProgressBars:

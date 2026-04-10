@@ -24,35 +24,35 @@ from lerobot.utils.import_utils import require_package
 
 require_package("accelerate", extra="training")
 
-import torch
-from accelerate import Accelerator
-from termcolor import colored
-from torch.optim import Optimizer
-from tqdm import tqdm
+import torch  # noqa: E402
+from accelerate import Accelerator  # noqa: E402
+from termcolor import colored  # noqa: E402
+from torch.optim import Optimizer  # noqa: E402
+from tqdm import tqdm  # noqa: E402
 
-from lerobot.configs import parser
-from lerobot.configs.train import TrainPipelineConfig
-from lerobot.datasets.factory import make_dataset
-from lerobot.datasets.sampler import EpisodeAwareSampler
-from lerobot.datasets.utils import cycle
-from lerobot.envs.factory import make_env, make_env_pre_post_processors
-from lerobot.envs.utils import close_envs
-from lerobot.optim.factory import make_optimizer_and_scheduler
-from lerobot.policies.factory import make_policy, make_pre_post_processors
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.rl.wandb_utils import WandBLogger
-from lerobot.scripts.lerobot_eval import eval_policy_all
-from lerobot.utils.import_utils import register_third_party_plugins
-from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
-from lerobot.utils.random_utils import set_seed
-from lerobot.utils.train_utils import (
+from lerobot.configs import parser  # noqa: E402
+from lerobot.configs.train import TrainPipelineConfig  # noqa: E402
+from lerobot.datasets import EpisodeAwareSampler  # noqa: E402
+from lerobot.datasets.factory import make_dataset  # noqa: E402
+from lerobot.envs.factory import make_env, make_env_pre_post_processors  # noqa: E402
+from lerobot.envs.utils import close_envs  # noqa: E402
+from lerobot.optim.factory import make_optimizer_and_scheduler  # noqa: E402
+from lerobot.policies.factory import make_policy, make_pre_post_processors  # noqa: E402
+from lerobot.policies.pretrained import PreTrainedPolicy  # noqa: E402
+from lerobot.rl.wandb_utils import WandBLogger  # noqa: E402
+from lerobot.scripts.lerobot_eval import eval_policy_all  # noqa: E402
+from lerobot.utils.import_utils import register_third_party_plugins  # noqa: E402
+from lerobot.utils.logging_utils import AverageMeter, MetricsTracker  # noqa: E402
+from lerobot.utils.random_utils import set_seed  # noqa: E402
+from lerobot.utils.train_utils import (  # noqa: E402
     get_step_checkpoint_dir,
     get_step_identifier,
     load_training_state,
     save_checkpoint,
     update_last_checkpoint,
 )
-from lerobot.utils.utils import (
+from lerobot.utils.utils import (  # noqa: E402
+    cycle,
     format_big_number,
     has_method,
     init_logging,

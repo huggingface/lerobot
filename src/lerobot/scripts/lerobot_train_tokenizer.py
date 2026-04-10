@@ -62,7 +62,7 @@ else:
 
 from lerobot.configs import parser
 from lerobot.configs.types import NormalizationMode
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 

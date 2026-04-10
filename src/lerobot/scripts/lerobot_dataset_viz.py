@@ -70,7 +70,7 @@ import torch
 import torch.utils.data
 import tqdm
 
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 from lerobot.utils.constants import ACTION, DONE, OBS_STATE, REWARD
 from lerobot.utils.utils import init_logging
 

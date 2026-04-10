@@ -29,7 +29,6 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.feature_utils import dataset_to_policy_features
-from lerobot.datasets.utils import cycle
 from lerobot.envs.factory import make_env, make_env_config
 from lerobot.envs.utils import close_envs, preprocess_observation
 from lerobot.optim.factory import make_optimizer_and_scheduler
@@ -46,6 +45,7 @@ from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.policies.vqbet.modeling_vqbet import VQBeTHead
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 from lerobot.utils.random_utils import seeded_context
+from lerobot.utils.utils import cycle
 from tests.artifacts.policies.save_policy_to_safetensors import get_policy_stats
 from tests.utils import DEVICE, require_cpu, require_env, require_x86_64_kernel
 

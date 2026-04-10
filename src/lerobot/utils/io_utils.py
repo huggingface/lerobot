@@ -14,8 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import json
+import logging
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 JsonLike = str | int | float | bool | None | list["JsonLike"] | dict[str, "JsonLike"] | tuple["JsonLike", ...]
 
@@ -58,10 +61,18 @@ def write_video(video_path: str | Path, stacked_frames: list, fps: int) -> None:
     import av
 
     with av.open(str(video_path), mode="w") as container:
-        height, width = stacked_frames[0].shape[:2]
-        # Ensure dimensions are even for yuv420p compatibility
-        height = height if height % 2 == 0 else height - 1
-        width = width if width % 2 == 0 else width - 1
+        orig_height, orig_width = stacked_frames[0].shape[:2]
+        # yuv420p requires even dimensions; crop by one pixel if needed
+        height = orig_height if orig_height % 2 == 0 else orig_height - 1
+        width = orig_width if orig_width % 2 == 0 else orig_width - 1
+        if height != orig_height or width != orig_width:
+            logger.warning(
+                "Frame dimensions %dx%d are not even; cropping to %dx%d for yuv420p compatibility.",
+                orig_width,
+                orig_height,
+                width,
+                height,
+            )
         stream = container.add_stream("libx264", rate=fps)
         stream.width = width
         stream.height = height
