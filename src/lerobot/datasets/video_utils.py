@@ -17,6 +17,7 @@ import contextlib
 import glob
 import importlib
 import logging
+import os
 import queue
 import shutil
 import tempfile
@@ -260,11 +261,21 @@ def decode_video_frames_torchvision(
 
 
 class VideoDecoderCache:
-    """Thread-safe cache for video decoders to avoid expensive re-initialization."""
+    """Thread-safe, process-local cache for video decoders to avoid expensive re-initialization."""
 
     def __init__(self):
         self._cache: dict[str, tuple[Any, Any]] = {}
         self._lock = Lock()
+        self._owner_pid = os.getpid()
+
+    def _reset_if_forked(self) -> None:
+        # Drop entries inherited from a parent process. Don't close inherited
+        # file handles from a child — that can corrupt the parent's view; let GC
+        # reclaim them. Caller must hold the lock.
+        pid = os.getpid()
+        if pid != self._owner_pid:
+            self._cache = {}
+            self._owner_pid = pid
 
     def get_decoder(self, video_path: str):
         """Get a cached decoder or create a new one."""
@@ -276,6 +287,7 @@ class VideoDecoderCache:
         video_path = str(video_path)
 
         with self._lock:
+            self._reset_if_forked()
             if video_path not in self._cache:
                 file_handle = fsspec.open(video_path).__enter__()
                 decoder = VideoDecoder(file_handle, seek_mode="approximate")
@@ -286,14 +298,21 @@ class VideoDecoderCache:
     def clear(self):
         """Clear the cache and close file handles."""
         with self._lock:
-            for _, file_handle in self._cache.values():
-                file_handle.close()
+            if os.getpid() == self._owner_pid:
+                for _, file_handle in self._cache.values():
+                    file_handle.close()
             self._cache.clear()
+            self._owner_pid = os.getpid()
 
     def size(self) -> int:
         """Return the number of cached decoders."""
         with self._lock:
             return len(self._cache)
+
+
+def lerobot_worker_init_fn(worker_id: int) -> None:
+    """``DataLoader(worker_init_fn=...)`` helper that resets the module-level torchcodec cache."""
+    _default_decoder_cache.clear()
 
 
 class FrameTimestampError(ValueError):
