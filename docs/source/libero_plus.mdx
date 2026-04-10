@@ -1,0 +1,171 @@
+# LIBERO-plus
+
+LIBERO-plus is a **robustness benchmark** for Vision-Language-Action (VLA) models built on top of [LIBERO](./libero). It systematically stress-tests policies by applying **seven independent perturbation dimensions** to the original LIBERO task set, exposing failure modes that standard benchmarks miss.
+
+- Paper: [LIBERO-plus: A Robustness Benchmark for VLA Models](https://github.com/sylvestf/LIBERO-plus)
+- GitHub: [sylvestf/LIBERO-plus](https://github.com/sylvestf/LIBERO-plus)
+- Dataset: [pepijn223/libero_plus_lerobot](https://huggingface.co/datasets/pepijn223/libero_plus_lerobot)
+
+## Perturbation dimensions
+
+LIBERO-plus creates ~10 000 task variants by perturbing each original LIBERO task along these axes:
+
+| Dimension             | What changes                                          |
+| --------------------- | ----------------------------------------------------- |
+| Objects layout        | Target position, presence of confounding objects      |
+| Camera viewpoints     | Camera position, orientation, field-of-view           |
+| Robot initial states  | Manipulator start pose                                |
+| Language instructions | LLM-rewritten task description (paraphrase / synonym) |
+| Light conditions      | Intensity, direction, color, shadow                   |
+| Background textures   | Scene surface and object appearance                   |
+| Sensor noise          | Photometric distortions and image degradation         |
+
+## Available task suites
+
+LIBERO-plus covers the same five suites as LIBERO:
+
+| Suite          | CLI name         | Tasks | Max steps |
+| -------------- | ---------------- | ----- | --------- |
+| LIBERO-Spatial | `libero_spatial` | 10    | 280       |
+| LIBERO-Object  | `libero_object`  | 10    | 280       |
+| LIBERO-Goal    | `libero_goal`    | 10    | 300       |
+| LIBERO-90      | `libero_90`      | 90    | 400       |
+| LIBERO-Long    | `libero_10`      | 10    | 520       |
+
+## Installation
+
+### System dependencies (Linux only)
+
+```bash
+sudo apt install libexpat1 libfontconfig1-dev libmagickwand-dev
+```
+
+### Python package
+
+```bash
+pip install -e ".[libero_plus]"
+```
+
+This installs LIBERO-plus directly from its GitHub repository. Because MuJoCo is required, only Linux is supported.
+
+<Tip>
+Set the MuJoCo rendering backend before running evaluation:
+
+```bash
+export MUJOCO_GL=egl   # headless / HPC / cloud
+```
+
+</Tip>
+
+### Download LIBERO-plus assets
+
+LIBERO-plus ships its extended asset pack separately. Download `assets.zip` from the [Hugging Face dataset](https://huggingface.co/datasets/Sylvest/LIBERO-plus/tree/main) and extract it into the LIBERO-plus package directory:
+
+```bash
+# After installing the package, find where it was installed:
+python -c "import libero; print(libero.__file__)"
+# Then extract assets.zip into <package_root>/libero/assets/
+```
+
+## Evaluation
+
+### Minimal smoke-test (1 episode, no async)
+
+```bash
+lerobot-eval \
+    --policy.path=pepijn223/smolvla_libero \
+    --env.type=libero_plus \
+    --env.task=libero_spatial \
+    --eval.batch_size=1 \
+    --eval.n_episodes=1 \
+    --eval.use_async_envs=false \
+    --policy.device=cuda \
+    --env.camera_name_mapping='{"agentview_image": "camera1", "robot0_eye_in_hand_image": "camera2"}' \
+    --policy.empty_cameras=1
+```
+
+### Full robustness benchmark (recommended)
+
+```bash
+lerobot-eval \
+    --policy.path=<your-policy-id> \
+    --env.type=libero_plus \
+    --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
+    --eval.batch_size=1 \
+    --eval.n_episodes=10 \
+    --env.max_parallel_tasks=1
+```
+
+### Key CLI flags
+
+| Flag                        | Description                                                      |
+| --------------------------- | ---------------------------------------------------------------- |
+| `--env.type=libero_plus`    | Selects LIBERO-plus environment (same gym interface as `libero`) |
+| `--env.task`                | Suite name(s), comma-separated                                   |
+| `--env.task_ids`            | Restrict to specific task indices, e.g. `[0,1,2]`                |
+| `--env.camera_name_mapping` | JSON dict remapping raw camera names to policy input keys        |
+| `--env.control_mode`        | `relative` (default) or `absolute`                               |
+| `--eval.use_async_envs`     | `true` for parallel rollouts (default), `false` for debugging    |
+| `--policy.empty_cameras`    | Number of camera slots without observations (policy-specific)    |
+
+### Camera name mapping
+
+By default, LIBERO cameras are mapped as:
+
+| Raw camera name            | LeRobot key                 |
+| -------------------------- | --------------------------- |
+| `agentview_image`          | `observation.images.image`  |
+| `robot0_eye_in_hand_image` | `observation.images.image2` |
+
+If your policy was trained with different key names, pass a JSON remapping:
+
+```bash
+--env.camera_name_mapping='{"agentview_image": "camera1", "robot0_eye_in_hand_image": "camera2"}'
+```
+
+## Policy inputs and outputs
+
+**Observations (after `LiberoProcessorStep`):**
+
+- `observation.state` — 8-dim proprioceptive vector: `[eef_pos(3), eef_axis_angle(3), gripper_qpos(2)]`
+- `observation.images.<name>` — camera image(s), flipped 180° to match VLA convention
+
+**Actions:**
+
+- `Box(-1, 1, shape=(7,))` — 6D end-effector delta + 1D gripper
+
+## Dataset
+
+A LeRobot-format training dataset for LIBERO-plus is available at:
+
+- [pepijn223/libero_plus_lerobot](https://huggingface.co/datasets/pepijn223/libero_plus_lerobot)
+
+### Example training command
+
+```bash
+lerobot-train \
+    --policy.type=smolvla \
+    --policy.repo_id=${HF_USER}/smolvla_libero_plus \
+    --policy.load_vlm_weights=true \
+    --dataset.repo_id=pepijn223/libero_plus_lerobot \
+    --env.type=libero_plus \
+    --env.task=libero_spatial \
+    --output_dir=./outputs/ \
+    --steps=100000 \
+    --batch_size=4 \
+    --eval.batch_size=1 \
+    --eval.n_episodes=1 \
+    --eval_freq=1000
+```
+
+## Relationship to LIBERO
+
+LIBERO-plus is a drop-in extension of LIBERO:
+
+- Same Python gym interface (`LiberoEnv`, `LiberoProcessorStep`)
+- Same camera names and observation/action format
+- Same task suite names
+- Installs under the same `libero` Python package name (different GitHub repo)
+- The only code difference in LeRobot is a try/except import fallback in `libero.py` that handles the slightly different package nesting in LIBERO-plus
+
+To use the original LIBERO benchmark, see [LIBERO](./libero) and use `--env.type=libero`.

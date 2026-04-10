@@ -26,8 +26,15 @@ import gymnasium as gym
 import numpy as np
 import torch
 from gymnasium import spaces
-from libero.libero import benchmark, get_libero_path
-from libero.libero.envs import OffScreenRenderEnv
+
+try:
+    from libero.libero import benchmark, get_libero_path
+    from libero.libero.envs import OffScreenRenderEnv
+except ImportError:
+    # LIBERO-plus installs with an extra package nesting level.
+    # See: https://github.com/sylvestf/LIBERO-plus
+    from libero.libero.libero import benchmark, get_libero_path  # type: ignore[no-redef]
+    from libero.libero.libero.envs import OffScreenRenderEnv  # type: ignore[no-redef]
 
 from lerobot.envs.utils import _LazyAsyncVectorEnv
 from lerobot.types import RobotObservation
