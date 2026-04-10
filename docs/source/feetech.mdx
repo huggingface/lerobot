@@ -1,27 +1,54 @@
-# Feetech Motor Firmware Update
+# Feetech Troubleshooting and Motor Firmware Update
+
+## Troubleshooting
+
+### Position Overflow
+
+If during calibration you encounter an error like this:
+
+```bash
+ValueError: Magnitude 2816 exceeds 2047 (max for sign_bit_index=11)
+```
+
+The firmware may be overflowing and returning incorrect position readings.
+
+**Quick fix:** Unplug both the AC power and USB cable, then reconnect them. This should give you correct position readings again.
+
+If the issue persists, reset the positions of the motors:
+
+1. Complete the first 4 steps of the motor firmware update process
+2. Select the _Programming_ tab
+3. Move all joints to the middle of their range
+4. Click _Offset_
+   <img
+     src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/feetech-reset-offset.png"
+     alt="Feetech Offset Position"
+   />
+
+## Feetech Motor Firmware Update
 
 This tutorial guides you through updating the firmware of Feetech motors using the official Feetech software.
 
-## Prerequisites
+### Prerequisites
 
 - Windows computer (Feetech software is only available for Windows)
 - Feetech motor control board
 - USB cable to connect the control board to your computer
 - Feetech motors connected to the control board
 
-## Step 1: Download Feetech Software
+### Step 1: Download Feetech Software
 
 1. Visit the official Feetech software download page: [https://www.feetechrc.com/software.html](https://www.feetechrc.com/software.html)
 2. Download the latest version of the Feetech debugging software (FD)
 3. Install the software on your Windows computer
 
-## Step 2: Hardware Setup
+### Step 2: Hardware Setup
 
 1. Connect your Feetech motors to the motor control board
 2. Connect the motor control board to your Windows computer via USB cable
 3. Ensure power is supplied to the motors
 
-## Step 3: Configure Connection
+### Step 3: Configure Connection
 
 1. Launch the Feetech debugging software
 2. Select the correct COM port from the port dropdown menu
@@ -29,13 +56,13 @@ This tutorial guides you through updating the firmware of Feetech motors using t
 3. Set the appropriate baud rate (typically 1000000 for most Feetech motors)
 4. Click "Open" to establish communication with the control board
 
-## Step 4: Scan for Motors
+### Step 4: Scan for Motors
 
 1. Once connected, click the "Search" button to detect all connected motors
 2. The software will automatically discover and list all motors on the bus
 3. Each motor will appear with its ID number
 
-## Step 5: Update Firmware
+### Step 5: Update Firmware
 
 For each motor you want to update:
 
@@ -46,12 +73,12 @@ For each motor you want to update:
 4. **Click on Upgrade button**:
    - The update progress will be displayed
 
-## Step 6: Verify Update
+### Step 6: Verify Update
 
 1. After the update completes, the software should automatically refresh the motor information
 2. Verify that the firmware version has been updated to the expected version
 
-## Important Notes
+### Important Notes
 
 ⚠️ **Warning**: Do not disconnect power or USB during firmware updates, it will potentially brick the motor.
 
@@ -61,7 +88,7 @@ For debugging purposes only, you can use the open-source Feetech Debug Tool:
 
 - **Repository**: [FT_SCServo_Debug_Qt](https://github.com/CarolinePascal/FT_SCServo_Debug_Qt/tree/fix/port-search-timer)
 
-### Installation Instructions
+#### Installation Instructions
 
 Follow the instructions in the repository to install the tool, for Ubuntu you can directly install it, for MacOS you need to build it from source.
 

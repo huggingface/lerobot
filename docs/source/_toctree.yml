@@ -134,7 +134,7 @@
   - local: notebooks
     title: Notebooks
   - local: feetech
-    title: Updating Feetech Firmware
+    title: Feetech Troubleshooting and Firmware Update
   - local: damiao
     title: Damiao Motors and CAN Bus
   title: "Resources"
