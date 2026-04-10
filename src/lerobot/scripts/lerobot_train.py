@@ -116,6 +116,7 @@ def update_policy(
         else:
             loss, output_dict = policy.forward(batch)
 
+        output_dict = {k: v.item() if isinstance(v, torch.Tensor) else v for k, v in output_dict.items()} if output_dict is not None else {}
         # TODO(rcadene): policy.unnormalize_outputs(out_dict)
 
     # Use accelerator's backward method
