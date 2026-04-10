@@ -1,0 +1,247 @@
+# 自備策略
+
+本教學說明如何將您自訂策略的實作整合到 LeRobot 生態系統中，讓您在使用自己的演算法的同時，能夠運用所有 LeRobot 工具進行訓練、評估和部署。
+
+## 步驟 1：建立策略套件
+
+您自訂的策略應組織成一個遵循 LeRobot 外掛慣例的可安裝的 Python 套件。
+
+### 套件結構
+
+建立一個以 `lerobot_policy_` 為前綴（重要！）並在後面加上您的策略名稱的套件：
+
+```bash
+lerobot_policy_my_custom_policy/
+├── pyproject.toml
+└── src/
+    └── lerobot_policy_my_custom_policy/
+        ├── __init__.py
+        ├── configuration_my_custom_policy.py
+        ├── modeling_my_custom_policy.py
+        └── processor_my_custom_policy.py
+```
+
+### 套件配置
+
+設定您的 `pyproject.toml`：
+
+```toml
+[project]
+name = "lerobot_policy_my_custom_policy"
+version = "0.1.0"
+dependencies = [
+    # your policy-specific dependencies
+]
+requires-python = ">= 3.12"
+
+[build-system]
+build-backend = # your-build-backend
+requires = # your-build-system
+```
+
+## 步驟 2：定義策略配置
+
+建立一個繼承自 [`PreTrainedConfig`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/configs/policies.py) 的配置類別，並註冊您的策略類型：
+以下提供一個起始範本，請依據您的策略架構與訓練需求自行調整參數和方法。
+
+```python
+# configuration_my_custom_policy.py
+from dataclasses import dataclass, field
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.optim.optimizers import AdamWConfig
+from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
+
+@PreTrainedConfig.register_subclass("my_custom_policy")
+@dataclass
+class MyCustomPolicyConfig(PreTrainedConfig):
+    """MyCustomPolicy 的配置類。
+
+    Args:
+        n_obs_steps: 作為輸入使用的觀測步數
+        horizon: 動作預測範圍
+        n_action_steps: 要執行的動作步數
+        hidden_dim: 策略網路的隱藏維度
+        # 在此新增您的策略特定參數
+    """
+
+    horizon: int = 50
+    n_action_steps: int = 50
+    hidden_dim: int = 256
+
+    optimizer_lr: float = 1e-4
+    optimizer_weight_decay: float = 1e-4
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.n_action_steps > self.horizon:
+            raise ValueError("n_action_steps cannot exceed horizon")
+
+    def validate_features(self) -> None:
+        """驗證輸入/輸出特徵的相容性"""
+        if not self.image_features:
+            raise ValueError("MyCustomPolicy requires at least one image feature.")
+        if self.action_feature is None:
+            raise ValueError("MyCustomPolicy requires 'action' in output_features.")
+
+    def get_optimizer_preset(self) -> AdamWConfig:
+        return AdamWConfig(lr=self.optimizer_lr, weight_decay=self.optimizer_weight_decay)
+
+    def get_scheduler_preset(self):
+        return None
+
+    @property
+    def observation_delta_indices(self) -> list[int] | None:
+        """資料集載入器為每個觀測提供的相對時間步偏移量。
+
+        對於單幀策略，回傳 `None`。對於需要使用多個過去或未來幀的時序策略，
+        回傳偏移量的列表，例如 `[-20, -10, 0, 10]` 代表步長為 10 的
+        3 個過去幀與步長為 10 的 1 個未來幀。
+        """
+        return None
+
+    @property
+    def action_delta_indices(self) -> list[int]:
+        """資料集載入器回傳的動作區塊的相對時間步偏移量。
+        """
+        return list(range(self.horizon))
+
+    @property
+    def reward_delta_indices(self) -> None:
+        return None
+```
+
+## 步驟 3：實作策略類
+
+透過繼承 [`PreTrainedPolicy`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/pretrained.py) 來建立您的策略實作：
+
+```python
+# modeling_my_custom_policy.py
+import torch
+import torch.nn as nn
+from typing import Any
+
+from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.utils.constants import ACTION
+from .configuration_my_custom_policy import MyCustomPolicyConfig
+
+class MyCustomPolicy(PreTrainedPolicy):
+    config_class = MyCustomPolicyConfig  # 必須與 @register_subclass 中的字串相符
+    name = "my_custom_policy"
+
+    def __init__(self, config: MyCustomPolicyConfig, dataset_stats: dict[str, Any] = None):
+        super().__init__(config, dataset_stats)
+        config.validate_features()  # 基礎類別不會自動呼叫
+        self.config = config
+        self.model = ...  # 您的 nn.Module 放在這裡
+
+    def reset(self):
+        """重設回合狀態。"""
+        ...
+
+    def get_optim_params(self) -> dict:
+        """回傳要傳遞給最佳化器的參數（例如分組的 lr/wd）。"""
+        return {"params": self.parameters()}
+
+    def predict_action_chunk(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
+        """回傳當前觀測的完整動作區塊 (B, chunk_size, action_dim)。"""
+        ...
+
+    def select_action(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
+        """回傳當前時間步的單一動作（在推論時呼叫）。"""
+        ...
+
+    def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        """計算訓練損失。
+
+        `batch["action_is_pad"]` 是形狀為 (B, horizon) 的布林遮罩，標記
+        因回合在 `horizon` 步之前結束而填充的時間步，您可以將這些從損失中
+        排除。
+        """
+        actions = batch[ACTION]
+        action_is_pad = batch.get("action_is_pad")
+        ...
+        return {"loss": ...}
+```
+
+## 步驟 4：新增資料處理器
+
+建立處理器函數。如需具體參考，請查看 [processor_act.py](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/processor_act.py) 或 [processor_diffusion.py](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/diffusion/processor_diffusion.py)。
+
+```python
+# processor_my_custom_policy.py
+from typing import Any
+import torch
+
+from lerobot.processor import PolicyAction, PolicyProcessorPipeline
+
+
+def make_my_custom_policy_pre_post_processors(
+    config,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+) -> tuple[
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+]:
+    preprocessor = ...   # 為輸入建立您的 PolicyProcessorPipeline
+    postprocessor = ...  # 為輸出建立您的 PolicyProcessorPipeline
+    return preprocessor, postprocessor
+```
+
+**重要 — 函數命名：** LeRobot 透過名稱來探索您的處理器。函式**必須**命名為 `make_{policy_name}_pre_post_processors`（與您傳給 `@PreTrainedConfig.register_subclass` 的字串相符）。
+
+## 步驟 5：套件初始化
+
+在套件的 `__init__.py` 中暴露您的類：
+
+```python
+# __init__.py
+"""為 LeRobot 自訂的策略套件。"""
+
+try:
+    import lerobot  # noqa: F401
+except ImportError:
+    raise ImportError(
+        "lerobot is not installed. Please install lerobot to use this policy package."
+    )
+
+from .configuration_my_custom_policy import MyCustomPolicyConfig
+from .modeling_my_custom_policy import MyCustomPolicy
+from .processor_my_custom_policy import make_my_custom_policy_pre_post_processors
+
+__all__ = [
+    "MyCustomPolicyConfig",
+    "MyCustomPolicy",
+    "make_my_custom_policy_pre_post_processors",
+]
+```
+
+## 步驟 6：安裝與使用
+
+### 安裝您的策略套件
+
+```bash
+cd lerobot_policy_my_custom_policy
+pip install -e .
+
+# 或者如果已發布到 PyPI，從 PyPI 安裝
+pip install lerobot_policy_my_custom_policy
+```
+
+### 使用您的策略
+
+安裝完成後，您的策略會自動整合到 LeRobot 的訓練和評估工具中：
+
+```bash
+lerobot-train \
+    --policy.type my_custom_policy \
+    --env.type pusht \
+    --steps 200000
+```
+
+## 範例與社群貢獻
+
+查看以下策略實作範例：
+
+- [DiTFlow 策略](https://github.com/danielsanjosepro/lerobot_policy_ditflow) — 使用流匹配目標（flow-matching objective）的擴散 （Diffusion） Transformer 策略。在此範例中試用：[DiTFlow 範例](https://github.com/danielsanjosepro/test_lerobot_policy_ditflow)
+
+歡迎與社群分享您的策略實作！🤗

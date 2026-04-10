@@ -1,0 +1,125 @@
+# 多 GPU 訓練
+
+本指南說明如何使用 [Hugging Face Accelerate](https://huggingface.co/docs/accelerate) 在多個 GPU 上訓練策略。
+
+## 安裝
+
+首先，請確保已安裝 accelerate：
+
+```bash
+pip install accelerate
+```
+
+## 使用多 GPU 進行訓練
+
+您可以透過兩種方式啟動訓練：
+
+### 選項 1：不使用配置檔案（直接指定參數）
+
+您可以在命令中直接指定所有參數，無需執行 `accelerate config`：
+
+```bash
+accelerate launch \
+  --multi_gpu \
+  --num_processes=2 \
+  $(which lerobot-train) \
+  --dataset.repo_id=${HF_USER}/my_dataset \
+  --policy.type=act \
+  --policy.repo_id=${HF_USER}/my_trained_policy \
+  --output_dir=outputs/train/act_multi_gpu \
+  --job_name=act_multi_gpu \
+  --wandb.enable=true
+```
+
+**主要的 accelerate 參數：**
+
+- `--multi_gpu`：啟用多 GPU 訓練
+- `--num_processes=2`：要使用的 GPU 數量
+- `--mixed_precision=fp16`：使用 fp16 混合精度（若支援也可使用 `bf16`）
+
+### 選項 2：使用 accelerate config
+
+如果您偏好將設置儲存，可以選擇性地透過以下命令為您的硬體環境配置 accelerate：
+
+```bash
+accelerate config
+```
+
+此互動式設定會詢問您關於訓練環境的問題（GPU 數量、混合精度設定等），並儲存設定供日後使用。對於在單台機器上進行簡單的多 GPU 設定，您可以使用以下建議設定：
+
+- 運算環境：This machine
+- 機器數量：1
+- 處理程序數量：（您想使用的 GPU 數量）
+- 要使用的 GPU ID：（留空以使用全部）
+- 混合精度：fp16 或 bf16（建議使用以加速訓練）
+
+然後使用以下命令啟動訓練：
+
+```bash
+accelerate launch $(which lerobot-train) \
+  --dataset.repo_id=${HF_USER}/my_dataset \
+  --policy.type=act \
+  --policy.repo_id=${HF_USER}/my_trained_policy \
+  --output_dir=outputs/train/act_multi_gpu \
+  --job_name=act_multi_gpu \
+  --wandb.enable=true
+```
+
+## 運作原理
+
+當您使用 accelerate 啟動訓練時：
+
+1. **自動偵測**：LeRobot 會自動偵測是否在 accelerate 環境下執行
+2. **資料分配**：您的批次會自動分配到各個 GPU
+3. **梯度同步**：在反向傳播過程中，梯度會在各 GPU 之間同步
+4. **單一處理程序記錄**：僅由主處理程序記錄到 wandb 並儲存檢查點
+
+## 學習率與訓練步數縮放
+
+**重要：** LeRobot **不會**根據 GPU 數量自動縮放學習率或訓練步數。這讓您能完全掌控訓練的超參數。
+
+### 為什麼不自動縮放？
+
+許多分散式訓練框架會根據 GPU 數量自動縮放學習率（例如 `lr = base_lr × num_gpus`）。
+然而，LeRobot 會完全按照您指定的學習率執行。
+
+### 何時及如何縮放
+
+如果您希望在使用多 GPU 時縮放超參數，應手動進行：
+
+**學習率縮放：**
+
+```bash
+# 範例：2 個 GPU 搭配線性學習率縮放
+# 基礎學習率：1e-4，使用 2 個 GPU -> 2e-4
+accelerate launch --num_processes=2 $(which lerobot-train) \
+  --optimizer.lr=2e-4 \
+  --dataset.repo_id=lerobot/pusht \
+  --policy=act
+```
+
+**訓練步數縮放：**
+
+由於有效批次大小 `bs` 會隨多 GPU 增加（batch_size × num_gpus），您可能希望按比例減少訓練步數：
+
+```bash
+# 範例：2 個 GPU，有效批次大小為 2 倍
+# 原始設定：batch_size=8, steps=100000
+# 使用 2 個 GPU：batch_size=8（總計 16），steps=50000
+accelerate launch --num_processes=2 $(which lerobot-train) \
+  --batch_size=8 \
+  --steps=50000 \
+  --dataset.repo_id=lerobot/pusht \
+  --policy=act
+```
+
+## 注意事項
+
+- `lerobot-train` 中的 `--policy.use_amp` 旗標僅在**未**使用 accelerate 時有效。使用 accelerate 時，混合精度由 accelerate 的設定控制。
+- 訓練日誌、檢查點和 Hub 上傳僅由主處理程序執行，以避免衝突。非主處理程序的主控台記錄會被停用，以防止重複輸出。
+- 有效批次大小為 `batch_size × num_gpus`。如果您使用 4 個 GPU 且 `--batch_size=8`，有效批次大小為 32。
+- 學習率排程在多個處理程序之間能正確處理——LeRobot 設定 `step_scheduler_with_optimizer=False` 以防止 accelerate 根據處理程序數量調整排程器步數。
+- 儲存或推送模型時，LeRobot 會自動將模型從 accelerate 的分散式包裝器中解包，以確保相容性。
+- WandB 整合會自動僅在主處理程序上初始化，防止建立多個執行紀錄。
+
+如需更進階的設定與疑難排解，請參閱 [Accelerate 文件](https://huggingface.co/docs/accelerate)。如果您想了解更多關於如何在大量 GPU 上進行訓練的資訊，請參考這份優秀的指南：[Ultrascale Playbook](https://huggingface.co/spaces/nanotron/ultrascale-playbook)。
