@@ -69,8 +69,22 @@ COPY --chown=user_lerobot:user_lerobot src/ src/
 # Use uv pip install (not uv sync --locked) — the lockfile may be stale for
 # this extra, and uv sync resolves all extras across all Python versions which
 # hits cross-extra conflicts. pip-style install resolves only what's requested.
-RUN uv pip install --no-cache -e ".[robocerebra]"
+RUN uv pip install --no-cache -e ".[robocerebra,smolvla]"
 
+# Pre-download libero assets and write ~/.libero/config.yaml so that
+# libero/__init__.py does not call input() (which fails in non-interactive Docker).
+RUN LIBERO_DIR=$(python${PYTHON_VERSION} -c \
+      "import importlib.util, os; s=importlib.util.find_spec('libero'); \
+       print(os.path.join(os.path.dirname(s.origin), 'libero'))") && \
+    mkdir -p /home/user_lerobot/.libero && \
+    python${PYTHON_VERSION} -c "\
+from huggingface_hub import snapshot_download; \
+snapshot_download(repo_id='lerobot/libero-assets', repo_type='dataset', \
+                  local_dir='/home/user_lerobot/.libero/assets')" && \
+    printf "assets: /home/user_lerobot/.libero/assets\nbddl_files: ${LIBERO_DIR}/bddl_files\ndatasets: ${LIBERO_DIR}/../datasets\ninit_states: ${LIBERO_DIR}/init_files\n" \
+    > /home/user_lerobot/.libero/config.yaml
+
+# Workaround: Triton ships ptxas without the execute bit set.
 RUN chmod +x /lerobot/.venv/lib/python${PYTHON_VERSION}/site-packages/triton/backends/nvidia/bin/ptxas
 
 COPY --chown=user_lerobot:user_lerobot . .
