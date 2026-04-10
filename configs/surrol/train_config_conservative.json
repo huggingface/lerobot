@@ -1,0 +1,139 @@
+{
+    "output_dir": null,
+    "job_name": "franka_sim_sac_touch_conservative",
+    "resume": false,
+    "seed": 1000,
+    "num_workers": 4,
+    "batch_size": 256,
+    "steps": 100000,
+    "eval_freq": 10000,
+    "log_freq": 1,
+    "save_checkpoint": true,
+    "save_freq": 10000,
+    "use_policy_training_preset": true,
+    "wandb": {
+      "enable": true,
+      "project": "franka_sim_touch"
+    },
+    "dataset": {
+      "repo_id": "local/franka_sim_touch_demos",
+      "use_imagenet_stats": false
+    },
+    "env": {
+      "type": "gym_manipulator",
+      "name": "gym_hil",
+      "task": "PandaPickCubeBase-v0",
+      "fps": 10,
+      "robot": null,
+      "teleop": {
+        "type": "touch",
+        "use_gripper": true,
+        "device_name": "right",
+        "position_scale": 0.2,
+        "haptic_module_path": "/home/zjj/projects/hilserl-surrol/SurRoL_v2/haptic_src",
+        "clutch_mode": false
+      },
+      "processor": {
+        "gripper": {
+          "use_gripper": true,
+          "gripper_penalty": -0.02
+        },
+        "reset": {
+          "fixed_reset_joint_positions": [0.0, 0.195, 0.0, -2.43, 0.0, 2.62, 0.785],
+          "reset_time_s": 2.0,
+          "control_time_s": 10.0,
+          "terminate_on_success": true
+        }
+      },
+      "features": {
+        "observation.images.front": { "type": "VISUAL", "shape": [3, 128, 128] },
+        "observation.images.wrist": { "type": "VISUAL", "shape": [3, 128, 128] },
+        "observation.state": { "type": "STATE", "shape": [18] },
+        "action": { "type": "ACTION", "shape": [7] }
+      },
+      "features_map": {
+        "observation.images.front": "observation.images.front",
+        "observation.images.wrist": "observation.images.wrist",
+        "observation.state": "observation.state",
+        "action": "action"
+      }
+    },
+    "policy": {
+      "type": "sac",
+      "push_to_hub": false,
+      "n_obs_steps": 1,
+      "normalization_mapping": {
+        "VISUAL": "MEAN_STD",
+        "STATE": "MIN_MAX",
+        "ENV": "MIN_MAX",
+        "ACTION": "MIN_MAX"
+      },
+      "dataset_stats": {
+        "observation.images.front": {
+          "mean": [0.485, 0.456, 0.406],
+          "std":  [0.229, 0.224, 0.225]
+        },
+        "observation.images.wrist": {
+          "mean": [0.485, 0.456, 0.406],
+          "std":  [0.229, 0.224, 0.225]
+        },
+        "observation.state": {
+          "min": [-0.063, 0.055, -0.204, -2.671, -0.298, 1.667, 0.638, -0.217, -0.540, -0.496, -0.831, -0.663, -1.607, -0.330, 0.0, 0.464, -0.034, 0.003],
+          "max": [0.218, 0.612, 0.057, -1.511, 0.074, 3.128, 1.159, 0.459, 0.574, 0.225, 1.416, 0.249, 0.793, 0.784, 255.0, 0.600, 0.029, 0.155]
+        },
+        "action": {
+          "min": [-0.4, -0.4, -0.4, -0.25, -0.25, -0.25, 0.0],
+          "max": [0.4, 0.4, 0.4, 0.25, 0.25, 0.25, 2.0]
+        }
+      },
+      "device": "cuda",
+      "storage_device": "cpu",
+      "vision_encoder_name": "helper2424/resnet10",
+      "freeze_vision_encoder": true,
+      "image_encoder_hidden_dim": 32,
+      "shared_encoder": true,
+      "num_discrete_actions": 3,
+      "online_steps": 1000000,
+      "online_buffer_capacity": 100000,
+      "offline_buffer_capacity": 100000,
+      "online_step_before_learning": 300,
+      "policy_update_freq": 1,
+      "discount": 0.99,
+      "temperature_init": 0.5,
+      "num_critics": 2,
+      "critic_lr": 0.0003,
+      "actor_lr": 0.0003,
+      "temperature_lr": 0.001,
+      "critic_target_update_weight": 0.005,
+      "utd_ratio": 2,
+      "state_encoder_hidden_dim": 256,
+      "latent_dim": 64,
+      "target_entropy": null,
+      "use_backup_entropy": true,
+      "grad_clip_norm": 10.0,
+      "critic_network_kwargs": {
+        "hidden_dims": [256, 256],
+        "activate_final": true,
+        "final_activation": null
+      },
+      "actor_network_kwargs": {
+        "hidden_dims": [256, 256],
+        "activate_final": true
+      },
+      "policy_kwargs": {
+        "use_tanh_squash": true,
+        "std_min": 1e-5,
+        "std_max": 5,
+        "init_final": 0.05
+      },
+      "actor_learner_config": {
+        "learner_host": "127.0.0.1",
+        "learner_port": 50051,
+        "policy_parameters_push_frequency": 2
+      },
+      "concurrency": {
+        "actor": "threads",
+        "learner": "threads"
+      }
+    }
+  }
