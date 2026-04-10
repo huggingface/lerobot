@@ -105,10 +105,10 @@ class DatasetReader:
         """Build absolute-to-relative index mapping from loaded hf_dataset."""
         self._absolute_to_relative_idx = None
         if self.episodes is not None and self.hf_dataset is not None:
-            self._absolute_to_relative_idx = {
-                abs_idx.item() if isinstance(abs_idx, torch.Tensor) else abs_idx: rel_idx
-                for rel_idx, abs_idx in enumerate(self.hf_dataset["index"])
-            }
+            indices = self.hf_dataset.data.column("index").to_numpy()
+            self._absolute_to_relative_idx = dict(
+                zip(indices.tolist(), range(len(indices)))
+            )
 
     @property
     def num_frames(self) -> int:
