@@ -77,8 +77,9 @@ COPY --chown=user_lerobot:user_lerobot setup.py pyproject.toml uv.lock README.md
 COPY --chown=user_lerobot:user_lerobot src/ src/
 
 # Install lerobot base only (no benchmark extras — RoboTwin is source-only).
-# Use uv pip install (not uv sync --locked) to avoid cross-extra conflicts.
-RUN uv pip install --no-cache -e "."
+# Use uv pip install with --python-version to bypass requires-python>=3.12
+# check (RoboTwin needs Python 3.10 for SAPIEN wheel compatibility).
+RUN uv pip install --no-cache --python-version 3.10 -e "."
 
 # ── 2. Install RoboTwin 2.0 simulator stack ────────────────────────────────
 # Clone at a pinned commit for reproducibility.
