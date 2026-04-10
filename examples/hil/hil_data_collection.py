@@ -136,8 +136,10 @@ from lerobot.processor.relative_action_processor import to_relative_actions
 from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import Robot, RobotConfig, make_robot_from_config
 from lerobot.robots.bi_openarm_follower.config_bi_openarm_follower import BiOpenArmFollowerConfig
+from lerobot.robots.bi_so_follower.config_bi_so_follower import BiSOFollowerConfig  # noqa: F401
 from lerobot.robots.so_follower.config_so_follower import SOFollowerRobotConfig  # noqa: F401
 from lerobot.teleoperators import Teleoperator, TeleoperatorConfig, make_teleoperator_from_config
+from lerobot.teleoperators.bi_so_leader.config_bi_so_leader import BiSOLeaderConfig  # noqa: F401
 from lerobot.teleoperators.openarm_mini.config_openarm_mini import OpenArmMiniConfig  # noqa: F401
 from lerobot.teleoperators.so_leader.config_so_leader import SOLeaderTeleopConfig  # noqa: F401
 from lerobot.utils.constants import ACTION, OBS_STATE, OBS_STR
