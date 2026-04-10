@@ -87,7 +87,7 @@ def test_base_create_envs():
             return {}
 
     try:
-        envs = _Env().create_envs(n_envs=2, use_async_envs=False)
+        envs = _Env().create_envs(n_envs=2)
         assert "_dispatch_base_test" in envs
         env = envs["_dispatch_base_test"][0]
         assert isinstance(env, gym.vector.VectorEnv)
