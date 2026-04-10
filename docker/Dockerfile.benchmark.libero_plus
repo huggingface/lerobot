@@ -68,7 +68,12 @@ COPY --chown=user_lerobot:user_lerobot src/ src/
 # Use uv pip install (not uv sync) — uv sync resolves all extras across all
 # Python versions, hitting cross-extra numpy conflicts. pip-style install
 # only resolves the requested extras for the current platform.
-RUN uv pip install --no-cache -e ".[libero_plus,smolvla]"
+# Install lerobot with libero_plus and smolvla extras.
+# The libero git dep sometimes gets silently skipped by uv pip install
+# when embedded in self-referential extras, so install it explicitly too.
+RUN uv pip install --no-cache -e ".[libero_plus,smolvla]" \
+    && uv pip install --no-cache "libero @ git+https://github.com/sylvestf/LIBERO-plus.git@main" \
+    && python -c "import libero; print('libero installed at', libero.__file__)"
 
 # Pre-download libero assets so nothing is fetched at runtime (CI timeout risk).
 # libero/libero/__init__.py prompts with input() when ~/.libero/config.yaml is
