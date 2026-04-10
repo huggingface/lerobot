@@ -136,8 +136,8 @@ class TokenizerProcessorStep(ObservationProcessorStep):
         # Standardize to a list of strings for the tokenizer
         if isinstance(task, str):
             return [task]
-        elif isinstance(task, list) and all(isinstance(t, str) for t in task):
-            return task
+        elif isinstance(task, (list, tuple)) and all(isinstance(t, str) for t in task):
+            return list(task)
 
         return None
 
