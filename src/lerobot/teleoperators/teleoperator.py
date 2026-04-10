@@ -24,6 +24,7 @@ from lerobot.types import RobotAction
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
 
 from .config import TeleoperatorConfig
+from .utils import KeyboardTeleopEvents
 
 
 class Teleoperator(abc.ABC):
@@ -55,6 +56,8 @@ class Teleoperator(abc.ABC):
         if self.calibration_fpath.is_file():
             self._load_calibration()
 
+        self._keyboard_events: KeyboardTeleopEvents | None = None
+
     def __str__(self) -> str:
         return f"{self.id} {self.__class__.__name__}"
 
@@ -79,6 +82,8 @@ class Teleoperator(abc.ABC):
         Attempts to disconnect if the object is garbage collected without cleanup.
         """
         try:
+            if self._keyboard_events is not None:
+                self._keyboard_events.stop()
             if self.is_connected:
                 self.disconnect()
         except Exception:  # nosec B110
@@ -201,6 +206,20 @@ class Teleoperator(abc.ABC):
                 safety limits on velocity.
         """
         pass
+
+    def get_teleop_events(self) -> dict[str, Any]:
+        """Get control events for episode management.
+
+        This default implementation uses keyboard keys matching the HIL-SERL
+        docs for leader arm usage (Space, s, Esc, r). Subclasses with
+        hardware-based event support (e.g., gamepad buttons) should override.
+
+        Returns:
+            Dictionary containing episode control events.
+        """
+        if self._keyboard_events is None:
+            self._keyboard_events = KeyboardTeleopEvents()
+        return self._keyboard_events.get_events()
 
     @abc.abstractmethod
     def disconnect(self) -> None:
