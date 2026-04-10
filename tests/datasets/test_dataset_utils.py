@@ -148,3 +148,40 @@ def test_non_dict_passthrough_last_wins():
     out = combine_feature_dicts(g1, g2)
     # For non-dict entries the last one wins
     assert out["misc"] == 456
+
+
+# ── get_video_feature_encoding_kwargs ────────────────────────────────
+
+
+def test_get_video_feature_encoding_kwargs_direct_key():
+    """When 'video.codec' is a top-level key, the entire dict is returned."""
+    from lerobot.datasets.feature_utils import get_video_feature_encoding_kwargs
+
+    info = {"video.codec": "libsvtav1", "video.fps": 30, "video.pix_fmt": "yuv420p"}
+    result = get_video_feature_encoding_kwargs(info)
+    assert result == info
+
+
+def test_get_video_feature_encoding_kwargs_nested():
+    """When 'video.codec' is in a nested dict, it is found and that inner dict returned."""
+    from lerobot.datasets.feature_utils import get_video_feature_encoding_kwargs
+
+    inner = {"video.codec": "h264", "video.fps": 25}
+    outer = {"dtype": "video", "shape": (64, 96, 3), "info": inner}
+    result = get_video_feature_encoding_kwargs(outer)
+    assert result == inner
+
+
+def test_get_video_feature_encoding_kwargs_empty():
+    """An empty dict returns {}."""
+    from lerobot.datasets.feature_utils import get_video_feature_encoding_kwargs
+
+    assert get_video_feature_encoding_kwargs({}) == {}
+
+
+def test_get_video_feature_encoding_kwargs_no_codec():
+    """A dict without 'video.codec' anywhere returns {}."""
+    from lerobot.datasets.feature_utils import get_video_feature_encoding_kwargs
+
+    info = {"dtype": "video", "shape": (64, 96, 3), "names": ["h", "w", "c"]}
+    assert get_video_feature_encoding_kwargs(info) == {}

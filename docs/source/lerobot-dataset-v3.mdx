@@ -83,6 +83,12 @@ A core v3 principle is **decoupling storage from the user API**: data is stored 
 - **`data/`**: frame‑by‑frame **Parquet** shards; each file typically contains **many episodes**.
 - **`videos/`**: **MP4** shards per camera; each file typically contains **many episodes**.
 
+### Depth map video features
+
+In addition to RGB cameras, v3.0 supports storing depth maps as video streams. Depth maps can use per-video-key encoding parameters (e.g. lossless CRF, custom pixel format) configured in the feature `info` dict, and custom encoding/decoding transforms via `depth_map_encoding_fn` / `depth_map_decoding_fn`.
+
+Depth map video features require `streaming_encoding=True`. See the [streaming video encoding guide](./streaming_video_encoding#5-depth-map-video-features) for details.
+
 ## Load a dataset for training
 
 `LeRobotDataset` returns Python dictionaries of PyTorch tensors and integrates with `torch.utils.data.DataLoader`. Here is a code example showing its use:
