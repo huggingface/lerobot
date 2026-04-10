@@ -64,10 +64,12 @@ RUN uv venv --python python${PYTHON_VERSION}
 # ── Dependency layer (cached unless pyproject.toml / uv.lock change) ────────
 # Copy only the files uv needs to resolve deps, plus a minimal package stub
 # so the editable install can succeed without the full source tree.
+# Uses `uv pip install` instead of `uv sync` — see Dockerfile.benchmark.libero
+# for rationale (cross-extra numpy conflict with robomme).
 COPY --chown=user_lerobot:user_lerobot setup.py pyproject.toml uv.lock README.md MANIFEST.in ./
 RUN mkdir -p src/lerobot && touch src/lerobot/__init__.py src/lerobot/py.typed
 
-RUN uv sync --locked --extra metaworld --extra smolvla --no-cache
+RUN uv pip install --no-cache -e ".[metaworld,smolvla]"
 
 # Workaround: Triton ships ptxas without the execute bit set.
 # Without this chmod, any JIT compilation (e.g. torch.compile) fails

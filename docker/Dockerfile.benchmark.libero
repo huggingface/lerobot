@@ -64,10 +64,14 @@ RUN uv venv --python python${PYTHON_VERSION}
 # ── Dependency layer (cached unless pyproject.toml / uv.lock change) ────────
 # Copy only the files uv needs to resolve deps, plus a minimal package stub
 # so the editable install can succeed without the full source tree.
+# Uses `uv pip install` instead of `uv sync` because uv sync validates the
+# entire lockfile across all extras — robomme's numpy<2.0 conflicts with the
+# base numpy>=2.0, making the full lockfile unsatisfiable. pip-style install
+# only resolves the requested extras for the current platform.
 COPY --chown=user_lerobot:user_lerobot setup.py pyproject.toml uv.lock README.md MANIFEST.in ./
 RUN mkdir -p src/lerobot && touch src/lerobot/__init__.py src/lerobot/py.typed
 
-RUN uv sync --locked --extra libero --extra smolvla --no-cache
+RUN uv pip install --no-cache -e ".[libero,smolvla]"
 
 # Pre-download lerobot/libero-assets from HF Hub so nothing is fetched at
 # runtime (which times out on CI). Point the libero config at the cached path.
