@@ -1130,9 +1130,19 @@ class PI0Policy(PreTrainedPolicy):
                 key == "model.paligemma_with_expert.paligemma.lm_head.weight"
                 or key == "paligemma_with_expert.paligemma.lm_head.weight"
             ):
+                # PaLI-Gemma ties lm_head and embed_tokens weights
                 fixed_state_dict[
                     "model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
                 ] = value.clone()
+
+            # Also handle checkpoints that store embed_tokens.weight directly
+            if key in (
+                "paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight",
+                "model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight",
+            ):
+                fixed_state_dict[
+                    "model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
+                ] = value
 
             fixed_state_dict[new_key] = value
 
