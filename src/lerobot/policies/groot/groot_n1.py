@@ -89,6 +89,19 @@ class EagleBackbone(nn.Module):
         else:
             self.eagle_linear = torch.nn.Identity()
 
+        # Normalize select_layer to a valid index into hidden_states.
+        # output_hidden_states=True returns a tuple of length num_layers+1
+        # (initial embedding + each layer output), so 0 <= select_layer <= num_layers.
+        n_layers = len(self.eagle_model.language_model.model.layers)
+        if select_layer < 0:
+            select_layer = max(0, n_layers + select_layer + 1)
+        elif select_layer > n_layers:
+            print(
+                f"[GROOT] Warning: select_layer={select_layer} exceeds num_hidden_layers={n_layers}; "
+                f"clamping to {n_layers}"
+            )
+            select_layer = n_layers
+
         # needed since we don't use these layers. Also saves compute
         while len(self.eagle_model.language_model.model.layers) > select_layer:
             self.eagle_model.language_model.model.layers.pop(-1)
@@ -138,7 +151,9 @@ class EagleBackbone(nn.Module):
         }
         del eagle_input["image_sizes"]
 
-        eagle_output = self.eagle_model(**eagle_input, output_hidden_states=True, return_dict=True)
+        eagle_output = self.eagle_model(
+            **eagle_input, output_hidden_states=True, return_dict=True, use_cache=False
+        )
         eagle_features = eagle_output.hidden_states[self.select_layer]
 
         eagle_features = self.eagle_linear(eagle_features)
