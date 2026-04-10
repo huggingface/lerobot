@@ -5,6 +5,7 @@
 ### Position Overflow
 
 If during calibration you encounter an error like this:
+
 ```bash
 ValueError: Magnitude 2816 exceeds 2047 (max for sign_bit_index=11)
 ```
@@ -14,15 +15,15 @@ The firmware may be overflowing and returning incorrect position readings.
 **Quick fix:** Unplug both the AC power and USB cable, then reconnect them. This should give you correct position readings again.
 
 If the issue persists, reset the positions of the motors:
-1. Complete the first 4 steps of the motor firmware update process
-2. Select the *Programming* tab
-3. Move all joints to the middle of their range
-4. Click *Offset*
-<img
-   src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/feetech_reset_offset.png"
-   alt="Feetech Offset Position"
-/>
 
+1. Complete the first 4 steps of the motor firmware update process
+2. Select the _Programming_ tab
+3. Move all joints to the middle of their range
+4. Click _Offset_
+   <img
+     src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/feetech_reset_offset.png"
+     alt="Feetech Offset Position"
+   />
 
 ## Feetech Motor Firmware Update
 
