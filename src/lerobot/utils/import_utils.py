@@ -80,9 +80,15 @@ def get_safe_default_codec():
         return "pyav"
 
 
+_require_package_cache: dict[str, bool] = {}
+
+
 def require_package(pkg_name: str, extra: str, import_name: str | None = None) -> None:
     """Raise an informative ImportError if a package required by an optional feature is missing."""
-    if not is_package_available(pkg_name, import_name):
+    cache_key = import_name or pkg_name
+    if cache_key not in _require_package_cache:
+        _require_package_cache[cache_key] = is_package_available(pkg_name, import_name)
+    if not _require_package_cache[cache_key]:
         raise ImportError(
             f"'{pkg_name}' is required but not installed. Install it with: pip install 'lerobot[{extra}]'"
         )

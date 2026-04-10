@@ -2200,9 +2200,11 @@ dependencies = [
     { name = "numpy" },
     { name = "opencv-python-headless" },
     { name = "packaging" },
+    { name = "safetensors" },
     { name = "termcolor" },
     { name = "torch" },
     { name = "torchvision" },
+    { name = "tqdm" },
 ]
 
 [package.optional-dependencies]
@@ -2251,7 +2253,6 @@ all = [
     { name = "qwen-vl-utils" },
     { name = "reachy2-sdk" },
     { name = "rerun-sdk" },
-    { name = "safetensors" },
     { name = "scikit-image" },
     { name = "scipy" },
     { name = "setuptools" },
@@ -2341,7 +2342,6 @@ groot = [
     { name = "ninja" },
     { name = "peft" },
     { name = "pillow" },
-    { name = "safetensors" },
     { name = "timm" },
     { name = "transformers" },
 ]
@@ -2466,7 +2466,6 @@ scipy-dep = [
 smolvla = [
     { name = "accelerate" },
     { name = "num2words" },
-    { name = "safetensors" },
     { name = "transformers" },
 ]
 test = [
@@ -2674,8 +2673,7 @@ requires-dist = [
     { name = "qwen-vl-utils", marker = "extra == 'qwen-vl-utils-dep'", specifier = ">=0.0.11,<0.1.0" },
     { name = "reachy2-sdk", marker = "extra == 'reachy2'", specifier = ">=1.0.15,<1.1.0" },
     { name = "rerun-sdk", marker = "extra == 'viz'", specifier = ">=0.24.0,<0.27.0" },
-    { name = "safetensors", marker = "extra == 'groot'", specifier = ">=0.4.3,<1.0.0" },
-    { name = "safetensors", marker = "extra == 'smolvla'", specifier = ">=0.4.3,<1.0.0" },
+    { name = "safetensors", specifier = ">=0.4.3,<1.0.0" },
     { name = "scikit-image", marker = "extra == 'video-benchmark'", specifier = ">=0.23.2,<0.26.0" },
     { name = "scipy", marker = "extra == 'all'", specifier = ">=1.14.0,<2.0.0" },
     { name = "scipy", marker = "extra == 'scipy-dep'", specifier = ">=1.14.0,<2.0.0" },
@@ -2687,6 +2685,7 @@ requires-dist = [
     { name = "torchcodec", marker = "(platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l' and sys_platform == 'linux' and extra == 'dataset') or (platform_machine != 'x86_64' and sys_platform == 'darwin' and extra == 'dataset') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'dataset')", specifier = ">=0.3.0,<0.11.0" },
     { name = "torchdiffeq", marker = "extra == 'wallx'", specifier = ">=0.2.4,<0.3.0" },
     { name = "torchvision", specifier = ">=0.22.0,<0.26.0" },
+    { name = "tqdm", specifier = ">=4.66.0,<5.0.0" },
     { name = "transformers", marker = "extra == 'transformers-dep'", specifier = "==5.3.0" },
     { name = "wandb", marker = "extra == 'training'", specifier = ">=0.24.0,<0.25.0" },
 ]

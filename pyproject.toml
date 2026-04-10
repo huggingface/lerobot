@@ -75,9 +75,13 @@ dependencies = [
     # tightly-coupled modules. Candidate for a future refactor to decouple envs from the core.
     "gymnasium>=1.1.1,<2.0.0",
 
+    # Serialization & checkpointing
+    "safetensors>=0.4.3,<1.0.0",
+
     # Lightweight utilities
     "packaging>=24.2,<26.0",
     "termcolor>=2.4.0,<4.0.0",
+    "tqdm>=4.66.0,<5.0.0",
 ]
 
 # Optional dependencies
@@ -166,14 +170,13 @@ wallx = [
     "lerobot[qwen-vl-utils-dep]",
 ]
 pi = ["lerobot[transformers-dep]", "lerobot[scipy-dep]"]
-smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "accelerate>=1.7.0,<2.0.0", "safetensors>=0.4.3,<1.0.0"]
+smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "accelerate>=1.7.0,<2.0.0"]
 multi_task_dit = ["lerobot[transformers-dep]"]
 groot = [
     "lerobot[transformers-dep]",
     "lerobot[peft]",
     "dm-tree>=0.1.8,<1.0.0",
     "timm>=1.0.0,<1.1.0",
-    "safetensors>=0.4.3,<1.0.0",
     "Pillow>=10.0.0,<13.0.0",
     "decord>=0.6.0,<1.0.0; (platform_machine == 'AMD64' or platform_machine == 'x86_64')",
     "ninja>=1.11.1,<2.0.0",

@@ -17,15 +17,10 @@ import os
 
 import numpy as np
 
+from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.import_utils import require_package
 
-require_package("rerun-sdk", extra="viz", import_name="rerun")
-
-import rerun as rr  # noqa: E402
-
-from lerobot.types import RobotAction, RobotObservation  # noqa: E402
-
-from .constants import ACTION, ACTION_PREFIX, OBS_PREFIX, OBS_STR  # noqa: E402
+from .constants import ACTION, ACTION_PREFIX, OBS_PREFIX, OBS_STR
 
 
 def init_rerun(
@@ -39,6 +34,10 @@ def init_rerun(
         ip: Optional IP for connecting to a Rerun server.
         port: Optional port for connecting to a Rerun server.
     """
+
+    require_package("rerun-sdk", extra="viz", import_name="rerun")
+    import rerun as rr
+
     batch_size = os.getenv("RERUN_FLUSH_NUM_BYTES", "8000")
     os.environ["RERUN_FLUSH_NUM_BYTES"] = batch_size
     rr.init(session_name)
@@ -51,6 +50,10 @@ def init_rerun(
 
 def shutdown_rerun() -> None:
     """Shuts down the Rerun SDK gracefully."""
+
+    require_package("rerun-sdk", extra="viz", import_name="rerun")
+    import rerun as rr
+
     rr.rerun_shutdown()
 
 
@@ -83,6 +86,10 @@ def log_rerun_data(
         action: An optional dictionary containing action data to log.
         compress_images: Whether to compress images before logging to save bandwidth & memory in exchange for cpu and quality.
     """
+
+    require_package("rerun-sdk", extra="viz", import_name="rerun")
+    import rerun as rr
+
     if observation:
         for k, v in observation.items():
             if v is None:

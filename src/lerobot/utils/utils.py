@@ -287,14 +287,23 @@ class SuppressProgressBars:
     """
 
     def __enter__(self):
-        from datasets.utils.logging import disable_progress_bar
+        try:
+            from datasets.utils.logging import disable_progress_bar
 
-        disable_progress_bar()
+            disable_progress_bar()
+        except ImportError:
+            logging.getLogger(__name__).info(
+                "SuppressProgressBars is a no-op because 'datasets' is not installed. "
+                "Install it with: pip install 'lerobot[dataset]'"
+            )
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        from datasets.utils.logging import enable_progress_bar
+        try:
+            from datasets.utils.logging import enable_progress_bar
 
-        enable_progress_bar()
+            enable_progress_bar()
+        except ImportError:
+            pass
 
 
 class TimerManager:
