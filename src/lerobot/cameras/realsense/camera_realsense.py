@@ -471,7 +471,10 @@ class RealSenseCamera(Camera):
             raise RuntimeError(f"{self}: stop_event is not initialized before starting read loop.")
 
         failure_count = 0
-        while not self.stop_event.is_set():
+        while True:
+            stop_event = self.stop_event
+            if stop_event is None or stop_event.is_set():
+                break
             try:
                 frame = self._read_from_hardware()
                 color_frame_raw = frame.get_color_frame()
@@ -513,11 +516,19 @@ class RealSenseCamera(Camera):
 
     def _stop_read_thread(self) -> None:
         """Signals the background read thread to stop and waits for it to join."""
-        if self.stop_event is not None:
-            self.stop_event.set()
+        stop_event = self.stop_event
+        if stop_event is not None:
+            stop_event.set()
 
-        if self.thread is not None and self.thread.is_alive():
-            self.thread.join(timeout=2.0)
+        thread = self.thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2.0)
+
+            if thread.is_alive():
+                logger.warning(
+                    f"{self} read thread did not stop within timeout; preserving stop state for safe shutdown."
+                )
+                return
 
         self.thread = None
         self.stop_event = None
