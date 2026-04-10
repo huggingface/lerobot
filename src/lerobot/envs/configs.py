@@ -445,6 +445,107 @@ class LiberoEnv(EnvConfig):
         )
 
 
+@EnvConfig.register_subclass("robocerebra")
+@dataclass
+class RoboCerebraEnv(EnvConfig):
+    """RoboCerebra long-horizon manipulation benchmark (10 tasks on LIBERO/libero_10).
+
+    10 kitchen/living-room/study tasks designed to evaluate long-horizon reasoning in VLAs.
+    Dataset (LeRobot v3.0): CollisionCode/RoboCerebra_lerobot_v3.0
+    Paper: https://robocerebra.github.io
+    Benchmark: https://github.com/qiuboxiang/RoboCerebra
+
+    Requires: pip install 'lerobot[robocerebra]'  (Linux only — same deps as libero)
+    """
+
+    task: str = "libero_10"
+    task_ids: list[int] | None = None
+    fps: int = 20  # matches RoboCerebra dataset fps
+    episode_length: int | None = None  # None → libero_10 default (520 steps)
+    obs_type: str = "pixels_agent_pos"
+    render_mode: str = "rgb_array"
+    camera_name: str = "agentview_image,robot0_eye_in_hand_image"
+    # Maps LIBERO camera names → dataset observation key names
+    camera_name_mapping: dict[str, str] = field(
+        default_factory=lambda: {
+            "agentview_image": "image",
+            "robot0_eye_in_hand_image": "wrist_image",
+        }
+    )
+    init_states: bool = True
+    observation_height: int = 256
+    observation_width: int = 256
+    control_mode: str = "relative"
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
+        }
+    )
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            ACTION: ACTION,
+            "pixels/image": f"{OBS_IMAGES}.image",
+            "pixels/wrist_image": f"{OBS_IMAGES}.wrist_image",
+            LIBERO_KEY_EEF_POS: f"{OBS_STATE}.eef_pos",
+            LIBERO_KEY_EEF_QUAT: f"{OBS_STATE}.eef_quat",
+            LIBERO_KEY_EEF_MAT: f"{OBS_STATE}.eef_mat",
+            LIBERO_KEY_GRIPPER_QPOS: f"{OBS_STATE}.gripper_qpos",
+            LIBERO_KEY_GRIPPER_QVEL: f"{OBS_STATE}.gripper_qvel",
+            LIBERO_KEY_JOINTS_POS: f"{OBS_STATE}.joint_pos",
+            LIBERO_KEY_JOINTS_VEL: f"{OBS_STATE}.joint_vel",
+        }
+    )
+
+    def __post_init__(self) -> None:
+        h, w = self.observation_height, self.observation_width
+        self.features["pixels/image"] = PolicyFeature(type=FeatureType.VISUAL, shape=(h, w, 3))
+        self.features["pixels/wrist_image"] = PolicyFeature(type=FeatureType.VISUAL, shape=(h, w, 3))
+        if self.obs_type == "pixels_agent_pos":
+            self.features[LIBERO_KEY_EEF_POS] = PolicyFeature(type=FeatureType.STATE, shape=(3,))
+            self.features[LIBERO_KEY_EEF_QUAT] = PolicyFeature(type=FeatureType.STATE, shape=(4,))
+            self.features[LIBERO_KEY_EEF_MAT] = PolicyFeature(type=FeatureType.STATE, shape=(3, 3))
+            self.features[LIBERO_KEY_GRIPPER_QPOS] = PolicyFeature(type=FeatureType.STATE, shape=(2,))
+            self.features[LIBERO_KEY_GRIPPER_QVEL] = PolicyFeature(type=FeatureType.STATE, shape=(2,))
+            self.features[LIBERO_KEY_JOINTS_POS] = PolicyFeature(type=FeatureType.STATE, shape=(7,))
+            self.features[LIBERO_KEY_JOINTS_VEL] = PolicyFeature(type=FeatureType.STATE, shape=(7,))
+        elif self.obs_type != "pixels":
+            raise ValueError(
+                f"RoboCerebraEnv: unsupported obs_type '{self.obs_type}'. Use 'pixels' or 'pixels_agent_pos'."
+            )
+
+    @property
+    def gym_kwargs(self) -> dict:
+        kwargs: dict[str, Any] = {"obs_type": self.obs_type, "render_mode": self.render_mode}
+        if self.task_ids is not None:
+            kwargs["task_ids"] = self.task_ids
+        return kwargs
+
+    def create_envs(self, n_envs: int, use_async_envs: bool = True):
+        from lerobot.envs.libero import create_libero_envs
+
+        env_cls = _make_vec_env_cls(use_async_envs, n_envs)
+        return create_libero_envs(
+            task=self.task,
+            n_envs=n_envs,
+            camera_name=self.camera_name,
+            init_states=self.init_states,
+            gym_kwargs=self.gym_kwargs,
+            env_cls=env_cls,
+            control_mode=self.control_mode,
+            episode_length=self.episode_length,
+            camera_name_mapping=self.camera_name_mapping,
+        )
+
+    def get_env_processors(self):
+        from lerobot.processor.env_processor import LiberoProcessorStep
+        from lerobot.processor.pipeline import PolicyProcessorPipeline
+
+        return (
+            PolicyProcessorPipeline(steps=[LiberoProcessorStep()]),
+            PolicyProcessorPipeline(steps=[]),
+        )
+
+
 @EnvConfig.register_subclass("metaworld")
 @dataclass
 class MetaworldEnv(EnvConfig):
