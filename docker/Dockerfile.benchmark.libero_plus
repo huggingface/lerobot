@@ -43,7 +43,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        python${PYTHON_VERSION} \
        python${PYTHON_VERSION}-venv \
        python${PYTHON_VERSION}-dev \
-    && curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && curl -LsSf https://astral.sh/uv/0.8.0/install.sh | sh \
     && mv /root/.local/bin/uv /usr/local/bin/uv \
     && useradd --create-home --shell /bin/bash user_lerobot \
     && usermod -aG sudo user_lerobot \
@@ -65,14 +65,23 @@ RUN uv venv --python python${PYTHON_VERSION}
 COPY --chown=user_lerobot:user_lerobot setup.py pyproject.toml uv.lock README.md MANIFEST.in ./
 COPY --chown=user_lerobot:user_lerobot src/ src/
 
-RUN uv sync --extra libero_plus --extra smolvla --no-cache
+# Use uv pip install (not uv sync) — uv sync resolves all extras across all
+# Python versions, hitting cross-extra numpy conflicts. pip-style install
+# only resolves the requested extras for the current platform.
+RUN uv pip install --no-cache -e ".[libero_plus,smolvla]"
 
 # Pre-download libero assets so nothing is fetched at runtime (CI timeout risk).
 # libero/libero/__init__.py prompts with input() when ~/.libero/config.yaml is
 # missing; write the config first so any import is non-interactive.
-RUN LIBERO_DIR=$(python${PYTHON_VERSION} -c \
-      "import importlib.util, os; s=importlib.util.find_spec('libero'); \
-       print(os.path.join(os.path.dirname(s.origin), 'libero'))") && \
+# LIBERO-plus installs with a nested package structure, so find_spec('libero')
+# may return a namespace package without .origin. Use glob to locate bddl_files.
+RUN LIBERO_DIR=$(python${PYTHON_VERSION} -c "\
+import site, os, glob
+for sp in site.getsitepackages():
+    matches = glob.glob(os.path.join(sp, 'libero', '**', 'bddl_files'), recursive=True)
+    if matches:
+        print(os.path.dirname(matches[0]))
+        break") && \
     mkdir -p /home/user_lerobot/.libero && \
     python${PYTHON_VERSION} -c "\
 from huggingface_hub import snapshot_download; \
