@@ -202,9 +202,20 @@ Here is how the different processors compose. Each arrow is a processor step, an
                     └─────────────────────────────────────────┘
 
                     ┌─────────────────────────────────────────┐
-   Representation   │   Absolute  ←────→  Relative            │
+   State Derivation │   Action column  ────→  State + Action  │
+                    │   DeriveStateFromActionStep (pre only)  │
+                    │   (UMI-style: state from action chunk)  │
+                    └─────────────────────────────────────────┘
+
+                    ┌─────────────────────────────────────────┐
+   Action Repr.     │   Absolute  ←────→  Relative            │
                     │   RelativeActionsProcessorStep (pre)    │
                     │   AbsoluteActionsProcessorStep (post)   │
+                    └─────────────────────────────────────────┘
+
+                    ┌─────────────────────────────────────────┐
+   State Repr.      │   Absolute  ────→  Relative             │
+                    │   RelativeStateProcessorStep (pre only) │
                     └─────────────────────────────────────────┘
 
                     ┌─────────────────────────────────────────┐
@@ -215,6 +226,10 @@ Here is how the different processors compose. Each arrow is a processor step, an
 ```
 
 A typical training preprocessor might chain: `raw absolute joint actions → relative → normalize`. A typical inference postprocessor: `unnormalize → absolute → (optionally IK to joints)`.
+
+With UMI-style relative proprioception (`use_relative_state=True`), the preprocessor also converts observation.state to offsets from the current timestep via `RelativeStateProcessorStep` before normalization. This is a pre-processing-only step (state is an input, not an output).
+
+With `derive_state_from_action=True`, the preprocessor first runs `DeriveStateFromActionStep` to extract a 2-step state from the extended action chunk. This enables full UMI-style training without a separate `observation.state` column. See the [UMI pi0 guide](umi_pi0_relative_ee) for details.
 
 ## References
 

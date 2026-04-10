@@ -767,3 +767,94 @@ def compute_relative_action_stats(
     )
 
     return stats
+
+
+def compute_relative_state_stats(
+    hf_dataset,
+    features: dict,
+    state_obs_steps: int = 2,
+    exclude_joints: list[str] | None = None,
+    source_key: str = OBS_STATE,
+) -> dict[str, np.ndarray]:
+    """Compute normalization statistics for observation.state after relative conversion.
+
+    For UMI-style relative proprioception with ``state_obs_steps`` timesteps,
+    each state observation becomes a stack of offsets from the current timestep:
+    ``state[t-k] - state[t]`` for k in ``range(state_obs_steps-1, -1, -1)``.
+
+    The stats are computed over the flattened ``[state_obs_steps * state_dim]``
+    vector that the model actually sees after ``prepare_state`` flattening.
+
+    Args:
+        hf_dataset: The HuggingFace dataset with the source column and
+            "episode_index" columns.
+        features: Dataset feature metadata.
+        state_obs_steps: Number of observation timesteps (must be >= 2).
+        exclude_joints: State dimension names to keep absolute.
+        source_key: Column to read data from. Defaults to "observation.state".
+            When ``derive_state_from_action=True``, pass ``ACTION`` to read
+            from the action column instead.
+
+    Returns:
+        Statistics dict with keys "mean", "std", "min", "max", "q01", …, "q99".
+    """
+    from lerobot.processor.relative_action_processor import RelativeStateProcessorStep
+
+    if exclude_joints is None:
+        exclude_joints = []
+
+    state_dim = features[source_key]["shape"][0]
+    state_names = features.get(source_key, {}).get("names")
+    mask_step = RelativeStateProcessorStep(
+        enabled=True,
+        exclude_joints=exclude_joints,
+        state_names=state_names,
+    )
+    relative_mask = np.array(mask_step._build_mask(state_dim), dtype=np.float32)
+
+    logging.info(f"Loading data from '{source_key}' for relative state stats...")
+    all_states = np.array(hf_dataset[source_key], dtype=np.float32)
+    episode_indices = np.array(hf_dataset["episode_index"])
+
+    # Build all valid windows of length state_obs_steps within each episode
+    n = len(all_states)
+    if n < state_obs_steps:
+        raise ValueError(f"Dataset has {n} frames but state_obs_steps={state_obs_steps}")
+
+    max_start = n - state_obs_steps
+    starts = np.arange(max_start + 1)
+    valid = episode_indices[starts] == episode_indices[starts + state_obs_steps - 1]
+    valid_starts = starts[valid]
+
+    if len(valid_starts) == 0:
+        raise RuntimeError("No valid state windows found within single episodes")
+
+    offsets = np.arange(state_obs_steps)
+    mask_dim = len(relative_mask)
+
+    running_stats = RunningQuantileStats()
+
+    batch_size = 50_000
+    for i in range(0, len(valid_starts), batch_size):
+        batch_starts = valid_starts[i : i + batch_size]
+        frame_idx = batch_starts[:, None] + offsets[None, :]  # [N, state_obs_steps]
+        windows = all_states[frame_idx].copy()  # [N, state_obs_steps, state_dim]
+
+        # Subtract current (last) timestep from all timesteps for masked dims
+        current = windows[:, -1:, :]  # [N, 1, state_dim]
+        windows[:, :, :mask_dim] -= current[:, :, :mask_dim] * relative_mask[None, None, :]
+
+        # Flatten to [N, state_obs_steps * state_dim] (same as prepare_state)
+        flattened = windows.reshape(len(batch_starts), -1)
+        running_stats.update(flattened)
+
+    stats = running_stats.get_statistics()
+
+    excluded_dims = int(mask_dim - relative_mask.sum())
+    logging.info(
+        f"Relative state stats ({len(valid_starts)} windows, obs_steps={state_obs_steps}): "
+        f"relative_dims={int(relative_mask.sum())}/{mask_dim} (excluded={excluded_dims}), "
+        f"mean={np.abs(stats['mean']).mean():.4f}, std={stats['std'].mean():.4f}"
+    )
+
+    return stats

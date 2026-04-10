@@ -1230,8 +1230,11 @@ class PI0Policy(PreTrainedPolicy):
         return images, img_masks
 
     def prepare_state(self, batch):
-        """Pad state"""
-        state = pad_vector(batch[OBS_STATE], self.config.max_state_dim)
+        """Flatten multi-timestep state and pad to max_state_dim."""
+        state = batch[OBS_STATE]
+        if state.ndim == 3:
+            state = state.flatten(start_dim=1)
+        state = pad_vector(state, self.config.max_state_dim)
         return state
 
     def prepare_action(self, batch):
@@ -1250,7 +1253,8 @@ class PI0Policy(PreTrainedPolicy):
 
         # Action queue logic for n_action_steps > 1
         if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
+            skip = self.config.latency_skip_steps
+            actions = self.predict_action_chunk(batch)[:, skip : skip + self.config.n_action_steps]
             # Transpose to get shape (n_action_steps, batch_size, action_dim)
             self._action_queue.extend(actions.transpose(0, 1))
 

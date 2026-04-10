@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Dataset Replay — EE Frame Viewer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0d1117; overflow: hidden; font-family: 'JetBrains Mono', monospace; color: #c9d1d9; }
+  canvas { display: block; }
+
+  #panel {
+    position: absolute; top: 14px; left: 14px;
+    background: rgba(13,17,23,0.92); border: 1px solid #30363d;
+    border-radius: 10px; padding: 16px 20px; z-index: 10;
+    width: 340px; backdrop-filter: blur(8px);
+  }
+  #panel h2 { font-size: 14px; color: #58a6ff; margin-bottom: 10px; letter-spacing: 0.5px; }
+
+  .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 12px; }
+  .row label { width: 70px; color: #8b949e; flex-shrink: 0; }
+  .row .val { color: #f0f6fc; font-variant-numeric: tabular-nums; }
+
+  #transport {
+    margin-top: 12px; display: flex; align-items: center; gap: 8px;
+  }
+  #transport button {
+    background: #21262d; color: #c9d1d9; border: 1px solid #30363d;
+    padding: 6px 14px; border-radius: 6px; cursor: pointer;
+    font-family: inherit; font-size: 12px; transition: background 0.15s;
+  }
+  #transport button:hover { background: #30363d; }
+  #transport button.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+
+  #scrubber {
+    width: 100%; margin-top: 8px;
+    -webkit-appearance: none; appearance: none;
+    height: 6px; border-radius: 3px; background: #21262d; outline: none;
+  }
+  #scrubber::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 14px; height: 14px;
+    border-radius: 50%; background: #58a6ff; cursor: pointer;
+  }
+
+  #speed-ctrl { margin-top: 6px; }
+  #speed-ctrl select {
+    background: #21262d; color: #c9d1d9; border: 1px solid #30363d;
+    padding: 4px 8px; border-radius: 4px; font-family: inherit; font-size: 11px;
+  }
+
+  #frame-counter {
+    font-size: 11px; color: #8b949e; margin-top: 6px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .legend { display: flex; align-items: center; gap: 6px; margin: 3px 0; font-size: 11px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+</style>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<div id="panel">
+  <h2>DATASET REPLAY — EE FRAME</h2>
+  <div style="font-size:11px;color:#8b949e;margin-bottom:8px;">glannuzel/grabette-dataset · episode 0</div>
+
+  <div class="legend"><span class="dot" style="background:#ff6b6b"></span> EE target (dataset)</div>
+  <div class="legend"><span class="dot" style="background:#ffd43b"></span> Trajectory (past)</div>
+  <div class="legend"><span class="dot" style="background:#30363d"></span> Trajectory (future)</div>
+
+  <div class="row"><label>x</label><span class="val" id="v-x">—</span></div>
+  <div class="row"><label>y</label><span class="val" id="v-y">—</span></div>
+  <div class="row"><label>z</label><span class="val" id="v-z">—</span></div>
+  <div class="row"><label>ax</label><span class="val" id="v-ax">—</span></div>
+  <div class="row"><label>ay</label><span class="val" id="v-ay">—</span></div>
+  <div class="row"><label>az</label><span class="val" id="v-az">—</span></div>
+  <div class="row"><label>gripper</label><span class="val" id="v-grip">—</span></div>
+
+  <div id="transport">
+    <button id="btn-play" onclick="togglePlay()">▶ Play</button>
+    <button onclick="stepFrame(-1)">◀</button>
+    <button onclick="stepFrame(1)">▶</button>
+    <button onclick="resetPlay()">⟳</button>
+  </div>
+  <input type="range" id="scrubber" min="0" max="1" value="0" step="1" />
+  <div id="speed-ctrl">
+    <label style="font-size:11px;color:#8b949e;">Speed:</label>
+    <select id="speed-select" onchange="setSpeed(this.value)">
+      <option value="0.25">0.25×</option>
+      <option value="0.5">0.5×</option>
+      <option value="1" selected>1×</option>
+      <option value="2">2×</option>
+      <option value="4">4×</option>
+    </select>
+  </div>
+  <div id="frame-counter">Frame 0 / 0 · 0.00s</div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+    "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+
+let trajectory = null;
+let currentFrame = 0;
+let playing = false;
+let speed = 1.0;
+let lastTime = 0;
+let accumulator = 0;
+
+// Anchor: EE tip world position at zero-joint pose (in Y-up Three.js space)
+const eeAnchor = new THREE.Vector3();
+// Z-up → Y-up rotation (same as robotGroup): -90° around X
+const zUpToYUp = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0d1117);
+
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.01, 100);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.4);
+dirLight.position.set(2, 4, 3);
+scene.add(dirLight);
+scene.add(new THREE.DirectionalLight(0x8899cc, 0.6).translateX(-2).translateY(1).translateZ(-3));
+scene.add(new THREE.DirectionalLight(0xffffff, 0.5).translateY(-1).translateZ(2));
+
+const grid = new THREE.GridHelper(2, 20, 0x21262d, 0x161b22);
+scene.add(grid);
+scene.add(new THREE.AxesHelper(0.15));
+
+// EE marker
+const eeMarker = new THREE.Mesh(
+  new THREE.SphereGeometry(0.012, 20, 20),
+  new THREE.MeshStandardMaterial({ color: 0xff6b6b, emissive: 0xff6b6b, emissiveIntensity: 0.7 })
+);
+scene.add(eeMarker);
+eeMarker.add(new THREE.AxesHelper(0.06));
+
+// Trajectory lines
+const MAX_POINTS = 2000;
+const pastGeo = new THREE.BufferGeometry();
+pastGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(MAX_POINTS * 3), 3));
+const pastLine = new THREE.Line(pastGeo, new THREE.LineBasicMaterial({ color: 0xffd43b, linewidth: 2 }));
+scene.add(pastLine);
+
+const futureGeo = new THREE.BufferGeometry();
+futureGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(MAX_POINTS * 3), 3));
+const futureLine = new THREE.Line(futureGeo, new THREE.LineBasicMaterial({ color: 0x30363d, linewidth: 1 }));
+scene.add(futureLine);
+
+// URDF
+const stlLoader = new STLLoader();
+const robotGroup = new THREE.Group();
+// URDF is Z-up; Three.js is Y-up → rotate -90° around X
+robotGroup.rotation.x = -Math.PI / 2;
+scene.add(robotGroup);
+let urdfLinks = {};
+
+function rotvecToQuat(ax, ay, az) {
+  const angle = Math.sqrt(ax * ax + ay * ay + az * az);
+  if (angle < 1e-8) return new THREE.Quaternion();
+  return new THREE.Quaternion().setFromAxisAngle(
+    new THREE.Vector3(ax / angle, ay / angle, az / angle), angle
+  );
+}
+
+async function loadURDF() {
+  const resp = await fetch('./openarm_bimanual_pybullet.urdf');
+  const text = await resp.text();
+  const xml = new DOMParser().parseFromString(text, 'text/xml');
+
+  const links = {};
+
+  for (const linkEl of xml.querySelectorAll('link')) {
+    const name = linkEl.getAttribute('name');
+    const group = new THREE.Group();
+    group.name = name;
+
+    const visual = linkEl.querySelector('visual');
+    if (visual) {
+      const meshEl = visual.querySelector('mesh');
+      const originEl = visual.querySelector('origin');
+      if (meshEl) {
+        const filename = meshEl.getAttribute('filename');
+        const scaleStr = meshEl.getAttribute('scale');
+        const sc = scaleStr ? scaleStr.split(' ').map(Number) : [1, 1, 1];
+        let xyz = [0, 0, 0];
+        if (originEl && originEl.getAttribute('xyz'))
+          xyz = originEl.getAttribute('xyz').split(' ').map(Number);
+        if (filename.endsWith('.stl')) {
+          try {
+            const geo = await new Promise((res, rej) =>
+              stlLoader.load(filename, res, undefined, rej));
+            const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+              color: 0x8899bb, metalness: 0.3, roughness: 0.5,
+            }));
+            mesh.scale.set(sc[0], sc[1], sc[2]);
+            mesh.position.set(xyz[0], xyz[1], xyz[2]);
+            group.add(mesh);
+          } catch (e) { /* skip missing mesh */ }
+        }
+      }
+    }
+    links[name] = group;
+  }
+
+  const rootLinks = new Set(Object.keys(links));
+
+  for (const jointEl of xml.querySelectorAll('joint')) {
+    const parentName = jointEl.querySelector('parent').getAttribute('link');
+    const childName = jointEl.querySelector('child').getAttribute('link');
+    rootLinks.delete(childName);
+
+    const originEl = jointEl.querySelector('origin');
+    let xyz = [0, 0, 0], rpy = [0, 0, 0];
+    if (originEl) {
+      if (originEl.getAttribute('xyz')) xyz = originEl.getAttribute('xyz').split(' ').map(Number);
+      if (originEl.getAttribute('rpy')) rpy = originEl.getAttribute('rpy').split(' ').map(Number);
+    }
+
+    const parent = links[parentName];
+    const child = links[childName];
+    if (!parent || !child) continue;
+
+    child.position.set(xyz[0], xyz[1], xyz[2]);
+    if (rpy[0] || rpy[1] || rpy[2])
+      child.rotation.set(rpy[0], rpy[1], rpy[2], 'XYZ');
+    parent.add(child);
+  }
+
+  for (const n of rootLinks)
+    if (links[n]) robotGroup.add(links[n]);
+
+  // EE target marker on the URDF
+  const eeTargetLink = links['openarm_right_ee_target'];
+  if (eeTargetLink) {
+    eeTargetLink.add(new THREE.Mesh(
+      new THREE.TorusGeometry(0.02, 0.002, 8, 32),
+      new THREE.MeshStandardMaterial({ color: 0xffaa00, emissive: 0xffaa00, emissiveIntensity: 0.5 })
+    ));
+    eeTargetLink.add(new THREE.AxesHelper(0.05));
+  }
+
+  urdfLinks = links;
+}
+
+async function loadTrajectory() {
+  const resp = await fetch('./trajectory_ep0.json');
+  trajectory = await resp.json();
+  document.getElementById('scrubber').max = trajectory.num_frames - 1;
+  document.getElementById('scrubber').value = 0;
+}
+
+function computeOffset() {
+  if (!trajectory || !urdfLinks['openarm_right_ee_target']) return;
+
+  robotGroup.updateMatrixWorld(true);
+  const eeLink = urdfLinks['openarm_right_ee_target'];
+  eeLink.getWorldPosition(eeAnchor);
+
+  controls.target.copy(eeAnchor);
+  camera.position.set(eeAnchor.x + 0.8, eeAnchor.y + 0.3, eeAnchor.z + 0.0);
+  controls.update();
+
+  updateFrame(0);
+}
+
+function mapFramePos(f) {
+  const f0 = trajectory.frames[0];
+  const delta = new THREE.Vector3(f.x - f0.x, f.y - f0.y, f.z - f0.z);
+  delta.applyQuaternion(zUpToYUp);
+  return delta.add(eeAnchor);
+}
+
+function updateFrame(idx) {
+  if (!trajectory) return;
+  currentFrame = Math.max(0, Math.min(idx, trajectory.num_frames - 1));
+
+  const f = trajectory.frames[currentFrame];
+  const pos = mapFramePos(f);
+
+  eeMarker.position.copy(pos);
+  // Orientation: rotate the dataset axis-angle into Y-up space
+  const q = rotvecToQuat(f.ax, f.ay, f.az);
+  eeMarker.quaternion.copy(zUpToYUp).multiply(q);
+
+  // Past trajectory
+  const pastArr = pastGeo.attributes.position.array;
+  let pi = 0;
+  for (let i = 0; i <= currentFrame && i < MAX_POINTS; i++) {
+    const p = mapFramePos(trajectory.frames[i]);
+    pastArr[pi++] = p.x; pastArr[pi++] = p.y; pastArr[pi++] = p.z;
+  }
+  pastGeo.setDrawRange(0, Math.min(currentFrame + 1, MAX_POINTS));
+  pastGeo.attributes.position.needsUpdate = true;
+
+  // Future trajectory
+  const futArr = futureGeo.attributes.position.array;
+  let fi = 0;
+  for (let i = currentFrame; i < trajectory.num_frames && (i - currentFrame) < MAX_POINTS; i++) {
+    const p = mapFramePos(trajectory.frames[i]);
+    futArr[fi++] = p.x; futArr[fi++] = p.y; futArr[fi++] = p.z;
+  }
+  futureGeo.setDrawRange(0, Math.min(trajectory.num_frames - currentFrame, MAX_POINTS));
+  futureGeo.attributes.position.needsUpdate = true;
+
+  // UI
+  document.getElementById('v-x').textContent = pos.x.toFixed(4);
+  document.getElementById('v-y').textContent = pos.y.toFixed(4);
+  document.getElementById('v-z').textContent = pos.z.toFixed(4);
+  document.getElementById('v-ax').textContent = f.ax.toFixed(4);
+  document.getElementById('v-ay').textContent = f.ay.toFixed(4);
+  document.getElementById('v-az').textContent = f.az.toFixed(4);
+  document.getElementById('v-grip').textContent =
+    `p=${f.proximal.toFixed(2)} d=${f.distal.toFixed(2)}`;
+
+  document.getElementById('scrubber').value = currentFrame;
+  const timeS = (currentFrame / trajectory.fps).toFixed(2);
+  document.getElementById('frame-counter').textContent =
+    `Frame ${currentFrame} / ${trajectory.num_frames - 1} · ${timeS}s`;
+}
+
+// Playback controls
+window.togglePlay = function() {
+  playing = !playing;
+  const btn = document.getElementById('btn-play');
+  btn.textContent = playing ? '⏸ Pause' : '▶ Play';
+  btn.classList.toggle('active', playing);
+  if (playing) { lastTime = performance.now(); accumulator = 0; }
+};
+
+window.stepFrame = function(delta) {
+  playing = false;
+  document.getElementById('btn-play').textContent = '▶ Play';
+  document.getElementById('btn-play').classList.remove('active');
+  updateFrame(currentFrame + delta);
+};
+
+window.resetPlay = function() {
+  playing = false;
+  document.getElementById('btn-play').textContent = '▶ Play';
+  document.getElementById('btn-play').classList.remove('active');
+  updateFrame(0);
+};
+
+window.setSpeed = function(v) { speed = parseFloat(v); };
+
+document.getElementById('scrubber').addEventListener('input', (e) => {
+  updateFrame(parseInt(e.target.value));
+});
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+function animate(now) {
+  requestAnimationFrame(animate);
+  controls.update();
+
+  if (playing && trajectory) {
+    const dt = (now - lastTime) / 1000;
+    lastTime = now;
+    accumulator += dt * speed;
+    const frameDuration = 1.0 / trajectory.fps;
+    while (accumulator >= frameDuration) {
+      accumulator -= frameDuration;
+      if (currentFrame < trajectory.num_frames - 1) {
+        updateFrame(currentFrame + 1);
+      } else {
+        playing = false;
+        document.getElementById('btn-play').textContent = '▶ Play';
+        document.getElementById('btn-play').classList.remove('active');
+        break;
+      }
+    }
+  }
+
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(animate);
+
+Promise.all([loadURDF(), loadTrajectory()])
+  .then(() => computeOffset())
+  .catch(err => console.error(err));
+</script>
+</body>
+</html>
