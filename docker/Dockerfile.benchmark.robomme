@@ -78,13 +78,13 @@ RUN uv venv --python python${PYTHON_VERSION}
 COPY --chown=user_lerobot:user_lerobot setup.py pyproject.toml uv.lock README.md MANIFEST.in ./
 COPY --chown=user_lerobot:user_lerobot src/ src/
 
-# Use uv pip install (not uv sync) — uv sync resolves all extras across all
-# Python versions, hitting the robomme/numpy<2.0 vs base/numpy>=2.0 conflict.
-# pip-style install only resolves the requested extras for the current platform.
-RUN uv pip install --no-cache -e ".[robomme]"
+# Step 1: Install lerobot base (without robomme) — this gets gymnasium>=1.1.1
+# and numpy>=2.0.0 as lerobot requires.
+RUN uv pip install --no-cache -e "."
 
-# mani-skill (robomme dep) pins gymnasium==0.29.1 and numpy<2.0.0.
-# These conflict with lerobot's defaults but are safe to override at runtime:
+# Step 2: Force-install robomme with overridden gymnasium and numpy versions.
+# mani-skill (robomme dep) hard-pins gymnasium==0.29.1 and numpy<2.0.0 which
+# conflict with lerobot's defaults. Both overrides are safe at runtime:
 #   - gymnasium 0.29.x has the same 5-tuple step() API as 1.x (since gym 0.26)
 #   - numpy 1.26.4 is API-compatible with lerobot's actual usage
 RUN printf 'gymnasium==0.29.1\nnumpy==1.26.4\n' > /tmp/robomme_override.txt \
