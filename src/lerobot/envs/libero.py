@@ -29,8 +29,9 @@ from gymnasium import spaces
 from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
 
-from lerobot.envs.utils import _LazyAsyncVectorEnv
 from lerobot.types import RobotObservation
+
+from .utils import _LazyAsyncVectorEnv
 
 
 def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:

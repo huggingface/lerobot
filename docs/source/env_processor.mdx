@@ -173,8 +173,8 @@ observation = {
 The `make_env_pre_post_processors` function follows the same pattern as `make_pre_post_processors` for policies:
 
 ```python
-from lerobot.envs.factory import make_env_pre_post_processors
-from lerobot.envs.configs import LiberoEnv, PushtEnv
+from lerobot.envs import make_env_pre_post_processors, PushtEnv
+from lerobot.envs.configs import LiberoEnv
 
 # For LIBERO: Returns LiberoProcessorStep in preprocessor
 libero_cfg = LiberoEnv(task="libero_spatial", camera_name=["agentview"])
@@ -257,7 +257,7 @@ def eval_main(cfg: EvalPipelineConfig):
 The `LiberoProcessorStep` demonstrates a real-world environment processor:
 
 ```python
-from lerobot.processor.pipeline import ObservationProcessorStep
+from lerobot.processor import ObservationProcessorStep
 
 @dataclass
 @ProcessorStepRegistry.register(name="libero_processor")

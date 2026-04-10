@@ -15,6 +15,9 @@
 # limitations under the License.
 """Evaluate a policy on an environment by running rollouts and computing metrics.
 
+Requires: pip install 'lerobot[evaluation]' plus the policy extra (e.g. lerobot[pi])
+          and the environment extra (e.g. lerobot[pusht]) if evaluating in simulation.
+
 Usage examples:
 
 You want to evaluate a model from the hub (eg: https://huggingface.co/lerobot/diffusion_pusht)
@@ -71,14 +74,14 @@ from tqdm import trange
 
 from lerobot.configs import parser
 from lerobot.configs.eval import EvalPipelineConfig
-from lerobot.envs.factory import make_env, make_env_pre_post_processors
-from lerobot.envs.utils import (
+from lerobot.envs import (
     check_env_attributes_and_types,
     close_envs,
+    make_env,
+    make_env_pre_post_processors,
     preprocess_observation,
 )
-from lerobot.policies.factory import make_policy, make_pre_post_processors
-from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.types import PolicyAction
 from lerobot.utils.constants import ACTION, DONE, OBS_STR, REWARD

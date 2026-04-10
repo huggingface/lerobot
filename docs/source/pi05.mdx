@@ -116,8 +116,7 @@ lerobot-edit-dataset \
 Or equivalently in Python:
 
 ```python
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.dataset_tools import recompute_stats
+from lerobot.datasets import LeRobotDataset, recompute_stats
 
 dataset = LeRobotDataset("your_dataset")
 recompute_stats(dataset, relative_action=True, chunk_size=50, relative_exclude_joints=["gripper"])
