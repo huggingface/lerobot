@@ -71,9 +71,13 @@ COPY --chown=user_lerobot:user_lerobot src/ src/
 # Install lerobot with libero_plus and smolvla extras.
 # The libero git dep sometimes gets silently skipped by uv pip install
 # when embedded in self-referential extras, so install it explicitly too.
-RUN uv pip install --no-cache -e ".[libero_plus,smolvla]" \
-    && uv pip install --no-cache "libero @ git+https://github.com/sylvestf/LIBERO-plus.git@main" \
-    && python -c "import libero; print('libero installed at', libero.__file__)"
+# Step 1: install lerobot with extras (libero git dep may be silently skipped)
+RUN uv pip install --no-cache -e ".[libero_plus,smolvla]"
+# Step 2: force-install the LIBERO-plus git dep (uv may "audit" it as satisfied
+# without actually making it importable due to the nested package structure)
+RUN uv pip install --no-cache --reinstall-package libero \
+    "libero @ git+https://github.com/sylvestf/LIBERO-plus.git@main" \
+    && python -c "from libero.libero import benchmark; print('libero-plus OK')"
 
 # Pre-download libero assets so nothing is fetched at runtime (CI timeout risk).
 # libero/libero/__init__.py prompts with input() when ~/.libero/config.yaml is
