@@ -15,17 +15,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from lerobot.utils.import_utils import require_package
+
+require_package("datasets", extra="dataset")
+
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.multi_dataset import MultiLeRobotDataset
 from lerobot.datasets.sampler import EpisodeAwareSampler
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
-from lerobot.datasets.transforms import ImageTransforms, ImageTransformsConfig
 
 __all__ = [
     "EpisodeAwareSampler",
-    "ImageTransforms",
-    "ImageTransformsConfig",
     "LeRobotDataset",
     "LeRobotDatasetMetadata",
     "MultiLeRobotDataset",

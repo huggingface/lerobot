@@ -24,7 +24,7 @@ import torch
 
 from lerobot.configs.types import PolicyFeature
 from lerobot.utils.constants import OBS_STATE
-from tests.utils import require_package
+from tests.utils import skip_if_package_missing
 
 # -----------------------------------------------------------------------------
 # Test fixtures
@@ -62,7 +62,7 @@ class MockPolicy:
 
 
 @pytest.fixture
-@require_package("grpcio", "grpc")
+@skip_if_package_missing("grpcio", "grpc")
 def policy_server():
     """Fresh `PolicyServer` instance with a stubbed-out policy model."""
     # Import only when the test actually runs (after decorator check)

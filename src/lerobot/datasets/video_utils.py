@@ -37,6 +37,8 @@ import torchvision
 from datasets.features.features import register_feature
 from PIL import Image
 
+from lerobot.utils.import_utils import get_safe_default_codec
+
 logger = logging.getLogger(__name__)
 
 # List of hardware encoders to probe for auto-selection. Availability depends on the platform and FFmpeg build.
@@ -114,16 +116,6 @@ def resolve_vcodec(vcodec: str) -> str:
             return encoder
     logger.info("No hardware encoder available, falling back to software encoder 'libsvtav1'")
     return "libsvtav1"
-
-
-def get_safe_default_codec():
-    if importlib.util.find_spec("torchcodec"):
-        return "torchcodec"
-    else:
-        logger.warning(
-            "'torchcodec' is not available in your platform, falling back to 'pyav' as a default decoder"
-        )
-        return "pyav"
 
 
 def decode_video_frames(

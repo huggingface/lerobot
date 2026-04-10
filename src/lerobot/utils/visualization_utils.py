@@ -16,11 +16,16 @@ import numbers
 import os
 
 import numpy as np
-import rerun as rr
 
-from lerobot.types import RobotAction, RobotObservation
+from lerobot.utils.import_utils import require_package
 
-from .constants import ACTION, ACTION_PREFIX, OBS_PREFIX, OBS_STR
+require_package("rerun-sdk", extra="viz", import_name="rerun")
+
+import rerun as rr  # noqa: E402
+
+from lerobot.types import RobotAction, RobotObservation  # noqa: E402
+
+from .constants import ACTION, ACTION_PREFIX, OBS_PREFIX, OBS_STR  # noqa: E402
 
 
 def init_rerun(
@@ -42,6 +47,11 @@ def init_rerun(
         rr.connect_grpc(url=f"rerun+http://{ip}:{port}/proxy")
     else:
         rr.spawn(memory_limit=memory_limit)
+
+
+def shutdown_rerun() -> None:
+    """Shuts down the Rerun SDK gracefully."""
+    rr.rerun_shutdown()
 
 
 def _is_scalar(x):

@@ -66,7 +66,6 @@ import time
 from pathlib import Path
 
 import numpy as np
-import rerun as rr
 import torch
 import torch.utils.data
 import tqdm
@@ -116,6 +115,11 @@ def visualize_dataset(
 
     if mode not in ["local", "distant"]:
         raise ValueError(mode)
+
+    from lerobot.utils.import_utils import require_package
+
+    require_package("rerun-sdk", extra="viz", import_name="rerun")
+    import rerun as rr
 
     spawn_local_viewer = mode == "local" and not save
     rr.init(f"{repo_id}/episode_{episode_index}", spawn=spawn_local_viewer)

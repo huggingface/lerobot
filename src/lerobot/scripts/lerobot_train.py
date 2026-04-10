@@ -20,6 +20,10 @@ from contextlib import nullcontext
 from pprint import pformat
 from typing import Any
 
+from lerobot.utils.import_utils import require_package
+
+require_package("accelerate", extra="training")
+
 import torch
 from accelerate import Accelerator
 from termcolor import colored

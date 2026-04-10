@@ -152,7 +152,7 @@ def require_env(func):
     return wrapper
 
 
-def require_package_arg(func):
+def skip_if_package_arg_missing(func):
     """
     Decorator that skips the test if the required package is not installed.
     This is similar to `require_env` but more general in that it can check any package (not just environments).
@@ -184,7 +184,7 @@ def require_package_arg(func):
     return wrapper
 
 
-def require_package(package_name, import_name=None):
+def skip_if_package_missing(package_name, import_name=None):
     """
     Decorator that skips the test if the specified package is not installed.
     """

@@ -69,6 +69,24 @@ def is_package_available(
         return package_exists
 
 
+def get_safe_default_codec():
+    if importlib.util.find_spec("torchcodec"):
+        return "torchcodec"
+    else:
+        logging.warning(
+            "'torchcodec' is not available in your platform, falling back to 'pyav' as a default decoder"
+        )
+        return "pyav"
+
+
+def require_package(pkg_name: str, extra: str, import_name: str | None = None) -> None:
+    """Raise an informative ImportError if a package required by an optional feature is missing."""
+    if not is_package_available(pkg_name, import_name):
+        raise ImportError(
+            f"'{pkg_name}' is required but not installed. Install it with: pip install 'lerobot[{extra}]'"
+        )
+
+
 _transformers_available = is_package_available("transformers")
 _peft_available = is_package_available("peft")
 _scipy_available = is_package_available("scipy")

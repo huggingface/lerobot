@@ -18,14 +18,15 @@ from __future__ import annotations
 
 import importlib
 import logging
-from typing import Any, TypedDict, Unpack
+from typing import TYPE_CHECKING, Any, TypedDict, Unpack
 
 import torch
 
+if TYPE_CHECKING:
+    from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType
-from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-from lerobot.datasets.feature_utils import dataset_to_policy_features
 from lerobot.envs.configs import EnvConfig
 from lerobot.envs.utils import env_to_policy_features
 from lerobot.policies.act.configuration_act import ACTConfig
@@ -494,6 +495,8 @@ def make_policy(
 
     kwargs = {}
     if ds_meta is not None:
+        from lerobot.datasets.feature_utils import dataset_to_policy_features
+
         features = dataset_to_policy_features(ds_meta.features)
     else:
         if not cfg.pretrained_path:

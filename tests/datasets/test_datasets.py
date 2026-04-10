@@ -35,7 +35,6 @@ from lerobot.datasets.image_writer import image_array_to_pil_image
 from lerobot.datasets.io_utils import hf_transform_to_torch
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.multi_dataset import MultiLeRobotDataset
-from lerobot.datasets.transforms import ImageTransforms, ImageTransformsConfig
 from lerobot.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
@@ -46,6 +45,7 @@ from lerobot.datasets.video_utils import VALID_VIDEO_CODECS
 from lerobot.envs.factory import make_env_config
 from lerobot.policies.factory import make_policy_config
 from lerobot.robots import make_robot_from_config
+from lerobot.transforms import ImageTransforms, ImageTransformsConfig
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, OBS_STR, REWARD
 from tests.fixtures.constants import DUMMY_CHW, DUMMY_HWC, DUMMY_REPO_ID
 from tests.mocks.mock_robot import MockRobotConfig

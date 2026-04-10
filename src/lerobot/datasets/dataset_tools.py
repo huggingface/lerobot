@@ -829,7 +829,7 @@ def _copy_and_reindex_episodes_metadata(
         data_metadata: Dict mapping new episode index to its data file metadata
         video_metadata: Optional dict mapping new episode index to its video metadata
     """
-    from lerobot.datasets.utils import flatten_dict
+    from lerobot.utils.utils import flatten_dict
 
     if src_dataset.meta.episodes is None:
         src_dataset.meta.episodes = load_episodes(src_dataset.meta.root)

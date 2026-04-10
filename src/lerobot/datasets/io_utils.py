@@ -13,7 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import json
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +40,7 @@ from lerobot.datasets.utils import (
     serialize_dict,
     unflatten_dict,
 )
+from lerobot.utils.io_utils import load_json, write_json
 from lerobot.utils.utils import SuppressProgressBars
 
 
@@ -114,33 +114,6 @@ def embed_images(dataset: datasets.Dataset) -> datasets.Dataset:
     dataset = dataset.map(embed_table_storage, batched=False)
     dataset = dataset.with_format(**format)
     return dataset
-
-
-def load_json(fpath: Path) -> Any:
-    """Load data from a JSON file.
-
-    Args:
-        fpath (Path): Path to the JSON file.
-
-    Returns:
-        Any: The data loaded from the JSON file.
-    """
-    with open(fpath) as f:
-        return json.load(f)
-
-
-def write_json(data: dict, fpath: Path) -> None:
-    """Write data to a JSON file.
-
-    Creates parent directories if they don't exist.
-
-    Args:
-        data (dict): The dictionary to write.
-        fpath (Path): The path to the output JSON file.
-    """
-    fpath.parent.mkdir(exist_ok=True, parents=True)
-    with open(fpath, "w") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
 
 
 def write_info(info: dict, local_dir: Path) -> None:

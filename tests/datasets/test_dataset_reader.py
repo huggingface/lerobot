@@ -16,7 +16,7 @@
 """Contract tests for DatasetReader."""
 
 from lerobot.datasets.dataset_reader import DatasetReader
-from lerobot.datasets.video_utils import get_safe_default_codec
+from lerobot.utils.import_utils import get_safe_default_codec
 
 # ── Loading ──────────────────────────────────────────────────────────
 
