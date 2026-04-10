@@ -15,7 +15,12 @@
 # limitations under the License.
 
 from .configuration_groot import GrootConfig
-from .modeling_groot import GrootPolicy
-from .processor_groot import make_groot_pre_post_processors
+
+try:
+    from .modeling_groot import GrootPolicy
+    from .processor_groot import make_groot_pre_post_processors
+except (ImportError, TypeError):
+    GrootPolicy = None
+    make_groot_pre_post_processors = None
 
 __all__ = ["GrootConfig", "GrootPolicy", "make_groot_pre_post_processors"]
