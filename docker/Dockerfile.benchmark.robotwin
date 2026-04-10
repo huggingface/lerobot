@@ -93,9 +93,9 @@ USER user_lerobot
 # (lerobot uses 1.x; RoboTwin's API is wrapped so 0.29 is not needed), scipy
 # (version-pinned by lerobot), huggingface_hub (pinned by lerobot), wandb,
 # azure, openai, pyglet (UI only).
-# Pin --python-version to 3.12 — sapien 3.0.0b1 has no wheel for cp314 and
-# uv resolves for all Python versions supported by the project by default.
-RUN uv pip install --no-cache --python-version 3.12 \
+# Install RoboTwin-specific packages on top of the lerobot venv.
+# The venv is Python 3.10 so uv resolves for cp310 automatically.
+RUN uv pip install --no-cache \
     "sapien==3.0.0b1" \
     "mplib==0.2.1" \
     "transforms3d==0.4.2" \
