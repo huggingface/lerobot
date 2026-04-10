@@ -87,7 +87,7 @@ class DatasetReader:
         """Attempt to load from local cache. Returns True if data is sufficient."""
         try:
             self.hf_dataset = self._load_hf_dataset()
-        except (FileNotFoundError, NotADirectoryError):
+        except (FileNotFoundError, NotADirectoryError, ValueError):
             self.hf_dataset = None
             return False
         if not self._check_cached_episodes_sufficient():
