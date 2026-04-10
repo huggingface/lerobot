@@ -8,11 +8,12 @@ A benchmark in LeRobot is a set of [Gymnasium](https://gymnasium.farama.org/) en
 
 Before diving in, here is what is already integrated:
 
-| Benchmark      | Env file            | Config class       | Tasks               | Action dim   | Processor                    |
-| -------------- | ------------------- | ------------------ | ------------------- | ------------ | ---------------------------- |
-| LIBERO         | `envs/libero.py`    | `LiberoEnv`        | 130 across 5 suites | 7            | `LiberoProcessorStep`        |
-| Meta-World     | `envs/metaworld.py` | `MetaworldEnv`     | 50 (MT50)           | 4            | None                         |
-| IsaacLab Arena | Hub-hosted          | `IsaaclabArenaEnv` | Configurable        | Configurable | `IsaaclabArenaProcessorStep` |
+| Benchmark      | Env file            | Config class        | Tasks               | Action dim   | Processor                    |
+| -------------- | ------------------- | ------------------- | ------------------- | ------------ | ---------------------------- |
+| LIBERO         | `envs/libero.py`    | `LiberoEnv`         | 130 across 5 suites | 7            | `LiberoProcessorStep`        |
+| Meta-World     | `envs/metaworld.py` | `MetaworldEnv`      | 50 (MT50)           | 4            | None                         |
+| RoboTwin 2.0   | `envs/robotwin.py`  | `RoboTwinEnvConfig` | 60 dual-arm tasks   | 14           | `RoboTwinProcessorStep`      |
+| IsaacLab Arena | Hub-hosted          | `IsaaclabArenaEnv`  | Configurable        | Configurable | `IsaaclabArenaProcessorStep` |
 
 Use `src/lerobot/envs/libero.py` and `src/lerobot/envs/metaworld.py` as reference implementations.
 
