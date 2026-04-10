@@ -98,7 +98,6 @@ class DatasetReader:
 
     def load_and_activate(self) -> None:
         """Load HF dataset from disk and build index mapping. Call after data is on disk."""
-        self._meta._load_metadata()
         self.hf_dataset = self._load_hf_dataset()
         self._build_index_mapping()
 
