@@ -1,0 +1,151 @@
+# 向下相容性
+
+## 策略正規化遷移（PR #1452）
+
+**重大變更**：LeRobot 策略的權重中不再內建正規化層。正規化現在由外部的 PolicyProcessorPipeline 元件負責處理。
+
+### 有什麼改變？
+
+| 項目               | PR #1452 之前                           | PR #1452 之後                                                |
+| ------------------ | --------------------------------------- | ------------------------------------------------------------ |
+| **正規化的位置**   | 嵌入於模型權重中 (`normalize_inputs.*`) | 外部的 `PolicyProcessorPipeline` 元件                        |
+| **模型狀態的字典** | 包含正規化的統計資料                    | **僅含乾淨的權重** — 不含正規化參數                          |
+| **使用方式**       | `policy(batch)` 處理全部                | `preprocessor(batch)` → `policy(...)` → `postprocessor(...)` |
+
+### 對現有模型的影響
+
+- 在 PR #1452 **之前**訓練的模型，其正規化已嵌入於權重中。
+- 這些模型需要進行遷移，才能與新的 `PolicyProcessorPipeline` 系統相容。
+- 此遷移會擷取正規化統計數據，並建立獨立的處理器管線。
+
+### 遷移舊模型
+
+使用遷移腳本將內嵌正規化的模型進行轉換：
+
+```shell
+python src/lerobot/processor/migrate_policy_normalization.py \
+    --pretrained-path lerobot/act_aloha_sim_transfer_cube_human \
+    --push-to-hub \
+    --branch migrated
+```
+
+此腳本將會：
+
+1. **提取**模型權重中的正規化統計數據
+2. **建立**外部預處理器與後處理器的管線
+3. **移除**模型權重中的正規化層
+4. **儲存**乾淨模型 + 處理器管線
+5. **推送**至 Hub 並自動建立 PR
+
+### 使用已遷移的模型
+
+```python
+# 新的使用方式（遷移後）
+from lerobot.policies.factory import make_policy, make_pre_post_processors
+
+# 分別載入模型與處理器
+policy = make_policy(config, ds_meta=dataset.meta)
+preprocessor, postprocessor = make_pre_post_processors(
+    policy_cfg=config,
+    dataset_stats=dataset.meta.stats
+)
+
+# 透過管線處理資料
+processed_batch = preprocessor(raw_batch)
+action = policy.select_action(processed_batch)
+final_action = postprocessor(action)
+```
+
+## 硬體 API 重新設計
+
+PR [#777](https://github.com/huggingface/lerobot/pull/777) 改善了 LeRobot 的校正功能，但**不向下相容**。以下概述了變更內容，以及如何繼續使用此 PR 之前所建立的資料集。
+
+### 有什麼改變？
+
+| 項目                      | PR #777 之前                        | PR #777 之後                                      |
+| ------------------------- | ----------------------------------- | ------------------------------------------------- |
+| **關節範圍**              | 角度 `-180...180°`                  | **正規化範圍** 關節：`–100...100` 夾爪：`0...100` |
+| **零位（SO100 / SO101）** | 手臂完全水平伸展                    | **位於各關節範圍的中點**                          |
+| **邊界處理**              | 以軟體防護機制偵測 ±180° 的跨越情形 | 因零位位於範圍中點，無需跨越邏輯                  |
+
+---
+
+### 對現有資料集的影響
+
+- PR #777 **之前**所錄製的軌跡，若直接載入將無法正確重播：
+  - 關節角度產生偏移且正規化不正確。
+- 任何直接以舊資料進行微調或訓練的模型需對其輸入與輸出行轉換。
+
+### 使用舊版校正系統建立的資料集
+
+我們在此提供一個遷移範例腳本，用於重播以先前校正方式錄製的片段： `examples/backward_compatibility/replay.py`.
+以下將帶您了解範例腳本中所進行的修改，以使先前校正的資料集能夠正常運作。
+
+```diff
++   key = f"{name.removeprefix('main_')}.pos"
+    action[key] = action_array[i].item()
++   action["shoulder_lift.pos"] = -(action["shoulder_lift.pos"] - 90)
++   action["elbow_flex.pos"] -= 90
+```
+
+逐一說明如下。
+新版程式碼使用 `.pos` 後綴表示位置觀測值，並已移除 `main_` 前綴：
+
+<!-- prettier-ignore-start -->
+```python
+key = f"{name.removeprefix('main_')}.pos"
+```
+<!-- prettier-ignore-end -->
+
+對於 `"shoulder_lift"`（id = 2），與舊版校正／程式碼相比，零位偏移了 -90 度，且方向相反。
+
+<!-- prettier-ignore-start -->
+```python
+action["shoulder_lift.pos"] = -(action["shoulder_lift.pos"] - 90)
+```
+<!-- prettier-ignore-end -->
+
+對於 `"elbow_flex"`（id = 3），與舊版校正／程式碼相比，零位偏移了 -90 度。
+
+<!-- prettier-ignore-start -->
+```python
+action["elbow_flex.pos"] -= 90
+```
+<!-- prettier-ignore-end -->
+
+若要使用角度正規化，請將 `--robot.use_degrees` 選項設為 `true`。
+
+```diff
+python examples/backward_compatibility/replay.py \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem5A460814411 \
+    --robot.id=blue \
++   --robot.use_degrees=true \
+    --dataset.repo_id=my_dataset_id \
+    --dataset.episode=0
+```
+
+### 使用舊版校正系統訓練的政策
+
+政策輸出的動作格式與資料集相同（`torch.Tensors`），因此應套用相同的轉換。
+
+若要找出這些轉換，建議先依照上方說明，嘗試重播政策所訓練資料集中的某個片段。
+接著，在推論腳本中加入相同的轉換（以下以 `record.py` 腳本為例）：
+
+```diff
+action_values = predict_action(
+    observation_frame,
+    policy,
+    get_safe_torch_device(policy.config.device),
+    policy.config.use_amp,
+    task=single_task,
+    robot_type=robot.robot_type,
+    )
+    action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
+
++   action["shoulder_lift.pos"] = -(action["shoulder_lift.pos"] - 90)
++   action["elbow_flex.pos"] -= 90
+    robot.send_action(action)
+```
+
+若有任何問題或在遷移過程中遇到困難，歡迎至 [Discord](https://discord.gg/s3KuuzsPFb) 上提問。
