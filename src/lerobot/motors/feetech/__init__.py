@@ -14,10 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lerobot.utils.import_utils import require_package
-
-require_package("feetech-servo-sdk", extra="feetech", import_name="scservo_sdk")
-
 from .feetech import DriveMode, FeetechMotorsBus, OperatingMode, TorqueMode
 from .tables import *  # noqa: F403 — hardware constant tables
 
