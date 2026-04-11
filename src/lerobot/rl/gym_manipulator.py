@@ -75,11 +75,11 @@ from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, REWARD
 from lerobot.utils.robot_utils import precise_sleep
-from lerobot.utils.utils import log_say
+from lerobot.utils.utils import init_logging, log_say
 
 from .joint_observations_processor import JointVelocityProcessorStep, MotorCurrentProcessorStep
 
-logging.basicConfig(level=logging.INFO)
+init_logging()
 
 
 @dataclass
