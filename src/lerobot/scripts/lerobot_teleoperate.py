@@ -219,7 +219,10 @@ def teleoperate(cfg: TeleoperateConfig):
 
     teleop = make_teleoperator_from_config(cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
-    teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
+
+    teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors(
+        cfg.teleop, cfg.robot
+    )
 
     teleop.connect()
     robot.connect()

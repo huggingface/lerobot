@@ -39,6 +39,8 @@ class InputController:
         self.intervention_flag = False
         self.open_gripper_command = False
         self.close_gripper_command = False
+        self.wrist_roll_command = 0.0  # -1.0 = roll left, 0 = stop, +1.0 = roll right
+        self.right_x = 0.0  # right stick horizontal, normalized -1..1
 
     def start(self):
         """Start the controller and initialize resources."""
@@ -198,11 +200,14 @@ class KeyboardController(InputController):
 class GamepadController(InputController):
     """Generate motion deltas from gamepad input."""
 
-    def __init__(self, x_step_size=1.0, y_step_size=1.0, z_step_size=1.0, deadzone=0.1):
+    def __init__(
+        self, x_step_size=1.0, y_step_size=1.0, z_step_size=1.0, deadzone=0.1, device_name: str | None = None
+    ):
         super().__init__(x_step_size, y_step_size, z_step_size)
         self.deadzone = deadzone
         self.joystick = None
         self.intervention_flag = False
+        self.device_name = device_name
 
     def start(self):
         """Initialize pygame and the gamepad."""
@@ -211,12 +216,31 @@ class GamepadController(InputController):
         pygame.init()
         pygame.joystick.init()
 
-        if pygame.joystick.get_count() == 0:
+        count = pygame.joystick.get_count()
+        if count == 0:
             logging.error("No gamepad detected. Please connect a gamepad and try again.")
             self.running = False
             return
 
-        self.joystick = pygame.joystick.Joystick(0)
+        if self.device_name is not None:
+            # Find joystick matching device_name
+            for i in range(count):
+                js = pygame.joystick.Joystick(i)
+                if self.device_name.lower() in js.get_name().lower():
+                    self.joystick = js
+                    break
+            if self.joystick is None:
+                available = [pygame.joystick.Joystick(i).get_name() for i in range(count)]
+                logging.error(
+                    f"No gamepad matching '{self.device_name}' found. "
+                    f"Available: {available}. "
+                    f"Use --teleop.device_name=<name> to select one."
+                )
+                self.running = False
+                return
+        else:
+            self.joystick = pygame.joystick.Joystick(0)
+
         self.joystick.init()
         logging.info(f"Initialized gamepad: {self.joystick.get_name()}")
 
@@ -311,25 +335,34 @@ class GamepadController(InputController):
 class GamepadControllerHID(InputController):
     """Generate motion deltas from gamepad input using HIDAPI."""
 
+    # HID usage_page=0x01 (Generic Desktop), usage=0x05 (Game Pad) per USB HID spec
+    GAMEPAD_USAGE_PAGE = 0x01
+    GAMEPAD_USAGE = 0x05
+
     def __init__(
         self,
         x_step_size=1.0,
         y_step_size=1.0,
         z_step_size=1.0,
         deadzone=0.1,
+        device_name: str | None = None,
     ):
         """
         Initialize the HID gamepad controller.
 
         Args:
-            step_size: Base movement step size in meters
-            z_scale: Scaling factor for Z-axis movement
+            x_step_size: Base movement step size in meters
+            y_step_size: Base movement step size in meters
+            z_step_size: Base movement step size in meters
             deadzone: Joystick deadzone to prevent drift
+            device_name: Substring to match against HID product name. If None,
+                uses DEFAULT_GAMEPAD_NAMES to find the first recognized gamepad.
         """
         super().__init__(x_step_size, y_step_size, z_step_size)
         self.deadzone = deadzone
         self.device = None
         self.device_info = None
+        self.device_name = device_name
 
         # Movement values (normalized from -1.0 to 1.0)
         self.left_x = 0.0
@@ -341,17 +374,57 @@ class GamepadControllerHID(InputController):
         self.buttons = {}
 
     def find_device(self):
-        """Look for the gamepad device by vendor and product ID."""
+        """Find a gamepad HID device.
+
+        Uses the USB HID usage page (Generic Desktop / Game Pad) to reliably
+        identify gamepads regardless of brand. When ``device_name`` is set,
+        further filters by substring match against the product or manufacturer string.
+        """
         import hid
 
         devices = hid.enumerate()
-        for device in devices:
-            device_name = device["product_string"]
-            if any(controller in device_name for controller in ["Logitech", "Xbox", "PS4", "PS5"]):
-                return device
 
+        # First, collect all actual gamepads by HID usage
+        gamepads = [
+            d
+            for d in devices
+            if d.get("usage_page") == self.GAMEPAD_USAGE_PAGE and d.get("usage") == self.GAMEPAD_USAGE
+        ]
+
+        if self.device_name is not None:
+            # Filter gamepads by user-specified name (matches product or manufacturer)
+            needle = self.device_name.lower()
+            for gp in gamepads:
+                product = gp.get("product_string", "")
+                manufacturer = gp.get("manufacturer_string", "")
+                if needle in product.lower() or needle in manufacturer.lower():
+                    return gp
+
+            available = [
+                f"{d.get('manufacturer_string', '')} {d.get('product_string', '')}".strip() for d in gamepads
+            ]
+            logging.error(
+                f"No gamepad matching '{self.device_name}' found. "
+                f"Detected gamepads: {available if available else '(none)'}"
+            )
+            return None
+
+        # No device_name — return the first gamepad found
+        if gamepads:
+            return gamepads[0]
+
+        available = sorted(
+            {
+                f"{d.get('manufacturer_string', '')} {d.get('product_string', '')}".strip()
+                for d in devices
+                if d.get("product_string")
+            }
+        )
         logging.error(
-            "No gamepad found, check the connection and the product string in HID to add your gamepad"
+            f"No gamepad found (looked for HID usage_page={self.GAMEPAD_USAGE_PAGE:#x}, "
+            f"usage={self.GAMEPAD_USAGE:#x}). "
+            f"All HID devices: {available}. "
+            f"Use --teleop.device_name=<name> to match by product/manufacturer name."
         )
         return None
 
@@ -406,55 +479,116 @@ class GamepadControllerHID(InputController):
             return
 
         try:
-            # Read data from the gamepad
             data = self.device.read(64)
-            # Interpret gamepad data - this will vary by controller model
-            # These offsets are for the Logitech RumblePad 2
-            if data and len(data) >= 8:
-                # Normalize joystick values from 0-255 to -1.0-1.0
-                self.left_y = (data[1] - 128) / 128.0
-                self.left_x = (data[2] - 128) / 128.0
-                self.right_x = (data[3] - 128) / 128.0
-                self.right_y = (data[4] - 128) / 128.0
+            if not data:
+                return
 
-                # Apply deadzone
-                self.left_y = 0 if abs(self.left_y) < self.deadzone else self.left_y
-                self.left_x = 0 if abs(self.left_x) < self.deadzone else self.left_x
-                self.right_x = 0 if abs(self.right_x) < self.deadzone else self.right_x
-                self.right_y = 0 if abs(self.right_y) < self.deadzone else self.right_y
-
-                # Parse button states (byte 5 in the Logitech RumblePad 2)
-                buttons = data[5]
-
-                # Check if RB is pressed then the intervention flag should be set
-                self.intervention_flag = data[6] in [2, 6, 10, 14]
-
-                # Check if RT is pressed
-                self.open_gripper_command = data[6] in [8, 10, 12]
-
-                # Check if LT is pressed
-                self.close_gripper_command = data[6] in [4, 6, 12]
-
-                # Check if Y/Triangle button (bit 7) is pressed for saving
-                # Check if X/Square button (bit 5) is pressed for failure
-                # Check if A/Cross button (bit 4) is pressed for rerecording
-                if buttons & 1 << 7:
-                    self.episode_end_status = TeleopEvents.SUCCESS
-                elif buttons & 1 << 5:
-                    self.episode_end_status = TeleopEvents.FAILURE
-                elif buttons & 1 << 4:
-                    self.episode_end_status = TeleopEvents.RERECORD_EPISODE
-                else:
-                    self.episode_end_status = None
+            # Xbox One / Xbox Series controller: 18-byte GIP report (packet type 0x20)
+            # Layout:
+            #   byte[0]    = 0x20 (packet type)
+            #   byte[1]    = 0x00
+            #   byte[2:4]  = u16 LE packet counter
+            #   byte[4]    = buttons: sync(0), _(1), start(2), back(3), A(4), B(5), X(6), Y(7)
+            #   byte[5]    = buttons: dpad_up(0), dpad_down(1), dpad_left(2), dpad_right(3), LB(4), RB(5), L3(6), R3(7)
+            #   byte[6:8]  = u16 LE left trigger  (0-1023)
+            #   byte[8:10] = u16 LE right trigger  (0-1023)
+            #   byte[10:12]= s16 LE left stick X  (-32768 to 32767)
+            #   byte[12:14]= s16 LE left stick Y  (-32768 to 32767)
+            #   byte[14:16]= s16 LE right stick X (-32768 to 32767)
+            #   byte[16:18]= s16 LE right stick Y (-32768 to 32767)
+            if len(data) == 18 and data[0] == 0x20:
+                self._update_xbox(data)
+            elif len(data) >= 8:
+                self._update_logitech(data)
 
         except OSError as e:
             logging.error(f"Error reading from gamepad: {e}")
 
+    def _update_xbox(self, data: list[int]) -> None:
+        """Parse an Xbox One / Xbox Series controller GIP report."""
+        import struct
+
+        # Sticks: signed 16-bit LE, normalize to -1.0..1.0
+        lx = struct.unpack_from("<h", bytes(data), 10)[0] / 32768.0
+        ly = struct.unpack_from("<h", bytes(data), 12)[0] / 32768.0
+        rx = struct.unpack_from("<h", bytes(data), 14)[0] / 32768.0
+        ry = struct.unpack_from("<h", bytes(data), 16)[0] / 32768.0
+
+        # Negate Y axes to match SDL/Logitech convention (stick up = negative)
+        self.left_x = 0.0 if abs(lx) < self.deadzone else lx
+        self.left_y = 0.0 if abs(ly) < self.deadzone else -ly
+        self.right_x = 0.0 if abs(rx) < self.deadzone else rx
+        self.right_y = 0.0 if abs(ry) < self.deadzone else -ry
+
+        # Triggers: unsigned 16-bit LE (0-1023)
+        lt = struct.unpack_from("<H", bytes(data), 6)[0]
+        rt = struct.unpack_from("<H", bytes(data), 8)[0]
+
+        # Use triggers for gripper: RT = open, LT = close (threshold ~10% of 1023)
+        self.open_gripper_command = rt > 100
+        self.close_gripper_command = lt > 100
+
+        # Buttons byte 4: A(bit4), B(bit5), X(bit6), Y(bit7)
+        btn0 = data[4]
+        # Buttons byte 5: LB(bit4), RB(bit5)
+        btn1 = data[5]
+
+        # LB/RB for wrist roll: LB = roll left (-1), RB = roll right (+1)
+        lb = bool(btn1 & (1 << 4))
+        rb = bool(btn1 & (1 << 5))
+        if lb and not rb:
+            self.wrist_roll_command = -1.0
+        elif rb and not lb:
+            self.wrist_roll_command = 1.0
+        else:
+            self.wrist_roll_command = 0.0
+
+        # Y = success, X = failure, A = rerecord
+        if btn0 & (1 << 7):  # Y
+            self.episode_end_status = TeleopEvents.SUCCESS
+        elif btn0 & (1 << 6):  # X
+            self.episode_end_status = TeleopEvents.FAILURE
+        elif btn0 & (1 << 4):  # A
+            self.episode_end_status = TeleopEvents.RERECORD_EPISODE
+        else:
+            self.episode_end_status = None
+
+    def _update_logitech(self, data: list[int]) -> None:
+        """Parse a Logitech RumblePad 2 HID report."""
+        # Normalize joystick values from 0-255 to -1.0..1.0
+        self.left_y = (data[1] - 128) / 128.0
+        self.left_x = (data[2] - 128) / 128.0
+        self.right_x = (data[3] - 128) / 128.0
+        self.right_y = (data[4] - 128) / 128.0
+
+        self.left_y = 0 if abs(self.left_y) < self.deadzone else self.left_y
+        self.left_x = 0 if abs(self.left_x) < self.deadzone else self.left_x
+        self.right_x = 0 if abs(self.right_x) < self.deadzone else self.right_x
+        self.right_y = 0 if abs(self.right_y) < self.deadzone else self.right_y
+
+        buttons = data[5]
+
+        self.intervention_flag = data[6] in [2, 6, 10, 14]
+        self.open_gripper_command = data[6] in [8, 10, 12]
+        self.close_gripper_command = data[6] in [4, 6, 12]
+
+        if buttons & 1 << 7:
+            self.episode_end_status = TeleopEvents.SUCCESS
+        elif buttons & 1 << 5:
+            self.episode_end_status = TeleopEvents.FAILURE
+        elif buttons & 1 << 4:
+            self.episode_end_status = TeleopEvents.RERECORD_EPISODE
+        else:
+            self.episode_end_status = None
+
     def get_deltas(self):
         """Get the current movement deltas from gamepad state."""
-        # Calculate deltas - invert as needed based on controller orientation
-        delta_x = -self.left_x * self.x_step_size  # Forward/backward
-        delta_y = -self.left_y * self.y_step_size  # Left/right
-        delta_z = -self.right_y * self.z_step_size  # Up/down
+        # Left stick vertical (left_y) → forward/backward (delta_x)
+        # Left stick horizontal (left_x) → left/right (delta_y)
+        # Right stick vertical (right_y) → up/down (delta_z)
+        # Convention: stick up/left = negative value (SDL/Logitech), negate to get positive forward/left/up
+        delta_x = -self.left_y * self.x_step_size
+        delta_y = -self.left_x * self.y_step_size
+        delta_z = -self.right_y * self.z_step_size
 
         return delta_x, delta_y, delta_z

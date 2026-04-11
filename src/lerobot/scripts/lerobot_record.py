@@ -497,7 +497,9 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     robot = make_robot_from_config(cfg.robot)
     teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
 
-    teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
+    teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors(
+        cfg.teleop, cfg.robot
+    )
 
     dataset_features = combine_feature_dicts(
         aggregate_pipeline_dataset_features(
