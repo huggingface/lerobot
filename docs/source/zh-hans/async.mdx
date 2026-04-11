@@ -1,0 +1,308 @@
+# 异步推理
+
+在我们的 [SmolVLA](https://huggingface.co/papers/2506.01844) 中，我们引入了一种在真实机器人上运行推理的新方式——**将动作预测与动作执行解耦**。
+本教程将介绍如何使用异步推理（_async inference_），支持 SmolVLA 的微调版本以及 LeRobot 所支持的所有策略。
+**所有 LeRobot 支持的策略均可使用异步推理！**
+
+**你将学到：**
+
+1. 为什么异步推理很重要，以及它与传统顺序推理的区别。
+2. 如何在同一台机器上，甚至跨网络启动 `PolicyServer` 并连接 `RobotClient`。
+3. 如何为你的机器人和策略调整关键参数（`actions_per_chunk`、`chunk_size_threshold`）。
+
+如果遇到问题，欢迎加入我们的 [Discord 社区](https://discord.gg/s3KuuzsPFb)！
+
+简而言之：使用_异步推理_时，机器人在持续执行动作的同时，策略服务器已在计算下一批动作——从而消除"等待推理"的延迟，实现更流畅、更快速响应的行为。
+这与同步推理（sync）有本质区别——在同步推理中，机器人在策略计算下一批动作时会保持空闲。
+
+---
+
+## 开始使用异步推理
+
+你可以在我们的[博客文章](https://huggingface.co/blog/async-robot-inference)中了解更多关于异步推理的信息。本指南旨在帮助你快速在自己的环境中配置并运行异步推理。
+
+首先，使用 `async` 标签安装 `lerobot`，以安装运行异步推理所需的额外依赖。
+
+```shell
+pip install -e ".[async]"
+```
+
+然后，启动一个策略服务器（在一个终端中，或在另一台机器上），并指定客户端连接所需的主机地址和端口。
+运行以下命令启动策略服务器：
+
+```shell
+python -m lerobot.async_inference.policy_server \
+     --host=127.0.0.1 \
+     --port=8080
+```
+
+这将在 `127.0.0.1:8080`（即 `localhost`，端口 8080）上启动一个策略服务器。此时策略服务器为空，所有关于运行哪个策略及其参数的信息将在客户端与服务器的首次握手中指定。使用以下命令启动客户端：
+
+```shell
+python -m lerobot.async_inference.robot_client \
+    --server_address=127.0.0.1:8080 \ # SERVER：策略服务器的主机地址和端口
+    --robot.type=so100_follower \ # ROBOT：机器人类型
+    --robot.port=/dev/tty.usbmodem585A0076841 \ # ROBOT：机器人端口
+    --robot.id=follower_so100 \ # ROBOT：机器人 id，用于加载校准文件
+    --robot.cameras="{ laptop: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}, phone: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \ # POLICY：用于采集帧的摄像头，键名须与策略期望的键名匹配
+    --task="dummy" \ # POLICY：策略执行的任务（如 `Fold my t-shirt`），并非所有策略都需要此参数，如 `act`
+    --policy_type=your_policy_type \ # POLICY：要运行的策略类型（smolvla、act 等）
+    --pretrained_name_or_path=user/model \ # POLICY：服务器上模型的名称/路径（如 lerobot/smolvla_base）
+    --policy_device=mps \ # POLICY：服务器上运行策略所使用的设备（cuda、mps、xpu、cpu）
+    --actions_per_chunk=50 \ # POLICY：每次输出的动作数量
+    --chunk_size_threshold=0.5 \ # CLIENT：向服务器发送新观测前的队列大小阈值
+    --aggregate_fn_name=weighted_average \ # CLIENT：用于聚合重叠部分动作的函数
+    --debug_visualize_queue_size=True # CLIENT：是否在运行时可视化队列大小
+```
+
+总结来说，你需要为以下各项指定参数：
+
+- `SERVER`：策略服务器的地址和端口
+- `ROBOT`：要连接的机器人类型、连接端口以及机器人的本地 `id`
+- `POLICY`：要运行的策略类型，以及服务器上模型检查点的名称/路径。还需指定服务器使用的设备，以及每次输出的动作数量（不超过策略支持的最大动作数）
+- `CLIENT`：向服务器发送新观测前的队列大小阈值，以及用于聚合重叠部分动作的函数。可选地，也可在运行时可视化队列大小，以便调整 `CLIENT` 参数
+
+重要提示：
+
+- `actions_per_chunk` 和 `chunk_size_threshold` 是需要针对你的配置调整的关键参数。
+- `aggregate_fn_name` 是用于聚合重叠部分动作的函数。你可以向函数注册表中添加新函数，或在 `robot_client.py` 中自定义（参见[此处](NOTE:addlinktoLOC)）
+- `debug_visualize_queue_size` 是调整 `CLIENT` 参数的实用工具。
+
+## 完成！此时你应该能看到机器人动起来了 😉
+
+## 异步推理 vs. 同步推理
+
+同步推理依赖于动作块预测与动作执行的交替进行，这必然导致_空闲帧_——机器人等待策略输出下一批动作的帧。
+这使推理过程出现明显的实时延迟，机器人会因没有可用动作而停止运动。
+随着机器人模型规模的增大，这一问题有加剧的风险。
+
+<p align="center">
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/async-inference/sync.png"
+    width="80%"
+  ></img>
+</p>
+<p align="center">
+  <i>同步推理</i>使机器人在策略计算下一批动作时保持空闲。
+</p>
+
+为解决这一问题，我们设计了异步推理范式——将动作规划与执行解耦，从而实现（1）更高的适应性，以及最重要的（2）无空闲帧。
+关键在于，使用异步推理时，下一批动作在当前批次耗尽_之前_就已计算完毕，从而消除空闲。
+通过对重叠部分的不同动作块进行聚合，可获得最新的规划和更紧密的控制循环，从而保证更高的适应性。
+
+<p align="center">
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/async-inference/async.png"
+    width="80%"
+  ></img>
+</p>
+<p align="center">
+  <i>异步推理</i>因在当前批次耗尽前就计算好下一批次，从而实现无空闲。
+</p>
+
+---
+
+## 启动策略服务器
+
+策略服务器是对 `PreTrainedPolicy` 的封装，负责与来自机器人客户端的观测进行交互。
+策略服务器初始化为空容器，在机器人客户端与策略服务器首次握手时，根据请求填充指定的策略。
+因此，启动策略服务器只需指定主机地址和端口即可。若策略服务器与机器人客户端运行在同一台机器上，可使用 `localhost` 作为主机地址。
+
+<hfoptions id="start_policy_server">
+<hfoption id="Command">
+```bash
+python -m lerobot.async_inference.policy_server \
+     --host=127.0.0.1 \
+     --port=8080
+```
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.async_inference.configs import PolicyServerConfig
+from lerobot.async_inference.policy_server import serve
+
+config = PolicyServerConfig(
+    host="localhost",
+    port=8080,
+)
+serve(config)
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+这将在 `localhost:8080` 上监听来自对应 `RobotClient` 的连接，客户端将在首次握手时告知服务器运行哪个策略。
+
+---
+
+## 启动机器人客户端
+
+`RobotClient` 是对 `Robot` 实例的封装，负责连接（可能是远程的）`PolicyServer`。
+`RobotClient` 将观测流式传输至 `PolicyServer`，并接收服务器运行推理后返回的动作块（我们假设服务器具有比机器人控制器更强的计算资源）。
+
+<hfoptions id="start_robot_client">
+<hfoption id="Command">
+```bash
+python -m lerobot.async_inference.robot_client \
+    --server_address=127.0.0.1:8080 \ # SERVER：策略服务器的主机地址和端口
+    --robot.type=so100_follower \ # ROBOT：机器人类型
+    --robot.port=/dev/tty.usbmodem585A0076841 \ # ROBOT：机器人端口
+    --robot.id=follower_so100 \ # ROBOT：机器人 id，用于加载校准文件
+    --robot.cameras="{ laptop: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}, phone: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \ # POLICY：用于采集帧的摄像头
+    --task="dummy" \ # POLICY：策略执行的任务
+    --policy_type=your_policy_type \ # POLICY：要运行的策略类型
+    --pretrained_name_or_path=user/model \ # POLICY：服务器上模型的名称/路径
+    --policy_device=mps \ # POLICY：服务器上运行策略所使用的设备
+    --actions_per_chunk=50 \ # POLICY：每次输出的动作数量
+    --chunk_size_threshold=0.5 \ # CLIENT：向服务器发送新观测前的队列大小阈值
+    --aggregate_fn_name=weighted_average \ # CLIENT：用于聚合重叠部分动作的函数
+    --debug_visualize_queue_size=True # CLIENT：是否在运行时可视化队列大小
+```
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+import threading
+from lerobot.robots.so_follower import SO100FollowerConfig
+from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.async_inference.configs import RobotClientConfig
+from lerobot.async_inference.robot_client import RobotClient
+from lerobot.async_inference.helpers import visualize_action_queue_size
+
+# 1. 创建机器人实例
+"""运行 `python lerobot/find_cameras.py` 查看可用摄像头"""
+# 这些摄像头须与策略期望的摄像头匹配
+# 请查看 Hub 上对应策略的 config.json
+camera_cfg = {
+    "top": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=30),
+    "side": OpenCVCameraConfig(index_or_path=1, width=640, height=480, fps=30)
+}
+
+robot_cfg = SO100FollowerConfig(
+  port="/dev/tty.usbmodem585A0076841",
+  id="follower_so100",
+  cameras=camera_cfg
+)
+
+# 3. 创建客户端配置
+client_cfg = RobotClientConfig(
+    robot=robot_cfg,
+    server_address="localhost:8080",
+    policy_device="mps",
+    client_device="cpu",
+    policy_type="smolvla",
+    pretrained_name_or_path="<user>/smolvla_async",
+    chunk_size_threshold=0.5,
+    actions_per_chunk=50,  # 确保此值不超过策略支持的最大动作数
+)
+
+# 4. 创建并启动客户端
+client = RobotClient(client_cfg)
+
+# 5. 指定任务
+task = "Don't do anything, stay still"
+
+if client.start():
+    # 启动动作接收线程
+    action_receiver_thread = threading.Thread(target=client.receive_actions, daemon=True)
+    action_receiver_thread.start()
+
+    try:
+        # 运行控制循环
+        client.control_loop(task)
+    except KeyboardInterrupt:
+        client.stop()
+        action_receiver_thread.join()
+        # （可选）绘制动作队列大小
+        visualize_action_queue_size(client.action_queue_size)
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+以下两个参数在任何配置中都至关重要：
+
+<table>
+  <thead>
+    <tr>
+      <th>超参数</th>
+      <th>默认值</th>
+      <th>作用</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>
+        <code>actions_per_chunk</code>
+      </td>
+      <td>50</td>
+      <td>
+        策略每次输出的动作数量。典型值：10-50。
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>chunk_size_threshold</code>
+      </td>
+      <td>0.7</td>
+      <td>
+        当队列剩余不足 50% 时，客户端发送新观测。取值范围 [0, 1]。
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<Tip>
+  `actions_per_chunk` 和 `chunk_size_threshold` 的不同取值会产生不同的行为。
+</Tip>
+
+增大 `actions_per_chunk` 可以降低动作队列为空的概率，因为计算新批次时队列中有更多动作可用。
+但过大的 `actions_per_chunk` 也可能导致动作精度下降，因为在更长时间跨度上预测动作会带来误差累积。
+
+增大 `chunk_size_threshold` 则会更频繁地向 `PolicyServer` 发送观测以触发推理，从而产生更多动作块更新，这些更新在较大的重叠部分上聚合，带来更高的适应性。极端情况下，每个观测都会触发一次动作块预测，而当前批次只消耗极少动作，新批次随即生成。
+此选项也会对推理管线造成更大压力。相反，`chunk_size_threshold` 接近 0.0 时则退化为同步推理——只有当前批次耗尽时才发送新观测。
+
+我们发现 `actions_per_chunk` 和 `chunk_size_threshold` 的默认值在 [SmolVLA 论文](https://huggingface.co/papers/2506.01844) 的实验中表现良好，但建议针对你的具体配置尝试不同的取值以找到最佳组合。
+
+### 针对你的配置调整异步推理
+
+1. **谨慎选择计算资源。** [PI0](https://huggingface.co/lerobot/pi0) 在推理时占用约 14GB 内存，而 [SmolVLA](https://huggingface.co/lerobot/smolvla_base) 仅需约 2GB。应根据使用场景选择合适的计算资源，较小的策略所需计算资源更少。策略与设备的组合（CPU 密集型、使用 MPS，或特定 NVIDIA GPU 的 CUDA 核心数量）直接影响预期的平均推理延迟。
+2. **根据推理延迟调整 `fps`。** 服务器生成新动作块期间，客户端并不空闲，而是持续执行当前动作队列中的动作。若两者速度差异过大，客户端可能出现队列为空的情况。因此，如果动作队列频繁为空，应降低 fps。
+3. **调整 `chunk_size_threshold`。**
+   - 接近 `0.0` 的值接近顺序推理行为；接近 `1.0` 的值则每步都发送观测（带宽消耗更大，依赖良好的世界模型）。
+   - 我们发现 0.5-0.6 左右的值效果较好。如需调整，可启动 `RobotClient` 并将 `--debug_visualize_queue_size` 设为 `True`，运行时将绘制动作队列大小的变化曲线，帮助你找到最适合的 `chunk_size_threshold` 值。
+
+<p align="center">
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/async-inference/queues.png"
+    width="80%"
+  ></img>
+</p>
+<p align="center">
+  <i>
+    传入 `--debug_visualize_queue_size` 标志后，运行时将绘制动作队列大小，
+    展示不同 `chunk_size_threshold` 取值（SmolVLA 论文中记为 `g`）下的队列变化曲线。
+  </i>
+</p>
+
+---
+
+## 结语
+
+异步推理代表了实时机器人控制领域的重大进步，从根本上解决了长期困扰机器人应用的推理延迟问题。通过本教程，你已学会如何搭建完整的异步推理流水线，消除空闲帧，实现更流畅、响应更快的机器人行为。
+
+**核心要点：**
+
+- **范式转变**：异步推理将动作预测与执行解耦，机器人在持续运动的同时，新的动作块在后台并行计算
+- **性能提升**：消除了同步推理固有的"等待推理"延迟，随着策略模型规模增大，这一优势愈发重要
+- **灵活架构**：服务器-客户端设计支持分布式计算，推理可在强大的远程硬件上运行，同时保持实时机器人控制
+- **可调参数**：成功运行的关键在于针对具体硬件、策略和任务需求，合理配置 `actions_per_chunk` 和 `chunk_size_threshold`
+- **广泛兼容**：支持所有 LeRobot 兼容的策略，从轻量级 ACT 模型到 SmolVLA 等视觉语言模型
+
+从默认参数开始实验，监控动作队列大小，并持续优化配置，以在你的具体使用场景中达到最佳性能。
+如需进一步讨论，欢迎加入我们的 [Discord 社区](https://discord.gg/s3KuuzsPFb)，或在我们的 [GitHub 仓库](https://github.com/huggingface/lerobot/issues)提交 issue。

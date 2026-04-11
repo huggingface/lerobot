@@ -1,0 +1,95 @@
+# ACT（Action Chunking with Transformers）
+
+ACT 是一种兼顾轻量化与高效率的模仿学习策略，尤其适用于高精度操作任务。由于训练速度快、计算资源需求低且性能表现优异，我们将其作为 LeRobot 新手的首推模型。
+
+<div class="video-container">
+  <iframe
+    width="100%"
+    height="415"
+    src="https://www.youtube.com/embed/ft73x0LfGpM"
+    title="LeRobot ACT Tutorial"
+    frameborder="0"
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+    allowfullscreen
+  ></iframe>
+</div>
+
+_观看 LeRobot 团队出品的教程，了解 ACT 的工作原理：[LeRobot ACT Tutorial](https://www.youtube.com/watch?v=ft73x0LfGpM)_
+
+## 模型概述
+
+Action Chunking with Transformers（ACT）由 Zhao 等人在论文 [Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware](https://arxiv.org/abs/2304.13705) 中提出。该策略旨在利用低成本硬件与少量示范数据，完成精确的接触密集型操作任务。
+
+### ACT 适合新手的原因
+
+ACT 作为入门首选，有以下几点突出优势：
+
+- **训练速度快**：单块 GPU 数小时内即可完成训练
+- **模型轻量**：参数量仅约 80M，易于使用与部署
+- **数据高效**：通常只需 50 条示范数据，即可达到较高的任务成功率
+
+### 架构
+
+ACT 采用基于 Transformer 的架构，包含三个核心模块：
+
+1. **视觉骨干网络**：使用 ResNet-18 处理来自多个相机视角的图像
+2. **Transformer 编码器**：融合相机特征、关节位置以及学习到的潜变量
+3. **Transformer 解码器**：通过交叉注意力机制生成连贯的动作序列
+
+策略的输入包括：
+
+- 多路 RGB 图像（如腕部相机、前置或顶置相机）
+- 机器人当前各关节的位置
+- 潜在风格变量 `z`（训练时学习，推理时置零）
+
+输出为未来 `k` 步的动作序列块。
+
+## 安装要求
+
+1. 按照[安装指南](./installation)完成 LeRobot 的安装。
+2. ACT 已包含在 LeRobot 的基础安装中，无需额外安装任何依赖！
+
+## 训练 ACT
+
+ACT 与 LeRobot 标准训练流程无缝兼容。以下是在自定义数据集上训练 ACT 的完整示例：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=${HF_USER}/your_dataset \
+  --policy.type=act \
+  --output_dir=outputs/train/act_your_dataset \
+  --job_name=act_your_dataset \
+  --policy.device=cuda \
+  --wandb.enable=true \
+  --policy.repo_id=${HF_USER}/act_policy
+```
+
+### 训练建议
+
+1. **从默认参数开始**：ACT 的默认超参数对大多数任务都有良好表现
+2. **训练时长**：单块 GPU 训练 10 万步大约需要数小时
+3. **批量大小**：建议从 8 开始，根据显存情况适当调整
+
+### 使用 Google Colab 训练
+
+如果本地没有性能足够的 GPU，可以使用 Google Colab 进行云端训练，具体步骤参考 [ACT 训练 Notebook](./notebooks#training-act)。
+
+## 评估 ACT
+
+训练完成后，使用 `lerobot-record` 命令配合已训练的策略进行评估。该命令会运行推理并记录评估片段：
+
+```bash
+lerobot-record \
+  --robot.type=so100_follower \
+  --robot.port=/dev/ttyACM0 \
+  --robot.id=my_robot \
+  --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+  --display_data=true \
+  --dataset.repo_id=${HF_USER}/eval_act_your_dataset \
+  --dataset.num_episodes=10 \
+  --dataset.single_task="Your task description" \
+  --dataset.streaming_encoding=true \
+  --dataset.encoder_threads=2 \
+  # --dataset.vcodec=auto \
+  --policy.path=${HF_USER}/act_policy
+```
