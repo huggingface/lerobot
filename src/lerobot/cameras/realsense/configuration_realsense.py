@@ -45,6 +45,15 @@ class RealSenseCameraConfig(CameraConfig):
         use_depth: Whether to enable depth stream. Defaults to False.
         rotation: Image rotation setting (0°, 90°, 180°, or 270°). Defaults to no rotation.
         warmup_s: Time reading frames before returning from connect (in seconds)
+        exposure: Manual exposure value for the color sensor. When set, auto-exposure is
+            disabled and this fixed value is used. Valid range depends on the camera model
+            (e.g., 1-10000 for D400 series). Defaults to None (auto-exposure).
+        gain: Manual gain value for the color sensor. When set, auto-exposure is disabled
+            and this fixed gain is used. Valid range depends on the camera model
+            (e.g., 16-248 for D400 series). Defaults to None (auto).
+        white_balance: Manual white balance value for the color sensor. When set, auto
+            white balance is disabled and this fixed value is used. Valid range depends on
+            the camera model (e.g., 2800-6500 for D400 series). Defaults to None (auto).
 
     Note:
         - Either name or serial_number must be specified.
@@ -58,6 +67,9 @@ class RealSenseCameraConfig(CameraConfig):
     use_depth: bool = False
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     warmup_s: int = 1
+    exposure: int | None = None
+    gain: int | None = None
+    white_balance: int | None = None
 
     def __post_init__(self) -> None:
         self.color_mode = ColorMode(self.color_mode)
