@@ -64,6 +64,20 @@ class PolicyServerConfig:
         default=DEFAULT_OBS_QUEUE_TIMEOUT, metadata={"help": "Timeout for observation queue in seconds"}
     )
 
+    # Observation similarity configuration
+    obs_similarity_atol: float = field(
+        default=1.0,
+        metadata={
+            "help": (
+                "Absolute tolerance for the joint-space observation similarity check. "
+                "Observations whose L2 distance is below this threshold are considered "
+                "'similar' and skipped to avoid redundant inference. "
+                "Lower values trigger inference more often (useful for precise robots); "
+                "set to 0.0 to disable the similarity check entirely."
+            )
+        },
+    )
+
     def __post_init__(self):
         """Validate configuration after initialization."""
         if self.port < 1 or self.port > 65535:
@@ -77,6 +91,9 @@ class PolicyServerConfig:
 
         if self.obs_queue_timeout < 0:
             raise ValueError(f"obs_queue_timeout must be non-negative, got {self.obs_queue_timeout}")
+
+        if self.obs_similarity_atol < 0:
+            raise ValueError(f"obs_similarity_atol must be non-negative, got {self.obs_similarity_atol}")
 
     @classmethod
     def from_dict(cls, config_dict: dict) -> "PolicyServerConfig":
