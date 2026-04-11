@@ -28,6 +28,7 @@ from lerobot.async_inference.helpers import (
     prepare_raw_observation,
     raw_observation_to_observation,
     resize_robot_observation_image,
+    validate_camera_setup,
 )
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
@@ -448,3 +449,130 @@ def test_image_processing_pipeline_preserves_content():
     corner_val = processed_img[:, 5, 5].mean()  # Corner
 
     assert center_val > corner_val, "Image processing should preserve recognizable patterns"
+
+
+# ---------------------------------------------------------------------
+# validate_camera_setup()
+# ---------------------------------------------------------------------
+
+
+def test_validate_camera_setup_perfect_match():
+    """Test validation passes when robot cameras perfectly match policy expectations."""
+    robot_camera_keys = {"laptop", "phone"}
+    policy_image_features = {
+        "observation.images.laptop": PolicyFeature(
+            type=FeatureType.VISUAL,
+            shape=(3, 224, 224),
+        ),
+        "observation.images.phone": PolicyFeature(
+            type=FeatureType.VISUAL,
+            shape=(3, 160, 160),
+        ),
+    }
+
+    # Should not raise any exception
+    validate_camera_setup(robot_camera_keys, policy_image_features)
+
+
+def test_validate_camera_setup_subset_match():
+    """Test validation passes when robot has a subset of policy's expected cameras.
+
+    This tests the new behavior where it's OK for the policy to expect more cameras
+    than the robot provides, as long as the robot doesn't have any unexpected cameras.
+    """
+    robot_camera_keys = {"laptop"}  # Robot only has one camera
+    policy_image_features = {
+        "observation.images.laptop": PolicyFeature(
+            type=FeatureType.VISUAL,
+            shape=(3, 224, 224),
+        ),
+        "observation.images.phone": PolicyFeature(
+            type=FeatureType.VISUAL,
+            shape=(3, 160, 160),
+        ),
+        "observation.images.wrist": PolicyFeature(
+            type=FeatureType.VISUAL,
+            shape=(3, 128, 128),
+        ),
+    }
+
+    # Should not raise any exception - robot is a subset of policy expectations
+    validate_camera_setup(robot_camera_keys, policy_image_features)
+
+
+def test_validate_camera_setup_extra_camera_fails():
+    """Test validation fails when robot has cameras not expected by policy."""
+    import pytest
+
+    robot_camera_keys = {"laptop", "phone", "wrist"}  # Robot has extra camera
+    policy_image_features = {
+        "observation.images.laptop": PolicyFeature(
+            type=FeatureType.VISUAL,
+            shape=(3, 224, 224),
+        ),
+        "observation.images.phone": PolicyFeature(
+            type=FeatureType.VISUAL,
+            shape=(3, 160, 160),
+        ),
+    }
+
+    # Should raise ValueError because robot has 'wrist' camera that policy doesn't expect
+    with pytest.raises(ValueError) as exc_info:
+        validate_camera_setup(robot_camera_keys, policy_image_features)
+
+    error_msg = str(exc_info.value)
+    assert "Camera setup mismatch" in error_msg
+    assert "wrist" in error_msg
+    assert "Extra cameras on robot" in error_msg
+
+
+def test_validate_camera_setup_no_match_fails():
+    """Test validation fails when robot cameras don't match policy at all."""
+    import pytest
+
+    robot_camera_keys = {"ceiling", "floor"}  # Completely different cameras
+    policy_image_features = {
+        "observation.images.laptop": PolicyFeature(
+            type=FeatureType.VISUAL,
+            shape=(3, 224, 224),
+        ),
+        "observation.images.phone": PolicyFeature(
+            type=FeatureType.VISUAL,
+            shape=(3, 160, 160),
+        ),
+    }
+
+    # Should raise ValueError because robot has cameras not in policy
+    with pytest.raises(ValueError) as exc_info:
+        validate_camera_setup(robot_camera_keys, policy_image_features)
+
+    error_msg = str(exc_info.value)
+    assert "Camera setup mismatch" in error_msg
+    assert "ceiling" in error_msg or "floor" in error_msg
+    assert "Extra cameras on robot" in error_msg
+
+
+def test_validate_camera_setup_too_many_cameras_fails():
+    """Test validation fails when robot has more cameras than policy, even if all match."""
+    import pytest
+
+    robot_camera_keys = {"laptop", "phone", "wrist"}
+    policy_image_features = {
+        "observation.images.laptop": PolicyFeature(
+            type=FeatureType.VISUAL,
+            shape=(3, 224, 224),
+        ),
+        "observation.images.phone": PolicyFeature(
+            type=FeatureType.VISUAL,
+            shape=(3, 160, 160),
+        ),
+    }
+
+    # Should raise ValueError because robot has 3 cameras but policy expects 2
+    with pytest.raises(ValueError) as exc_info:
+        validate_camera_setup(robot_camera_keys, policy_image_features)
+
+    error_msg = str(exc_info.value)
+    assert "Camera setup mismatch" in error_msg
+    # Should mention count mismatch
+    assert "3" in error_msg and "2" in error_msg
