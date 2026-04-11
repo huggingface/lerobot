@@ -98,6 +98,16 @@ Remove camera feature:
         --operation.type remove_feature \
         --operation.feature_names "['observation.image']"
 
+Add an externally computed feature from a NumPy file:
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht \
+        --new_repo_id lerobot/pusht_with_reward \
+        --operation.type add_feature \
+        --operation.feature_name reward \
+        --operation.feature_values_path /path/to/reward.npy \
+        --operation.feature_dtype float32 \
+        --operation.feature_shape "[1]"
+
 Modify tasks - set a single task for all episodes (WARNING: modifies in-place):
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \
@@ -176,9 +186,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import draccus
+import numpy as np
 
 from lerobot.configs import parser
 from lerobot.datasets.dataset_tools import (
+    add_features,
     convert_image_to_video_dataset,
     delete_episodes,
     merge_datasets,
@@ -221,6 +233,16 @@ class MergeConfig(OperationConfig):
 @OperationConfig.register_subclass("remove_feature")
 @dataclass
 class RemoveFeatureConfig(OperationConfig):
+    feature_names: list[str] | None = None
+
+
+@OperationConfig.register_subclass("add_feature")
+@dataclass
+class AddFeatureConfig(OperationConfig):
+    feature_name: str | None = None
+    feature_values_path: str | None = None
+    feature_dtype: str | None = None
+    feature_shape: list[int] | None = None
     feature_names: list[str] | None = None
 
 
@@ -447,6 +469,77 @@ def handle_remove_feature(cfg: EditDatasetConfig) -> None:
         LeRobotDataset(output_repo_id, root=output_dir).push_to_hub()
 
 
+def _load_feature_values(feature_values_path: str) -> np.ndarray:
+    path = Path(feature_values_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Feature values file not found: {path}")
+
+    if path.suffix != ".npy":
+        raise ValueError(
+            f"Unsupported feature values format '{path.suffix}'. Only .npy files are currently supported."
+        )
+
+    values = np.load(path, allow_pickle=False)
+    if not isinstance(values, np.ndarray):
+        raise TypeError(f"Expected numpy.ndarray in {path}, got {type(values).__name__}")
+    return values
+
+
+def handle_add_feature(cfg: EditDatasetConfig) -> None:
+    if not isinstance(cfg.operation, AddFeatureConfig):
+        raise ValueError("Operation config must be AddFeatureConfig")
+
+    if not cfg.operation.feature_name:
+        raise ValueError("feature_name must be specified for add_feature operation")
+    if not cfg.operation.feature_values_path:
+        raise ValueError("feature_values_path must be specified for add_feature operation")
+    if not cfg.operation.feature_dtype:
+        raise ValueError("feature_dtype must be specified for add_feature operation")
+    if not cfg.operation.feature_shape:
+        raise ValueError("feature_shape must be specified for add_feature operation")
+
+    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+    output_repo_id, output_dir = get_output_path(
+        cfg.repo_id,
+        new_repo_id=cfg.new_repo_id,
+        root=cfg.root,
+        new_root=cfg.new_root,
+    )
+
+    # In case of in-place modification, make the dataset point to the backup directory
+    if output_dir == dataset.root:
+        dataset.root = dataset.root.with_name(dataset.root.name + "_old")
+
+    feature_values = _load_feature_values(cfg.operation.feature_values_path)
+    feature_info = {
+        "dtype": cfg.operation.feature_dtype,
+        "shape": tuple(cfg.operation.feature_shape),
+        "names": cfg.operation.feature_names,
+    }
+
+    logging.info(
+        f"Adding feature '{cfg.operation.feature_name}' from {cfg.operation.feature_values_path} to {cfg.repo_id}"
+    )
+    new_dataset = add_features(
+        dataset,
+        features={
+            cfg.operation.feature_name: (
+                feature_values,
+                feature_info,
+            )
+        },
+        output_dir=output_dir,
+        repo_id=output_repo_id,
+    )
+
+    logging.info(f"Dataset saved to {output_dir}")
+    logging.info(f"Added feature: {cfg.operation.feature_name}")
+
+    if cfg.push_to_hub:
+        logging.info(f"Pushing to hub as {output_repo_id}")
+        LeRobotDataset(output_repo_id, root=output_dir).push_to_hub()
+
+
 def handle_modify_tasks(cfg: EditDatasetConfig) -> None:
     if not isinstance(cfg.operation, ModifyTasksConfig):
         raise ValueError("Operation config must be ModifyTasksConfig")
@@ -645,6 +738,8 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
         handle_split(cfg)
     elif operation_type == "merge":
         handle_merge(cfg)
+    elif operation_type == "add_feature":
+        handle_add_feature(cfg)
     elif operation_type == "remove_feature":
         handle_remove_feature(cfg)
     elif operation_type == "modify_tasks":
