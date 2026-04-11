@@ -27,10 +27,15 @@ from .batch_processor import AddBatchDimensionProcessorStep
 from .converters import (
     batch_to_transition,
     create_transition,
+    from_tensor_to_numpy,
+    identity_transition,
+    policy_action_to_transition,
     transition_to_batch,
+    transition_to_policy_action,
 )
 from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
 from .device_processor import DeviceProcessorStep
+from .env_processor import IsaaclabArenaProcessorStep, LiberoProcessorStep
 from .factory import (
     make_default_processors,
     make_default_robot_action_processor,
@@ -81,7 +86,7 @@ from .relative_action_processor import (
     to_absolute_actions,
     to_relative_actions,
 )
-from .rename_processor import RenameObservationsProcessorStep
+from .rename_processor import RenameObservationsProcessorStep, rename_stats
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
 
 __all__ = [
@@ -91,6 +96,10 @@ __all__ = [
     "ComplementaryDataProcessorStep",
     "batch_to_transition",
     "create_transition",
+    "from_tensor_to_numpy",
+    "identity_transition",
+    "policy_action_to_transition",
+    "transition_to_policy_action",
     "DeviceProcessorStep",
     "DoneProcessorStep",
     "EnvAction",
@@ -122,10 +131,13 @@ __all__ = [
     "RobotAction",
     "RobotActionProcessorStep",
     "RobotObservation",
+    "rename_stats",
     "RenameObservationsProcessorStep",
     "RewardClassifierProcessorStep",
     "RewardProcessorStep",
     "DataProcessorPipeline",
+    "IsaaclabArenaProcessorStep",
+    "LiberoProcessorStep",
     "TimeLimitProcessorStep",
     "AddBatchDimensionProcessorStep",
     "RobotProcessorPipeline",

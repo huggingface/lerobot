@@ -18,9 +18,9 @@ import os
 import numpy as np
 
 from lerobot.types import RobotAction, RobotObservation
-from lerobot.utils.import_utils import require_package
 
 from .constants import ACTION, ACTION_PREFIX, OBS_PREFIX, OBS_STR
+from .import_utils import require_package
 
 
 def init_rerun(

@@ -21,17 +21,17 @@ from pathlib import Path
 import datasets
 import torch
 
-from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-from lerobot.datasets.feature_utils import (
+from .dataset_metadata import LeRobotDatasetMetadata
+from .feature_utils import (
     check_delta_timestamps,
     get_delta_indices,
     get_hf_features_from_features,
 )
-from lerobot.datasets.io_utils import (
+from .io_utils import (
     hf_transform_to_torch,
     load_nested_dataset,
 )
-from lerobot.datasets.video_utils import decode_video_frames
+from .video_utils import decode_video_frames
 
 
 class DatasetReader:

@@ -25,8 +25,9 @@ from typing import Any
 
 import numpy as np
 
-from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.utils.constants import ACTION, DEFAULT_FEATURES, OBS_ENV_STATE, OBS_STR
+from lerobot.configs import FeatureType, PolicyFeature
+
+from .constants import ACTION, DEFAULT_FEATURES, OBS_ENV_STATE, OBS_STR
 
 
 def _validate_feature_names(features: dict[str, dict]) -> None:

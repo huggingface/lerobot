@@ -47,6 +47,9 @@ class DiffuserSchedulerConfig(LRSchedulerConfig):
     num_warmup_steps: int | None = None
 
     def build(self, optimizer: Optimizer, num_training_steps: int) -> LambdaLR:
+        from lerobot.utils.import_utils import require_package
+
+        require_package("diffusers", extra="diffusion")
         from diffusers.optimization import get_scheduler
 
         kwargs = {**asdict(self), "num_training_steps": num_training_steps, "optimizer": optimizer}

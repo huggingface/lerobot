@@ -28,10 +28,11 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 from torch.distributions import MultivariateNormal, TanhTransform, Transform, TransformedDistribution
 
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.sac.configuration_sac import SACConfig, is_image_feature
-from lerobot.policies.utils import get_device_from_parameters
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE
+
+from ..pretrained import PreTrainedPolicy
+from ..utils import get_device_from_parameters
+from .configuration_sac import SACConfig, is_image_feature
 
 DISCRETE_DIMENSION_INDEX = -1  # Gripper is always the last dimension
 

@@ -27,11 +27,10 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import torch
 
-from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies import PreTrainedPolicy, prepare_observation_for_inference
 
 if TYPE_CHECKING:
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.policies.utils import prepare_observation_for_inference
+    from lerobot.datasets import LeRobotDataset
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.robots import Robot
 from lerobot.types import PolicyAction
@@ -218,12 +217,12 @@ def sanity_check_dataset_robot_compatibility(
     Raises:
         ValueError: If any of the checked metadata fields do not match.
     """
-    from lerobot.utils.import_utils import require_package
+    from .import_utils import require_package
 
     require_package("deepdiff", extra="hardware")
     from deepdiff import DeepDiff
 
-    from lerobot.utils.constants import DEFAULT_FEATURES
+    from .constants import DEFAULT_FEATURES
 
     fields = [
         ("robot_type", dataset.meta.robot_type, robot.robot_type),

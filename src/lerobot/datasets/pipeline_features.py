@@ -16,7 +16,7 @@ import re
 from collections.abc import Sequence
 from typing import Any
 
-from lerobot.configs.types import PipelineFeatureType
+from lerobot.configs import PipelineFeatureType
 from lerobot.processor import DataProcessorPipeline
 from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE, OBS_STR

@@ -20,7 +20,7 @@ from typing import Any
 
 import zmq
 
-from lerobot.robots.unitree_g1.config_unitree_g1 import UnitreeG1Config
+from .config_unitree_g1 import UnitreeG1Config
 
 # Module-level ZMQ state mirrors the Unitree SDK's global ChannelFactory Singleton.
 # Only one robot connection per process is supported.

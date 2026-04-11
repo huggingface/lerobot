@@ -14,5 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from lerobot.utils.import_utils import require_package
+
+require_package("dynamixel-sdk", extra="dynamixel", import_name="dynamixel_sdk")
+
 from .dynamixel import DriveMode, DynamixelMotorsBus, OperatingMode, TorqueMode
 from .tables import *

@@ -16,6 +16,11 @@ import copy
 
 import torch
 from torch import nn
+
+from lerobot.utils.import_utils import require_package
+
+require_package("transformers", extra="smolvla")
+
 from transformers import (
     AutoConfig,
     AutoModel,

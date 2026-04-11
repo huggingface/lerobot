@@ -19,7 +19,7 @@ from typing import Any
 
 import torch
 
-from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.processor import ActionProcessorStep, PolicyAction, ProcessorStepRegistry, RobotAction
 from lerobot.utils.constants import ACTION
 

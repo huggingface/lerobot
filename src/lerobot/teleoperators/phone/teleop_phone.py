@@ -26,10 +26,11 @@ import hebi
 import numpy as np
 from teleop import Teleop
 
-from lerobot.teleoperators.phone.config_phone import PhoneConfig, PhoneOS
-from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.rotation import Rotation
+
+from ..teleoperator import Teleoperator
+from .config_phone import PhoneConfig, PhoneOS
 
 logger = logging.getLogger(__name__)
 

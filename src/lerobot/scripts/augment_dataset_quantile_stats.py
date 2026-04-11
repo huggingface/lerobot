@@ -44,9 +44,14 @@ from huggingface_hub import HfApi
 from requests import HTTPError
 from tqdm import tqdm
 
-from lerobot.datasets import LeRobotDataset, write_stats
-from lerobot.datasets.compute_stats import DEFAULT_QUANTILES, aggregate_stats, get_feature_stats
-from lerobot.datasets.dataset_metadata import CODEBASE_VERSION
+from lerobot.datasets import (
+    CODEBASE_VERSION,
+    LeRobotDataset,
+    aggregate_stats,
+    get_feature_stats,
+    write_stats,
+)
+from lerobot.datasets.compute_stats import DEFAULT_QUANTILES
 from lerobot.utils.utils import init_logging
 
 

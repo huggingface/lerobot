@@ -43,6 +43,14 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from lerobot.utils.import_utils import require_package
+
+require_package("transformers", extra="wallx")
+require_package("peft", extra="wallx")
+require_package("torchdiffeq", extra="wallx")
+require_package("qwen-vl-utils", extra="wallx", import_name="qwen_vl_utils")
+
 from peft import LoraConfig, get_peft_model
 from PIL import Image
 from qwen_vl_utils.vision_process import smart_resize
@@ -59,10 +67,12 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
 )
 from transformers.utils import is_torchdynamo_compiling, logging
 
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.utils import populate_queues
-from lerobot.policies.wall_x.configuration_wall_x import WallXConfig
-from lerobot.policies.wall_x.constant import (
+from lerobot.utils.constants import ACTION, OBS_STATE
+
+from ..pretrained import PreTrainedPolicy
+from ..utils import populate_queues
+from .configuration_wall_x import WallXConfig
+from .constant import (
     GENERATE_SUBTASK_RATIO,
     IMAGE_FACTOR,
     MAX_PIXELS,
@@ -72,19 +82,18 @@ from lerobot.policies.wall_x.constant import (
     RESOLUTION,
     TOKENIZER_MAX_LENGTH,
 )
-from lerobot.policies.wall_x.qwen_model.configuration_qwen2_5_vl import Qwen2_5_VLConfig
-from lerobot.policies.wall_x.qwen_model.qwen2_5_vl_moe import (
+from .qwen_model.configuration_qwen2_5_vl import Qwen2_5_VLConfig
+from .qwen_model.qwen2_5_vl_moe import (
     Qwen2_5_VisionTransformerPretrainedModel,
     Qwen2_5_VLACausalLMOutputWithPast,
     Qwen2_5_VLMoEModel,
 )
-from lerobot.policies.wall_x.utils import (
+from .utils import (
     get_wallx_normal_text,
     preprocesser_call,
     process_grounding_points,
     replace_action_token,
 )
-from lerobot.utils.constants import ACTION, OBS_STATE
 
 logger = logging.get_logger(__name__)
 

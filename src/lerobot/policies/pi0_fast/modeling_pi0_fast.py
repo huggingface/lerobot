@@ -38,7 +38,7 @@ if TYPE_CHECKING or _transformers_available:
     from transformers import AutoTokenizer
     from transformers.models.auto import CONFIG_MAPPING
 
-    from lerobot.policies.pi_gemma import (
+    from ..pi_gemma import (
         PaliGemmaForConditionalGenerationWithPiGemma,
         PiGemmaModel,
     )
@@ -48,10 +48,7 @@ else:
     PiGemmaModel = None
     PaliGemmaForConditionalGenerationWithPiGemma = None
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig
-from lerobot.policies.pretrained import PreTrainedPolicy, T
-from lerobot.policies.rtc.modeling_rtc import RTCProcessor
+from lerobot.configs import PreTrainedConfig
 from lerobot.utils.constants import (
     ACTION,
     ACTION_TOKEN_MASK,
@@ -60,6 +57,10 @@ from lerobot.utils.constants import (
     OBS_LANGUAGE_TOKENS,
     OPENPI_ATTENTION_MASK_VALUE,
 )
+
+from ..pretrained import PreTrainedPolicy, T
+from ..rtc.modeling_rtc import RTCProcessor
+from .configuration_pi0_fast import PI0FastConfig
 
 
 class ActionSelectKwargs(TypedDict, total=False):

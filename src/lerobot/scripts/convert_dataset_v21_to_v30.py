@@ -59,9 +59,7 @@ from datasets import Dataset, Features, Image
 from huggingface_hub import HfApi, snapshot_download
 from requests import HTTPError
 
-from lerobot.datasets import LeRobotDataset
-from lerobot.datasets.compute_stats import aggregate_stats
-from lerobot.datasets.dataset_metadata import CODEBASE_VERSION
+from lerobot.datasets import CODEBASE_VERSION, LeRobotDataset, aggregate_stats
 from lerobot.datasets.io_utils import (
     cast_stats_to_numpy,
     get_file_size_in_mb,

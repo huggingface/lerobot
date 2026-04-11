@@ -19,7 +19,7 @@ import torch.nn.functional as F  # noqa: N812
 
 from lerobot.utils.import_utils import require_package
 
-require_package("diffusers", extra="training")
+require_package("diffusers", extra="groot")
 
 from diffusers import ConfigMixin, ModelMixin  # noqa: E402
 from diffusers.configuration_utils import register_to_config  # noqa: E402

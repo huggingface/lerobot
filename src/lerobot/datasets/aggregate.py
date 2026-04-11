@@ -23,10 +23,10 @@ import datasets
 import pandas as pd
 import tqdm
 
-from lerobot.datasets.compute_stats import aggregate_stats
-from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-from lerobot.datasets.feature_utils import get_hf_features_from_features
-from lerobot.datasets.io_utils import (
+from .compute_stats import aggregate_stats
+from .dataset_metadata import LeRobotDatasetMetadata
+from .feature_utils import get_hf_features_from_features
+from .io_utils import (
     get_file_size_in_mb,
     get_parquet_file_size_in_mb,
     to_parquet_with_hf_images,
@@ -34,7 +34,7 @@ from lerobot.datasets.io_utils import (
     write_stats,
     write_tasks,
 )
-from lerobot.datasets.utils import (
+from .utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
@@ -43,7 +43,7 @@ from lerobot.datasets.utils import (
     DEFAULT_VIDEO_PATH,
     update_chunk_file_indices,
 )
-from lerobot.datasets.video_utils import concatenate_video_files, get_video_duration_in_s
+from .video_utils import concatenate_video_files, get_video_duration_in_s
 
 
 def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata]):

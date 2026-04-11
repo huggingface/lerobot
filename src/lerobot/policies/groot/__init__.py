@@ -14,6 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from lerobot.utils.import_utils import require_package
+
+require_package("transformers", extra="groot")
+
 from .configuration_groot import GrootConfig
 from .modeling_groot import GrootPolicy
 from .processor_groot import make_groot_pre_post_processors

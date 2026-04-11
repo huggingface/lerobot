@@ -63,11 +63,8 @@ from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.datasets import LeRobotDataset, make_dataset
-from lerobot.policies.factory import make_policy
+from lerobot.policies import make_policy
 from lerobot.policies.sac.modeling_sac import SACPolicy
-from lerobot.rl.buffer import ReplayBuffer, concatenate_batch_transitions
-from lerobot.rl.process import ProcessSignalHandler
-from lerobot.rl.wandb_utils import WandBLogger
 from lerobot.robots import so_follower  # noqa: F401
 from lerobot.teleoperators import gamepad, so_leader  # noqa: F401
 from lerobot.teleoperators.utils import TeleopEvents
@@ -99,7 +96,10 @@ from lerobot.utils.utils import (
     init_logging,
 )
 
+from .buffer import ReplayBuffer, concatenate_batch_transitions
 from .learner_service import MAX_WORKERS, SHUTDOWN_TIMEOUT, LearnerService
+from .process import ProcessSignalHandler
+from .wandb_utils import WandBLogger
 
 
 @parser.wrap()
@@ -151,7 +151,7 @@ def train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None):
 
     # Setup WandB logging if enabled
     if cfg.wandb.enable and cfg.wandb.project:
-        from lerobot.rl.wandb_utils import WandBLogger
+        from .wandb_utils import WandBLogger
 
         wandb_logger = WandBLogger(cfg)
     else:

@@ -14,11 +14,11 @@
 
 """Real-Time Chunking (RTC) utilities for action-chunking policies."""
 
-from lerobot.policies.rtc.action_interpolator import ActionInterpolator
-from lerobot.policies.rtc.action_queue import ActionQueue
-from lerobot.policies.rtc.configuration_rtc import RTCConfig
-from lerobot.policies.rtc.latency_tracker import LatencyTracker
-from lerobot.policies.rtc.modeling_rtc import RTCProcessor
+from .action_interpolator import ActionInterpolator
+from .action_queue import ActionQueue
+from .configuration_rtc import RTCConfig
+from .latency_tracker import LatencyTracker
+from .modeling_rtc import RTCProcessor
 
 __all__ = [
     "ActionInterpolator",

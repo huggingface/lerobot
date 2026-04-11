@@ -36,8 +36,9 @@ import torch.nn.functional as F  # noqa: N812
 import torchvision
 from torch import Tensor
 
-from lerobot.policies.multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
 from lerobot.utils.import_utils import _transformers_available
+
+from .configuration_multi_task_dit import MultiTaskDiTConfig
 
 # Conditional import for type checking and lazy loading
 if TYPE_CHECKING or _transformers_available:
@@ -45,8 +46,6 @@ if TYPE_CHECKING or _transformers_available:
 else:
     CLIPTextModel = None
     CLIPVisionModel = None
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.utils import populate_queues
 from lerobot.utils.constants import (
     ACTION,
     OBS_IMAGES,
@@ -54,6 +53,9 @@ from lerobot.utils.constants import (
     OBS_LANGUAGE_TOKENS,
     OBS_STATE,
 )
+
+from ..pretrained import PreTrainedPolicy
+from ..utils import populate_queues
 
 # -- Policy --
 
@@ -643,7 +645,7 @@ class DiffusionObjective(nn.Module):
 
         from lerobot.utils.import_utils import require_package
 
-        require_package("diffusers", extra="training")
+        require_package("diffusers", extra="multi_task_dit")
         from diffusers.schedulers.scheduling_ddim import DDIMScheduler
         from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 

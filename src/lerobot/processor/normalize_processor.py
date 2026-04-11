@@ -24,11 +24,11 @@ from typing import TYPE_CHECKING, Any
 import torch
 from torch import Tensor
 
-from lerobot.configs.types import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
+from lerobot.configs import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
 from lerobot.types import EnvTransition, PolicyAction, TransitionKey
 
 if TYPE_CHECKING:
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    from lerobot.datasets import LeRobotDataset
 
 from lerobot.utils.constants import ACTION
 

@@ -76,15 +76,12 @@ from typing import Any
 
 import torch
 
-from lerobot.cameras import (  # noqa: F401
-    CameraConfig,  # noqa: F401
-)
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
-from lerobot.cameras.reachy2_camera.configuration_reachy2_camera import Reachy2CameraConfig  # noqa: F401
-from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
-from lerobot.cameras.zmq.configuration_zmq import ZMQCameraConfig  # noqa: F401
-from lerobot.configs import parser
-from lerobot.configs.policies import PreTrainedConfig
+from lerobot.cameras import CameraConfig  # noqa: F401
+from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
+from lerobot.cameras.reachy2_camera import Reachy2CameraConfig  # noqa: F401
+from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.cameras.zmq import ZMQCameraConfig  # noqa: F401
+from lerobot.configs import PreTrainedConfig, parser
 from lerobot.datasets import (
     LeRobotDataset,
     VideoEncodingManager,
@@ -92,10 +89,13 @@ from lerobot.datasets import (
     create_initial_features,
     safe_stop_image_writer,
 )
-from lerobot.policies.factory import make_policy, make_pre_post_processors
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.rtc import ActionInterpolator
-from lerobot.policies.utils import make_robot_action
+from lerobot.policies import (
+    ActionInterpolator,
+    PreTrainedPolicy,
+    make_policy,
+    make_pre_post_processors,
+    make_robot_action,
+)
 from lerobot.processor import (
     PolicyAction,
     PolicyProcessorPipeline,
@@ -103,8 +103,8 @@ from lerobot.processor import (
     RobotObservation,
     RobotProcessorPipeline,
     make_default_processors,
+    rename_stats,
 )
-from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,

@@ -598,7 +598,7 @@ class _CameraEncoderThread(threading.Thread):
         self.encoder_threads = encoder_threads
 
     def run(self) -> None:
-        from lerobot.datasets.compute_stats import RunningQuantileStats, auto_downsample_height_width
+        from .compute_stats import RunningQuantileStats, auto_downsample_height_width
 
         container = None
         output_stream = None

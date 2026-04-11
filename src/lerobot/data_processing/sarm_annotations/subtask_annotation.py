@@ -76,7 +76,7 @@ import torch
 from pydantic import BaseModel, Field
 from transformers import AutoProcessor, Qwen3VLMoeForConditionalGeneration
 
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 
 
 # Pydantic Models for SARM Subtask Annotation

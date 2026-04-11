@@ -58,7 +58,7 @@ def write_video(video_path: str | Path, stacked_frames: list, fps: int) -> None:
         stacked_frames: List of HWC uint8 numpy arrays (RGB).
         fps: Frames per second for the output video.
     """
-    from lerobot.utils.import_utils import require_package
+    from .import_utils import require_package
 
     require_package("av", extra="av-dep")
     import av

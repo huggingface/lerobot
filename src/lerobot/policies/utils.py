@@ -21,10 +21,10 @@ import numpy as np
 import torch
 from torch import nn
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.configs import FeatureType, PolicyFeature, PreTrainedConfig
 from lerobot.types import PolicyAction, RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_STR
+from lerobot.utils.feature_utils import build_dataset_frame
 
 
 def populate_queues(
@@ -162,8 +162,6 @@ def build_inference_frame(
     Returns:
         A dictionary of preprocessed tensors ready for model inference.
     """
-    from lerobot.utils.feature_utils import build_dataset_frame
-
     # Extracts the correct keys from the incoming raw observation
     observation = build_dataset_frame(ds_features, observation, prefix=OBS_STR)
 

@@ -24,33 +24,35 @@ import pandas as pd
 import torch
 from faker import Faker
 from PIL import Image
+
+from lerobot.utils.import_utils import require_package
+
+require_package("transformers", extra="sarm")
+
 from transformers import CLIPModel, CLIPProcessor
 
-from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.policies.sarm.configuration_sarm import SARMConfig
-from lerobot.policies.sarm.sarm_utils import (
+from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.processor import (
+    AddBatchDimensionProcessorStep,
+    DeviceProcessorStep,
+    NormalizerProcessorStep,
+    PolicyProcessorPipeline,
+    ProcessorStep,
+    RenameObservationsProcessorStep,
+    from_tensor_to_numpy,
+    policy_action_to_transition,
+    transition_to_policy_action,
+)
+from lerobot.types import EnvTransition, PolicyAction, TransitionKey
+from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
+
+from .configuration_sarm import SARMConfig
+from .sarm_utils import (
     apply_rewind_augmentation,
     compute_absolute_indices,
     find_stage_and_tau,
     pad_state_to_max_dim,
 )
-from lerobot.processor import (
-    AddBatchDimensionProcessorStep,
-    DeviceProcessorStep,
-    NormalizerProcessorStep,
-    PolicyAction,
-    PolicyProcessorPipeline,
-    ProcessorStep,
-    RenameObservationsProcessorStep,
-)
-from lerobot.processor.converters import (
-    from_tensor_to_numpy,
-    policy_action_to_transition,
-    transition_to_policy_action,
-)
-from lerobot.processor.pipeline import PipelineFeatureType
-from lerobot.types import EnvTransition, TransitionKey
-from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
 
 class SARMEncodingProcessorStep(ProcessorStep):

@@ -19,15 +19,16 @@ import datasets
 import numpy as np
 from PIL import Image as PILImage
 
-from lerobot.datasets.utils import (
+from lerobot.utils.constants import DEFAULT_FEATURES
+from lerobot.utils.utils import is_valid_numpy_dtype_string
+
+from .utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
     DEFAULT_VIDEO_FILE_SIZE_IN_MB,
     DEFAULT_VIDEO_PATH,
 )
-from lerobot.utils.constants import DEFAULT_FEATURES
-from lerobot.utils.utils import is_valid_numpy_dtype_string
 
 
 def get_hf_features_from_features(features: dict) -> datasets.Features:

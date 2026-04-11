@@ -30,10 +30,11 @@ from typing import Any
 import torch
 from transformers import BatchFeature
 
-from lerobot.policies.wall_x.constant import (
+from lerobot.utils.constants import OBS_IMAGES
+
+from .constant import (
     CAMERA_NAME_MAPPING,
 )
-from lerobot.utils.constants import OBS_IMAGES
 
 
 @dataclass

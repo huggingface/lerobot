@@ -19,8 +19,8 @@ from typing import Any
 
 import gymnasium as gym
 
-from lerobot.envs.configs import EnvConfig, HubEnvConfig
-from lerobot.envs.utils import _call_make_env, _download_hub_file, _import_hub_module, _normalize_hub_result
+from .configs import EnvConfig, HubEnvConfig
+from .utils import _call_make_env, _download_hub_file, _import_hub_module, _normalize_hub_result
 
 
 def make_env_config(env_type: str, **kwargs) -> EnvConfig:

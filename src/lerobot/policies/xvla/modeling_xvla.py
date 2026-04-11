@@ -24,15 +24,19 @@ import os
 from collections import deque
 from pathlib import Path
 
+from lerobot.utils.import_utils import require_package
+
+require_package("transformers", extra="xvla")
+
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.policies.pretrained import PreTrainedPolicy, T
-from lerobot.policies.utils import populate_queues
+from lerobot.configs import PreTrainedConfig
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_TOKENS, OBS_STATE
 
+from ..pretrained import PreTrainedPolicy, T
+from ..utils import populate_queues
 from .action_hub import build_action_space
 from .configuration_florence2 import Florence2Config
 from .configuration_xvla import XVLAConfig
