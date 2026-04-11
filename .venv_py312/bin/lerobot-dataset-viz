@@ -1,0 +1,6 @@
+#!/Users/antoineboxho/Developer/Personal/02_projects/le-robot/lerobot/.venv_py312/bin/python3.12
+import sys
+from lerobot.scripts.lerobot_dataset_viz import main
+if __name__ == '__main__':
+    sys.argv[0] = sys.argv[0].removesuffix('.exe')
+    sys.exit(main())
