@@ -14,7 +14,11 @@
 
 from .act.configuration_act import ACTConfig as ACTConfig
 from .diffusion.configuration_diffusion import DiffusionConfig as DiffusionConfig
+<<<<<<< HEAD
 from .factory import get_policy_class, make_policy, make_policy_config, make_pre_post_processors
+=======
+from .flow_matching.configuration_flow_matching import FlowMatchingConfig as FlowMatchingConfig
+>>>>>>> d1e86721 (feat(policy): add flow matching policy and factory integration)
 from .groot.configuration_groot import GrootConfig as GrootConfig
 from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig as MultiTaskDiTConfig
 from .pi0.configuration_pi0 import PI0Config as PI0Config
@@ -40,7 +44,11 @@ __all__ = [
     # Configuration classes
     "ACTConfig",
     "DiffusionConfig",
+<<<<<<< HEAD
     "GrootConfig",
+=======
+    "FlowMatchingConfig",
+>>>>>>> d1e86721 (feat(policy): add flow matching policy and factory integration)
     "MultiTaskDiTConfig",
     "PI0Config",
     "PI0FastConfig",

@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, TypedDict, Unpack
 
 import torch
 
+<<<<<<< HEAD
 if TYPE_CHECKING:
     from lerobot.datasets import LeRobotDatasetMetadata
 
@@ -31,6 +32,33 @@ from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
+=======
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.types import FeatureType
+from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+from lerobot.datasets.feature_utils import dataset_to_policy_features
+from lerobot.envs.configs import EnvConfig
+from lerobot.envs.utils import env_to_policy_features
+from lerobot.policies.act.configuration_act import ACTConfig
+from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
+from lerobot.policies.groot.configuration_groot import GrootConfig
+from lerobot.policies.multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
+from lerobot.policies.pi0.configuration_pi0 import PI0Config
+from lerobot.policies.pi05.configuration_pi05 import PI05Config
+from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.sac.configuration_sac import SACConfig
+from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
+from lerobot.policies.sarm.configuration_sarm import SARMConfig
+from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
+from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
+from lerobot.policies.flow_matching.configuration_flow_matching import FlowMatchingConfig
+from lerobot.policies.utils import validate_visual_features_consistency
+from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
+from lerobot.policies.wall_x.configuration_wall_x import WallXConfig
+from lerobot.policies.xvla.configuration_xvla import XVLAConfig
+from lerobot.processor import PolicyProcessorPipeline
+from lerobot.processor.converters import (
+>>>>>>> d1e86721 (feat(policy): add flow matching policy and factory integration)
     batch_to_transition,
     policy_action_to_transition,
     transition_to_batch,
@@ -184,6 +212,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
     """
     if policy_type == "tdmpc":
         return TDMPCConfig(**kwargs)
+    elif policy_type == "flow_matching":
+        return FlowMatchingConfig(**kwargs)
     elif policy_type == "diffusion":
         return DiffusionConfig(**kwargs)
     elif policy_type == "act":
@@ -316,6 +346,14 @@ def make_pre_post_processors(
         from .tdmpc.processor_tdmpc import make_tdmpc_pre_post_processors
 
         processors = make_tdmpc_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, FlowMatchingConfig):
+        from lerobot.policies.flow_matching.processor_flow_matching import make_flow_matching_pre_post_processors
+
+        processors = make_flow_matching_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
