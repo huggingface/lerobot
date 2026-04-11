@@ -470,8 +470,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         # Get episode index from the item
         ep_idx = item["episode_index"]
 
-        # "timestamp" restarts from 0 for each episode, whereas we need a global timestep within the single .mp4 file (given by index/fps)
-        current_ts = item["index"] / self.fps
+        # Use per-episode timestamp (not global index) for video frame lookup
+        current_ts = item["timestamp"].item() if "timestamp" in item else item["frame_index"].item() / self.fps
 
         episode_boundaries_ts = {
             key: (
