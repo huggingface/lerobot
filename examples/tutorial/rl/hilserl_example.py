@@ -6,7 +6,6 @@ from queue import Empty, Full
 import torch
 import torch.optim as optim
 
-from lerobot.datasets.feature_utils import hw_to_dataset_features
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.envs.configs import HILSerlProcessorConfig, HILSerlRobotEnvConfig
 from lerobot.policies.sac.configuration_sac import SACConfig
@@ -17,6 +16,7 @@ from lerobot.rl.gym_manipulator import make_robot_env
 from lerobot.robots.so_follower import SO100FollowerConfig
 from lerobot.teleoperators.so_leader import SO100LeaderConfig
 from lerobot.teleoperators.utils import TeleopEvents
+from lerobot.utils.feature_utils import hw_to_dataset_features
 
 LOG_EVERY = 10
 SEND_EVERY = 10

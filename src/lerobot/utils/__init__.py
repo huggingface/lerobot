@@ -15,10 +15,9 @@
 """
 Public API for lightweight, base-dependency-only utilities.
 
-Heavy utility modules (train_utils, control_utils, visualization_utils)
-are intentionally NOT re-exported here to avoid pulling in optional
-dependencies. Import them directly, e.g.:
-``from lerobot.utils.train_utils import save_checkpoint``
+Heavy cross-cutting modules (train_utils, control_utils) have been moved
+to ``lerobot.common``. ``visualization_utils`` remains here but is
+intentionally NOT re-exported to avoid pulling in optional dependencies.
 """
 
 from .constants import (

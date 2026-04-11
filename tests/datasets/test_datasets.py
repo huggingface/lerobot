@@ -26,7 +26,6 @@ from PIL import Image
 from safetensors.torch import load_file
 from torchvision.transforms import v2
 
-import lerobot
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import make_dataset
@@ -494,13 +493,28 @@ def test_tmp_mixed_deletion(tmp_path, empty_lerobot_dataset_factory):
 # - [ ] remove old tests
 
 
+ENV_DATASET_POLICY_TRIPLETS = [
+    ("aloha", dataset, "act")
+    for dataset in [
+        "lerobot/aloha_sim_insertion_human",
+        "lerobot/aloha_sim_insertion_scripted",
+        "lerobot/aloha_sim_transfer_cube_human",
+        "lerobot/aloha_sim_transfer_cube_scripted",
+        "lerobot/aloha_sim_insertion_human_image",
+        "lerobot/aloha_sim_insertion_scripted_image",
+        "lerobot/aloha_sim_transfer_cube_human_image",
+        "lerobot/aloha_sim_transfer_cube_scripted_image",
+    ]
+] + [
+    ("pusht", dataset, policy)
+    for dataset in ["lerobot/pusht", "lerobot/pusht_image"]
+    for policy in ["diffusion", "vqbet"]
+]
+
+
 @pytest.mark.parametrize(
     "env_name, repo_id, policy_name",
-    # Single dataset
-    lerobot.env_dataset_policy_triplets,
-    # Multi-dataset
-    # TODO after fix multidataset
-    # + [("aloha", ["lerobot/aloha_sim_insertion_human", "lerobot/aloha_sim_transfer_cube_human"], "act")],
+    ENV_DATASET_POLICY_TRIPLETS,
 )
 def test_factory(env_name, repo_id, policy_name):
     """

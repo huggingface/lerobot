@@ -115,7 +115,8 @@ build = [
 # ── User-facing composite extras (map to CLI scripts) ─────
 # lerobot-record, lerobot-replay, lerobot-calibrate, lerobot-teleoperate, etc.
 robot = ["lerobot[dataset]", "lerobot[hardware]", "lerobot[viz]"]
-# lerobot-eval -- base evaluation framework. You also need the policy's extra (e.g., lerobot[pi]).
+# lerobot-eval -- base evaluation framework. You also need the policy's extra (e.g., lerobot[pi])
+# and the environment's extra (e.g., lerobot[pusht]) if evaluating in simulation.
 evaluation = ["lerobot[av-dep]"]
 # lerobot-dataset-viz, lerobot-imgtransform-viz
 dataset_viz = ["lerobot[dataset]", "lerobot[viz]"]
@@ -307,6 +308,8 @@ ignore = [
 "src/lerobot/policies/smolvla/smolvlm_with_expert.py" = ["E402"]
 "src/lerobot/policies/xvla/modeling_xvla.py" = ["E402"]
 "src/lerobot/policies/sarm/processor_sarm.py" = ["E402"]
+"src/lerobot/scripts/convert_dataset_v21_to_v30.py" = ["E402"]
+"src/lerobot/teleoperators/unitree_g1/exo_serial.py" = ["E402"]
 "src/lerobot/policies/wall_x/**" = ["N801", "N812", "SIM102", "SIM108", "SIM210", "SIM211", "B006", "B007", "SIM118"] # Supprese these as they are coming from original Qwen2_5_vl code TODO(pepijn): refactor original
 
 [tool.ruff.lint.isort]

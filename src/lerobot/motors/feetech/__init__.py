@@ -19,4 +19,6 @@ from lerobot.utils.import_utils import require_package
 require_package("feetech-servo-sdk", extra="feetech", import_name="scservo_sdk")
 
 from .feetech import DriveMode, FeetechMotorsBus, OperatingMode, TorqueMode
-from .tables import *
+from .tables import *  # noqa: F403 — hardware constant tables
+
+__all__ = ["DriveMode", "FeetechMotorsBus", "OperatingMode", "TorqueMode"]

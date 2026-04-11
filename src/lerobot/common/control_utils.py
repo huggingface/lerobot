@@ -217,12 +217,12 @@ def sanity_check_dataset_robot_compatibility(
     Raises:
         ValueError: If any of the checked metadata fields do not match.
     """
-    from .import_utils import require_package
+    from lerobot.utils.import_utils import require_package
 
     require_package("deepdiff", extra="hardware")
     from deepdiff import DeepDiff
 
-    from .constants import DEFAULT_FEATURES
+    from lerobot.utils.constants import DEFAULT_FEATURES
 
     fields = [
         ("robot_type", dataset.meta.robot_type, robot.robot_type),

@@ -20,22 +20,37 @@ from functools import wraps
 import pytest
 import torch
 
-from lerobot import available_cameras, available_motors, available_robots
 from lerobot.utils.device_utils import auto_select_torch_device
 from lerobot.utils.import_utils import is_package_available
 
 DEVICE = os.environ.get("LEROBOT_TEST_DEVICE", str(auto_select_torch_device()))
 
+AVAILABLE_ROBOTS = [
+    "koch",
+    "koch_bimanual",
+    "aloha",
+    "so100",
+    "so101",
+]
+AVAILABLE_CAMERAS = [
+    "opencv",
+    "intelrealsense",
+]
+AVAILABLE_MOTORS = [
+    "dynamixel",
+    "feetech",
+]
+
 TEST_ROBOT_TYPES = []
-for robot_type in available_robots:
+for robot_type in AVAILABLE_ROBOTS:
     TEST_ROBOT_TYPES += [(robot_type, True), (robot_type, False)]
 
 TEST_CAMERA_TYPES = []
-for camera_type in available_cameras:
+for camera_type in AVAILABLE_CAMERAS:
     TEST_CAMERA_TYPES += [(camera_type, True), (camera_type, False)]
 
 TEST_MOTOR_TYPES = []
-for motor_type in available_motors:
+for motor_type in AVAILABLE_MOTORS:
     TEST_MOTOR_TYPES += [(motor_type, True), (motor_type, False)]
 
 # Camera indices used for connecting physical cameras

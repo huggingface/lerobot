@@ -21,12 +21,12 @@ import torch
 
 from lerobot.configs.types import FeatureType
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-from lerobot.datasets.feature_utils import dataset_to_policy_features
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.utils.constants import ACTION
+from lerobot.utils.feature_utils import dataset_to_policy_features
 
 
 def main():

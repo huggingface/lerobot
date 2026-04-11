@@ -60,6 +60,12 @@ from torch.multiprocessing import Queue
 from torch.optim.optimizer import Optimizer
 
 from lerobot.cameras import opencv  # noqa: F401
+from lerobot.common.train_utils import (
+    get_step_checkpoint_dir,
+    load_training_state as utils_load_training_state,
+    save_checkpoint,
+    update_last_checkpoint,
+)
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.datasets import LeRobotDataset, make_dataset
@@ -84,12 +90,6 @@ from lerobot.utils.constants import (
 )
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.random_utils import set_seed
-from lerobot.utils.train_utils import (
-    get_step_checkpoint_dir,
-    load_training_state as utils_load_training_state,
-    save_checkpoint,
-    update_last_checkpoint,
-)
 from lerobot.utils.transition import move_state_dict_to_device, move_transition_to_device
 from lerobot.utils.utils import (
     format_big_number,

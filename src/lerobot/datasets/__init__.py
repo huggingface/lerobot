@@ -18,6 +18,7 @@
 from lerobot.utils.import_utils import require_package
 
 require_package("datasets", extra="dataset")
+require_package("av", extra="dataset")
 
 from .compute_stats import aggregate_stats, get_feature_stats
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata

@@ -19,4 +19,6 @@ from lerobot.utils.import_utils import require_package
 require_package("dynamixel-sdk", extra="dynamixel", import_name="dynamixel_sdk")
 
 from .dynamixel import DriveMode, DynamixelMotorsBus, OperatingMode, TorqueMode
-from .tables import *
+from .tables import *  # noqa: F403 — hardware constant tables
+
+__all__ = ["DriveMode", "DynamixelMotorsBus", "OperatingMode", "TorqueMode"]

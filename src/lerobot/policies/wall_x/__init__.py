@@ -15,5 +15,6 @@
 # limitations under the License.
 
 from .configuration_wall_x import WallXConfig
+from .processor_wall_x import make_wall_x_pre_post_processors
 
-__all__ = ["WallXConfig"]
+__all__ = ["WallXConfig", "make_wall_x_pre_post_processors"]

@@ -51,6 +51,10 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from lerobot.utils.import_utils import require_package
+
+require_package("jsonlines", extra="dataset")
+
 import jsonlines
 import pandas as pd
 import pyarrow as pa

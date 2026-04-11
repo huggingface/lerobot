@@ -28,6 +28,13 @@ from termcolor import colored
 from torch.optim import Optimizer
 from tqdm import tqdm
 
+from lerobot.common.train_utils import (
+    get_step_checkpoint_dir,
+    get_step_identifier,
+    load_training_state,
+    save_checkpoint,
+    update_last_checkpoint,
+)
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import EpisodeAwareSampler, make_dataset
@@ -38,13 +45,6 @@ from lerobot.rl.wandb_utils import WandBLogger
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
-from lerobot.utils.train_utils import (
-    get_step_checkpoint_dir,
-    get_step_identifier,
-    load_training_state,
-    save_checkpoint,
-    update_last_checkpoint,
-)
 from lerobot.utils.utils import (
     cycle,
     format_big_number,

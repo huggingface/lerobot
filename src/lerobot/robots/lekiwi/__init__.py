@@ -14,10 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lerobot.utils.import_utils import require_package
-
-require_package("pyzmq", extra="lekiwi", import_name="zmq")
-
 from .config_lekiwi import LeKiwiClientConfig, LeKiwiConfig
 from .lekiwi import LeKiwi
 from .lekiwi_client import LeKiwiClient
+
+__all__ = ["LeKiwi", "LeKiwiClient", "LeKiwiClientConfig", "LeKiwiConfig"]

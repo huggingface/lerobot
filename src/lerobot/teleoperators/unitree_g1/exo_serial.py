@@ -19,6 +19,10 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
+from lerobot.utils.import_utils import require_package
+
+require_package("pyserial", extra="hardware", import_name="serial")
+
 import serial
 
 from .exo_calib import ExoskeletonCalibration, exo_raw_to_angles, run_exo_calibration

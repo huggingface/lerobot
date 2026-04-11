@@ -27,16 +27,15 @@ from lerobot.optim import (
 )
 from lerobot.policies import PreTrainedPolicy
 from lerobot.processor import PolicyProcessorPipeline
-
-from .constants import (
+from lerobot.utils.constants import (
     CHECKPOINTS_DIR,
     LAST_CHECKPOINT_LINK,
     PRETRAINED_MODEL_DIR,
     TRAINING_STATE_DIR,
     TRAINING_STEP,
 )
-from .io_utils import load_json, write_json
-from .random_utils import load_rng_state, save_rng_state
+from lerobot.utils.io_utils import load_json, write_json
+from lerobot.utils.random_utils import load_rng_state, save_rng_state
 
 
 def get_step_identifier(step: int, total_steps: int) -> str:
