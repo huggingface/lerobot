@@ -1,0 +1,278 @@
+# 在 LeRobot 数据集中使用子任务
+
+机器人数据集中的子任务支持已被证明能有效提升机器人的推理能力和理解能力。子任务在以下场景中尤为有用：
+
+- **分层策略**：构建包含子任务预测的策略，以实时可视化机器人的推理过程
+- **奖励建模**：帮助奖励模型理解任务进度（如 SARM 风格的阶段感知奖励模型）
+- **任务分解**：将复杂的操作任务拆解为原子化、可解释的步骤
+
+LeRobotDataset 现已支持将子任务作为数据集结构的一部分，与任务并列存储。
+
+## 什么是子任务？
+
+**任务**描述整体目标（如"拿起苹果并放入篮子"），而**子任务**则将执行过程拆分为更细粒度的步骤：
+
+1. "靠近苹果"
+2. "抓取苹果"
+3. "举起苹果"
+4. "移向篮子"
+5. "放开苹果"
+
+数据集中的每一帧都可以标注对应的子任务，使模型能够学习并预测这些中间阶段。
+
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/subtask-asset.png"
+  alt="子任务标注概览，展示帧如何被标注为不同的中间子任务阶段"
+  width="80%"
+/>
+
+<p>
+  <em>图：子任务标注概览。</em>
+</p>
+
+**参考文献：** _基于子任务学习的机器人在制造业灵活协作装配中的自组装_，原创文章，发表于 2022 年 4 月 19 日。
+
+## 数据集结构
+
+子任务信息存储在数据集元数据中：
+
+```
+my-dataset/
+├── data/
+│   └── ...
+├── meta/
+│   ├── info.json
+│   ├── stats.json
+│   ├── tasks.parquet
+│   ├── subtasks.parquet      # 子任务索引 → 子任务字符串的映射
+│   └── episodes/
+│       └── ...
+└── videos/
+    └── ...
+```
+
+### 子任务 Parquet 文件
+
+`meta/subtasks.parquet` 文件将子任务索引映射到对应的自然语言描述：
+
+| subtask_index | subtask（索引列）   |
+| ------------- | ------------------ |
+| 0             | "靠近苹果"          |
+| 1             | "抓取苹果"          |
+| 2             | "举起苹果"          |
+| ...           | ...                |
+
+### 帧级标注
+
+数据集中的每一帧都可以包含 `subtask_index` 字段，引用子任务 parquet 文件：
+
+```python
+# parquet 文件中的示例帧数据
+{
+    "index": 42,
+    "timestamp": 1.4,
+    "episode_index": 0,
+    "task_index": 0,
+    "subtask_index": 2,  # 引用"举起苹果"
+    "observation.state": [...],
+    "action": [...],
+}
+```
+
+## 为数据集标注子任务
+
+我们提供了一个 HuggingFace Space，可以轻松为任意 LeRobotDataset 标注子任务：
+
+**[https://huggingface.co/spaces/lerobot/annotate](https://huggingface.co/spaces/lerobot/annotate)**
+
+完成标注后：
+
+1. 点击"Push to Hub"上传已标注的数据集
+2. 也可以按照 [github.com/huggingface/lerobot-annotate](https://github.com/huggingface/lerobot-annotate) 的说明在本地运行标注工具
+
+## 加载含子任务的数据集
+
+加载带有子任务标注的数据集时，子任务信息会自动可用：
+
+```python
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+# 加载含子任务标注的数据集
+dataset = LeRobotDataset("jadechoghari/collect-fruit-annotated")
+
+# 访问样本
+sample = dataset[100]
+
+# 样本同时包含任务和子任务信息
+print(sample["task"])           # "Collect the fruit"
+print(sample["subtask"])        # "Grasp the apple"
+print(sample["task_index"])     # tensor(0)
+print(sample["subtask_index"])  # tensor(2)
+```
+
+### 检查子任务支持
+
+可以检查数据集是否包含子任务标注：
+
+```python
+# 检查子任务是否可用
+has_subtasks = (
+    "subtask_index" in dataset.features
+    and dataset.meta.subtasks is not None
+)
+
+if has_subtasks:
+    print(f"数据集共有 {len(dataset.meta.subtasks)} 个唯一子任务")
+    print("子任务：", list(dataset.meta.subtasks.index))
+```
+
+## 将子任务用于训练
+
+### 使用分词处理器
+
+`TokenizerProcessor` 自动处理视觉-语言-动作（VLA）模型的子任务分词：
+
+```python
+from lerobot.processor.tokenizer_processor import TokenizerProcessor
+from lerobot.processor.pipeline import ProcessorPipeline
+
+# 创建分词处理器
+tokenizer_processor = TokenizerProcessor(
+    tokenizer_name_or_path="google/paligemma-3b-pt-224",
+    padding="max_length",
+    max_length=64,
+)
+
+# 如果批次中存在子任务，处理器会自动对其分词，
+# 并将结果添加到观测中：
+# - "observation.subtask.tokens"
+# - "observation.subtask.attention_mask"
+```
+
+当批次中存在子任务时，分词处理器会添加：
+
+- `observation.subtask.tokens`：子任务文本的分词结果
+- `observation.subtask.attention_mask`：子任务 token 的注意力掩码
+
+### 含子任务的 DataLoader
+
+```python
+import torch
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+dataset = LeRobotDataset("jadechoghari/collect-fruit-annotated")
+
+dataloader = torch.utils.data.DataLoader(
+    dataset,
+    batch_size=16,
+    shuffle=True,
+)
+
+for batch in dataloader:
+    # 访问批次中的子任务信息
+    subtasks = batch["subtask"]          # 子任务字符串列表
+    subtask_indices = batch["subtask_index"]  # 子任务索引张量
+
+    # 用于训练分层策略或奖励模型
+    print(f"批次子任务：{set(subtasks)}")
+```
+
+## 含子任务标注的示例数据集
+
+尝试加载含子任务标注的数据集：
+
+```python
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+# 含子任务标注的示例数据集
+dataset = LeRobotDataset("jadechoghari/collect-fruit-annotated")
+
+# 浏览子任务
+print("可用子任务：")
+for subtask_name in dataset.meta.subtasks.index:
+    print(f"  - {subtask_name}")
+
+# 获取子任务分布
+subtask_counts = {}
+for i in range(len(dataset)):
+    sample = dataset[i]
+    subtask = sample["subtask"]
+    subtask_counts[subtask] = subtask_counts.get(subtask, 0) + 1
+
+print("\n子任务分布：")
+for subtask, count in sorted(subtask_counts.items(), key=lambda x: -x[1]):
+    print(f"  {subtask}：{count} 帧")
+```
+
+## 使用场景
+
+### 1. 分层策略训练
+
+训练同时预测动作和当前子任务的策略：
+
+```python
+class HierarchicalPolicy(nn.Module):
+    def __init__(self, num_subtasks):
+        super().__init__()
+        self.action_head = nn.Linear(hidden_dim, action_dim)
+        self.subtask_head = nn.Linear(hidden_dim, num_subtasks)
+
+    def forward(self, observations):
+        features = self.encoder(observations)
+        actions = self.action_head(features)
+        subtask_logits = self.subtask_head(features)
+        return actions, subtask_logits
+```
+
+### 2. 阶段感知奖励建模（SARM）
+
+构建能理解任务进度的奖励模型：
+
+```python
+# SARM 预测：
+# - 阶段：正在执行哪个子任务（离散）
+# - 进度：子任务完成程度（连续值 0-1）
+
+class SARMRewardModel(nn.Module):
+    def forward(self, observations):
+        features = self.encoder(observations)
+        stage_logits = self.stage_classifier(features)
+        progress = self.progress_regressor(features)
+        return stage_logits, progress
+```
+
+### 3. 进度可视化
+
+通过追踪子任务进展来监控机器人执行情况：
+
+```python
+def visualize_execution(model, observations):
+    for t, obs in enumerate(observations):
+        action, subtask_logits = model(obs)
+        predicted_subtask = subtask_names[subtask_logits.argmax()]
+        print(f"t={t}：正在执行'{predicted_subtask}'")
+```
+
+## API 参考
+
+### LeRobotDataset 属性
+
+| 属性                         | 类型                   | 描述                             |
+| ---------------------------- | ---------------------- | -------------------------------- |
+| `meta.subtasks`              | `pd.DataFrame \| None` | 子任务名称到索引的 DataFrame 映射 |
+| `features["subtask_index"]`  | `dict`                 | 子任务索引的特征规范（如存在）    |
+
+### 样本键
+
+当子任务可用时，每个样本包含：
+
+| 键              | 类型           | 描述               |
+| --------------- | -------------- | ------------------ |
+| `subtask_index` | `torch.Tensor` | 当前子任务的整数索引 |
+| `subtask`       | `str`          | 子任务的自然语言描述 |
+
+## 相关资源
+
+- [SARM 论文](https://arxiv.org/pdf/2509.25358) - 面向长时域机器人操作的阶段感知奖励建模
+- [LeRobot 标注工具](https://huggingface.co/spaces/lerobot/annotate) - 交互式标注工具
+- [LeRobotDataset v3.0](./lerobot-dataset-v3) - 数据集格式文档
