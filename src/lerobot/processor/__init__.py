@@ -56,6 +56,7 @@ from .hil_processor import (
     RewardClassifierProcessorStep,
     TimeLimitProcessorStep,
 )
+from .newline_task_processor import NewLineTaskProcessorStep
 from .normalize_processor import NormalizerProcessorStep, UnnormalizerProcessorStep, hotswap_stats
 from .observation_processor import VanillaObservationProcessorStep
 from .pipeline import (
@@ -119,6 +120,7 @@ __all__ = [
     "RelativeActionsProcessorStep",
     "MapDeltaActionToRobotActionStep",
     "MapTensorToDeltaActionDictStep",
+    "NewLineTaskProcessorStep",
     "NormalizerProcessorStep",
     "Numpy2TorchActionProcessorStep",
     "ObservationProcessorStep",

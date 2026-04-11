@@ -13,21 +13,27 @@
 # limitations under the License.
 
 import copy
+from typing import TYPE_CHECKING
 
 import torch
 from torch import nn
 
-from lerobot.utils.import_utils import require_package
+from lerobot.utils.import_utils import _transformers_available, require_package
 
-require_package("transformers", extra="smolvla")
-
-from transformers import (
-    AutoConfig,
-    AutoModel,
-    AutoModelForImageTextToText,
-    AutoProcessor,
-    SmolVLMForConditionalGeneration,
-)
+if TYPE_CHECKING or _transformers_available:
+    from transformers import (
+        AutoConfig,
+        AutoModel,
+        AutoModelForImageTextToText,
+        AutoProcessor,
+        SmolVLMForConditionalGeneration,
+    )
+else:
+    AutoConfig = None
+    AutoModel = None
+    AutoModelForImageTextToText = None
+    AutoProcessor = None
+    SmolVLMForConditionalGeneration = None
 
 
 def apply_rope(x, positions, max_wavelength=10_000):
@@ -78,6 +84,7 @@ class SmolVLMWithExpertModel(nn.Module):
         device: str = "auto",
     ):
         super().__init__()
+        require_package("transformers", extra="smolvla")
         if load_vlm_weights:
             print(f"Loading  {model_id} weights ...")
             self.vlm = AutoModelForImageTextToText.from_pretrained(

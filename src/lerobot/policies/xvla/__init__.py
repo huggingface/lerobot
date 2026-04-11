@@ -1,4 +1,5 @@
 from .configuration_xvla import XVLAConfig
+from .modeling_xvla import XVLAPolicy
 from .processor_xvla import (
     XVLAAddDomainIdProcessorStep,
     XVLAImageNetNormalizeProcessorStep,
@@ -7,6 +8,7 @@ from .processor_xvla import (
 
 __all__ = [
     "XVLAConfig",
+    "XVLAPolicy",
     "XVLAAddDomainIdProcessorStep",
     "XVLAImageNetNormalizeProcessorStep",
     "XVLAImageToFloatProcessorStep",

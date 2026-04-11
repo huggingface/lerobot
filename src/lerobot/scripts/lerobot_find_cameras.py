@@ -38,10 +38,8 @@ import numpy as np
 from PIL import Image
 
 from lerobot.cameras import ColorMode
-from lerobot.cameras.opencv import OpenCVCameraConfig
-from lerobot.cameras.opencv.camera_opencv import OpenCVCamera
-from lerobot.cameras.realsense import RealSenseCameraConfig
-from lerobot.cameras.realsense.camera_realsense import RealSenseCamera
+from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
+from lerobot.cameras.realsense import RealSenseCamera, RealSenseCameraConfig
 
 logger = logging.getLogger(__name__)
 

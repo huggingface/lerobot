@@ -66,6 +66,7 @@ from lerobot.common.train_utils import (
     save_checkpoint,
     update_last_checkpoint,
 )
+from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.datasets import LeRobotDataset, make_dataset
@@ -99,7 +100,6 @@ from lerobot.utils.utils import (
 from .buffer import ReplayBuffer, concatenate_batch_transitions
 from .learner_service import MAX_WORKERS, SHUTDOWN_TIMEOUT, LearnerService
 from .process import ProcessSignalHandler
-from .wandb_utils import WandBLogger
 
 
 @parser.wrap()
@@ -151,7 +151,7 @@ def train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None):
 
     # Setup WandB logging if enabled
     if cfg.wandb.enable and cfg.wandb.project:
-        from .wandb_utils import WandBLogger
+        from lerobot.common.wandb_utils import WandBLogger
 
         wandb_logger = WandBLogger(cfg)
     else:

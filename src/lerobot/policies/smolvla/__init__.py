@@ -1,7 +1,5 @@
 from .configuration_smolvla import SmolVLAConfig
-from .processor_smolvla import (
-    SmolVLANewLineProcessor,
-    make_smolvla_pre_post_processors,
-)
+from .modeling_smolvla import SmolVLAPolicy
+from .processor_smolvla import make_smolvla_pre_post_processors
 
-__all__ = ["SmolVLAConfig", "SmolVLANewLineProcessor", "make_smolvla_pre_post_processors"]
+__all__ = ["SmolVLAConfig", "SmolVLAPolicy", "make_smolvla_pre_post_processors"]
