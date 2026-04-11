@@ -103,6 +103,15 @@ class PI0Config(PreTrainedConfig):
 
     tokenizer_max_length: int = 48  # see openpi `__post_init__`
 
+    resize_imgs_with_padding: list[int] | tuple[int, int] | None = None
+    adapt_to_pi_aloha: bool = False
+    use_delta_joint_actions_aloha: bool = False
+    proj_width: int = 1024
+    num_steps: int = 10
+    use_cache: bool = True
+    attention_implementation: str = "eager"
+    train_state_proj: bool = True
+
     def __post_init__(self):
         super().__post_init__()
 
