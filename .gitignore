@@ -15,7 +15,7 @@
 ### Environments & Dependencies ###
 .env
 .venv
-.venv_lerobot
+.venv_*
 env/
 venv/
 env.bak/
