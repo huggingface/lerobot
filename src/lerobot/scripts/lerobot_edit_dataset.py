@@ -117,6 +117,12 @@ Modify tasks - set default task with overrides for specific episodes (WARNING: m
         --operation.new_task "Default task" \
         --operation.episode_tasks '{"5": "Special task for episode 5"}'
 
+Modify tasks - replace existing task strings in-place (WARNING: modifies in-place):
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht \
+        --operation.type modify_tasks \
+        --operation.task_replacements '{"Pick up the red cube": "Lift the red cube"}'
+
 Convert image dataset to video format and save locally:
     lerobot-edit-dataset \
         --repo_id lerobot/pusht_image \
@@ -229,6 +235,7 @@ class RemoveFeatureConfig(OperationConfig):
 class ModifyTasksConfig(OperationConfig):
     new_task: str | None = None
     episode_tasks: dict[str, str] | None = None
+    task_replacements: dict[str, str] | None = None
 
 
 @OperationConfig.register_subclass("convert_image_to_video")
@@ -453,9 +460,15 @@ def handle_modify_tasks(cfg: EditDatasetConfig) -> None:
 
     new_task = cfg.operation.new_task
     episode_tasks_raw = cfg.operation.episode_tasks
+    task_replacements = cfg.operation.task_replacements
 
-    if new_task is None and episode_tasks_raw is None:
-        raise ValueError("Must specify at least one of new_task or episode_tasks for modify_tasks operation")
+    if new_task is not None and task_replacements is not None:
+        raise ValueError("Cannot combine new_task with task_replacements for modify_tasks operation")
+
+    if new_task is None and episode_tasks_raw is None and task_replacements is None:
+        raise ValueError(
+            "Must specify at least one of new_task, episode_tasks, or task_replacements for modify_tasks operation"
+        )
 
     if cfg.new_repo_id is not None or cfg.new_root is not None:
         logging.warning(
@@ -475,11 +488,14 @@ def handle_modify_tasks(cfg: EditDatasetConfig) -> None:
         logging.info(f"  Default task: '{new_task}'")
     if episode_tasks:
         logging.info(f"  Episode-specific tasks: {episode_tasks}")
+    if task_replacements:
+        logging.info(f"  Task replacements: {task_replacements}")
 
     modified_dataset = modify_tasks(
         dataset,
         new_task=new_task,
         episode_tasks=episode_tasks,
+        task_replacements=task_replacements,
     )
 
     logging.info(f"Dataset modified at {dataset.root}")
