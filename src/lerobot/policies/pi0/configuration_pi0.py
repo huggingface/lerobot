@@ -103,8 +103,23 @@ class PI0Config(PreTrainedConfig):
 
     tokenizer_max_length: int = 48  # see openpi `__post_init__`
 
+    # Fields present in the published lerobot/pi0 Hub config.json but not actively
+    # wired into model logic. Accepted here so draccus can decode the config without error.
+    resize_imgs_with_padding: list[int] | tuple[int, int] | None = None
+    adapt_to_pi_aloha: bool = False
+    use_delta_joint_actions_aloha: bool = False
+    proj_width: int = 1024
+    num_steps: int = 10
+    use_cache: bool = True
+    attention_implementation: str = "eager"
+    train_state_proj: bool = True
+
     def __post_init__(self):
         super().__post_init__()
+
+        # The Hub config stores `num_steps` but the model code uses `num_inference_steps`.
+        if self.num_steps != self.num_inference_steps:
+            self.num_inference_steps = self.num_steps
 
         # Validate configuration
         if self.n_action_steps > self.chunk_size:
