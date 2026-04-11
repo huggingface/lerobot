@@ -85,11 +85,13 @@ from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraCon
 from lerobot.cameras.zmq.configuration_zmq import ZMQCameraConfig  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.datasets import LeRobotDataset
-from lerobot.datasets.feature_utils import build_dataset_frame, combine_feature_dicts
-from lerobot.datasets.image_writer import safe_stop_image_writer
-from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
-from lerobot.datasets.video_utils import VideoEncodingManager
+from lerobot.datasets import (
+    LeRobotDataset,
+    VideoEncodingManager,
+    aggregate_pipeline_dataset_features,
+    create_initial_features,
+    safe_stop_image_writer,
+)
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc import ActionInterpolator
@@ -143,6 +145,7 @@ from lerobot.utils.control_utils import (
     sanity_check_dataset_robot_compatibility,
 )
 from lerobot.utils.device_utils import get_safe_torch_device
+from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import (

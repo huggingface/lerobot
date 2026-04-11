@@ -495,7 +495,7 @@ def make_policy(
 
     kwargs = {}
     if ds_meta is not None:
-        from lerobot.datasets.feature_utils import dataset_to_policy_features
+        from lerobot.utils.feature_utils import dataset_to_policy_features
 
         features = dataset_to_policy_features(ds_meta.features)
     else:

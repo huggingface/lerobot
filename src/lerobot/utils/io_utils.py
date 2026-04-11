@@ -81,6 +81,8 @@ def write_video(video_path: str | Path, stacked_frames: list, fps: int) -> None:
         stream.height = height
         stream.pix_fmt = "yuv420p"
         for frame_array in stacked_frames:
+            if height != orig_height or width != orig_width:
+                frame_array = frame_array[:height, :width]
             frame = av.VideoFrame.from_ndarray(frame_array, format="rgb24")
             for packet in stream.encode(frame):
                 container.mux(packet)

@@ -162,7 +162,7 @@ def build_inference_frame(
     Returns:
         A dictionary of preprocessed tensors ready for model inference.
     """
-    from lerobot.datasets.feature_utils import build_dataset_frame
+    from lerobot.utils.feature_utils import build_dataset_frame
 
     # Extracts the correct keys from the incoming raw observation
     observation = build_dataset_frame(ds_features, observation, prefix=OBS_STR)

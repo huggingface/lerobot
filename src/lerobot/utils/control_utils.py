@@ -223,7 +223,7 @@ def sanity_check_dataset_robot_compatibility(
     require_package("deepdiff", extra="hardware")
     from deepdiff import DeepDiff
 
-    from lerobot.datasets.utils import DEFAULT_FEATURES
+    from lerobot.utils.constants import DEFAULT_FEATURES
 
     fields = [
         ("robot_type", dataset.meta.robot_type, robot.robot_type),

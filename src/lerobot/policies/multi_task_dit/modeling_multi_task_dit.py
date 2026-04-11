@@ -34,17 +34,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 import torchvision
+from torch import Tensor
 
-from lerobot.utils.import_utils import require_package
-
-require_package("diffusers", extra="training")
-
-from diffusers.schedulers.scheduling_ddim import DDIMScheduler  # noqa: E402
-from diffusers.schedulers.scheduling_ddpm import DDPMScheduler  # noqa: E402
-from torch import Tensor  # noqa: E402
-
-from lerobot.policies.multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig  # noqa: E402
-from lerobot.utils.import_utils import _transformers_available  # noqa: E402
+from lerobot.policies.multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
+from lerobot.utils.import_utils import _transformers_available
 
 # Conditional import for type checking and lazy loading
 if TYPE_CHECKING or _transformers_available:
@@ -52,9 +45,9 @@ if TYPE_CHECKING or _transformers_available:
 else:
     CLIPTextModel = None
     CLIPVisionModel = None
-from lerobot.policies.pretrained import PreTrainedPolicy  # noqa: E402
-from lerobot.policies.utils import populate_queues  # noqa: E402
-from lerobot.utils.constants import (  # noqa: E402
+from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.utils import populate_queues
+from lerobot.utils.constants import (
     ACTION,
     OBS_IMAGES,
     OBS_LANGUAGE_ATTENTION_MASK,
@@ -647,6 +640,12 @@ class DiffusionObjective(nn.Module):
             "clip_sample_range": config.clip_sample_range,
             "prediction_type": config.prediction_type,
         }
+
+        from lerobot.utils.import_utils import require_package
+
+        require_package("diffusers", extra="training")
+        from diffusers.schedulers.scheduling_ddim import DDIMScheduler
+        from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 
         if config.noise_scheduler_type == "DDPM":
             self.noise_scheduler: DDPMScheduler | DDIMScheduler = DDPMScheduler(**scheduler_kwargs)

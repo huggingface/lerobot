@@ -292,9 +292,8 @@ class SuppressProgressBars:
 
             disable_progress_bar()
         except ImportError:
-            logging.getLogger(__name__).info(
-                "SuppressProgressBars is a no-op because 'datasets' is not installed. "
-                "Install it with: pip install 'lerobot[dataset]'"
+            logging.getLogger(__name__).debug(
+                "SuppressProgressBars is a no-op because 'datasets' is not installed."
             )
 
     def __exit__(self, exc_type, exc_val, exc_tb):

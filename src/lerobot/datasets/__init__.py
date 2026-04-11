@@ -20,10 +20,15 @@ from lerobot.utils.import_utils import require_package
 require_package("datasets", extra="dataset")
 
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+from lerobot.datasets.factory import make_dataset
+from lerobot.datasets.image_writer import safe_stop_image_writer
+from lerobot.datasets.io_utils import load_episodes, write_stats
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.multi_dataset import MultiLeRobotDataset
+from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
 from lerobot.datasets.sampler import EpisodeAwareSampler
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
+from lerobot.datasets.video_utils import VideoEncodingManager
 
 __all__ = [
     "EpisodeAwareSampler",
@@ -31,4 +36,11 @@ __all__ = [
     "LeRobotDatasetMetadata",
     "MultiLeRobotDataset",
     "StreamingLeRobotDataset",
+    "VideoEncodingManager",
+    "aggregate_pipeline_dataset_features",
+    "create_initial_features",
+    "load_episodes",
+    "make_dataset",
+    "safe_stop_image_writer",
+    "write_stats",
 ]

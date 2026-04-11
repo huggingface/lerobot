@@ -90,7 +90,8 @@ def require_package(pkg_name: str, extra: str, import_name: str | None = None) -
         _require_package_cache[cache_key] = is_package_available(pkg_name, import_name)
     if not _require_package_cache[cache_key]:
         raise ImportError(
-            f"'{pkg_name}' is required but not installed. Install it with: pip install 'lerobot[{extra}]'"
+            f"'{pkg_name}' is required but not installed. Install it with: "
+            f"pip install 'lerobot[{extra}]' (or uv pip install 'lerobot[{extra}]')"
         )
 
 
