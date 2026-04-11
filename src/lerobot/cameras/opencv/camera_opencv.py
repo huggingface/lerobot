@@ -36,6 +36,7 @@ from lerobot.utils.decorators import check_if_already_connected, check_if_not_co
 from lerobot.utils.errors import DeviceNotConnectedError
 
 from ..camera import Camera
+from ..configs import Cv2Backends
 from ..utils import get_cv2_rotation
 from .configuration_opencv import ColorMode, OpenCVCameraConfig
 
@@ -155,7 +156,24 @@ class OpenCVCamera(Camera):
         # blocking in multi-threaded applications, especially during data collection.
         cv2.setNumThreads(1)
 
-        self.videocapture = cv2.VideoCapture(self.index_or_path, self.backend)
+        # On Linux, when using /dev/video* device paths with backend=ANY, OpenCV may
+        # auto-select the FFMPEG backend which does not reliably apply camera settings
+        # like FOURCC, resolution, or FPS. Force V4L2 in this case since it is the
+        # correct backend for Linux video devices.
+        backend = self.backend
+        if (
+            platform.system() == "Linux"
+            and backend == Cv2Backends.ANY
+            and isinstance(self.index_or_path, (str, Path))
+            and str(self.index_or_path).startswith("/dev/video")
+        ):
+            backend = Cv2Backends.V4L2
+            logger.info(
+                f"{self} auto-selected V4L2 backend for Linux device path "
+                f"(override with backend=Cv2Backends.V4L2 or backend=Cv2Backends.ANY explicitly)."
+            )
+
+        self.videocapture = cv2.VideoCapture(self.index_or_path, backend)
 
         if not self.videocapture.isOpened():
             self.videocapture.release()
@@ -255,7 +273,8 @@ class OpenCVCamera(Camera):
         if not success or actual_fourcc != self.config.fourcc:
             logger.warning(
                 f"{self} failed to set fourcc={self.config.fourcc} (actual={actual_fourcc}, success={success}). "
-                f"Continuing with default format."
+                f"Continuing with default format. "
+                f"On Linux, try setting backend=Cv2Backends.V4L2 if using /dev/video* paths."
             )
 
     def _validate_width_and_height(self) -> None:
