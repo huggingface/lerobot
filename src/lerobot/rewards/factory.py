@@ -24,6 +24,7 @@ from lerobot.configs.rewards import RewardModelConfig
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
 from lerobot.rewards.classifier.configuration_classifier import RewardClassifierConfig
 from lerobot.rewards.pretrained import PreTrainedRewardModel
+from lerobot.rewards.robo_reward.configuration_robo_reward import RoboRewardConfig
 from lerobot.rewards.sarm.configuration_sarm import SARMConfig
 
 
@@ -36,7 +37,7 @@ def get_reward_model_class(name: str) -> type[PreTrainedRewardModel]:
 
     Args:
         name: The name of the reward model. Supported names are "reward_classifier",
-              "sarm".
+              "sarm", "robo_reward".
 
     Returns:
         The reward model class corresponding to the given name.
@@ -52,6 +53,10 @@ def get_reward_model_class(name: str) -> type[PreTrainedRewardModel]:
         from lerobot.rewards.sarm.modeling_sarm import SARMRewardModel
 
         return SARMRewardModel
+    elif name == "robo_reward":
+        from lerobot.rewards.robo_reward.modeling_robo_reward import RoboRewardModel
+
+        return RoboRewardModel
     else:
         try:
             return _get_reward_model_cls_from_name(name=name)
@@ -68,7 +73,7 @@ def make_reward_model_config(reward_type: str, **kwargs) -> RewardModelConfig:
 
     Args:
         reward_type: The type of the reward model. Supported types include
-                     "reward_classifier", "sarm".
+                     "reward_classifier", "sarm", "robo_reward".
         **kwargs: Keyword arguments to be passed to the configuration class constructor.
 
     Returns:
@@ -81,6 +86,8 @@ def make_reward_model_config(reward_type: str, **kwargs) -> RewardModelConfig:
         return RewardClassifierConfig(**kwargs)
     elif reward_type == "sarm":
         return SARMConfig(**kwargs)
+    elif reward_type == "robo_reward":
+        return RoboRewardConfig(**kwargs)
     else:
         try:
             config_cls = RewardModelConfig.get_choice_class(reward_type)
@@ -159,6 +166,14 @@ def make_reward_pre_post_processors(
             config=reward_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
             dataset_meta=kwargs.get("dataset_meta"),
+        )
+
+    elif isinstance(reward_cfg, RoboRewardConfig):
+        from lerobot.rewards.robo_reward.processor_robo_reward import make_robo_reward_pre_post_processors
+
+        return make_robo_reward_pre_post_processors(
+            config=reward_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
         )
 
     else:

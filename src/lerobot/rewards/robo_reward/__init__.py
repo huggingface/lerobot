@@ -11,13 +11,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-from .classifier.configuration_classifier import RewardClassifierConfig as RewardClassifierConfig
-from .robo_reward.configuration_robo_reward import RoboRewardConfig as RoboRewardConfig
-from .sarm.configuration_sarm import SARMConfig as SARMConfig
-
-__all__ = [
-    "RewardClassifierConfig",
-    "RoboRewardConfig",
-    "SARMConfig",
-]

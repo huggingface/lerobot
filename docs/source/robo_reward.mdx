@@ -1,0 +1,108 @@
+# RoboReward: General-Purpose Vision-Language Reward Models
+
+RoboReward is a family of vision-language reward models (4B and 8B parameters) trained on large-scale real-robot data to assign progress scores to robot rollout videos. This guide covers how to instantiate and use RoboReward in LeRobot for reward computation during RL training or evaluation.
+
+**Paper**: [RoboReward: General-Purpose Vision-Language Reward Models for Robotics](https://arxiv.org/abs/2601.00675)
+
+**Models**: [teetone/RoboReward-4B](https://huggingface.co/teetone/RoboReward-4B) · [teetone/RoboReward-8B](https://huggingface.co/teetone/RoboReward-8B)
+
+## Overview
+
+RoboReward fine-tunes Qwen3-VL on the [RoboReward dataset](https://huggingface.co/datasets/teetone/RoboReward), which is built on Open X-Embodiment (OXE) and RoboArena data. Given a robot rollout video and a task description, the model generates a discrete progress score:
+
+| Score | Meaning                                                    |
+| ----- | ---------------------------------------------------------- |
+| 1     | No Success — no goal-relevant change                       |
+| 2     | Minimal Progress — insufficient change toward goal         |
+| 3     | Partial Completion — good progress but misses requirements |
+| 4     | Near Completion — misses a single minor requirement        |
+| 5     | Perfect Completion — all requirements satisfied            |
+
+These scores are mapped to float rewards in [0, 1] via a configurable `score_to_reward` table (default: linear 0.0 → 1.0).
+
+## Requirements
+
+```bash
+pip install "transformers>=4.51.0" qwen-vl-utils
+```
+
+## Quickstart
+
+```python
+import torch
+from lerobot.rewards.robo_reward.configuration_robo_reward import RoboRewardConfig
+from lerobot.rewards.robo_reward.modeling_robo_reward import RoboRewardModel
+
+config = RoboRewardConfig(
+    model_name="teetone/RoboReward-8B",
+    device="cuda",
+    image_key="observation.images.top",
+    task_key="observation.language_instruction",
+)
+model = RoboRewardModel(config)
+model.eval()
+
+# batch from your dataset or environment
+batch = {
+    "observation.images.top": torch.rand(2, 3, 480, 640),   # (B, C, H, W)
+    "observation.language_instruction": [
+        "pick up the red cube",
+        "place the block on the tray",
+    ],
+}
+rewards = model.compute_reward(batch)  # tensor([0.75, 0.50])
+```
+
+For video input (multiple frames), pass a `(B, T, C, H, W)` tensor:
+
+```python
+batch["observation.images.top"] = torch.rand(2, 8, 3, 480, 640)  # 8 frames
+rewards = model.compute_reward(batch)
+```
+
+## Configuration
+
+```python
+from lerobot.rewards.robo_reward.configuration_robo_reward import RoboRewardConfig
+
+config = RoboRewardConfig(
+    model_name="teetone/RoboReward-4B",   # lighter-weight variant
+    device="cuda",
+    max_new_tokens=16,                    # enough for "ANSWER: 5\n"
+    score_to_reward={1: 0.0, 2: 0.25, 3: 0.5, 4: 0.75, 5: 1.0},
+    image_key="observation.images.top",
+    task_key="observation.language_instruction",
+)
+```
+
+## Using with the Factory
+
+```python
+from lerobot.rewards.factory import get_reward_model_class, make_reward_model_config
+
+cfg = make_reward_model_config("robo_reward", device="cuda")
+cls = get_reward_model_class("robo_reward")
+model = cls(cfg)
+```
+
+## Using with HIL-SERL / RL Training
+
+Pass the reward model config to the RL trainer. The model's `compute_reward()` is called at each environment step to provide dense rewards:
+
+```python
+from lerobot.rewards.factory import make_reward_model
+
+cfg = make_reward_model_config("robo_reward", device="cuda")
+reward_model = make_reward_model(cfg)
+
+# In your RL loop:
+rewards = reward_model.compute_reward(obs_batch)
+```
+
+## Notes
+
+- **Inference only**: The VLM backbone is frozen. `forward()` raises `NotImplementedError`.
+  Fine-tuning support is planned as future work.
+- **Throughput**: Reward computation runs sequentially per batch item (one `generate()` call each).
+  For high-throughput RL, consider computing rewards asynchronously or at episode end rather than
+  every step.
