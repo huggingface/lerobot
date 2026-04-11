@@ -1014,10 +1014,12 @@ def _copy_data_with_feature_changes(
                     df[feature_name] = feature_values
                 else:
                     feature_slice = values[frame_idx:end_idx]
-                    if len(feature_slice.shape) > 1 and feature_slice.shape[1] == 1:
+                    if feature_slice.ndim == 1:
+                        df[feature_name] = feature_slice
+                    elif feature_slice.ndim == 2 and feature_slice.shape[1] == 1:
                         df[feature_name] = feature_slice.flatten()
                     else:
-                        df[feature_name] = feature_slice
+                        df[feature_name] = list(feature_slice)
             frame_idx = end_idx
 
         # Write using the same chunk/file structure as source

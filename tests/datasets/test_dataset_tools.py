@@ -369,6 +369,40 @@ def test_add_features_with_callable(sample_dataset, tmp_path):
     assert float(first_frame["reward"]) == 0.0
 
 
+def test_add_features_with_multidimensional_values(sample_dataset, tmp_path):
+    """Test adding a multi-dimensional per-frame feature."""
+    num_frames = sample_dataset.meta.total_frames
+    feature_values = np.random.randn(num_frames, 1, 4).astype(np.float32)
+
+    feature_info = {
+        "dtype": "float32",
+        "shape": (1, 4),
+        "names": None,
+    }
+    features = {
+        "multi_dim_feature": (feature_values, feature_info),
+    }
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(tmp_path / "with_multi_dim_feature")
+
+        new_dataset = add_features(
+            dataset=sample_dataset,
+            features=features,
+            output_dir=tmp_path / "with_multi_dim_feature",
+        )
+
+    assert "multi_dim_feature" in new_dataset.meta.features
+    sample_item = new_dataset[0]
+    assert "multi_dim_feature" in sample_item
+    assert isinstance(sample_item["multi_dim_feature"], torch.Tensor)
+    assert tuple(sample_item["multi_dim_feature"].shape) == (1, 4)
+
+
 def test_add_existing_feature(sample_dataset, tmp_path):
     """Test error when adding an existing feature."""
     feature_info = {"dtype": "float32", "shape": (1,)}
