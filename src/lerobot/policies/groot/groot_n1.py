@@ -220,6 +220,7 @@ class GR00TN15(PreTrainedModel):
         self.action_horizon = config.action_horizon
         self.action_dim = config.action_dim
         self.compute_dtype = config.compute_dtype
+        self.post_init()
 
     def validate_inputs(self, inputs):
         # NOTE -- this should be handled internally by the model
