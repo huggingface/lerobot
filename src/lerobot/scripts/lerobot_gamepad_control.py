@@ -4,17 +4,27 @@ SO-101 Xbox Controller Control Script
 Controls SO-101 robotic arm using an Xbox controller (or any compatible gamepad)
 
 Button Mapping:
-- Left Stick: Control joints 1-2 (base rotation and shoulder)
-- Right Stick: Control joints 3-4 (elbow and wrist)
-- D-Pad Up/Down: Control joint 5 (wrist rotation)
-- LT (Left Trigger): Close gripper
-- RT (Right Trigger): Open gripper
-- RB (Right Bumper): Enable/disable control (safety)
-- Start button: Exit program
-- B button: Reset to home position
+    Left Stick          Shoulder pan & lift  (joints 0-1)  [ARM mode]
+    Right Stick Y       Elbow flex           (joint 2)     [ARM mode]
+    D-Pad Up/Down       Wrist flex           (joint 3)     [ARM mode]
+    D-Pad Left/Right    Wrist roll           (joint 4)     [ARM mode]
+    LT / RT             Gripper open/close                 [ARM mode]
+    RT                  Drive forward                      [MOTOR mode]
+    LT                  Drive backward                     [MOTOR mode]
+    Left Stick X        Steer left/right                   [MOTOR mode]
+    RB                  Switch to ARM mode  (tap to toggle)
+    LB                  Switch to MOTOR mode (tap to toggle)
+    RB + LB             IDLE (stop everything)
+    A                   Preset → HOME
+    B                   Preset → MOVEMENT
+    X                   Preset → DROP
+    Y                   Preset → GRAB
+    Start               Exit
 
 Safety Features:
-- Must hold RB to enable movement (dead-man switch)
+- Tap RB to enter ARM mode, tap again to go IDLE
+- Tap LB to enter MOTOR mode, tap again to go IDLE
+- Hold RB + LB together to force IDLE immediately
 - Max movement speed limit
 - Automatic disconnect on exit
 """
@@ -81,9 +91,18 @@ class SO101GamepadController:
         self._initialize_presets()
         
         # Control state
-        self.enabled = False
         self.running = True
         self.gripper_state = 0.0  # -1.0 = closed, 1.0 = open
+
+        # Mode toggle: None | "arm" | "motor"
+        # Tap RB → arm, tap LB → motor, RB+LB together → idle (None)
+        self.mode = None
+        self._prev_rb = False
+        self._prev_lb = False
+        self._prev_a  = False
+        self._prev_b  = False
+        self._prev_x  = False
+        self._prev_y  = False
         
         # Button/axis indices vary by PLATFORM (OS), not controller model!
         # The same controller has different mappings on Windows vs Linux
@@ -235,17 +254,7 @@ class SO101GamepadController:
     
     def _initialize_presets(self):
         """Initialize preset positions"""
-        # Ready position: all joints at 0°
-        self.preset_positions['ready'] = np.array([
-            0.0,    # shoulder_pan: centered
-            0.0, # shoulder_lift: back
-            0.0,   # elbow_flex: 90° bend
-            0.0,     # wrist_flex: back
-            -90.0,    # wrist_roll: centered
-            0.0     # gripper: neutral
-        ], dtype=np.float32)
-        
-        # Home position:
+        # Home position
         self.preset_positions['home'] = np.array([
             0.0,    # shoulder_pan: centered
             -108.0, # shoulder_lift: back
@@ -254,21 +263,42 @@ class SO101GamepadController:
             -90.0,  # wrist_roll: centered
             0.0     # gripper: neutral
         ], dtype=np.float32)
-        
-        # Vertical reach position: arm reaching upward
-        self.preset_positions['vertical'] = np.array([
-            0.0,    # shoulder_pan: centered
-            0.0,    # shoulder_lift: pointing up
-            -90.0,  # elbow_flex: 90° bend
-            0.0,    # wrist_flex: straight
-            -90.0,  # wrist_roll: centered
+
+        # Movement position: ready for driving/navigation
+        self.preset_positions['movement'] = np.array([
+            0.3,    # shoulder_pan
+            -85.7,  # shoulder_lift
+            95.0,   # elbow_flex
+            -23.0,  # wrist_flex
+            -90.0,  # wrist_roll
             0.0     # gripper: neutral
         ], dtype=np.float32)
-        
+
+        # Grab position: arm reaching to grab an object
+        self.preset_positions['grab'] = np.array([
+            -12.3,  # shoulder_pan
+            60.9,   # shoulder_lift
+            -38.3,  # elbow_flex
+            73.0,   # wrist_flex
+            -90.0,  # wrist_roll
+            64.1    # gripper: open
+        ], dtype=np.float32)
+
+        # Drop position: arm extended to drop an object
+        self.preset_positions['drop'] = np.array([
+            -2.5,   # shoulder_pan
+            -30.0,  # shoulder_lift
+            -98.0,  # elbow_flex
+            -107.6, # wrist_flex
+            90.0,   # wrist_roll
+            -3.3    # gripper: closed
+        ], dtype=np.float32)
+
         print(f"  ✓ Initialized preset positions:")
-        print(f"    A button → Home (all zeros)")
-        print(f"    X button → Ready (forward reach)")
-        print(f"    Y button → Vertical (upward reach)")
+        print(f"    A button → Home")
+        print(f"    B button → Movement")
+        print(f"    X button → Drop")
+        print(f"    Y button → Grab")
         
     def apply_deadzone(self, value):
         """Apply dead zone to analog stick values"""
@@ -281,83 +311,107 @@ class SO101GamepadController:
     def get_gamepad_input(self):
         """Read gamepad state and return action vector"""
         pygame.event.pump()
-        
-        # Check enable button (RB - dead man switch)
-        rb_pressed = self.joystick.get_button(self.BTN_RB)
-        
+
+        rb = self.joystick.get_button(self.BTN_RB)
+        lb = self.joystick.get_button(self.BTN_LB)
+        a  = self.joystick.get_button(self.BTN_A)
+        b  = self.joystick.get_button(self.BTN_B)
+        x  = self.joystick.get_button(self.BTN_X)
+        y  = self.joystick.get_button(self.BTN_Y)
+
+        # Rising-edge detection (tap, not hold)
+        rb_pressed = rb and not self._prev_rb
+        lb_pressed = lb and not self._prev_lb
+        a_pressed  = a  and not self._prev_a
+        b_pressed  = b  and not self._prev_b
+        x_pressed  = x  and not self._prev_x
+        y_pressed  = y  and not self._prev_y
+
+        self._prev_rb = rb
+        self._prev_lb = lb
+        self._prev_a  = a
+        self._prev_b  = b
+        self._prev_x  = x
+        self._prev_y  = y
+
         # Check exit button
         if self.joystick.get_button(self.BTN_START):
             self.running = False
             return None
-        
-        # Check preset position buttons (A, X, Y)
-        if self.joystick.get_button(self.BTN_A):
+
+        # ── Mode switching ─────────────────────────────────────────
+        if rb_pressed and lb_pressed:
+            print("Mode: IDLE (both bumpers)")
+            self.mode = None
+        elif rb_pressed:
+            if self.mode == "arm":
+                print("Mode: IDLE")
+                self.mode = None
+            else:
+                print("Mode: ARM")
+                self.mode = "arm"
+        elif lb_pressed:
+            if self.mode == "motor":
+                print("Mode: IDLE")
+                self.mode = None
+            else:
+                print("Mode: MOTOR")
+                self.mode = "motor"
+
+        # ── Preset buttons (work in any mode) ─────────────────────
+        if a_pressed:
             print("→ Moving to HOME position")
             return "preset_home"
-        
-        if self.joystick.get_button(self.BTN_X):
-            print("→ Moving to READY position")
-            return "preset_ready"
-        
-        if self.joystick.get_button(self.BTN_Y):
-            print("→ Moving to VERTICAL position")
-            return "preset_vertical"
-            
-        # Check reset button (B)
-        if self.joystick.get_button(self.BTN_B):
-            print("Resetting to home position...")
-            return "reset"
-        
-        # If RB not pressed, don't move
-        if not rb_pressed:
-            if self.enabled:
-                print("Control disabled - release RB")
-                self.enabled = False
-            return np.zeros(self.num_joints)
-        
-        if not self.enabled:
-            print("Control enabled - hold RB to move")
-            self.enabled = True
-        
-        # Read analog sticks (apply deadzone, no inversion)
-        left_x = self.apply_deadzone(self.joystick.get_axis(self.AXIS_LEFT_X))
-        left_y = -self.apply_deadzone(self.joystick.get_axis(self.AXIS_LEFT_Y))
-        right_y = self.apply_deadzone(self.joystick.get_axis(self.AXIS_RIGHT_Y))
-        
-        # Read triggers (normalize from -1.0~1.0 to 0.0~1.0 range)
-        # Xbox triggers default to -1.0 when not pressed, +1.0 when fully pressed
-        lt = (self.joystick.get_axis(self.AXIS_LT) + 1.0) / 2.0
-        rt = (self.joystick.get_axis(self.AXIS_RT) + 1.0) / 2.0
-        
-        # Read D-pad (hat) for wrist flex and wrist roll control
-        # Hat returns (x, y) where x is left/right, y is up/down
-        # x: -1 for left, 1 for right
-        # y: -1 for down, 1 for up
-        hat_x = 0
-        hat_y = 0
-        if self.joystick.get_numhats() > 0:
-            hat = self.joystick.get_hat(0)
-            hat_x = -hat[0]  # -1 for left, 1 for right, ivert
-            hat_y = hat[1]  # -1 for down, 1 for up
-        
-        # Map to joint deltas
-        action = np.zeros(self.num_joints)
-        
-        # Assuming SO-101 has 6 joints: [shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper]
-        if self.num_joints >= 6:
-            action[0] = left_x * self.max_speed       # Shoulder pan (base rotation)
-            action[1] = left_y * self.max_speed       # Shoulder lift
-            action[2] = right_y * self.max_speed      # Elbow flex
-            action[3] = hat_y * self.max_speed        # Wrist flex (D-pad up/down)
-            action[4] = hat_x * self.max_speed        # Wrist roll (D-pad left/right)
-            
-            # Gripper control (joint 5)
-            if rt > 0.1:  # Right trigger - close gripper
-                action[5] = -rt * self.max_speed
-            elif lt > 0.1:  # Left trigger - open gripper
-                action[5] = lt * self.max_speed
-        
-        return action
+        if b_pressed:
+            print("→ Moving to MOVEMENT position")
+            return "preset_movement"
+        if x_pressed:
+            print("→ Moving to DROP position")
+            return "preset_drop"
+        if y_pressed:
+            print("→ Moving to GRAB position")
+            return "preset_grab"
+
+        # ── Motor mode ─────────────────────────────────────────────
+        if self.mode == "motor":
+            lt = (self.joystick.get_axis(self.AXIS_LT) + 1.0) / 2.0
+            rt = (self.joystick.get_axis(self.AXIS_RT) + 1.0) / 2.0
+            throttle = rt - lt  # positive = forward, negative = backward
+            turn = self.apply_deadzone(self.joystick.get_axis(self.AXIS_LEFT_X))
+            m1 = max(-1.0, min(1.0, throttle - turn))
+            m2 = max(-1.0, min(1.0, throttle + turn))
+            return {"motor": True, "m1": m1, "m2": m2}
+
+        # ── Arm mode ───────────────────────────────────────────────
+        if self.mode == "arm":
+            left_x  = self.apply_deadzone(self.joystick.get_axis(self.AXIS_LEFT_X))
+            left_y  = -self.apply_deadzone(self.joystick.get_axis(self.AXIS_LEFT_Y))
+            right_y = self.apply_deadzone(self.joystick.get_axis(self.AXIS_RIGHT_Y))
+
+            lt = (self.joystick.get_axis(self.AXIS_LT) + 1.0) / 2.0
+            rt = (self.joystick.get_axis(self.AXIS_RT) + 1.0) / 2.0
+
+            hat_x, hat_y = 0, 0
+            if self.joystick.get_numhats() > 0:
+                hat = self.joystick.get_hat(0)
+                hat_x = -hat[0]
+                hat_y =  hat[1]
+
+            action = np.zeros(self.num_joints)
+            if self.num_joints >= 6:
+                action[0] = left_x  * self.max_speed   # shoulder_pan
+                action[1] = left_y  * self.max_speed   # shoulder_lift
+                action[2] = right_y * self.max_speed   # elbow_flex
+                action[3] = -hat_y  * self.max_speed   # wrist_flex (D-pad up/down)
+                action[4] = hat_x   * self.max_speed   # wrist_roll (D-pad left/right)
+                if rt > 0.1:
+                    action[5] = -rt * self.max_speed   # close gripper
+                elif lt > 0.1:
+                    action[5] =  lt * self.max_speed   # open gripper
+            return action
+
+        # ── Idle — nothing to do ───────────────────────────────────
+        return np.zeros(self.num_joints)
     
     def run(self):
         """Main control loop"""
@@ -365,23 +419,22 @@ class SO101GamepadController:
         print("SO-101 GAMEPAD CONTROL")
         print("="*60)
         print("\nControls:")
-        print("  Left Stick:         Shoulder pan & lift (joints 0-1)")
-        print("  Right Stick Y:      Elbow flex (joint 2)")
-        print("  D-Pad Up/Down:      Wrist flex (joint 3)")
-        print("  D-Pad Left/Right:   Wrist roll (joint 4)")
-        print("  LT (Left Trigger):  Close gripper")
-        print("  RT (Right Trigger): Open gripper")
-        print("  RB (Hold):          Enable movement (SAFETY)")
-        print("\nPreset Positions:")
-        print("  A Button:           Move to HOME (all zeros)")
-        print("  X Button:           Move to READY (forward reach)")
-        print("  Y Button:           Move to VERTICAL (upward reach)")
-        print("  B Button:           Reset to home (legacy)")
-        print("\nOther:")
-        print("  Start Button:       Exit")
-        print("\n" + "="*60)
-        print("\n⚠️  SAFETY: Hold RB button to enable manual movement!")
-        print("⚠️  Preset buttons (A/X/Y) work without holding RB")
+        print("  ── MOTOR mode (tap LB to toggle) ─────────────────────")
+        print("  RT:                  Drive forward")
+        print("  LT:                  Drive backward")
+        print("  Left Stick X:        Steer left / right")
+        print("  ── ARM mode (tap RB to toggle) ───────────────────────")
+        print("  Left Stick:          Shoulder pan & lift  (joints 0-1)")
+        print("  Right Stick Y:       Elbow flex           (joint 2)")
+        print("  D-Pad Up/Down:       Wrist flex           (joint 3)")
+        print("  D-Pad Left/Right:    Wrist roll           (joint 4)")
+        print("  LT:                  Open gripper")
+        print("  RT:                  Close gripper")
+        print("  ── General ───────────────────────────────────────────")
+        print("  RB + LB:             Force idle (stop everything)")
+        print("  A: HOME  B: MOVEMENT  X: DROP  Y: GRAB")
+        print("  Start:               Exit")
+        print("\nℹ️  Tap RB → ARM mode  |  Tap LB → MOTOR mode  |  Tap again → IDLE")
         print("Starting in 3 seconds...\n")
         time.sleep(3)
         
@@ -394,52 +447,37 @@ class SO101GamepadController:
                 
                 if action is None:
                     break
-                
-                # Handle preset positions
-                if isinstance(action, str):
-                    if action == "reset":
-                        # Reset to home position (all zeros in degrees)
-                        target_position = self.preset_positions['home'].copy()
-                    elif action == "preset_home":
-                        target_position = self.preset_positions['home'].copy()
-                    elif action == "preset_ready":
-                        target_position = self.preset_positions['ready'].copy()
-                    elif action == "preset_vertical":
-                        target_position = self.preset_positions['vertical'].copy()
-                    else:
-                        continue
-                    
-                    # Convert to dictionary format for SO-101
+
+                # ── Motor command (local robot doesn't drive, just log) ──
+                if isinstance(action, dict) and action.get("motor"):
+                    # Motor mode not connected on local robot — log only
+                    print(f"\r[MOTOR] m1={action['m1']:+.2f}  m2={action['m2']:+.2f}", end="", flush=True)
+
+                # ── Preset handling ────────────────────────────────────
+                elif isinstance(action, str):
+                    preset_name = action.removeprefix("preset_")
+                    target_position = self.preset_positions.get(preset_name, self.preset_positions['home']).copy()
+                    target_position = np.clip(target_position, self.joint_limits_lower, self.joint_limits_upper)
                     action_dict = {key: float(target_position[i]) for i, key in enumerate(self.joint_keys)}
-                    
                     self.robot.send_action(action_dict)
                     self.current_position = target_position
                     time.sleep(0.5)  # Brief pause after preset movement
-                    continue
-                
-                # Calculate new target position (relative control)
-                target_position = self.current_position + action
-                
-                # Clip to calibrated safe ranges
-                # This prevents sending positions outside the servo's physical limits
-                # Uses the actual calibrated min/max from your robot's calibration file
-                target_position = np.clip(target_position, self.joint_limits_lower, self.joint_limits_upper)
-                
-                # Convert to dictionary format for SO-101
-                action_dict = {key: float(target_position[i]) for i, key in enumerate(self.joint_keys)}
-                
-                # Send action to robot
-                self.robot.send_action(action_dict)
-                
-                # Update current position
-                self.current_position = target_position
-                
-                # Display status (every 30 frames = ~1 second)
-                if int(time.time() * 30) % 30 == 0:
-                    active = np.any(np.abs(action) > 0.001)
-                    if active or self.enabled:
-                        status = "ACTIVE" if active else "READY"
-                        print(f"[{status}] Position: {np.round(self.current_position, 2)}")
+
+                # ── Arm continuous control ─────────────────────────────
+                else:
+                    # Calculate new target position (relative control)
+                    target_position = self.current_position + action
+                    target_position = np.clip(target_position, self.joint_limits_lower, self.joint_limits_upper)
+                    action_dict = {key: float(target_position[i]) for i, key in enumerate(self.joint_keys)}
+                    self.robot.send_action(action_dict)
+                    self.current_position = target_position
+
+                    # Display status (every ~1 second)
+                    if int(time.time() * 30) % 30 == 0:
+                        active = np.any(np.abs(action) > 0.001)
+                        if active or self.mode == "arm":
+                            status = "ACTIVE" if active else "READY"
+                            print(f"[{status}] Position: {np.round(self.current_position, 2)}")
                 
                 # Maintain control frequency
                 elapsed = time.time() - loop_start
