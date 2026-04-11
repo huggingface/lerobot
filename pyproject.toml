@@ -128,6 +128,7 @@ unitree_g1 = [
     "lerobot[pygame-dep]",
 ]
 reachy2 = ["reachy2_sdk>=1.0.15,<1.1.0"]
+reachy_mini = ["reachy-mini @ git+https://github.com/pollen-robotics/reachy_mini.git"]
 kinematics = ["lerobot[placo-dep]"]
 intelrealsense = [
     "pyrealsense2>=2.55.1.6486,<2.57.0 ; sys_platform != 'darwin'",
