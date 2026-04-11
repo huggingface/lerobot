@@ -1,0 +1,183 @@
+# 설치 가이드
+
+이 가이드는 `conda`(miniforge 기반)를 사용하여 환경을 관리합니다(권장). 다른 환경 관리 도구(예: `uv`, `venv`)를 선호하는 경우, Python >=3.12와 `libsvtav1` 인코더가 포함된 `ffmpeg`가 설치되어 있는지 확인한 후 [환경 설정](#step-2-환경-설정)으로 건너뛰세요.
+
+## Step 1 (`conda` 전용): [`miniforge`](https://conda-forge.org/download/) 설치
+
+```bash
+wget "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh"
+bash Miniforge3-$(uname)-$(uname -m).sh
+```
+
+## Step 2: 환경 설정
+
+Python 3.12로 가상환경을 생성합니다:
+
+<!-- prettier-ignore-start -->
+<hfoptions id="create_venv">
+<hfoption id="conda">
+```bash
+conda create -y -n lerobot python=3.12
+```
+</hfoption>
+<hfoption id="uv">
+```bash
+uv python install 3.12
+uv venv --python 3.12
+```
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->
+
+그런 다음 가상환경을 활성화합니다. LeRobot을 사용하려면 셸을 열 때마다 이 명령을 실행해야 합니다:
+
+<!-- prettier-ignore-start -->
+<hfoptions id="activate_venv">
+<hfoption id="conda">```bash
+conda activate lerobot
+```</hfoption>
+<hfoption id="uv">
+```bash
+# Linux/macOS
+source .venv/bin/activate
+# Windows PowerShell
+source .venv\Scripts\Activate.ps1
+```
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->
+
+`conda`를 사용하는 경우, 환경에 `ffmpeg`를 설치합니다:
+
+```bash
+conda install ffmpeg -c conda-forge
+ffmpeg -version  # ffmpeg 8.X는 아직 지원되지 않습니다!
+```
+
+> [!TIP]
+> 일반적으로 해당 플랫폼에 맞게 `libsvtav1` 인코더가 포함된 `ffmpeg 7.X`가 설치됩니다. `libsvtav1`이 지원되지 않는 경우(`ffmpeg -encoders`로 지원 인코더 확인), 다음 방법을 사용할 수 있습니다:
+>
+> - _[모든 플랫폼]_ `ffmpeg 7.X`를 명시적으로 설치:
+>
+> ```bash
+> conda install ffmpeg=7.1.1 -c conda-forge
+> ```
+>
+> - _[Linux 전용]_ 직접 빌드한 ffmpeg를 사용하려면: [ffmpeg 빌드 의존성](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#GettheDependencies)을 설치하고, [libsvtav1을 포함하여 소스에서 ffmpeg를 컴파일](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#libsvtav1)한 다음, `which ffmpeg`으로 올바른 바이너리를 사용하고 있는지 확인하세요.
+
+> [!NOTE]
+> WSL(Windows Subsystem for Linux) 내에서 LeRobot을 설치하는 경우, 다음 명령으로 `evdev`를 설치해야 합니다:
+>
+> ```bash
+> conda install evdev -c conda-forge
+> ```
+
+> [!IMPORTANT]
+> `uv`를 사용하는 경우, `ffmpeg`를 시스템 전체에(가상환경 외부에) 설치해야 합니다. 이 방식은 `uv`와 `torchcodec`이 시스템 `ffmpeg`에 동적으로 링크하는 기능에 의존합니다.
+
+## Step 3: LeRobot 설치 🤗
+
+### 소스에서 설치
+
+먼저, 레포지토리를 클론하고 디렉토리로 이동합니다:
+
+```bash
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
+```
+
+그런 다음, 편집 가능 모드로 라이브러리를 설치합니다. 코드에 기여할 계획이라면 이 방법이 유용합니다.
+
+<!-- prettier-ignore-start -->
+<hfoptions id="install_lerobot_src">
+<hfoption id="conda">
+```bash
+pip install -e .
+```
+</hfoption>
+<hfoption id="uv">
+```bash
+uv pip install -e .
+```
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->
+
+### PyPI에서 설치
+
+**핵심 라이브러리:**
+기본 패키지를 설치합니다:
+
+<!-- prettier-ignore-start -->
+<hfoptions id="install_lerobot_pypi">
+<hfoption id="conda">
+```bash
+pip install lerobot
+```
+</hfoption>
+<hfoption id="uv">
+```bash
+uv pip install lerobot
+```
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->
+
+_기본 의존성만 설치됩니다._
+
+**추가 기능:**
+추가 기능을 설치하려면 다음 중 하나를 사용하세요(`uv`를 사용하는 경우, 아래 명령에서 `pip install`을 `uv pip install`로 대체하세요.):
+
+```bash
+pip install 'lerobot[all]'          # 모든 기능
+pip install 'lerobot[aloha,pusht]'  # 특정 기능 (Aloha & Pusht)
+pip install 'lerobot[feetech]'      # Feetech 모터 지원
+```
+
+_`[...]`를 원하는 기능으로 대체하세요._
+
+**사용 가능한 태그:**
+선택적 의존성의 전체 목록은 다음을 참조하세요:
+https://pypi.org/project/lerobot/
+
+### 문제 해결
+
+빌드 오류가 발생하면, 추가 의존성(`cmake`, `build-essential`, `ffmpeg libs`)을 설치해야 할 수 있습니다.
+Linux에서 설치하려면 다음을 실행하세요:
+
+```bash
+sudo apt-get install cmake build-essential python3-dev pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev
+```
+
+다른 시스템의 경우: [PyAV 컴파일](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)을 참조하세요.
+
+## 선택적 의존성
+
+LeRobot은 특정 기능을 위한 선택적 extras를 제공합니다. 여러 extras를 조합할 수 있습니다(예: `.[aloha,feetech]`). 사용 가능한 모든 extras는 `pyproject.toml`을 참조하세요. `uv`를 사용하는 경우, 아래 명령에서 `pip install`을 `uv pip install`로 대체하세요.
+
+### 시뮬레이션
+
+환경 패키지를 설치합니다: `aloha` ([gym-aloha](https://github.com/huggingface/gym-aloha)), 또는 `pusht` ([gym-pusht](https://github.com/huggingface/gym-pusht))
+예시:
+
+```bash
+pip install -e ".[aloha]" # 또는 예를 들어 "[pusht]"
+```
+
+### 모터 제어
+
+Koch v1.1의 경우 Dynamixel SDK를, SO100/SO101/Moss의 경우 Feetech SDK를 설치합니다.
+
+```bash
+pip install -e ".[feetech]" # 또는 예를 들어 "[dynamixel]"
+```
+
+### 실험 추적
+
+실험 추적을 위해 [Weights and Biases](https://docs.wandb.ai/quickstart)를 사용하려면, 다음으로 로그인하세요:
+
+```bash
+wandb login
+```
+
+이제 로봇이 아직 준비되지 않았다면 조립할 수 있습니다. 왼쪽에서 로봇 유형을 찾아보세요. 그런 다음 아래 링크를 따라 LeRobot을 로봇과 함께 사용하세요.

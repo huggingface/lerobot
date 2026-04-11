@@ -1,0 +1,95 @@
+# ACT (Action Chunking with Transformers)
+
+ACT는 **가볍고 효율적인 모방 학습 정책**으로, 특히 정밀한 조작(manipulation) 작업에 적합합니다. 빠른 학습 시간, 낮은 연산 요구량, 뛰어난 성능 덕분에 LeRobot을 처음 시작할 때 **가장 먼저 추천하는 모델**입니다.
+
+<div class="video-container">
+  <iframe
+    width="100%"
+    height="415"
+    src="https://www.youtube.com/embed/ft73x0LfGpM"
+    title="LeRobot ACT Tutorial"
+    frameborder="0"
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+    allowfullscreen
+  ></iframe>
+</div>
+
+_LeRobot 팀의 ACT 작동 원리 튜토리얼을 시청하세요: [LeRobot ACT Tutorial](https://www.youtube.com/watch?v=ft73x0LfGpM)_
+
+## 모델 개요
+
+Action Chunking with Transformers (ACT)는 Zhao et al.의 논문 [Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware](https://arxiv.org/abs/2304.13705)에서 소개되었습니다. 이 정책은 저렴한 하드웨어와 최소한의 시연 데이터로 정밀하고 접촉이 많은(contact-rich) 조작 작업을 수행할 수 있도록 설계되었습니다.
+
+### ACT가 입문자에게 좋은 이유
+
+ACT가 훌륭한 출발점인 이유는 다음과 같습니다:
+
+- **빠른 학습**: 단일 GPU에서 몇 시간 내에 학습 완료
+- **경량**: 약 80M 파라미터로, 효율적이고 다루기 쉬움
+- **데이터 효율적**: 50개의 시연만으로도 높은 성공률 달성 가능
+
+### 아키텍처
+
+ACT는 세 가지 주요 구성요소로 이루어진 트랜스포머 기반 아키텍처를 사용합니다:
+
+1. **비전 백본(Vision Backbone)**: ResNet-18이 다중 카메라 시점의 이미지를 처리
+2. **트랜스포머 인코더**: 카메라 특징, 관절 위치, 학습된 잠재 변수의 정보를 통합
+3. **트랜스포머 디코더**: 교차 어텐션(cross-attention)을 사용하여 일관된 액션 시퀀스를 생성
+
+정책의 입력:
+
+- 다중 RGB 이미지 (예: 손목 카메라, 전면/상단 카메라)
+- 현재 로봇 관절 위치
+- 잠재 스타일 변수 `z` (훈련 중 학습됨, 추론 시 0으로 설정)
+
+출력은 `k`개의 미래 액션 시퀀스로 구성된 청크입니다.
+
+## 설치 요구사항
+
+1. [설치 가이드](./installation)를 따라 LeRobot을 설치하세요.
+2. ACT는 LeRobot 기본 설치에 포함되어 있으므로, 추가 의존성이 필요하지 않습니다!
+
+## ACT 학습
+
+ACT는 표준 LeRobot 학습 파이프라인과 원활하게 작동합니다. 데이터셋에서 ACT를 학습하는 전체 예시입니다:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=${HF_USER}/your_dataset \
+  --policy.type=act \
+  --output_dir=outputs/train/act_your_dataset \
+  --job_name=act_your_dataset \
+  --policy.device=cuda \
+  --wandb.enable=true \
+  --policy.repo_id=${HF_USER}/act_policy
+```
+
+### 학습 팁
+
+1. **기본값으로 시작**: ACT의 기본 하이퍼파라미터는 대부분의 작업에서 잘 작동합니다
+2. **학습 시간**: 단일 GPU에서 100k 학습 스텝에 몇 시간이 소요됩니다
+3. **배치 크기**: 배치 크기 8로 시작하고, GPU 메모리에 따라 조정합니다
+
+### Google Colab으로 학습
+
+로컬 컴퓨터에 강력한 GPU가 없다면, [ACT 학습 노트북](./notebooks#training-act)을 따라 Google Colab을 활용하여 모델을 학습할 수 있습니다.
+
+## ACT 평가
+
+학습이 완료되면, 학습된 정책을 사용하여 `lerobot-record` 명령으로 ACT 정책을 평가할 수 있습니다. 추론을 실행하고 평가 에피소드를 녹화합니다:
+
+```bash
+lerobot-record \
+  --robot.type=so100_follower \
+  --robot.port=/dev/ttyACM0 \
+  --robot.id=my_robot \
+  --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+  --display_data=true \
+  --dataset.repo_id=${HF_USER}/eval_act_your_dataset \
+  --dataset.num_episodes=10 \
+  --dataset.single_task="Your task description" \
+  --dataset.streaming_encoding=true \
+  --dataset.encoder_threads=2 \
+  # --dataset.vcodec=auto \
+  --policy.path=${HF_USER}/act_policy
+```

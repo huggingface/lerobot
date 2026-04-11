@@ -1,0 +1,96 @@
+# π₀ (Pi0)
+
+π₀는 Physical Intelligence가 개발한 **범용 로봇 제어를 위한 Vision-Language-Action 모델**입니다. LeRobot 구현은 해당 팀의 오픈소스 [OpenPI](https://github.com/Physical-Intelligence/openpi) 레포지토리를 기반으로 합니다.
+
+## 모델 개요
+
+π₀는 [Physical Intelligence](https://www.physicalintelligence.company/blog/pi0)가 개발한 최초의 범용 로봇 파운데이션 모델로, 로보틱스의 획기적 성과를 나타냅니다. 반복적인 동작을 프로그래밍하는 기존의 협소한 전문가형 로봇 프로그램과 달리, π₀는 시각 입력을 이해하고, 자연어 지시를 해석하며, 다양한 작업에 걸쳐 여러 종류의 로봇을 제어할 수 있는 제너럴리스트(generalist) 정책으로 설계되었습니다.
+
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot-pi0%20(1).png"
+  alt="Pi0 개요"
+  width="85%"
+/>
+
+### 물리적 지능(Physical Intelligence)을 향한 비전
+
+Physical Intelligence가 설명하듯이, AI는 체스부터 신약 발견까지 디지털 영역에서 놀라운 성공을 거두었지만, 물리적 세계에서는 여전히 인간 지능이 AI를 크게 앞서고 있습니다. 모라벡의 역설(Moravec's paradox)을 빌려 말하자면, 체스 게임에서 이기는 것은 AI에게 "쉬운" 문제이지만, 셔츠를 접거나 테이블을 치우는 것은 지금까지 고안된 가장 어려운 공학적 문제를 풀어야 합니다. π₀는 사용자가 대규모 언어 모델에게 하듯이 로봇에게 원하는 작업을 단순히 요청할 수 있는 인공 물리적 지능을 개발하기 위한 첫 걸음입니다.
+
+### 아키텍처와 접근 방식
+
+π₀는 여러 핵심 혁신을 결합합니다:
+
+- **Flow Matching**: 사전학습된 VLM에 flow matching(확산 모델의 변형)을 통해 연속적인 액션 출력을 증강하는 새로운 방법
+- **Cross-Embodiment 학습**: UR5e, Bimanual UR5e, Franka, Bimanual Trossen, Bimanual ARX, Mobile Trossen, Mobile Fibocom 등 8개의 로봇 플랫폼 데이터로 학습
+- **인터넷 규모 사전학습**: 사전학습된 3B 파라미터 Vision-Language Model에서 의미적 지식을 계승
+- **고주파 제어**: 실시간 정교한 조작(dexterous manipulation)을 위해 최대 50Hz로 모터 명령 출력
+
+## 설치 요구사항
+
+1. [설치 가이드](./installation)를 따라 LeRobot을 설치하세요.
+2. 다음 명령으로 Pi0 의존성을 설치하세요:
+
+   ```bash
+   pip install -e ".[pi]"
+   ```
+
+## 학습 데이터 및 능력
+
+π₀는 현재까지 가장 대규모의 로봇 상호작용 데이터셋으로 학습되었으며, 세 가지 핵심 데이터 소스를 결합합니다:
+
+1. **인터넷 규모 사전학습**: 의미 이해를 위한 웹 기반 비전-언어 데이터
+2. **Open X-Embodiment Dataset**: 오픈소스 로봇 조작 데이터셋
+3. **Physical Intelligence Dataset**: 8개의 다른 로봇에 걸친 대규모의 다양한 정교한 작업 데이터셋
+
+## 사용법
+
+LeRobot에서 π₀를 사용하려면, 정책 타입을 다음과 같이 지정하세요:
+
+```python
+policy.type=pi0
+```
+
+## 학습
+
+π₀를 학습하려면, 적절한 설정과 함께 표준 LeRobot 학습 스크립트를 사용할 수 있습니다:
+
+```bash
+lerobot-train \
+    --dataset.repo_id=your_dataset \
+    --policy.type=pi0 \
+    --output_dir=./outputs/pi0_training \
+    --job_name=pi0_training \
+    --policy.pretrained_path=lerobot/pi0_base \
+    --policy.repo_id=your_repo_id \
+    --policy.compile_model=true \
+    --policy.gradient_checkpointing=true \
+    --policy.dtype=bfloat16 \
+    --policy.freeze_vision_encoder=false \
+    --policy.train_expert_only=false \
+    --steps=3000 \
+    --policy.device=cuda \
+    --batch_size=32
+```
+
+### 주요 학습 파라미터
+
+- **`--policy.compile_model=true`**: 모델 컴파일을 활성화하여 학습 속도 향상
+- **`--policy.gradient_checkpointing=true`**: 학습 중 메모리 사용량을 크게 절감
+- **`--policy.dtype=bfloat16`**: 효율성을 위한 혼합 정밀도 학습
+- **`--batch_size=32`**: 학습 배치 크기, GPU 메모리에 따라 조정
+- **`--policy.pretrained_path=lerobot/pi0_base`**: 파인튜닝할 기본 π₀ 모델, 옵션:
+  - [lerobot/pi0_base](https://huggingface.co/lerobot/pi0_base)
+  - [lerobot/pi0_libero](https://huggingface.co/lerobot/pi0_libero) (Libero 데이터셋에 특화 학습)
+
+### 학습 파라미터 설명
+
+| 파라미터                | 기본값  | 설명                                      |
+| ----------------------- | ------- | ----------------------------------------- |
+| `freeze_vision_encoder` | `false` | 비전 인코더를 고정하지 않음               |
+| `train_expert_only`     | `false` | VLM을 고정하지 않고, 모든 파라미터를 학습 |
+
+**💡 팁**: `train_expert_only=true`를 설정하면 VLM을 고정하고 액션 전문가(action expert)와 프로젝션만 학습하여, 메모리 사용량을 줄인 파인튜닝이 가능합니다.
+
+## 라이선스
+
+이 모델은 원본 [OpenPI 레포지토리](https://github.com/Physical-Intelligence/openpi)와 일관되게 **Apache 2.0 License**를 따릅니다.
