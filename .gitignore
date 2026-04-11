@@ -15,6 +15,7 @@
 ### Environments & Dependencies ###
 .env
 .venv
+.venv-lerobot-test
 env/
 venv/
 env.bak/
