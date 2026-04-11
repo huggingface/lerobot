@@ -543,7 +543,7 @@ def make_xvla_libero_pre_post_processors() -> tuple[
     pre_processor_steps: list[ProcessorStep] = []
     post_processor_steps: list[ProcessorStep] = []
     pre_processor_steps.extend(
-        [LiberoProcessorStep(), XVLAImageNetNormalizeProcessorStep(), XVLAAddDomainIdProcessorStep()]
+        [LiberoProcessorStep()]
     )
     post_processor_steps.extend([XVLARotation6DToAxisAngleProcessorStep()])
     return (
