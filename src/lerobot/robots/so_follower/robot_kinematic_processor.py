@@ -74,13 +74,16 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
     _command_when_disabled: np.ndarray | None = field(default=None, init=False, repr=False)
 
     def action(self, action: RobotAction) -> RobotAction:
-        observation = self.transition.get(TransitionKey.OBSERVATION).copy()
+        observation = self.transition.get(TransitionKey.OBSERVATION)
 
         if observation is None:
-            raise ValueError("Joints observation is require for computing robot kinematics")
+            raise ValueError("Joints observation is required for computing robot kinematics")
 
-        if self.use_ik_solution and "IK_solution" in self.transition.get(TransitionKey.COMPLEMENTARY_DATA):
-            q_raw = self.transition.get(TransitionKey.COMPLEMENTARY_DATA)["IK_solution"]
+        observation = observation.copy()
+
+        complementary_data = self.transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if self.use_ik_solution and complementary_data is not None and "IK_solution" in complementary_data:
+            q_raw = complementary_data["IK_solution"]
         else:
             q_raw = np.array(
                 [
@@ -285,9 +288,10 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
                 "Missing required end-effector pose components: ee.x, ee.y, ee.z, ee.wx, ee.wy, ee.wz, ee.gripper_pos must all be present in action"
             )
 
-        observation = self.transition.get(TransitionKey.OBSERVATION).copy()
+        observation = self.transition.get(TransitionKey.OBSERVATION)
         if observation is None:
-            raise ValueError("Joints observation is require for computing robot kinematics")
+            raise ValueError("Joints observation is required for computing robot kinematics")
+        observation = observation.copy()
 
         q_raw = np.array(
             [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
@@ -362,12 +366,12 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
     discrete_gripper: bool = False
 
     def action(self, action: RobotAction) -> RobotAction:
-        observation = self.transition.get(TransitionKey.OBSERVATION).copy()
+        observation = self.transition.get(TransitionKey.OBSERVATION)
+        if observation is None:
+            raise ValueError("Joints observation is required for computing robot kinematics")
+        observation = observation.copy()
 
         gripper_vel = action.pop("ee.gripper_vel")
-
-        if observation is None:
-            raise ValueError("Joints observation is require for computing robot kinematics")
 
         q_raw = np.array(
             [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
@@ -554,9 +558,10 @@ class InverseKinematicsRLStep(ProcessorStep):
                 "Missing required end-effector pose components: ee.x, ee.y, ee.z, ee.wx, ee.wy, ee.wz, ee.gripper_pos must all be present in action"
             )
 
-        observation = new_transition.get(TransitionKey.OBSERVATION).copy()
+        observation = new_transition.get(TransitionKey.OBSERVATION)
         if observation is None:
-            raise ValueError("Joints observation is require for computing robot kinematics")
+            raise ValueError("Joints observation is required for computing robot kinematics")
+        observation = observation.copy()
 
         q_raw = np.array(
             [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
