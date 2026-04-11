@@ -23,7 +23,8 @@ import draccus
 import gymnasium as gym
 from gymnasium.envs.registration import registry as gym_registry
 
-from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.configs import FeatureType, PolicyFeature
+from lerobot.processor import IsaaclabArenaProcessorStep, LiberoProcessorStep, PolicyProcessorPipeline
 from lerobot.robots import RobotConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.constants import (
@@ -124,8 +125,6 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
 
     def get_env_processors(self):
         """Return (preprocessor, postprocessor) for this env. Default: identity."""
-        from lerobot.processor.pipeline import PolicyProcessorPipeline
-
         return PolicyProcessorPipeline(steps=[]), PolicyProcessorPipeline(steps=[])
 
 
@@ -418,7 +417,7 @@ class LiberoEnv(EnvConfig):
         return kwargs
 
     def create_envs(self, n_envs: int, use_async_envs: bool = False):
-        from lerobot.envs.libero import create_libero_envs
+        from .libero import create_libero_envs
 
         if self.task is None:
             raise ValueError("LiberoEnv requires a task to be specified")
@@ -436,9 +435,6 @@ class LiberoEnv(EnvConfig):
         )
 
     def get_env_processors(self):
-        from lerobot.processor.env_processor import LiberoProcessorStep
-        from lerobot.processor.pipeline import PolicyProcessorPipeline
-
         return (
             PolicyProcessorPipeline(steps=[LiberoProcessorStep()]),
             PolicyProcessorPipeline(steps=[]),
@@ -487,7 +483,7 @@ class MetaworldEnv(EnvConfig):
         }
 
     def create_envs(self, n_envs: int, use_async_envs: bool = False):
-        from lerobot.envs.metaworld import create_metaworld_envs
+        from .metaworld import create_metaworld_envs
 
         if self.task is None:
             raise ValueError("MetaWorld requires a task to be specified")
@@ -568,9 +564,6 @@ class IsaaclabArenaEnv(HubEnvConfig):
         return {}
 
     def get_env_processors(self):
-        from lerobot.processor.env_processor import IsaaclabArenaProcessorStep
-        from lerobot.processor.pipeline import PolicyProcessorPipeline
-
         state_keys = tuple(k.strip() for k in (self.state_keys or "").split(",") if k.strip())
         camera_keys = tuple(k.strip() for k in (self.camera_keys or "").split(",") if k.strip())
         if not state_keys and not camera_keys:

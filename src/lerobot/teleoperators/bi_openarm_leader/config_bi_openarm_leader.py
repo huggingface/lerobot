@@ -16,9 +16,8 @@
 
 from dataclasses import dataclass
 
-from lerobot.teleoperators.openarm_leader import OpenArmLeaderConfigBase
-
 from ..config import TeleoperatorConfig
+from ..openarm_leader import OpenArmLeaderConfigBase
 
 
 @TeleoperatorConfig.register_subclass("bi_openarm_leader")

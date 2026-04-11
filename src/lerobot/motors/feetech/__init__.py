@@ -15,4 +15,6 @@
 # limitations under the License.
 
 from .feetech import DriveMode, FeetechMotorsBus, OperatingMode, TorqueMode
-from .tables import *
+from .tables import *  # noqa: F403 — hardware constant tables
+
+__all__ = ["DriveMode", "FeetechMotorsBus", "OperatingMode", "TorqueMode"]

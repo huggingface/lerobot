@@ -16,7 +16,7 @@
 from collections.abc import Callable
 from typing import Any
 
-from lerobot.utils.utils import format_big_number
+from .utils import format_big_number
 
 
 class AverageMeter:

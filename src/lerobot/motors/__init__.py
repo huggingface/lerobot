@@ -19,3 +19,5 @@ from .motors_bus import (
     MotorCalibration,
     MotorNormMode,
 )
+
+__all__ = ["Motor", "MotorCalibration", "MotorNormMode"]

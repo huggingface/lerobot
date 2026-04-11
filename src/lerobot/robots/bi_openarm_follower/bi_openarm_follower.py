@@ -17,10 +17,10 @@
 import logging
 from functools import cached_property
 
-from lerobot.robots.openarm_follower import OpenArmFollower, OpenArmFollowerConfig
 from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
+from ..openarm_follower import OpenArmFollower, OpenArmFollowerConfig
 from ..robot import Robot
 from .config_bi_openarm_follower import BiOpenArmFollowerConfig
 

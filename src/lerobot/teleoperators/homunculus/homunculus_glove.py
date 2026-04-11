@@ -23,12 +23,12 @@ import serial
 
 from lerobot.motors import MotorCalibration
 from lerobot.motors.motors_bus import MotorNormMode
-from lerobot.teleoperators.homunculus.joints_translation import homunculus_glove_to_hope_jr_hand
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.utils import enter_pressed, move_cursor_up
 
 from ..teleoperator import Teleoperator
 from .config_homunculus import HomunculusGloveConfig
+from .joints_translation import homunculus_glove_to_hope_jr_hand
 
 logger = logging.getLogger(__name__)
 

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from safetensors.torch import load_file
 
-from .utils import require_package
+from .utils import skip_if_package_missing
 
 # Skip this entire module in CI
 pytestmark = pytest.mark.skipif(
@@ -37,7 +37,7 @@ def resolve_model_id_for_peft_training(policy_type):
 
 
 @pytest.mark.parametrize("policy_type", ["smolvla"])
-@require_package("peft")
+@skip_if_package_missing("peft")
 def test_peft_training_push_to_hub_works(policy_type, tmp_path):
     """Ensure that push to hub stores PEFT only the adapter, not the full model weights."""
     output_dir = tmp_path / f"output_{policy_type}"
@@ -76,7 +76,7 @@ def test_peft_training_push_to_hub_works(policy_type, tmp_path):
 
 
 @pytest.mark.parametrize("policy_type", ["smolvla"])
-@require_package("peft")
+@skip_if_package_missing("peft")
 def test_peft_training_works(policy_type, tmp_path):
     """Check whether the standard case of fine-tuning a (partially) pre-trained policy with PEFT works."""
     output_dir = tmp_path / f"output_{policy_type}"
@@ -125,7 +125,7 @@ def test_peft_training_works(policy_type, tmp_path):
 
 
 @pytest.mark.parametrize("policy_type", ["smolvla"])
-@require_package("peft")
+@skip_if_package_missing("peft")
 def test_peft_training_params_are_fewer(policy_type, tmp_path):
     """Check whether the standard case of fine-tuning a (partially) pre-trained policy with PEFT works."""
     output_dir = tmp_path / f"output_{policy_type}"
@@ -176,7 +176,7 @@ def dummy_make_robot_from_config(*args, **kwargs):
 
 
 @pytest.mark.parametrize("policy_type", ["smolvla"])
-@require_package("peft")
+@skip_if_package_missing("peft")
 def test_peft_record_loads_policy(policy_type, tmp_path):
     """Train a policy with PEFT and attempt to load it with `lerobot-record`."""
     from peft import PeftModel

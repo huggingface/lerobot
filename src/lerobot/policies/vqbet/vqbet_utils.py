@@ -30,7 +30,7 @@ from torch import einsum, nn
 from torch.cuda.amp import autocast
 from torch.optim import Optimizer
 
-from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
+from .configuration_vqbet import VQBeTConfig
 
 # ruff: noqa: N806
 

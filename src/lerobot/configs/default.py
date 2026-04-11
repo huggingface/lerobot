@@ -16,8 +16,8 @@
 
 from dataclasses import dataclass, field
 
-from lerobot.datasets.transforms import ImageTransformsConfig
-from lerobot.datasets.video_utils import get_safe_default_codec
+from lerobot.transforms import ImageTransformsConfig
+from lerobot.utils.import_utils import get_safe_default_codec
 
 
 @dataclass

@@ -25,15 +25,22 @@ import random
 import re
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
-from transformers import BatchFeature
 
-from lerobot.policies.wall_x.constant import (
+from lerobot.utils.import_utils import _transformers_available
+
+if TYPE_CHECKING or _transformers_available:
+    from transformers import BatchFeature
+else:
+    BatchFeature = None
+
+from lerobot.utils.constants import OBS_IMAGES
+
+from .constant import (
     CAMERA_NAME_MAPPING,
 )
-from lerobot.utils.constants import OBS_IMAGES
 
 
 @dataclass

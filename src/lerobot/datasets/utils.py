@@ -17,9 +17,7 @@ import contextlib
 import importlib.resources
 import json
 import logging
-from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
 
 import datasets
 import numpy as np
@@ -27,6 +25,8 @@ import packaging.version
 import torch
 from huggingface_hub import DatasetCard, DatasetCardData, HfApi
 from huggingface_hub.errors import RevisionNotFoundError
+
+from lerobot.utils.utils import flatten_dict, unflatten_dict
 
 V30_MESSAGE = """
 The dataset you requested ({repo_id}) is in {version} format.
@@ -93,14 +93,6 @@ LEGACY_EPISODES_PATH = "meta/episodes.jsonl"
 LEGACY_EPISODES_STATS_PATH = "meta/episodes_stats.jsonl"
 LEGACY_TASKS_PATH = "meta/tasks.jsonl"
 
-DEFAULT_FEATURES = {
-    "timestamp": {"dtype": "float32", "shape": (1,), "names": None},
-    "frame_index": {"dtype": "int64", "shape": (1,), "names": None},
-    "episode_index": {"dtype": "int64", "shape": (1,), "names": None},
-    "index": {"dtype": "int64", "shape": (1,), "names": None},
-    "task_index": {"dtype": "int64", "shape": (1,), "names": None},
-}
-
 
 def has_legacy_hub_download_metadata(root: Path) -> bool:
     """Return ``True`` when *root* looks like a legacy Hub ``local_dir`` mirror.
@@ -121,59 +113,6 @@ def update_chunk_file_indices(chunk_idx: int, file_idx: int, chunks_size: int) -
     else:
         file_idx += 1
     return chunk_idx, file_idx
-
-
-def flatten_dict(d: dict, parent_key: str = "", sep: str = "/") -> dict:
-    """Flatten a nested dictionary by joining keys with a separator.
-
-    Example:
-        >>> dct = {"a": {"b": 1, "c": {"d": 2}}, "e": 3}
-        >>> print(flatten_dict(dct))
-        {'a/b': 1, 'a/c/d': 2, 'e': 3}
-
-    Args:
-        d (dict): The dictionary to flatten.
-        parent_key (str): The base key to prepend to the keys in this level.
-        sep (str): The separator to use between keys.
-
-    Returns:
-        dict: A flattened dictionary.
-    """
-    items = []
-    for k, v in d.items():
-        new_key = f"{parent_key}{sep}{k}" if parent_key else k
-        if isinstance(v, dict):
-            items.extend(flatten_dict(v, new_key, sep=sep).items())
-        else:
-            items.append((new_key, v))
-    return dict(items)
-
-
-def unflatten_dict(d: dict, sep: str = "/") -> dict:
-    """Unflatten a dictionary with delimited keys into a nested dictionary.
-
-    Example:
-        >>> flat_dct = {"a/b": 1, "a/c/d": 2, "e": 3}
-        >>> print(unflatten_dict(flat_dct))
-        {'a': {'b': 1, 'c': {'d': 2}}, 'e': 3}
-
-    Args:
-        d (dict): A dictionary with flattened keys.
-        sep (str): The separator used in the keys.
-
-    Returns:
-        dict: A nested dictionary.
-    """
-    outdict = {}
-    for key, value in d.items():
-        parts = key.split(sep)
-        d = outdict
-        for part in parts[:-1]:
-            if part not in d:
-                d[part] = {}
-            d = d[part]
-        d[parts[-1]] = value
-    return outdict
 
 
 def serialize_dict(stats: dict[str, torch.Tensor | np.ndarray | dict]) -> dict:
@@ -330,27 +269,6 @@ def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> 
     upper_versions = [v for v in hub_versions if v > target_version]
     assert len(upper_versions) > 0
     raise ForwardCompatibilityError(repo_id, min(upper_versions))
-
-
-def cycle(iterable: Any) -> Iterator[Any]:
-    """Create a dataloader-safe cyclical iterator.
-
-    This is an equivalent of `itertools.cycle` but is safe for use with
-    PyTorch DataLoaders with multiple workers.
-    See https://github.com/pytorch/pytorch/issues/23900 for details.
-
-    Args:
-        iterable: The iterable to cycle over.
-
-    Yields:
-        Items from the iterable, restarting from the beginning when exhausted.
-    """
-    iterator = iter(iterable)
-    while True:
-        try:
-            yield next(iterator)
-        except StopIteration:
-            iterator = iter(iterable)
 
 
 def create_branch(repo_id: str, *, branch: str, repo_type: str | None = None) -> None:

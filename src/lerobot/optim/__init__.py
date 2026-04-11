@@ -12,4 +12,45 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .optimizers import OptimizerConfig as OptimizerConfig
+from .optimizers import (
+    AdamConfig as AdamConfig,
+    AdamWConfig as AdamWConfig,
+    MultiAdamConfig as MultiAdamConfig,
+    OptimizerConfig as OptimizerConfig,
+    SGDConfig as SGDConfig,
+    XVLAAdamWConfig as XVLAAdamWConfig,
+    load_optimizer_state,
+    save_optimizer_state,
+)
+from .schedulers import (
+    CosineDecayWithWarmupSchedulerConfig as CosineDecayWithWarmupSchedulerConfig,
+    DiffuserSchedulerConfig as DiffuserSchedulerConfig,
+    LRSchedulerConfig as LRSchedulerConfig,
+    VQBeTSchedulerConfig as VQBeTSchedulerConfig,
+    load_scheduler_state,
+    save_scheduler_state,
+)
+
+# NOTE: make_optimizer_and_scheduler is intentionally NOT re-exported here
+# to avoid circular dependencies (it imports lerobot.configs.train and lerobot.policies).
+# Import directly: ``from lerobot.optim.factory import make_optimizer_and_scheduler``
+
+__all__ = [
+    # Optimizer configs
+    "AdamConfig",
+    "AdamWConfig",
+    "MultiAdamConfig",
+    "OptimizerConfig",
+    "SGDConfig",
+    "XVLAAdamWConfig",
+    # Scheduler configs
+    "CosineDecayWithWarmupSchedulerConfig",
+    "DiffuserSchedulerConfig",
+    "LRSchedulerConfig",
+    "VQBeTSchedulerConfig",
+    # State management
+    "load_optimizer_state",
+    "load_scheduler_state",
+    "save_optimizer_state",
+    "save_scheduler_state",
+]

@@ -18,15 +18,17 @@ from typing import Any
 
 import torch
 
-from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
 from lerobot.processor import (
     DeviceProcessorStep,
     IdentityProcessorStep,
     NormalizerProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
+    policy_action_to_transition,
+    transition_to_policy_action,
 )
-from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
+
+from .configuration_classifier import RewardClassifierConfig
 
 
 def make_classifier_processor(

@@ -27,7 +27,7 @@ from threading import Lock
 import torch
 from torch import Tensor
 
-from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from .configuration_rtc import RTCConfig
 
 logger = logging.getLogger(__name__)
 

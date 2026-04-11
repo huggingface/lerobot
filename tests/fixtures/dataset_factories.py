@@ -34,12 +34,12 @@ from lerobot.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
-    DEFAULT_FEATURES,
     DEFAULT_VIDEO_FILE_SIZE_IN_MB,
     DEFAULT_VIDEO_PATH,
-    flatten_dict,
 )
 from lerobot.datasets.video_utils import encode_video_frames
+from lerobot.utils.constants import DEFAULT_FEATURES
+from lerobot.utils.utils import flatten_dict
 from tests.fixtures.constants import (
     DEFAULT_FPS,
     DUMMY_CAMERA_FEATURES,

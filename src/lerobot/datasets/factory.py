@@ -18,19 +18,15 @@ from pprint import pformat
 
 import torch
 
-from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.multi_dataset import MultiLeRobotDataset
-from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
-from lerobot.datasets.transforms import ImageTransforms
-from lerobot.utils.constants import ACTION, OBS_PREFIX, REWARD
+from lerobot.transforms import ImageTransforms
+from lerobot.utils.constants import ACTION, IMAGENET_STATS, OBS_PREFIX, REWARD
 
-IMAGENET_STATS = {
-    "mean": [[[0.485]], [[0.456]], [[0.406]]],  # (c,1,1)
-    "std": [[[0.229]], [[0.224]], [[0.225]]],  # (c,1,1)
-}
+from .dataset_metadata import LeRobotDatasetMetadata
+from .lerobot_dataset import LeRobotDataset
+from .multi_dataset import MultiLeRobotDataset
+from .streaming_dataset import StreamingLeRobotDataset
 
 
 def resolve_delta_timestamps(

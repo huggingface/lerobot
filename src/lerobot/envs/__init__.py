@@ -12,4 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .configs import AlohaEnv, EnvConfig, HubEnvConfig, PushtEnv  # noqa: F401
+# NOTE: gymnasium is currently a core dependency but is a candidate for moving to an
+# optional extra in the future. This guard is here to ensure a clear error message
+# if/when that transition happens.
+from lerobot.utils.import_utils import require_package
+
+require_package("gymnasium", extra="evaluation", import_name="gymnasium")
+
+from .configs import AlohaEnv, EnvConfig, HILSerlRobotEnvConfig, HubEnvConfig, PushtEnv
+from .factory import make_env, make_env_config, make_env_pre_post_processors
+from .utils import check_env_attributes_and_types, close_envs, env_to_policy_features, preprocess_observation
+
+__all__ = [
+    "AlohaEnv",
+    "EnvConfig",
+    "HILSerlRobotEnvConfig",
+    "HubEnvConfig",
+    "PushtEnv",
+    "check_env_attributes_and_types",
+    "close_envs",
+    "env_to_policy_features",
+    "make_env",
+    "make_env_config",
+    "make_env_pre_post_processors",
+    "preprocess_observation",
+]

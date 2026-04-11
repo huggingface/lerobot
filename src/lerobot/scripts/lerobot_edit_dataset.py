@@ -178,7 +178,8 @@ from pathlib import Path
 import draccus
 
 from lerobot.configs import parser
-from lerobot.datasets.dataset_tools import (
+from lerobot.datasets import (
+    LeRobotDataset,
     convert_image_to_video_dataset,
     delete_episodes,
     merge_datasets,
@@ -187,7 +188,6 @@ from lerobot.datasets.dataset_tools import (
     remove_feature,
     split_dataset,
 )
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.utils import init_logging
 

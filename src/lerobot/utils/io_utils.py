@@ -14,21 +14,80 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import json
-import warnings
+import logging
 from pathlib import Path
+from typing import Any
 
-import imageio
+logger = logging.getLogger(__name__)
 
 JsonLike = str | int | float | bool | None | list["JsonLike"] | dict[str, "JsonLike"] | tuple["JsonLike", ...]
 
 
-def write_video(video_path, stacked_frames, fps):
-    # Filter out DeprecationWarnings raised from pkg_resources
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore", "pkg_resources is deprecated as an API", category=DeprecationWarning
-        )
-        imageio.mimsave(video_path, stacked_frames, fps=fps)
+def load_json(fpath: Path) -> Any:
+    """Load data from a JSON file.
+
+    Args:
+        fpath (Path): Path to the JSON file.
+
+    Returns:
+        Any: The data loaded from the JSON file.
+    """
+    with open(fpath) as f:
+        return json.load(f)
+
+
+def write_json(data: dict, fpath: Path) -> None:
+    """Write data to a JSON file.
+
+    Creates parent directories if they don't exist.
+
+    Args:
+        data (dict): The dictionary to write.
+        fpath (Path): The path to the output JSON file.
+    """
+    fpath.parent.mkdir(exist_ok=True, parents=True)
+    with open(fpath, "w") as f:
+        json.dump(data, f, indent=4, ensure_ascii=False)
+
+
+def write_video(video_path: str | Path, stacked_frames: list, fps: int) -> None:
+    """Write a sequence of RGB frames to an MP4 video file using libx264.
+
+    Args:
+        video_path: Output file path.
+        stacked_frames: List of HWC uint8 numpy arrays (RGB).
+        fps: Frames per second for the output video.
+    """
+    from .import_utils import require_package
+
+    require_package("av", extra="av-dep")
+    import av
+
+    with av.open(str(video_path), mode="w") as container:
+        orig_height, orig_width = stacked_frames[0].shape[:2]
+        # yuv420p requires even dimensions; crop by one pixel if needed
+        height = orig_height if orig_height % 2 == 0 else orig_height - 1
+        width = orig_width if orig_width % 2 == 0 else orig_width - 1
+        if height != orig_height or width != orig_width:
+            logger.warning(
+                "Frame dimensions %dx%d are not even; cropping to %dx%d for yuv420p compatibility.",
+                orig_width,
+                orig_height,
+                width,
+                height,
+            )
+        stream = container.add_stream("libx264", rate=fps)
+        stream.width = width
+        stream.height = height
+        stream.pix_fmt = "yuv420p"
+        for frame_array in stacked_frames:
+            if height != orig_height or width != orig_width:
+                frame_array = frame_array[:height, :width]
+            frame = av.VideoFrame.from_ndarray(frame_array, format="rgb24")
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
 
 
 def deserialize_json_into_object[T: JsonLike](fpath: Path, obj: T) -> T:
