@@ -23,7 +23,7 @@ from lerobot.motors.dynamixel import (
     DynamixelMotorsBus,
     OperatingMode,
 )
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..teleoperator import Teleoperator
 from .config_omx_leader import OmxLeaderConfig
@@ -68,10 +68,8 @@ class OmxLeader(Teleoperator):
     def is_connected(self) -> bool:
         return self.bus.is_connected
 
+    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
-
         self.bus.connect()
         if not self.is_calibrated and calibrate:
             logger.info(
@@ -105,7 +103,7 @@ class OmxLeader(Teleoperator):
             self.calibration[motor] = MotorCalibration(
                 id=m.id,
                 drive_mode=drive_modes[motor],
-                homing_offset=0,
+                homing_offset=0 if motor != "gripper" else 100,
                 range_min=0,
                 range_max=4095,
             )
@@ -125,12 +123,20 @@ class OmxLeader(Teleoperator):
                 # point
                 self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
 
+            if motor == "gripper":
+                self.bus.write("Drive_Mode", motor, DriveMode.INVERTED.value)
+            else:
+                self.bus.write("Drive_Mode", motor, DriveMode.NON_INVERTED.value)
+
         # Use 'position control current based' for gripper to be limited by the limit of the current.
         # For the follower gripper, it means it can grasp an object without forcing too much even tho,
         # its goal position is a complete grasp (both gripper fingers are ordered to join and reach a touch).
         # For the leader gripper, it means we can use it as a physical trigger, since we can force with our finger
         # to make it move, and it will move back to its original target position when we release the force.
         self.bus.write("Operating_Mode", "gripper", OperatingMode.CURRENT_POSITION.value)
+        self.bus.write("Current_Limit", "gripper", 100)
+        self.bus.write("Goal_Current", "gripper", 100)
+        self.bus.write("Homing_Offset", "gripper", 100)
         # Set gripper's goal pos in current position mode so that we can use it as a trigger.
         self.bus.enable_torque("gripper")
         if self.is_calibrated:
@@ -142,10 +148,8 @@ class OmxLeader(Teleoperator):
             self.bus.setup_motor(motor)
             print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
+    @check_if_not_connected
     def get_action(self) -> dict[str, float]:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
         start = time.perf_counter()
         action = self.bus.sync_read("Present_Position")
         action = {f"{motor}.pos": val for motor, val in action.items()}
@@ -157,9 +161,7 @@ class OmxLeader(Teleoperator):
         # TODO(rcadene, aliberts): Implement force feedback
         raise NotImplementedError
 
+    @check_if_not_connected
     def disconnect(self) -> None:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
         self.bus.disconnect()
         logger.info(f"{self} disconnected.")

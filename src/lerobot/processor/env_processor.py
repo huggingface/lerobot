@@ -17,8 +17,8 @@ from dataclasses import dataclass
 
 import torch
 
-from lerobot.configs.types import PipelineFeatureType, PolicyFeature
-from lerobot.utils.constants import OBS_IMAGES, OBS_STATE, OBS_STR
+from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.utils.constants import OBS_IMAGES, OBS_PREFIX, OBS_STATE, OBS_STR
 
 from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
 
@@ -60,8 +60,9 @@ class LiberoProcessorStep(ObservationProcessorStep):
 
                 processed_obs[key] = img
         # Process robot_state into a flat state vector
-        if "observation.robot_state" in processed_obs:
-            robot_state = processed_obs.pop("observation.robot_state")
+        observation_robot_state_str = OBS_PREFIX + "robot_state"
+        if observation_robot_state_str in processed_obs:
+            robot_state = processed_obs.pop(observation_robot_state_str)
 
             # Extract components
             eef_pos = robot_state["eef"]["pos"]  # (B, 3,)
@@ -91,21 +92,19 @@ class LiberoProcessorStep(ObservationProcessorStep):
 
         # copy over non-STATE features
         for ft, feats in features.items():
-            if ft != PipelineFeatureType.STATE:
+            if ft != FeatureType.STATE:
                 new_features[ft] = feats.copy()
 
         # rebuild STATE features
         state_feats = {}
 
         # add our new flattened state
-        state_feats["observation.state"] = PolicyFeature(
-            key="observation.state",
+        state_feats[OBS_STATE] = PolicyFeature(
+            type=FeatureType.STATE,
             shape=(8,),  # [eef_pos(3), axis_angle(3), gripper(2)]
-            dtype="float32",
-            description=("Concatenated end-effector position (3), axis-angle (3), and gripper qpos (2)."),
         )
 
-        new_features[PipelineFeatureType.STATE] = state_feats
+        new_features[FeatureType.STATE] = state_feats
 
         return new_features
 

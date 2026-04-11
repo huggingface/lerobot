@@ -7,8 +7,6 @@
 - sections:
   - local: il_robots
     title: Imitation Learning for Robots
-  - local: cameras
-    title: Cameras
   - local: bring_your_own_policies
     title: Bring Your Own Policies
   - local: integrate_hardware
@@ -19,8 +17,12 @@
     title: Train RL in Simulation
   - local: multi_gpu_training
     title: Multi GPU training
+  - local: hil_data_collection
+    title: Human In the Loop Data Collection
   - local: peft_training
     title: Training with PEFT (e.g., LoRA)
+  - local: rename_map
+    title: Using Rename Map and Empty Cameras
   title: "Tutorials"
 - sections:
   - local: lerobot-dataset-v3
@@ -29,6 +31,10 @@
     title: Porting Large Datasets
   - local: using_dataset_tools
     title: Using the Dataset Tools
+  - local: dataset_subtask
+    title: Using Subtasks in the Dataset
+  - local: streaming_video_encoding
+    title: Streaming Video Encoding
   title: "Datasets"
 - sections:
   - local: act
@@ -45,6 +51,8 @@
     title: NVIDIA GR00T N1.5
   - local: xvla
     title: X-VLA
+  - local: multi_task_dit
+    title: Multitask DiT Policy
   - local: walloss
     title: WALL-OSS
   title: "Policies"
@@ -63,13 +71,17 @@
     title: Environments from the Hub
   - local: envhub_leisaac
     title: Control & Train Robots in Sim (LeIsaac)
+  title: "Simulation"
+- sections:
+  - local: adding_benchmarks
+    title: Adding a New Benchmark
+  - local: libero
+    title: LIBERO
+  - local: metaworld
+    title: Meta-World
   - local: envhub_isaaclab_arena
     title: NVIDIA IsaacLab Arena Environments
-  - local: libero
-    title: Using Libero
-  - local: metaworld
-    title: Using MetaWorld
-  title: "Simulation"
+  title: "Benchmarks"
 - sections:
   - local: introduction_processors
     title: Introduction to Robot Processors
@@ -81,6 +93,8 @@
     title: Processors for Robots and Teleoperators
   - local: env_processor
     title: Environment Processors
+  - local: action_representations
+    title: Action Representations
   title: "Robot Processors"
 - sections:
   - local: so101
@@ -99,11 +113,19 @@
     title: Unitree G1
   - local: earthrover_mini_plus
     title: Earth Rover Mini
+  - local: omx
+    title: OMX
+  - local: openarm
+    title: OpenArm
   title: "Robots"
 - sections:
   - local: phone_teleop
     title: Phone
   title: "Teleoperators"
+- sections:
+  - local: cameras
+    title: Cameras
+  title: "Sensors"
 - sections:
   - local: torch_accelerators
     title: PyTorch accelerators
@@ -113,6 +135,8 @@
     title: Notebooks
   - local: feetech
     title: Updating Feetech Firmware
+  - local: damiao
+    title: Damiao Motors and CAN Bus
   title: "Resources"
 - sections:
   - local: contributing

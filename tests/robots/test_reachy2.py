@@ -19,6 +19,8 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
+pytest.importorskip("reachy2_sdk")
+
 from lerobot.robots.reachy2 import (
     REACHY2_ANTENNAS_JOINTS,
     REACHY2_L_ARM_JOINTS,
@@ -140,6 +142,7 @@ def _make_reachy2_camera_mock(*args, **kwargs):
     cam.connect = MagicMock()
     cam.disconnect = MagicMock()
     cam.async_read = MagicMock(side_effect=lambda: np.zeros((height, width, 3), dtype=np.uint8))
+    cam.read_latest = MagicMock(side_effect=lambda: np.zeros((height, width, 3), dtype=np.uint8))
     return cam
 
 

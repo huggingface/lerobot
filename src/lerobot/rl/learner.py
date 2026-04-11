@@ -86,6 +86,7 @@ from lerobot.utils.constants import (
     PRETRAINED_MODEL_DIR,
     TRAINING_STATE_DIR,
 )
+from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.train_utils import (
     get_step_checkpoint_dir,
@@ -96,7 +97,6 @@ from lerobot.utils.train_utils import (
 from lerobot.utils.transition import move_state_dict_to_device, move_transition_to_device
 from lerobot.utils.utils import (
     format_big_number,
-    get_safe_torch_device,
     init_logging,
 )
 
@@ -544,9 +544,6 @@ def add_actor_information_and_train(
                 training_infos["loss_temperature"] = loss_temperature.item()
                 training_infos["temperature_grad_norm"] = temp_grad_norm
                 training_infos["temperature"] = policy.temperature
-
-                # Update temperature
-                policy.update_temperature()
 
         # Push policy to actors if needed
         if time.time() - last_time_policy_pushed > policy_parameters_push_frequency:

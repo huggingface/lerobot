@@ -21,6 +21,7 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 DEFAULT_IMAGE_SIZE = 224
 
@@ -40,6 +41,13 @@ class PI0FastConfig(PreTrainedConfig):
     max_action_dim: int = 32
     max_action_tokens: int = 256
 
+    # Relative actions: converts absolute actions to relative (relative to state).
+    use_relative_actions: bool = False
+    # Joint names to exclude from relative (kept absolute). Empty list = all dims relative.
+    relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+    # Populated at runtime from dataset metadata by make_policy.
+    action_feature_names: list[str] | None = None
+
     # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None
 
@@ -53,7 +61,7 @@ class PI0FastConfig(PreTrainedConfig):
 
     tokenizer_max_length: int = 200  # see openpi `__post_init__`
     text_tokenizer_name: str = "google/paligemma-3b-pt-224"
-    action_tokenizer_name: str = "physical-intelligence/fast"
+    action_tokenizer_name: str = "lerobot/fast-action-tokenizer"
     temperature: float = 0.0
     max_decoding_steps: int = 256
     fast_skip_tokens: int = 128
@@ -110,26 +118,26 @@ class PI0FastConfig(PreTrainedConfig):
     def validate_features(self) -> None:
         """Validate and set up input/output features."""
         for i in range(self.empty_cameras):
-            key = f"observation.images.empty_camera_{i}"
+            key = OBS_IMAGES + f".empty_camera_{i}"
             empty_camera = PolicyFeature(
                 type=FeatureType.VISUAL,
                 shape=(3, *self.image_resolution),  # Use configured image resolution
             )
             self.input_features[key] = empty_camera
 
-        if "observation.state" not in self.input_features:
+        if OBS_STATE not in self.input_features:
             state_feature = PolicyFeature(
                 type=FeatureType.STATE,
                 shape=(self.max_state_dim,),  # Padded to max_state_dim
             )
-            self.input_features["observation.state"] = state_feature
+            self.input_features[OBS_STATE] = state_feature
 
-        if "action" not in self.output_features:
+        if ACTION not in self.output_features:
             action_feature = PolicyFeature(
                 type=FeatureType.ACTION,
                 shape=(self.max_action_dim,),  # Padded to max_action_dim
             )
-            self.output_features["action"] = action_feature
+            self.output_features[ACTION] = action_feature
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(

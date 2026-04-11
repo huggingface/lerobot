@@ -1,0 +1,309 @@
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# This workflow tests the project against the latest upstream dependencies
+# (within pyproject.toml constraints) and opens a PR to update uv.lock
+# if the tests pass and the lockfile has changed.
+name: Latest Dependency Tests
+
+on:
+  # Allows running this workflow manually from the Actions tab
+  workflow_dispatch:
+
+  # Runs at 03:00 UTC
+  schedule:
+    - cron: "0 3 * * *"
+
+# Sets up the environment variables
+env:
+  UV_VERSION: "0.8.0"
+  PYTHON_VERSION: "3.12"
+  DOCKER_IMAGE_NAME: huggingface/lerobot-gpu:latest-deps
+
+# Ensures that only the latest run is active, canceling older runs.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+
+  # This job upgrades the lockfile and checks if dependencies have changed
+  upgrade-lock:
+    name: Upgrade Lockfile
+    runs-on: ubuntu-latest
+    if: github.repository == 'huggingface/lerobot'
+    permissions:
+      contents: read
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup uv and Python
+        uses: astral-sh/setup-uv@v6 # zizmor: ignore[unpinned-uses]
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Upgrade uv.lock
+        run: uv lock --upgrade
+
+      - name: Check for changes
+        id: diff
+        run: |
+          if git diff --quiet uv.lock; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "uv.lock is up to date — no dependency changes."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "uv.lock has changed — running tests."
+          fi
+
+      - name: Upload updated lockfile
+        if: steps.diff.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: uv-lock
+          path: uv.lock
+
+  # This job runs the full test suite with the upgraded dependencies
+  cpu-tests:
+    name: CPU Tests (Latest Deps)
+    needs: [upgrade-lock]
+    if: needs.upgrade-lock.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      MUJOCO_GL: egl
+      HF_HOME: /mnt/cache/.cache/huggingface
+      HF_LEROBOT_HOME: /mnt/cache/.cache/huggingface/lerobot
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          lfs: true
+          persist-credentials: false
+
+      - name: Download updated lockfile
+        uses: actions/download-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: uv-lock
+
+      # NOTE(Steven): Mount to `/mnt` to avoid the limited storage on `/home`. Consider cleaning default SDKs or using self-hosted runners for more space.
+      # (As of 2024-06-10, the runner's `/home` has only 6.2 GB free—8% of its 72 GB total.)
+      - name: Setup /mnt storage
+        run: sudo chown -R $USER:$USER /mnt
+
+      - name: Install apt dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y build-essential \
+          git curl libglib2.0-0 libegl1-mesa-dev ffmpeg libusb-1.0-0-dev \
+          speech-dispatcher libgeos-dev portaudio19-dev
+
+      - name: Setup uv and Python
+        uses: astral-sh/setup-uv@v6 # zizmor: ignore[unpinned-uses]
+        with:
+          enable-cache: true
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install lerobot with all extras
+        run: uv sync --locked --extra all # TODO(Steven): Make flash-attn optional
+
+      - name: Login to Hugging Face
+        if: env.HF_USER_TOKEN != ''
+        run: |
+          uv run hf auth login --token "$HF_USER_TOKEN" --add-to-git-credential
+          uv run hf auth whoami
+
+      - name: Run pytest (all extras)
+        run: uv run pytest tests -vv --maxfail=10
+
+      - name: Run end-to-end tests
+        run: uv run make test-end-to-end
+
+  # This job builds a GPU-enabled Docker image with the upgraded dependencies
+  build-and-push-docker:
+    name: Build and Push Docker
+    needs: [upgrade-lock]
+    if: needs.upgrade-lock.outputs.changed == 'true'
+    permissions:
+      contents: read
+    runs-on:
+      group: aws-general-8-plus
+    outputs:
+      image_tag: ${{ env.DOCKER_IMAGE_NAME }}
+    steps:
+      - name: Install Git LFS
+        run: |
+          sudo apt-get update
+          sudo apt-get install git-lfs
+          git lfs install
+      - uses: actions/checkout@v6
+        with:
+          lfs: true
+          persist-credentials: false
+
+      - name: Download updated lockfile
+        uses: actions/download-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: uv-lock
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          cache-binary: false
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6 # zizmor: ignore[unpinned-uses]
+        with:
+          context: .
+          file: ./docker/Dockerfile.internal
+          push: true
+          tags: ${{ env.DOCKER_IMAGE_NAME }}
+
+  # This job runs pytest with all extras on a GPU-enabled host
+  gpu-tests:
+    name: GPU Tests (Latest Deps)
+    needs: [build-and-push-docker]
+    permissions:
+      contents: read
+    runs-on:
+      group: aws-g6-4xlarge-plus
+    env:
+      HF_HOME: /home/user_lerobot/.cache/huggingface
+      HF_LEROBOT_HOME: /home/user_lerobot/.cache/huggingface/lerobot
+      TORCH_HOME: /home/user_lerobot/.cache/torch
+      TRITON_CACHE_DIR: /home/user_lerobot/.cache/triton
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
+    container:
+      image: ${{ needs.build-and-push-docker.outputs.image_tag }} # zizmor: ignore[unpinned-images]
+      options: --gpus all --shm-size "16gb"
+      credentials:
+        username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: /lerobot
+    steps:
+      - name: Login to Hugging Face
+        if: env.HF_USER_TOKEN != ''
+        run: |
+          hf auth login --token "$HF_USER_TOKEN" --add-to-git-credential
+          hf auth whoami
+      - name: Fix ptxas permissions
+        run: chmod +x /lerobot/.venv/lib/python3.12/site-packages/triton/backends/nvidia/bin/ptxas
+      - name: Run pytest on GPU
+        run: pytest tests -vv --maxfail=10
+      - name: Run end-to-end tests
+        run: make test-end-to-end
+
+  # This job creates or updates a PR with the upgraded lockfile
+  open-pr:
+    name: Open PR
+    needs: [cpu-tests, gpu-tests, upgrade-lock]
+    if: success() && needs.upgrade-lock.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ secrets.UPDATE_LOCK_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Download updated lockfile
+        uses: actions/download-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: uv-lock
+
+      - name: Create or update PR
+        run: |
+          set -euo pipefail
+          BRANCH="auto/update-uv-lock"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+
+          git checkout -B "$BRANCH"
+          git add uv.lock
+          git commit -m "chore(dependencies): update uv.lock"
+          git push --force origin "$BRANCH"
+
+          # Create PR only if one doesn't already exist for this branch
+          EXISTING_PR=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number')
+          if [ -z "$EXISTING_PR" ]; then
+            gh pr create \
+              --title "chore(dependencies): update uv.lock" \
+              --body "Automated update of \`uv.lock\` after successful latest dependency tests (CPU + GPU).
+
+          This PR upgrades all dependencies to their latest versions within the ranges specified in \`pyproject.toml\`." \
+              --head "$BRANCH" \
+              --base main
+          else
+            echo "PR #$EXISTING_PR already exists, branch has been updated."
+          fi
+
+  # This job deletes the temporary Docker image after tests complete
+  cleanup-docker:
+    name: Cleanup Docker Image
+    needs: [gpu-tests, build-and-push-docker]
+    if: always() && needs.build-and-push-docker.result == 'success'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get Docker Hub Token and Delete Image
+        # zizmor: ignore[template-injection]
+        env:
+          DOCKERHUB_LEROBOT_USERNAME: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+          DOCKERHUB_LEROBOT_PASSWORD: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+          IMAGE_FULL: ${{ needs.build-and-push-docker.outputs.image_tag }}
+        run: |
+          IMAGE_NAME=$(echo "$IMAGE_FULL" | cut -d':' -f1)
+          IMAGE_TAG=$(echo "$IMAGE_FULL" | cut -d':' -f2-)
+          echo "Attempting to delete image: $IMAGE_NAME:$IMAGE_TAG"
+
+          TOKEN=$(curl -s -H "Content-Type: application/json" \
+                       -X POST \
+                       -d "{\"username\": \"$DOCKERHUB_LEROBOT_USERNAME\", \"password\": \"$DOCKERHUB_LEROBOT_PASSWORD\"}" \
+                       https://hub.docker.com/v2/users/login/ | jq -r .token)
+
+          if [ "$TOKEN" == "null" ] || [ -z "$TOKEN" ]; then
+            echo "::error::Failed to get Docker Hub token."
+            exit 1
+          fi
+
+          HTTP_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+                               -H "Authorization: JWT ${TOKEN}" \
+                               -X DELETE \
+                               https://hub.docker.com/v2/repositories/${IMAGE_NAME}/tags/$IMAGE_TAG)
+
+          if [ "$HTTP_RESPONSE" -eq 204 ]; then
+            echo "Successfully deleted Docker image tag: $IMAGE_NAME:$IMAGE_TAG"
+          else
+            echo "::error::Failed to delete Docker image. HTTP status: $HTTP_RESPONSE"
+            exit 1
+          fi

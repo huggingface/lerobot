@@ -30,15 +30,17 @@ from typing import TYPE_CHECKING, Any
 import torch
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.types import EnvTransition, RobotObservation, TransitionKey
 from lerobot.utils.constants import (
     ACTION_TOKEN_MASK,
     ACTION_TOKENS,
     OBS_LANGUAGE_ATTENTION_MASK,
+    OBS_LANGUAGE_SUBTASK_ATTENTION_MASK,
+    OBS_LANGUAGE_SUBTASK_TOKENS,
     OBS_LANGUAGE_TOKENS,
 )
 from lerobot.utils.import_utils import _transformers_available
 
-from .core import EnvTransition, TransitionKey
 from .pipeline import ActionProcessorStep, ObservationProcessorStep, ProcessorStepRegistry
 
 # Conditional import for type checking and lazy loading
@@ -134,12 +136,38 @@ class TokenizerProcessorStep(ObservationProcessorStep):
         # Standardize to a list of strings for the tokenizer
         if isinstance(task, str):
             return [task]
-        elif isinstance(task, list) and all(isinstance(t, str) for t in task):
-            return task
+        elif isinstance(task, (list, tuple)) and all(isinstance(t, str) for t in task):
+            return list(task)
 
         return None
 
-    def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+    def get_subtask(self, transition: EnvTransition) -> list[str] | None:
+        """
+        Extracts the subtask from the transition's complementary data.
+
+        Args:
+            transition: The environment transition.
+
+        Returns:
+            A list of subtask strings, or None if the subtask key is not found or the value is None.
+        """
+        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if complementary_data is None:
+            return None
+
+        subtask = complementary_data.get("subtask")
+        if subtask is None:
+            return None
+
+        # Standardize to a list of strings for the tokenizer
+        if isinstance(subtask, str):
+            return [subtask]
+        elif isinstance(subtask, list) and all(isinstance(t, str) for t in subtask):
+            return subtask
+
+        return None
+
+    def observation(self, observation: RobotObservation) -> RobotObservation:
         """
         Tokenizes the task description and adds it to the observation dictionary.
 
@@ -175,6 +203,24 @@ class TokenizerProcessorStep(ObservationProcessorStep):
         # Add tokenized data to the observation
         new_observation[OBS_LANGUAGE_TOKENS] = tokenized_prompt["input_ids"]
         new_observation[OBS_LANGUAGE_ATTENTION_MASK] = tokenized_prompt["attention_mask"].to(dtype=torch.bool)
+
+        # Tokenize subtask if available
+        subtask = self.get_subtask(self.transition)
+        if subtask is not None:
+            tokenized_subtask = self._tokenize_text(subtask)
+
+            # Move new tokenized tensors to the detected device
+            if target_device is not None:
+                tokenized_subtask = {
+                    k: v.to(target_device) if isinstance(v, torch.Tensor) else v
+                    for k, v in tokenized_subtask.items()
+                }
+
+            # Add tokenized subtask to the observation
+            new_observation[OBS_LANGUAGE_SUBTASK_TOKENS] = tokenized_subtask["input_ids"]
+            new_observation[OBS_LANGUAGE_SUBTASK_ATTENTION_MASK] = tokenized_subtask["attention_mask"].to(
+                dtype=torch.bool
+            )
 
         return new_observation
 
@@ -290,7 +336,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
     Requires the `transformers` library to be installed.
 
     Attributes:
-        tokenizer_name: The name of a pretrained processor from the Hugging Face Hub (e.g., "physical-intelligence/fast").
+        tokenizer_name: The name of a pretrained processor from the Hugging Face Hub (e.g., "lerobot/fast-action-tokenizer").
         tokenizer: A pre-initialized processor/tokenizer object. If provided, `tokenizer_name` is ignored.
         trust_remote_code: Whether to trust remote code when loading the tokenizer (required for some tokenizers).
         action_tokenizer: The internal tokenizer/processor instance, loaded during initialization.

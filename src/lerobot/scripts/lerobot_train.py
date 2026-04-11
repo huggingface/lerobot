@@ -24,6 +24,7 @@ import torch
 from accelerate import Accelerator
 from termcolor import colored
 from torch.optim import Optimizer
+from tqdm import tqdm
 
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
@@ -51,6 +52,7 @@ from lerobot.utils.utils import (
     format_big_number,
     has_method,
     init_logging,
+    inside_slurm,
 )
 
 
@@ -148,92 +150,6 @@ def update_policy(
     return train_metrics, output_dict
 
 
-def get_default_peft_configuration(policy_type):
-    """Build a basic PEFT configuration for the given policy type assuming that we train a policy from a checkpoint."""
-
-    common_projections = "state_proj|action_in_proj|action_out_proj|action_time_mlp_in|action_time_mlp_out"
-
-    if policy_type == "smolvla":
-        return {
-            "target_modules": rf"(model\.vlm_with_expert\.lm_expert\..*\.(q|v)_proj|model\.({common_projections}))",
-            "modules_to_save": [],
-        }
-    elif policy_type in ("pi0", "pi05"):
-        return {
-            "target_modules": rf"(.*\.gemma_expert\..*\.self_attn.(q|v)_proj|model\.({common_projections}))",
-            "modules_to_save": [],
-        }
-
-    return {"modules_to_save": None}
-
-
-def wrap_policy_in_peft_model(cfg, policy):
-    from peft import PEFT_TYPE_TO_CONFIG_MAPPING, PeftType, get_peft_model
-
-    # Disable all gradients because we'll only train the parameters selected by the PEFT method.
-    # Layers that should receive gradients anyway need to be listed in `modules_to_save`.
-    for p in policy.parameters():
-        p.requires_grad_(False)
-
-    if not cfg.policy.pretrained_path:
-        raise ValueError(
-            "Training from scratch using PEFT. This is unlikely to yield good results. "
-            "Supply a `policy.path` to fine-tune an existing model."
-        )
-
-    if cfg.policy.type == "smolvla" and not cfg.policy.load_vlm_weights:
-        logging.warning(
-            "Training SmolVLA from scratch using PEFT. This is unlikely to yield good results. Set "
-            "`load_vlm_weights=True` to fine-tune the existing policy."
-        )
-
-    peft_config_policy = get_default_peft_configuration(cfg.policy.type)
-    peft_config_cli = dataclasses.asdict(cfg.peft) if cfg.peft else {}
-    peft_config_cli["modules_to_save"] = peft_config_cli["full_training_modules"]  # compatibility with PEFT
-    peft_method_type = PeftType[peft_config_cli["method_type"].upper()]
-    peft_config_cls = PEFT_TYPE_TO_CONFIG_MAPPING[peft_method_type]
-
-    # Handle specific CLI overrides
-    for key in ["target_modules", "modules_to_save", "r"]:
-        if peft_config_cli[key] is not None:
-            peft_config_policy[key] = peft_config_cli[key]
-
-    if "target_modules" not in peft_config_policy:
-        raise ValueError(
-            f"There is no default `target_modules` value for policy {cfg.policy.type}. Please pass it manually."
-        )
-
-    # Init method depends on the used PEFT method, your specific PEFT method
-    # might not be considered here, in that case an error is raised.
-    if peft_config_cli["init_type"] is not None:
-        if peft_method_type == "LORA":
-            peft_config_policy["init_lora_weights"] = peft_config_cli["init_type"]
-        elif peft_method_type == "MISS":
-            peft_config_policy["init_weights"] = peft_config_cli["init_type"]
-        else:
-            raise ValueError(
-                f"Init type {peft_config_cli['init_type']} unknown for PEFT method {peft_method_type}."
-            )
-
-    # PEFT uses this attribute to set adapter_config.base_name_or_path which we use for loading the
-    # correct base model in `make_policy` since in a PEFT loading setting we only get the path to the
-    # adapter, not the base model.
-    if policy.config.pretrained_path:
-        policy.name_or_path = str(policy.config.pretrained_path)
-
-    # Finally wrap the policy in a PEFT model
-    policy = get_peft_model(
-        policy,
-        peft_config_cls(**peft_config_policy),
-    )
-
-    # Make sure that the config is tagged as using PEFT so that the loading code can take the
-    # appropriate steps to use the adapter weights and the PEFT config instead of the full model weights.
-    policy.config.use_peft = True
-
-    return policy
-
-
 @parser.wrap()
 def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     """
@@ -251,6 +167,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         cfg: A `TrainPipelineConfig` object containing all training configurations.
         accelerator: Optional Accelerator instance. If None, one will be created automatically.
     """
+    cfg.validate()
+
     # Create Accelerator if not provided
     # It will automatically detect if running in distributed mode or single-process mode
     # We set step_scheduler_with_optimizer=False to prevent accelerate from adjusting the lr_scheduler steps based on the num_processes
@@ -259,15 +177,20 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         from accelerate.utils import DistributedDataParallelKwargs
 
         ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
-        accelerator = Accelerator(step_scheduler_with_optimizer=False, kwargs_handlers=[ddp_kwargs])
+        # Accelerate auto-detects the device based on the available hardware and ignores the policy.device setting.
+        # Force the device to be CPU when policy.device is set to CPU.
+        force_cpu = cfg.policy.device == "cpu"
+        accelerator = Accelerator(
+            step_scheduler_with_optimizer=False,
+            kwargs_handlers=[ddp_kwargs],
+            cpu=force_cpu,
+        )
 
     init_logging(accelerator=accelerator)
 
     # Determine if this is the main process (for logging and checkpointing)
     # When using accelerate, only the main process should log to avoid duplicate outputs
     is_main_process = accelerator.is_main_process
-
-    cfg.validate()
 
     # Only log on main process
     if is_main_process:
@@ -286,7 +209,11 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
     # Use accelerator's device
     device = accelerator.device
-    torch.backends.cudnn.benchmark = True
+    if cfg.cudnn_deterministic:
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+    else:
+        torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
     # Dataset loading synchronization: main process downloads first to avoid race conditions
@@ -304,9 +231,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
     # using the eval.py instead, with gym_dora environment and dora-rs.
     eval_env = None
-    if cfg.eval_freq > 0 and cfg.env is not None:
-        if is_main_process:
-            logging.info("Creating env")
+    if cfg.eval_freq > 0 and cfg.env is not None and is_main_process:
+        logging.info("Creating env")
         eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
 
     if is_main_process:
@@ -319,15 +245,29 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
     if cfg.peft is not None:
         logging.info("Using PEFT! Wrapping model.")
-        policy = wrap_policy_in_peft_model(cfg, policy)
+        # Convert CLI peft config to dict for overrides
+        peft_cli_overrides = dataclasses.asdict(cfg.peft)
+        policy = policy.wrap_with_peft(peft_cli_overrides=peft_cli_overrides)
 
     # Wait for all processes to finish policy creation before continuing
     accelerator.wait_for_everyone()
 
+    processor_pretrained_path = cfg.policy.pretrained_path
+    if (
+        getattr(cfg.policy, "use_relative_actions", False)
+        and processor_pretrained_path is not None
+        and not cfg.resume
+    ):
+        logging.warning(
+            "use_relative_actions=true with pretrained processors can skip relative transforms if "
+            "the checkpoint processors do not define them. Building processors from current policy config."
+        )
+        processor_pretrained_path = None
+
     # Create processors - only provide dataset_stats if not resuming from saved processors
     processor_kwargs = {}
     postprocessor_kwargs = {}
-    if (cfg.policy.pretrained_path and not cfg.resume) or not cfg.policy.pretrained_path:
+    if (processor_pretrained_path and not cfg.resume) or not processor_pretrained_path:
         # Only provide dataset_stats when not resuming from saved processor state
         processor_kwargs["dataset_stats"] = dataset.meta.stats
 
@@ -335,7 +275,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if cfg.policy.type == "sarm":
         processor_kwargs["dataset_meta"] = dataset.meta
 
-    if cfg.policy.pretrained_path is not None:
+    if processor_pretrained_path is not None:
         processor_kwargs["preprocessor_overrides"] = {
             "device_processor": {"device": device.type},
             "normalizer_processor": {
@@ -357,7 +297,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy,
-        pretrained_path=cfg.policy.pretrained_path,
+        pretrained_path=processor_pretrained_path,
         **processor_kwargs,
         **postprocessor_kwargs,
     )
@@ -456,10 +396,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         "dataloading_s": AverageMeter("data_s", ":.3f"),
     }
 
-    # Use effective batch size for proper epoch calculation in distributed training
+    # Keep global batch size for logging; MetricsTracker handles world size internally.
     effective_batch_size = cfg.batch_size * accelerator.num_processes
     train_tracker = MetricsTracker(
-        effective_batch_size,
+        cfg.batch_size,
         dataset.num_frames,
         dataset.num_episodes,
         train_metrics,
@@ -468,6 +408,14 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     )
 
     if is_main_process:
+        progbar = tqdm(
+            total=cfg.steps - step,
+            desc="Training",
+            unit="step",
+            disable=inside_slurm(),
+            position=0,
+            leave=True,
+        )
         logging.info(
             f"Start offline training on a fixed dataset, with effective batch size: {effective_batch_size}"
         )
@@ -492,6 +440,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
         step += 1
+        if is_main_process:
+            progbar.update(1)
         train_tracker.step()
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0 and is_main_process
         is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
@@ -584,6 +534,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                     wandb_logger.log_video(eval_info["overall"]["video_paths"][0], step, mode="eval")
 
             accelerator.wait_for_everyone()
+
+    if is_main_process:
+        progbar.close()
 
     if eval_env:
         close_envs(eval_env)

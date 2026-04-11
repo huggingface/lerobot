@@ -17,7 +17,7 @@
 import time
 
 from lerobot.model.kinematics import RobotKinematics
-from lerobot.processor import RobotAction, RobotObservation, RobotProcessorPipeline
+from lerobot.processor import RobotProcessorPipeline
 from lerobot.processor.converters import (
     robot_action_observation_to_transition,
     robot_action_to_transition,
@@ -29,8 +29,8 @@ from lerobot.robots.so_follower.robot_kinematic_processor import (
     ForwardKinematicsJointsToEE,
     InverseKinematicsEEToJoints,
 )
-from lerobot.teleoperators.so_leader import SO100LeaderConfig
-from lerobot.teleoperators.so_leader.so100_leader import SO100Leader
+from lerobot.teleoperators.so_leader import SO100Leader, SO100LeaderConfig
+from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
