@@ -28,6 +28,7 @@ from lerobot.configs import parser
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.envs.configs import HILSerlRobotEnvConfig
 from lerobot.model.kinematics import RobotKinematics
+from lerobot.motors.motors_bus import MotorNormMode
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     AddTeleopActionAsComplimentaryDataStep,
@@ -129,6 +130,7 @@ class RobotEnv(gym.Env):
         display_cameras: bool = False,
         reset_pose: list[float] | None = None,
         reset_time_s: float = 5.0,
+        control_mode: str = "gamepad",
     ) -> None:
         """Initialize robot environment with configuration options.
 
@@ -138,11 +140,13 @@ class RobotEnv(gym.Env):
             display_cameras: Whether to show camera feeds during execution.
             reset_pose: Joint positions for environment reset.
             reset_time_s: Time to wait during reset.
+            control_mode: Control mode - "leader" for direct joint control, "gamepad" for delta EE.
         """
         super().__init__()
 
         self.robot = robot
         self.display_cameras = display_cameras
+        self.control_mode = control_mode
 
         # Connect to the robot if not already connected.
         if not self.robot.is_connected:
@@ -202,16 +206,34 @@ class RobotEnv(gym.Env):
 
         self.observation_space = gym.spaces.Dict(observation_spaces)
 
-        # Define the action space for joint positions along with setting an intervention flag.
-        action_dim = 3
-        bounds = {}
-        bounds["min"] = -np.ones(action_dim)
-        bounds["max"] = np.ones(action_dim)
-
-        if self.use_gripper:
-            action_dim += 1
-            bounds["min"] = np.concatenate([bounds["min"], [0]])
-            bounds["max"] = np.concatenate([bounds["max"], [2]])
+        # Define the action space.
+        if self.control_mode == "leader":
+            # Leader arm: direct joint positions, one per motor (including gripper).
+            # Bounds are derived from the follower's motor normalization modes, which
+            # must match the leader's modes for positions to be compatible.
+            low, high = [], []
+            for motor in self.robot.bus.motors.values():
+                if motor.norm_mode == MotorNormMode.DEGREES:
+                    low.append(-180.0)
+                    high.append(180.0)
+                elif motor.norm_mode == MotorNormMode.RANGE_M100_100:
+                    low.append(-100.0)
+                    high.append(100.0)
+                elif motor.norm_mode == MotorNormMode.RANGE_0_100:
+                    low.append(0.0)
+                    high.append(100.0)
+            action_dim = len(low)
+            bounds = {"min": np.array(low, dtype=np.float32), "max": np.array(high, dtype=np.float32)}
+        else:
+            # Gamepad/keyboard EE: delta end-effector control
+            action_dim = 3
+            bounds = {}
+            bounds["min"] = -np.ones(action_dim)
+            bounds["max"] = np.ones(action_dim)
+            if self.use_gripper:
+                action_dim += 1
+                bounds["min"] = np.concatenate([bounds["min"], [0]])
+                bounds["max"] = np.concatenate([bounds["max"], [2]])
 
         self.action_space = gym.spaces.Box(
             low=bounds["min"],
@@ -342,12 +364,26 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
         cfg.processor.observation.display_cameras if cfg.processor.observation is not None else False
     )
     reset_pose = cfg.processor.reset.fixed_reset_joint_positions if cfg.processor.reset is not None else None
+    control_mode = cfg.processor.control_mode if cfg.processor is not None else "gamepad"
+
+    if control_mode == "leader":
+        # The intervention pipeline converts leader actions to a positional list and
+        # RobotEnv.step() reconstructs a dict using the follower's motor order.
+        # These must match or joint positions will be silently swapped.
+        leader_keys = list(teleop_device.bus.motors.keys())
+        follower_keys = list(robot.bus.motors.keys())
+        if leader_keys != follower_keys:
+            raise ValueError(
+                f"Leader and follower motor key order must match for joint-position control. "
+                f"Leader: {leader_keys}, Follower: {follower_keys}"
+            )
 
     env = RobotEnv(
         robot=robot,
         use_gripper=use_gripper,
         display_cameras=display_cameras,
         reset_pose=reset_pose,
+        control_mode=control_mode,
     )
 
     return env, teleop_device
@@ -476,11 +512,17 @@ def make_processors(
         InterventionActionProcessorStep(
             use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False,
             terminate_on_success=terminate_on_success,
+            control_mode=cfg.processor.control_mode if cfg.processor is not None else "gamepad",
         ),
     ]
 
-    # Replace InverseKinematicsProcessor with new kinematic processors
-    if cfg.processor.inverse_kinematics is not None and kinematics_solver is not None:
+    # IK pipeline converts EE deltas → joint targets.  Leader arm actions are already
+    # joint positions, so the IK pipeline must be skipped in leader mode.
+    if (
+        cfg.processor.inverse_kinematics is not None
+        and kinematics_solver is not None
+        and cfg.processor.control_mode != "leader"
+    ):
         # Add EE bounds and safety processor
         inverse_kinematics_steps = [
             MapTensorToDeltaActionDictStep(
@@ -612,6 +654,14 @@ def control_loop(
     if cfg.mode == "record":
         if teleop_device:
             action_features = teleop_device.action_features
+            # Leader arm teleoperators return motor-specific format: {"motor.pos": float, ...}
+            # Convert to dataset feature format: {"dtype": "float32", "shape": (n,), "names": [...]}
+            if cfg.env.processor.control_mode == "leader":
+                action_features = {
+                    "dtype": "float32",
+                    "shape": (len(action_features),),
+                    "names": list(action_features.keys()),
+                }
         else:
             action_features = {
                 "dtype": "float32",
@@ -662,10 +712,16 @@ def control_loop(
     while episode_idx < cfg.dataset.num_episodes_to_record:
         step_start_time = time.perf_counter()
 
-        # Create a neutral action (no movement)
-        neutral_action = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32)
-        if use_gripper:
-            neutral_action = torch.cat([neutral_action, torch.tensor([0.0])])  # Gripper stay
+        # Create a neutral action (no movement).
+        # In leader mode actions are absolute joint positions, so "no movement"
+        # means holding the current position — not zeros which would slam the arm.
+        if env.control_mode == "leader":
+            raw = env.get_raw_joint_positions()
+            neutral_action = torch.tensor(
+                [raw[f"{k}.pos"] for k in env.robot.bus.motors], dtype=torch.float32
+            )
+        else:
+            neutral_action = torch.zeros(env.action_space.shape[0], dtype=torch.float32)
 
         # Use the new step function
         transition = step_env_and_process_transition(
