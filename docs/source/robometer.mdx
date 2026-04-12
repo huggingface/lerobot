@@ -1,8 +1,7 @@
-a Trajectory Comparisons
+# Robometer: Scaling General-Purpose Robotic Reward Models via Trajectory Comparisons
 
-Robometer is a pre-trained reward model (4B parameters) trained on large-scale real-robot data to assign progress scores to robot rollout videos. 
-dense progress values
-Qwen3-VL-4B-Instruct fine-tuned on the RBM-1M dataset.
+Robometer is a pre-trained reward model (4B parameters) trained on large-scale real robot videos to predict dense progress values.
+
 This guide covers how to instantiate and use Robometer in LeRobot for reward computation during RL training or evaluation.
 
 **Paper**: [Robometer: Scaling General-Purpose Robotic Reward Models via Trajectory Comparisons](https://arxiv.org/abs/2603.02115)
@@ -11,22 +10,13 @@ This guide covers how to instantiate and use Robometer in LeRobot for reward com
 
 ## Overview
 
-RoboReward fine-tunes Qwen3-VL-4B-Instruct on their RBM-1M dataset, which is built on Open X-Embodiment (OXE) and RoboArena data. Given a robot rollout video and a task description, the model generates a discrete progress score:
-
-| Score | Meaning                                                    |
-| ----- | ---------------------------------------------------------- |
-| 1     | No Success — no goal-relevant change                       |
-| 2     | Minimal Progress — insufficient change toward goal         |
-| 3     | Partial Completion — good progress but misses requirements |
-| 4     | Near Completion — misses a single minor requirement        |
-| 5     | Perfect Completion — all requirements satisfied            |
-
-These scores are mapped to float rewards in [0, 1] via a configurable `score_to_reward` table (default: linear 0.0 → 1.0).
+Robometer fine-tunes Qwen3-VL-4B-Instruct on their RBM-1M dataset. 
+Given a robot rollout video and a task description, the model generates a progress scores between 0 and 1 for each timestep of the vidoe.
 
 ## Requirements
 
 ```bash
-pip install "transformers>=4.51.0" qwen-vl-utils roboreason unsloth>=2025.10
+pip install "transformers>=4.51.0" qwen-vl-utils roboreason
 ```
 
 ## Quickstart
@@ -37,7 +27,6 @@ from lerobot.rewards.robometer.configuration_robometer import RobometerConfig
 from lerobot.rewards.robometer.modeling_robometer import RobometerModel
 
 config = RobometerConfig(
-    model_name="robometer",
     device="cuda",
     image_key="observation.images.side",
     task_key="observation.language_instruction", # if task_key is None, must provide task_instruction string: e.g., task_instruction="pick up the red cube"
@@ -47,13 +36,15 @@ model.eval()
 
 # batch from your dataset or environment (with videos)
 batch = {
-    "observation.images.side": torch.rand(2, 8, 3, 480, 640),   # (B, T, C, H, W) - batch of 2 videos, each with 8 frames
+    "observation.images.side": torch.rand(2, 8, 3, 84, 84),   # (B, T, C, H, W) - batch of 2 videos, each with 8 frames
     "observation.language_instruction": [
         "pick up the red cube",
         "place the block on the tray",
     ],
 }
-rewards = model.compute_reward(batch)  # tensor([[], []])
+rewards = model.compute_reward(batch) 
+# tensor([[0.1404, 0.1278, 0.1569, 0.1777, 0.1788, 0.1907, 0.1687, 0.2079],
+#         [0.0410, 0.0332, 0.0513, 0.0881, 0.0556, 0.0640, 0.0784, 0.0859]])
 ```
 
 ## Configuration
@@ -62,7 +53,6 @@ rewards = model.compute_reward(batch)  # tensor([[], []])
 from lerobot.rewards.robometer.configuration_robometer import RobometerConfig
 
 config = RobometerConfig(
-    model_name="robometer",   
     device="cuda",
     image_key="observation.images.side",
     task_key="observation.language_instruction", # if task_key is None, must provide task_instruction string: e.g., task_instruction="pick up the red cube"
@@ -94,7 +84,7 @@ reward_model = make_reward_model(cfg)
 rewards = reward_model.compute_reward(obs_batch)
 ```
 
-## Notes
+## Notes (similar to RoboReward implementation)
 
 - **Inference only**: The VLM backbone is frozen. `forward()` raises `NotImplementedError`.
   Fine-tuning support is planned as future work.
