@@ -99,6 +99,10 @@ class ACTSimpleWithAWMHeadConfig(PreTrainedConfig):
     ema_momentum_end: float = 0.999
     ema_anneal_steps: int = 50_000
     normalize_wm_representations: bool = False  # L2-normalize z_pred and z_target to unit sphere before WM loss and image decoding
+    use_sigreg: bool = False  # Use SIGReg regularization loss instead of L2 normalization
+    sigreg_weight: float = 0.09  # Weight on SIGReg loss term
+    sigreg_knots: int = 17  # Number of knots for the Epps-Pulley characteristic function grid
+    sigreg_num_proj: int = 1024  # Number of random projections for SIGReg
     decoder_loss_weight: float = 0.1
     n_image_viz_pairs: int = 12
 

@@ -57,6 +57,45 @@ from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
 # Helpers (shared with AWM)
 # ---------------------------------------------------------------------------
 
+class SIGReg(nn.Module):
+    """Sketch Isotropic Gaussian Regularizer.
+
+    Encourages latent embeddings to be approximately standard-Gaussian distributed
+    by comparing the empirical characteristic function of random 1D projections
+    against the Gaussian characteristic function (Epps-Pulley statistic).
+
+    Reference: LeWorldModel (arXiv:2603.19312)
+    """
+
+    def __init__(self, knots: int = 17, num_proj: int = 1024):
+        super().__init__()
+        self.num_proj = num_proj
+        t = torch.linspace(0, 3, knots, dtype=torch.float32)
+        dt = 3 / (knots - 1)
+        weights = torch.full((knots,), 2 * dt, dtype=torch.float32)
+        weights[[0, -1]] = dt
+        window = torch.exp(-t.square() / 2.0)
+        self.register_buffer("t", t)
+        self.register_buffer("phi", window)
+        self.register_buffer("weights", weights * window)
+
+    def forward(self, x: Tensor) -> Tensor:
+        """Compute the SIGReg loss.
+
+        Args:
+            x: (S, B, D) — token embeddings to regularize.
+
+        Returns:
+            Scalar loss encouraging Gaussian-distributed embeddings.
+        """
+        A = torch.randn(x.size(-1), self.num_proj, device=x.device)
+        A = A.div_(A.norm(p=2, dim=0))
+        x_t = (x @ A).unsqueeze(-1) * self.t
+        err = (x_t.cos().mean(-3) - self.phi).square() + x_t.sin().mean(-3).square()
+        statistic = (err @ self.weights) * x.size(-2)
+        return statistic.mean()
+
+
 class ResBlock2d(nn.Module):
     """Conv2d residual block: two 3×3 convs with a skip connection."""
 
@@ -506,7 +545,7 @@ class ACTSimpleWithAWMHeadPolicy(PreTrainedPolicy):
         ).mean()
 
         # WM loss.
-        z_pred, z_target, decoded_curr, gt_curr_img = wm_tensors
+        z_pred, z_target, decoded_curr, gt_curr_img, sigreg_loss = wm_tensors
         valid_wm = ~next_obs_is_pad[:, 1]  # (B,)
         wm_loss = _compute_wm_loss(z_pred, z_target, valid_wm)
 
@@ -517,6 +556,10 @@ class ACTSimpleWithAWMHeadPolicy(PreTrainedPolicy):
             effective_wm_weight = self.config.wm_loss_weight
 
         loss = action_loss + effective_wm_weight * wm_loss
+
+        if sigreg_loss is not None:
+            loss = loss + self.config.sigreg_weight * sigreg_loss
+
         info = {
             "action_loss": action_loss.item(),
             "wm_loss": wm_loss.item(),
@@ -526,6 +569,9 @@ class ACTSimpleWithAWMHeadPolicy(PreTrainedPolicy):
             "z_pred_batch_std": z_pred.std(dim=1).mean().item(),
             "z_target_batch_std": z_target.std(dim=1).mean().item(),
         }
+
+        if sigreg_loss is not None:
+            info["sigreg_loss"] = sigreg_loss.item()
 
         with torch.no_grad():
             info["wm_cosine_sim"] = F.cosine_similarity(z_pred, z_target, dim=-1).mean().item()
@@ -679,6 +725,12 @@ class ACTSimpleWithAWMHead(nn.Module):
             nn.ReLU(),
             nn.Linear(config.dim_model, config.dim_model),
         )
+
+        # ------------------------------------------------------------------
+        # SIGReg regularizer (alternative to L2 normalization)
+        # ------------------------------------------------------------------
+        if config.use_sigreg:
+            self.sigreg = SIGReg(knots=config.sigreg_knots, num_proj=config.sigreg_num_proj)
 
         # ------------------------------------------------------------------
         # Image decoder (debug only)
@@ -911,6 +963,11 @@ class ACTSimpleWithAWMHead(nn.Module):
         if self.config.normalize_wm_representations:
             z_pred = F.normalize(z_pred, dim=-1)
 
+        # SIGReg loss on predicted representations.
+        sigreg_loss = None
+        if self.config.use_sigreg:
+            sigreg_loss = self.sigreg(z_pred)
+
         # Image decoder.
         decoded_curr, gt_curr_img = None, None
         if hasattr(self, "wm_image_decoder") and OBS_IMAGES in batch:
@@ -920,7 +977,7 @@ class ACTSimpleWithAWMHead(nn.Module):
             decoded_curr = self.wm_image_decoder(curr_img_z.detach())
             gt_curr_img = batch[OBS_IMAGES][0].detach()
 
-        wm_tensors = (z_pred, z_target, decoded_curr, gt_curr_img)
+        wm_tensors = (z_pred, z_target, decoded_curr, gt_curr_img, sigreg_loss)
         return actions_hat, wm_tensors
 
     def predict(self, batch: dict[str, Tensor]) -> Tensor:
