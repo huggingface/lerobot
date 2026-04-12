@@ -246,6 +246,20 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
     if is_main_process:
         logging.info("Creating policy")
+
+    # CUDAGraphs ("max-autotune", "reduce-overhead") is incompatible with
+    # gradient_accumulation_steps > 1 because multiple forward passes before
+    # backward overwrite tensors captured in the graph.
+    if (
+        cfg.gradient_accumulation_steps > 1
+        and getattr(cfg.policy, "compile_model", False)
+        and getattr(cfg.policy, "compile_mode", None) in {"max-autotune", "reduce-overhead"}
+    ):
+        raise ValueError(
+            f"compile_mode='{cfg.policy.compile_mode}' uses CUDAGraphs which is incompatible with "
+            f"gradient_accumulation_steps > 1. Use 'max-autotune-no-cudagraphs' or 'default' instead."
+        )
+
     policy = make_policy(
         cfg=cfg.policy,
         ds_meta=dataset.meta,
