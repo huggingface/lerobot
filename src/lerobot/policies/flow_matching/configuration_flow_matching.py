@@ -55,6 +55,12 @@ class FlowMatchingConfig(PreTrainedConfig):
         if self.input_features is None:
             return
 
+        if self.qpos_dim != 13:
+            raise ValueError(
+                "FlowMatchingPolicy currently expects qpos_dim=13 because the model uses a fixed 7+6 split "
+                "for kinematic and force features."
+            )
+
         if self.state_key not in self.input_features:
             raise ValueError(f"Missing required state feature key: {self.state_key}.")
 
