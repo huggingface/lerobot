@@ -70,13 +70,17 @@ class WandBLogger:
         os.environ["WANDB_SILENT"] = "True"
         import wandb
 
-        wandb_run_id = (
-            cfg.wandb.run_id
-            if cfg.wandb.run_id
-            else get_wandb_run_id_from_filesystem(self.log_dir)
-            if cfg.resume
-            else None
-        )
+        if cfg.wandb.run_id:
+            wandb_run_id = cfg.wandb.run_id
+        elif cfg.resume:
+            try:
+                wandb_run_id = get_wandb_run_id_from_filesystem(self.log_dir)
+            except RuntimeError:
+                # New output_dir on resume (e.g. self-improvement finetuning)
+                wandb_run_id = None
+        else:
+            wandb_run_id = None
+
         wandb.init(
             id=wandb_run_id,
             project=self.cfg.project,
@@ -90,7 +94,7 @@ class WandBLogger:
             save_code=False,
             # TODO(rcadene): split train and eval, and run async eval with job_type="eval"
             job_type="train_eval",
-            resume="must" if cfg.resume else None,
+            resume="allow" if wandb_run_id else None,
             mode=self.cfg.mode if self.cfg.mode in ["online", "offline", "disabled"] else "online",
         )
         run_id = wandb.run.id

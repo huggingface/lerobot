@@ -1,1 +1,0 @@
-../../../../docs/source/policy_act_README.md

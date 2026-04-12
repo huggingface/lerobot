@@ -523,8 +523,11 @@ def eval_main(cfg: EvalPipelineConfig):
     # Check device is available
     device = get_safe_torch_device(cfg.policy.device, log=True)
 
-    torch.backends.cudnn.benchmark = True
-    torch.backends.cuda.matmul.allow_tf32 = True
+    import os as _os
+    _os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.use_deterministic_algorithms(True)
     set_seed(cfg.seed)
 
     logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")

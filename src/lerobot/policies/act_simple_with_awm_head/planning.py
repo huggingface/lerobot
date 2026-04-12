@@ -48,6 +48,11 @@ class PlanningConfig:
     convergence_tol: float = 1e-3
     antithetic: bool = True
 
+    # Multi-stage (LIBERO) — kept for checkpoint compatibility
+    multi_stage: bool = False
+    gripper_closed_threshold: float = 0.02
+    gripper_closed_steps: int = 3
+
 
 class BasePlanner(ABC):
     """Abstract base class for test-time action chunk optimizers."""

@@ -29,7 +29,7 @@ from torch.optim import Optimizer
 
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.datasets.factory import make_dataset
+from lerobot.datasets.factory import make_dataset, resolve_delta_timestamps
 from lerobot.datasets.sampler import EpisodeAwareSampler
 from lerobot.datasets.utils import cycle
 from lerobot.envs.factory import make_env, make_env_pre_post_processors
@@ -54,6 +54,84 @@ from lerobot.utils.utils import (
     has_method,
     init_logging,
 )
+
+
+class _FinetuneDataset(torch.utils.data.Dataset):
+    """Concatenates a primary dataset with an online dataset for finetuning.
+
+    Delegates metadata (``meta``, ``episodes``, ``features``) to the primary
+    dataset so that normalization statistics and policy initialisation remain
+    unchanged.  If the online dataset contains ``bc_loss_mask`` but the primary
+    does not, a mask of 1.0 is injected into primary samples automatically.
+    """
+
+    def __init__(self, primary, online):
+        self._primary = primary
+        self._online = online
+        self._inject_bc_mask = (
+            "bc_loss_mask" in online.features and "bc_loss_mask" not in primary.features
+        )
+        # Determine common keys so the collate function never sees
+        # mismatched dicts (e.g. pretrain has next.reward, online doesn't).
+        p_sample = primary[0]
+        o_sample = online[0]
+        self._keep_keys = set(p_sample.keys()) & set(o_sample.keys())
+        if self._inject_bc_mask:
+            self._keep_keys.add("bc_loss_mask")
+
+    # ---- torch Dataset interface ----
+    def __len__(self):
+        return len(self._primary) + len(self._online)
+
+    def __getitem__(self, idx):
+        if idx < len(self._primary):
+            item = self._primary[idx]
+            if self._inject_bc_mask:
+                item["bc_loss_mask"] = torch.tensor([1.0])
+        else:
+            item = self._online[idx - len(self._primary)]
+            # Ensure bc_loss_mask is 1-d (HF datasets may load scalars)
+            if "bc_loss_mask" in item and item["bc_loss_mask"].ndim == 0:
+                item["bc_loss_mask"] = item["bc_loss_mask"].unsqueeze(0)
+        return {k: v for k, v in item.items() if k in self._keep_keys}
+
+    # ---- Properties expected by train() ----
+    @property
+    def meta(self):
+        return self._primary.meta
+
+    @property
+    def num_frames(self):
+        return self._primary.num_frames + self._online.num_frames
+
+    @property
+    def num_episodes(self):
+        return self._primary.num_episodes + self._online.num_episodes
+
+    @property
+    def episodes(self):
+        # Return None so that EpisodeAwareSampler uses all combined episodes
+        # (both primary and online) when get_episode_boundaries() is used.
+        return None
+
+    @property
+    def features(self):
+        return self._primary.features
+
+    def get_episode_boundaries(self):
+        """Return combined (from_indices, to_indices) covering primary + online episodes.
+
+        Online episode boundaries are shifted by len(primary) so they
+        correspond to the indices used by __getitem__.
+        """
+        primary_from = list(self._primary.meta.episodes["dataset_from_index"])
+        primary_to = list(self._primary.meta.episodes["dataset_to_index"])
+
+        offset = len(self._primary)
+        online_from = [idx + offset for idx in self._online.meta.episodes["dataset_from_index"]]
+        online_to = [idx + offset for idx in self._online.meta.episodes["dataset_to_index"]]
+
+        return primary_from + online_from, primary_to + online_to
 
 
 def _log_wm_visualizations(policy, batch, step, output_dir, wandb_logger):
@@ -179,7 +257,7 @@ def update_policy(
 
 
 @parser.wrap()
-def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
+def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None, dataset=None):
     """
     Main function to train a policy.
 
@@ -238,22 +316,51 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     # Use accelerator's device
     device = accelerator.device
     if cfg.cudnn_deterministic:
-        torch.backends.cudnn.deterministic = True
+        import os as _os
+        _os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
         torch.backends.cudnn.benchmark = False
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.use_deterministic_algorithms(True)
     else:
         torch.backends.cudnn.benchmark = True
-    torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cuda.matmul.allow_tf32 = True
 
-    # Dataset loading synchronization: main process downloads first to avoid race conditions
-    if is_main_process:
-        logging.info("Creating dataset")
-        dataset = make_dataset(cfg)
+    # When a caller passes a pre-built dataset (e.g. self-improvement
+    # pipeline), skip all dataset creation and online concatenation.
+    if dataset is None:
+        # Dataset loading synchronization: main process downloads first to avoid race conditions
+        if is_main_process:
+            logging.info("Creating dataset")
+            dataset = make_dataset(cfg)
 
-    accelerator.wait_for_everyone()
+        accelerator.wait_for_everyone()
 
-    # Now all other processes can safely load the dataset
-    if not is_main_process:
-        dataset = make_dataset(cfg)
+        # Now all other processes can safely load the dataset
+        if not is_main_process:
+            dataset = make_dataset(cfg)
+
+        # Concatenate online dataset for self-improvement finetuning
+        if cfg.online_dataset_root:
+            from lerobot.datasets.lerobot_dataset import LeRobotDataset as _LRD
+
+            delta_timestamps = resolve_delta_timestamps(cfg.policy, dataset.meta)
+            online_ds = _LRD(
+                repo_id="online",
+                root=cfg.online_dataset_root,
+                delta_timestamps=delta_timestamps,
+                video_backend=cfg.dataset.video_backend,
+                tolerance_s=cfg.tolerance_s,
+            )
+            if is_main_process:
+                logging.info(
+                    "Concatenating online dataset: %d episodes, %d frames from %s",
+                    online_ds.num_episodes, online_ds.num_frames, cfg.online_dataset_root,
+                )
+            dataset = _FinetuneDataset(dataset, online_ds)
+    else:
+        if is_main_process:
+            logging.info("Using caller-provided dataset: %d frames, %d episodes",
+                         dataset.num_frames, dataset.num_episodes)
 
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
@@ -350,6 +457,35 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if cfg.resume:
         step, optimizer, lr_scheduler = load_training_state(cfg.checkpoint_path, optimizer, lr_scheduler)
 
+    # Apply LR override after loading optimizer state (useful for finetuning with a different LR)
+    if cfg.override_lr is not None:
+        for param_group in optimizer.param_groups:
+            param_group["lr"] = cfg.override_lr
+        if lr_scheduler is not None:
+            lr_scheduler.base_lrs = [cfg.override_lr] * len(lr_scheduler.base_lrs)
+        if is_main_process:
+            logging.info(f"Overriding learning rate to {cfg.override_lr}")
+
+    # Freeze parameters AFTER optimizer creation and state loading so that the
+    # optimizer state dict matches the checkpoint (all params present).  Frozen
+    # params keep their optimizer state but receive no gradients, so
+    # optimizer.step() simply skips them.
+    if cfg.trainable_param_keywords is not None:
+        n_frozen = 0
+        n_trainable = 0
+        for name, param in policy.named_parameters():
+            if any(kw in name for kw in cfg.trainable_param_keywords):
+                param.requires_grad = True
+                n_trainable += 1
+            else:
+                param.requires_grad = False
+                n_frozen += 1
+        if is_main_process:
+            logging.info(
+                "Parameter freezing: %d trainable, %d frozen (keywords: %s)",
+                n_trainable, n_frozen, cfg.trainable_param_keywords,
+            )
+
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total_params = sum(p.numel() for p in policy.parameters())
 
@@ -373,10 +509,17 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     # create dataloader for offline training
     if hasattr(cfg.policy, "drop_n_last_frames"):
         shuffle = False
+        if isinstance(dataset, _FinetuneDataset):
+            from_indices, to_indices = dataset.get_episode_boundaries()
+            episode_indices_to_use = None  # use all combined episodes
+        else:
+            from_indices = dataset.meta.episodes["dataset_from_index"]
+            to_indices = dataset.meta.episodes["dataset_to_index"]
+            episode_indices_to_use = dataset.episodes
         sampler = EpisodeAwareSampler(
-            dataset.meta.episodes["dataset_from_index"],
-            dataset.meta.episodes["dataset_to_index"],
-            episode_indices_to_use=dataset.episodes,
+            from_indices,
+            to_indices,
+            episode_indices_to_use=episode_indices_to_use,
             drop_n_last_frames=cfg.policy.drop_n_last_frames,
             shuffle=True,
         )

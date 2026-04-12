@@ -31,9 +31,6 @@ from lerobot.envs.configs import EnvConfig
 from lerobot.envs.utils import env_to_policy_features
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act_simple.configuration_act_simple import ACTSimpleConfig
-from lerobot.policies.awm.configuration_awm import AWMConfig
-from lerobot.policies.fawm.configuration_fawm import FAWMConfig
-from lerobot.policies.act_awm.configuration_act_awm import ACTAWMConfig
 from lerobot.policies.act_simple_with_awm_head.configuration_act_simple_with_awm_head import ACTSimpleWithAWMHeadConfig
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.groot.configuration_groot import GrootConfig
@@ -71,7 +68,7 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
     at once, improving startup time and reducing dependencies.
 
     Args:
-        name: The name of the policy. Supported names are "tdmpc", "diffusion", "act", "act_awm",
+        name: The name of the policy. Supported names are "tdmpc", "diffusion", "act",
               "vqbet", "pi0", "pi05", "sac", "reward_classifier", "smolvla", "wall_x".
 
     Returns:
@@ -92,10 +89,6 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.act.modeling_act import ACTPolicy
 
         return ACTPolicy
-    elif name == "act_awm":
-        from lerobot.policies.act_awm.modeling_act_awm import ACTAWMPolicy
-
-        return ACTAWMPolicy
     elif name == "act_simple_with_awm_head":
         from lerobot.policies.act_simple_with_awm_head.modeling_act_simple_with_awm_head import ACTSimpleWithAWMHeadPolicy
 
@@ -132,10 +125,6 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.sarm.modeling_sarm import SARMRewardModel
 
         return SARMRewardModel
-    elif name == "fawm":
-        from lerobot.policies.fawm.modeling_fawm import FAWMPolicy
-
-        return FAWMPolicy
     elif name == "groot":
         from lerobot.policies.groot.modeling_groot import GrootPolicy
 
@@ -164,7 +153,7 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
 
     Args:
         policy_type: The type of the policy. Supported types include "tdmpc",
-                     "diffusion", "act", "act_awm", "vqbet", "pi0", "pi05", "sac", "smolvla",
+                     "diffusion", "act", "vqbet", "pi0", "pi05", "sac", "smolvla",
                      "reward_classifier", "wall_x".
         **kwargs: Keyword arguments to be passed to the configuration class constructor.
 
@@ -180,8 +169,6 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return DiffusionConfig(**kwargs)
     elif policy_type == "act":
         return ACTConfig(**kwargs)
-    elif policy_type == "act_awm":
-        return ACTAWMConfig(**kwargs)
     elif policy_type == "act_simple_with_awm_head":
         return ACTSimpleWithAWMHeadConfig(**kwargs)
     elif policy_type == "vqbet":
@@ -196,8 +183,6 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return SmolVLAConfig(**kwargs)
     elif policy_type == "reward_classifier":
         return RewardClassifierConfig(**kwargs)
-    elif policy_type == "fawm":
-        return FAWMConfig(**kwargs)
     elif policy_type == "groot":
         return GrootConfig(**kwargs)
     elif policy_type == "xvla":
@@ -373,34 +358,10 @@ def make_pre_post_processors(
             dataset_stats=kwargs.get("dataset_stats"),
         )
 
-    elif isinstance(policy_cfg, AWMConfig):
-        from lerobot.policies.act.processor_act import make_act_pre_post_processors
-
-        processors = make_act_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-        )
-
-    elif isinstance(policy_cfg, FAWMConfig):
-        from lerobot.policies.act.processor_act import make_act_pre_post_processors
-
-        processors = make_act_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-        )
-
     elif isinstance(policy_cfg, ACTSimpleWithAWMHeadConfig):
         from lerobot.policies.act.processor_act import make_act_pre_post_processors
 
         processors = make_act_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-        )
-
-    elif isinstance(policy_cfg, ACTAWMConfig):
-        from lerobot.policies.act_awm.processor_act_awm import make_act_awm_pre_post_processors
-
-        processors = make_act_awm_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
