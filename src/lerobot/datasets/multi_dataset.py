@@ -47,6 +47,8 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         tolerances_s: dict | None = None,
         download_videos: bool = True,
         video_backend: str | None = None,
+        depth_map_encoding_fn: Callable | None = None,
+        depth_map_decoding_fn: Callable | None = None,
     ):
         super().__init__()
         self.repo_ids = repo_ids
@@ -64,6 +66,8 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                 tolerance_s=self.tolerances_s[repo_id],
                 download_videos=download_videos,
                 video_backend=video_backend,
+                depth_map_encoding_fn=depth_map_encoding_fn,
+                depth_map_decoding_fn=depth_map_decoding_fn,
             )
             for repo_id in repo_ids
         ]

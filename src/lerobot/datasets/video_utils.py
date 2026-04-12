@@ -22,6 +22,7 @@ import shutil
 import tempfile
 import threading
 import warnings
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from fractions import Fraction
 from pathlib import Path
@@ -102,6 +103,9 @@ def detect_available_hw_encoders() -> list[str]:
 
 def resolve_vcodec(vcodec: str) -> str:
     """Validate vcodec and resolve 'auto' to best available HW encoder, fallback to libsvtav1."""
+    if vcodec == "av1":
+        # Alias "av1" to "libsvtav1"
+        vcodec = "libsvtav1"
     if vcodec not in VALID_VIDEO_CODECS:
         raise ValueError(f"Invalid vcodec '{vcodec}'. Must be one of: {sorted(VALID_VIDEO_CODECS)}")
     if vcodec != "auto":
@@ -126,11 +130,32 @@ def get_safe_default_codec():
         return "pyav"
 
 
+def info_to_encoding_kwargs(info: dict) -> dict:
+    encoding_kwargs = {}
+    if "video.fps" in info:
+        encoding_kwargs["fps"] = int(info["video.fps"])
+    if "video.codec" in info:
+        encoding_kwargs["vcodec"] = resolve_vcodec(info["video.codec"])
+    if "video.pix_fmt" in info:
+        encoding_kwargs["pix_fmt"] = info["video.pix_fmt"]
+    if "video.g" in info:
+        encoding_kwargs["g"] = info["video.g"]
+    if "video.crf" in info:
+        encoding_kwargs["crf"] = info["video.crf"]
+    if "video.preset" in info:
+        encoding_kwargs["preset"] = info["video.preset"]
+    if "video.options" in info:
+        encoding_kwargs["options"] = info["video.options"]
+    return encoding_kwargs
+
+
 def decode_video_frames(
     video_path: Path | str,
     timestamps: list[float],
     tolerance_s: float,
     backend: str | None = None,
+    is_depth_map: bool = False,
+    depth_map_decoding_fn: Callable[[list[av.VideoFrame]], torch.Tensor] | None = None,
 ) -> torch.Tensor:
     """
     Decodes video frames using the specified backend.
@@ -140,12 +165,19 @@ def decode_video_frames(
         timestamps (list[float]): List of timestamps to extract frames.
         tolerance_s (float): Allowed deviation in seconds for frame retrieval.
         backend (str, optional): Backend to use for decoding. Defaults to "torchcodec" when available in the platform; otherwise, defaults to "pyav"..
+        is_depth_map (bool, optional): Whether the video is a depth map. Defaults to False.
+        depth_map_decoding_fn (Callable, optional): Function to decode depth map frames. Required when is_depth_map is True.
 
     Returns:
         torch.Tensor: Decoded frames.
 
-    Currently supports torchcodec on cpu and pyav.
+    Currently supports torchcodec on cpu, pyav, video_reader, and native pyav (for depth maps).
     """
+    if is_depth_map:
+        assert depth_map_decoding_fn is not None, (
+            "depth_map_decoding_fn must be provided when is_depth_map is True"
+        )
+        return decode_video_frames_depth(video_path, timestamps, tolerance_s, depth_map_decoding_fn)
     if backend is None:
         backend = get_safe_default_codec()
     if backend == "torchcodec":
@@ -389,6 +421,96 @@ def decode_video_frames_torchcodec(
     return closest_frames
 
 
+def decode_video_frames_depth(
+    video_path: Path | str,
+    timestamps: list[float],
+    tolerance_s: float,
+    depth_map_decoding_fn: Callable[[list[av.VideoFrame]], torch.Tensor],
+    log_loaded_timestamps: bool = False,
+) -> torch.Tensor:
+    """Decodes raw video frames using pyav without any normalization.
+
+    This function uses pyav to decode video frames while preserving the original
+    pixel format (e.g., yuv420p12le for 12-bit depth videos). The provided
+    depth_map_decoding_fn is called to convert the raw av.VideoFrame objects
+    to normalized torch tensors.
+
+    Args:
+        video_path: Path to the video file.
+        timestamps: List of timestamps to extract frames.
+        tolerance_s: Allowed deviation in seconds for frame retrieval.
+        depth_map_decoding_fn: Function to convert list of av.VideoFrame to torch.Tensor.
+        log_loaded_timestamps: Whether to log loaded timestamps.
+
+    Returns:
+        torch.Tensor: Decoded frames as normalized tensors.
+    """
+    video_path = str(video_path)
+
+    container = av.open(video_path)
+    video_stream = container.streams.video[0]
+
+    first_ts = min(timestamps)
+    last_ts = max(timestamps)
+
+    # Seek to first timestamp before decoding
+    # Note: we seek to a keyframe before first_ts, so we may load a few extra frames
+    offset = int(first_ts / video_stream.time_base)
+    container.seek(offset, backward=True, stream=video_stream)
+
+    # Decode frames from seek point
+    reader = container.decode(video_stream)
+    loaded_frames: list[av.VideoFrame] = []
+    loaded_ts: list[float] = []
+
+    for frame in reader:
+        pts = float(frame.pts * frame.time_base)
+        if pts > last_ts + tolerance_s:
+            break
+
+        loaded_frames.append(frame)
+        loaded_ts.append(pts)
+        if log_loaded_timestamps:
+            logger.info(f"frame loaded at timestamp={pts:.4f}")
+
+    container.close()
+
+    query_ts = torch.tensor(timestamps)
+    loaded_ts_tensor = torch.tensor(loaded_ts)
+
+    dist = torch.cdist(query_ts[:, None], loaded_ts_tensor[:, None], p=1)
+    min_, argmin_ = dist.min(1)
+
+    is_within_tol = min_ < tolerance_s
+    if not is_within_tol.all():
+        raise FrameTimestampError(
+            f"One or several query timestamps unexpectedly violate the tolerance ({min_[~is_within_tol]} > {tolerance_s=})."
+            " It means that the closest frame that can be loaded from the video is too far away in time."
+            " This might be due to synchronization issues with timestamps during data collection."
+            " To be safe, we advise to ignore this item during training."
+            f"\nqueried timestamps: {query_ts}"
+            f"\nloaded timestamps: {loaded_ts_tensor}"
+            f"\nvideo: {video_path}"
+            f"\nbackend: pyav"
+        )
+
+    closest_frames = [loaded_frames[idx] for idx in argmin_]
+    closest_ts = loaded_ts_tensor[argmin_]
+
+    if log_loaded_timestamps:
+        logger.info(f"{closest_ts=}")
+
+    result = depth_map_decoding_fn(closest_frames)
+
+    if len(timestamps) != len(result):
+        raise FrameTimestampError(
+            f"Number of retrieved frames ({len(result)}) does not match "
+            f"number of queried timestamps ({len(timestamps)})"
+        )
+
+    return result
+
+
 def encode_video_frames(
     imgs_dir: Path | str,
     video_path: Path | str,
@@ -402,6 +524,7 @@ def encode_video_frames(
     overwrite: bool = False,
     preset: int | None = None,
     encoder_threads: int | None = None,
+    options: dict | None = None,
 ) -> None:
     """More info on ffmpeg arguments tuning on `benchmark/video/README.md`"""
     vcodec = resolve_vcodec(vcodec)
@@ -451,6 +574,9 @@ def encode_video_frames(
                 video_options["svtav1-params"] = lp_param
         else:
             video_options["threads"] = str(encoder_threads)
+
+    if options is not None:
+        video_options.update({str(key): str(value) for key, value in options.items()})
 
     # Set logging level
     if log_level is not None:
@@ -591,6 +717,9 @@ class _CameraEncoderThread(threading.Thread):
         result_queue: queue.Queue,
         stop_event: threading.Event,
         encoder_threads: int | None = None,
+        options: dict | None = None,
+        is_depth_map: bool = False,
+        depth_map_encoding_fn: Callable[[np.ndarray], av.VideoFrame] | None = None,
     ):
         super().__init__(daemon=True)
         self.video_path = video_path
@@ -600,10 +729,13 @@ class _CameraEncoderThread(threading.Thread):
         self.g = g
         self.crf = crf
         self.preset = preset
+        self.options = options
         self.frame_queue = frame_queue
         self.result_queue = result_queue
         self.stop_event = stop_event
         self.encoder_threads = encoder_threads
+        self.is_depth_map = is_depth_map
+        self.depth_map_encoding_fn = depth_map_encoding_fn
 
     def run(self) -> None:
         from lerobot.datasets.compute_stats import RunningQuantileStats, auto_downsample_height_width
@@ -629,7 +761,7 @@ class _CameraEncoderThread(threading.Thread):
                     break
 
                 # Ensure HWC uint8 numpy array
-                if isinstance(frame_data, np.ndarray):
+                if isinstance(frame_data, np.ndarray) and not self.is_depth_map:
                     if frame_data.ndim == 3 and frame_data.shape[0] == 3:
                         # CHW -> HWC
                         frame_data = frame_data.transpose(1, 2, 0)
@@ -649,6 +781,8 @@ class _CameraEncoderThread(threading.Thread):
                                 video_options["svtav1-params"] = lp_param
                         else:
                             video_options["threads"] = str(self.encoder_threads)
+                    if self.options is not None:
+                        video_options.update({str(key): str(value) for key, value in self.options.items()})
                     Path(self.video_path).parent.mkdir(parents=True, exist_ok=True)
                     container = av.open(str(self.video_path), "w")
                     output_stream = container.add_stream(self.vcodec, self.fps, options=video_options)
@@ -658,8 +792,11 @@ class _CameraEncoderThread(threading.Thread):
                     output_stream.time_base = Fraction(1, self.fps)
 
                 # Encode frame with explicit timestamps
-                pil_img = Image.fromarray(frame_data)
-                video_frame = av.VideoFrame.from_image(pil_img)
+                if self.is_depth_map:
+                    video_frame = self.depth_map_encoding_fn(frame_data)
+                else:
+                    pil_img = Image.fromarray(frame_data)
+                    video_frame = av.VideoFrame.from_image(pil_img)
                 video_frame.pts = frame_count
                 video_frame.time_base = Fraction(1, self.fps)
                 packet = output_stream.encode(video_frame)
@@ -722,15 +859,40 @@ class StreamingVideoEncoder:
         g: int | None = 2,
         crf: int | None = 30,
         preset: int | None = None,
+        options: dict | None = None,
         queue_maxsize: int = 30,
         encoder_threads: int | None = None,
+        video_feature_encoding_kwargs: dict[str, dict] | None = None,
+        depth_map_encoding_fn: Callable[[np.ndarray], av.VideoFrame] | None = None,
     ):
-        self.fps = fps
-        self.vcodec = resolve_vcodec(vcodec)
-        self.pix_fmt = pix_fmt
-        self.g = g
-        self.crf = crf
-        self.preset = preset
+        # The following are default encoding settings that can be overridden
+        # on a per-video-key basis via `video_feature_encoding_kwargs`
+        self.default_encoding_kwargs = {
+            "fps": fps,
+            "vcodec": resolve_vcodec(vcodec),
+            "pix_fmt": pix_fmt,
+            "g": g,
+            "crf": crf,
+            "preset": preset,
+            "options": options,
+        }
+        self.video_feature_encoding_kwargs = {}
+        if video_feature_encoding_kwargs is not None:
+            for key, enc in video_feature_encoding_kwargs.items():
+                self.video_feature_encoding_kwargs[key] = info_to_encoding_kwargs(enc)
+        self.is_depth_map = {}
+        if video_feature_encoding_kwargs is not None:
+            self.is_depth_map = {
+                video_key: (
+                    video_feature_encoding_kwargs is not None
+                    and video_feature_encoding_kwargs[video_key].get("video.is_depth_map", False)
+                )
+                for video_key in video_feature_encoding_kwargs
+            }
+        # if any of the videos is a depth map, depth_map_encoding_fn must be provided
+        if any(self.is_depth_map.values()) and depth_map_encoding_fn is None:
+            raise ValueError("depth_map_encoding_fn must be provided if any video is a depth map")
+
         self.queue_maxsize = queue_maxsize
         self.encoder_threads = encoder_threads
 
@@ -742,6 +904,7 @@ class StreamingVideoEncoder:
         self._dropped_frames: dict[str, int] = {}
         self._episode_active = False
         self._closed = False
+        self._depth_map_encoding_fn = depth_map_encoding_fn
 
     def start_episode(self, video_keys: list[str], temp_dir: Path) -> None:
         """Start encoder threads for a new episode.
@@ -763,18 +926,25 @@ class StreamingVideoEncoder:
             temp_video_dir = Path(tempfile.mkdtemp(dir=temp_dir))
             video_path = temp_video_dir / f"{video_key.replace('/', '_')}_streaming.mp4"
 
+            key_enc = self.video_feature_encoding_kwargs.get(video_key, {})
+            # If specified, fps must be the same with self.fps from meta info
+            if "fps" in key_enc and key_enc["fps"] != self.default_encoding_kwargs["fps"]:
+                raise ValueError(
+                    f"FPS mismatch for {video_key}: {key_enc['fps']} in video_feature_encoding_kwargs vs {self.default_encoding_kwargs['fps']} in default_encoding_kwargs"
+                )
+            key_enc = {
+                **self.default_encoding_kwargs,
+                **key_enc,
+            }  # video_feature_encoding_kwargs overrides defaults
             encoder_thread = _CameraEncoderThread(
                 video_path=video_path,
-                fps=self.fps,
-                vcodec=self.vcodec,
-                pix_fmt=self.pix_fmt,
-                g=self.g,
-                crf=self.crf,
-                preset=self.preset,
                 frame_queue=frame_queue,
                 result_queue=result_queue,
                 stop_event=stop_event,
                 encoder_threads=self.encoder_threads,
+                is_depth_map=self.is_depth_map.get(video_key, False),
+                depth_map_encoding_fn=self._depth_map_encoding_fn,
+                **key_enc,
             )
             encoder_thread.start()
 

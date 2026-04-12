@@ -655,3 +655,65 @@ def test_create_record_finalize_read_roundtrip(tmp_path):
         item = reopened[3 + i]
         assert torch.allclose(item["state"], ep1_states[i], atol=1e-5)
         assert item["episode_index"].item() == 1
+
+
+# ── Depth map support ────────────────────────────────────────────────
+
+
+DEPTH_VIDEO_FEATURES = {
+    "observation.images.depth": {
+        "dtype": "video",
+        "shape": (64, 96, 3),
+        "names": ["height", "width", "channels"],
+        "info": {
+            "video.fps": DEFAULT_FPS,
+            "video.codec": "libsvtav1",
+            "video.pix_fmt": "yuv420p",
+            "video.is_depth_map": True,
+        },
+    },
+    "state": {"dtype": "float32", "shape": (2,), "names": None},
+}
+
+
+def test_ensure_depth_streaming_encoding_raises(tmp_path):
+    """ensure_depth_streaming_encoding raises ValueError when depth keys exist and streaming is False."""
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID,
+        fps=DEFAULT_FPS,
+        features=DEPTH_VIDEO_FEATURES,
+        root=tmp_path / "ds",
+        use_videos=True,
+        streaming_encoding=True,
+        depth_map_encoding_fn=lambda x: x,  # dummy fn to satisfy video_utils check
+    )
+    with pytest.raises(ValueError, match="require streaming_encoding=True"):
+        dataset.ensure_depth_streaming_encoding(streaming_encoding=False)
+
+
+def test_ensure_depth_streaming_encoding_ok_with_streaming(tmp_path):
+    """ensure_depth_streaming_encoding does not raise when streaming is True."""
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID,
+        fps=DEFAULT_FPS,
+        features=DEPTH_VIDEO_FEATURES,
+        root=tmp_path / "ds",
+        use_videos=True,
+        streaming_encoding=True,
+        depth_map_encoding_fn=lambda x: x,  # dummy fn to satisfy video_utils check
+    )
+    dataset.ensure_depth_streaming_encoding(streaming_encoding=True)  # should not raise
+
+
+def test_create_with_depth_map_features_requires_streaming(tmp_path):
+    """LeRobotDataset.create raises ValueError when depth map features + streaming_encoding=False."""
+    with pytest.raises(ValueError, match="require streaming_encoding=True"):
+        LeRobotDataset.create(
+            repo_id=DUMMY_REPO_ID,
+            fps=DEFAULT_FPS,
+            features=DEPTH_VIDEO_FEATURES,
+            root=tmp_path / "ds",
+            use_videos=True,
+            streaming_encoding=False,
+            depth_map_encoding_fn=lambda x: x,  # dummy fn to satisfy video_utils check
+        )

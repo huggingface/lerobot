@@ -147,7 +147,7 @@ lerobot-edit-dataset \
 **Parameters:**
 
 - `output_dir`: Custom output directory (optional - by default uses `new_repo_id` or `{repo_id}_video`)
-- `vcodec`: Video codec to use - options: `h264`, `hevc`, `libsvtav1` (default: `libsvtav1`)
+- `vcodec`: Video codec to use - options: `h264`, `hevc`, `libsvtav1` (default: `libsvtav1`). `av1` is an alias for `libsvtav1`.
 - `pix_fmt`: Pixel format - options: `yuv420p`, `yuv444p` (default: `yuv420p`)
 - `g`: Group of pictures (GOP) size - lower values give better quality but larger files (default: 2)
 - `crf`: Constant rate factor - lower values give better quality but larger files, 0 is lossless (default: 30)
@@ -156,6 +156,9 @@ lerobot-edit-dataset \
 - `num_workers`: Number of parallel workers for processing (default: 4)
 
 **Note:** The resulting dataset will be a proper LeRobotDataset with all cameras encoded as videos in the `videos/` directory, with parquet files containing only metadata (no raw image data). All episodes, stats, and tasks are preserved.
+
+> [!TIP]
+> Encoding parameters (codec, CRF, pixel format, etc.) are also stored in each video feature's `info` dict in the metadata (e.g. `video.codec`, `video.crf`, `video.pix_fmt`). These per-video-key settings can be used by `LeRobotDataset` to override dataset-level defaults when re-encoding. See the [streaming video encoding guide](./streaming_video_encoding#5-depth-map-video-features) for details on per-key encoding and depth map support.
 
 ### Show the information of datasets
 

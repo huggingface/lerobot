@@ -131,6 +131,10 @@ class TestHWEncoderDetection:
         with pytest.raises(ValueError, match="Invalid vcodec"):
             resolve_vcodec("not_a_real_codec")
 
+    def test_resolve_vcodec_av1_alias(self):
+        """Test that resolve_vcodec('av1') returns 'libsvtav1'."""
+        assert resolve_vcodec("av1") == "libsvtav1"
+
 
 # ─── _CameraEncoderThread tests ───
 
@@ -478,6 +482,70 @@ class TestStreamingVideoEncoder:
         encoder = StreamingVideoEncoder(fps=30, vcodec="libsvtav1", pix_fmt="yuv420p")
         assert encoder.encoder_threads is None
         encoder.close()
+
+    def test_per_key_encoding_kwargs_none_backward_compat(self, tmp_path):
+        """video_feature_encoding_kwargs=None still works (backward compatible)."""
+        encoder = StreamingVideoEncoder(fps=30, vcodec="libsvtav1", video_feature_encoding_kwargs=None)
+        video_keys = [f"{OBS_IMAGES}.cam"]
+        encoder.start_episode(video_keys, tmp_path)
+
+        for _ in range(10):
+            frame = np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)
+            encoder.feed_frame(f"{OBS_IMAGES}.cam", frame)
+
+        results = encoder.finish_episode()
+        assert results[f"{OBS_IMAGES}.cam"][0].exists()
+        encoder.close()
+
+    def test_per_key_encoding_kwargs_override(self, tmp_path):
+        """Per-video-key encoding kwargs (e.g. crf) override defaults."""
+
+        video_feature_encoding_kwargs = {
+            f"{OBS_IMAGES}.depth": {"video.codec": "libsvtav1", "video.crf": 20, "video.pix_fmt": "yuv420p"},
+        }
+        encoder = StreamingVideoEncoder(
+            fps=30,
+            vcodec="libsvtav1",
+            crf=30,
+            video_feature_encoding_kwargs=video_feature_encoding_kwargs,
+        )
+        video_keys = [f"{OBS_IMAGES}.depth"]
+        encoder.start_episode(video_keys, tmp_path)
+
+        for _ in range(10):
+            frame = np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)
+            encoder.feed_frame(f"{OBS_IMAGES}.depth", frame)
+
+        results = encoder.finish_episode()
+        mp4_path, stats = results[f"{OBS_IMAGES}.depth"]
+        assert mp4_path.exists()
+        assert stats is not None
+        encoder.close()
+
+    def test_encoder_thread_options(self, tmp_path):
+        """_CameraEncoderThread accepts and stores options dict."""
+        fps = 30
+        video_path = tmp_path / "opts_test" / "test.mp4"
+        custom_options = {"foo": "bar"}
+
+        frame_queue: queue.Queue = queue.Queue(maxsize=60)
+        result_queue: queue.Queue = queue.Queue(maxsize=1)
+        stop_event = threading.Event()
+
+        encoder_thread = _CameraEncoderThread(
+            video_path=video_path,
+            fps=fps,
+            vcodec="libsvtav1",
+            pix_fmt="yuv420p",
+            g=2,
+            crf=30,
+            preset=13,
+            options=custom_options,
+            frame_queue=frame_queue,
+            result_queue=result_queue,
+            stop_event=stop_event,
+        )
+        assert encoder_thread.options == custom_options
 
     def test_graceful_frame_dropping(self, tmp_path):
         """Test that full queue drops frames instead of crashing."""
