@@ -1,0 +1,315 @@
+# RECAP Value Network Training
+
+Implementation of RECAP from the [π∗0.6: a VLA That Learns From Experience](https://www.pi.website/download/pistar06.pdf)
+
+The pipeline is two training runs followed by advantage-conditioned inference:
+
+1. **Value network** — uses a PaliGemma VLM backbone (SigLIP vision tower + Gemma LM); learns V(o_t) from episode success/fail labels. Joint positions are discretized into the text prompt (Pi 0.5-style). Optionally initializes from pretrained Pi 0.5 weights.
+2. **PiStar06 policy** — fine-tunes Pi0.5 with advantage conditioning. The pretrained value network computes per-frame advantages (`A_t = R_t - V(o_t)`), and a percentile-based threshold determines which frames get "Advantage: positive" vs "Advantage: negative" text injected into the language prompt. By default the 70th percentile is used so that only the top ~30% of frames (typically mid-to-late frames of successful episodes) are labeled positive.
+3. **Inference** — The advantage conditioning effectively allows the model to learn two distributions. At inference time we always append "Advantage: positive" to the text prompt to push the model toward the good distribution.
+
+## Quick Start
+
+Everything below uses the public dataset
+`jackvial/so101_pickplace_recap_merged_v2` (episode labels included) and fits
+on a single **RTX 4070 TI SUPER** (16 GB VRAM).
+
+### Step 1 — Train the value network
+
+```bash
+python -m lerobot.rl.algorithms.recap_train_value_network \
+  --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
+  --root="${HOME}/.cache/huggingface/lerobot" \
+  --output_dir="${HOME}/code/lerobot/outputs/recap_value_9" \
+  --epochs=2 \
+  --batch_size=4 \
+  --gradient_accumulation_steps=4 \
+  --learning_rate=1e-4 \
+  --num_workers=4 \
+  --val_split_ratio=0.1 \
+  --log_every_n_steps=100 \
+  --validate_every_n_train_steps=50 \
+  --plot_every_n_train_steps=200 \
+  --max_val_steps_per_step_validation=20 \
+  --c_fail=500.0 \
+  --num_value_bins=50 \
+  --num_vlm_layers=10 \
+  --paligemma_variant=gemma_2b \
+  --pretrained_path=lerobot/pi05_base \
+  --value_head_depth=1 \
+  --val_plot_num_episodes=4 \
+  --val_plot_num_frames=8 \
+  --val_plot_every_n_epochs=1 \
+  --model_precision="bfloat16" \
+  --freeze_vision_encoder=true \
+  --freeze_backbone=true \
+  --num_unfrozen_backbone_layers=3
+```
+
+### Step 2 — Train the advantage-conditioned policy
+
+Point `--value_network_checkpoint` at the checkpoint produced by Step 1.
+This can be either a **local file path** to a `.pt` file, or a
+**HuggingFace model repo ID** (e.g. `jackvial/recap_value_0`). When a
+repo ID is given the script automatically downloads the checkpoint file
+specified by `--value_network_checkpoint_filename` (default:
+`checkpoints/epoch_0001.pt`).
+
+> **`c_fail` consistency:** The `c_fail` and `num_value_bins` values used
+> here *must* match those used to train the value network in Step 1,
+> because the return targets \(R_t\) are re-built from the same formula.
+> A mismatch produces meaningless advantages (\(A_t = R_t - V(o_t)\)).
+>
+> The training script **automatically reads `c_fail` and `num_value_bins`
+> from the value-network checkpoint** and overrides the CLI values if they
+> differ (with a logged warning). You can still pass `--c_fail` on the
+> command line, but it will be corrected to match the checkpoint.
+
+```bash
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python -m lerobot.rl.algorithms.recap_train_pi_star \
+  --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
+  --output_dir="${HOME}/code/lerobot/outputs/recap_pistar_9" \
+  --value_network_checkpoint="${HOME}/code/lerobot/outputs/recap_value_5/checkpoints/epoch_0001.pt" \
+  --epochs=5 \
+  --batch_size=8 \
+  --gradient_checkpointing=true \
+  --learning_rate=1e-4 \
+  --val_split_ratio=0.1 \
+  --validate_every_n_train_steps=1000 \
+  --advantage_threshold_percentile=70.0 \
+  --advantage_dropout=0.3 \
+  --log_every_n_steps=10 \
+  --model_precision="bfloat16" \
+  --freeze_vision_encoder=true \
+  --freeze_backbone=true \
+  --num_unfrozen_backbone_layers=3 \
+  --advantage_cache_path="${HOME}/code/lerobot/outputs/advantage_cache_8.json"
+```
+
+### Advantage threshold
+
+The `--advantage_threshold_percentile` flag (default `70.0`) controls which
+frames receive "Advantage: positive" conditioning. After pre-computing
+per-frame advantages (`A_t = R_t − V(o_t)`), the script takes the Nth
+percentile of all advantage values and uses it as the binary threshold.
+
+Following the paper (Appendix A.4):
+- **Pre-training:** 70th percentile → ~30% of frames are positive
+- **Fine-tuning:** 60th percentile → ~40% of frames are positive
+
+The percentile matters because failure-episode frames cluster tightly at
+advantage ≈ 0 (the value network already expects them to fail). A fixed
+`threshold=0.0` splits this noise randomly, giving the model contradictory
+labels. The percentile-based threshold pushes the cutoff above the noise
+floor so that "positive" is reserved for frames from successful episodes
+where the outcome genuinely exceeded expectations.
+
+Note that many frames in successful episodes also receive "negative" labels
+(especially early in the episode, before success and failure trajectories
+diverge). This is not harmful — at those timesteps the action distribution
+is essentially unimodal (success and failure look the same), so the model
+simply learns the average policy for early-episode actions regardless of
+the label. The conditioning only has a meaningful effect later in the
+episode where the distributions genuinely separate.
+
+To override with a manual threshold instead, pass `--advantage_threshold=0.02`
+and omit `--advantage_threshold_percentile` (or set it to `None`).
+
+---
+
+## Ablation: Does advantage conditioning help?
+
+To verify that advantage conditioning actually improves policy performance,
+run a two-stage experiment:
+
+1. Fine-tune Pi0.5 on the task data **without** advantage conditioning (baseline)
+2. Take that checkpoint and fine-tune it further **with** advantage conditioning (RECAP)
+3. Roll out both policies on the robot and compare
+
+Because Stage 2 starts from the Stage 1 checkpoint, any improvement is
+directly attributable to advantage conditioning rather than differences in
+initialization or training duration.
+
+| | Policy A (baseline) | Policy B (RECAP) |
+|---|---|---|
+| Initialized from | `lerobot/pi05_base` | Stage 1 checkpoint |
+| Advantage text | Never injected | "Advantage: positive/negative" injected |
+| Value network | Not needed | Required |
+| Inference prompt | No advantage text | "Advantage: positive" appended |
+
+### Step 2a — Train the baseline (no advantage conditioning)
+
+This uses the same training script as Step 2 but with
+`--enable_advantage_conditioning=false`. The value network is not needed
+and no advantage text is ever injected — it is vanilla Pi0.5 fine-tuning.
+
+```bash
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python -m lerobot.rl.algorithms.recap_train_pi_star \
+  --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
+  --output_dir="${HOME}/code/lerobot/outputs/recap_baseline" \
+  --enable_advantage_conditioning=false \
+  --epochs=5 \
+  --batch_size=8 \
+  --gradient_checkpointing=true \
+  --learning_rate=1e-4 \
+  --val_split_ratio=0.1 \
+  --validate_every_n_train_steps=1000 \
+  --log_every_n_steps=10 \
+  --model_precision="bfloat16" \
+  --freeze_vision_encoder=true \
+  --freeze_backbone=true \
+  --num_unfrozen_backbone_layers=3
+```
+
+This exports a `pretrained/` directory at the end of training (containing
+`config.json` + `model.safetensors`).
+
+### Step 2b — Fine-tune with advantage conditioning (RECAP)
+
+Start from the **Stage 1 checkpoint** by pointing `--pretrained_path` at
+the pretrained directory produced by Step 2a. This ensures both policies
+share the same fine-tuned base, and the only difference is the addition of
+advantage conditioning.
+
+```bash
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python -m lerobot.rl.algorithms.recap_train_pi_star \
+  --repo_id="jackvial/so101_pickplace_recap_merged_v2" \
+  --output_dir="${HOME}/code/lerobot/outputs/recap_pistart" \
+  --value_network_pretrained_path="jackvial/recap-value-network-so101-pickplace" \
+  --epochs=5 \
+  --batch_size=8 \
+  --gradient_checkpointing=true \
+  --learning_rate=1e-4 \
+  --val_split_ratio=0.1 \
+  --validate_every_n_train_steps=1000 \
+  --advantage_threshold_percentile=70.0 \
+  --advantage_dropout=0.3 \
+  --log_every_n_steps=10 \
+  --model_precision="bfloat16" \
+  --freeze_vision_encoder=true \
+  --freeze_backbone=true \
+  --num_unfrozen_backbone_layers=3 \
+  --advantage_cache_path="${HOME}/code/lerobot/outputs/advantage_cache.json"
+```
+
+### Step 3 — Roll out each policy on the robot with RTC
+
+Replace `--robot.*` and `--task` flags with your hardware configuration.
+
+**Baseline policy (no advantage conditioning):**
+
+```bash
+uv run examples/rtc/eval_with_real_robot.py \
+  --policy.path="${HOME}/code/lerobot/outputs/recap_baseline/pretrained" \
+  --policy.device=cuda \
+  --rtc.enabled=true \
+  --rtc.execution_horizon=20 \
+  --robot.type=so100_follower \
+  --robot.port=/dev/ttyACM0 \
+  --robot.id=so100_follower \
+  --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30} }" \
+  --task="Pick up the object and place it in the target area" \
+  --duration=120
+```
+
+**RECAP policy (with advantage conditioning):**
+
+```bash
+uv run examples/rtc/eval_with_real_robot.py \
+  --policy.path="${HOME}/code/lerobot/outputs/recap_pistar/pretrained" \
+  --policy.device=cuda \
+  --rtc.enabled=true \
+  --rtc.execution_horizon=20 \
+  --robot.type=so100_follower \
+  --robot.port=/dev/ttyACM0 \
+  --robot.id=so100_follower \
+  --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30} }" \
+  --task="Pick up the object and place it in the target area" \
+  --duration=120
+```
+
+### What to measure
+
+Run each policy for the same number of trials (e.g. 10-20 pick-and-place
+attempts) and record:
+
+- **Success rate** -- did the robot complete the task?
+- **Qualitative behavior** -- does the RECAP policy show cleaner
+  mid-to-late-episode motions (where advantage conditioning diverges)?
+- **Failure modes** -- does the baseline fail in ways the RECAP policy avoids?
+
+If advantage conditioning is working, Policy B should show a higher success
+rate, particularly on the later portion of episodes where the positive and
+negative action distributions meaningfully differ.
+
+---
+
+## 1) Dataset Preparation
+
+The value trainer expects:
+
+- A valid LeRobot dataset (with episode metadata and frames).
+- A CSV with **fixed schema** containing per-episode success/failure labels.
+
+### 1.1 Episode labels (bundled in the dataset)
+
+Episode labels are stored inside the dataset at `meta/episode_labels.csv`. When you
+load the dataset via `LeRobotDataset(repo_id=...)`, the labels file is downloaded
+automatically alongside the other metadata.
+
+The training script discovers the labels at `<dataset_root>/meta/episode_labels.csv`
+by default — no extra flags needed. You can still override the path with
+`--labels_csv_path` for local experimentation.
+
+Example dataset: `jackvial/so101_pickplace_recap_merged_v2`
+
+### 1.2 Required CSV format
+
+```csv
+episode_index,success
+0,1
+1,1
+2,1
+...
+10,0
+11,0
+...
+```
+
+Rules:
+
+- `episode_index` must match LeRobot episode indices.
+- `success` must be binary (`1` success, `0` failure).
+- Include a row for every episode used for training/validation.
+
+If labels are missing for selected episodes, the script will raise an error.
+
+### 1.3 Uploading labels to your own dataset
+
+If you have your own LeRobot dataset on HuggingFace and want to bundle episode
+labels so other users get them automatically:
+
+```python
+from huggingface_hub import HfApi
+
+api = HfApi()
+api.upload_file(
+    path_or_fileobj="path/to/your/episode_labels.csv",
+    path_in_repo="meta/episode_labels.csv",
+    repo_id="your-username/your-dataset",
+    repo_type="dataset",
+)
+```
+
+### 1.4 Reward/return construction
+
+During preprocessing, the script builds a reward and return sequence from episode outcomes:
+
+- Per-step reward:
+  - non-terminal steps: `-1`
+  - terminal success: `0`
+  - terminal failure: `-C_fail` (configurable as `--c_fail`)
+- Empirical return is computed via reverse cumulative sum.
+- Return is normalized by per-task max episode length.
+- Normalized values are clamped to `[-1, 0]`.
+- Values are discretized into `B` bins (`--num_value_bins`, default `50`).
