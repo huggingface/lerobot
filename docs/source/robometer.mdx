@@ -1,0 +1,104 @@
+a Trajectory Comparisons
+
+Robometer is a pre-trained reward model (4B parameters) trained on large-scale real-robot data to assign progress scores to robot rollout videos. 
+dense progress values
+Qwen3-VL-4B-Instruct fine-tuned on the RBM-1M dataset.
+This guide covers how to instantiate and use Robometer in LeRobot for reward computation during RL training or evaluation.
+
+**Paper**: [Robometer: Scaling General-Purpose Robotic Reward Models via Trajectory Comparisons](https://arxiv.org/abs/2603.02115)
+
+**Models**: [robometer/Robometer-4B](https://huggingface.co/robometer/Robometer-4B)
+
+## Overview
+
+RoboReward fine-tunes Qwen3-VL-4B-Instruct on their RBM-1M dataset, which is built on Open X-Embodiment (OXE) and RoboArena data. Given a robot rollout video and a task description, the model generates a discrete progress score:
+
+| Score | Meaning                                                    |
+| ----- | ---------------------------------------------------------- |
+| 1     | No Success — no goal-relevant change                       |
+| 2     | Minimal Progress — insufficient change toward goal         |
+| 3     | Partial Completion — good progress but misses requirements |
+| 4     | Near Completion — misses a single minor requirement        |
+| 5     | Perfect Completion — all requirements satisfied            |
+
+These scores are mapped to float rewards in [0, 1] via a configurable `score_to_reward` table (default: linear 0.0 → 1.0).
+
+## Requirements
+
+```bash
+pip install "transformers>=4.51.0" qwen-vl-utils roboreason unsloth>=2025.10
+```
+
+## Quickstart
+
+```python
+import torch
+from lerobot.rewards.robometer.configuration_robometer import RobometerConfig
+from lerobot.rewards.robometer.modeling_robometer import RobometerModel
+
+config = RobometerConfig(
+    model_name="robometer",
+    device="cuda",
+    image_key="observation.images.side",
+    task_key="observation.language_instruction", # if task_key is None, must provide task_instruction string: e.g., task_instruction="pick up the red cube"
+)
+model = RobometerModel(config)
+model.eval()
+
+# batch from your dataset or environment (with videos)
+batch = {
+    "observation.images.side": torch.rand(2, 8, 3, 480, 640),   # (B, T, C, H, W) - batch of 2 videos, each with 8 frames
+    "observation.language_instruction": [
+        "pick up the red cube",
+        "place the block on the tray",
+    ],
+}
+rewards = model.compute_reward(batch)  # tensor([[], []])
+```
+
+## Configuration
+
+```python
+from lerobot.rewards.robometer.configuration_robometer import RobometerConfig
+
+config = RobometerConfig(
+    model_name="robometer",   
+    device="cuda",
+    image_key="observation.images.side",
+    task_key="observation.language_instruction", # if task_key is None, must provide task_instruction string: e.g., task_instruction="pick up the red cube"
+    num_reasoning_frames=10,  # the video is evenly downsampled to this number of frames before computing rewards
+)
+```
+
+## Using with the Factory
+
+```python
+from lerobot.rewards.factory import get_reward_model_class, make_reward_model_config
+
+cfg = make_reward_model_config("robometer", device="cuda")
+cls = get_reward_model_class("robometer")
+model = cls(cfg)
+```
+
+## Using with HIL-SERL / RL Training
+
+Pass the reward model config to the RL trainer. The model's `compute_reward()` is called at each environment step to provide dense rewards:
+
+```python
+from lerobot.rewards.factory import make_reward_model
+
+cfg = make_reward_model_config("robometer", device="cuda")
+reward_model = make_reward_model(cfg)
+
+# In your RL loop:
+rewards = reward_model.compute_reward(obs_batch)
+```
+
+## Notes
+
+- **Inference only**: The VLM backbone is frozen. `forward()` raises `NotImplementedError`.
+  Fine-tuning support is planned as future work.
+- **Throughput**: Reward computation runs sequentially per batch item (one `generate()` call each).
+  For high-throughput RL, consider computing rewards asynchronously or at episode end rather than
+  every step.
+
