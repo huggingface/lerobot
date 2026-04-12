@@ -15,7 +15,7 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 import torch
@@ -177,13 +177,13 @@ N_COLOR_CHANNELS = 3
 @dataclass
 class GR00TN15Config(PretrainedConfig):
     model_type = "gr00t_n1_5"
-    backbone_cfg: dict = field(init=False, metadata={"help": "Backbone configuration."})
+    backbone_cfg: Optional[dict] = field(init=False, default=None, metadata={"help": "Backbone configuration."})
 
-    action_head_cfg: dict = field(init=False, metadata={"help": "Action head configuration."})
+    action_head_cfg: Optional[dict] = field(init=False, default=None, metadata={"help": "Action head configuration."})
 
-    action_horizon: int = field(init=False, metadata={"help": "Action horizon."})
+    action_horizon: Optional[int] = field(init=False, default=None, metadata={"help": "Action horizon."})
 
-    action_dim: int = field(init=False, metadata={"help": "Action dimension."})
+    action_dim: Optional[int] = field(init=False, default=None, metadata={"help": "Action dimension."})
     compute_dtype: str = field(default="float32", metadata={"help": "Compute dtype."})
 
     def __init__(self, **kwargs):
