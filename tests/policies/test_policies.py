@@ -31,7 +31,7 @@ from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.feature_utils import dataset_to_policy_features
 from lerobot.datasets.utils import cycle
 from lerobot.envs.factory import make_env, make_env_config
-from lerobot.envs.utils import preprocess_observation
+from lerobot.envs.utils import close_envs, preprocess_observation
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act.modeling_act import ACTTemporalEnsembler
@@ -223,6 +223,8 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
 
     # Test step through policy
     env.step(action)
+
+    close_envs(envs)
 
 
 # TODO(rcadene, aliberts): This test is quite end-to-end. Move this test in test_optimizer?

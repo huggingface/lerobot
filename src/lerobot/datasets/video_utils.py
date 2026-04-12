@@ -741,6 +741,7 @@ class StreamingVideoEncoder:
         self._video_paths: dict[str, Path] = {}
         self._dropped_frames: dict[str, int] = {}
         self._episode_active = False
+        self._closed = False
 
     def start_episode(self, video_keys: list[str], temp_dir: Path) -> None:
         """Start encoder threads for a new episode.
@@ -895,8 +896,11 @@ class StreamingVideoEncoder:
 
     def close(self) -> None:
         """Close the encoder, canceling any in-progress episode."""
+        if self._closed:
+            return
         if self._episode_active:
             self.cancel_episode()
+        self._closed = True
 
     def _cleanup(self) -> None:
         """Clean up queues and thread tracking dicts."""
@@ -1063,43 +1067,19 @@ class VideoEncodingManager:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        streaming_encoder = getattr(self.dataset, "_streaming_encoder", None)
+        writer = self.dataset.writer
+        if writer is not None:
+            if exc_type is not None and writer._streaming_encoder is not None:
+                writer.cancel_pending_videos()
 
-        if streaming_encoder is not None:
-            # Handle streaming encoder cleanup
-            if exc_type is not None:
-                streaming_encoder.cancel_episode()
-            streaming_encoder.close()
-        elif self.dataset.episodes_since_last_encoding > 0:
-            # Handle any remaining episodes that haven't been batch encoded
-            if exc_type is not None:
-                logger.info("Exception occurred. Encoding remaining episodes before exit...")
-            else:
-                logger.info("Recording stopped. Encoding remaining episodes...")
+            # finalize() handles flush_pending_videos + parquet + metadata
+            self.dataset.finalize()
 
-            start_ep = self.dataset.num_episodes - self.dataset.episodes_since_last_encoding
-            end_ep = self.dataset.num_episodes
-            logger.info(
-                f"Encoding remaining {self.dataset.episodes_since_last_encoding} episodes, "
-                f"from episode {start_ep} to {end_ep - 1}"
-            )
-            self.dataset._batch_save_episode_video(start_ep, end_ep)
-
-        # Finalize the dataset to properly close all writers
-        self.dataset.finalize()
-
-        # Clean up episode images if recording was interrupted (only for non-streaming mode)
-        if exc_type is not None and streaming_encoder is None:
-            interrupted_episode_index = self.dataset.num_episodes
-            for key in self.dataset.meta.video_keys:
-                img_dir = self.dataset._get_image_file_path(
-                    episode_index=interrupted_episode_index, image_key=key, frame_index=0
-                ).parent
-                if img_dir.exists():
-                    logger.debug(
-                        f"Cleaning up interrupted episode images for episode {interrupted_episode_index}, camera {key}"
-                    )
-                    shutil.rmtree(img_dir)
+            # Clean up episode images if recording was interrupted (only for non-streaming mode)
+            if exc_type is not None and writer._streaming_encoder is None:
+                writer.cleanup_interrupted_episode(self.dataset.num_episodes)
+        else:
+            self.dataset.finalize()
 
         # Clean up any remaining images directory if it's empty
         img_dir = self.dataset.root / "images"

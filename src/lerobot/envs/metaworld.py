@@ -25,6 +25,7 @@ import metaworld.policies as policies
 import numpy as np
 from gymnasium import spaces
 
+from lerobot.envs.utils import _LazyAsyncVectorEnv
 from lerobot.types import RobotObservation
 
 # ---- Load configuration data from the external JSON file ----
@@ -97,8 +98,9 @@ class MetaworldEnv(gym.Env):
         self.visualization_height = visualization_height
         self.camera_name = camera_name
 
-        self._env = self._make_envs_task(self.task)
-        self._max_episode_steps = self._env.max_path_length
+        self._env_name = self.task  # already stripped of "metaworld-" prefix above
+        self._env = None  # deferred — created on first reset() inside the worker subprocess
+        self._max_episode_steps = 500  # MT1 environments always have max_path_length=500
         self.task_description = TASK_DESCRIPTIONS[self.task]
 
         self.expert_policy = TASK_POLICY_MAPPING[self.task]()
@@ -136,6 +138,24 @@ class MetaworldEnv(gym.Env):
 
         self.action_space = spaces.Box(low=-1, high=1, shape=(ACTION_DIM,), dtype=np.float32)
 
+    def _ensure_env(self) -> None:
+        """Create the underlying MetaWorld env on first use.
+
+        Called inside the worker subprocess after fork(), so each worker gets
+        its own clean rendering context rather than inheriting a stale one from
+        the parent process (which causes crashes with AsyncVectorEnv).
+        """
+        if self._env is not None:
+            return
+        mt1 = metaworld.MT1(self._env_name, seed=42)
+        env = mt1.train_classes[self._env_name](render_mode="rgb_array", camera_name=self.camera_name)
+        env.set_task(mt1.train_tasks[0])
+        if self.camera_name == "corner2":
+            env.model.cam_pos[2] = [0.75, 0.075, 0.7]
+        env.reset()
+        env._freeze_rand_vec = False  # otherwise no randomization
+        self._env = env
+
     def render(self) -> np.ndarray:
         """
         Render the current environment frame.
@@ -143,25 +163,12 @@ class MetaworldEnv(gym.Env):
         Returns:
             np.ndarray: The rendered RGB image from the environment.
         """
+        self._ensure_env()
         image = self._env.render()
         if self.camera_name == "corner2":
             # Images from this camera are flipped — correct them
             image = np.flip(image, (0, 1))
         return image
-
-    def _make_envs_task(self, env_name: str):
-        mt1 = metaworld.MT1(env_name, seed=42)
-        env = mt1.train_classes[env_name](render_mode="rgb_array", camera_name=self.camera_name)
-        env.set_task(mt1.train_tasks[0])
-        if self.camera_name == "corner2":
-            env.model.cam_pos[2] = [
-                0.75,
-                0.075,
-                0.7,
-            ]  # corner2 position, similar to https://arxiv.org/pdf/2206.14244
-        env.reset()
-        env._freeze_rand_vec = False  # otherwise no randomization
-        return env
 
     def _format_raw_obs(self, raw_obs: np.ndarray) -> RobotObservation:
         image = None
@@ -209,6 +216,7 @@ class MetaworldEnv(gym.Env):
             observation (RobotObservation): The initial formatted observation.
             info (Dict[str, Any]): Additional info about the reset state.
         """
+        self._ensure_env()
         super().reset(seed=seed)
 
         raw_obs, info = self._env.reset(seed=seed)
@@ -232,6 +240,7 @@ class MetaworldEnv(gym.Env):
             truncated (bool): Whether the episode was truncated due to a time limit.
             info (Dict[str, Any]): Additional environment info.
         """
+        self._ensure_env()
         if action.ndim != 1:
             raise ValueError(
                 f"Expected action to be 1-D (shape (action_dim,)), "
@@ -263,7 +272,8 @@ class MetaworldEnv(gym.Env):
         return observation, reward, terminated, truncated, info
 
     def close(self):
-        self._env.close()
+        if self._env is not None:
+            self._env.close()
 
 
 # ---- Main API ----------------------------------------------------------------
@@ -297,6 +307,9 @@ def create_metaworld_envs(
 
     print(f"Creating Meta-World envs | task_groups={task_groups} | n_envs(per task)={n_envs}")
 
+    is_async = env_cls is gym.vector.AsyncVectorEnv
+    cached_obs_space = None
+    cached_act_space = None
     out: dict[str, dict[int, Any]] = defaultdict(dict)
 
     for group in task_groups:
@@ -309,7 +322,14 @@ def create_metaworld_envs(
             # build n_envs factories
             fns = [(lambda tn=task_name: MetaworldEnv(task=tn, **gym_kwargs)) for _ in range(n_envs)]
 
-            out[group][tid] = env_cls(fns)
+            if is_async:
+                lazy = _LazyAsyncVectorEnv(fns, cached_obs_space, cached_act_space)
+                if cached_obs_space is None:
+                    cached_obs_space = lazy.observation_space
+                    cached_act_space = lazy.action_space
+                out[group][tid] = lazy
+            else:
+                out[group][tid] = env_cls(fns)
 
     # return a plain dict for consistency
     return {group: dict(task_map) for group, task_map in out.items()}

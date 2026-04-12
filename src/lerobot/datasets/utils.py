@@ -18,6 +18,7 @@ import importlib.resources
 import json
 import logging
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import datasets
@@ -99,6 +100,18 @@ DEFAULT_FEATURES = {
     "index": {"dtype": "int64", "shape": (1,), "names": None},
     "task_index": {"dtype": "int64", "shape": (1,), "names": None},
 }
+
+
+def has_legacy_hub_download_metadata(root: Path) -> bool:
+    """Return ``True`` when *root* looks like a legacy Hub ``local_dir`` mirror.
+
+    ``snapshot_download(local_dir=...)`` stores lightweight metadata under
+    ``<local_dir>/.cache/huggingface/download/``.  The presence of this
+    directory is a reliable indicator that the dataset was downloaded with
+    the old non-revision-safe ``local_dir`` mode and should be re-fetched
+    through the snapshot cache instead.
+    """
+    return (root / ".cache" / "huggingface" / "download").exists()
 
 
 def update_chunk_file_indices(chunk_idx: int, file_idx: int, chunks_size: int) -> tuple[int, int]:

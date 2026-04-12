@@ -534,7 +534,7 @@ class TestStreamingEncoderIntegration:
             streaming_encoding=True,
         )
 
-        assert dataset._streaming_encoder is not None
+        assert dataset.writer._streaming_encoder is not None
 
         num_frames = 20
         for _ in range(num_frames):
@@ -580,7 +580,7 @@ class TestStreamingEncoderIntegration:
             streaming_encoding=False,
         )
 
-        assert dataset._streaming_encoder is None
+        assert dataset.writer._streaming_encoder is None
 
         num_frames = 5
         for _ in range(num_frames):

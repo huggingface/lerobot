@@ -365,6 +365,10 @@ def get_delta_indices(delta_timestamps: dict[str, list[float]], fps: int) -> dic
 
 
 def validate_frame(frame: dict, features: dict) -> None:
+    # DEFAULT_FEATURES (timestamp, frame_index, episode_index, index, task_index) are
+    # auto-populated by the recording pipeline (add_frame / save_episode) and must not
+    # be supplied by the caller. Excluding them here means any frame dict that contains
+    # these keys will be rejected as extra features.
     expected_features = set(features) - set(DEFAULT_FEATURES)
     actual_features = set(frame)
 
