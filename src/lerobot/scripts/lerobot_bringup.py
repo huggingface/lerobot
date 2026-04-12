@@ -223,9 +223,7 @@ class BringupConfig:
     display_data: bool = False
 
 
-def interpolate(
-    start: dict[str, float], end: dict[str, float], steps: int
-) -> list[dict[str, float]]:
+def interpolate(start: dict[str, float], end: dict[str, float], steps: int) -> list[dict[str, float]]:
     """Generate linearly interpolated waypoints between start and end."""
     waypoints = []
     for i in range(1, steps + 1):
@@ -315,8 +313,12 @@ def bringup(cfg: BringupConfig):
 
             print("  Moving...")
             move_to_config(
-                robot, target, cfg.interpolation_steps, cfg.fps,
-                display_data=cfg.display_data, config_name=name,
+                robot,
+                target,
+                cfg.interpolation_steps,
+                cfg.fps,
+                display_data=cfg.display_data,
+                config_name=name,
             )
 
             # Read back and show actual position
@@ -341,8 +343,12 @@ def bringup(cfg: BringupConfig):
         print("\n  Moving to Stow (gravity-safe) and holding position...")
         print("  Press Ctrl+C to release and disconnect.\n")
         move_to_config(
-            robot, STOW_CONFIG, cfg.interpolation_steps, cfg.fps,
-            display_data=cfg.display_data, config_name="Stow (holding)",
+            robot,
+            STOW_CONFIG,
+            cfg.interpolation_steps,
+            cfg.fps,
+            display_data=cfg.display_data,
+            config_name="Stow (holding)",
         )
         while True:
             loop_start = time.perf_counter()
