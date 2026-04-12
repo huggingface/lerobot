@@ -1,4 +1,4 @@
-﻿import dataclasses
+import dataclasses
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType
