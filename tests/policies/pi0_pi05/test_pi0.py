@@ -125,3 +125,50 @@ def test_config_creation():
     except Exception as e:
         print(f"Config creation failed: {e}")
         raise
+
+
+class TestPI0ConfigAliases:
+    """Config-level tests (no GPU / HF token required)."""
+
+    def test_num_steps_from_hub_overrides_num_inference_steps(self):
+        config = PI0Config(num_steps=20)
+        assert config.num_inference_steps == 20
+
+    def test_num_inference_steps_works_without_num_steps(self):
+        config = PI0Config(num_inference_steps=25)
+        assert config.num_inference_steps == 25
+        assert config.num_steps is None
+
+    def test_num_steps_and_num_inference_steps_conflict_raises(self):
+        with pytest.raises(ValueError, match="both explicitly set to different values"):
+            PI0Config(num_steps=20, num_inference_steps=30)
+
+    def test_num_steps_and_num_inference_steps_same_value_ok(self):
+        config = PI0Config(num_steps=15, num_inference_steps=15)
+        assert config.num_inference_steps == 15
+
+    def test_default_num_inference_steps(self):
+        config = PI0Config()
+        assert config.num_inference_steps == 10
+        assert config.num_steps is None
+
+    def test_resize_imgs_with_padding_list_normalized_to_tuple(self):
+        config = PI0Config(resize_imgs_with_padding=[256, 256])  # type: ignore[arg-type]
+        assert config.resize_imgs_with_padding == (256, 256)
+        assert isinstance(config.resize_imgs_with_padding, tuple)
+
+    def test_resize_imgs_with_padding_tuple_passes(self):
+        config = PI0Config(resize_imgs_with_padding=(512, 512))
+        assert config.resize_imgs_with_padding == (512, 512)
+
+    def test_resize_imgs_with_padding_none_passes(self):
+        config = PI0Config(resize_imgs_with_padding=None)
+        assert config.resize_imgs_with_padding is None
+
+    def test_resize_imgs_with_padding_wrong_length_raises(self):
+        with pytest.raises(ValueError, match="tuple of 2 ints"):
+            PI0Config(resize_imgs_with_padding=[1, 2, 3])  # type: ignore[arg-type]
+
+    def test_resize_imgs_with_padding_non_int_raises(self):
+        with pytest.raises(ValueError, match="tuple of 2 ints"):
+            PI0Config(resize_imgs_with_padding=[1.5, 2.5])  # type: ignore[arg-type]
