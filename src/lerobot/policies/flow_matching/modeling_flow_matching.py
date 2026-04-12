@@ -199,14 +199,21 @@ class FlowMatchingPolicy(PreTrainedPolicy):
     name = "flow_matching"
     config_class = FlowMatchingConfig
 
-    def __init__(self, config: FlowMatchingConfig | None = None, **kwargs):
+    def __init__(self, config: FlowMatchingConfig, **kwargs):
         super().__init__(config, **kwargs)
+        config.validate_features()
         self.config = config
 
         self.action_dim = config.action_dim
         self.qpos_dim = config.qpos_dim
         self.num_cameras = config.num_cameras
         self.hidden_dim = config.hidden_dim
+
+        if len(config.image_keys) != self.num_cameras:
+            raise ValueError(
+                "The number of `image_keys` must match `num_cameras`. "
+                f"Got len(image_keys)={len(config.image_keys)} and num_cameras={self.num_cameras}."
+            )
 
         resnet = models.resnet18(weights=config.pretrained_backbone_weights)
         self.vision_backbone = nn.Sequential(*list(resnet.children())[:-1])
@@ -258,7 +265,7 @@ class FlowMatchingPolicy(PreTrainedPolicy):
         self, qpos: torch.Tensor, images: torch.Tensor, uncond_prob: float = 0.0
     ) -> torch.Tensor:
         batch_size = qpos.shape[0] if qpos is not None else images.shape[0]
-        num_cameras = self.num_cameras
+        num_cameras = images.shape[1] if images is not None else self.num_cameras
         device = qpos.device if qpos is not None else images.device
 
         if qpos is not None:
@@ -297,15 +304,18 @@ class FlowMatchingPolicy(PreTrainedPolicy):
 
         u_pred = self.net(x_t=x_t, t=t_tensor, conditions=condition_vector)
 
-        loss = nn.functional.mse_loss(u_pred, u_true, reduction="none")
+        mse = nn.functional.mse_loss(u_pred, u_true, reduction="none")
+        l1 = nn.functional.l1_loss(u_pred, u_true, reduction="none")
 
         if is_pad is not None:
             valid_mask = ~is_pad
-            loss = loss[valid_mask].mean()
+            loss = mse[valid_mask].mean()
+            l1 = l1[valid_mask].mean()
         else:
-            loss = loss.mean()
+            loss = mse.mean()
+            l1 = l1.mean()
 
-        return loss, {"l1": loss.detach(), "mse": loss.detach()}
+        return loss, {"l1": l1.detach(), "mse": loss.detach()}
 
     def predict_action_chunk(
         self, batch: dict[str, torch.Tensor], **kwargs: Unpack[ActionSelectKwargs]
@@ -318,9 +328,11 @@ class FlowMatchingPolicy(PreTrainedPolicy):
         conditions = {"qpos": qpos, "images": images}
 
         def vector_field_wrapper(x_t, t_tensor, conds):
-            is_uncond = conds.get("images") is None
+            cond_qpos = conds.get("qpos")
+            cond_images = conds.get("images")
+            is_uncond = cond_qpos is None and cond_images is None
             prob = 1.0 if is_uncond else 0.0
-            cond_vec = self.extract_condition(qpos, images, uncond_prob=prob)
+            cond_vec = self.extract_condition(cond_qpos, cond_images, uncond_prob=prob)
             return self.net(x_t, t_tensor, cond_vec)
 
         solver = FlowMatchingEulerSolver(num_sampling_steps=self.config.num_sampling_steps)

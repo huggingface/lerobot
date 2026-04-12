@@ -1,7 +1,7 @@
 import dataclasses
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import FeatureType
+from lerobot.configs.types import FeatureType, NormalizationMode
 from lerobot.optim.optimizers import AdamConfig
 
 
@@ -21,6 +21,13 @@ class FlowMatchingConfig(PreTrainedConfig):
     image_keys: list[str] = dataclasses.field(default_factory=lambda: ["observation.images.cam_high"])
     state_key: str = "observation.state"
     action_key: str = "action"
+    normalization_mapping: dict[str, NormalizationMode] = dataclasses.field(
+        default_factory=lambda: {
+            "VISUAL": NormalizationMode.MEAN_STD,
+            "STATE": NormalizationMode.MEAN_STD,
+            "ACTION": NormalizationMode.MEAN_STD,
+        }
+    )
 
     # Flow Matching specific parameters
     uncond_prob: float = 0.1

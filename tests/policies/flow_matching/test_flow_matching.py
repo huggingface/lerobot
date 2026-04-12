@@ -1,6 +1,7 @@
 import torch
 
-from lerobot.policies.factory import make_policy_config
+from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.policies.factory import make_policy_config, make_pre_post_processors
 from lerobot.policies.flow_matching.configuration_flow_matching import FlowMatchingConfig
 from lerobot.policies.flow_matching.modeling_flow_matching import FlowMatchingPolicy
 
@@ -26,6 +27,13 @@ def test_flow_matching_policy_forward_and_select_action_cpu():
         pretrained_backbone_weights=None,
         device="cpu",
     )
+    cfg.input_features = {
+        "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(13,)),
+        "observation.images.cam_high": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 64, 64)),
+    }
+    cfg.output_features = {
+        "action": PolicyFeature(type=FeatureType.ACTION, shape=(14,)),
+    }
     policy = FlowMatchingPolicy(config=cfg)
 
     batch_size = 2
@@ -48,3 +56,44 @@ def test_flow_matching_policy_forward_and_select_action_cpu():
 
     action = policy.select_action(infer_batch)
     assert action.shape == (batch_size, 14)
+
+
+def test_flow_matching_processor_factory_smoke():
+    cfg = FlowMatchingConfig(
+        action_dim=14,
+        qpos_dim=13,
+        num_cameras=1,
+        max_horizon=8,
+        pretrained_backbone_weights=None,
+        device="cpu",
+    )
+    cfg.input_features = {
+        "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(13,)),
+        "observation.images.cam_high": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 64, 64)),
+    }
+    cfg.output_features = {
+        "action": PolicyFeature(type=FeatureType.ACTION, shape=(14,)),
+    }
+
+    dataset_stats = {
+        "observation.state": {"mean": torch.zeros(13), "std": torch.ones(13)},
+        "observation.images.cam_high": {
+            "mean": torch.zeros(3, 64, 64),
+            "std": torch.ones(3, 64, 64),
+        },
+        "action": {"mean": torch.zeros(14), "std": torch.ones(14)},
+    }
+
+    preprocessor, postprocessor = make_pre_post_processors(policy_cfg=cfg, dataset_stats=dataset_stats)
+
+    batch = {
+        "observation.state": torch.rand(13),
+        "observation.images.cam_high": torch.rand(3, 64, 64),
+        "action": torch.rand(8, 14),
+    }
+    processed = preprocessor(batch)
+    assert "observation.state" in processed
+
+    action = torch.rand(1, 14)
+    restored = postprocessor(action)
+    assert restored.shape == (1, 14)
