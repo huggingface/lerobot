@@ -168,6 +168,7 @@ jobs:
       # immediately runs eval inside the training loop (eval_freq=1, 1 episode).
       # Tests the full train→eval-within-training pipeline end-to-end.
       - name: Run Libero train+eval smoke (1 step, eval_freq=1)
+        if: env.HF_USER_TOKEN != ''
         run: |
           docker run --name libero-train-smoke --gpus all \
             --shm-size=4g \
@@ -253,6 +254,7 @@ jobs:
           tags: lerobot-benchmark-metaworld:ci
 
       - name: Run MetaWorld smoke eval (1 episode)
+        if: env.HF_USER_TOKEN != ''
         run: |
           docker run --name metaworld-eval --gpus all \
             --shm-size=4g \
