@@ -27,8 +27,8 @@ Physical Intelligence가 설명하듯이, AI는 체스부터 신약 발견까지
 
 ## 설치 요구사항
 
-1. [설치 가이드](./installation)를 따라 LeRobot을 설치하세요.
-2. 다음 명령으로 Pi0 의존성을 설치하세요:
+1. [설치 가이드](./installation)를 따라 LeRobot을 설치해주세요.
+2. 다음 명령으로 Pi0 의존성을 설치해주세요:
 
    ```bash
    pip install -e ".[pi]"
@@ -44,7 +44,7 @@ Physical Intelligence가 설명하듯이, AI는 체스부터 신약 발견까지
 
 ## 사용법
 
-LeRobot에서 π₀를 사용하려면, 정책 타입을 다음과 같이 지정하세요:
+LeRobot에서 π₀를 사용하려면, 정책 타입을 다음과 같이 지정해주세요:
 
 ```python
 policy.type=pi0
@@ -90,6 +90,45 @@ lerobot-train \
 | `train_expert_only`     | `false` | VLM을 고정하지 않고, 모든 파라미터를 학습 |
 
 **💡 팁**: `train_expert_only=true`를 설정하면 VLM을 고정하고 액션 전문가(action expert)와 프로젝션만 학습하여, 메모리 사용량을 줄인 파인튜닝이 가능합니다.
+
+## 상대 액션(Relative Actions)
+
+기본적으로 π₀는 절대 액션을 예측합니다. **상대 액션(relative actions)**을 활성화하면 모델이 현재 로봇 상태에 대한 상대적인 오프셋을 예측하게 할 수 있습니다. 이는 특정 설정에서 학습 안정성을 개선할 수 있습니다.
+
+상대 액션을 사용하려면, 먼저 CLI를 통해 데이터셋 통계를 상대 공간에서 재계산해주세요:
+
+```bash
+lerobot-edit-dataset \
+    --repo_id your_dataset \
+    --operation.type recompute_stats \
+    --operation.relative_action true \
+    --operation.chunk_size 50 \
+    --operation.relative_exclude_joints "['gripper']" \
+    --push_to_hub true
+```
+
+Python으로 동일하게 실행할 수도 있습니다:
+
+```python
+from lerobot.datasets import LeRobotDataset, recompute_stats
+
+dataset = LeRobotDataset("your_dataset")
+recompute_stats(dataset, relative_action=True, chunk_size=50, relative_exclude_joints=["gripper"])
+dataset.push_to_hub()
+```
+
+`chunk_size`는 정책의 `chunk_size`(π₀ 기본값은 50)와 일치해야 합니다. `relative_exclude_joints`는 절대 공간에 유지되어야 하는 관절 이름 목록입니다(예: 그리퍼 명령). 업데이트된 통계를 Hub에 업로드하려면 `--push_to_hub true`를 사용해주세요.
+
+그다음, 상대 액션을 활성화하여 학습을 진행합니다:
+
+```bash
+lerobot-train \
+    --dataset.repo_id=your_dataset \
+    --policy.type=pi0 \
+    --policy.use_relative_actions=true \
+    --policy.relative_exclude_joints='["gripper"]' \
+    ...
+```
 
 ## 라이선스
 
