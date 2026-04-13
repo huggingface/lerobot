@@ -25,6 +25,8 @@ from unittest.mock import Mock
 import pytest
 import torch
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 import lerobot.datasets.dataset_metadata as dataset_metadata_module
 import lerobot.datasets.lerobot_dataset as lerobot_dataset_module
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata

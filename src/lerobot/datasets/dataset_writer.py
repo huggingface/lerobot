@@ -31,26 +31,26 @@ import PIL.Image
 import pyarrow.parquet as pq
 import torch
 
-from lerobot.datasets.compute_stats import compute_episode_stats
-from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-from lerobot.datasets.feature_utils import (
+from .compute_stats import compute_episode_stats
+from .dataset_metadata import LeRobotDatasetMetadata
+from .feature_utils import (
     get_hf_features_from_features,
     validate_episode_buffer,
     validate_frame,
 )
-from lerobot.datasets.image_writer import AsyncImageWriter, write_image
-from lerobot.datasets.io_utils import (
+from .image_writer import AsyncImageWriter, write_image
+from .io_utils import (
     embed_images,
     get_file_size_in_mb,
     load_episodes,
     write_info,
 )
-from lerobot.datasets.utils import (
+from .utils import (
     DEFAULT_EPISODES_PATH,
     DEFAULT_IMAGE_PATH,
     update_chunk_file_indices,
 )
-from lerobot.datasets.video_utils import (
+from .video_utils import (
     StreamingVideoEncoder,
     concatenate_video_files,
     encode_video_frames,

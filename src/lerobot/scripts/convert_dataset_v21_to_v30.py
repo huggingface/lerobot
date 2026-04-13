@@ -51,6 +51,10 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from lerobot.utils.import_utils import require_package
+
+require_package("jsonlines", extra="dataset")
+
 import jsonlines
 import pandas as pd
 import pyarrow as pa
@@ -59,8 +63,7 @@ from datasets import Dataset, Features, Image
 from huggingface_hub import HfApi, snapshot_download
 from requests import HTTPError
 
-from lerobot.datasets.compute_stats import aggregate_stats
-from lerobot.datasets.dataset_metadata import CODEBASE_VERSION
+from lerobot.datasets import CODEBASE_VERSION, LeRobotDataset, aggregate_stats
 from lerobot.datasets.io_utils import (
     cast_stats_to_numpy,
     get_file_size_in_mb,
@@ -72,7 +75,6 @@ from lerobot.datasets.io_utils import (
     write_stats,
     write_tasks,
 )
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
@@ -82,12 +84,11 @@ from lerobot.datasets.utils import (
     LEGACY_EPISODES_PATH,
     LEGACY_EPISODES_STATS_PATH,
     LEGACY_TASKS_PATH,
-    flatten_dict,
     update_chunk_file_indices,
 )
 from lerobot.datasets.video_utils import concatenate_video_files, get_video_duration_in_s
 from lerobot.utils.constants import HF_LEROBOT_HOME
-from lerobot.utils.utils import init_logging
+from lerobot.utils.utils import flatten_dict, init_logging
 
 V21 = "v2.1"
 V30 = "v3.0"

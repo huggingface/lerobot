@@ -17,7 +17,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
-from lerobot.configs.types import PipelineFeatureType, PolicyFeature
+from lerobot.configs import PipelineFeatureType, PolicyFeature
 
 from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
 
