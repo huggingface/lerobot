@@ -89,7 +89,7 @@ A core v3 principle is **decoupling storage from the user API**: data is stored 
 
 ```python
 import torch
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 
 repo_id = "yaak-ai/L2D-v3"
 
@@ -135,7 +135,7 @@ for batch in data_loader:
 Use `StreamingLeRobotDataset` to iterate directly from the Hub without local copies. This allows to stream large datasets without the need to downloading them onto disk or loading them onto memory, and is a key feature of the new dataset format.
 
 ```python
-from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
+from lerobot.datasets import StreamingLeRobotDataset
 
 repo_id = "yaak-ai/L2D-v3"
 dataset = StreamingLeRobotDataset(repo_id)  # streams directly from the Hub
@@ -167,8 +167,8 @@ Currently, transforms are applied during **training time only**, not during reco
 Use the `image_transforms` parameter when loading a dataset for training:
 
 ```python
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.transforms import ImageTransforms, ImageTransformsConfig, ImageTransformConfig
+from lerobot.datasets import LeRobotDataset
+from lerobot.transforms import ImageTransforms, ImageTransformsConfig, ImageTransformConfig
 
 # Option 1: Use default transform configuration (disabled by default)
 transforms_config = ImageTransformsConfig(
@@ -290,7 +290,7 @@ python -m lerobot.datasets.v30.convert_dataset_v21_to_v30 --repo-id=<HF_USER/DAT
 When creating or recording datasets, you **must** call `dataset.finalize()` to properly close parquet writers. See the [PR #1903](https://github.com/huggingface/lerobot/pull/1903) for more details.
 
 ```python
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 
 # Create dataset and record episodes
 dataset = LeRobotDataset.create(...)

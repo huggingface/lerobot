@@ -14,16 +14,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import hw_to_dataset_features
+from lerobot.common.control_utils import init_keyboard_listener
+from lerobot.datasets import LeRobotDataset
 from lerobot.processor import make_default_processors
-from lerobot.robots.lekiwi.config_lekiwi import LeKiwiClientConfig
-from lerobot.robots.lekiwi.lekiwi_client import LeKiwiClient
+from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
 from lerobot.scripts.lerobot_record import record_loop
 from lerobot.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.teleoperators.so_leader import SO100Leader, SO100LeaderConfig
 from lerobot.utils.constants import ACTION, OBS_STR
-from lerobot.utils.control_utils import init_keyboard_listener
+from lerobot.utils.feature_utils import hw_to_dataset_features
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
 

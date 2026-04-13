@@ -28,7 +28,7 @@ quantile statistics (q01, q10, q50, q90, q99) in their metadata. This script:
 Usage:
 
 ```bash
-python src/lerobot/datasets/v30/augment_dataset_quantile_stats.py \
+python src/lerobot/scripts/augment_dataset_quantile_stats.py \
     --repo-id=lerobot/pusht \
 ```
 """
@@ -44,9 +44,14 @@ from huggingface_hub import HfApi
 from requests import HTTPError
 from tqdm import tqdm
 
-from lerobot.datasets.compute_stats import DEFAULT_QUANTILES, aggregate_stats, get_feature_stats
-from lerobot.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
-from lerobot.datasets.utils import write_stats
+from lerobot.datasets import (
+    CODEBASE_VERSION,
+    DEFAULT_QUANTILES,
+    LeRobotDataset,
+    aggregate_stats,
+    get_feature_stats,
+    write_stats,
+)
 from lerobot.utils.utils import init_logging
 
 

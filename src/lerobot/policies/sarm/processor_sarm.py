@@ -16,41 +16,60 @@
 
 """SARM Processor for encoding images/text and generating stage+tau targets."""
 
+from __future__ import annotations
+
 import random
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import pandas as pd
 import torch
-from faker import Faker
 from PIL import Image
-from transformers import CLIPModel, CLIPProcessor
 
-from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.policies.sarm.configuration_sarm import SARMConfig
-from lerobot.policies.sarm.sarm_utils import (
+from lerobot.utils.import_utils import (
+    _faker_available,
+    _pandas_available,
+    _transformers_available,
+    require_package,
+)
+
+if TYPE_CHECKING or _transformers_available:
+    from transformers import CLIPModel, CLIPProcessor
+else:
+    CLIPModel = None  # type: ignore[assignment, misc]
+    CLIPProcessor = None  # type: ignore[assignment, misc]
+
+if TYPE_CHECKING or _pandas_available:
+    import pandas as pd
+else:
+    pd = None  # type: ignore[assignment]
+
+if TYPE_CHECKING or _faker_available:
+    from faker import Faker
+else:
+    Faker = None  # type: ignore[assignment, misc]
+
+from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.processor import (
+    AddBatchDimensionProcessorStep,
+    DeviceProcessorStep,
+    NormalizerProcessorStep,
+    PolicyProcessorPipeline,
+    ProcessorStep,
+    RenameObservationsProcessorStep,
+    from_tensor_to_numpy,
+    policy_action_to_transition,
+    transition_to_policy_action,
+)
+from lerobot.types import EnvTransition, PolicyAction, TransitionKey
+from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
+
+from .configuration_sarm import SARMConfig
+from .sarm_utils import (
     apply_rewind_augmentation,
     compute_absolute_indices,
     find_stage_and_tau,
     pad_state_to_max_dim,
 )
-from lerobot.processor import (
-    AddBatchDimensionProcessorStep,
-    DeviceProcessorStep,
-    NormalizerProcessorStep,
-    PolicyAction,
-    PolicyProcessorPipeline,
-    ProcessorStep,
-    RenameObservationsProcessorStep,
-)
-from lerobot.processor.converters import (
-    from_tensor_to_numpy,
-    policy_action_to_transition,
-    transition_to_policy_action,
-)
-from lerobot.processor.core import EnvTransition, TransitionKey
-from lerobot.processor.pipeline import PipelineFeatureType
-from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
 
 class SARMEncodingProcessorStep(ProcessorStep):
@@ -63,6 +82,9 @@ class SARMEncodingProcessorStep(ProcessorStep):
         dataset_meta=None,
         dataset_stats: dict | None = None,
     ):
+        require_package("transformers", extra="sarm")
+        require_package("faker", extra="sarm")
+        require_package("pandas", extra="dataset")
         super().__init__()
         self.config = config
         self.image_key = image_key or config.image_key

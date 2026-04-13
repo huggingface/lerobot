@@ -25,9 +25,9 @@ import torch
 
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.envs.configs import HILSerlRobotEnvConfig
-from lerobot.model.kinematics import RobotKinematics
+from lerobot.datasets import LeRobotDataset
+from lerobot.envs import HILSerlRobotEnvConfig
+from lerobot.model import RobotKinematics
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     AddTeleopActionAsComplimentaryDataStep,
@@ -50,8 +50,8 @@ from lerobot.processor import (
     TransitionKey,
     VanillaObservationProcessorStep,
     create_transition,
+    identity_transition,
 )
-from lerobot.processor.converters import identity_transition
 from lerobot.robots import (  # noqa: F401
     RobotConfig,
     make_robot_from_config,
@@ -752,8 +752,7 @@ def replay_trajectory(
         episodes=[cfg.dataset.replay_episode],
         download_videos=False,
     )
-    episode_frames = dataset.hf_dataset.filter(lambda x: x["episode_index"] == cfg.dataset.replay_episode)
-    actions = episode_frames.select_columns(ACTION)
+    actions = dataset.select_columns(ACTION)
 
     _, info = env.reset()
 

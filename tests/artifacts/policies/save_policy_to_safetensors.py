@@ -21,7 +21,7 @@ from safetensors.torch import save_file
 
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.datasets.factory import make_dataset
+from lerobot.datasets import make_dataset
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.factory import make_policy, make_policy_config, make_pre_post_processors
 from lerobot.utils.constants import OBS_STR
@@ -80,7 +80,7 @@ def get_policy_stats(ds_repo_id: str, policy_name: str, policy_kwargs: dict):
     # HACK: We reload a batch with no delta_indices as `select_action` won't expect a timestamps dimension
     # We simulate having an environment using a dataset by setting delta_indices to None and dropping tensors
     # indicating padding (those ending with "_is_pad")
-    dataset.delta_indices = None
+    dataset.reader.delta_indices = None
     batch = next(iter(dataloader))
     obs = {}
     for k in batch:

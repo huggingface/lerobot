@@ -14,13 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
-from lerobot.datasets.utils import combine_feature_dicts
+from lerobot.cameras.opencv import OpenCVCameraConfig
+from lerobot.common.control_utils import init_keyboard_listener
+from lerobot.datasets import LeRobotDataset, aggregate_pipeline_dataset_features, create_initial_features
 from lerobot.model.kinematics import RobotKinematics
-from lerobot.processor import RobotAction, RobotObservation, RobotProcessorPipeline
-from lerobot.processor.converters import (
+from lerobot.processor import (
+    RobotProcessorPipeline,
     observation_to_transition,
     robot_action_observation_to_transition,
     transition_to_observation,
@@ -35,10 +34,11 @@ from lerobot.robots.so_follower.robot_kinematic_processor import (
     InverseKinematicsEEToJoints,
 )
 from lerobot.scripts.lerobot_record import record_loop
-from lerobot.teleoperators.phone.config_phone import PhoneConfig, PhoneOS
+from lerobot.teleoperators.phone import Phone, PhoneConfig
+from lerobot.teleoperators.phone.config_phone import PhoneOS
 from lerobot.teleoperators.phone.phone_processor import MapPhoneActionToRobotAction
-from lerobot.teleoperators.phone.teleop_phone import Phone
-from lerobot.utils.control_utils import init_keyboard_listener
+from lerobot.types import RobotAction, RobotObservation
+from lerobot.utils.feature_utils import combine_feature_dicts
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
 

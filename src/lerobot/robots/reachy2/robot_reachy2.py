@@ -18,8 +18,8 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any
 
-from lerobot.cameras.utils import make_cameras_from_configs
-from lerobot.processor import RobotAction, RobotObservation
+from lerobot.cameras import make_cameras_from_configs
+from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.import_utils import _reachy2_sdk_available
 
 from ..robot import Robot

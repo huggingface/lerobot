@@ -27,11 +27,12 @@ import torch.nn.functional as F  # noqa: N812
 import torchvision
 from torch import Tensor, nn
 
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.utils import get_device_from_parameters, get_output_shape, populate_queues
-from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
-from lerobot.policies.vqbet.vqbet_utils import GPT, ResidualVQ
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
+
+from ..pretrained import PreTrainedPolicy
+from ..utils import get_device_from_parameters, get_output_shape, populate_queues
+from .configuration_vqbet import VQBeTConfig
+from .vqbet_utils import GPT, ResidualVQ
 
 # ruff: noqa: N806
 
@@ -467,8 +468,8 @@ class VQBeTHead(nn.Module):
         self.vqvae_model.optimized_steps += 1
         # if we updated RVQ more than `n_vqvae_training_steps` steps, we freeze the RVQ part.
         if self.vqvae_model.optimized_steps >= n_vqvae_training_steps:
-            self.vqvae_model.discretized = torch.tensor(True)
-            self.vqvae_model.vq_layer.freeze_codebook = torch.tensor(True)
+            self.vqvae_model.discretized.fill_(True)
+            self.vqvae_model.vq_layer.freeze_codebook.fill_(True)
             print("Finished discretizing action data!")
             self.vqvae_model.eval()
             for param in self.vqvae_model.vq_layer.parameters():

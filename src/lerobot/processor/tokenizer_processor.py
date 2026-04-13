@@ -29,7 +29,8 @@ from typing import TYPE_CHECKING, Any
 
 import torch
 
-from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.types import EnvTransition, RobotObservation, TransitionKey
 from lerobot.utils.constants import (
     ACTION_TOKEN_MASK,
     ACTION_TOKENS,
@@ -40,7 +41,6 @@ from lerobot.utils.constants import (
 )
 from lerobot.utils.import_utils import _transformers_available
 
-from .core import EnvTransition, RobotObservation, TransitionKey
 from .pipeline import ActionProcessorStep, ObservationProcessorStep, ProcessorStepRegistry
 
 # Conditional import for type checking and lazy loading
@@ -136,8 +136,8 @@ class TokenizerProcessorStep(ObservationProcessorStep):
         # Standardize to a list of strings for the tokenizer
         if isinstance(task, str):
             return [task]
-        elif isinstance(task, list) and all(isinstance(t, str) for t in task):
-            return task
+        elif isinstance(task, (list, tuple)) and all(isinstance(t, str) for t in task):
+            return list(task)
 
         return None
 

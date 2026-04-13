@@ -33,7 +33,7 @@ if TYPE_CHECKING or _transformers_available:
     from transformers.models.auto import CONFIG_MAPPING
     from transformers.models.gemma import modeling_gemma
 
-    from lerobot.policies.pi_gemma import (
+    from ..pi_gemma import (
         PaliGemmaForConditionalGenerationWithPiGemma,
         PiGemmaForCausalLM,
         _gated_residual,
@@ -46,16 +46,17 @@ else:
     _gated_residual = None
     layernorm_forward = None
     PaliGemmaForConditionalGenerationWithPiGemma = None
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.policies.pi05.configuration_pi05 import DEFAULT_IMAGE_SIZE, PI05Config
-from lerobot.policies.pretrained import PreTrainedPolicy, T
-from lerobot.policies.rtc.modeling_rtc import RTCProcessor
+from lerobot.configs import PreTrainedConfig
 from lerobot.utils.constants import (
     ACTION,
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
     OPENPI_ATTENTION_MASK_VALUE,
 )
+
+from ..pretrained import PreTrainedPolicy, T
+from ..rtc.modeling_rtc import RTCProcessor
+from .configuration_pi05 import DEFAULT_IMAGE_SIZE, PI05Config
 
 
 class ActionSelectKwargs(TypedDict, total=False):

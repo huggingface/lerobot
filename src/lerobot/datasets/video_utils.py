@@ -37,6 +37,10 @@ import torchvision
 from datasets.features.features import register_feature
 from PIL import Image
 
+from lerobot.utils.import_utils import get_safe_default_codec
+
+logger = logging.getLogger(__name__)
+
 # List of hardware encoders to probe for auto-selection. Availability depends on the platform and FFmpeg build.
 # Determines the order of preference for auto-selection when vcodec="auto" is used.
 HW_ENCODERS = [
@@ -94,7 +98,7 @@ def detect_available_hw_encoders() -> list[str]:
             av.codec.Codec(codec_name, "w")
             available.append(codec_name)
         except Exception:  # nosec B110
-            pass  # nosec B110
+            logger.debug("HW encoder '%s' not available", codec_name)  # nosec B110
     return available
 
 
@@ -103,25 +107,15 @@ def resolve_vcodec(vcodec: str) -> str:
     if vcodec not in VALID_VIDEO_CODECS:
         raise ValueError(f"Invalid vcodec '{vcodec}'. Must be one of: {sorted(VALID_VIDEO_CODECS)}")
     if vcodec != "auto":
-        logging.info(f"Using video codec: {vcodec}")
+        logger.info(f"Using video codec: {vcodec}")
         return vcodec
     available = detect_available_hw_encoders()
     for encoder in HW_ENCODERS:
         if encoder in available:
-            logging.info(f"Auto-selected video codec: {encoder}")
+            logger.info(f"Auto-selected video codec: {encoder}")
             return encoder
-    logging.info("No hardware encoder available, falling back to software encoder 'libsvtav1'")
+    logger.info("No hardware encoder available, falling back to software encoder 'libsvtav1'")
     return "libsvtav1"
-
-
-def get_safe_default_codec():
-    if importlib.util.find_spec("torchcodec"):
-        return "torchcodec"
-    else:
-        logging.warning(
-            "'torchcodec' is not available in your platform, falling back to 'pyav' as a default decoder"
-        )
-        return "pyav"
 
 
 def decode_video_frames(
@@ -208,7 +202,7 @@ def decode_video_frames_torchvision(
     for frame in reader:
         current_ts = frame["pts"]
         if log_loaded_timestamps:
-            logging.info(f"frame loaded at timestamp={current_ts:.4f}")
+            logger.info(f"frame loaded at timestamp={current_ts:.4f}")
         loaded_frames.append(frame["data"])
         loaded_ts.append(current_ts)
         if current_ts >= last_ts:
@@ -244,7 +238,7 @@ def decode_video_frames_torchvision(
     closest_ts = loaded_ts[argmin_]
 
     if log_loaded_timestamps:
-        logging.info(f"{closest_ts=}")
+        logger.info(f"{closest_ts=}")
 
     # convert to the pytorch format which is float32 in [0,1] range (and channel first)
     closest_frames = closest_frames.type(torch.float32) / 255
@@ -269,7 +263,10 @@ class VideoDecoderCache:
         if importlib.util.find_spec("torchcodec"):
             from torchcodec.decoders import VideoDecoder
         else:
-            raise ImportError("torchcodec is required but not available.")
+            raise ImportError(
+                "'torchcodec' is required but not installed. "
+                "Install it with: pip install 'lerobot[dataset]' (or uv pip install 'lerobot[dataset]')"
+            )
 
         video_path = str(video_path)
 
@@ -348,7 +345,7 @@ def decode_video_frames_torchcodec(
         loaded_frames.append(frame)
         loaded_ts.append(pts.item())
         if log_loaded_timestamps:
-            logging.info(f"Frame loaded at timestamp={pts:.4f}")
+            logger.info(f"Frame loaded at timestamp={pts:.4f}")
 
     query_ts = torch.tensor(timestamps)
     loaded_ts = torch.tensor(loaded_ts)
@@ -374,7 +371,7 @@ def decode_video_frames_torchcodec(
     closest_ts = loaded_ts[argmin_]
 
     if log_loaded_timestamps:
-        logging.info(f"{closest_ts=}")
+        logger.info(f"{closest_ts=}")
 
     # convert to float32 in [0,1] range
     closest_frames = (closest_frames / 255.0).type(torch.float32)
@@ -408,14 +405,14 @@ def encode_video_frames(
     imgs_dir = Path(imgs_dir)
 
     if video_path.exists() and not overwrite:
-        logging.warning(f"Video file already exists: {video_path}. Skipping encoding.")
+        logger.warning(f"Video file already exists: {video_path}. Skipping encoding.")
         return
 
     video_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Encoders/pixel formats incompatibility check
     if (vcodec == "libsvtav1" or vcodec == "hevc") and pix_fmt == "yuv444p":
-        logging.warning(
+        logger.warning(
             f"Incompatible pixel format 'yuv444p' for codec {vcodec}, auto-selecting format 'yuv420p'"
         )
         pix_fmt = "yuv420p"
@@ -508,7 +505,7 @@ def concatenate_video_files(
     output_video_path = Path(output_video_path)
 
     if output_video_path.exists() and not overwrite:
-        logging.warning(f"Video file already exists: {output_video_path}. Skipping concatenation.")
+        logger.warning(f"Video file already exists: {output_video_path}. Skipping concatenation.")
         return
 
     output_video_path.parent.mkdir(parents=True, exist_ok=True)
@@ -604,7 +601,7 @@ class _CameraEncoderThread(threading.Thread):
         self.encoder_threads = encoder_threads
 
     def run(self) -> None:
-        from lerobot.datasets.compute_stats import RunningQuantileStats, auto_downsample_height_width
+        from .compute_stats import RunningQuantileStats, auto_downsample_height_width
 
         container = None
         output_stream = None
@@ -693,7 +690,7 @@ class _CameraEncoderThread(threading.Thread):
                 self.result_queue.put(("ok", None))
 
         except Exception as e:
-            logging.error(f"Encoder thread error: {e}")
+            logger.error(f"Encoder thread error: {e}")
             if container is not None:
                 with contextlib.suppress(Exception):
                     container.close()
@@ -739,6 +736,7 @@ class StreamingVideoEncoder:
         self._video_paths: dict[str, Path] = {}
         self._dropped_frames: dict[str, int] = {}
         self._episode_active = False
+        self._closed = False
 
     def start_episode(self, video_keys: list[str], temp_dir: Path) -> None:
         """Start encoder threads for a new episode.
@@ -819,7 +817,7 @@ class StreamingVideoEncoder:
             count = self._dropped_frames[video_key]
             # Log periodically to avoid spam (1st, then every 10th)
             if count == 1 or count % 10 == 0:
-                logging.warning(
+                logger.warning(
                     f"Encoder queue full for {video_key}, dropped {count} frame(s). "
                     f"Consider using vcodec='auto' for hardware encoding or increasing encoder_queue_maxsize."
                 )
@@ -841,7 +839,7 @@ class StreamingVideoEncoder:
         # Report dropped frames
         for video_key, count in self._dropped_frames.items():
             if count > 0:
-                logging.warning(f"Episode finished with {count} dropped frame(s) for {video_key}.")
+                logger.warning(f"Episode finished with {count} dropped frame(s) for {video_key}.")
 
         # Send sentinel to all queues
         for video_key in self._frame_queues:
@@ -851,7 +849,7 @@ class StreamingVideoEncoder:
         for video_key in self._threads:
             self._threads[video_key].join(timeout=120)
             if self._threads[video_key].is_alive():
-                logging.error(f"Encoder thread for {video_key} did not finish in time")
+                logger.error(f"Encoder thread for {video_key} did not finish in time")
                 self._stop_events[video_key].set()
                 self._threads[video_key].join(timeout=5)
                 results[video_key] = (self._video_paths[video_key], None)
@@ -863,7 +861,7 @@ class StreamingVideoEncoder:
                     raise RuntimeError(f"Encoder thread for {video_key} failed: {data}")
                 results[video_key] = (self._video_paths[video_key], data)
             except queue.Empty:
-                logging.error(f"No result from encoder thread for {video_key}")
+                logger.error(f"No result from encoder thread for {video_key}")
                 results[video_key] = (self._video_paths[video_key], None)
 
         self._cleanup()
@@ -893,8 +891,11 @@ class StreamingVideoEncoder:
 
     def close(self) -> None:
         """Close the encoder, canceling any in-progress episode."""
+        if self._closed:
+            return
         if self._episode_active:
             self.cancel_episode()
+        self._closed = True
 
     def _cleanup(self) -> None:
         """Clean up queues and thread tracking dicts."""
@@ -1061,43 +1062,19 @@ class VideoEncodingManager:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        streaming_encoder = getattr(self.dataset, "_streaming_encoder", None)
+        writer = self.dataset.writer
+        if writer is not None:
+            if exc_type is not None and writer._streaming_encoder is not None:
+                writer.cancel_pending_videos()
 
-        if streaming_encoder is not None:
-            # Handle streaming encoder cleanup
-            if exc_type is not None:
-                streaming_encoder.cancel_episode()
-            streaming_encoder.close()
-        elif self.dataset.episodes_since_last_encoding > 0:
-            # Handle any remaining episodes that haven't been batch encoded
-            if exc_type is not None:
-                logging.info("Exception occurred. Encoding remaining episodes before exit...")
-            else:
-                logging.info("Recording stopped. Encoding remaining episodes...")
+            # finalize() handles flush_pending_videos + parquet + metadata
+            self.dataset.finalize()
 
-            start_ep = self.dataset.num_episodes - self.dataset.episodes_since_last_encoding
-            end_ep = self.dataset.num_episodes
-            logging.info(
-                f"Encoding remaining {self.dataset.episodes_since_last_encoding} episodes, "
-                f"from episode {start_ep} to {end_ep - 1}"
-            )
-            self.dataset._batch_save_episode_video(start_ep, end_ep)
-
-        # Finalize the dataset to properly close all writers
-        self.dataset.finalize()
-
-        # Clean up episode images if recording was interrupted (only for non-streaming mode)
-        if exc_type is not None and streaming_encoder is None:
-            interrupted_episode_index = self.dataset.num_episodes
-            for key in self.dataset.meta.video_keys:
-                img_dir = self.dataset._get_image_file_path(
-                    episode_index=interrupted_episode_index, image_key=key, frame_index=0
-                ).parent
-                if img_dir.exists():
-                    logging.debug(
-                        f"Cleaning up interrupted episode images for episode {interrupted_episode_index}, camera {key}"
-                    )
-                    shutil.rmtree(img_dir)
+            # Clean up episode images if recording was interrupted (only for non-streaming mode)
+            if exc_type is not None and writer._streaming_encoder is None:
+                writer.cleanup_interrupted_episode(self.dataset.num_episodes)
+        else:
+            self.dataset.finalize()
 
         # Clean up any remaining images directory if it's empty
         img_dir = self.dataset.root / "images"
@@ -1105,8 +1082,8 @@ class VideoEncodingManager:
             png_files = list(img_dir.rglob("*.png"))
             if len(png_files) == 0:
                 shutil.rmtree(img_dir)
-                logging.debug("Cleaned up empty images directory")
+                logger.debug("Cleaned up empty images directory")
             else:
-                logging.debug(f"Images directory is not empty, containing {len(png_files)} PNG files")
+                logger.debug(f"Images directory is not empty, containing {len(png_files)} PNG files")
 
         return False  # Don't suppress the original exception
