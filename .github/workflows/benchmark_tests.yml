@@ -42,7 +42,6 @@ on:
   pull_request:
     branches:
       - main
-      - feat/benchmark-ci
     paths:
       - "src/lerobot/envs/**"
       - "src/lerobot/scripts/lerobot_eval.py"
