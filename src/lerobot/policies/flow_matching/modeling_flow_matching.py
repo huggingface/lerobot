@@ -201,6 +201,10 @@ class FlowMatchingPolicy(PreTrainedPolicy):
 
     def __init__(self, config: FlowMatchingConfig, **kwargs):
         super().__init__(config, **kwargs)
+        config = config if config is not None else self.config
+        if config is None:
+            raise ValueError("FlowMatchingPolicy requires a non-None config.")
+        config.validate_features()
         config.validate_features()
         self.config = config
 
