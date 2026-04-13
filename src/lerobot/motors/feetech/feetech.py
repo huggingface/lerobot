@@ -221,7 +221,8 @@ class FeetechMotorsBus(SerialMotorsBus):
             # Only known to be necessary for the STS3215.
             if self.motors[motor].model == "sts3215":
                 phase = self.read("Phase", motor, normalize=False)
-                self.write("Phase", motor, phase & ~0x10)
+                if phase & 0x10:
+                    self.write("Phase", motor, phase & ~0x10)
 
     @property
     def is_calibrated(self) -> bool:
