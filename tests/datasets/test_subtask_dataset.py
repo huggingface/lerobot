@@ -23,8 +23,11 @@ These tests verify that:
 - Subtask handling gracefully handles missing data
 """
 
-import pandas as pd
 import pytest
+
+pytest.importorskip("pandas", reason="pandas is required (install lerobot[dataset])")
+
+import pandas as pd  # noqa: E402
 import torch
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset

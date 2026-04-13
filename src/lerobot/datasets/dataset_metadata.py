@@ -23,9 +23,13 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from huggingface_hub import snapshot_download
 
-from lerobot.datasets.compute_stats import aggregate_stats
-from lerobot.datasets.feature_utils import _validate_feature_names, create_empty_dataset_info
-from lerobot.datasets.io_utils import (
+from lerobot.utils.constants import DEFAULT_FEATURES, HF_LEROBOT_HOME, HF_LEROBOT_HUB_CACHE
+from lerobot.utils.feature_utils import _validate_feature_names
+from lerobot.utils.utils import flatten_dict
+
+from .compute_stats import aggregate_stats
+from .feature_utils import create_empty_dataset_info
+from .io_utils import (
     get_file_size_in_mb,
     load_episodes,
     load_info,
@@ -37,19 +41,16 @@ from lerobot.datasets.io_utils import (
     write_stats,
     write_tasks,
 )
-from lerobot.datasets.utils import (
+from .utils import (
     DEFAULT_EPISODES_PATH,
-    DEFAULT_FEATURES,
     INFO_PATH,
     check_version_compatibility,
-    flatten_dict,
     get_safe_version,
     has_legacy_hub_download_metadata,
     is_valid_version,
     update_chunk_file_indices,
 )
-from lerobot.datasets.video_utils import get_video_info
-from lerobot.utils.constants import HF_LEROBOT_HOME, HF_LEROBOT_HUB_CACHE
+from .video_utils import get_video_info
 
 CODEBASE_VERSION = "v3.0"
 

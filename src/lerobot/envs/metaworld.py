@@ -25,8 +25,9 @@ import metaworld.policies as policies
 import numpy as np
 from gymnasium import spaces
 
-from lerobot.envs.utils import _LazyAsyncVectorEnv
 from lerobot.types import RobotObservation
+
+from .utils import _LazyAsyncVectorEnv
 
 # ---- Load configuration data from the external JSON file ----
 CONFIG_PATH = Path(__file__).parent / "metaworld_config.json"

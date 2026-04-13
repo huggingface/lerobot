@@ -18,9 +18,13 @@ import threading
 import time
 from queue import Queue
 
-from torch.multiprocessing import Queue as TorchMPQueue
+import pytest
 
-from lerobot.rl.queue import get_last_item_from_queue
+pytest.importorskip("grpc")
+
+from torch.multiprocessing import Queue as TorchMPQueue  # noqa: E402
+
+from lerobot.rl.queue import get_last_item_from_queue  # noqa: E402
 
 
 def test_get_last_item_single_item():

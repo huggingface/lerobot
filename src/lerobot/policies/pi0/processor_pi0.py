@@ -18,8 +18,7 @@ from typing import Any
 
 import torch
 
-from lerobot.configs.types import PipelineFeatureType, PolicyFeature
-from lerobot.policies.pi0.configuration_pi0 import PI0Config
+from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     AddBatchDimensionProcessorStep,
@@ -34,9 +33,12 @@ from lerobot.processor import (
     RenameObservationsProcessorStep,
     TokenizerProcessorStep,
     UnnormalizerProcessorStep,
+    policy_action_to_transition,
+    transition_to_policy_action,
 )
-from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
+
+from .configuration_pi0 import PI0Config
 
 
 @ProcessorStepRegistry.register(name="pi0_new_line_processor")

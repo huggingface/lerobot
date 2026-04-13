@@ -15,3 +15,9 @@
 from .camera import Camera
 from .configs import CameraConfig, ColorMode, Cv2Backends, Cv2Rotation
 from .utils import make_cameras_from_configs
+
+# NOTE: Camera submodule configs and implementations (OpenCVCameraConfig, RealSenseCamera, etc.)
+# are intentionally NOT re-exported here to avoid pulling backend-specific dependencies.
+# Import from submodules: ``from lerobot.cameras.opencv import OpenCVCameraConfig``
+
+__all__ = ["Camera", "CameraConfig", "ColorMode", "Cv2Backends", "Cv2Rotation", "make_cameras_from_configs"]

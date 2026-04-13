@@ -21,6 +21,8 @@ import numpy as np
 import pytest
 import torch
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.datasets.dataset_tools import (
     add_features,
     delete_episodes,
