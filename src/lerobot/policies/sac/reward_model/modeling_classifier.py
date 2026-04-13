@@ -20,9 +20,10 @@ from typing import Any
 import torch
 from torch import Tensor, nn
 
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
 from lerobot.utils.constants import OBS_IMAGE, REWARD
+
+from ...pretrained import PreTrainedPolicy
+from .configuration_classifier import RewardClassifierConfig
 
 
 class ClassifierOutput:

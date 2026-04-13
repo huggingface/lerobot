@@ -17,11 +17,10 @@
 import logging
 from functools import cached_property
 
-from lerobot.processor import RobotAction
-from lerobot.teleoperators.openarm_leader import OpenArmLeaderConfig
+from lerobot.types import RobotAction
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
-from ..openarm_leader import OpenArmLeader
+from ..openarm_leader import OpenArmLeader, OpenArmLeaderConfig
 from ..teleoperator import Teleoperator
 from .config_bi_openarm_leader import BiOpenArmLeaderConfig
 

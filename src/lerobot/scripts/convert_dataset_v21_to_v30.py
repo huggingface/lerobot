@@ -28,13 +28,13 @@ Usage:
 
 Convert a dataset from the hub:
 ```bash
-python src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
+python src/lerobot/scripts/convert_dataset_v21_to_v30.py \
     --repo-id=lerobot/pusht
 ```
 
 Convert a local dataset (works in place):
 ```bash
-python src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
+python src/lerobot/scripts/convert_dataset_v21_to_v30.py \
     --repo-id=lerobot/pusht \
     --root=/path/to/local/dataset/directory \
     --push-to-hub=false
@@ -51,6 +51,10 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from lerobot.utils.import_utils import require_package
+
+require_package("jsonlines", extra="dataset")
+
 import jsonlines
 import pandas as pd
 import pyarrow as pa
@@ -59,8 +63,18 @@ from datasets import Dataset, Features, Image
 from huggingface_hub import HfApi, snapshot_download
 from requests import HTTPError
 
-from lerobot.datasets.compute_stats import aggregate_stats
-from lerobot.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
+from lerobot.datasets import CODEBASE_VERSION, LeRobotDataset, aggregate_stats
+from lerobot.datasets.io_utils import (
+    cast_stats_to_numpy,
+    get_file_size_in_mb,
+    get_parquet_file_size_in_mb,
+    get_parquet_num_frames,
+    load_info,
+    write_episodes,
+    write_info,
+    write_stats,
+    write_tasks,
+)
 from lerobot.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
@@ -70,21 +84,11 @@ from lerobot.datasets.utils import (
     LEGACY_EPISODES_PATH,
     LEGACY_EPISODES_STATS_PATH,
     LEGACY_TASKS_PATH,
-    cast_stats_to_numpy,
-    flatten_dict,
-    get_file_size_in_mb,
-    get_parquet_file_size_in_mb,
-    get_parquet_num_frames,
-    load_info,
     update_chunk_file_indices,
-    write_episodes,
-    write_info,
-    write_stats,
-    write_tasks,
 )
 from lerobot.datasets.video_utils import concatenate_video_files, get_video_duration_in_s
 from lerobot.utils.constants import HF_LEROBOT_HOME
-from lerobot.utils.utils import init_logging
+from lerobot.utils.utils import flatten_dict, init_logging
 
 V21 = "v2.1"
 V30 = "v3.0"

@@ -25,7 +25,7 @@ import pandas as pd
 import pytest
 import torch
 
-from lerobot.processor.core import TransitionKey
+from lerobot.types import TransitionKey
 
 
 class MockDatasetMeta:

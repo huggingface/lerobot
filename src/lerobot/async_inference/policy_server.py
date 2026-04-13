@@ -38,16 +38,14 @@ import draccus
 import grpc
 import torch
 
-from lerobot.policies.factory import get_policy_class, make_pre_post_processors
-from lerobot.processor import (
-    PolicyAction,
-    PolicyProcessorPipeline,
-)
+from lerobot.policies import get_policy_class, make_pre_post_processors
+from lerobot.processor import PolicyProcessorPipeline
 from lerobot.transport import (
     services_pb2,  # type: ignore
     services_pb2_grpc,  # type: ignore
 )
 from lerobot.transport.utils import receive_bytes_in_chunks
+from lerobot.types import PolicyAction
 
 from .configs import PolicyServerConfig
 from .constants import SUPPORTED_POLICIES

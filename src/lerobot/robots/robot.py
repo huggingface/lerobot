@@ -19,7 +19,7 @@ from pathlib import Path
 import draccus
 
 from lerobot.motors import MotorCalibration
-from lerobot.processor import RobotAction, RobotObservation
+from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, ROBOTS
 
 from .config import RobotConfig

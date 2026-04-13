@@ -41,11 +41,12 @@ from typing import TypeVar
 import torch
 from torch import Tensor
 
-from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.policies.groot.configuration_groot import GrootConfig
-from lerobot.policies.groot.groot_n1 import GR00TN15
-from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.utils.constants import ACTION, OBS_IMAGES
+
+from ..pretrained import PreTrainedPolicy
+from .configuration_groot import GrootConfig
+from .groot_n1 import GR00TN15
 
 T = TypeVar("T", bound="GrootPolicy")
 

@@ -18,13 +18,13 @@ import numpy as np
 import pytest
 import torch
 
-from lerobot.processor import TransitionKey
 from lerobot.processor.converters import (
     batch_to_transition,
     create_transition,
     to_tensor,
     transition_to_batch,
 )
+from lerobot.types import TransitionKey
 from lerobot.utils.constants import ACTION, DONE, OBS_STATE, OBS_STR, REWARD
 
 

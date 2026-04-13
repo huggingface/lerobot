@@ -31,11 +31,10 @@ else:
     PretrainedConfig = object
     BatchFeature = None
 
-from lerobot.policies.groot.action_head.action_encoder import (
+from .action_encoder import (
     SinusoidalPositionalEncoding,
     swish,
 )
-
 from .cross_attention_dit import DiT, SelfAttentionTransformer
 
 

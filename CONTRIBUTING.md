@@ -2,7 +2,7 @@
 
 Everyone is welcome to contribute, and we value everybody's contribution. Code is not the only way to help the community. Answering questions, helping others, reaching out, and improving the documentation are immensely valuable.
 
-Whichever way you choose to contribute, please be mindful to respect our [code of conduct](./CODE_OF_CONDUCT.md) and our [AI policy](./AI_POLICY.md).
+Whichever way you choose to contribute, please be mindful to respect our [code of conduct](https://github.com/huggingface/lerobot/blob/main/CODE_OF_CONDUCT.md) and our [AI policy](https://github.com/huggingface/lerobot/blob/main/AI_POLICY.md).
 
 ## Ways to Contribute
 
@@ -32,7 +32,7 @@ git remote add upstream https://github.com/huggingface/lerobot.git
 
 ### 2. Environment Installation
 
-Please follow our [Installation Guide](./docs/source/installation.mdx) for the environment setup & installation from source.
+Please follow our [Installation Guide](https://huggingface.co/docs/lerobot/installation) for the environment setup & installation from source.
 
 ## Running Tests & Quality Checks
 
@@ -75,8 +75,8 @@ pytest -sv tests/test_specific_feature.py
 
 Use the templates for required fields and examples.
 
-- **Issues:** Follow the [ticket template](./.github/ISSUE_TEMPLATE/bug-report.yml).
-- **Pull requests:** Rebase on `upstream/main`, use a descriptive branch (don't work on `main`), run `pre-commit` and tests locally, and follow the [PR template](./.github/PULL_REQUEST_TEMPLATE.md).
+- **Issues:** Follow the [ticket template](https://github.com/huggingface/lerobot/blob/main/.github/ISSUE_TEMPLATE/bug-report.yml).
+- **Pull requests:** Rebase on `upstream/main`, use a descriptive branch (don't work on `main`), run `pre-commit` and tests locally, and follow the [PR template](https://github.com/huggingface/lerobot/blob/main/.github/PULL_REQUEST_TEMPLATE.md).
 
 One member of the LeRobot team will then review your contribution.
 
