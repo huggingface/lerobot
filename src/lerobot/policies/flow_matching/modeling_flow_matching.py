@@ -37,7 +37,7 @@ class SinusoidalPositionEmbedding(nn.Module):
 class ActionFlowNet(nn.Module):
     """
     Standard Vector Field Estimator (Transformer-based).
-    Maps (x_t, t, condition) -> _pred, representing the derivative of the trajectory.
+    Maps (x_t, t, condition) -> v_pred, representing the derivative of the trajectory.
     """
 
     def __init__(
