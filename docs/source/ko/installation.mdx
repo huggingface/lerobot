@@ -116,7 +116,7 @@ brew install ffmpeg
 
 ## Step 3: LeRobot 설치 🤗
 
-기본 `lerobot` 설치는 의도적으로 **가볍게** 구성되어 있습니다. 핵심 ML 의존성(PyTorch, torchvision, numpy, opencv, einops, draccus, huggingface-hub, gymnasium, safetensors)만 포함합니다. 무거운 의존성은 선택적 기능(extras) 뒤에 두어, 필요한 것만 설치할 수 있도록 했습니다.
+기본 `lerobot` 설치는 의도적으로 **가볍게** 구성되어 있습니다. 핵심 ML 의존성(PyTorch, torchvision, numpy, opencv, einops, draccus, huggingface-hub, gymnasium, safetensors)만 포함합니다. 무거운 의존성은 선택적 확장(extras) 뒤에 두어, 필요한 것만 설치할 수 있도록 했습니다.
 
 ### 소스에서 설치
 
@@ -168,21 +168,21 @@ uv pip install lerobot
 </hfoptions>
 <!-- prettier-ignore-end -->
 
-_이 명령은 핵심 ML 의존성만 설치합니다. 대부분의 워크플로우에는 추가 기능(extras)을 설치해야 합니다._
+_이 명령은 핵심 ML 의존성만 설치합니다. 대부분의 워크플로우에는 확장(extras)을 설치해야 합니다._
 
 **기능 확장 (Feature Extras):**
 LeRobot은 일반적인 워크플로우에 맞는 **기능 중심 확장(feature-scoped extras)**을 제공합니다. `uv`를 사용하는 경우, 아래 명령에서 `pip install`을 `uv pip install`로 대체해주세요.
 
-| 확장(Extra) | 추가되는 내용                               | 일반적인 사용 사례                 |
-| ---------- | ------------------------------------------- | ----------------------------------- |
-| `dataset`  | `datasets`, `av`, `torchcodec`, `jsonlines` | 데이터셋 로드 및 생성              |
-| `training` | `dataset` + `accelerate`, `wandb`           | 정책 학습                           |
-| `hardware` | `pynput`, `pyserial`, `deepdiff`            | 실제 로봇 연결                      |
-| `viz`      | `rerun-sdk`                                 | 녹화/평가 중 시각화                 |
+| 확장(Extra) | 추가되는 내용                               | 일반적인 사용 사례    |
+| ----------- | ------------------------------------------- | --------------------- |
+| `dataset`   | `datasets`, `av`, `torchcodec`, `jsonlines` | 데이터셋 로드 및 생성 |
+| `training`  | `dataset` + `accelerate`, `wandb`           | 정책 학습             |
+| `hardware`  | `pynput`, `pyserial`, `deepdiff`            | 실제 로봇 연결        |
+| `viz`       | `rerun-sdk`                                 | 녹화/평가 중 시각화   |
 
 **복합 확장 (Composite Extras)**은 일반적인 CLI 스크립트를 위해 기능 확장을 결합한 것입니다:
 
-| 확장(Extra)    | 포함                             | 일반적인 사용 사례                                       |
+| 확장(Extra)    | 포함                           | 일반적인 사용 사례                                      |
 | -------------- | ------------------------------ | ------------------------------------------------------- |
 | `core_scripts` | `dataset` + `hardware` + `viz` | `lerobot-record`, `lerobot-replay`, `lerobot-calibrate` |
 | `evaluation`   | `av`                           | `lerobot-eval` (필요에 따라 정책/환경 확장 추가)        |
