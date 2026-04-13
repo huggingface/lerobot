@@ -429,6 +429,22 @@ def test_set_half_turn_homings(mock_motors, dummy_motors):
     assert all(mock_motors.stubs[stub].wait_called() for stub in write_homing_stubs)
 
 
+def test_set_half_turn_homings_at_wrap_boundary(dummy_motors):
+    """Regression test for huggingface/lerobot#1296.
+
+    A Feetech motor parked at the encoder's wrap boundary (raw 4095) must not
+    crash the calibration pipeline. Without the wrap fix, ``pos - max_res // 2``
+    produces offset 2048 at ``pos = 4095``, which ``encode_sign_magnitude`` then
+    rejects because the 11-bit Homing_Offset register can only hold magnitudes
+    up to 2047.
+    """
+    bus = FeetechMotorsBus(port="/dev/dummy-port", motors=dummy_motors)
+    for motor in dummy_motors:
+        offset = bus._get_half_turn_homings({motor: 4095})[motor]
+        assert abs(offset) <= 2047, f"offset {offset} exceeds 11-bit register capacity"
+        encode_sign_magnitude(offset, 11)  # must not raise
+
+
 def test_record_ranges_of_motion(mock_motors, dummy_motors):
     positions = {
         1: [351, 42, 1337],
