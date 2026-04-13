@@ -58,8 +58,8 @@ lerobot-teleoperate \
 
 <!-- prettier-ignore-start -->
 ```python
-from lerobot.teleoperators.so_leader import SO101LeaderConfig, SO101Leader
-from lerobot.robots.so_follower import SO101FollowerConfig, SO101Follower
+from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
+from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
 
 robot_config = SO101FollowerConfig(
     port="/dev/tty.usbmodem58760431541",
@@ -116,9 +116,9 @@ lerobot-teleoperate \
 
 <!-- prettier-ignore-start -->
 ```python
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.teleoperators.koch_leader import KochLeaderConfig, KochLeader
-from lerobot.robots.koch_follower import KochFollowerConfig, KochFollower
+from lerobot.cameras.opencv import OpenCVCameraConfig
+from lerobot.teleoperators.koch_leader import KochLeader, KochLeaderConfig
+from lerobot.robots.koch_follower import KochFollower, KochFollowerConfig
 
 camera_config = {
     "front": OpenCVCameraConfig(index_or_path=0, width=1920, height=1080, fps=30)
@@ -195,13 +195,12 @@ lerobot-record \
 
 <!-- prettier-ignore-start -->
 ```python
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import hw_to_dataset_features
+from lerobot.cameras.opencv import OpenCVCameraConfig
+from lerobot.datasets import LeRobotDataset
+from lerobot.utils.feature_utils import hw_to_dataset_features
 from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
-from lerobot.teleoperators.so_leader.config_so100_leader import SO100LeaderConfig
-from lerobot.teleoperators.so_leader.so100_leader import SO100Leader
-from lerobot.utils.control_utils import init_keyboard_listener
+from lerobot.teleoperators.so_leader import SO100Leader, SO100LeaderConfig
+from lerobot.common.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
 from lerobot.scripts.lerobot_record import record_loop
@@ -213,11 +212,11 @@ EPISODE_TIME_SEC = 60
 RESET_TIME_SEC = 10
 TASK_DESCRIPTION = "My task description"
 
-# 로봇 설정 생성
+# Create robot configuration
 robot_config = SO100FollowerConfig(
     id="my_awesome_follower_arm",
     cameras={
-        "front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS) # 선택사항: OpenCV 비동기 오류 해결을 위해 fourcc="MJPG" 사용
+        "front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS) # Optional: fourcc="MJPG" for troubleshooting OpenCV async error.
     },
     port="/dev/tty.usbmodem58760434471",
 )
@@ -227,16 +226,16 @@ teleop_config = SO100LeaderConfig(
     port="/dev/tty.usbmodem585A0077581",
 )
 
-# 로봇 및 텔레오퍼레이터 초기화
+# Initialize the robot and teleoperator
 robot = SO100Follower(robot_config)
 teleop = SO100Leader(teleop_config)
 
-# 데이터셋 피처 설정
+# Configure the dataset features
 action_features = hw_to_dataset_features(robot.action_features, "action")
 obs_features = hw_to_dataset_features(robot.observation_features, "observation")
 dataset_features = {**action_features, **obs_features}
 
-# 데이터셋 생성
+# Create the dataset
 dataset = LeRobotDataset.create(
     repo_id="<hf_username>/<dataset_repo_id>",
     fps=FPS,
@@ -246,15 +245,15 @@ dataset = LeRobotDataset.create(
     image_writer_threads=4,
 )
 
-# 키보드 리스너 및 rerun 시각화 초기화
+# Initialize the keyboard listener and rerun visualization
 _, events = init_keyboard_listener()
 init_rerun(session_name="recording")
 
-# 로봇 및 텔레오퍼레이터 연결
+# Connect the robot and teleoperator
 robot.connect()
 teleop.connect()
 
-# 필요한 프로세서 생성
+# Create the required processors
 teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
 
 episode_idx = 0
@@ -275,7 +274,7 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
         display_data=True,
     )
 
-    # 중지하거나 재녹화하지 않는 경우 환경 리셋
+    # Reset the environment if not stopping or re-recording
     if not events["stop_recording"] and (episode_idx < NUM_EPISODES - 1 or events["rerecord_episode"]):
         log_say("Reset the environment")
         record_loop(
@@ -301,7 +300,7 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
     dataset.save_episode()
     episode_idx += 1
 
-# 정리
+# Clean up
 log_say("Stop recording")
 robot.disconnect()
 teleop.disconnect()
@@ -401,7 +400,7 @@ lerobot-replay \
     --robot.port=/dev/tty.usbmodem58760431541 \
     --robot.id=my_awesome_follower_arm \
     --dataset.repo_id=${HF_USER}/record-test \
-    --dataset.episode=0 # 재생할 에피소드를 선택하세요
+    --dataset.episode=0 # choose the episode you want to replay
 ```
 </hfoption>
 <hfoption id="API example">
@@ -410,9 +409,8 @@ lerobot-replay \
 ```python
 import time
 
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.robots.so_follower.config_so100_follower import SO100FollowerConfig
-from lerobot.robots.so_follower.so100_follower import SO100Follower
+from lerobot.datasets import LeRobotDataset
+from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
 
@@ -424,7 +422,7 @@ robot = SO100Follower(robot_config)
 robot.connect()
 
 dataset = LeRobotDataset("<hf_username>/<dataset_repo_id>", episodes=[episode_idx])
-actions = dataset.hf_dataset.select_columns("action")
+actions = dataset.select_columns("action")
 
 log_say(f"Replaying episode {episode_idx}")
 for idx in range(dataset.num_frames):
@@ -521,7 +519,7 @@ lerobot-record  \
   --dataset.streaming_encoding=true \
   --dataset.encoder_threads=2 \
   # --dataset.vcodec=auto \
-  # <- 에피소드 사이에 텔레오퍼레이션을 하려면 아래 옵션 사용 \
+  # <- Teleop optional if you want to teleoperate in between episodes \
   # --teleop.type=so100_leader \
   # --teleop.port=/dev/ttyACM0 \
   # --teleop.id=my_awesome_leader_arm \
@@ -532,15 +530,14 @@ lerobot-record  \
 
 <!-- prettier-ignore-start -->
 ```python
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import hw_to_dataset_features
-from lerobot.policies.act.modeling_act import ACTPolicy
-from lerobot.policies.factory import make_pre_post_processors
-from lerobot.robots.so_follower.config_so100_follower import SO100FollowerConfig
-from lerobot.robots.so_follower.so100_follower import SO100Follower
+from lerobot.cameras.opencv import OpenCVCameraConfig
+from lerobot.datasets import LeRobotDataset
+from lerobot.utils.feature_utils import hw_to_dataset_features
+from lerobot.policies.act import ACTPolicy
+from lerobot.policies import make_pre_post_processors
+from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
 from lerobot.scripts.lerobot_record import record_loop
-from lerobot.utils.control_utils import init_keyboard_listener
+from lerobot.common.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
 
@@ -552,24 +549,24 @@ TASK_DESCRIPTION = "My task description"
 HF_MODEL_ID = "<hf_username>/<model_repo_id>"
 HF_DATASET_ID = "<hf_username>/<eval_dataset_repo_id>"
 
-# 로봇 설정 생성
+# Create the robot configuration
 camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
 robot_config = SO100FollowerConfig(
     port="/dev/tty.usbmodem58760434471", id="my_awesome_follower_arm", cameras=camera_config
 )
 
-# 로봇 초기화
+# Initialize the robot
 robot = SO100Follower(robot_config)
 
-# 정책 초기화
+# Initialize the policy
 policy = ACTPolicy.from_pretrained(HF_MODEL_ID)
 
-# 데이터셋 피처 설정
+# Configure the dataset features
 action_features = hw_to_dataset_features(robot.action_features, "action")
 obs_features = hw_to_dataset_features(robot.observation_features, "observation")
 dataset_features = {**action_features, **obs_features}
 
-# 데이터셋 생성
+# Create the dataset
 dataset = LeRobotDataset.create(
     repo_id=HF_DATASET_ID,
     fps=FPS,
@@ -579,11 +576,11 @@ dataset = LeRobotDataset.create(
     image_writer_threads=4,
 )
 
-# 키보드 리스너 및 rerun 시각화 초기화
+# Initialize the keyboard listener and rerun visualization
 _, events = init_keyboard_listener()
 init_rerun(session_name="recording")
 
-# 로봇 연결
+# Connect the robot
 robot.connect()
 
 preprocessor, postprocessor = make_pre_post_processors(
@@ -595,7 +592,7 @@ preprocessor, postprocessor = make_pre_post_processors(
 for episode_idx in range(NUM_EPISODES):
     log_say(f"Running inference, recording eval episode {episode_idx + 1} of {NUM_EPISODES}")
 
-    # 정책 추론 루프 실행
+    # Run the policy inference loop
     record_loop(
         robot=robot,
         events=events,
@@ -611,7 +608,7 @@ for episode_idx in range(NUM_EPISODES):
 
     dataset.save_episode()
 
-# 정리
+# Clean up
 robot.disconnect()
 dataset.push_to_hub()
 ```
