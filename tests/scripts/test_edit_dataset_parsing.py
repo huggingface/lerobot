@@ -17,6 +17,8 @@
 import draccus
 import pytest
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.scripts.lerobot_edit_dataset import (
     ConvertImageToVideoConfig,
     DeleteEpisodesConfig,

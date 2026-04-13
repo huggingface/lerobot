@@ -19,3 +19,5 @@
 
 from .config_omx_follower import OmxFollowerConfig
 from .omx_follower import OmxFollower
+
+__all__ = ["OmxFollower", "OmxFollowerConfig"]
