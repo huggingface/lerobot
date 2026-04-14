@@ -70,6 +70,12 @@ def _select_task_ids(total_tasks: int, task_ids: Iterable[int] | None) -> list[i
 
 
 def get_task_init_states(task_suite: Any, i: int) -> np.ndarray:
+    # LIBERO-plus's Benchmark exposes a suffix-aware loader that maps perturbation
+    # variants (_table_N, _tb_N, _view_, _language_, _light_, _add_, _level) back to
+    # the base init_states file. Vanilla LIBERO has no such method — fall through.
+    suite_loader = getattr(task_suite, "get_task_init_states", None)
+    if callable(suite_loader):
+        return suite_loader(i)
     init_states_path = (
         Path(get_libero_path("init_states"))
         / task_suite.tasks[i].problem_folder

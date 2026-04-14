@@ -92,18 +92,10 @@ ENV PYTHONPATH="/home/user_lerobot/libero-plus:${PYTHONPATH}"
 # LIBERO-plus installs with a nested package structure, so find_spec('libero')
 # may return a namespace package without .origin. Use glob to locate bddl_files.
 ENV LIBERO_PLUS_ROOT=/home/user_lerobot/libero-plus/libero/libero
-# Find hf-libero's init_files in site-packages (shallow clone doesn't have them).
-# Copy them into the PYTHONPATH clone so both bddl_files (from clone) and
-# init_files (from pip) are in the same tree.
-RUN uv pip install --no-cache --no-deps "hf-libero>=0.1.3,<0.2.0"
-RUN HF_LIBERO=$(uv pip show hf-libero 2>/dev/null | grep Location | awk '{print $2}') && \
-    if [ -d "${HF_LIBERO}/libero/libero/init_files" ]; then \
-        cp -r "${HF_LIBERO}/libero/libero/init_files" ${LIBERO_PLUS_ROOT}/init_files; \
-    fi && \
-    # Uninstall hf-libero so that Python imports LIBERO-plus (from PYTHONPATH)
-    # instead of vanilla hf-libero — LIBERO-plus has 2400+ perturbation tasks per
-    # suite, vanilla has only 10.
-    uv pip uninstall hf-libero 2>/dev/null || true
+# LIBERO-plus's clone already ships both bddl_files/ and init_files/ with base
+# `.pruned_init` files for all 5 suites. Its Benchmark.get_task_init_states()
+# strips perturbation suffixes (_table_N, _tb_N, _view_, _language_, _light_)
+# back to the base filename, so no extra init files are needed.
 RUN mkdir -p /home/user_lerobot/.libero && \
     python${PYTHON_VERSION} -c "\
 from huggingface_hub import snapshot_download; \
