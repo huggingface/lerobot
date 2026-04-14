@@ -1,0 +1,312 @@
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Integration tests: build an isolated Docker image per benchmark and run a
+# 1-episode smoke eval. Each benchmark gets its own image so incompatible
+# dependency trees (e.g. hf-libero vs metaworld==3.0.0) can never collide.
+#
+# To add a new benchmark:
+#   1. Add docker/Dockerfile.benchmark.<name>  (install only lerobot[<name>])
+#   2. Copy one of the jobs below and adjust the image name and eval command.
+name: Benchmark Integration Tests
+
+on:
+  # Run manually from the Actions tab
+  workflow_dispatch:
+
+  # Run every Monday at 02:00 UTC.
+  schedule:
+    - cron: "0 2 * * 1"
+
+  push:
+    branches:
+      - main
+    paths:
+      - "src/lerobot/envs/**"
+      - "src/lerobot/scripts/lerobot_eval.py"
+      - "docker/Dockerfile.benchmark.*"
+      - ".github/workflows/benchmark_tests.yml"
+      - "pyproject.toml"
+
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "src/lerobot/envs/**"
+      - "src/lerobot/scripts/lerobot_eval.py"
+      - "docker/Dockerfile.benchmark.*"
+      - ".github/workflows/benchmark_tests.yml"
+      - "pyproject.toml"
+
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: "0.8.0"
+  PYTHON_VERSION: "3.12"
+
+# Cancel in-flight runs for the same branch/PR.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  # ── LIBERO ────────────────────────────────────────────────────────────────
+  # Isolated image: lerobot[libero] only (hf-libero, dm-control, mujoco chain)
+  libero-integration-test:
+    name: Libero — build image + 1-episode eval
+    runs-on:
+      group: aws-g6-4xlarge-plus
+    env:
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+          lfs: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          cache-binary: false
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+
+      # Build the benchmark-specific image. The Dockerfile separates dep-install
+      # from source-copy, so code-only changes skip the slow uv-sync layer
+      # when the runner has a warm Docker daemon cache.
+      - name: Build Libero benchmark image
+        uses: docker/build-push-action@v6 # zizmor: ignore[unpinned-uses]
+        with:
+          context: .
+          file: docker/Dockerfile.benchmark.libero
+          push: false
+          load: true
+          tags: lerobot-benchmark-libero:ci
+
+      - name: Run Libero smoke eval (1 episode)
+        if: env.HF_USER_TOKEN != ''
+        run: |
+          # Named container (no --rm) so we can docker cp artifacts out.
+          # Output to /tmp inside the container — /artifacts doesn't exist
+          # and user_lerobot cannot create root-level dirs.
+          docker run --name libero-eval --gpus all \
+            --shm-size=4g \
+            -e HF_HOME=/tmp/hf \
+            -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
+            -e HF_HUB_DOWNLOAD_TIMEOUT=300 \
+            lerobot-benchmark-libero:ci \
+            bash -c "
+              hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
+              lerobot-eval \
+                --policy.path=pepijn223/smolvla_libero \
+                --env.type=libero \
+                --env.task=libero_spatial \
+                --eval.batch_size=1 \
+                --eval.n_episodes=1 \
+                --eval.use_async_envs=false \
+                --policy.device=cuda \
+                '--env.camera_name_mapping={\"agentview_image\": \"camera1\", \"robot0_eye_in_hand_image\": \"camera2\"}' \
+                --policy.empty_cameras=1 \
+                --output_dir=/tmp/eval-artifacts
+              python scripts/ci/extract_task_descriptions.py \
+                --env libero --task libero_spatial \
+                --output /tmp/eval-artifacts/task_descriptions.json
+            "
+
+      - name: Copy Libero artifacts from container
+        if: always()
+        run: |
+          mkdir -p /tmp/libero-artifacts
+          docker cp libero-eval:/tmp/eval-artifacts/. /tmp/libero-artifacts/ 2>/dev/null || true
+          docker rm -f libero-eval || true
+
+      - name: Parse Libero eval metrics
+        if: always()
+        run: |
+          python3 scripts/ci/parse_eval_metrics.py \
+            --artifacts-dir /tmp/libero-artifacts \
+            --env libero \
+            --task libero_spatial \
+            --policy pepijn223/smolvla_libero
+
+      - name: Upload Libero rollout video
+        if: always()
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: libero-rollout-video
+          path: /tmp/libero-artifacts/videos/
+          if-no-files-found: warn
+
+      - name: Upload Libero eval metrics
+        if: always()
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: libero-metrics
+          path: /tmp/libero-artifacts/metrics.json
+          if-no-files-found: warn
+
+      # ── LIBERO TRAIN+EVAL SMOKE ──────────────────────────────────────────────
+      # Train SmolVLA for 1 step (batch_size=1, dataset episode 0 only) then
+      # immediately runs eval inside the training loop (eval_freq=1, 1 episode).
+      # Tests the full train→eval-within-training pipeline end-to-end.
+      - name: Run Libero train+eval smoke (1 step, eval_freq=1)
+        if: env.HF_USER_TOKEN != ''
+        run: |
+          docker run --name libero-train-smoke --gpus all \
+            --shm-size=4g \
+            -e HF_HOME=/tmp/hf \
+            -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
+            -e HF_HUB_DOWNLOAD_TIMEOUT=300 \
+            lerobot-benchmark-libero:ci \
+            bash -c "
+              hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
+              accelerate launch --num_processes=1 \$(which lerobot-train) \
+                --policy.path=lerobot/smolvla_base \
+                --policy.load_vlm_weights=true \
+                --policy.scheduler_decay_steps=25000 \
+                --policy.freeze_vision_encoder=false \
+                --policy.train_expert_only=false \
+                --dataset.repo_id=lerobot/libero \
+                --dataset.episodes=[0] \
+                --dataset.use_imagenet_stats=false \
+                --env.type=libero \
+                --env.task=libero_spatial \
+                '--env.camera_name_mapping={\"agentview_image\": \"camera1\", \"robot0_eye_in_hand_image\": \"camera2\"}' \
+                --policy.empty_cameras=1 \
+                --output_dir=/tmp/train-smoke \
+                --steps=1 \
+                --batch_size=1 \
+                --eval_freq=1 \
+                --eval.n_episodes=1 \
+                --eval.batch_size=1 \
+                --eval.use_async_envs=false \
+                --save_freq=1 \
+                --policy.push_to_hub=false \
+                '--rename_map={\"observation.images.image\": \"observation.images.camera1\", \"observation.images.image2\": \"observation.images.camera2\"}'
+            "
+
+      - name: Copy Libero train-smoke artifacts from container
+        if: always()
+        run: |
+          mkdir -p /tmp/libero-train-smoke-artifacts
+          docker cp libero-train-smoke:/tmp/train-smoke/. /tmp/libero-train-smoke-artifacts/ 2>/dev/null || true
+          docker rm -f libero-train-smoke || true
+
+      - name: Upload Libero train-smoke eval video
+        if: always()
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: libero-train-smoke-video
+          path: /tmp/libero-train-smoke-artifacts/eval/
+          if-no-files-found: warn
+
+  # ── METAWORLD ─────────────────────────────────────────────────────────────
+  # Isolated image: lerobot[metaworld] only (metaworld==3.0.0, mujoco>=3 chain)
+  metaworld-integration-test:
+    name: MetaWorld — build image + 1-episode eval
+    runs-on:
+      group: aws-g6-4xlarge-plus
+    env:
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+          lfs: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          cache-binary: false
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+
+      - name: Build MetaWorld benchmark image
+        uses: docker/build-push-action@v6 # zizmor: ignore[unpinned-uses]
+        with:
+          context: .
+          file: docker/Dockerfile.benchmark.metaworld
+          push: false
+          load: true
+          tags: lerobot-benchmark-metaworld:ci
+
+      - name: Run MetaWorld smoke eval (1 episode)
+        if: env.HF_USER_TOKEN != ''
+        run: |
+          docker run --name metaworld-eval --gpus all \
+            --shm-size=4g \
+            -e HF_HOME=/tmp/hf \
+            -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
+            -e HF_HUB_DOWNLOAD_TIMEOUT=300 \
+            lerobot-benchmark-metaworld:ci \
+            bash -c "
+              hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
+              lerobot-eval \
+                --policy.path=pepijn223/smolvla_metaworld \
+                --env.type=metaworld \
+                --env.task=metaworld-push-v3 \
+                --eval.batch_size=1 \
+                --eval.n_episodes=1 \
+                --eval.use_async_envs=false \
+                --policy.device=cuda \
+                '--rename_map={\"observation.image\": \"observation.images.camera1\"}' \
+                --policy.empty_cameras=2 \
+                --output_dir=/tmp/eval-artifacts
+              python scripts/ci/extract_task_descriptions.py \
+                --env metaworld --task metaworld-push-v3 \
+                --output /tmp/eval-artifacts/task_descriptions.json
+            "
+
+      - name: Copy MetaWorld artifacts from container
+        if: always()
+        run: |
+          mkdir -p /tmp/metaworld-artifacts
+          docker cp metaworld-eval:/tmp/eval-artifacts/. /tmp/metaworld-artifacts/ 2>/dev/null || true
+          docker rm -f metaworld-eval || true
+
+      - name: Parse MetaWorld eval metrics
+        if: always()
+        run: |
+          python3 scripts/ci/parse_eval_metrics.py \
+            --artifacts-dir /tmp/metaworld-artifacts \
+            --env metaworld \
+            --task metaworld-push-v3 \
+            --policy pepijn223/smolvla_metaworld
+
+      - name: Upload MetaWorld rollout video
+        if: always()
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: metaworld-rollout-video
+          path: /tmp/metaworld-artifacts/videos/
+          if-no-files-found: warn
+
+      - name: Upload MetaWorld eval metrics
+        if: always()
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: metaworld-metrics
+          path: /tmp/metaworld-artifacts/metrics.json
+          if-no-files-found: warn

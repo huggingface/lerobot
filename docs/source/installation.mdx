@@ -116,6 +116,8 @@ brew install ffmpeg
 
 ## Step 3: Install LeRobot 🤗
 
+The base `lerobot` install is intentionally **lightweight** — it includes only core ML dependencies (PyTorch, torchvision, numpy, opencv, einops, draccus, huggingface-hub, gymnasium, safetensors). Heavier dependencies are gated behind optional extras so you only install what you need.
+
 ### From Source
 
 First, clone the repository and navigate into the directory:
@@ -131,12 +133,16 @@ Then, install the library in editable mode. This is useful if you plan to contri
 <hfoptions id="install_lerobot_src">
 <hfoption id="conda">
 ```bash
-pip install -e .
+pip install -e ".[core_scripts]"  # For robot workflows (recording, replaying, calibrate)
+pip install -e ".[training]"      # For training policies
+pip install -e ".[all]"           # Everything (all policies, envs, hardware, dev tools)
 ```
 </hfoption>
 <hfoption id="uv">
 ```bash
-uv pip install -e .
+uv pip install -e ".[core_scripts]"  # For robot workflows (recording, replaying, calibrate)
+uv pip install -e ".[training]"      # For training policies
+uv pip install -e ".[all]"           # Everything (all policies, envs, hardware, dev tools)
 ```
 </hfoption>
 </hfoptions>
@@ -162,26 +168,48 @@ uv pip install lerobot
 </hfoptions>
 <!-- prettier-ignore-end -->
 
-_This installs only the default dependencies._
+_This installs only the core ML dependencies. You will need to add extras for most workflows._
 
-**Extra Features:**
-To install additional functionality, use one of the following (If you are using `uv`, replace `pip install` with `uv pip install` in the commands below.):
+**Feature Extras:**
+LeRobot provides **feature-scoped extras** that map to common workflows. If you are using `uv`, replace `pip install` with `uv pip install` in the commands below.
+
+| Extra      | What it adds                                | Typical use case                    |
+| ---------- | ------------------------------------------- | ----------------------------------- |
+| `dataset`  | `datasets`, `av`, `torchcodec`, `jsonlines` | Loading & creating datasets         |
+| `training` | `dataset` + `accelerate`, `wandb`           | Training policies                   |
+| `hardware` | `pynput`, `pyserial`, `deepdiff`            | Connecting to real robots           |
+| `viz`      | `rerun-sdk`                                 | Visualization during recording/eval |
+
+**Composite Extras** combine feature extras for common CLI scripts:
+
+| Extra          | Includes                       | Typical use case                                        |
+| -------------- | ------------------------------ | ------------------------------------------------------- |
+| `core_scripts` | `dataset` + `hardware` + `viz` | `lerobot-record`, `lerobot-replay`, `lerobot-calibrate` |
+| `evaluation`   | `av`                           | `lerobot-eval` (add policy + env extras as needed)      |
+| `dataset_viz`  | `dataset` + `viz`              | `lerobot-dataset-viz`, `lerobot-imgtransform-viz`       |
 
 ```bash
-pip install 'lerobot[all]'          # All available features
-pip install 'lerobot[aloha,pusht]'  # Specific features (Aloha & Pusht)
-pip install 'lerobot[feetech]'      # Feetech motor support
+pip install 'lerobot[core_scripts]'          # Record, replay, calibrate
+pip install 'lerobot[training]'              # Train policies
+pip install 'lerobot[core_scripts,training]' # Record + train
+pip install 'lerobot[all]'                   # Everything
 ```
 
-_Replace `[...]` with your desired features._
+**Policy, environment, and hardware extras** are still available for specific dependencies:
 
-**Available Tags:**
-For a full list of optional dependencies, see:
-https://pypi.org/project/lerobot/
+```bash
+pip install 'lerobot[pi]'             # Pi0/Pi0.5/Pi0-FAST policy deps
+pip install 'lerobot[smolvla]'        # SmolVLA policy deps
+pip install 'lerobot[diffusion]'      # Diffusion policy deps (diffusers)
+pip install 'lerobot[aloha,pusht]'    # Simulation environments
+pip install 'lerobot[feetech]'        # Feetech motor support
+```
+
+_Multiple extras can be combined (e.g., `.[core_scripts,pi,pusht]`). For a full list of available extras, refer to `pyproject.toml`._
 
 ### Troubleshooting
 
-If you encounter build errors, you may need to install additional dependencies: `cmake`, `build-essential`, and `ffmpeg libs`.
+If you encounter build errors, you may need to install additional system dependencies: `cmake`, `build-essential`, and `ffmpeg libs`.
 To install these for Linux run:
 
 ```bash
@@ -196,8 +224,8 @@ LeRobot provides optional extras for specific functionalities. Multiple extras c
 
 ### Simulations
 
-Install environment packages: `aloha` ([gym-aloha](https://github.com/huggingface/gym-aloha)), or `pusht` ([gym-pusht](https://github.com/huggingface/gym-pusht))
-Example:
+Install environment packages: `aloha` ([gym-aloha](https://github.com/huggingface/gym-aloha)), or `pusht` ([gym-pusht](https://github.com/huggingface/gym-pusht)).
+These automatically include the `dataset` extra.
 
 ```bash
 pip install -e ".[aloha]" # or "[pusht]" for example
@@ -213,7 +241,7 @@ pip install -e ".[feetech]" # or "[dynamixel]" for example
 
 ### Experiment Tracking
 
-To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tracking, log in with
+Weights and Biases is included in the `training` extra. To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tracking, log in with:
 
 ```bash
 wandb login

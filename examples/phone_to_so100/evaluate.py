@@ -14,19 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.datasets.feature_utils import combine_feature_dicts
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
+from lerobot.cameras.opencv import OpenCVCameraConfig
+from lerobot.common.control_utils import init_keyboard_listener
+from lerobot.configs import FeatureType, PolicyFeature
+from lerobot.datasets import LeRobotDataset, aggregate_pipeline_dataset_features, create_initial_features
 from lerobot.model.kinematics import RobotKinematics
-from lerobot.policies.act.modeling_act import ACTPolicy
-from lerobot.policies.factory import make_pre_post_processors
+from lerobot.policies import make_pre_post_processors
+from lerobot.policies.act import ACTPolicy
 from lerobot.processor import (
     RobotProcessorPipeline,
     make_default_teleop_action_processor,
-)
-from lerobot.processor.converters import (
     observation_to_transition,
     robot_action_observation_to_transition,
     transition_to_observation,
@@ -39,7 +36,7 @@ from lerobot.robots.so_follower.robot_kinematic_processor import (
 )
 from lerobot.scripts.lerobot_record import record_loop
 from lerobot.types import RobotAction, RobotObservation
-from lerobot.utils.control_utils import init_keyboard_listener
+from lerobot.utils.feature_utils import combine_feature_dicts
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
 
