@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from functools import partial
@@ -69,19 +70,47 @@ def _select_task_ids(total_tasks: int, task_ids: Iterable[int] | None) -> list[i
     return ids
 
 
+def _resolve_libero_init_states_path(task: Any) -> tuple[Path, bool]:
+    """Resolve the on-disk init_states path for a LIBERO task.
+
+    LIBERO-plus perturbation variants encode the perturbation in the filename
+    (_table_N, _tb_N, _view_, _language_, _light_, _add_, _level) but only the
+    base `.pruned_init` exists on disk. Mirror LIBERO-plus's own suffix-stripping
+    (libero/libero/benchmark/__init__.py) so we can load with `weights_only=False`
+    ourselves instead of delegating to the suite (whose `torch.load` call omits
+    that flag and fails on PyTorch 2.6+ numpy pickles).
+
+    Returns (path, needs_reshape) — `_add_`/`_level` variants store a flat
+    init_state that must be reshaped to (1, -1).
+    """
+    filename = task.init_states_file
+    problem_folder = task.problem_folder
+    ext = filename.rsplit(".", 1)[-1]
+    root = Path(get_libero_path("init_states"))
+
+    needs_reshape = "_add_" in filename or "_level" in filename
+    if needs_reshape:
+        return root / "libero_newobj" / problem_folder / filename, True
+    if "_language_" in filename:
+        filename = filename.split("_language_")[0] + "." + ext
+    elif "_view_" in filename:
+        filename = filename.split("_view_")[0] + "." + ext
+    else:
+        if "_table_" in filename:
+            filename = re.sub(r"_table_\d+", "", filename)
+        if "_tb_" in filename:
+            filename = re.sub(r"_tb_\d+", "", filename)
+        if "_light_" in filename:
+            filename = filename.split("_light_")[0] + "." + ext
+    return root / problem_folder / filename, False
+
+
 def get_task_init_states(task_suite: Any, i: int) -> np.ndarray:
-    # LIBERO-plus's Benchmark exposes a suffix-aware loader that maps perturbation
-    # variants (_table_N, _tb_N, _view_, _language_, _light_, _add_, _level) back to
-    # the base init_states file. Vanilla LIBERO has no such method — fall through.
-    suite_loader = getattr(task_suite, "get_task_init_states", None)
-    if callable(suite_loader):
-        return suite_loader(i)
-    init_states_path = (
-        Path(get_libero_path("init_states"))
-        / task_suite.tasks[i].problem_folder
-        / task_suite.tasks[i].init_states_file
-    )
+    task = task_suite.tasks[i]
+    init_states_path, needs_reshape = _resolve_libero_init_states_path(task)
     init_states = torch.load(init_states_path, weights_only=False)  # nosec B614
+    if needs_reshape:
+        init_states = init_states.reshape(1, -1)
     return init_states
 
 
