@@ -107,7 +107,9 @@ RUN python${PYTHON_VERSION} -c "\
 from huggingface_hub import hf_hub_download; \
 hf_hub_download(repo_id='Sylvest/LIBERO-plus', repo_type='dataset', \
                 filename='assets.zip', local_dir='/tmp/libero-plus-dl')" && \
-    unzip -q /tmp/libero-plus-dl/assets.zip -d ${LIBERO_PLUS_ROOT}/ && \
+    unzip -q /tmp/libero-plus-dl/assets.zip -d /tmp/libero-plus-dl/extract && \
+    mv /tmp/libero-plus-dl/extract/inspire/hdd/project/embodied-multimodality/public/syfei/libero_new/release/dataset/LIBERO-plus-0/assets \
+       ${LIBERO_PLUS_ROOT}/assets && \
     rm -rf /tmp/libero-plus-dl
 RUN mkdir -p /home/user_lerobot/.libero && \
     printf "assets: ${LIBERO_PLUS_ROOT}/assets\nbddl_files: ${LIBERO_PLUS_ROOT}/bddl_files\ndatasets: ${LIBERO_PLUS_ROOT}/../datasets\ninit_states: ${LIBERO_PLUS_ROOT}/init_files\n" \
