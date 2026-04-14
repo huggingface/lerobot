@@ -36,7 +36,7 @@ import torch.nn.functional as F  # noqa: N812
 import torchvision
 from torch import Tensor
 
-from lerobot.utils.import_utils import _transformers_available
+from lerobot.utils.import_utils import _transformers_available, require_package
 
 from .configuration_multi_task_dit import MultiTaskDiTConfig
 
@@ -65,6 +65,8 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
     name = "multi_task_dit"
 
     def __init__(self, config: MultiTaskDiTConfig, **kwargs):
+        require_package("transformers", extra="multi_task_dit")
+        require_package("diffusers", extra="multi_task_dit")
         super().__init__(config)
         config.validate_features()
         self.config = config

@@ -19,16 +19,18 @@ Provides the RealSenseCamera class for capturing frames from Intel RealSense cam
 import logging
 import time
 from threading import Event, Lock, Thread
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import cv2  # type: ignore  # TODO: add type stubs for OpenCV
 import numpy as np  # type: ignore  # TODO: add type stubs for numpy
 from numpy.typing import NDArray  # type: ignore  # TODO: add type stubs for numpy.typing
 
-try:
-    import pyrealsense2 as rs  # type: ignore  # TODO: add type stubs for pyrealsense2
-except Exception as e:
-    logging.info(f"Could not import realsense: {e}")
+from lerobot.utils.import_utils import _pyrealsense2_available, require_package
+
+if TYPE_CHECKING or _pyrealsense2_available:
+    import pyrealsense2 as rs
+else:
+    rs = None
 
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.errors import DeviceNotConnectedError
@@ -112,7 +114,7 @@ class RealSenseCamera(Camera):
         Args:
             config: The configuration settings for the camera.
         """
-
+        require_package("pyrealsense2", extra="intelrealsense")
         super().__init__(config)
 
         self.config = config

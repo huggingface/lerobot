@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.types import RobotAction, RobotObservation
-from lerobot.utils.import_utils import _reachy2_sdk_available
+from lerobot.utils.import_utils import _reachy2_sdk_available, require_package
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
@@ -81,6 +81,7 @@ class Reachy2Robot(Robot):
     name = "reachy2"
 
     def __init__(self, config: Reachy2RobotConfig):
+        require_package("reachy2_sdk", extra="reachy2")
         super().__init__(config)
 
         self.config = config

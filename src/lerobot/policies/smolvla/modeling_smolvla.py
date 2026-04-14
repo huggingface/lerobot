@@ -62,6 +62,7 @@ from torch import Tensor, nn
 
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.utils.device_utils import get_safe_dtype
+from lerobot.utils.import_utils import require_package
 
 from ..pretrained import PreTrainedPolicy
 from ..rtc.modeling_rtc import RTCProcessor
@@ -239,6 +240,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
                     the configuration class is used.
         """
 
+        require_package("transformers", extra="smolvla")
         super().__init__(config)
         config.validate_features()
         self.config = config
