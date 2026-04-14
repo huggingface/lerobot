@@ -17,15 +17,17 @@
 from dataclasses import dataclass, field
 
 from lerobot.cameras import CameraConfig
-from lerobot.robots.openarm_follower import OpenArmFollowerConfigBase
 
 from ..config import RobotConfig
+from ..openarm_follower import OpenArmFollowerConfigBase
 
 
 @RobotConfig.register_subclass("bi_openarm_follower")
-@dataclass
+@dataclass(kw_only=True)
 class BiOpenArmFollowerConfig(RobotConfig):
     """Configuration class for Bi OpenArm Follower robots."""
+
+    id: str | None = "bi_openarm_follower"
 
     left_arm_config: OpenArmFollowerConfigBase
     right_arm_config: OpenArmFollowerConfigBase

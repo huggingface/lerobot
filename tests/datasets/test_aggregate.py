@@ -16,7 +16,11 @@
 
 from unittest.mock import patch
 
-import datasets
+import pytest
+
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
+import datasets  # noqa: E402
 import torch
 
 from lerobot.datasets.aggregate import aggregate_datasets

@@ -23,6 +23,7 @@ from typing import Any
 
 from lerobot.types import RobotAction
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.import_utils import _pynput_available
 
 from ..teleoperator import Teleoperator
 from ..utils import TeleopEvents
@@ -32,20 +33,18 @@ from .configuration_keyboard import (
     KeyboardTeleopConfig,
 )
 
-PYNPUT_AVAILABLE = True
-try:
-    if ("DISPLAY" not in os.environ) and ("linux" in sys.platform):
-        logging.info("No DISPLAY set. Skipping pynput import.")
-        raise ImportError("pynput blocked intentionally due to no display.")
-
-    from pynput import keyboard
-except ImportError:
-    keyboard = None
-    PYNPUT_AVAILABLE = False
-except Exception as e:
-    keyboard = None
-    PYNPUT_AVAILABLE = False
-    logging.info(f"Could not import pynput: {e}")
+PYNPUT_AVAILABLE = _pynput_available
+keyboard = None
+if PYNPUT_AVAILABLE:
+    try:
+        if ("DISPLAY" not in os.environ) and ("linux" in sys.platform):
+            logging.info("No DISPLAY set. Skipping pynput import.")
+            PYNPUT_AVAILABLE = False
+        else:
+            from pynput import keyboard
+    except Exception as e:
+        PYNPUT_AVAILABLE = False
+        logging.info(f"Could not import pynput: {e}")
 
 
 class KeyboardTeleop(Teleoperator):

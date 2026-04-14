@@ -58,8 +58,8 @@ lerobot-teleoperate \
 
 <!-- prettier-ignore-start -->
 ```python
-from lerobot.teleoperators.so_leader import SO101LeaderConfig, SO101Leader
-from lerobot.robots.so_follower import SO101FollowerConfig, SO101Follower
+from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
+from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
 
 robot_config = SO101FollowerConfig(
     port="/dev/tty.usbmodem58760431541",
@@ -116,9 +116,9 @@ lerobot-teleoperate \
 
 <!-- prettier-ignore-start -->
 ```python
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.teleoperators.koch_leader import KochLeaderConfig, KochLeader
-from lerobot.robots.koch_follower import KochFollowerConfig, KochFollower
+from lerobot.cameras.opencv import OpenCVCameraConfig
+from lerobot.teleoperators.koch_leader import KochLeader, KochLeaderConfig
+from lerobot.robots.koch_follower import KochFollower, KochFollowerConfig
 
 camera_config = {
     "front": OpenCVCameraConfig(index_or_path=0, width=1920, height=1080, fps=30)
@@ -195,13 +195,12 @@ lerobot-record \
 
 <!-- prettier-ignore-start -->
 ```python
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import hw_to_dataset_features
+from lerobot.cameras.opencv import OpenCVCameraConfig
+from lerobot.datasets import LeRobotDataset
+from lerobot.utils.feature_utils import hw_to_dataset_features
 from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
-from lerobot.teleoperators.so_leader.config_so100_leader import SO100LeaderConfig
-from lerobot.teleoperators.so_leader.so100_leader import SO100Leader
-from lerobot.utils.control_utils import init_keyboard_listener
+from lerobot.teleoperators.so_leader import SO100Leader, SO100LeaderConfig
+from lerobot.common.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
 from lerobot.scripts.lerobot_record import record_loop
@@ -410,9 +409,8 @@ lerobot-replay \
 ```python
 import time
 
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.robots.so_follower.config_so100_follower import SO100FollowerConfig
-from lerobot.robots.so_follower.so100_follower import SO100Follower
+from lerobot.datasets import LeRobotDataset
+from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
 
@@ -532,15 +530,14 @@ lerobot-record  \
 
 <!-- prettier-ignore-start -->
 ```python
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import hw_to_dataset_features
-from lerobot.policies.act.modeling_act import ACTPolicy
-from lerobot.policies.factory import make_pre_post_processors
-from lerobot.robots.so_follower.config_so100_follower import SO100FollowerConfig
-from lerobot.robots.so_follower.so100_follower import SO100Follower
+from lerobot.cameras.opencv import OpenCVCameraConfig
+from lerobot.datasets import LeRobotDataset
+from lerobot.utils.feature_utils import hw_to_dataset_features
+from lerobot.policies.act import ACTPolicy
+from lerobot.policies import make_pre_post_processors
+from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
 from lerobot.scripts.lerobot_record import record_loop
-from lerobot.utils.control_utils import init_keyboard_listener
+from lerobot.common.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
 
