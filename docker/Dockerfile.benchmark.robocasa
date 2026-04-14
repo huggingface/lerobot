@@ -21,9 +21,11 @@
 
 FROM huggingface/lerobot-gpu:latest
 
-# Install robocasa and its dependencies
-RUN pip install --no-cache-dir \
-    "robocasa @ git+https://github.com/robocasa/robocasa.git@v1.0.0" \
+# Install robocasa and its dependencies into the existing venv via uv pip.
+# The base image uses uv with a venv at /lerobot/.venv (PATH already set),
+# so `pip` is not available — use `uv pip install` instead.
+RUN uv pip install --no-cache \
+    "robocasa @ git+https://github.com/robocasa/robocasa.git" \
     "robosuite @ git+https://github.com/ARISE-Initiative/robosuite.git"
 
 # Set up robocasa macros and download kitchen assets
