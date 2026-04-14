@@ -57,6 +57,36 @@ def _metaworld_descriptions(task_name: str) -> dict[str, str]:
     return {f"{task_name}_0": label}
 
 
+_ROBOMME_DESCRIPTIONS = {
+    "BinFill": "Fill the target bin with the correct number of cubes",
+    "PickXtimes": "Pick the indicated cube the specified number of times",
+    "SwingXtimes": "Swing the object the specified number of times",
+    "StopCube": "Grasp and stop the moving cube",
+    "VideoUnmask": "Pick the cube shown in the reference video",
+    "VideoUnmaskSwap": "Pick the cube matching the reference video after a swap",
+    "ButtonUnmask": "Press the button indicated by the reference",
+    "ButtonUnmaskSwap": "Press the correct button after objects are swapped",
+    "PickHighlight": "Pick the highlighted cube",
+    "VideoRepick": "Repick the cube shown in the reference video",
+    "VideoPlaceButton": "Place the cube on the button shown in the video",
+    "VideoPlaceOrder": "Place cubes in the order shown in the video",
+    "MoveCube": "Move the cube to the target location",
+    "InsertPeg": "Insert the peg into the target hole",
+    "PatternLock": "Unlock the pattern by pressing buttons in sequence",
+    "RouteStick": "Route the stick through the required waypoints",
+}
+
+
+def _robomme_descriptions(task_names: str) -> dict[str, str]:
+    """Return descriptions for each requested RoboMME task. Keys match the
+    video filename pattern `<task>_<task_id>` used by the eval script."""
+    out: dict[str, str] = {}
+    for name in (t.strip() for t in task_names.split(",") if t.strip()):
+        desc = _ROBOMME_DESCRIPTIONS.get(name, name)
+        out[f"{name}_0"] = desc
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env", required=True, help="Environment family (libero, metaworld, ...)")
@@ -70,6 +100,8 @@ def main() -> int:
             descriptions = _libero_descriptions(args.task)
         elif args.env == "metaworld":
             descriptions = _metaworld_descriptions(args.task)
+        elif args.env == "robomme":
+            descriptions = _robomme_descriptions(args.task)
         else:
             print(
                 f"[extract_task_descriptions] No description extractor for env '{args.env}'.",
