@@ -54,7 +54,7 @@ class DiffuserSchedulerConfig(LRSchedulerConfig):
     num_warmup_steps: int | None = None
 
     def build(self, optimizer: Optimizer, num_training_steps: int) -> LambdaLR:
-        require_package("diffusers", extra="diffusers-dep")
+        require_package("diffusers", extra="diffusion")
 
         kwargs = {**asdict(self), "num_training_steps": num_training_steps, "optimizer": optimizer}
         return get_scheduler(**kwargs)

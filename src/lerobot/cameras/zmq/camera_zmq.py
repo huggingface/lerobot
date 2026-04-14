@@ -185,10 +185,8 @@ class ZMQCamera(Camera):
 
         try:
             message = self.socket.recv_string()
-        except Exception as e:
-            if type(e).__name__ == "Again":
-                raise TimeoutError(f"{self} timeout after {self.timeout_ms}ms") from e
-            raise
+        except zmq.Again as e:
+            raise TimeoutError(f"{self} timeout after {self.timeout_ms}ms") from e
 
         # Decode JSON message
         data = json.loads(message)
