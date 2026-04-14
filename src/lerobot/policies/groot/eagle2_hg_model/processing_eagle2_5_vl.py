@@ -302,16 +302,16 @@ class Eagle25VLProcessor(ProcessorMixin):
 
         text = replace_in_text(text)
         if len(unified_frame_list) > 0:
+
             def _to_tensor(v):
                 if isinstance(v, torch.Tensor):
                     return v
                 if isinstance(v, list):
                     if v and isinstance(v[0], list):
                         v = [t for sub in v for t in sub]
-                    return torch.stack(
-                        [t if isinstance(t, torch.Tensor) else torch.as_tensor(t) for t in v]
-                    )
+                    return torch.stack([t if isinstance(t, torch.Tensor) else torch.as_tensor(t) for t in v])
                 return torch.as_tensor(v)
+
             pixel_values = torch.cat([_to_tensor(frame["pixel_values"]) for frame in unified_frame_list])
             image_sizes = torch.cat([_to_tensor(frame["image_sizes"]) for frame in unified_frame_list])
         else:
