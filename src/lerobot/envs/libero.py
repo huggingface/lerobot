@@ -70,48 +70,28 @@ def _select_task_ids(total_tasks: int, task_ids: Iterable[int] | None) -> list[i
     return ids
 
 
-def _resolve_libero_init_states_path(task: Any) -> tuple[Path, bool]:
-    """Resolve the on-disk init_states path for a LIBERO task.
-
-    LIBERO-plus perturbation variants encode the perturbation in the filename
-    (_table_N, _tb_N, _view_, _language_, _light_, _add_, _level) but only the
-    base `.pruned_init` exists on disk. Mirror LIBERO-plus's own suffix-stripping
-    (libero/libero/benchmark/__init__.py) so we can load with `weights_only=False`
-    ourselves instead of delegating to the suite (whose `torch.load` call omits
-    that flag and fails on PyTorch 2.6+ numpy pickles).
-
-    Returns (path, needs_reshape) — `_add_`/`_level` variants store a flat
-    init_state that must be reshaped to (1, -1).
-    """
-    filename = task.init_states_file
-    problem_folder = task.problem_folder
-    ext = filename.rsplit(".", 1)[-1]
-    root = Path(get_libero_path("init_states"))
-
-    needs_reshape = "_add_" in filename or "_level" in filename
-    if needs_reshape:
-        return root / "libero_newobj" / problem_folder / filename, True
-    if "_language_" in filename:
-        filename = filename.split("_language_")[0] + "." + ext
-    elif "_view_" in filename:
-        filename = filename.split("_view_")[0] + "." + ext
-    else:
-        if "_table_" in filename:
-            filename = re.sub(r"_table_\d+", "", filename)
-        if "_tb_" in filename:
-            filename = re.sub(r"_tb_\d+", "", filename)
-        if "_light_" in filename:
-            filename = filename.split("_light_")[0] + "." + ext
-    return root / problem_folder / filename, False
+# LIBERO-plus perturbation variants encode the perturbation in the filename
+# but on disk only the base `.pruned_init` exists — strip the suffix to match
+# LIBERO-plus's own suite.get_task_init_states() (we reimplement it here so we
+# can pass weights_only=False for PyTorch 2.6+ numpy pickles).
+_LIBERO_PERTURBATION_SUFFIX_RE = re.compile(r"_(?:language|view|light)_[^.]*|_(?:table|tb)_\d+")
 
 
 def get_task_init_states(task_suite: Any, i: int) -> np.ndarray:
     task = task_suite.tasks[i]
-    init_states_path, needs_reshape = _resolve_libero_init_states_path(task)
-    init_states = torch.load(init_states_path, weights_only=False)  # nosec B614
-    if needs_reshape:
-        init_states = init_states.reshape(1, -1)
-    return init_states
+    filename = Path(task.init_states_file)
+    root = Path(get_libero_path("init_states"))
+
+    # `_add_` / `_level` variants store extra-object layouts under libero_newobj/
+    # as a flat array that must be reshaped to (1, -1).
+    if "_add_" in filename.name or "_level" in filename.name:
+        init_states_path = root / "libero_newobj" / task.problem_folder / filename.name
+        init_states = torch.load(init_states_path, weights_only=False)  # nosec B614
+        return init_states.reshape(1, -1)
+
+    stripped = _LIBERO_PERTURBATION_SUFFIX_RE.sub("", filename.stem) + filename.suffix
+    init_states_path = root / task.problem_folder / stripped
+    return torch.load(init_states_path, weights_only=False)  # nosec B614
 
 
 def get_libero_dummy_action():
