@@ -136,13 +136,14 @@ from lerobot.processor import (
     to_relative_actions,
 )
 from lerobot.robots import Robot, RobotConfig, make_robot_from_config
-from lerobot.robots.bi_openarm_follower.config_bi_openarm_follower import BiOpenArmFollowerConfig
+from lerobot.robots.bi_openarm_follower import BiOpenArmFollowerConfig
 from lerobot.robots.bi_so_follower.config_bi_so_follower import BiSOFollowerConfig  # noqa: F401
-from lerobot.robots.so_follower.config_so_follower import SOFollowerRobotConfig  # noqa: F401
+from lerobot.robots.so_follower import SOFollowerRobotConfig  # noqa: F401
 from lerobot.teleoperators import Teleoperator, TeleoperatorConfig, make_teleoperator_from_config
 from lerobot.teleoperators.bi_so_leader.config_bi_so_leader import BiSOLeaderConfig  # noqa: F401
-from lerobot.teleoperators.openarm_mini.config_openarm_mini import OpenArmMiniConfig  # noqa: F401
-from lerobot.teleoperators.so_leader.config_so_leader import SOLeaderTeleopConfig  # noqa: F401
+from lerobot.teleoperators.openarm_mini import OpenArmMiniConfig  # noqa: F401
+from lerobot.teleoperators.so_leader import SOLeaderTeleopConfig  # noqa: F401
+from lerobot.utils import get_safe_torch_device
 from lerobot.utils.constants import ACTION, OBS_STATE, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts, hw_to_dataset_features
 from lerobot.utils.robot_utils import precise_sleep
