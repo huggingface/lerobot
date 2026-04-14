@@ -26,8 +26,8 @@ import torch
 from torchvision.transforms import v2
 from torchvision.transforms.functional import to_pil_image
 
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.transforms import ImageTransformConfig, ImageTransforms, ImageTransformsConfig
+from lerobot.datasets import LeRobotDataset
+from lerobot.transforms import ImageTransformConfig, ImageTransforms, ImageTransformsConfig
 
 
 def save_image(tensor, filename):

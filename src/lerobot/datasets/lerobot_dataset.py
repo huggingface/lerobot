@@ -24,20 +24,21 @@ import torch.utils
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.errors import RevisionNotFoundError
 
-from lerobot.datasets.dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
-from lerobot.datasets.dataset_reader import DatasetReader
-from lerobot.datasets.dataset_writer import DatasetWriter
-from lerobot.datasets.utils import (
+from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
+
+from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
+from .dataset_reader import DatasetReader
+from .dataset_writer import DatasetWriter
+from .utils import (
     create_lerobot_dataset_card,
     get_safe_version,
     is_valid_version,
 )
-from lerobot.datasets.video_utils import (
+from .video_utils import (
     StreamingVideoEncoder,
     get_safe_default_codec,
     resolve_vcodec,
 )
-from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
 
 logger = logging.getLogger(__name__)
 
