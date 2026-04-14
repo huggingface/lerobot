@@ -574,3 +574,26 @@ class IsaaclabArenaEnv(HubEnvConfig):
             ),
             PolicyProcessorPipeline(steps=[]),
         )
+
+
+@EnvConfig.register_subclass("libero_plus")
+@dataclass
+class LiberoPlusEnv(LiberoEnv):
+    """Config for LIBERO-plus robustness benchmark evaluation.
+
+    LIBERO-plus extends LIBERO with 7 perturbation dimensions (camera viewpoints,
+    object layouts, robot initial states, language instructions, lighting, background
+    textures, sensor noise) producing ~10k task variants.
+
+    The gym interface is identical to LIBERO so this class reuses ``LiberoEnv``
+    entirely — only the registered name and default task suite differ.
+
+    Install::
+
+        pip install -e ".[libero_plus]"
+
+    See Also:
+        https://github.com/sylvestf/LIBERO-plus
+    """
+
+    task: str = "libero_spatial"
