@@ -32,7 +32,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # System deps — same set as Dockerfile.internal plus LIBERO-plus extras
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    software-properties-common build-essential git curl \
+    software-properties-common build-essential git curl unzip \
     libglib2.0-0 libgl1-mesa-glx libegl1-mesa ffmpeg \
     libusb-1.0-0-dev speech-dispatcher libgeos-dev portaudio19-dev \
     cmake pkg-config ninja-build \
@@ -96,12 +96,21 @@ ENV LIBERO_PLUS_ROOT=/home/user_lerobot/libero-plus/libero/libero
 # `.pruned_init` files for all 5 suites. Its Benchmark.get_task_init_states()
 # strips perturbation suffixes (_table_N, _tb_N, _view_, _language_, _light_)
 # back to the base filename, so no extra init files are needed.
+#
+# Assets are different: LIBERO-plus's bddl_base_domain.py resolves scene XMLs
+# via `os.path.join(DIR_PATH, "../assets")` (package-relative, ignoring
+# config.yaml), and its 2402 perturbation tasks reference table/view/light
+# textures that ship only in Sylvest/LIBERO-plus's `assets.zip` (6.4 GB).
+# Without this extract, every perturbation task fails on a FileNotFoundError
+# for scenes/tabletop_table_<texture>.xml.
+RUN python${PYTHON_VERSION} -c "\
+from huggingface_hub import hf_hub_download; \
+hf_hub_download(repo_id='Sylvest/LIBERO-plus', repo_type='dataset', \
+                filename='assets.zip', local_dir='/tmp/libero-plus-dl')" && \
+    unzip -q /tmp/libero-plus-dl/assets.zip -d ${LIBERO_PLUS_ROOT}/ && \
+    rm -rf /tmp/libero-plus-dl
 RUN mkdir -p /home/user_lerobot/.libero && \
-    python${PYTHON_VERSION} -c "\
-from huggingface_hub import snapshot_download; \
-snapshot_download(repo_id='lerobot/libero-assets', repo_type='dataset', \
-                  local_dir='/home/user_lerobot/.libero/assets')" && \
-    printf "assets: /home/user_lerobot/.libero/assets\nbddl_files: ${LIBERO_PLUS_ROOT}/bddl_files\ndatasets: ${LIBERO_PLUS_ROOT}/../datasets\ninit_states: ${LIBERO_PLUS_ROOT}/init_files\n" \
+    printf "assets: ${LIBERO_PLUS_ROOT}/assets\nbddl_files: ${LIBERO_PLUS_ROOT}/bddl_files\ndatasets: ${LIBERO_PLUS_ROOT}/../datasets\ninit_states: ${LIBERO_PLUS_ROOT}/init_files\n" \
     > /home/user_lerobot/.libero/config.yaml
 
 RUN chmod +x /lerobot/.venv/lib/python${PYTHON_VERSION}/site-packages/triton/backends/nvidia/bin/ptxas
