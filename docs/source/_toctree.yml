@@ -79,6 +79,8 @@
     title: LIBERO
   - local: metaworld
     title: Meta-World
+  - local: robocasa
+    title: RoboCasa365
   - local: envhub_isaaclab_arena
     title: NVIDIA IsaacLab Arena Environments
   title: "Benchmarks"

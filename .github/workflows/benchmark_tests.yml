@@ -310,3 +310,93 @@ jobs:
           name: metaworld-metrics
           path: /tmp/metaworld-artifacts/metrics.json
           if-no-files-found: warn
+
+  # ── ROBOCASA365 ──────────────────────────────────────────────────────────
+  # Isolated image: lerobot[robocasa] only (robocasa, robosuite, mujoco chain)
+  robocasa-integration-test:
+    name: RoboCasa365 — build image + 1-episode eval
+    runs-on:
+      group: aws-g6-4xlarge-plus
+    env:
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+          lfs: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          cache-binary: false
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+
+      - name: Build RoboCasa365 benchmark image
+        uses: docker/build-push-action@v6 # zizmor: ignore[unpinned-uses]
+        with:
+          context: .
+          file: docker/Dockerfile.benchmark.robocasa
+          push: false
+          load: true
+          tags: lerobot-benchmark-robocasa:ci
+
+      - name: Run RoboCasa365 smoke eval (1 episode)
+        if: env.HF_USER_TOKEN != ''
+        run: |
+          docker run --name robocasa-eval --gpus all \
+            --shm-size=4g \
+            -e HF_HOME=/tmp/hf \
+            -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
+            -e HF_HUB_DOWNLOAD_TIMEOUT=300 \
+            -e MUJOCO_GL=egl \
+            lerobot-benchmark-robocasa:ci \
+            bash -c "
+              hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
+              lerobot-eval \
+                --policy.path=pepijn223/smolvla_robocasa \
+                --env.type=robocasa \
+                --env.task=CloseFridge \
+                --eval.batch_size=1 \
+                --eval.n_episodes=1 \
+                --eval.use_async_envs=false \
+                --policy.device=cuda \
+                --output_dir=/tmp/eval-artifacts
+            "
+
+      - name: Copy RoboCasa365 artifacts from container
+        if: always()
+        run: |
+          mkdir -p /tmp/robocasa-artifacts
+          docker cp robocasa-eval:/tmp/eval-artifacts/. /tmp/robocasa-artifacts/ 2>/dev/null || true
+          docker rm -f robocasa-eval || true
+
+      - name: Parse RoboCasa365 eval metrics
+        if: always()
+        run: |
+          python3 scripts/ci/parse_eval_metrics.py \
+            --artifacts-dir /tmp/robocasa-artifacts \
+            --env robocasa \
+            --task CloseFridge \
+            --policy pepijn223/smolvla_robocasa
+
+      - name: Upload RoboCasa365 rollout video
+        if: always()
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: robocasa-rollout-video
+          path: /tmp/robocasa-artifacts/videos/
+          if-no-files-found: warn
+
+      - name: Upload RoboCasa365 eval metrics
+        if: always()
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: robocasa-metrics
+          path: /tmp/robocasa-artifacts/metrics.json
+          if-no-files-found: warn
