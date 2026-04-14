@@ -1032,7 +1032,7 @@ def hil_collect(cfg: HILConfig) -> LeRobotDataset:
             policy = policy.to(cfg.device)
             policy.eval()
         else:
-            policy = make_policy(cfg.policy, ds_meta=dataset.meta)
+            policy = make_policy(cfg.policy, ds_meta=dataset.meta, rename_map=cfg.dataset.rename_map)
 
         preprocessor, postprocessor = make_pre_post_processors(
             policy_cfg=cfg.policy,
