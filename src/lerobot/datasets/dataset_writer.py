@@ -31,26 +31,26 @@ import PIL.Image
 import pyarrow.parquet as pq
 import torch
 
-from lerobot.datasets.compute_stats import compute_episode_stats
-from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-from lerobot.datasets.feature_utils import (
+from .compute_stats import compute_episode_stats
+from .dataset_metadata import LeRobotDatasetMetadata
+from .feature_utils import (
     get_hf_features_from_features,
     validate_episode_buffer,
     validate_frame,
 )
-from lerobot.datasets.image_writer import AsyncImageWriter, write_image
-from lerobot.datasets.io_utils import (
+from .image_writer import AsyncImageWriter, write_image
+from .io_utils import (
     embed_images,
     get_file_size_in_mb,
     load_episodes,
     write_info,
 )
-from lerobot.datasets.utils import (
+from .utils import (
     DEFAULT_EPISODES_PATH,
     DEFAULT_IMAGE_PATH,
     update_chunk_file_indices,
 )
-from lerobot.datasets.video_utils import (
+from .video_utils import (
     StreamingVideoEncoder,
     concatenate_video_files,
     encode_video_frames,
@@ -155,7 +155,16 @@ class DatasetWriter:
             self.image_writer.save_image(image=image, fpath=fpath, compress_level=compress_level)
 
     def add_frame(self, frame: dict) -> None:
-        """Add a frame to the episode_buffer. Images are written to a temporary directory."""
+        """
+        Add a single frame to the current episode buffer.
+
+        Apart from images written to a temporary directory, nothing is written to disk
+        until ``save_episode()`` is called.
+
+        The caller must provide all user-defined features plus ``"task"``, and must
+        not provide ``"timestamp"`` or ``"frame_index"``; those are computed
+        automatically.
+        """
         # Convert torch to numpy if needed
         for name in frame:
             if isinstance(frame[name], torch.Tensor):
@@ -168,7 +177,7 @@ class DatasetWriter:
 
         # Automatically add frame_index and timestamp to episode buffer
         frame_index = self.episode_buffer["size"]
-        timestamp = frame.pop("timestamp") if "timestamp" in frame else frame_index / self._meta.fps
+        timestamp = frame_index / self._meta.fps
         self.episode_buffer["frame_index"].append(frame_index)
         self.episode_buffer["timestamp"].append(timestamp)
         self.episode_buffer["task"].append(frame.pop("task"))

@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import field
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import torch
@@ -31,11 +31,10 @@ else:
     PretrainedConfig = object
     BatchFeature = None
 
-from lerobot.policies.groot.action_head.action_encoder import (
+from .action_encoder import (
     SinusoidalPositionalEncoding,
     swish,
 )
-
 from .cross_attention_dit import DiT, SelfAttentionTransformer
 
 
@@ -110,6 +109,7 @@ class MultiEmbodimentActionEncoder(nn.Module):
         return x
 
 
+@dataclass
 class FlowmatchingActionHeadConfig(PretrainedConfig):
     """NOTE: N1.5 uses XEmbFlowmatchingPolicyHeadConfig as action head"""
 
