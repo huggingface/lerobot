@@ -77,6 +77,8 @@
     title: Adding a New Benchmark
   - local: libero
     title: LIBERO
+  - local: libero_plus
+    title: LIBERO-plus
   - local: metaworld
     title: Meta-World
   - local: envhub_isaaclab_arena

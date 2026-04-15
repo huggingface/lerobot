@@ -4,7 +4,7 @@ LIBERO-plus is a **robustness benchmark** for Vision-Language-Action (VLA) model
 
 - Paper: [LIBERO-plus: A Robustness Benchmark for VLA Models](https://github.com/sylvestf/LIBERO-plus)
 - GitHub: [sylvestf/LIBERO-plus](https://github.com/sylvestf/LIBERO-plus)
-- Dataset: [pepijn223/libero_plus_lerobot](https://huggingface.co/datasets/pepijn223/libero_plus_lerobot)
+- Dataset: [lerobot/libero_plus](https://huggingface.co/datasets/lerobot/libero_plus)
 
 ## Perturbation dimensions
 
@@ -138,7 +138,7 @@ If your policy was trained with different key names, pass a JSON remapping:
 
 A LeRobot-format training dataset for LIBERO-plus is available at:
 
-- [pepijn223/libero_plus_lerobot](https://huggingface.co/datasets/pepijn223/libero_plus_lerobot)
+- [lerobot/libero_plus](https://huggingface.co/datasets/lerobot/libero_plus)
 
 ### Example training command
 
@@ -147,7 +147,7 @@ lerobot-train \
     --policy.type=smolvla \
     --policy.repo_id=${HF_USER}/smolvla_libero_plus \
     --policy.load_vlm_weights=true \
-    --dataset.repo_id=pepijn223/libero_plus_lerobot \
+    --dataset.repo_id=lerobot/libero_plus \
     --env.type=libero_plus \
     --env.task=libero_spatial \
     --output_dir=./outputs/ \
