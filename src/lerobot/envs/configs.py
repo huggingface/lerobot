@@ -582,7 +582,7 @@ class RoboMMEEnv(EnvConfig):
     """RoboMME memory-augmented manipulation benchmark (ManiSkill/SAPIEN).
 
     16 tasks across 4 suites: Counting, Permanence, Reference, Imitation.
-    Dataset: pepijn223/robomme_data_lerobot (LeRobot v3.0, 1,600 episodes).
+    Dataset: lerobot/robomme (LeRobot v3.0, 1,600 episodes).
     Benchmark: https://github.com/RoboMME/robomme_benchmark
 
     Requires: pip install 'lerobot[robomme]' (Linux only).

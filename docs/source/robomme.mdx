@@ -4,13 +4,8 @@
 
 - **16 tasks** across 4 memory-skill suites
 - **1,600 training demos** (100 per task, 50 val, 50 test)
-- **Dataset**: [`pepijn223/robomme_data_lerobot`](https://huggingface.co/datasets/pepijn223/robomme_data_lerobot) — LeRobot v3.0, 768K frames at 10 fps
+- **Dataset**: [`lerobot/robomme`](https://huggingface.co/datasets/lerobot/robomme) — LeRobot v3.0, 768K frames at 10 fps
 - **Simulator**: ManiSkill / SAPIEN, Panda arm, Linux only
-
-> **Related work**: The initial integration of RoboMME into LeRobot was prototyped in
-> [`feat/robomme-integration`](https://github.com/huggingface/lerobot/tree/feat/robomme-integration).
-> This PR rebases that work onto `feat/async-vector-env`, adopts the `create_envs()` dispatch
-> pattern, and adds the `LazyVectorEnv` helper for large task-count benchmarks.
 
 ## Tasks
 
@@ -69,12 +64,12 @@ lerobot-eval \
 
 ## Dataset
 
-The dataset [`pepijn223/robomme_data_lerobot`](https://huggingface.co/datasets/pepijn223/robomme_data_lerobot) is in **LeRobot v3.0 format** and can be loaded directly:
+The dataset [`lerobot/robomme`](https://huggingface.co/datasets/lerobot/robomme) is in **LeRobot v3.0 format** and can be loaded directly:
 
 ```python
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
-dataset = LeRobotDataset("pepijn223/robomme_data_lerobot")
+dataset = LeRobotDataset("lerobot/robomme")
 ```
 
 ### Dataset features
@@ -97,7 +92,7 @@ The env wrapper exposes `front_rgb` and `wrist_rgb` as observation keys. The `fe
 The dataset uses `image` and `wrist_image` as column names. When fine-tuning from the dataset, you may need to rename columns to match your policy's expected input keys:
 
 ```python
-dataset = LeRobotDataset("pepijn223/robomme_data_lerobot")
+dataset = LeRobotDataset("lerobot/robomme")
 # rename dataset columns if needed:
 # dataset.hf_dataset = dataset.hf_dataset.rename_column("image", "front_rgb")
 ```

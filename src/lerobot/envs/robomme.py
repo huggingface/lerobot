@@ -9,7 +9,7 @@ RoboMME tasks:
   Reference:   PickHighlight, VideoRepick, VideoPlaceButton, VideoPlaceOrder
   Imitation:   MoveCube, InsertPeg, PatternLock, RouteStick
 
-Dataset: pepijn223/robomme_data_lerobot (LeRobot v3.0, 1,600 episodes)
+Dataset: lerobot/robomme (LeRobot v3.0, 1,600 episodes)
 Install: pip install 'lerobot[robomme]'  (Linux only)
 Benchmark: https://github.com/RoboMME/robomme_benchmark
 """
