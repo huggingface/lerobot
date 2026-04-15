@@ -1,0 +1,61 @@
+# RoboCerebra
+
+[RoboCerebra](https://robocerebra-project.github.io/) is a long-horizon manipulation benchmark for evaluating high-level reasoning, planning, and memory in VLAs. Episodes chain multiple sub-goals with language-grounded intermediate instructions, building on top of LIBERO's simulator stack.
+
+- Paper: [RoboCerebra: A Large-scale Benchmark for Long-horizon Robotic Manipulation Evaluation](https://arxiv.org/abs/2506.06677)
+- Project website: [robocerebra-project.github.io](https://robocerebra-project.github.io/)
+- Dataset: [`lerobot/robocerebra_unified`](https://huggingface.co/datasets/lerobot/robocerebra_unified) — LeRobot v3.0, 6,660 episodes (571,116 frames) at 20 fps, 1,728 language-grounded sub-tasks
+
+## Installation
+
+RoboCerebra reuses LIBERO's simulator stack, so install the `libero` extra:
+
+```bash
+pip install -e ".[libero]"
+```
+
+<Tip>
+RoboCerebra requires Linux (MuJoCo/robosuite). Set the rendering backend before training or evaluation:
+
+```bash
+export MUJOCO_GL=egl  # for headless servers
+```
+
+</Tip>
+
+## Evaluation
+
+RoboCerebra eval runs against the LIBERO `libero_10` long-horizon suite with RoboCerebra's camera naming (`image` + `wrist_image`) and an extra empty-camera slot for policies expecting three views:
+
+```bash
+lerobot-eval \
+  --policy.path=pepijn223/smolvla_robocerebra \
+  --env.type=libero \
+  --env.task=libero_10 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  '--rename_map={"observation.images.image": "observation.images.camera1", "observation.images.wrist_image": "observation.images.camera2"}' \
+  --policy.empty_cameras=3
+```
+
+## Training
+
+The unified dataset at [`lerobot/robocerebra_unified`](https://huggingface.co/datasets/lerobot/robocerebra_unified) exposes two RGB streams:
+
+| Feature                          | Shape         | Description          |
+| -------------------------------- | ------------- | -------------------- |
+| `observation.images.image`       | (256, 256, 3) | Third-person view    |
+| `observation.images.wrist_image` | (256, 256, 3) | Wrist-mounted camera |
+| `observation.state`              | (8,)          | Joint pos + gripper  |
+| `action`                         | (7,)          | EEF delta + gripper  |
+
+Fine-tune a SmolVLA base on it:
+
+```bash
+lerobot-train \
+  --policy.path=lerobot/smolvla_base \
+  --dataset.repo_id=lerobot/robocerebra_unified \
+  --env.type=libero \
+  --env.task=libero_10 \
+  --output_dir=outputs/smolvla_robocerebra
+```
