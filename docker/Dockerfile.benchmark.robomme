@@ -12,91 +12,43 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Isolated benchmark image for RoboMME integration tests.
-# Installs only lerobot[robomme] so its dep tree (mani-skill, SAPIEN, robomme)
-# cannot conflict with other benchmarks.
-#
-# Key differences vs libero/metaworld:
-#   - Vulkan ICD loader required (ManiSkill/SAPIEN renderer)
-#   - uv sync without --locked (robomme is a git dep, not in uv.lock)
-#   - gymnasium==0.29.1 + numpy==1.26.4 overridden post-install (mani-skill pins)
+# Benchmark image for RoboMME integration tests.
+# Extends the nightly GPU image (which has lerobot[all]) with Vulkan system
+# libs for ManiSkill/SAPIEN and the robomme extra. robomme isn't in [all]
+# because mani-skill hard-pins gymnasium==0.29.1 and numpy<2.0.0 which
+# conflict with lerobot's defaults; both are safe at runtime:
+#   - gymnasium 0.29.x has the same 5-tuple step() API as 1.x (since 0.26)
+#   - numpy 1.26.4 is API-compatible with lerobot's actual usage.
 #
 # Build:  docker build -f docker/Dockerfile.benchmark.robomme -t lerobot-benchmark-robomme .
 # Run:    docker run --gpus all --rm lerobot-benchmark-robomme lerobot-eval ...
 
-ARG CUDA_VERSION=12.4.1
-ARG OS_VERSION=22.04
-FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu${OS_VERSION}
+FROM huggingface/lerobot-gpu:latest
 
-ARG PYTHON_VERSION=3.12
-
-ENV DEBIAN_FRONTEND=noninteractive \
-    PATH=/lerobot/.venv/bin:$PATH \
-    CUDA_VISIBLE_DEVICES=0 \
-    DEVICE=cuda \
-    # NVIDIA Container Toolkit: expose all driver capabilities (includes Vulkan)
-    NVIDIA_DRIVER_CAPABILITIES=all \
-    # ManiSkill uses Vulkan; set ICD path for headless GPU rendering
+# NVIDIA Container Toolkit: expose Vulkan driver capability for headless rendering.
+ENV NVIDIA_DRIVER_CAPABILITIES=all \
     VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
 
-# System deps — same base as Dockerfile.internal, plus Vulkan loader for ManiSkill/SAPIEN
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    software-properties-common build-essential git curl \
-    libglib2.0-0 libgl1-mesa-glx libegl1-mesa ffmpeg \
-    libusb-1.0-0-dev speech-dispatcher libgeos-dev portaudio19-dev \
-    cmake pkg-config ninja-build \
-    # Vulkan: required by ManiSkill/SAPIEN renderer
-    libvulkan1 \
-    libvulkan-dev \
-    mesa-vulkan-drivers \
-    && add-apt-repository -y ppa:deadsnakes/ppa \
-    && apt-get update \
+# ManiSkill/SAPIEN's renderer needs Vulkan, which isn't in the base image.
+USER root
+RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-       python${PYTHON_VERSION} \
-       python${PYTHON_VERSION}-venv \
-       python${PYTHON_VERSION}-dev \
-    && curl -LsSf https://astral.sh/uv/0.8.0/install.sh | sh \
-    && mv /root/.local/bin/uv /usr/local/bin/uv \
+         libvulkan1 libvulkan-dev mesa-vulkan-drivers \
     && mkdir -p /usr/share/vulkan/icd.d \
     && echo '{"file_format_version":"1.0.0","ICD":{"library_path":"libGLX_nvidia.so.0","api_version":"1.3.0"}}' \
        > /usr/share/vulkan/icd.d/nvidia_icd.json \
-    && useradd --create-home --shell /bin/bash user_lerobot \
-    && usermod -aG sudo user_lerobot \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /lerobot
-RUN chown -R user_lerobot:user_lerobot /lerobot
 USER user_lerobot
 
-ENV HOME=/home/user_lerobot \
-    HF_HOME=/home/user_lerobot/.cache/huggingface \
-    HF_LEROBOT_HOME=/home/user_lerobot/.cache/huggingface/lerobot \
-    TORCH_HOME=/home/user_lerobot/.cache/torch \
-    TRITON_CACHE_DIR=/home/user_lerobot/.cache/triton
-
-RUN uv venv --python python${PYTHON_VERSION}
-
-# Install only lerobot[robomme] — completely isolated from libero/metaworld dep trees.
-# Note: --locked is intentionally omitted because robomme is a git dep and is not
-# pinned in uv.lock; the install is still reproducible via the pinned git URL.
+# Refresh pyproject/setup.py so the PR's robomme extra is registered, then
+# install it with gymnasium/numpy overrides to downgrade from lerobot[all].
 COPY --chown=user_lerobot:user_lerobot setup.py pyproject.toml uv.lock README.md MANIFEST.in ./
-COPY --chown=user_lerobot:user_lerobot src/ src/
-
-# Step 1: Install lerobot base (without robomme) — this gets gymnasium>=1.1.1
-# and numpy>=2.0.0 as lerobot requires.
-RUN uv pip install --no-cache -e "."
-
-# Step 2: Force-install robomme with overridden gymnasium and numpy versions.
-# mani-skill (robomme dep) hard-pins gymnasium==0.29.1 and numpy<2.0.0 which
-# conflict with lerobot's defaults. Both overrides are safe at runtime:
-#   - gymnasium 0.29.x has the same 5-tuple step() API as 1.x (since gym 0.26)
-#   - numpy 1.26.4 is API-compatible with lerobot's actual usage
 RUN printf 'gymnasium==0.29.1\nnumpy==1.26.4\n' > /tmp/robomme_override.txt \
-    && uv pip install --no-cache --override /tmp/robomme_override.txt -e ".[robomme,smolvla,av-dep]" \
+    && uv pip install --no-cache --override /tmp/robomme_override.txt \
+         -e ".[robomme,smolvla,av-dep]" \
     && python -c "import robomme; print('robomme import OK')"
 
-RUN chmod +x /lerobot/.venv/lib/python${PYTHON_VERSION}/site-packages/triton/backends/nvidia/bin/ptxas
-
+# Overlay the PR's source code on top of the nightly image.
 COPY --chown=user_lerobot:user_lerobot . .
 
 CMD ["/bin/bash"]
