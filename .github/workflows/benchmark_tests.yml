@@ -312,8 +312,9 @@ jobs:
           if-no-files-found: warn
 
   # ── ROBOCEREBRA ───────────────────────────────────────────────────────────
-  # Isolated image: lerobot[robocerebra] only (= lerobot[libero] alias)
-  # Uses the libero_10 suite with RoboCerebra camera defaults (image/wrist_image).
+  # Reuses the LIBERO simulator (libero_10 suite) with RoboCerebra camera
+  # defaults (image/wrist_image). The image is layered on
+  # huggingface/lerobot-gpu, which already ships [libero] as part of [all].
   robocerebra-integration-test:
     name: RoboCerebra — build image + 1-episode eval
     runs-on:

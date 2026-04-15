@@ -12,81 +12,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Isolated benchmark image for RoboCerebra integration tests.
-# Installs only lerobot[robocerebra] (= lerobot[libero]: hf-libero, dm-control, mujoco)
-# so its dependency tree cannot conflict with other benchmarks.
+# Benchmark image for RoboCerebra integration tests.
+# RoboCerebra reuses LIBERO's simulator (libero_10 suite) with a different
+# rename_map, so this image is identical to the LIBERO benchmark image —
+# extends the nightly GPU base with LIBERO assets + the PR's source code.
 #
 # Build:  docker build -f docker/Dockerfile.benchmark.robocerebra -t lerobot-benchmark-robocerebra .
 # Run:    docker run --gpus all --rm lerobot-benchmark-robocerebra lerobot-eval ...
 
-ARG CUDA_VERSION=12.4.1
-ARG OS_VERSION=22.04
-FROM nvidia/cuda:${CUDA_VERSION}-base-ubuntu${OS_VERSION}
+FROM huggingface/lerobot-gpu:latest
 
-ARG PYTHON_VERSION=3.12
-
-ENV DEBIAN_FRONTEND=noninteractive \
-    MUJOCO_GL=egl \
-    PATH=/lerobot/.venv/bin:$PATH \
-    CUDA_VISIBLE_DEVICES=0 \
-    DEVICE=cuda
-
-# System deps — same set as Dockerfile.internal
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    software-properties-common build-essential git curl \
-    libglib2.0-0 libgl1-mesa-glx libegl1-mesa ffmpeg \
-    libusb-1.0-0-dev speech-dispatcher libgeos-dev portaudio19-dev \
-    cmake pkg-config ninja-build \
-    && add-apt-repository -y ppa:deadsnakes/ppa \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends \
-       python${PYTHON_VERSION} \
-       python${PYTHON_VERSION}-venv \
-       python${PYTHON_VERSION}-dev \
-    && curl -LsSf https://astral.sh/uv/0.8.0/install.sh | sh \
-    && mv /root/.local/bin/uv /usr/local/bin/uv \
-    && useradd --create-home --shell /bin/bash user_lerobot \
-    && usermod -aG sudo user_lerobot \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /lerobot
-RUN chown -R user_lerobot:user_lerobot /lerobot
-USER user_lerobot
-
-ENV HOME=/home/user_lerobot \
-    HF_HOME=/home/user_lerobot/.cache/huggingface \
-    HF_LEROBOT_HOME=/home/user_lerobot/.cache/huggingface/lerobot \
-    TORCH_HOME=/home/user_lerobot/.cache/torch \
-    TRITON_CACHE_DIR=/home/user_lerobot/.cache/triton
-
-RUN uv venv --python python${PYTHON_VERSION}
-
-# Install only lerobot[robocerebra] — completely isolated from other benchmarks' dep trees.
-# robocerebra = lerobot[libero] (hf-libero + dm-control + mujoco chain)
-COPY --chown=user_lerobot:user_lerobot setup.py pyproject.toml uv.lock README.md MANIFEST.in ./
-COPY --chown=user_lerobot:user_lerobot src/ src/
-
-# Use uv pip install (not uv sync --locked) — the lockfile may be stale for
-# this extra, and uv sync resolves all extras across all Python versions which
-# hits cross-extra conflicts. pip-style install resolves only what's requested.
-RUN uv pip install --no-cache -e ".[robocerebra,smolvla]"
-
-# Pre-download libero assets and write ~/.libero/config.yaml so that
-# libero/__init__.py does not call input() (which fails in non-interactive Docker).
-RUN LIBERO_DIR=$(python${PYTHON_VERSION} -c \
+# Pre-download lerobot/libero-assets from HF Hub so nothing is fetched at
+# runtime (which times out on CI). Point the libero config at the cached path.
+# libero/libero/__init__.py calls input() when ~/.libero/config.yaml is missing,
+# so we write the config before any libero import can happen.
+RUN LIBERO_DIR=$(python -c \
       "import importlib.util, os; s=importlib.util.find_spec('libero'); \
        print(os.path.join(os.path.dirname(s.origin), 'libero'))") && \
     mkdir -p /home/user_lerobot/.libero && \
-    python${PYTHON_VERSION} -c "\
+    python -c "\
 from huggingface_hub import snapshot_download; \
 snapshot_download(repo_id='lerobot/libero-assets', repo_type='dataset', \
                   local_dir='/home/user_lerobot/.libero/assets')" && \
     printf "assets: /home/user_lerobot/.libero/assets\nbddl_files: ${LIBERO_DIR}/bddl_files\ndatasets: ${LIBERO_DIR}/../datasets\ninit_states: ${LIBERO_DIR}/init_files\n" \
     > /home/user_lerobot/.libero/config.yaml
 
-# Workaround: Triton ships ptxas without the execute bit set.
-RUN chmod +x /lerobot/.venv/lib/python${PYTHON_VERSION}/site-packages/triton/backends/nvidia/bin/ptxas
-
+# Overlay the PR's source code on top of the nightly image.
 COPY --chown=user_lerobot:user_lerobot . .
 
 CMD ["/bin/bash"]
