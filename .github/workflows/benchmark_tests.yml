@@ -115,7 +115,7 @@ jobs:
             bash -c "
               hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
               lerobot-eval \
-                --policy.path=pepijn223/smolvla_libero \
+                --policy.path=lerobot/smolvla_libero \
                 --env.type=libero \
                 --env.task=libero_spatial \
                 --eval.batch_size=1 \
@@ -144,7 +144,7 @@ jobs:
             --artifacts-dir /tmp/libero-artifacts \
             --env libero \
             --task libero_spatial \
-            --policy pepijn223/smolvla_libero
+            --policy lerobot/smolvla_libero
 
       - name: Upload Libero rollout video
         if: always()
@@ -264,7 +264,7 @@ jobs:
             bash -c "
               hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
               lerobot-eval \
-                --policy.path=pepijn223/smolvla_metaworld \
+                --policy.path=lerobot/smolvla_metaworld \
                 --env.type=metaworld \
                 --env.task=metaworld-push-v3 \
                 --eval.batch_size=1 \
@@ -293,7 +293,7 @@ jobs:
             --artifacts-dir /tmp/metaworld-artifacts \
             --env metaworld \
             --task metaworld-push-v3 \
-            --policy pepijn223/smolvla_metaworld
+            --policy lerobot/smolvla_metaworld
 
       - name: Upload MetaWorld rollout video
         if: always()
@@ -363,7 +363,7 @@ jobs:
             bash -c "
               hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
               lerobot-eval \
-                --policy.path=pepijn223/smolvla_robocerebra \
+                --policy.path=lerobot/smolvla_robocerebra \
                 --env.type=libero \
                 --env.task=libero_10 \
                 --eval.batch_size=1 \
@@ -392,7 +392,7 @@ jobs:
             --artifacts-dir /tmp/robocerebra-artifacts \
             --env robocerebra \
             --task libero_10 \
-            --policy pepijn223/smolvla_robocerebra
+            --policy lerobot/smolvla_robocerebra
 
       - name: Upload RoboCerebra rollout video
         if: always()
