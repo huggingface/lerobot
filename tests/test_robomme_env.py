@@ -13,10 +13,9 @@
 # limitations under the License.
 """Unit tests for the RoboMME env wrapper and config.
 
-RoboMME requires Linux + ManiSkill (Vulkan/SAPIEN), so all tests that
-instantiate the real env mock the ``robomme`` package.  Tests that only
-exercise pure-Python logic (config defaults, obs conversion, lazy env)
-run without any mocking.
+RoboMME requires Linux + ManiSkill (Vulkan/SAPIEN), so tests that touch the
+env wrapper mock the ``robomme`` package. Tests that only exercise the
+dataclass config run without any mocking.
 """
 
 from __future__ import annotations
@@ -26,15 +25,10 @@ from types import ModuleType
 from unittest.mock import MagicMock
 
 import numpy as np
-import pytest
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 
-def _make_robomme_stub():
-    """Return a minimal stub for the ``robomme`` package."""
+def _install_robomme_stub():
+    """Register a minimal stub for the ``robomme`` package on sys.modules."""
     stub = ModuleType("robomme")
     wrapper_stub = ModuleType("robomme.env_record_wrapper")
 
@@ -56,7 +50,13 @@ def _make_robomme_stub():
 
     wrapper_stub.BenchmarkEnvBuilder = FakeBuilder
     stub.env_record_wrapper = wrapper_stub
-    return stub, wrapper_stub
+    sys.modules["robomme"] = stub
+    sys.modules["robomme.env_record_wrapper"] = wrapper_stub
+
+
+def _uninstall_robomme_stub():
+    sys.modules.pop("robomme", None)
+    sys.modules.pop("robomme.env_record_wrapper", None)
 
 
 # ---------------------------------------------------------------------------
@@ -89,8 +89,8 @@ def test_robomme_features_map():
 
     cfg = RoboMMEEnv()
     assert cfg.features_map[ACTION] == ACTION
-    assert cfg.features_map["front_rgb"] == f"{OBS_IMAGES}.front"
-    assert cfg.features_map["wrist_rgb"] == f"{OBS_IMAGES}.wrist"
+    assert cfg.features_map["image"] == f"{OBS_IMAGES}.image"
+    assert cfg.features_map["wrist_image"] == f"{OBS_IMAGES}.wrist_image"
     assert cfg.features_map[OBS_STATE] == OBS_STATE
 
 
@@ -103,17 +103,14 @@ def test_robomme_features_action_dim_joint_angle():
 
 
 def test_robomme_features_action_dim_ee_pose():
-    """ee_pose action space uses 7-D; config declares 8-D default (joint_angle).
-
-    Users switching to ee_pose must override the features dict manually or
-    the env wrapper will return 7-D actions while the config claims 8-D.
-    This test documents the current behaviour so it is explicit.
+    """`ee_pose` uses a 7-D action; the features dict still declares 8-D
+    (the joint_angle default). Switching to ee_pose requires the user to
+    override `features[ACTION]`. This test documents that.
     """
     from lerobot.envs.configs import RoboMMEEnv
     from lerobot.utils.constants import ACTION
 
     cfg = RoboMMEEnv(action_space="ee_pose")
-    # Default features still say 8-D — ee_pose override is a user responsibility.
     assert cfg.features[ACTION].shape == (8,)
 
 
@@ -123,62 +120,57 @@ def test_robomme_features_action_dim_ee_pose():
 
 
 def test_convert_obs_list_format():
-    """_convert_obs must take the last element from list-format obs fields."""
-    stub, wrapper_stub = _make_robomme_stub()
-    sys.modules["robomme"] = stub
-    sys.modules["robomme.env_record_wrapper"] = wrapper_stub
+    """_convert_obs takes the last element from list-format obs fields and
+    emits the lerobot-canonical keys (image, wrist_image, state)."""
+    _install_robomme_stub()
+    try:
+        from lerobot.envs.robomme import RoboMMEGymEnv
 
-    from lerobot.envs.robomme import RoboMMEGymEnv
+        env = RoboMMEGymEnv.__new__(RoboMMEGymEnv)
 
-    env = RoboMMEGymEnv.__new__(RoboMMEGymEnv)
+        front = np.full((256, 256, 3), 42, dtype=np.uint8)
+        wrist = np.full((256, 256, 3), 7, dtype=np.uint8)
+        joints = np.arange(7, dtype=np.float32)
+        gripper = np.array([0.5, 0.5], dtype=np.float32)
 
-    front = np.full((256, 256, 3), 42, dtype=np.uint8)
-    wrist = np.full((256, 256, 3), 7, dtype=np.uint8)
-    joints = np.arange(7, dtype=np.float32)
-    gripper = np.array([0.5, 0.5], dtype=np.float32)
+        obs_raw = {
+            "front_rgb_list": [np.zeros_like(front), front],
+            "wrist_rgb_list": [np.zeros_like(wrist), wrist],
+            "joint_state_list": [np.zeros(7, dtype=np.float32), joints],
+            "gripper_state_list": [np.zeros(2, dtype=np.float32), gripper],
+        }
 
-    obs_raw = {
-        "front_rgb_list": [np.zeros_like(front), front],
-        "wrist_rgb_list": [np.zeros_like(wrist), wrist],
-        "joint_state_list": [np.zeros(7, dtype=np.float32), joints],
-        "gripper_state_list": [np.zeros(2, dtype=np.float32), gripper],
-    }
-
-    result = env._convert_obs(obs_raw)
-
-    np.testing.assert_array_equal(result["front_rgb"], front)
-    np.testing.assert_array_equal(result["wrist_rgb"], wrist)
-    assert result["state"].shape == (8,)
-    np.testing.assert_array_almost_equal(result["state"][:7], joints)
-    assert result["state"][7] == pytest.approx(gripper[0])
-
-    # cleanup
-    del sys.modules["robomme"]
-    del sys.modules["robomme.env_record_wrapper"]
+        result = env._convert_obs(obs_raw)
+        np.testing.assert_array_equal(result["image"], front)
+        np.testing.assert_array_equal(result["wrist_image"], wrist)
+        assert result["state"].shape == (8,)
+        np.testing.assert_array_almost_equal(result["state"][:7], joints)
+        assert result["state"][7] == gripper[0]
+    finally:
+        _uninstall_robomme_stub()
 
 
 def test_convert_obs_array_format():
-    """_convert_obs must also handle non-list (direct array) obs."""
-    stub, wrapper_stub = _make_robomme_stub()
-    sys.modules["robomme"] = stub
-    sys.modules["robomme.env_record_wrapper"] = wrapper_stub
+    """_convert_obs also handles non-list (direct array) obs."""
+    _install_robomme_stub()
+    try:
+        from lerobot.envs.robomme import RoboMMEGymEnv
 
-    from lerobot.envs.robomme import RoboMMEGymEnv
+        env = RoboMMEGymEnv.__new__(RoboMMEGymEnv)
 
-    env = RoboMMEGymEnv.__new__(RoboMMEGymEnv)
-
-    front = np.zeros((256, 256, 3), dtype=np.uint8)
-    obs_raw = {
-        "front_rgb_list": front,
-        "wrist_rgb_list": front,
-        "joint_state_list": np.zeros(7, dtype=np.float32),
-        "gripper_state_list": np.zeros(2, dtype=np.float32),
-    }
-    result = env._convert_obs(obs_raw)
-    assert result["front_rgb"].shape == (256, 256, 3)
-
-    del sys.modules["robomme"]
-    del sys.modules["robomme.env_record_wrapper"]
+        front = np.zeros((256, 256, 3), dtype=np.uint8)
+        obs_raw = {
+            "front_rgb_list": front,
+            "wrist_rgb_list": front,
+            "joint_state_list": np.zeros(7, dtype=np.float32),
+            "gripper_state_list": np.zeros(2, dtype=np.float32),
+        }
+        result = env._convert_obs(obs_raw)
+        assert result["image"].shape == (256, 256, 3)
+        assert result["wrist_image"].shape == (256, 256, 3)
+        assert result["state"].shape == (8,)
+    finally:
+        _uninstall_robomme_stub()
 
 
 # ---------------------------------------------------------------------------
@@ -187,98 +179,53 @@ def test_convert_obs_array_format():
 
 
 def test_create_robomme_envs_returns_correct_structure():
-    stub, wrapper_stub = _make_robomme_stub()
-    sys.modules["robomme"] = stub
-    sys.modules["robomme.env_record_wrapper"] = wrapper_stub
+    """Single task -> {task_name: {task_id: VectorEnv}} with one entry per task_id."""
+    _install_robomme_stub()
+    try:
+        from lerobot.envs.robomme import create_robomme_envs
 
-    from lerobot.envs.robomme import create_robomme_envs
+        env_cls = MagicMock(return_value=MagicMock())
+        result = create_robomme_envs(
+            task="PickXtimes",
+            n_envs=1,
+            task_ids=[0, 1],
+            env_cls=env_cls,
+        )
 
-    env_cls = MagicMock(return_value=MagicMock())
-    result = create_robomme_envs(
-        task="PickXtimes",
-        n_envs=1,
-        task_ids=[0, 1],
-        env_cls=env_cls,
-    )
+        assert "PickXtimes" in result
+        assert 0 in result["PickXtimes"]
+        assert 1 in result["PickXtimes"]
+        assert env_cls.call_count == 2
+    finally:
+        _uninstall_robomme_stub()
 
-    assert "robomme" in result
-    assert 0 in result["robomme"]
-    assert 1 in result["robomme"]
-    assert env_cls.call_count == 2
 
-    del sys.modules["robomme"]
-    del sys.modules["robomme.env_record_wrapper"]
+def test_create_robomme_envs_multi_task():
+    """Comma-separated task list produces one suite per task."""
+    _install_robomme_stub()
+    try:
+        from lerobot.envs.robomme import create_robomme_envs
+
+        env_cls = MagicMock(return_value=MagicMock())
+        result = create_robomme_envs(
+            task="PickXtimes,BinFill,StopCube",
+            n_envs=1,
+            env_cls=env_cls,
+        )
+
+        assert set(result.keys()) == {"PickXtimes", "BinFill", "StopCube"}
+    finally:
+        _uninstall_robomme_stub()
 
 
 def test_create_robomme_envs_raises_on_invalid_env_cls():
-    stub, wrapper_stub = _make_robomme_stub()
-    sys.modules["robomme"] = stub
-    sys.modules["robomme.env_record_wrapper"] = wrapper_stub
+    _install_robomme_stub()
+    try:
+        import pytest
 
-    from lerobot.envs.robomme import create_robomme_envs
+        from lerobot.envs.robomme import create_robomme_envs
 
-    with pytest.raises(ValueError, match="env_cls must be a callable"):
-        create_robomme_envs(task="PickXtimes", n_envs=1, env_cls=None)
-
-    del sys.modules["robomme"]
-    del sys.modules["robomme.env_record_wrapper"]
-
-
-# ---------------------------------------------------------------------------
-# LazyVectorEnv
-# ---------------------------------------------------------------------------
-
-
-def test_lazy_vec_env_used_when_task_ids_gt_50():
-    """create_robomme_envs must use LazyVectorEnv when len(task_ids) > 50."""
-    stub, wrapper_stub = _make_robomme_stub()
-    sys.modules["robomme"] = stub
-    sys.modules["robomme.env_record_wrapper"] = wrapper_stub
-
-    from lerobot.envs.lazy_vec_env import LazyVectorEnv
-    from lerobot.envs.robomme import create_robomme_envs
-
-    env_cls = MagicMock(return_value=MagicMock())
-    task_ids = list(range(51))
-    result = create_robomme_envs(task="PickXtimes", n_envs=1, task_ids=task_ids, env_cls=env_cls)
-
-    for tid in task_ids:
-        assert isinstance(result["robomme"][tid], LazyVectorEnv)
-    # env_cls must NOT have been called yet (lazy)
-    env_cls.assert_not_called()
-
-    del sys.modules["robomme"]
-    del sys.modules["robomme.env_record_wrapper"]
-
-
-def test_lazy_vec_env_materializes_on_access():
-    from lerobot.envs.lazy_vec_env import LazyVectorEnv
-
-    inner = MagicMock()
-    inner.reset.return_value = ({"obs": 1}, {})
-    env_cls = MagicMock(return_value=inner)
-    factory_fns = [lambda: MagicMock()]
-
-    lazy = LazyVectorEnv(env_cls, factory_fns)
-    env_cls.assert_not_called()
-
-    # accessing reset triggers materialization
-    lazy.reset()
-    env_cls.assert_called_once_with(factory_fns)
-    inner.reset.assert_called_once()
-
-
-def test_lazy_vec_env_close_clears_env():
-    from lerobot.envs.lazy_vec_env import LazyVectorEnv
-
-    inner = MagicMock()
-    env_cls = MagicMock(return_value=inner)
-    lazy = LazyVectorEnv(env_cls, [lambda: MagicMock()])
-
-    lazy.reset()  # materialize
-    lazy.close()
-    inner.close.assert_called_once()
-
-    # env_cls should be called again on next access after close
-    lazy.reset()
-    assert env_cls.call_count == 2
+        with pytest.raises(ValueError, match="env_cls must be a callable"):
+            create_robomme_envs(task="PickXtimes", n_envs=1, env_cls=None)
+    finally:
+        _uninstall_robomme_stub()
