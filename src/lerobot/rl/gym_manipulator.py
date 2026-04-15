@@ -551,8 +551,8 @@ def step_env_and_process_transition(
     terminated = terminated or processed_action_transition[TransitionKey.DONE]
     truncated = truncated or processed_action_transition[TransitionKey.TRUNCATED]
     complementary_data = processed_action_transition[TransitionKey.COMPLEMENTARY_DATA].copy()
-    new_info = processed_action_transition[TransitionKey.INFO].copy()
-    new_info.update(info)
+    new_info = info.copy()
+    new_info.update(processed_action_transition[TransitionKey.INFO])
 
     new_transition = create_transition(
         observation=obs,

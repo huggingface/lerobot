@@ -23,6 +23,7 @@ TODO(alexander-soare):
 import math
 from collections import deque
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import einops
 import numpy as np
@@ -32,6 +33,14 @@ import torchvision
 from torch import Tensor, nn
 
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
+from lerobot.utils.import_utils import _diffusers_available, require_package
+
+if TYPE_CHECKING or _diffusers_available:
+    from diffusers.schedulers.scheduling_ddim import DDIMScheduler
+    from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
+else:
+    DDIMScheduler = None
+    DDPMScheduler = None
 
 from ..pretrained import PreTrainedPolicy
 from ..utils import (
@@ -64,6 +73,7 @@ class DiffusionPolicy(PreTrainedPolicy):
             dataset_stats: Dataset statistics to be used for normalization. If not passed here, it is expected
                 that they will be passed with a call to `load_state_dict` before the policy is used.
         """
+        require_package("diffusers", extra="diffusion")
         super().__init__(config)
         config.validate_features()
         self.config = config
@@ -155,11 +165,7 @@ def _make_noise_scheduler(name: str, **kwargs: dict):
     Factory for noise scheduler instances of the requested type. All kwargs are passed
     to the scheduler.
     """
-    from lerobot.utils.import_utils import require_package
-
     require_package("diffusers", extra="diffusion")
-    from diffusers.schedulers.scheduling_ddim import DDIMScheduler
-    from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 
     if name == "DDPM":
         return DDPMScheduler(**kwargs)
