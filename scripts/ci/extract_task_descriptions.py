@@ -31,8 +31,22 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
+
+# LIBERO-plus derives task.language by space-joining the perturbation-variant
+# filename (grab_language_from_filename in libero/libero/benchmark/__init__.py),
+# so non-_language_ variants inherit a trailing metadata blob like
+# "view 0 0 100 0 0 initstate 0 noise 45" or "add 16". Strip those tokens so
+# the description matches the base instruction used in the training dataset.
+_LIBERO_PERTURBATION_TAIL_RE = re.compile(
+    r"(?:\s(?:view|initstate|noise|add|tb|table|light|level)(?:\s\d+)+)+$"
+)
+
+
+def _strip_libero_perturbation_tail(instruction: str) -> str:
+    return _LIBERO_PERTURBATION_TAIL_RE.sub("", instruction).strip()
 
 
 def _libero_descriptions(task_suite: str) -> dict[str, str]:
@@ -47,7 +61,10 @@ def _libero_descriptions(task_suite: str) -> dict[str, str]:
         )
         return {}
     suite = suite_dict[task_suite]()
-    return {f"{task_suite}_{i}": suite.get_task(i).language for i in range(suite.n_tasks)}
+    return {
+        f"{task_suite}_{i}": _strip_libero_perturbation_tail(suite.get_task(i).language)
+        for i in range(suite.n_tasks)
+    }
 
 
 def _metaworld_descriptions(task_name: str) -> dict[str, str]:
