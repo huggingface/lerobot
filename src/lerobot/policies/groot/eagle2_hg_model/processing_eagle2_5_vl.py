@@ -222,6 +222,13 @@ class Eagle25VLProcessor(ProcessorMixin):
                         videos=None,
                         **output_kwargs["images_kwargs"],
                     )
+                    if isinstance(image_inputs["pixel_values"], list):
+                        _pv = image_inputs["pixel_values"]
+                        if _pv and isinstance(_pv[0], list):
+                            _pv = [t for sub in _pv for t in sub]
+                        image_inputs["pixel_values"] = torch.stack(
+                            [t if isinstance(t, torch.Tensor) else torch.as_tensor(t) for t in _pv]
+                        )
                     num_all_tiles = image_inputs["pixel_values"].shape[0]
                     special_placeholder = f"<image {idx_in_list + 1}>{self.image_start_token}{self.image_token * num_all_tiles * self.tokens_per_tile}{self.image_end_token}"
                     unified_frame_list.append(image_inputs)
@@ -233,6 +240,13 @@ class Eagle25VLProcessor(ProcessorMixin):
                         videos=[video_list[idx_in_list]],
                         **output_kwargs["videos_kwargs"],
                     )
+                    if isinstance(video_inputs["pixel_values"], list):
+                        _pv = video_inputs["pixel_values"]
+                        if _pv and isinstance(_pv[0], list):
+                            _pv = [t for sub in _pv for t in sub]
+                        video_inputs["pixel_values"] = torch.stack(
+                            [t if isinstance(t, torch.Tensor) else torch.as_tensor(t) for t in _pv]
+                        )
                     num_all_tiles = video_inputs["pixel_values"].shape[0]
                     image_sizes = video_inputs["image_sizes"]
                     if timestamps_list is not None and -1 not in timestamps_list:
@@ -288,8 +302,18 @@ class Eagle25VLProcessor(ProcessorMixin):
 
         text = replace_in_text(text)
         if len(unified_frame_list) > 0:
-            pixel_values = torch.cat([frame["pixel_values"] for frame in unified_frame_list])
-            image_sizes = torch.cat([frame["image_sizes"] for frame in unified_frame_list])
+
+            def _to_tensor(v):
+                if isinstance(v, torch.Tensor):
+                    return v
+                if isinstance(v, list):
+                    if v and isinstance(v[0], list):
+                        v = [t for sub in v for t in sub]
+                    return torch.stack([t if isinstance(t, torch.Tensor) else torch.as_tensor(t) for t in v])
+                return torch.as_tensor(v)
+
+            pixel_values = torch.cat([_to_tensor(frame["pixel_values"]) for frame in unified_frame_list])
+            image_sizes = torch.cat([_to_tensor(frame["image_sizes"]) for frame in unified_frame_list])
         else:
             pixel_values = None
             image_sizes = None
