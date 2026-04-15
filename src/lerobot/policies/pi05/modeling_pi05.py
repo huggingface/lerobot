@@ -26,7 +26,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
-from lerobot.utils.import_utils import _transformers_available
+from lerobot.utils.import_utils import _transformers_available, require_package
 
 # Conditional import for type checking and lazy loading
 if TYPE_CHECKING or _transformers_available:
@@ -918,6 +918,7 @@ class PI05Policy(PreTrainedPolicy):
         Args:
             config: Policy configuration class instance.
         """
+        require_package("transformers", extra="pi")
         super().__init__(config)
         config.validate_features()
         self.config = config
