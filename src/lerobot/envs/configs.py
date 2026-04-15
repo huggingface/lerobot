@@ -588,9 +588,9 @@ class LiberoPlusEnv(LiberoEnv):
     The gym interface is identical to LIBERO so this class reuses ``LiberoEnv``
     entirely — only the registered name and default task suite differ.
 
-    Install::
-
-        pip install -e ".[libero_plus]"
+    Install: see docker/Dockerfile.benchmark.libero_plus — LIBERO-plus ships
+    as a namespace package from a git fork and must be cloned + PYTHONPATH'd
+    rather than installed as a pyproject extra.
 
     See Also:
         https://github.com/sylvestf/LIBERO-plus

@@ -43,10 +43,13 @@ sudo apt install libexpat1 libfontconfig1-dev libmagickwand-dev
 ### Python package
 
 ```bash
-pip install -e ".[libero_plus]"
+pip install -e ".[libero]" "robosuite==1.4.1" bddl easydict mujoco wand scikit-image gym
+git clone https://github.com/sylvestf/LIBERO-plus.git
+cd LIBERO-plus && pip install --no-deps -e .
+pip uninstall -y hf-libero  # so `import libero` resolves to the fork
 ```
 
-This installs LIBERO-plus directly from its GitHub repository. Because MuJoCo is required, only Linux is supported.
+LIBERO-plus is installed from its GitHub fork rather than a pyproject extra — the fork ships as a namespace package that pip can't handle, so it must be cloned and added to `PYTHONPATH`. See `docker/Dockerfile.benchmark.libero_plus` for the canonical install. MuJoCo is required, so only Linux is supported.
 
 <Tip>
 Set the MuJoCo rendering backend before running evaluation:

@@ -312,7 +312,8 @@ jobs:
           if-no-files-found: warn
 
   # ── LIBERO-plus ───────────────────────────────────────────────────────────
-  # Isolated image: lerobot[libero_plus] only (LIBERO-plus from GitHub, mujoco)
+  # Isolated image: LIBERO-plus fork cloned into /home/user_lerobot on top of
+  # huggingface/lerobot-gpu (see docker/Dockerfile.benchmark.libero_plus).
   libero-plus-integration-test:
     name: LIBERO-plus — build image + 1-episode eval
     runs-on:
