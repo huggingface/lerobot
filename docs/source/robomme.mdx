@@ -23,10 +23,12 @@
 ### Native (Linux)
 
 ```bash
-pip install 'lerobot[robomme]'
+pip install --override <(printf 'gymnasium==0.29.1\nnumpy==1.26.4\n') \
+  -e '.[smolvla,av-dep]' \
+  'robomme @ git+https://github.com/RoboMME/robomme_benchmark.git@main'
 ```
 
-> **Dependency note**: `robomme` pulls in `mani-skill` which pins `gymnasium==0.29.1` and `numpy<2.0.0`. These conflict with lerobot's default pins. On Linux you can pin both in your env; see the Docker approach below to avoid conflicts entirely.
+> **Dependency note**: `mani-skill` (pulled by `robomme`) pins `gymnasium==0.29.1` and `numpy<2.0.0`, which conflict with lerobot's base `numpy>=2.0.0`. That's why `robomme` is not a pyproject extra — use the override install above, or the Docker approach below to avoid conflicts entirely.
 
 ### Docker (recommended)
 

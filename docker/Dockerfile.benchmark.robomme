@@ -40,12 +40,14 @@ RUN apt-get update \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 USER user_lerobot
 
-# Refresh pyproject/setup.py so the PR's robomme extra is registered, then
-# install it with gymnasium/numpy overrides to downgrade from lerobot[all].
+# Install smolvla + av-dep via the PR's pyproject, then layer robomme on top
+# with gymnasium/numpy overrides. robomme isn't a pyproject extra because its
+# mani-skill pin conflicts with lerobot's base numpy>=2 (see pyproject.toml).
 COPY --chown=user_lerobot:user_lerobot setup.py pyproject.toml uv.lock README.md MANIFEST.in ./
 RUN printf 'gymnasium==0.29.1\nnumpy==1.26.4\n' > /tmp/robomme_override.txt \
     && uv pip install --no-cache --override /tmp/robomme_override.txt \
-         -e ".[robomme,smolvla,av-dep]" \
+         -e ".[smolvla,av-dep]" \
+         "robomme @ git+https://github.com/RoboMME/robomme_benchmark.git@main" \
     && python -c "import robomme; print('robomme import OK')"
 
 # Overlay the PR's source code on top of the nightly image.

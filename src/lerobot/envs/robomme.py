@@ -10,7 +10,7 @@ RoboMME tasks:
   Imitation:   MoveCube, InsertPeg, PatternLock, RouteStick
 
 Dataset: lerobot/robomme (LeRobot v3.0, 1,600 episodes)
-Install: pip install 'lerobot[robomme]'  (Linux only)
+Install: see docker/Dockerfile.benchmark.robomme  (Linux only — mani-skill vs numpy pin conflict)
 Benchmark: https://github.com/RoboMME/robomme_benchmark
 """
 

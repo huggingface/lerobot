@@ -312,7 +312,8 @@ jobs:
           if-no-files-found: warn
 
   # ── ROBOMME ───────────────────────────────────────────────────────────────
-  # Isolated image: lerobot[robomme] only (mani-skill, SAPIEN, Vulkan chain)
+  # Isolated image: mani-skill/SAPIEN/Vulkan chain with gymnasium and numpy
+  # overrides (robomme can't be a pyproject extra due to numpy<2 pin).
   robomme-integration-test:
     name: RoboMME — build image + 1-episode eval
     runs-on:

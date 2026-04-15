@@ -585,7 +585,8 @@ class RoboMMEEnv(EnvConfig):
     Dataset: lerobot/robomme (LeRobot v3.0, 1,600 episodes).
     Benchmark: https://github.com/RoboMME/robomme_benchmark
 
-    Requires: pip install 'lerobot[robomme]' (Linux only).
+    Requires the `robomme` git package installed separately (Linux only);
+    see docker/Dockerfile.benchmark.robomme for the canonical install.
     """
 
     task: str = "PickXtimes"
