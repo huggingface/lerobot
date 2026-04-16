@@ -31,11 +31,10 @@ else:
     PretrainedConfig = object
     BatchFeature = None
 
-from lerobot.policies.groot.action_head.action_encoder import (
+from .action_encoder import (
     SinusoidalPositionalEncoding,
     swish,
 )
-
 from .cross_attention_dit import DiT, SelfAttentionTransformer
 
 
@@ -205,7 +204,9 @@ class FlowmatchingActionHead(nn.Module):
             self.position_embedding = nn.Embedding(config.max_seq_len, self.input_embedding_dim)
             nn.init.normal_(self.position_embedding.weight, mean=0.0, std=0.02)
 
-        self.beta_dist = Beta(config.noise_beta_alpha, config.noise_beta_beta)
+        self._noise_beta_alpha = config.noise_beta_alpha
+        self._noise_beta_beta = config.noise_beta_beta
+        self._beta_dist = None
         self.num_timestep_buckets = config.num_timestep_buckets
         self.config = config
         self.set_trainable_parameters(config.tune_projector, config.tune_diffusion_model)
@@ -250,7 +251,9 @@ class FlowmatchingActionHead(nn.Module):
                 self.model.eval()
 
     def sample_time(self, batch_size, device, dtype):
-        sample = self.beta_dist.sample([batch_size]).to(device, dtype=dtype)
+        if self._beta_dist is None:
+            self._beta_dist = Beta(self._noise_beta_alpha, self._noise_beta_beta, validate_args=False)
+        sample = self._beta_dist.sample([batch_size]).to(device, dtype=dtype)
         return (self.config.noise_s - sample) / self.config.noise_s
 
     def prepare_input(self, batch: dict) -> BatchFeature:

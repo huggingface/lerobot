@@ -22,8 +22,9 @@ from lerobot.processor import (
     NormalizerProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
+    policy_action_to_transition,
+    transition_to_policy_action,
 )
-from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
 from lerobot.rewards.classifier.configuration_classifier import RewardClassifierConfig
 
 

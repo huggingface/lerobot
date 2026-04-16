@@ -1,7 +1,7 @@
 import torch
 
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.policies.factory import make_policy
+from lerobot.datasets import LeRobotDataset
+from lerobot.policies import make_policy
 from lerobot.rewards.classifier.configuration_classifier import RewardClassifierConfig
 from lerobot.rewards.factory import make_reward_pre_post_processors
 

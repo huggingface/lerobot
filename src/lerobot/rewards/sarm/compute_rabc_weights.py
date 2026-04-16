@@ -57,7 +57,7 @@ import pyarrow.parquet as pq
 import torch
 from tqdm import tqdm
 
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 from lerobot.rewards.sarm.modeling_sarm import SARMRewardModel
 from lerobot.rewards.sarm.processor_sarm import make_sarm_pre_post_processors
 from lerobot.rewards.sarm.sarm_utils import normalize_stage_tau

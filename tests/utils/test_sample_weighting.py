@@ -19,6 +19,9 @@
 from unittest.mock import Mock
 
 import pytest
+
+pytest.importorskip("pandas", reason="pandas is required (install lerobot[dataset])")
+
 import torch
 
 from lerobot.utils.sample_weighting import (

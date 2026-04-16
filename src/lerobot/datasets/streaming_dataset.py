@@ -22,20 +22,21 @@ import numpy as np
 import torch
 from datasets import load_dataset
 
-from lerobot.datasets.dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
-from lerobot.datasets.feature_utils import get_delta_indices
-from lerobot.datasets.io_utils import item_to_torch
-from lerobot.datasets.utils import (
+from lerobot.utils.constants import HF_LEROBOT_HOME, LOOKAHEAD_BACKTRACKTABLE, LOOKBACK_BACKTRACKTABLE
+
+from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
+from .feature_utils import get_delta_indices
+from .io_utils import item_to_torch
+from .utils import (
     check_version_compatibility,
     find_float_index,
     is_float_in_list,
     safe_shard,
 )
-from lerobot.datasets.video_utils import (
+from .video_utils import (
     VideoDecoderCache,
     decode_video_frames_torchcodec,
 )
-from lerobot.utils.constants import HF_LEROBOT_HOME, LOOKAHEAD_BACKTRACKTABLE, LOOKBACK_BACKTRACKTABLE
 
 
 class LookBackError(Exception):
@@ -255,7 +256,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         Args:
             repo_id (str): This is the repo id that will be used to fetch the dataset.
-            root (Path | None, optional): Local directory to use for downloading/writing files.
+            root (Path | None, optional): Local directory to use for local datasets. When omitted, Hub
+                metadata is resolved through a revision-safe snapshot cache under
+                ``$HF_LEROBOT_HOME/hub``.
             episodes (list[int] | None, optional): If specified, this will only load episodes specified by
                 their episode_index in this list.
             image_transforms (Callable | None, optional): Transform to apply to image data.
@@ -271,7 +274,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         """
         super().__init__()
         self.repo_id = repo_id
-        self.root = Path(root) if root else HF_LEROBOT_HOME / repo_id
+        self._requested_root = Path(root) if root else None
+        self.root = self._requested_root if self._requested_root is not None else HF_LEROBOT_HOME / repo_id
         self.streaming_from_local = root is not None
 
         self.image_transforms = image_transforms
@@ -288,12 +292,15 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         # We cache the video decoders to avoid re-initializing them at each frame (avoiding a ~10x slowdown)
         self.video_decoder_cache = None
 
-        self.root.mkdir(exist_ok=True, parents=True)
+        if self._requested_root is not None:
+            self.root.mkdir(exist_ok=True, parents=True)
 
         # Load metadata
         self.meta = LeRobotDatasetMetadata(
-            self.repo_id, self.root, self.revision, force_cache_sync=force_cache_sync
+            self.repo_id, self._requested_root, self.revision, force_cache_sync=force_cache_sync
         )
+        self.root = self.meta.root
+        self.revision = self.meta.revision
         # Check version
         check_version_compatibility(self.repo_id, self.meta._version, CODEBASE_VERSION)
 

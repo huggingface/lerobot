@@ -30,13 +30,19 @@ See: https://arxiv.org/abs/2509.25358 for the SARM paper.
 
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
-import pandas as pd
 import torch
 from huggingface_hub import hf_hub_download
 
+from lerobot.utils.import_utils import _pandas_available
 from lerobot.utils.sample_weighting import SampleWeighter
+
+if TYPE_CHECKING or _pandas_available:
+    import pandas as pd
+else:
+    pd = None  # type: ignore[assignment]
 
 
 def resolve_hf_path(path: str | Path) -> Path:
