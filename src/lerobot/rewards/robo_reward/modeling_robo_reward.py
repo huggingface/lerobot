@@ -204,7 +204,9 @@ class RoboRewardModel(PreTrainedRewardModel):
         tasks = batch.get(self.config.task_key)
         task_list = _decode_tasks(tasks, batch_size)
 
-        vlm_device = torch.device(self.config.device)
+        # Derive the input device from the model's first parameter so that
+        # device_map="auto" (multi-GPU) is handled correctly.
+        vlm_device = next(self.vlm.parameters()).device
         all_messages: list[list[dict[str, Any]]] = []
         for i in range(batch_size):
             frames = [self._tensor_to_pil(images[i, t]) for t in range(images.shape[1])]
