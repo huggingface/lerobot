@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from lerobot.utils.import_utils import _serial_available
+from lerobot.utils.import_utils import _serial_available, require_package
 
 if TYPE_CHECKING or _serial_available:
     import serial
@@ -156,6 +156,7 @@ def run_exo_calibration(
     """
     Run interactive calibration for an exoskeleton arm.
     """
+    require_package("pyserial", extra="unitree_g1", import_name="serial")
     try:
         import cv2
         import matplotlib.pyplot as plt
