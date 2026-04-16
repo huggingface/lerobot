@@ -37,4 +37,8 @@ RUN python -m robocasa.scripts.setup_macros && \
 # Overlay the PR's source code on top of the nightly image.
 COPY --chown=user_lerobot:user_lerobot . .
 
+# Re-install lerobot editably so the new source (with RoboCasaEnv registration)
+# replaces the stale package baked into the nightly image.
+RUN uv pip install --no-cache --no-deps -e .
+
 CMD ["/bin/bash"]
