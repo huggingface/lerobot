@@ -353,6 +353,7 @@ jobs:
             bash -c "hf auth login --token '$HF_USER_TOKEN' --add-to-git-credential && hf auth whoami"
 
       - name: Run RoboCerebra smoke eval (1 episode)
+        if: env.HF_USER_TOKEN != ''
         run: |
           docker run --name robocerebra-eval --gpus all \
             --shm-size=4g \
@@ -365,14 +366,17 @@ jobs:
               hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
               lerobot-eval \
                 --policy.path=lerobot/smolvla_robocerebra \
-                --env.type=robocerebra \
+                --env.type=libero \
                 --env.task=libero_10 \
+                --env.observation_height=256 \
+                --env.observation_width=256 \
+                '--env.camera_name_mapping={\"agentview_image\": \"image\", \"robot0_eye_in_hand_image\": \"wrist_image\"}' \
                 --eval.batch_size=1 \
                 --eval.n_episodes=1 \
                 --eval.use_async_envs=false \
                 --policy.device=cuda \
                 '--rename_map={\"observation.images.image\": \"observation.images.camera1\", \"observation.images.wrist_image\": \"observation.images.camera2\"}' \
-                --policy.empty_cameras=3 \
+                --policy.empty_cameras=1 \
                 --output_dir=/tmp/eval-artifacts
               python scripts/ci/extract_task_descriptions.py \
                 --env libero --task libero_10 \
