@@ -45,8 +45,9 @@ from .pipeline import ActionProcessorStep, ObservationProcessorStep, ProcessorSt
 
 # Conditional import for type checking and lazy loading
 if TYPE_CHECKING or _transformers_available:
-    from transformers import AutoProcessor, AutoTokenizer
+    from transformers import AddedToken, AutoProcessor, AutoTokenizer
 else:
+    AddedToken = None
     AutoProcessor = None
     AutoTokenizer = None
 
@@ -81,6 +82,7 @@ class TokenizerProcessorStep(ObservationProcessorStep):
     padding_side: str = "right"
     padding: str = "max_length"
     truncation: bool = True
+    additional_special_tokens: list[str] | None = None
 
     # Internal tokenizer instance (not part of the config)
     input_tokenizer: Any = field(default=None, init=False, repr=False)
@@ -113,6 +115,15 @@ class TokenizerProcessorStep(ObservationProcessorStep):
             raise ValueError(
                 "Either 'tokenizer' or 'tokenizer_name' must be provided. "
                 "Pass a tokenizer object directly or a tokenizer name to auto-load."
+            )
+
+        if self.additional_special_tokens:
+            if AddedToken is None:
+                raise ImportError("AddedToken is not available")
+            deduped = list(dict.fromkeys(self.additional_special_tokens))
+            self.input_tokenizer.add_tokens(
+                [AddedToken(token, normalized=False, special=True) for token in deduped],
+                special_tokens=True,
             )
 
     def get_task(self, transition: EnvTransition) -> list[str] | None:
@@ -290,6 +301,8 @@ class TokenizerProcessorStep(ObservationProcessorStep):
         # Only save tokenizer_name if it was used to create the tokenizer
         if self.tokenizer_name is not None and self.tokenizer is None:
             config["tokenizer_name"] = self.tokenizer_name
+        if self.additional_special_tokens:
+            config["additional_special_tokens"] = list(self.additional_special_tokens)
 
         return config
 
