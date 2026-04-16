@@ -359,7 +359,7 @@ jobs:
             bash -c "
               hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
               lerobot-eval \
-                --policy.path=pepijn223/smolvla_robocasa \
+                --policy.path=lerobot/smolvla_robocasa \
                 --env.type=robocasa \
                 --env.task=CloseFridge \
                 --eval.batch_size=1 \
@@ -383,7 +383,7 @@ jobs:
             --artifacts-dir /tmp/robocasa-artifacts \
             --env robocasa \
             --task CloseFridge \
-            --policy pepijn223/smolvla_robocasa
+            --policy lerobot/smolvla_robocasa
 
       - name: Upload RoboCasa365 rollout video
         if: always()

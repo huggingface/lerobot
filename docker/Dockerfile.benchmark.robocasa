@@ -21,16 +21,18 @@
 
 FROM huggingface/lerobot-gpu:latest
 
-# Install robocasa and its dependencies into the existing venv via uv pip.
-# The base image uses uv with a venv at /lerobot/.venv (PATH already set),
-# so `pip` is not available — use `uv pip install` instead.
-RUN uv pip install --no-cache \
-    "robocasa @ git+https://github.com/robocasa/robocasa.git" \
-    "robosuite @ git+https://github.com/ARISE-Initiative/robosuite.git"
+# Install robocasa + robosuite as editable clones. pip-installing from git
+# omits data files like robocasa/models/assets/box_links/box_links_assets.json
+# (not declared in package_data), which download_kitchen_assets needs at import.
+RUN git clone --depth 1 https://github.com/robocasa/robocasa.git ~/robocasa && \
+    git clone --depth 1 https://github.com/ARISE-Initiative/robosuite.git ~/robosuite && \
+    uv pip install --no-cache -e ~/robocasa -e ~/robosuite
 
-# Set up robocasa macros and download kitchen assets
+# Set up robocasa macros and download kitchen assets (textures + fixtures only —
+# skip objaverse/aigen objects to keep the image under size limits).
+# The download script prompts interactively, so pipe 'y' to auto-accept.
 RUN python -m robocasa.scripts.setup_macros && \
-    python -m robocasa.scripts.download_kitchen_assets
+    yes y | python -m robocasa.scripts.download_kitchen_assets --type tex fixtures_lw
 
 # Overlay the PR's source code on top of the nightly image.
 COPY --chown=user_lerobot:user_lerobot . .
