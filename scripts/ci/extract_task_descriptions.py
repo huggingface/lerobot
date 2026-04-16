@@ -77,13 +77,16 @@ _ROBOMME_DESCRIPTIONS = {
 }
 
 
-def _robomme_descriptions(task_names: str) -> dict[str, str]:
+def _robomme_descriptions(task_names: str, task_ids: list[int] | None = None) -> dict[str, str]:
     """Return descriptions for each requested RoboMME task. Keys match the
     video filename pattern `<task>_<task_id>` used by the eval script."""
+    if task_ids is None:
+        task_ids = [0]
     out: dict[str, str] = {}
     for name in (t.strip() for t in task_names.split(",") if t.strip()):
         desc = _ROBOMME_DESCRIPTIONS.get(name, name)
-        out[f"{name}_0"] = desc
+        for tid in task_ids:
+            out[f"{name}_{tid}"] = desc
     return out
 
 
@@ -91,8 +94,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env", required=True, help="Environment family (libero, metaworld, ...)")
     parser.add_argument("--task", required=True, help="Task/suite name (e.g. libero_spatial)")
+    parser.add_argument(
+        "--task-ids",
+        type=str,
+        default=None,
+        help="Comma-separated task IDs (e.g. '0,1,2'). Default: [0]",
+    )
     parser.add_argument("--output", required=True, help="Path to write task_descriptions.json")
     args = parser.parse_args()
+
+    task_ids: list[int] | None = None
+    if args.task_ids:
+        task_ids = [int(x.strip()) for x in args.task_ids.split(",")]
 
     descriptions: dict[str, str] = {}
     try:
@@ -101,7 +114,7 @@ def main() -> int:
         elif args.env == "metaworld":
             descriptions = _metaworld_descriptions(args.task)
         elif args.env == "robomme":
-            descriptions = _robomme_descriptions(args.task)
+            descriptions = _robomme_descriptions(args.task, task_ids=task_ids)
         else:
             print(
                 f"[extract_task_descriptions] No description extractor for env '{args.env}'.",

@@ -89,9 +89,9 @@ def test_robomme_features_map():
 
     cfg = RoboMMEEnv()
     assert cfg.features_map[ACTION] == ACTION
-    assert cfg.features_map["image"] == f"{OBS_IMAGES}.image"
-    assert cfg.features_map["wrist_image"] == f"{OBS_IMAGES}.wrist_image"
-    assert cfg.features_map[OBS_STATE] == OBS_STATE
+    assert cfg.features_map["pixels/image"] == f"{OBS_IMAGES}.image"
+    assert cfg.features_map["pixels/wrist_image"] == f"{OBS_IMAGES}.wrist_image"
+    assert cfg.features_map["agent_pos"] == OBS_STATE
 
 
 def test_robomme_features_action_dim_joint_angle():
@@ -103,15 +103,12 @@ def test_robomme_features_action_dim_joint_angle():
 
 
 def test_robomme_features_action_dim_ee_pose():
-    """`ee_pose` uses a 7-D action; the features dict still declares 8-D
-    (the joint_angle default). Switching to ee_pose requires the user to
-    override `features[ACTION]`. This test documents that.
-    """
+    """`ee_pose` uses a 7-D action; __post_init__ sets the correct shape."""
     from lerobot.envs.configs import RoboMMEEnv
     from lerobot.utils.constants import ACTION
 
     cfg = RoboMMEEnv(action_space="ee_pose")
-    assert cfg.features[ACTION].shape == (8,)
+    assert cfg.features[ACTION].shape == (7,)
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +118,7 @@ def test_robomme_features_action_dim_ee_pose():
 
 def test_convert_obs_list_format():
     """_convert_obs takes the last element from list-format obs fields and
-    emits the lerobot-canonical keys (image, wrist_image, state)."""
+    emits the lerobot-canonical keys (pixels/image, pixels/wrist_image, agent_pos)."""
     _install_robomme_stub()
     try:
         from lerobot.envs.robomme import RoboMMEGymEnv
@@ -141,11 +138,11 @@ def test_convert_obs_list_format():
         }
 
         result = env._convert_obs(obs_raw)
-        np.testing.assert_array_equal(result["image"], front)
-        np.testing.assert_array_equal(result["wrist_image"], wrist)
-        assert result["state"].shape == (8,)
-        np.testing.assert_array_almost_equal(result["state"][:7], joints)
-        assert result["state"][7] == gripper[0]
+        np.testing.assert_array_equal(result["pixels/image"], front)
+        np.testing.assert_array_equal(result["pixels/wrist_image"], wrist)
+        assert result["agent_pos"].shape == (8,)
+        np.testing.assert_array_almost_equal(result["agent_pos"][:7], joints)
+        assert result["agent_pos"][7] == gripper[0]
     finally:
         _uninstall_robomme_stub()
 
@@ -166,9 +163,9 @@ def test_convert_obs_array_format():
             "gripper_state_list": np.zeros(2, dtype=np.float32),
         }
         result = env._convert_obs(obs_raw)
-        assert result["image"].shape == (256, 256, 3)
-        assert result["wrist_image"].shape == (256, 256, 3)
-        assert result["state"].shape == (8,)
+        assert result["pixels/image"].shape == (256, 256, 3)
+        assert result["pixels/wrist_image"].shape == (256, 256, 3)
+        assert result["agent_pos"].shape == (8,)
     finally:
         _uninstall_robomme_stub()
 

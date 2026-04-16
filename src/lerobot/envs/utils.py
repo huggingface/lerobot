@@ -107,27 +107,6 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
     if "camera_obs" in observations:
         return_observations[f"{OBS_STR}.camera_obs"] = observations["camera_obs"]
 
-    # Handle flat image keys (e.g., RoboMME: "image", "wrist_image", "state")
-    for key in ("image", "wrist_image"):
-        if key in observations:
-            img = observations[key]
-            img_tensor = torch.from_numpy(img) if isinstance(img, np.ndarray) else img
-            if img_tensor.ndim == 3:
-                img_tensor = img_tensor.unsqueeze(0)
-            img_tensor = einops.rearrange(img_tensor, "b h w c -> b c h w").contiguous()
-            img_tensor = img_tensor.float() / 255 if img_tensor.dtype == torch.uint8 else img_tensor.float()
-            return_observations[f"{OBS_IMAGES}.{key}"] = img_tensor
-
-    if "state" in observations and OBS_STATE not in return_observations:
-        state = (
-            torch.from_numpy(observations["state"]).float()
-            if isinstance(observations["state"], np.ndarray)
-            else observations["state"].float()
-        )
-        if state.dim() == 1:
-            state = state.unsqueeze(0)
-        return_observations[OBS_STATE] = state
-
     return return_observations
 
 

@@ -595,22 +595,24 @@ class RoboMMEEnv(EnvConfig):
     action_space: str = "joint_angle"  # or "ee_pose" (7-D)
     dataset_split: str = "test"  # "train" | "val" | "test"
     task_ids: list[int] | None = None
-    features: dict[str, PolicyFeature] = field(
-        default_factory=lambda: {
-            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(8,)),
-            "image": PolicyFeature(type=FeatureType.VISUAL, shape=(256, 256, 3)),
-            "wrist_image": PolicyFeature(type=FeatureType.VISUAL, shape=(256, 256, 3)),
-            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(8,)),
-        }
-    )
+    features: dict[str, PolicyFeature] = field(default_factory=dict)
     features_map: dict[str, str] = field(
         default_factory=lambda: {
             ACTION: ACTION,
-            "image": f"{OBS_IMAGES}.image",
-            "wrist_image": f"{OBS_IMAGES}.wrist_image",
-            OBS_STATE: OBS_STATE,
+            "pixels/image": f"{OBS_IMAGES}.image",
+            "pixels/wrist_image": f"{OBS_IMAGES}.wrist_image",
+            "agent_pos": OBS_STATE,
         }
     )
+
+    def __post_init__(self):
+        action_dim = 8 if self.action_space == "joint_angle" else 7
+        self.features = {
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(action_dim,)),
+            "pixels/image": PolicyFeature(type=FeatureType.VISUAL, shape=(256, 256, 3)),
+            "pixels/wrist_image": PolicyFeature(type=FeatureType.VISUAL, shape=(256, 256, 3)),
+            "agent_pos": PolicyFeature(type=FeatureType.STATE, shape=(8,)),
+        }
 
     @property
     def gym_kwargs(self) -> dict:

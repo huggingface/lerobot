@@ -81,9 +81,9 @@ class RoboMMEGymEnv(gym.Env):
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(action_dim,), dtype=np.float32)
         self.observation_space = spaces.Dict(
             {
-                "image": spaces.Box(0, 255, shape=(256, 256, 3), dtype=np.uint8),
-                "wrist_image": spaces.Box(0, 255, shape=(256, 256, 3), dtype=np.uint8),
-                "state": spaces.Box(-np.inf, np.inf, shape=(8,), dtype=np.float32),
+                "pixels/image": spaces.Box(0, 255, shape=(256, 256, 3), dtype=np.uint8),
+                "pixels/wrist_image": spaces.Box(0, 255, shape=(256, 256, 3), dtype=np.uint8),
+                "agent_pos": spaces.Box(-np.inf, np.inf, shape=(8,), dtype=np.float32),
             }
         )
 
@@ -146,9 +146,9 @@ class RoboMMEGymEnv(gym.Env):
         state = np.concatenate([joint, gripper])
 
         return {
-            "image": front_rgb,
-            "wrist_image": wrist_rgb,
-            "state": state,
+            "pixels/image": front_rgb,
+            "pixels/wrist_image": wrist_rgb,
+            "agent_pos": state,
         }
 
     def _convert_info(self, info: dict) -> dict:

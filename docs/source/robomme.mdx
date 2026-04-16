@@ -1,4 +1,4 @@
-# RoboMME Benchmark
+# RoboMME
 
 [RoboMME](https://robomme.github.io) is a memory-augmented manipulation benchmark built on ManiSkill (SAPIEN). It evaluates a robot's ability to retain and use information across an episode — counting, object permanence, reference, and imitation.
 
@@ -6,6 +6,8 @@
 - **1,600 training demos** (100 per task, 50 val, 50 test)
 - **Dataset**: [`lerobot/robomme`](https://huggingface.co/datasets/lerobot/robomme) — LeRobot v3.0, 768K frames at 10 fps
 - **Simulator**: ManiSkill / SAPIEN, Panda arm, Linux only
+
+![RoboMME benchmark tasks overview](https://raw.githubusercontent.com/RoboMME/robomme_benchmark/main/assets/teaser.png)
 
 ## Tasks
 
@@ -44,12 +46,30 @@ The `Dockerfile.eval-robomme` overrides `gymnasium==0.29.1` and `numpy==1.26.4` 
 
 ## Running Evaluation
 
+### Default (single task, single episode)
+
 ```bash
 lerobot-eval \
     --policy.path=<your_policy_repo> \
     --env.type=robomme \
     --env.task=PickXtimes \
     --env.dataset_split=test \
+    --env.task_ids=[0] \
+    --eval.batch_size=1 \
+    --eval.n_episodes=1
+```
+
+### Multi-task evaluation
+
+Evaluate multiple tasks in one run by comma-separating task names. Use `task_ids` to control which episodes are evaluated per task. Recommended: 50 episodes per task for the test split.
+
+```bash
+lerobot-eval \
+    --policy.path=<your_policy_repo> \
+    --env.type=robomme \
+    --env.task=PickXtimes,BinFill,StopCube,MoveCube,InsertPeg \
+    --env.dataset_split=test \
+    --env.task_ids=[0,1,2,3,4,5,6,7,8,9] \
     --eval.batch_size=1 \
     --eval.n_episodes=50
 ```
@@ -58,7 +78,7 @@ lerobot-eval \
 
 | Option               | Default       | Description                                        |
 | -------------------- | ------------- | -------------------------------------------------- |
-| `env.task`           | `PickXtimes`  | Any of the 16 task names above                     |
+| `env.task`           | `PickXtimes`  | Any of the 16 task names above (comma-separated)   |
 | `env.dataset_split`  | `test`        | `train`, `val`, or `test`                          |
 | `env.action_space`   | `joint_angle` | `joint_angle` (8-D) or `ee_pose` (7-D)             |
 | `env.episode_length` | `300`         | Max steps per episode                              |
