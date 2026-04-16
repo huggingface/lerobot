@@ -30,6 +30,7 @@ Safety Features:
 """
 
 import time
+import threading
 import numpy as np
 import torch
 import pygame
@@ -37,6 +38,143 @@ from pathlib import Path
 
 # Import LeRobot components
 from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
+
+try:
+    from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
+    LEROBOT_CAMERA_AVAILABLE = True
+except Exception:
+    LEROBOT_CAMERA_AVAILABLE = False
+
+try:
+    import cv2
+    CV2_AVAILABLE = True
+except ImportError:
+    CV2_AVAILABLE = False
+
+
+# ──────────────────────────────────────────────────────────────
+# Camera helpers (mirrors server CameraBuffer)
+# ──────────────────────────────────────────────────────────────
+
+def connect_cameras(camera_spec: str) -> dict:
+    """
+    Parse camera spec and connect each OpenCVCamera.
+    Accepts the same format as the server's --cameras arg:
+        "{ front: {type: opencv, index_or_path: /dev/video0, width: 640, height: 480, fps: 30},
+           base:  {type: opencv, index_or_path: /dev/video2} }"
+    Also accepts simple shorthand: "front:/dev/video0,base:/dev/video2"
+    """
+    cameras = {}
+    if not camera_spec or not LEROBOT_CAMERA_AVAILABLE:
+        if not LEROBOT_CAMERA_AVAILABLE:
+            print("  ⚠️  lerobot cameras not available — skipping camera init")
+        return cameras
+
+    # Detect format: lerobot-style dict vs simple shorthand
+    spec = camera_spec.strip()
+    if spec.startswith("{"):
+        # lerobot-style: "{ name: {index_or_path: /dev/videoN, ...}, ... }"
+        entries = {}
+        spec_inner = spec.strip("{}")
+        depth, current, blocks = 0, "", []
+        for ch in spec_inner:
+            if ch == "{": depth += 1
+            elif ch == "}": depth -= 1
+            if ch == "," and depth == 0:
+                blocks.append(current.strip()); current = ""
+            else:
+                current += ch
+        if current.strip():
+            blocks.append(current.strip())
+        for block in blocks:
+            colon = block.index(":")
+            name = block[:colon].strip().strip("\"'")
+            inner = block[colon+1:].strip().strip("{}")
+            cfg = {}
+            pairs, depth2, cur2 = [], 0, ""
+            for ch in inner:
+                if ch == "{": depth2 += 1
+                elif ch == "}": depth2 -= 1
+                if ch == "," and depth2 == 0:
+                    pairs.append(cur2.strip()); cur2 = ""
+                else:
+                    cur2 += ch
+            if cur2.strip():
+                pairs.append(cur2.strip())
+            for pair in pairs:
+                if ":" not in pair: continue
+                k, v = pair.split(":", 1)
+                cfg[k.strip().strip("\"'")] = v.strip().strip("\"'")
+            entries[name] = cfg
+    else:
+        # Simple shorthand: "front:/dev/video0,base:/dev/video2"
+        entries = {}
+        for part in spec.split(","):
+            part = part.strip()
+            if ":" not in part: continue
+            name, path = part.split(":", 1)
+            entries[name.strip()] = {"index_or_path": path.strip()}
+
+    for name, cfg_dict in entries.items():
+        try:
+            raw_path = cfg_dict.get("index_or_path", "0")
+            if str(raw_path).lstrip("-").isdigit():
+                index = int(raw_path)
+            elif str(raw_path).startswith("/dev/video"):
+                index = int(raw_path.replace("/dev/video", ""))
+            else:
+                index = raw_path
+            kwargs = {"index_or_path": index}
+            if "width"  in cfg_dict: kwargs["width"]  = int(cfg_dict["width"])
+            if "height" in cfg_dict: kwargs["height"] = int(cfg_dict["height"])
+            if "fps"    in cfg_dict: kwargs["fps"]    = int(cfg_dict["fps"])
+            cam = OpenCVCamera(OpenCVCameraConfig(**kwargs))
+            cam.connect()
+            cameras[name] = cam
+            print(f"  ✓ Camera '{name}' connected ({raw_path})")
+        except Exception as e:
+            print(f"  ⚠️  Camera '{name}' failed: {e}")
+    return cameras
+
+
+class CameraBuffer:
+    """
+    Runs each camera in its own background thread, always holding the
+    latest frame. Identical to the server's CameraBuffer.
+    """
+
+    def __init__(self, cameras: dict):
+        self._cameras  = cameras
+        self._frames   = {n: None for n in cameras}
+        self._lock     = threading.Lock()
+        self._stop_evt = threading.Event()
+        self._threads  = []
+
+    def start(self) -> None:
+        for name, cam in self._cameras.items():
+            t = threading.Thread(
+                target=self._capture_loop, args=(name, cam),
+                daemon=True, name=f"cam-{name}"
+            )
+            t.start()
+            self._threads.append(t)
+
+    def _capture_loop(self, name: str, cam) -> None:
+        while not self._stop_evt.is_set():
+            try:
+                img = cam.read()
+                if img is not None:
+                    with self._lock:
+                        self._frames[name] = img
+            except Exception:
+                pass
+
+    def get_latest(self) -> dict:
+        with self._lock:
+            return dict(self._frames)
+
+    def stop(self) -> None:
+        self._stop_evt.set()
 
 
 class SO101GamepadController:
@@ -48,6 +186,9 @@ class SO101GamepadController:
         robot_id="so101_follower",
         max_speed=2.0,  # Maximum change per control loop (in degrees for joints)
         control_frequency=30,  # Hz
+        cameras="",     # Camera spec string, e.g. "front:/dev/video0,base:/dev/video2"
+        show_images=False,
+        image_hz=5,
     ):
         self.robot_port = robot_port
         self.robot_id = robot_id
@@ -103,6 +244,23 @@ class SO101GamepadController:
         self._prev_b  = False
         self._prev_x  = False
         self._prev_y  = False
+
+        # ── Camera display ─────────────────────────────────────
+        self._show_images = show_images and CV2_AVAILABLE
+        if show_images and not CV2_AVAILABLE:
+            print("  ⚠️  --show-images requested but opencv-python is not installed — skipping")
+        self._cam_buffer  = None
+        self._img_interval = max(1, int(1.0 / self.control_dt) // max(1, image_hz))
+        self._img_frame    = 0
+        if cameras:
+            print("\n  Connecting cameras...")
+            cam_dict = connect_cameras(cameras)
+            if cam_dict:
+                self._cam_buffer = CameraBuffer(cam_dict)
+                self._cam_buffer.start()
+                print(f"  ✓ Camera buffer started ({len(cam_dict)} camera(s))")
+            else:
+                print("  ⚠️  No cameras connected")
         
         # Button/axis indices vary by PLATFORM (OS), not controller model!
         # The same controller has different mappings on Windows vs Linux
@@ -412,7 +570,21 @@ class SO101GamepadController:
 
         # ── Idle — nothing to do ───────────────────────────────────
         return np.zeros(self.num_joints)
-    
+
+    def _maybe_show_images(self) -> None:
+        """Throttled camera display — reads from local CameraBuffer and shows in cv2 windows."""
+        if not self._show_images or self._cam_buffer is None:
+            return
+        self._img_frame += 1
+        if self._img_frame % self._img_interval != 0:
+            return
+        frames = self._cam_buffer.get_latest()
+        for cam_name, img in frames.items():
+            if img is not None and isinstance(img, np.ndarray) and img.ndim == 3:
+                # OpenCVCamera returns RGB; cv2.imshow expects BGR
+                cv2.imshow(f"cam: {cam_name}", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+        cv2.waitKey(1)
+
     def run(self):
         """Main control loop"""
         print("\n" + "="*60)
@@ -480,6 +652,7 @@ class SO101GamepadController:
                             print(f"[{status}] Position: {np.round(self.current_position, 2)}")
                 
                 # Maintain control frequency
+                self._maybe_show_images()
                 elapsed = time.time() - loop_start
                 sleep_time = max(0, self.control_dt - elapsed)
                 time.sleep(sleep_time)
@@ -493,6 +666,10 @@ class SO101GamepadController:
     
     def cleanup(self):
         """Clean up resources"""
+        if self._cam_buffer is not None:
+            self._cam_buffer.stop()
+        if CV2_AVAILABLE:
+            cv2.destroyAllWindows()
         print("Disconnecting robot...")
         self.robot.disconnect()
         pygame.quit()
@@ -530,7 +707,27 @@ def main():
         default=30,
         help="Control frequency in Hz (default: 30)",
     )
-    
+    parser.add_argument(
+        "--cameras",
+        type=str,
+        default="",
+        help=(
+            "Camera spec. Simple: 'front:/dev/video0,base:/dev/video2'  "
+            "or lerobot-style: '{ front: {type: opencv, index_or_path: /dev/video0, width: 640, height: 480, fps: 30} }'"
+        ),
+    )
+    parser.add_argument(
+        "--show-images",
+        action="store_true",
+        help="Display camera frames in cv2 windows (requires opencv-python)",
+    )
+    parser.add_argument(
+        "--image-hz",
+        type=int,
+        default=5,
+        help="Camera display refresh rate in Hz (default: 5)",
+    )
+
     args = parser.parse_args()
     
     calib_path = Path.home() / ".cache" / "huggingface" / "lerobot" / "calibration" / "robots" / "so_follower" / f"{args.robot_id}.json"
@@ -549,6 +746,9 @@ def main():
         robot_id=args.robot_id,
         max_speed=args.max_speed,
         control_frequency=args.frequency,
+        cameras=args.cameras,
+        show_images=args.show_images,
+        image_hz=args.image_hz,
     )
     
     controller.run()

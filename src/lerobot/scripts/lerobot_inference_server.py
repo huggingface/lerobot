@@ -191,8 +191,8 @@ JOINT_KEYS = [
     "gripper.pos",
 ]
 
-PRESET_SPEED_DEG_PER_SEC = 50.0
-PRESET_STEP_HZ           = 50
+PRESET_SPEED_DEG_PER_SEC = 75.0
+PRESET_STEP_HZ           = 75.0
 
 
 def send_action_preset(robot_arm, action_dict: dict) -> float:
