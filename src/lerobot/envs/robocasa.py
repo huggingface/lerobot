@@ -182,13 +182,15 @@ class RoboCasaEnv(gym.Env):
             return
         from robocasa.wrappers.gym_wrapper import RoboCasaGymEnv
 
+        # RoboCasaGymEnv has a broken default split="test" (invalid for create_env
+        # which only accepts None/"all"/"pretrain"/"target"). Always pass a valid
+        # value so we don't hit that default.
         kwargs: dict[str, Any] = {
             "env_name": self.task,
             "camera_widths": self.observation_width,
             "camera_heights": self.observation_height,
+            "split": self.split if self.split is not None else "all",
         }
-        if self.split is not None:
-            kwargs["split"] = self.split
 
         self._env = RoboCasaGymEnv(**kwargs)
 
