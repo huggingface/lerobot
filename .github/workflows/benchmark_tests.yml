@@ -368,6 +368,8 @@ jobs:
                 --policy.path=lerobot/smolvla_robocerebra \
                 --env.type=libero \
                 --env.task=libero_10 \
+                --env.fps=20 \
+                --env.obs_type=pixels_agent_pos \
                 --env.observation_height=256 \
                 --env.observation_width=256 \
                 '--env.camera_name_mapping={\"agentview_image\": \"image\", \"robot0_eye_in_hand_image\": \"wrist_image\"}' \
