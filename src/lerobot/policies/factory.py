@@ -40,6 +40,7 @@ from lerobot.policies.sac.reward_model.configuration_classifier import RewardCla
 from lerobot.policies.sarm.configuration_sarm import SARMConfig
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
+from lerobot.policies.twinrl.configuration_twinrl import TwinRLConfig
 from lerobot.policies.utils import validate_visual_features_consistency
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.policies.wall_x.configuration_wall_x import WallXConfig
@@ -134,6 +135,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.sac.modeling_sac import SACPolicy
 
         return SACPolicy
+    elif name == "twinrl":
+        from lerobot.policies.twinrl.modeling_twinrl import TwinRLPolicy
+
+        return TwinRLPolicy
     elif name == "reward_classifier":
         from lerobot.policies.sac.reward_model.modeling_classifier import Classifier
 
@@ -200,6 +205,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return PI05Config(**kwargs)
     elif policy_type == "sac":
         return SACConfig(**kwargs)
+    elif policy_type == "twinrl":
+        return TwinRLConfig(**kwargs)
     elif policy_type == "smolvla":
         return SmolVLAConfig(**kwargs)
     elif policy_type == "reward_classifier":
@@ -372,7 +379,7 @@ def make_pre_post_processors(
             dataset_stats=kwargs.get("dataset_stats"),
         )
 
-    elif isinstance(policy_cfg, SACConfig):
+    elif isinstance(policy_cfg, (SACConfig, TwinRLConfig)):
         from lerobot.policies.sac.processor_sac import make_sac_pre_post_processors
 
         processors = make_sac_pre_post_processors(

@@ -38,6 +38,60 @@ class BatchTransition(TypedDict):
     complementary_info: dict[str, torch.Tensor | float | int] | None = None
 
 
+def compute_mc_returns(rewards: list[float], dones: list[bool], gamma: float = 0.95) -> list[float]:
+    """Compute discounted Monte Carlo returns for a sequence of (reward, done) pairs.
+
+    For each timestep t, the MC return is:
+        G_t = r_t + γ * r_{t+1} + γ² * r_{t+2} + ... (until episode end)
+
+    Ported from TwinRL's data_utils.calc_return_to_go.
+
+    Args:
+        rewards: List of rewards, one per timestep.
+        dones: List of done flags aligned with rewards.
+        gamma: Discount factor.
+
+    Returns:
+        List of MC returns, same length as rewards.
+    """
+    n = len(rewards)
+    mc_returns = [0.0] * n
+    running = 0.0
+    for t in reversed(range(n)):
+        if dones[t]:
+            running = 0.0
+        running = rewards[t] + gamma * running
+        mc_returns[t] = running
+    return mc_returns
+
+
+def add_mc_returns_to_transitions(
+    transitions: list[Transition],
+    gamma: float = 0.95,
+) -> list[Transition]:
+    """Tag each transition with its discounted MC return in complementary_info["mc_returns"].
+
+    Ported from TwinRL's data_utils.add_mc_returns_to_trajectory.
+
+    Args:
+        transitions: A list of Transition dicts (can span multiple episodes).
+        gamma: Discount factor.
+
+    Returns:
+        The same list with complementary_info["mc_returns"] set on every transition.
+    """
+    rewards = [float(t["reward"]) for t in transitions]
+    dones = [bool(t["done"]) for t in transitions]
+    mc_returns = compute_mc_returns(rewards, dones, gamma)
+
+    for t, mc in zip(transitions, mc_returns, strict=True):
+        if t.get("complementary_info") is None:
+            t["complementary_info"] = {}
+        t["complementary_info"]["mc_returns"] = torch.tensor(mc, dtype=torch.float32)
+
+    return transitions
+
+
 def random_crop_vectorized(images: torch.Tensor, output_size: tuple) -> torch.Tensor:
     """
     Perform a per-image random crop over a batch of images in a vectorized way.
@@ -228,6 +282,36 @@ class ReplayBuffer:
 
         self.position = (self.position + 1) % self.capacity
         self.size = min(self.size + 1, self.capacity)
+
+    def seed_from_transitions(
+        self,
+        transitions: list[Transition],
+        gamma: float = 0.95,
+        add_mc_returns: bool = True,
+    ) -> None:
+        """Seed the buffer with pre-collected transitions (e.g. from a digital twin rollout).
+
+        Used in TwinRL Step 3 to initialise D_real with D_twin before online RL.
+
+        Args:
+            transitions: List of Transition dicts to add to the buffer.
+            gamma: Discount factor for MC return computation (used only when add_mc_returns=True).
+            add_mc_returns: If True, compute and attach MC returns to each transition's
+                complementary_info["mc_returns"] before adding. This is required for Cal-QL.
+        """
+        if add_mc_returns:
+            transitions = add_mc_returns_to_transitions(transitions, gamma=gamma)
+
+        for t in transitions:
+            self.add(
+                state=t["state"],
+                action=t["action"],
+                reward=t["reward"],
+                next_state=t["next_state"],
+                done=t["done"],
+                truncated=t.get("truncated", False),
+                complementary_info=t.get("complementary_info"),
+            )
 
     def sample(self, batch_size: int) -> BatchTransition:
         """Sample a random batch of transitions and collate them into batched tensors."""
