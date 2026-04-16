@@ -102,6 +102,7 @@ class RoboRewardModel(PreTrainedRewardModel):
         self.vlm = Qwen3VLForConditionalGeneration.from_pretrained(
             config.model_name,
             torch_dtype="auto",
+            device_map=config.device,
         )
         self.vlm_processor = AutoProcessor.from_pretrained(config.model_name)
 
@@ -204,32 +205,47 @@ class RoboRewardModel(PreTrainedRewardModel):
         task_list = _decode_tasks(tasks, batch_size)
 
         vlm_device = torch.device(self.config.device)
-        rewards: list[float] = []
-
+        all_messages: list[list[dict[str, Any]]] = []
         for i in range(batch_size):
             frames = [self._tensor_to_pil(images[i, t]) for t in range(images.shape[1])]
-            messages = self._build_messages(frames, task_list[i])
+            all_messages.append(self._build_messages(frames, task_list[i]))
 
-            text = self.vlm_processor.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
-            )
-            image_inputs, video_inputs, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
-            inputs = self.vlm_processor(
-                text=[text],
-                images=image_inputs,
-                videos=video_inputs,
-                return_tensors="pt",
-                **video_kwargs,
-            )
-            inputs = {k: v.to(vlm_device) for k, v in inputs.items()}
+        text = self.vlm_processor.apply_chat_template(
+            all_messages, tokenize=False, add_generation_prompt=True
+        )
+        image_inputs, video_inputs, video_kwargs = process_vision_info(
+            all_messages,
+            image_patch_size=16,
+            return_video_kwargs=True,
+            return_video_metadata=True,
+        )
+        # qwen_vl_utils returns each video as (video, metadata) when return_video_metadata=True.
+        if video_inputs is not None:
+            video_inputs, video_metadatas = zip(*video_inputs, strict=True)
+            video_inputs, video_metadatas = list(video_inputs), list(video_metadatas)
+        else:
+            video_metadatas = None
 
-            output_ids = self.vlm.generate(**inputs, max_new_tokens=self.config.max_new_tokens)
-            generated_ids = output_ids[0][inputs["input_ids"].shape[1] :]
-            decoded = self.vlm_processor.decode(generated_ids, skip_special_tokens=True)
+        inputs = self.vlm_processor(
+            text=text,
+            images=image_inputs,
+            videos=video_inputs,
+            video_metadata=video_metadatas,
+            return_tensors="pt",
+            do_resize=False,
+            **video_kwargs,
+        )
+        inputs = inputs.to(vlm_device)
 
-            score = self._parse_score(decoded)
-            rewards.append(self.config.score_to_reward.get(score, 0.0))
+        output_ids = self.vlm.generate(**inputs, max_new_tokens=self.config.max_new_tokens)
+        generated_ids = [
+            out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs["input_ids"], output_ids, strict=False)
+        ]
+        decoded_texts = self.vlm_processor.batch_decode(generated_ids, skip_special_tokens=True)
 
+        rewards = [
+            self.config.score_to_reward.get(self._parse_score(decoded), 0.0) for decoded in decoded_texts
+        ]
         return torch.tensor(rewards, dtype=torch.float32, device=images.device)
 
     def reset(self) -> None:

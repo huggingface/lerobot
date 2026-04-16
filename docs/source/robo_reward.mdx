@@ -99,10 +99,52 @@ reward_model = make_reward_model(cfg)
 rewards = reward_model.compute_reward(obs_batch)
 ```
 
+## Example Scripts
+
+### Score a dataset
+
+Load a LeRobot dataset, sample evenly-spaced frames from one episode, and print the
+RoboReward score for each frame:
+
+```python
+import torch
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.rewards.robo_reward.configuration_robo_reward import RoboRewardConfig
+from lerobot.rewards.robo_reward.modeling_robo_reward import RoboRewardModel
+
+IMAGE_KEY = "observation.images.top"
+TASK = "insert the peg into the socket"
+DEVICE = "cuda"
+NUM_FRAMES = 8
+
+# --- load dataset and pick evenly-spaced frames from episode 0 ---
+dataset = LeRobotDataset("lerobot/aloha_sim_insertion_human")
+ep_col = dataset.hf_dataset["episode_index"]
+indices = [i for i, ep in enumerate(ep_col) if ep == 0]
+step = max(1, len(indices) // NUM_FRAMES)
+indices = indices[::step][:NUM_FRAMES]
+images = torch.stack([dataset[i][IMAGE_KEY] for i in indices])  # (N, C, H, W)
+tasks = [TASK] * len(indices)
+
+# --- load model ---
+config = RoboRewardConfig(model_name="teetone/RoboReward-8B", device=DEVICE, image_key=IMAGE_KEY)
+model = RoboRewardModel(config)
+model.eval()
+
+# --- score ---
+batch = {IMAGE_KEY: images.to(DEVICE), config.task_key: tasks}
+with torch.no_grad():
+    rewards = model.compute_reward(batch)  # (N,)
+
+for frame_idx, reward in zip(indices, rewards.tolist()):
+    print(f"frame {frame_idx:>6}  reward {reward:.3f}")
+print(f"mean {rewards.mean():.3f}  max {rewards.max():.3f}")
+```
+
 ## Notes
 
 - **Inference only**: The VLM backbone is frozen. `forward()` raises `NotImplementedError`.
   Fine-tuning support is planned as future work.
-- **Throughput**: Reward computation runs sequentially per batch item (one `generate()` call each).
-  For high-throughput RL, consider computing rewards asynchronously or at episode end rather than
-  every step.
+- **Throughput**: Reward computation is batched within `compute_reward()` (single `generate()` for the
+  input batch), but VLM inference is still heavy. For high-throughput RL, consider computing rewards
+  asynchronously or at episode end rather than every step.
