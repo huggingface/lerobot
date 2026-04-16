@@ -39,9 +39,8 @@ The snippet below provides a simplified pseudo-example of how RTC operates with 
 
 ```python
 from lerobot.policies.pi0 import PI0Policy, PI0Config
-from lerobot.configs.types import RTCAttentionSchedule
-from lerobot.policies.rtc.configuration_rtc import RTCConfig
-from lerobot.policies.rtc.action_queue import ActionQueue
+from lerobot.configs import RTCAttentionSchedule
+from lerobot.policies.rtc import RTCConfig, ActionQueue
 
 # Load Pi0 with RTC enabled
 policy_cfg = PI0Config()
