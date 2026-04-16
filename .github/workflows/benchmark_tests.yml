@@ -365,7 +365,7 @@ jobs:
               hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
               lerobot-eval \
                 --policy.path=lerobot/smolvla_robocerebra \
-                --env.type=libero \
+                --env.type=robocerebra \
                 --env.task=libero_10 \
                 --eval.batch_size=1 \
                 --eval.n_episodes=1 \
