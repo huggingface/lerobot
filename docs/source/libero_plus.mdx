@@ -2,9 +2,11 @@
 
 LIBERO-plus is a **robustness benchmark** for Vision-Language-Action (VLA) models built on top of [LIBERO](./libero). It systematically stress-tests policies by applying **seven independent perturbation dimensions** to the original LIBERO task set, exposing failure modes that standard benchmarks miss.
 
-- Paper: [LIBERO-plus: A Robustness Benchmark for VLA Models](https://github.com/sylvestf/LIBERO-plus)
+- Paper: [In-depth Robustness Analysis of Vision-Language-Action Models](https://arxiv.org/abs/2510.13626)
 - GitHub: [sylvestf/LIBERO-plus](https://github.com/sylvestf/LIBERO-plus)
 - Dataset: [lerobot/libero_plus](https://huggingface.co/datasets/lerobot/libero_plus)
+
+![An overview of the LIBERO-plus benchmark perturbation dimensions](https://github.com/sylvestf/LIBERO-plus/raw/main/media/overview.png)
 
 ## Perturbation dimensions
 
@@ -24,13 +26,20 @@ LIBERO-plus creates ~10 000 task variants by perturbing each original LIBERO tas
 
 LIBERO-plus covers the same five suites as LIBERO:
 
-| Suite          | CLI name         | Tasks | Max steps |
-| -------------- | ---------------- | ----- | --------- |
-| LIBERO-Spatial | `libero_spatial` | 10    | 280       |
-| LIBERO-Object  | `libero_object`  | 10    | 280       |
-| LIBERO-Goal    | `libero_goal`    | 10    | 300       |
-| LIBERO-90      | `libero_90`      | 90    | 400       |
-| LIBERO-Long    | `libero_10`      | 10    | 520       |
+| Suite          | CLI name         | Tasks | Max steps | Description                                        |
+| -------------- | ---------------- | ----- | --------- | -------------------------------------------------- |
+| LIBERO-Spatial | `libero_spatial` | 10    | 280       | Tasks requiring reasoning about spatial relations  |
+| LIBERO-Object  | `libero_object`  | 10    | 280       | Tasks centered on manipulating different objects   |
+| LIBERO-Goal    | `libero_goal`    | 10    | 300       | Goal-conditioned tasks with changing targets       |
+| LIBERO-90      | `libero_90`      | 90    | 400       | Short-horizon tasks from the LIBERO-100 collection |
+| LIBERO-Long    | `libero_10`      | 10    | 520       | Long-horizon tasks from the LIBERO-100 collection  |
+
+<Tip warning={true}>
+  Installing LIBERO-plus **replaces** vanilla LIBERO — it uninstalls `hf-libero`
+  so that `import libero` resolves to the LIBERO-plus fork. You cannot have both
+  installed at the same time. To switch back to vanilla LIBERO, uninstall the
+  fork and reinstall with `pip install -e ".[libero]"`.
+</Tip>
 
 ## Installation
 
@@ -72,72 +81,78 @@ python -c "import libero; print(libero.__file__)"
 
 ## Evaluation
 
-### Minimal smoke-test (1 episode, no async)
+### Default evaluation (recommended)
+
+Evaluate across the four standard suites (10 episodes per task):
 
 ```bash
 lerobot-eval \
-    --policy.path=pepijn223/smolvla_libero_plus \
-    --env.type=libero_plus \
-    --env.task=libero_spatial \
-    --eval.batch_size=1 \
-    --eval.n_episodes=1 \
-    --eval.use_async_envs=false \
-    --policy.device=cuda \
-    --env.camera_name_mapping='{"agentview_image": "camera1", "robot0_eye_in_hand_image": "camera2"}' \
-    --policy.empty_cameras=1
+  --policy.path="your-policy-id" \
+  --env.type=libero_plus \
+  --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --env.max_parallel_tasks=1
 ```
 
-### Full robustness benchmark (recommended)
+### Single-suite evaluation
+
+Evaluate on one LIBERO-plus suite:
 
 ```bash
 lerobot-eval \
-    --policy.path=<your-policy-id> \
-    --env.type=libero_plus \
-    --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
-    --eval.batch_size=1 \
-    --eval.n_episodes=10 \
-    --env.max_parallel_tasks=1
+  --policy.path="your-policy-id" \
+  --env.type=libero_plus \
+  --env.task=libero_spatial \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10
 ```
 
-### Key CLI flags
+- `--env.task` picks the suite (`libero_spatial`, `libero_object`, etc.).
+- `--env.task_ids` restricts to specific task indices (`[0]`, `[1,2,3]`, etc.). Omit to run all tasks in the suite.
+- `--eval.batch_size` controls how many environments run in parallel.
+- `--eval.n_episodes` sets how many episodes to run per task.
 
-| Flag                        | Description                                                      |
-| --------------------------- | ---------------------------------------------------------------- |
-| `--env.type=libero_plus`    | Selects LIBERO-plus environment (same gym interface as `libero`) |
-| `--env.task`                | Suite name(s), comma-separated                                   |
-| `--env.task_ids`            | Restrict to specific task indices, e.g. `[0,1,2]`                |
-| `--env.camera_name_mapping` | JSON dict remapping raw camera names to policy input keys        |
-| `--env.control_mode`        | `relative` (default) or `absolute`                               |
-| `--eval.use_async_envs`     | `true` for parallel rollouts (default), `false` for debugging    |
-| `--policy.empty_cameras`    | Number of camera slots without observations (policy-specific)    |
+### Multi-suite evaluation
 
-### Camera name mapping
-
-By default, LIBERO cameras are mapped as:
-
-| Raw camera name            | LeRobot key                 |
-| -------------------------- | --------------------------- |
-| `agentview_image`          | `observation.images.image`  |
-| `robot0_eye_in_hand_image` | `observation.images.image2` |
-
-If your policy was trained with different key names, pass a JSON remapping:
+Benchmark a policy across multiple suites at once by passing a comma-separated list:
 
 ```bash
---env.camera_name_mapping='{"agentview_image": "camera1", "robot0_eye_in_hand_image": "camera2"}'
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=libero_plus \
+  --env.task=libero_spatial,libero_object \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10
 ```
 
-## Policy inputs and outputs
+### Control mode
 
-**Observations (after `LiberoProcessorStep`):**
+LIBERO-plus supports two control modes — `relative` (default) and `absolute`. Different VLA checkpoints are trained with different action parameterizations, so make sure the mode matches your policy:
 
-- `observation.state` — 8-dim proprioceptive vector: `[eef_pos(3), eef_axis_angle(3), gripper_qpos(2)]`
-- `observation.images.<name>` — camera image(s), flipped 180° to match VLA convention
+```bash
+--env.control_mode=relative   # or "absolute"
+```
+
+### Policy inputs and outputs
+
+**Observations:**
+
+- `observation.state` — 8-dim proprioceptive features (eef position, axis-angle orientation, gripper qpos)
+- `observation.images.image` — main camera view (`agentview_image`), HWC uint8
+- `observation.images.image2` — wrist camera view (`robot0_eye_in_hand_image`), HWC uint8
 
 **Actions:**
 
-- `Box(-1, 1, shape=(7,))` — 6D end-effector delta + 1D gripper
+- Continuous control in `Box(-1, 1, shape=(7,))` — 6D end-effector delta + 1D gripper
 
-## Dataset
+### Recommended evaluation episodes
+
+For reproducible benchmarking, use **10 episodes per task** across all four standard suites (Spatial, Object, Goal, Long). This gives 400 total episodes and matches the protocol used for published results.
+
+## Training
+
+### Dataset
 
 A LeRobot-format training dataset for LIBERO-plus is available at:
 
@@ -169,6 +184,5 @@ LIBERO-plus is a drop-in extension of LIBERO:
 - Same camera names and observation/action format
 - Same task suite names
 - Installs under the same `libero` Python package name (different GitHub repo)
-- The only code difference in LeRobot is a try/except import fallback in `libero.py` that handles the slightly different package nesting in LIBERO-plus
 
 To use the original LIBERO benchmark, see [LIBERO](./libero) and use `--env.type=libero`.

@@ -44,7 +44,7 @@ RUN uv pip install --no-cache \
 ENV LIBERO_PLUS_ROOT=/home/user_lerobot/libero-plus/libero/libero
 RUN git clone --depth=1 https://github.com/sylvestf/LIBERO-plus.git /home/user_lerobot/libero-plus \
     && cd /home/user_lerobot/libero-plus && uv pip install --no-cache --no-deps -e "." \
-    && uv pip uninstall hf-libero 2>/dev/null || true
+    && (uv pip uninstall hf-libero 2>/dev/null || true)
 ENV PYTHONPATH="/home/user_lerobot/libero-plus:${PYTHONPATH}"
 
 # Perturbation textures/scenes: bddl_base_domain.py resolves XMLs via
@@ -57,8 +57,8 @@ from huggingface_hub import hf_hub_download; \
 hf_hub_download(repo_id='Sylvest/LIBERO-plus', repo_type='dataset', \
                 filename='assets.zip', local_dir='/tmp/libero-plus-dl')" \
     && unzip -q /tmp/libero-plus-dl/assets.zip -d /tmp/libero-plus-dl/extract \
-    && mv /tmp/libero-plus-dl/extract/inspire/hdd/project/embodied-multimodality/public/syfei/libero_new/release/dataset/LIBERO-plus-0/assets \
-          ${LIBERO_PLUS_ROOT}/assets \
+    && ASSETS_DIR=$(find /tmp/libero-plus-dl/extract -type d -name assets | head -1) \
+    && mv "${ASSETS_DIR}" ${LIBERO_PLUS_ROOT}/assets \
     && rm -rf /tmp/libero-plus-dl
 
 # Point ~/.libero/config.yaml at the clone so LIBERO-plus's imports are

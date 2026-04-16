@@ -331,6 +331,7 @@ class LiberoEnv(EnvConfig):
     camera_name_mapping: dict[str, str] | None = None
     observation_height: int = 360
     observation_width: int = 360
+    is_libero_plus: bool = False
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
             ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
@@ -432,6 +433,7 @@ class LiberoEnv(EnvConfig):
             control_mode=self.control_mode,
             episode_length=self.episode_length,
             camera_name_mapping=self.camera_name_mapping,
+            is_libero_plus=self.is_libero_plus,
         )
 
     def get_env_processors(self):
@@ -597,3 +599,4 @@ class LiberoPlusEnv(LiberoEnv):
     """
 
     task: str = "libero_spatial"
+    is_libero_plus: bool = True

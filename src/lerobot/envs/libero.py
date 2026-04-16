@@ -77,18 +77,24 @@ def _select_task_ids(total_tasks: int, task_ids: Iterable[int] | None) -> list[i
 _LIBERO_PERTURBATION_SUFFIX_RE = re.compile(r"_(?:language|view|light)_[^.]*|_(?:table|tb)_\d+")
 
 
-def get_task_init_states(task_suite: Any, i: int) -> np.ndarray:
+def get_task_init_states(task_suite: Any, i: int, is_libero_plus: bool = False) -> np.ndarray:
     task = task_suite.tasks[i]
     filename = Path(task.init_states_file)
     root = Path(get_libero_path("init_states"))
 
-    # `_add_` / `_level` variants store extra-object layouts under libero_newobj/
-    # as a flat array that must be reshaped to (1, -1).
+    if not is_libero_plus:
+        init_states_path = root / task.problem_folder / filename.name
+        return torch.load(init_states_path, weights_only=False)  # nosec B614
+
+    # LIBERO-plus: `_add_` / `_level` variants store extra-object layouts under
+    # libero_newobj/ as a flat array that must be reshaped to (1, -1).
     if "_add_" in filename.name or "_level" in filename.name:
         init_states_path = root / "libero_newobj" / task.problem_folder / filename.name
         init_states = torch.load(init_states_path, weights_only=False)  # nosec B614
         return init_states.reshape(1, -1)
 
+    # LIBERO-plus perturbation variants encode the perturbation in the filename
+    # but on disk only the base `.pruned_init` exists — strip the suffix to match.
     stripped = _LIBERO_PERTURBATION_SUFFIX_RE.sub("", filename.stem) + filename.suffix
     init_states_path = root / task.problem_folder / stripped
     return torch.load(init_states_path, weights_only=False)  # nosec B614
@@ -133,9 +139,11 @@ class LiberoEnv(gym.Env):
         camera_name_mapping: dict[str, str] | None = None,
         num_steps_wait: int = 10,
         control_mode: str = "relative",
+        is_libero_plus: bool = False,
     ):
         super().__init__()
         self.task_id = task_id
+        self.is_libero_plus = is_libero_plus
         self.obs_type = obs_type
         self.render_mode = render_mode
         self.observation_width = observation_width
@@ -162,7 +170,11 @@ class LiberoEnv(gym.Env):
         self.episode_index = episode_index
         self.episode_length = episode_length
         # Load once and keep
-        self._init_states = get_task_init_states(task_suite, self.task_id) if self.init_states else None
+        self._init_states = (
+            get_task_init_states(task_suite, self.task_id, is_libero_plus=self.is_libero_plus)
+            if self.init_states
+            else None
+        )
         self._reset_stride = n_envs  # when performing a reset, append `_reset_stride` to `init_state_id`.
 
         self.init_state_id = self.episode_index  # tie each sub-env to a fixed init state
@@ -395,6 +407,7 @@ def _make_env_fns(
     gym_kwargs: Mapping[str, Any],
     control_mode: str,
     camera_name_mapping: dict[str, str] | None = None,
+    is_libero_plus: bool = False,
 ) -> list[Callable[[], LiberoEnv]]:
     """Build n_envs factory callables for a single (suite, task_id)."""
 
@@ -411,6 +424,7 @@ def _make_env_fns(
             n_envs=n_envs,
             control_mode=control_mode,
             camera_name_mapping=camera_name_mapping,
+            is_libero_plus=is_libero_plus,
             **local_kwargs,
         )
 
@@ -433,6 +447,7 @@ def create_libero_envs(
     control_mode: str = "relative",
     episode_length: int | None = None,
     camera_name_mapping: dict[str, str] | None = None,
+    is_libero_plus: bool = False,
 ) -> dict[str, dict[int, Any]]:
     """
     Create vectorized LIBERO environments with a consistent return shape.
@@ -490,6 +505,7 @@ def create_libero_envs(
                 gym_kwargs=gym_kwargs,
                 control_mode=control_mode,
                 camera_name_mapping=camera_name_mapping,
+                is_libero_plus=is_libero_plus,
             )
             if is_async:
                 lazy = _LazyAsyncVectorEnv(fns, cached_obs_space, cached_act_space)
