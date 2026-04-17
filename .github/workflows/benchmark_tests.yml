@@ -346,7 +346,7 @@ jobs:
           load: true
           tags: lerobot-benchmark-robocasa:ci
 
-      - name: Run RoboCasa365 smoke eval (1 episode)
+      - name: Run RoboCasa365 smoke eval (10 atomic tasks, 1 episode each)
         if: env.HF_USER_TOKEN != ''
         run: |
           docker run --name robocasa-eval --gpus all \
@@ -361,7 +361,7 @@ jobs:
               lerobot-eval \
                 --policy.path=lerobot/smolvla_robocasa \
                 --env.type=robocasa \
-                --env.task=CloseFridge \
+                --env.task=CloseFridge,OpenCabinet,OpenDrawer,TurnOnMicrowave,TurnOffStove,CloseToasterOvenDoor,SlideDishwasherRack,TurnOnSinkFaucet,NavigateKitchen,TurnOnElectricKettle \
                 --eval.batch_size=1 \
                 --eval.n_episodes=1 \
                 --eval.use_async_envs=false \
@@ -383,7 +383,7 @@ jobs:
           python3 scripts/ci/parse_eval_metrics.py \
             --artifacts-dir /tmp/robocasa-artifacts \
             --env robocasa \
-            --task CloseFridge \
+            --task atomic_smoke_10 \
             --policy lerobot/smolvla_robocasa
 
       - name: Upload RoboCasa365 rollout video
