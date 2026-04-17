@@ -162,7 +162,7 @@ class CameraBuffer:
     def _capture_loop(self, name: str, cam) -> None:
         while not self._stop_evt.is_set():
             try:
-                img = cam.read()
+                img = cam.async_read(timeout_ms=500)
                 if img is not None:
                     with self._lock:
                         self._frames[name] = img
@@ -194,9 +194,14 @@ class SO101GamepadController:
         self.robot_id = robot_id
         self.max_speed = max_speed
         self.control_dt = 1.0 / control_frequency
-        
+
         # Initialize pygame for gamepad
         pygame.init()
+        if show_images and CV2_AVAILABLE:
+            self._pygame_screen = pygame.display.set_mode((640, 480))
+            pygame.display.set_caption("SockBot Camera")
+        else:
+            pygame.display.set_mode((1, 1), pygame.NOFRAME)
         pygame.joystick.init()
         
         # Check for gamepad
@@ -468,7 +473,8 @@ class SO101GamepadController:
     
     def get_gamepad_input(self):
         """Read gamepad state and return action vector"""
-        pygame.event.pump()
+        for event in pygame.event.get():
+            pass
 
         rb = self.joystick.get_button(self.BTN_RB)
         lb = self.joystick.get_button(self.BTN_LB)
@@ -572,7 +578,6 @@ class SO101GamepadController:
         return np.zeros(self.num_joints)
 
     def _maybe_show_images(self) -> None:
-        """Throttled camera display — reads from local CameraBuffer and shows in cv2 windows."""
         if not self._show_images or self._cam_buffer is None:
             return
         self._img_frame += 1
@@ -581,9 +586,10 @@ class SO101GamepadController:
         frames = self._cam_buffer.get_latest()
         for cam_name, img in frames.items():
             if img is not None and isinstance(img, np.ndarray) and img.ndim == 3:
-                # OpenCVCamera returns RGB; cv2.imshow expects BGR
-                cv2.imshow(f"cam: {cam_name}", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-        cv2.waitKey(1)
+                # img is RGB from LeRobot — pygame wants RGB too, so no conversion needed
+                surface = pygame.surfarray.make_surface(img.swapaxes(0, 1))
+                self._pygame_screen.blit(surface, (0, 0))
+                pygame.display.flip()
 
     def run(self):
         """Main control loop"""
