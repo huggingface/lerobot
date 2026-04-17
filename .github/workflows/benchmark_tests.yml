@@ -347,7 +347,7 @@ jobs:
           load: true
           tags: lerobot-benchmark-robomme:ci
 
-      - name: Run RoboMME smoke eval (1 episode)
+      - name: Run RoboMME smoke eval (10 tasks, 1 episode each)
         if: env.HF_USER_TOKEN != ''
         run: |
           docker run --name robomme-eval --gpus all \
@@ -361,7 +361,7 @@ jobs:
               lerobot-eval \
                 --policy.path=lerobot/smolvla_robomme \
                 --env.type=robomme \
-                --env.task=PickXtimes,BinFill,StopCube,MoveCube,InsertPeg \
+                --env.task=PickXtimes,BinFill,StopCube,MoveCube,InsertPeg,SwingXtimes,VideoUnmask,ButtonUnmask,PickHighlight,PatternLock \
                 --env.dataset_split=test \
                 --env.task_ids=[0] \
                 --eval.batch_size=1 \
@@ -372,7 +372,7 @@ jobs:
                 --policy.empty_cameras=3 \
                 --output_dir=/tmp/eval-artifacts
               python scripts/ci/extract_task_descriptions.py \
-                --env robomme --task PickXtimes,BinFill,StopCube,MoveCube,InsertPeg \
+                --env robomme --task PickXtimes,BinFill,StopCube,MoveCube,InsertPeg,SwingXtimes,VideoUnmask,ButtonUnmask,PickHighlight,PatternLock \
                 --output /tmp/eval-artifacts/task_descriptions.json
             "
 
@@ -389,7 +389,7 @@ jobs:
           python3 scripts/ci/parse_eval_metrics.py \
             --artifacts-dir /tmp/robomme-artifacts \
             --env robomme \
-            --task PickXtimes \
+            --task PickXtimes,BinFill,StopCube,MoveCube,InsertPeg,SwingXtimes,VideoUnmask,ButtonUnmask,PickHighlight,PatternLock \
             --policy lerobot/smolvla_robomme
 
       - name: Upload RoboMME rollout video
