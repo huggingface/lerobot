@@ -508,6 +508,12 @@ class RoboCasaEnv(EnvConfig):
     observation_height: int = 256
     observation_width: int = 256
     split: str | None = None
+    # Object-mesh registries to sample from. Upstream default is
+    # ("objaverse", "lightwheel"), but objaverse is ~30GB and the CI image
+    # only ships the lightwheel pack. Override to include objaverse once
+    # you've run `python -m robocasa.scripts.download_kitchen_assets
+    # --type objaverse` locally.
+    obj_registries: list[str] = field(default_factory=lambda: ["lightwheel"])
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(12,))}
     )
@@ -557,6 +563,7 @@ class RoboCasaEnv(EnvConfig):
             gym_kwargs=self.gym_kwargs,
             env_cls=env_cls,
             episode_length=self.episode_length,
+            obj_registries=tuple(self.obj_registries),
         )
 
 

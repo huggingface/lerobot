@@ -44,6 +44,16 @@ DEFAULT_CAMERAS = [
     "robot0_agentview_right",
 ]
 
+# Object-mesh registries to sample from. RoboCasa's upstream default is
+# ("objaverse", "lightwheel"), but the objaverse pack is huge (~30GB) and
+# most users — including our CI image — only download the lightwheel pack
+# (`--type objs_lw` in `download_kitchen_assets`). When a sampled object
+# category has zero candidates in every registry, robocasa crashes with
+# `ValueError: Probabilities contain NaN` (0/0 divide in the probability
+# normalization). Restricting to registries that are actually on disk
+# avoids the NaN and matches what the asset download provides.
+DEFAULT_OBJ_REGISTRIES: tuple[str, ...] = ("lightwheel",)
+
 # Task-group shortcuts accepted as `--env.task`. When the user passes one of
 # these names, we expand it to the upstream RoboCasa task list and auto-set
 # the dataset split. Individual task names (optionally comma-separated) still
@@ -132,6 +142,7 @@ class RoboCasaEnv(gym.Env):
         observation_height: int = 256,
         split: str | None = None,
         episode_length: int | None = None,
+        obj_registries: Sequence[str] = DEFAULT_OBJ_REGISTRIES,
     ):
         super().__init__()
         self.task = task
@@ -140,6 +151,7 @@ class RoboCasaEnv(gym.Env):
         self.observation_width = observation_width
         self.observation_height = observation_height
         self.split = split
+        self.obj_registries = tuple(obj_registries)
 
         self.camera_name = _parse_camera_names(camera_name)
 
@@ -197,12 +209,14 @@ class RoboCasaEnv(gym.Env):
 
         # RoboCasaGymEnv defaults split="test", which create_env rejects
         # (only None/"all"/"pretrain"/"target" are valid). Always pass a
-        # valid value so we don't hit that default.
+        # valid value so we don't hit that default. Extra kwargs are
+        # forwarded to the underlying kitchen env via create_env/robosuite.make.
         self._env = RoboCasaGymEnv(
             env_name=self.task,
             camera_widths=self.observation_width,
             camera_heights=self.observation_height,
             split=self.split if self.split is not None else "all",
+            obj_registries=self.obj_registries,
         )
 
         ep_meta = self._env.env.get_ep_meta()
@@ -286,6 +300,7 @@ def _make_env_fns(
     observation_height: int,
     split: str | None,
     episode_length: int | None,
+    obj_registries: Sequence[str],
 ) -> list[Callable[[], RoboCasaEnv]]:
     """Build n_envs factory callables for a single task."""
 
@@ -299,6 +314,7 @@ def _make_env_fns(
             observation_height=observation_height,
             split=split,
             episode_length=episode_length,
+            obj_registries=obj_registries,
             **kwargs,
         )
 
@@ -312,6 +328,7 @@ def create_robocasa_envs(
     camera_name: str | Sequence[str] = ",".join(DEFAULT_CAMERAS),
     env_cls: Callable[[Sequence[Callable[[], Any]]], Any] | None = None,
     episode_length: int | None = None,
+    obj_registries: Sequence[str] = DEFAULT_OBJ_REGISTRIES,
 ) -> dict[str, dict[int, Any]]:
     """Create vectorized RoboCasa365 environments with a consistent return shape.
 
@@ -362,6 +379,7 @@ def create_robocasa_envs(
             observation_height=observation_height,
             split=split,
             episode_length=episode_length,
+            obj_registries=obj_registries,
         )
 
         if is_async:

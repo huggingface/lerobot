@@ -32,7 +32,13 @@ After following the LeRobot installation instructions:
 ```bash
 pip install -e ".[robocasa]"
 python -m robocasa.scripts.setup_macros
-python -m robocasa.scripts.download_kitchen_assets
+# Lightweight assets only (lightwheel registry, ~2GB). Enough for the
+# default env out of the box.
+python -m robocasa.scripts.download_kitchen_assets --type tex fixtures_lw objs_lw
+# Optional: full objaverse/aigen registries (~30GB) for richer object
+# variety. If you download these, pass them via `--env.obj_registries`
+# at eval/train time (see below).
+# python -m robocasa.scripts.download_kitchen_assets --type objaverse
 ```
 
 <Tip>
@@ -43,6 +49,12 @@ export MUJOCO_GL=egl  # for headless servers (HPC, cloud)
 ```
 
 </Tip>
+
+By default the env samples objects only from the `lightwheel` registry (the one shipped by `--type objs_lw`), which avoids a `Probabilities contain NaN` crash when the objaverse/aigen packs are absent. If you've downloaded the full asset set, enable it with:
+
+```bash
+--env.obj_registries='[objaverse,lightwheel]'
+```
 
 ## Policy inputs and outputs
 
