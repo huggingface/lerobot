@@ -56,6 +56,7 @@ class TrainPipelineConfig(HubMixin):
     # Number of workers for the dataloader.
     num_workers: int = 4
     batch_size: int = 8
+    gradient_accumulation_steps: int = 1
     steps: int = 100_000
     eval_freq: int = 20_000
     log_freq: int = 200
@@ -131,6 +132,11 @@ class TrainPipelineConfig(HubMixin):
 
         if isinstance(self.dataset.repo_id, list):
             raise NotImplementedError("LeRobotMultiDataset is not currently implemented.")
+
+        if self.gradient_accumulation_steps <= 0:
+            raise ValueError(
+                f"`gradient_accumulation_steps` must be strictly positive, got {self.gradient_accumulation_steps}."
+            )
 
         if not self.use_policy_training_preset and (self.optimizer is None or self.scheduler is None):
             raise ValueError("Optimizer and Scheduler must be set when the policy presets are not used.")

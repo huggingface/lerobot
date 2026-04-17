@@ -67,11 +67,17 @@ class EvalConfig:
     # `batch_size` specifies the number of environments to use in a gym.vector.VectorEnv.
     # Set to 0 for auto-tuning based on available CPU cores and n_episodes.
     batch_size: int = 0
+    # Number of rollout videos to save per evaluated task. Set to 0 to disable videos.
+    max_episodes_rendered: int = 10
     # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
     # Defaults to True; automatically downgraded to SyncVectorEnv when batch_size=1.
     use_async_envs: bool = True
 
     def __post_init__(self) -> None:
+        if self.max_episodes_rendered < 0:
+            raise ValueError(
+                f"`max_episodes_rendered` must be non-negative, got {self.max_episodes_rendered}."
+            )
         if self.batch_size == 0:
             self.batch_size = self._auto_batch_size()
         if self.batch_size > self.n_episodes:

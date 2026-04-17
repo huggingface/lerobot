@@ -1,0 +1,48 @@
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+FROM huggingface/lerobot-gpu:latest
+
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+         unzip libexpat1 libfontconfig1-dev libmagickwand-dev \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+USER user_lerobot
+
+RUN uv pip install --no-cache \
+        "robosuite==1.4.1" bddl easydict mujoco matplotlib wand scikit-image gym
+
+ENV LIBERO_PLUS_ROOT=/home/user_lerobot/libero-plus/libero/libero
+RUN git clone --depth=1 https://github.com/sylvestf/LIBERO-plus.git /home/user_lerobot/libero-plus \
+    && cd /home/user_lerobot/libero-plus && uv pip install --no-cache --no-deps -e "." \
+    && uv pip uninstall hf-libero 2>/dev/null || true
+ENV PYTHONPATH="/home/user_lerobot/libero-plus:${PYTHONPATH}"
+
+RUN python -c "\
+from huggingface_hub import hf_hub_download; \
+hf_hub_download(repo_id='Sylvest/LIBERO-plus', repo_type='dataset', \
+                filename='assets.zip', local_dir='/tmp/libero-plus-dl')" \
+    && unzip -q /tmp/libero-plus-dl/assets.zip -d /tmp/libero-plus-dl/extract \
+    && mv /tmp/libero-plus-dl/extract/inspire/hdd/project/embodied-multimodality/public/syfei/libero_new/release/dataset/LIBERO-plus-0/assets \
+          ${LIBERO_PLUS_ROOT}/assets \
+    && rm -rf /tmp/libero-plus-dl
+
+RUN mkdir -p /home/user_lerobot/.libero \
+    && printf "assets: ${LIBERO_PLUS_ROOT}/assets\nbddl_files: ${LIBERO_PLUS_ROOT}/bddl_files\ndatasets: ${LIBERO_PLUS_ROOT}/../datasets\ninit_states: ${LIBERO_PLUS_ROOT}/init_files\n" \
+       > /home/user_lerobot/.libero/config.yaml
+
+COPY --chown=user_lerobot:user_lerobot . .
+
+CMD ["/bin/bash"]

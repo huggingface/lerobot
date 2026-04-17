@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from functools import partial
@@ -69,14 +70,28 @@ def _select_task_ids(total_tasks: int, task_ids: Iterable[int] | None) -> list[i
     return ids
 
 
+# LIBERO-plus perturbation variants encode the perturbation in the filename
+# but on disk only the base `.pruned_init` exists — strip the suffix to match
+# LIBERO-plus's own suite.get_task_init_states() (we reimplement it here so we
+# can pass weights_only=False for PyTorch 2.6+ numpy pickles).
+_LIBERO_PERTURBATION_SUFFIX_RE = re.compile(r"_(?:language|view|light)_[^.]*|_(?:table|tb)_\d+")
+
+
 def get_task_init_states(task_suite: Any, i: int) -> np.ndarray:
-    init_states_path = (
-        Path(get_libero_path("init_states"))
-        / task_suite.tasks[i].problem_folder
-        / task_suite.tasks[i].init_states_file
-    )
-    init_states = torch.load(init_states_path, weights_only=False)  # nosec B614
-    return init_states
+    task = task_suite.tasks[i]
+    filename = Path(task.init_states_file)
+    root = Path(get_libero_path("init_states"))
+
+    # `_add_` / `_level` variants store extra-object layouts under libero_newobj/
+    # as a flat array that must be reshaped to (1, -1).
+    if "_add_" in filename.name or "_level" in filename.name:
+        init_states_path = root / "libero_newobj" / task.problem_folder / filename.name
+        init_states = torch.load(init_states_path, weights_only=False)  # nosec B614
+        return init_states.reshape(1, -1)
+
+    stripped = _LIBERO_PERTURBATION_SUFFIX_RE.sub("", filename.stem) + filename.suffix
+    init_states_path = root / task.problem_folder / stripped
+    return torch.load(init_states_path, weights_only=False)  # nosec B614
 
 
 def get_libero_dummy_action():

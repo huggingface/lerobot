@@ -71,6 +71,9 @@ def update_policy(
     lr_scheduler=None,
     lock=None,
     rabc_weights_provider=None,
+    *,
+    do_optimizer_step: bool = True,
+    loss_divisor: int = 1,
 ) -> tuple[MetricsTracker, dict]:
     """
     Performs a single training step to update the policy's weights.
@@ -122,34 +125,38 @@ def update_policy(
             loss, output_dict = policy.forward(batch)
 
         # TODO(rcadene): policy.unnormalize_outputs(out_dict)
+        logged_loss = loss.detach()
+        if loss_divisor > 1:
+            loss = loss / loss_divisor
 
     # Use accelerator's backward method
     accelerator.backward(loss)
 
-    # Clip gradients if specified
-    if grad_clip_norm > 0:
-        grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
-    else:
-        grad_norm = torch.nn.utils.clip_grad_norm_(
-            policy.parameters(), float("inf"), error_if_nonfinite=False
-        )
+    grad_norm_value = 0.0
+    if do_optimizer_step:
+        if grad_clip_norm > 0:
+            grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
+        else:
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                policy.parameters(), float("inf"), error_if_nonfinite=False
+            )
+        grad_norm_value = grad_norm.item()
 
-    # Optimizer step
-    with lock if lock is not None else nullcontext():
-        optimizer.step()
+        with lock if lock is not None else nullcontext():
+            optimizer.step()
 
-    optimizer.zero_grad()
+        optimizer.zero_grad()
 
-    # Step through pytorch scheduler at every batch instead of epoch
-    if lr_scheduler is not None:
-        lr_scheduler.step()
+        # Step through pytorch scheduler at every optimizer step instead of epoch
+        if lr_scheduler is not None:
+            lr_scheduler.step()
 
-    # Update internal buffers if policy has update method
-    if has_method(accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"):
-        accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
+        # Update internal buffers if policy has update method
+        if has_method(accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"):
+            accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
 
-    train_metrics.loss = loss.item()
-    train_metrics.grad_norm = grad_norm.item()
+    train_metrics.loss = logged_loss.item()
+    train_metrics.grad_norm = grad_norm_value
     train_metrics.lr = optimizer.param_groups[0]["lr"]
     train_metrics.update_s = time.perf_counter() - start_time
     return train_metrics, output_dict
@@ -359,8 +366,16 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
         logging.info(f"{dataset.num_episodes=}")
         num_processes = accelerator.num_processes
-        effective_bs = cfg.batch_size * num_processes
-        logging.info(f"Effective batch size: {cfg.batch_size} x {num_processes} = {effective_bs}")
+        micro_batch = cfg.batch_size
+        logical_batch = cfg.batch_size * cfg.gradient_accumulation_steps
+        effective_bs = logical_batch * num_processes
+        logging.info(
+            "Effective batch size: %s x %s x %s = %s",
+            micro_batch,
+            cfg.gradient_accumulation_steps,
+            num_processes,
+            effective_bs,
+        )
         logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
@@ -407,9 +422,10 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     }
 
     # Keep global batch size for logging; MetricsTracker handles world size internally.
-    effective_batch_size = cfg.batch_size * accelerator.num_processes
+    logical_batch_size = cfg.batch_size * cfg.gradient_accumulation_steps
+    effective_batch_size = logical_batch_size * accelerator.num_processes
     train_tracker = MetricsTracker(
-        cfg.batch_size,
+        logical_batch_size,
         dataset.num_frames,
         dataset.num_episodes,
         train_metrics,
@@ -431,21 +447,62 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         )
 
     for _ in range(step, cfg.steps):
-        start_time = time.perf_counter()
-        batch = next(dl_iter)
-        batch = preprocessor(batch)
-        train_tracker.dataloading_s = time.perf_counter() - start_time
+        step_dataloading_s = 0.0
+        step_update_s = 0.0
+        step_losses = []
+        step_grad_norm = 0.0
+        step_lr = optimizer.param_groups[0]["lr"]
+        output_dict = {}
+        optimizer.zero_grad()
+        for accumulation_idx in range(cfg.gradient_accumulation_steps):
+            start_time = time.perf_counter()
+            batch = next(dl_iter)
+            batch = preprocessor(batch)
+            step_dataloading_s += time.perf_counter() - start_time
 
-        train_tracker, output_dict = update_policy(
-            train_tracker,
-            policy,
-            batch,
-            optimizer,
-            cfg.optimizer.grad_clip_norm,
-            accelerator=accelerator,
-            lr_scheduler=lr_scheduler,
-            rabc_weights_provider=rabc_weights,
-        )
+            is_last_microbatch = accumulation_idx == cfg.gradient_accumulation_steps - 1
+            micro_metrics = MetricsTracker(
+                cfg.batch_size,
+                dataset.num_frames,
+                dataset.num_episodes,
+                {
+                    "loss": AverageMeter("loss", ":.3f"),
+                    "grad_norm": AverageMeter("grdn", ":.3f"),
+                    "lr": AverageMeter("lr", ":0.1e"),
+                    "update_s": AverageMeter("updt_s", ":.3f"),
+                },
+                accelerator=accelerator,
+            )
+            sync_context = (
+                nullcontext()
+                if is_last_microbatch or accelerator.num_processes == 1
+                else accelerator.no_sync(policy)
+            )
+            with sync_context:
+                micro_metrics, micro_output_dict = update_policy(
+                    micro_metrics,
+                    policy,
+                    batch,
+                    optimizer,
+                    cfg.optimizer.grad_clip_norm,
+                    accelerator=accelerator,
+                    lr_scheduler=lr_scheduler if is_last_microbatch else None,
+                    rabc_weights_provider=rabc_weights,
+                    do_optimizer_step=is_last_microbatch,
+                    loss_divisor=cfg.gradient_accumulation_steps,
+                )
+            step_update_s += micro_metrics.update_s.val
+            step_losses.append(micro_metrics.loss.val)
+            if is_last_microbatch:
+                step_grad_norm = micro_metrics.grad_norm.val
+                step_lr = micro_metrics.lr.val
+                output_dict = micro_output_dict
+
+        train_tracker.loss = sum(step_losses) / len(step_losses)
+        train_tracker.grad_norm = step_grad_norm
+        train_tracker.lr = step_lr
+        train_tracker.update_s = step_update_s
+        train_tracker.dataloading_s = step_dataloading_s
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
@@ -510,7 +567,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                         postprocessor=postprocessor,
                         n_episodes=cfg.eval.n_episodes,
                         videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
-                        max_episodes_rendered=4,
+                        max_episodes_rendered=cfg.eval.max_episodes_rendered,
                         start_seed=cfg.seed,
                         max_parallel_tasks=cfg.env.max_parallel_tasks,
                     )
@@ -541,7 +598,9 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                 if wandb_logger:
                     wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
                     wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
-                    wandb_logger.log_video(eval_info["overall"]["video_paths"][0], step, mode="eval")
+                    video_paths = eval_info["overall"].get("video_paths", [])
+                    if video_paths:
+                        wandb_logger.log_video(video_paths[0], step, mode="eval")
 
             accelerator.wait_for_everyone()
 

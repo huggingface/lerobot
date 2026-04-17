@@ -31,8 +31,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
+
+
+# LIBERO-plus derives task.language by space-joining the perturbation-variant
+# filename, so strip the perturbation metadata blob to recover the base prompt.
+_LIBERO_PERTURBATION_TAIL_RE = re.compile(
+    r"(?:\s(?:view|initstate|noise|add|tb|table|light|level)(?:\s\d+)+)+$"
+)
+
+
+def _strip_libero_perturbation_tail(instruction: str) -> str:
+    return _LIBERO_PERTURBATION_TAIL_RE.sub("", instruction).strip()
 
 
 def _libero_descriptions(task_suite: str) -> dict[str, str]:
@@ -47,7 +59,10 @@ def _libero_descriptions(task_suite: str) -> dict[str, str]:
         )
         return {}
     suite = suite_dict[task_suite]()
-    return {f"{task_suite}_{i}": suite.get_task(i).language for i in range(suite.n_tasks)}
+    return {
+        f"{task_suite}_{i}": _strip_libero_perturbation_tail(suite.get_task(i).language)
+        for i in range(suite.n_tasks)
+    }
 
 
 def _metaworld_descriptions(task_name: str) -> dict[str, str]:
@@ -55,6 +70,14 @@ def _metaworld_descriptions(task_name: str) -> dict[str, str]:
     # use a cleaned version of the task name as the description.
     label = task_name.removeprefix("metaworld-").replace("-", " ").strip()
     return {f"{task_name}_0": label}
+
+
+def _robomme_descriptions(task_names: str) -> dict[str, str]:
+    return {
+        f"{task_name}_0": task_name.replace("_", " ").strip()
+        for task_name in (task.strip() for task in task_names.split(","))
+        if task_name
+    }
 
 
 def main() -> int:
@@ -66,10 +89,12 @@ def main() -> int:
 
     descriptions: dict[str, str] = {}
     try:
-        if args.env == "libero":
+        if args.env in {"libero", "libero_plus"}:
             descriptions = _libero_descriptions(args.task)
         elif args.env == "metaworld":
             descriptions = _metaworld_descriptions(args.task)
+        elif args.env == "robomme":
+            descriptions = _robomme_descriptions(args.task)
         else:
             print(
                 f"[extract_task_descriptions] No description extractor for env '{args.env}'.",

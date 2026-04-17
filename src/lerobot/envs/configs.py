@@ -574,3 +574,58 @@ class IsaaclabArenaEnv(HubEnvConfig):
             ),
             PolicyProcessorPipeline(steps=[]),
         )
+
+
+@EnvConfig.register_subclass("libero_plus")
+@dataclass
+class LiberoPlusEnv(LiberoEnv):
+    """Config for LIBERO-plus robustness benchmark evaluation."""
+
+    task: str = "libero_spatial"
+
+
+@EnvConfig.register_subclass("robomme")
+@dataclass
+class RoboMMEEnv(EnvConfig):
+    """RoboMME memory-augmented manipulation benchmark."""
+
+    task: str = "PickXtimes"
+    fps: int = 10
+    episode_length: int = 300
+    action_space: str = "joint_angle"
+    dataset_split: str = "test"
+    task_ids: list[int] | None = None
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(8,)),
+            "image": PolicyFeature(type=FeatureType.VISUAL, shape=(256, 256, 3)),
+            "wrist_image": PolicyFeature(type=FeatureType.VISUAL, shape=(256, 256, 3)),
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(8,)),
+        }
+    )
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            ACTION: ACTION,
+            "image": f"{OBS_IMAGES}.image",
+            "wrist_image": f"{OBS_IMAGES}.wrist_image",
+            OBS_STATE: OBS_STATE,
+        }
+    )
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {}
+
+    def create_envs(self, n_envs: int, use_async_envs: bool = True):
+        from .robomme import create_robomme_envs
+
+        env_cls = _make_vec_env_cls(use_async_envs, n_envs)
+        return create_robomme_envs(
+            task=self.task,
+            n_envs=n_envs,
+            action_space_type=self.action_space,
+            dataset=self.dataset_split,
+            episode_length=self.episode_length,
+            task_ids=self.task_ids,
+            env_cls=env_cls,
+        )
