@@ -68,13 +68,6 @@ class RoboRewardConfig(RewardModelConfig):
         }
     )
 
-    def __post_init__(self):
-        # Rebuild input_features from image_key/task_key so they stay in sync.
-        self.input_features = {
-            self.image_key: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 480, 640)),
-            self.task_key: PolicyFeature(type=FeatureType.LANGUAGE, shape=(1,)),
-        }
-
     def get_optimizer_preset(self) -> OptimizerConfig:
         return AdamWConfig(lr=1e-5, weight_decay=1e-2)
 
@@ -82,7 +75,7 @@ class RoboRewardConfig(RewardModelConfig):
         return None
 
     def validate_features(self) -> None:
-        if self.image_key not in self.input_features:
+        if self.input_features and self.image_key not in self.input_features:
             raise ValueError(
                 f"image_key '{self.image_key}' not found in input_features. "
                 f"Available keys: {list(self.input_features.keys())}"

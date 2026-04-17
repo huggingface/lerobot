@@ -63,7 +63,16 @@ def test_robo_reward_config_type():
 
 def test_robo_reward_config_validate_features_missing_key():
     """validate_features must raise if image_key is not in input_features."""
-    cfg = RoboRewardConfig(image_key="observation.images.nonexistent")
+    from lerobot.configs.types import FeatureType, PolicyFeature
+
+    dataset_features = {
+        "observation.images.top": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 480, 640)),
+        "observation.language_instruction": PolicyFeature(type=FeatureType.LANGUAGE, shape=(1,)),
+    }
+    cfg = RoboRewardConfig(
+        image_key="observation.images.nonexistent",
+        input_features=dataset_features,
+    )
     with pytest.raises(ValueError, match="image_key"):
         cfg.validate_features()
 
@@ -95,19 +104,32 @@ def test_factory_make_reward_model_config():
 # ---------------------------------------------------------------------------
 
 
+class _BatchDict(dict):
+    """Dict subclass with a `.to()` method to mimic transformers BatchEncoding."""
+
+    def to(self, *args, **kwargs):
+        return self
+
+
 def _make_mock_vlm_and_processor(output_text: str = "ANSWER: 4"):
     """Return a (mock_vlm, mock_processor) pair that simulates Qwen3-VL."""
     mock_vlm = MagicMock()
-    mock_vlm.parameters.return_value = iter([torch.zeros(1)])
-    mock_vlm.generate.return_value = torch.tensor([[1, 2, 3, 4, 5, 6]])
+    mock_vlm.parameters.side_effect = lambda: iter([torch.zeros(1)])
+    mock_vlm.generate.side_effect = lambda **kwargs: torch.ones(
+        kwargs["input_ids"].shape[0], 6, dtype=torch.long
+    )
 
     mock_processor = MagicMock()
-    mock_processor.apply_chat_template.return_value = "fake_text"
-    mock_processor.return_value = {
-        "input_ids": torch.zeros(1, 5, dtype=torch.long),
-        "attention_mask": torch.ones(1, 5, dtype=torch.long),
-    }
-    mock_processor.decode.return_value = output_text
+    mock_processor.apply_chat_template.side_effect = lambda msgs, **kwargs: (
+        ["fake_text"] * len(msgs) if isinstance(msgs, list) else "fake_text"
+    )
+    mock_processor.side_effect = lambda text=None, **kwargs: _BatchDict(
+        {
+            "input_ids": torch.zeros(len(text) if isinstance(text, list) else 1, 5, dtype=torch.long),
+            "attention_mask": torch.ones(len(text) if isinstance(text, list) else 1, 5, dtype=torch.long),
+        }
+    )
+    mock_processor.batch_decode.side_effect = lambda ids, **kwargs: [output_text] * len(ids)
     return mock_vlm, mock_processor
 
 
