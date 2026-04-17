@@ -216,11 +216,11 @@ jobs:
         run: pytest tests -vv --maxfail=10
       - name: Run end-to-end tests
         run: make test-end-to-end
-  
+
   slack-notification:
     name: Slack Notification
-    needs: [cpu-tests, gpu-tests]
-    if: always()
+    needs: [cpu-tests, gpu-tests, upgrade-lock]
+    if: always() && needs.upgrade-lock.outputs.changed == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -231,7 +231,7 @@ jobs:
         uses: huggingface/hf-workflows/.github/actions/post-slack@a88e7fa2eaee28de5a4d6142381b1fb792349b67  # main
         with:
           slack_channel: ${{ env.CI_SLACK_CHANNEL }}
-          title: "Results of the latest dependency tests (CPU + GPU)"          
+          title: "Results of the latest dependency tests (CPU + GPU)"
           status: ${{ (needs.cpu-tests.result == 'success' && needs.gpu-tests.result == 'success') && 'success' || 'failure' }}
           slack_token: ${{ secrets.SLACK_CIFEEDBACK_BOT_TOKEN }}
 
