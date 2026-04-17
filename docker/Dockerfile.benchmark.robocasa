@@ -28,12 +28,21 @@ RUN git clone --depth 1 https://github.com/robocasa/robocasa.git ~/robocasa && \
     git clone --depth 1 https://github.com/ARISE-Initiative/robosuite.git ~/robosuite && \
     uv pip install --no-cache -e ~/robocasa -e ~/robosuite
 
-# Set up robocasa macros and download kitchen assets. Include tex + fixtures_lw
-# + objs_lw (kitchen tasks reference lightwheel object meshes like stools); skip
-# objaverse/aigen object categories (~8GB extra, not used by the smoke tasks).
+# Set up robocasa macros and download kitchen assets. We need:
+#   - tex              : base environment textures
+#   - tex_generative   : AI-generated textures; kitchen fixture XMLs embed
+#                        refs to generative_textures/wall/tex*.png
+#                        unconditionally, so MjModel.from_xml_string fails
+#                        at reset time without them (even if the env is
+#                        constructed with generative_textures=None).
+#   - fixtures_lw      : lightwheel kitchen fixtures (fridge, counters...)
+#   - objs_lw          : lightwheel object meshes (stools, misc props)
+# We skip the objaverse/aigen object packs (~30GB combined) by pairing
+# this with --env.obj_registries=["lightwheel"] on the lerobot side.
 # The download script prompts interactively, so pipe 'y' to auto-accept.
 RUN python -m robocasa.scripts.setup_macros && \
-    yes y | python -m robocasa.scripts.download_kitchen_assets --type tex fixtures_lw objs_lw
+    yes y | python -m robocasa.scripts.download_kitchen_assets \
+      --type tex tex_generative fixtures_lw objs_lw
 
 # Overlay the PR's source code on top of the nightly image.
 COPY --chown=user_lerobot:user_lerobot . .
