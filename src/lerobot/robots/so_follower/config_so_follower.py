@@ -54,5 +54,10 @@ class SOFollowerRobotConfig(RobotConfig, SOFollowerConfig):
 class SO101FollowerDragontactileConfig(SOFollowerRobotConfig):
     pass
 
+@RobotConfig.register_subclass("so101_follower_dragontactil")
+@dataclass
+class SO101FollowerDragontactilConfig(RobotConfig, SOFollowerConfig):
+    pass
+
 SO100FollowerConfig = SOFollowerRobotConfig
 SO101FollowerConfig = SOFollowerRobotConfig
