@@ -22,20 +22,21 @@ import numpy as np
 import torch
 from datasets import load_dataset
 
-from lerobot.datasets.dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
-from lerobot.datasets.feature_utils import get_delta_indices
-from lerobot.datasets.io_utils import item_to_torch
-from lerobot.datasets.utils import (
+from lerobot.utils.constants import HF_LEROBOT_HOME, LOOKAHEAD_BACKTRACKTABLE, LOOKBACK_BACKTRACKTABLE
+
+from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
+from .feature_utils import get_delta_indices
+from .io_utils import item_to_torch
+from .utils import (
     check_version_compatibility,
     find_float_index,
     is_float_in_list,
     safe_shard,
 )
-from lerobot.datasets.video_utils import (
+from .video_utils import (
     VideoDecoderCache,
     decode_video_frames_torchcodec,
 )
-from lerobot.utils.constants import HF_LEROBOT_HOME, LOOKAHEAD_BACKTRACKTABLE, LOOKBACK_BACKTRACKTABLE
 
 
 class LookBackError(Exception):

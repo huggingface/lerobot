@@ -20,6 +20,8 @@ import json
 import numpy as np
 import pytest
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.utils import INFO_PATH
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_ROBOT_TYPE

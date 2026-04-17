@@ -17,10 +17,8 @@
 import logging
 from dataclasses import dataclass, field
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import NormalizationMode
-from lerobot.optim.optimizers import AdamConfig
-from lerobot.optim.schedulers import DiffuserSchedulerConfig
+from lerobot.configs import NormalizationMode, PreTrainedConfig
+from lerobot.optim import AdamConfig, DiffuserSchedulerConfig
 
 
 @PreTrainedConfig.register_subclass("multi_task_dit")

@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -41,12 +41,13 @@ try:
 except ImportError:
     tree = None
 
-from lerobot.policies.groot.action_head.flow_matching_action_head import (
+from lerobot.utils.constants import ACTION, HF_LEROBOT_HOME
+
+from .action_head.flow_matching_action_head import (
     FlowmatchingActionHead,
     FlowmatchingActionHeadConfig,
 )
-from lerobot.policies.groot.utils import ensure_eagle_cache_ready
-from lerobot.utils.constants import ACTION, HF_LEROBOT_HOME
+from .utils import ensure_eagle_cache_ready
 
 DEFAULT_VENDOR_EAGLE_PATH = str((Path(__file__).resolve().parent / "eagle2_hg_model").resolve())
 DEFAULT_TOKENIZER_ASSETS_REPO = "lerobot/eagle2hg-processor-groot-n1p5"
@@ -173,6 +174,7 @@ N_COLOR_CHANNELS = 3
 
 
 # config
+@dataclass
 class GR00TN15Config(PretrainedConfig):
     model_type = "gr00t_n1_5"
     backbone_cfg: dict = field(init=False, metadata={"help": "Backbone configuration."})
@@ -219,6 +221,7 @@ class GR00TN15(PreTrainedModel):
         self.action_horizon = config.action_horizon
         self.action_dim = config.action_dim
         self.compute_dtype = config.compute_dtype
+        self.post_init()
 
     def validate_inputs(self, inputs):
         # NOTE -- this should be handled internally by the model

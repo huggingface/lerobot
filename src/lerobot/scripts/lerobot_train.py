@@ -13,47 +13,52 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""Train a policy.
+
+Requires: pip install 'lerobot[training]'  (includes dataset + accelerate + wandb extras)
+"""
+
 import dataclasses
 import logging
 import time
 from contextlib import nullcontext
 from pprint import pformat
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from accelerate import Accelerator
 
 import torch
-from accelerate import Accelerator
 from termcolor import colored
 from torch.optim import Optimizer
 from tqdm import tqdm
 
-from lerobot.configs import parser
-from lerobot.configs.train import TrainPipelineConfig
-from lerobot.datasets.factory import make_dataset
-from lerobot.datasets.sampler import EpisodeAwareSampler
-from lerobot.datasets.utils import cycle
-from lerobot.envs.factory import make_env, make_env_pre_post_processors
-from lerobot.envs.utils import close_envs
-from lerobot.optim.factory import make_optimizer_and_scheduler
-from lerobot.policies.factory import make_policy, make_pre_post_processors
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.rl.wandb_utils import WandBLogger
-from lerobot.scripts.lerobot_eval import eval_policy_all
-from lerobot.utils.import_utils import register_third_party_plugins
-from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
-from lerobot.utils.random_utils import set_seed
-from lerobot.utils.train_utils import (
+from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
     get_step_identifier,
     load_training_state,
     save_checkpoint,
     update_last_checkpoint,
 )
+from lerobot.common.wandb_utils import WandBLogger
+from lerobot.configs import parser
+from lerobot.configs.train import TrainPipelineConfig
+from lerobot.datasets import EpisodeAwareSampler, make_dataset
+from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
+from lerobot.optim.factory import make_optimizer_and_scheduler
+from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
+from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
+from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
+    cycle,
     format_big_number,
     has_method,
     init_logging,
     inside_slurm,
 )
+
+from .lerobot_eval import eval_policy_all
 
 
 def update_policy(
@@ -62,7 +67,7 @@ def update_policy(
     batch: Any,
     optimizer: Optimizer,
     grad_clip_norm: float,
-    accelerator: Accelerator,
+    accelerator: "Accelerator",
     lr_scheduler=None,
     lock=None,
     rabc_weights_provider=None,
@@ -151,7 +156,7 @@ def update_policy(
 
 
 @parser.wrap()
-def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
+def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     """
     Main function to train a policy.
 
@@ -167,6 +172,11 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         cfg: A `TrainPipelineConfig` object containing all training configurations.
         accelerator: Optional Accelerator instance. If None, one will be created automatically.
     """
+    from lerobot.utils.import_utils import require_package
+
+    require_package("accelerate", extra="training")
+    from accelerate import Accelerator
+
     cfg.validate()
 
     # Create Accelerator if not provided
@@ -252,10 +262,22 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     # Wait for all processes to finish policy creation before continuing
     accelerator.wait_for_everyone()
 
+    processor_pretrained_path = cfg.policy.pretrained_path
+    if (
+        getattr(cfg.policy, "use_relative_actions", False)
+        and processor_pretrained_path is not None
+        and not cfg.resume
+    ):
+        logging.warning(
+            "use_relative_actions=true with pretrained processors can skip relative transforms if "
+            "the checkpoint processors do not define them. Building processors from current policy config."
+        )
+        processor_pretrained_path = None
+
     # Create processors - only provide dataset_stats if not resuming from saved processors
     processor_kwargs = {}
     postprocessor_kwargs = {}
-    if (cfg.policy.pretrained_path and not cfg.resume) or not cfg.policy.pretrained_path:
+    if (processor_pretrained_path and not cfg.resume) or not processor_pretrained_path:
         # Only provide dataset_stats when not resuming from saved processor state
         processor_kwargs["dataset_stats"] = dataset.meta.stats
 
@@ -263,7 +285,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if cfg.policy.type == "sarm":
         processor_kwargs["dataset_meta"] = dataset.meta
 
-    if cfg.policy.pretrained_path is not None:
+    if processor_pretrained_path is not None:
         processor_kwargs["preprocessor_overrides"] = {
             "device_processor": {"device": device.type},
             "normalizer_processor": {
@@ -285,7 +307,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy,
-        pretrained_path=cfg.policy.pretrained_path,
+        pretrained_path=processor_pretrained_path,
         **processor_kwargs,
         **postprocessor_kwargs,
     )
