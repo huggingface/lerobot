@@ -27,18 +27,32 @@ RoboCasa365 includes **365 tasks** organized into atomic (single-skill) and comp
 
 ## Installation
 
-After following the LeRobot installation instructions:
+RoboCasa and its dependency `robosuite` are not published on PyPI, and RoboCasa's own `setup.py` hardcodes `lerobot==0.3.3`, which conflicts with this repo's `lerobot`. Install them manually as editable clones (using `--no-deps` on `robocasa` to skip its shadowed `lerobot` pin):
 
 ```bash
-pip install -e ".[robocasa]"
+# After following the standard LeRobot installation instructions.
+
+git clone https://github.com/robocasa/robocasa.git ~/robocasa
+git clone https://github.com/ARISE-Initiative/robosuite.git ~/robosuite
+pip install -e ~/robocasa --no-deps
+pip install -e ~/robosuite
+
+# Robocasa's runtime deps (the ones its setup.py would have pulled,
+# minus the bad lerobot pin).
+pip install numpy numba scipy mujoco pygame Pillow opencv-python \
+            pyyaml pynput tqdm termcolor imageio h5py lxml hidapi \
+            tianshou gymnasium
+
 python -m robocasa.scripts.setup_macros
-# Lightweight assets only (lightwheel registry, ~2GB). Enough for the
-# default env out of the box.
-python -m robocasa.scripts.download_kitchen_assets --type tex fixtures_lw objs_lw
+# Lightweight assets only (lightwheel registry, ~2GB + the generative
+# textures needed by the fixture XMLs). Enough for the default env out
+# of the box.
+python -m robocasa.scripts.download_kitchen_assets \
+  --type tex tex_generative fixtures_lw objs_lw
 # Optional: full objaverse/aigen registries (~30GB) for richer object
 # variety. If you download these, pass them via `--env.obj_registries`
 # at eval/train time (see below).
-# python -m robocasa.scripts.download_kitchen_assets --type objaverse
+# python -m robocasa.scripts.download_kitchen_assets --type objs_objaverse
 ```
 
 <Tip>

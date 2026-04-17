@@ -24,9 +24,18 @@ FROM huggingface/lerobot-gpu:latest
 # Install robocasa + robosuite as editable clones. pip-installing from git
 # omits data files like robocasa/models/assets/box_links/box_links_assets.json
 # (not declared in package_data), which download_kitchen_assets needs at import.
+#
+# `--no-deps` on robocasa is deliberate: its setup.py pins `lerobot==0.3.3`
+# in install_requires, which would shadow the editable lerobot baked into
+# this image. We install robocasa's actual runtime deps explicitly instead.
 RUN git clone --depth 1 https://github.com/robocasa/robocasa.git ~/robocasa && \
     git clone --depth 1 https://github.com/ARISE-Initiative/robosuite.git ~/robosuite && \
-    uv pip install --no-cache -e ~/robocasa -e ~/robosuite
+    uv pip install --no-cache -e ~/robocasa --no-deps && \
+    uv pip install --no-cache -e ~/robosuite && \
+    uv pip install --no-cache \
+      "numpy==2.2.5" "numba==0.61.2" "scipy==1.15.3" "mujoco==3.3.1" \
+      pygame Pillow opencv-python pyyaml pynput tqdm termcolor \
+      imageio h5py lxml hidapi "tianshou==0.4.10" gymnasium
 
 # Set up robocasa macros and download kitchen assets. We need:
 #   - tex              : base environment textures
