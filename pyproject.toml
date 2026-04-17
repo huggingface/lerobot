@@ -187,6 +187,7 @@ intelrealsense = [
     "pyrealsense2-macosx>=2.54,<2.57.0 ; sys_platform == 'darwin'",
 ]
 phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0", "fastapi<1.0", "lerobot[scipy-dep]"]
+dragontactil = ["scipy>=1.14.0,<2.0.0",  "opendaq"]
 
 # Policies
 diffusion = ["lerobot[diffusers-dep]"]

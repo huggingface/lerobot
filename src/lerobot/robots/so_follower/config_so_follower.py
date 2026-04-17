@@ -41,13 +41,17 @@ class SOFollowerConfig:
     # Set to `True` for backward compatibility with previous policies/dataset
     use_degrees: bool = True
 
-
 @RobotConfig.register_subclass("so101_follower")
 @RobotConfig.register_subclass("so100_follower")
 @dataclass
 class SOFollowerRobotConfig(RobotConfig, SOFollowerConfig):
     pass
 
+
+@RobotConfig.register_subclass("so101_follower_dragontactil")
+@dataclass
+class SO101FollowerDragontactilConfig(RobotConfig, SOFollowerConfig):
+    pass
 
 SO100FollowerConfig = SOFollowerRobotConfig
 SO101FollowerConfig = SOFollowerRobotConfig
