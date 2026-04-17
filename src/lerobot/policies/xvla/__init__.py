@@ -1,6 +1,15 @@
-# register the processor steps
-from lerobot.policies.xvla.processor_xvla import (
+from .configuration_xvla import XVLAConfig
+from .modeling_xvla import XVLAPolicy
+from .processor_xvla import (
     XVLAAddDomainIdProcessorStep,
     XVLAImageNetNormalizeProcessorStep,
     XVLAImageToFloatProcessorStep,
 )
+
+__all__ = [
+    "XVLAConfig",
+    "XVLAPolicy",
+    "XVLAAddDomainIdProcessorStep",
+    "XVLAImageNetNormalizeProcessorStep",
+    "XVLAImageToFloatProcessorStep",
+]

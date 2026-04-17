@@ -21,8 +21,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from lerobot.configs.types import PipelineFeatureType, PolicyFeature
-from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig
+from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     ActionTokenizerProcessorStep,
@@ -37,14 +36,17 @@ from lerobot.processor import (
     RenameObservationsProcessorStep,
     TokenizerProcessorStep,
     UnnormalizerProcessorStep,
+    policy_action_to_transition,
+    transition_to_policy_action,
 )
-from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
 from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
     OBS_STATE,
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
+
+from .configuration_pi0_fast import PI0FastConfig
 
 
 @ProcessorStepRegistry.register(name="pi0_fast_prepare_state_tokenizer_processor_step")
