@@ -366,7 +366,7 @@ jobs:
                 --eval.n_episodes=1 \
                 --eval.use_async_envs=false \
                 --policy.device=cuda \
-                '--rename_map={\"observation.images.image\": \"observation.images.camera1\", \"observation.images.image2\": \"observation.images.camera2\", \"observation.images.image3\": \"observation.images.camera3\"}' \
+                '--rename_map={\"observation.images.robot0_agentview_left\": \"observation.images.camera1\", \"observation.images.robot0_eye_in_hand\": \"observation.images.camera2\", \"observation.images.robot0_agentview_right\": \"observation.images.camera3\"}' \
                 --output_dir=/tmp/eval-artifacts
             "
 

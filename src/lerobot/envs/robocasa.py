@@ -35,18 +35,27 @@ ACTION_DIM = 12  # base_motion(4) + control_mode(1) + ee_pos(3) + ee_rot(3) + gr
 ACTION_LOW = -1.0
 ACTION_HIGH = 1.0
 
-# Default cameras for the PandaOmron robot.
+# Default PandaOmron cameras. We surface these raw names directly as
+# `observation.images.<name>` so the LeRobot dataset/policy keys match
+# RoboCasa's native convention (no implicit renaming).
 DEFAULT_CAMERAS = [
     "robot0_agentview_left",
     "robot0_eye_in_hand",
     "robot0_agentview_right",
 ]
 
-# Map raw RoboCasa camera names to LeRobot convention names.
-DEFAULT_CAMERA_NAME_MAPPING = {
-    "robot0_agentview_left": "image",
-    "robot0_eye_in_hand": "image2",
-    "robot0_agentview_right": "image3",
+# Task-group shortcuts accepted as `--env.task`. When the user passes one of
+# these names, we expand it to the upstream RoboCasa task list and auto-set
+# the dataset split. Individual task names (optionally comma-separated) still
+# take precedence; this only triggers on an exact group-name match.
+_TASK_GROUP_SPLITS = {
+    "atomic_seen": "target",
+    "composite_seen": "target",
+    "composite_unseen": "target",
+    "pretrain50": "pretrain",
+    "pretrain100": "pretrain",
+    "pretrain200": "pretrain",
+    "pretrain300": "pretrain",
 }
 
 
@@ -63,21 +72,30 @@ def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
     return cams
 
 
-def convert_state(raw_obs: dict[str, np.ndarray]) -> np.ndarray:
-    """Concatenate RoboCasa robot state dict into a flat (16,) vector.
+def _resolve_tasks(task: str) -> tuple[list[str], str | None]:
+    """Resolve a `--env.task` value to (task_names, split_override).
 
-    Layout: base_pos(3) + base_quat(4) + ee_pos_rel(3) + ee_quat_rel(4) + gripper_qpos(2)
+    If `task` is a known task-group name (e.g. `atomic_seen`, `pretrain100`),
+    expand it via `robocasa.utils.dataset_registry.{TARGET,PRETRAINING}_TASKS`
+    and return the matching split. Otherwise treat `task` as a single task or
+    comma-separated list and leave the split untouched (None).
     """
-    return np.concatenate(
-        [
-            raw_obs["robot0_base_pos"],  # (3,)
-            raw_obs["robot0_base_quat"],  # (4,)
-            raw_obs["robot0_base_to_eef_pos"],  # (3,)
-            raw_obs["robot0_base_to_eef_quat"],  # (4,)
-            raw_obs["robot0_gripper_qpos"],  # (2,)
-        ],
-        axis=-1,
-    ).astype(np.float32)
+    key = task.strip()
+    if key in _TASK_GROUP_SPLITS:
+        from robocasa.utils.dataset_registry import PRETRAINING_TASKS, TARGET_TASKS
+
+        combined = {**TARGET_TASKS, **PRETRAINING_TASKS}
+        if key not in combined:
+            raise ValueError(
+                f"Task group '{key}' is not available in this version of robocasa. "
+                f"Known groups: {sorted(combined.keys())}."
+            )
+        return list(combined[key]), _TASK_GROUP_SPLITS[key]
+
+    names = [t.strip() for t in task.split(",") if t.strip()]
+    if not names:
+        raise ValueError("`task` must contain at least one RoboCasa task name.")
+    return names, None
 
 
 def convert_action(flat_action: np.ndarray) -> dict[str, Any]:
@@ -97,9 +115,9 @@ def convert_action(flat_action: np.ndarray) -> dict[str, Any]:
 class RoboCasaEnv(gym.Env):
     """LeRobot gym.Env wrapper for RoboCasa365 kitchen environments.
 
-    Wraps the RoboCasaGymEnv from the robocasa package and converts its
-    dict-based observations and actions into flat arrays compatible with
-    the LeRobot evaluation pipeline.
+    Wraps RoboCasaGymEnv from the robocasa package and converts its
+    dict-based observations and actions into the flat arrays LeRobot expects.
+    Raw RoboCasa camera names are preserved verbatim under `pixels/<cam>`.
     """
 
     metadata = {"render_modes": ["rgb_array"], "render_fps": 20}
@@ -108,7 +126,6 @@ class RoboCasaEnv(gym.Env):
         self,
         task: str,
         camera_name: str | Sequence[str] = ",".join(DEFAULT_CAMERAS),
-        camera_name_mapping: dict[str, str] | None = None,
         obs_type: str = "pixels_agent_pos",
         render_mode: str = "rgb_array",
         observation_width: int = 256,
@@ -125,27 +142,23 @@ class RoboCasaEnv(gym.Env):
         self.split = split
 
         self.camera_name = _parse_camera_names(camera_name)
-        if camera_name_mapping is None:
-            camera_name_mapping = dict(DEFAULT_CAMERA_NAME_MAPPING)
-        self.camera_name_mapping = camera_name_mapping
 
         self._max_episode_steps = episode_length if episode_length is not None else 1000
 
         # Deferred — created on first reset() inside the worker subprocess
         # to avoid inheriting stale GPU/EGL contexts across fork().
-        self._env = None
+        self._env: Any = None
         self.task_description = ""
 
-        # Build observation space
-        images = {}
-        for cam in self.camera_name:
-            mapped = self.camera_name_mapping.get(cam, cam)
-            images[mapped] = spaces.Box(
+        images = {
+            cam: spaces.Box(
                 low=0,
                 high=255,
                 shape=(self.observation_height, self.observation_width, 3),
                 dtype=np.uint8,
             )
+            for cam in self.camera_name
+        }
 
         if self.obs_type == "pixels":
             self.observation_space = spaces.Dict({"pixels": spaces.Dict(images)})
@@ -182,37 +195,28 @@ class RoboCasaEnv(gym.Env):
             return
         from robocasa.wrappers.gym_wrapper import RoboCasaGymEnv
 
-        # RoboCasaGymEnv has a broken default split="test" (invalid for create_env
-        # which only accepts None/"all"/"pretrain"/"target"). Always pass a valid
-        # value so we don't hit that default.
-        kwargs: dict[str, Any] = {
-            "env_name": self.task,
-            "camera_widths": self.observation_width,
-            "camera_heights": self.observation_height,
-            "split": self.split if self.split is not None else "all",
-        }
+        # RoboCasaGymEnv defaults split="test", which create_env rejects
+        # (only None/"all"/"pretrain"/"target" are valid). Always pass a
+        # valid value so we don't hit that default.
+        self._env = RoboCasaGymEnv(
+            env_name=self.task,
+            camera_widths=self.observation_width,
+            camera_heights=self.observation_height,
+            split=self.split if self.split is not None else "all",
+        )
 
-        self._env = RoboCasaGymEnv(**kwargs)
-
-        # Extract task description from environment metadata
-        assert self._env is not None
         ep_meta = self._env.env.get_ep_meta()
         self.task_description = ep_meta.get("lang", self.task)
 
     def _format_raw_obs(self, raw_obs: dict) -> RobotObservation:
         """Convert RoboCasaGymEnv observation dict to LeRobot format."""
-        # Extract camera images (RoboCasaGymEnv provides "video.<cam>" keys)
-        images = {}
-        for cam in self.camera_name:
-            video_key = f"video.{cam}"
-            if video_key in raw_obs:
-                mapped = self.camera_name_mapping.get(cam, cam)
-                images[mapped] = raw_obs[video_key]
+        # RoboCasaGymEnv emits camera frames under "video.<cam>".
+        images = {cam: raw_obs[f"video.{cam}"] for cam in self.camera_name if f"video.{cam}" in raw_obs}
 
         if self.obs_type == "pixels":
             return {"pixels": images}
 
-        # Extract state from raw_obs (state.* keys from PandaOmronKeyConverter)
+        # `state.*` keys come from PandaOmronKeyConverter inside the wrapper.
         agent_pos = np.concatenate(
             [
                 raw_obs.get("state.base_position", np.zeros(3)),
@@ -224,10 +228,7 @@ class RoboCasaEnv(gym.Env):
             axis=-1,
         ).astype(np.float32)
 
-        return {
-            "pixels": images,
-            "agent_pos": agent_pos,
-        }
+        return {"pixels": images, "agent_pos": agent_pos}
 
     def render(self) -> np.ndarray:
         self._ensure_env()
@@ -240,7 +241,6 @@ class RoboCasaEnv(gym.Env):
         super().reset(seed=seed)
         raw_obs, info = self._env.reset(seed=seed)
 
-        # Update task description on each reset (may change per episode)
         ep_meta = self._env.env.get_ep_meta()
         self.task_description = ep_meta.get("lang", self.task)
 
@@ -257,19 +257,12 @@ class RoboCasaEnv(gym.Env):
                 f"but got shape {action.shape} with ndim={action.ndim}"
             )
 
-        # Convert flat action to RoboCasa dict format
         action_dict = convert_action(action)
         raw_obs, reward, done, truncated, info = self._env.step(action_dict)
 
         is_success = bool(info.get("success", False))
         terminated = done or is_success
-        info.update(
-            {
-                "task": self.task,
-                "done": done,
-                "is_success": is_success,
-            }
-        )
+        info.update({"task": self.task, "done": done, "is_success": is_success})
 
         observation = self._format_raw_obs(raw_obs)
         if terminated:
@@ -282,15 +275,11 @@ class RoboCasaEnv(gym.Env):
             self._env.close()
 
 
-# ---- Main API ----------------------------------------------------------------
-
-
 def _make_env_fns(
     *,
     task: str,
     n_envs: int,
     camera_names: list[str],
-    camera_name_mapping: dict[str, str] | None,
     obs_type: str,
     render_mode: str,
     observation_width: int,
@@ -304,7 +293,6 @@ def _make_env_fns(
         return RoboCasaEnv(
             task=task,
             camera_name=camera_names,
-            camera_name_mapping=camera_name_mapping,
             obs_type=obs_type,
             render_mode=render_mode,
             observation_width=observation_width,
@@ -322,7 +310,6 @@ def create_robocasa_envs(
     n_envs: int,
     gym_kwargs: dict[str, Any] | None = None,
     camera_name: str | Sequence[str] = ",".join(DEFAULT_CAMERAS),
-    camera_name_mapping: dict[str, str] | None = None,
     env_cls: Callable[[Sequence[Callable[[], Any]]], Any] | None = None,
     episode_length: int | None = None,
 ) -> dict[str, dict[int, Any]]:
@@ -330,9 +317,14 @@ def create_robocasa_envs(
 
     Returns:
         dict[task_name][task_id] -> vec_env (env_cls([...]) with exactly n_envs factories)
-    Notes:
-        - n_envs is the number of rollouts *per task* (parallel environments).
-        - `task` can be a single task or a comma-separated list of tasks.
+
+    `task` can be:
+      - a single task name (e.g. `CloseFridge`)
+      - a comma-separated list of task names (e.g. `CloseFridge,PickPlaceCoffee`)
+      - a benchmark-group shortcut (`atomic_seen`, `composite_seen`,
+        `composite_unseen`, `pretrain50`, `pretrain100`, `pretrain200`,
+        `pretrain300`), which auto-expands to the upstream task list and
+        auto-sets the dataset `split` ("target" or "pretrain").
     """
     if env_cls is None or not callable(env_cls):
         raise ValueError("env_cls must be a callable that wraps a list of environment factory callables.")
@@ -347,11 +339,11 @@ def create_robocasa_envs(
     split = gym_kwargs.pop("split", None)
 
     camera_names = _parse_camera_names(camera_name)
-    task_names = [t.strip() for t in str(task).split(",") if t.strip()]
-    if not task_names:
-        raise ValueError("`task` must contain at least one RoboCasa task name.")
+    task_names, group_split = _resolve_tasks(str(task))
+    if group_split is not None and split is None:
+        split = group_split
 
-    print(f"Creating RoboCasa envs | tasks={task_names} | n_envs(per task)={n_envs}")
+    print(f"Creating RoboCasa envs | tasks={task_names} | split={split} | n_envs(per task)={n_envs}")
 
     is_async = env_cls is gym.vector.AsyncVectorEnv
 
@@ -359,12 +351,11 @@ def create_robocasa_envs(
     cached_act_space: spaces.Space | None = None
     out: dict[str, dict[int, Any]] = defaultdict(dict)
 
-    for _tid, task_name in enumerate(task_names):
+    for task_name in task_names:
         fns = _make_env_fns(
             task=task_name,
             n_envs=n_envs,
             camera_names=camera_names,
-            camera_name_mapping=camera_name_mapping,
             obs_type=obs_type,
             render_mode=render_mode,
             observation_width=observation_width,

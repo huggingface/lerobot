@@ -505,49 +505,32 @@ class RoboCasaEnv(EnvConfig):
     obs_type: str = "pixels_agent_pos"
     render_mode: str = "rgb_array"
     camera_name: str = "robot0_agentview_left,robot0_eye_in_hand,robot0_agentview_right"
-    camera_name_mapping: dict[str, str] | None = None
     observation_height: int = 256
     observation_width: int = 256
     split: str | None = None
     features: dict[str, PolicyFeature] = field(
-        default_factory=lambda: {
-            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(12,)),
-        }
+        default_factory=lambda: {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(12,))}
     )
-    features_map: dict[str, str] = field(
-        default_factory=lambda: {
-            ACTION: ACTION,
-            "agent_pos": OBS_STATE,
-            "pixels/image": f"{OBS_IMAGES}.image",
-            "pixels/image2": f"{OBS_IMAGES}.image2",
-            "pixels/image3": f"{OBS_IMAGES}.image3",
-        }
-    )
+    features_map: dict[str, str] = field(default_factory=lambda: {ACTION: ACTION, "agent_pos": OBS_STATE})
 
     def __post_init__(self):
-        if self.obs_type == "pixels":
-            for cam_key in ["pixels/image", "pixels/image2", "pixels/image3"]:
-                self.features[cam_key] = PolicyFeature(
-                    type=FeatureType.VISUAL,
-                    shape=(self.observation_height, self.observation_width, 3),
-                )
-        elif self.obs_type == "pixels_agent_pos":
-            for cam_key in ["pixels/image", "pixels/image2", "pixels/image3"]:
-                self.features[cam_key] = PolicyFeature(
-                    type=FeatureType.VISUAL,
-                    shape=(self.observation_height, self.observation_width, 3),
-                )
-            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(16,))
-        else:
+        if self.obs_type not in ("pixels", "pixels_agent_pos"):
             raise ValueError(f"Unsupported obs_type: {self.obs_type}")
 
-        if self.camera_name_mapping is not None:
-            # Update features_map to reflect custom camera name mapping
-            mapping = self.camera_name_mapping
-            cams = [c.strip() for c in self.camera_name.split(",") if c.strip()]
-            for cam in cams:
-                mapped = mapping.get(cam, cam)
-                self.features_map[f"pixels/{mapped}"] = f"{OBS_IMAGES}.{mapped}"
+        # Preserve raw RoboCasa camera names end-to-end (e.g.
+        # `observation.images.robot0_agentview_left`). This matches the
+        # naming convention used by the RoboCasa datasets on the Hub, so
+        # trained policies don't need a `--rename_map` at eval time.
+        cams = [c.strip() for c in self.camera_name.split(",") if c.strip()]
+        for cam in cams:
+            self.features[f"pixels/{cam}"] = PolicyFeature(
+                type=FeatureType.VISUAL,
+                shape=(self.observation_height, self.observation_width, 3),
+            )
+            self.features_map[f"pixels/{cam}"] = f"{OBS_IMAGES}.{cam}"
+
+        if self.obs_type == "pixels_agent_pos":
+            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(16,))
 
     @property
     def gym_kwargs(self) -> dict:
@@ -571,7 +554,6 @@ class RoboCasaEnv(EnvConfig):
             task=self.task,
             n_envs=n_envs,
             camera_name=self.camera_name,
-            camera_name_mapping=self.camera_name_mapping,
             gym_kwargs=self.gym_kwargs,
             env_cls=env_cls,
             episode_length=self.episode_length,
