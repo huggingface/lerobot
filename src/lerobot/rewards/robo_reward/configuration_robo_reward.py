@@ -56,12 +56,7 @@ class RoboRewardConfig(RewardModelConfig):
     task_key: str = "observation.language_instruction"
     image_key: str = "observation.images.top"
 
-    input_features: dict[str, PolicyFeature] = field(
-        default_factory=lambda: {
-            "observation.images.top": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 480, 640)),
-            "observation.language_instruction": PolicyFeature(type=FeatureType.LANGUAGE, shape=(1,)),
-        }
-    )
+    input_features: dict[str, PolicyFeature] = field(default_factory=dict)
     output_features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {"reward": PolicyFeature(type=FeatureType.REWARD, shape=(1,))}
     )
@@ -72,6 +67,13 @@ class RoboRewardConfig(RewardModelConfig):
             "REWARD": NormalizationMode.IDENTITY,
         }
     )
+
+    def __post_init__(self):
+        # Rebuild input_features from image_key/task_key so they stay in sync.
+        self.input_features = {
+            self.image_key: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 480, 640)),
+            self.task_key: PolicyFeature(type=FeatureType.LANGUAGE, shape=(1,)),
+        }
 
     def get_optimizer_preset(self) -> OptimizerConfig:
         return AdamWConfig(lr=1e-5, weight_decay=1e-2)
