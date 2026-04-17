@@ -79,10 +79,18 @@ class RoboMMEGymEnv(gym.Env):
 
         action_dim = 8 if action_space_type == "joint_angle" else 7
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(action_dim,), dtype=np.float32)
+        # `pixels` must be a nested Dict so `preprocess_observation()` in
+        # envs/utils.py picks it up and maps each camera to
+        # `observation.images.<cam>`. A flat layout (`pixels/image`,
+        # `pixels/wrist_image`) silently drops every image from the batch.
         self.observation_space = spaces.Dict(
             {
-                "pixels/image": spaces.Box(0, 255, shape=(256, 256, 3), dtype=np.uint8),
-                "pixels/wrist_image": spaces.Box(0, 255, shape=(256, 256, 3), dtype=np.uint8),
+                "pixels": spaces.Dict(
+                    {
+                        "image": spaces.Box(0, 255, shape=(256, 256, 3), dtype=np.uint8),
+                        "wrist_image": spaces.Box(0, 255, shape=(256, 256, 3), dtype=np.uint8),
+                    }
+                ),
                 "agent_pos": spaces.Box(-np.inf, np.inf, shape=(8,), dtype=np.float32),
             }
         )
@@ -146,8 +154,7 @@ class RoboMMEGymEnv(gym.Env):
         state = np.concatenate([joint, gripper])
 
         return {
-            "pixels/image": front_rgb,
-            "pixels/wrist_image": wrist_rgb,
+            "pixels": {"image": front_rgb, "wrist_image": wrist_rgb},
             "agent_pos": state,
         }
 
