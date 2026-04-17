@@ -19,7 +19,11 @@ RoboCasa365 includes **365 tasks** organized into atomic (single-skill) and comp
 
 **Composite task categories:** baking, boiling, brewing, chopping food, clearing table, defrosting food, loading dishwasher, making tea, microwaving food, washing dishes, and many more.
 
-Pass individual task class names directly as `--env.task` (e.g., `CloseFridge`, `PickPlaceCoffee`). Multiple tasks can be comma-separated for multi-task evaluation.
+`--env.task` accepts three forms:
+
+- a single task name (e.g. `CloseFridge`)
+- a comma-separated list of task names (e.g. `CloseFridge,OpenBlenderLid`)
+- a benchmark-group shortcut — `atomic_seen`, `composite_seen`, `composite_unseen`, `pretrain50`, `pretrain100`, `pretrain200`, `pretrain300` — which auto-expands to the upstream task list and auto-sets the dataset `split` (`target` or `pretrain`).
 
 ## Installation
 
@@ -40,71 +44,82 @@ export MUJOCO_GL=egl  # for headless servers (HPC, cloud)
 
 </Tip>
 
-## Evaluation
+## Policy inputs and outputs
 
-### Single-task evaluation
+**Observations** (raw RoboCasa camera names are preserved verbatim):
 
-Evaluate a policy on a single RoboCasa task:
+- `observation.state` -- 16-dim proprioceptive state (base position, base quaternion, relative end-effector position, relative end-effector quaternion, gripper qpos)
+- `observation.images.robot0_agentview_left` -- left agent view, 256x256 HWC uint8
+- `observation.images.robot0_eye_in_hand` -- wrist camera view, 256x256 HWC uint8
+- `observation.images.robot0_agentview_right` -- right agent view, 256x256 HWC uint8
+
+**Actions:**
+
+- Continuous control in `Box(-1, 1, shape=(12,))` -- base motion (4D) + control mode (1D) + end-effector position (3D) + end-effector rotation (3D) + gripper (1D)
+
+## Training on a single task
+
+A ready-to-use single-task dataset is available on the Hub:
+[`pepijn223/robocasa_CloseFridge`](https://huggingface.co/datasets/pepijn223/robocasa_CloseFridge).
+
+Train a SmolVLA policy on `CloseFridge`:
+
+```bash
+lerobot-train \
+  --policy.type=smolvla \
+  --policy.repo_id=${HF_USER}/smolvla_robocasa_CloseFridge \
+  --policy.load_vlm_weights=true \
+  --policy.push_to_hub=true \
+  --dataset.repo_id=pepijn223/robocasa_CloseFridge \
+  --env.type=robocasa \
+  --env.task=CloseFridge \
+  --output_dir=./outputs/smolvla_robocasa_CloseFridge \
+  --steps=100000 \
+  --batch_size=4 \
+  --eval_freq=5000 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=5 \
+  --save_freq=10000
+```
+
+Evaluate the trained checkpoint on the same task:
 
 ```bash
 lerobot-eval \
-  --policy.path="your-policy-id" \
+  --policy.path=${HF_USER}/smolvla_robocasa_CloseFridge \
   --env.type=robocasa \
   --env.task=CloseFridge \
   --eval.batch_size=1 \
   --eval.n_episodes=20
 ```
 
-### Multi-task evaluation
+## Multi-task evaluation
 
-Evaluate across multiple tasks at once by passing a comma-separated list:
+Evaluate across several tasks at once:
 
 ```bash
 lerobot-eval \
-  --policy.path="your-policy-id" \
+  --policy.path=your-policy-id \
   --env.type=robocasa \
   --env.task=CloseFridge,OpenBlenderLid,PickPlaceCoffee \
   --eval.batch_size=1 \
   --eval.n_episodes=20
 ```
 
-- `--env.task` accepts individual task names (comma-separated).
+Or run a full benchmark group:
+
+```bash
+lerobot-eval \
+  --policy.path=your-policy-id \
+  --env.type=robocasa \
+  --env.task=atomic_seen \
+  --eval.batch_size=1 \
+  --eval.n_episodes=20
+```
+
 - `--eval.batch_size` controls how many environments run in parallel.
 - `--eval.n_episodes` sets how many episodes to run per task.
-
-### Policy inputs and outputs
-
-**Observations:**
-
-- `observation.state` -- 16-dim proprioceptive state (base position, base quaternion, relative end-effector position, relative end-effector quaternion, gripper qpos)
-- `observation.images.image` -- left agent view (`robot0_agentview_left`), 256x256 HWC uint8
-- `observation.images.image2` -- wrist camera view (`robot0_eye_in_hand`), 256x256 HWC uint8
-- `observation.images.image3` -- right agent view (`robot0_agentview_right`), 256x256 HWC uint8
-
-**Actions:**
-
-- Continuous control in `Box(-1, 1, shape=(12,))` -- base motion (4D) + control mode (1D) + end-effector position (3D) + end-effector rotation (3D) + gripper (1D)
 
 ### Recommended evaluation episodes
 
 For reproducible benchmarking, use **20 episodes per task**. This matches the protocol used in published results.
-
-## Training
-
-### Example training command
-
-```bash
-lerobot-train \
-  --policy.type=smolvla \
-  --policy.repo_id=${HF_USER}/robocasa-test \
-  --policy.load_vlm_weights=true \
-  --dataset.repo_id=your-robocasa-dataset \
-  --env.type=robocasa \
-  --env.task=CloseFridge \
-  --output_dir=./outputs/ \
-  --steps=100000 \
-  --batch_size=4 \
-  --eval.batch_size=1 \
-  --eval.n_episodes=1 \
-  --eval_freq=1000
-```
