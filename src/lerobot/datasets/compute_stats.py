@@ -592,14 +592,16 @@ def _validate_stat_value(value: np.ndarray, key: str, feature_key: str) -> None:
     if key == "count" and value.shape != (1,):
         raise ValueError(f"Shape of 'count' must be (1), but is {value.shape} instead.")
 
-    # Validate image/depth stats shape: (C, 1, 1) where C is 3 for RGB or 1 for depth
+    # Validate image/depth stats shape: (C, 1, 1) where C is 3 for RGB or 1 for depth.
+    # Matches the existing substring convention (feature keys typically contain "image"
+    # or "images."); we extend the same convention to cover depth feature keys.
     if (
-        "image" in feature_key
+        ("image" in feature_key or "depth" in feature_key)
         and key != "count"
         and (len(value.shape) != 3 or value.shape[1:] != (1, 1) or value.shape[0] not in [1, 3])
     ):
         raise ValueError(
-            f"Shape of stat '{key}' for image feature must be (C,1,1) where C is 1 or 3, "
+            f"Shape of stat '{key}' for image/depth feature must be (C,1,1) where C is 1 or 3, "
             f"but is {value.shape} instead."
         )
 

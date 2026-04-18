@@ -746,8 +746,39 @@ def test_assert_type_and_shape_with_quantiles():
         }
     ]
 
-    with pytest.raises(ValueError, match="Shape of stat 'q01' for image feature must be \\(C,1,1\\)"):
+    with pytest.raises(ValueError, match="Shape of stat 'q01' for image/depth feature must be \\(C,1,1\\)"):
         _assert_type_and_shape(invalid_stats)
+
+
+def test_assert_type_and_shape_depth_validated_by_key_without_images_prefix():
+    """Depth features named without 'images.' (e.g. 'observation.depth') must still
+    have their stats shape validated. Prior to this PR, the check only fired on
+    substrings of 'image', so `observation.depth` slipped through silently."""
+    invalid_stats = [
+        {
+            "observation.depth": {
+                "count": np.array([100]),
+                "mean": np.array([2.5, 3.5]),  # Wrong shape for depth stats
+            }
+        }
+    ]
+
+    with pytest.raises(ValueError, match="Shape of stat 'mean' for image/depth feature must be \\(C,1,1\\)"):
+        _assert_type_and_shape(invalid_stats)
+
+    # Valid (1, 1, 1) depth stats should pass.
+    valid_stats = [
+        {
+            "observation.depth": {
+                "min": np.array([0.5]).reshape(1, 1, 1),
+                "max": np.array([5.0]).reshape(1, 1, 1),
+                "mean": np.array([2.5]).reshape(1, 1, 1),
+                "std": np.array([0.8]).reshape(1, 1, 1),
+                "count": np.array([100]),
+            }
+        }
+    ]
+    _assert_type_and_shape(valid_stats)
 
 
 def test_quantile_integration_single_value_quantiles():
