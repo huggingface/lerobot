@@ -28,13 +28,13 @@ from lerobot.datasets.compute_stats import (
     get_feature_stats,
     sample_depth_images,
 )
-from lerobot.datasets.image_writer import (
-    image_array_to_pil_image,
-    write_image,
-)
 from lerobot.datasets.feature_utils import (
     get_hf_features_from_features,
     validate_feature_image_or_video,
+)
+from lerobot.datasets.image_writer import (
+    image_array_to_pil_image,
+    write_image,
 )
 from lerobot.datasets.io_utils import (
     hf_transform_to_torch,

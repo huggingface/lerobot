@@ -271,10 +271,7 @@ def load_depth_as_numpy(
     """
     img = PILImage.open(fpath)
     img_array = np.array(img, dtype=dtype)
-    if channel_first:
-        img_array = img_array[np.newaxis, :, :]
-    else:
-        img_array = img_array[:, :, np.newaxis]
+    img_array = img_array[np.newaxis, :, :] if channel_first else img_array[:, :, np.newaxis]
     if np.issubdtype(dtype, np.floating):
         img_array = img_array / 1000.0
     return img_array
