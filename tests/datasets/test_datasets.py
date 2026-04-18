@@ -473,6 +473,7 @@ def test_add_frame_depth(depth_dataset):
     dataset = depth_dataset
     dataset.add_frame({"depth": np.random.rand(*DUMMY_DEPTH_CHW), "task": "Dummy task"})
     dataset.save_episode()
+    dataset.finalize()
 
     assert dataset[0]["depth"].shape == torch.Size(DUMMY_DEPTH_CHW)
 
@@ -481,6 +482,7 @@ def test_add_frame_depth_h_w_c(depth_dataset):
     dataset = depth_dataset
     dataset.add_frame({"depth": np.random.rand(*DUMMY_DEPTH_HWC), "task": "Dummy task"})
     dataset.save_episode()
+    dataset.finalize()
 
     assert dataset[0]["depth"].shape == torch.Size(DUMMY_DEPTH_CHW)
 
@@ -491,6 +493,7 @@ def test_add_frame_depth_uint16(depth_dataset):
     depth = np.random.randint(0, 65535, DUMMY_DEPTH_HWC, dtype=np.uint16)
     dataset.add_frame({"depth": depth, "task": "Dummy task"})
     dataset.save_episode()
+    dataset.finalize()
 
     assert dataset[0]["depth"].shape == torch.Size(DUMMY_DEPTH_CHW)
 
@@ -501,6 +504,7 @@ def test_add_frame_depth_float32(depth_dataset):
     depth = np.random.rand(*DUMMY_DEPTH_HWC).astype(np.float32)
     dataset.add_frame({"depth": depth, "task": "Dummy task"})
     dataset.save_episode()
+    dataset.finalize()
 
     assert dataset[0]["depth"].shape == torch.Size(DUMMY_DEPTH_CHW)
 
