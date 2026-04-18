@@ -21,7 +21,7 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
 from lerobot.policies.sac.reward_model.modeling_classifier import ClassifierOutput
 from lerobot.utils.constants import OBS_IMAGE, REWARD
-from tests.utils import require_package
+from tests.utils import skip_if_package_missing
 
 
 def test_classifier_output():
@@ -37,7 +37,7 @@ def test_classifier_output():
     )
 
 
-@require_package("transformers")
+@skip_if_package_missing("transformers")
 @pytest.mark.skip(
     reason="helper2424/resnet10 needs to be updated to work with the latest version of transformers"
 )
@@ -81,7 +81,7 @@ def test_binary_classifier_with_default_params():
     assert not torch.isnan(output.hidden_states).any(), "Tensor contains NaN values"
 
 
-@require_package("transformers")
+@skip_if_package_missing("transformers")
 @pytest.mark.skip(
     reason="helper2424/resnet10 needs to be updated to work with the latest version of transformers"
 )
@@ -123,7 +123,7 @@ def test_multiclass_classifier():
     assert not torch.isnan(output.hidden_states).any(), "Tensor contains NaN values"
 
 
-@require_package("transformers")
+@skip_if_package_missing("transformers")
 @pytest.mark.skip(
     reason="helper2424/resnet10 needs to be updated to work with the latest version of transformers"
 )
@@ -138,7 +138,7 @@ def test_default_device():
         assert p.device == torch.device("cpu")
 
 
-@require_package("transformers")
+@skip_if_package_missing("transformers")
 @pytest.mark.skip(
     reason="helper2424/resnet10 needs to be updated to work with the latest version of transformers"
 )

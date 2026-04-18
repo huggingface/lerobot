@@ -19,8 +19,9 @@ from pathlib import Path
 
 from lerobot import envs, policies  # noqa: F401
 from lerobot.configs import parser
-from lerobot.configs.default import EvalConfig
-from lerobot.configs.policies import PreTrainedConfig
+
+from .default import EvalConfig
+from .policies import PreTrainedConfig
 
 logger = getLogger(__name__)
 

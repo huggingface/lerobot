@@ -23,7 +23,8 @@ import draccus
 import gymnasium as gym
 from gymnasium.envs.registration import registry as gym_registry
 
-from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.configs import FeatureType, PolicyFeature
+from lerobot.processor import IsaaclabArenaProcessorStep, LiberoProcessorStep, PolicyProcessorPipeline
 from lerobot.robots import RobotConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.constants import (
@@ -42,6 +43,13 @@ from lerobot.utils.constants import (
     OBS_IMAGES,
     OBS_STATE,
 )
+
+
+def _make_vec_env_cls(use_async: bool, n_envs: int):
+    """Return the right VectorEnv constructor."""
+    if use_async and n_envs > 1:
+        return gym.vector.AsyncVectorEnv
+    return gym.vector.SyncVectorEnv
 
 
 @dataclass
@@ -80,8 +88,9 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         """Create {suite: {task_id: VectorEnv}}.
 
         Default: single-task env via gym.make(). Multi-task benchmarks override.
+        AsyncVectorEnv is the default for n_envs > 1; auto-downgraded to Sync for n_envs=1.
         """
-        env_cls = gym.vector.AsyncVectorEnv if use_async_envs else gym.vector.SyncVectorEnv
+        env_cls = gym.vector.AsyncVectorEnv if (use_async_envs and n_envs > 1) else gym.vector.SyncVectorEnv
 
         if self.gym_id not in gym_registry:
             print(f"gym id '{self.gym_id}' not found, attempting to import '{self.package_name}'...")
@@ -101,18 +110,21 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         def _make_one():
             return gym.make(self.gym_id, disable_env_checker=self.disable_env_checker, **self.gym_kwargs)
 
+        extra_kwargs: dict = {}
+        if env_cls is gym.vector.AsyncVectorEnv:
+            extra_kwargs["context"] = "forkserver"
         try:
             from gymnasium.vector import AutoresetMode
 
-            vec = env_cls([_make_one for _ in range(n_envs)], autoreset_mode=AutoresetMode.SAME_STEP)
+            vec = env_cls(
+                [_make_one for _ in range(n_envs)], autoreset_mode=AutoresetMode.SAME_STEP, **extra_kwargs
+            )
         except ImportError:
-            vec = env_cls([_make_one for _ in range(n_envs)])
+            vec = env_cls([_make_one for _ in range(n_envs)], **extra_kwargs)
         return {self.type: {0: vec}}
 
     def get_env_processors(self):
         """Return (preprocessor, postprocessor) for this env. Default: identity."""
-        from lerobot.processor.pipeline import PolicyProcessorPipeline
-
         return PolicyProcessorPipeline(steps=[]), PolicyProcessorPipeline(steps=[])
 
 
@@ -394,17 +406,22 @@ class LiberoEnv(EnvConfig):
 
     @property
     def gym_kwargs(self) -> dict:
-        kwargs: dict[str, Any] = {"obs_type": self.obs_type, "render_mode": self.render_mode}
+        kwargs: dict[str, Any] = {
+            "obs_type": self.obs_type,
+            "render_mode": self.render_mode,
+            "observation_height": self.observation_height,
+            "observation_width": self.observation_width,
+        }
         if self.task_ids is not None:
             kwargs["task_ids"] = self.task_ids
         return kwargs
 
     def create_envs(self, n_envs: int, use_async_envs: bool = False):
-        from lerobot.envs.libero import create_libero_envs
+        from .libero import create_libero_envs
 
         if self.task is None:
             raise ValueError("LiberoEnv requires a task to be specified")
-        env_cls = gym.vector.AsyncVectorEnv if use_async_envs else gym.vector.SyncVectorEnv
+        env_cls = _make_vec_env_cls(use_async_envs, n_envs)
         return create_libero_envs(
             task=self.task,
             n_envs=n_envs,
@@ -418,9 +435,6 @@ class LiberoEnv(EnvConfig):
         )
 
     def get_env_processors(self):
-        from lerobot.processor.env_processor import LiberoProcessorStep
-        from lerobot.processor.pipeline import PolicyProcessorPipeline
-
         return (
             PolicyProcessorPipeline(steps=[LiberoProcessorStep()]),
             PolicyProcessorPipeline(steps=[]),
@@ -469,11 +483,11 @@ class MetaworldEnv(EnvConfig):
         }
 
     def create_envs(self, n_envs: int, use_async_envs: bool = False):
-        from lerobot.envs.metaworld import create_metaworld_envs
+        from .metaworld import create_metaworld_envs
 
         if self.task is None:
             raise ValueError("MetaWorld requires a task to be specified")
-        env_cls = gym.vector.AsyncVectorEnv if use_async_envs else gym.vector.SyncVectorEnv
+        env_cls = _make_vec_env_cls(use_async_envs, n_envs)
         return create_metaworld_envs(
             task=self.task,
             n_envs=n_envs,
@@ -550,9 +564,6 @@ class IsaaclabArenaEnv(HubEnvConfig):
         return {}
 
     def get_env_processors(self):
-        from lerobot.processor.env_processor import IsaaclabArenaProcessorStep
-        from lerobot.processor.pipeline import PolicyProcessorPipeline
-
         state_keys = tuple(k.strip() for k in (self.state_keys or "").split(",") if k.strip())
         camera_keys = tuple(k.strip() for k in (self.camera_keys or "").split(",") if k.strip())
         if not state_keys and not camera_keys:

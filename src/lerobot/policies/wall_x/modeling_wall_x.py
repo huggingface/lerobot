@@ -34,35 +34,31 @@ lerobot-train \
 ```
 """
 
+import logging
 import math
 from collections import deque
 from os import PathLike
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from peft import LoraConfig, get_peft_model
 from PIL import Image
-from qwen_vl_utils.vision_process import smart_resize
 from torch import Tensor
 from torch.distributions import Beta
 from torch.nn import CrossEntropyLoss
-from torchdiffeq import odeint
-from transformers import AutoProcessor, BatchFeature
-from transformers.cache_utils import (
-    StaticCache,
-)
-from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
-    Qwen2_5_VLForConditionalGeneration,
-)
-from transformers.utils import is_torchdynamo_compiling, logging
 
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.utils import populate_queues
-from lerobot.policies.wall_x.configuration_wall_x import WallXConfig
-from lerobot.policies.wall_x.constant import (
+from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.import_utils import (
+    _wallx_deps_available,
+    require_package,
+)
+
+from ..pretrained import PreTrainedPolicy
+from ..utils import populate_queues
+from .configuration_wall_x import WallXConfig
+from .constant import (
     GENERATE_SUBTASK_RATIO,
     IMAGE_FACTOR,
     MAX_PIXELS,
@@ -72,21 +68,47 @@ from lerobot.policies.wall_x.constant import (
     RESOLUTION,
     TOKENIZER_MAX_LENGTH,
 )
-from lerobot.policies.wall_x.qwen_model.configuration_qwen2_5_vl import Qwen2_5_VLConfig
-from lerobot.policies.wall_x.qwen_model.qwen2_5_vl_moe import (
-    Qwen2_5_VisionTransformerPretrainedModel,
-    Qwen2_5_VLACausalLMOutputWithPast,
-    Qwen2_5_VLMoEModel,
-)
-from lerobot.policies.wall_x.utils import (
+
+if TYPE_CHECKING or _wallx_deps_available:
+    from peft import LoraConfig, get_peft_model
+    from qwen_vl_utils.vision_process import smart_resize
+    from torchdiffeq import odeint
+    from transformers import AutoProcessor, BatchFeature
+    from transformers.cache_utils import StaticCache
+    from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
+        Qwen2_5_VLForConditionalGeneration,
+    )
+    from transformers.utils import is_torchdynamo_compiling
+
+    from .qwen_model.configuration_qwen2_5_vl import Qwen2_5_VLConfig
+    from .qwen_model.qwen2_5_vl_moe import (
+        Qwen2_5_VisionTransformerPretrainedModel,
+        Qwen2_5_VLACausalLMOutputWithPast,
+        Qwen2_5_VLMoEModel,
+    )
+else:
+    LoraConfig = None
+    get_peft_model = None
+    smart_resize = None
+    odeint = None
+    AutoProcessor = None
+    BatchFeature = None
+    StaticCache = None
+    Qwen2_5_VLForConditionalGeneration = None
+    is_torchdynamo_compiling = None
+    Qwen2_5_VLConfig = None
+    Qwen2_5_VisionTransformerPretrainedModel = None
+    Qwen2_5_VLACausalLMOutputWithPast = None
+    Qwen2_5_VLMoEModel = None
+
+from .utils import (
     get_wallx_normal_text,
     preprocesser_call,
     process_grounding_points,
     replace_action_token,
 )
-from lerobot.utils.constants import ACTION, OBS_STATE
 
-logger = logging.get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class SinusoidalPosEmb(nn.Module):
@@ -253,7 +275,13 @@ class ActionHead(nn.Module):
         return self.propri_proj(proprioception)
 
 
-class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):
+# Conditional base: when transformers is unavailable the class still parses
+# (inheriting from nn.Module) but cannot be instantiated—require_package in
+# WallXPolicy.__init__ gives the user a clear error before that happens.
+_Qwen2_5_VLForAction_Base = Qwen2_5_VLForConditionalGeneration if _wallx_deps_available else nn.Module
+
+
+class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):
     """
     Qwen2.5 Vision-Language Mixture of Experts model for action processing.
 
@@ -1708,6 +1736,10 @@ class WallXPolicy(PreTrainedPolicy):
     name = "wall_x"
 
     def __init__(self, config: WallXConfig, **kwargs):
+        require_package("transformers", extra="wallx")
+        require_package("peft", extra="wallx")
+        require_package("torchdiffeq", extra="wallx")
+        require_package("qwen-vl-utils", extra="wallx", import_name="qwen_vl_utils")
         super().__init__(config)
         config.validate_features()
         self.config = config
