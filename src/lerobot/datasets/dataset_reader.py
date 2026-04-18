@@ -50,6 +50,7 @@ class DatasetReader:
         video_backend: str,
         delta_timestamps: dict[str, list[float]] | None,
         image_transforms: Callable | None,
+        return_uint8: bool = False,
     ):
         """Initialize the reader with metadata, filtering, and transform config.
 
@@ -74,6 +75,7 @@ class DatasetReader:
         self._tolerance_s = tolerance_s
         self._video_backend = video_backend
         self._image_transforms = image_transforms
+        self._return_uint8 = return_uint8
 
         self.hf_dataset: datasets.Dataset | None = None
         self._absolute_to_relative_idx: dict[int, int] | None = None
@@ -240,7 +242,11 @@ class DatasetReader:
             shifted_query_ts = [from_timestamp + ts for ts in query_ts]
             video_path = self.root / self._meta.get_video_file_path(ep_idx, vid_key)
             frames = decode_video_frames(
-                video_path, shifted_query_ts, self._tolerance_s, self._video_backend, return_uint8=True
+                video_path,
+                shifted_query_ts,
+                self._tolerance_s,
+                self._video_backend,
+                return_uint8=self._return_uint8,
             )
             return vid_key, frames.squeeze(0)
 

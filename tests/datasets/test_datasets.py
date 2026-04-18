@@ -658,12 +658,7 @@ def test_backward_compatibility(repo_id):
         assert new_keys == old_keys, f"{new_keys=} and {old_keys=} are not the same"
 
         for key in new_frame:
-            new_val = new_frame[key]
-            old_val = old_frame[key]
-            # Video frames are now returned as uint8; saved artifacts are float32.
-            if new_val.dtype == torch.uint8 and old_val.dtype == torch.float32:
-                new_val = new_val.float() / 255.0
-            assert torch.isclose(new_val, old_val).all(), (
+            assert torch.isclose(new_frame[key], old_frame[key]).all(), (
                 f"{key=} for index={i} does not contain the same value"
             )
 

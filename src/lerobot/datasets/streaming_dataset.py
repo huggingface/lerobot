@@ -251,6 +251,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         seed: int = 42,
         rng: np.random.Generator | None = None,
         shuffle: bool = True,
+        return_uint8: bool = False,
     ):
         """Initialize a StreamingLeRobotDataset.
 
@@ -288,6 +289,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         self.streaming = streaming
         self.buffer_size = buffer_size
+        self._return_uint8 = return_uint8
 
         # We cache the video decoders to avoid re-initializing them at each frame (avoiding a ~10x slowdown)
         self.video_decoder_cache = None
@@ -557,7 +559,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 query_ts,
                 self.tolerance_s,
                 decoder_cache=self.video_decoder_cache,
-                return_uint8=True,
+                return_uint8=self._return_uint8,
             )
 
             item[video_key] = frames.squeeze(0) if len(query_ts) == 1 else frames
