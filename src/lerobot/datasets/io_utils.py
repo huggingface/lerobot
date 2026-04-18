@@ -258,16 +258,19 @@ def load_depth_as_numpy(
     """Load a depth image from a file into a numpy array.
 
     Depth images are stored as mono uint16 PNG files with values in millimeters.
-    They are decoded as floats in meters (divided by 1000).
+    Floating output dtypes are scaled to meters (divided by 1000), while
+    non-floating output dtypes preserve the raw millimeter values.
 
     Args:
         fpath (str | Path): Path to the depth image file.
         dtype (np.dtype): The desired data type of the output array. If floating,
-            pixels are scaled by 1/1000 to meters.
+            pixels are scaled by 1/1000 to meters; otherwise they remain in
+            millimeters.
         channel_first (bool): If True, returns shape (1, H, W). Otherwise (H, W, 1).
 
     Returns:
-        np.ndarray: The depth image as a numpy array in meters.
+        np.ndarray: The depth image as a numpy array, in meters for floating
+        dtypes and in raw millimeters for non-floating dtypes.
     """
     img = PILImage.open(fpath)
     img_array = np.array(img, dtype=dtype)

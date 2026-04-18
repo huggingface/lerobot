@@ -47,12 +47,15 @@ def image_array_to_pil_image(
     """Convert a numpy array to a PIL Image.
 
     Args:
-        image_array: Image array with shape (C, H, W) or (H, W, C).
-            For RGB images: C=3, dtype uint8 or float32 in [0, 1].
-            For depth images: C=1, dtype uint16 (mm) or float32 (meters).
-        range_check: If True, validate float image values are in [0, 1] for RGB
-            or non-negative for depth.
-        is_depth: If True, treat as depth image (1-channel, uint16 output).
+        image_array: Image array.  
+            For RGB images: shape (C, H, W) or (H, W, C), with C=3, dtype uint8  
+            or float32 in [0, 1].  
+            For depth images when ``is_depth=True``: shape (H, W), (1, H, W),  
+            or (H, W, 1), dtype uint16 (mm) or float32 (meters).  
+        range_check: If True, validate float image values are in [0, 1] for RGB  
+            or non-negative for depth.  
+        is_depth: If True, treat the input as a depth image and allow 2D  
+            ``(H, W)`` or single-channel 3D input, returning uint16 output.  
 
     Returns:
         PIL.Image.Image: The converted image.
