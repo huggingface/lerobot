@@ -95,8 +95,7 @@ def test_image_array_to_pil_image_pytorch_format(img_array_factory):
 def test_image_array_to_pil_image_single_channel(img_array_factory):
     """Test that single channel arrays without is_depth flag raise error for RGB context."""
     img_array = img_array_factory(channels=1)
-    # Single channel arrays should raise error when not explicitly marked as depth
-    with pytest.raises((NotImplementedError, ValueError)):
+    with pytest.raises(NotImplementedError):
         image_array_to_pil_image(img_array)
 
 
