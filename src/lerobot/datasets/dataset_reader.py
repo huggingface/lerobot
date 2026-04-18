@@ -106,9 +106,7 @@ class DatasetReader:
         self._absolute_to_relative_idx = None
         if self.episodes is not None and self.hf_dataset is not None:
             indices = self.hf_dataset.data.column("index").to_numpy()
-            self._absolute_to_relative_idx = dict(
-                zip(indices.tolist(), range(len(indices)))
-            )
+            self._absolute_to_relative_idx = dict(zip(indices.tolist(), range(len(indices)), strict=True))
 
     @property
     def num_frames(self) -> int:
