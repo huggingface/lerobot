@@ -57,19 +57,20 @@ def image_array_to_pil_image(
     Returns:
         PIL.Image.Image: The converted image.
     """
-    if image_array.ndim != 3:
-        raise ValueError(f"The array has {image_array.ndim} dimensions, but 3 is expected for an image.")
-
     if is_depth:
-        # Depth image: 1 channel
-        if image_array.shape[0] == 1:
+        if image_array.ndim == 2:
+            # (H, W) already — nothing to squeeze
+            pass
+        elif image_array.ndim == 3 and image_array.shape[0] == 1:
             # (1, H, W) -> (H, W)
             image_array = image_array.squeeze(0)
-        elif image_array.shape[-1] == 1:
+        elif image_array.ndim == 3 and image_array.shape[-1] == 1:
             # (H, W, 1) -> (H, W)
             image_array = image_array.squeeze(-1)
         else:
-            raise ValueError(f"Depth image must have 1 channel, but got shape {image_array.shape}.")
+            raise ValueError(
+                f"Depth image must be 2D (H, W) or 3D with 1 channel, but got shape {image_array.shape}."
+            )
 
         if image_array.dtype == np.uint16:
             # Already in correct format (millimeters)
@@ -83,6 +84,9 @@ def image_array_to_pil_image(
             raise ValueError(f"Depth image dtype must be uint16 or float, but got {image_array.dtype}")
 
         return PIL.Image.fromarray(image_array)
+
+    if image_array.ndim != 3:
+        raise ValueError(f"The array has {image_array.ndim} dimensions, but 3 is expected for an image.")
 
     # RGB image: 3 channels
     if image_array.shape[0] == 3:

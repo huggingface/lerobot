@@ -131,10 +131,18 @@ class TestDepthImageEncoding:
         assert result_array.dtype == np.uint16
         np.testing.assert_array_equal(result_array, 1000)  # 1m = 1000mm
 
+    def test_depth_array_to_pil_2d_format(self):
+        """Test that 2D (H, W) depth arrays work (natural shape from PIL/depth sensors)."""
+        depth_2d = np.random.uniform(0.5, 5.0, (480, 640)).astype(np.float32)
+        result = image_array_to_pil_image(depth_2d, is_depth=True)
+        assert isinstance(result, Image.Image)
+        assert result.size == (640, 480)
+        assert result.mode == "I;16"
+
     def test_depth_array_invalid_channels(self):
         """Test that 3-channel array raises error when is_depth=True."""
         rgb_array = np.random.rand(3, 100, 100).astype(np.float32)
-        with pytest.raises(ValueError, match="Depth image must have 1 channel"):
+        with pytest.raises(ValueError, match="Depth image must be 2D"):
             image_array_to_pil_image(rgb_array, is_depth=True)
 
     def test_depth_array_negative_values_raises(self):
