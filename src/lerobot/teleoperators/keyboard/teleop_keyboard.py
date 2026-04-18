@@ -23,7 +23,7 @@ from typing import Any
 
 from lerobot.types import RobotAction
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
-from lerobot.utils.import_utils import _pynput_available
+from lerobot.utils.import_utils import _pynput_available, require_package
 
 from ..teleoperator import Teleoperator
 from ..utils import TeleopEvents
@@ -56,6 +56,7 @@ class KeyboardTeleop(Teleoperator):
     name = "keyboard"
 
     def __init__(self, config: KeyboardTeleopConfig):
+        require_package("pynput", extra="pynput-dep")
         super().__init__(config)
         self.config = config
         self.robot_type = config.type
