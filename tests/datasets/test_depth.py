@@ -22,6 +22,8 @@ import pytest
 import torch
 from PIL import Image
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.configs.types import FeatureType
 from lerobot.datasets.compute_stats import (
     compute_episode_stats,
