@@ -15,3 +15,5 @@
 # limitations under the License.
 
 from .bi_so_leader import BiSOLeader, BiSOLeaderConfig
+
+__all__ = ["BiSOLeader", "BiSOLeaderConfig"]

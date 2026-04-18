@@ -19,10 +19,13 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.datasets.io_utils import load_json, write_json
-from lerobot.optim.optimizers import load_optimizer_state, save_optimizer_state
-from lerobot.optim.schedulers import load_scheduler_state, save_scheduler_state
-from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.optim import (
+    load_optimizer_state,
+    load_scheduler_state,
+    save_optimizer_state,
+    save_scheduler_state,
+)
+from lerobot.policies import PreTrainedPolicy
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.utils.constants import (
     CHECKPOINTS_DIR,
@@ -31,6 +34,7 @@ from lerobot.utils.constants import (
     TRAINING_STATE_DIR,
     TRAINING_STEP,
 )
+from lerobot.utils.io_utils import load_json, write_json
 from lerobot.utils.random_utils import load_rng_state, save_rng_state
 
 

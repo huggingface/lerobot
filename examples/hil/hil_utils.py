@@ -19,13 +19,12 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from lerobot.common.control_utils import is_headless
 from lerobot.processor import (
     IdentityProcessorStep,
     RobotAction,
     RobotObservation,
     RobotProcessorPipeline,
-)
-from lerobot.processor.converters import (
     observation_to_transition,
     robot_action_observation_to_transition,
     transition_to_observation,
@@ -33,7 +32,6 @@ from lerobot.processor.converters import (
 )
 from lerobot.robots import Robot
 from lerobot.teleoperators import Teleoperator
-from lerobot.utils.control_utils import is_headless
 from lerobot.utils.robot_utils import precise_sleep
 
 logger = logging.getLogger(__name__)
