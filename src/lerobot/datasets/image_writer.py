@@ -79,6 +79,16 @@ def image_array_to_pil_image(
             # Convert from meters to millimeters
             if range_check and image_array.min() < 0:
                 raise ValueError(f"Depth values must be non-negative, but got min={image_array.min()}")
+            # TODO: uint16-mm encoding saturates past 65.535 m. For long-range
+            # sensors (LiDAR, long-range ToF) a scale factor or wider dtype is
+            # needed. Warn here so silent clipping is at least observable.
+            max_val_m = float(image_array.max())
+            if range_check and max_val_m > 65.535:
+                logger.warning(
+                    "Depth values exceed the uint16-mm encoding range "
+                    "(max=%.3f m > 65.535 m); values will be clipped on save. ",
+                    max_val_m,
+                )
             image_array = np.clip(image_array * 1000, 0, 65535).astype(np.uint16)
         else:
             raise ValueError(f"Depth image dtype must be uint16 or float, but got {image_array.dtype}")

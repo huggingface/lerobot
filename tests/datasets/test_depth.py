@@ -152,6 +152,22 @@ class TestDepthImageEncoding:
         with pytest.raises(ValueError, match="Depth values must be non-negative"):
             image_array_to_pil_image(negative_depth, is_depth=True)
 
+    def test_depth_array_over_range_warns(self, caplog):
+        """Depth values > 65.535 m must log a warning (uint16-mm saturates)."""
+        over_range = np.full((1, 10, 10), 70.0, dtype=np.float32)  # 70 m > 65.535 m
+        with caplog.at_level("WARNING", logger="lerobot.datasets.image_writer"):
+            result = image_array_to_pil_image(over_range, is_depth=True)
+        assert any("exceed the uint16-mm encoding range" in rec.message for rec in caplog.records)
+        # Clipping still happens so downstream callers don't break.
+        assert np.array(result).max() == 65535
+
+    def test_depth_array_in_range_no_warn(self, caplog):
+        """Depth values within the uint16-mm range must not trigger the warning."""
+        in_range = np.full((1, 10, 10), 5.0, dtype=np.float32)
+        with caplog.at_level("WARNING", logger="lerobot.datasets.image_writer"):
+            image_array_to_pil_image(in_range, is_depth=True)
+        assert not any("exceed the uint16-mm encoding range" in rec.message for rec in caplog.records)
+
     def test_write_depth_image_roundtrip(self, tmp_path, depth_array_chw):
         """Test full roundtrip: write depth image and read it back."""
         fpath = tmp_path / "test_depth.png"
