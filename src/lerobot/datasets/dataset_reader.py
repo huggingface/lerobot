@@ -74,7 +74,6 @@ class DatasetReader:
         self._tolerance_s = tolerance_s
         self._video_backend = video_backend
         self._image_transforms = image_transforms
-        self._video_thread_pool: ThreadPoolExecutor | None = None
 
         self.hf_dataset: datasets.Dataset | None = None
         self._absolute_to_relative_idx: dict[int, int] | None = None
@@ -240,7 +239,9 @@ class DatasetReader:
             from_timestamp = ep[f"videos/{vid_key}/from_timestamp"]
             shifted_query_ts = [from_timestamp + ts for ts in query_ts]
             video_path = self.root / self._meta.get_video_file_path(ep_idx, vid_key)
-            frames = decode_video_frames(video_path, shifted_query_ts, self._tolerance_s, self._video_backend)
+            frames = decode_video_frames(
+                video_path, shifted_query_ts, self._tolerance_s, self._video_backend, return_uint8=True
+            )
             return vid_key, frames.squeeze(0)
 
         items = list(query_timestamps.items())
@@ -250,11 +251,9 @@ class DatasetReader:
             return {vid_key: _decode_single(vid_key, query_ts)[1] for vid_key, query_ts in items}
 
         # Multi-camera: decode in parallel (video decoding releases the GIL)
-        if self._video_thread_pool is None:
-            self._video_thread_pool = ThreadPoolExecutor(max_workers=len(self._meta.video_keys))
-
-        futures = [self._video_thread_pool.submit(_decode_single, k, ts) for k, ts in items]
-        return {f.result()[0]: f.result()[1] for f in futures}
+        with ThreadPoolExecutor(max_workers=len(items)) as pool:
+            futures = [pool.submit(_decode_single, k, ts) for k, ts in items]
+            return dict(f.result() for f in futures)
 
     def get_item(self, idx) -> dict:
         """Core __getitem__ logic. Assumes hf_dataset is loaded.

@@ -123,7 +123,7 @@ def decode_video_frames(
     timestamps: list[float],
     tolerance_s: float,
     backend: str | None = None,
-    return_uint8: bool = True,
+    return_uint8: bool = False,
 ) -> torch.Tensor:
     """
     Decodes video frames using the specified backend.
