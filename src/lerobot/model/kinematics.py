@@ -61,6 +61,22 @@ class RobotKinematics:
         # Initialize frame task for IK
         self.tip_frame = self.solver.add_frame_task(self.target_frame_name, np.eye(4))
 
+        # Posture task: bias toward a "ready" configuration to avoid undesirable IK solutions
+        # This pulls joints toward preferred angles when the EE task doesn't fully constrain them
+        self.posture_task = self.solver.add_joints_task()
+        self.posture_task.configure("posture", "soft", 0.01)
+        # Preferred joint angles (radians): slightly bent, elbow forward, wrist neutral
+        preferred_deg = {
+            "shoulder_pan": 0.0,
+            "shoulder_lift": -20.0,
+            "elbow_flex": 30.0,
+            "wrist_flex": -10.0,
+            "wrist_roll": 0.0,
+        }
+        for name, deg in preferred_deg.items():
+            if name in self.joint_names:
+                self.posture_task.set_joint(name, np.deg2rad(deg))
+
     def forward_kinematics(self, joint_pos_deg: np.ndarray) -> np.ndarray:
         """
         Compute forward kinematics for given joint configuration given the target frame name in the constructor.
@@ -90,7 +106,7 @@ class RobotKinematics:
         current_joint_pos: np.ndarray,
         desired_ee_pose: np.ndarray,
         position_weight: float = 1.0,
-        orientation_weight: float = 0.01,
+        orientation_weight: float = 0.05,
     ) -> np.ndarray:
         """
         Compute inverse kinematics using placo solver.
