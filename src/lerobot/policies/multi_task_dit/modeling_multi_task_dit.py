@@ -750,7 +750,8 @@ class FlowMatchingObjective(nn.Module):
 
         if self.do_mask_loss_for_padding and "action_is_pad" in batch:
             mask = ~batch["action_is_pad"].unsqueeze(-1)
-            return (loss * mask).sum() / mask.sum().clamp_min(1)
+            num_valid = mask.sum() * loss.shape[-1]
+            return (loss * mask).sum() / num_valid.clamp_min(1)
 
         return loss.mean()
 
