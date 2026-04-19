@@ -105,6 +105,9 @@ class RoboRewardModel(PreTrainedRewardModel):
             device_map=config.device,
         )
         self.vlm_processor = AutoProcessor.from_pretrained(config.model_name)
+        # Decoder-only models require left-padding for batched generation: all sequences
+        # must end at the same position so autoregressive decoding starts correctly.
+        self.vlm_processor.tokenizer.padding_side = "left"
 
         for param in self.vlm.parameters():
             param.requires_grad = False
@@ -233,6 +236,7 @@ class RoboRewardModel(PreTrainedRewardModel):
             images=image_inputs,
             videos=video_inputs,
             video_metadata=video_metadatas,
+            padding=True,  # pad to longest sequence in batch so all input_ids have the same length
             return_tensors="pt",
             do_resize=False,
             **video_kwargs,
