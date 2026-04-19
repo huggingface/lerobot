@@ -71,13 +71,10 @@ from lerobot.utils.robot_utils import precise_sleep
 class FindJointLimitsConfig:
     teleop: TeleoperatorConfig
     robot: RobotConfig
-
-    # Path to URDF file for kinematics
-    # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo:
-    # https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
-    urdf_path: str
-    target_frame_name: str = "gripper"
-
+    # Path to the robot URDF file for kinematics
+    urdf_path: str = "./SO-ARM100/Simulation/SO101/so101_new_calib.urdf"
+    # Name of the end-effector frame in the URDF
+    target_frame_name: str = "gripper_frame_link"
     # Duration of the recording phase in seconds
     teleop_time_s: float = 30
     # Duration of the warmup phase in seconds
@@ -98,6 +95,9 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
 
     # Initialize Kinematics
     try:
+        robot_type = getattr(robot.config, "robot_type", "so101")
+        if "so100" in robot_type or "so101" in robot_type:
+            robot_type = "so_new_calibration"
         kinematics = RobotKinematics(cfg.urdf_path, cfg.target_frame_name)
     except Exception as e:
         print(f"Error initializing kinematics: {e}")

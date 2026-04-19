@@ -44,6 +44,15 @@ class RobotKinematics:
         self.solver = placo.KinematicsSolver(self.robot)
         self.solver.mask_fbase(True)  # Fix the base
 
+        # Set velocity limits (URDF has none defined) and add regularization
+        # to penalize large changes from the previous solution
+        self.solver.dt = 1.0 / 30  # match control loop FPS
+        max_joint_vel = 2.0  # rad/s
+        for name in self.robot.joint_names():
+            self.robot.set_velocity_limit(name, max_joint_vel)
+        self.solver.enable_velocity_limits(True)
+        self.solver.add_regularization_task(0.1)  # low weight so frame task dominates
+
         self.target_frame_name = target_frame_name
 
         # Set joint names

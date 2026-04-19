@@ -154,6 +154,8 @@ def teleop_loop(
 
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
+    ite = 0
+
     while True:
         loop_start = time.perf_counter()
 
@@ -168,14 +170,26 @@ def teleop_loop(
 
         # Get teleop action
         raw_action = teleop.get_action()
+        # print(f"Raw action keys: {list(raw_action.keys())}")
+        # print(f"Raw action values: {list(raw_action.values())}")
 
-        # Process teleop action through pipeline
-        teleop_action = teleop_action_processor((raw_action, obs))
+        # # Process teleop action through pipeline
+        # teleop_action = teleop_action_processor((raw_action, obs))
 
-        # Process action for robot through pipeline
-        robot_action_to_send = robot_action_processor((teleop_action, obs))
+        # # Process action for robot through pipeline
+        # robot_action_to_send = robot_action_processor((teleop_action, obs))
 
-        # Send processed action to robot (robot_action_processor.to_output should return RobotAction)
+        gripper_value = 5.0 if ite % 200 < 100 else 1.0
+        teleop_action = {
+            'shoulder_pan.pos': obs['shoulder_pan.pos'] + 3 * raw_action['shoulder_pan'],
+            'shoulder_lift.pos': obs['shoulder_lift.pos'] + 3 * raw_action['shoulder_lift'],
+            'elbow_flex.pos': obs['elbow_flex.pos'] + 5 * raw_action['elbow_flex'],
+            'wrist_flex.pos': obs['wrist_flex.pos'] + 5 * raw_action['wrist_flex'],
+            'wrist_roll.pos': obs['wrist_roll.pos'] + raw_action['wrist_roll'],
+            'gripper.pos': obs['gripper.pos'] + raw_action['gripper'],
+        }
+        robot_action_to_send = teleop_action
+        # Send processed action to robot
         _ = robot.send_action(robot_action_to_send)
 
         if display_data:
@@ -191,9 +205,9 @@ def teleop_loop(
             print("\n" + "-" * (display_len + 10))
             print(f"{'NAME':<{display_len}} | {'NORM':>7}")
             # Display the final robot action that was sent
-            for motor, value in robot_action_to_send.items():
+            for motor, value in raw_action.items():
                 print(f"{motor:<{display_len}} | {value:>7.2f}")
-            move_cursor_up(len(robot_action_to_send) + 3)
+            move_cursor_up(len(raw_action) + 5)
 
         dt_s = time.perf_counter() - loop_start
         precise_sleep(max(1 / fps - dt_s, 0.0))
@@ -201,8 +215,11 @@ def teleop_loop(
         print(f"Teleop loop time: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
         move_cursor_up(1)
 
-        if duration is not None and time.perf_counter() - start >= duration:
-            return
+        # if duration is not None and time.perf_counter() - start >= duration:
+        #     return
+        ite += 1
+        # if ite >= 5000:
+        #     return
 
 
 @parser.wrap()
@@ -217,12 +234,16 @@ def teleoperate(cfg: TeleoperateConfig):
         else cfg.display_compressed_images
     )
 
+    print("Creating teleoperator and robot from config...")
     teleop = make_teleoperator_from_config(cfg.teleop)
+    # print(f"Teleoperator: {teleop}")
     robot = make_robot_from_config(cfg.robot)
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
 
     teleop.connect()
+    print(f"Teleoperator connected: {teleop.is_connected}")
     robot.connect()
+    print(f"Robot connected: {robot.is_connected}")
 
     try:
         teleop_loop(
@@ -247,6 +268,7 @@ def teleoperate(cfg: TeleoperateConfig):
 
 def main():
     register_third_party_plugins()
+    print("Starting teleoperation...")
     teleoperate()
 
 

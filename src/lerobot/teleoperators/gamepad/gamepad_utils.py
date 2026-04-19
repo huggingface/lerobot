@@ -347,7 +347,7 @@ class GamepadControllerHID(InputController):
         devices = hid.enumerate()
         for device in devices:
             device_name = device["product_string"]
-            if any(controller in device_name for controller in ["Logitech", "Xbox", "PS4", "PS5"]):
+            if any(controller in device_name for controller in ["Logitech", "Xbox", "PS4", "PS5", "NSW", "Nintendo", "Switch"]):
                 return device
 
         logging.error(
@@ -381,6 +381,10 @@ class GamepadControllerHID(InputController):
             logging.info("  Button 2/A/Cross: End episode with SUCCESS")
             logging.info("  Button 3/X/Square: End episode with FAILURE")
 
+            # configuration controller setup
+            self.delta = {}
+            self.data_original = {}
+
         except OSError as e:
             logging.error(f"Error opening gamepad: {e}")
             logging.error("You might need to run this with sudo/admin privileges on some systems")
@@ -411,11 +415,47 @@ class GamepadControllerHID(InputController):
             # Interpret gamepad data - this will vary by controller model
             # These offsets are for the Logitech RumblePad 2
             if data and len(data) >= 8:
+
+                # configuration controller setup
+                self.delta['shoulder_pan'] = (data[3] - 128) / 128.0
+                self.delta['shoulder_lift'] = (data[4] - 128) / 128.0
+                self.delta['elbow_flex'] = (data[5] - 128) / 128.0
+                self.delta['wrist_flex'] = (data[6] - 128) / 128.0
+                # data[0] is controlled by L, R, ZL, ZR buttons
+                # L: 16, R: 32, ZL: 64, ZR: 128, otherwise zero
+                self.delta['wrist_roll'] = 0.0
+                self.delta['gripper'] = 0.0
+                if data[0] == 16:
+                    self.delta['wrist_roll'] = -1.0
+                elif data[0] == 32:
+                    self.delta['wrist_roll'] = 1.0
+                elif data[0] == 64:
+                    self.delta['gripper'] = -1.0
+                elif data[0] == 128:
+                    self.delta['gripper'] = 1.0
+                # self.delta['wrist_roll'] = data[7] # (data[7] - 128) / 128.0
+
+                self.data_original['0'] = data[0]
+                self.data_original['1'] = data[1]
+                self.data_original['2'] = data[2]
+                self.data_original['3'] = data[3]
+                self.data_original['4'] = data[4]
+                self.data_original['5'] = data[5]
+                self.data_original['6'] = data[6]
+                self.data_original['7'] = data[7]
+
+                # apply deadzone and clip
+                for key in self.delta:
+                    value = self.delta[key]
+                    if abs(value) < self.deadzone:
+                        value = 0.0
+                    self.delta[key] = max(-1.0, min(1.0, value))
+
                 # Normalize joystick values from 0-255 to -1.0-1.0
-                self.left_y = (data[1] - 128) / 128.0
-                self.left_x = (data[2] - 128) / 128.0
-                self.right_x = (data[3] - 128) / 128.0
-                self.right_y = (data[4] - 128) / 128.0
+                self.left_y = (data[3] - 128) / 128.0
+                self.left_x = (data[4] - 128) / 128.0
+                self.right_x = (data[5] - 128) / 128.0
+                self.right_y = (data[6] - 128) / 128.0
 
                 # Apply deadzone
                 self.left_y = 0 if abs(self.left_y) < self.deadzone else self.left_y
@@ -458,3 +498,11 @@ class GamepadControllerHID(InputController):
         delta_z = -self.right_y * self.z_step_size  # Up/down
 
         return delta_x, delta_y, delta_z
+    
+    def get_delta_configuration(self):
+        """Get the current movement deltas from gamepad state for configuration."""
+        return self.delta
+    
+    def get_teleop_original(self):
+        """Get the original data from the gamepad."""
+        return self.data_original

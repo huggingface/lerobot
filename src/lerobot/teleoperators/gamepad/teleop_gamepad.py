@@ -103,12 +103,23 @@ class GamepadTeleop(Teleoperator):
             "delta_z": gamepad_action[2],
         }
 
+        delta = self.gamepad.get_delta_configuration()
+        action_dict = {
+            "shoulder_pan": delta['shoulder_pan'],
+            "shoulder_lift": delta['shoulder_lift'],
+            "elbow_flex": delta['elbow_flex'],
+            "wrist_flex": delta['wrist_flex'],
+            "wrist_roll": delta['wrist_roll'],
+            "gripper": delta['gripper'],
+
+        }
+
         # Default gripper action is to stay
-        gripper_action = GripperAction.STAY.value
-        if self.config.use_gripper:
-            gripper_command = self.gamepad.gripper_command()
-            gripper_action = gripper_action_map[gripper_command]
-            action_dict["gripper"] = gripper_action
+        # gripper_action = GripperAction.STAY.value
+        # if self.config.use_gripper:
+        #     gripper_command = self.gamepad.gripper_command()
+        #     gripper_action = gripper_action_map[gripper_command]
+        #     action_dict["gripper"] = gripper_action
 
         return action_dict
 
