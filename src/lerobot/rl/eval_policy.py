@@ -18,8 +18,8 @@ import logging
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.policies.factory import make_policy
+from lerobot.datasets import LeRobotDataset
+from lerobot.policies import make_policy
 from lerobot.robots import (  # noqa: F401
     RobotConfig,
     make_robot_from_config,

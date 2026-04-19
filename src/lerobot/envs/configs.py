@@ -12,13 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import abc
+import importlib
 from dataclasses import dataclass, field, fields
 from typing import Any
 
 import draccus
+import gymnasium as gym
+from gymnasium.envs.registration import registry as gym_registry
 
-from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.configs import FeatureType, PolicyFeature
+from lerobot.processor import IsaaclabArenaProcessorStep, LiberoProcessorStep, PolicyProcessorPipeline
 from lerobot.robots import RobotConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.constants import (
@@ -37,6 +43,13 @@ from lerobot.utils.constants import (
     OBS_IMAGES,
     OBS_STATE,
 )
+
+
+def _make_vec_env_cls(use_async: bool, n_envs: int):
+    """Return the right VectorEnv constructor."""
+    if use_async and n_envs > 1:
+        return gym.vector.AsyncVectorEnv
+    return gym.vector.SyncVectorEnv
 
 
 @dataclass
@@ -66,6 +79,53 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     @abc.abstractmethod
     def gym_kwargs(self) -> dict:
         raise NotImplementedError()
+
+    def create_envs(
+        self,
+        n_envs: int,
+        use_async_envs: bool = False,
+    ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
+        """Create {suite: {task_id: VectorEnv}}.
+
+        Default: single-task env via gym.make(). Multi-task benchmarks override.
+        AsyncVectorEnv is the default for n_envs > 1; auto-downgraded to Sync for n_envs=1.
+        """
+        env_cls = gym.vector.AsyncVectorEnv if (use_async_envs and n_envs > 1) else gym.vector.SyncVectorEnv
+
+        if self.gym_id not in gym_registry:
+            print(f"gym id '{self.gym_id}' not found, attempting to import '{self.package_name}'...")
+            try:
+                importlib.import_module(self.package_name)
+            except ModuleNotFoundError as e:
+                raise ModuleNotFoundError(
+                    f"Package '{self.package_name}' required for env '{self.type}' not found. "
+                    f"Please install it or check PYTHONPATH."
+                ) from e
+
+            if self.gym_id not in gym_registry:
+                raise gym.error.NameNotFound(
+                    f"Environment '{self.gym_id}' not registered even after importing '{self.package_name}'."
+                )
+
+        def _make_one():
+            return gym.make(self.gym_id, disable_env_checker=self.disable_env_checker, **self.gym_kwargs)
+
+        extra_kwargs: dict = {}
+        if env_cls is gym.vector.AsyncVectorEnv:
+            extra_kwargs["context"] = "forkserver"
+        try:
+            from gymnasium.vector import AutoresetMode
+
+            vec = env_cls(
+                [_make_one for _ in range(n_envs)], autoreset_mode=AutoresetMode.SAME_STEP, **extra_kwargs
+            )
+        except ImportError:
+            vec = env_cls([_make_one for _ in range(n_envs)], **extra_kwargs)
+        return {self.type: {0: vec}}
+
+    def get_env_processors(self):
+        """Return (preprocessor, postprocessor) for this env. Default: identity."""
+        return PolicyProcessorPipeline(steps=[]), PolicyProcessorPipeline(steps=[])
 
 
 @dataclass
@@ -338,12 +398,47 @@ class LiberoEnv(EnvConfig):
         else:
             raise ValueError(f"Unsupported obs_type: {self.obs_type}")
 
+        if self.camera_name_mapping is not None:
+            mapped_agentview = self.camera_name_mapping.get("agentview_image", "image")
+            mapped_eye_in_hand = self.camera_name_mapping.get("robot0_eye_in_hand_image", "image2")
+            self.features_map[LIBERO_KEY_PIXELS_AGENTVIEW] = f"{OBS_IMAGES}.{mapped_agentview}"
+            self.features_map[LIBERO_KEY_PIXELS_EYE_IN_HAND] = f"{OBS_IMAGES}.{mapped_eye_in_hand}"
+
     @property
     def gym_kwargs(self) -> dict:
-        kwargs: dict[str, Any] = {"obs_type": self.obs_type, "render_mode": self.render_mode}
+        kwargs: dict[str, Any] = {
+            "obs_type": self.obs_type,
+            "render_mode": self.render_mode,
+            "observation_height": self.observation_height,
+            "observation_width": self.observation_width,
+        }
         if self.task_ids is not None:
             kwargs["task_ids"] = self.task_ids
         return kwargs
+
+    def create_envs(self, n_envs: int, use_async_envs: bool = False):
+        from .libero import create_libero_envs
+
+        if self.task is None:
+            raise ValueError("LiberoEnv requires a task to be specified")
+        env_cls = _make_vec_env_cls(use_async_envs, n_envs)
+        return create_libero_envs(
+            task=self.task,
+            n_envs=n_envs,
+            camera_name=self.camera_name,
+            init_states=self.init_states,
+            gym_kwargs=self.gym_kwargs,
+            env_cls=env_cls,
+            control_mode=self.control_mode,
+            episode_length=self.episode_length,
+            camera_name_mapping=self.camera_name_mapping,
+        )
+
+    def get_env_processors(self):
+        return (
+            PolicyProcessorPipeline(steps=[LiberoProcessorStep()]),
+            PolicyProcessorPipeline(steps=[]),
+        )
 
 
 @EnvConfig.register_subclass("metaworld")
@@ -386,6 +481,19 @@ class MetaworldEnv(EnvConfig):
             "obs_type": self.obs_type,
             "render_mode": self.render_mode,
         }
+
+    def create_envs(self, n_envs: int, use_async_envs: bool = False):
+        from .metaworld import create_metaworld_envs
+
+        if self.task is None:
+            raise ValueError("MetaWorld requires a task to be specified")
+        env_cls = _make_vec_env_cls(use_async_envs, n_envs)
+        return create_metaworld_envs(
+            task=self.task,
+            n_envs=n_envs,
+            gym_kwargs=self.gym_kwargs,
+            env_cls=env_cls,
+        )
 
 
 @EnvConfig.register_subclass("isaaclab_arena")
@@ -454,3 +562,15 @@ class IsaaclabArenaEnv(HubEnvConfig):
     @property
     def gym_kwargs(self) -> dict:
         return {}
+
+    def get_env_processors(self):
+        state_keys = tuple(k.strip() for k in (self.state_keys or "").split(",") if k.strip())
+        camera_keys = tuple(k.strip() for k in (self.camera_keys or "").split(",") if k.strip())
+        if not state_keys and not camera_keys:
+            raise ValueError("At least one of state_keys or camera_keys must be specified.")
+        return (
+            PolicyProcessorPipeline(
+                steps=[IsaaclabArenaProcessorStep(state_keys=state_keys, camera_keys=camera_keys)]
+            ),
+            PolicyProcessorPipeline(steps=[]),
+        )

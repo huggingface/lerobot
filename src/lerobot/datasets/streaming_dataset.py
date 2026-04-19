@@ -13,7 +13,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from collections.abc import Callable, Generator, Iterator
+from collections import deque
+from collections.abc import Callable, Generator, Iterable, Iterator
 from pathlib import Path
 
 import datasets
@@ -21,23 +22,179 @@ import numpy as np
 import torch
 from datasets import load_dataset
 
-from lerobot.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDatasetMetadata
-from lerobot.datasets.utils import (
-    Backtrackable,
-    LookAheadError,
-    LookBackError,
+from lerobot.utils.constants import HF_LEROBOT_HOME, LOOKAHEAD_BACKTRACKTABLE, LOOKBACK_BACKTRACKTABLE
+
+from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
+from .feature_utils import get_delta_indices
+from .io_utils import item_to_torch
+from .utils import (
     check_version_compatibility,
     find_float_index,
-    get_delta_indices,
     is_float_in_list,
-    item_to_torch,
     safe_shard,
 )
-from lerobot.datasets.video_utils import (
+from .video_utils import (
     VideoDecoderCache,
     decode_video_frames_torchcodec,
 )
-from lerobot.utils.constants import HF_LEROBOT_HOME, LOOKAHEAD_BACKTRACKTABLE, LOOKBACK_BACKTRACKTABLE
+
+
+class LookBackError(Exception):
+    """
+    Exception raised when trying to look back in the history of a Backtrackable object.
+    """
+
+    pass
+
+
+class LookAheadError(Exception):
+    """
+    Exception raised when trying to look ahead in the future of a Backtrackable object.
+    """
+
+    pass
+
+
+class Backtrackable[T]:
+    """
+    Wrap any iterator/iterable so you can step back up to `history` items
+    and look ahead up to `lookahead` items.
+
+    This is useful for streaming datasets where you need to access previous and future items
+    but can't load the entire dataset into memory.
+
+    Example:
+    -------
+    ```python
+    ds = load_dataset("c4", "en", streaming=True, split="train")
+    rev = Backtrackable(ds, history=3, lookahead=2)
+
+    x0 = next(rev)  # forward
+    x1 = next(rev)
+    x2 = next(rev)
+
+    # Look ahead
+    x3_peek = rev.peek_ahead(1)  # next item without moving cursor
+    x4_peek = rev.peek_ahead(2)  # two items ahead
+
+    # Look back
+    x1_again = rev.peek_back(1)  # previous item without moving cursor
+    x0_again = rev.peek_back(2)  # two items back
+
+    # Move backward
+    x1_back = rev.prev()  # back one step
+    next(rev)  # returns x2, continues forward from where we were
+    ```
+    """
+
+    __slots__ = ("_source", "_back_buf", "_ahead_buf", "_cursor", "_history", "_lookahead")
+
+    def __init__(self, iterable: Iterable[T], *, history: int = 1, lookahead: int = 0):
+        if history < 1:
+            raise ValueError("history must be >= 1")
+        if lookahead <= 0:
+            raise ValueError("lookahead must be > 0")
+
+        self._source: Iterator[T] = iter(iterable)
+        self._back_buf: deque[T] = deque(maxlen=history)
+        self._ahead_buf: deque[T] = deque(maxlen=lookahead) if lookahead > 0 else deque()
+        self._cursor: int = 0
+        self._history = history
+        self._lookahead = lookahead
+
+    def __iter__(self) -> "Backtrackable[T]":
+        return self
+
+    def __next__(self) -> T:
+        # If we've stepped back, consume from back buffer first
+        if self._cursor < 0:  # -1 means "last item", etc.
+            self._cursor += 1
+            return self._back_buf[self._cursor]
+
+        # If we have items in the ahead buffer, use them first
+        item = self._ahead_buf.popleft() if self._ahead_buf else next(self._source)
+
+        # Add current item to back buffer and reset cursor
+        self._back_buf.append(item)
+        self._cursor = 0
+        return item
+
+    def prev(self) -> T:
+        """
+        Step one item back in history and return it.
+        Raises IndexError if already at the oldest buffered item.
+        """
+        if len(self._back_buf) + self._cursor <= 1:
+            raise LookBackError("At start of history")
+
+        self._cursor -= 1
+        return self._back_buf[self._cursor]
+
+    def peek_back(self, n: int = 1) -> T:
+        """
+        Look `n` items back (n=1 == previous item) without moving the cursor.
+        """
+        if n < 0 or n + 1 > len(self._back_buf) + self._cursor:
+            raise LookBackError("peek_back distance out of range")
+
+        return self._back_buf[self._cursor - (n + 1)]
+
+    def peek_ahead(self, n: int = 1) -> T:
+        """
+        Look `n` items ahead (n=1 == next item) without moving the cursor.
+        Fills the ahead buffer if necessary.
+        """
+        if n < 1:
+            raise LookAheadError("peek_ahead distance must be 1 or more")
+        elif n > self._lookahead:
+            raise LookAheadError("peek_ahead distance exceeds lookahead limit")
+
+        # Fill ahead buffer if we don't have enough items
+        while len(self._ahead_buf) < n:
+            try:
+                item = next(self._source)
+                self._ahead_buf.append(item)
+
+            except StopIteration as err:
+                raise LookAheadError("peek_ahead: not enough items in source") from err
+
+        return self._ahead_buf[n - 1]
+
+    def history(self) -> list[T]:
+        """
+        Return a copy of the buffered history (most recent last).
+        The list length ≤ `history` argument passed at construction.
+        """
+        if self._cursor == 0:
+            return list(self._back_buf)
+
+        # When cursor<0, slice so the order remains chronological
+        return list(self._back_buf)[: self._cursor or None]
+
+    def can_peek_back(self, steps: int = 1) -> bool:
+        """
+        Check if we can go back `steps` items without raising an IndexError.
+        """
+        return steps <= len(self._back_buf) + self._cursor
+
+    def can_peek_ahead(self, steps: int = 1) -> bool:
+        """
+        Check if we can peek ahead `steps` items.
+        This may involve trying to fill the ahead buffer.
+        """
+        if self._lookahead > 0 and steps > self._lookahead:
+            return False
+
+        # Try to fill ahead buffer to check if we can peek that far
+        try:
+            while len(self._ahead_buf) < steps:
+                if self._lookahead > 0 and len(self._ahead_buf) >= self._lookahead:
+                    return False
+                item = next(self._source)
+                self._ahead_buf.append(item)
+            return True
+        except StopIteration:
+            return False
 
 
 class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
@@ -94,12 +251,15 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         seed: int = 42,
         rng: np.random.Generator | None = None,
         shuffle: bool = True,
+        return_uint8: bool = False,
     ):
         """Initialize a StreamingLeRobotDataset.
 
         Args:
             repo_id (str): This is the repo id that will be used to fetch the dataset.
-            root (Path | None, optional): Local directory to use for downloading/writing files.
+            root (Path | None, optional): Local directory to use for local datasets. When omitted, Hub
+                metadata is resolved through a revision-safe snapshot cache under
+                ``$HF_LEROBOT_HOME/hub``.
             episodes (list[int] | None, optional): If specified, this will only load episodes specified by
                 their episode_index in this list.
             image_transforms (Callable | None, optional): Transform to apply to image data.
@@ -115,7 +275,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         """
         super().__init__()
         self.repo_id = repo_id
-        self.root = Path(root) if root else HF_LEROBOT_HOME / repo_id
+        self._requested_root = Path(root) if root else None
+        self.root = self._requested_root if self._requested_root is not None else HF_LEROBOT_HOME / repo_id
         self.streaming_from_local = root is not None
 
         self.image_transforms = image_transforms
@@ -128,16 +289,20 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         self.streaming = streaming
         self.buffer_size = buffer_size
+        self._return_uint8 = return_uint8
 
         # We cache the video decoders to avoid re-initializing them at each frame (avoiding a ~10x slowdown)
         self.video_decoder_cache = None
 
-        self.root.mkdir(exist_ok=True, parents=True)
+        if self._requested_root is not None:
+            self.root.mkdir(exist_ok=True, parents=True)
 
         # Load metadata
         self.meta = LeRobotDatasetMetadata(
-            self.repo_id, self.root, self.revision, force_cache_sync=force_cache_sync
+            self.repo_id, self._requested_root, self.revision, force_cache_sync=force_cache_sync
         )
+        self.root = self.meta.root
+        self.revision = self.meta.revision
         # Check version
         check_version_compatibility(self.repo_id, self.meta._version, CODEBASE_VERSION)
 
@@ -390,7 +555,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             root = self.meta.url_root if self.streaming and not self.streaming_from_local else self.root
             video_path = f"{root}/{self.meta.get_video_file_path(ep_idx, video_key)}"
             frames = decode_video_frames_torchcodec(
-                video_path, query_ts, self.tolerance_s, decoder_cache=self.video_decoder_cache
+                video_path,
+                query_ts,
+                self.tolerance_s,
+                decoder_cache=self.video_decoder_cache,
+                return_uint8=self._return_uint8,
             )
 
             item[video_key] = frames.squeeze(0) if len(query_ts) == 1 else frames

@@ -34,7 +34,7 @@ Finally, your environment must implement the standard `gym.vector.VectorEnv` int
 Loading an environment from the Hub is as simple as:
 
 ```python
-from lerobot.envs.factory import make_env
+from lerobot.envs import make_env
 
 # Load a hub environment (requires explicit consent to run remote code)
 env = make_env("lerobot/cartpole-env", trust_remote_code=True)
@@ -191,7 +191,7 @@ api.upload_folder(
 ### Basic Usage
 
 ```python
-from lerobot.envs.factory import make_env
+from lerobot.envs import make_env
 
 # Load from the hub
 envs_dict = make_env(
@@ -314,7 +314,7 @@ env = make_env("trusted-org/verified-env@a1b2c3d4", trust_remote_code=True)
 Here's a complete example using the reference CartPole environment:
 
 ```python
-from lerobot.envs.factory import make_env
+from lerobot.envs import make_env
 import numpy as np
 
 # Load the environment

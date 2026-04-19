@@ -30,7 +30,7 @@ from lerobot.processor import (
 )
 from lerobot.processor.converters import create_transition, identity_transition, to_tensor
 from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_STATE, OBS_STR
-from lerobot.utils.utils import auto_select_torch_device
+from lerobot.utils.device_utils import auto_select_torch_device
 
 
 def test_numpy_conversion():

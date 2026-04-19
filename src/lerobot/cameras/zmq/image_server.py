@@ -31,8 +31,8 @@ import cv2
 import numpy as np
 import zmq
 
-from lerobot.cameras.configs import ColorMode
-from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
+from ..configs import ColorMode
+from ..opencv import OpenCVCamera, OpenCVCameraConfig
 
 logger = logging.getLogger(__name__)
 

@@ -42,7 +42,8 @@ from transformers import AutoTokenizer  # noqa: E402
 
 from lerobot.policies.pi05 import PI05Config, PI05Policy  # noqa: E402
 from lerobot.policies.pi05.processor_pi05 import make_pi05_pre_post_processors  # noqa: E402
-from lerobot.processor import PolicyAction, PolicyProcessorPipeline  # noqa: E402
+from lerobot.processor import PolicyProcessorPipeline  # noqa: E402
+from lerobot.types import PolicyAction  # noqa: E402
 
 # TODO: ADDING DEFAULT IMAGES_FEATURES TO CONFIG
 DUMMY_ACTION_DIM = 32

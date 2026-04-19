@@ -13,6 +13,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import logging
 import os
 import platform
@@ -20,111 +22,23 @@ import select
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
 from copy import copy, deepcopy
 from datetime import datetime
 from pathlib import Path
 from statistics import mean
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import torch
-from accelerate import Accelerator
-from datasets.utils.logging import disable_progress_bar, enable_progress_bar
+
+if TYPE_CHECKING:
+    from accelerate import Accelerator
 
 
 def inside_slurm():
     """Check whether the python process was launched through slurm"""
     # TODO(rcadene): return False for interactive mode `--pty bash`
     return "SLURM_JOB_ID" in os.environ
-
-
-def auto_select_torch_device() -> torch.device:
-    """Tries to select automatically a torch device."""
-    if torch.cuda.is_available():
-        logging.info("Cuda backend detected, using cuda.")
-        return torch.device("cuda")
-    elif torch.backends.mps.is_available():
-        logging.info("Metal backend detected, using mps.")
-        return torch.device("mps")
-    elif torch.xpu.is_available():
-        logging.info("Intel XPU backend detected, using xpu.")
-        return torch.device("xpu")
-    else:
-        logging.warning("No accelerated backend detected. Using default cpu, this will be slow.")
-        return torch.device("cpu")
-
-
-# TODO(Steven): Remove log. log shouldn't be an argument, this should be handled by the logger level
-def get_safe_torch_device(try_device: str, log: bool = False) -> torch.device:
-    """Given a string, return a torch.device with checks on whether the device is available."""
-    try_device = str(try_device)
-    if try_device.startswith("cuda"):
-        assert torch.cuda.is_available()
-        device = torch.device(try_device)
-    elif try_device == "mps":
-        assert torch.backends.mps.is_available()
-        device = torch.device("mps")
-    elif try_device == "xpu":
-        assert torch.xpu.is_available()
-        device = torch.device("xpu")
-    elif try_device == "cpu":
-        device = torch.device("cpu")
-        if log:
-            logging.warning("Using CPU, this will be slow.")
-    else:
-        device = torch.device(try_device)
-        if log:
-            logging.warning(f"Using custom {try_device} device.")
-    return device
-
-
-def get_safe_dtype(dtype: torch.dtype, device: str | torch.device):
-    """
-    mps is currently not compatible with float64
-    """
-    if isinstance(device, torch.device):
-        device = device.type
-    if device == "mps" and dtype == torch.float64:
-        return torch.float32
-    if device == "xpu" and dtype == torch.float64:
-        if hasattr(torch.xpu, "get_device_capability"):
-            device_capability = torch.xpu.get_device_capability()
-            # NOTE: Some Intel XPU devices do not support double precision (FP64).
-            # The `has_fp64` flag is returned by `torch.xpu.get_device_capability()`
-            # when available; if False, we fall back to float32 for compatibility.
-            if not device_capability.get("has_fp64", False):
-                logging.warning(f"Device {device} does not support float64, using float32 instead.")
-                return torch.float32
-        else:
-            logging.warning(
-                f"Device {device} capability check failed. Assuming no support for float64, using float32 instead."
-            )
-            return torch.float32
-        return dtype
-    else:
-        return dtype
-
-
-def is_torch_device_available(try_device: str) -> bool:
-    try_device = str(try_device)  # Ensure try_device is a string
-    if try_device.startswith("cuda"):
-        return torch.cuda.is_available()
-    elif try_device == "mps":
-        return torch.backends.mps.is_available()
-    elif try_device == "xpu":
-        return torch.xpu.is_available()
-    elif try_device == "cpu":
-        return True
-    else:
-        raise ValueError(f"Unknown device {try_device}. Supported devices are: cuda, mps, xpu or cpu.")
-
-
-def is_amp_available(device: str):
-    if device in ["cuda", "xpu", "cpu"]:
-        return True
-    elif device == "mps":
-        return False
-    else:
-        raise ValueError(f"Unknown device '{device}.")
 
 
 def init_logging(
@@ -181,6 +95,8 @@ def init_logging(
         file_handler.setFormatter(formatter)
         file_handler.setLevel(file_level.upper())
         logger.addHandler(file_handler)
+
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 def format_big_number(num, precision=0):
@@ -284,6 +200,80 @@ def get_elapsed_time_in_days_hours_minutes_seconds(elapsed_time_s: float):
     return days, hours, minutes, seconds
 
 
+def flatten_dict(d: dict, parent_key: str = "", sep: str = "/") -> dict:
+    """Flatten a nested dictionary by joining keys with a separator.
+
+    Example:
+        >>> dct = {"a": {"b": 1, "c": {"d": 2}}, "e": 3}
+        >>> print(flatten_dict(dct))
+        {'a/b': 1, 'a/c/d': 2, 'e': 3}
+
+    Args:
+        d (dict): The dictionary to flatten.
+        parent_key (str): The base key to prepend to the keys in this level.
+        sep (str): The separator to use between keys.
+
+    Returns:
+        dict: A flattened dictionary.
+    """
+    items = []
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
+
+
+def unflatten_dict(d: dict, sep: str = "/") -> dict:
+    """Unflatten a dictionary with delimited keys into a nested dictionary.
+
+    Example:
+        >>> flat_dct = {"a/b": 1, "a/c/d": 2, "e": 3}
+        >>> print(unflatten_dict(flat_dct))
+        {'a': {'b': 1, 'c': {'d': 2}}, 'e': 3}
+
+    Args:
+        d (dict): A dictionary with flattened keys.
+        sep (str): The separator used in the keys.
+
+    Returns:
+        dict: A nested dictionary.
+    """
+    outdict = {}
+    for key, value in d.items():
+        parts = key.split(sep)
+        d_inner = outdict
+        for part in parts[:-1]:
+            if part not in d_inner:
+                d_inner[part] = {}
+            d_inner = d_inner[part]
+        d_inner[parts[-1]] = value
+    return outdict
+
+
+def cycle(iterable: Any) -> Iterator[Any]:
+    """Create a dataloader-safe cyclical iterator.
+
+    This is an equivalent of `itertools.cycle` but is safe for use with
+    PyTorch DataLoaders with multiple workers.
+    See https://github.com/pytorch/pytorch/issues/23900 for details.
+
+    Args:
+        iterable: The iterable to cycle over.
+
+    Yields:
+        Items from the iterable, restarting from the beginning when exhausted.
+    """
+    iterator = iter(iterable)
+    while True:
+        try:
+            yield next(iterator)
+        except StopIteration:
+            iterator = iter(iterable)
+
+
 class SuppressProgressBars:
     """
     Context manager to suppress progress bars.
@@ -297,10 +287,22 @@ class SuppressProgressBars:
     """
 
     def __enter__(self):
-        disable_progress_bar()
+        try:
+            from datasets.utils.logging import disable_progress_bar
+
+            disable_progress_bar()
+        except ImportError:
+            logging.getLogger(__name__).debug(
+                "SuppressProgressBars is a no-op because 'datasets' is not installed."
+            )
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        enable_progress_bar()
+        try:
+            from datasets.utils.logging import enable_progress_bar
+
+            enable_progress_bar()
+        except ImportError:
+            pass
 
 
 class TimerManager:

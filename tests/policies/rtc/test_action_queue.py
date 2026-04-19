@@ -25,7 +25,7 @@ import torch
 from lerobot.policies.rtc.action_queue import ActionQueue
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 
-# ====================== Fixtures ======================
+# Fixtures
 
 
 @pytest.fixture
@@ -63,7 +63,7 @@ def action_queue_rtc_disabled(rtc_config_disabled):
     return ActionQueue(rtc_config_disabled)
 
 
-# ====================== Initialization Tests ======================
+# Initialization tests
 
 
 def test_action_queue_initialization_rtc_enabled(rtc_config_enabled):
@@ -84,7 +84,7 @@ def test_action_queue_initialization_rtc_disabled(rtc_config_disabled):
     assert queue.cfg.enabled is False
 
 
-# ====================== get() Tests ======================
+# get() tests
 
 
 def test_get_returns_none_when_empty(action_queue_rtc_enabled):
@@ -136,7 +136,7 @@ def test_get_increments_last_index(action_queue_rtc_enabled, sample_actions):
     assert action_queue_rtc_enabled.last_index == 2
 
 
-# ====================== qsize() Tests ======================
+# qsize() tests
 
 
 def test_qsize_returns_zero_when_empty(action_queue_rtc_enabled):
@@ -167,7 +167,7 @@ def test_qsize_after_exhaustion(action_queue_rtc_enabled, sample_actions):
     assert action_queue_rtc_enabled.qsize() == 0
 
 
-# ====================== empty() Tests ======================
+# empty() tests
 
 
 def test_empty_returns_true_when_empty(action_queue_rtc_enabled):
@@ -202,7 +202,7 @@ def test_empty_after_full_consumption(action_queue_rtc_enabled, sample_actions):
     assert action_queue_rtc_enabled.empty() is True
 
 
-# ====================== get_action_index() Tests ======================
+# get_action_index() tests
 
 
 def test_get_action_index_initial_value(action_queue_rtc_enabled):
@@ -222,7 +222,7 @@ def test_get_action_index_after_consumption(action_queue_rtc_enabled, sample_act
     assert action_queue_rtc_enabled.get_action_index() == 3
 
 
-# ====================== get_left_over() Tests ======================
+# get_left_over() tests
 
 
 def test_get_left_over_returns_none_when_empty(action_queue_rtc_enabled):
@@ -269,7 +269,7 @@ def test_get_left_over_returns_empty_after_exhaustion(action_queue_rtc_enabled, 
     assert leftover.shape == (0, 6)
 
 
-# ====================== merge() with RTC Enabled Tests ======================
+# merge() with RTC enabled tests
 
 
 def test_merge_replaces_queue_when_rtc_enabled(action_queue_rtc_enabled, sample_actions):
@@ -336,7 +336,7 @@ def test_merge_with_large_delay(action_queue_rtc_enabled, sample_actions):
     assert action_queue_rtc_enabled.qsize() == 0
 
 
-# ====================== merge() with RTC Disabled Tests ======================
+# merge() with RTC disabled tests
 
 
 def test_merge_appends_when_rtc_disabled(action_queue_rtc_disabled, sample_actions):
@@ -402,7 +402,7 @@ def test_merge_first_call_with_rtc_disabled(action_queue_rtc_disabled, sample_ac
     assert action_queue_rtc_disabled.last_index == 0
 
 
-# ====================== merge() with Different Action Shapes Tests ======================
+# merge() with different action shapes tests
 
 
 def test_merge_with_different_action_dims():
@@ -431,7 +431,7 @@ def test_merge_with_different_lengths():
     assert queue.qsize() == 35
 
 
-# ====================== merge() Delay Validation Tests ======================
+# merge() delay validation tests
 
 
 def test_merge_validates_delay_consistency(action_queue_rtc_enabled, sample_actions, caplog):
@@ -509,7 +509,7 @@ def test_merge_skips_validation_when_action_index_none(action_queue_rtc_enabled,
     assert "Indexes diff is not equal to real delay" not in caplog.text
 
 
-# ====================== Thread Safety Tests ======================
+# Thread safety tests
 
 
 def test_get_is_thread_safe(action_queue_rtc_enabled, sample_actions):
@@ -621,7 +621,7 @@ def test_concurrent_get_and_merge(action_queue_rtc_disabled, sample_actions):
     assert consumed_count[0] <= 200
 
 
-# ====================== get_left_over() Thread Safety Tests ======================
+# get_left_over() thread safety tests
 
 
 def test_get_left_over_is_thread_safe(action_queue_rtc_enabled, sample_actions):
@@ -670,7 +670,7 @@ def test_get_left_over_is_thread_safe(action_queue_rtc_enabled, sample_actions):
     assert len(leftovers) > 0
 
 
-# ====================== Edge Cases Tests ======================
+# Edge cases tests
 
 
 def test_queue_with_single_action(action_queue_rtc_enabled):
@@ -773,7 +773,7 @@ def test_qsize_with_none_queue(action_queue_rtc_enabled):
     assert action_queue_rtc_enabled.qsize() == 0
 
 
-# ====================== Integration Tests ======================
+# Integration tests
 
 
 def test_typical_rtc_workflow(action_queue_rtc_enabled, sample_actions):

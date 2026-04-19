@@ -28,7 +28,8 @@ import torch
 from lerobot.policies.groot.configuration_groot import GrootConfig
 from lerobot.policies.groot.modeling_groot import GrootPolicy
 from lerobot.policies.groot.processor_groot import make_groot_pre_post_processors
-from lerobot.processor import PolicyAction, PolicyProcessorPipeline
+from lerobot.processor import PolicyProcessorPipeline
+from lerobot.types import PolicyAction
 
 pytest.importorskip("gr00t")
 pytest.importorskip("transformers")

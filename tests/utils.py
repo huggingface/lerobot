@@ -20,23 +20,11 @@ from functools import wraps
 import pytest
 import torch
 
-from lerobot import available_cameras, available_motors, available_robots
+from lerobot.utils.device_utils import auto_select_torch_device
 from lerobot.utils.import_utils import is_package_available
-from lerobot.utils.utils import auto_select_torch_device
 
 DEVICE = os.environ.get("LEROBOT_TEST_DEVICE", str(auto_select_torch_device()))
 
-TEST_ROBOT_TYPES = []
-for robot_type in available_robots:
-    TEST_ROBOT_TYPES += [(robot_type, True), (robot_type, False)]
-
-TEST_CAMERA_TYPES = []
-for camera_type in available_cameras:
-    TEST_CAMERA_TYPES += [(camera_type, True), (camera_type, False)]
-
-TEST_MOTOR_TYPES = []
-for motor_type in available_motors:
-    TEST_MOTOR_TYPES += [(motor_type, True), (motor_type, False)]
 
 # Camera indices used for connecting physical cameras
 OPENCV_CAMERA_INDEX = int(os.environ.get("LEROBOT_TEST_OPENCV_CAMERA_INDEX", 0))
@@ -152,7 +140,7 @@ def require_env(func):
     return wrapper
 
 
-def require_package_arg(func):
+def skip_if_package_arg_missing(func):
     """
     Decorator that skips the test if the required package is not installed.
     This is similar to `require_env` but more general in that it can check any package (not just environments).
@@ -184,7 +172,7 @@ def require_package_arg(func):
     return wrapper
 
 
-def require_package(package_name, import_name=None):
+def skip_if_package_missing(package_name, import_name=None):
     """
     Decorator that skips the test if the specified package is not installed.
     """
