@@ -60,15 +60,18 @@ from torch.multiprocessing import Queue
 from torch.optim.optimizer import Optimizer
 
 from lerobot.cameras import opencv  # noqa: F401
+from lerobot.common.train_utils import (
+    get_step_checkpoint_dir,
+    load_training_state as utils_load_training_state,
+    save_checkpoint,
+    update_last_checkpoint,
+)
+from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
-from lerobot.datasets.factory import make_dataset
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.policies.factory import make_policy
+from lerobot.datasets import LeRobotDataset, make_dataset
+from lerobot.policies import make_policy
 from lerobot.policies.sac.modeling_sac import SACPolicy
-from lerobot.rl.buffer import ReplayBuffer, concatenate_batch_transitions
-from lerobot.rl.process import ProcessSignalHandler
-from lerobot.rl.wandb_utils import WandBLogger
 from lerobot.robots import so_follower  # noqa: F401
 from lerobot.teleoperators import gamepad, so_leader  # noqa: F401
 from lerobot.teleoperators.utils import TeleopEvents
@@ -88,19 +91,15 @@ from lerobot.utils.constants import (
 )
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.random_utils import set_seed
-from lerobot.utils.train_utils import (
-    get_step_checkpoint_dir,
-    load_training_state as utils_load_training_state,
-    save_checkpoint,
-    update_last_checkpoint,
-)
 from lerobot.utils.transition import move_state_dict_to_device, move_transition_to_device
 from lerobot.utils.utils import (
     format_big_number,
     init_logging,
 )
 
+from .buffer import ReplayBuffer, concatenate_batch_transitions
 from .learner_service import MAX_WORKERS, SHUTDOWN_TIMEOUT, LearnerService
+from .process import ProcessSignalHandler
 
 
 @parser.wrap()
@@ -152,7 +151,7 @@ def train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None):
 
     # Setup WandB logging if enabled
     if cfg.wandb.enable and cfg.wandb.project:
-        from lerobot.rl.wandb_utils import WandBLogger
+        from lerobot.common.wandb_utils import WandBLogger
 
         wandb_logger = WandBLogger(cfg)
     else:
@@ -219,30 +218,33 @@ def start_learner_threads(
     )
     communication_process.start()
 
-    add_actor_information_and_train(
-        cfg=cfg,
-        wandb_logger=wandb_logger,
-        shutdown_event=shutdown_event,
-        transition_queue=transition_queue,
-        interaction_message_queue=interaction_message_queue,
-        parameters_queue=parameters_queue,
-    )
-    logging.info("[LEARNER] Training process stopped")
+    try:
+        add_actor_information_and_train(
+            cfg=cfg,
+            wandb_logger=wandb_logger,
+            shutdown_event=shutdown_event,
+            transition_queue=transition_queue,
+            interaction_message_queue=interaction_message_queue,
+            parameters_queue=parameters_queue,
+        )
+        logging.info("[LEARNER] Training process stopped")
+    except Exception:
+        logging.exception("[LEARNER] Unhandled exception in training loop")
+        shutdown_event.set()
+    finally:
+        logging.info("[LEARNER] Closing queues")
+        transition_queue.close()
+        interaction_message_queue.close()
+        parameters_queue.close()
 
-    logging.info("[LEARNER] Closing queues")
-    transition_queue.close()
-    interaction_message_queue.close()
-    parameters_queue.close()
+        communication_process.join()
+        logging.info("[LEARNER] Communication process joined")
 
-    communication_process.join()
-    logging.info("[LEARNER] Communication process joined")
+        transition_queue.cancel_join_thread()
+        interaction_message_queue.cancel_join_thread()
+        parameters_queue.cancel_join_thread()
 
-    logging.info("[LEARNER] join queues")
-    transition_queue.cancel_join_thread()
-    interaction_message_queue.cancel_join_thread()
-    parameters_queue.cancel_join_thread()
-
-    logging.info("[LEARNER] queues closed")
+        logging.info("[LEARNER] Cleanup complete")
 
 
 # Core algorithm functions

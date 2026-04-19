@@ -19,15 +19,15 @@
 import pytest
 import torch
 
-from lerobot.configs.types import FeatureType, PolicyFeature, RTCAttentionSchedule  # noqa: E402
-from lerobot.policies.factory import make_pre_post_processors  # noqa: E402
-from lerobot.policies.rtc.configuration_rtc import RTCConfig  # noqa: E402
+from lerobot.configs.types import FeatureType, PolicyFeature, RTCAttentionSchedule
+from lerobot.policies.factory import make_pre_post_processors
+from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig  # noqa: F401
-from lerobot.utils.random_utils import set_seed  # noqa: E402
-from tests.utils import require_cuda, require_package  # noqa: E402
+from lerobot.utils.random_utils import set_seed
+from tests.utils import require_cuda, skip_if_package_missing
 
 
-@require_package("transformers")
+@skip_if_package_missing("transformers")
 @require_cuda
 def test_smolvla_rtc_initialization():
     from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy  # noqa: F401
@@ -65,7 +65,7 @@ def test_smolvla_rtc_initialization():
     print("✓ SmolVLA RTC initialization: Test passed")
 
 
-@require_package("transformers")
+@skip_if_package_missing("transformers")
 @require_cuda
 def test_smolvla_rtc_initialization_without_rtc_config():
     from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy  # noqa: F401
@@ -87,7 +87,7 @@ def test_smolvla_rtc_initialization_without_rtc_config():
     print("✓ SmolVLA RTC initialization without RTC config: Test passed")
 
 
-@require_package("transformers")
+@skip_if_package_missing("transformers")
 @require_cuda
 @pytest.mark.skipif(True, reason="Requires pretrained SmolVLA model weights")
 def test_smolvla_rtc_inference_with_prev_chunk():
@@ -170,7 +170,7 @@ def test_smolvla_rtc_inference_with_prev_chunk():
     print("✓ SmolVLA RTC inference with prev_chunk: Test passed")
 
 
-@require_package("transformers")
+@skip_if_package_missing("transformers")
 @require_cuda
 @pytest.mark.skipif(True, reason="Requires pretrained SmolVLA model weights")
 def test_smolvla_rtc_inference_without_prev_chunk():
@@ -244,7 +244,7 @@ def test_smolvla_rtc_inference_without_prev_chunk():
     print("✓ SmolVLA RTC inference without prev_chunk: Test passed")
 
 
-@require_package("transformers")
+@skip_if_package_missing("transformers")
 @require_cuda
 @pytest.mark.skipif(True, reason="Requires pretrained SmolVLA model weights")
 def test_smolvla_rtc_validation_rules():

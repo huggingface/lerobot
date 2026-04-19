@@ -12,26 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 ########################################################################################
 # Utilities
 ########################################################################################
-
-
 import logging
 import traceback
 from contextlib import nullcontext
 from copy import copy
 from functools import cache
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
-from deepdiff import DeepDiff
 
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import DEFAULT_FEATURES
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.utils import prepare_observation_for_inference
+from lerobot.policies import PreTrainedPolicy, prepare_observation_for_inference
+from lerobot.utils.import_utils import _deepdiff_available, require_package
+
+if TYPE_CHECKING or _deepdiff_available:
+    from deepdiff import DeepDiff
+else:
+    DeepDiff = None
+
+if TYPE_CHECKING:
+    from lerobot.datasets import LeRobotDataset
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.robots import Robot
 from lerobot.types import PolicyAction
@@ -218,6 +223,10 @@ def sanity_check_dataset_robot_compatibility(
     Raises:
         ValueError: If any of the checked metadata fields do not match.
     """
+    require_package("deepdiff", extra="deepdiff-dep")
+
+    from lerobot.utils.constants import DEFAULT_FEATURES
+
     fields = [
         ("robot_type", dataset.meta.robot_type, robot.robot_type),
         ("fps", dataset.fps, fps),

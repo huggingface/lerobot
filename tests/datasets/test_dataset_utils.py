@@ -16,13 +16,16 @@
 
 import pytest
 import torch
-from datasets import Dataset
+
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
+from datasets import Dataset  # noqa: E402
 from huggingface_hub import DatasetCard
 
-from lerobot.datasets.feature_utils import combine_feature_dicts
 from lerobot.datasets.io_utils import hf_transform_to_torch
 from lerobot.datasets.utils import create_lerobot_dataset_card
 from lerobot.utils.constants import ACTION, OBS_IMAGES
+from lerobot.utils.feature_utils import combine_feature_dicts
 
 
 def calculate_episode_data_index(hf_dataset: Dataset) -> dict[str, torch.Tensor]:

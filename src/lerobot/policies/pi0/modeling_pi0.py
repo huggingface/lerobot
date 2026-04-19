@@ -26,14 +26,14 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
-from lerobot.utils.import_utils import _transformers_available
+from lerobot.utils.import_utils import _transformers_available, require_package
 
 # Conditional import for type checking and lazy loading
 if TYPE_CHECKING or _transformers_available:
     from transformers.models.auto import CONFIG_MAPPING
     from transformers.models.gemma import modeling_gemma
 
-    from lerobot.policies.pi_gemma import (
+    from ..pi_gemma import (
         PaliGemmaForConditionalGenerationWithPiGemma,
         PiGemmaForCausalLM,
         _gated_residual,
@@ -48,10 +48,7 @@ else:
     PaliGemmaForConditionalGenerationWithPiGemma = None
 
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.policies.pi0.configuration_pi0 import DEFAULT_IMAGE_SIZE, PI0Config
-from lerobot.policies.pretrained import PreTrainedPolicy, T
-from lerobot.policies.rtc.modeling_rtc import RTCProcessor
+from lerobot.configs import PreTrainedConfig
 from lerobot.utils.constants import (
     ACTION,
     OBS_LANGUAGE_ATTENTION_MASK,
@@ -59,6 +56,10 @@ from lerobot.utils.constants import (
     OBS_STATE,
     OPENPI_ATTENTION_MASK_VALUE,
 )
+
+from ..pretrained import PreTrainedPolicy, T
+from ..rtc.modeling_rtc import RTCProcessor
+from .configuration_pi0 import DEFAULT_IMAGE_SIZE, PI0Config
 
 
 class ActionSelectKwargs(TypedDict, total=False):
@@ -946,6 +947,7 @@ class PI0Policy(PreTrainedPolicy):
         Args:
             config: Policy configuration class instance.
         """
+        require_package("transformers", extra="pi")
         super().__init__(config)
         config.validate_features()
         self.config = config

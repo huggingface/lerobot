@@ -24,11 +24,11 @@ from huggingface_hub.errors import HfHubHTTPError
 
 from lerobot import envs
 from lerobot.configs import parser
-from lerobot.configs.default import DatasetConfig, EvalConfig, PeftConfig, WandBConfig
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.optim import OptimizerConfig
-from lerobot.optim.schedulers import LRSchedulerConfig
+from lerobot.optim import LRSchedulerConfig, OptimizerConfig
 from lerobot.utils.hub import HubMixin
+
+from .default import DatasetConfig, EvalConfig, PeftConfig, WandBConfig
+from .policies import PreTrainedConfig
 
 TRAIN_CONFIG_NAME = "train_config.json"
 
@@ -56,6 +56,8 @@ class TrainPipelineConfig(HubMixin):
     # Number of workers for the dataloader.
     num_workers: int = 4
     batch_size: int = 8
+    prefetch_factor: int = 4
+    persistent_workers: bool = True
     steps: int = 100_000
     eval_freq: int = 20_000
     log_freq: int = 200

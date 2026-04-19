@@ -24,20 +24,21 @@ import torch.utils
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.errors import RevisionNotFoundError
 
-from lerobot.datasets.dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
-from lerobot.datasets.dataset_reader import DatasetReader
-from lerobot.datasets.dataset_writer import DatasetWriter
-from lerobot.datasets.utils import (
+from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
+
+from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
+from .dataset_reader import DatasetReader
+from .dataset_writer import DatasetWriter
+from .utils import (
     create_lerobot_dataset_card,
     get_safe_version,
     is_valid_version,
 )
-from lerobot.datasets.video_utils import (
+from .video_utils import (
     StreamingVideoEncoder,
     get_safe_default_codec,
     resolve_vcodec,
 )
-from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         force_cache_sync: bool = False,
         download_videos: bool = True,
         video_backend: str | None = None,
+        return_uint8: bool = False,
         batch_encoding_size: int = 1,
         vcodec: str = "libsvtav1",
         streaming_encoding: bool = False,
@@ -201,6 +203,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.tolerance_s = tolerance_s
         self.revision = revision if revision else CODEBASE_VERSION
         self._video_backend = video_backend if video_backend else get_safe_default_codec()
+        self._return_uint8 = return_uint8
         self._batch_encoding_size = batch_encoding_size
         self._vcodec = resolve_vcodec(vcodec)
         self._encoder_threads = encoder_threads
@@ -224,6 +227,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             video_backend=self._video_backend,
             delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
+            return_uint8=self._return_uint8,
         )
 
         # Load actual data
@@ -278,6 +282,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def _ensure_reader(self) -> DatasetReader:
         """Lazily create the reader on first access."""
         if self.reader is None:
+            self.meta.ensure_readable()
             self.reader = DatasetReader(
                 meta=self.meta,
                 root=self.root,
@@ -286,6 +291,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 video_backend=self._video_backend,
                 delta_timestamps=self.delta_timestamps,
                 image_transforms=self.image_transforms,
+                return_uint8=self._return_uint8,
             )
         return self.reader
 
@@ -681,6 +687,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.delta_timestamps = None
         obj.episodes = None
         obj._video_backend = video_backend if video_backend is not None else get_safe_default_codec()
+        obj._return_uint8 = False
         obj._batch_encoding_size = batch_encoding_size
         obj._vcodec = vcodec
         obj._encoder_threads = encoder_threads
@@ -773,6 +780,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.delta_timestamps = None
         obj.episodes = None
         obj._video_backend = video_backend if video_backend else get_safe_default_codec()
+        obj._return_uint8 = False
         obj._batch_encoding_size = batch_encoding_size
         obj._vcodec = vcodec
         obj._encoder_threads = encoder_threads
