@@ -382,7 +382,7 @@ jobs:
                 --policy.empty_cameras=1 \
                 --output_dir=/tmp/eval-artifacts
               python scripts/ci/extract_task_descriptions.py \
-                --env libero --task libero_spatial \
+                --env libero_plus --task libero_spatial \
                 --output /tmp/eval-artifacts/task_descriptions.json
             "
 
