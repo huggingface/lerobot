@@ -216,6 +216,11 @@ metaworld = ["lerobot[dataset]", "metaworld==3.0.0", "lerobot[scipy-dep]"]
 # which conflicts with lerobot's numpy>=2 base pin, so the two trees can't
 # resolve into a single env. Install it only in the RoboMME Docker image
 # via `uv pip install --override` (see docker/Dockerfile.benchmark.robomme).
+# NOTE: robocasa is NOT exposed as a `lerobot` extra. Its setup.py pins
+# `lerobot==0.3.3` in install_requires, which cyclically shadows our own
+# workspace `lerobot` and makes the graph unsolvable under any resolver
+# (uv, pip). Install it manually alongside robosuite — see
+# docs/source/robocasa.mdx for the recipe.
 
 # All
 all = [
