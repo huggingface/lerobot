@@ -50,15 +50,15 @@ class GamepadTeleop(Teleoperator):
     config_class = GamepadTeleopConfig
     name = "gamepad"
 
-    def __init__(self, config: GamepadTeleopConfig, hidapi_fallback: bool = False):
+    def __init__(self, config: GamepadTeleopConfig):
         super().__init__(config)
         self.config = config
         self.robot_type = config.type
 
         self.gamepad = None
 
-        self.hidapi_fallback = hidapi_fallback
-        if sys.platform == "darwin" and not hidapi_fallback:
+        self.hidapi_fallback = config.hidapi_fallback
+        if sys.platform == "darwin" and not self.hidapi_fallback:
             logging.warning(
                 "Warning: On macOS, pygame may not reliably detect input from some controllers. "
                 "If you experience issues with the gamepad, consider setting hidapi_fallback to True."
@@ -84,7 +84,6 @@ class GamepadTeleop(Teleoperator):
         return {}
 
     def connect(self) -> None:
-        # use HidApi for macos
         if self.hidapi_fallback:
             from .gamepad_utils import GamepadControllerHID as Gamepad
         else:
