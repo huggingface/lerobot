@@ -597,7 +597,7 @@ class DatasetWriter:
 
     def cleanup_interrupted_episode(self, episode_index: int) -> None:
         """Remove temporary image directories for an interrupted episode."""
-        for key in self._meta.video_keys:
+        for key in self._meta.camera_keys:
             img_dir = self._get_image_file_path(
                 episode_index=episode_index, image_key=key, frame_index=0
             ).parent
