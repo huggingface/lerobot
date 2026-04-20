@@ -31,8 +31,22 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
+
+# LIBERO-plus derives task.language by space-joining the perturbation-variant
+# filename (grab_language_from_filename in libero/libero/benchmark/__init__.py),
+# so non-_language_ variants inherit a trailing metadata blob like
+# "view 0 0 100 0 0 initstate 0 noise 45" or "add 16". Strip those tokens so
+# the description matches the base instruction used in the training dataset.
+_LIBERO_PERTURBATION_TAIL_RE = re.compile(
+    r"(?:\s(?:view|initstate|noise|add|tb|table|light|level)(?:\s\d+)+)+$"
+)
+
+
+def _strip_libero_perturbation_tail(instruction: str) -> str:
+    return _LIBERO_PERTURBATION_TAIL_RE.sub("", instruction).strip()
 
 
 def _libero_descriptions(task_suite: str) -> dict[str, str]:
@@ -47,7 +61,10 @@ def _libero_descriptions(task_suite: str) -> dict[str, str]:
         )
         return {}
     suite = suite_dict[task_suite]()
-    return {f"{task_suite}_{i}": suite.get_task(i).language for i in range(suite.n_tasks)}
+    return {
+        f"{task_suite}_{i}": _strip_libero_perturbation_tail(suite.get_task(i).language)
+        for i in range(suite.n_tasks)
+    }
 
 
 def _metaworld_descriptions(task_name: str) -> dict[str, str]:
@@ -92,16 +109,59 @@ def _robocasa_descriptions(task_spec: str) -> dict[str, str]:
     return out
 
 
+_ROBOMME_DESCRIPTIONS = {
+    "BinFill": "Fill the target bin with the correct number of cubes",
+    "PickXtimes": "Pick the indicated cube the specified number of times",
+    "SwingXtimes": "Swing the object the specified number of times",
+    "StopCube": "Grasp and stop the moving cube",
+    "VideoUnmask": "Pick the cube shown in the reference video",
+    "VideoUnmaskSwap": "Pick the cube matching the reference video after a swap",
+    "ButtonUnmask": "Press the button indicated by the reference",
+    "ButtonUnmaskSwap": "Press the correct button after objects are swapped",
+    "PickHighlight": "Pick the highlighted cube",
+    "VideoRepick": "Repick the cube shown in the reference video",
+    "VideoPlaceButton": "Place the cube on the button shown in the video",
+    "VideoPlaceOrder": "Place cubes in the order shown in the video",
+    "MoveCube": "Move the cube to the target location",
+    "InsertPeg": "Insert the peg into the target hole",
+    "PatternLock": "Unlock the pattern by pressing buttons in sequence",
+    "RouteStick": "Route the stick through the required waypoints",
+}
+
+
+def _robomme_descriptions(task_names: str, task_ids: list[int] | None = None) -> dict[str, str]:
+    """Return descriptions for each requested RoboMME task. Keys match the
+    video filename pattern `<task>_<task_id>` used by the eval script."""
+    if task_ids is None:
+        task_ids = [0]
+    out: dict[str, str] = {}
+    for name in (t.strip() for t in task_names.split(",") if t.strip()):
+        desc = _ROBOMME_DESCRIPTIONS.get(name, name)
+        for tid in task_ids:
+            out[f"{name}_{tid}"] = desc
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env", required=True, help="Environment family (libero, metaworld, ...)")
     parser.add_argument("--task", required=True, help="Task/suite name (e.g. libero_spatial)")
+    parser.add_argument(
+        "--task-ids",
+        type=str,
+        default=None,
+        help="Comma-separated task IDs (e.g. '0,1,2'). Default: [0]",
+    )
     parser.add_argument("--output", required=True, help="Path to write task_descriptions.json")
     args = parser.parse_args()
 
+    task_ids: list[int] | None = None
+    if args.task_ids:
+        task_ids = [int(x.strip()) for x in args.task_ids.split(",")]
+
     descriptions: dict[str, str] = {}
     try:
-        if args.env == "libero":
+        if args.env == ("libero", "libero_plus"):
             descriptions = _libero_descriptions(args.task)
         elif args.env == "metaworld":
             descriptions = _metaworld_descriptions(args.task)
@@ -109,6 +169,8 @@ def main() -> int:
             descriptions = _robotwin_descriptions(args.task)
         elif args.env == "robocasa":
             descriptions = _robocasa_descriptions(args.task)
+        elif args.env == "robomme":
+            descriptions = _robomme_descriptions(args.task, task_ids=task_ids)
         else:
             print(
                 f"[extract_task_descriptions] No description extractor for env '{args.env}'.",

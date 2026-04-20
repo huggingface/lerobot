@@ -77,6 +77,8 @@
     title: Adding a New Benchmark
   - local: libero
     title: LIBERO
+  - local: libero_plus
+    title: LIBERO-plus
   - local: metaworld
     title: Meta-World
   - local: robotwin
@@ -85,6 +87,8 @@
     title: RoboCasa365
   - local: robocerebra
     title: RoboCerebra
+  - local: robomme
+    title: RoboMME
   - local: envhub_isaaclab_arena
     title: NVIDIA IsaacLab Arena Environments
   title: "Benchmarks"
