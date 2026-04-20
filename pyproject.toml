@@ -212,6 +212,10 @@ aloha = ["lerobot[dataset]", "gym-aloha>=0.1.2,<0.2.0", "lerobot[scipy-dep]"]
 pusht = ["lerobot[dataset]", "gym-pusht>=0.1.5,<0.2.0", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version in gym-pusht instead
 libero = ["lerobot[dataset]", "lerobot[transformers-dep]", "hf-libero>=0.1.3,<0.2.0; sys_platform == 'linux'", "lerobot[scipy-dep]"]
 metaworld = ["lerobot[dataset]", "metaworld==3.0.0", "lerobot[scipy-dep]"]
+# NOTE: robomme is NOT a pyproject extra — mani-skill hard-pins numpy<2
+# which conflicts with lerobot's numpy>=2 base pin, so the two trees can't
+# resolve into a single env. Install it only in the RoboMME Docker image
+# via `uv pip install --override` (see docker/Dockerfile.benchmark.robomme).
 # NOTE: robocasa is NOT exposed as a `lerobot` extra. Its setup.py pins
 # `lerobot==0.3.3` in install_requires, which cyclically shadows our own
 # workspace `lerobot` and makes the graph unsolvable under any resolver
