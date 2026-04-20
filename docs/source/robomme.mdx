@@ -109,15 +109,9 @@ dataset = LeRobotDataset("lerobot/robomme")
 
 ### Feature key alignment (training)
 
-The env wrapper exposes `front_rgb` and `wrist_rgb` as observation keys. The `features_map` in `RoboMMEEnv` maps these to `obs_images.front` and `obs_images.wrist` for the policy.
+The env wrapper exposes `pixels/image` and `pixels/wrist_image` as observation keys. The `features_map` in `RoboMMEEnv` maps these to `observation.images.image` and `observation.images.wrist_image` for the policy. State is exposed as `agent_pos` and maps to `observation.state`.
 
-The dataset uses `image` and `wrist_image` as column names. When fine-tuning from the dataset, you may need to rename columns to match your policy's expected input keys:
-
-```python
-dataset = LeRobotDataset("lerobot/robomme")
-# rename dataset columns if needed:
-# dataset.hf_dataset = dataset.hf_dataset.rename_column("image", "front_rgb")
-```
+The dataset's `image` and `wrist_image` columns already align with the policy input keys, so no renaming is needed when fine-tuning.
 
 ## Action Spaces
 

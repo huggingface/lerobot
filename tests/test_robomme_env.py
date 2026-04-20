@@ -118,7 +118,11 @@ def test_robomme_features_action_dim_ee_pose():
 
 def test_convert_obs_list_format():
     """_convert_obs takes the last element from list-format obs fields and
-    emits the lerobot-canonical keys (pixels/image, pixels/wrist_image, agent_pos)."""
+    emits a nested ``pixels`` dict (image, wrist_image) plus ``agent_pos``.
+
+    The nested layout is required so ``preprocess_observation()`` in
+    ``envs/utils.py`` maps each camera to ``observation.images.<cam>``.
+    """
     _install_robomme_stub()
     try:
         from lerobot.envs.robomme import RoboMMEGymEnv
@@ -138,8 +142,8 @@ def test_convert_obs_list_format():
         }
 
         result = env._convert_obs(obs_raw)
-        np.testing.assert_array_equal(result["pixels/image"], front)
-        np.testing.assert_array_equal(result["pixels/wrist_image"], wrist)
+        np.testing.assert_array_equal(result["pixels"]["image"], front)
+        np.testing.assert_array_equal(result["pixels"]["wrist_image"], wrist)
         assert result["agent_pos"].shape == (8,)
         np.testing.assert_array_almost_equal(result["agent_pos"][:7], joints)
         assert result["agent_pos"][7] == gripper[0]
@@ -163,8 +167,8 @@ def test_convert_obs_array_format():
             "gripper_state_list": np.zeros(2, dtype=np.float32),
         }
         result = env._convert_obs(obs_raw)
-        assert result["pixels/image"].shape == (256, 256, 3)
-        assert result["pixels/wrist_image"].shape == (256, 256, 3)
+        assert result["pixels"]["image"].shape == (256, 256, 3)
+        assert result["pixels"]["wrist_image"].shape == (256, 256, 3)
         assert result["agent_pos"].shape == (8,)
     finally:
         _uninstall_robomme_stub()
