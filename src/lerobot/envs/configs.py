@@ -496,6 +496,81 @@ class MetaworldEnv(EnvConfig):
         )
 
 
+@EnvConfig.register_subclass("robocasa")
+@dataclass
+class RoboCasaEnv(EnvConfig):
+    task: str = "CloseFridge"
+    fps: int = 20
+    episode_length: int = 1000
+    obs_type: str = "pixels_agent_pos"
+    render_mode: str = "rgb_array"
+    camera_name: str = "robot0_agentview_left,robot0_eye_in_hand,robot0_agentview_right"
+    observation_height: int = 256
+    observation_width: int = 256
+    visualization_height: int = 512
+    visualization_width: int = 512
+    split: str | None = None
+    # Object-mesh registries to sample from. Upstream default is
+    # ("objaverse", "lightwheel"), but objaverse is ~30GB and the CI image
+    # only ships the lightwheel pack. Override to include objaverse once
+    # you've run `python -m robocasa.scripts.download_kitchen_assets
+    # --type objaverse` locally.
+    obj_registries: list[str] = field(default_factory=lambda: ["lightwheel"])
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(12,))}
+    )
+    features_map: dict[str, str] = field(default_factory=lambda: {ACTION: ACTION, "agent_pos": OBS_STATE})
+
+    def __post_init__(self):
+        if self.obs_type not in ("pixels", "pixels_agent_pos"):
+            raise ValueError(f"Unsupported obs_type: {self.obs_type}")
+
+        # Preserve raw RoboCasa camera names end-to-end (e.g.
+        # `observation.images.robot0_agentview_left`). This matches the
+        # naming convention used by the RoboCasa datasets on the Hub, so
+        # trained policies don't need a `--rename_map` at eval time.
+        cams = [c.strip() for c in self.camera_name.split(",") if c.strip()]
+        for cam in cams:
+            self.features[f"pixels/{cam}"] = PolicyFeature(
+                type=FeatureType.VISUAL,
+                shape=(self.observation_height, self.observation_width, 3),
+            )
+            self.features_map[f"pixels/{cam}"] = f"{OBS_IMAGES}.{cam}"
+
+        if self.obs_type == "pixels_agent_pos":
+            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(16,))
+
+    @property
+    def gym_kwargs(self) -> dict:
+        kwargs: dict[str, Any] = {
+            "obs_type": self.obs_type,
+            "render_mode": self.render_mode,
+            "observation_height": self.observation_height,
+            "observation_width": self.observation_width,
+            "visualization_height": self.visualization_height,
+            "visualization_width": self.visualization_width,
+        }
+        if self.split is not None:
+            kwargs["split"] = self.split
+        return kwargs
+
+    def create_envs(self, n_envs: int, use_async_envs: bool = False):
+        from .robocasa import create_robocasa_envs
+
+        if self.task is None:
+            raise ValueError("RoboCasaEnv requires a task to be specified")
+        env_cls = _make_vec_env_cls(use_async_envs, n_envs)
+        return create_robocasa_envs(
+            task=self.task,
+            n_envs=n_envs,
+            camera_name=self.camera_name,
+            gym_kwargs=self.gym_kwargs,
+            env_cls=env_cls,
+            episode_length=self.episode_length,
+            obj_registries=tuple(self.obj_registries),
+        )
+
+
 @EnvConfig.register_subclass("isaaclab_arena")
 @dataclass
 class IsaaclabArenaEnv(HubEnvConfig):
@@ -573,4 +648,91 @@ class IsaaclabArenaEnv(HubEnvConfig):
                 steps=[IsaaclabArenaProcessorStep(state_keys=state_keys, camera_keys=camera_keys)]
             ),
             PolicyProcessorPipeline(steps=[]),
+        )
+
+
+@EnvConfig.register_subclass("robotwin")
+@dataclass
+class RoboTwinEnvConfig(EnvConfig):
+    """Configuration for RoboTwin 2.0 benchmark environments.
+
+    RoboTwin 2.0 is a dual-arm manipulation benchmark with 50 tasks built on the
+    SAPIEN simulator. The robot is an Aloha-AgileX bimanual platform with 14 DOF
+    (7 per arm). All three cameras are enabled by default.
+
+    See: https://robotwin-platform.github.io
+    Dataset: https://huggingface.co/datasets/lerobot/robotwin_unified
+    """
+
+    task: str = "beat_block_hammer"  # single task or comma-separated list
+    fps: int = 25
+    episode_length: int = 300
+    obs_type: str = "pixels_agent_pos"
+    render_mode: str = "rgb_array"
+    # Available cameras from RoboTwin's aloha-agilex embodiment: head_camera
+    # (torso-mounted) + left_camera / right_camera (wrists).
+    camera_names: str = "head_camera,left_camera,right_camera"
+    # Match the D435 dims in task_config/demo_clean.yml (_camera_config.yml).
+    # Gym's vector-env concatenate pre-allocates buffers of this shape, so it
+    # must equal what SAPIEN actually renders.
+    observation_height: int = 240
+    observation_width: int = 320
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(14,)),
+        }
+    )
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            ACTION: ACTION,
+            "pixels/head_camera": f"{OBS_IMAGES}.head_camera",
+            "pixels/left_camera": f"{OBS_IMAGES}.left_camera",
+            "pixels/right_camera": f"{OBS_IMAGES}.right_camera",
+            "agent_pos": OBS_STATE,
+        }
+    )
+
+    def __post_init__(self):
+        cam_list = [c.strip() for c in self.camera_names.split(",") if c.strip()]
+        for cam in cam_list:
+            self.features[f"pixels/{cam}"] = PolicyFeature(
+                type=FeatureType.VISUAL,
+                shape=(self.observation_height, self.observation_width, 3),
+            )
+            # Keep features_map entry if already set (default_factory); add if missing.
+            key = f"pixels/{cam}"
+            if key not in self.features_map:
+                self.features_map[key] = f"{OBS_IMAGES}.{cam}"
+
+        if self.obs_type == "pixels_agent_pos":
+            self.features["agent_pos"] = PolicyFeature(
+                type=FeatureType.STATE,
+                shape=(14,),  # 14 DOF: 7 per arm
+            )
+        elif self.obs_type != "pixels":
+            raise ValueError(
+                f"Unsupported obs_type '{self.obs_type}'. "
+                "RoboTwinEnvConfig supports 'pixels' and 'pixels_agent_pos'."
+            )
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {}
+
+    def create_envs(self, n_envs: int, use_async_envs: bool = True):
+        from lerobot.envs.robotwin import create_robotwin_envs
+
+        if not self.task:
+            raise ValueError("RoboTwinEnvConfig requires `task` to be specified.")
+
+        env_cls = _make_vec_env_cls(use_async_envs, n_envs)
+        cam_list = [c.strip() for c in self.camera_names.split(",") if c.strip()]
+        return create_robotwin_envs(
+            task=self.task,
+            n_envs=n_envs,
+            env_cls=env_cls,
+            camera_names=cam_list,
+            observation_height=self.observation_height,
+            observation_width=self.observation_width,
+            episode_length=self.episode_length,
         )
