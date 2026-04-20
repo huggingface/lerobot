@@ -383,6 +383,7 @@ def create_robocasa_envs(
 
     cached_obs_space: spaces.Space | None = None
     cached_act_space: spaces.Space | None = None
+    cached_metadata: dict[str, Any] | None = None
     out: dict[str, dict[int, Any]] = defaultdict(dict)
 
     for task_name in task_names:
@@ -402,10 +403,11 @@ def create_robocasa_envs(
         )
 
         if is_async:
-            lazy = _LazyAsyncVectorEnv(fns, cached_obs_space, cached_act_space)
+            lazy = _LazyAsyncVectorEnv(fns, cached_obs_space, cached_act_space, cached_metadata)
             if cached_obs_space is None:
                 cached_obs_space = lazy.observation_space
                 cached_act_space = lazy.action_space
+                cached_metadata = lazy.metadata
             out[task_name][0] = lazy
         else:
             out[task_name][0] = env_cls(fns)
