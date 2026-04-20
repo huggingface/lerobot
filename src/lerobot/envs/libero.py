@@ -462,6 +462,7 @@ def create_libero_envs(
         # Probe once and reuse to avoid creating a temp env per task.
         cached_obs_space: spaces.Space | None = None
         cached_act_space: spaces.Space | None = None
+        cached_metadata: dict[str, Any] | None = None
 
         for tid in selected:
             fns = _make_env_fns(
@@ -477,10 +478,11 @@ def create_libero_envs(
                 camera_name_mapping=camera_name_mapping,
             )
             if is_async:
-                lazy = _LazyAsyncVectorEnv(fns, cached_obs_space, cached_act_space)
+                lazy = _LazyAsyncVectorEnv(fns, cached_obs_space, cached_act_space, cached_metadata)
                 if cached_obs_space is None:
                     cached_obs_space = lazy.observation_space
                     cached_act_space = lazy.action_space
+                    cached_metadata = lazy.metadata
                 out[suite_name][tid] = lazy
             else:
                 out[suite_name][tid] = env_cls(fns)
