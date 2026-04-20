@@ -24,6 +24,8 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
+from .utils import _LazyAsyncVectorEnv
+
 ROBOMME_TASKS = [
     "BinFill",
     "PickXtimes",
@@ -214,6 +216,10 @@ def create_robomme_envs(
         task_ids = [0]
 
     task_names = [t.strip() for t in task.split(",") if t.strip()]
+    is_async = env_cls is gym.vector.AsyncVectorEnv
+    cached_obs_space: spaces.Space | None = None
+    cached_act_space: spaces.Space | None = None
+    cached_metadata: dict[str, Any] | None = None
     out: dict[str, dict[int, gym.vector.VectorEnv]] = {}
     for task_name in task_names:
         envs_by_task: dict[int, gym.vector.VectorEnv] = {}
@@ -226,6 +232,14 @@ def create_robomme_envs(
                 episode_length=episode_length,
                 task_id=task_id,
             )
-            envs_by_task[task_id] = env_cls(fns)
+            if is_async:
+                lazy = _LazyAsyncVectorEnv(fns, cached_obs_space, cached_act_space, cached_metadata)
+                if cached_obs_space is None:
+                    cached_obs_space = lazy.observation_space
+                    cached_act_space = lazy.action_space
+                    cached_metadata = lazy.metadata
+                envs_by_task[task_id] = lazy
+            else:
+                envs_by_task[task_id] = env_cls(fns)
         out[task_name] = envs_by_task
     return out

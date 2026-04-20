@@ -326,6 +326,8 @@ jobs:
       group: aws-g6-4xlarge-plus
     env:
       HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
+      ROBOMME_POLICY: lerobot/smolvla_robomme
+      ROBOMME_TASKS: PickXtimes,BinFill,StopCube,MoveCube,InsertPeg,SwingXtimes,VideoUnmask,ButtonUnmask,PickHighlight,PatternLock
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -364,13 +366,15 @@ jobs:
             -e HF_HOME=/tmp/hf \
             -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
             -e HF_HUB_DOWNLOAD_TIMEOUT=300 \
+            -e ROBOMME_POLICY="${ROBOMME_POLICY}" \
+            -e ROBOMME_TASKS="${ROBOMME_TASKS}" \
             lerobot-benchmark-robomme:ci \
             bash -c "
               hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
               lerobot-eval \
-                --policy.path=lerobot/smolvla_robomme \
+                --policy.path=\"\$ROBOMME_POLICY\" \
                 --env.type=robomme \
-                --env.task=PickXtimes,BinFill,StopCube,MoveCube,InsertPeg,SwingXtimes,VideoUnmask,ButtonUnmask,PickHighlight,PatternLock \
+                --env.task=\"\$ROBOMME_TASKS\" \
                 --env.dataset_split=test \
                 --env.task_ids=[0] \
                 --eval.batch_size=1 \
@@ -381,7 +385,7 @@ jobs:
                 --policy.empty_cameras=3 \
                 --output_dir=/tmp/eval-artifacts
               python scripts/ci/extract_task_descriptions.py \
-                --env robomme --task PickXtimes,BinFill,StopCube,MoveCube,InsertPeg,SwingXtimes,VideoUnmask,ButtonUnmask,PickHighlight,PatternLock \
+                --env robomme --task \"\$ROBOMME_TASKS\" \
                 --output /tmp/eval-artifacts/task_descriptions.json
             "
 
@@ -398,8 +402,8 @@ jobs:
           python3 scripts/ci/parse_eval_metrics.py \
             --artifacts-dir /tmp/robomme-artifacts \
             --env robomme \
-            --task PickXtimes,BinFill,StopCube,MoveCube,InsertPeg,SwingXtimes,VideoUnmask,ButtonUnmask,PickHighlight,PatternLock \
-            --policy lerobot/smolvla_robomme
+            --task "${ROBOMME_TASKS}" \
+            --policy "${ROBOMME_POLICY}"
 
       - name: Upload RoboMME rollout video
         if: always()

@@ -39,10 +39,10 @@ pip install --override <(printf 'gymnasium==0.29.1\nnumpy==1.26.4\n') \
 docker build -f docker/Dockerfile.eval-base -t lerobot-eval-base .
 
 # Build RoboMME eval image (applies gymnasium + numpy pin overrides)
-docker build -f docker/Dockerfile.eval-robomme -t lerobot-robomme .
+docker build -f docker/Dockerfile.benchmark.robomme -t lerobot-robomme .
 ```
 
-The `Dockerfile.eval-robomme` overrides `gymnasium==0.29.1` and `numpy==1.26.4` after lerobot's install. Both versions are runtime-safe for lerobot's actual API usage.
+The `docker/Dockerfile.benchmark.robomme` image overrides `gymnasium==0.29.1` and `numpy==1.26.4` after lerobot's install. Both versions are runtime-safe for lerobot's actual API usage.
 
 ## Running Evaluation
 
@@ -89,7 +89,7 @@ lerobot-eval \
 The dataset [`lerobot/robomme`](https://huggingface.co/datasets/lerobot/robomme) is in **LeRobot v3.0 format** and can be loaded directly:
 
 ```python
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 dataset = LeRobotDataset("lerobot/robomme")
 ```
