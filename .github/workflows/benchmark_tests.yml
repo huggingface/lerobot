@@ -410,7 +410,7 @@ jobs:
 
       - name: Upload LIBERO-plus rollout video
         if: always()
-uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
         with:
           name: libero-plus-rollout-video
           path: /tmp/libero-plus-artifacts/videos/
@@ -418,7 +418,7 @@ uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
 
       - name: Upload LIBERO-plus eval metrics
         if: always()
-uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
         with:
           name: libero-plus-metrics
           path: /tmp/libero-plus-artifacts/metrics.json
