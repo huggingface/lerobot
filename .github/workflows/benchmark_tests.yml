@@ -410,7 +410,7 @@ jobs:
 
       - name: Upload RoboCerebra rollout video
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
         with:
           name: robocerebra-rollout-video
           path: /tmp/robocerebra-artifacts/videos/
