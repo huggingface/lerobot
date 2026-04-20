@@ -22,15 +22,24 @@ and calculate arctan2 of the unit circle to get the joint angle.
 We then store the ellipse parameters and the zero offset for each joint to be used at runtime.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
-import serial
+
+from lerobot.utils.import_utils import _serial_available, require_package
+
+if TYPE_CHECKING or _serial_available:
+    import serial
+else:
+    serial = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +91,7 @@ class ExoskeletonCalibration:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "ExoskeletonCalibration":
+    def from_dict(cls, data: dict) -> ExoskeletonCalibration:
         joints = [
             ExoskeletonJointCalibration(
                 name=j["name"],
@@ -147,6 +156,7 @@ def run_exo_calibration(
     """
     Run interactive calibration for an exoskeleton arm.
     """
+    require_package("pyserial", extra="unitree_g1", import_name="serial")
     try:
         import cv2
         import matplotlib.pyplot as plt

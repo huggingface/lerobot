@@ -18,6 +18,8 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.datasets.compute_stats import (
     RunningQuantileStats,
     _assert_type_and_shape,

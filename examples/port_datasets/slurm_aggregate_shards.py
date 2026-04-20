@@ -36,7 +36,7 @@ class AggregateDatasets(PipelineStep):
     def run(self, data=None, rank: int = 0, world_size: int = 1):
         import logging
 
-        from lerobot.datasets.aggregate import aggregate_datasets
+        from lerobot.datasets import aggregate_datasets
         from lerobot.utils.utils import init_logging
 
         init_logging()

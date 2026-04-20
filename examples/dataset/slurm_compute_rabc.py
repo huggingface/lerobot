@@ -231,7 +231,7 @@ class AggregateProgress(PipelineStep):
         import pyarrow as pa
         import pyarrow.parquet as pq
 
-        from lerobot.datasets.lerobot_dataset import LeRobotDataset
+        from lerobot.datasets import LeRobotDataset
         from lerobot.utils.utils import init_logging
 
         init_logging()
