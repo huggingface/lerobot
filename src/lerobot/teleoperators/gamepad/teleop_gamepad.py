@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import sys
 from enum import IntEnum
 from typing import Any
@@ -49,12 +50,19 @@ class GamepadTeleop(Teleoperator):
     config_class = GamepadTeleopConfig
     name = "gamepad"
 
-    def __init__(self, config: GamepadTeleopConfig):
+    def __init__(self, config: GamepadTeleopConfig, hidapi_fallback: bool = False):
         super().__init__(config)
         self.config = config
         self.robot_type = config.type
 
         self.gamepad = None
+
+        self.hidapi_fallback = hidapi_fallback
+        if sys.platform == "darwin" and not hidapi_fallback:
+            logging.warning(
+                "Warning: On macOS, pygame may not reliably detect input from some controllers. "
+                "If you experience issues with the gamepad, consider setting hidapi_fallback to True."
+            )
 
     @property
     def action_features(self) -> dict:
@@ -77,8 +85,7 @@ class GamepadTeleop(Teleoperator):
 
     def connect(self) -> None:
         # use HidApi for macos
-        if sys.platform == "darwin":
-            # NOTE: On macOS, pygame doesn’t reliably detect input from some controllers so we fall back to hidapi
+        if self.hidapi_fallback:
             from .gamepad_utils import GamepadControllerHID as Gamepad
         else:
             from .gamepad_utils import GamepadController as Gamepad
