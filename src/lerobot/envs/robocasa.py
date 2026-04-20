@@ -26,7 +26,7 @@ from gymnasium import spaces
 
 from lerobot.types import RobotObservation
 
-from .utils import _LazyAsyncVectorEnv
+from .utils import _LazyAsyncVectorEnv, parse_camera_names
 
 # Dimensions for the flat action/state vectors used by the LeRobot wrapper.
 # These correspond to the PandaOmron robot in RoboCasa365.
@@ -67,19 +67,6 @@ _TASK_GROUP_SPLITS = {
     "pretrain200": "pretrain",
     "pretrain300": "pretrain",
 }
-
-
-def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
-    """Normalize camera_name into a non-empty list of strings."""
-    if isinstance(camera_name, str):
-        cams = [c.strip() for c in camera_name.split(",") if c.strip()]
-    elif isinstance(camera_name, (list | tuple)):
-        cams = [str(c).strip() for c in camera_name if str(c).strip()]
-    else:
-        raise TypeError(f"camera_name must be str or sequence[str], got {type(camera_name).__name__}")
-    if not cams:
-        raise ValueError("camera_name resolved to an empty list.")
-    return cams
 
 
 def _resolve_tasks(task: str) -> tuple[list[str], str | None]:
@@ -140,9 +127,12 @@ class RoboCasaEnv(gym.Env):
         render_mode: str = "rgb_array",
         observation_width: int = 256,
         observation_height: int = 256,
+        visualization_width: int = 512,
+        visualization_height: int = 512,
         split: str | None = None,
         episode_length: int | None = None,
         obj_registries: Sequence[str] = DEFAULT_OBJ_REGISTRIES,
+        episode_index: int = 0,
     ):
         super().__init__()
         self.task = task
@@ -150,10 +140,16 @@ class RoboCasaEnv(gym.Env):
         self.render_mode = render_mode
         self.observation_width = observation_width
         self.observation_height = observation_height
+        self.visualization_width = visualization_width
+        self.visualization_height = visualization_height
         self.split = split
         self.obj_registries = tuple(obj_registries)
+        # Per-worker index (0..n_envs-1) used to spread the user-provided
+        # seed across factories so each sub-env explores a distinct layout
+        # even when the same seed is passed to `reset()`.
+        self.episode_index = int(episode_index)
 
-        self.camera_name = _parse_camera_names(camera_name)
+        self.camera_name = parse_camera_names(camera_name)
 
         self._max_episode_steps = episode_length if episode_length is not None else 1000
 
@@ -253,7 +249,12 @@ class RoboCasaEnv(gym.Env):
         self._ensure_env()
         assert self._env is not None
         super().reset(seed=seed)
-        raw_obs, info = self._env.reset(seed=seed)
+        # Spread the user seed across workers. With n_envs factories each
+        # carrying a distinct `episode_index`, the same outer seed produces
+        # a different layout/trajectory per worker instead of all workers
+        # rolling the same scene.
+        worker_seed = seed + self.episode_index if seed is not None else None
+        raw_obs, info = self._env.reset(seed=worker_seed)
 
         ep_meta = self._env.env.get_ep_meta()
         self.task_description = ep_meta.get("lang", self.task)
@@ -280,6 +281,11 @@ class RoboCasaEnv(gym.Env):
 
         observation = self._format_raw_obs(raw_obs)
         if terminated:
+            info["final_info"] = {
+                "task": self.task,
+                "done": bool(done),
+                "is_success": bool(is_success),
+            }
             self.reset()
 
         return observation, reward, terminated, truncated, info
@@ -298,13 +304,20 @@ def _make_env_fns(
     render_mode: str,
     observation_width: int,
     observation_height: int,
+    visualization_width: int,
+    visualization_height: int,
     split: str | None,
     episode_length: int | None,
     obj_registries: Sequence[str],
 ) -> list[Callable[[], RoboCasaEnv]]:
-    """Build n_envs factory callables for a single task."""
+    """Build n_envs factory callables for a single task.
 
-    def _make_env(**kwargs) -> RoboCasaEnv:
+    Each factory carries a distinct ``episode_index`` (``0..n_envs-1``) so
+    ``RoboCasaEnv.reset()`` can derive a per-worker seed series from the
+    user-provided seed.
+    """
+
+    def _make_env(episode_index: int) -> RoboCasaEnv:
         return RoboCasaEnv(
             task=task,
             camera_name=camera_names,
@@ -312,13 +325,15 @@ def _make_env_fns(
             render_mode=render_mode,
             observation_width=observation_width,
             observation_height=observation_height,
+            visualization_width=visualization_width,
+            visualization_height=visualization_height,
             split=split,
             episode_length=episode_length,
             obj_registries=obj_registries,
-            **kwargs,
+            episode_index=episode_index,
         )
 
-    return [partial(_make_env) for _ in range(n_envs)]
+    return [partial(_make_env, i) for i in range(n_envs)]
 
 
 def create_robocasa_envs(
@@ -353,9 +368,11 @@ def create_robocasa_envs(
     render_mode = gym_kwargs.pop("render_mode", "rgb_array")
     observation_width = gym_kwargs.pop("observation_width", 256)
     observation_height = gym_kwargs.pop("observation_height", 256)
+    visualization_width = gym_kwargs.pop("visualization_width", 512)
+    visualization_height = gym_kwargs.pop("visualization_height", 512)
     split = gym_kwargs.pop("split", None)
 
-    camera_names = _parse_camera_names(camera_name)
+    camera_names = parse_camera_names(camera_name)
     task_names, group_split = _resolve_tasks(str(task))
     if group_split is not None and split is None:
         split = group_split
@@ -377,6 +394,8 @@ def create_robocasa_envs(
             render_mode=render_mode,
             observation_width=observation_width,
             observation_height=observation_height,
+            visualization_width=visualization_width,
+            visualization_height=visualization_height,
             split=split,
             episode_length=episode_length,
             obj_registries=obj_registries,

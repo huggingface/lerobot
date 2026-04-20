@@ -312,7 +312,9 @@ jobs:
           if-no-files-found: warn
 
   # ── ROBOCASA365 ──────────────────────────────────────────────────────────
-  # Isolated image: lerobot[robocasa] only (robocasa, robosuite, mujoco chain)
+  # Isolated image: robocasa + robosuite installed manually as editable
+  # clones (no `lerobot[robocasa]` extra — robocasa's setup.py pins
+  # `lerobot==0.3.3`, which would shadow this repo's lerobot).
   robocasa-integration-test:
     name: RoboCasa365 — build image + 1-episode eval
     runs-on:

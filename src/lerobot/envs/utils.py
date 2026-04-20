@@ -34,6 +34,25 @@ from lerobot.utils.utils import get_channel_first_image_shape
 from .configs import EnvConfig
 
 
+def parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
+    """Normalize ``camera_name`` into a non-empty list of strings.
+
+    Accepts a comma-separated string (``"cam_a,cam_b"``) or a sequence of
+    strings (tuples/lists). Whitespace is stripped; empty entries are
+    dropped. Raises ``TypeError`` for unsupported input types and
+    ``ValueError`` when the normalized list is empty.
+    """
+    if isinstance(camera_name, str):
+        cams = [c.strip() for c in camera_name.split(",") if c.strip()]
+    elif isinstance(camera_name, (list | tuple)):
+        cams = [str(c).strip() for c in camera_name if str(c).strip()]
+    else:
+        raise TypeError(f"camera_name must be str or sequence[str], got {type(camera_name).__name__}")
+    if not cams:
+        raise ValueError("camera_name resolved to an empty list.")
+    return cams
+
+
 def _convert_nested_dict(d):
     result = {}
     for k, v in d.items():

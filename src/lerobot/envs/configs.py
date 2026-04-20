@@ -507,6 +507,8 @@ class RoboCasaEnv(EnvConfig):
     camera_name: str = "robot0_agentview_left,robot0_eye_in_hand,robot0_agentview_right"
     observation_height: int = 256
     observation_width: int = 256
+    visualization_height: int = 512
+    visualization_width: int = 512
     split: str | None = None
     # Object-mesh registries to sample from. Upstream default is
     # ("objaverse", "lightwheel"), but objaverse is ~30GB and the CI image
@@ -545,6 +547,8 @@ class RoboCasaEnv(EnvConfig):
             "render_mode": self.render_mode,
             "observation_height": self.observation_height,
             "observation_width": self.observation_width,
+            "visualization_height": self.visualization_height,
+            "visualization_width": self.visualization_width,
         }
         if self.split is not None:
             kwargs["split"] = self.split

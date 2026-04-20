@@ -74,6 +74,8 @@ By default the env samples objects only from the `lightwheel` registry (what `--
 
 ## Evaluation
 
+All eval snippets below mirror the CI command (see `.github/workflows/benchmark_tests.yml`). The `--rename_map` argument maps RoboCasa's native camera keys (`robot0_agentview_left` / `robot0_eye_in_hand` / `robot0_agentview_right`) onto the three-camera (`camera1` / `camera2` / `camera3`) input layout the released `smolvla_robocasa` policy was trained on.
+
 ### Single-task evaluation (recommended for quick iteration)
 
 ```bash
@@ -82,7 +84,10 @@ lerobot-eval \
   --env.type=robocasa \
   --env.task=CloseFridge \
   --eval.batch_size=1 \
-  --eval.n_episodes=20
+  --eval.n_episodes=20 \
+  --eval.use_async_envs=false \
+  --policy.device=cuda \
+  '--rename_map={"observation.images.robot0_agentview_left": "observation.images.camera1", "observation.images.robot0_eye_in_hand": "observation.images.camera2", "observation.images.robot0_agentview_right": "observation.images.camera3"}'
 ```
 
 ### Multi-task evaluation
@@ -95,7 +100,10 @@ lerobot-eval \
   --env.type=robocasa \
   --env.task=CloseFridge,OpenCabinet,OpenDrawer,TurnOnMicrowave,TurnOffStove \
   --eval.batch_size=1 \
-  --eval.n_episodes=20
+  --eval.n_episodes=20 \
+  --eval.use_async_envs=false \
+  --policy.device=cuda \
+  '--rename_map={"observation.images.robot0_agentview_left": "observation.images.camera1", "observation.images.robot0_eye_in_hand": "observation.images.camera2", "observation.images.robot0_agentview_right": "observation.images.camera3"}'
 ```
 
 ### Benchmark-group evaluation
@@ -108,7 +116,10 @@ lerobot-eval \
   --env.type=robocasa \
   --env.task=atomic_seen \
   --eval.batch_size=1 \
-  --eval.n_episodes=20
+  --eval.n_episodes=20 \
+  --eval.use_async_envs=false \
+  --policy.device=cuda \
+  '--rename_map={"observation.images.robot0_agentview_left": "observation.images.camera1", "observation.images.robot0_eye_in_hand": "observation.images.camera2", "observation.images.robot0_agentview_right": "observation.images.camera3"}'
 ```
 
 ### Recommended evaluation episodes

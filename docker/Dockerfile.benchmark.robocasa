@@ -28,14 +28,22 @@ FROM huggingface/lerobot-gpu:latest
 # `--no-deps` on robocasa is deliberate: its setup.py pins `lerobot==0.3.3`
 # in install_requires, which would shadow the editable lerobot baked into
 # this image. We install robocasa's actual runtime deps explicitly instead.
-RUN git clone --depth 1 https://github.com/robocasa/robocasa.git ~/robocasa && \
-    git clone --depth 1 https://github.com/ARISE-Initiative/robosuite.git ~/robosuite && \
+# Pinned SHAs for reproducible benchmark runs. Bump when you need an
+# upstream fix; don't rely on `main`/`master` drift.
+ARG ROBOCASA_SHA=56e355ccc64389dfc1b8a61a33b9127b975ba681
+ARG ROBOSUITE_SHA=aaa8b9b214ce8e77e82926d677b4d61d55e577ab
+RUN git clone https://github.com/robocasa/robocasa.git ~/robocasa && \
+    git -C ~/robocasa checkout ${ROBOCASA_SHA} && \
+    git clone https://github.com/ARISE-Initiative/robosuite.git ~/robosuite && \
+    git -C ~/robosuite checkout ${ROBOSUITE_SHA} && \
     uv pip install --no-cache -e ~/robocasa --no-deps && \
     uv pip install --no-cache -e ~/robosuite && \
     uv pip install --no-cache \
       "numpy==2.2.5" "numba==0.61.2" "scipy==1.15.3" "mujoco==3.3.1" \
-      pygame Pillow opencv-python pyyaml pynput tqdm termcolor \
-      imageio h5py lxml hidapi "tianshou==0.4.10" gymnasium
+      "pygame==2.6.1" "Pillow==12.2.0" "opencv-python==4.13.0.92" \
+      "pyyaml==6.0.3" "pynput==1.8.1" "tqdm==4.67.3" "termcolor==3.3.0" \
+      "imageio==2.37.3" "h5py==3.16.0" "lxml==6.0.4" "hidapi==0.14.0.post4" \
+      "tianshou==0.4.10" "gymnasium==1.2.3"
 
 # Set up robocasa macros and download kitchen assets. We need:
 #   - tex              : base environment textures
