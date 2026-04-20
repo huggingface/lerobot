@@ -27,7 +27,7 @@ from threading import Lock
 import torch
 from torch import Tensor
 
-from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from .configuration_rtc import RTCConfig
 
 logger = logging.getLogger(__name__)
 
@@ -245,10 +245,7 @@ class ActionQueue:
 
             if indexes_diff != expected_indexes_diff:
                 logger.warning(
-                    (
-                        "Indexes diff is not equal to expected delay. "
-                        "indexes_diff=%d, expected=%d, real_delay=%d"
-                    ),
+                    ("Indexes diff is not equal to real delay. indexes_diff=%d, expected=%d, real_delay=%d"),
                     indexes_diff,
                     expected_indexes_diff,
                     real_delay,

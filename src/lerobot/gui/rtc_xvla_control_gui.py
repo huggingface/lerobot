@@ -1,4 +1,5 @@
 import ast
+import contextlib
 import json
 import threading
 import time
@@ -12,9 +13,9 @@ import numpy as np
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig
 from lerobot.configs.types import RTCAttentionSchedule
+from lerobot.robots.so_follower import SO100FollowerConfig, SO101FollowerConfig
 from lerobot.rtc_inference.configs import AGGREGATE_FUNCTIONS, RobotClientConfig
 from lerobot.rtc_inference.robot_client import RobotClient
-from lerobot.robots.so_follower import SO100FollowerConfig, SO101FollowerConfig
 from lerobot.utils.import_utils import register_third_party_plugins
 
 
@@ -98,13 +99,17 @@ class RTCXVLAControlGUI(tk.Tk):
             row += 1
 
             for spec in specs:
-                ttk.Label(form_frame, text=spec.label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=3)
+                ttk.Label(form_frame, text=spec.label).grid(
+                    row=row, column=0, sticky="w", padx=(0, 8), pady=3
+                )
                 var = tk.StringVar(value=spec.default)
                 self._vars[spec.key] = var
 
                 if spec.field_type in {"bool", "choice"}:
                     values = spec.options if spec.options else ("true", "false")
-                    widget = ttk.Combobox(form_frame, textvariable=var, values=values, state="readonly", width=48)
+                    widget = ttk.Combobox(
+                        form_frame, textvariable=var, values=values, state="readonly", width=48
+                    )
                 else:
                     widget = ttk.Entry(form_frame, textvariable=var, width=80)
 
@@ -122,13 +127,19 @@ class RTCXVLAControlGUI(tk.Tk):
         status = ttk.Label(parent, textvariable=self.status_var, foreground="#1f4e79")
         status.pack(anchor="w", pady=(0, 10))
 
-        self.btn_connect = ttk.Button(parent, text="Connect", command=lambda: self._run_async(self._on_connect))
+        self.btn_connect = ttk.Button(
+            parent, text="Connect", command=lambda: self._run_async(self._on_connect)
+        )
         self.btn_connect.pack(fill=tk.X, pady=4)
 
-        self.btn_zero = ttk.Button(parent, text="To Zero Pose", command=lambda: self._run_async(self._on_zero_pose))
+        self.btn_zero = ttk.Button(
+            parent, text="To Zero Pose", command=lambda: self._run_async(self._on_zero_pose)
+        )
         self.btn_zero.pack(fill=tk.X, pady=4)
 
-        self.btn_call = ttk.Button(parent, text="Call to Server", command=lambda: self._run_async(self._on_call_server))
+        self.btn_call = ttk.Button(
+            parent, text="Call to Server", command=lambda: self._run_async(self._on_call_server)
+        )
         self.btn_call.pack(fill=tk.X, pady=4)
 
         self.btn_stop_stream = ttk.Button(
@@ -155,7 +166,12 @@ class RTCXVLAControlGUI(tk.Tk):
         return {
             "Connection": [
                 _FieldSpec("server_address", "Server Address", "192.168.1.107:4567", "str"),
-                _FieldSpec("task", "Task", "Pour sunflower seeds from the orange cup into the clean cup on the white cloth.", "str"),
+                _FieldSpec(
+                    "task",
+                    "Task",
+                    "Pour sunflower seeds from the orange cup into the clean cup on the white cloth.",
+                    "str",
+                ),
             ],
             "Policy": [
                 _FieldSpec("policy_type", "Policy Type", "xvla", "choice", ("xvla",)),
@@ -170,7 +186,13 @@ class RTCXVLAControlGUI(tk.Tk):
                 ),
             ],
             "Robot": [
-                _FieldSpec("robot_type", "Robot Type", "so101_follower", "choice", ("so101_follower", "so100_follower")),
+                _FieldSpec(
+                    "robot_type",
+                    "Robot Type",
+                    "so101_follower",
+                    "choice",
+                    ("so101_follower", "so100_follower"),
+                ),
                 _FieldSpec("robot_port", "Robot Port", "COM6", "str"),
                 _FieldSpec("robot_id", "Robot ID", "DI_VLA_FOLLOWER", "str"),
                 _FieldSpec("robot_use_degrees", "Robot Use Degrees", "true", "bool", ("true", "false")),
@@ -200,11 +222,17 @@ class RTCXVLAControlGUI(tk.Tk):
                     tuple(AGGREGATE_FUNCTIONS.keys()),
                 ),
                 _FieldSpec("fps", "FPS", "15", "int"),
-                _FieldSpec("obs_timestep_independent", "Obs Timestep Independent", "false", "bool", ("true", "false")),
-                _FieldSpec("image_compress_enable", "Image Compress Enable", "true", "bool", ("true", "false")),
+                _FieldSpec(
+                    "obs_timestep_independent", "Obs Timestep Independent", "false", "bool", ("true", "false")
+                ),
+                _FieldSpec(
+                    "image_compress_enable", "Image Compress Enable", "true", "bool", ("true", "false")
+                ),
                 _FieldSpec("image_compress_quality", "Image Compress Quality", "90", "int"),
                 _FieldSpec("interpolation_multiplier", "Interpolation Multiplier", "1", "int"),
-                _FieldSpec("debug_visualize_queue_size", "Debug Visualize Queue", "true", "bool", ("true", "false")),
+                _FieldSpec(
+                    "debug_visualize_queue_size", "Debug Visualize Queue", "true", "bool", ("true", "false")
+                ),
             ],
             "RTC": [
                 _FieldSpec("rtc_execution_horizon", "RTC Execution Horizon", "10", "int"),
@@ -264,11 +292,17 @@ class RTCXVLAControlGUI(tk.Tk):
             busy = self._state.busy
 
         self.btn_connect.configure(state=("normal" if not connected and not busy else "disabled"))
-        self.btn_zero.configure(state=("normal" if connected and not stream_running and not busy else "disabled"))
-        self.btn_call.configure(
-            state=("normal" if connected and zero_pose_done and not stream_running and not busy else "disabled")
+        self.btn_zero.configure(
+            state=("normal" if connected and not stream_running and not busy else "disabled")
         )
-        self.btn_stop_stream.configure(state=("normal" if connected and stream_running and not busy else "disabled"))
+        self.btn_call.configure(
+            state=(
+                "normal" if connected and zero_pose_done and not stream_running and not busy else "disabled"
+            )
+        )
+        self.btn_stop_stream.configure(
+            state=("normal" if connected and stream_running and not busy else "disabled")
+        )
         self.btn_disconnect.configure(state=("normal" if connected and not busy else "disabled"))
 
     def _run_async(self, fn):
@@ -277,8 +311,9 @@ class RTCXVLAControlGUI(tk.Tk):
             try:
                 fn()
             except Exception as exc:
+                error_text = str(exc)
                 self._log(f"[ERROR] {exc}")
-                self.after(0, lambda: messagebox.showerror("Error", str(exc)))
+                self.after(0, lambda: messagebox.showerror("Error", error_text))
             finally:
                 self._set_busy(False)
 
@@ -414,8 +449,7 @@ class RTCXVLAControlGUI(tk.Tk):
             return SO100FollowerConfig(**common_kwargs)
 
         raise ValueError(
-            "GUI currently supports robot_type in {so101_follower, so100_follower}. "
-            f"Received: {robot_type}"
+            f"GUI currently supports robot_type in {{so101_follower, so100_follower}}. Received: {robot_type}"
         )
 
     def _build_client_config(self) -> RobotClientConfig:
@@ -497,7 +531,7 @@ class RTCXVLAControlGUI(tk.Tk):
         left_turn_offset_deg: float,
         use_degrees: bool,
     ):
-        target_action = {k: 0.0 for k in joint_names}
+        target_action = dict.fromkeys(joint_names, 0.0)
         gripper_name = next((k for k in joint_names if "gripper" in k.lower() or "jaw" in k.lower()), None)
         if gripper_name:
             target_action[gripper_name] = gripper_home_value
@@ -508,8 +542,7 @@ class RTCXVLAControlGUI(tk.Tk):
             target_action[left_turn_joint] += offset_value
             unit = "deg" if use_degrees else "rad"
             self._log(
-                f"[INFO] Zero-pose left offset applied on '{left_turn_joint}': "
-                f"{offset_value:.4f} {unit}"
+                f"[INFO] Zero-pose left offset applied on '{left_turn_joint}': {offset_value:.4f} {unit}"
             )
         elif left_turn_joint is None and abs(left_turn_offset_deg) > 1e-9:
             self._log("[WARN] No base/yaw joint detected. Left offset was skipped.")
@@ -522,8 +555,7 @@ class RTCXVLAControlGUI(tk.Tk):
             alpha = i / steps
             smooth_alpha = (1.0 - np.cos(alpha * np.pi)) / 2.0
             interp_action = {
-                k: start_action[k] + smooth_alpha * (target_action[k] - start_action[k])
-                for k in joint_names
+                k: start_action[k] + smooth_alpha * (target_action[k] - start_action[k]) for k in joint_names
             }
             robot.send_action(interp_action)
             time.sleep(sleep_time)
@@ -552,7 +584,9 @@ class RTCXVLAControlGUI(tk.Tk):
                 return name
         return None
 
-    def _home_robot_to_zero(self, homing_duration: float, gripper_home_value: float, left_turn_offset_deg: float):
+    def _home_robot_to_zero(
+        self, homing_duration: float, gripper_home_value: float, left_turn_offset_deg: float
+    ):
         if self._client is None:
             raise RuntimeError("Client is not connected")
 
@@ -566,7 +600,7 @@ class RTCXVLAControlGUI(tk.Tk):
         try:
             start_action = self._extract_current_action_from_observation(current_obs, joint_names)
         except KeyError:
-            start_action = {k: 0.0 for k in joint_names}
+            start_action = dict.fromkeys(joint_names, 0.0)
 
         self._home_to_zero(
             robot,
@@ -597,10 +631,8 @@ class RTCXVLAControlGUI(tk.Tk):
             receiver_thread.join(timeout=2.0)
 
         if receiver_thread is not None and receiver_thread.is_alive():
-            try:
+            with contextlib.suppress(Exception):
                 self._client.channel.close()
-            except Exception:
-                pass
             receiver_thread.join(timeout=1.0)
 
         with self._state_lock:
@@ -739,14 +771,10 @@ class RTCXVLAControlGUI(tk.Tk):
         try:
             self._client.stop()
         except Exception:
-            try:
+            with contextlib.suppress(Exception):
                 self._client.channel.close()
-            except Exception:
-                pass
-            try:
+            with contextlib.suppress(Exception):
                 self._client.robot.disconnect()
-            except Exception:
-                pass
 
         self._client = None
         self._client_cfg = None
@@ -764,10 +792,8 @@ class RTCXVLAControlGUI(tk.Tk):
 
     def _on_close(self):
         def close_worker():
-            try:
+            with contextlib.suppress(Exception):
                 self._on_disconnect()
-            except Exception:
-                pass
             self.after(0, self.destroy)
 
         threading.Thread(target=close_worker, daemon=True).start()

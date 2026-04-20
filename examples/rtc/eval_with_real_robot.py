@@ -101,26 +101,21 @@ from threading import Event, Lock, Thread
 import torch
 from torch import Tensor
 
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
-from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
-from lerobot.cameras.zmq.configuration_zmq import ZMQCameraConfig  # noqa: F401
-from lerobot.configs import parser
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import RTCAttentionSchedule
-from lerobot.datasets.feature_utils import build_dataset_frame, hw_to_dataset_features
-from lerobot.policies.factory import get_policy_class, make_pre_post_processors
+from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
+from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.cameras.zmq import ZMQCameraConfig  # noqa: F401
+from lerobot.configs import PreTrainedConfig, RTCAttentionSchedule, parser
+from lerobot.policies import get_policy_class, make_pre_post_processors
 from lerobot.policies.rtc import ActionInterpolator, ActionQueue, LatencyTracker, RTCConfig
 from lerobot.processor import (
     NormalizerProcessorStep,
     RelativeActionsProcessorStep,
     TransitionKey,
     create_transition,
-)
-from lerobot.processor.factory import (
     make_default_robot_action_processor,
     make_default_robot_observation_processor,
+    to_relative_actions,
 )
-from lerobot.processor.relative_action_processor import to_relative_actions
 from lerobot.rl.process import ProcessSignalHandler
 from lerobot.robots import (  # noqa: F401
     Robot,
@@ -133,6 +128,7 @@ from lerobot.robots import (  # noqa: F401
 )
 from lerobot.robots.utils import make_robot_from_config
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
+from lerobot.utils.feature_utils import build_dataset_frame, hw_to_dataset_features
 from lerobot.utils.hub import HubMixin
 from lerobot.utils.utils import init_logging
 

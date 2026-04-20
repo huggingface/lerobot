@@ -112,17 +112,18 @@ from hil_utils import (
     teleop_smooth_move_to,
 )
 
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
-from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
-from lerobot.configs import parser
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.datasets.feature_utils import build_dataset_frame, combine_feature_dicts, hw_to_dataset_features
-from lerobot.datasets.image_writer import safe_stop_image_writer
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
-from lerobot.datasets.video_utils import VideoEncodingManager
-from lerobot.policies.factory import get_policy_class, make_policy, make_pre_post_processors
-from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
+from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.common.control_utils import is_headless, predict_action
+from lerobot.configs import PreTrainedConfig, parser
+from lerobot.datasets import (
+    LeRobotDataset,
+    VideoEncodingManager,
+    aggregate_pipeline_dataset_features,
+    create_initial_features,
+    safe_stop_image_writer,
+)
+from lerobot.policies import PreTrainedPolicy, get_policy_class, make_policy, make_pre_post_processors
 from lerobot.policies.rtc import ActionInterpolator, ActionQueue, LatencyTracker, RTCConfig
 from lerobot.policies.utils import make_robot_action
 from lerobot.processor import (
@@ -131,18 +132,18 @@ from lerobot.processor import (
     RelativeActionsProcessorStep,
     TransitionKey,
     create_transition,
+    rename_stats,
+    to_relative_actions,
 )
-from lerobot.processor.relative_action_processor import to_relative_actions
-from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import Robot, RobotConfig, make_robot_from_config
-from lerobot.robots.bi_openarm_follower.config_bi_openarm_follower import BiOpenArmFollowerConfig
-from lerobot.robots.so_follower.config_so_follower import SOFollowerRobotConfig  # noqa: F401
+from lerobot.robots.bi_openarm_follower import BiOpenArmFollowerConfig
+from lerobot.robots.so_follower import SOFollowerRobotConfig  # noqa: F401
 from lerobot.teleoperators import Teleoperator, TeleoperatorConfig, make_teleoperator_from_config
-from lerobot.teleoperators.openarm_mini.config_openarm_mini import OpenArmMiniConfig  # noqa: F401
-from lerobot.teleoperators.so_leader.config_so_leader import SOLeaderTeleopConfig  # noqa: F401
+from lerobot.teleoperators.openarm_mini import OpenArmMiniConfig  # noqa: F401
+from lerobot.teleoperators.so_leader import SOLeaderTeleopConfig  # noqa: F401
+from lerobot.utils import get_safe_torch_device
 from lerobot.utils.constants import ACTION, OBS_STATE, OBS_STR
-from lerobot.utils.control_utils import is_headless, predict_action
-from lerobot.utils.device_utils import get_safe_torch_device
+from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts, hw_to_dataset_features
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import init_logging, log_say
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data

@@ -434,7 +434,7 @@ class RobotClient:
                     curr_list = list(current_positions)
 
                 target_list = [action_dict[k] for k in self.robot.action_features]
-                deltas = [t - c for t, c in zip(target_list, curr_list)]
+                deltas = [t - c for t, c in zip(target_list, curr_list, strict=False)]
 
                 current_ts = timed_action.get_timestep() if timed_action is not None else self.latest_action
                 self.logger.info(f"[DEBUG] Timestep #{current_ts}")
@@ -451,9 +451,7 @@ class RobotClient:
             current_ts = timed_action.get_timestep() if timed_action is not None else self.latest_action
 
             self.logger.info(
-                f"Ts={time.time()} | "
-                f"Action #{current_ts} performed | "
-                f"Queue size: {current_queue_size}"
+                f"Ts={time.time()} | Action #{current_ts} performed | Queue size: {current_queue_size}"
             )
 
             self.logger.info(
@@ -465,7 +463,10 @@ class RobotClient:
     def _ready_to_send_observation(self):
         """Flags when the client is ready to send an observation"""
         now = time.perf_counter()
-        if self._last_obs_send_perf is not None and (now - self._last_obs_send_perf) < self._obs_send_interval:
+        if (
+            self._last_obs_send_perf is not None
+            and (now - self._last_obs_send_perf) < self._obs_send_interval
+        ):
             return False
 
         with self.action_queue_lock:
@@ -501,9 +502,10 @@ class RobotClient:
             # Save one debug frame per camera only in verbose mode.
             if verbose and not self._saved_debug_frames:
                 try:
+                    from pathlib import Path
+
                     import cv2
                     import numpy as np
-                    from pathlib import Path
 
                     debug_dir = Path("debug_frames")
                     debug_dir.mkdir(parents=True, exist_ok=True)

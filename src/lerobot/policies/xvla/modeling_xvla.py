@@ -23,22 +23,30 @@ import logging
 import os
 from collections import deque
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.policies.pretrained import PreTrainedPolicy, T
+from lerobot.configs import PreTrainedConfig
 from lerobot.policies.rtc.modeling_rtc import RTCProcessor
-from lerobot.policies.utils import populate_queues
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_TOKENS, OBS_STATE
+from lerobot.utils.import_utils import _transformers_available, require_package
 
+from ..pretrained import PreTrainedPolicy, T
+from ..utils import populate_queues
 from .action_hub import build_action_space
-from .configuration_florence2 import Florence2Config
 from .configuration_xvla import XVLAConfig
-from .modeling_florence2 import Florence2ForConditionalGeneration
 from .soft_transformer import SoftPromptedTransformer
+
+# Florence2 config and modeling depend on transformers
+if TYPE_CHECKING or _transformers_available:
+    from .configuration_florence2 import Florence2Config
+    from .modeling_florence2 import Florence2ForConditionalGeneration
+else:
+    Florence2Config = None
+    Florence2ForConditionalGeneration = None
 
 
 class XVLAModel(nn.Module):
@@ -259,7 +267,9 @@ class XVLAModel(nn.Module):
 
         steps = max(1, int(steps))
         if not self._rtc_enabled() or self.rtc_processor is None:
-            x1 = torch.randn(batch_size, self.chunk_size, action_dim, device=proprio.device, dtype=target_dtype)
+            x1 = torch.randn(
+                batch_size, self.chunk_size, action_dim, device=proprio.device, dtype=target_dtype
+            )
             action = torch.zeros_like(x1)
 
             for i in range(steps, 0, -1):
@@ -325,6 +335,7 @@ class XVLAPolicy(PreTrainedPolicy):
     name = "xvla"
 
     def __init__(self, config: XVLAConfig, **kwargs):
+        require_package("transformers", extra="xvla")
         super().__init__(config)
         config.validate_features()
         self.init_rtc_processor()

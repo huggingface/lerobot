@@ -257,9 +257,7 @@ class RobotClientConfig:
             raise ValueError(f"rtc_execution_horizon must be positive, got {self.rtc_execution_horizon}")
 
         if self.rtc_max_guidance_weight <= 0:
-            raise ValueError(
-                f"rtc_max_guidance_weight must be positive, got {self.rtc_max_guidance_weight}"
-            )
+            raise ValueError(f"rtc_max_guidance_weight must be positive, got {self.rtc_max_guidance_weight}")
 
         if self.rtc_debug_maxlen <= 0:
             raise ValueError(f"rtc_debug_maxlen must be positive, got {self.rtc_debug_maxlen}")

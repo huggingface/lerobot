@@ -29,8 +29,8 @@ import math
 import pickle  # nosec
 import threading
 import time
-from csv import writer
 from concurrent import futures
+from csv import writer
 from dataclasses import asdict
 from pathlib import Path
 from pprint import pformat
@@ -319,7 +319,9 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
                 policy_n_action_steps,
             )
 
-        if getattr(policy_specs, "xvla_domain_id", None) is not None and hasattr(self.policy.config, "domain_id"):
+        if getattr(policy_specs, "xvla_domain_id", None) is not None and hasattr(
+            self.policy.config, "domain_id"
+        ):
             self.policy.config.domain_id = policy_specs.xvla_domain_id
 
         if self.rtc_enabled:
@@ -481,7 +483,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             inter_arrival_ms = self._delta_ms(receive_perf, self._last_obs_receive_perf)
             self._last_obs_receive_perf = receive_perf
 
-        setattr(timed_observation, "_server_recv_perf", receive_perf)
+        timed_observation._server_recv_perf = receive_perf
 
         enqueued = self._enqueue_observation(
             timed_observation  # wrapping a RawObservation
@@ -572,7 +574,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
             first_action = action_chunk[0].action.tolist()
             self.logger.info(
-                f"[SERVER→CLIENT] Sending {len(action_chunk)} actions | "
+                f"[SERVER->CLIENT] Sending {len(action_chunk)} actions | "
                 f"First action: {first_action} | Payload size: {len(actions_bytes)} bytes"
             )
 
@@ -647,7 +649,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
                 self.logger.debug("Observation queue was full, removed oldest observation")
 
             # Now put the new observation (never blocks as queue is non-full here)
-            setattr(obs, "_server_enqueue_perf", time.perf_counter())
+            obs._server_enqueue_perf = time.perf_counter()
             self.observation_queue.put(obs)
             return True
 

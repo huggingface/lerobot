@@ -33,8 +33,8 @@ from lerobot.policies import (  # noqa: F401
     PI0Config,
     PI05Config,
     SmolVLAConfig,
-    XVLAConfig,
     VQBeTConfig,
+    XVLAConfig,
 )
 from lerobot.robots.robot import Robot
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE, OBS_STR
@@ -273,10 +273,7 @@ def decode_observation_images_from_transport(
 
     decode_ms = (time.perf_counter() - decode_start) * 1000.0
 
-    if decoded_image_count > 0:
-        mode = JPEG_ENCODING_TAG
-    else:
-        mode = "raw"
+    mode = JPEG_ENCODING_TAG if decoded_image_count > 0 else "raw"
 
     stats = {
         "mode": mode,

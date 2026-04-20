@@ -14,12 +14,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import serial
+from lerobot.utils.import_utils import _serial_available, require_package
+
+if TYPE_CHECKING or _serial_available:
+    import serial
+else:
+    serial = None  # type: ignore[assignment]
 
 from .exo_calib import ExoskeletonCalibration, exo_raw_to_angles, run_exo_calibration
 
@@ -68,6 +76,7 @@ class ExoskeletonArm:
     calibration: ExoskeletonCalibration | None = None
 
     def __post_init__(self):
+        require_package("pyserial", extra="hardware", import_name="serial")
         if self.calibration_fpath.is_file():
             self._load_calibration()
 
