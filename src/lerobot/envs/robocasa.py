@@ -15,6 +15,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from collections.abc import Callable, Sequence
 from functools import partial
@@ -27,6 +28,8 @@ from gymnasium import spaces
 from lerobot.types import RobotObservation
 
 from .utils import _LazyAsyncVectorEnv, parse_camera_names
+
+logger = logging.getLogger(__name__)
 
 # Dimensions for the flat action/state vectors used by the LeRobot wrapper.
 # These correspond to the PandaOmron robot in RoboCasa365.
@@ -249,11 +252,12 @@ class RoboCasaEnv(gym.Env):
         self._ensure_env()
         assert self._env is not None
         super().reset(seed=seed)
-        # Spread the user seed across workers. With n_envs factories each
-        # carrying a distinct `episode_index`, the same outer seed produces
-        # a different layout/trajectory per worker instead of all workers
-        # rolling the same scene.
-        worker_seed = seed + self.episode_index if seed is not None else None
+        # Spread the seed across workers so n_envs factories don't all
+        # roll the same scene. With an explicit user seed we shift it by
+        # episode_index; with no seed we fall back to episode_index so
+        # each worker is still distinct rather than inheriting the same
+        # global RNG state.
+        worker_seed = seed + self.episode_index if seed is not None else self.episode_index
         raw_obs, info = self._env.reset(seed=worker_seed)
 
         ep_meta = self._env.env.get_ep_meta()
@@ -377,7 +381,12 @@ def create_robocasa_envs(
     if group_split is not None and split is None:
         split = group_split
 
-    print(f"Creating RoboCasa envs | tasks={task_names} | split={split} | n_envs(per task)={n_envs}")
+    logger.info(
+        "Creating RoboCasa envs | tasks=%s | split=%s | n_envs(per task)=%d",
+        task_names,
+        split,
+        n_envs,
+    )
 
     is_async = env_cls is gym.vector.AsyncVectorEnv
 
@@ -411,6 +420,6 @@ def create_robocasa_envs(
             out[task_name][0] = lazy
         else:
             out[task_name][0] = env_cls(fns)
-        print(f"Built vec env | task={task_name} | n_envs={n_envs}")
+        logger.info("Built vec env | task=%s | n_envs=%d", task_name, n_envs)
 
     return {name: dict(task_map) for name, task_map in out.items()}

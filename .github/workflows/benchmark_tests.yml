@@ -379,6 +379,10 @@ jobs:
                 --policy.device=cuda \
                 '--rename_map={\"observation.images.robot0_agentview_left\": \"observation.images.camera1\", \"observation.images.robot0_eye_in_hand\": \"observation.images.camera2\", \"observation.images.robot0_agentview_right\": \"observation.images.camera3\"}' \
                 --output_dir=/tmp/eval-artifacts
+              python scripts/ci/extract_task_descriptions.py \
+                --env robocasa \
+                --task CloseFridge,OpenCabinet,OpenDrawer,TurnOnMicrowave,TurnOffStove,CloseToasterOvenDoor,SlideDishwasherRack,TurnOnSinkFaucet,NavigateKitchen,TurnOnElectricKettle \
+                --output /tmp/eval-artifacts/task_descriptions.json
             "
 
       - name: Copy RoboCasa365 artifacts from container
