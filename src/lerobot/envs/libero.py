@@ -31,20 +31,7 @@ from libero.libero.envs import OffScreenRenderEnv
 
 from lerobot.types import RobotObservation
 
-from .utils import _LazyAsyncVectorEnv
-
-
-def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
-    """Normalize camera_name into a non-empty list of strings."""
-    if isinstance(camera_name, str):
-        cams = [c.strip() for c in camera_name.split(",") if c.strip()]
-    elif isinstance(camera_name, (list | tuple)):
-        cams = [str(c).strip() for c in camera_name if str(c).strip()]
-    else:
-        raise TypeError(f"camera_name must be str or sequence[str], got {type(camera_name).__name__}")
-    if not cams:
-        raise ValueError("camera_name resolved to an empty list.")
-    return cams
+from .utils import _LazyAsyncVectorEnv, parse_camera_names
 
 
 def _get_suite(name: str) -> benchmark.Benchmark:
@@ -128,7 +115,7 @@ class LiberoEnv(gym.Env):
         self.visualization_width = visualization_width
         self.visualization_height = visualization_height
         self.init_states = init_states
-        self.camera_name = _parse_camera_names(
+        self.camera_name = parse_camera_names(
             camera_name
         )  # agentview_image (main) or robot0_eye_in_hand_image (wrist)
 
@@ -437,7 +424,7 @@ def create_libero_envs(
     gym_kwargs = dict(gym_kwargs or {})
     task_ids_filter = gym_kwargs.pop("task_ids", None)  # optional: limit to specific tasks
 
-    camera_names = _parse_camera_names(camera_name)
+    camera_names = parse_camera_names(camera_name)
     suite_names = [s.strip() for s in str(task).split(",") if s.strip()]
     if not suite_names:
         raise ValueError("`task` must contain at least one LIBERO suite name.")
@@ -462,6 +449,7 @@ def create_libero_envs(
         # Probe once and reuse to avoid creating a temp env per task.
         cached_obs_space: spaces.Space | None = None
         cached_act_space: spaces.Space | None = None
+        cached_metadata: dict[str, Any] | None = None
 
         for tid in selected:
             fns = _make_env_fns(
@@ -477,10 +465,11 @@ def create_libero_envs(
                 camera_name_mapping=camera_name_mapping,
             )
             if is_async:
-                lazy = _LazyAsyncVectorEnv(fns, cached_obs_space, cached_act_space)
+                lazy = _LazyAsyncVectorEnv(fns, cached_obs_space, cached_act_space, cached_metadata)
                 if cached_obs_space is None:
                     cached_obs_space = lazy.observation_space
                     cached_act_space = lazy.action_space
+                    cached_metadata = lazy.metadata
                 out[suite_name][tid] = lazy
             else:
                 out[suite_name][tid] = env_cls(fns)

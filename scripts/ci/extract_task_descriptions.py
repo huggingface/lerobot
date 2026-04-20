@@ -57,6 +57,41 @@ def _metaworld_descriptions(task_name: str) -> dict[str, str]:
     return {f"{task_name}_0": label}
 
 
+def _robotwin_descriptions(task_names: str) -> dict[str, str]:
+    """Return descriptions for each requested RoboTwin task. Reads
+    `description/task_instruction/<task>.json` from the RoboTwin clone
+    (cwd is /opt/robotwin in CI). Falls back to the task name if missing."""
+    out: dict[str, str] = {}
+    root = Path("description/task_instruction")
+    for name in (t.strip() for t in task_names.split(",") if t.strip()):
+        desc_file = root / f"{name}.json"
+        desc = name.replace("_", " ")
+        if desc_file.is_file():
+            data = json.loads(desc_file.read_text())
+            full = data.get("full_description") or desc
+            # Strip the schema placeholders ({A}, {a}) — keep the sentence readable.
+            desc = full.replace("<", "").replace(">", "")
+        out[f"{name}_0"] = desc
+    return out
+
+
+def _robocasa_descriptions(task_spec: str) -> dict[str, str]:
+    """For each task in the comma-separated list, emit a cleaned-name label.
+
+    RoboCasa episodes carry their language instruction in the env's
+    `ep_meta['lang']`, populated per reset. Pulling it requires spinning
+    up the full kitchen env per task (~seconds each); we use the task
+    name as the key here and let the eval's episode info carry the
+    actual instruction.
+    """
+    out: dict[str, str] = {}
+    for task in (t.strip() for t in task_spec.split(",") if t.strip()):
+        # Split CamelCase into words: "CloseFridge" → "close fridge".
+        label = "".join(f" {c.lower()}" if c.isupper() else c for c in task).strip()
+        out[f"{task}_0"] = label or task
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env", required=True, help="Environment family (libero, metaworld, ...)")
@@ -70,6 +105,10 @@ def main() -> int:
             descriptions = _libero_descriptions(args.task)
         elif args.env == "metaworld":
             descriptions = _metaworld_descriptions(args.task)
+        elif args.env == "robotwin":
+            descriptions = _robotwin_descriptions(args.task)
+        elif args.env == "robocasa":
+            descriptions = _robocasa_descriptions(args.task)
         else:
             print(
                 f"[extract_task_descriptions] No description extractor for env '{args.env}'.",
