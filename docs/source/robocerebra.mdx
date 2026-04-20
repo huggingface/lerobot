@@ -36,7 +36,7 @@ export MUJOCO_GL=egl  # for headless servers (HPC, cloud)
 
 ## Evaluation
 
-RoboCerebra eval runs against LIBERO's `libero_10` suite with RoboCerebra's camera naming (`image` + `wrist_image`) and an extra empty-camera slot for policies trained with three views:
+RoboCerebra eval runs against LIBERO's `libero_10` suite with RoboCerebra's camera naming (`image` + `wrist_image`) and an extra empty-camera slot so a three-view-trained policy receives the expected input layout:
 
 ```bash
 lerobot-eval \
@@ -45,10 +45,15 @@ lerobot-eval \
   --env.task=libero_10 \
   --env.fps=20 \
   --env.obs_type=pixels_agent_pos \
+  --env.observation_height=256 \
+  --env.observation_width=256 \
+  '--env.camera_name_mapping={"agentview_image": "image", "robot0_eye_in_hand_image": "wrist_image"}' \
   --eval.batch_size=1 \
   --eval.n_episodes=10 \
+  --eval.use_async_envs=false \
+  --policy.device=cuda \
   '--rename_map={"observation.images.image": "observation.images.camera1", "observation.images.wrist_image": "observation.images.camera2"}' \
-  --policy.empty_cameras=3
+  --policy.empty_cameras=1
 ```
 
 ### Recommended evaluation episodes
