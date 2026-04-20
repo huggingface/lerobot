@@ -83,7 +83,7 @@ def main() -> int:
 
     descriptions: dict[str, str] = {}
     try:
-        if args.env == "libero":
+        if args.env == ("libero", "libero_plus"):
             descriptions = _libero_descriptions(args.task)
         elif args.env == "metaworld":
             descriptions = _metaworld_descriptions(args.task)
