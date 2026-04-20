@@ -29,6 +29,7 @@ Safety Features:
 - Automatic disconnect on exit
 """
 
+import os
 import time
 import threading
 import numpy as np
@@ -201,7 +202,8 @@ class SO101GamepadController:
             self._pygame_screen = pygame.display.set_mode((640, 480))
             pygame.display.set_caption("SockBot Camera")
         else:
-            pygame.display.set_mode((1, 1), pygame.NOFRAME)
+            os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+            pygame.display.init()
         pygame.joystick.init()
         
         # Check for gamepad
