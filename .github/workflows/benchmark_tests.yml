@@ -326,6 +326,9 @@ jobs:
       group: aws-g6-4xlarge-plus
     env:
       HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
+      LIBERO_PLUS_SUITE: libero_spatial
+      LIBERO_PLUS_POLICY: lerobot/smolvla_libero_plus
+      LIBERO_PLUS_TASK_IDS: "[0,100,260,500,1000,1500,2000,2400]"
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
@@ -366,14 +369,17 @@ jobs:
             -e HF_HOME=/tmp/hf \
             -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
             -e HF_HUB_DOWNLOAD_TIMEOUT=300 \
+            -e LIBERO_PLUS_SUITE="${LIBERO_PLUS_SUITE}" \
+            -e LIBERO_PLUS_POLICY="${LIBERO_PLUS_POLICY}" \
+            -e LIBERO_PLUS_TASK_IDS="${LIBERO_PLUS_TASK_IDS}" \
             lerobot-benchmark-libero-plus:ci \
             bash -c "
               hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
               lerobot-eval \
-                --policy.path=lerobot/smolvla_libero_plus \
+                --policy.path=\"\$LIBERO_PLUS_POLICY\" \
                 --env.type=libero_plus \
-                --env.task=libero_spatial \
-                '--env.task_ids=[0,100,260,500,1000,1500,2000,2400]' \
+                --env.task=\"\$LIBERO_PLUS_SUITE\" \
+                --env.task_ids=\"\$LIBERO_PLUS_TASK_IDS\" \
                 --eval.batch_size=1 \
                 --eval.n_episodes=1 \
                 --eval.use_async_envs=false \
@@ -382,7 +388,7 @@ jobs:
                 --policy.empty_cameras=1 \
                 --output_dir=/tmp/eval-artifacts
               python scripts/ci/extract_task_descriptions.py \
-                --env libero_plus --task libero_spatial \
+                --env libero_plus --task \"\$LIBERO_PLUS_SUITE\" \
                 --output /tmp/eval-artifacts/task_descriptions.json
             "
 
@@ -399,8 +405,8 @@ jobs:
           python3 scripts/ci/parse_eval_metrics.py \
             --artifacts-dir /tmp/libero-plus-artifacts \
             --env libero_plus \
-            --task libero_spatial \
-            --policy lerobot/smolvla_libero_plus
+            --task "${LIBERO_PLUS_SUITE}" \
+            --policy "${LIBERO_PLUS_POLICY}"
 
       - name: Upload LIBERO-plus rollout video
         if: always()

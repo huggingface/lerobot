@@ -20,6 +20,7 @@
 # Run:    docker run --gpus all --rm lerobot-benchmark-libero-plus lerobot-eval ...
 
 FROM huggingface/lerobot-gpu:latest
+ENV MUJOCO_GL=egl
 
 # unzip for the 6.4 GB assets.zip; the rest are LIBERO-plus build-time extras
 # (wand / ImageMagick / fontconfig) not in the nightly base.
@@ -36,13 +37,23 @@ USER user_lerobot
 # the extra's `libero @ git+...` dep installs as a namespace package and then
 # clone and PYTHONPATH-override it below.
 RUN uv pip install --no-cache \
-        "robosuite==1.4.1" bddl easydict mujoco matplotlib wand scikit-image gym
+        "robosuite==1.4.1" \
+        "bddl==1.0.1" \
+        "easydict==1.13" \
+        "mujoco==3.7.0" \
+        "matplotlib==3.10.8" \
+        "Wand==0.6.13" \
+        "scikit-image==0.25.2" \
+        "gym==0.26.2"
 
 # Clone LIBERO-plus and make it importable as `libero`. The nightly base has
 # hf-libero (10 tasks) preinstalled via lerobot[libero]; uninstall it so
 # Python resolves `import libero` to the 2402-task LIBERO-plus module instead.
+# Pinned to the current upstream main SHA so benchmark builds stay reproducible.
+ARG LIBERO_PLUS_SHA=4976dc3
 ENV LIBERO_PLUS_ROOT=/home/user_lerobot/libero-plus/libero/libero
-RUN git clone --depth=1 https://github.com/sylvestf/LIBERO-plus.git /home/user_lerobot/libero-plus \
+RUN git clone https://github.com/sylvestf/LIBERO-plus.git /home/user_lerobot/libero-plus \
+    && git -C /home/user_lerobot/libero-plus checkout ${LIBERO_PLUS_SHA} \
     && cd /home/user_lerobot/libero-plus && uv pip install --no-cache --no-deps -e "." \
     && (uv pip uninstall hf-libero 2>/dev/null || true)
 ENV PYTHONPATH="/home/user_lerobot/libero-plus:${PYTHONPATH}"
