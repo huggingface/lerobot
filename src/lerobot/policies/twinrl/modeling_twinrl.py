@@ -20,13 +20,13 @@ Joint IL+RL training objective (paper Eq. 6):
     L_actor(ψ) = β * L_IL + η * L_Q
 
 where:
-    L_IL = MSE(π_mean(s), a_demo)           -- BC/imitation loss
-    L_Q  = -E[min_i Q_i(s, π(s))]          -- RL Q-gradient
+    L_IL = recon_loss (ConRFT Karras-weighted) or MSE(π_mean, a_demo) for Gaussian
+    L_Q  = -E[mean_i Q_i(s, π(s))]         -- RL Q-gradient
 
 Critic uses Cal-QL (paper Appendix C, official code calql_critic_loss_fn):
     L_critic = L_TD + α * L_CQL
 
-where L_CQL applies a logsumexp penalty over sampled OOD actions, with
+where L_CQL applies a logsumexp penalty over sampled OOD actions (3n), with
 Monte Carlo return lower-bound clipping to prevent Q underestimation.
 
 Paper: https://arxiv.org/abs/2602.09023
@@ -38,6 +38,7 @@ from typing import Literal
 
 import einops
 import torch
+import torch.nn as nn
 from torch import Tensor
 
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -50,6 +51,138 @@ from lerobot.policies.sac.modeling_sac import (
 )
 from lerobot.policies.twinrl.configuration_twinrl import TwinRLConfig
 from lerobot.utils.constants import ACTION
+
+
+class OctoActorEncoder(nn.Module):
+    """Frozen OctoTransformer used as actor feature extractor.
+
+    Loads weights from HuggingFace (requires octo-pytorch package).
+    Outputs the mean-pooled readout_action token: (b, token_embedding_size).
+    The transformer weights are frozen; only downstream layers are trained.
+    """
+
+    def __init__(self, config):
+        super().__init__()
+        from octo_pytorch.model.modeling_octo import OctoModel
+
+        octo = OctoModel.from_pretrained(config.octo_model_name)
+        self.transformer = octo.octo_transformer
+        self.text_processor = octo.text_processor
+        self._output_dim = self.transformer.token_embedding_size
+        for param in self.transformer.parameters():
+            param.requires_grad = False
+
+    @property
+    def output_dim(self) -> int:
+        return self._output_dim
+
+    def forward(self, observations: dict[str, Tensor], obs_features: Tensor | None = None) -> Tensor:
+        """Return (b, token_embedding_size) readout feature vector."""
+        if obs_features is not None:
+            return obs_features
+
+        device = next(self.transformer.parameters()).device
+        img = observations.get("image_primary", observations.get("observation.image"))
+        if img is None:
+            raise ValueError("OctoActorEncoder requires 'image_primary' in observations.")
+
+        b = img.shape[0]
+        obs_octo = {"image_primary": img.unsqueeze(1) if img.ndim == 4 else img}
+        if "image_wrist" in observations:
+            w = observations["image_wrist"]
+            obs_octo["image_wrist"] = w.unsqueeze(1) if w.ndim == 4 else w
+
+        tasks = {"language_instruction": self.text_processor.encode([""] * b)}
+        for k, v in tasks["language_instruction"].items():
+            tasks["language_instruction"][k] = v.to(device)
+
+        window = obs_octo["image_primary"].shape[1]
+        pad_mask = torch.ones(b, window, dtype=torch.bool, device=device)
+
+        with torch.no_grad():
+            outputs = self.transformer(obs_octo, tasks, pad_mask)
+
+        # tokens: (b, window, n_tokens, embed) → mean over tokens → last window step
+        feats = outputs["readout_action"].tokens.mean(dim=-2)[:, -1, :]  # (b, embed)
+        return feats
+
+
+class ConsistencyActorHead(nn.Module):
+    """Karras consistency model actor (ConRFT-style, matches JAX ConsistencyPolicy_octo).
+
+    base_network(x_t, sigma, obs_enc) predicts x_0 via boundary conditions:
+        c_skip * x_t + c_out * network([c_in * x_t, t_embed, obs_enc])
+
+    Requires octo-pytorch package for FourierFeatures and MLPResNet primitives.
+    """
+
+    def __init__(self, encoder: nn.Module, obs_enc_dim: int, action_dim: int, config):
+        super().__init__()
+        from octo_pytorch.model.components.diffusion import FourierFeatures, MLPResNet
+
+        self.encoder = encoder
+        self.action_dim = action_dim
+        self.sigma_min = config.sigma_min
+        self.sigma_max = config.sigma_max
+        self.sigma_data = config.sigma_data
+
+        t_dim = config.consistency_t_dim
+        hidden_dim = config.actor_network_kwargs.hidden_dims[0]
+        num_blocks = len(config.actor_network_kwargs.hidden_dims)
+
+        self.fourier = FourierFeatures(t_dim, learnable=True)
+        self.t_proj = nn.Sequential(nn.Linear(t_dim, 2 * t_dim), nn.SiLU(), nn.Linear(2 * t_dim, t_dim))
+        net_in_dim = action_dim + t_dim + obs_enc_dim
+        self.network = MLPResNet(
+            num_blocks=num_blocks,
+            out_dim=hidden_dim,
+            in_dim=net_in_dim,
+            dropout_rate=None,
+            hidden_dim=hidden_dim,
+            use_layer_norm=True,
+        )
+        self.output_proj = nn.Linear(hidden_dim, action_dim)
+
+        sigmas = self._karras_sigmas(config.num_scales, config.sigma_min, config.sigma_max, config.rho)
+        self.register_buffer("karras_sigmas", sigmas)
+
+    @staticmethod
+    def _karras_sigmas(n: int, sigma_min: float, sigma_max: float, rho: float) -> Tensor:
+        ramp = torch.linspace(0, 1, n)
+        min_inv = sigma_min ** (1 / rho)
+        max_inv = sigma_max ** (1 / rho)
+        sigmas = (max_inv + ramp * (min_inv - max_inv)) ** rho
+        return torch.cat([sigmas, sigmas.new_zeros(1)])  # append 0 sentinel
+
+    def _scalings(self, sigma: Tensor):
+        c_skip = self.sigma_data**2 / ((sigma - self.sigma_min) ** 2 + self.sigma_data**2)
+        c_out = (sigma - self.sigma_min) * self.sigma_data / (sigma**2 + self.sigma_data**2) ** 0.5
+        c_in = 1.0 / (sigma**2 + self.sigma_data**2) ** 0.5
+        return c_skip, c_out, c_in
+
+    def base_network(self, x_t: Tensor, sigma: Tensor, obs_enc: Tensor) -> Tensor:
+        """Predict x_0 from noisy x_t at noise level sigma. sigma: (b,)."""
+        c_skip, c_out, c_in = self._scalings(sigma)
+        c_skip = c_skip.unsqueeze(-1)
+        c_out = c_out.unsqueeze(-1)
+        c_in = c_in.unsqueeze(-1)
+        rescaled_t = 1000.0 * 0.25 * torch.log(sigma + 1e-44)
+        t_embed = self.t_proj(self.fourier(rescaled_t.unsqueeze(-1)))  # (b, t_dim)
+        net_in = torch.cat([c_in * x_t, t_embed, obs_enc], dim=-1)
+        features = self.network(net_in)
+        denoised = self.output_proj(features)
+        return c_out * denoised + c_skip * x_t
+
+    def forward(self, observations: dict[str, Tensor], obs_features: Tensor | None = None):
+        """Single-step inference: denoise from x_t ~ N(0, sigma_max²).
+        Returns (x_0, None, x_0) to match Policy interface.
+        """
+        obs_enc = self.encoder(observations, obs_features)
+        b, device = obs_enc.shape[0], obs_enc.device
+        x_t = torch.randn(b, self.action_dim, device=device) * self.sigma_max
+        sigma = self.karras_sigmas[0].expand(b)
+        x_0 = self.base_network(x_t, sigma, obs_enc).clamp(-1, 1)
+        return x_0, None, x_0
 
 
 class TwinRLPolicy(PreTrainedPolicy):
@@ -144,18 +277,43 @@ class TwinRLPolicy(PreTrainedPolicy):
         demo_actions: Tensor,
         obs_features: Tensor | None = None,
     ) -> Tensor:
-        """Joint BC + RL actor loss."""
-        # sampled_actions: reparameterized sample (for Q-gradient)
-        # mean_actions: policy mean (for IL regression)
-        sampled_actions, _, mean_actions = self.actor(observations, obs_features)
+        """Joint BC + RL actor loss.
 
-        # IL term: MSE between policy mean and demo action (no noise bias)
-        il_loss = torch.nn.functional.mse_loss(mean_actions, demo_actions)
+        ConRFT path (use_consistency_policy=True):
+            IL  = Karras-weighted consistency reconstruction loss (matches JAX policy_loss_fn)
+            Q   = -mean_Q on single-step denoised action
 
-        # RL term: maximise mean Q over ensemble (use sample for RL gradient)
-        q_values = self._critic_forward(observations, sampled_actions, obs_features)
-        mean_q = q_values.mean(dim=0)
-        q_loss = -mean_q.mean()
+        Gaussian path (use_consistency_policy=False):
+            IL  = MSE(policy_mean, demo_action)
+            Q   = -mean_Q on reparameterized sample
+        """
+        if self.config.use_consistency_policy:
+            b, device = demo_actions.shape[0], demo_actions.device
+
+            # Octo encoder is frozen; detach matches JAX stop_gradient=True
+            obs_enc = self.actor.encoder(observations, obs_features).detach()
+
+            # --- ConRFT recon loss (JAX policy_loss_fn lines 327-345) ---
+            indices = torch.randint(0, self.config.num_scales - 1, (b,), device=device)
+            sigma = self.actor.karras_sigmas[indices]  # (b,)
+            noise = torch.randn_like(demo_actions)
+            x_t = demo_actions + noise * sigma.unsqueeze(-1)
+            distiller = self.actor.base_network(x_t, sigma, obs_enc)
+            snrs = sigma**-2
+            weights = snrs + 1.0 / self.config.sigma_data**2  # Karras weighting
+            il_loss = ((distiller - demo_actions) ** 2).mean(dim=-1).mul(weights).mean()
+
+            # --- Q-gradient: single-step denoised action (JAX lines 347-353) ---
+            x_t = torch.randn(b, demo_actions.shape[-1], device=device) * self.config.sigma_max
+            sigma_top = self.actor.karras_sigmas[0].expand(b)
+            new_actions = self.actor.base_network(x_t, sigma_top, obs_enc).clamp(-1, 1)
+            q_values = self._critic_forward(observations, new_actions, obs_features)
+            q_loss = -q_values.mean(dim=0).mean()
+        else:
+            sampled_actions, _, mean_actions = self.actor(observations, obs_features)
+            il_loss = torch.nn.functional.mse_loss(mean_actions, demo_actions)
+            q_values = self._critic_forward(observations, sampled_actions, obs_features)
+            q_loss = -q_values.mean(dim=0).mean()
 
         return self.config.bc_weight * il_loss + self.config.q_weight * q_loss
 
@@ -317,11 +475,16 @@ class TwinRLPolicy(PreTrainedPolicy):
     # ------------------------------------------------------------------
 
     def _init_encoders(self):
-        self.shared_encoder = self.config.shared_encoder
         self.encoder_critic = SACObservationEncoder(self.config)
-        self.encoder_actor = (
-            self.encoder_critic if self.shared_encoder else SACObservationEncoder(self.config)
-        )
+        if self.config.actor_encoder_type == "octo":
+            # Octo actor encoder is always separate from the SAC critic encoder
+            self.encoder_actor = OctoActorEncoder(self.config)
+            self.shared_encoder = False
+        else:
+            self.shared_encoder = self.config.shared_encoder
+            self.encoder_actor = (
+                self.encoder_critic if self.shared_encoder else SACObservationEncoder(self.config)
+            )
 
     def _init_critics(self, action_dim: int):
         def _make_ensemble():
@@ -343,13 +506,21 @@ class TwinRLPolicy(PreTrainedPolicy):
             self.critic_target = torch.compile(self.critic_target)
 
     def _init_actor(self, action_dim: int):
-        self.actor = Policy(
-            encoder=self.encoder_actor,
-            network=MLP(
-                input_dim=self.encoder_actor.output_dim,
-                **asdict(self.config.actor_network_kwargs),
-            ),
-            action_dim=action_dim,
-            encoder_is_shared=self.shared_encoder,
-            **asdict(self.config.policy_kwargs),
-        )
+        if self.config.use_consistency_policy:
+            self.actor = ConsistencyActorHead(
+                encoder=self.encoder_actor,
+                obs_enc_dim=self.encoder_actor.output_dim,
+                action_dim=action_dim,
+                config=self.config,
+            )
+        else:
+            self.actor = Policy(
+                encoder=self.encoder_actor,
+                network=MLP(
+                    input_dim=self.encoder_actor.output_dim,
+                    **asdict(self.config.actor_network_kwargs),
+                ),
+                action_dim=action_dim,
+                encoder_is_shared=self.shared_encoder,
+                **asdict(self.config.policy_kwargs),
+            )

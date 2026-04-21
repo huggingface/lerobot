@@ -131,6 +131,22 @@ class TwinRLConfig(PreTrainedConfig):
     cql_clip_diff_min: float = -float("inf")
     cql_clip_diff_max: float = float("inf")
 
+    # --- ConRFT / Consistency policy ---
+    # "sac" = SACObservationEncoder for actor; "octo" = frozen OctoTransformer
+    actor_encoder_type: str = "sac"
+    # HuggingFace repo for the octo-pytorch model (used when actor_encoder_type="octo")
+    octo_model_name: str = "lilkm/octo-small-test"
+    # When True, use Karras consistency model instead of Gaussian policy
+    use_consistency_policy: bool = False
+    # Karras noise schedule hyperparameters (match official TwinRL defaults)
+    num_scales: int = 40
+    sigma_min: float = 0.002
+    sigma_max: float = 80.0
+    sigma_data: float = 0.5
+    rho: float = 7.0
+    # Timestep embedding dimension for the consistency t_network
+    consistency_t_dim: int = 16
+
     # Network architecture configs (reuse SAC sub-configs)
     critic_network_kwargs: CriticNetworkConfig = field(default_factory=CriticNetworkConfig)
     actor_network_kwargs: ActorNetworkConfig = field(default_factory=ActorNetworkConfig)
