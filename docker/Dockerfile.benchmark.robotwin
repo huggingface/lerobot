@@ -56,11 +56,11 @@ RUN uv pip install --no-cache --no-build-isolation \
         "git+https://github.com/facebookresearch/pytorch3d.git@stable"
 
 # CuRobo — NVlabs motion generator; TORCH_CUDA_ARCH_LIST must be set or the
-# build aborts on an empty arch list. Pinned SHA for reproducibility.
-ARG CUROBO_SHA=ca941586c33b8482ed9c0e74d60f23efd64b516a
+# build aborts on an empty arch list. RoboTwin's own installer pins v0.7.8,
+# which still exposes the v1 API (`curobo.types.math`) that RoboTwin imports.
+ARG CUROBO_REF=v0.7.8
 RUN cd ${ROBOTWIN_ROOT}/envs \
-    && git clone https://github.com/NVlabs/curobo.git \
-    && git -C curobo checkout ${CUROBO_SHA} \
+    && git clone --branch ${CUROBO_REF} --depth 1 https://github.com/NVlabs/curobo.git \
     && cd curobo \
     && TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;8.9;9.0" \
        uv pip install -e . --no-build-isolation --no-cache
@@ -112,6 +112,15 @@ WORKDIR ${ROBOTWIN_ROOT}
 RUN python script/update_embodiment_config_path.py
 
 ENV PYTHONPATH="${ROBOTWIN_ROOT}:${PYTHONPATH}"
+
+# Fail the image build early if the CuRobo/RoboTwin import chain regresses.
+RUN python - <<'EOF'
+from curobo.types.math import Pose
+from envs.robot.planner import CuroboPlanner
+
+print("CuRobo import OK:", Pose.__name__)
+print("RoboTwin planner import OK:", CuroboPlanner.__name__)
+EOF
 
 # Return to the lerobot source directory (set by base image) before overlaying.
 WORKDIR /lerobot
