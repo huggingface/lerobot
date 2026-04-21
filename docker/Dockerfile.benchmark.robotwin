@@ -111,15 +111,22 @@ EOF
 WORKDIR ${ROBOTWIN_ROOT}
 RUN python script/update_embodiment_config_path.py
 
-ENV PYTHONPATH="${ROBOTWIN_ROOT}:${PYTHONPATH}"
+ENV PYTHONPATH="${ROBOTWIN_ROOT}"
 
-# Fail the image build early if the CuRobo/RoboTwin import chain regresses.
+# Fail the image build early if the CuRobo package layout regresses. Importing
+# RoboTwin's planner here is too eager because CuRobo constructs CUDA-backed
+# defaults at import time, while Docker builds don't have access to an NVIDIA
+# driver.
 RUN python - <<'EOF'
+from pathlib import Path
+
 from curobo.types.math import Pose
-from envs.robot.planner import CuroboPlanner
+
+planner_src = (Path("/opt/robotwin/envs/robot/planner.py")).read_text()
+assert "from curobo.types.math import Pose as CuroboPose" in planner_src
 
 print("CuRobo import OK:", Pose.__name__)
-print("RoboTwin planner import OK:", CuroboPlanner.__name__)
+print("RoboTwin planner import references curobo.types.math")
 EOF
 
 # Return to the lerobot source directory (set by base image) before overlaying.
