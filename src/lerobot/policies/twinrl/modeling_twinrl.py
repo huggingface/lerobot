@@ -76,10 +76,17 @@ class OctoActorEncoder(nn.Module):
     def output_dim(self) -> int:
         return self._output_dim
 
-    def forward(self, observations: dict[str, Tensor], obs_features: Tensor | None = None) -> Tensor:
+    def forward(
+        self,
+        observations: dict[str, Tensor],
+        obs_features: Tensor | None = None,
+        cache: Tensor | None = None,
+        detach: bool = False,
+    ) -> Tensor:
         """Return (b, token_embedding_size) readout feature vector."""
-        if obs_features is not None:
-            return obs_features
+        features = obs_features if obs_features is not None else cache
+        if features is not None:
+            return features if not detach else features.detach()
 
         device = next(self.transformer.parameters()).device
         img = observations.get("image_primary", observations.get("observation.image"))
