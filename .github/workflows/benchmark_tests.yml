@@ -843,3 +843,103 @@ jobs:
           name: libero-plus-metrics
           path: /tmp/libero-plus-artifacts/metrics.json
           if-no-files-found: warn
+
+  # ── VLABENCH ─────────────────────────────────────────────────────────────
+  # Isolated image: lerobot[vlabench] only (VLABench, mujoco==3.2.2, dm-control chain)
+  vlabench-integration-test:
+    name: VLABench — build image + 1-episode eval
+    runs-on:
+      group: aws-g6-4xlarge-plus
+    env:
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+          lfs: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          cache-binary: false
+
+      - name: Login to Docker Hub
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
+        uses: docker/login-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+
+      - name: Build VLABench benchmark image
+        uses: docker/build-push-action@v6 # zizmor: ignore[unpinned-uses]
+        with:
+          context: .
+          file: docker/Dockerfile.benchmark.vlabench
+          push: false
+          load: true
+          tags: lerobot-benchmark-vlabench:ci
+          build-args: |
+            VLABENCH_ASSETS_REPO=lerobot/vlabench-assets
+
+      - name: Run VLABench smoke eval (10 tasks, 1 episode each)
+        if: env.HF_USER_TOKEN != ''
+        run: |
+          docker run --name vlabench-eval --gpus all \
+            --shm-size=4g \
+            -e HF_HOME=/tmp/hf \
+            -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
+            -e HF_HUB_DOWNLOAD_TIMEOUT=300 \
+            -e MUJOCO_GL=egl \
+            lerobot-benchmark-vlabench:ci \
+            bash -c "
+              hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
+              lerobot-eval \
+                --policy.path=lerobot/smolvla_vlabench \
+                --env.type=vlabench \
+                --env.task=select_fruit,select_toy,select_book,select_painting,select_drink,select_ingredient,select_billiards,select_poker,add_condiment,insert_flower \
+                --eval.batch_size=1 \
+                --eval.n_episodes=1 \
+                --eval.use_async_envs=false \
+                --policy.device=cuda \
+                '--rename_map={\"observation.images.image\": \"observation.images.camera1\", \"observation.images.second_image\": \"observation.images.camera2\", \"observation.images.wrist_image\": \"observation.images.camera3\"}' \
+                --output_dir=/tmp/eval-artifacts
+              python scripts/ci/extract_task_descriptions.py \
+                --env vlabench \
+                --task select_fruit,select_toy,select_book,select_painting,select_drink,select_ingredient,select_billiards,select_poker,add_condiment,insert_flower \
+                --output /tmp/eval-artifacts/task_descriptions.json
+            "
+
+      - name: Copy VLABench artifacts from container
+        if: always()
+        run: |
+          mkdir -p /tmp/vlabench-artifacts
+          docker cp vlabench-eval:/tmp/eval-artifacts/. /tmp/vlabench-artifacts/ 2>/dev/null || true
+          docker rm -f vlabench-eval || true
+
+      - name: Parse VLABench eval metrics
+        if: always()
+        run: |
+          python3 scripts/ci/parse_eval_metrics.py \
+            --artifacts-dir /tmp/vlabench-artifacts \
+            --env vlabench \
+            --task select_fruit,select_toy,select_book,select_painting,select_drink,select_ingredient,select_billiards,select_poker,add_condiment,insert_flower \
+            --policy lerobot/smolvla_vlabench
+
+      - name: Upload VLABench rollout video
+        if: always()
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: vlabench-rollout-video
+          path: /tmp/vlabench-artifacts/videos/
+          if-no-files-found: warn
+
+      - name: Upload VLABench eval metrics
+        if: always()
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: vlabench-metrics
+          path: /tmp/vlabench-artifacts/metrics.json
+          if-no-files-found: warn

@@ -142,6 +142,21 @@ def _robomme_descriptions(task_names: str, task_ids: list[int] | None = None) ->
     return out
 
 
+def _vlabench_descriptions(task_spec: str) -> dict[str, str]:
+    """For each task in the comma-separated list, emit a cleaned-name label.
+
+    VLABench tasks carry language instructions on their dm_control task
+    object, but pulling them requires loading the full env per task
+    (~seconds each). The CI smoke-eval already captures the instruction
+    inside its episode info; this mapping is just enough to key
+    `metrics.json` by `<task>_0`.
+    """
+    out: dict[str, str] = {}
+    for task in (t.strip() for t in task_spec.split(",") if t.strip()):
+        out[f"{task}_0"] = task.replace("_", " ").strip()
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env", required=True, help="Environment family (libero, metaworld, ...)")
@@ -171,6 +186,8 @@ def main() -> int:
             descriptions = _robocasa_descriptions(args.task)
         elif args.env == "robomme":
             descriptions = _robomme_descriptions(args.task, task_ids=task_ids)
+        elif args.env == "vlabench":
+            descriptions = _vlabench_descriptions(args.task)
         else:
             print(
                 f"[extract_task_descriptions] No description extractor for env '{args.env}'.",
