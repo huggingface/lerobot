@@ -40,13 +40,13 @@ class SO101FollowerDragontactile(SOFollower):
         super().__init__(config)
         self._tactile_obs_key = "left_tactile_spectrogram"
 
-        self._sampling_rate = 20_000 # fs = 20 kHz
+        self._sampling_rate_hz = 20_000 # fs = 20 kHz
 
         self._nfft = 1024
         self._width, self._height = 224, 224 # For ResNet
         self._target_size = (self._width, self._height)
 
-        self._df=self._sampling_rate/2/self._height
+        self._df=self._sampling_rate_hz/2/self._height
         dt=1/(2*self._df) # *2 because of 50% overlap
         self._window_duration = self._width*dt
         
@@ -54,7 +54,7 @@ class SO101FollowerDragontactile(SOFollower):
         self._spectrogram_min_db = -70.0
         self._spectrogram_max_db = 40.0
 
-        display_buffer_size = int(self._sampling_rate * self._window_duration)
+        display_buffer_size = int(self._sampling_rate_hz * self._window_duration)
         self._display_buffer = np.zeros(display_buffer_size, dtype=np.float32)
         self._last_spectrogram_frame: np.ndarray | None = None
 
@@ -62,7 +62,15 @@ class SO101FollowerDragontactile(SOFollower):
         self._reader = None
         self._init_tactile_reader()
 
+    def _infer_target_size_from_camera_config(self) -> tuple[int, int]:
+        """Returns target (width, height) from the first configured camera, with safe fallback."""
+        if not self.config.cameras:
+            return (400, 300)
 
+        first_camera_cfg = next(iter(self.config.cameras.values()))
+        width = int(first_camera_cfg.width) if first_camera_cfg.width is not None else 400
+        height = int(first_camera_cfg.height) if first_camera_cfg.height is not None else 300
+        return (width, height)
 
     def _init_tactile_reader(self) -> None:
         try:
@@ -80,15 +88,15 @@ class SO101FollowerDragontactile(SOFollower):
             target = next((d for d in available_devices if "IOLITE-X" in d.name), available_devices[0])
             device = self._instance.add_device(target.connection_string)
 
-            channel = device.channels[0]  # first channel of IOLITE-X
-            signal = channel.signals[0]  # main data stream
-            amplifier = channel.get_function_blocks()[0]  # contains the amplifier settings
+            channel = device.channels[0]
+            signal = channel.signals[0]
+            amplifier = channel.get_function_blocks()[0]
             self._configure_iepe_amplifier(amplifier)
 
             try:
-                device.set_property_value("SampleRate", self._sampling_rate)
+                device.set_property_value("SampleRate", self._sampling_rate_hz)
             except Exception:
-                logger.warning("Could not set SampleRate to %s on tactile device.", self._sampling_rate)
+                logger.warning("Could not set SampleRate to %s on tactile device.", self._sampling_rate_hz)
 
             self._reader = opendaq.StreamReader(signal)
             logger.info("Connected tactile stream from %s.", target.name)
@@ -96,9 +104,8 @@ class SO101FollowerDragontactile(SOFollower):
             logger.warning("Failed to initialize tactile stream: %s", exc)
             self._reader = None
 
-
     @staticmethod
-    def _configure_iepe_amplifier(amplifier) -> None:   # Fnction to upgrade : give sensor and it returns settings for gain 1 10 100
+    def _configure_iepe_amplifier(amplifier) -> None:
         try:
             amplifier.set_property_value("Measurement", 1)  # IEPE
             amplifier.set_property_value("Range", 0)  # 10V
@@ -142,7 +149,7 @@ class SO101FollowerDragontactile(SOFollower):
 
         _, _, sxx = scipy.signal.spectrogram(
             self._display_buffer,
-            fs=self._sampling_rate,
+            fs=self._sampling_rate_hz,
             nperseg=nperseg,
             noverlap=noverlap,
         )
