@@ -186,3 +186,9 @@ outputs
 *.urdf
 *.xml
 *.part
+
+# experiments things
+experiment/
+*.md
+*.png
+*.pdf

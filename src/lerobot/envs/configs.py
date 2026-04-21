@@ -341,6 +341,8 @@ class LiberoEnv(EnvConfig):
         return {
             "obs_type": self.obs_type,
             "render_mode": self.render_mode,
+            "observation_height": self.observation_height,
+            "observation_width": self.observation_width,
         }
 
 
