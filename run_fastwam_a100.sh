@@ -12,7 +12,7 @@
 
 export HF_HOME=/storage/project/r-agarg35-0/shared/huggingface_cache
 export DIFFSYNTH_DOWNLOAD_SOURCE=huggingface
-export DIFFSYNTH_MODEL_BASE_PATH=/storage/project/r-agarg35-0/shared/fastwam/wan22_weights
+export DIFFSYNTH_MODEL_BASE_PATH=/storage/project/r-agarg35-0/shared/awm/fastwam_wan22_weights
 export DIFFSYNTH_SKIP_DOWNLOAD=false
 export MUJOCO_GL=egl
 
@@ -25,7 +25,7 @@ nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 
 echo "=== FastWAM eval on A100: 3 episodes ==="
 echo N | lerobot-eval \
-    --policy.path=/storage/project/r-agarg35-0/shared/fastwam/hf_checkpoint_minmax \
+    --policy.path=/storage/project/r-agarg35-0/shared/awm/fastwam_checkpoint \
     --policy.device=cuda \
     --env.type=libero \
     --env.task=libero_10 \

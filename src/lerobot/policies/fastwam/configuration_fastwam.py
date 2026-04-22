@@ -22,6 +22,10 @@ from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
+# Shared cluster paths — load the policy directly without specifying --policy.path.
+FASTWAM_CHECKPOINT_PATH = "/storage/project/r-agarg35-0/shared/awm/fastwam_checkpoint"
+FASTWAM_WAN22_WEIGHTS_PATH = "/storage/project/r-agarg35-0/shared/awm/fastwam_wan22_weights"
+
 
 @PreTrainedConfig.register_subclass("fastwam")
 @dataclass

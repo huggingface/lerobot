@@ -17,11 +17,19 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections import deque
 from typing import Any
 
 import torch
 from torch import Tensor
+
+# Set default path to Wan2.2 pretrained weights on shared cluster storage so users
+# don't need to export DIFFSYNTH_MODEL_BASE_PATH manually.
+os.environ.setdefault(
+    "DIFFSYNTH_MODEL_BASE_PATH",
+    "/storage/project/r-agarg35-0/shared/awm/fastwam_wan22_weights",
+)
 
 from lerobot.policies.fastwam.configuration_fastwam import FastWAMConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
