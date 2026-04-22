@@ -36,7 +36,7 @@ from .utils import (
 )
 from .video_utils import (
     StreamingVideoEncoder,
-    get_safe_default_codec,
+    get_safe_default_video_backend,
     resolve_vcodec,
 )
 
@@ -202,7 +202,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.episodes = episodes
         self.tolerance_s = tolerance_s
         self.revision = revision if revision else CODEBASE_VERSION
-        self._video_backend = video_backend if video_backend else get_safe_default_codec()
+        self._video_backend = video_backend if video_backend else get_safe_default_video_backend()
         self._return_uint8 = return_uint8
         self._batch_encoding_size = batch_encoding_size
         self._vcodec = resolve_vcodec(vcodec)
@@ -690,7 +690,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.image_transforms = None
         obj.delta_timestamps = None
         obj.episodes = None
-        obj._video_backend = video_backend if video_backend is not None else get_safe_default_codec()
+        obj._video_backend = video_backend if video_backend is not None else get_safe_default_video_backend()
         obj._return_uint8 = False
         obj._batch_encoding_size = batch_encoding_size
         obj._vcodec = vcodec
@@ -783,7 +783,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.image_transforms = None
         obj.delta_timestamps = None
         obj.episodes = None
-        obj._video_backend = video_backend if video_backend else get_safe_default_codec()
+        obj._video_backend = video_backend if video_backend else get_safe_default_video_backend()
         obj._return_uint8 = False
         obj._batch_encoding_size = batch_encoding_size
         obj._vcodec = vcodec

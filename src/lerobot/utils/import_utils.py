@@ -69,7 +69,7 @@ def is_package_available(
         return package_exists
 
 
-def get_safe_default_codec():
+def get_safe_default_video_backend():
     logger = logging.getLogger(__name__)
     if importlib.util.find_spec("torchcodec"):
         return "torchcodec"
