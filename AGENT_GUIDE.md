@@ -103,9 +103,9 @@ lerobot-teleoperate \
   --display_data=true
 ```
 
-> **Feetech timeout / comms error on SO-100 / SO-101?** Before touching software, check the **motor LEDs** on the daisy chain.
+> **Feetech timeout / comms error on SO-100 / SO-101?** Before touching software, check the **red motor LEDs** on the daisy chain.
 >
-> - **All steady red, gripper → base** → wiring OK.
+> - **All steady red, gripper → base chain** → wiring OK.
 > - **One or more motors dark / chain stops mid-way** → wiring issue: reseat the 3-pin cables, check the controller-board power supply, and make sure each motor is fully clicked in.
 > - **LEDs blinking** → the motor is in an **error state**: usually overload (forcing a joint past its limit) **or wrong power supply voltage**. SO-100 / SO-101 ship in two variants — a **5 V / 7.4 V** build and a **12 V** build — they are NOT interchangeable. Using a 12 V PSU on a 5 V / 7.4 V arm (or vice-versa) will trip this error; confirm your motor variant before powering up.
 >
