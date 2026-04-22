@@ -52,6 +52,10 @@ class OneroRobotConfig(RobotConfig):
 
     enable_gripper: bool = True  # Whether to enable gripper control
 
+    # Optional low-level MIT gains passed to oneroarm_api_py (length should match dof)
+    mit_kp: list[float] | None = None
+    mit_kd: list[float] | None = None
+
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
     def __post_init__(self):

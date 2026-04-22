@@ -100,6 +100,10 @@ class OneroAdapter:
         # Set other defaults or from config if needed
         api_config.dof = self.dof
         api_config.is_teleop_leader = self.config.is_teleop_leader
+        if self.config.mit_kp is not None:
+            api_config.mit_kp = self.config.mit_kp
+        if self.config.mit_kd is not None:
+            api_config.mit_kd = self.config.mit_kd
 
         try:
             # 2. Initialize and Connect Arm
@@ -371,7 +375,7 @@ class OneroTeleopFollower(OneroAdapter):
     def connect(self):
         super().connect()
         self.runtohome()
-        time.sleep(15)  # Allow time for the robot to stabilize at home position after initialization
+        time.sleep(5)  # Allow time for the robot to stabilize at home position after initialization
         return
 
     def unpack_action(self, action_tensor: torch.Tensor, dof: int = 7) -> dict:

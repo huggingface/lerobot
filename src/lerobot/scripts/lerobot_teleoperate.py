@@ -125,7 +125,6 @@ class TeleoperateConfig:
     # Whether to  display compressed images in Rerun
     display_compressed_images: bool = False
 
-
 def teleop_loop(
     teleop: Teleoperator,
     robot: Robot,
@@ -137,75 +136,140 @@ def teleop_loop(
     duration: float | None = None,
     display_compressed_images: bool = False,
 ):
-    """
-    This function continuously reads actions from a teleoperation device, processes them through optional
-    pipelines, sends them to a robot, and optionally displays the robot's state. The loop runs at a
-    specified frequency until a set duration is reached or it is manually interrupted.
-
-    Args:
-        teleop: The teleoperator device instance providing control actions.
-        robot: The robot instance being controlled.
-        fps: The target frequency for the control loop in frames per second.
-        display_data: If True, fetches robot observations and displays them in the console and Rerun.
-        display_compressed_images: If True, compresses images before sending them to Rerun for display.
-        duration: The maximum duration of the teleoperation loop in seconds. If None, the loop runs indefinitely.
-        teleop_action_processor: An optional pipeline to process raw actions from the teleoperator.
-        robot_action_processor: An optional pipeline to process actions before they are sent to the robot.
-        robot_observation_processor: An optional pipeline to process raw observations from the robot.
-    """
-
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
-    while True:
-        loop_start = time.perf_counter()
 
-        # Get robot observation
-        # Not really needed for now other than for visualization
-        # teleop_action_processor can take None as an observation
-        # given that it is the identity processor as default
-        obs = robot.get_observation()
+    # ============ CSV 记录设置 ============
+    import csv
+    import os
 
-        if robot.name == "unitree_g1":
-            teleop.send_feedback(obs)
+    csv_path = os.path.join(os.getcwd(), "teleop_data.csv")
+    logging.info(f"========================================")
+    logging.info(f"CSV will be saved to: {csv_path}")
+    logging.info(f"========================================")
 
-        # Get teleop action
-        raw_action = teleop.get_action()
+    csv_file = open(csv_path, "w", newline="")
+    csv_writer = None
+    frame_idx = 0
+    # =====================================
 
-        # Process teleop action through pipeline
-        teleop_action = teleop_action_processor((raw_action, obs))
+    try:
+        while True:
+            loop_start = time.perf_counter()
 
-        # Process action for robot through pipeline
-        robot_action_to_send = robot_action_processor((teleop_action, obs))
+            # 1. Get robot observation
+            t_obs_start = time.perf_counter()
+            obs = robot.get_observation()
+            t_obs = (time.perf_counter() - t_obs_start) * 1000
 
-        # Send processed action to robot (robot_action_processor.to_output should return RobotAction)
-        _ = robot.send_action(robot_action_to_send)
+            if robot.name == "unitree_g1":
+                teleop.send_feedback(obs)
 
-        if display_data:
-            # Process robot observation through pipeline
-            obs_transition = robot_observation_processor(obs)
+            # 2. Get teleop action
+            t_act_start = time.perf_counter()
+            raw_action = teleop.get_action()
+            t_act = (time.perf_counter() - t_act_start) * 1000
 
-            log_rerun_data(
-                observation=obs_transition,
-                action=teleop_action,
-                compress_images=display_compressed_images,
+            # Processing pipelines
+            t_proc_start = time.perf_counter()
+            teleop_action = teleop_action_processor((raw_action, obs))
+            robot_action_to_send = robot_action_processor((teleop_action, obs))
+            t_proc = (time.perf_counter() - t_proc_start) * 1000
+
+            # 3. Send action out
+            t_send_start = time.perf_counter()
+            _ = robot.send_action(robot_action_to_send)
+            t_send = (time.perf_counter() - t_send_start) * 1000
+
+            # ============ 写CSV ============
+            timestamp = time.perf_counter() - start
+
+            # 提取从臂观测（只要数值类型）
+            obs_joint_data = {}
+            for key, val in obs.items():
+                if isinstance(val, (int, float)):
+                    obs_joint_data[f"obs_{key}"] = round(val, 6)
+
+            # 提取主臂原始动作
+            leader_data = {}
+            for key, val in raw_action.items():
+                if isinstance(val, (int, float)):
+                    leader_data[f"leader_{key}"] = round(val, 6)
+
+            # 提取处理后的动作
+            action_data = {}
+            for key, val in robot_action_to_send.items():
+                if isinstance(val, (int, float)):
+                    action_data[f"action_{key}"] = round(val, 6)
+
+            row = {
+                "frame": frame_idx,
+                "timestamp": round(timestamp, 4),
+                **leader_data,
+                **action_data,
+                **obs_joint_data,
+            }
+
+            # 第一帧：写表头
+            if csv_writer is None:
+                csv_writer = csv.DictWriter(csv_file, fieldnames=list(row.keys()))
+                csv_writer.writeheader()
+                csv_file.flush()
+                logging.info(f"CSV header written. Columns: {list(row.keys())}")
+
+            csv_writer.writerow(row)
+
+            # 每50帧flush一次，保证数据落盘
+            if frame_idx % 50 == 0:
+                csv_file.flush()
+                if frame_idx % 500 == 0:
+                    logging.info(f"CSV: {frame_idx} frames written to {csv_path}")
+
+            frame_idx += 1
+            # ================================
+
+            if display_data:
+                obs_transition = robot_observation_processor(obs)
+                log_rerun_data(
+                    observation=obs_transition,
+                    action=teleop_action,
+                    compress_images=display_compressed_images,
+                )
+                print("\n" + "-" * (display_len + 10))
+                print(f"{'NAME':<{display_len}} | {'NORM':>7}")
+                for motor, value in robot_action_to_send.items():
+                    print(f"{motor:<{display_len}} | {value:>7.2f}")
+                move_cursor_up(len(robot_action_to_send) + 3)
+
+            dt_s = time.perf_counter() - loop_start
+            precise_sleep(max(1 / fps - dt_s, 0.0))
+            loop_s = time.perf_counter() - loop_start
+
+            action_age_ms = getattr(teleop, "latest_action_age_ms", None)
+            action_age_str = f"{action_age_ms:.1f}ms" if action_age_ms is not None else "N/A"
+
+            logging.info(
+                f"Hz: {1/loop_s:.1f} | Obs: {t_obs:.1f}ms | GetAct: {t_act:.1f}ms | "
+                f"ActionAge: {action_age_str} | Proc: {t_proc:.1f}ms | SendAct: {t_send:.1f}ms"
             )
 
-            print("\n" + "-" * (display_len + 10))
-            print(f"{'NAME':<{display_len}} | {'NORM':>7}")
-            # Display the final robot action that was sent
-            for motor, value in robot_action_to_send.items():
-                print(f"{motor:<{display_len}} | {value:>7.2f}")
-            move_cursor_up(len(robot_action_to_send) + 3)
+            if duration is not None and time.perf_counter() - start >= duration:
+                break
 
-        dt_s = time.perf_counter() - loop_start
-        precise_sleep(max(1 / fps - dt_s, 0.0))
-        loop_s = time.perf_counter() - loop_start
-        print(f"Teleop loop time: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
-        move_cursor_up(1)
-
-        if duration is not None and time.perf_counter() - start >= duration:
-            return
-
+    except KeyboardInterrupt:
+        logging.info("KeyboardInterrupt received, saving CSV...")
+    finally:
+        # ============ 确保CSV关闭 ============
+        try:
+            csv_file.flush()
+            csv_file.close()
+            logging.info(f"========================================")
+            logging.info(f"CSV SAVED: {frame_idx} frames -> {csv_path}")
+            logging.info(f"File size: {os.path.getsize(csv_path)} bytes")
+            logging.info(f"========================================")
+        except Exception as e:
+            logging.error(f"Error closing CSV: {e}")
+        # ======================================
 
 @parser.wrap()
 def teleoperate(cfg: TeleoperateConfig):

@@ -38,6 +38,10 @@ class OneroTeleopLeaderConfigBase(RobotConfig):
     enable_gripper: bool = False
     enable_gripper_joystick: bool = True
 
+    # Optional low-level MIT gains passed to oneroarm_api_py (length should match dof)
+    mit_kp: list[float] | None = None
+    mit_kd: list[float] | None = None
+
     # Robot Physical settings
     home_joints_positions: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
