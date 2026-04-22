@@ -41,7 +41,7 @@ The script:
 
 ```python
 # New usage pattern (after migration)
-from lerobot.policies.factory import make_policy, make_pre_post_processors
+from lerobot.policies import make_policy, make_pre_post_processors
 
 # Load model and processors separately
 policy = make_policy(config, ds_meta=dataset.meta)

@@ -16,9 +16,8 @@
 
 import time
 
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.robots.lekiwi.config_lekiwi import LeKiwiClientConfig
-from lerobot.robots.lekiwi.lekiwi_client import LeKiwiClient
+from lerobot.datasets import LeRobotDataset
+from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
 from lerobot.utils.constants import ACTION
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
@@ -35,9 +34,7 @@ def main():
 
     # Fetch the dataset to replay
     dataset = LeRobotDataset("<hf_username>/<dataset_repo_id>", episodes=[EPISODE_IDX])
-    # Filter dataset to only include frames from the specified episode since episodes are chunked in dataset V3.0
-    episode_frames = dataset.hf_dataset.filter(lambda x: x["episode_index"] == EPISODE_IDX)
-    actions = episode_frames.select_columns(ACTION)
+    actions = dataset.select_columns(ACTION)
 
     # Connect to the robot
     robot.connect()
@@ -48,7 +45,7 @@ def main():
 
         print("Starting replay loop...")
         log_say(f"Replaying episode {EPISODE_IDX}")
-        for idx in range(len(episode_frames)):
+        for idx in range(dataset.num_frames):
             t0 = time.perf_counter()
 
             # Get recorded action from dataset

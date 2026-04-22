@@ -15,6 +15,8 @@
 """
 Replays the actions of an episode from a dataset on a robot.
 
+Requires: pip install 'lerobot[core_scripts]'  (includes dataset + hardware + viz extras)
+
 Examples:
 
 ```shell
@@ -46,7 +48,7 @@ from pathlib import Path
 from pprint import pformat
 
 from lerobot.configs import parser
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 from lerobot.processor import (
     make_default_robot_action_processor,
 )
@@ -104,15 +106,13 @@ def replay(cfg: ReplayConfig):
     robot = make_robot_from_config(cfg.robot)
     dataset = LeRobotDataset(cfg.dataset.repo_id, root=cfg.dataset.root, episodes=[cfg.dataset.episode])
 
-    # Filter dataset to only include frames from the specified episode since episodes are chunked in dataset V3.0
-    episode_frames = dataset.hf_dataset.filter(lambda x: x["episode_index"] == cfg.dataset.episode)
-    actions = episode_frames.select_columns(ACTION)
+    actions = dataset.select_columns(ACTION)
 
     robot.connect()
 
     try:
         log_say("Replaying episode", cfg.play_sounds, blocking=True)
-        for idx in range(len(episode_frames)):
+        for idx in range(dataset.num_frames):
             start_episode_t = time.perf_counter()
 
             action_array = actions[idx][ACTION]

@@ -19,10 +19,10 @@ This means that your favorite policy can be used like this:
 ```python
 import torch
 
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.policies.factory import make_pre_post_processors
+from lerobot.datasets import LeRobotDataset
+from lerobot.policies import make_pre_post_processors
 from lerobot.policies.your_policy import YourPolicy
-from lerobot.processor.pipeline import RobotProcessorPipeline, PolicyProcessorPipeline
+from lerobot.processor import RobotProcessorPipeline, PolicyProcessorPipeline
 dataset = LeRobotDataset("hf_user/dataset", episodes=[0])
 sample = dataset[10]
 
@@ -260,7 +260,7 @@ Since processor pipelines can add new features (like velocity fields), change te
 These functions work together by starting with robot hardware specifications (`create_initial_features()`) then simulating the entire pipeline transformation (`aggregate_pipeline_dataset_features()`) to compute the final feature dictionary that gets passed to `LeRobotDataset.create()`, ensuring perfect alignment between what processors output and what datasets expect to store.
 
 ```python
-from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features
+from lerobot.datasets import aggregate_pipeline_dataset_features
 
 # Start with robot's raw features
 initial_features = create_initial_features(

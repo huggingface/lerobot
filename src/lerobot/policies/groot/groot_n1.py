@@ -41,12 +41,13 @@ try:
 except ImportError:
     tree = None
 
-from lerobot.policies.groot.action_head.flow_matching_action_head import (
+from lerobot.utils.constants import ACTION, HF_LEROBOT_HOME
+
+from .action_head.flow_matching_action_head import (
     FlowmatchingActionHead,
     FlowmatchingActionHeadConfig,
 )
-from lerobot.policies.groot.utils import ensure_eagle_cache_ready
-from lerobot.utils.constants import ACTION, HF_LEROBOT_HOME
+from .utils import ensure_eagle_cache_ready
 
 DEFAULT_VENDOR_EAGLE_PATH = str((Path(__file__).resolve().parent / "eagle2_hg_model").resolve())
 DEFAULT_TOKENIZER_ASSETS_REPO = "lerobot/eagle2hg-processor-groot-n1p5"
@@ -220,6 +221,7 @@ class GR00TN15(PreTrainedModel):
         self.action_horizon = config.action_horizon
         self.action_dim = config.action_dim
         self.compute_dtype = config.compute_dtype
+        self.post_init()
 
     def validate_inputs(self, inputs):
         # NOTE -- this should be handled internally by the model
