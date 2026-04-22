@@ -103,6 +103,8 @@ lerobot-teleoperate \
   --display_data=true
 ```
 
+> **Feetech timeout / comms error on SO-100 / SO-101?** Before touching software, check the **motor LEDs** on the daisy chain. When powered, every motor from gripper → base should briefly flash its red LED. If any motor is dark or the chain stops mid-way, it's a wiring issue: reseat the 3-pin cables, check the controller-board power supply, and make sure each motor is fully clicked in. Most "timeout" errors are physical, not code.
+
 **4.6 Record a dataset** — keys: **→** next, **←** redo, **ESC** finish & upload.
 
 ```bash
@@ -121,7 +123,7 @@ lerobot-record \
 ```
 
 **4.7 Visualize** — **always** do this before training. Look for missing frames, camera blur, unreachable targets, inconsistent object positions.
-After upload: https://huggingface.co/spaces/lerobot/visualize_dataset → paste `${HF_USER}/my_task`.
+After upload: https://huggingface.co/spaces/lerobot/visualize_dataset → paste `${HF_USER}/my_task`. Works for **any LeRobot-formatted Hub dataset** — use it to scout other datasets, inspect episode quality, or debug your own data before retraining.
 
 **4.8 Replay an episode** (sanity check)
 
