@@ -36,7 +36,7 @@ import torch.nn.functional as F  # noqa: N812
 import torchvision
 from torch import Tensor
 
-from lerobot.utils.import_utils import _transformers_available
+from lerobot.utils.import_utils import _diffusers_available, _transformers_available, require_package
 
 from .configuration_multi_task_dit import MultiTaskDiTConfig
 
@@ -46,6 +46,13 @@ if TYPE_CHECKING or _transformers_available:
 else:
     CLIPTextModel = None
     CLIPVisionModel = None
+
+if TYPE_CHECKING or _diffusers_available:
+    from diffusers.schedulers.scheduling_ddim import DDIMScheduler
+    from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
+else:
+    DDIMScheduler = None
+    DDPMScheduler = None
 from lerobot.utils.constants import (
     ACTION,
     OBS_IMAGES,
@@ -65,6 +72,8 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
     name = "multi_task_dit"
 
     def __init__(self, config: MultiTaskDiTConfig, **kwargs):
+        require_package("transformers", extra="multi_task_dit")
+        require_package("diffusers", extra="multi_task_dit")
         super().__init__(config)
         config.validate_features()
         self.config = config
@@ -642,12 +651,6 @@ class DiffusionObjective(nn.Module):
             "clip_sample_range": config.clip_sample_range,
             "prediction_type": config.prediction_type,
         }
-
-        from lerobot.utils.import_utils import require_package
-
-        require_package("diffusers", extra="multi_task_dit")
-        from diffusers.schedulers.scheduling_ddim import DDIMScheduler
-        from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 
         if config.noise_scheduler_type == "DDPM":
             self.noise_scheduler: DDPMScheduler | DDIMScheduler = DDPMScheduler(**scheduler_kwargs)
