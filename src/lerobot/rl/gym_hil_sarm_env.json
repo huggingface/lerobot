@@ -1,0 +1,33 @@
+{
+    "env": {
+        "name": "gym_hil",
+        "task": "PandaPickCubeGamepad-v0",
+        "fps": 10,
+        "robot": null,
+        "teleop": null,
+        "processor": {
+            "control_mode": "gamepad",
+            "gripper": {
+                "use_gripper": true,
+                "gripper_penalty": -0.02
+            },
+            "reset": {
+                "reset_time_s": 2.0,
+                "control_time_s": 15.0,
+                "terminate_on_success": true
+            },
+            "reward_model": {
+                "type": "sarm",
+                "pretrained_path": "outputs/gym_hil_sarm/checkpoints/last/pretrained_model",
+                "device": "cuda",
+                "task": "pick_cube",
+                "head_mode": "sparse",
+                "reward_mode": "delta",
+                "success_threshold": 0.9,
+                "success_reward": 1.0,
+                "stats_dataset_repo_id": "aractingi/franka_sim_pick_lift_6"
+            }
+        }
+    },
+    "device": "cuda"
+}

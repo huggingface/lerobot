@@ -225,6 +225,10 @@ lerobot-find-joint-limits="lerobot.scripts.lerobot_find_joint_limits:main"
 lerobot-imgtransform-viz="lerobot.scripts.lerobot_imgtransform_viz:main"
 lerobot-edit-dataset="lerobot.scripts.lerobot_edit_dataset:main"
 lerobot-setup-can="lerobot.scripts.lerobot_setup_can:main"
+lerobot-train-reward-classifier="lerobot.scripts.lerobot_train_reward_classifier:main"
+lerobot-split-reward-dataset="lerobot.policies.sac.reward_model.split_dataset:main"
+lerobot-prepare-sarm-data="lerobot.rl.prepare_sarm_data:main"
+lerobot-relabel-sarm="lerobot.rl.relabel_sarm:main"
 
 # ---------------- Tool Configurations ----------------
 [tool.setuptools.package-data]

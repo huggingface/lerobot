@@ -190,6 +190,37 @@ class RewardClassifierConfig:
 
 
 @dataclass
+class EnvRewardModelConfig:
+    """Unified reward-model config. Dispatches on ``type``.
+
+    Supported values of ``type``:
+    - ``"manual"`` / ``"none"``: no reward model (reward comes from env/teleop button).
+    - ``"height_gripper"``: state-based lift detector (needs z_index, gripper_index).
+    - ``"cnn"``: binary image classifier (needs pretrained_path).
+    - ``"sarm"``: stage-aware reward model (needs pretrained_path, task).
+
+    Extra keys not relevant to the chosen type are ignored at build time.
+    """
+
+    type: str = "manual"
+    pretrained_path: str | None = None
+    device: str = "cpu"
+    success_threshold: float = 0.5
+    success_reward: float = 1.0
+    # height_gripper
+    height_threshold: float = 0.21
+    gripper_closed_threshold: float = 0.5
+    z_index: int = 2
+    gripper_index: int = 7
+    # sarm
+    task: str = ""
+    head_mode: str = "sparse"
+    reward_mode: str = "binary"
+    stats_dataset_repo_id: str | None = None
+    eval_every_n_steps: int = 1
+
+
+@dataclass
 class InverseKinematicsConfig:
     """Configuration for inverse kinematics processing."""
 
@@ -240,6 +271,7 @@ class HILSerlProcessorConfig:
     reset: ResetConfig | None = None
     inverse_kinematics: InverseKinematicsConfig | None = None
     reward_classifier: RewardClassifierConfig | None = None
+    reward_model: EnvRewardModelConfig | None = None
     max_gripper_pos: float | None = 100.0
 
 

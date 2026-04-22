@@ -391,6 +391,27 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
     return env, teleop_device
 
 
+def _maybe_build_reward_step(cfg: HILSerlRobotEnvConfig, terminate_on_success: bool, device: str):
+    """Dispatch ``cfg.processor.reward_model`` to a reward processor step, or None.
+
+    ``type="manual"`` / ``"none"`` / ``None`` → returns None (reward comes from env
+    or from the teleop SUCCESS button via ``InterventionActionProcessorStep``).
+    """
+    rm_cfg = getattr(cfg.processor, "reward_model", None)
+    if rm_cfg is None or rm_cfg.type in (None, "manual", "none"):
+        return None
+
+    import dataclasses as _dc
+
+    from lerobot.processor.reward_model import build_reward_model_step
+
+    reward_cfg_dict = _dc.asdict(rm_cfg)
+    reward_cfg_dict["terminate_on_success"] = terminate_on_success
+    if reward_cfg_dict.get("device") in (None, "cpu") and device not in (None, "cpu"):
+        reward_cfg_dict["device"] = device
+    return build_reward_model_step(reward_cfg_dict)
+
+
 def make_processors(
     env: gym.Env, teleop_device: Teleoperator | None, cfg: HILSerlRobotEnvConfig, device: str = "cpu"
 ) -> tuple[
@@ -421,9 +442,14 @@ def make_processors(
             GymHILAdapterProcessorStep(),
             Numpy2TorchActionProcessorStep(),
             VanillaObservationProcessorStep(),
-            AddBatchDimensionProcessorStep(),
-            DeviceProcessorStep(device=device),
         ]
+
+        reward_step = _maybe_build_reward_step(cfg, terminate_on_success, device)
+        if reward_step is not None:
+            env_pipeline_steps.append(reward_step)
+
+        env_pipeline_steps.append(AddBatchDimensionProcessorStep())
+        env_pipeline_steps.append(DeviceProcessorStep(device=device))
 
         return DataProcessorPipeline(
             steps=env_pipeline_steps, to_transition=identity_transition, to_output=identity_transition
@@ -463,6 +489,10 @@ def make_processors(
             env_pipeline_steps.append(
                 TimeLimitProcessorStep(max_episode_steps=int(cfg.processor.reset.control_time_s * cfg.fps))
             )
+
+        reward_step = _maybe_build_reward_step(cfg, terminate_on_success, device)
+        if reward_step is not None:
+            env_pipeline_steps.append(reward_step)
 
         env_pipeline_steps.append(AddBatchDimensionProcessorStep())
         env_pipeline_steps.append(DeviceProcessorStep(device=device))
@@ -546,6 +576,10 @@ def make_processors(
                 terminate_on_success=terminate_on_success,
             )
         )
+
+    reward_step = _maybe_build_reward_step(cfg, terminate_on_success, device)
+    if reward_step is not None:
+        env_pipeline_steps.append(reward_step)
 
     env_pipeline_steps.append(AddBatchDimensionProcessorStep())
     env_pipeline_steps.append(DeviceProcessorStep(device=device))

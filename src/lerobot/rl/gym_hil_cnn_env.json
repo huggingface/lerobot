@@ -1,0 +1,29 @@
+{
+    "env": {
+        "name": "gym_hil",
+        "task": "PandaPickCubeGamepad-v0",
+        "fps": 10,
+        "robot": null,
+        "teleop": null,
+        "processor": {
+            "control_mode": "gamepad",
+            "gripper": {
+                "use_gripper": true,
+                "gripper_penalty": -0.02
+            },
+            "reset": {
+                "reset_time_s": 2.0,
+                "control_time_s": 15.0,
+                "terminate_on_success": true
+            },
+            "reward_model": {
+                "type": "cnn",
+                "pretrained_path": "outputs/gym_hil_cnn_reward/checkpoints/last/pretrained_model",
+                "device": "cuda",
+                "success_threshold": 0.7,
+                "success_reward": 1.0
+            }
+        }
+    },
+    "device": "cuda"
+}
