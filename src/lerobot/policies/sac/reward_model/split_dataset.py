@@ -35,6 +35,14 @@ _SKIP_KEYS = {"task_index", "timestamp", "episode_index", "frame_index", "index"
 
 
 def _build_new_frame(frame: dict) -> dict:
+    """Strip dataset-level metadata, reshape scalars, restore image channel-last uint8.
+
+    LeRobotDataset reads image features as channel-first float32 in [0, 1]. The
+    write path (add_frame) validates against the feature spec which expects
+    channel-last uint8. Undo the read-time transform for image keys.
+    """
+    import torch
+
     new_frame: dict = {}
     for key, value in frame.items():
         if key in _SKIP_KEYS:
@@ -43,6 +51,9 @@ def _build_new_frame(frame: dict) -> dict:
             value = value.unsqueeze(0)
         if key.startswith("complementary_info") and hasattr(value, "dim") and value.dim() == 0:
             value = value.unsqueeze(0)
+        if "image" in key and isinstance(value, torch.Tensor) and value.ndim == 3 and value.shape[0] in (1, 3):
+            # (C, H, W) float32 in [0, 1] -> (H, W, C) uint8
+            value = (value.clamp(0.0, 1.0) * 255.0).round().to(torch.uint8).permute(1, 2, 0).contiguous().numpy()
         new_frame[key] = value
     return new_frame
 

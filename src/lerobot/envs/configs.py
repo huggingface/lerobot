@@ -286,6 +286,10 @@ class HILSerlRobotEnvConfig(EnvConfig):
 
     name: str = "real_robot"
 
+    # Run env in fast (non-realtime) mode where supported (e.g. sim_assembling).
+    # Actor rollouts then advance as fast as compute allows. No effect on real robots.
+    realtime: bool = True
+
     @property
     def gym_kwargs(self) -> dict:
         return {}

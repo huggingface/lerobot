@@ -329,6 +329,37 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
 
         return env, None
 
+    # Custom MuJoCo sim (simulator_for_IL_RL, UR10e+2F85, 3-obj nesting).
+    # Uses the same flat gym-hil-style obs / 3D-delta action, so the gym_hil
+    # processor pipeline applies unchanged.
+    if cfg.name == "sim_assembling":
+        assert cfg.robot is None, "sim_assembling env has no physical robot"
+        import lerobot.envs.sim_assembling  # noqa: F401  # registers gym id
+
+        use_gripper = cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else True
+        control_time_s = cfg.processor.reset.control_time_s if cfg.processor.reset is not None else 15.0
+        reset_time_s = cfg.processor.reset.reset_time_s if cfg.processor.reset is not None else 0.0
+        max_ep = max(1, int(round(control_time_s * cfg.fps)))
+        # mode='fast' lifts the real-time throttle (control_hz no longer caps wall-clock).
+        fast = bool(getattr(cfg, "realtime", False) is False)
+        sim_mode = "fast" if fast else "realtime"
+        env_kwargs = {
+            "control_hz": float(cfg.fps),
+            "mode": sim_mode,
+            "max_episode_steps": max_ep,
+            "render_mode": "rgb_array",
+            "use_gripper": use_gripper,
+        }
+        env = gym.make(f"sim_assembling/{cfg.task}", **env_kwargs)
+
+        teleop_device = None
+        if cfg.teleop is not None:
+            teleop_device = make_teleoperator_from_config(cfg.teleop)
+            teleop_device.connect()
+
+        _ = reset_time_s  # currently unused for sim (no physical reset delay needed)
+        return env, teleop_device
+
     # RC10 real robot environment (task-space jog controller)
     if cfg.name == "rc10":
         from lerobot.robots.rc10 import RC10Robot, RC10RobotEnv, RC10RobotEnvConfig
@@ -432,11 +463,22 @@ def make_processors(
         cfg.processor.reset.terminate_on_success if cfg.processor.reset is not None else True
     )
 
-    if cfg.name == "gym_hil":
-        action_pipeline_steps = [
-            InterventionActionProcessorStep(terminate_on_success=terminate_on_success),
-            Torch2NumpyActionProcessorStep(),
-        ]
+    if cfg.name in ("gym_hil", "sim_assembling"):
+        # Same obs/action shape contract as gym-hil; same processor pipeline applies.
+        action_pipeline_steps: list = []
+        if teleop_device is not None:
+            action_pipeline_steps.extend(
+                [
+                    AddTeleopActionAsComplimentaryDataStep(teleop_device=teleop_device),
+                    AddTeleopEventsAsInfoStep(teleop_device=teleop_device),
+                ]
+            )
+        action_pipeline_steps.extend(
+            [
+                InterventionActionProcessorStep(terminate_on_success=terminate_on_success),
+                Torch2NumpyActionProcessorStep(),
+            ]
+        )
 
         env_pipeline_steps = [
             GymHILAdapterProcessorStep(),
