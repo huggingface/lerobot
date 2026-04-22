@@ -103,7 +103,7 @@ lerobot-teleoperate \
   --display_data=true
 ```
 
-> **Feetech timeout / comms error on SO-100 / SO-101?** Before touching software, check the **motor LEDs** on the daisy chain. When powered, every motor from gripper → base should briefly flash its red LED. If any motor is dark or the chain stops mid-way, it's a wiring issue: reseat the 3-pin cables, check the controller-board power supply, and make sure each motor is fully clicked in. Most "timeout" errors are physical, not code.
+> **Feetech timeout / comms error on SO-100 / SO-101?** Before touching software, check the **motor LEDs** on the daisy chain. When powered, every motor from gripper → base has its red LED on. If any motor is dark or the chain stops mid-way, it's a wiring issue: reseat the 3-pin cables, check the controller-board power supply, and make sure each motor is fully clicked in. Most "timeout" errors are physical, not code.
 
 **4.6 Record a dataset** — keys: **→** next, **←** redo, **ESC** finish & upload.
 
