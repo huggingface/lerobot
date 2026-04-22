@@ -459,7 +459,8 @@ class SARMEncodingProcessorStep(ProcessorStep):
             output = self.clip_model.get_image_features(**inputs)
             if not isinstance(output, torch.Tensor):
                 output = output.pooler_output
-                assert output is not None, "pooler_output should not be None for CLIP models."
+                if output is None:
+                    raise ValueError("pooler_output should not be None for CLIP models.")
             embeddings = output.detach().cpu()
 
             # Handle single frame case
@@ -491,7 +492,8 @@ class SARMEncodingProcessorStep(ProcessorStep):
         output = self.clip_model.get_text_features(**inputs)
         if not isinstance(output, torch.Tensor):
             output = output.pooler_output
-            assert output is not None, "pooler_output should not be None for CLIP models."
+            if output is None:
+                raise ValueError("pooler_output should not be None for CLIP models.")
         text_embedding = output.detach().cpu()
         text_embedding = text_embedding.expand(batch_size, -1)
 
