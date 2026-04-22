@@ -142,10 +142,10 @@ class ACTPolicy(PreTrainedPolicy):
 
         actions_hat, (mu_hat, log_sigma_x2_hat) = self.model(batch)
 
+        abs_err = F.l1_loss(batch[ACTION], actions_hat, reduction="none")
         valid_mask = ~batch["action_is_pad"].unsqueeze(-1)
-        l1_loss = (
-            F.l1_loss(batch[ACTION], actions_hat, reduction="none") * valid_mask
-        ).sum() / valid_mask.sum().clamp_min(1)
+        num_valid = valid_mask.sum() * abs_err.shape[-1]
+        l1_loss = (abs_err * valid_mask).sum() / num_valid.clamp_min(1)
 
         loss_dict = {"l1_loss": l1_loss.item()}
         if self.config.use_vae:
