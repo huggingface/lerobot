@@ -184,7 +184,7 @@ Same grasp, approach vector, and timing. Coherent strategies are much easier to 
 
 ### 5.5 Start small, then extend (the golden rule)
 
-- **First 50 episodes = constrained version** of the task: one object, fixed position, one camera angle, one operator.
+- **First 50 episodes = constrained version** of the task: one object, fixed position, fixed camera setup, one operator.
 - Train a quick ACT model. See what fails.
 - **Then add diversity** along one axis at a time: more positions → more lighting → more objects → more operators.
 - Don't try to collect the "perfect dataset" on day one. Iterate.
@@ -197,14 +197,14 @@ Same grasp, approach vector, and timing. Coherent strategies are much easier to 
 
 ### 5.7 Recommended defaults for your first task
 
-| Setting          | Value                                                              |
-| ---------------- | ------------------------------------------------------------------ |
-| Episodes         | **50** to start, scale to 100–300 after first training             |
-| Episode length   | 20–45 s (shorter is fine for grasp/place)                          |
-| Reset time       | 10 s                                                               |
-| FPS              | 30                                                                 |
-| Cameras          | **1 fixed front camera** (add wrist cam only after baseline works) |
-| Task description | Short, specific, action-phrased sentence                           |
+| Setting          | Value                                                                                                                                                 |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Episodes         | **50** to start, scale to 100–300 after first training                                                                                                |
+| Episode length   | 20–45 s (shorter is fine for grasp/place)                                                                                                             |
+| Reset time       | 10 s                                                                                                                                                  |
+| FPS              | 30                                                                                                                                                    |
+| Cameras          | **2 cameras recommended**: 1 fixed front + 1 wrist. Multi-view often outperforms single-view. A single fixed camera also works to keep things simple. |
+| Task description | Short, specific, action-phrased sentence                                                                                                              |
 
 ### 5.8 Troubleshooting signal
 
@@ -243,7 +243,7 @@ All policies typically train for **5–10 epochs** (see §7).
 
 - **< 8 GB VRAM (laptop, 3060, M-series Mac):** → `act`. Maybe `diffusion` if you have ~6–8 GB free.
 - **12–16 GB VRAM (4070/4080, A4000):** → `smolvla` with defaults, or `act`/`diffusion` with larger batch. `pi0`/`pi05`/`wall_x`/`xvla` feasible only with small batch + gradient accumulation.
-- **24+ GB VRAM (3090/4090/A5000):** → any policy. Prefer `smolvla` (unfrozen) for multi-task; `act` for single-task grasp-and-place (still often the best ROI). Could experiment with `pi0` or `pi05`
+- **24+ GB VRAM (3090/4090/A5000):** → any policy. Prefer `smolvla` (unfrozen) for multi-task; `act` for single-task grasp-and-place (still often the best ROI). Could experiment with `pi0` or `pi05` or `xvla`
 - **80 GB (A100/H100):** → any, with healthy batch. `pi05`, `xvla`, `wall_x` become comfortable.
 - **CPU only:** → don't train here. Use Google Colab (see [`docs/source/notebooks.mdx`](./docs/source/notebooks.mdx)) or a rented GPU.
 
