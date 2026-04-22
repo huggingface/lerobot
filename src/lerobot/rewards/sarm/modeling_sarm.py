@@ -645,16 +645,8 @@ class SARMRewardModel(PreTrainedRewardModel):
         return self.parameters()
 
     def reset(self):
-        """Required by PreTrainedPolicy but not used for reward models."""
+        """SARM has no episode-level state to reset."""
         pass
-
-    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
-        """Required by PreTrainedPolicy but not used for reward models."""
-        raise NotImplementedError("SARM model does not predict action chunks")
-
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        """Required by PreTrainedPolicy but not used for SARM."""
-        raise NotImplementedError("SARM model does not select actions")
 
     def _train_step(
         self,
