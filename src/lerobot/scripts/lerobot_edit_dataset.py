@@ -49,6 +49,14 @@ Delete episodes and save to a new dataset at a specific path and with a new repo
         --operation.type delete_episodes \
         --operation.episode_indices "[0, 2, 5]"
 
+Delete episodes and re-encode video segments with h264:
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht \
+        --operation.type delete_episodes \
+        --operation.episode_indices "[0, 2, 5]" \
+        --operation.camera_encoder_config.vcodec h264 \
+        --operation.camera_encoder_config.crf 23
+
 Split dataset by fractions (pusht_train, pusht_val):
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \
@@ -73,6 +81,14 @@ Split into more than two splits:
         --repo_id lerobot/pusht \
         --operation.type split \
         --operation.splits '{"train": 0.6, "val": 0.2, "test": 0.2}'
+
+Split dataset and re-encode video segments with h264:
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht \
+        --operation.type split \
+        --operation.splits '{"train": 0.8, "val": 0.2}' \
+        --operation.camera_encoder_config.vcodec h264 \
+        --operation.camera_encoder_config.crf 23
 
 Merge multiple datasets:
     lerobot-edit-dataset \
@@ -187,7 +203,7 @@ import abc
 import logging
 import shutil
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import draccus
@@ -195,6 +211,8 @@ import draccus
 from lerobot.configs import parser
 from lerobot.datasets import (
     LeRobotDataset,
+    VideoEncoderConfig,
+    camera_encoder_defaults,
     convert_image_to_video_dataset,
     delete_episodes,
     merge_datasets,
@@ -218,12 +236,14 @@ class OperationConfig(draccus.ChoiceRegistry, abc.ABC):
 @dataclass
 class DeleteEpisodesConfig(OperationConfig):
     episode_indices: list[int] | None = None
+    camera_encoder_config: VideoEncoderConfig = field(default_factory=camera_encoder_defaults)
 
 
 @OperationConfig.register_subclass("split")
 @dataclass
 class SplitConfig(OperationConfig):
     splits: dict[str, float | list[int]] | None = None
+    camera_encoder_config: VideoEncoderConfig = field(default_factory=camera_encoder_defaults)
 
 
 @OperationConfig.register_subclass("merge")
@@ -250,11 +270,7 @@ class ModifyTasksConfig(OperationConfig):
 @dataclass
 class ConvertImageToVideoConfig(OperationConfig):
     output_dir: str | None = None
-    vcodec: str = "libsvtav1"
-    pix_fmt: str = "yuv420p"
-    g: int = 2
-    crf: int = 30
-    fast_decode: int = 0
+    camera_encoder_config: VideoEncoderConfig = field(default_factory=camera_encoder_defaults)
     episode_indices: list[int] | None = None
     num_workers: int = 4
     max_episodes_per_batch: int | None = None
@@ -356,6 +372,7 @@ def handle_delete_episodes(cfg: EditDatasetConfig) -> None:
         episode_indices=cfg.operation.episode_indices,
         output_dir=output_dir,
         repo_id=output_repo_id,
+        camera_encoder_config=cfg.operation.camera_encoder_config,
     )
 
     logging.info(f"Dataset saved to {output_dir}")
@@ -387,6 +404,7 @@ def handle_split(cfg: EditDatasetConfig) -> None:
         dataset,
         splits=cfg.operation.splits,
         output_dir=cfg.new_root,
+        camera_encoder_config=cfg.operation.camera_encoder_config,
     )
 
     for split_name, split_ds in split_datasets.items():
@@ -557,11 +575,8 @@ def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
         dataset=dataset,
         output_dir=output_dir,
         repo_id=output_repo_id,
-        vcodec=getattr(cfg.operation, "vcodec", "libsvtav1"),
-        pix_fmt=getattr(cfg.operation, "pix_fmt", "yuv420p"),
-        g=getattr(cfg.operation, "g", 2),
-        crf=getattr(cfg.operation, "crf", 30),
-        fast_decode=getattr(cfg.operation, "fast_decode", 0),
+        camera_encoder_config=getattr(cfg.operation, "camera_encoder_config", None)
+        or camera_encoder_defaults(),
         episode_indices=getattr(cfg.operation, "episode_indices", None),
         num_workers=getattr(cfg.operation, "num_workers", 4),
         max_episodes_per_batch=getattr(cfg.operation, "max_episodes_per_batch", None),

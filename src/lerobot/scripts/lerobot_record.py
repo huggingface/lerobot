@@ -63,6 +63,27 @@ lerobot-record \\
   --dataset.streaming_encoding=true \\
   --dataset.encoder_threads=2
 ```
+
+Example recording with custom video encoding parameters:
+```shell
+lerobot-record \\
+    --robot.type=so100_follower \\
+    --robot.port=/dev/tty.usbmodem58760431541 \\
+    --robot.cameras="{laptop: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \\
+    --robot.id=black \\
+    --teleop.type=so100_leader \\
+    --teleop.port=/dev/tty.usbmodem58760431551 \\
+    --teleop.id=blue \\
+    --dataset.repo_id=<my_username>/<my_dataset_name> \\
+    --dataset.num_episodes=2 \\
+    --dataset.single_task="Grab the cube" \\
+    --dataset.streaming_encoding=true \\
+    --dataset.encoder_threads=2 \\
+    --dataset.camera_encoder_config.vcodec=h264 \\
+    --dataset.camera_encoder_config.preset=fast \\
+    --dataset.camera_encoder_config.extra_options={"tune": "film", "profile:v": "high", "bf": 2} \\
+    --display_data=true
+```
 """
 
 import logging
@@ -84,8 +105,10 @@ from lerobot.configs import parser
 from lerobot.configs.dataset import DatasetRecordConfig
 from lerobot.datasets import (
     LeRobotDataset,
+    VideoEncoderConfig,
     VideoEncodingManager,
     aggregate_pipeline_dataset_features,
+    camera_encoder_defaults,
     create_initial_features,
     safe_stop_image_writer,
 )
@@ -377,10 +400,10 @@ def record(
                 cfg.dataset.repo_id,
                 root=cfg.dataset.root,
                 batch_encoding_size=cfg.dataset.video_encoding_batch_size,
-                vcodec=cfg.dataset.vcodec,
+                camera_encoder_config=cfg.dataset.camera_encoder_config,
+                encoder_threads=cfg.dataset.encoder_threads,
                 streaming_encoding=cfg.dataset.streaming_encoding,
                 encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
-                encoder_threads=cfg.dataset.encoder_threads,
                 image_writer_processes=cfg.dataset.num_image_writer_processes if num_cameras > 0 else 0,
                 image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * num_cameras
                 if num_cameras > 0
@@ -406,10 +429,10 @@ def record(
                 image_writer_processes=cfg.dataset.num_image_writer_processes,
                 image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot.cameras),
                 batch_encoding_size=cfg.dataset.video_encoding_batch_size,
-                vcodec=cfg.dataset.vcodec,
+                camera_encoder_config=cfg.dataset.camera_encoder_config,
+                encoder_threads=cfg.dataset.encoder_threads,
                 streaming_encoding=cfg.dataset.streaming_encoding,
                 encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
-                encoder_threads=cfg.dataset.encoder_threads,
             )
 
         robot.connect()
@@ -420,7 +443,7 @@ def record(
 
         if not cfg.dataset.streaming_encoding:
             logging.info(
-                "Streaming encoding is disabled. If you have capable hardware, consider enabling it for way faster episode saving. --dataset.streaming_encoding=true --dataset.encoder_threads=2 # --dataset.vcodec=auto. More info in the documentation: https://huggingface.co/docs/lerobot/streaming_video_encoding"
+                "Streaming encoding is disabled. If you have capable hardware, consider enabling it for way faster episode saving. --dataset.streaming_encoding=true --dataset.encoder_threads=2 # --dataset.camera_encoder_config.vcodec=auto. More info in the documentation: https://huggingface.co/docs/lerobot/streaming_video_encoding"
             )
 
         with VideoEncodingManager(dataset):

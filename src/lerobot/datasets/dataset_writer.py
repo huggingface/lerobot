@@ -52,6 +52,7 @@ from .utils import (
 )
 from .video_utils import (
     StreamingVideoEncoder,
+    VideoEncoderConfig,
     concatenate_video_files,
     encode_video_frames,
     get_video_duration_in_s,
@@ -65,14 +66,19 @@ def _encode_video_worker(
     episode_index: int,
     root: Path,
     fps: int,
-    vcodec: str = "libsvtav1",
+    camera_encoder_config: VideoEncoderConfig | None = None,
     encoder_threads: int | None = None,
 ) -> Path:
     temp_path = Path(tempfile.mkdtemp(dir=root)) / f"{video_key}_{episode_index:03d}.mp4"
     fpath = DEFAULT_IMAGE_PATH.format(image_key=video_key, episode_index=episode_index, frame_index=0)
     img_dir = (root / fpath).parent
     encode_video_frames(
-        img_dir, temp_path, fps, vcodec=vcodec, overwrite=True, encoder_threads=encoder_threads
+        img_dir,
+        temp_path,
+        fps,
+        camera_encoder_config=camera_encoder_config,
+        encoder_threads=encoder_threads,
+        overwrite=True,
     )
     shutil.rmtree(img_dir)
     return temp_path
@@ -89,20 +95,21 @@ class DatasetWriter:
         self,
         meta: LeRobotDatasetMetadata,
         root: Path,
-        vcodec: str,
+        camera_encoder_config: VideoEncoderConfig,
         encoder_threads: int | None,
         batch_encoding_size: int,
         streaming_encoder: StreamingVideoEncoder | None = None,
         initial_frames: int = 0,
     ):
-        """Initialize the writer with metadata, codec, and encoding config.
+        """Initialize the writer with metadata, codec, and encoder config.
 
         Args:
             meta: Dataset metadata instance (used for feature schema, chunk
                 settings, and episode persistence).
             root: Local dataset root directory.
-            vcodec: Video codec for encoding (e.g. ``'libsvtav1'``, ``'h264'``).
-            encoder_threads: Threads per encoder instance. ``None`` for auto.
+            camera_encoder_config: Video encoder settings applied to all cameras.
+            encoder_threads: Number of encoder threads (global). ``None``
+                lets the codec decide.
             batch_encoding_size: Number of episodes to accumulate before
                 batch-encoding videos.
             streaming_encoder: Optional pre-built :class:`StreamingVideoEncoder`
@@ -111,7 +118,7 @@ class DatasetWriter:
         """
         self._meta = meta
         self._root = root
-        self._vcodec = vcodec
+        self._camera_encoder_config = camera_encoder_config
         self._encoder_threads = encoder_threads
         self._batch_encoding_size = batch_encoding_size
         self._streaming_encoder = streaming_encoder
@@ -284,7 +291,7 @@ class DatasetWriter:
                             episode_index,
                             self._root,
                             self._meta.fps,
-                            self._vcodec,
+                            self._camera_encoder_config,
                             self._encoder_threads,
                         ): video_key
                         for video_key in self._meta.video_keys
@@ -564,7 +571,12 @@ class DatasetWriter:
     def _encode_temporary_episode_video(self, video_key: str, episode_index: int) -> Path:
         """Use ffmpeg to convert frames stored as png into mp4 videos."""
         return _encode_video_worker(
-            video_key, episode_index, self._root, self._meta.fps, self._vcodec, self._encoder_threads
+            video_key,
+            episode_index,
+            self._root,
+            self._meta.fps,
+            self._camera_encoder_config,
+            self._encoder_threads,
         )
 
     def close_writer(self) -> None:
