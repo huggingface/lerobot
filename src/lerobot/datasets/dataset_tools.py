@@ -1850,7 +1850,9 @@ def convert_image_to_video_dataset(
                 video_path = new_meta.root / new_meta.video_path.format(
                     video_key=img_key, chunk_index=0, file_index=0
                 )
-                new_meta.info.features[img_key]["info"] = get_video_info(video_path)
+                new_meta.info.features[img_key]["info"] = get_video_info(
+                    video_path, camera_encoder_config=camera_encoder_config
+                )
 
         write_info(new_meta.info, new_meta.root)
 

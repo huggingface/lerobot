@@ -22,7 +22,7 @@ import shutil
 import tempfile
 import threading
 import warnings
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from fractions import Fraction
 from pathlib import Path
 from threading import Lock
@@ -1040,8 +1040,18 @@ def get_audio_info(video_path: Path | str) -> dict:
     return audio_info
 
 
-def get_video_info(video_path: Path | str) -> dict:
-    # Set logging level
+def get_video_info(
+    video_path: Path | str,
+    camera_encoder_config: "VideoEncoderConfig | None" = None,
+) -> dict:
+    """Build the ``video.*`` / ``audio.*`` info dict persisted in ``info.json``.
+
+    Args:
+        video_path: Path to the encoded video file to probe.
+        camera_encoder_config: If provided, record the exact encoder settings used to encode this 
+            video. Stream-derived values take precedence — encoder fields are only written for keys
+            not already populated from the video file itself.
+    """
     logging.getLogger("libav").setLevel(av.logging.WARNING)
 
     # Getting video stream information
@@ -1071,6 +1081,11 @@ def get_video_info(video_path: Path | str) -> dict:
 
     # Adding audio stream information
     video_info.update(**get_audio_info(video_path))
+
+    # Add additional encoder configuration if provided
+    if camera_encoder_config is not None:
+        for field_name, field_value in asdict(camera_encoder_config).items():
+            video_info.setdefault(f"video.{field_name}", field_value)
 
     return video_info
 

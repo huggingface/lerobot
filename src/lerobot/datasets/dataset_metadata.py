@@ -48,7 +48,7 @@ from .utils import (
     is_valid_version,
     update_chunk_file_indices,
 )
-from .video_utils import get_video_info
+from .video_utils import VideoEncoderConfig, get_video_info
 
 CODEBASE_VERSION = "v3.0"
 
@@ -510,10 +510,23 @@ class LeRobotDatasetMetadata:
         self.stats = aggregate_stats([self.stats, episode_stats]) if self.stats is not None else episode_stats
         write_stats(self.stats, self.root)
 
-    def update_video_info(self, video_key: str | None = None) -> None:
-        """
+    def update_video_info(
+        self,
+        video_key: str | None = None,
+        camera_encoder_config: VideoEncoderConfig | None = None,
+    ) -> None:
+        """Populate per-feature video info in ``info.json``.
+
         Warning: this function writes info from first episode videos, implicitly assuming that all videos have
         been encoded the same way. Also, this means it assumes the first episode exists.
+
+        Args:
+            video_key: If provided, only update this video key. Otherwise update
+                all video keys in the dataset.
+            camera_encoder_config: Encoder configuration used to produce the
+                videos. When provided, its fields are recorded as
+                ``video.<field>`` entries alongside the stream-derived
+                ``video.*`` entries (see :func:`get_video_info`).
         """
         if video_key is not None and video_key not in self.video_keys:
             raise ValueError(f"Video key {video_key} not found in dataset")
@@ -522,7 +535,9 @@ class LeRobotDatasetMetadata:
         for key in video_keys:
             if not self.features[key].get("info", None):
                 video_path = self.root / self.video_path.format(video_key=key, chunk_index=0, file_index=0)
-                self.info.features[key]["info"] = get_video_info(video_path)
+                self.info.features[key]["info"] = get_video_info(
+                    video_path, camera_encoder_config=camera_encoder_config
+                )
 
     def update_chunk_settings(
         self,
