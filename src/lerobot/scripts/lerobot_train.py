@@ -275,6 +275,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         )
 
     if cfg.peft is not None:
+        if cfg.is_reward_model_training:
+            raise ValueError("PEFT is only supported for policy training. ")
         logging.info("Using PEFT! Wrapping model.")
         peft_cli_overrides = dataclasses.asdict(cfg.peft)
         policy = policy.wrap_with_peft(peft_cli_overrides=peft_cli_overrides)
