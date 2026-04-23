@@ -19,6 +19,7 @@ from pprint import pformat
 import torch
 
 from lerobot.configs import PreTrainedConfig
+from lerobot.configs.rewards import RewardModelConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.transforms import ImageTransforms
 from lerobot.utils.constants import ACTION, IMAGENET_STATS, OBS_PREFIX, REWARD
@@ -30,12 +31,14 @@ from .streaming_dataset import StreamingLeRobotDataset
 
 
 def resolve_delta_timestamps(
-    cfg: PreTrainedConfig, ds_meta: LeRobotDatasetMetadata
+    cfg: PreTrainedConfig | RewardModelConfig, ds_meta: LeRobotDatasetMetadata
 ) -> dict[str, list] | None:
-    """Resolves delta_timestamps by reading from the 'delta_indices' properties of the PreTrainedConfig.
+    """Resolves delta_timestamps by reading from the 'delta_indices' properties of the config.
 
     Args:
-        cfg (PreTrainedConfig): The PreTrainedConfig to read delta_indices from.
+        cfg (PreTrainedConfig | RewardModelConfig): The config to read delta_indices from. Both
+            ``PreTrainedConfig`` and concrete ``RewardModelConfig`` subclasses expose the
+            ``{observation,action,reward}_delta_indices`` properties used below.
         ds_meta (LeRobotDatasetMetadata): The dataset from which features and fps are used to build
             delta_timestamps against.
 
@@ -82,7 +85,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
         ds_meta = LeRobotDatasetMetadata(
             cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision
         )
-        delta_timestamps = resolve_delta_timestamps(cfg.policy, ds_meta)
+        delta_timestamps = resolve_delta_timestamps(cfg.trainable_config, ds_meta)
         if not cfg.dataset.streaming:
             dataset = LeRobotDataset(
                 cfg.dataset.repo_id,

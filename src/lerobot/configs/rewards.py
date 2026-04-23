@@ -30,6 +30,7 @@ from huggingface_hub.errors import HfHubHTTPError
 from lerobot.configs.types import PolicyFeature
 from lerobot.optim.optimizers import OptimizerConfig
 from lerobot.optim.schedulers import LRSchedulerConfig
+from lerobot.utils.device_utils import auto_select_torch_device, is_torch_device_available
 from lerobot.utils.hub import HubMixin
 
 T = TypeVar("T", bound="RewardModelConfig")
@@ -63,12 +64,30 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     tags: list[str] | None = None
     private: bool | None = None
 
+    def __post_init__(self) -> None:
+        if not self.device or not is_torch_device_available(self.device):
+            auto_device = auto_select_torch_device()
+            logger.warning(f"Device '{self.device}' is not available. Switching to '{auto_device}'.")
+            self.device = auto_device.type
+
     @property
     def type(self) -> str:
         choice_name = self.get_choice_name(self.__class__)
         if not isinstance(choice_name, str):
             raise TypeError(f"Expected string from get_choice_name, got {type(choice_name)}")
         return choice_name
+
+    @property
+    def observation_delta_indices(self) -> list | None:  # type: ignore[type-arg]
+        return None
+
+    @property
+    def action_delta_indices(self) -> list | None:  # type: ignore[type-arg]
+        return None
+
+    @property
+    def reward_delta_indices(self) -> list | None:  # type: ignore[type-arg]
+        return None
 
     @abc.abstractmethod
     def get_optimizer_preset(self) -> OptimizerConfig:

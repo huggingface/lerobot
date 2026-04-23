@@ -108,6 +108,7 @@ class SARMConfig(RewardModelConfig):
     )
 
     def __post_init__(self):
+        super().__post_init__()
         if self.annotation_mode not in ["single_stage", "dense_only", "dual"]:
             raise ValueError(
                 f"annotation_mode must be 'single_stage', 'dense_only', or 'dual', got {self.annotation_mode}"
