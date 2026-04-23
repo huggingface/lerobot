@@ -332,7 +332,6 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
         videos_idx: Dictionary tracking video chunk and file indices.
         video_files_size_in_mb: Maximum size for video files in MB (defaults to DEFAULT_VIDEO_FILE_SIZE_IN_MB)
         chunk_size: Maximum number of files per chunk (defaults to DEFAULT_CHUNK_SIZE)
-
     Returns:
         dict: Updated videos_idx with current chunk and file indices.
     """
@@ -417,6 +416,7 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
                 concatenate_video_files(
                     [dst_path, src_path],
                     dst_path,
+                    compatibilty_check=True,
                 )
                 # Update duration of this destination file
                 dst_file_durations[dst_key] = current_dst_duration + src_duration
