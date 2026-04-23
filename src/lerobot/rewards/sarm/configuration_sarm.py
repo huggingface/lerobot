@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2025 Qianzhong Chen, Justin Yu, Mac Schwager, Pieter Abbeel, Yide Shentu, Philipp Wu
 # and The HuggingFace Inc. team. All rights reserved.
 #
@@ -22,14 +20,15 @@ Paper: https://arxiv.org/abs/2509.25358
 
 from dataclasses import dataclass, field
 
-from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.configs.rewards import RewardModelConfig
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
 
 
-@PreTrainedConfig.register_subclass("sarm")
+@RewardModelConfig.register_subclass("sarm")
 @dataclass
-class SARMConfig(PreTrainedConfig):
+class SARMConfig(RewardModelConfig):
     """Configuration class for SARM (Stage-Aware Reward Modeling).
 
     Supports three annotation modes:

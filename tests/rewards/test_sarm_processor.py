@@ -104,8 +104,8 @@ class TestSARMEncodingProcessorStepEndToEnd:
     def mock_clip_model(self):
         """Mock CLIP model to avoid loading real weights."""
         with (
-            patch("lerobot.policies.sarm.processor_sarm.CLIPModel") as mock_model_cls,
-            patch("lerobot.policies.sarm.processor_sarm.CLIPProcessor") as mock_processor_cls,
+            patch("lerobot.rewards.sarm.processor_sarm.CLIPModel") as mock_model_cls,
+            patch("lerobot.rewards.sarm.processor_sarm.CLIPProcessor") as mock_processor_cls,
         ):
             # Mock the CLIP model - return embeddings based on input batch size
             mock_model = MagicMock()
@@ -142,7 +142,7 @@ class TestSARMEncodingProcessorStepEndToEnd:
     @pytest.fixture
     def processor_with_mocks(self, mock_clip_model):
         """Create a processor with mocked CLIP and dataset metadata for dual mode."""
-        from lerobot.policies.sarm.processor_sarm import SARMEncodingProcessorStep
+        from lerobot.rewards.sarm.processor_sarm import SARMEncodingProcessorStep
 
         # Dual mode config with both sparse and dense annotations
         config = MockConfig(
@@ -256,7 +256,7 @@ class TestSARMEncodingProcessorStepEndToEnd:
 
     def test_call_with_batched_input(self, mock_clip_model):
         """Test processor __call__ with a batched input (multiple frames) in dual mode."""
-        from lerobot.policies.sarm.processor_sarm import SARMEncodingProcessorStep
+        from lerobot.rewards.sarm.processor_sarm import SARMEncodingProcessorStep
 
         config = MockConfig(
             n_obs_steps=8,
@@ -332,7 +332,7 @@ class TestSARMEncodingProcessorStepEndToEnd:
 
     def test_targets_increase_with_progress(self, mock_clip_model):
         """Test that both sparse and dense targets increase as frame index progresses."""
-        from lerobot.policies.sarm.processor_sarm import SARMEncodingProcessorStep
+        from lerobot.rewards.sarm.processor_sarm import SARMEncodingProcessorStep
 
         config = MockConfig(
             n_obs_steps=8,
@@ -404,7 +404,7 @@ class TestSARMEncodingProcessorStepEndToEnd:
 
     def test_progress_labels_exact_values(self, mock_clip_model):
         """Test that progress labels (stage.tau) are computed correctly for known positions."""
-        from lerobot.policies.sarm.processor_sarm import SARMEncodingProcessorStep
+        from lerobot.rewards.sarm.processor_sarm import SARMEncodingProcessorStep
 
         # Simple setup: 2 sparse stages, 4 dense stages, 100 frame episode
         config = MockConfig(
@@ -495,7 +495,7 @@ class TestSARMEncodingProcessorStepEndToEnd:
         """Test that rewind augmentation correctly extends sequence and generates targets."""
         import random
 
-        from lerobot.policies.sarm.processor_sarm import SARMEncodingProcessorStep
+        from lerobot.rewards.sarm.processor_sarm import SARMEncodingProcessorStep
 
         config = MockConfig(
             n_obs_steps=8,
@@ -587,8 +587,8 @@ class TestSARMEncodingProcessorStepEndToEnd:
 
     def test_full_sequence_target_consistency(self, mock_clip_model):
         """Test that the full sequence of targets is consistent with frame positions."""
-        from lerobot.policies.sarm.processor_sarm import SARMEncodingProcessorStep
-        from lerobot.policies.sarm.sarm_utils import find_stage_and_tau
+        from lerobot.rewards.sarm.processor_sarm import SARMEncodingProcessorStep
+        from lerobot.rewards.sarm.sarm_utils import find_stage_and_tau
 
         config = MockConfig(
             n_obs_steps=8,

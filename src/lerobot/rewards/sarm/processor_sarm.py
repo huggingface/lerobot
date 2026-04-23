@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -60,16 +58,15 @@ from lerobot.processor import (
     policy_action_to_transition,
     transition_to_policy_action,
 )
-from lerobot.types import EnvTransition, PolicyAction, TransitionKey
-from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
-
-from .configuration_sarm import SARMConfig
-from .sarm_utils import (
+from lerobot.rewards.sarm.configuration_sarm import SARMConfig
+from lerobot.rewards.sarm.sarm_utils import (
     apply_rewind_augmentation,
     compute_absolute_indices,
     find_stage_and_tau,
     pad_state_to_max_dim,
 )
+from lerobot.types import EnvTransition, PolicyAction, TransitionKey
+from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
 
 class SARMEncodingProcessorStep(ProcessorStep):

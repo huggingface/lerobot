@@ -1,5 +1,3 @@
-# !/usr/bin/env python
-
 # Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,8 +25,7 @@ from lerobot.processor import (
     policy_action_to_transition,
     transition_to_policy_action,
 )
-
-from .configuration_classifier import RewardClassifierConfig
+from lerobot.rewards.classifier.configuration_classifier import RewardClassifierConfig
 
 
 def make_classifier_processor(
@@ -52,8 +49,6 @@ def make_classifier_processor(
     Args:
         config: The configuration object for the RewardClassifier.
         dataset_stats: A dictionary of statistics for normalization.
-        preprocessor_kwargs: Additional arguments for the pre-processor pipeline.
-        postprocessor_kwargs: Additional arguments for the post-processor pipeline.
 
     Returns:
         A tuple containing the configured pre-processor and post-processor pipelines.

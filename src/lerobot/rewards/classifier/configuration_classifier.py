@@ -1,5 +1,3 @@
-# !/usr/bin/env python
-
 # Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,14 +13,15 @@
 # limitations under the License.
 from dataclasses import dataclass, field
 
-from lerobot.configs import NormalizationMode, PreTrainedConfig
+from lerobot.configs import NormalizationMode
+from lerobot.configs.rewards import RewardModelConfig
 from lerobot.optim import AdamWConfig, LRSchedulerConfig, OptimizerConfig
 from lerobot.utils.constants import OBS_IMAGE
 
 
-@PreTrainedConfig.register_subclass(name="reward_classifier")
+@RewardModelConfig.register_subclass(name="reward_classifier")
 @dataclass
-class RewardClassifierConfig(PreTrainedConfig):
+class RewardClassifierConfig(RewardModelConfig):
     """Configuration for the Reward Classifier model."""
 
     name: str = "reward_classifier"

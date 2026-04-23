@@ -1,5 +1,3 @@
-# !/usr/bin/env python
-
 # Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,8 +16,8 @@ import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
-from lerobot.policies.sac.reward_model.modeling_classifier import ClassifierOutput
+from lerobot.rewards.classifier.configuration_classifier import RewardClassifierConfig
+from lerobot.rewards.classifier.modeling_classifier import ClassifierOutput
 from lerobot.utils.constants import OBS_IMAGE, REWARD
 from tests.utils import skip_if_package_missing
 
@@ -42,7 +40,7 @@ def test_classifier_output():
     reason="helper2424/resnet10 needs to be updated to work with the latest version of transformers"
 )
 def test_binary_classifier_with_default_params():
-    from lerobot.policies.sac.reward_model.modeling_classifier import Classifier
+    from lerobot.rewards.classifier.modeling_classifier import Classifier
 
     config = RewardClassifierConfig()
     config.input_features = {
@@ -86,7 +84,7 @@ def test_binary_classifier_with_default_params():
     reason="helper2424/resnet10 needs to be updated to work with the latest version of transformers"
 )
 def test_multiclass_classifier():
-    from lerobot.policies.sac.reward_model.modeling_classifier import Classifier
+    from lerobot.rewards.classifier.modeling_classifier import Classifier
 
     num_classes = 5
     config = RewardClassifierConfig()
@@ -128,11 +126,15 @@ def test_multiclass_classifier():
     reason="helper2424/resnet10 needs to be updated to work with the latest version of transformers"
 )
 def test_default_device():
-    from lerobot.policies.sac.reward_model.modeling_classifier import Classifier
+    from lerobot.rewards.classifier.modeling_classifier import Classifier
 
     config = RewardClassifierConfig()
-    assert config.device == "cpu"
+    assert config.device is None or config.device == "cpu"
 
+    config.input_features = {
+        OBS_IMAGE: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)),
+    }
+    config.num_cameras = 1
     classifier = Classifier(config)
     for p in classifier.parameters():
         assert p.device == torch.device("cpu")
@@ -143,11 +145,15 @@ def test_default_device():
     reason="helper2424/resnet10 needs to be updated to work with the latest version of transformers"
 )
 def test_explicit_device_setup():
-    from lerobot.policies.sac.reward_model.modeling_classifier import Classifier
+    from lerobot.rewards.classifier.modeling_classifier import Classifier
 
     config = RewardClassifierConfig(device="cpu")
     assert config.device == "cpu"
 
+    config.input_features = {
+        OBS_IMAGE: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)),
+    }
+    config.num_cameras = 1
     classifier = Classifier(config)
     for p in classifier.parameters():
         assert p.device == torch.device("cpu")

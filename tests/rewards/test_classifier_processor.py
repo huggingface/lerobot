@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,8 +19,6 @@ import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
-from lerobot.policies.sac.reward_model.processor_classifier import make_classifier_processor
 from lerobot.processor import (
     DataProcessorPipeline,
     DeviceProcessorStep,
@@ -31,6 +27,8 @@ from lerobot.processor import (
     TransitionKey,
 )
 from lerobot.processor.converters import create_transition, transition_to_batch
+from lerobot.rewards.classifier.configuration_classifier import RewardClassifierConfig
+from lerobot.rewards.classifier.processor_classifier import make_classifier_processor
 from lerobot.utils.constants import OBS_IMAGE, OBS_STATE
 
 
@@ -42,7 +40,7 @@ def create_default_config():
         OBS_IMAGE: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)),
     }
     config.output_features = {
-        "reward": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),  # Classifier output
+        "reward": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
     }
     config.normalization_mapping = {
         FeatureType.STATE: NormalizationMode.MEAN_STD,
@@ -90,17 +88,14 @@ def test_classifier_processor_normalization():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_classifier_processor(
-        config,
-        stats,
-    )
+    preprocessor, postprocessor = make_classifier_processor(config, stats)
 
     # Create test data
     observation = {
         OBS_STATE: torch.randn(10),
         OBS_IMAGE: torch.randn(3, 224, 224),
     }
-    action = torch.randn(1)  # Dummy action/reward
+    action = torch.randn(1)
     transition = create_transition(observation, action)
     batch = transition_to_batch(transition)
 
@@ -120,10 +115,7 @@ def test_classifier_processor_cuda():
     config.device = "cuda"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_classifier_processor(
-        config,
-        stats,
-    )
+    preprocessor, postprocessor = make_classifier_processor(config, stats)
 
     # Create CPU data
     observation = {
@@ -132,7 +124,6 @@ def test_classifier_processor_cuda():
     }
     action = torch.randn(1)
     transition = create_transition(observation, action)
-
     batch = transition_to_batch(transition)
 
     # Process through preprocessor
@@ -158,10 +149,7 @@ def test_classifier_processor_accelerate_scenario():
     config.device = "cuda:0"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_classifier_processor(
-        config,
-        stats,
-    )
+    preprocessor, postprocessor = make_classifier_processor(config, stats)
 
     # Simulate Accelerate: data already on GPU
     device = torch.device("cuda:0")
@@ -171,7 +159,6 @@ def test_classifier_processor_accelerate_scenario():
     }
     action = torch.randn(1).to(device)
     transition = create_transition(observation, action)
-
     batch = transition_to_batch(transition)
 
     # Process through preprocessor
@@ -201,7 +188,6 @@ def test_classifier_processor_multi_gpu():
     }
     action = torch.randn(1).to(device)
     transition = create_transition(observation, action)
-
     batch = transition_to_batch(transition)
 
     # Process through preprocessor
@@ -231,7 +217,6 @@ def test_classifier_processor_without_stats():
     }
     action = torch.randn(1)
     transition = create_transition(observation, action)
-
     batch = transition_to_batch(transition)
 
     processed = preprocessor(batch)
@@ -294,7 +279,6 @@ def test_classifier_processor_mixed_precision():
     }
     action = torch.randn(1, dtype=torch.float32)
     transition = create_transition(observation, action)
-
     batch = transition_to_batch(transition)
 
     # Process through preprocessor
@@ -312,10 +296,7 @@ def test_classifier_processor_batch_data():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_classifier_processor(
-        config,
-        stats,
-    )
+    preprocessor, postprocessor = make_classifier_processor(config, stats)
 
     # Test with batched data
     batch_size = 16
@@ -325,7 +306,6 @@ def test_classifier_processor_batch_data():
     }
     action = torch.randn(batch_size, 1)
     transition = create_transition(observation, action)
-
     batch = transition_to_batch(transition)
 
     # Process through preprocessor
@@ -343,15 +323,11 @@ def test_classifier_processor_postprocessor_identity():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_classifier_processor(
-        config,
-        stats,
-    )
+    preprocessor, postprocessor = make_classifier_processor(config, stats)
 
     # Create test data for postprocessor
-    reward = torch.tensor([[0.8], [0.3], [0.9]])  # Batch of rewards/predictions
+    reward = torch.tensor([[0.8], [0.3], [0.9]])
     transition = create_transition(action=reward)
-
     _ = transition_to_batch(transition)
 
     # Process through postprocessor
