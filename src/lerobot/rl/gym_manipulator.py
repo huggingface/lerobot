@@ -350,12 +350,14 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
         fast = bool(getattr(cfg, "realtime", False) is False)
         sim_mode = "fast" if fast else "realtime"
         render_mode = getattr(cfg, "render_mode", "rgb_array") or "rgb_array"
+        action_step_size = float(getattr(cfg, "action_step_size", 0.005))
         env_kwargs = {
             "control_hz": float(cfg.fps),
             "mode": sim_mode,
             "max_episode_steps": max_ep,
             "render_mode": render_mode,
             "use_gripper": use_gripper,
+            "action_step_size": action_step_size,
         }
         env = gym.make(f"sim_assembling/{cfg.task}", **env_kwargs)
 

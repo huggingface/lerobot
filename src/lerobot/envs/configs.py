@@ -297,6 +297,12 @@ class HILSerlRobotEnvConfig(EnvConfig):
     # Ignored by real-robot envs.
     render_mode: str = "rgb_array"
 
+    # Max per-step EE delta in metres when stick is at full deflection (sim_assembling).
+    # At control_hz=20Hz this caps EE speed to (action_step_size * 20) m/s.
+    # 0.005 → 10 cm/s (comfortable for manual teleop).
+    # 0.025 → 50 cm/s (too aggressive for humans, fine for RL policy rollout).
+    action_step_size: float = 0.005
+
     @property
     def gym_kwargs(self) -> dict:
         return {}

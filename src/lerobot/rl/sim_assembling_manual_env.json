@@ -17,14 +17,15 @@
             },
             "reset": {
                 "reset_time_s": 0.0,
-                "control_time_s": 15.0,
+                "control_time_s": 20.0,
                 "terminate_on_success": true
             },
             "reward_model": {
                 "type": "manual"
             }
         },
-        "render_mode": "all"
+        "render_mode": "all",
+        "action_step_size": 0.005
     },
     "device": "cpu"
 }
