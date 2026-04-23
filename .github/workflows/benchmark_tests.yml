@@ -1,0 +1,945 @@
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Integration tests: build an isolated Docker image per benchmark and run a
+# 1-episode smoke eval. Each benchmark gets its own image so incompatible
+# dependency trees (e.g. hf-libero vs metaworld==3.0.0) can never collide.
+#
+# To add a new benchmark:
+#   1. Add docker/Dockerfile.benchmark.<name>  (install only lerobot[<name>])
+#   2. Copy one of the jobs below and adjust the image name and eval command.
+name: Benchmark Integration Tests
+
+on:
+  # Run manually from the Actions tab
+  workflow_dispatch:
+
+  # Run every Monday at 02:00 UTC.
+  schedule:
+    - cron: "0 2 * * 1"
+
+  push:
+    branches:
+      - main
+    paths:
+      - "src/lerobot/envs/**"
+      - "src/lerobot/scripts/lerobot_eval.py"
+      - "docker/Dockerfile.benchmark.*"
+      - ".github/workflows/benchmark_tests.yml"
+      - "pyproject.toml"
+
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "src/lerobot/envs/**"
+      - "src/lerobot/scripts/lerobot_eval.py"
+      - "docker/Dockerfile.benchmark.*"
+      - ".github/workflows/benchmark_tests.yml"
+      - "pyproject.toml"
+
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: "0.8.0"
+  PYTHON_VERSION: "3.12"
+
+# Cancel in-flight runs for the same branch/PR.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  # ── LIBERO ────────────────────────────────────────────────────────────────
+  # Isolated image: lerobot[libero] only (hf-libero, dm-control, mujoco chain)
+  libero-integration-test:
+    name: Libero — build image + 1-episode eval
+    runs-on:
+      group: aws-g6-4xlarge-plus
+    env:
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+          lfs: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          cache-binary: false
+
+      - name: Login to Docker Hub
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
+        uses: docker/login-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+
+      # Build the benchmark-specific image. The Dockerfile separates dep-install
+      # from source-copy, so code-only changes skip the slow uv-sync layer
+      # when the runner has a warm Docker daemon cache.
+      - name: Build Libero benchmark image
+        uses: docker/build-push-action@v6 # zizmor: ignore[unpinned-uses]
+        with:
+          context: .
+          file: docker/Dockerfile.benchmark.libero
+          push: false
+          load: true
+          tags: lerobot-benchmark-libero:ci
+
+      - name: Run Libero smoke eval (1 episode)
+        if: env.HF_USER_TOKEN != ''
+        run: |
+          # Named container (no --rm) so we can docker cp artifacts out.
+          # Output to /tmp inside the container — /artifacts doesn't exist
+          # and user_lerobot cannot create root-level dirs.
+          docker run --name libero-eval --gpus all \
+            --shm-size=4g \
+            -e HF_HOME=/tmp/hf \
+            -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
+            -e HF_HUB_DOWNLOAD_TIMEOUT=300 \
+            lerobot-benchmark-libero:ci \
+            bash -c "
+              hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
+              lerobot-eval \
+                --policy.path=lerobot/smolvla_libero \
+                --env.type=libero \
+                --env.task=libero_spatial \
+                --eval.batch_size=1 \
+                --eval.n_episodes=1 \
+                --eval.use_async_envs=false \
+                --policy.device=cuda \
+                '--env.camera_name_mapping={\"agentview_image\": \"camera1\", \"robot0_eye_in_hand_image\": \"camera2\"}' \
+                --policy.empty_cameras=1 \
+                --output_dir=/tmp/eval-artifacts
+              python scripts/ci/extract_task_descriptions.py \
+                --env libero --task libero_spatial \
+                --output /tmp/eval-artifacts/task_descriptions.json
+            "
+
+      - name: Copy Libero artifacts from container
+        if: always()
+        run: |
+          mkdir -p /tmp/libero-artifacts
+          docker cp libero-eval:/tmp/eval-artifacts/. /tmp/libero-artifacts/ 2>/dev/null || true
+          docker rm -f libero-eval || true
+
+      - name: Parse Libero eval metrics
+        if: always()
+        run: |
+          python3 scripts/ci/parse_eval_metrics.py \
+            --artifacts-dir /tmp/libero-artifacts \
+            --env libero \
+            --task libero_spatial \
+            --policy lerobot/smolvla_libero
+
+      - name: Upload Libero rollout video
+        if: always()
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: libero-rollout-video
+          path: /tmp/libero-artifacts/videos/
+          if-no-files-found: warn
+
+      - name: Upload Libero eval metrics
+        if: always()
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: libero-metrics
+          path: /tmp/libero-artifacts/metrics.json
+          if-no-files-found: warn
+
+      # ── LIBERO TRAIN+EVAL SMOKE ──────────────────────────────────────────────
+      # Train SmolVLA for 1 step (batch_size=1, dataset episode 0 only) then
+      # immediately runs eval inside the training loop (eval_freq=1, 1 episode).
+      # Tests the full train→eval-within-training pipeline end-to-end.
+      - name: Run Libero train+eval smoke (1 step, eval_freq=1)
+        if: env.HF_USER_TOKEN != ''
+        run: |
+          docker run --name libero-train-smoke --gpus all \
+            --shm-size=4g \
+            -e HF_HOME=/tmp/hf \
+            -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
+            -e HF_HUB_DOWNLOAD_TIMEOUT=300 \
+            lerobot-benchmark-libero:ci \
+            bash -c "
+              hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
+              accelerate launch --num_processes=1 \$(which lerobot-train) \
+                --policy.path=lerobot/smolvla_base \
+                --policy.load_vlm_weights=true \
+                --policy.scheduler_decay_steps=25000 \
+                --policy.freeze_vision_encoder=false \
+                --policy.train_expert_only=false \
+                --dataset.repo_id=lerobot/libero \
+                --dataset.episodes=[0] \
+                --dataset.use_imagenet_stats=false \
+                --env.type=libero \
+                --env.task=libero_spatial \
+                '--env.camera_name_mapping={\"agentview_image\": \"camera1\", \"robot0_eye_in_hand_image\": \"camera2\"}' \
+                --policy.empty_cameras=1 \
+                --output_dir=/tmp/train-smoke \
+                --steps=1 \
+                --batch_size=1 \
+                --eval_freq=1 \
+                --eval.n_episodes=1 \
+                --eval.batch_size=1 \
+                --eval.use_async_envs=false \
+                --save_freq=1 \
+                --policy.push_to_hub=false \
+                '--rename_map={\"observation.images.image\": \"observation.images.camera1\", \"observation.images.image2\": \"observation.images.camera2\"}'
+            "
+
+      - name: Copy Libero train-smoke artifacts from container
+        if: always()
+        run: |
+          mkdir -p /tmp/libero-train-smoke-artifacts
+          docker cp libero-train-smoke:/tmp/train-smoke/. /tmp/libero-train-smoke-artifacts/ 2>/dev/null || true
+          docker rm -f libero-train-smoke || true
+
+      - name: Upload Libero train-smoke eval video
+        if: always()
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: libero-train-smoke-video
+          path: /tmp/libero-train-smoke-artifacts/eval/
+          if-no-files-found: warn
+
+  # ── METAWORLD ─────────────────────────────────────────────────────────────
+  # Isolated image: lerobot[metaworld] only (metaworld==3.0.0, mujoco>=3 chain)
+  metaworld-integration-test:
+    name: MetaWorld — build image + 1-episode eval
+    runs-on:
+      group: aws-g6-4xlarge-plus
+    env:
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+          lfs: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          cache-binary: false
+
+      - name: Login to Docker Hub
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
+        uses: docker/login-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+
+      - name: Build MetaWorld benchmark image
+        uses: docker/build-push-action@v6 # zizmor: ignore[unpinned-uses]
+        with:
+          context: .
+          file: docker/Dockerfile.benchmark.metaworld
+          push: false
+          load: true
+          tags: lerobot-benchmark-metaworld:ci
+
+      - name: Run MetaWorld smoke eval (1 episode)
+        if: env.HF_USER_TOKEN != ''
+        run: |
+          docker run --name metaworld-eval --gpus all \
+            --shm-size=4g \
+            -e HF_HOME=/tmp/hf \
+            -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
+            -e HF_HUB_DOWNLOAD_TIMEOUT=300 \
+            lerobot-benchmark-metaworld:ci \
+            bash -c "
+              hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
+              lerobot-eval \
+                --policy.path=lerobot/smolvla_metaworld \
+                --env.type=metaworld \
+                --env.task=metaworld-push-v3 \
+                --eval.batch_size=1 \
+                --eval.n_episodes=1 \
+                --eval.use_async_envs=false \
+                --policy.device=cuda \
+                '--rename_map={\"observation.image\": \"observation.images.camera1\"}' \
+                --policy.empty_cameras=2 \
+                --output_dir=/tmp/eval-artifacts
+              python scripts/ci/extract_task_descriptions.py \
+                --env metaworld --task metaworld-push-v3 \
+                --output /tmp/eval-artifacts/task_descriptions.json
+            "
+
+      - name: Copy MetaWorld artifacts from container
+        if: always()
+        run: |
+          mkdir -p /tmp/metaworld-artifacts
+          docker cp metaworld-eval:/tmp/eval-artifacts/. /tmp/metaworld-artifacts/ 2>/dev/null || true
+          docker rm -f metaworld-eval || true
+
+      - name: Parse MetaWorld eval metrics
+        if: always()
+        run: |
+          python3 scripts/ci/parse_eval_metrics.py \
+            --artifacts-dir /tmp/metaworld-artifacts \
+            --env metaworld \
+            --task metaworld-push-v3 \
+            --policy lerobot/smolvla_metaworld
+
+      - name: Upload MetaWorld rollout video
+        if: always()
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: metaworld-rollout-video
+          path: /tmp/metaworld-artifacts/videos/
+          if-no-files-found: warn
+
+      - name: Upload MetaWorld eval metrics
+        if: always()
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: metaworld-metrics
+          path: /tmp/metaworld-artifacts/metrics.json
+          if-no-files-found: warn
+
+  # ── ROBOTWIN 2.0 ──────────────────────────────────────────────────────────
+  # Isolated image: full RoboTwin 2.0 stack — SAPIEN, mplib, CuRobo,
+  # pytorch3d, + simulation assets (~4 GB).
+  # Build takes ~20 min on first run; subsequent runs hit the layer cache.
+  # Requires an NVIDIA GPU runner with CUDA 12.1 drivers.
+  robotwin-integration-test:
+    name: RoboTwin 2.0 — build image + 1-episode eval
+    runs-on:
+      group: aws-g6-4xlarge-plus
+    env:
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
+      ROBOTWIN_POLICY: lerobot/smolvla_robotwin
+      ROBOTWIN_TASKS: beat_block_hammer,click_bell,handover_block,stack_blocks_two,click_alarmclock,open_microwave,adjust_bottle,lift_pot,stamp_seal,turn_switch
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+          lfs: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          cache-binary: false
+
+      - name: Login to Docker Hub
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
+        uses: docker/login-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+
+      # Build the full-install image: SAPIEN, mplib, CuRobo, pytorch3d +
+      # simulation assets (~4 GB). Layer cache lives in the runner's local
+      # Docker daemon — reused across re-runs on the same machine.
+      - name: Build RoboTwin 2.0 benchmark image
+        uses: docker/build-push-action@v6 # zizmor: ignore[unpinned-uses]
+        with:
+          context: .
+          file: docker/Dockerfile.benchmark.robotwin
+          push: false
+          load: true
+          tags: lerobot-benchmark-robotwin:ci
+          cache-from: type=local,src=/tmp/.buildx-cache-robotwin
+          cache-to: type=local,dest=/tmp/.buildx-cache-robotwin,mode=max
+
+      - name: Run RoboTwin 2.0 smoke eval (10 tasks, 1 episode each)
+        if: env.HF_USER_TOKEN != ''
+        run: |
+          # Named container (no --rm) so we can docker cp artifacts out.
+          docker run --name robotwin-eval --gpus all \
+            --shm-size=4g \
+            -e HF_HOME=/tmp/hf \
+            -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
+            -e ROBOTWIN_POLICY="${ROBOTWIN_POLICY}" \
+            -e ROBOTWIN_TASKS="${ROBOTWIN_TASKS}" \
+            lerobot-benchmark-robotwin:ci \
+            bash -c "
+              hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
+              cd /opt/robotwin && lerobot-eval \
+                --policy.path=\"\$ROBOTWIN_POLICY\" \
+                --env.type=robotwin \
+                --env.task=\"\$ROBOTWIN_TASKS\" \
+                --eval.batch_size=1 \
+                --eval.n_episodes=1 \
+                --eval.use_async_envs=false \
+                --policy.device=cuda \
+                '--rename_map={\"observation.images.head_camera\": \"observation.images.camera1\", \"observation.images.left_camera\": \"observation.images.camera2\", \"observation.images.right_camera\": \"observation.images.camera3\"}' \
+                --output_dir=/tmp/eval-artifacts
+              python /lerobot/scripts/ci/extract_task_descriptions.py \
+                --env robotwin \
+                --task \"\$ROBOTWIN_TASKS\" \
+                --output /tmp/eval-artifacts/task_descriptions.json
+            "
+
+      - name: Copy RoboTwin artifacts from container
+        if: always()
+        run: |
+          mkdir -p /tmp/robotwin-artifacts
+          docker cp robotwin-eval:/tmp/eval-artifacts/. /tmp/robotwin-artifacts/ 2>/dev/null || true
+          docker rm -f robotwin-eval || true
+
+      - name: Parse RoboTwin eval metrics
+        if: always()
+        run: |
+          python3 scripts/ci/parse_eval_metrics.py \
+            --artifacts-dir /tmp/robotwin-artifacts \
+            --env robotwin \
+            --task "${ROBOTWIN_TASKS}" \
+            --policy "${ROBOTWIN_POLICY}"
+
+      - name: Upload RoboTwin rollout video
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: robotwin-rollout-video
+          path: /tmp/robotwin-artifacts/videos/
+          if-no-files-found: warn
+
+      - name: Upload RoboTwin eval metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: robotwin-metrics
+          path: /tmp/robotwin-artifacts/metrics.json
+          if-no-files-found: warn
+
+  # ── ROBOCASA365 ──────────────────────────────────────────────────────────
+  # Isolated image: robocasa + robosuite installed manually as editable
+  # clones (no `lerobot[robocasa]` extra — robocasa's setup.py pins
+  # `lerobot==0.3.3`, which would shadow this repo's lerobot).
+  robocasa-integration-test:
+    name: RoboCasa365 — build image + 1-episode eval
+    runs-on:
+      group: aws-g6-4xlarge-plus
+    env:
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+          lfs: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          cache-binary: false
+
+      - name: Login to Docker Hub
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
+        uses: docker/login-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+
+      - name: Build RoboCasa365 benchmark image
+        uses: docker/build-push-action@v6 # zizmor: ignore[unpinned-uses]
+        with:
+          context: .
+          file: docker/Dockerfile.benchmark.robocasa
+          push: false
+          load: true
+          tags: lerobot-benchmark-robocasa:ci
+
+      - name: Run RoboCasa365 smoke eval (10 atomic tasks, 1 episode each)
+        if: env.HF_USER_TOKEN != ''
+        run: |
+          docker run --name robocasa-eval --gpus all \
+            --shm-size=4g \
+            -e HF_HOME=/tmp/hf \
+            -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
+            -e HF_HUB_DOWNLOAD_TIMEOUT=300 \
+            -e MUJOCO_GL=egl \
+            lerobot-benchmark-robocasa:ci \
+            bash -c "
+              hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
+              lerobot-eval \
+                --policy.path=lerobot/smolvla_robocasa \
+                --env.type=robocasa \
+                --env.task=CloseFridge,OpenCabinet,OpenDrawer,TurnOnMicrowave,TurnOffStove,CloseToasterOvenDoor,SlideDishwasherRack,TurnOnSinkFaucet,NavigateKitchen,TurnOnElectricKettle \
+                --eval.batch_size=1 \
+                --eval.n_episodes=1 \
+                --eval.use_async_envs=false \
+                --policy.device=cuda \
+                '--rename_map={\"observation.images.robot0_agentview_left\": \"observation.images.camera1\", \"observation.images.robot0_eye_in_hand\": \"observation.images.camera2\", \"observation.images.robot0_agentview_right\": \"observation.images.camera3\"}' \
+                --output_dir=/tmp/eval-artifacts
+              python scripts/ci/extract_task_descriptions.py \
+                --env robocasa \
+                --task CloseFridge,OpenCabinet,OpenDrawer,TurnOnMicrowave,TurnOffStove,CloseToasterOvenDoor,SlideDishwasherRack,TurnOnSinkFaucet,NavigateKitchen,TurnOnElectricKettle \
+                --output /tmp/eval-artifacts/task_descriptions.json
+            "
+
+      - name: Copy RoboCasa365 artifacts from container
+        if: always()
+        run: |
+          mkdir -p /tmp/robocasa-artifacts
+          docker cp robocasa-eval:/tmp/eval-artifacts/. /tmp/robocasa-artifacts/ 2>/dev/null || true
+          docker rm -f robocasa-eval || true
+
+      - name: Parse RoboCasa365 eval metrics
+        if: always()
+        run: |
+          python3 scripts/ci/parse_eval_metrics.py \
+            --artifacts-dir /tmp/robocasa-artifacts \
+            --env robocasa \
+            --task atomic_smoke_10 \
+            --policy lerobot/smolvla_robocasa
+
+      - name: Upload RoboCasa365 rollout video
+        if: always()
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: robocasa-rollout-video
+          path: /tmp/robocasa-artifacts/videos/
+          if-no-files-found: warn
+
+      - name: Upload RoboCasa365 eval metrics
+        if: always()
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: robocasa-metrics
+          path: /tmp/robocasa-artifacts/metrics.json
+          if-no-files-found: warn
+
+  # ── ROBOCEREBRA ───────────────────────────────────────────────────────────
+  # Reuses the LIBERO simulator (libero_10 suite) with RoboCerebra camera
+  # defaults (image/wrist_image). The image is layered on
+  # huggingface/lerobot-gpu, which already ships [libero] as part of [all].
+  robocerebra-integration-test:
+    name: RoboCerebra — build image + 1-episode eval
+    runs-on:
+      group: aws-g6-4xlarge-plus
+    env:
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+          lfs: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          cache-binary: false
+
+      - name: Login to Docker Hub
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
+        uses: docker/login-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+
+      - name: Build RoboCerebra benchmark image
+        uses: docker/build-push-action@v6 # zizmor: ignore[unpinned-uses]
+        with:
+          context: .
+          file: docker/Dockerfile.benchmark.robocerebra
+          push: false
+          load: true
+          tags: lerobot-benchmark-robocerebra:ci
+          cache-from: type=local,src=/tmp/.buildx-cache-robocerebra
+          cache-to: type=local,dest=/tmp/.buildx-cache-robocerebra,mode=max
+
+      - name: Run RoboCerebra smoke eval (1 episode)
+        if: env.HF_USER_TOKEN != ''
+        run: |
+          docker run --name robocerebra-eval --gpus all \
+            --shm-size=4g \
+            -e HF_HOME=/tmp/hf \
+            -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
+            -e HF_HUB_DOWNLOAD_TIMEOUT=300 \
+            -e LIBERO_DATA_FOLDER=/tmp/libero_data \
+            lerobot-benchmark-robocerebra:ci \
+            bash -c "
+              hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
+              lerobot-eval \
+                --policy.path=lerobot/smolvla_robocerebra \
+                --env.type=libero \
+                --env.task=libero_10 \
+                --env.fps=20 \
+                --env.obs_type=pixels_agent_pos \
+                --env.observation_height=256 \
+                --env.observation_width=256 \
+                '--env.camera_name_mapping={\"agentview_image\": \"image\", \"robot0_eye_in_hand_image\": \"wrist_image\"}' \
+                --eval.batch_size=1 \
+                --eval.n_episodes=1 \
+                --eval.use_async_envs=false \
+                --policy.device=cuda \
+                '--rename_map={\"observation.images.image\": \"observation.images.camera1\", \"observation.images.wrist_image\": \"observation.images.camera2\"}' \
+                --policy.empty_cameras=1 \
+                --output_dir=/tmp/eval-artifacts
+              python scripts/ci/extract_task_descriptions.py \
+                --env libero --task libero_10 \
+                --output /tmp/eval-artifacts/task_descriptions.json
+            "
+
+      - name: Copy RoboCerebra artifacts from container
+        if: always()
+        run: |
+          mkdir -p /tmp/robocerebra-artifacts
+          docker cp robocerebra-eval:/tmp/eval-artifacts/. /tmp/robocerebra-artifacts/ 2>/dev/null || true
+          docker rm -f robocerebra-eval || true
+
+      - name: Parse RoboCerebra eval metrics
+        if: always()
+        run: |
+          python3 scripts/ci/parse_eval_metrics.py \
+            --artifacts-dir /tmp/robocerebra-artifacts \
+            --env robocerebra \
+            --task libero_10 \
+            --policy lerobot/smolvla_robocerebra
+
+      - name: Upload RoboCerebra rollout video
+        if: always()
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: robocerebra-rollout-video
+          path: /tmp/robocerebra-artifacts/videos/
+          if-no-files-found: warn
+
+      - name: Upload RoboCerebra eval metrics
+        if: always()
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: robocerebra-metrics
+          path: /tmp/robocerebra-artifacts/metrics.json
+          if-no-files-found: warn
+
+  # ── ROBOMME ───────────────────────────────────────────────────────────────
+  # Isolated image: mani-skill/SAPIEN/Vulkan chain with gymnasium and numpy
+  # overrides (robomme can't be a pyproject extra due to numpy<2 pin).
+  robomme-integration-test:
+    name: RoboMME — build image + 1-episode eval
+    runs-on:
+      group: aws-g6-4xlarge-plus
+    env:
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
+      ROBOMME_POLICY: lerobot/smolvla_robomme
+      ROBOMME_TASKS: PickXtimes,BinFill,StopCube,MoveCube,InsertPeg,SwingXtimes,VideoUnmask,ButtonUnmask,PickHighlight,PatternLock
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          lfs: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          cache-binary: false
+
+      - name: Login to Docker Hub
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
+        uses: docker/login-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+
+      - name: Build RoboMME benchmark image
+        uses: docker/build-push-action@v6 # zizmor: ignore[unpinned-uses]
+        with:
+          context: .
+          file: docker/Dockerfile.benchmark.robomme
+          push: false
+          load: true
+          tags: lerobot-benchmark-robomme:ci
+
+      - name: Run RoboMME smoke eval (10 tasks, 1 episode each)
+        if: env.HF_USER_TOKEN != ''
+        run: |
+          docker run --name robomme-eval --gpus all \
+            --shm-size=4g \
+            -e HF_HOME=/tmp/hf \
+            -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
+            -e HF_HUB_DOWNLOAD_TIMEOUT=300 \
+            -e ROBOMME_POLICY="${ROBOMME_POLICY}" \
+            -e ROBOMME_TASKS="${ROBOMME_TASKS}" \
+            lerobot-benchmark-robomme:ci \
+            bash -c "
+              hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
+              lerobot-eval \
+                --policy.path=\"\$ROBOMME_POLICY\" \
+                --env.type=robomme \
+                --env.task=\"\$ROBOMME_TASKS\" \
+                --env.dataset_split=test \
+                --env.task_ids=[0] \
+                --eval.batch_size=1 \
+                --eval.n_episodes=1 \
+                --eval.use_async_envs=false \
+                --policy.device=cuda \
+                '--rename_map={\"observation.images.image\": \"observation.images.camera1\", \"observation.images.wrist_image\": \"observation.images.camera2\"}' \
+                --policy.empty_cameras=3 \
+                --output_dir=/tmp/eval-artifacts
+              python scripts/ci/extract_task_descriptions.py \
+                --env robomme --task \"\$ROBOMME_TASKS\" \
+                --output /tmp/eval-artifacts/task_descriptions.json
+            "
+
+      - name: Copy RoboMME artifacts from container
+        if: always()
+        run: |
+          mkdir -p /tmp/robomme-artifacts
+          docker cp robomme-eval:/tmp/eval-artifacts/. /tmp/robomme-artifacts/ 2>/dev/null || true
+          docker rm -f robomme-eval || true
+
+      - name: Parse RoboMME eval metrics
+        if: always()
+        run: |
+          python3 scripts/ci/parse_eval_metrics.py \
+            --artifacts-dir /tmp/robomme-artifacts \
+            --env robomme \
+            --task "${ROBOMME_TASKS}" \
+            --policy "${ROBOMME_POLICY}"
+
+      - name: Upload RoboMME rollout video
+        if: always()
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: robomme-rollout-video
+          path: /tmp/robomme-artifacts/videos/
+          if-no-files-found: warn
+
+      - name: Upload RoboMME eval metrics
+        if: always()
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: robomme-metrics
+          path: /tmp/robomme-artifacts/metrics.json
+          if-no-files-found: warn
+
+  # ── LIBERO-plus ───────────────────────────────────────────────────────────
+  # Isolated image: LIBERO-plus fork cloned into /home/user_lerobot on top of
+  # huggingface/lerobot-gpu (see docker/Dockerfile.benchmark.libero_plus).
+  libero-plus-integration-test:
+    name: LIBERO-plus — build image + 1-episode eval
+    runs-on:
+      group: aws-g6-4xlarge-plus
+    env:
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
+      LIBERO_PLUS_SUITE: libero_spatial
+      LIBERO_PLUS_POLICY: lerobot/smolvla_libero_plus
+      LIBERO_PLUS_TASK_IDS: "[0,100,260,500,1000,1500,2000,2400]"
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+          lfs: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          cache-binary: false
+
+      - name: Login to Docker Hub
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
+        uses: docker/login-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+
+      - name: Build LIBERO-plus benchmark image
+        uses: docker/build-push-action@v6 # zizmor: ignore[unpinned-uses]
+        with:
+          context: .
+          file: docker/Dockerfile.benchmark.libero_plus
+          push: false
+          load: true
+          tags: lerobot-benchmark-libero-plus:ci
+          cache-from: type=local,src=/tmp/.buildx-cache-libero-plus
+          cache-to: type=local,dest=/tmp/.buildx-cache-libero-plus,mode=max
+
+      - name: Run LIBERO-plus smoke eval (1 episode)
+        if: env.HF_USER_TOKEN != ''
+        run: |
+          docker run --name libero-plus-eval --gpus all \
+            --shm-size=4g \
+            -e HF_HOME=/tmp/hf \
+            -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
+            -e HF_HUB_DOWNLOAD_TIMEOUT=300 \
+            -e LIBERO_PLUS_SUITE="${LIBERO_PLUS_SUITE}" \
+            -e LIBERO_PLUS_POLICY="${LIBERO_PLUS_POLICY}" \
+            -e LIBERO_PLUS_TASK_IDS="${LIBERO_PLUS_TASK_IDS}" \
+            lerobot-benchmark-libero-plus:ci \
+            bash -c "
+              hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
+              lerobot-eval \
+                --policy.path=\"\$LIBERO_PLUS_POLICY\" \
+                --env.type=libero_plus \
+                --env.task=\"\$LIBERO_PLUS_SUITE\" \
+                --env.task_ids=\"\$LIBERO_PLUS_TASK_IDS\" \
+                --eval.batch_size=1 \
+                --eval.n_episodes=1 \
+                --eval.use_async_envs=false \
+                --policy.device=cuda \
+                '--env.camera_name_mapping={\"agentview_image\": \"camera1\", \"robot0_eye_in_hand_image\": \"camera2\"}' \
+                --policy.empty_cameras=1 \
+                --output_dir=/tmp/eval-artifacts
+              python scripts/ci/extract_task_descriptions.py \
+                --env libero_plus --task \"\$LIBERO_PLUS_SUITE\" \
+                --output /tmp/eval-artifacts/task_descriptions.json
+            "
+
+      - name: Copy LIBERO-plus artifacts from container
+        if: always()
+        run: |
+          mkdir -p /tmp/libero-plus-artifacts
+          docker cp libero-plus-eval:/tmp/eval-artifacts/. /tmp/libero-plus-artifacts/ 2>/dev/null || true
+          docker rm -f libero-plus-eval || true
+
+      - name: Parse LIBERO-plus eval metrics
+        if: always()
+        run: |
+          python3 scripts/ci/parse_eval_metrics.py \
+            --artifacts-dir /tmp/libero-plus-artifacts \
+            --env libero_plus \
+            --task "${LIBERO_PLUS_SUITE}" \
+            --policy "${LIBERO_PLUS_POLICY}"
+
+      - name: Upload LIBERO-plus rollout video
+        if: always()
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: libero-plus-rollout-video
+          path: /tmp/libero-plus-artifacts/videos/
+          if-no-files-found: warn
+
+      - name: Upload LIBERO-plus eval metrics
+        if: always()
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: libero-plus-metrics
+          path: /tmp/libero-plus-artifacts/metrics.json
+          if-no-files-found: warn
+
+  # ── VLABENCH ─────────────────────────────────────────────────────────────
+  # Isolated image: lerobot[vlabench] only (VLABench, mujoco==3.2.2, dm-control chain)
+  vlabench-integration-test:
+    name: VLABench — build image + 1-episode eval
+    runs-on:
+      group: aws-g6-4xlarge-plus
+    env:
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+          lfs: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          cache-binary: false
+
+      - name: Login to Docker Hub
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
+        uses: docker/login-action@v3 # zizmor: ignore[unpinned-uses]
+        with:
+          username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+
+      - name: Build VLABench benchmark image
+        uses: docker/build-push-action@v6 # zizmor: ignore[unpinned-uses]
+        with:
+          context: .
+          file: docker/Dockerfile.benchmark.vlabench
+          push: false
+          load: true
+          tags: lerobot-benchmark-vlabench:ci
+          build-args: |
+            VLABENCH_ASSETS_REPO=lerobot/vlabench-assets
+
+      - name: Run VLABench smoke eval (10 tasks, 1 episode each)
+        if: env.HF_USER_TOKEN != ''
+        run: |
+          docker run --name vlabench-eval --gpus all \
+            --shm-size=4g \
+            -e HF_HOME=/tmp/hf \
+            -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
+            -e HF_HUB_DOWNLOAD_TIMEOUT=300 \
+            -e MUJOCO_GL=egl \
+            lerobot-benchmark-vlabench:ci \
+            bash -c "
+              hf auth login --token \"\$HF_USER_TOKEN\" --add-to-git-credential 2>/dev/null || true
+              lerobot-eval \
+                --policy.path=lerobot/smolvla_vlabench \
+                --env.type=vlabench \
+                --env.task=select_fruit,select_toy,select_book,select_painting,select_drink,select_ingredient,select_billiards,select_poker,add_condiment,insert_flower \
+                --eval.batch_size=1 \
+                --eval.n_episodes=1 \
+                --eval.use_async_envs=false \
+                --policy.device=cuda \
+                '--rename_map={\"observation.images.image\": \"observation.images.camera1\", \"observation.images.second_image\": \"observation.images.camera2\", \"observation.images.wrist_image\": \"observation.images.camera3\"}' \
+                --output_dir=/tmp/eval-artifacts
+              python scripts/ci/extract_task_descriptions.py \
+                --env vlabench \
+                --task select_fruit,select_toy,select_book,select_painting,select_drink,select_ingredient,select_billiards,select_poker,add_condiment,insert_flower \
+                --output /tmp/eval-artifacts/task_descriptions.json
+            "
+
+      - name: Copy VLABench artifacts from container
+        if: always()
+        run: |
+          mkdir -p /tmp/vlabench-artifacts
+          docker cp vlabench-eval:/tmp/eval-artifacts/. /tmp/vlabench-artifacts/ 2>/dev/null || true
+          docker rm -f vlabench-eval || true
+
+      - name: Parse VLABench eval metrics
+        if: always()
+        run: |
+          python3 scripts/ci/parse_eval_metrics.py \
+            --artifacts-dir /tmp/vlabench-artifacts \
+            --env vlabench \
+            --task select_fruit,select_toy,select_book,select_painting,select_drink,select_ingredient,select_billiards,select_poker,add_condiment,insert_flower \
+            --policy lerobot/smolvla_vlabench
+
+      - name: Upload VLABench rollout video
+        if: always()
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: vlabench-rollout-video
+          path: /tmp/vlabench-artifacts/videos/
+          if-no-files-found: warn
+
+      - name: Upload VLABench eval metrics
+        if: always()
+        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+        with:
+          name: vlabench-metrics
+          path: /tmp/vlabench-artifacts/metrics.json
+          if-no-files-found: warn

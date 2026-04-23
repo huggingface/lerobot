@@ -47,9 +47,9 @@ Here is a template to get you started, customize the parameters and methods as n
 ```python
 # configuration_my_custom_policy.py
 from dataclasses import dataclass, field
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.optim.optimizers import AdamWConfig
-from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
+from lerobot.configs import PreTrainedConfig
+from lerobot.optim import AdamWConfig
+from lerobot.optim import CosineDecayWithWarmupSchedulerConfig
 
 @PreTrainedConfig.register_subclass("my_custom_policy")
 @dataclass
@@ -120,7 +120,7 @@ import torch
 import torch.nn as nn
 from typing import Any
 
-from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies import PreTrainedPolicy
 from lerobot.utils.constants import ACTION
 from .configuration_my_custom_policy import MyCustomPolicyConfig
 

@@ -17,6 +17,8 @@ import numpy as np
 import pytest
 import torch
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from lerobot.datasets.utils import safe_shard
 from lerobot.utils.constants import ACTION

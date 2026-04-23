@@ -15,8 +15,21 @@
 # limitations under the License.
 
 import logging
+from typing import TYPE_CHECKING
+
+from lerobot.utils.import_utils import _hidapi_available, _pygame_available, require_package
 
 from ..utils import TeleopEvents
+
+if TYPE_CHECKING or _pygame_available:
+    import pygame
+else:
+    pygame = None  # type: ignore[assignment]
+
+if TYPE_CHECKING or _hidapi_available:
+    import hid
+else:
+    hid = None  # type: ignore[assignment]
 
 
 class InputController:
@@ -199,6 +212,7 @@ class GamepadController(InputController):
     """Generate motion deltas from gamepad input."""
 
     def __init__(self, x_step_size=1.0, y_step_size=1.0, z_step_size=1.0, deadzone=0.1):
+        require_package("pygame", extra="gamepad")
         super().__init__(x_step_size, y_step_size, z_step_size)
         self.deadzone = deadzone
         self.joystick = None
@@ -206,8 +220,6 @@ class GamepadController(InputController):
 
     def start(self):
         """Initialize pygame and the gamepad."""
-        import pygame
-
         pygame.init()
         pygame.joystick.init()
 
@@ -230,8 +242,6 @@ class GamepadController(InputController):
 
     def stop(self):
         """Clean up pygame resources."""
-        import pygame
-
         if pygame.joystick.get_init():
             if self.joystick:
                 self.joystick.quit()
@@ -240,8 +250,6 @@ class GamepadController(InputController):
 
     def update(self):
         """Process pygame events to get fresh gamepad readings."""
-        import pygame
-
         for event in pygame.event.get():
             if event.type == pygame.JOYBUTTONDOWN:
                 if event.button == 3:
@@ -280,8 +288,6 @@ class GamepadController(InputController):
 
     def get_deltas(self):
         """Get the current movement deltas from gamepad state."""
-        import pygame
-
         try:
             # Read joystick axes
             # Left stick X and Y (typically axes 0 and 1)
@@ -326,6 +332,7 @@ class GamepadControllerHID(InputController):
             z_scale: Scaling factor for Z-axis movement
             deadzone: Joystick deadzone to prevent drift
         """
+        require_package("hidapi", extra="gamepad", import_name="hid")
         super().__init__(x_step_size, y_step_size, z_step_size)
         self.deadzone = deadzone
         self.device = None
@@ -342,8 +349,6 @@ class GamepadControllerHID(InputController):
 
     def find_device(self):
         """Look for the gamepad device by vendor and product ID."""
-        import hid
-
         devices = hid.enumerate()
         for device in devices:
             device_name = device["product_string"]
@@ -357,8 +362,6 @@ class GamepadControllerHID(InputController):
 
     def start(self):
         """Connect to the gamepad using HIDAPI."""
-        import hid
-
         self.device_info = self.find_device()
         if not self.device_info:
             self.running = False

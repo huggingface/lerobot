@@ -60,9 +60,8 @@ if TYPE_CHECKING or _transformers_available:
 else:
     AutoProcessor = None
 
-from lerobot.configs import parser
-from lerobot.configs.types import NormalizationMode
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.configs import NormalizationMode, parser
+from lerobot.datasets import LeRobotDataset
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 
