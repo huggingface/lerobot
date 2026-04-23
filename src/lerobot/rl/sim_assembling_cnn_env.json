@@ -7,7 +7,8 @@
         "robot": null,
         "teleop": {
             "type": "gamepad",
-            "use_gripper": true
+            "use_gripper": true,
+            "use_yaw": true
         },
         "processor": {
             "control_mode": "gamepad",
@@ -29,7 +30,9 @@
             }
         },
         "render_mode": "all",
-        "action_step_size": 0.005
+        "action_step_size": 0.005,
+        "include_yaw_slot": true,
+        "yaw_step_size": 0.05
     },
     "device": "cuda"
 }

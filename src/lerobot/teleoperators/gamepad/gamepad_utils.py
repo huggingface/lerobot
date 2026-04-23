@@ -198,11 +198,25 @@ class KeyboardController(InputController):
 class GamepadController(InputController):
     """Generate motion deltas from gamepad input."""
 
-    def __init__(self, x_step_size=1.0, y_step_size=1.0, z_step_size=1.0, deadzone=0.1):
+    def __init__(self, x_step_size=1.0, y_step_size=1.0, z_step_size=1.0, deadzone=0.1, yaw_step_size=1.0):
         super().__init__(x_step_size, y_step_size, z_step_size)
         self.deadzone = deadzone
+        self.yaw_step_size = yaw_step_size
         self.joystick = None
         self.intervention_flag = False
+
+    def get_yaw_delta(self):
+        """Return yaw stick delta (right-stick horizontal, axis 3 on PS4/DualSense), deadzoned + scaled."""
+        import pygame
+
+        try:
+            yaw_input = self.joystick.get_axis(3)
+            if abs(yaw_input) < self.deadzone:
+                return 0.0
+            # Invert: stick left → positive yaw (CCW around world Z) feels natural.
+            return -yaw_input * self.yaw_step_size
+        except pygame.error:
+            return 0.0
 
     def start(self):
         """Initialize pygame and the gamepad."""
@@ -223,6 +237,7 @@ class GamepadController(InputController):
         print("Gamepad controls:")
         print("  Left analog stick: Move in X-Y plane")
         print("  Right analog stick (vertical): Move in Z axis")
+        print("  Right analog stick (horizontal): Yaw rotation (if use_yaw=true)")
         print("  B/Circle button: Exit")
         print("  Y/Triangle button: End episode with SUCCESS")
         print("  A/Cross button: End episode with FAILURE")

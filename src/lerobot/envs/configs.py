@@ -303,6 +303,15 @@ class HILSerlRobotEnvConfig(EnvConfig):
     # 0.025 → 50 cm/s (too aggressive for humans, fine for RL policy rollout).
     action_step_size: float = 0.005
 
+    # Max per-step yaw rotation in radians when right-stick-horizontal is at
+    # full deflection (sim_assembling with include_yaw_slot=True).
+    # 0.05 rad ≈ 2.9° per tick. At 20 Hz → ~57°/s, comfortable for teleop.
+    yaw_step_size: float = 0.05
+
+    # If True (and env supports it), sim action is 5D [dx, dy, dz, dyaw, gripper]
+    # and the right stick horizontal drives EE yaw. If False, 4D [dx, dy, dz, gripper].
+    include_yaw_slot: bool = False
+
     @property
     def gym_kwargs(self) -> dict:
         return {}

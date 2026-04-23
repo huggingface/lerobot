@@ -21,6 +21,7 @@ import logging
 from typing import Any
 
 import gymnasium as gym
+import mujoco
 import numpy as np
 from gymnasium import spaces
 
@@ -76,6 +77,7 @@ class AssemblingHILAdapter(gym.Wrapper):
         cam_front_key: str = "cam_front",
         cam_wrist_key: str = "cam_gripper",
         action_step_size: float = 0.025,
+        yaw_step_size: float = 0.05,
         use_gripper: bool = True,
         num_discrete_actions: int = 3,
         include_yaw_slot: bool = True,
@@ -86,6 +88,7 @@ class AssemblingHILAdapter(gym.Wrapper):
         self.cam_front_key = cam_front_key
         self.cam_wrist_key = cam_wrist_key
         self.action_step_size = float(action_step_size)
+        self.yaw_step_size = float(yaw_step_size)
         self.use_gripper = bool(use_gripper)
         self.num_discrete_actions = int(num_discrete_actions) if use_gripper else 0
         self.include_yaw_slot = bool(include_yaw_slot)
@@ -184,7 +187,17 @@ class AssemblingHILAdapter(gym.Wrapper):
         dxyz = np.clip(a[:3], -1.0, 1.0) * self.action_step_size
         self._ee_ref_pos = self._ee_ref_pos + dxyz
 
-        # dyaw is accepted but ignored (quaternion held constant for a vertical pick task).
+        # Optional yaw rotation around world Z (compose: q_new = q_delta ⊗ q_current).
+        if self.include_yaw_slot and a.shape[0] > 3:
+            dyaw = float(np.clip(a[3], -1.0, 1.0)) * self.yaw_step_size
+            if abs(dyaw) > 1e-6:
+                q_delta = np.array(
+                    [np.cos(dyaw / 2.0), 0.0, 0.0, np.sin(dyaw / 2.0)], dtype=np.float64
+                )
+                new_q = np.zeros(4, dtype=np.float64)
+                mujoco.mju_mulQuat(new_q, q_delta, self._ee_ref_quat)
+                self._ee_ref_quat = new_q
+
         gripper_idx = 4 if self.include_yaw_slot else 3
         if self.use_gripper and a.shape[0] > gripper_idx:
             self._gripper_cmd = float(np.clip(self._decode_gripper(a[gripper_idx]), 0.0, 1.0))
@@ -206,6 +219,7 @@ def make_assembling_env(
     render_mode: str = "rgb_array",
     image_size: tuple[int, int] = (128, 128),
     action_step_size: float = 0.025,
+    yaw_step_size: float = 0.05,
     use_gripper: bool = True,
     num_discrete_actions: int = 3,
     include_yaw_slot: bool = False,
@@ -232,6 +246,7 @@ def make_assembling_env(
         base,
         image_size=image_size,
         action_step_size=action_step_size,
+        yaw_step_size=yaw_step_size,
         use_gripper=use_gripper,
         num_discrete_actions=num_discrete_actions,
         include_yaw_slot=include_yaw_slot,

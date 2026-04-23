@@ -58,18 +58,15 @@ class GamepadTeleop(Teleoperator):
 
     @property
     def action_features(self) -> dict:
+        names = {"delta_x": 0, "delta_y": 1, "delta_z": 2}
+        idx = 3
+        if self.config.use_yaw:
+            names["delta_yaw"] = idx
+            idx += 1
         if self.config.use_gripper:
-            return {
-                "dtype": "float32",
-                "shape": (4,),
-                "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2, "gripper": 3},
-            }
-        else:
-            return {
-                "dtype": "float32",
-                "shape": (3,),
-                "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2},
-            }
+            names["gripper"] = idx
+            idx += 1
+        return {"dtype": "float32", "shape": (idx,), "names": names}
 
     @property
     def feedback_features(self) -> dict:
@@ -94,21 +91,19 @@ class GamepadTeleop(Teleoperator):
         # Get movement deltas from the controller
         delta_x, delta_y, delta_z = self.gamepad.get_deltas()
 
-        # Create action from gamepad input
-        gamepad_action = np.array([delta_x, delta_y, delta_z], dtype=np.float32)
-
         action_dict = {
-            "delta_x": gamepad_action[0],
-            "delta_y": gamepad_action[1],
-            "delta_z": gamepad_action[2],
+            "delta_x": float(delta_x),
+            "delta_y": float(delta_y),
+            "delta_z": float(delta_z),
         }
 
+        if self.config.use_yaw and hasattr(self.gamepad, "get_yaw_delta"):
+            action_dict["delta_yaw"] = float(self.gamepad.get_yaw_delta())
+
         # Default gripper action is to stay
-        gripper_action = GripperAction.STAY.value
         if self.config.use_gripper:
             gripper_command = self.gamepad.gripper_command()
-            gripper_action = gripper_action_map[gripper_command]
-            action_dict["gripper"] = gripper_action
+            action_dict["gripper"] = gripper_action_map[gripper_command]
 
         return action_dict
 

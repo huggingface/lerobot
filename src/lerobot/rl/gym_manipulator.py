@@ -351,6 +351,8 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
         sim_mode = "fast" if fast else "realtime"
         render_mode = getattr(cfg, "render_mode", "rgb_array") or "rgb_array"
         action_step_size = float(getattr(cfg, "action_step_size", 0.005))
+        yaw_step_size = float(getattr(cfg, "yaw_step_size", 0.05))
+        include_yaw_slot = bool(getattr(cfg, "include_yaw_slot", False))
         env_kwargs = {
             "control_hz": float(cfg.fps),
             "mode": sim_mode,
@@ -358,6 +360,8 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
             "render_mode": render_mode,
             "use_gripper": use_gripper,
             "action_step_size": action_step_size,
+            "yaw_step_size": yaw_step_size,
+            "include_yaw_slot": include_yaw_slot,
         }
         env = gym.make(f"sim_assembling/{cfg.task}", **env_kwargs)
 
@@ -858,9 +862,13 @@ def control_loop(
         step_start_time = time.perf_counter()
 
         # Create a neutral action (no movement)
-        neutral_action = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32)
+        # Size neutral action from the env's action space so yaw / extra dims
+        # (e.g. sim_assembling with include_yaw_slot=True) don't fall through.
+        act_dim = int(getattr(env.action_space, "shape", (4,))[0])
+        neutral_action = torch.zeros(act_dim, dtype=torch.float32)
         if use_gripper:
-            neutral_action = torch.cat([neutral_action, torch.tensor([1.0])])  # Gripper stay (for RC10 1.0 is for stay instead of 0.0)
+            # Gripper is the last slot. 1.0 = stay (matches RC10 + sim_assembling "noop" bucket).
+            neutral_action[-1] = 1.0
 
         # Use the new step function
         transition = step_env_and_process_transition(

@@ -490,6 +490,9 @@ class InterventionActionProcessorStep(ProcessorStep):
                     teleop_action.get("delta_y", 0.0),
                     teleop_action.get("delta_z", 0.0),
                 ]
+                # Optional yaw slot (gamepad/ps4_joystick teleops with use_yaw=True).
+                if "delta_yaw" in teleop_action:
+                    action_list.append(teleop_action["delta_yaw"])
                 if self.use_gripper:
                     action_list.append(teleop_action.get(GRIPPER_KEY, 1.0))
             elif isinstance(teleop_action, np.ndarray):

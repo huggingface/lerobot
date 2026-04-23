@@ -23,3 +23,7 @@ from ..config import TeleoperatorConfig
 @dataclass
 class GamepadTeleopConfig(TeleoperatorConfig):
     use_gripper: bool = True
+    # If True, read the right-stick horizontal axis (axis 3) and emit a
+    # ``delta_yaw`` field in addition to delta_x / delta_y / delta_z. Enables
+    # yaw control for envs that accept a 5D action (dx, dy, dz, dyaw, gripper).
+    use_yaw: bool = False
