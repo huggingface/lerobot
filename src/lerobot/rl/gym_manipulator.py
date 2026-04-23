@@ -94,6 +94,11 @@ class DatasetConfig:
     num_episodes_to_record: int = 5
     replay_episode: int | None = None
     push_to_hub: bool = False
+    # If True and the target dataset directory already exists, delete it before
+    # creating a fresh one. Useful for iterating on recording configs without
+    # having to rm -rf the HF cache between attempts. Off by default to avoid
+    # accidental data loss.
+    overwrite: bool = False
 
 
 @dataclass
@@ -802,16 +807,41 @@ def control_loop(
                     "names": ["channels", "height", "width"],
                 }
 
+        # Optional clean-up before create (avoids FileExistsError on retry).
+        if cfg.dataset.overwrite:
+            import shutil as _shutil
+            from pathlib import Path as _Path
+
+            from lerobot.utils.constants import HF_LEROBOT_HOME
+
+            resolved_root = (
+                _Path(cfg.dataset.root)
+                if cfg.dataset.root is not None
+                else HF_LEROBOT_HOME / cfg.dataset.repo_id
+            )
+            if resolved_root.exists():
+                logging.warning("--dataset.overwrite=true: removing existing %s", resolved_root)
+                _shutil.rmtree(resolved_root)
+
         # Create dataset
-        dataset = LeRobotDataset.create(
-            cfg.dataset.repo_id,
-            cfg.env.fps,
-            root=cfg.dataset.root,
-            use_videos=True,
-            image_writer_threads=4,
-            image_writer_processes=0,
-            features=features,
-        )
+        try:
+            dataset = LeRobotDataset.create(
+                cfg.dataset.repo_id,
+                cfg.env.fps,
+                root=cfg.dataset.root,
+                use_videos=True,
+                image_writer_threads=4,
+                image_writer_processes=0,
+                features=features,
+            )
+        except FileExistsError as e:
+            raise FileExistsError(
+                f"{e}\n\n"
+                f"Dataset directory already exists. Options:\n"
+                f"  1. Re-run with --dataset.overwrite=true (destroys the existing dir first).\n"
+                f"  2. Remove it manually: rm -rf ~/.cache/huggingface/lerobot/{cfg.dataset.repo_id}\n"
+                f"  3. Pick a different --dataset.repo_id."
+            ) from None
 
     episode_idx = 0
     episode_step = 0
