@@ -82,6 +82,8 @@ class AssemblingHILAdapter(gym.Wrapper):
         num_discrete_actions: int = 3,
         include_yaw_slot: bool = True,
         object_spawn_offset: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        ee_bounds_min: tuple[float, float, float] | None = None,
+        ee_bounds_max: tuple[float, float, float] | None = None,
     ):
         super().__init__(env)
         assert env.use_task_space, "AssemblingHILAdapter requires use_task_space=True"
@@ -91,6 +93,12 @@ class AssemblingHILAdapter(gym.Wrapper):
         self.action_step_size = float(action_step_size)
         self.yaw_step_size = float(yaw_step_size)
         self._spawn_offset = np.asarray(object_spawn_offset, dtype=np.float64).reshape(3)
+        self._ee_min = (
+            np.asarray(ee_bounds_min, dtype=np.float64).reshape(3) if ee_bounds_min is not None else None
+        )
+        self._ee_max = (
+            np.asarray(ee_bounds_max, dtype=np.float64).reshape(3) if ee_bounds_max is not None else None
+        )
         self.use_gripper = bool(use_gripper)
         self.num_discrete_actions = int(num_discrete_actions) if use_gripper else 0
         self.include_yaw_slot = bool(include_yaw_slot)
@@ -202,6 +210,12 @@ class AssemblingHILAdapter(gym.Wrapper):
         dxyz = np.clip(a[:3], -1.0, 1.0) * self.action_step_size
         self._ee_ref_pos = self._ee_ref_pos + dxyz
 
+        # Workspace bounds (set min[i]==max[i] to lock axis i).
+        if self._ee_min is not None:
+            self._ee_ref_pos = np.maximum(self._ee_ref_pos, self._ee_min)
+        if self._ee_max is not None:
+            self._ee_ref_pos = np.minimum(self._ee_ref_pos, self._ee_max)
+
         # Optional yaw rotation around world Z (compose: q_new = q_delta ⊗ q_current).
         if self.include_yaw_slot and a.shape[0] > 3:
             dyaw = float(np.clip(a[3], -1.0, 1.0)) * self.yaw_step_size
@@ -239,6 +253,8 @@ def make_assembling_env(
     num_discrete_actions: int = 3,
     include_yaw_slot: bool = False,
     object_spawn_offset: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    ee_bounds_min: tuple[float, float, float] | None = None,
+    ee_bounds_max: tuple[float, float, float] | None = None,
     **_ignored: Any,
 ) -> gym.Env:
     """Factory used by ``gym.make("sim_assembling/AssembleBase-v0", ...)``.
@@ -267,6 +283,8 @@ def make_assembling_env(
         num_discrete_actions=num_discrete_actions,
         include_yaw_slot=include_yaw_slot,
         object_spawn_offset=object_spawn_offset,
+        ee_bounds_min=ee_bounds_min,
+        ee_bounds_max=ee_bounds_max,
     )
 
 

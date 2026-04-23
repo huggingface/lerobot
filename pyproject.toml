@@ -229,6 +229,7 @@ lerobot-train-reward-classifier="lerobot.scripts.lerobot_train_reward_classifier
 lerobot-split-reward-dataset="lerobot.policies.sac.reward_model.split_dataset:main"
 lerobot-prepare-sarm-data="lerobot.rl.prepare_sarm_data:main"
 lerobot-relabel-sarm="lerobot.rl.relabel_sarm:main"
+lerobot-find-sim-workspace-bounds="lerobot.scripts.lerobot_find_sim_workspace_bounds:main"
 
 # ---------------- Tool Configurations ----------------
 [tool.setuptools.package-data]

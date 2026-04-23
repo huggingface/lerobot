@@ -354,6 +354,16 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
         yaw_step_size = float(getattr(cfg, "yaw_step_size", 0.05))
         include_yaw_slot = bool(getattr(cfg, "include_yaw_slot", False))
         object_spawn_offset = tuple(getattr(cfg, "object_spawn_offset", (0.0, 0.0, 0.0)))
+        # Reuse the existing InverseKinematicsConfig.end_effector_bounds slot so users
+        # don't need a third place to define workspace limits. Optional.
+        ee_bounds_min = ee_bounds_max = None
+        ik_cfg = cfg.processor.inverse_kinematics
+        if ik_cfg is not None and ik_cfg.end_effector_bounds is not None:
+            b = ik_cfg.end_effector_bounds
+            if b.get("min") is not None:
+                ee_bounds_min = tuple(b["min"])
+            if b.get("max") is not None:
+                ee_bounds_max = tuple(b["max"])
         env_kwargs = {
             "control_hz": float(cfg.fps),
             "mode": sim_mode,
@@ -364,6 +374,8 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
             "yaw_step_size": yaw_step_size,
             "include_yaw_slot": include_yaw_slot,
             "object_spawn_offset": object_spawn_offset,
+            "ee_bounds_min": ee_bounds_min,
+            "ee_bounds_max": ee_bounds_max,
         }
         env = gym.make(f"sim_assembling/{cfg.task}", **env_kwargs)
 
