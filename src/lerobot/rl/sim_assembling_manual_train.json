@@ -30,11 +30,8 @@
         "realtime": false,
         "robot": null,
         "teleop": {
-            "type": "ps4_joystick",
-            "delta_mode": true,
-            "max_speed": 0.05,
-            "max_rot_speed": 0.1,
-            "deadzone": 0.05
+            "type": "gamepad",
+            "use_gripper": true
         },
         "processor": {
             "control_mode": "gamepad",
@@ -52,10 +49,34 @@
             }
         },
         "features": {
-            "observation.images.front": {"type": "VISUAL", "shape": [3, 128, 128]},
-            "observation.images.wrist": {"type": "VISUAL", "shape": [3, 128, 128]},
-            "observation.state": {"type": "STATE", "shape": [15]},
-            "action": {"type": "ACTION", "shape": [3]}
+            "observation.images.front": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    128,
+                    128
+                ]
+            },
+            "observation.images.wrist": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    128,
+                    128
+                ]
+            },
+            "observation.state": {
+                "type": "STATE",
+                "shape": [
+                    15
+                ]
+            },
+            "action": {
+                "type": "ACTION",
+                "shape": [
+                    3
+                ]
+            }
         },
         "features_map": {
             "observation.images.front": "observation.images.front",
@@ -74,31 +95,111 @@
             "ACTION": "MIN_MAX"
         },
         "input_features": {
-            "observation.images.front": {"type": "VISUAL", "shape": [3, 128, 128]},
-            "observation.images.wrist": {"type": "VISUAL", "shape": [3, 128, 128]},
-            "observation.state": {"type": "STATE", "shape": [15]}
+            "observation.images.front": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    128,
+                    128
+                ]
+            },
+            "observation.images.wrist": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    128,
+                    128
+                ]
+            },
+            "observation.state": {
+                "type": "STATE",
+                "shape": [
+                    15
+                ]
+            }
         },
         "output_features": {
-            "action": {"type": "ACTION", "shape": [3]}
+            "action": {
+                "type": "ACTION",
+                "shape": [
+                    3
+                ]
+            }
         },
         "device": "cuda",
         "use_amp": false,
         "dataset_stats": {
             "observation.images.front": {
-                "mean": [0.485, 0.456, 0.406],
-                "std": [0.229, 0.224, 0.225]
+                "mean": [
+                    0.485,
+                    0.456,
+                    0.406
+                ],
+                "std": [
+                    0.229,
+                    0.224,
+                    0.225
+                ]
             },
             "observation.images.wrist": {
-                "mean": [0.485, 0.456, 0.406],
-                "std": [0.229, 0.224, 0.225]
+                "mean": [
+                    0.485,
+                    0.456,
+                    0.406
+                ],
+                "std": [
+                    0.229,
+                    0.224,
+                    0.225
+                ]
             },
             "observation.state": {
-                "min": [-3.1416, -3.1416, -3.1416, -3.1416, -3.1416, -3.1416, 0.0, -1.0, -1.0, 0.0, -1.0, -1.0, -1.0, -1.0, 0.0],
-                "max": [ 3.1416,  3.1416,  3.1416,  3.1416,  3.1416,  3.1416, 0.8,  1.0,  1.0, 1.0,  1.0,  1.0,  1.0,  1.0, 0.8]
+                "min": [
+                    -3.1416,
+                    -3.1416,
+                    -3.1416,
+                    -3.1416,
+                    -3.1416,
+                    -3.1416,
+                    0.0,
+                    -1.0,
+                    -1.0,
+                    0.0,
+                    -1.0,
+                    -1.0,
+                    -1.0,
+                    -1.0,
+                    0.0
+                ],
+                "max": [
+                    3.1416,
+                    3.1416,
+                    3.1416,
+                    3.1416,
+                    3.1416,
+                    3.1416,
+                    0.8,
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                    0.8
+                ]
             },
             "action": {
-                "min": [-0.025, -0.025, -0.025],
-                "max": [ 0.025,  0.025,  0.025]
+                "min": [
+                    -0.025,
+                    -0.025,
+                    -0.025
+                ],
+                "max": [
+                    0.025,
+                    0.025,
+                    0.025
+                ]
             }
         },
         "repo_id": "local/sim_assemble_manual",
@@ -128,17 +229,23 @@
         "grad_clip_norm": 10.0,
         "num_discrete_actions": 3,
         "critic_network_kwargs": {
-            "hidden_dims": [256, 256],
+            "hidden_dims": [
+                256,
+                256
+            ],
             "activate_final": true,
             "final_activation": null
         },
         "actor_network_kwargs": {
-            "hidden_dims": [256, 256],
+            "hidden_dims": [
+                256,
+                256
+            ],
             "activate_final": true
         },
         "policy_kwargs": {
             "use_tanh_squash": true,
-            "std_min": 1e-5,
+            "std_min": 1e-05,
             "std_max": 5,
             "init_final": 0.05
         },

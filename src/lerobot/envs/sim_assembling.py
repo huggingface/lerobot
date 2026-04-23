@@ -59,8 +59,12 @@ class AssemblingHILAdapter(gym.Wrapper):
         cam_front_key: source camera name in env obs (default "cam_front").
         cam_wrist_key: source camera name in env obs (default "cam_gripper").
         action_step_size: max |delta_xyz| in metres per control step.
-        use_gripper: append a discrete gripper dim to action.
+        use_gripper: append a gripper dim to action.
         num_discrete_actions: number of discrete buckets for gripper (3 = noop/open/close).
+        include_yaw_slot: if True, expose action shape (dx, dy, dz, dyaw, gripper) = 5D
+            to match lerobot's ps4_joystick ``delta_mode`` teleop (which emits 5 values).
+            ``dyaw`` is ignored internally — the task is vertical pick-and-place so the
+            wrist orientation is held at the reset quaternion.
     """
 
     metadata = {"render_fps": 10, "render_modes": ["rgb_array", "human"]}
@@ -74,6 +78,7 @@ class AssemblingHILAdapter(gym.Wrapper):
         action_step_size: float = 0.025,
         use_gripper: bool = True,
         num_discrete_actions: int = 3,
+        include_yaw_slot: bool = True,
     ):
         super().__init__(env)
         assert env.use_task_space, "AssemblingHILAdapter requires use_task_space=True"
@@ -83,15 +88,22 @@ class AssemblingHILAdapter(gym.Wrapper):
         self.action_step_size = float(action_step_size)
         self.use_gripper = bool(use_gripper)
         self.num_discrete_actions = int(num_discrete_actions) if use_gripper else 0
+        self.include_yaw_slot = bool(include_yaw_slot)
 
-        cont_dim = 3  # dx, dy, dz
+        # [dx, dy, dz] + optional [dyaw] + optional [gripper]
+        low = [-1.0, -1.0, -1.0]
+        high = [1.0, 1.0, 1.0]
+        if self.include_yaw_slot:
+            low.append(-1.0)
+            high.append(1.0)
         if self.use_gripper:
-            low = np.array([-1.0] * cont_dim + [0.0], dtype=np.float32)
-            high = np.array([1.0] * cont_dim + [float(num_discrete_actions - 1)], dtype=np.float32)
-        else:
-            low = np.array([-1.0] * cont_dim, dtype=np.float32)
-            high = np.array([1.0] * cont_dim, dtype=np.float32)
-        self.action_space = spaces.Box(low=low, high=high, dtype=np.float32)
+            low.append(0.0)
+            high.append(float(max(num_discrete_actions - 1, 1)))
+        self.action_space = spaces.Box(
+            low=np.asarray(low, dtype=np.float32),
+            high=np.asarray(high, dtype=np.float32),
+            dtype=np.float32,
+        )
 
         h, w = image_size
         self.observation_space = spaces.Dict(
@@ -168,13 +180,14 @@ class AssemblingHILAdapter(gym.Wrapper):
         if self._ee_ref_pos is None:
             raise RuntimeError("AssemblingHILAdapter.step called before reset().")
 
-        # Expect 3D continuous + optional discrete gripper.
-        dxyz = a[:3]
-        dxyz = np.clip(dxyz, -1.0, 1.0) * self.action_step_size
+        # Layout: [dx, dy, dz] + (optional [dyaw]) + (optional [gripper]).
+        dxyz = np.clip(a[:3], -1.0, 1.0) * self.action_step_size
         self._ee_ref_pos = self._ee_ref_pos + dxyz
 
-        if self.use_gripper and a.shape[0] >= 4:
-            self._gripper_cmd = float(np.clip(self._decode_gripper(a[3]), 0.0, 1.0))
+        # dyaw is accepted but ignored (quaternion held constant for a vertical pick task).
+        gripper_idx = 4 if self.include_yaw_slot else 3
+        if self.use_gripper and a.shape[0] > gripper_idx:
+            self._gripper_cmd = float(np.clip(self._decode_gripper(a[gripper_idx]), 0.0, 1.0))
 
         sim_action = np.concatenate(
             [self._ee_ref_pos, self._ee_ref_quat, [self._gripper_cmd]]
@@ -195,9 +208,17 @@ def make_assembling_env(
     action_step_size: float = 0.025,
     use_gripper: bool = True,
     num_discrete_actions: int = 3,
+    include_yaw_slot: bool = False,
     **_ignored: Any,
 ) -> gym.Env:
-    """Factory used by ``gym.make("sim_assembling/AssembleBase-v0", ...)``."""
+    """Factory used by ``gym.make("sim_assembling/AssembleBase-v0", ...)``.
+
+    ``include_yaw_slot=False`` (default) → action = (dx, dy, dz, gripper) 4D,
+    matches lerobot's ``gamepad`` teleop in delta_mode.
+
+    ``include_yaw_slot=True`` → action = (dx, dy, dz, dyaw, gripper) 5D,
+    matches lerobot's ``ps4_joystick`` teleop in delta_mode (dyaw is ignored).
+    """
     base = AssemblingEnv(
         xml_path=xml_path,
         sim_timestep=sim_timestep,
@@ -213,6 +234,7 @@ def make_assembling_env(
         action_step_size=action_step_size,
         use_gripper=use_gripper,
         num_discrete_actions=num_discrete_actions,
+        include_yaw_slot=include_yaw_slot,
     )
 
 

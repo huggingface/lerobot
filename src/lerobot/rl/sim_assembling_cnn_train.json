@@ -30,11 +30,8 @@
         "realtime": false,
         "robot": null,
         "teleop": {
-            "type": "ps4_joystick",
-            "delta_mode": true,
-            "max_speed": 0.05,
-            "max_rot_speed": 0.1,
-            "deadzone": 0.05
+            "type": "gamepad",
+            "use_gripper": true
         },
         "processor": {
             "control_mode": "gamepad",
