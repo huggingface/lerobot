@@ -169,7 +169,7 @@ def test_async_read_depth_before_connect():
         _ = camera.async_read_depth()
 
 
-def test_async_read_depth_depth_disabled():
+def test_async_read_depth_disabled():
     config = RealSenseCameraConfig(serial_number_or_name="042", warmup_s=0)
     with (
         RealSenseCamera(config) as camera,

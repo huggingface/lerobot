@@ -565,7 +565,7 @@ class RealSenseCamera(Camera):
 
         if not self.use_depth:
             raise RuntimeError(
-                f"Failed to capture depth frame '.async_read_depth()'. Depth stream is not enabled for {self}."
+                f"Failed to capture depth frame via async_read_depth(); depth stream is not enabled for {self}."
             )
         if self.thread is None or not self.thread.is_alive():
             raise RuntimeError(f"{self} read thread is not running.")
@@ -633,7 +633,7 @@ class RealSenseCamera(Camera):
         Returns the most recent depth frame captured immediately (Peeking).
 
         This method is non-blocking and returns whatever is currently in the
-        memory buffer. Unlike `async_read`, it does not clear the new-frame
+        memory buffer. Unlike `async_read_depth`, it does not clear the new-frame
         event nor wait for a fresh frame — it just peeks at whatever the
         background capture thread has most recently stored. The frame may be
         stale (hanging camera scenario e.g.).
