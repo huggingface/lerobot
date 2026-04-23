@@ -164,6 +164,16 @@ class FastWAMConfig(PreTrainedConfig):
             )
         if self.dtype not in ("bfloat16", "float16", "float32"):
             raise ValueError(f"Invalid dtype '{self.dtype}'.")
+        if self.n_obs_steps > 1:
+            T = self.n_obs_steps
+            if T % 4 != 1:
+                raise ValueError(
+                    f"n_obs_steps={T} must satisfy T % 4 == 1 (e.g. 5, 9, 33) for FastWAM video training."
+                )
+            if self.chunk_size % (T - 1) != 0:
+                raise ValueError(
+                    f"chunk_size={self.chunk_size} must be divisible by n_obs_steps-1={T - 1}."
+                )
 
     def validate_features(self) -> None:
         if self.input_features is None:
@@ -209,8 +219,13 @@ class FastWAMConfig(PreTrainedConfig):
         )
 
     @property
-    def observation_delta_indices(self) -> None:
-        return None
+    def observation_delta_indices(self) -> list[int] | None:
+        # With n_obs_steps > 1 the dataset returns T past frames as video for training.
+        # T must satisfy T % 4 == 1 and action_horizon % (T-1) == 0.
+        # Default n_obs_steps=1 → None (single frame, tiled to T=5 in _prepare_video_for_training).
+        if self.n_obs_steps <= 1:
+            return None
+        return list(range(self.n_obs_steps))
 
     @property
     def action_delta_indices(self) -> list[int]:

@@ -177,6 +177,9 @@ class FastWAMPolicy(PreTrainedPolicy):
         video = self._prepare_video_for_training(batch)
         context, context_mask = self._encode_text(batch)
         proprio = self._get_proprio(batch)
+        # build_inputs expects proprio as (B, T, D); add T dim if (B, D)
+        if proprio is not None and proprio.dim() == 2:
+            proprio = proprio.unsqueeze(1)
         action = batch[ACTION].to(device=self.model.device, dtype=self.model.torch_dtype)
         action_is_pad = batch.get("action_is_pad", None)
         if action_is_pad is not None:
@@ -190,8 +193,7 @@ class FastWAMPolicy(PreTrainedPolicy):
             "action": action,
             "action_is_pad": action_is_pad,
         }
-        loss_dict = self.model.training_loss(sample)
-        loss = loss_dict["loss"]
+        loss, loss_dict = self.model.training_loss(sample)
         return loss, {k: v.item() if isinstance(v, Tensor) else v for k, v in loss_dict.items()}
 
     # ------------------------------------------------------------------
@@ -265,11 +267,20 @@ class FastWAMPolicy(PreTrainedPolicy):
         return self.model.encode_prompt(templated)
 
     def _prepare_video_for_training(self, batch: dict[str, Tensor]) -> Tensor:
-        """Stack multi-camera video tensors into (B, C, T, H, W*N_cam) in [-1, 1]."""
+        """Stack multi-camera video tensors into (B, C, T, H, W*N_cam) in [-1, 1].
+
+        Accepts either:
+          - 5D (B, T, C, H, W): multi-frame dataset (n_obs_steps > 1)
+          - 4D (B, C, H, W):    single-frame dataset (n_obs_steps == 1) — tiled to T=5
+        The tiled T=5 case produces a static video; the action loss still trains the policy.
+        """
         cam_videos = []
         for i in range(self.config.num_cameras):
             key = f"{OBS_IMAGES}.image" if i == 0 else f"{OBS_IMAGES}.image{i + 1}"
-            v = batch[key]  # (B, T, C, H, W) float in [0, 1]
+            v = batch[key]  # (B, T, C, H, W) or (B, C, H, W)
+            if v.dim() == 4:
+                # Single-frame: tile to T=5 (minimum T satisfying T%4==1, T>1)
+                v = v.unsqueeze(1).expand(-1, 5, -1, -1, -1)
             cam_videos.append(v)
 
         # Concat along W, then permute to (B, C, T, H, W*N)
