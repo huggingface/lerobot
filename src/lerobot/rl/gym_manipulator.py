@@ -472,6 +472,7 @@ def make_processors(
 
     if cfg.name in ("gym_hil", "sim_assembling"):
         # Same obs/action shape contract as gym-hil; same processor pipeline applies.
+        use_gripper = cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else True
         action_pipeline_steps: list = []
         if teleop_device is not None:
             action_pipeline_steps.extend(
@@ -482,7 +483,10 @@ def make_processors(
             )
         action_pipeline_steps.extend(
             [
-                InterventionActionProcessorStep(terminate_on_success=terminate_on_success),
+                InterventionActionProcessorStep(
+                    use_gripper=use_gripper,
+                    terminate_on_success=terminate_on_success,
+                ),
                 Torch2NumpyActionProcessorStep(),
             ]
         )
