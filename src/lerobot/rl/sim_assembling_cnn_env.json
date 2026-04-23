@@ -27,10 +27,24 @@
                 "device": "cuda",
                 "success_threshold": 0.7,
                 "success_reward": 1.0
+            },
+            "inverse_kinematics": {
+                "end_effector_bounds": {
+                    "min": [
+                        -0.1708,
+                        -0.8781,
+                        0.3065
+                    ],
+                    "max": [
+                        0.2538,
+                        -0.4845,
+                        0.3589
+                    ]
+                }
             }
         },
         "render_mode": "all",
-        "action_step_size": 0.005,
+        "action_step_size": 0.01,
         "include_yaw_slot": true,
         "yaw_step_size": 0.05,
         "object_spawn_offset": [

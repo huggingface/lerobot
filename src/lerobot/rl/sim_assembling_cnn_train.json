@@ -41,7 +41,7 @@
             },
             "reset": {
                 "reset_time_s": 0.0,
-                "control_time_s": 15.0,
+                "control_time_s": 20.0,
                 "terminate_on_success": true
             },
             "reward_model": {
@@ -50,6 +50,20 @@
                 "device": "cuda",
                 "success_threshold": 0.7,
                 "success_reward": 1.0
+            },
+            "inverse_kinematics": {
+                "end_effector_bounds": {
+                    "min": [
+                        -0.1708,
+                        -0.8781,
+                        0.3065
+                    ],
+                    "max": [
+                        0.2538,
+                        -0.4845,
+                        0.3589
+                    ]
+                }
             }
         },
         "features": {
