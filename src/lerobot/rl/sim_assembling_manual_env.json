@@ -23,7 +23,8 @@
             "reward_model": {
                 "type": "manual"
             }
-        }
+        },
+        "render_mode": "all"
     },
     "device": "cpu"
 }

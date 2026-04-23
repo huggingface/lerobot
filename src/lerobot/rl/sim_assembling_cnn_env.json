@@ -27,7 +27,8 @@
                 "success_threshold": 0.7,
                 "success_reward": 1.0
             }
-        }
+        },
+        "render_mode": "all"
     },
     "device": "cuda"
 }

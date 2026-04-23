@@ -30,7 +30,8 @@
                 "success_threshold": 0.9,
                 "stats_dataset_repo_id": "local/sim_assembling_sarm_success_cropped"
             }
-        }
+        },
+        "render_mode": "all"
     },
     "device": "cuda"
 }

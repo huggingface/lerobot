@@ -344,11 +344,12 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
         # mode='fast' lifts the real-time throttle (control_hz no longer caps wall-clock).
         fast = bool(getattr(cfg, "realtime", False) is False)
         sim_mode = "fast" if fast else "realtime"
+        render_mode = getattr(cfg, "render_mode", "rgb_array") or "rgb_array"
         env_kwargs = {
             "control_hz": float(cfg.fps),
             "mode": sim_mode,
             "max_episode_steps": max_ep,
-            "render_mode": "rgb_array",
+            "render_mode": render_mode,
             "use_gripper": use_gripper,
         }
         env = gym.make(f"sim_assembling/{cfg.task}", **env_kwargs)

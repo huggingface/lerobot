@@ -290,6 +290,13 @@ class HILSerlRobotEnvConfig(EnvConfig):
     # Actor rollouts then advance as fast as compute allows. No effect on real robots.
     realtime: bool = True
 
+    # Rendering mode for sim envs. Options (sim_assembling):
+    #   "rgb_array" (default) — offscreen (pipeline-only, headless-safe)
+    #   "human"               — interactive MuJoCo viewer window (needs a display)
+    #   "all"                 — viewer + rgb_array (both)
+    # Ignored by real-robot envs.
+    render_mode: str = "rgb_array"
+
     @property
     def gym_kwargs(self) -> dict:
         return {}
