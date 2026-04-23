@@ -353,6 +353,7 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
         action_step_size = float(getattr(cfg, "action_step_size", 0.005))
         yaw_step_size = float(getattr(cfg, "yaw_step_size", 0.05))
         include_yaw_slot = bool(getattr(cfg, "include_yaw_slot", False))
+        object_spawn_offset = tuple(getattr(cfg, "object_spawn_offset", (0.0, 0.0, 0.0)))
         env_kwargs = {
             "control_hz": float(cfg.fps),
             "mode": sim_mode,
@@ -362,6 +363,7 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
             "action_step_size": action_step_size,
             "yaw_step_size": yaw_step_size,
             "include_yaw_slot": include_yaw_slot,
+            "object_spawn_offset": object_spawn_offset,
         }
         env = gym.make(f"sim_assembling/{cfg.task}", **env_kwargs)
 

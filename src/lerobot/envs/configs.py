@@ -312,6 +312,13 @@ class HILSerlRobotEnvConfig(EnvConfig):
     # and the right stick horizontal drives EE yaw. If False, 4D [dx, dy, dz, gripper].
     include_yaw_slot: bool = False
 
+    # Translate every free-body object by this xyz offset at reset (sim_assembling
+    # only). Useful to spawn objects closer to the EE start pose without editing
+    # scene.xml. EE start is roughly (0.10, -0.65, 0.36); scene.xml anchors the
+    # three nested objects near (-0.15, -0.65, 0.16..0.18). An offset of
+    # (0.25, 0.0, 0.0) re-centers them directly under the EE.
+    object_spawn_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
     @property
     def gym_kwargs(self) -> dict:
         return {}

@@ -81,6 +81,7 @@ class AssemblingHILAdapter(gym.Wrapper):
         use_gripper: bool = True,
         num_discrete_actions: int = 3,
         include_yaw_slot: bool = True,
+        object_spawn_offset: tuple[float, float, float] = (0.0, 0.0, 0.0),
     ):
         super().__init__(env)
         assert env.use_task_space, "AssemblingHILAdapter requires use_task_space=True"
@@ -89,6 +90,7 @@ class AssemblingHILAdapter(gym.Wrapper):
         self.cam_wrist_key = cam_wrist_key
         self.action_step_size = float(action_step_size)
         self.yaw_step_size = float(yaw_step_size)
+        self._spawn_offset = np.asarray(object_spawn_offset, dtype=np.float64).reshape(3)
         self.use_gripper = bool(use_gripper)
         self.num_discrete_actions = int(num_discrete_actions) if use_gripper else 0
         self.include_yaw_slot = bool(include_yaw_slot)
@@ -152,6 +154,19 @@ class AssemblingHILAdapter(gym.Wrapper):
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         obs, info = self.env.reset(seed=seed, options=options)
+
+        # Optional: translate all free-body objects by a fixed offset after the
+        # underlying reset (e.g. to spawn them near the EE start pose). We
+        # modify the MuJoCo state directly, so no changes to scene.xml are
+        # required.
+        if np.any(self._spawn_offset != 0.0):
+            base = self.env.unwrapped  # AssemblingEnv
+            for adr in getattr(base, "objects_qpos_adr", []):
+                base.data.qpos[adr : adr + 3] = base.data.qpos[adr : adr + 3] + self._spawn_offset
+            mujoco.mj_forward(base.model, base.data)
+            # Re-read obs so camera renders + state reflect the new pose.
+            obs = base._get_obs()
+
         ee_pos = np.asarray(obs["state"]["ee_pos"], dtype=np.float64)
         ee_quat = np.asarray(obs["state"]["ee_quat"], dtype=np.float64)
         self._ee_ref_pos = ee_pos.copy()
@@ -223,6 +238,7 @@ def make_assembling_env(
     use_gripper: bool = True,
     num_discrete_actions: int = 3,
     include_yaw_slot: bool = False,
+    object_spawn_offset: tuple[float, float, float] = (0.0, 0.0, 0.0),
     **_ignored: Any,
 ) -> gym.Env:
     """Factory used by ``gym.make("sim_assembling/AssembleBase-v0", ...)``.
@@ -250,6 +266,7 @@ def make_assembling_env(
         use_gripper=use_gripper,
         num_discrete_actions=num_discrete_actions,
         include_yaw_slot=include_yaw_slot,
+        object_spawn_offset=object_spawn_offset,
     )
 
 
