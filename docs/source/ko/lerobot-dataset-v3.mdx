@@ -1,0 +1,317 @@
+# LeRobotDataset v3.0
+
+`LeRobotDataset v3.0`은 로봇 학습(Robot Learning) 데이터를 위한 표준화된 포맷입니다. 다중 모달(Multi-modal) 시계열 데이터, 감각운동(Sensorimotor) 신호, 다중 카메라 영상에 대한 통합 접근성을 제공하며, Hugging Face Hub에서의 인덱싱(Indexing), 검색, 시각화를 위한 풍부한 메타데이터(Metadata)를 포함합니다.
+
+이 문서에서는 다음 내용을 안내합니다:
+
+- v3.0의 설계 원칙 및 디렉터리 구조 이해
+- 데이터셋(Dataset) 녹화 후 Hub에 푸시(Push)
+- `LeRobotDataset`을 사용하여 훈련용 데이터셋 로드
+- `StreamingLeRobotDataset`을 사용하여 다운로드 없이 데이터셋 스트리밍(Streaming)
+- 훈련 중 데이터 증강(Data Augmentation)을 위한 이미지 변환(Image Transform) 적용
+- 기존 `v2.1` 데이터셋을 `v3.0`으로 마이그레이션(Migration)
+
+## `v3`의 새로운 기능
+
+- **파일 기반 저장(File-based Storage)**: 하나의 Parquet/MP4 파일에 여러 에피소드(Episode)를 저장합니다 (v2에서는 에피소드당 파일 1개).
+- **관계형 메타데이터(Relational Metadata)**: 에피소드 경계 및 조회를 파일명이 아닌 메타데이터를 통해 해결합니다.
+- **Hub 네이티브 스트리밍(Hub-native Streaming)**: `StreamingLeRobotDataset`으로 Hub에서 직접 데이터셋을 사용할 수 있습니다.
+- **파일 시스템 부하 감소(Lower File-system Pressure)**: 더 적고 큰 파일 ⇒ 더 빠른 초기화 및 대규모 운용 시 문제 감소.
+- **통합된 구성(Unified Organization)**: 데이터 및 영상 전반에 걸쳐 일관된 경로 템플릿(Path Template)을 사용하는 명확한 디렉터리 구조.
+
+## 설치
+
+`LeRobotDataset v3.0`은 `lerobot >= 0.4.0`에 포함될 예정입니다.
+
+안정적인 릴리스(Release) 전까지는 [소스 빌드 안내](./installation#from-source)를 따라 main 브랜치를 사용할 수 있습니다.
+
+## 데이터셋 녹화
+
+SO-101 로봇으로 데이터셋을 녹화하고 Hub에 푸시하려면 아래 명령어를 실행하십시오:
+
+```bash
+lerobot-record \
+  --robot.type=so101_follower \
+  --robot.port=/dev/tty.usbmodem585A0076841 \
+  --robot.id=my_awesome_follower_arm \
+  --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
+  --teleop.type=so101_leader \
+  --teleop.port=/dev/tty.usbmodem58760431551 \
+  --teleop.id=my_awesome_leader_arm \
+  --display_data=true \
+  --dataset.repo_id=${HF_USER}/record-test \
+  --dataset.num_episodes=5 \
+  --dataset.single_task="Grab the black cube" \
+  --dataset.streaming_encoding=true \
+  # --dataset.vcodec=auto \
+  --dataset.encoder_threads=2
+```
+
+자세한 내용은 [녹화 가이드](./il_robots#record-a-dataset)를 참조하십시오.
+
+## 포맷 설계
+
+v3의 핵심 원칙은 **저장소와 사용자 API의 분리(Decoupling Storage from the User API)**입니다. 데이터는 효율적으로 저장되고(적은 수의 큰 파일), 공개 API는 직관적인 에피소드 수준의 접근을 제공합니다.
+
+`v3`는 세 가지 구성 요소(Pillar)로 이루어집니다:
+
+1. **테이블 형식 데이터(Tabular Data)**: 저차원(Low-dimensional)의 고주파(High-frequency) 신호(상태, 액션, 타임스탬프)를 **Apache Parquet**에 저장합니다. `datasets` 스택을 통해 메모리 맵(Memory-mapped) 또는 스트리밍 방식으로 접근합니다.
+2. **시각 데이터(Visual Data)**: 카메라 프레임을 연결하여 **MP4**로 인코딩(Encoding)합니다. 동일 에피소드의 프레임을 그룹화하고, 적절한 크기를 위해 카메라별로 샤딩(Sharding)합니다.
+3. **메타데이터(Metadata)**: 스키마(Schema)(피처명, 데이터 타입, 형상), 프레임 레이트(Frame Rate), 정규화(Normalization) 통계, **에피소드 세그멘테이션(Episode Segmentation)**(공유 Parquet/MP4 파일 내 시작/종료 오프셋)을 기술하는 JSON/Parquet 레코드.
+
+> 수백만 개의 에피소드로 확장하기 위해, 여러 에피소드의 테이블 행(Row)과 비디오 프레임을 더 큰 파일에 **연결(Concatenate)**합니다. 에피소드별 뷰(View)는 파일 경계가 아닌 **메타데이터를 통해** 재구성됩니다.
+
+<div style="display:flex; justify-content:center; gap:12px; flex-wrap:wrap;">
+  <figure style="margin:0; text-align:center;">
+    <img
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobotdataset-v3/asset1datasetv3.png"
+      alt="LeRobotDataset v3 diagram"
+      width="220"
+    />
+    <figcaption style="font-size:0.9em; color:#666;">
+      에피소드 기반 데이터셋에서 파일 기반 데이터셋으로
+    </figcaption>
+  </figure>
+</div>
+
+### 디렉터리 구조 (간략화)
+
+- **`meta/info.json`**: 표준 스키마(피처, 형상/데이터 타입), FPS, 코드베이스 버전, 데이터/비디오 샤드 위치를 지정하는 **경로 템플릿**.
+- **`meta/stats.json`**: 정규화에 사용되는 전역 피처 통계(평균/표준편차/최소/최대); `dataset.meta.stats`로 접근.
+- **`meta/tasks.jsonl`**: 태스크 조건부 정책(Task-conditioned Policy)을 위해 정수 ID에 매핑된 자연어(Natural Language) 태스크 설명.
+- **`meta/episodes/`**: 확장성을 위해 **청크된 Parquet(Chunked Parquet)**으로 저장된 에피소드별 레코드(길이, 태스크, 오프셋).
+- **`data/`**: 프레임 단위 **Parquet** 샤드; 각 파일에는 일반적으로 **다수의 에피소드**가 포함됩니다.
+- **`videos/`**: 카메라별 **MP4** 샤드; 각 파일에는 일반적으로 **다수의 에피소드**가 포함됩니다.
+
+## 훈련용 데이터셋 로드
+
+`LeRobotDataset`은 PyTorch 텐서(Tensor)의 Python 딕셔너리(Dictionary)를 반환하며, `torch.utils.data.DataLoader`와 통합됩니다. 사용 예시는 다음과 같습니다:
+
+```python
+import torch
+from lerobot.datasets import LeRobotDataset
+
+repo_id = "yaak-ai/L2D-v3"
+
+# 1) Hub에서 로드 (로컬에 캐시됨)
+dataset = LeRobotDataset(repo_id)
+
+# 2) 인덱스로 랜덤 접근
+sample = dataset[100]
+print(sample)
+# {
+#   'observation.state': tensor([...]),
+#   'action': tensor([...]),
+#   'observation.images.front_left': tensor([C, H, W]),
+#   'timestamp': tensor(1.234),
+#   ...
+# }
+
+# 3) delta_timestamps를 이용한 시간 윈도우 (현재 시각 t 기준 초 단위 상대값)
+delta_timestamps = {
+    "observation.images.front_left": [-0.2, -0.1, 0.0]  # 현재 프레임 기준 0.2초, 0.1초 이전
+}
+
+dataset = LeRobotDataset(repo_id, delta_timestamps=delta_timestamps)
+
+# 이제 인덱스 접근 시 지정한 키에 대해 스택(Stack)된 텐서를 반환
+sample = dataset[100]
+print(sample["observation.images.front_left"].shape)  # [T, C, H, W], T=3
+
+# 4) 훈련을 위해 DataLoader로 래핑
+batch_size = 16
+data_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size)
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
+for batch in data_loader:
+    observations = batch["observation.state"].to(device)
+    actions = batch["action"].to(device)
+    images = batch["observation.images.front_left"].to(device)
+    # model.forward(batch)
+```
+
+## 데이터셋 스트리밍 (다운로드 불필요)
+
+`StreamingLeRobotDataset`을 사용하면 로컬 복사본 없이 Hub에서 직접 반복(Iterate)할 수 있습니다. 이를 통해 대규모 데이터셋을 디스크에 다운로드하거나 메모리에 로드하지 않고 스트리밍할 수 있으며, 이는 새로운 데이터셋 포맷의 핵심 기능입니다.
+
+```python
+from lerobot.datasets import StreamingLeRobotDataset
+
+repo_id = "yaak-ai/L2D-v3"
+dataset = StreamingLeRobotDataset(repo_id)  # Hub에서 직접 스트리밍
+```
+
+<div style="display:flex; justify-content:center; gap:12px; flex-wrap:wrap;">
+  <figure style="margin:0; text-align:center;">
+    <img
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobotdataset-v3/streaming-lerobot.png"
+      alt="StreamingLeRobotDataset"
+      width="520"
+    />
+    <figcaption style="font-size:0.9em; color:#666;">
+      Hub에서 직접 스트리밍하여 온더플라이(On-the-fly) 훈련 수행.
+    </figcaption>
+  </figure>
+</div>
+
+## 이미지 변환
+
+이미지 변환(Image Transforms)은 모델의 견고성(Robustness)과 일반화(Generalization) 성능을 향상시키기 위해 훈련 중 카메라 프레임에 적용되는 데이터 증강(Data Augmentation) 기법입니다. LeRobot은 밝기(Brightness), 대비(Contrast), 채도(Saturation), 색조(Hue), 선명도(Sharpness) 조정 등 다양한 변환을 지원합니다.
+
+### 데이터셋 생성/녹화 시 변환 적용
+
+현재 변환은 녹화 중이 아닌 **훈련 시에만** 적용됩니다. 데이터셋을 생성하거나 녹화할 때 원본 이미지는 변환 없이 저장됩니다. 이를 통해 데이터를 다시 녹화하지 않고도 나중에 다양한 증강 방식을 실험해볼 수 있습니다.
+
+### 기존 데이터셋에 변환 추가 (API)
+
+훈련용 데이터셋 로드 시 `image_transforms` 파라미터를 사용하십시오:
+
+```python
+from lerobot.datasets import LeRobotDataset
+from lerobot.transforms import ImageTransforms, ImageTransformsConfig, ImageTransformConfig
+
+# 옵션 1: 기본 변환 설정 사용 (기본값: 비활성화)
+transforms_config = ImageTransformsConfig(
+    enable=True,  # 변환 활성화
+    max_num_transforms=3,  # 프레임당 최대 3개의 변환 적용
+    random_order=False,  # 표준 순서로 적용
+)
+transforms = ImageTransforms(transforms_config)
+
+dataset = LeRobotDataset(
+    repo_id="your-username/your-dataset",
+    image_transforms=transforms
+)
+
+# 옵션 2: 커스텀 변환 설정 생성
+custom_transforms_config = ImageTransformsConfig(
+    enable=True,
+    max_num_transforms=2,
+    random_order=True,
+    tfs={
+        "brightness": ImageTransformConfig(
+            weight=1.0,
+            type="ColorJitter",
+            kwargs={"brightness": (0.7, 1.3)}  # 밝기 범위 조정
+        ),
+        "contrast": ImageTransformConfig(
+            weight=2.0,  # 가중치가 높을수록 선택될 확률이 높음
+            type="ColorJitter",
+            kwargs={"contrast": (0.8, 1.2)}
+        ),
+        "sharpness": ImageTransformConfig(
+            weight=0.5,  # 가중치가 낮을수록 선택될 확률이 낮음
+            type="SharpnessJitter",
+            kwargs={"sharpness": (0.3, 2.0)}
+        ),
+    }
+)
+
+dataset = LeRobotDataset(
+    repo_id="your-username/your-dataset",
+    image_transforms=ImageTransforms(custom_transforms_config)
+)
+
+# 옵션 3: 순수 torchvision 변환 사용
+from torchvision.transforms import v2
+
+torchvision_transforms = v2.Compose([
+    v2.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+    v2.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),
+])
+
+dataset = LeRobotDataset(
+    repo_id="your-username/your-dataset",
+    image_transforms=torchvision_transforms
+)
+```
+
+### 사용 가능한 변환 유형
+
+LeRobot은 다음과 같은 변환 유형을 제공합니다:
+
+- **`ColorJitter`**: 밝기, 대비, 채도, 색조 조정
+- **`SharpnessJitter`**: 이미지 선명도 무작위 조정
+- **`Identity`**: 변환 없음 (테스트용으로 유용)
+
+`image_transforms` 파라미터에 직접 전달하여 임의의 `torchvision.transforms.v2` 변환을 사용할 수도 있습니다.
+
+### 설정 옵션
+
+- **`enable`**: 변환 활성화/비활성화 (기본값: `False`)
+- **`max_num_transforms`**: 프레임당 적용되는 최대 변환 수 (기본값: `3`)
+- **`random_order`**: 변환을 무작위 순서 또는 표준 순서로 적용 (기본값: `False`)
+- **`weight`**: 각 변환의 샘플링 확률 (값이 높을수록 선택 가능성이 높으며, 가중치의 합이 1이 아닐 경우 정규화됩니다)
+- **`kwargs`**: 변환별 파라미터 (예: 밝기 범위)
+
+### 변환 시각화
+
+시각화 스크립트를 사용하여 변환이 데이터에 미치는 영향을 미리 확인하십시오:
+
+```bash
+lerobot-imgtransform-viz \
+  --repo-id=your-username/your-dataset \
+  --output-dir=./transform_examples \
+  --n-examples=5
+```
+
+이 스크립트는 각 변환의 효과를 보여주는 예시 이미지를 저장하며, 파라미터 튜닝(Tuning)에 도움을 줍니다.
+
+### 권장 사항
+
+- **보수적으로 시작**: 작은 범위(예: 밝기 0.9~1.1)로 시작하여 점진적으로 늘려가십시오.
+- **먼저 테스트**: 시각화 스크립트를 사용하여 변환이 적절한지 확인하십시오.
+- **훈련 모니터링**: 과도하게 강한 증강은 오히려 성능을 저하시킬 수 있습니다.
+- **도메인에 맞게 조정**: 로봇이 다양한 조명 환경에서 작동한다면 밝기/대비 변환을 사용하십시오.
+- **신중하게 조합**: 너무 많은 변환을 동시에 사용하면 훈련이 불안정해질 수 있습니다.
+
+## `v2.1` → `v3.0` 마이그레이션
+
+변환기(Converter)는 에피소드별 파일을 더 큰 샤드로 합치고, 에피소드 오프셋(Offset) 및 메타데이터를 작성합니다. 아래 안내에 따라 데이터셋을 변환하십시오.
+
+```bash
+# v3 지원이 포함된 프리릴리스(Pre-release) 빌드:
+pip install "https://github.com/huggingface/lerobot/archive/33cad37054c2b594ceba57463e8f11ee374fa93c.zip"
+
+# Hub에 호스팅된 기존 v2.1 데이터셋 변환:
+python -m lerobot.datasets.v30.convert_dataset_v21_to_v30 --repo-id=<HF_USER/DATASET_ID>
+```
+
+**수행 작업**
+
+- Parquet 파일 통합: `episode-0000.parquet`, `episode-0001.parquet`, … → **`file-0000.parquet`**, …
+- MP4 파일 통합: `episode-0000.mp4`, `episode-0001.mp4`, … → **`file-0000.mp4`**, …
+- `meta/episodes/*` (청크된 Parquet) 업데이트: 에피소드별 길이, 태스크, 바이트/프레임 오프셋 포함.
+
+## 자주 발생하는 문제
+
+### 푸시 전에 반드시 `finalize()` 호출
+
+데이터셋을 생성하거나 녹화할 때, Parquet 라이터(Writer)를 올바르게 종료하기 위해 **반드시** `dataset.finalize()`를 호출해야 합니다. 자세한 내용은 [PR #1903](https://github.com/huggingface/lerobot/pull/1903)을 참조하십시오.
+
+```python
+from lerobot.datasets import LeRobotDataset
+
+# 데이터셋 생성 및 에피소드 녹화
+dataset = LeRobotDataset.create(...)
+
+for episode in range(num_episodes):
+    # 프레임 녹화
+    for frame in episode_data:
+        dataset.add_frame(frame)
+    dataset.save_episode()
+
+# 녹화 완료 후, push_to_hub() 전에 finalize() 호출
+dataset.finalize()  # Parquet 라이터 종료, 메타데이터 푸터(Footer) 작성
+dataset.push_to_hub()
+```
+
+**왜 필요한가?**
+
+Dataset v3.0은 효율성을 위해 버퍼링된 메타데이터와 함께 증분(Incremental) Parquet 쓰기를 사용합니다. `finalize()` 메서드는 다음을 수행합니다:
+
+- 버퍼링된 에피소드 메타데이터를 디스크에 플러시(Flush)
+- Parquet 라이터를 종료하여 푸터 메타데이터 작성 (호출하지 않으면 Parquet 파일이 손상됨)
+- 데이터셋이 정상적으로 로드될 수 있도록 유효성 보장
+
+`finalize()`를 호출하지 않으면 Parquet 파일이 불완전한 상태가 되어 데이터셋을 제대로 로드할 수 없습니다.
