@@ -56,6 +56,8 @@ class FindWorkspaceBoundsConfig:
     # sim_assembling adapter emits [joint_pos(7), ee_pos(3), ee_quat(4), gripper(1)]
     ee_pos_start: int = 7
     ee_pos_end: int = 10
+    # Stream observation + action to a Rerun viewer window.
+    rerun: bool = False
 
 
 def _read_ee_xyz(transition: dict, lo: int, hi: int) -> np.ndarray:
@@ -74,6 +76,11 @@ def main(cfg: FindWorkspaceBoundsConfig) -> None:
 
     env, teleop_device = make_robot_env(cfg.env)
     env_processor, action_processor = make_processors(env, teleop_device, cfg.env, cfg.device)
+
+    if cfg.rerun:
+        from lerobot.utils.visualization_utils import init_rerun
+
+        init_rerun(session_name="lerobot_workspace_bounds")
 
     print("\n" + "=" * 60)
     print("  SIM WORKSPACE BOUNDS FINDER")
@@ -115,6 +122,18 @@ def main(cfg: FindWorkspaceBoundsConfig) -> None:
             )
 
             ee = _read_ee_xyz(transition, int(cfg.ee_pos_start), int(cfg.ee_pos_end))
+
+            if cfg.rerun:
+                from lerobot.utils.visualization_utils import log_rerun_data
+
+                obs_rr = {}
+                for k, v in transition.get(TransitionKey.OBSERVATION.value, {}).items():
+                    if isinstance(v, torch.Tensor):
+                        arr = v.detach().cpu().float().numpy()
+                        if arr.ndim >= 3 and arr.shape[0] == 1:
+                            arr = arr[0]
+                        obs_rr[k] = arr
+                log_rerun_data(observation=obs_rr, action=None)
             ee_min = np.minimum(ee_min, ee)
             ee_max = np.maximum(ee_max, ee)
             n_samples += 1

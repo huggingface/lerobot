@@ -109,6 +109,8 @@ class GymManipulatorConfig:
     dataset: DatasetConfig
     mode: str | None = None  # Either "record", "replay", None
     device: str = "cpu"
+    # If True, open a Rerun viewer and stream observation/action data every step.
+    rerun: bool = False
 
 
 def reset_follower_position(robot_arm: Robot, target_position: np.ndarray) -> None:
@@ -895,6 +897,26 @@ def control_loop(
         terminated = transition.get(TransitionKey.DONE, False)
         truncated = transition.get(TransitionKey.TRUNCATED, False)
 
+        # Stream to Rerun if enabled.
+        if getattr(cfg, "rerun", False):
+            from lerobot.utils.visualization_utils import log_rerun_data
+
+            obs_for_rerun = {}
+            for k, v in transition.get(TransitionKey.OBSERVATION, {}).items():
+                if isinstance(v, torch.Tensor):
+                    arr = v.detach().cpu().float().numpy()
+                    if arr.ndim >= 3 and arr.shape[0] == 1:
+                        arr = arr[0]
+                    obs_for_rerun[k] = arr
+            act_for_rerun = None
+            act = transition.get(TransitionKey.ACTION)
+            if isinstance(act, torch.Tensor):
+                arr = act.detach().cpu().float().numpy()
+                if arr.ndim >= 2 and arr.shape[0] == 1:
+                    arr = arr[0]
+                act_for_rerun = {"raw": arr}
+            log_rerun_data(observation=obs_for_rerun, action=act_for_rerun)
+
         # Display camera feeds if available (shows what the policy sees)
         display_cameras = (
             cfg.env.processor.observation.display_cameras
@@ -1038,6 +1060,11 @@ def main(cfg: GymManipulatorConfig) -> None:
     """Main entry point for gym manipulator script."""
     env, teleop_device = make_robot_env(cfg.env)
     env_processor, action_processor = make_processors(env, teleop_device, cfg.env, cfg.device)
+
+    if cfg.rerun:
+        from lerobot.utils.visualization_utils import init_rerun
+
+        init_rerun(session_name="lerobot_gym_manipulator")
 
     print("Environment observation space:", env.observation_space)
     print("Environment action space:", env.action_space)
