@@ -3,7 +3,7 @@
         "name": "sim_assembling",
         "task": "AssembleBase-v0",
         "fps": 20,
-        "realtime": false,
+        "realtime": true,
         "robot": null,
         "teleop": {
             "type": "gamepad",
