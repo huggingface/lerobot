@@ -502,9 +502,7 @@ class DatasetWriter:
 
         # Update video info (only needed when first episode is encoded)
         if episode_index == 0:
-            self._meta.update_video_info(
-                video_key, camera_encoder_config=self._camera_encoder_config
-            )
+            self._meta.update_video_info(video_key, camera_encoder_config=self._camera_encoder_config)
             write_info(self._meta.info, self._meta.root)
 
         metadata = {

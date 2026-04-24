@@ -416,7 +416,7 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
                 concatenate_video_files(
                     [dst_path, src_path],
                     dst_path,
-                    compatibilty_check=True,
+                    compatibility_check=True,
                 )
                 # Update duration of this destination file
                 dst_file_durations[dst_key] = current_dst_duration + src_duration

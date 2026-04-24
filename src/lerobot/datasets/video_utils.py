@@ -100,7 +100,6 @@ class VideoEncoderConfig:
 
         self.validate()
 
-
     def detect_available_encoders(self, encoders: list[str] | str) -> list[str]:
         """Detect available encoders based on the video backend."""
         if self.video_backend == "pyav":
@@ -108,12 +107,10 @@ class VideoEncoderConfig:
         else:
             return []
 
-
     def validate(self) -> None:
         """Validate the video encoder config."""
         if self.video_backend == "pyav":
             check_video_encoder_config_pyav(self)
-
 
     def resolve_vcodec(self) -> None:
         """Validate vcodec and resolve 'auto' to best available HW encoder, fallback to libsvtav1.
@@ -123,9 +120,7 @@ class VideoEncoderConfig:
         a host missing the requested encoder.
         """
         if self.vcodec not in VALID_VIDEO_CODECS:
-            raise ValueError(
-                f"Invalid vcodec '{self.vcodec}'. Must be one of: {sorted(VALID_VIDEO_CODECS)}"
-            )
+            raise ValueError(f"Invalid vcodec '{self.vcodec}'. Must be one of: {sorted(VALID_VIDEO_CODECS)}")
         if self.vcodec == "auto":
             available = self.detect_available_encoders(HW_ENCODERS)
             for encoder in HW_ENCODERS:
@@ -141,7 +136,6 @@ class VideoEncoderConfig:
             self.vcodec = self.vcodec
             return
         raise ValueError(f"Unsupported video codec: {self.vcodec} with video backend {self.video_backend}")
-
 
     def get_codec_options(self, encoder_threads: int | None = None) -> dict[str, str]:
         """Translate the tuning fields to codec-specific FFmpeg options.
@@ -563,7 +557,10 @@ def encode_video_frames(
 
 
 def concatenate_video_files(
-    input_video_paths: list[Path | str], output_video_path: Path, overwrite: bool = True, compatibilty_check: bool = False
+    input_video_paths: list[Path | str],
+    output_video_path: Path,
+    overwrite: bool = True,
+    compatibility_check: bool = False,
 ):
     """
     Concatenate multiple video files into a single video file using pyav.
@@ -576,7 +573,7 @@ def concatenate_video_files(
         input_video_paths: Ordered list of input video file paths to concatenate.
         output_video_path: Path to the output video file.
         overwrite: Whether to overwrite the output video file if it already exists. Default is True.
-        compatibilty_check: Whether to check if the input videos are compatible. Default is False.
+        compatibility_check: Whether to check if the input videos are compatible. Default is False.
 
     Note:
         - Creates a temporary directory for intermediate files that is cleaned up after use.
@@ -596,12 +593,20 @@ def concatenate_video_files(
         raise FileNotFoundError("No input video paths provided.")
 
     # This check may be skipped at recording time as videos are encoded with the same encoder config.
-    if compatibilty_check:
+    if compatibility_check:
         reference_video_info = get_video_info(input_video_paths[0])
         for input_path in input_video_paths[1:]:
             video_info = get_video_info(input_path)
-            if video_info["video.height"] != reference_video_info["video.height"] or video_info["video.width"] != reference_video_info["video.width"] or video_info["video.fps"] != reference_video_info["video.fps"] or video_info["video.codec"] != reference_video_info["video.codec"] or video_info["video.pix_fmt"] != reference_video_info["video.pix_fmt"]:
-                raise ValueError(f"Input video {input_path} is not compatible with the reference video {input_video_paths[0]}.")
+            if (
+                video_info["video.height"] != reference_video_info["video.height"]
+                or video_info["video.width"] != reference_video_info["video.width"]
+                or video_info["video.fps"] != reference_video_info["video.fps"]
+                or video_info["video.codec"] != reference_video_info["video.codec"]
+                or video_info["video.pix_fmt"] != reference_video_info["video.pix_fmt"]
+            ):
+                raise ValueError(
+                    f"Input video {input_path} is not compatible with the reference video {input_video_paths[0]}."
+                )
 
     # Create a temporary .ffconcat file to list the input video paths
     with tempfile.NamedTemporaryFile(mode="w", suffix=".ffconcat", delete=False) as tmp_concatenate_file:
@@ -1058,7 +1063,7 @@ def get_video_info(
 
     Args:
         video_path: Path to the encoded video file to probe.
-        camera_encoder_config: If provided, record the exact encoder settings used to encode this 
+        camera_encoder_config: If provided, record the exact encoder settings used to encode this
             video. Stream-derived values take precedence — encoder fields are only written for keys
             not already populated from the video file itself.
     """

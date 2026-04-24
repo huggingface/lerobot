@@ -95,9 +95,7 @@ def detect_available_encoders_pyav(encoders: list[str] | str) -> list[str]:
     return available
 
 
-def _is_field_supported(
-    field_name: str, vcodec: str, options: dict[str, av.option.Option]
-) -> bool:
+def _is_field_supported(field_name: str, vcodec: str, options: dict[str, av.option.Option]) -> bool:
     """Whether tuning option *field_name* is meaningful for *vcodec*."""
     # GOP is a stream-level option (AVStream.gop_size) not stored in private options.
     # Every video codec accepts it.
@@ -118,20 +116,14 @@ def _is_field_supported(
     return field_name in options
 
 
-def _check_numeric_range(
-    label: str, num: float, opt: av.option.Option, vcodec: str
-) -> None:
+def _check_numeric_range(label: str, num: float, opt: av.option.Option, vcodec: str) -> None:
     """Raise if *num* lies outside *opt*'s numeric range (no-op if range is degenerate)."""
     lo, hi = float(opt.min), float(opt.max)
     if lo < hi and not (lo <= num <= hi):
-        raise ValueError(
-            f"{label}={num} is out of range for codec {vcodec!r}; must be in [{lo}, {hi}]"
-        )
+        raise ValueError(f"{label}={num} is out of range for codec {vcodec!r}; must be in [{lo}, {hi}]")
 
 
-def _validate_option_value(
-    vcodec: str, field_name: str, value: Any, opt: av.option.Option
-) -> None:
+def _validate_option_value(vcodec: str, field_name: str, value: Any, opt: av.option.Option) -> None:
     """Range-check numeric *value* and choice-check string *value* against *opt*.
 
     Type mismatches fall through to FFmpeg's own validation at encode time.
@@ -154,9 +146,7 @@ def _validate_option_value(
         return
 
 
-def _validate_extra_option(
-    vcodec: str, key: str, value: Any, opt: av.option.Option
-) -> None:
+def _validate_extra_option(vcodec: str, key: str, value: Any, opt: av.option.Option) -> None:
     """Validate an ``extra_options`` entry: enforce numeric range/type only.
 
     Non-numeric options are passed through (FFmpeg accepts many ad-hoc strings).
@@ -208,9 +198,7 @@ def _check_tuning_fields(
         # Enforce a positive integer value.
         if field_name == "g":
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-                raise ValueError(
-                    f"g={value!r} must be a positive integer for codec {vcodec!r}"
-                )
+                raise ValueError(f"g={value!r} must be a positive integer for codec {vcodec!r}")
             continue
         # Value shape is only cross-checkable when the field maps directly
         # to a private option: ``preset`` is literally ``"preset"``;

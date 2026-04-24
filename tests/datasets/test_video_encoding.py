@@ -28,7 +28,7 @@ import av  # noqa: E402
 
 from lerobot.datasets.image_writer import write_image
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.pyav_utils import detect_available_encoders_pyav, get_codec
+from lerobot.datasets.pyav_utils import get_codec
 from lerobot.datasets.utils import INFO_PATH
 from lerobot.datasets.video_utils import (
     VALID_VIDEO_CODECS,
@@ -38,12 +38,11 @@ from lerobot.datasets.video_utils import (
     get_video_info,
 )
 
+
 # Per-codec skip markers — validation tests only fire when the codec is available
 def _require_encoder(vcodec: str) -> pytest.MarkDecorator:
     """Skip the test if ``vcodec`` is not available in the local FFmpeg build."""
-    return pytest.mark.skipif(
-        get_codec(vcodec) is None, reason=f"{vcodec!r} not in local FFmpeg build"
-    )
+    return pytest.mark.skipif(get_codec(vcodec) is None, reason=f"{vcodec!r} not in local FFmpeg build")
 
 
 require_libsvtav1 = _require_encoder("libsvtav1")
@@ -306,7 +305,9 @@ def _write_frames(imgs_dir: Path, num_frames: int = 4, height: int = 64, width: 
         write_image(arr, imgs_dir / f"frame-{i:06d}.png")
 
 
-def _encode_video(path: Path, num_frames: int = 4, fps: int = 30, cfg: VideoEncoderConfig | None = None) -> Path:
+def _encode_video(
+    path: Path, num_frames: int = 4, fps: int = 30, cfg: VideoEncoderConfig | None = None
+) -> Path:
     imgs_dir = path.parent / f"imgs_{path.stem}"
     _write_frames(imgs_dir, num_frames=num_frames)
     encode_video_frames(imgs_dir, path, fps=fps, camera_encoder_config=cfg, overwrite=True)
@@ -321,11 +322,13 @@ def _read_feature_info(dataset: LeRobotDataset) -> dict:
 def _add_frames(dataset: LeRobotDataset, num_frames: int) -> None:
     shape = dataset.meta.features[VIDEO_KEY]["shape"]
     for _ in range(num_frames):
-        dataset.add_frame({
-            VIDEO_KEY: np.random.randint(0, 256, shape, dtype=np.uint8),
-            "action": np.zeros(2, dtype=np.float32),
-            "task": "test",
-        })
+        dataset.add_frame(
+            {
+                VIDEO_KEY: np.random.randint(0, 256, shape, dtype=np.uint8),
+                "action": np.zeros(2, dtype=np.float32),
+                "task": "test",
+            }
+        )
 
 
 class TestGetVideoInfo:
@@ -480,7 +483,7 @@ class TestConcatenateVideoFiles:
             concatenate_video_files(
                 [ARTIFACTS / "clip_4frames.mp4", ARTIFACTS / "clip_h264.mp4"],
                 tmp_path / "out.mp4",
-                compatibilty_check=True,
+                compatibility_check=True,
             )
 
     def test_compatibility_check_raises_on_different_resolution(self, tmp_path):
@@ -488,7 +491,7 @@ class TestConcatenateVideoFiles:
             concatenate_video_files(
                 [ARTIFACTS / "clip_4frames.mp4", ARTIFACTS / "clip_32x48.mp4"],
                 tmp_path / "out.mp4",
-                compatibilty_check=True,
+                compatibility_check=True,
             )
 
 

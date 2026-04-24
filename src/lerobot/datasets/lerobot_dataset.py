@@ -36,8 +36,8 @@ from .utils import (
 )
 from .video_utils import (
     StreamingVideoEncoder,
-    get_safe_default_video_backend,
     VideoEncoderConfig,
+    get_safe_default_video_backend,
 )
 
 logger = logging.getLogger(__name__)
