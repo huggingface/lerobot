@@ -27,3 +27,8 @@ class GamepadTeleopConfig(TeleoperatorConfig):
     # ``delta_yaw`` field in addition to delta_x / delta_y / delta_z. Enables
     # yaw control for envs that accept a 5D action (dx, dy, dz, dyaw, gripper).
     use_yaw: bool = False
+    # SDL/pygame button index that advances to the next SARM recording stage
+    # (consumed by StageAnnotatorProcessorStep). Default 0: Cross on DualSense
+    # via SDL2, which the existing gamepad update() loop leaves unhandled.
+    # Remap per-controller via env JSON if 0 collides on your pad.
+    stage_advance_button: int = 0

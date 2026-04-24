@@ -6,7 +6,8 @@ that lerobot's HIL-SERL processor pipeline expects:
 - ``pixels.front``, ``pixels.wrist``: (H, W, 3) uint8, default resized to 128x128
 - ``agent_pos``: flat 15-dim float32 = joint_pos(7) + ee_pos(3) + ee_quat(4) + gripper_qpos(1)
 - action: Box[-1, 1] shape=(3,) — delta (dx, dy, dz); optional discrete gripper
-  (num_discrete_actions=3: no-op/open/close) appended when ``use_gripper=True``
+  (num_discrete_actions=3: close/stay/open — standard lerobot encoding)
+  appended when ``use_gripper=True``
 
 The wrapper maintains an internal ee reference pose (captured on reset) and
 advances it per step by ``action_step_size`` clipped to a box; quaternion held
@@ -61,7 +62,7 @@ class AssemblingHILAdapter(gym.Wrapper):
         cam_wrist_key: source camera name in env obs (default "cam_gripper").
         action_step_size: max |delta_xyz| in metres per control step.
         use_gripper: append a gripper dim to action.
-        num_discrete_actions: number of discrete buckets for gripper (3 = noop/open/close).
+        num_discrete_actions: number of discrete buckets for gripper (3 = close/stay/open).
         include_yaw_slot: if True, expose action shape (dx, dy, dz, dyaw, gripper) = 5D
             to match lerobot's ps4_joystick ``delta_mode`` teleop (which emits 5 values).
             ``dyaw`` is ignored internally — the task is vertical pick-and-place so the
@@ -183,23 +184,27 @@ class AssemblingHILAdapter(gym.Wrapper):
         return self._adapt_obs(obs), info
 
     def _decode_gripper(self, g: float) -> float:
-        """Map discrete gripper action {0,1,2,...} to continuous gripper in [0, 1].
+        """Map discrete gripper action {0,1,2} to continuous gripper in [0, 1].
 
-        0 → no-op (hold current). 1 → open (gripper=0). 2 → close (gripper=1).
-        Higher discrete indices map linearly to [0, 1].
+        Standard lerobot / gym_hil convention:
+          0 → close (gripper=1). 1 → stay (hold current). 2 → open (gripper=0).
+        For num_discrete_actions > 3, extremes remain close/open and middle
+        indices map linearly.
         """
         if not self.use_gripper:
             return self._gripper_cmd
         idx = int(round(float(g)))
-        if idx <= 0:
+        n = self.num_discrete_actions
+        if n <= 1:
             return self._gripper_cmd
-        if self.num_discrete_actions <= 1:
-            return 0.0
+        if idx <= 0:
+            return 1.0  # close
         if idx == 1:
-            return 0.0
-        if idx == 2:
-            return 1.0
-        return float(idx - 1) / float(self.num_discrete_actions - 1)
+            return self._gripper_cmd  # stay / no-op
+        if idx >= n - 1:
+            return 0.0  # open
+        # Linear interp between close (idx=0 → 1.0) and open (idx=n-1 → 0.0).
+        return 1.0 - float(idx) / float(n - 1)
 
     def step(self, action):
         a = np.asarray(action, dtype=np.float32).flatten()

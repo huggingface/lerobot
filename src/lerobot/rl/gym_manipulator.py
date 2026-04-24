@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import logging
+import os
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -99,6 +100,11 @@ class DatasetConfig:
     # having to rm -rf the HF cache between attempts. Off by default to avoid
     # accidental data loss.
     overwrite: bool = False
+    # If True, open the existing dataset at --dataset.root (or the HF cache)
+    # and append new episodes to it instead of creating a fresh one. Mutually
+    # exclusive with --dataset.overwrite. num_episodes_to_record counts the
+    # episodes for THIS session only (not total).
+    resume: bool = False
 
 
 @dataclass
@@ -384,6 +390,22 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
         teleop_device = None
         if cfg.teleop is not None:
             teleop_device = make_teleoperator_from_config(cfg.teleop)
+            # Give gamepad teleop a live gripper-state reader so the R2 toggle
+            # emits the OPPOSITE of the current sim state (never desyncs from
+            # the policy or prior intervention). _gripper_cmd lives on
+            # AssemblingHILAdapter (a gym.Wrapper), NOT on .unwrapped (that
+            # returns the innermost AssemblingEnv). Walk the wrapper chain.
+            def _read_gripper_cmd(env_ref=env) -> float:
+                e = env_ref
+                while e is not None:
+                    cmd = getattr(e, "_gripper_cmd", None)
+                    if cmd is not None:
+                        return float(cmd)
+                    e = getattr(e, "env", None)
+                return 0.0
+
+            if hasattr(teleop_device, "set_gripper_state_fn"):
+                teleop_device.set_gripper_state_fn(_read_gripper_cmd)
             teleop_device.connect()
 
         _ = reset_time_s  # currently unused for sim (no physical reset delay needed)
@@ -503,15 +525,18 @@ def make_processors(
                     AddTeleopEventsAsInfoStep(teleop_device=teleop_device),
                 ]
             )
-        action_pipeline_steps.extend(
-            [
-                InterventionActionProcessorStep(
-                    use_gripper=use_gripper,
-                    terminate_on_success=terminate_on_success,
-                ),
-                Torch2NumpyActionProcessorStep(),
-            ]
+        action_pipeline_steps.append(
+            InterventionActionProcessorStep(
+                use_gripper=use_gripper,
+                terminate_on_success=terminate_on_success,
+            )
         )
+        stage_names = list(cfg.processor.stage_names or [])
+        if stage_names:
+            from lerobot.processor.stage_annotator import StageAnnotatorProcessorStep
+
+            action_pipeline_steps.append(StageAnnotatorProcessorStep(stage_names=stage_names))
+        action_pipeline_steps.append(Torch2NumpyActionProcessorStep())
 
         env_pipeline_steps = [
             GymHILAdapterProcessorStep(),
@@ -543,8 +568,13 @@ def make_processors(
                 use_gripper=use_gripper,
                 terminate_on_success=terminate_on_success,
             ),
-            Torch2NumpyActionProcessorStep(),
         ]
+        stage_names = list(cfg.processor.stage_names or [])
+        if stage_names:
+            from lerobot.processor.stage_annotator import StageAnnotatorProcessorStep
+
+            action_pipeline_steps.append(StageAnnotatorProcessorStep(stage_names=stage_names))
+        action_pipeline_steps.append(Torch2NumpyActionProcessorStep())
 
         # Env pipeline: numpy to torch action + observation processing + optional image crop/resize + time limit + batch + device
         env_pipeline_steps = [
@@ -757,6 +787,101 @@ def step_env_and_process_transition(
     return new_transition
 
 
+def _write_stage_annotations_to_dataset(
+    dataset,
+    stage_names: list[str],
+    ep_annotations: list,
+    resume_offset: int = 0,
+) -> None:
+    """Patch a finalized LeRobotDataset with SARM sparse/dual stage annotations.
+
+    Ported verbatim from lerobot-panda. ``ep_annotations`` is session-local
+    (0..N-1 for the N eps recorded THIS session). ``resume_offset`` is the
+    dataset's episode count BEFORE the session started (0 if not resumed).
+    Shard episode_index ``e`` maps to session-local index ``e - resume_offset``;
+    out-of-range ids keep any earlier annotation (preserves prior-session data).
+
+    Writes three per-episode columns into every ``meta/episodes/**.parquet``
+    shard:
+        sparse_subtask_names, sparse_subtask_start_frames, sparse_subtask_end_frames
+    and mirrors them into ``dense_subtask_*`` so the dataset is usable under
+    SARM ``annotation_mode=dual``. Also writes
+    ``meta/temporal_proportions_{sparse,dense}.json`` with per-stage frame
+    share across all annotated episodes.
+    """
+    import json
+    from pathlib import Path
+
+    import numpy as np
+    import pandas as pd
+
+    out_root = Path(dataset.root)
+    ep_meta_paths = list((out_root / "meta" / "episodes").rglob("*.parquet"))
+    if not ep_meta_paths:
+        logging.warning("stage annotation: no episodes parquet at %s", out_root)
+        return
+
+    frame_counts: dict[str, int] = {name: 0 for name in stage_names}
+    for names, starts, ends in ep_annotations:
+        if names is None:
+            continue
+        for n, s, e in zip(names, starts, ends, strict=True):
+            if n in frame_counts:
+                frame_counts[n] += max(0, e - s + 1)
+
+    for path in ep_meta_paths:
+        df = pd.read_parquet(path)
+        df = df.sort_values("episode_index").reset_index(drop=True)
+        existing = {}
+        for col in (
+            "sparse_subtask_names",
+            "sparse_subtask_start_frames",
+            "sparse_subtask_end_frames",
+        ):
+            if col in df.columns:
+                existing[col] = df[col].tolist()
+            else:
+                existing[col] = [None] * len(df)
+
+        sparse_names, sparse_starts, sparse_ends = [], [], []
+        for row_idx, ep in enumerate(df["episode_index"].tolist()):
+            ep = int(ep)
+            list_idx = ep - resume_offset
+            if 0 <= list_idx < len(ep_annotations):
+                names, starts, ends = ep_annotations[list_idx]
+                if names is None:
+                    sparse_names.append(existing["sparse_subtask_names"][row_idx])
+                    sparse_starts.append(existing["sparse_subtask_start_frames"][row_idx])
+                    sparse_ends.append(existing["sparse_subtask_end_frames"][row_idx])
+                else:
+                    sparse_names.append(np.array(names, dtype=object))
+                    sparse_starts.append(np.array(starts, dtype=np.int32))
+                    sparse_ends.append(np.array(ends, dtype=np.int32))
+            else:
+                sparse_names.append(existing["sparse_subtask_names"][row_idx])
+                sparse_starts.append(existing["sparse_subtask_start_frames"][row_idx])
+                sparse_ends.append(existing["sparse_subtask_end_frames"][row_idx])
+
+        df["sparse_subtask_names"] = sparse_names
+        df["sparse_subtask_start_frames"] = sparse_starts
+        df["sparse_subtask_end_frames"] = sparse_ends
+        df["dense_subtask_names"] = sparse_names
+        df["dense_subtask_start_frames"] = sparse_starts
+        df["dense_subtask_end_frames"] = sparse_ends
+        df.to_parquet(path)
+
+    total = sum(frame_counts.values())
+    if total > 0:
+        props = {name: frame_counts[name] / total for name in stage_names}
+    else:
+        props = {name: 0.0 for name in stage_names}
+    for fname in ("temporal_proportions_sparse.json", "temporal_proportions_dense.json"):
+        p = out_root / "meta" / fname
+        with open(p, "w") as f:
+            json.dump(props, f, indent=2)
+        logging.info("stage annotation: wrote %s = %s", p, props)
+
+
 def control_loop(
     env: gym.Env,
     env_processor: DataProcessorPipeline[EnvTransition, EnvTransition],
@@ -789,6 +914,20 @@ def control_loop(
     )
     env_processor.reset()
     action_processor.reset()
+
+    # Locate the optional StageAnnotatorProcessorStep so we can flush per-ep
+    # annotations and patch the dataset's episodes.parquet after finalize.
+    stage_annotator = None
+    try:
+        from lerobot.processor.stage_annotator import StageAnnotatorProcessorStep
+
+        for step in getattr(action_processor, "steps", []):
+            if isinstance(step, StageAnnotatorProcessorStep) and step.stage_names:
+                stage_annotator = step
+                break
+    except Exception:
+        stage_annotator = None
+    all_ep_stage_annotations: list = []
 
     # Process initial observation
     transition = create_transition(observation=obs, info=info, complementary_data=complementary_data)
@@ -833,6 +972,11 @@ def control_loop(
                     "names": ["channels", "height", "width"],
                 }
 
+        if cfg.dataset.resume and cfg.dataset.overwrite:
+            raise ValueError(
+                "--dataset.resume=true and --dataset.overwrite=true are mutually exclusive."
+            )
+
         # Optional clean-up before create (avoids FileExistsError on retry).
         if cfg.dataset.overwrite:
             import shutil as _shutil
@@ -849,25 +993,51 @@ def control_loop(
                 logging.warning("--dataset.overwrite=true: removing existing %s", resolved_root)
                 _shutil.rmtree(resolved_root)
 
-        # Create dataset
-        try:
-            dataset = LeRobotDataset.create(
+        if cfg.dataset.resume:
+            dataset = LeRobotDataset(
                 cfg.dataset.repo_id,
-                cfg.env.fps,
                 root=cfg.dataset.root,
-                use_videos=True,
-                image_writer_threads=4,
-                image_writer_processes=0,
-                features=features,
             )
-        except FileExistsError as e:
-            raise FileExistsError(
-                f"{e}\n\n"
-                f"Dataset directory already exists. Options:\n"
-                f"  1. Re-run with --dataset.overwrite=true (destroys the existing dir first).\n"
-                f"  2. Remove it manually: rm -rf ~/.cache/huggingface/lerobot/{cfg.dataset.repo_id}\n"
-                f"  3. Pick a different --dataset.repo_id."
-            ) from None
+            dataset.start_image_writer(num_processes=0, num_threads=4)
+            logging.info(
+                "Resuming dataset %s: %d existing episodes, %d frames. "
+                "num_episodes_to_record=%d counts NEW episodes only.",
+                cfg.dataset.repo_id,
+                dataset.num_episodes,
+                dataset.num_frames,
+                cfg.dataset.num_episodes_to_record,
+            )
+        else:
+            # Create dataset
+            try:
+                dataset = LeRobotDataset.create(
+                    cfg.dataset.repo_id,
+                    cfg.env.fps,
+                    root=cfg.dataset.root,
+                    use_videos=True,
+                    image_writer_threads=4,
+                    image_writer_processes=0,
+                    features=features,
+                )
+            except FileExistsError as e:
+                raise FileExistsError(
+                    f"{e}\n\n"
+                    f"Dataset directory already exists. Options:\n"
+                    f"  1. Re-run with --dataset.resume=true (append new episodes).\n"
+                    f"  2. Re-run with --dataset.overwrite=true (destroys the existing dir first).\n"
+                    f"  3. Remove it manually: rm -rf ~/.cache/huggingface/lerobot/{cfg.dataset.repo_id}\n"
+                    f"  4. Pick a different --dataset.repo_id."
+                ) from None
+
+        # Snapshot the dataset's episode count so stage annotations for this
+        # session map to the right shard rows. 0 for a fresh dataset.
+        stage_annotation_resume_offset = int(dataset.num_episodes)
+        if stage_annotator is not None and stage_annotation_resume_offset > 0:
+            logging.info(
+                "[STAGE] resume offset=%d. temporal_proportions json will reflect "
+                "SESSION-LOCAL stage frames only (prior-session eps not re-scanned).",
+                stage_annotation_resume_offset,
+            )
 
     episode_idx = 0
     episode_step = 0
@@ -885,6 +1055,13 @@ def control_loop(
         if use_gripper:
             # Gripper is the last slot. 1.0 = stay (matches RC10 + sim_assembling "noop" bucket).
             neutral_action[-1] = 1.0
+
+        # LEROBOT_RECORD_RANDOM_ACTION=1 replaces neutral action with a random
+        # sample from env.action_space — used to collect OOD negative frames for
+        # training the CNN reward classifier against random-policy exploration.
+        if os.environ.get("LEROBOT_RECORD_RANDOM_ACTION") == "1":
+            sampled = env.action_space.sample()
+            neutral_action = torch.as_tensor(sampled, dtype=torch.float32)
 
         # Use the new step function
         transition = step_env_and_process_transition(
@@ -1002,6 +1179,21 @@ def control_loop(
                 else:
                     logging.info(f"Saving episode {episode_idx}")
                     dataset.save_episode()
+                    if stage_annotator is not None:
+                        annot = stage_annotator.flush_episode_annotation()
+                        all_ep_stage_annotations.append(annot)
+                        names, _, _ = annot
+                        n_configured = len(stage_annotator.stage_names)
+                        n_recorded = 0 if names is None else len(names)
+                        if n_recorded < n_configured:
+                            logging.warning(
+                                "[STAGE] ep %d: only %d/%d stages annotated (%s). "
+                                "Press the stage-advance button during teleop to advance.",
+                                episode_idx - 1,
+                                n_recorded,
+                                n_configured,
+                                names if names else "none",
+                            )
 
             # Reset for new episode
             obs, info = env.reset()
@@ -1018,6 +1210,15 @@ def control_loop(
     if dataset is not None:
         logging.info("Finalizing dataset before pushing to hub")
         dataset.finalize()
+        # Patch episodes.parquet + write temporal proportions json for SARM
+        # dual-mode training when stage annotation was used this session.
+        if stage_annotator is not None and all_ep_stage_annotations:
+            _write_stage_annotations_to_dataset(
+                dataset=dataset,
+                stage_names=stage_annotator.stage_names,
+                ep_annotations=all_ep_stage_annotations,
+                resume_offset=stage_annotation_resume_offset,
+            )
     if cfg.dataset.push_to_hub:
         logging.info("Pushing dataset to hub")
         dataset.push_to_hub()

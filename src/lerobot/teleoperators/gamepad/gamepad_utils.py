@@ -198,12 +198,35 @@ class KeyboardController(InputController):
 class GamepadController(InputController):
     """Generate motion deltas from gamepad input."""
 
-    def __init__(self, x_step_size=1.0, y_step_size=1.0, z_step_size=1.0, deadzone=0.1, yaw_step_size=1.0):
+    def __init__(
+        self,
+        x_step_size=1.0,
+        y_step_size=1.0,
+        z_step_size=1.0,
+        deadzone=0.1,
+        yaw_step_size=1.0,
+        stage_advance_button=0,
+    ):
         super().__init__(x_step_size, y_step_size, z_step_size)
         self.deadzone = deadzone
         self.yaw_step_size = yaw_step_size
+        self.stage_advance_button = stage_advance_button
         self.joystick = None
         self.intervention_flag = False
+        self._stage_advance_pending = False
+        # Latched gripper toggle state (False=open, True=close). Flipped on
+        # each R2 press. Starts False; first R2 press commands "close".
+        self._gripper_closed_desired = False
+        # R2 edge-detect state. DualSense R2 is axis 5 (-1 idle, +1 pressed).
+        # Hysteresis: crossing >0.7 arms a press (toggle once); must drop
+        # <0.3 before next press can fire.
+        self._r2_pressed = False
+        self._r2_axis = 5
+        # Optional callable returning current gripper state in [0,1] (0=open,
+        # 1=closed). When set, R2 press emits the OPPOSITE of current state so
+        # the toggle never desyncs from reality. When None, falls back to
+        # flipping the latched _gripper_closed_desired flag.
+        self.gripper_state_fn = None
 
     def get_yaw_delta(self):
         """Return yaw stick delta (right-stick horizontal, axis 3 on PS4/DualSense), deadzoned + scaled."""
@@ -217,6 +240,13 @@ class GamepadController(InputController):
             return -yaw_input * self.yaw_step_size
         except pygame.error:
             return 0.0
+
+    def consume_stage_advance(self):
+        """Read-and-clear the one-shot stage-advance flag. Returns True iff
+        the configured button was pressed since the last call."""
+        pending = self._stage_advance_pending
+        self._stage_advance_pending = False
+        return pending
 
     def start(self):
         """Initialize pygame and the gamepad."""
@@ -257,7 +287,69 @@ class GamepadController(InputController):
         """Process pygame events to get fresh gamepad readings."""
         import pygame
 
+        # Poll intervention (RB / button 5) FIRST so event handlers below see
+        # the current intervention state. Detect the False->True edge to reset
+        # the R2 gripper toggle to neutral, so the policy's last gripper
+        # state stays in effect until the user actually presses R2 during
+        # intervention.
+        # Pump events first so joystick state (buttons + axes) is fresh.
+        pygame.event.pump()
+
+        new_intervention = bool(self.joystick.get_button(5))
+        if new_intervention and not self.intervention_flag:
+            self._gripper_closed_desired = False
+            self.close_gripper_command = False
+            self.open_gripper_command = False
+            # Also re-arm R2 edge so a trigger held through intervention start
+            # doesn't immediately fire a toggle.
+            self._r2_pressed = True
+        self.intervention_flag = new_intervention
+
+        # R2 trigger on DualSense is an analog AXIS (idx 5, idle=-1, pressed=+1),
+        # not a button -- pygame never emits JOYBUTTONDOWN for it. Poll the axis
+        # each tick and edge-detect a press with hysteresis. Only fires while
+        # intervening so pre-intervention presses don't accumulate.
+        try:
+            r2_val = self.joystick.get_axis(self._r2_axis)
+        except Exception:
+            r2_val = 0.0
+        if not self._r2_pressed and r2_val > 0.7:
+            self._r2_pressed = True
+            if self.intervention_flag:
+                # Prefer live env state if available, so toggle never desyncs
+                # from reality (policy or prior intervention may have moved
+                # gripper without the gamepad knowing).
+                if self.gripper_state_fn is not None:
+                    try:
+                        current = float(self.gripper_state_fn())
+                    except Exception:
+                        current = 1.0 if self._gripper_closed_desired else 0.0
+                    desired_closed = current < 0.5
+                else:
+                    desired_closed = not self._gripper_closed_desired
+                self._gripper_closed_desired = desired_closed
+                self.close_gripper_command = desired_closed
+                self.open_gripper_command = not desired_closed
+        elif self._r2_pressed and r2_val < 0.3:
+            self._r2_pressed = False
+
+        # DBG: dump all gamepad events + intervention state. Remove once mapping
+        # is confirmed.
+        import os
+        _dbg = os.environ.get("LEROBOT_GAMEPAD_DEBUG") == "1"
+
         for event in pygame.event.get():
+            if _dbg:
+                if event.type == pygame.JOYBUTTONDOWN:
+                    print(f"[GP] BTN_DOWN idx={event.button} interv={self.intervention_flag}", flush=True)
+                elif event.type == pygame.JOYBUTTONUP:
+                    print(f"[GP] BTN_UP   idx={event.button} interv={self.intervention_flag}", flush=True)
+                elif event.type == pygame.JOYAXISMOTION:
+                    if abs(event.value) > 0.5:
+                        print(f"[GP] AXIS     idx={event.axis} val={event.value:.2f} interv={self.intervention_flag}", flush=True)
+                elif event.type == pygame.JOYHATMOTION:
+                    print(f"[GP] HAT      idx={event.hat} val={event.value}", flush=True)
+
             if event.type == pygame.JOYBUTTONDOWN:
                 if event.button == 2:   # For ps4
                     self.episode_end_status = TeleopEvents.SUCCESS
@@ -268,30 +360,29 @@ class GamepadController(InputController):
                 elif event.button == 3: # For ps4
                     self.episode_end_status = TeleopEvents.RERECORD_EPISODE
 
-                # RB button (6) for closing gripper
+                # R2 trigger (button 6): toggle gripper close/open on press
+                # (not hold). Only respond while intervening so pre-intervention
+                # presses don't accumulate and fire at intervention start. Flip
+                # the latched desired state and drive close_/open_gripper_command
+                # as a mutually-exclusive pair so gripper_command() keeps
+                # returning "close" or "open" each tick.
                 elif event.button == 6:
-                    self.close_gripper_command = True
+                    if self.intervention_flag:
+                        self._gripper_closed_desired = not self._gripper_closed_desired
+                        self.close_gripper_command = self._gripper_closed_desired
+                        self.open_gripper_command = not self._gripper_closed_desired
 
-                # LT button (7) for opening gripper
-                elif event.button == 7:
-                    self.open_gripper_command = True
+                # Stage-advance button (configurable; default 0 = Cross on
+                # DualSense). JOYBUTTONDOWN fires once per press, so a single
+                # tap latches one advance into _stage_advance_pending; held
+                # press does NOT repeat.
+                if event.button == self.stage_advance_button:
+                    self._stage_advance_pending = True
 
             # Reset episode status on button release
             elif event.type == pygame.JOYBUTTONUP:
                 if event.button in [2, 1, 3]:
                     self.episode_end_status = None
-
-                elif event.button == 6:
-                    self.close_gripper_command = False
-
-                elif event.button == 7:
-                    self.open_gripper_command = False
-
-            # Check for RB button (typically button 5) for intervention flag
-            if self.joystick.get_button(5):
-                self.intervention_flag = True
-            else:
-                self.intervention_flag = False
 
     def get_deltas(self):
         """Get the current movement deltas from gamepad state."""

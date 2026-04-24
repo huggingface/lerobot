@@ -3,7 +3,7 @@
         "name": "sim_assembling",
         "task": "AssembleBase-v0",
         "fps": 20,
-        "realtime": false,
+        "realtime": true,
         "robot": null,
         "teleop": {
             "type": "gamepad",
@@ -18,8 +18,8 @@
             },
             "reset": {
                 "reset_time_s": 0.0,
-                "control_time_s": 30.0,
-                "terminate_on_success": true
+                "control_time_s": 60.0,
+                "terminate_on_success": false
             },
             "reward_model": {
                 "type": "manual"

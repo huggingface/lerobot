@@ -55,6 +55,16 @@ class GamepadTeleop(Teleoperator):
         self.robot_type = config.type
 
         self.gamepad = None
+        self._pending_gripper_state_fn = None
+
+    def set_gripper_state_fn(self, fn) -> None:
+        """Register a callable that returns the env's current gripper state in
+        [0,1] (0=open, 1=closed). Used by the R2 toggle to emit the opposite
+        of the live state so it never desyncs from the policy/sim. Safe to
+        call before or after ``connect()``."""
+        self._pending_gripper_state_fn = fn
+        if self.gamepad is not None:
+            self.gamepad.gripper_state_fn = fn
 
     @property
     def action_features(self) -> dict:
@@ -80,7 +90,14 @@ class GamepadTeleop(Teleoperator):
         else:
             from .gamepad_utils import GamepadController as Gamepad
 
-        self.gamepad = Gamepad()
+        # Only pass stage_advance_button to the pygame controller — the HID
+        # path doesn't support configurable buttons yet.
+        if sys.platform == "darwin":
+            self.gamepad = Gamepad()
+        else:
+            self.gamepad = Gamepad(stage_advance_button=self.config.stage_advance_button)
+        if self._pending_gripper_state_fn is not None:
+            self.gamepad.gripper_state_fn = self._pending_gripper_state_fn
         self.gamepad.start()
 
     @check_if_not_connected
@@ -125,6 +142,7 @@ class GamepadTeleop(Teleoperator):
                 TeleopEvents.TERMINATE_EPISODE: False,
                 TeleopEvents.SUCCESS: False,
                 TeleopEvents.RERECORD_EPISODE: False,
+                TeleopEvents.STAGE_ADVANCE: False,
             }
 
         # Update gamepad state to get fresh inputs
@@ -142,11 +160,16 @@ class GamepadTeleop(Teleoperator):
         success = episode_end_status == TeleopEvents.SUCCESS
         rerecord_episode = episode_end_status == TeleopEvents.RERECORD_EPISODE
 
+        stage_advance = False
+        if hasattr(self.gamepad, "consume_stage_advance"):
+            stage_advance = bool(self.gamepad.consume_stage_advance())
+
         return {
             TeleopEvents.IS_INTERVENTION: is_intervention,
             TeleopEvents.TERMINATE_EPISODE: terminate_episode,
             TeleopEvents.SUCCESS: success,
             TeleopEvents.RERECORD_EPISODE: rerecord_episode,
+            TeleopEvents.STAGE_ADVANCE: stage_advance,
         }
 
     def disconnect(self) -> None:

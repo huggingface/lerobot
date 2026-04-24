@@ -273,6 +273,13 @@ class HILSerlProcessorConfig:
     reward_classifier: RewardClassifierConfig | None = None
     reward_model: EnvRewardModelConfig | None = None
     max_gripper_pos: float | None = 100.0
+    # When non-empty, inserts a StageAnnotatorProcessorStep into the action
+    # pipeline (sim / gym_hil / rc10 only). Operator presses the gamepad
+    # stage_advance_button mid-teleop to advance to the next stage. The
+    # per-episode (names, start_frames, end_frames) triple is flushed at
+    # episode end and written back to the dataset's episodes.parquet as
+    # sparse + dense subtask columns for SARM dual-mode training.
+    stage_names: list[str] | None = None
 
 
 @EnvConfig.register_subclass(name="gym_manipulator")

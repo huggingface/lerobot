@@ -31,6 +31,9 @@ class TeleopEvents(Enum):
     RERECORD_EPISODE = "rerecord_episode"
     IS_INTERVENTION = "is_intervention"
     TERMINATE_EPISODE = "terminate_episode"
+    # One-shot flag set on the frame the operator presses the stage-advance
+    # button. Consumed by StageAnnotatorProcessorStep; cleared after read.
+    STAGE_ADVANCE = "stage_advance"
 
 
 def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":

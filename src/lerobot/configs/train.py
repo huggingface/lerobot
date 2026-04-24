@@ -117,10 +117,14 @@ class TrainPipelineConfig(HubMixin):
                 self.job_name = f"{self.env.type}_{self.policy.type}"
 
         if not self.resume and isinstance(self.output_dir, Path) and self.output_dir.is_dir():
-            raise FileExistsError(
-                f"Output directory {self.output_dir} already exists and resume is {self.resume}. "
-                f"Please change your output directory so that {self.output_dir} is not overwritten."
-            )
+            # HIL-SERL: learner and actor share output_dir. The first process to start creates
+            # the dir; the second must not fail. Set LEROBOT_SKIP_OUTPUT_DIR_CHECK=1 for that
+            # second process (typically the actor) to bypass this safeguard.
+            if os.environ.get("LEROBOT_SKIP_OUTPUT_DIR_CHECK") != "1":
+                raise FileExistsError(
+                    f"Output directory {self.output_dir} already exists and resume is {self.resume}. "
+                    f"Please change your output directory so that {self.output_dir} is not overwritten."
+                )
         elif not self.output_dir:
             now = dt.datetime.now()
             train_dir = f"{now:%Y-%m-%d}/{now:%H-%M-%S}_{self.job_name}"

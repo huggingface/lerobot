@@ -1,0 +1,169 @@
+{
+    "output_dir": "outputs/sim_assembling_hilserl_intervention",
+    "job_name": "sim_assembling_hilserl_intervention",
+    "resume": false,
+    "seed": 1000,
+    "num_workers": 4,
+    "batch_size": 256,
+    "steps": 2000000,
+    "eval_freq": 50000,
+    "log_freq": 1,
+    "save_checkpoint": false,
+    "save_freq": 50000,
+    "use_policy_training_preset": true,
+    "optimizer": null,
+    "scheduler": null,
+    "wandb": {
+        "enable": true,
+        "project": "sim_assembling_hilserl_auto",
+        "entity": "i_domrachev-interactive-robotic-systems-lab-kaist",
+        "disable_artifact": true
+    },
+    "dataset": {
+        "repo_id": "local/sim_assemble_manual_filtered",
+        "use_imagenet_stats": false
+    },
+    "env": {
+        "type": "gym_manipulator",
+        "name": "sim_assembling",
+        "task": "AssembleBase-v0",
+        "fps": 20,
+        "realtime": true,
+        "render_mode": "all",
+        "robot": null,
+        "teleop": {
+            "type": "gamepad",
+            "use_gripper": true,
+            "use_yaw": true
+        },
+        "processor": {
+            "control_mode": "gamepad",
+            "gripper": {
+                "use_gripper": true,
+                "gripper_penalty": 0.0
+            },
+            "reset": {
+                "reset_time_s": 0.0,
+                "control_time_s": 30.0,
+                "terminate_on_success": true
+            },
+            "reward_model": {
+                "type": "cnn",
+                "pretrained_path": "outputs/sim_assembling_cnn_reward_v3/checkpoints/last/pretrained_model",
+                "device": "cuda",
+                "success_threshold": 0.98,
+                "success_reward": 1.0
+            },
+            "inverse_kinematics": {
+                "end_effector_bounds": {
+                    "min": [-0.1708, -0.8781, 0.33],
+                    "max": [0.2538, -0.4845, 0.38]
+                }
+            }
+        },
+        "action_step_size": 0.01,
+        "include_yaw_slot": true,
+        "yaw_step_size": 0.1,
+        "object_spawn_offset": [0.1, 0.0, 0.0],
+        "features": {
+            "observation.images.front": {"type": "VISUAL", "shape": [3, 128, 128]},
+            "observation.images.wrist": {"type": "VISUAL", "shape": [3, 128, 128]},
+            "observation.state": {"type": "STATE", "shape": [15]},
+            "action": {"type": "ACTION", "shape": [4]}
+        },
+        "features_map": {
+            "observation.images.front": "observation.images.front",
+            "observation.images.wrist": "observation.images.wrist",
+            "observation.state": "observation.state",
+            "action": "action"
+        }
+    },
+    "policy": {
+        "type": "sac",
+        "n_obs_steps": 1,
+        "normalization_mapping": {
+            "VISUAL": "MEAN_STD",
+            "STATE": "MIN_MAX",
+            "ENV": "MIN_MAX",
+            "ACTION": "MIN_MAX"
+        },
+        "input_features": {
+            "observation.images.front": {"type": "VISUAL", "shape": [3, 128, 128]},
+            "observation.images.wrist": {"type": "VISUAL", "shape": [3, 128, 128]},
+            "observation.state": {"type": "STATE", "shape": [15]}
+        },
+        "output_features": {
+            "action": {"type": "ACTION", "shape": [4]}
+        },
+        "device": "cuda",
+        "use_amp": false,
+        "dataset_stats": {
+            "observation.images.front": {
+                "mean": [0.485, 0.456, 0.406],
+                "std": [0.229, 0.224, 0.225]
+            },
+            "observation.images.wrist": {
+                "mean": [0.485, 0.456, 0.406],
+                "std": [0.229, 0.224, 0.225]
+            },
+            "observation.state": {
+                "min": [-3.1416,-3.1416,-3.1416,-3.1416,-3.1416,-3.1416,0.0,-1.0,-1.0,0.0,-1.0,-1.0,-1.0,-1.0,0.0],
+                "max": [3.1416,3.1416,3.1416,3.1416,3.1416,3.1416,0.8,1.0,1.0,1.0,1.0,1.0,1.0,1.0,0.8]
+            },
+            "action": {
+                "min": [-0.01, -0.01, -0.01, -0.05],
+                "max": [0.01, 0.01, 0.01, 0.05]
+            }
+        },
+        "repo_id": "local/sim_assemble_manual_filtered",
+        "storage_device": "cpu",
+        "vision_encoder_name": "helper2424/resnet10",
+        "freeze_vision_encoder": true,
+        "image_encoder_hidden_dim": 32,
+        "shared_encoder": true,
+        "online_steps": 1000000,
+        "online_buffer_capacity": 30000,
+        "offline_buffer_capacity": 10000,
+        "online_step_before_learning": 200,
+        "policy_update_freq": 1,
+        "discount": 0.97,
+        "temperature_init": 0.2,
+        "num_critics": 2,
+        "num_subsample_critics": null,
+        "critic_lr": 0.0003,
+        "actor_lr": 0.0003,
+        "temperature_lr": 0.0003,
+        "critic_target_update_weight": 0.005,
+        "utd_ratio": 2,
+        "state_encoder_hidden_dim": 256,
+        "latent_dim": 64,
+        "target_entropy": null,
+        "use_backup_entropy": true,
+        "grad_clip_norm": 10.0,
+        "num_discrete_actions": 3,
+        "critic_network_kwargs": {
+            "hidden_dims": [256, 256],
+            "activate_final": true,
+            "final_activation": null
+        },
+        "actor_network_kwargs": {
+            "hidden_dims": [256, 256],
+            "activate_final": true
+        },
+        "policy_kwargs": {
+            "use_tanh_squash": true,
+            "std_min": 1e-05,
+            "std_max": 5,
+            "init_final": 0.05
+        },
+        "actor_learner_config": {
+            "learner_host": "127.0.0.1",
+            "learner_port": 50051,
+            "policy_parameters_push_frequency": 4
+        },
+        "concurrency": {
+            "actor": "threads",
+            "learner": "threads"
+        }
+    }
+}
