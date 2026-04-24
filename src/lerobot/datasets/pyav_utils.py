@@ -34,6 +34,9 @@ logger = logging.getLogger(__name__)
 
 FFMPEG_NUMERIC_OPTION_TYPES = ("INT", "INT64", "UINT64", "FLOAT", "DOUBLE")
 
+# Abstract tuning fields of VideoEncoderConfig
+TUNING_FIELDS: tuple[str, ...] = ("g", "crf", "preset", "fast_decode")
+
 # Codec-specific FFmpeg private option whose value is controlled by the
 # abstract ``crf`` tuning field.
 CRF_OPTION_BY_CODEC: dict[str, str] = {
@@ -191,9 +194,8 @@ def _check_pixel_format(vcodec: str, pix_fmt: str, formats: tuple[str, ...]) -> 
 def _check_tuning_fields(
     config: VideoEncoderConfig, vcodec: str, options: dict[str, av.option.Option]
 ) -> None:
-    tuning_options: tuple[str, ...] = config._TUNING_OPTIONS
-    supported_fields = [f for f in tuning_options if _is_field_supported(f, vcodec, options)]
-    for field_name in tuning_options:
+    supported_fields = [f for f in TUNING_FIELDS if _is_field_supported(f, vcodec, options)]
+    for field_name in TUNING_FIELDS:
         value = getattr(config, field_name)
         if not value:
             continue
@@ -202,10 +204,18 @@ def _check_tuning_fields(
                 f"{field_name}={value!r} is not supported by codec {vcodec!r}; "
                 f"supported fields for this codec: {supported_fields}"
             )
+        # ``g`` is stream-level (AVCodecContext.gop_size), not in ``options``.
+        # Enforce a positive integer value.
+        if field_name == "g":
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(
+                    f"g={value!r} must be a positive integer for codec {vcodec!r}"
+                )
+            continue
         # Value shape is only cross-checkable when the field maps directly
         # to a private option: ``preset`` is literally ``"preset"``;
-        # ``crf`` maps per-codec. ``g`` (stream-level) and ``fast_decode``
-        # (composite) fall through to FFmpeg at encode time.
+        # ``crf`` maps per-codec. ``fast_decode`` (composite) falls through
+        # to FFmpeg at encode time.
         if field_name == "preset":
             opt = options.get("preset")
         elif field_name == "crf":
