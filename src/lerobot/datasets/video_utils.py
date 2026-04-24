@@ -144,88 +144,64 @@ class VideoEncoderConfig:
 
 
     def get_codec_options(self, encoder_threads: int | None = None) -> dict[str, str]:
-        """Build codec-specific FFmpeg options from the tuning fields.
+        """Translate the tuning fields to codec-specific FFmpeg options.
+
+        ``VideoEncoderConfig.extra_options`` are merged last but never override a structured field.
 
         Args:
             encoder_threads: Number of encoder threads set globally for all VideoEncoderConfigs. For libsvtav1, this is mapped to ``lp`` via ``svtav1-params``. For h264/hevc, this is mapped to ``threads``. Hardware encoders ignore this.
         """
-        return _get_codec_options(
-            self.vcodec,
-            g=self.g,
-            crf=self.crf,
-            preset=self.preset,
-            fast_decode=self.fast_decode,
-            encoder_threads=encoder_threads,
-            extra_options=self.extra_options,
-        )
+        opts: dict[str, str] = {}
+
+        def set_if(key: str, value: Any) -> None:
+            if value is not None:
+                opts[key] = str(value)
+
+        if self.vcodec == "libsvtav1":
+            set_if("g", self.g)
+            set_if("crf", self.crf)
+            set_if("preset", self.preset)
+            svtav1_parts: list[str] = []
+            if self.fast_decode:
+                svtav1_parts.append(f"fast-decode={self.fast_decode}")
+            if encoder_threads is not None:
+                svtav1_parts.append(f"lp={encoder_threads}")
+            if svtav1_parts:
+                opts["svtav1-params"] = ":".join(svtav1_parts)
+        elif self.vcodec in ("h264", "hevc"):
+            set_if("g", self.g)
+            set_if("crf", self.crf)
+            set_if("preset", self.preset)
+            if self.fast_decode:
+                opts["tune"] = "fastdecode"
+            set_if("threads", encoder_threads)
+        elif self.vcodec in ("h264_videotoolbox", "hevc_videotoolbox"):
+            set_if("g", self.g)
+            if self.crf is not None:
+                opts["q:v"] = str(max(1, min(100, 100 - self.crf * 2)))
+        elif self.vcodec in ("h264_nvenc", "hevc_nvenc"):
+            opts["rc"] = "constqp"
+            set_if("qp", self.crf)
+            set_if("preset", self.preset)
+        elif self.vcodec == "h264_vaapi":
+            set_if("qp", self.crf)
+        elif self.vcodec == "h264_qsv":
+            set_if("global_quality", self.crf)
+            set_if("preset", self.preset)
+        else:
+            set_if("g", self.g)
+            set_if("crf", self.crf)
+            set_if("preset", self.preset)
+
+        for k, v in self.extra_options.items():
+            opts.setdefault(k, str(v))
+
+        return opts
 
 
 def camera_encoder_defaults() -> VideoEncoderConfig:
     """Return a :class:`VideoEncoderConfig` with RGB-camera defaults."""
     return VideoEncoderConfig()
-
-
-def _get_codec_options(
-    vcodec: str,
-    *,
-    g: int | None,
-    crf: int | None,
-    preset: int | str | None,
-    fast_decode: int,
-    encoder_threads: int | None,
-    extra_options: dict[str, Any] | None = None,
-) -> dict[str, str]:
-    """Translate tuning options to FFmpeg codec options.
-
-    ``extra_options`` are merged last and take precedence over the named fields.
-    """
-    opts: dict[str, str] = {}
-
-    def set_if(key: str, value: Any) -> None:
-        if value is not None:
-            opts[key] = str(value)
-
-    if vcodec == "libsvtav1":
-        set_if("g", g)
-        set_if("crf", crf)
-        set_if("preset", preset)
-        svtav1_parts: list[str] = []
-        if fast_decode:
-            svtav1_parts.append(f"fast-decode={fast_decode}")
-        if encoder_threads is not None:
-            svtav1_parts.append(f"lp={encoder_threads}")
-        if svtav1_parts:
-            opts["svtav1-params"] = ":".join(svtav1_parts)
-    elif vcodec in ("h264", "hevc"):
-        set_if("g", g)
-        set_if("crf", crf)
-        set_if("preset", preset)
-        if fast_decode:
-            opts["tune"] = "fastdecode"
-        set_if("threads", encoder_threads)
-    elif vcodec in ("h264_videotoolbox", "hevc_videotoolbox"):
-        set_if("g", g)
-        if crf is not None:
-            opts["q:v"] = str(max(1, min(100, 100 - crf * 2)))
-    elif vcodec in ("h264_nvenc", "hevc_nvenc"):
-        opts["rc"] = "constqp"
-        set_if("qp", crf)
-        set_if("preset", preset)
-    elif vcodec == "h264_vaapi":
-        set_if("qp", crf)
-    elif vcodec == "h264_qsv":
-        set_if("global_quality", crf)
-        set_if("preset", preset)
-    else:
-        set_if("g", g)
-        set_if("crf", crf)
-        set_if("preset", preset)
-
-    if extra_options:
-        for k, v in extra_options.items():
-            opts.setdefault(k, str(v))
-
-    return opts
 
 
 def decode_video_frames(
