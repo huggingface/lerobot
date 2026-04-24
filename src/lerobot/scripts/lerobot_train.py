@@ -386,7 +386,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         sampler=sampler,
         pin_memory=device.type == "cuda",
         drop_last=False,
-        prefetch_factor=2 if cfg.num_workers > 0 else None,
+        prefetch_factor=cfg.prefetch_factor if cfg.num_workers > 0 else None,
+        persistent_workers=cfg.persistent_workers and cfg.num_workers > 0,
     )
 
     # Prepare everything with accelerator
@@ -433,6 +434,9 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
+        for cam_key in dataset.meta.camera_keys:
+            if cam_key in batch and batch[cam_key].dtype == torch.uint8:
+                batch[cam_key] = batch[cam_key].to(dtype=torch.float32) / 255.0
         batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 

@@ -1,0 +1,138 @@
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Benchmark image for RoboTwin 2.0 integration tests.
+# Extends the nightly GPU image with the RoboTwin simulator stack:
+#   sapien/mplib/pytorch3d + NVlabs CuRobo + embodiments.zip + objects.zip
+# (~3.96 GB of assets; background_texture.zip ~11 GB skipped for smoke eval).
+#
+# Build: docker build -f docker/Dockerfile.benchmark.robotwin -t lerobot-benchmark-robotwin .
+# Run:   docker run --gpus all --rm lerobot-benchmark-robotwin \
+#            lerobot-eval --env.type=robotwin --env.task=beat_block_hammer ...
+
+FROM huggingface/lerobot-gpu:latest
+
+ENV NVIDIA_DRIVER_CAPABILITIES=all \
+    VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json \
+    ROBOTWIN_ROOT=/opt/robotwin
+
+# The nightly base is CUDA -base (no compiler, no Vulkan loader). CuRobo's
+# `pip install -e .` runs nvcc, and SAPIEN renders via Vulkan — add both.
+USER root
+# Pinned upstream SHA for reproducible benchmark runs. Bump when we need
+# an upstream fix; don't rely on `main` drift.
+ARG ROBOTWIN_SHA=0aeea2d669c0f8516f4d5785f0aa33ba812c14b4
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+         cuda-nvcc-12-4 cuda-cudart-dev-12-4 \
+         libvulkan1 vulkan-tools \
+    && mkdir -p /usr/share/vulkan/icd.d \
+    && echo '{"file_format_version":"1.0.0","ICD":{"library_path":"libGLX_nvidia.so.0","api_version":"1.3.0"}}' \
+       > /usr/share/vulkan/icd.d/nvidia_icd.json \
+    && git clone https://github.com/RoboTwin-Platform/RoboTwin.git ${ROBOTWIN_ROOT} \
+    && git -C ${ROBOTWIN_ROOT} checkout ${ROBOTWIN_SHA} \
+    && chown -R user_lerobot:user_lerobot ${ROBOTWIN_ROOT} \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+USER user_lerobot
+
+# RoboTwin runtime deps (av is already in the base via [av-dep]).
+RUN uv pip install --no-cache \
+        "sapien==3.0.0b1" "mplib==0.2.1" "transforms3d==0.4.2" "trimesh==4.4.3" \
+        "open3d==0.19.0" "imageio==2.34.2" termcolor zarr pydantic h5py
+
+# pytorch3d has no universal wheel; must be built from source (~10 min, cached).
+RUN uv pip install --no-cache --no-build-isolation \
+        "git+https://github.com/facebookresearch/pytorch3d.git@stable"
+
+# CuRobo — NVlabs motion generator; TORCH_CUDA_ARCH_LIST must be set or the
+# build aborts on an empty arch list. RoboTwin's own installer pins v0.7.8,
+# which still exposes the v1 API (`curobo.types.math`) that RoboTwin imports.
+ARG CUROBO_REF=v0.7.8
+RUN cd ${ROBOTWIN_ROOT}/envs \
+    && git clone --branch ${CUROBO_REF} --depth 1 https://github.com/NVlabs/curobo.git \
+    && cd curobo \
+    && TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;8.9;9.0" \
+       uv pip install -e . --no-build-isolation --no-cache
+
+# Upstream patches (mirror RoboTwin's script/_install.sh).
+# These patches target the exact versions pinned above; re-check when upgrading.
+# mplib==0.2.1: drop a broken `or collide` clause in planner.py.
+#   Safe to remove once mplib > 0.2.1 ships with the fix upstream.
+# sapien==3.0.0b1: fix URDF loader encoding + .srdf extension check.
+#   Safe to remove once sapien > 3.0.0b1 ships with the fix upstream.
+RUN python - <<'EOF'
+import pathlib, re, site
+for d in site.getsitepackages():
+    p = pathlib.Path(d) / "mplib" / "planner.py"
+    if p.exists():
+        p.write_text(re.sub(r"\bor collide\b", "", p.read_text(), count=1))
+        print(f"mplib patch applied: {p}")
+    p = pathlib.Path(d) / "sapien" / "wrapper" / "urdf_loader.py"
+    if p.exists():
+        src = p.read_text().replace(
+            "with open(srdf_path) as f:", 'with open(srdf_path, encoding="utf-8") as f:'
+        ).replace('"srdf"', '".srdf"')
+        p.write_text(src)
+        print(f"sapien patch applied: {p}")
+EOF
+
+# Simulation assets from TianxingChen/RoboTwin2.0: embodiments (~220 MB) +
+# objects (~3.74 GB). background_texture (~11 GB) is intentionally skipped.
+# The dataset is public — no auth token needed.
+RUN python - <<'EOF'
+import os, pathlib, zipfile
+from huggingface_hub import hf_hub_download
+
+assets_dir = pathlib.Path(os.environ["ROBOTWIN_ROOT"]) / "assets"
+assets_dir.mkdir(parents=True, exist_ok=True)
+for fname in ("embodiments.zip", "objects.zip"):
+    local = hf_hub_download(
+        repo_id="TianxingChen/RoboTwin2.0",
+        repo_type="dataset",
+        filename=fname,
+        local_dir=str(assets_dir),
+    )
+    with zipfile.ZipFile(local, "r") as z:
+        z.extractall(str(assets_dir))
+    pathlib.Path(local).unlink()
+EOF
+
+WORKDIR ${ROBOTWIN_ROOT}
+RUN python script/update_embodiment_config_path.py
+
+ENV PYTHONPATH="${ROBOTWIN_ROOT}"
+
+# Fail the image build early if the CuRobo package layout regresses. Importing
+# RoboTwin's planner here is too eager because CuRobo constructs CUDA-backed
+# defaults at import time, while Docker builds don't have access to an NVIDIA
+# driver.
+RUN python - <<'EOF'
+from pathlib import Path
+
+from curobo.types.math import Pose
+
+planner_src = (Path("/opt/robotwin/envs/robot/planner.py")).read_text()
+assert "from curobo.types.math import Pose as CuroboPose" in planner_src
+
+print("CuRobo import OK:", Pose.__name__)
+print("RoboTwin planner import references curobo.types.math")
+EOF
+
+# Return to the lerobot source directory (set by base image) before overlaying.
+WORKDIR /lerobot
+
+# Overlay the PR's source code on top of the nightly image.
+COPY --chown=user_lerobot:user_lerobot . .
+
+CMD ["/bin/bash"]
