@@ -37,8 +37,8 @@ from datasets.features.features import register_feature
 from PIL import Image
 
 from lerobot.datasets.pyav_utils import (
-    check_config_against_bundled_ffmpeg,
-    detect_available_encoders,
+    check_video_encoder_config_pyav,
+    detect_available_encoders_pyav,
 )
 from lerobot.utils.import_utils import get_safe_default_video_backend
 
@@ -92,13 +92,56 @@ class VideoEncoderConfig:
     extra_options: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        self.vcodec = resolve_vcodec(self.vcodec)
+        self.resolve_vcodec()
 
         # Empty-constructor ergonomics: ``VideoEncoderConfig()`` must "just work".
         if self.preset is None and self.vcodec == "libsvtav1":
             self.preset = LIBSVTAV1_DEFAULT_PRESET
 
-        check_config_against_bundled_ffmpeg(self)
+        self.validate()
+
+
+    def detect_available_encoders(self, encoders: list[str] | str) -> list[str]:
+        """Detect available encoders based on the video backend."""
+        if self.video_backend == "pyav":
+            return detect_available_encoders_pyav(encoders)
+        else:
+            return []
+
+
+    def validate(self) -> None:
+        """Validate the video encoder config."""
+        if self.video_backend == "pyav":
+            check_video_encoder_config_pyav(self)
+
+
+    def resolve_vcodec(self) -> None:
+        """Validate vcodec and resolve 'auto' to best available HW encoder, fallback to libsvtav1.
+
+        Any explicitly-requested codec that isn't in the local FFmpeg build is
+        also silently rewritten to ``libsvtav1`` so encoding never hard-fails on
+        a host missing the requested encoder.
+        """
+        if self.vcodec not in VALID_VIDEO_CODECS:
+            raise ValueError(
+                f"Invalid vcodec '{self.vcodec}'. Must be one of: {sorted(VALID_VIDEO_CODECS)}"
+            )
+        if self.vcodec == "auto":
+            available = self.detect_available_encoders(HW_ENCODERS)
+            for encoder in HW_ENCODERS:
+                if encoder in available:
+                    logger.info(f"Auto-selected video codec: {encoder}")
+                    self.vcodec = encoder
+                    return
+            logger.info("No hardware encoder available, falling back to software encoder 'libsvtav1'")
+            self.vcodec = "libsvtav1"
+
+        if self.detect_available_encoders(self.vcodec):
+            logger.info(f"Using video codec: {self.vcodec}")
+            self.vcodec = self.vcodec
+            return
+        raise ValueError(f"Unsupported video codec: {self.vcodec} with video backend {self.video_backend}")
+
 
     def get_codec_options(self, encoder_threads: int | None = None) -> dict[str, str]:
         """Build codec-specific FFmpeg options from the tuning fields.
@@ -183,24 +226,6 @@ def _get_codec_options(
             opts.setdefault(k, str(v))
 
     return opts
-
-
-def resolve_vcodec(vcodec: str) -> str:
-    """Validate vcodec and resolve 'auto' to best available HW encoder, fallback to libsvtav1."""
-    if vcodec not in VALID_VIDEO_CODECS:
-        raise ValueError(f"Invalid vcodec '{vcodec}'. Must be one of: {sorted(VALID_VIDEO_CODECS)}")
-    if vcodec != "auto" and detect_available_encoders(vcodec) != []:
-        logger.info(f"Using video codec: {vcodec}")
-        return vcodec
-    elif vcodec == "auto":
-        available = detect_available_encoders()
-        for encoder in HW_ENCODERS:
-            if encoder in available:
-                logger.info(f"Auto-selected video codec: {encoder}")
-                return encoder
-    else:
-        logger.info("No hardware encoder available, falling back to software encoder 'libsvtav1'")
-        return "libsvtav1"
 
 
 def decode_video_frames(

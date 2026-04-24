@@ -74,31 +74,18 @@ def _get_codec_video_formats(vcodec: str) -> tuple[str, ...]:
     return tuple(fmt.name for fmt in (codec.video_formats or []))
 
 
-@functools.cache
-def _all_video_encoders() -> tuple[str, ...]:
-    """Every video encoder PyAV exposes in the local FFmpeg build, sorted by name."""
-    result: list[str] = []
-    for name in sorted(av.codecs_available):
-        codec = get_codec(name)
-        if codec is not None and codec.type == "video":
-            result.append(name)
-    return tuple(result)
-
-
-def detect_available_encoders(encoders: list[str] | str | None = None) -> list[str]:
+def detect_available_encoders_pyav(encoders: list[str] | str) -> list[str]:
     """Return the subset of *encoders* available as video encoders in the local FFmpeg build.
 
-    ``None`` returns every video encoder PyAV exposes; a single ``str`` is probed as a list of one.
+    Each name is probed directly via :func:`get_codec`; input order is preserved.
     """
-    if encoders is None:
-        return list(_all_video_encoders())
     if isinstance(encoders, str):
         encoders = [encoders]
 
-    video_encoders = set(_all_video_encoders())
-    available = []
+    available: list[str] = []
     for name in encoders:
-        if name in video_encoders:
+        codec = get_codec(name)
+        if codec is not None and codec.type == "video":
             available.append(name)
         else:
             logger.debug("encoder '%s' not available as video encoder", name)
@@ -242,7 +229,7 @@ def _check_extra_options(
         _validate_extra_option(vcodec, key, value, opt)
 
 
-def check_config_against_bundled_ffmpeg(config: VideoEncoderConfig) -> None:
+def check_video_encoder_config_pyav(config: VideoEncoderConfig) -> None:
     """Verify *config* is compatible with the bundled FFmpeg build.
 
     Checks pixel format, tuning-field availability, value range/choices for
