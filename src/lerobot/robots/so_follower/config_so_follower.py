@@ -41,6 +41,13 @@ class SOFollowerConfig:
     # Set to `True` for backward compatibility with previous policies/dataset
     use_degrees: bool = True
 
+    # If True, include Present_Velocity, Present_Load, and Present_Temperature in
+    # observations (read from the Feetech motor registers). Adds 3 extra `sync_read`
+    # calls per `get_observation()` (~15-30ms on a 6-motor bus at 1Mbaud), which
+    # may impact sustained FPS above 30Hz. Default False preserves existing behavior
+    # and keeps observations compatible with policies trained on position-only data.
+    record_telemetry: bool = False
+
 
 @RobotConfig.register_subclass("so101_follower")
 @RobotConfig.register_subclass("so100_follower")
