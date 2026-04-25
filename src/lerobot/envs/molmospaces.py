@@ -16,16 +16,13 @@
 from __future__ import annotations
 
 import os
-from collections import defaultdict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from functools import partial
 from typing import Any
 
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
-
-from lerobot.types import RobotObservation
 
 from .utils import _LazyAsyncVectorEnv, parse_camera_names
 
