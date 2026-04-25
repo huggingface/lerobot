@@ -90,7 +90,7 @@ class MolmoSpacesEnv(gym.Env):
             return
 
         try:
-            from molmo_spaces.envs.episode import EpisodeConfig, load_benchmark
+            from molmo_spaces.envs.episode import load_benchmark
             from molmo_spaces.simulators.mujoco import MuJoCoSimulator
         except ImportError as e:
             raise ImportError(
@@ -129,22 +129,30 @@ class MolmoSpacesEnv(gym.Env):
         if self.obs_type == "pixels":
             self.observation_space = spaces.Dict(
                 {
-                    "pixels": spaces.Box(
-                        low=0,
-                        high=255,
-                        shape=(self.observation_height, self.observation_width, 3),
-                        dtype=np.uint8,
+                    "pixels": spaces.Dict(
+                        {
+                            self.camera_name: spaces.Box(
+                                low=0,
+                                high=255,
+                                shape=(self.observation_height, self.observation_width, 3),
+                                dtype=np.uint8,
+                            )
+                        }
                     )
                 }
             )
         elif self.obs_type == "pixels_agent_pos":
             self.observation_space = spaces.Dict(
                 {
-                    "pixels": spaces.Box(
-                        low=0,
-                        high=255,
-                        shape=(self.observation_height, self.observation_width, 3),
-                        dtype=np.uint8,
+                    "pixels": spaces.Dict(
+                        {
+                            self.camera_name: spaces.Box(
+                                low=0,
+                                high=255,
+                                shape=(self.observation_height, self.observation_width, 3),
+                                dtype=np.uint8,
+                            )
+                        }
                     ),
                     "agent_pos": spaces.Box(
                         low=-1000.0,
@@ -180,11 +188,23 @@ class MolmoSpacesEnv(gym.Env):
                 f"but got shape {action.shape} with ndim={action.ndim}"
             )
 
-        obs, reward, done, info = self._sim.step(action)
+        raw_obs, reward, done, info = self._sim.step(action)
+        info = dict(info)
 
         is_success = info.get("success", False)
         terminated = done or is_success
         truncated = self._episode_step >= self.max_episode_steps
+
+        info["is_success"] = is_success
+        info["task"] = self.task
+
+        if terminated or truncated:
+            final_obs = self._get_obs()
+            obs, reset_info = self.reset()
+            info["final_observation"] = final_obs
+            info["reset_info"] = reset_info
+        else:
+            obs = self._get_obs()
 
         return obs, reward, terminated, truncated, info
 
@@ -213,11 +233,11 @@ class MolmoSpacesEnv(gym.Env):
             pass
 
         if self.obs_type == "pixels":
-            return {"pixels": pixels}
+            return {"pixels": {self.camera_name: pixels}}
 
         data = self._sim._data
-        qpos = data.qpos.copy() if data.qpos is not None else np.zeros(9)
-        qvel = data.qvel.copy() if data.qvel is not None else np.zeros(9)
+        qpos = data.qpos.copy()[:7] if data.qpos is not None and len(data.qpos) >= 7 else np.zeros(7)
+        qvel = data.qvel.copy()[:7] if data.qvel is not None and len(data.qvel) >= 7 else np.zeros(7)
 
         end_effector_pos = np.zeros(3)
         end_effector_quat = np.zeros(4)
@@ -227,9 +247,9 @@ class MolmoSpacesEnv(gym.Env):
             if hasattr(self._sim, "_robot"):
                 robot = self._sim._robot
                 if hasattr(robot, "ee_pos"):
-                    end_effector_pos = robot.ee_pos
+                    end_effector_pos = np.array(robot.ee_pos) if robot.ee_pos is not None else np.zeros(3)
                 if hasattr(robot, "ee_quat"):
-                    end_effector_quat = robot.ee_quat
+                    end_effector_quat = np.array(robot.ee_quat) if robot.ee_quat is not None else np.zeros(4)
                 if hasattr(robot, "gripper_qpos"):
                     gripper_qpos = np.array([robot.gripper_qpos])
         except Exception:
@@ -237,10 +257,10 @@ class MolmoSpacesEnv(gym.Env):
 
         agent_pos = np.concatenate(
             [
-                qpos[:7] if len(qpos) >= 7 else np.zeros(7),
-                qvel[:7] if len(qvel) >= 7 else np.zeros(7),
+                qpos,
+                qvel,
                 end_effector_pos,
-                end_effector_quat,
+                end_effector_quat[:3] if len(end_effector_quat) >= 3 else np.zeros(3),
                 gripper_qpos,
             ]
         )
@@ -249,7 +269,7 @@ class MolmoSpacesEnv(gym.Env):
             agent_pos = np.zeros(14)
 
         return {
-            "pixels": pixels,
+            "pixels": {self.camera_name: pixels},
             "agent_pos": agent_pos.astype(np.float64),
         }
 
@@ -258,8 +278,8 @@ class MolmoSpacesEnv(gym.Env):
         agent_pos = np.zeros(14, dtype=np.float64)
 
         if self.obs_type == "pixels":
-            return {"pixels": pixels}
-        return {"pixels": pixels, "agent_pos": agent_pos}
+            return {"pixels": {self.camera_name: pixels}}
+        return {"pixels": {self.camera_name: pixels}, "agent_pos": agent_pos}
 
     def render(self):
         return self._get_obs()["pixels"]
@@ -282,19 +302,18 @@ def _make_env_fns(
 ) -> list[Callable[[], MolmoSpacesEnv]]:
     """Build n_envs factory callables for a single task."""
 
-    def _make_env(episode_index: int, **kwargs) -> MolmoSpacesEnv:
-        local_kwargs = dict(gym_kwargs)
+    def _make_env(episode_index: int) -> MolmoSpacesEnv:
         return MolmoSpacesEnv(
             task=task,
             camera_name=camera_name,
             episode_index=episode_index,
             benchmark_name=benchmark_name,
-            **local_kwargs,
+            **gym_kwargs,
         )
 
     fns: list[Callable[[], MolmoSpacesEnv]] = []
     for episode_index in range(n_envs):
-        fns.append(partial(_make_env, episode_index, **gym_kwargs))
+        fns.append(partial(_make_env, episode_index))
     return fns
 
 
