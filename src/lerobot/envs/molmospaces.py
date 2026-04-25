@@ -187,8 +187,6 @@ class MolmoSpacesEnv(gym.Env):
         return obs, reward, terminated, truncated, info
 
     def _get_obs(self) -> dict:
-        import mujoco
-
         if self._sim._scene is None:
             return self._get_dummy_obs()
 
