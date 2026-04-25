@@ -39,6 +39,23 @@ PLUGIN_DISCOVERY_SUFFIX = "discover_packages_path"
 # get_path_arg() can find them even when they weren't passed via CLI.
 _config_path_args: dict[str, str] = {}
 
+# Storage for non-path YAML overrides so validate() can pass them to from_pretrained.
+_config_yaml_overrides: dict[str, list[str]] = {}
+
+
+def _flatten_to_cli_args(d: dict, prefix: str = "") -> list[str]:
+    """Recursively flatten a nested dict to CLI-style args (e.g. {"lr": 1e-4} -> ["--lr=0.0001"])."""
+    args = []
+    for key, value in d.items():
+        if key in (PATH_KEY, draccus.CHOICE_TYPE_KEY):
+            continue
+        full_key = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, dict):
+            args.extend(_flatten_to_cli_args(value, full_key))
+        elif not isinstance(value, list):
+            args.append(f"--{full_key}={value}")
+    return args
+
 
 def get_cli_overrides(field_name: str, args: Sequence[str] | None = None) -> list[str] | None:
     """Parses arguments from cli at a given nested attribute level.
@@ -158,6 +175,10 @@ def get_path_arg(field_name: str, args: Sequence[str] | None = None) -> str | No
     return result
 
 
+def get_yaml_overrides(field_name: str) -> list[str]:
+    return _config_yaml_overrides.get(field_name, [])
+
+
 def get_type_arg(field_name: str, args: Sequence[str] | None = None) -> str | None:
     return parse_arg(f"{field_name}.{draccus.CHOICE_TYPE_KEY}", args)
 
@@ -229,8 +250,10 @@ def extract_path_fields_from_config(config_path: str, path_fields: list[str]) ->
     for field in path_fields:
         if field in config_data and isinstance(config_data[field], dict) and PATH_KEY in config_data[field]:
             _config_path_args[field] = str(config_data[field].pop(PATH_KEY))
-            # Remove the field entirely if it's now empty
-            if not config_data[field]:
+            remaining = config_data[field]
+            if remaining:
+                _config_yaml_overrides[field] = _flatten_to_cli_args(remaining)
+            else:
                 del config_data[field]
             modified = True
 
@@ -238,12 +261,11 @@ def extract_path_fields_from_config(config_path: str, path_fields: list[str]) ->
         return config_path
 
     # Write cleaned config to a temp file
-    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=suffix, delete=False)
-    if suffix in (".yaml", ".yml"):
-        yaml.dump(config_data, tmp, default_flow_style=False)
-    else:
-        json.dump(config_data, tmp, indent=2)
-    tmp.close()
+    with tempfile.NamedTemporaryFile(mode="w", suffix=suffix, delete=False) as tmp:
+        if suffix in (".yaml", ".yml"):
+            yaml.dump(config_data, tmp, default_flow_style=False)
+        else:
+            json.dump(config_data, tmp, indent=2)
     return tmp.name
 
 

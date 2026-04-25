@@ -2,14 +2,15 @@
 
 import json
 import tempfile
-from pathlib import Path
 
 import yaml
 
 from lerobot.configs.parser import (
     _config_path_args,
+    _config_yaml_overrides,
     extract_path_fields_from_config,
     get_path_arg,
+    get_yaml_overrides,
 )
 
 
@@ -125,3 +126,65 @@ def test_get_path_arg_cli_takes_precedence():
     assert result == "cli/path"
 
     _config_path_args.clear()
+
+
+def test_yaml_overrides_captured():
+    """Test that non-path policy fields are captured as CLI-style overrides."""
+    config = {
+        "policy": {"path": "lerobot/smolvla_base", "lr": 1e-4, "batch_size": 32},
+    }
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        yaml.dump(config, f)
+        config_path = f.name
+
+    _config_path_args.clear()
+    _config_yaml_overrides.clear()
+    extract_path_fields_from_config(config_path, ["policy"])
+
+    overrides = get_yaml_overrides("policy")
+    assert "--lr=0.0001" in overrides or any("lr=" in o for o in overrides)
+    assert any("batch_size=32" in o for o in overrides)
+
+    _config_path_args.clear()
+    _config_yaml_overrides.clear()
+
+
+def test_yaml_overrides_excludes_type_and_path():
+    """Test that type and path fields are not included in YAML overrides."""
+    config = {
+        "policy": {"path": "lerobot/smolvla_base", "type": "smolvla", "lr": 5e-5},
+    }
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        yaml.dump(config, f)
+        config_path = f.name
+
+    _config_path_args.clear()
+    _config_yaml_overrides.clear()
+    extract_path_fields_from_config(config_path, ["policy"])
+
+    overrides = get_yaml_overrides("policy")
+    assert not any("path=" in o for o in overrides)
+    assert not any("type=" in o for o in overrides)
+    assert any("lr=" in o for o in overrides)
+
+    _config_path_args.clear()
+    _config_yaml_overrides.clear()
+
+
+def test_get_yaml_overrides_empty_when_path_only():
+    """Test that get_yaml_overrides returns [] when policy had only a path field."""
+    config = {
+        "policy": {"path": "lerobot/smolvla_base"},
+    }
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        yaml.dump(config, f)
+        config_path = f.name
+
+    _config_path_args.clear()
+    _config_yaml_overrides.clear()
+    extract_path_fields_from_config(config_path, ["policy"])
+
+    assert get_yaml_overrides("policy") == []
+
+    _config_path_args.clear()
+    _config_yaml_overrides.clear()
