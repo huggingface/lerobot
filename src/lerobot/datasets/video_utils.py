@@ -17,6 +17,7 @@ import contextlib
 import glob
 import importlib
 import logging
+import math
 import queue
 import shutil
 import tempfile
@@ -40,6 +41,14 @@ from PIL import Image
 from lerobot.datasets.pyav_utils import (
     check_video_encoder_config_pyav,
     detect_available_encoders_pyav,
+)
+from lerobot.datasets.depth_utils import (
+    quantize_depth,
+    dequantize_depth,
+    DEFAULT_DEPTH_MIN,
+    DEFAULT_DEPTH_MAX,
+    DEFAULT_DEPTH_SHIFT,
+    DEFAULT_DEPTH_USE_LOG,
 )
 from lerobot.utils.import_utils import get_safe_default_video_backend
 
@@ -202,6 +211,60 @@ class VideoEncoderConfig:
 
         return opts
 
+
+@dataclass
+class DepthEncoderConfig(VideoEncoderConfig):
+    """Encoder configuration for depth-map streams.
+
+    Inherits the full :class:`VideoEncoderConfig` surface (codec, GOP, CRF,
+    preset, ``extra_options``…) and adds the four parameters of the depth
+    quantization pipeline (:func:`quantize_depth`). Inheritance — rather
+    than composition — keeps the CLI flat: ``--dataset.depth_encoder_config.<field>``
+    works identically to its RGB counterpart.
+
+    Defaults flip ``vcodec`` to ``"hevc"`` (Main 12 profile) and ``pix_fmt``
+    to ``"yuv420p12le"``, the most widely available 12-bit pixel format.
+    For archive-grade lossless storage use ``vcodec="ffv1"`` together with
+    ``pix_fmt="gray12le"`` (and clear ``crf``/``preset`` to ``None`` since
+    ``ffv1`` doesn't expose those tuning knobs).
+
+    The :attr:`is_depth_map` marker is class-fixed to ``True`` (``init=False``,
+    so it's hidden from CLI and constructor args) and is what the reader
+    side keys on to tell depth datasets from RGB ones.
+
+    Attributes:
+        depth_min: Minimum depth in physical units (e.g. metres) represented
+            by quantum ``0``.
+        depth_max: Maximum depth represented by quantum :data:`DEPTH_QMAX`.
+        shift: Pre-log offset for numerical stability near zero.
+        use_log: ``True`` for logarithmic quantization (default; matches
+            sensor error profile), ``False`` for linear.
+    """
+
+    vcodec: str = "hevc"
+    pix_fmt: str = "yuv420p12le"
+
+    depth_min: float = DEFAULT_DEPTH_MIN
+    depth_max: float = DEFAULT_DEPTH_MAX
+    shift: float = DEFAULT_DEPTH_SHIFT
+    use_log: bool = DEFAULT_DEPTH_USE_LOG
+
+    # Class invariant — kept out of ``__init__`` (and CLI) but persisted
+    # via ``asdict`` into ``info.json`` for the reader to detect depth.
+    is_depth_map: bool = field(default=True, init=False)
+
+    def quantize(self, depth: torch.Tensor | np.ndarray) -> torch.Tensor:
+        """Apply :func:`quantize_depth` bound to this config's parameters."""
+        return quantize_depth(depth, self.depth_min, self.depth_max, self.shift, self.use_log)
+
+    def dequantize(self, quantized: torch.Tensor | np.ndarray) -> torch.Tensor:
+        """Apply :func:`dequantize_depth` bound to this config's parameters."""
+        return dequantize_depth(quantized, self.depth_min, self.depth_max, self.shift, self.use_log)
+
+
+def depth_encoder_defaults() -> DepthEncoderConfig:
+    """Return a :class:`DepthEncoderConfig` with depth-camera defaults."""
+    return DepthEncoderConfig()
 
 def camera_encoder_defaults() -> VideoEncoderConfig:
     """Return a :class:`VideoEncoderConfig` with RGB-camera defaults."""
