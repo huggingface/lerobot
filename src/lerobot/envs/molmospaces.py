@@ -15,6 +15,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Callable, Sequence
 from functools import partial
@@ -32,6 +33,8 @@ ACTION_HIGH = 1.0
 DEFAULT_EPISODE_LENGTH = 500
 DEFAULT_CAMERA_H = 256
 DEFAULT_CAMERA_W = 256
+
+logger = logging.getLogger(__name__)
 
 MOLMO_SPACES_TASKS = (
     "pick",
@@ -71,11 +74,8 @@ class MolmoSpacesEnv(gym.Env):
         self.render_mode = render_mode
         self.observation_width = observation_width
         self.observation_height = observation_height
-        self.camera_name = (
-            parse_camera_names(camera_name)[0] if isinstance(camera_name, (str, list)) else camera_name
-        )
-        if isinstance(camera_name, str):
-            self.camera_name = camera_name.split(",")[0].strip()
+        parsed = parse_camera_names(camera_name)
+        self.camera_name = parsed[0] if parsed else "front"
         self.max_episode_steps = max_episode_steps
         self.benchmark_name = benchmark_name
         self.episode_index = episode_index
@@ -94,10 +94,7 @@ class MolmoSpacesEnv(gym.Env):
             from molmo_spaces.simulators.mujoco import MuJoCoSimulator
         except ImportError as e:
             raise ImportError(
-                "MolmoSpaces is not installed. Please install it with:\n"
-                "git clone git@github.com:allenai/molmospaces.git\n"
-                "cd molmospaces\n"
-                "pip install -e .[mujoco]"
+                'MolmoSpaces is not installed. Please install it with:\npip install "lerobot[molmospaces]"'
             ) from e
 
         benchmark_path = os.environ.get("MLSPACES_ASSETS_DIR", ".")
@@ -214,7 +211,8 @@ class MolmoSpacesEnv(gym.Env):
 
         try:
             self._sim.render()
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Render failed: {e}, returning dummy observation")
             return self._get_dummy_obs()
 
         height, width = self.observation_height, self.observation_width
@@ -229,8 +227,8 @@ class MolmoSpacesEnv(gym.Env):
 
                         img = cv2.resize(img, (width, height))
                     pixels = img
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Image capture failed: {e}, returning black frame")
 
         if self.obs_type == "pixels":
             return {"pixels": {self.camera_name: pixels}}
