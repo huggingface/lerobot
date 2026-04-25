@@ -113,11 +113,63 @@ accelerate launch --num_processes=2 $(which lerobot-train) \
   --policy=act
 ```
 
+## Gradient Accumulation
+
+Gradient accumulation lets you simulate a larger effective batch size without increasing GPU memory usage.
+Instead of processing all samples in one forward pass, it splits the batch into smaller micro-batches and accumulates gradients before updating.
+
+### Usage
+
+```bash
+lerobot-train \
+  --dataset.repo_id=your_dataset \
+  --policy.type=pi05 \
+  --batch_size=16 \
+  --gradient_accumulation_steps=2 \
+  --steps=30000
+```
+
+This gives an effective batch size of 16 × 2 = 32, while only using memory for batch size 16.
+
+### `compile_mode` Compatibility
+
+When using `gradient_accumulation_steps > 1` with `compile_model=true`, CUDAGraphs-based compile modes (`max-autotune`, `reduce-overhead`) are incompatible because multiple forward passes before backward overwrite tensors captured in the graph.
+
+If you use gradient accumulation with model compilation, set a non-CUDAGraphs compile mode explicitly:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=your_dataset \
+  --policy.type=pi05 \
+  --policy.compile_model=true \
+  --policy.compile_mode=max-autotune-no-cudagraphs \
+  --batch_size=16 \
+  --gradient_accumulation_steps=2 \
+  --steps=30000
+```
+
+If you use an incompatible combination, training will fail with a clear error message.
+
+### Combining with Multi-GPU
+
+Gradient accumulation works with multi-GPU training.
+The effective batch size becomes `batch_size × num_gpus × gradient_accumulation_steps`:
+
+```bash
+accelerate launch --num_processes=2 $(which lerobot-train) \
+  --batch_size=8 \
+  --gradient_accumulation_steps=4 \
+  --dataset.repo_id=your_dataset \
+  --policy.type=pi05
+```
+
+This gives an effective batch size of 8 × 2 × 4 = 64.
+
 ## Notes
 
 - The `--policy.use_amp` flag in `lerobot-train` is only used when **not** running with accelerate. When using accelerate, mixed precision is controlled by accelerate's configuration.
 - Training logs, checkpoints, and hub uploads are only done by the main process to avoid conflicts. Non-main processes have console logging disabled to prevent duplicate output.
-- The effective batch size is `batch_size × num_gpus`. If you use 4 GPUs with `--batch_size=8`, your effective batch size is 32.
+- The effective batch size is `batch_size × num_gpus × gradient_accumulation_steps`. If you use 4 GPUs with `--batch_size=8` and `--gradient_accumulation_steps=2`, your effective batch size is 64.
 - Learning rate scheduling is handled correctly across multiple processes—LeRobot sets `step_scheduler_with_optimizer=False` to prevent accelerate from adjusting scheduler steps based on the number of processes.
 - When saving or pushing models, LeRobot automatically unwraps the model from accelerate's distributed wrapper to ensure compatibility.
 - WandB integration automatically initializes only on the main process, preventing multiple runs from being created.
