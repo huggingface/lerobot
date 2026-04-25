@@ -90,7 +90,7 @@ lerobot-edit-dataset \
 
 #### Add Features
 
-Add new features to an existing dataset. This allows you to extend a dataset with additional data such as new observations, actions, or video streams. The new features can be added from external files (e.g., safetensors for numerical data or MP4 videos for visual data).
+Add new features to an existing dataset. This allows you to extend a dataset with additional data such as new observations, actions, or video streams. New features can be added from external files (e.g., .safetensors for numerical data or .mp4 for video).
 
 ```bash
 # Add a new numerical feature from a safetensors file (modifies original dataset)
@@ -100,7 +100,7 @@ lerobot-edit-dataset \
     --operation.feature_names "['new_observation']" \
     --operation.feature_paths "['/path/to/new_data.safetensors']"
 
-# Add a new video feature from an MP4 file and save to a new dataset
+# Add a new video feature from a video file and save to a new dataset
 lerobot-edit-dataset \
     --repo_id lerobot/pusht \
     --new_repo_id lerobot/pusht_with_video \
@@ -146,23 +146,73 @@ lerobot-edit-dataset \
 # If sensor_data.safetensors contains keys 'temperature' and 'pressure', this creates:
 # - temperature (original key, since empty string)
 # - custom_pressure (with pressure data)
+
+# Add a new numerical feature and manually specify dimension names (dimension names are only used if the script is not capable to infer names from dataset)
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type add_feature \
+    --operation.feature_names "['observation.extra_sensor']" \
+    --operation.feature_paths "['/path/to/data.safetensors']" \
+    --operation.dim_names "[['temperature', 'humidity']]"
+
+# Add a feature and specify its type to help the script infer dimension names from existing data
+# (e.g., if 'motor' type is used, it will try to match names from existing actions/state)
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type add_feature \
+    --operation.feature_names "['observation.new_state']" \
+    --operation.feature_paths "['/path/to/state.safetensors']" \
+    --operation.feature_types "['motor']"
+
+# Add a new video feature (names for video dimensions are automatically set to height/width/channels)
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --new_repo_id lerobot/pusht_with_video \
+    --operation.type add_feature \
+    --operation.feature_names "['observation.images.side']" \
+    --operation.feature_paths "['/path/to/side_camera.mp4']"
+
+# Add multiple features with mixed configurations (use None to skip manual config for a specific feature)
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type add_feature \
+    --operation.feature_names "['reward', 'observation.sensor']" \
+    --operation.feature_paths "['/path/to/rew.safetensors', '/path/to/sensor.safetensors']" \
+    --operation.feature_types "['reward', 'motor']" \
+    --operation.dim_names "[None, ['x', 'y', 'z']]"
 ```
 
 **Parameters:**
 
 - `feature_names`: List of names for the new features to add. Can be strings or lists of strings for advanced naming control (see examples above)
 - `feature_paths`: List of paths to the external data files (safetensors for numerical data, MP4 for video). Must correspond 1:1 with `feature_names`
+- `dim_names (Optional)`: List of lists (or dicts) defining the names of the dimensions for each feature. Used for fallback behaviour: the script always try to infer them.
+- `feature_types` (Optional): List of categories for the features (perception, motor, reward, or metadata). This helps the script find similar existing features to copy dimension names from. Defaults to motor for numerical data.
 
 **Notes:**
 
-- For video features (.mp4 files), the video must contain exactly the same number of frames as the total frames in the dataset.
-- For numerical data (.safetensors files), each array in the file must have shape `(frames, ...)` where `frames` matches the dataset's total frames.
+- **Video Detection & Metadata**:
+  - The tool uses `PyAV` to automatically detect if a file is a video.
+  - For video files, `dtype` is set to `video`, and dimension names are automatically assigned as `["height", "width", "channels"]`.
+  - The video must contain exactly the same number of frames as the total frames in the dataset.
+
+- **Numerical Data (.safetensors)**:
+  - Each array in the file must have a shape of `(frames, ...)` where `frames` matches the dataset's total frames.
+  - For numerical data, the script defaults the `feature_type` to `motor` unless specified otherwise.
+
+- **Dimension Name Inference**:
+  - The script always attempts to infer names by looking at existing features in the dataset that share the same `feature_type` and `shape`.
+  - The `feature_type` parameter maps to the following categories to help find matches:
+    - `perception`: Matches existing image/observation keys.
+    - `motor`: Matches actions and state observations.
+    - `reward`: Matches rewards and success signals.
+    - `metadata`: Matches indices and timestamps.
+  - If no matching feature is found or if multiple ambiguous matches exist, the dimension names will remain empty unless manually provided.
+
 - **Naming Strategy**:
-  - If `feature_names` contains a single string for a safetensors file with one key, uses that string as the feature name.
-  - If `feature_names` contains a single string for a safetensors file with multiple keys, prefixes each key with that string (e.g., `"prefix.key"`).
-  - If `feature_names` contains a list of strings, each string overrides the corresponding safetensors key (empty strings fall back to the original key).
-  - For video files, only single strings are allowed as feature names.
-- The feature type is automatically inferred from the file extension (.mp4 for video, otherwise numerical data).
+  - If `feature_names` contains a single string for a file with one key, that string is used as the feature name.
+  - If a single string is provided for a file with multiple keys, it acts as a prefix (e.g., `"prefix.key"`).
+  - If a list of strings is provided, it overrides the file's internal keys 1:1. Empty strings in the list fallback to the original internal keys.
 
 #### Convert to Video
 

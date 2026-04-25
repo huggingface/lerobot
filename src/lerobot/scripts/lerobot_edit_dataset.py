@@ -182,6 +182,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+import av
 import draccus
 from safetensors.numpy import load_file
 
@@ -198,7 +199,7 @@ from lerobot.datasets.dataset_tools import (
 )
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.video_utils import get_video_duration_in_s, get_video_info
-from lerobot.utils.constants import HF_LEROBOT_HOME
+from lerobot.utils.constants import ACTION, DONE, HF_LEROBOT_HOME, OBS_ENV_STATE, OBS_IMAGE, OBS_STATE, REWARD
 from lerobot.utils.utils import init_logging
 
 
@@ -239,6 +240,8 @@ class RemoveFeatureConfig(OperationConfig):
 class AddFeatureConfig(OperationConfig):
     feature_names: list[str | list[str]] | None = None
     feature_paths: list[str] | None = None
+    dim_names: list[list | dict] | None = None
+    feature_types: list[str] | None = None
 
 
 @OperationConfig.register_subclass("modify_tasks")
@@ -466,24 +469,75 @@ def handle_remove_feature(cfg: EditDatasetConfig) -> None:
 
 def handle_add_feature(cfg: EditDatasetConfig):
     if not isinstance(cfg.operation, AddFeatureConfig):
-        raise ValueError("Operation config must be AddFeatureConfig")
+        raise ValueError("Operation config must be AddFeatureConfig.")
 
     if not cfg.operation.feature_names:
-        raise ValueError("feature_names must be specified for add_feature operation")
+        raise ValueError("feature_names must be specified for add_feature operation.")
 
     if not cfg.operation.feature_paths:
-        raise ValueError("feature_paths must be specified for add_feature operation")
+        raise ValueError("feature_paths must be specified for add_feature operation.")
 
     if len(cfg.operation.feature_names) != len(cfg.operation.feature_paths):
-        raise ValueError("feature_names and feature_paths must have the same length")
+        raise ValueError("feature_names and feature_paths must have the same length.")
 
-    features = {}
+    if cfg.operation.dim_names and len(cfg.operation.dim_names) != len(cfg.operation.feature_paths):
+        raise ValueError(
+            "If dim_names list is provided, it must have feature_paths length. Use None if you want default behavior for a feature."
+        )
+
+    if cfg.operation.feature_types and len(cfg.operation.feature_types) != len(cfg.operation.feature_paths):
+        raise ValueError(
+            "If feature_types is provided, it must have feature_paths length. Use None if you want default behavior for a feature."
+        )
+
     dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+
+    features = get_features_dict(
+        dataset,
+        cfg.operation.feature_names,
+        cfg.operation.feature_paths,
+        cfg.operation.feature_types
+        if cfg.operation.feature_types
+        else ["motor"] * len(cfg.operation.feature_paths),
+        cfg.operation.dim_names if cfg.operation.dim_names else [None] * len(cfg.operation.feature_paths),
+    )
+
+    output_repo_id, output_dir = get_output_path(
+        cfg.repo_id,
+        cfg.new_repo_id,
+        cfg.root,
+        cfg.new_root,
+    )
+
+    # In case of in-place modification, make the dataset point to the backup directory
+    if output_dir == dataset.root:
+        dataset.root = dataset.root.with_name(dataset.root.name + "_old")
+
+    logging.info(f"Adding features {cfg.operation.feature_names} to {cfg.repo_id}")
+    new_dataset = add_features(
+        dataset,
+        features=features,
+        output_dir=output_dir,
+        repo_id=output_repo_id,
+    )
+
+    logging.info(f"Dataset saved to {output_dir}")
+    logging.info(f"Updated features: {list(new_dataset.meta.features.keys())}")
+
+    if cfg.push_to_hub:
+        logging.info(f"Pushing to hub as {output_repo_id}")
+        LeRobotDataset(output_repo_id, root=output_dir).push_to_hub()
+
+
+def get_features_dict(
+    dataset: LeRobotDataset, feature_names: list, feature_paths: list, feature_types: list, dim_names: list
+):
+    features = {}
     tgt_frames = dataset.meta.episodes[-1]["dataset_to_index"]
     tgt_fps = dataset.fps
 
-    for f_name, f_path in zip(cfg.operation.feature_names, cfg.operation.feature_paths, strict=True):
-        if f_path.endswith(".mp4"):
+    for f_idx, (f_name, f_path) in enumerate(zip(feature_names, feature_paths, strict=True)):
+        if is_video(f_path):
             if not isinstance(f_name, str):
                 raise ValueError(
                     f"A list of string was provided for the feature name of '{f_path}'. For video features you must provide strings for naming."
@@ -511,7 +565,7 @@ def handle_add_feature(cfg: EditDatasetConfig):
                 "names": ["height", "width", "channels"],
                 "video_info": video_info,
             }
-            new_feature_info["video_info"]["video.fps"] = dataset.fps
+            new_feature_info["video_info"]["video.fps"] = tgt_fps
             new_feature_value = f_path
 
             features[f_name] = (new_feature_value, new_feature_info)
@@ -520,17 +574,10 @@ def handle_add_feature(cfg: EditDatasetConfig):
             num_keys = len(f_dict)
 
             for idx, (k, v) in enumerate(f_dict.items()):
-                if v.shape[0] != tgt_frames:  # TODO: interpolation to obtain target fps
+                if v.shape[0] != tgt_frames:
                     raise ValueError(
                         f"Feature {k} has {v.shape[0]} frames, while dataset has {tgt_frames} frames"
                     )
-                new_feature_info = {
-                    "dtype": v.dtype.name,
-                    "shape": v.shape[1:],  # data must be provided with dimensions (frames, other_dims)
-                    "names": None,  # TODO: names in the arguments
-                    "fps": dataset.fps,
-                }
-                new_feature_value = v
 
                 if isinstance(f_name, str) and f_name:
                     # use f_name if there's only one key and f_name is provided
@@ -546,32 +593,77 @@ def handle_add_feature(cfg: EditDatasetConfig):
                 else:
                     new_feature_key = k
 
+                new_feature_info = {
+                    "dtype": v.dtype.name,
+                    "shape": v.shape[1:],  # data must be provided with dimensions (frames, other_dims)
+                    "names": get_feature_names(
+                        dim_names[f_idx],
+                        features=dataset.meta.features,
+                        shape=v.shape[1:],
+                        feature_type=feature_types[f_idx],
+                    ),
+                    "fps": tgt_fps,
+                }
+
+                new_feature_value = v
+
                 features[new_feature_key] = (new_feature_value, new_feature_info)
 
-    output_repo_id, output_dir = get_output_path(
-        cfg.repo_id,
-        cfg.new_repo_id,
-        cfg.root,
-        cfg.new_root,
-    )
+    return features
 
-    if cfg.new_repo_id is None:
-        dataset.root = Path(str(dataset.root) + "_old")
 
-    logging.info(f"Adding features {cfg.operation.feature_names} to {cfg.repo_id}")
-    new_dataset = add_features(
-        dataset,
-        features=features,
-        output_dir=output_dir,
-        repo_id=output_repo_id,
-    )
+def get_feature_names(names: list = None, features: dict = None, shape: tuple = None, feature_type="motor"):
+    if features:
+        # get names from matching features already in dataset
+        keys = [
+            key for key in features if key.startswith(get_features_by_type(feature_type))
+        ]  # default match for motor features
+        keys = [key for key in keys if features[key]["shape"] == shape]
+        keys = list(
+            {make_hashable(features[key]["names"]): key for key in keys}.values()
+        )  # remove duplicates
 
-    logging.info(f"Dataset saved to {output_dir}")
-    logging.info(f"Updated features: {list(new_dataset.meta.features.keys())}")
+        if len(keys) == 0:
+            logging.info("No matching feature found, assigning defaults names to new feature.")
+        else:
+            if len(keys) > 1:
+                logging.info(
+                    "More than one matching feature found, automatic names assigning is ambiguous. Check names and assign manually if needed."
+                )
+            names = features[keys[0]]["names"]
 
-    if cfg.push_to_hub:
-        logging.info(f"Pushing to hub as {output_repo_id}")
-        LeRobotDataset(output_repo_id, root=output_dir).push_to_hub()
+    return names
+
+
+def is_video(filepath: str | Path):
+    try:
+        with av.open(filepath) as container:
+            video_streams = [s for s in container.streams if s.type == "video"]
+            return len(video_streams) > 0
+    except (av.InvalidDataError, av.ValueError, UnicodeDecodeError, av.error.EOFError):
+        # corrupted files, non-media files, or path errors
+        return False
+
+
+def get_features_by_type(feature_type: str | None):
+    # get starting strings of a features by type, used in names inference
+    mapping = {
+        "perception": (OBS_IMAGE,),
+        "motor": (ACTION, OBS_STATE, OBS_ENV_STATE),
+        "metadata": ("episode_index", "frame_index", "timestamp", "index", "task_index"),
+        "reward": (REWARD, DONE, "next.success"),
+    }
+
+    selected_keys = mapping.get(feature_type.lower(), []) if feature_type else ()
+    return selected_keys
+
+
+def make_hashable(obj):
+    if isinstance(obj, dict):
+        return tuple((k, make_hashable(v)) for k, v in sorted(obj.items()))
+    elif isinstance(obj, list):
+        return tuple(make_hashable(i) for i in obj)
+    return obj
 
 
 def handle_modify_tasks(cfg: EditDatasetConfig) -> None:

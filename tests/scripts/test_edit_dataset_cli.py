@@ -76,7 +76,7 @@ class TestAddFeatureCLI:
 
     def test_add_feature_from_mp4(self, tmp_path):
         """Test adding a video feature from an MP4 file."""
-        # Create a mock MP4 file (just an empty file for this test)
+        # Create a mock MP4 file
         video_path = tmp_path / "video.mp4"
         video_path.write_bytes(b"mock video data")
 
@@ -85,7 +85,10 @@ class TestAddFeatureCLI:
             patch("lerobot.scripts.lerobot_edit_dataset.add_features") as mock_add_features,
             patch("lerobot.scripts.lerobot_edit_dataset.get_video_duration_in_s") as mock_get_duration,
             patch("lerobot.scripts.lerobot_edit_dataset.get_video_info") as mock_get_info,
+            patch("lerobot.scripts.lerobot_edit_dataset.is_video") as mock_is_video,
         ):
+            mock_is_video.return_value = True
+
             mock_dataset = mock_dataset_class.return_value
             mock_dataset.meta.total_frames = 50
             mock_dataset.meta.episodes = [
@@ -96,7 +99,7 @@ class TestAddFeatureCLI:
                 {"dataset_to_index": 50},
             ]
             mock_dataset.fps = 30.0
-            mock_get_duration.return_value = 50 / 30  # 50 frames at 30fps = 1.666... seconds
+            mock_get_duration.return_value = 50 / 30
             mock_get_info.return_value = {
                 "video.height": 480,
                 "video.width": 640,
@@ -119,6 +122,8 @@ class TestAddFeatureCLI:
 
             # Verify add_features was called
             mock_add_features.assert_called_once()
+            # Verify is_video was actually checked
+            mock_is_video.assert_called_with(str(video_path))
 
     def test_add_multiple_features(self, tmp_path):
         """Test adding multiple features at once."""
@@ -412,3 +417,128 @@ class TestAddFeatureCLI:
                         ),
                     )
                 )
+
+    def test_add_feature_validation_feature_names_required(self):
+        """Test that feature_names is required."""
+        cfg = EditDatasetConfig(
+            repo_id="test/repo",
+            operation=AddFeatureConfig(
+                feature_names=None,  # Missing!
+                feature_paths=["/some/path"],
+            ),
+        )
+
+        with pytest.raises(ValueError, match="feature_names must be specified"):
+            handle_add_feature(cfg)
+
+    def test_add_feature_validation_feature_paths_required(self):
+        """Test that feature_paths is required."""
+        cfg = EditDatasetConfig(
+            repo_id="test/repo",
+            operation=AddFeatureConfig(
+                feature_names=["reward"],
+                feature_paths=None,  # Missing!
+            ),
+        )
+
+        with pytest.raises(ValueError, match="feature_paths must be specified"):
+            handle_add_feature(cfg)
+
+    def test_add_feature_validation_matching_lengths(self):
+        """Test that feature_names and feature_paths must have same length."""
+        cfg = EditDatasetConfig(
+            repo_id="test/repo",
+            operation=AddFeatureConfig(
+                feature_names=["reward", "extra"],
+                feature_paths=["/path1"],  # Mismatch!
+            ),
+        )
+
+        with pytest.raises(ValueError, match="must have the same length"):
+            handle_add_feature(cfg)
+
+    def test_add_feature_validation_dim_names_length(self):
+        """Test that dim_names length matches if provided."""
+        cfg = EditDatasetConfig(
+            repo_id="test/repo",
+            operation=AddFeatureConfig(
+                feature_names=["reward"],
+                feature_paths=["/path1"],
+                dim_names=[[None], [None]],  # Mismatch!
+            ),
+        )
+
+        with pytest.raises(ValueError, match="dim_names list is provided"):
+            handle_add_feature(cfg)
+
+    def test_add_feature_validation_feature_types_length(self):
+        """Test that feature_types length matches if provided."""
+        cfg = EditDatasetConfig(
+            repo_id="test/repo",
+            operation=AddFeatureConfig(
+                feature_names=["reward"],
+                feature_paths=["/path1"],
+                feature_types=["reward", "motor"],  # Mismatch!
+            ),
+        )
+
+        with pytest.raises(ValueError, match="feature_types is provided"):
+            handle_add_feature(cfg)
+
+    def test_add_feature_uses_default_feature_types(self, tmp_path):
+        """Test that default feature_types are used when not provided."""
+        import safetensors.numpy
+
+        data = np.random.randn(50, 1).astype(np.float32)
+        safetensors.numpy.save_file({"reward": data}, tmp_path / "data.safetensors")
+
+        with (
+            patch("lerobot.scripts.lerobot_edit_dataset.LeRobotDataset") as mock_dataset_class,
+            patch("lerobot.scripts.lerobot_edit_dataset.add_features") as mock_add_features,
+        ):
+            mock_dataset = mock_dataset_class.return_value
+            mock_dataset.meta.total_frames = 50
+            mock_dataset.meta.episodes = [{"dataset_to_index": 50}]
+            mock_dataset.fps = 30.0
+
+            cfg = EditDatasetConfig(
+                repo_id="test/repo",
+                root=str(tmp_path),
+                operation=AddFeatureConfig(
+                    feature_names=["reward"],
+                    feature_paths=[str(tmp_path / "data.safetensors")],
+                    feature_types=None,  # Not provided, should default to "motor"
+                ),
+            )
+
+            handle_add_feature(cfg)
+            mock_add_features.assert_called_once()
+
+    def test_add_feature_uses_default_dim_names(self, tmp_path):
+        """Test that default dim_names are used when not provided."""
+        import safetensors.numpy
+
+        data = np.random.randn(50, 1).astype(np.float32)
+        safetensors.numpy.save_file({"reward": data}, tmp_path / "data.safetensors")
+
+        with (
+            patch("lerobot.scripts.lerobot_edit_dataset.LeRobotDataset") as mock_dataset_class,
+            patch("lerobot.scripts.lerobot_edit_dataset.add_features") as mock_add_features,
+        ):
+            mock_dataset = mock_dataset_class.return_value
+            mock_dataset.meta.total_frames = 50
+            mock_dataset.meta.episodes = [{"dataset_to_index": 50}]
+            mock_dataset.fps = 30.0
+
+            cfg = EditDatasetConfig(
+                repo_id="test/repo",
+                root=str(tmp_path),
+                operation=AddFeatureConfig(
+                    feature_names=["reward"],
+                    feature_paths=[str(tmp_path / "data.safetensors")],
+                    dim_names=None,  # Not provided, should default
+                ),
+            )
+
+            handle_add_feature(cfg)
+            mock_add_features.assert_called_once()
