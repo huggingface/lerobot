@@ -80,9 +80,9 @@ class MolmoSpacesEnv(gym.Env):
         self.benchmark_name = benchmark_name
         self.episode_index = episode_index
         self._env = None
+        self._sim = None
         self._episode_step = 0
 
-        self._init_env()
         self._setup_spaces()
 
     def _init_env(self) -> None:
@@ -170,6 +170,9 @@ class MolmoSpacesEnv(gym.Env):
         super().reset(seed=seed)
         self._episode_step = 0
 
+        if self._sim is None:
+            self._init_env()
+
         self._sim.reset(seed=seed)
 
         obs = self._get_obs()
@@ -184,6 +187,9 @@ class MolmoSpacesEnv(gym.Env):
                 f"Expected action to be 1-D (shape (action_dim,)), "
                 f"but got shape {action.shape} with ndim={action.ndim}"
             )
+
+        if self._sim is None:
+            self._init_env()
 
         raw_obs, reward, done, info = self._sim.step(action)
         info = dict(info)
