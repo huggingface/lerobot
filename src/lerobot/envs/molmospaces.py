@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from functools import partial
 from typing import Any
 
@@ -63,6 +63,7 @@ class MolmoSpacesEnv(gym.Env):
         observation_height: int = 256,
         max_episode_steps: int = 500,
         benchmark_name: str = "molmospaces_bench_v1",
+        episode_index: int = 0,
     ):
         super().__init__()
         self.task = task
@@ -77,6 +78,7 @@ class MolmoSpacesEnv(gym.Env):
             self.camera_name = camera_name.split(",")[0].strip()
         self.max_episode_steps = max_episode_steps
         self.benchmark_name = benchmark_name
+        self.episode_index = episode_index
         self._env = None
         self._episode_step = 0
 
