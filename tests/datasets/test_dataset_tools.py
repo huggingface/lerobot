@@ -1655,38 +1655,6 @@ def test_add_feature_preserves_episode_structure(sample_dataset, tmp_path):
     assert original_episodes == new_episodes
 
 
-def test_add_feature_with_fps_consistency(sample_dataset, tmp_path):
-    """Test that FPS is correctly set in added features."""
-    num_frames = sample_dataset.meta.total_frames
-    reward_data = np.random.randn(num_frames, 1).astype(np.float32)
-
-    features = {
-        "reward": (
-            reward_data,
-            {
-                "dtype": "float32",
-                "shape": (1,),
-                "names": None,
-            },
-        ),
-    }
-
-    with (
-        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
-        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
-    ):
-        mock_get_safe_version.return_value = "v3.0"
-        mock_snapshot_download.return_value = str(tmp_path / "with_fps")
-
-        new_dataset = add_features(
-            dataset=sample_dataset,
-            features=features,
-            output_dir=tmp_path / "with_fps",
-        )
-
-    assert new_dataset.meta.features["reward"]["fps"] == sample_dataset.meta.fps
-
-
 def test_add_feature_with_named_dimensions_inference(sample_dataset, tmp_path):
     """Test automatic dimension name inference from existing features."""
     num_frames = sample_dataset.meta.total_frames

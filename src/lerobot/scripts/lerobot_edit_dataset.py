@@ -613,6 +613,8 @@ def get_features_dict(
 
 
 def get_feature_names(names: list = None, features: dict = None, shape: tuple = None, feature_type="motor"):
+    if names:
+        return names
     if features:
         # get names from matching features already in dataset
         keys = [

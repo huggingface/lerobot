@@ -147,7 +147,7 @@ lerobot-edit-dataset \
 # - temperature (original key, since empty string)
 # - custom_pressure (with pressure data)
 
-# Add a new numerical feature and manually specify dimension names (dimension names are only used if the script is not capable to infer names from dataset)
+# Add a new numerical feature and manually specify dimension names
 lerobot-edit-dataset \
     --repo_id lerobot/pusht \
     --operation.type add_feature \
@@ -186,7 +186,7 @@ lerobot-edit-dataset \
 
 - `feature_names`: List of names for the new features to add. Can be strings or lists of strings for advanced naming control (see examples above)
 - `feature_paths`: List of paths to the external data files (safetensors for numerical data, MP4 for video). Must correspond 1:1 with `feature_names`
-- `dim_names (Optional)`: List of lists (or dicts) defining the names of the dimensions for each feature. Used for fallback behaviour: the script always try to infer them.
+- `dim_names (Optional)`: List of lists (or dicts) defining the names of the dimensions for each feature.
 - `feature_types` (Optional): List of categories for the features (perception, motor, reward, or metadata). This helps the script find similar existing features to copy dimension names from. Defaults to motor for numerical data.
 
 **Notes:**
@@ -201,13 +201,13 @@ lerobot-edit-dataset \
   - For numerical data, the script defaults the `feature_type` to `motor` unless specified otherwise.
 
 - **Dimension Name Inference**:
-  - The script always attempts to infer names by looking at existing features in the dataset that share the same `feature_type` and `shape`.
+  - If no names are provided, the script attempts to infer names by looking at existing features in the dataset that share the same `feature_type` and `shape`.
   - The `feature_type` parameter maps to the following categories to help find matches:
     - `perception`: Matches existing image/observation keys.
     - `motor`: Matches actions and state observations.
     - `reward`: Matches rewards and success signals.
     - `metadata`: Matches indices and timestamps.
-  - If no matching feature is found or if multiple ambiguous matches exist, the dimension names will remain empty unless manually provided.
+  - If no matching feature is found, the dimension names will remain empty unless manually provided.
 
 - **Naming Strategy**:
   - If `feature_names` contains a single string for a file with one key, that string is used as the feature name.
