@@ -314,6 +314,20 @@ class LeRobotDatasetMetadata:
         return [key for key, ft in self.features.items() if ft["dtype"] == "video"]
 
     @property
+    def depth_keys(self) -> list[str]:
+        """Keys to access depth-map modalities stored as videos.
+
+        A depth video key is a feature whose ``info`` dict carries
+        ``"video.is_depth_map": True`` (set either at creation time by the user
+        or after the first encoded episode by :meth:`update_video_info`).
+        """
+        return [
+            key
+            for key, ft in self.features.items()
+            if ft["dtype"] == "video" and ft.get("info", {}).get("video.is_depth_map", False)
+        ]
+
+    @property
     def camera_keys(self) -> list[str]:
         """Keys to access visual modalities (regardless of their storage method)."""
         return [key for key, ft in self.features.items() if ft["dtype"] in ["video", "image"]]

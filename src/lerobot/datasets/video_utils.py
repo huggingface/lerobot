@@ -41,6 +41,7 @@ from PIL import Image
 from lerobot.datasets.pyav_utils import (
     check_video_encoder_config_pyav,
     detect_available_encoders_pyav,
+    decode_depth_frame,
 )
 from lerobot.datasets.depth_utils import (
     quantize_depth,
@@ -102,6 +103,12 @@ class VideoEncoderConfig:
     # two backends (encoding and decoding).
     video_backend: str = "pyav"
     extra_options: dict[str, Any] = field(default_factory=dict)
+
+    # Class-level marker persisted to ``info.json`` (via ``asdict``) so the
+    # reader can tell depth datasets from RGB ones without a separate dispatch
+    # path. ``init=False`` keeps it out of CLI/constructor surface; subclasses
+    # flip the default (see :class:`DepthEncoderConfig`).
+    is_depth_map: bool = field(default=False, init=False)
 
     def __post_init__(self) -> None:
         self.resolve_vcodec()
@@ -551,6 +558,121 @@ def decode_video_frames_torchcodec(
     # convert to float32 in [0,1] range
     closest_frames = (closest_frames / 255.0).type(torch.float32)
     return closest_frames
+
+
+def decode_depth_frames(
+    video_path: Path | str,
+    timestamps: list[float],
+    tolerance_s: float,
+    *,
+    depth_min: float = DEFAULT_DEPTH_MIN,
+    depth_max: float = DEFAULT_DEPTH_MAX,
+    shift: float = DEFAULT_DEPTH_SHIFT,
+    use_log: bool = DEFAULT_DEPTH_USE_LOG,
+    return_quantized: bool = False,
+    log_loaded_timestamps: bool = False,
+) -> torch.Tensor:
+    """Decode depth-map frames at the requested timestamps using PyAV.
+
+    Mirrors the timestamp-tolerance / closest-frame contract of
+    :func:`decode_video_frames` but operates entirely through PyAV (the
+    ``torchvision`` and ``torchcodec`` backends don't currently round-trip
+    12-bit pixel formats reliably).
+
+    Each decoded frame is reformatted to ``gray12le`` so the same path
+    handles ``yuv420p12le`` (HEVC default) and ``gray12le`` (ffv1 archive)
+    sources transparently.
+
+    Args:
+        video_path: Path to a depth video produced with a
+            :class:`DepthEncoderConfig`.
+        timestamps: Frame timestamps to retrieve, in seconds.
+        tolerance_s: Maximum allowed deviation between the queried and the
+            actually-decoded timestamps.
+        depth_min, depth_max, shift, use_log: Parameters used at quantization
+            time. Should match :func:`info_to_depth_kwargs` extracted from
+            ``info.json`` for the source dataset.
+        return_quantized: If ``True``, skip the dequantization step and
+            return raw 12-bit ``uint16`` quanta.
+        log_loaded_timestamps: Debug logging.
+
+    Returns:
+        ``torch.Tensor`` of shape ``(N, H, W)``:
+
+        * ``dtype=torch.float32`` (metric depth, default)
+        * ``dtype=torch.uint16`` when ``return_quantized=True``.
+
+    Raises:
+        FrameTimestampError: If a query timestamp can't be matched within
+            *tolerance_s*, or if no frames are decoded.
+    """
+    video_path_str = str(video_path)
+    first_ts = min(timestamps)
+    last_ts = max(timestamps)
+
+    loaded_frames: list[np.ndarray] = []
+    loaded_ts: list[float] = []
+
+    av.logging.set_level(av.logging.WARNING)
+    with av.open(video_path_str, "r") as container:
+        try:
+            stream = container.streams.video[0]
+        except IndexError as e:
+            raise FrameTimestampError(f"No video stream in {video_path_str}") from e
+
+        # Seek to the keyframe at-or-before first_ts (PyAV doesn't do
+        # accurate seek, so we still iterate forward to the requested range).
+        seek_pts = int(first_ts / stream.time_base)
+        container.seek(seek_pts, stream=stream, any_frame=False, backward=True)
+
+        for frame in container.decode(stream):
+            if frame.pts is None:
+                continue
+            current_ts = float(frame.pts * stream.time_base)
+            if log_loaded_timestamps:
+                logger.info(f"depth frame loaded at timestamp={current_ts:.4f}")
+            loaded_frames.append(
+                decode_depth_frame(
+                    frame,
+                    depth_min=depth_min,
+                    depth_max=depth_max,
+                    shift=shift,
+                    use_log=use_log,
+                    return_quantized=True,
+                )
+            )
+            loaded_ts.append(current_ts)
+            if current_ts >= last_ts:
+                break
+
+    av.logging.restore_default_callback()
+
+    if not loaded_frames:
+        raise FrameTimestampError(
+            f"No depth frames decoded from {video_path_str} for timestamps {timestamps}"
+        )
+
+    query_ts = torch.tensor(timestamps)
+    loaded_ts_t = torch.tensor(loaded_ts)
+    dist = torch.cdist(query_ts[:, None], loaded_ts_t[:, None], p=1)
+    min_, argmin_ = dist.min(1)
+
+    is_within_tol = min_ < tolerance_s
+    if not is_within_tol.all():
+        raise FrameTimestampError(
+            f"One or several query timestamps violate the tolerance "
+            f"({min_[~is_within_tol]} > {tolerance_s=})."
+            f"\nqueried timestamps: {query_ts}"
+            f"\nloaded timestamps: {loaded_ts_t}"
+            f"\nvideo: {video_path_str}"
+        )
+
+    closest = np.stack([loaded_frames[i] for i in argmin_])  # (N, H, W) uint16
+    quantized = torch.from_numpy(closest)
+
+    if return_quantized:
+        return quantized
+    return dequantize_depth(quantized, depth_min, depth_max, shift, use_log)
 
 
 def encode_video_frames(
@@ -1128,13 +1250,13 @@ def get_audio_info(video_path: Path | str) -> dict:
 
 def get_video_info(
     video_path: Path | str,
-    camera_encoder_config: "VideoEncoderConfig | None" = None,
+    video_encoder_config: "VideoEncoderConfig | None" = None,
 ) -> dict:
     """Build the ``video.*`` / ``audio.*`` info dict persisted in ``info.json``.
 
     Args:
         video_path: Path to the encoded video file to probe.
-        camera_encoder_config: If provided, record the exact encoder settings used to encode this
+        video_encoder_config: If provided, record the exact encoder settings used to encode this
             video. Stream-derived values take precedence — encoder fields are only written for keys
             not already populated from the video file itself.
     """
@@ -1154,7 +1276,6 @@ def get_video_info(
         video_info["video.width"] = video_stream.width
         video_info["video.codec"] = video_stream.codec.canonical_name
         video_info["video.pix_fmt"] = video_stream.pix_fmt
-        video_info["video.is_depth_map"] = False
 
         # Calculate fps from r_frame_rate
         video_info["video.fps"] = int(video_stream.base_rate)
@@ -1168,12 +1289,27 @@ def get_video_info(
     # Adding audio stream information
     video_info.update(**get_audio_info(video_path))
 
-    # Add additional encoder configuration if provided
-    if camera_encoder_config is not None:
-        for field_name, field_value in asdict(camera_encoder_config).items():
+    # Add additional encoder configuration if provided (no override of stream-derived values)
+    # Depth related fields flow naturally through this path.
+    if video_encoder_config is not None:
+        for field_name, field_value in asdict(video_encoder_config).items():
             video_info.setdefault(f"video.{field_name}", field_value)
 
+    # Fallback case where no encoder config is provided or the video is not a depth map.
+    video_info.setdefault("video.is_depth_map", False)
+
     return video_info
+
+
+# ─── Depth metadata helpers (reader side) ────────────────────────────
+
+
+_DEPTH_INFO_KEYS: tuple[str, ...] = (
+    "video.depth_min",
+    "video.depth_max",
+    "video.shift",
+    "video.use_log",
+)
 
 
 def get_video_pixel_channels(pix_fmt: str) -> int:
