@@ -215,7 +215,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         """Returns actions to the robot client. Actions are sent as a single
         chunk, containing multiple actions."""
         client_id = context.peer()
-        self.logger.debug(f"Client {client_id} connected for action streaming")
+        self.logger.info(f"Client {client_id} connected for action streaming")
 
         # Generate action based on the most recent observation and its timestep
         try:
@@ -240,6 +240,17 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             actions = services_pb2.Actions(data=actions_bytes)
 
             self.logger.info(
+                f"[SERVER->CLIENT] Sending {len(action_chunk)} actions | "
+                f"First action: {action_chunk[0].action.tolist()} | "
+                f"Payload size: {len(actions_bytes)} bytes"
+            )
+            print(
+                f"[SERVER->CLIENT] Sending {len(action_chunk)} actions | "
+                f"First action: {action_chunk[0].action.tolist()} | "
+                f"Payload size: {len(actions_bytes)} bytes"
+            )
+
+            self.logger.info(
                 f"Action chunk #{obs.get_timestep()} generated | "
                 f"Total time: {(inference_time + serialize_time) * 1000:.2f}ms"
             )
@@ -258,9 +269,12 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             return actions
 
         except Empty:  # no observation added to queue in obs_queue_timeout
+            self.logger.warning("[SERVER] GetActions called but observation queue EMPTY - returning Empty")
+            print("[SERVER] GetActions called but observation queue EMPTY - returning Empty")
             return services_pb2.Empty()
 
         except Exception as e:
+            print(f"[SERVER] Error in GetActions: {e}")
             self.logger.error(f"Error in StreamActions: {e}")
 
             return services_pb2.Empty()

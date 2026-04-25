@@ -15,7 +15,7 @@
 """
 Example command:
 ```shell
-python src/lerobot/async_inference/robot_client.py \
+python -m lerobot.rtc_inference.robot_client \
     --robot.type=so100_follower \
     --robot.port=/dev/tty.usbmodem58760431541 \
     --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
@@ -47,8 +47,9 @@ import draccus
 import grpc
 import torch
 
-from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
-from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
+from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.policies.rtc import ActionInterpolator
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -74,6 +75,7 @@ from .helpers import (
     RemotePolicyConfig,
     TimedAction,
     TimedObservation,
+    encode_observation_images_for_transport,
     get_logger,
     map_robot_keys_to_lerobot_features,
     visualize_action_queue_size,
@@ -106,6 +108,17 @@ class RobotClient:
             lerobot_features,
             config.actions_per_chunk,
             config.policy_device,
+            rename_map=config.rename_map,
+            rtc_enabled=config.rtc_enabled,
+            rtc_execution_horizon=config.rtc_execution_horizon,
+            rtc_max_guidance_weight=config.rtc_max_guidance_weight,
+            rtc_prefix_attention_schedule=config.rtc_prefix_attention_schedule,
+            rtc_debug=config.rtc_debug,
+            rtc_debug_maxlen=config.rtc_debug_maxlen,
+            inference_delay_steps=config.inference_delay_steps,
+            xvla_domain_id=config.xvla_domain_id,
+            image_compress_enable=config.image_compress_enable,
+            image_compress_quality=config.image_compress_quality,
         )
         self.channel = grpc.insecure_channel(
             self.server_address, grpc_channel_options(initial_backoff=f"{config.environment_dt:.4f}s")
@@ -121,16 +134,34 @@ class RobotClient:
         self.action_chunk_size = -1
 
         self._chunk_size_threshold = config.chunk_size_threshold
+        self.obs_timestep_independent = config.obs_timestep_independent
+        self._obs_timestep_lock = threading.Lock()
+        self._next_obs_timestep = 0
+        self._obs_send_interval = 1.0 / float(self.config.fps)
+        self._last_obs_send_perf: float | None = None
+        self.interpolator = ActionInterpolator(config.interpolation_multiplier)
+        self.control_interval = self.interpolator.get_control_interval(self.config.fps)
 
         self.action_queue = Queue()
         self.action_queue_lock = threading.Lock()  # Protect queue operations
         self.action_queue_size = []
+        self._saved_debug_frames = False
         self.start_barrier = threading.Barrier(2)  # 2 threads: action receiver, control loop
+        self._transport_mode_logged = False
 
         # FPS measurement
         self.fps_tracker = FPSTracker(target_fps=self.config.fps)
 
         self.logger.info("Robot connected and ready")
+        self.logger.info(
+            "Observation timestep mode: %s",
+            "independent-monotonic" if self.obs_timestep_independent else "action-linked",
+        )
+        self.logger.info(
+            "Observation transport mode: %s | jpeg_quality=%s",
+            "jpeg" if self.config.image_compress_enable else "raw",
+            self.config.image_compress_quality,
+        )
 
         # Use an event for thread-safe coordination
         self.must_go = threading.Event()
@@ -234,7 +265,8 @@ class RobotClient:
 
         future_action_queue = Queue()
         with self.action_queue_lock:
-            internal_queue = self.action_queue.queue
+            # Copy current queue content under lock to avoid concurrent mutation while iterating.
+            internal_queue = list(self.action_queue.queue)
 
         current_action_queue = {action.get_timestep(): action.get_action() for action in internal_queue}
 
@@ -361,65 +393,65 @@ class RobotClient:
     def actions_available(self):
         """Check if there are actions available in the queue"""
         with self.action_queue_lock:
-            return not self.action_queue.empty()
+            queue_has_actions = not self.action_queue.empty()
+        return queue_has_actions or (not self.interpolator.needs_new_action())
 
     def _action_tensor_to_action_dict(self, action_tensor: torch.Tensor) -> dict[str, float]:
         action = {key: action_tensor[i].item() for i, key in enumerate(self.robot.action_features)}
         return action
 
-    def control_loop_action(self, verbose: bool = False) -> dict[str, Any]:
+    def control_loop_action(self, verbose: bool = False) -> dict[str, Any] | None:
         """Reading and performing actions in local queue"""
 
-        # Lock only for queue operations
+        timed_action = None
         get_start = time.perf_counter()
         with self.action_queue_lock:
             self.action_queue_size.append(self.action_queue.qsize())
-            # Get action from queue
-            timed_action = self.action_queue.get_nowait()
+            if self.interpolator.needs_new_action() and not self.action_queue.empty():
+                timed_action = self.action_queue.get_nowait()
         get_end = time.perf_counter() - get_start
 
-        # This is the target pose requested by the policy.
-        action_dict = self._action_tensor_to_action_dict(timed_action.get_action())
+        if timed_action is not None:
+            self.interpolator.add(timed_action.get_action())
+            with self.latest_action_lock:
+                self.latest_action = timed_action.get_timestep()
 
-        # --- GET CURRENT ROBOT STATE FOR DEBUGGING ---
-        # 1. Query the robot observation from the robot class.
-        current_obs = self.robot.get_observation()
+        action_tensor = self.interpolator.get()
+        if action_tensor is None:
+            return None
 
-        # 2. Joint positions are stored in 'observation.state' (tensor/array).
-        # Remap values because action_dict uses joint names while observation.state is often an indexed array.
-        current_positions = current_obs.get("observation.state", None)
+        action_dict = self._action_tensor_to_action_dict(action_tensor)
 
-        if current_positions is not None:
-            # Convert tensor/numpy to list for readable debug output.
-            if hasattr(current_positions, "tolist"):
-                curr_list = current_positions.tolist()
-            else:
-                curr_list = list(current_positions)
+        # Optional verbose diagnostics: compare target action vs current joint state.
+        if verbose:
+            current_obs = self.robot.get_observation()
+            current_positions = current_obs.get("observation.state", None)
 
-            # Build target action values in robot joint order.
-            target_list = [action_dict[k] for k in self.robot.action_features]
+            if current_positions is not None:
+                if hasattr(current_positions, "tolist"):
+                    curr_list = current_positions.tolist()
+                else:
+                    curr_list = list(current_positions)
 
-            # Compute delta between target action and current pose.
-            deltas = [t - c for t, c in zip(target_list, curr_list, strict=False)]
+                target_list = [action_dict[k] for k in self.robot.action_features]
+                deltas = [t - c for t, c in zip(target_list, curr_list, strict=False)]
 
-            self.logger.info(f"[DEBUG] Timestep #{timed_action.get_timestep()}")
-            self.logger.info(f"AI Target (Rel to Zero): {target_list}")
-            self.logger.info(f"Actual Pos (Rel to Zero): {curr_list}")
-            self.logger.info(f"Delta (Robot needs to move): {deltas}")
-        # -----------------------------------------------
+                current_ts = timed_action.get_timestep() if timed_action is not None else self.latest_action
+                self.logger.info(f"[DEBUG] Timestep #{current_ts}")
+                self.logger.info(f"AI Target (Rel to Zero): {target_list}")
+                self.logger.info(f"Actual Pos (Rel to Zero): {curr_list}")
+                self.logger.info(f"Delta (Robot needs to move): {deltas}")
 
         _performed_action = self.robot.send_action(action_dict)
-        with self.latest_action_lock:
-            self.latest_action = timed_action.get_timestep()
 
         if verbose:
             with self.action_queue_lock:
                 current_queue_size = self.action_queue.qsize()
 
+            current_ts = timed_action.get_timestep() if timed_action is not None else self.latest_action
+
             self.logger.info(
-                f"Ts={timed_action.get_timestamp()} | "
-                f"Action #{timed_action.get_timestep()} performed | "
-                f"Queue size: {current_queue_size}"
+                f"Ts={time.time()} | Action #{current_ts} performed | Queue size: {current_queue_size}"
             )
 
             self.logger.info(
@@ -430,8 +462,28 @@ class RobotClient:
 
     def _ready_to_send_observation(self):
         """Flags when the client is ready to send an observation"""
+        now = time.perf_counter()
+        if (
+            self._last_obs_send_perf is not None
+            and (now - self._last_obs_send_perf) < self._obs_send_interval
+        ):
+            return False
+
         with self.action_queue_lock:
+            if self.action_chunk_size <= 0:
+                # Bootstrap phase: allow first observations before first action chunk arrives.
+                return True
             return self.action_queue.qsize() / self.action_chunk_size <= self._chunk_size_threshold
+
+    def _get_observation_timestep(self) -> int:
+        if self.obs_timestep_independent:
+            with self._obs_timestep_lock:
+                timestep = self._next_obs_timestep
+                self._next_obs_timestep += 1
+            return timestep
+
+        with self.latest_action_lock:
+            return max(self.latest_action, 0)
 
     def control_loop_observation(self, task: str, verbose: bool = False) -> RawObservation:
         try:
@@ -441,33 +493,52 @@ class RobotClient:
             raw_observation: RawObservation = self.robot.get_observation()
             raw_observation["task"] = task
 
-            import os
+            transport_observation, transport_stats = encode_observation_images_for_transport(
+                raw_observation,
+                enabled=self.config.image_compress_enable,
+                quality=self.config.image_compress_quality,
+            )
 
-            import cv2
-            import numpy as np
+            # Save one debug frame per camera only in verbose mode.
+            if verbose and not self._saved_debug_frames:
+                try:
+                    from pathlib import Path
 
-            os.makedirs("debug_frames", exist_ok=True)
-            for key, value in raw_observation.items():
-                if "image" in key or "camera" in key:
-                    if hasattr(value, "numpy"):
-                        frame = value.numpy()
-                    elif isinstance(value, np.ndarray):
-                        frame = value
-                    else:
-                        continue
-                    # Save only one frame per key for quick verification.
-                    save_path = f"debug_frames/{key}.png"
-                    if not os.path.exists(save_path):
-                        cv2.imwrite(save_path, cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-                        self.logger.info(f"[DEBUG] Saved frame: {save_path} | shape: {frame.shape}")
+                    import cv2
+                    import numpy as np
 
-            with self.latest_action_lock:
-                latest_action = self.latest_action
+                    debug_dir = Path("debug_frames")
+                    debug_dir.mkdir(parents=True, exist_ok=True)
+
+                    saved_any = False
+                    for key, value in raw_observation.items():
+                        if "image" not in key and "camera" not in key:
+                            continue
+
+                        if hasattr(value, "numpy"):
+                            frame = value.numpy()
+                        elif isinstance(value, np.ndarray):
+                            frame = value
+                        else:
+                            continue
+
+                        save_path = debug_dir / f"{key}.png"
+                        if not save_path.exists():
+                            cv2.imwrite(str(save_path), cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+                            self.logger.info(
+                                f"[DEBUG] Saved frame: {save_path.as_posix()} | shape: {frame.shape}"
+                            )
+                            saved_any = True
+
+                    if saved_any:
+                        self._saved_debug_frames = True
+                except Exception as debug_err:
+                    self.logger.debug(f"Skip debug frame dump: {debug_err}")
 
             observation = TimedObservation(
                 timestamp=time.time(),  # need time.time() to compare timestamps across client and server
-                observation=raw_observation,
-                timestep=max(latest_action, 0),
+                observation=transport_observation,
+                timestep=self._get_observation_timestep(),
             )
 
             obs_capture_time = time.perf_counter() - start_time
@@ -477,7 +548,25 @@ class RobotClient:
                 observation.must_go = self.must_go.is_set() and self.action_queue.empty()
                 current_queue_size = self.action_queue.qsize()
 
-            _ = self.send_observation(observation)
+            sent_ok = self.send_observation(observation)
+            if sent_ok:
+                self._last_obs_send_perf = time.perf_counter()
+
+            if not self._transport_mode_logged:
+                raw_total = int(transport_stats.get("raw_total_bytes", 0))
+                enc_total = int(transport_stats.get("encoded_total_bytes", 0))
+                ratio = (enc_total / raw_total) if raw_total > 0 else float("nan")
+                self.logger.info(
+                    "Transport session settings | mode=%s | jpeg_quality=%s | "
+                    "encoded_images=%s | raw_total_bytes=%s | encoded_total_bytes=%s | ratio=%.4f",
+                    transport_stats.get("mode", "raw"),
+                    self.config.image_compress_quality,
+                    transport_stats.get("encoded_image_count", 0),
+                    raw_total,
+                    enc_total,
+                    ratio,
+                )
+                self._transport_mode_logged = True
 
             self.logger.debug(f"QUEUE SIZE: {current_queue_size} (Must go: {observation.must_go})")
             if observation.must_go:
@@ -524,7 +613,7 @@ class RobotClient:
 
             self.logger.debug(f"Control loop (ms): {(time.perf_counter() - control_loop_start) * 1000:.2f}")
             # Dynamically adjust sleep time to maintain the desired control frequency
-            time.sleep(max(0, self.config.environment_dt - (time.perf_counter() - control_loop_start)))
+            time.sleep(max(0, self.control_interval - (time.perf_counter() - control_loop_start)))
 
         return _captured_observation, _performed_action
 

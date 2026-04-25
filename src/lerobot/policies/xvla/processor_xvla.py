@@ -73,7 +73,7 @@ def make_xvla_pre_post_processors(
         ),
         XVLAImageToFloatProcessorStep(),
         XVLAImageNetNormalizeProcessorStep(),
-        XVLAAddDomainIdProcessorStep(),
+        XVLAAddDomainIdProcessorStep(domain_id=config.domain_id),
         DeviceProcessorStep(device=config.device),
         NormalizerProcessorStep(
             features=features, norm_map=config.normalization_mapping, stats=dataset_stats

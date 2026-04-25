@@ -588,7 +588,9 @@ def demo_cli(cfg: RTCDemoConfig):
     # The processor won't be created
     policy.init_rtc_processor()
 
-    assert policy.name in ["smolvla", "pi05", "pi0"], "Only smolvla, pi05, and pi0 are supported for RTC"
+    assert policy.name in ["smolvla", "pi05", "pi0", "xvla"], (
+        "Only smolvla, pi05, pi0, and xvla are supported for RTC"
+    )
 
     policy = policy.to(cfg.device)
     policy.eval()

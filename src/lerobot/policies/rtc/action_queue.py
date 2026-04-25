@@ -235,10 +235,19 @@ class ActionQueue:
 
         if action_index_before_inference is not None:
             indexes_diff = max(0, self.last_index - action_index_before_inference)
-            if indexes_diff != real_delay:
+            if self.queue is None:
+                expected_indexes_diff = 0
+            else:
+                # If inference started when the queue was already near-empty, advancing by real_delay
+                # saturates at queue length and the effective consumed steps can be < real_delay.
+                remaining_before_inference = max(0, len(self.queue) - action_index_before_inference)
+                expected_indexes_diff = min(max(0, real_delay), remaining_before_inference)
+
+            if indexes_diff != expected_indexes_diff:
                 logger.warning(
-                    "Indexes diff is not equal to real delay. indexes_diff=%d, real_delay=%d",
+                    ("Indexes diff is not equal to real delay. indexes_diff=%d, expected=%d, real_delay=%d"),
                     indexes_diff,
+                    expected_indexes_diff,
                     real_delay,
                 )
                 return real_delay

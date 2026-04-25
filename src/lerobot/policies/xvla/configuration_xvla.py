@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.optim import CosineDecayWithWarmupSchedulerConfig, XVLAAdamWConfig
+from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.utils.constants import OBS_IMAGES
 
 # Conditional import for type checking and lazy loading
@@ -80,9 +81,11 @@ class XVLAConfig(PreTrainedConfig):
     # Action & proprioception
     action_mode: str = "ee6d"
     num_denoising_steps: int = 10
+    rtc_config: RTCConfig | None = None
     use_proprio: bool = True
     max_state_dim: int = 32
     max_action_dim: int = 20  # Maximum action dimension for padding (used by "auto" action mode)
+    domain_id: int = 0
     domain_feature_key: str | None = None
 
     # Vision preprocessing
@@ -124,6 +127,11 @@ class XVLAConfig(PreTrainedConfig):
             raise ValueError("`num_image_views` must be > 0 when specified.")
         if self.dtype not in ["bfloat16", "float32"]:
             raise ValueError(f"Invalid dtype: {self.dtype}")
+        if not (0 <= self.domain_id < self.num_domains):
+            raise ValueError(
+                f"`domain_id` ({self.domain_id}) must be in [0, {self.num_domains - 1}] "
+                f"when `num_domains={self.num_domains}`."
+            )
         self._florence_config_obj: Florence2Config | None = None
 
     def get_florence_config(self) -> Florence2Config:

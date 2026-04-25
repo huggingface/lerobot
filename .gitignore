@@ -176,3 +176,7 @@ outputs/
 *.urdf
 *.xml
 *.part
+
+models/*
+
+client.txt

@@ -30,6 +30,7 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
 from lerobot.configs import PreTrainedConfig
+from lerobot.policies.rtc.modeling_rtc import RTCProcessor
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
 
@@ -58,6 +59,7 @@ class XVLAModel(nn.Module):
         config: XVLAConfig,
         florence_config: Florence2Config,
         proprio_dim: int,
+        rtc_processor: RTCProcessor | None = None,
     ) -> None:
         super().__init__()
         self.config = config
@@ -115,6 +117,11 @@ class XVLAModel(nn.Module):
 
         # Apply dtype casting based on config
         self._apply_dtype()
+        self.rtc_processor = rtc_processor
+
+    def _rtc_enabled(self) -> bool:
+        rtc_config = getattr(self.config, "rtc_config", None)
+        return rtc_config is not None and rtc_config.enabled
 
     def _get_target_dtype(self) -> torch.dtype:
         """Get the target dtype based on config."""
@@ -245,6 +252,7 @@ class XVLAModel(nn.Module):
         domain_id: torch.LongTensor,
         proprio: torch.Tensor,
         steps: int,
+        **kwargs,
     ) -> torch.Tensor:
         self.eval()
 
@@ -257,22 +265,67 @@ class XVLAModel(nn.Module):
         batch_size = input_ids.shape[0]
         action_dim = self.dim_action
 
-        x1 = torch.randn(batch_size, self.chunk_size, action_dim, device=proprio.device, dtype=target_dtype)
-        action = torch.zeros_like(x1)
-
         steps = max(1, int(steps))
-        for i in range(steps, 0, -1):
-            t = torch.full((batch_size,), i / steps, device=proprio.device, dtype=target_dtype)
-            x_t = x1 * t.view(-1, 1, 1) + action * (1 - t).view(-1, 1, 1)
-            proprio_m, x_t_m = self.action_space.preprocess(proprio, x_t)
-            action = self.transformer(
-                domain_id=domain_id,
-                action_with_noise=x_t_m,
-                proprio=proprio_m,
-                t=t,
-                **enc,
+        if not self._rtc_enabled() or self.rtc_processor is None:
+            x1 = torch.randn(
+                batch_size, self.chunk_size, action_dim, device=proprio.device, dtype=target_dtype
             )
-        return self.action_space.postprocess(action)
+            action = torch.zeros_like(x1)
+
+            for i in range(steps, 0, -1):
+                t = torch.full((batch_size,), i / steps, device=proprio.device, dtype=target_dtype)
+                x_t = x1 * t.view(-1, 1, 1) + action * (1 - t).view(-1, 1, 1)
+                proprio_m, x_t_m = self.action_space.preprocess(proprio, x_t)
+                action = self.transformer(
+                    domain_id=domain_id,
+                    action_with_noise=x_t_m,
+                    proprio=proprio_m,
+                    t=t,
+                    **enc,
+                )
+            return self.action_space.postprocess(action)
+
+        inference_delay = kwargs.get("inference_delay")
+        prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
+        execution_horizon = kwargs.get("execution_horizon")
+
+        if isinstance(prev_chunk_left_over, torch.Tensor):
+            prev_chunk_left_over = prev_chunk_left_over.to(device=proprio.device, dtype=target_dtype)
+
+        x_t = torch.randn(batch_size, self.chunk_size, action_dim, device=proprio.device, dtype=target_dtype)
+        dt = -1.0 / steps
+
+        for step in range(steps):
+            time = 1.0 + step * dt
+            t = torch.full((batch_size,), time, device=proprio.device, dtype=target_dtype)
+
+            def denoise_step_partial_call(input_x_t, current_timestep=t):
+                proprio_m, x_t_m = self.action_space.preprocess(proprio, input_x_t)
+                pred_action = self.transformer(
+                    domain_id=domain_id,
+                    action_with_noise=x_t_m,
+                    proprio=proprio_m,
+                    t=current_timestep,
+                    **enc,
+                )
+                safe_t = torch.clamp(current_timestep.view(-1, 1, 1), min=1e-3)
+                return (input_x_t - pred_action) / safe_t
+
+            v_t = self.rtc_processor.denoise_step(
+                x_t=x_t,
+                prev_chunk_left_over=prev_chunk_left_over,
+                inference_delay=inference_delay,
+                time=time,
+                original_denoise_step_partial=denoise_step_partial_call,
+                execution_horizon=execution_horizon,
+            )
+
+            x_t = x_t + dt * v_t
+
+            if self.rtc_processor.is_debug_enabled():
+                self.rtc_processor.track(time=time, x_t=x_t, v_t=v_t)
+
+        return self.action_space.postprocess(x_t)
 
 
 class XVLAPolicy(PreTrainedPolicy):
@@ -285,10 +338,27 @@ class XVLAPolicy(PreTrainedPolicy):
         require_package("transformers", extra="xvla")
         super().__init__(config)
         config.validate_features()
+        self.init_rtc_processor()
         florence_config = config.get_florence_config()
         proprio_dim = config.max_state_dim if config.use_proprio else 0
-        self.model = XVLAModel(config=config, florence_config=florence_config, proprio_dim=proprio_dim)
+        self.model = XVLAModel(
+            config=config,
+            florence_config=florence_config,
+            proprio_dim=proprio_dim,
+            rtc_processor=self.rtc_processor,
+        )
         self.reset()
+
+    def init_rtc_processor(self):
+        """Initialize RTC processor if RTC config is provided."""
+        self.rtc_processor = None
+
+        if self.config.rtc_config is not None:
+            self.rtc_processor = RTCProcessor(self.config.rtc_config)
+
+            model_value = getattr(self, "model", None)
+            if model_value is not None:
+                model_value.rtc_processor = self.rtc_processor
 
     def reset(self) -> None:
         self._queues = {
@@ -402,27 +472,32 @@ class XVLAPolicy(PreTrainedPolicy):
         log_dict["loss"] = total_loss.detach().item()
         return total_loss, log_dict
 
-    def _get_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+    def _get_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
         inputs = self._build_model_inputs(batch)
-        actions = self.model.generate_actions(**inputs, steps=self.config.num_denoising_steps)
+        actions = self.model.generate_actions(**inputs, steps=self.config.num_denoising_steps, **kwargs)
         return actions
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:  # noqa: ARG002
+    def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs) -> Tensor:  # noqa: ARG002
         self.eval()
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
-        return self._get_action_chunk(batch)
+        return self._get_action_chunk(batch, **kwargs)
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:  # noqa: ARG002
+    def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs) -> Tensor:  # noqa: ARG002
+        assert not self._rtc_enabled(), "RTC is not supported for select_action, use predict_action_chunk"
+
         self.eval()
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
         if len(self._queues[ACTION]) == 0:
-            actions = self._get_action_chunk(batch)
+            actions = self._get_action_chunk(batch, **kwargs)
             self._queues[ACTION].extend(actions.transpose(0, 1)[: self.config.n_action_steps])
 
         return self._queues[ACTION].popleft()
+
+    def _rtc_enabled(self) -> bool:
+        return self.config.rtc_config is not None and self.config.rtc_config.enabled
 
     @classmethod
     def from_pretrained(
