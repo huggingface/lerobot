@@ -65,7 +65,7 @@ HW_ENCODERS = [
     "h264_qsv",  # Intel Quick Sync
 ]
 
-VALID_VIDEO_CODECS = {"h264", "hevc", "libsvtav1", "auto"} | set(HW_ENCODERS)
+VALID_VIDEO_CODECS = {"h264", "hevc", "libsvtav1", "ffv1", "auto"} | set(HW_ENCODERS)
 
 LIBSVTAV1_DEFAULT_PRESET: int = 12
 
@@ -200,6 +200,10 @@ class VideoEncoderConfig:
         elif self.vcodec == "h264_qsv":
             set_if("global_quality", self.crf)
             set_if("preset", self.preset)
+        elif self.vcodec == "ffv1":
+            # Lossless intra-frame codec. ``crf``/``preset``/``fast_decode`` 
+            # are not meaningful.
+            set_if("threads", encoder_threads)
         else:
             set_if("crf", self.crf)
             set_if("preset", self.preset)
