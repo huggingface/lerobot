@@ -204,8 +204,8 @@ lerobot-record \
 from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.datasets import LeRobotDataset
 from lerobot.utils.feature_utils import hw_to_dataset_features
-from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
-from lerobot.teleoperators.so_leader import SO100Leader, SO100LeaderConfig
+from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
+from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 from lerobot.common.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
@@ -219,7 +219,7 @@ RESET_TIME_SEC = 10
 TASK_DESCRIPTION = "My task description"
 
 # Create robot configuration
-robot_config = SO100FollowerConfig(
+robot_config = SO101FollowerConfig(
     id="my_awesome_follower_arm",
     cameras={
         "front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS) # Optional: fourcc="MJPG" for troubleshooting OpenCV async error.
@@ -227,14 +227,14 @@ robot_config = SO100FollowerConfig(
     port="/dev/tty.usbmodem58760434471",
 )
 
-teleop_config = SO100LeaderConfig(
+teleop_config = SO101LeaderConfig(
     id="my_awesome_leader_arm",
     port="/dev/tty.usbmodem585A0077581",
 )
 
 # Initialize the robot and teleoperator
-robot = SO100Follower(robot_config)
-teleop = SO100Leader(teleop_config)
+robot = SO101Follower(robot_config)
+teleop = SO101Leader(teleop_config)
 
 # Configure the dataset features
 action_features = hw_to_dataset_features(robot.action_features, "action")
@@ -416,15 +416,15 @@ lerobot-replay \
 import time
 
 from lerobot.datasets import LeRobotDataset
-from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
+from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
 
 episode_idx = 0
 
-robot_config = SO100FollowerConfig(port="/dev/tty.usbmodem58760434471", id="my_awesome_follower_arm")
+robot_config = SO101FollowerConfig(port="/dev/tty.usbmodem58760434471", id="my_awesome_follower_arm")
 
-robot = SO100Follower(robot_config)
+robot = SO101Follower(robot_config)
 robot.connect()
 
 dataset = LeRobotDataset("<hf_username>/<dataset_repo_id>", episodes=[episode_idx])
@@ -515,18 +515,18 @@ You can use the `record` script from [`lerobot-record`](https://github.com/huggi
 <hfoption id="Command">
 ```bash
 lerobot-record  \
-  --robot.type=so100_follower \
+  --robot.type=so101_follower \
   --robot.port=/dev/ttyACM1 \
   --robot.cameras="{ up: {type: opencv, index_or_path: /dev/video10, width: 640, height: 480, fps: 30}, side: {type: intelrealsense, serial_number_or_name: 233522074606, width: 640, height: 480, fps: 30}}" \
   --robot.id=my_awesome_follower_arm \
   --display_data=false \
-  --dataset.repo_id=${HF_USER}/eval_so100 \
+  --dataset.repo_id=${HF_USER}/eval_so101 \
   --dataset.single_task="Put lego brick into the transparent box" \
   --dataset.streaming_encoding=true \
   --dataset.encoder_threads=2 \
   # --dataset.vcodec=auto \
   # <- Teleop optional if you want to teleoperate in between episodes \
-  # --teleop.type=so100_leader \
+  # --teleop.type=so101_leader \
   # --teleop.port=/dev/ttyACM0 \
   # --teleop.id=my_awesome_leader_arm \
   --policy.path=${HF_USER}/my_policy
@@ -541,7 +541,7 @@ from lerobot.datasets import LeRobotDataset
 from lerobot.utils.feature_utils import hw_to_dataset_features
 from lerobot.policies.act import ACTPolicy
 from lerobot.policies import make_pre_post_processors
-from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
+from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
 from lerobot.scripts.lerobot_record import record_loop
 from lerobot.common.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
@@ -557,12 +557,12 @@ HF_DATASET_ID = "<hf_username>/<eval_dataset_repo_id>"
 
 # Create the robot configuration
 camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
-robot_config = SO100FollowerConfig(
+robot_config = SO101FollowerConfig(
     port="/dev/tty.usbmodem58760434471", id="my_awesome_follower_arm", cameras=camera_config
 )
 
 # Initialize the robot
-robot = SO100Follower(robot_config)
+robot = SO101Follower(robot_config)
 
 # Initialize the policy
 policy = ACTPolicy.from_pretrained(HF_MODEL_ID)
