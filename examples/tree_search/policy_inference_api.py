@@ -45,6 +45,7 @@ from lerobot.types import PolicyAction
 from lerobot.utils.constants import ACTION
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import init_logging
 
@@ -59,6 +60,7 @@ class PolicyInferenceConfig:
     suite: str | None = None
     task_id: int | None = None
     seed: int | None = 1000
+    video_path: Path | None = None
     rename_map: dict[str, str] = field(default_factory=dict)
     trust_remote_code: bool = False
 
@@ -204,6 +206,20 @@ def _extract_success(info: Mapping[str, Any]) -> bool:
     return False
 
 
+def _render_single_env_frame(env: gym.vector.VectorEnv) -> np.ndarray:
+    if isinstance(env, gym.vector.SyncVectorEnv):
+        return env.envs[0].render()
+    return env.call("render")[0]
+
+
+def _infer_render_fps(env: gym.vector.VectorEnv, fallback: int) -> int:
+    try:
+        fps = env.unwrapped.metadata["render_fps"]
+    except (AttributeError, KeyError, TypeError):
+        fps = fallback
+    return int(fps)
+
+
 def make_action_api(cfg: PolicyInferenceConfig) -> tuple[LeRobotActionAPI, dict[str, dict[int, gym.vector.VectorEnv]]]:
     if cfg.policy is None:
         raise ValueError("Policy config was not initialized.")
@@ -279,6 +295,10 @@ def main(cfg: PolicyInferenceConfig) -> None:
         else:
             observation, _ = env.reset(seed=[cfg.seed])
 
+        video_frames: list[np.ndarray] = []
+        if cfg.video_path is not None:
+            video_frames.append(_render_single_env_frame(env))
+
         done = False
         success = False
         max_steps = cfg.steps
@@ -290,6 +310,8 @@ def main(cfg: PolicyInferenceConfig) -> None:
             last_step = step
             action = choose_action_with_external_planner(action_api, observation, env)
             observation, reward, terminated, truncated, info = env.step(action[None, :])
+            if cfg.video_path is not None:
+                video_frames.append(_render_single_env_frame(env))
             done = bool(np.asarray(terminated)[0] or np.asarray(truncated)[0])
             success = success or _extract_success(info)
             logger.info(
@@ -304,6 +326,11 @@ def main(cfg: PolicyInferenceConfig) -> None:
                 break
 
         logger.info("Finished after %s step(s). success=%s", last_step + 1, success)
+        if cfg.video_path is not None and video_frames:
+            cfg.video_path.parent.mkdir(parents=True, exist_ok=True)
+            fps = _infer_render_fps(env, fallback=cfg.env.fps)
+            write_video(str(cfg.video_path), np.stack(video_frames), fps)
+            logger.info("Saved rollout video to %s", cfg.video_path)
     finally:
         close_envs(envs_dict)
 
