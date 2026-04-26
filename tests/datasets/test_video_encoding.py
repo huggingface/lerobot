@@ -311,6 +311,18 @@ class TestEncoderDetection:
         assert "h264_videotoolbox" in VALID_VIDEO_CODECS
         assert "h264_nvenc" in VALID_VIDEO_CODECS
 
+    def test_av1_alias_resolves_to_libsvtav1(self):
+        """Older datasets persist ``vcodec="av1"``; backward-compat alias must keep them loadable."""
+        cfg = VideoEncoderConfig(vcodec="av1")
+        assert cfg.vcodec == "libsvtav1"
+
+    def test_av1_alias_persisted_after_resolve(self):
+        """Repeated calls to ``resolve_vcodec`` should be idempotent (alias only fires once)."""
+        cfg = VideoEncoderConfig(vcodec="av1")
+        assert cfg.vcodec == "libsvtav1"
+        cfg.resolve_vcodec()
+        assert cfg.vcodec == "libsvtav1"
+
 
 ARTIFACTS = Path(__file__).parent.parent / "fixtures" / "artifacts" / "videos"
 

@@ -138,6 +138,12 @@ class VideoEncoderConfig:
         also silently rewritten to ``libsvtav1`` so encoding never hard-fails on
         a host missing the requested encoder.
         """
+        # Backward compatibility: older datasets persist ``vcodec="av1"`` in
+        # ``info.json``. Rewrite to the canonical encoder name *before* the
+        # validation check below so loading those datasets keeps working.
+        if self.vcodec == "av1":
+            self.vcodec = "libsvtav1"
+
         if self.vcodec not in VALID_VIDEO_CODECS:
             raise ValueError(f"Invalid vcodec '{self.vcodec}'. Must be one of: {sorted(VALID_VIDEO_CODECS)}")
         if self.vcodec == "auto":
