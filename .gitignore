@@ -191,3 +191,9 @@ outputs
 prompt_run_and_eval.md
 results_self_improvement_deterministic.tsv
 test_self_improvement_v2.py
+
+# experiments things
+experiment/
+*.md
+*.png
+*.pdf

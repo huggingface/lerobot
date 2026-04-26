@@ -89,7 +89,7 @@ TASK_SUITE_MAX_STEPS: dict[str, int] = {
     "libero_spatial": 280,  # longest training demo has 193 steps
     "libero_object": 280,  # longest training demo has 254 steps
     "libero_goal": 300,  # longest training demo has 270 steps
-    "libero_10": 520,  # longest training demo has 505 steps
+    "libero_10": 700,  # original FastWAM eval uses 700; longest training demo has 505 steps
     "libero_90": 400,  # longest training demo has 373 steps
 }
 

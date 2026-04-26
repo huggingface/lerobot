@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import logging
 from dataclasses import dataclass
 
 import torch
@@ -20,7 +21,9 @@ import torch
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from lerobot.utils.constants import OBS_IMAGES, OBS_PREFIX, OBS_STATE, OBS_STR
 
-from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
+from .pipeline import ActionProcessorStep, ObservationProcessorStep, ProcessorStepRegistry
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -228,3 +231,34 @@ class IsaaclabArenaProcessorStep(ObservationProcessorStep):
 
     def observation(self, observation):
         return self._process_observation(observation)
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="fastwam_gripper_remap")
+class FastWAMGripperRemapStep(ActionProcessorStep):
+    """Remap FastWAM gripper output to LIBERO convention.
+
+    FastWAM training stores gripper in [0, 1] (0=close, 1=open).  After MIN_MAX
+    unnormalisation the model output is back in [0, 1].  LIBERO's PandaGripper
+    uses sign(action) to drive direction: negative → open, positive → close.
+
+    Conversion (matches original FastWAM eval ``invert_gripper_action`` + ``binarize``):
+        gripper_train ∈ [0, 1]  →  1 − 2·x  →  sign(·)
+        0 (close) → +1 (LIBERO close) ✓
+        1 (open)  → −1 (LIBERO open)  ✓
+    """
+
+    def action(self, action: torch.Tensor) -> torch.Tensor:
+        remapped = action.clone()
+        remapped[..., -1] = torch.sign(1.0 - 2.0 * action[..., -1])
+        logger.debug(
+            "FastWAMGripperRemapStep: gripper before=%.4f after=%.4f",
+            action[0, -1].item() if action.dim() == 2 else action[..., -1].flatten()[0].item(),
+            remapped[0, -1].item() if remapped.dim() == 2 else remapped[..., -1].flatten()[0].item(),
+        )
+        return remapped
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features

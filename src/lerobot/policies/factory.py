@@ -30,6 +30,7 @@ from lerobot.datasets.utils import dataset_to_policy_features
 from lerobot.envs.configs import EnvConfig
 from lerobot.envs.utils import env_to_policy_features
 from lerobot.policies.act.configuration_act import ACTConfig
+from lerobot.policies.fastwam.configuration_fastwam import FastWAMConfig
 from lerobot.policies.act_simple.configuration_act_simple import ACTSimpleConfig
 from lerobot.policies.act_simple_with_awm_head.configuration_act_simple_with_awm_head import ACTSimpleWithAWMHeadConfig
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
@@ -129,6 +130,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.groot.modeling_groot import GrootPolicy
 
         return GrootPolicy
+    elif name == "fastwam":
+        from lerobot.policies.fastwam.modeling_fastwam import FastWAMPolicy
+
+        return FastWAMPolicy
     elif name == "xvla":
         from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
 
@@ -185,6 +190,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return RewardClassifierConfig(**kwargs)
     elif policy_type == "groot":
         return GrootConfig(**kwargs)
+    elif policy_type == "fastwam":
+        return FastWAMConfig(**kwargs)
     elif policy_type == "xvla":
         return XVLAConfig(**kwargs)
     elif policy_type == "wall_x":
