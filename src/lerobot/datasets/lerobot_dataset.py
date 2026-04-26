@@ -35,6 +35,7 @@ from .utils import (
     is_valid_version,
 )
 from .video_utils import (
+    DepthEncoderConfig,
     StreamingVideoEncoder,
     VideoEncoderConfig,
     get_safe_default_video_backend,
@@ -59,6 +60,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return_uint8: bool = False,
         batch_encoding_size: int = 1,
         camera_encoder_config: VideoEncoderConfig | None = None,
+        depth_encoder_config: DepthEncoderConfig | None = None,
         encoder_threads: int | None = None,
         streaming_encoding: bool = False,
         encoder_queue_maxsize: int = 30,
@@ -207,6 +209,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if camera_encoder_config is None:
             camera_encoder_config = VideoEncoderConfig()
         self._camera_encoder_config = camera_encoder_config
+        self._depth_encoder_config = depth_encoder_config
         self._encoder_threads = encoder_threads
 
         if self._requested_root is not None:
@@ -261,6 +264,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 meta=self.meta,
                 root=self.root,
                 camera_encoder_config=self._camera_encoder_config,
+                depth_encoder_config=self._depth_encoder_config,
                 encoder_threads=self._encoder_threads,
                 batch_encoding_size=batch_encoding_size,
                 streaming_encoder=streaming_enc,
@@ -626,6 +630,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
         camera_encoder_config: VideoEncoderConfig | None = None,
+        depth_encoder_config: DepthEncoderConfig | None = None,
         metadata_buffer_size: int = 10,
         streaming_encoding: bool = False,
         encoder_queue_maxsize: int = 30,
@@ -697,6 +702,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj._return_uint8 = False
         obj._batch_encoding_size = batch_encoding_size
         obj._camera_encoder_config = camera_encoder_config
+        obj._depth_encoder_config = depth_encoder_config
         obj._encoder_threads = encoder_threads
 
         # Reader is lazily created on first access (write-only mode)
@@ -711,6 +717,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             meta=obj.meta,
             root=obj.root,
             camera_encoder_config=camera_encoder_config,
+            depth_encoder_config=depth_encoder_config,
             encoder_threads=encoder_threads,
             batch_encoding_size=batch_encoding_size,
             streaming_encoder=streaming_enc,
@@ -734,6 +741,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
         camera_encoder_config: VideoEncoderConfig | None = None,
+        depth_encoder_config: DepthEncoderConfig | None = None,
         encoder_threads: int | None = None,
         image_writer_processes: int = 0,
         image_writer_threads: int = 0,
@@ -804,6 +812,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if camera_encoder_config is None:
             camera_encoder_config = VideoEncoderConfig()
         obj._camera_encoder_config = camera_encoder_config
+        obj._depth_encoder_config = depth_encoder_config
         obj._encoder_threads = encoder_threads
         obj.root = obj.meta.root
 
@@ -819,6 +828,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             meta=obj.meta,
             root=obj.root,
             camera_encoder_config=camera_encoder_config,
+            depth_encoder_config=depth_encoder_config,
             encoder_threads=encoder_threads,
             batch_encoding_size=batch_encoding_size,
             streaming_encoder=streaming_enc,

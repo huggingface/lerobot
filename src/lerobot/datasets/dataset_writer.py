@@ -51,6 +51,7 @@ from .utils import (
     update_chunk_file_indices,
 )
 from .video_utils import (
+    DepthEncoderConfig,
     StreamingVideoEncoder,
     VideoEncoderConfig,
     concatenate_video_files,
@@ -100,6 +101,7 @@ class DatasetWriter:
         batch_encoding_size: int,
         streaming_encoder: StreamingVideoEncoder | None = None,
         initial_frames: int = 0,
+        depth_encoder_config: DepthEncoderConfig | None = None,
     ):
         """Initialize the writer with metadata, codec, and encoder config.
 
@@ -115,13 +117,18 @@ class DatasetWriter:
             streaming_encoder: Optional pre-built :class:`StreamingVideoEncoder`
                 for real-time encoding. ``None`` disables streaming mode.
             initial_frames: Starting frame count (non-zero when resuming).
+            depth_encoder_config: Optional depth-map encoder config used in
+                place of ``camera_encoder_config`` for keys present in
+                ``meta.depth_keys``.
         """
         self._meta = meta
         self._root = root
         self._camera_encoder_config = camera_encoder_config
+        self._depth_encoder_config = depth_encoder_config
         self._encoder_threads = encoder_threads
         self._batch_encoding_size = batch_encoding_size
         self._streaming_encoder = streaming_encoder
+
 
         # Writer state
         self.image_writer: AsyncImageWriter | None = None

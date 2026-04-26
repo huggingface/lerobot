@@ -436,6 +436,37 @@ def test_add_frame_works_in_write_mode(tmp_path):
     dataset.add_frame(_make_frame())  # should not raise
 
 
+# ── Depth-feature plumbing ───────────────────────────────────────────
+
+
+_DEPTH_FEATURES = {
+    **SIMPLE_FEATURES,
+    "observation.depth": {
+        "dtype": "video",
+        "shape": (32, 32),
+        "names": ["height", "width"],
+        "info": {"video.is_depth_map": True},
+    },
+}
+
+
+def test_create_with_depth_streaming_succeeds(tmp_path):
+    """A depth dataset with streaming_encoding=True is created in write mode."""
+    from lerobot.datasets.video_utils import DepthEncoderConfig
+
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID,
+        fps=DEFAULT_FPS,
+        features=_DEPTH_FEATURES,
+        root=tmp_path / "depth_ds",
+        depth_encoder_config=DepthEncoderConfig(),
+        streaming_encoding=True,
+    )
+    assert isinstance(dataset.writer, DatasetWriter)
+    assert dataset.meta.depth_keys == ["observation.depth"]
+    assert dataset._depth_encoder_config is not None
+
+
 # ── Resume mode ──────────────────────────────────────────────────────
 
 
