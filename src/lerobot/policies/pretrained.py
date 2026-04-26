@@ -21,12 +21,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TypedDict, TypeVar, Unpack
 
-import packaging
-import safetensors
+import torch
 from huggingface_hub import HfApi, ModelCard, ModelCardData, hf_hub_download
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
-from safetensors.torch import load_model as load_model_as_safetensor, save_model as save_model_as_safetensor
+from safetensors import safe_open
+from safetensors.torch import save_file as save_safetensors_file
 from torch import Tensor, nn
 
 from lerobot.configs import PreTrainedConfig
@@ -36,6 +36,83 @@ from lerobot.utils.hub import HubMixin
 from .utils import log_model_loading_keys
 
 T = TypeVar("T", bound="PreTrainedPolicy")
+
+
+def _materialized_state_dict(model: nn.Module) -> dict[str, Tensor]:
+    """Return ``model.state_dict()`` with each tensor materialized to its own contiguous storage.
+
+    ``safetensors.torch.save_model`` refuses to save when any tensor in the state dict is a
+    non-complete view of a larger storage (it fails with "None is covering the entire storage").
+    This can happen with sub-modules that come from ``transformers.from_pretrained`` (for example
+    ``CLIPVisionModel`` inside ``observation_encoder.vision_encoder``) where individual parameters
+    can end up as slices of a shared underlying storage in some library/version combinations
+    (see https://github.com/huggingface/lerobot/issues/3384,
+    https://github.com/huggingface/lerobot/issues/1142).
+
+    Calling ``.detach().clone()`` on each tensor is a defensive copy that guarantees every entry
+    owns its own contiguous storage, which both unblocks the duplicate-name check in safetensors
+    and produces a self-contained on-disk file. Tied weights become independent copies on disk;
+    on load they are rebuilt by the model's own ``__init__`` / ``_tie_weights`` logic, so this
+    is safe for the existing tied-weight pathways used in lerobot.
+    """
+    return {name: tensor.detach().clone() for name, tensor in model.state_dict().items()}
+
+
+def _safe_load_state_into_model(
+    model: nn.Module, model_file: str, device: str, strict: bool
+) -> tuple[list[str], list[str]]:
+    """Load a safetensors file into ``model`` without ``safetensors.torch.load_model``'s side checks.
+
+    The high-level ``safetensors.torch.load_model`` runs ``_remove_duplicate_names`` on the
+    *destination* model's state dict. When any destination parameter is a non-complete storage
+    view (see :func:`_materialized_state_dict`), that helper raises a confusing
+    ``RuntimeError: ... None is covering the entire storage`` even though the on-disk file is
+    perfectly fine (issue #3384). We bypass it here by streaming the tensors through
+    :func:`safetensors.safe_open` and applying them with ``model.load_state_dict``.
+
+    Returns ``(missing_keys, unexpected_keys)`` mirroring the original function so callers
+    (and ``log_model_loading_keys``) need no change. Keys that are missing solely because they
+    are tied to a key that *was* loaded (i.e. share storage with a loaded parameter) are dropped
+    from ``missing_keys`` so tied-weight models don't trip ``strict=True`` callers.
+    """
+    state_dict: dict[str, Tensor] = {}
+    with safe_open(model_file, framework="pt", device=device) as reader:
+        for key in reader.keys():
+            state_dict[key] = reader.get_tensor(key)
+
+    missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+    missing_keys = list(missing_keys)
+    unexpected_keys = list(unexpected_keys)
+
+    if missing_keys:
+        # Drop keys that are missing only because they share storage with a key we did load
+        # (tied weights, e.g. lm_head.weight tied to model.embed_tokens.weight). We compare by
+        # ``storage.data_ptr()`` because ``untyped_storage()`` may return a fresh Python wrapper
+        # on each call, so ``id(...)`` is not stable.
+        post_load_state = model.state_dict()
+        loaded_storage_ptrs = {
+            post_load_state[k].untyped_storage().data_ptr()
+            for k in state_dict
+            if k in post_load_state
+        }
+        missing_keys = [
+            k
+            for k in missing_keys
+            if k not in post_load_state
+            or post_load_state[k].untyped_storage().data_ptr() not in loaded_storage_ptrs
+        ]
+
+    if strict and (missing_keys or unexpected_keys):
+        missing_str = ", ".join(f'"{k}"' for k in sorted(missing_keys))
+        unexpected_str = ", ".join(f'"{k}"' for k in sorted(unexpected_keys))
+        error = f"Error(s) in loading state_dict for {model.__class__.__name__}:"
+        if missing_keys:
+            error += f"\n    Missing key(s) in state_dict: {missing_str}"
+        if unexpected_keys:
+            error += f"\n    Unexpected key(s) in state_dict: {unexpected_str}"
+        raise RuntimeError(error)
+
+    return missing_keys, unexpected_keys
 
 
 class ActionSelectKwargs(TypedDict, total=False):
@@ -70,7 +147,12 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     def _save_pretrained(self, save_directory: Path) -> None:
         self.config._save_pretrained(save_directory)
         model_to_save = self.module if hasattr(self, "module") else self
-        save_model_as_safetensor(model_to_save, str(save_directory / SAFETENSORS_SINGLE_FILE))
+        # Detach + clone every tensor so each entry owns a complete contiguous storage. This
+        # avoids ``RuntimeError: ... None is covering the entire storage`` from safetensors when
+        # a sub-module exposes parameters that are non-complete views of a shared storage
+        # (see issue #3384, _materialized_state_dict for details).
+        state_dict = _materialized_state_dict(model_to_save)
+        save_safetensors_file(state_dict, str(save_directory / SAFETENSORS_SINGLE_FILE))
 
     @classmethod
     def from_pretrained(
@@ -135,26 +217,40 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     @classmethod
     def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
-        # Create base kwargs
-        kwargs = {"strict": strict}
+        # We deliberately avoid ``safetensors.torch.load_model`` here. That helper inspects the
+        # *destination* model's state dict via ``_remove_duplicate_names`` and raises a
+        # ``RuntimeError`` if any parameter is a non-complete storage view (issue #3384). For
+        # policies that wrap third-party encoders (for example transformers' ``CLIPVisionModel``)
+        # this check can fire spuriously even though the on-disk file is valid.
+        target_device = str(map_location) if map_location is not None else "cpu"
+        loaded_device = target_device
+        try:
+            missing_keys, unexpected_keys = _safe_load_state_into_model(
+                model, model_file, target_device, strict
+            )
+        except (TypeError, ValueError) as e:
+            # Some older safetensors backends only support a subset of device strings. Fall
+            # back to CPU and let ``model.to`` below copy the tensors to the requested device.
+            # ``RuntimeError`` is intentionally NOT caught here so genuine load errors (e.g.
+            # strict-mode missing keys) still propagate.
+            if target_device == "cpu":
+                raise
+            logging.warning(
+                "Loading model weights directly on device %r is not supported by your "
+                "safetensors backend (%s); falling back to CPU and copying afterwards. "
+                "Update safetensors to >=0.4.3 for native device loading.",
+                target_device,
+                e,
+            )
+            missing_keys, unexpected_keys = _safe_load_state_into_model(
+                model, model_file, "cpu", strict
+            )
+            loaded_device = "cpu"
 
-        # Add device parameter for newer versions that support it
-        if packaging.version.parse(safetensors.__version__) >= packaging.version.parse("0.4.3"):
-            kwargs["device"] = map_location
-
-        # Load the model with appropriate kwargs
-        missing_keys, unexpected_keys = load_model_as_safetensor(model, model_file, **kwargs)
         log_model_loading_keys(missing_keys, unexpected_keys)
 
-        # For older versions, manually move to device if needed
-        if "device" not in kwargs and map_location != "cpu":
-            logging.warning(
-                "Loading model weights on other devices than 'cpu' is not supported natively in your version of safetensors."
-                " This means that the model is loaded on 'cpu' first and then copied to the device."
-                " This leads to a slower loading time."
-                " Please update safetensors to version 0.4.3 or above for improved performance."
-            )
-            model.to(map_location)
+        if loaded_device == "cpu" and target_device != "cpu":
+            model.to(target_device)
         return model
 
     @abc.abstractmethod
