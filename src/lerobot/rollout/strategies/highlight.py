@@ -135,8 +135,7 @@ class HighlightStrategy(RolloutStrategy):
                         break
 
                     obs = robot.get_observation()
-                    obs_processed = ctx.processors.robot_observation_processor(obs)
-                    engine.notify_observation(obs_processed)
+                    obs_processed = self._process_observation_and_notify(ctx.processors, obs)
 
                     if self._handle_warmup(cfg.use_torch_compile, loop_start, control_interval):
                         continue

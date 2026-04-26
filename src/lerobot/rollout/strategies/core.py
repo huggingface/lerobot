@@ -32,7 +32,7 @@ from ..inference import InferenceEngine
 
 if TYPE_CHECKING:
     from ..configs import RolloutStrategyConfig
-    from ..context import HardwareContext, RolloutContext, RuntimeContext
+    from ..context import HardwareContext, ProcessorContext, RolloutContext, RuntimeContext
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,7 @@ class RolloutStrategy(abc.ABC):
         self._engine: InferenceEngine | None = None
         self._interpolator: ActionInterpolator | None = None
         self._warmup_flushed: bool = False
+        self._cached_obs_processed: dict | None = None
 
     def _init_engine(self, ctx: RolloutContext) -> None:
         """Attach the inference engine and action interpolator, then start the backend.
@@ -65,7 +66,31 @@ class RolloutStrategy(abc.ABC):
         self._engine.reset()
         self._engine.start()
         self._warmup_flushed = False
+        self._cached_obs_processed = None
         logger.info("Inference engine started")
+
+    def _process_observation_and_notify(self, processors: ProcessorContext, obs_raw: dict) -> dict:
+        """Run the observation processor and notify the engine — throttled to policy ticks.
+
+        Callers are responsible for calling ``robot.get_observation()`` every loop
+        iteration so ``obs_raw`` stays fresh for the action post-processor.  This
+        helper gates only the comparatively expensive bits — the processor pipeline
+        and ``engine.notify_observation`` — to fire when the interpolator signals
+        it needs a new action (once per ``interpolation_multiplier`` ticks).  On
+        interpolated ticks the cached ``obs_processed`` is reused.
+
+        With ``interpolation_multiplier == 1`` this is equivalent to the unthrottled
+        path: ``needs_new_action()`` is True every tick.
+
+        The cache is implicitly invalidated whenever ``interpolator.reset()`` is
+        called (warmup completion, DAgger phase transitions back to AUTONOMOUS),
+        because reset makes ``needs_new_action()`` return True on the next call.
+        """
+        if self._cached_obs_processed is None or self._interpolator.needs_new_action():
+            obs_processed = processors.robot_observation_processor(obs_raw)
+            self._engine.notify_observation(obs_processed)
+            self._cached_obs_processed = obs_processed
+        return self._cached_obs_processed
 
     def _handle_warmup(self, use_torch_compile: bool, loop_start: float, control_interval: float) -> bool:
         """Handle torch.compile warmup phase.

@@ -434,19 +434,19 @@ class DAggerStrategy(RolloutStrategy):
 
                     phase = events.phase
                     obs = robot.get_observation()
-                    obs_processed = ctx.processors.robot_observation_processor(obs)
-                    obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
 
                     # --- CORRECTING: human teleop control ---
                     if phase == DAggerPhase.CORRECTING:
+                        obs_processed = ctx.processors.robot_observation_processor(obs)
                         teleop_action = teleop.get_action()
                         processed_teleop = ctx.processors.teleop_action_processor((teleop_action, obs))
                         robot_action_to_send = ctx.processors.robot_action_processor((processed_teleop, obs))
                         robot.send_action(robot_action_to_send)
                         last_action = robot_action_to_send
                         self._log_telemetry(obs_processed, processed_teleop, ctx.runtime)
-                        action_frame = build_dataset_frame(features, processed_teleop, prefix=ACTION)
                         if record_tick % record_stride == 0:
+                            obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
+                            action_frame = build_dataset_frame(features, processed_teleop, prefix=ACTION)
                             frame = {
                                 **obs_frame,
                                 **action_frame,
@@ -463,7 +463,7 @@ class DAggerStrategy(RolloutStrategy):
 
                     # --- AUTONOMOUS: policy control ---
                     else:
-                        engine.notify_observation(obs_processed)
+                        obs_processed = self._process_observation_and_notify(ctx.processors, obs)
 
                         if self._handle_warmup(cfg.use_torch_compile, loop_start, control_interval):
                             continue
@@ -472,8 +472,9 @@ class DAggerStrategy(RolloutStrategy):
                         if action_dict is not None:
                             self._log_telemetry(obs_processed, action_dict, ctx.runtime)
                             last_action = ctx.processors.robot_action_processor((action_dict, obs))
-                            action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
                             if record_tick % record_stride == 0:
+                                obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
+                                action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
                                 frame = {
                                     **obs_frame,
                                     **action_frame,
@@ -608,10 +609,10 @@ class DAggerStrategy(RolloutStrategy):
 
                     phase = events.phase
                     obs = robot.get_observation()
-                    obs_processed = ctx.processors.robot_observation_processor(obs)
 
                     # --- CORRECTING: human teleop control + recording ---
                     if phase == DAggerPhase.CORRECTING:
+                        obs_processed = ctx.processors.robot_observation_processor(obs)
                         teleop_action = teleop.get_action()
                         processed_teleop = ctx.processors.teleop_action_processor((teleop_action, obs))
                         robot_action_to_send = ctx.processors.robot_action_processor((processed_teleop, obs))
@@ -619,9 +620,9 @@ class DAggerStrategy(RolloutStrategy):
                         last_action = robot_action_to_send
                         self._log_telemetry(obs_processed, processed_teleop, ctx.runtime)
 
-                        obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
-                        action_frame = build_dataset_frame(features, processed_teleop, prefix=ACTION)
                         if record_tick % record_stride == 0:
+                            obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
+                            action_frame = build_dataset_frame(features, processed_teleop, prefix=ACTION)
                             dataset.add_frame(
                                 {
                                     **obs_frame,
@@ -639,7 +640,7 @@ class DAggerStrategy(RolloutStrategy):
 
                     # --- AUTONOMOUS: policy control (no recording) ---
                     else:
-                        engine.notify_observation(obs_processed)
+                        obs_processed = self._process_observation_and_notify(ctx.processors, obs)
 
                         if self._handle_warmup(cfg.use_torch_compile, loop_start, control_interval):
                             continue
