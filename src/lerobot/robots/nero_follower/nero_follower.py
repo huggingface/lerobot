@@ -49,6 +49,7 @@ class NEOFollower(Robot):
     def __init__(self, config: NEOFollowerRobotConfig):
         super().__init__(config)
         self.config = config
+        self._last_joint_targets: list[float] | None = None
 
         # Build pyAgxArm config
         self._arm_config = create_agx_arm_config(
@@ -128,6 +129,15 @@ class NEOFollower(Robot):
         # Set speed
         self._arm.set_speed_percent(self.config.speed_percent)
 
+        # Prime cached targets from live state so partial actions don't zero unspecified joints.
+        joint_msg = self._arm.get_joint_angles()
+        if joint_msg is not None and joint_msg.msg is not None:
+            self._last_joint_targets = [float(v) for v in list(joint_msg.msg)[: len(NERO_JOINTS)]]
+            if len(self._last_joint_targets) < len(NERO_JOINTS):
+                self._last_joint_targets += [0.0] * (len(NERO_JOINTS) - len(self._last_joint_targets))
+        else:
+            self._last_joint_targets = [0.0] * len(NERO_JOINTS)
+
         # Connect cameras
         for cam in self.cameras.values():
             cam.connect()
@@ -189,23 +199,38 @@ class NEOFollower(Robot):
         Returns the action actually sent (potentially clipped for safety).
         """
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
+        joint_goals = {k: float(v) for k, v in goal_pos.items() if k in NERO_JOINTS}
+
+        # Ignore non-joint actions (e.g. raw keyboard chars) to avoid unintended zeroing.
+        if not joint_goals and "gripper" not in goal_pos:
+            return {}
+
+        # Build a full 7-joint command from current state/cache + provided partial goals.
+        if self._last_joint_targets is None:
+            self._last_joint_targets = [0.0] * len(NERO_JOINTS)
+        base_targets = list(self._last_joint_targets)
+
+        present_obs = self._arm.get_joint_angles()
+        if present_obs is not None and present_obs.msg is not None:
+            present_vals = [float(v) for v in list(present_obs.msg)[: len(NERO_JOINTS)]]
+            if len(present_vals) < len(NERO_JOINTS):
+                present_vals += [0.0] * (len(NERO_JOINTS) - len(present_vals))
+            base_targets = present_vals
 
         # Safety clipping if max_relative_target is configured
-        if self.config.max_relative_target is not None:
-            present_obs = self._arm.get_joint_angles()
-            if present_obs is not None and present_obs.msg is not None:
-                present_vals = list(present_obs.msg)
-                present_dict = {name: float(val) for name, val in zip(NERO_JOINTS, present_vals)}
-                # Only clip joint positions, not gripper
-                joint_goals = {k: v for k, v in goal_pos.items() if k in NERO_JOINTS}
-                goal_present = {k: (v, present_dict[k]) for k, v in joint_goals.items() if k in present_dict}
-                if goal_present:
-                    clipped = ensure_safe_goal_position(goal_present, self.config.max_relative_target)
-                    goal_pos.update(clipped)
+        if self.config.max_relative_target is not None and present_obs is not None and present_obs.msg is not None:
+            present_dict = {name: float(val) for name, val in zip(NERO_JOINTS, list(present_obs.msg))}
+            goal_present = {k: (v, present_dict[k]) for k, v in joint_goals.items() if k in present_dict}
+            if goal_present:
+                joint_goals = ensure_safe_goal_position(goal_present, self.config.max_relative_target)
 
-        # Send joint positions via move_j (7 joints, radians)
-        joint_targets = [goal_pos.get(name, 0.0) for name in NERO_JOINTS]
-        self._arm.move_j(joint_targets)
+        for i, name in enumerate(NERO_JOINTS):
+            if name in joint_goals:
+                base_targets[i] = joint_goals[name]
+
+        if joint_goals:
+            self._arm.move_j(base_targets)
+            self._last_joint_targets = list(base_targets)
 
         # Send gripper command
         if "gripper" in goal_pos and self._effector is not None:
@@ -216,7 +241,10 @@ class NEOFollower(Robot):
             except Exception as e:
                 logger.warning(f"Failed to send gripper command: {e}")
 
-        return {f"{motor}.pos": goal_pos.get(motor, 0.0) for motor in NERO_MOTORS}
+        sent_action = {f"{motor}.pos": val for motor, val in joint_goals.items()}
+        if "gripper" in goal_pos:
+            sent_action["gripper.pos"] = float(goal_pos["gripper"])
+        return sent_action
 
     @check_if_not_connected
     def disconnect(self):
@@ -235,6 +263,8 @@ class NEOFollower(Robot):
 
         for cam in self.cameras.values():
             cam.disconnect()
+
+        self._last_joint_targets = None
 
         logger.info(f"{self} disconnected.")
 

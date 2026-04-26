@@ -37,9 +37,53 @@ class KeyboardEndEffectorTeleopConfig(KeyboardTeleopConfig):
 
     Attributes:
         use_gripper: Whether to include gripper control in actions
+        use_orientation: Whether to expose rotational end-effector controls
+        require_deadman: If True, motion commands are enabled only while deadman key is held
+        linear_step: Per-cycle linear step command magnitude
+        angular_step: Per-cycle angular step command magnitude
+        gripper_step: Per-cycle gripper velocity command magnitude
     """
 
     use_gripper: bool = True
+    use_orientation: bool = True
+    require_deadman: bool = True
+    linear_step: float = 0.004
+    angular_step: float = 0.06
+    gripper_step: float = 1.0
+
+
+@TeleoperatorConfig.register_subclass("keyboard_joint")
+@dataclass
+class KeyboardJointTeleopConfig(KeyboardTeleopConfig):
+    """Configuration for keyboard joint-level teleoperator.
+
+    键盘按键直接控制各关节增量，无需运动学求解。
+
+    按键映射:
+        关节控制:
+            Q/A: joint1 (底座旋转)
+            W/S: joint2 (肩部)
+            E/D: joint3 (肘部)
+            R/F: joint4 (腕1)
+            T/G: joint5 (腕2)
+            Y/H: joint6 (腕3)
+            U/J: joint7 (腕4/法兰)
+            1/2: 夹爪 开/合
+        安全:
+            Space: 死人开关（按住才生效）
+            ESC: 断开连接
+
+    Attributes:
+        joint_step: 每周期关节增量（弧度）
+        gripper_step: 每周期夹爪增量（0-100 映射度数）
+        require_deadman: 是否需要按住空格才允许运动
+        num_joints: 关节数量（默认 7，适配 NERO）
+    """
+
+    joint_step: float = 0.05
+    gripper_step: float = 2.0
+    require_deadman: bool = False
+    num_joints: int = 7
 
 
 @TeleoperatorConfig.register_subclass("keyboard_rover")

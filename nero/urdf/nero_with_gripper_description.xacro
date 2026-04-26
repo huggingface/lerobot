@@ -1,0 +1,82 @@
+<!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by Stephen Brawner (brawner@gmail.com) 
+     Commit Version: 1.6.0-4-g7f85cfe  Build Version: 1.6.7995.38578
+     For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="nero">
+<xacro:include filename="$(find agx_arm_description)/agx_arm_urdf/nero/urdf/nero_with_gripper_flange_description.xacro"/>
+    <link name="gripper_base">
+        <inertial>
+            <origin xyz="-0.000183807162235591 8.05033155577911E-05 0.0321436689908876" rpy="0 0 0"/>
+            <mass value="0.45"/>
+            <inertia ixx="0.00092934" ixy="0.00000034" ixz="-0.00000738" iyy="0.00071447" iyz="0.00000005" izz="0.00039442"/>
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <mesh filename="package://agx_arm_description/agx_arm_urdf/nero/meshes/dae/gripper_base.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <mesh filename="package://agx_arm_description/agx_arm_urdf/nero/meshes/gripper_base.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="gripper_base_joint" type="fixed">
+        <origin xyz="0 0 0.0055" rpy="0 0 0"/>
+        <parent link="gripper_flange"/>
+        <child link="gripper_base"/>
+    </joint>
+    <link name="gripper_link1">
+        <inertial>
+            <origin xyz="0.00065123185041968 -0.0491929869131989 0.00972258769184025" rpy="0 0 0"/>
+            <mass value="0.025"/>
+            <inertia ixx="0.00007371" ixy="-0.00000113" ixz="0.00000021" iyy="0.00000781" iyz="-0.00001372" izz="0.0000747"/>
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <mesh filename="package://agx_arm_description/agx_arm_urdf/nero/meshes/dae/gripper_link1.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <mesh filename="package://agx_arm_description/agx_arm_urdf/nero/meshes/gripper_link1.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="gripper_joint1" type="prismatic">
+        <origin xyz="0 0 0.1358" rpy="1.5707963 0 3.1415926"/>
+        <parent link="gripper_base"/>
+        <child link="gripper_link1"/>
+        <axis xyz="0 0 1"/>
+        <limit lower="0" upper="0.05" effort="10" velocity="3"/>
+    </joint>
+    <link name="gripper_link2">
+        <inertial>
+            <origin xyz="0.00065123185041968 -0.0491929869131989 0.00972258769184025" rpy="0 0 0"/>
+            <mass value="0.025"/>
+            <inertia ixx="0.00007371" ixy="-0.00000113" ixz="0.00000021" iyy="0.00000781" iyz="-0.00001372" izz="0.0000747"/>
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <mesh filename="package://agx_arm_description/agx_arm_urdf/nero/meshes/dae/gripper_link2.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <mesh filename="package://agx_arm_description/agx_arm_urdf/nero/meshes/gripper_link2.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="gripper_joint2" type="prismatic">
+        <origin xyz="0 0 0.1358" rpy="1.5707963 0 0"/>
+        <parent link="gripper_base"/>
+        <child link="gripper_link2"/>
+        <axis xyz="0 0 -1"/>
+        <limit lower="-0.05" upper="0" effort="10" velocity="3"/>
+    </joint>
+</robot>

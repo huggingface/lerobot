@@ -22,6 +22,23 @@ from ..config import RobotConfig
 
 
 @dataclass
+class NEOKeyboardEEConfig:
+    """Configuration for keyboard end-effector teleoperation + IK on NERO."""
+
+    enabled: bool = True
+    urdf_path: str | None = None
+    target_frame_name: str = "gripper"
+    joint_names: list[str] = field(default_factory=lambda: [f"joint{i}" for i in range(1, 8)])
+    max_linear_step_m: float = 0.01
+    max_angular_step_rad: float = 0.12
+    gripper_delta_per_step: float = 2.0
+    gripper_min: float = 0.0
+    gripper_max: float = 100.0
+    position_bounds_min: list[float] | None = None
+    position_bounds_max: list[float] | None = None
+
+
+@dataclass
 class NEOFollowerConfig:
     """Base configuration class for NERO Follower robots."""
 
@@ -52,6 +69,9 @@ class NEOFollowerConfig:
 
     # Cameras
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
+
+    # Optional processor settings to support keyboard end-effector teleoperation.
+    keyboard_ee: NEOKeyboardEEConfig = field(default_factory=NEOKeyboardEEConfig)
 
 
 @RobotConfig.register_subclass("nero_follower")

@@ -16,9 +16,13 @@
 
 from .config_nero_follower import NEOFollowerConfig, NEOFollowerRobotConfig
 from .nero_follower import NEOFollower
+from .robot_joint_delta_processor import make_nero_keyboard_joint_robot_action_processor
+from .robot_kinematic_processor import make_nero_keyboard_ee_robot_action_processor
 
 __all__ = [
     "NEOFollower",
     "NEOFollowerConfig",
     "NEOFollowerRobotConfig",
+    "make_nero_keyboard_ee_robot_action_processor",
+    "make_nero_keyboard_joint_robot_action_processor",
 ]
