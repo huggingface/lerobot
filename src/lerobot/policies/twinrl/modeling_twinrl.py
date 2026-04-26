@@ -93,13 +93,46 @@ class OctoActorEncoder(nn.Module):
         if img is None:
             raise ValueError("OctoActorEncoder requires 'image_primary' in observations.")
 
-        b = img.shape[0]
-        obs_octo = {"image_primary": img.unsqueeze(1) if img.ndim == 4 else img}
-        if "image_wrist" in observations:
-            w = observations["image_wrist"]
-            obs_octo["image_wrist"] = w.unsqueeze(1) if w.ndim == 4 else w
+        if img.ndim == 4:
+            img = img.unsqueeze(1)
 
-        tasks = {"language_instruction": self.text_processor.encode([""] * b)}
+        b, horizon, c, h, w = img.shape
+        # Octo expects (256, 256) for primary and (128, 128) for wrist
+        if h != 256 or w != 256:
+            img = torch.nn.functional.interpolate(
+                img.view(b * horizon, c, h, w), size=(256, 256), mode="bilinear", align_corners=False
+            ).view(b, horizon, c, 256, 256)
+
+        # Scale to [0, 255] if input is [0, 1]
+        if img.max() <= 1.1:
+            img = img * 255.0
+
+        obs_octo = {
+            "image_primary": img.permute(0, 1, 3, 4, 2),
+            "pad_mask_dict": {"image_primary": torch.ones(b, horizon, dtype=torch.bool, device=device)},
+        }
+
+        if "image_wrist" in observations:
+            w_img = observations["image_wrist"]
+            if w_img.ndim == 4:
+                w_img = w_img.unsqueeze(1)
+
+            bw, hw, cw, hh, ww = w_img.shape
+            if hh != 128 or ww != 128:
+                w_img = torch.nn.functional.interpolate(
+                    w_img.view(bw * hw, cw, hh, ww), size=(128, 128), mode="bilinear", align_corners=False
+                ).view(bw, hw, cw, 128, 128)
+
+            if w_img.max() <= 1.1:
+                w_img = w_img * 255.0
+
+            obs_octo["image_wrist"] = w_img.permute(0, 1, 3, 4, 2)
+            obs_octo["pad_mask_dict"]["image_wrist"] = torch.ones(bw, hw, dtype=torch.bool, device=device)
+
+        tasks = {
+            "language_instruction": self.text_processor.encode([""] * b),
+            "pad_mask_dict": {"language_instruction": torch.ones(b, dtype=torch.bool, device=device)},
+        }
         for k, v in tasks["language_instruction"].items():
             tasks["language_instruction"][k] = v.to(device)
 
@@ -198,7 +231,7 @@ class TwinRLPolicy(PreTrainedPolicy):
     config_class = TwinRLConfig
     name = "twinrl"
 
-    def __init__(self, config: TwinRLConfig | None = None):
+    def __init__(self, config: TwinRLConfig | None = None, **kwargs):
         super().__init__(config)
         self.config = config
         config.validate_features()
@@ -209,15 +242,21 @@ class TwinRLPolicy(PreTrainedPolicy):
         self._init_actor(action_dim)
         self.to(config.device)
 
-    def get_optim_params(self) -> dict:
-        return {
-            "actor": [
-                p
-                for n, p in self.actor.named_parameters()
-                if not n.startswith("encoder") or not self.shared_encoder
-            ],
-            "critic": self.critic_ensemble.parameters(),
-        }
+    def get_optim_params(self) -> list[dict]:
+        return [
+            {
+                "params": [
+                    p
+                    for n, p in self.actor.named_parameters()
+                    if not n.startswith("encoder") or not self.shared_encoder
+                ],
+                "lr": self.config.actor_lr,
+            },
+            {
+                "params": list(self.critic_ensemble.parameters()),
+                "lr": self.config.critic_lr,
+            },
+        ]
 
     def reset(self):
         pass
@@ -235,27 +274,46 @@ class TwinRLPolicy(PreTrainedPolicy):
     def forward(
         self,
         batch: dict[str, Tensor | dict[str, Tensor]],
-        model: Literal["actor", "critic"] = "critic",
-    ) -> dict[str, Tensor]:
-        """Compute loss for either the actor or critic.
+        model: Literal["actor", "critic"] | None = None,
+        reduction: str = "mean",
+    ) -> dict[str, Tensor] | tuple[Tensor, dict[str, Tensor]]:
+        """Compute loss for either the actor or critic, or both.
+
+        If model is None, it returns (loss, output_dict) for compatibility with lerobot_train.py.
+        Otherwise, it returns a dict for compatibility with learner.py.
 
         For "actor":
-            batch must contain "state", ACTION (demo actions for BC term),
+            batch must contain observations, ACTION (demo actions for BC term),
             and optionally "observation_feature".
         For "critic":
-            batch must also contain "reward", "next_state", "done",
+            batch must also contain "reward", next observations, "done",
             and optionally "complementary_info" with "mc_returns".
         """
-        observations: dict[str, Tensor] = batch["state"]
+        # --- Batch mapping ---
+        # Handle flat batches from lerobot_train.py or nested batches from learner.py
+        if "state" in batch and isinstance(batch["state"], dict):
+            observations = batch["state"]
+        else:
+            # Assume flat batch; filter keys starting with 'observation.'
+            observations = {k: v for k, v in batch.items() if k.startswith("observation.")}
+
         obs_features: Tensor | None = batch.get("observation_feature")
 
+        # Handle specific model requests (learner.py style)
         if model == "critic":
+            if "next_state" in batch and isinstance(batch["next_state"], dict):
+                next_observations = batch["next_state"]
+            else:
+                next_observations = {
+                    k.replace("next.", ""): v for k, v in batch.items() if k.startswith("next.observation.")
+                }
+
             return {
                 "loss_critic": self.compute_loss_critic(
                     observations=observations,
                     actions=batch[ACTION],
                     rewards=batch["reward"],
-                    next_observations=batch["next_state"],
+                    next_observations=next_observations,
                     done=batch["done"],
                     mc_returns=self._get_mc_returns(batch),
                     obs_features=obs_features,
@@ -272,7 +330,100 @@ class TwinRLPolicy(PreTrainedPolicy):
                 )
             }
 
-        raise ValueError(f"Unknown model: {model}")
+        # --- Offline training (lerobot_train.py style) ---
+        # If model is None, we assume we are in lerobot_train.py and return (loss, loss_dict)
+
+        # Detect sequence dimension and extract current/next observations
+        # LeRobotDataset with delta_timestamps returns (b, horizon, ...)
+        has_sequence = False
+        horizon = 1
+        if len(observations) > 0:
+            for k, v in observations.items():
+                if k.startswith("observation.image") and v.ndim == 5:
+                    has_sequence = True
+                    horizon = v.shape[1]
+                    break
+                if k.startswith("observation.state") and v.ndim == 3:
+                    has_sequence = True
+                    horizon = v.shape[1]
+                    break
+
+            if has_sequence:
+                if horizon == 2:
+                    # [0, 1] transitions: current is index 0, next is index 1
+                    current_observations = {k: v[:, 0] for k, v in observations.items()}
+                    next_obs_from_seq = {k: v[:, 1] for k, v in observations.items()}
+                else:
+                    # Horizon only (e.g. [-n, ..., 0]): use the whole sequence for the actor
+                    # but the last frame for anything else that expects single states.
+                    current_observations = observations
+                    next_obs_from_seq = None
+            else:
+                current_observations = observations
+                next_obs_from_seq = None
+        else:
+            current_observations = observations
+            next_obs_from_seq = None
+
+        # Squeeze singleton horizon dim for single-step actions/rewards if present
+        demo_actions = batch[ACTION]
+        if demo_actions.ndim == 3 and demo_actions.shape[1] == 1:
+            demo_actions = demo_actions.squeeze(1)
+
+        actor_loss = self.compute_loss_actor(
+            observations=current_observations,
+            demo_actions=demo_actions,
+            obs_features=obs_features,
+        )
+
+        loss_dict = {"loss_actor": actor_loss}
+        total_loss = actor_loss
+
+        # Try to compute critic loss if transitions are available
+        has_critic_data = "reward" in batch and (
+            next_obs_from_seq is not None
+            or "next_state" in batch
+            or any(k.startswith("next.observation.") for k in batch)
+        )
+        if has_critic_data:
+            if next_obs_from_seq is not None:
+                next_observations = next_obs_from_seq
+            elif "next_state" in batch and isinstance(batch["next_state"], dict):
+                next_observations = batch["next_state"]
+            else:
+                next_observations = {
+                    k.replace("next.", ""): v for k, v in batch.items() if k.startswith("next.observation.")
+                }
+
+            rewards = batch["reward"]
+            if rewards.ndim == 2 and rewards.shape[1] == 1:
+                rewards = rewards.squeeze(1)
+
+            done = batch.get("done", batch.get("next.done", torch.zeros_like(rewards)))
+            if done.ndim == 2 and done.shape[1] == 1:
+                done = done.squeeze(1)
+
+            # SACObservationEncoder (used by critic) expects 4D images, not 5D sequences.
+            # If current_observations is still a horizon > 2, we take the last frame.
+            critic_obs = current_observations
+            if has_sequence and horizon > 2:
+                critic_obs = {k: v[:, -1] for k, v in current_observations.items()}
+
+            critic_loss = self.compute_loss_critic(
+                observations=critic_obs,
+                actions=demo_actions,
+                rewards=rewards,
+                next_observations=next_observations,
+                done=done,
+                mc_returns=self._get_mc_returns(batch),
+                obs_features=obs_features,
+                next_obs_features=batch.get("next_observation_feature"),
+            )
+            loss_dict["loss_critic"] = critic_loss
+            total_loss = actor_loss + critic_loss
+
+        loss_dict["loss"] = total_loss
+        return total_loss, loss_dict
 
     # ------------------------------------------------------------------
     # Actor loss: β * L_IL + η * L_Q  (paper Eq. 6)

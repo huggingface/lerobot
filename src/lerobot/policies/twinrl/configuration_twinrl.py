@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
-from lerobot.optim.optimizers import MultiAdamConfig
+from lerobot.optim.optimizers import AdamConfig
 from lerobot.policies.sac.configuration_sac import (
     ActorLearnerConfig,
     ActorNetworkConfig,
@@ -70,7 +70,7 @@ class TwinRLConfig(PreTrainedConfig):
     )
 
     # Architecture
-    device: str = "cpu"
+    device: str = "cuda"
     storage_device: str = "cpu"
     vision_encoder_name: str | None = None
     freeze_vision_encoder: bool = True
@@ -133,11 +133,11 @@ class TwinRLConfig(PreTrainedConfig):
 
     # --- ConRFT / Consistency policy ---
     # "sac" = SACObservationEncoder for actor; "octo" = frozen OctoTransformer
-    actor_encoder_type: str = "sac"
+    actor_encoder_type: str = "octo"
     # HuggingFace repo for the octo-pytorch model (used when actor_encoder_type="octo")
     octo_model_name: str = "lilkm/octo-small-test"
     # When True, use Karras consistency model instead of Gaussian policy
-    use_consistency_policy: bool = False
+    use_consistency_policy: bool = True
     # Karras noise schedule hyperparameters (match official TwinRL defaults)
     num_scales: int = 40
     sigma_min: float = 0.002
@@ -161,13 +161,10 @@ class TwinRLConfig(PreTrainedConfig):
     def __post_init__(self):
         super().__post_init__()
 
-    def get_optimizer_preset(self) -> MultiAdamConfig:
-        return MultiAdamConfig(
+    def get_optimizer_preset(self) -> AdamConfig:
+        return AdamConfig(
+            lr=self.actor_lr,
             weight_decay=0.0,
-            optimizer_groups={
-                "actor": {"lr": self.actor_lr},
-                "critic": {"lr": self.critic_lr},
-            },
         )
 
     def get_scheduler_preset(self) -> None:
@@ -192,12 +189,12 @@ class TwinRLConfig(PreTrainedConfig):
 
     @property
     def observation_delta_indices(self) -> list | None:
-        return None
+        return [0, 1]
 
     @property
     def action_delta_indices(self) -> list | None:
-        return None
+        return [0]
 
     @property
-    def reward_delta_indices(self) -> None:
-        return None
+    def reward_delta_indices(self) -> list | None:
+        return [0]
