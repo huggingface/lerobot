@@ -280,6 +280,9 @@ def build_rollout_context(
     # action target; velocity and torque channels (when present) are kept in
     # the raw observation but excluded from the policy-facing tensors.
     all_obs_features = robot.observation_features
+    # ``observation_features`` values are either a tuple (camera shape) or the
+    # ``float`` type itself used as a sentinel for scalar motor features —
+    # see ``dict[str, type | tuple]`` annotation on ``Robot.observation_features``.
     observation_features_hw = {
         k: v
         for k, v in all_obs_features.items()

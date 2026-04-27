@@ -389,7 +389,8 @@ def record(
             sanity_check_dataset_robot_compatibility(dataset, robot, cfg.dataset.fps, dataset_features)
         else:
             # Reject eval_ prefix — for policy evaluation use lerobot-rollout
-            if cfg.dataset.repo_id.startswith("eval_"):
+            repo_name = cfg.dataset.repo_id.split("/", 1)[-1]
+            if repo_name.startswith("eval_"):
                 raise ValueError(
                     "Dataset names starting with 'eval_' are reserved for policy evaluation. "
                     "lerobot-record is for data collection only. Use lerobot-rollout for policy deployment."

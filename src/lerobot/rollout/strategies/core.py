@@ -237,10 +237,10 @@ def estimate_max_episode_seconds(
         if feat.get("dtype") == "video":
             shape = feat.get("shape", ())
 
-            # (H, W, C)
-            # We want to extract the spatial dimensions.
+            # (H, W, C) — bits-per-pixel is a per-spatial-pixel metric,
+            # so we exclude the channel dimension from the count.
             if len(shape) == 3:
-                pixels = shape[0] * shape[1] * shape[2]
+                pixels = shape[0] * shape[1]
                 camera_pixels.append(pixels)
             else:
                 raise ValueError(f"Unexpected video feature shape: {shape}")

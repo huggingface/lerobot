@@ -260,7 +260,7 @@ def test_estimate_max_episode_seconds_no_video():
 def test_estimate_max_episode_seconds_with_video():
     from lerobot.rollout.strategies import estimate_max_episode_seconds
 
-    features = {"cam": {"dtype": "video", "shape": (3, 480, 640)}}
+    features = {"cam": {"dtype": "video", "shape": (480, 640, 3)}}
     result = estimate_max_episode_seconds(features, fps=30.0)
     assert result > 0
     # With a real camera, duration should differ from the fallback
