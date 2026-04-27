@@ -71,6 +71,7 @@ class PolicyInferenceConfig:
     mcts_depth: int = 2
     mcts_num_candidates: int = 4
     mcts_noise_std: float = 0.05
+    mcts_noise_mode: str = "chunk"
     mcts_exploration: float = 1.4
     suite: str | None = None
     task_id: int | None = None
@@ -767,13 +768,25 @@ def _make_action_candidates(
     *,
     num_candidates: int,
     noise_std: float,
+    noise_mode: str,
     rng: np.random.Generator,
 ) -> list[tuple[str, np.ndarray]]:
     candidates = [("policy", policy_chunk.astype(np.float32, copy=True))]
     for candidate_ix in range(1, num_candidates):
-        noisy = policy_chunk + rng.normal(0.0, noise_std, size=policy_chunk.shape)
+        if noise_mode == "iid":
+            noise = rng.normal(0.0, noise_std, size=policy_chunk.shape)
+        elif noise_mode == "chunk":
+            noise = rng.normal(0.0, noise_std, size=(1, policy_chunk.shape[-1]))
+        elif noise_mode == "mixed":
+            chunk_noise = rng.normal(0.0, noise_std, size=(1, policy_chunk.shape[-1]))
+            iid_noise = rng.normal(0.0, noise_std * 0.25, size=policy_chunk.shape)
+            noise = chunk_noise + iid_noise
+        else:
+            raise ValueError(f"Unknown noise mode '{noise_mode}'.")
+
+        noisy = policy_chunk + noise
         noisy = np.clip(noisy, -1.0, 1.0).astype(np.float32)
-        candidates.append((f"policy_noise_{candidate_ix}", noisy))
+        candidates.append((f"policy_{noise_mode}_noise_{candidate_ix}", noisy))
     return candidates
 
 
@@ -865,6 +878,7 @@ def _expand_mcts_node(
         policy_chunk,
         num_candidates=cfg.mcts_num_candidates,
         noise_std=cfg.mcts_noise_std,
+        noise_mode=cfg.mcts_noise_mode,
         rng=rng,
     )
 
@@ -919,6 +933,7 @@ def _expand_mcts_node(
             source=source,
             extra={
                 "noise_std": cfg.mcts_noise_std if candidate_index else 0.0,
+                "noise_mode": cfg.mcts_noise_mode if candidate_index else "none",
                 "terminal": rollout.terminated,
                 "truncated": rollout.truncated,
                 "success": rollout.success,
@@ -1096,6 +1111,8 @@ def main(cfg: PolicyInferenceConfig) -> None:
         raise ValueError("`mcts_simulations` must be positive.")
     if cfg.mcts_num_candidates <= 0:
         raise ValueError("`mcts_num_candidates` must be positive.")
+    if cfg.mcts_noise_mode not in {"iid", "chunk", "mixed"}:
+        raise ValueError("`mcts_noise_mode` must be one of: iid, chunk, mixed.")
 
     set_seed(cfg.seed)
     action_api, envs_dict = make_action_api(cfg)
@@ -1122,6 +1139,7 @@ def main(cfg: PolicyInferenceConfig) -> None:
             "mcts_depth": cfg.mcts_depth,
             "mcts_num_candidates": cfg.mcts_num_candidates,
             "mcts_noise_std": cfg.mcts_noise_std,
+            "mcts_noise_mode": cfg.mcts_noise_mode,
             "vlm_model": cfg.vlm_model,
             "vlm_base_url": cfg.vlm_base_url or cfg.vlm_api_url,
             "vlm_api_key_env": cfg.vlm_api_key_env or "OPENAI_API_KEY",
