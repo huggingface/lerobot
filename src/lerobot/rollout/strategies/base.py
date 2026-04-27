@@ -78,5 +78,8 @@ class BaseStrategy(RolloutStrategy):
 
     def teardown(self, ctx: RolloutContext) -> None:
         """Disconnect hardware and stop inference."""
-        self._teardown_hardware(ctx.hardware)
+        self._teardown_hardware(
+            ctx.hardware,
+            return_to_initial_position=ctx.runtime.cfg.return_to_initial_position,
+        )
         logger.info("Base strategy teardown complete")

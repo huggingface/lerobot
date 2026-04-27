@@ -196,7 +196,10 @@ class SentryStrategy(RolloutStrategy):
                     logger.info("Dataset uploaded to hub")
                     log_say("Dataset uploaded to hub", play_sounds)
 
-        self._teardown_hardware(ctx.hardware)
+        self._teardown_hardware(
+            ctx.hardware,
+            return_to_initial_position=ctx.runtime.cfg.return_to_initial_position,
+        )
         logger.info("Sentry strategy teardown complete")
 
     def _background_push(self, dataset, cfg) -> None:

@@ -254,7 +254,7 @@ def test_create_inference_engine_sync():
 def test_estimate_max_episode_seconds_no_video():
     from lerobot.rollout.strategies import estimate_max_episode_seconds
 
-    assert estimate_max_episode_seconds({}, fps=30.0) == 600.0
+    assert estimate_max_episode_seconds({}, fps=30.0) == 300.0
 
 
 def test_estimate_max_episode_seconds_with_video():
@@ -264,7 +264,7 @@ def test_estimate_max_episode_seconds_with_video():
     result = estimate_max_episode_seconds(features, fps=30.0)
     assert result > 0
     # With a real camera, duration should differ from the fallback
-    assert result != 600.0
+    assert result != 300.0
 
 
 def test_safe_push_to_hub():
