@@ -416,6 +416,18 @@ def test_create_initial_counts_zero(tmp_path):
     assert dataset.num_frames == 0
 
 
+def test_create_propagates_video_files_size_in_mb(tmp_path):
+    """video_files_size_in_mb passed to create() is reflected in the dataset metadata."""
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID,
+        fps=DEFAULT_FPS,
+        features=SIMPLE_FEATURES,
+        root=tmp_path / "ds",
+        video_files_size_in_mb=42.0,
+    )
+    assert dataset.meta.video_files_size_in_mb == 42.0
+
+
 def test_add_frame_works_in_write_mode(tmp_path):
     """add_frame() succeeds on a dataset created via create()."""
     dataset = LeRobotDataset.create(

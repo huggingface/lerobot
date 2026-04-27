@@ -355,6 +355,7 @@ def build_rollout_context(
                     "Use --dataset.repo_id=<user>/rollout_<name> for policy deployment datasets."
                 )
             cfg.dataset.stamp_repo_id()
+            target_video_mb = getattr(cfg.strategy, "target_video_file_size_mb", None)
             dataset = LeRobotDataset.create(
                 cfg.dataset.repo_id,
                 cfg.dataset.fps,
@@ -370,6 +371,7 @@ def build_rollout_context(
                 streaming_encoding=cfg.dataset.streaming_encoding,
                 encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
                 encoder_threads=cfg.dataset.encoder_threads,
+                video_files_size_in_mb=target_video_mb,
             )
 
     if dataset is not None:
