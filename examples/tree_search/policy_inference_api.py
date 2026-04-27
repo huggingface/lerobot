@@ -26,6 +26,7 @@ import logging
 import math
 import os
 import time
+import re
 from collections.abc import Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass, field
