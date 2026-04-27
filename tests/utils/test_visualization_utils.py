@@ -249,7 +249,11 @@ def test_log_rerun_data_kwargs_only(mock_rerun):
 
 
 def test_log_rerun_data_routes_depth_to_depth_image(mock_rerun):
-    """A 2D float depth obs whose key matches a depth feature must use ``rr.DepthImage``."""
+    """A 2D float depth obs whose key matches a depth feature must use ``rr.DepthImage``.
+
+    Without ``video.depth_min``/``video.depth_max`` in the feature info, the
+    visualizer should not pass a ``depth_range`` (Rerun then auto-normalizes).
+    """
     vu, calls = mock_rerun
 
     features = {
@@ -279,7 +283,57 @@ def test_log_rerun_data_routes_depth_to_depth_image(mock_rerun):
     assert depth.arr.shape == (10, 12)
     assert depth.meter == pytest.approx(1.0)
     assert depth.colormap == "viridis"
+    # No range available -> Rerun should auto-normalize; we must not pass `depth_range`.
+    assert "depth_range" not in depth.kwargs
     assert _kwargs_for(calls, "observation.front_depth").get("static", False) is True
+
+
+def test_log_rerun_data_depth_range_anchored_from_info(mock_rerun):
+    """When ``video.depth_min``/``depth_max`` are present, ``depth_range`` is forwarded."""
+    vu, calls = mock_rerun
+
+    features = {
+        "observation.depth.front": {
+            "dtype": "video",
+            "shape": (480, 640),
+            "info": {
+                "video.is_depth_map": True,
+                "video.depth_min": 0.05,
+                "video.depth_max": 4.0,
+            },
+        },
+    }
+    obs = {"front_depth": np.full((10, 12), 0.5, dtype=np.float32)}
+
+    vu.log_rerun_data(observation=obs, features=features)
+
+    depth = _obj_for(calls, "observation.front_depth")
+    assert type(depth).__name__ == "DummyDepthImage"
+    assert depth.kwargs.get("depth_range") == (0.05, 4.0)
+
+
+def test_log_rerun_data_depth_range_ignored_when_invalid(mock_rerun):
+    """A degenerate range (max <= min, or non-numeric) must be discarded silently."""
+    vu, calls = mock_rerun
+
+    features = {
+        "observation.depth.front": {
+            "dtype": "video",
+            "shape": (480, 640),
+            "info": {
+                "video.is_depth_map": True,
+                "video.depth_min": 1.0,
+                "video.depth_max": 1.0,  # degenerate
+            },
+        },
+    }
+    obs = {"front_depth": np.full((10, 12), 0.5, dtype=np.float32)}
+
+    vu.log_rerun_data(observation=obs, features=features)
+
+    depth = _obj_for(calls, "observation.front_depth")
+    assert type(depth).__name__ == "DummyDepthImage"
+    assert "depth_range" not in depth.kwargs
 
 
 def test_log_rerun_data_depth_skips_compression(mock_rerun):

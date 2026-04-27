@@ -39,6 +39,7 @@ from .video_utils import (
     StreamingVideoEncoder,
     VideoEncoderConfig,
     get_safe_default_video_backend,
+    seed_depth_feature_info,
 )
 
 logger = logging.getLogger(__name__)
@@ -252,6 +253,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 DeprecationWarning,
                 stacklevel=2,
             )
+            seed_depth_feature_info(self.meta.features, self._depth_encoder_config)
             streaming_enc = None
             if streaming_encoding and len(self.meta.video_keys) > 0:
                 streaming_enc = self._build_streaming_encoder(
@@ -711,6 +713,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj._camera_encoder_config = camera_encoder_config
         obj._depth_encoder_config = depth_encoder_config
         obj._encoder_threads = encoder_threads
+        seed_depth_feature_info(obj.meta.features, depth_encoder_config)
 
         # Reader is lazily created on first access (write-only mode)
         obj.reader = None
@@ -827,6 +830,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj._depth_encoder_config = depth_encoder_config
         obj._encoder_threads = encoder_threads
         obj.root = obj.meta.root
+        seed_depth_feature_info(obj.meta.features, depth_encoder_config)
 
         # Reader is lazily created on first access (write-only mode)
         obj.reader = None

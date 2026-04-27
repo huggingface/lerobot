@@ -63,8 +63,10 @@ def _is_scalar(x):
     )
 
 
-def _derive_depth_obs_keys(features: dict[str, dict] | None) -> set[str]:
-    """Derive the set of observation keys that correspond to depth-map features.
+def _derive_depth_obs_ranges(
+    features: dict[str, dict] | None,
+) -> dict[str, tuple[float, float] | None]:
+    """Map observation keys of depth features to their ``(depth_min, depth_max)`` range.
 
     A feature is considered a depth map when its ``info`` dict carries
     ``video.is_depth_map=True`` (the marker set by ``hw_to_dataset_features``
@@ -73,21 +75,37 @@ def _derive_depth_obs_keys(features: dict[str, dict] | None) -> set[str]:
     the corresponding raw observation key forms the robot is likely to emit
     (``front`` and ``front_depth``) so a single membership check covers all
     call sites.
+
+    The mapped value is the ``(depth_min, depth_max)`` range stored on the
+    feature (matching the quantization range used at encoding time), or
+    ``None`` when the metadata doesn't expose a range — in which case the
+    caller should let Rerun auto-normalize. Anchoring the colormap to a
+    fixed range avoids per-frame re-normalization, which otherwise looks
+    like flicker on near-static scenes.
     """
-    keys: set[str] = set()
+    ranges: dict[str, tuple[float, float] | None] = {}
     if not features:
-        return keys
+        return ranges
     depth_prefix = f"{OBS_STR}.depth."
     for fk, fv in features.items():
         info = fv.get("info") if isinstance(fv, dict) else None
         if not isinstance(info, dict) or not info.get("video.is_depth_map", False):
             continue
-        keys.add(fk)
+        depth_min = info.get("video.depth_min")
+        depth_max = info.get("video.depth_max")
+        rng: tuple[float, float] | None = None
+        if (
+            isinstance(depth_min, (int, float))
+            and isinstance(depth_max, (int, float))
+            and depth_max > depth_min
+        ):
+            rng = (float(depth_min), float(depth_max))
+        ranges[fk] = rng
         if fk.startswith(depth_prefix):
             bare = fk[len(depth_prefix) :]
-            keys.add(bare)
-            keys.add(f"{bare}_depth")
-    return keys
+            ranges[bare] = rng
+            ranges[f"{bare}_depth"] = rng
+    return ranges
 
 
 def log_rerun_data(
@@ -106,8 +124,11 @@ def log_rerun_data(
       from CHW to HWC format, (optionally) compressed to JPEG and logged as `rr.Image` or `rr.EncodedImage`.
     - 2D NumPy arrays whose key matches a depth feature in ``features`` (i.e. carrying
       ``video.is_depth_map=True``) are logged as ``rr.DepthImage`` with the Viridis
-      colormap and ``meter=1.0`` (depth values are expected in metric meters). Depth
-      images are never JPEG-compressed regardless of ``compress_images``.
+      colormap and ``meter=1.0`` (depth values are expected in metric meters). When
+      the feature exposes ``video.depth_min`` / ``video.depth_max`` (the encoder
+      quantization range, persisted in ``info.json``), the colormap is anchored to
+      that range via ``depth_range`` to keep the visualization stable across frames.
+      Depth images are never JPEG-compressed regardless of ``compress_images``.
     - 1D NumPy arrays are logged as a series of individual scalars, with each element indexed.
     - Other multi-dimensional arrays are flattened and logged as individual scalars.
 
@@ -125,7 +146,7 @@ def log_rerun_data(
     require_package("rerun-sdk", extra="viz", import_name="rerun")
     import rerun as rr
 
-    depth_obs_keys = _derive_depth_obs_keys(features)
+    depth_obs_ranges = _derive_depth_obs_ranges(features)
 
     if observation:
         for k, v in observation.items():
@@ -137,18 +158,19 @@ def log_rerun_data(
                 rr.log(key, rr.Scalars(float(v)))
             elif isinstance(v, np.ndarray):
                 arr = v
-                is_depth = bool(depth_obs_keys) and (k in depth_obs_keys or key in depth_obs_keys)
+                is_depth = bool(depth_obs_ranges) and (k in depth_obs_ranges or key in depth_obs_ranges)
                 if is_depth and arr.ndim == 2:
                     # Viridis-colormapped DepthImage; never JPEG-compress (lossy on float metric depth).
-                    rr.log(
-                        key,
-                        rr.DepthImage(
-                            arr,
-                            meter=1.0,
-                            colormap=rr.components.Colormap.Viridis,
-                        ),
-                        static=True,
-                    )
+                    # Anchor the colormap to the encoder range when available, so the
+                    # visualization doesn't flicker as per-frame min/max drift.
+                    depth_range = depth_obs_ranges.get(k) or depth_obs_ranges.get(key)
+                    depth_kwargs: dict = {
+                        "meter": 1.0,
+                        "colormap": rr.components.Colormap.Viridis,
+                    }
+                    if depth_range is not None:
+                        depth_kwargs["depth_range"] = depth_range
+                    rr.log(key, rr.DepthImage(arr, **depth_kwargs), static=True)
                     continue
                 # Convert CHW -> HWC when needed
                 if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):

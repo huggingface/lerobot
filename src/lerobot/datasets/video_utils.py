@@ -1355,6 +1355,44 @@ _DEPTH_INFO_KEYS: tuple[str, ...] = (
 )
 
 
+def seed_depth_feature_info(
+    features: dict[str, dict],
+    depth_encoder_config: "DepthEncoderConfig | None",
+) -> None:
+    """Pre-populate per-feature ``video.<field>`` entries from *depth_encoder_config*.
+
+    ``update_video_info`` only runs after the first episode video is encoded,
+    so without this seeding step ``features[key]["info"]`` carries no
+    quantization range until then. Consumers that read the dataset feature
+    spec mid-recording (e.g. the rerun visualizer pinning the depth colormap
+    to ``video.depth_min`` / ``video.depth_max``) would otherwise see no
+    range during episode 1 and re-normalize per frame.
+
+    Stream-derived values written later by :func:`get_video_info` /
+    ``update_video_info`` win over these seeds (the merge is
+    ``{**existing, **stream_info}``), so callers can safely re-run this on
+    a partially-populated info dict.
+
+    No-op when ``depth_encoder_config`` is ``None`` or no feature is flagged
+    as a depth map.
+    """
+    if depth_encoder_config is None:
+        return
+    encoder_fields = {
+        f"video.{name}": value for name, value in asdict(depth_encoder_config).items()
+    }
+    for ft in features.values():
+        if ft.get("dtype") != "video":
+            continue
+        info = ft.get("info") or {}
+        if not info.get("video.is_depth_map", False):
+            continue
+        # Only fill fields not already set, so explicit user-provided info is preserved.
+        for k, v in encoder_fields.items():
+            info.setdefault(k, v)
+        ft["info"] = info
+
+
 def get_video_pixel_channels(pix_fmt: str) -> int:
     if "gray" in pix_fmt or "depth" in pix_fmt or "monochrome" in pix_fmt:
         return 1
