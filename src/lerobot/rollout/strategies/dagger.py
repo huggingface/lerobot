@@ -24,14 +24,21 @@ the ``input_device`` config field.  Each device exposes three actions:
     1. **pause_resume** — Toggle policy execution (AUTONOMOUS <-> PAUSED).
     2. **correction**   — Toggle correction recording (PAUSED <-> CORRECTING).
     3. **upload**        — Push dataset to hub on demand (corrections-only mode).
-    ESC (keyboard only)  — Stop session.
+    ESC (keyboard only) — Stop session.
 
-Recording Modes:
+Recording modes:
     ``record_autonomous=True``:  Sentry-like continuous recording with
         time-based episode rotation.  Both autonomous and correction
         frames are recorded; corrections tagged ``intervention=True``.
     ``record_autonomous=False``: Only correction windows are recorded.
         Each correction (start to stop) becomes one episode.
+
+Teleoperator expectations:
+    The user is responsible for keeping the leader arm aligned with the
+    follower arm at the moment a correction begins.  Programmatic motor
+    handover (``enable_torque`` / ``disable_torque`` / ``write_goal_positions``)
+    is intentionally not invoked here — see the TODO in
+    :func:`DAggerStrategy._apply_transition` for the open design decision.
 """
 
 from __future__ import annotations
@@ -168,8 +175,10 @@ class DAggerEvents:
 # ---------------------------------------------------------------------------
 
 
-# TODO(Steven): either enforce this (meaning all teleop must implement these methods) or
-# user is responsible for moving the teleop to the same position as the robot when starting the correction.
+# TODO(Steven): re-enable programmatic teleop alignment once we decide whether
+# to enforce motor-control methods on every Teleoperator.  Until then the user
+# is responsible for moving the leader arm to the follower's pose at the moment
+# a correction begins.
 def _teleop_smooth_move_to(
     teleop: Teleoperator, target_pos: dict, duration_s: float = 2.0, fps: int = 50
 ) -> None:
@@ -406,8 +415,8 @@ class DAggerStrategy(RolloutStrategy):
         engine.reset()
         interpolator.reset()
         events.reset()
-        # TODO(Steven): either enforce this (meaning all teleop must implement these methods) or
-        # user is responsible for moving the teleop to the same position as the robot when starting the correction.
+        # TODO(Steven): re-enable once Teleoperator motor-control methods are
+        # standardised; until then the user pre-aligns the leader by hand.
         # teleop.disable_torque()
         engine.resume()
 
@@ -439,7 +448,9 @@ class DAggerStrategy(RolloutStrategy):
                     obs = robot.get_observation()
 
                     # --- CORRECTING: human teleop control ---
-                    # TODO(Steven): This runs at interpolation FPS. We run at configured FPS and interpolate the actions from the teleop instead. Leaving it like this for now for simplicity.
+                    # TODO(Steven): teleop runs at the same FPS as the policy. To
+                    # decouple the two, sample teleop at its native rate and
+                    # interpolate to the control loop's tick rate.
                     if phase == DAggerPhase.CORRECTING:
                         obs_processed = ctx.processors.robot_observation_processor(obs)
                         teleop_action = teleop.get_action()
@@ -488,9 +499,9 @@ class DAggerStrategy(RolloutStrategy):
                                 dataset.add_frame(frame)
                             record_tick += 1
 
-                    # Episode rotation derived from video file-size target.
-                    # Do NOT save mid-correction — wait for the correction
-                    # to finish so the episode boundary is clean.
+                    # Episode rotation derived from the video file-size target.
+                    # Saving is deferred while a correction is ongoing so the
+                    # episode boundary lands on a clean autonomous frame.
                     elapsed = time.perf_counter() - episode_start
                     if elapsed >= episode_duration_s and phase != DAggerPhase.CORRECTING:
                         with self._episode_lock:
@@ -521,8 +532,8 @@ class DAggerStrategy(RolloutStrategy):
             finally:
                 logger.info("DAgger continuous control loop ended — pausing engine")
                 engine.pause()
-                # TODO(Steven): either enforce this (meaning all teleop must implement these methods) or
-                # user is responsible for moving the teleop to the same position as the robot when starting the correction.
+                # TODO(Steven): re-enable once Teleoperator motor-control methods
+                # are standardised across all teleop implementations.
                 # teleop.disable_torque()
                 with contextlib.suppress(Exception):
                     with self._episode_lock:
@@ -559,8 +570,8 @@ class DAggerStrategy(RolloutStrategy):
         engine.reset()
         interpolator.reset()
         events.reset()
-        # TODO(Steven): either enforce this (meaning all teleop must implement these methods) or
-        # user is responsible for moving the teleop to the same position as the robot when starting the correction.
+        # TODO(Steven): re-enable once Teleoperator motor-control methods are
+        # standardised; until then the user pre-aligns the leader by hand.
         # teleop.disable_torque()
         engine.resume()
 
@@ -615,7 +626,9 @@ class DAggerStrategy(RolloutStrategy):
                     obs = robot.get_observation()
 
                     # --- CORRECTING: human teleop control + recording ---
-                    # TODO(Steven): This runs at interpolation FPS. We run at configured FPS and interpolate the actions from the teleop instead. Leaving it like this for now for simplicity.
+                    # TODO(Steven): teleop runs at the same FPS as the policy. To
+                    # decouple the two, sample teleop at its native rate and
+                    # interpolate to the control loop's tick rate.
                     if phase == DAggerPhase.CORRECTING:
                         obs_processed = ctx.processors.robot_observation_processor(obs)
                         teleop_action = teleop.get_action()
@@ -666,8 +679,8 @@ class DAggerStrategy(RolloutStrategy):
             finally:
                 logger.info("DAgger corrections-only loop ended — pausing engine")
                 engine.pause()
-                # TODO(Steven): either enforce this (meaning all teleop must implement these methods) or
-                # user is responsible for moving the teleop to the same position as the robot when starting the correction.
+                # TODO(Steven): re-enable once Teleoperator motor-control methods
+                # are standardised across all teleop implementations.
                 # teleop.disable_torque()
                 with contextlib.suppress(Exception):
                     with self._episode_lock:
@@ -697,15 +710,16 @@ class DAggerStrategy(RolloutStrategy):
             _robot_pos = {
                 k: v for k, v in obs.items() if k.endswith(".pos") and k in robot.observation_features
             }
-            # TODO(Steven): either enforce this (meaning all teleop must implement these methods) or
-            # user is responsible for moving the teleop to the same position as the robot when starting the correction.
-            # Consider also a method that moves the robot to the teleop smoothly (similar to what we do at HW shutdown).
-            # _teleop_smooth_move_to(teleop, robot_pos, duration_s=2.0, fps=50)
+            # TODO(Steven): once Teleoperator motor-control methods are
+            # standardised, drive the leader to the follower's pose here so the
+            # operator does not need to pre-align the arm by hand.  Until then
+            # the user is responsible for the alignment.
+            # _teleop_smooth_move_to(teleop, _robot_pos, duration_s=2.0, fps=50)
 
         elif new_phase == DAggerPhase.CORRECTING:
             logger.info("Entering correction mode — human teleop control")
-            # TODO(Steven): either enforce this (meaning all teleop must implement these methods) or
-            # user is responsible for moving the teleop to the same position as the robot when starting the correction.
+            # TODO(Steven): re-enable once Teleoperator motor-control methods
+            # are standardised across all teleop implementations.
             # teleop.disable_torque()
 
         elif new_phase == DAggerPhase.AUTONOMOUS:

@@ -15,8 +15,8 @@
 """Inference engine ABC.
 
 Rollout strategies consume actions through this small interface so they
-do not need to know whether the inference engine is synchronous, runs in
-a background thread (RTC), or comes from an external source.
+do not need to know whether inference happens inline on the control thread
+or asynchronously in a background thread (RTC).
 """
 
 from __future__ import annotations
@@ -29,9 +29,10 @@ import torch
 class InferenceEngine(abc.ABC):
     """Abstract backend for producing actions during rollout.
 
-    Subclasses decide whether inference happens inline, in a background
-    thread, or externally. The contract is minimal so new backends can
-    be added without touching rollout strategies.
+    Subclasses decide whether inference happens inline on the control
+    thread or asynchronously in a background thread.  The contract is
+    minimal so additional backends can be plugged in without touching
+    rollout strategies.
 
     Lifecycle
     ---------
@@ -43,8 +44,8 @@ class InferenceEngine(abc.ABC):
     -----------------
     ``get_action(obs_frame)`` — return the next action tensor, or
     ``None`` if none is available (e.g. async queue empty).  Sync
-    backends always compute from ``obs_frame``; async backends may
-    ignore it (they get observations via ``notify_observation``).
+    backends always compute from ``obs_frame``; async backends ignore
+    it (they receive observations via ``notify_observation``).
 
     Optional hooks
     --------------

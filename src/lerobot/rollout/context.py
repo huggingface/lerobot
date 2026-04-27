@@ -259,10 +259,12 @@ def build_rollout_context(
         teleop.connect()
         logger.info("Teleoperator connected")
 
-    # DAgger requires teleop with motor control capabilities (enable_torque,
-    # disable_torque, write_goal_positions).
-    # TODO(Steven): either enforce this (meaning all teleop must implement these methods) or
-    # user is responsible for moving the teleop to the same position as the robot when starting the correction.
+    # TODO(Steven): once Teleoperator motor-control methods are standardised
+    # (``enable_torque`` / ``disable_torque`` / ``write_goal_positions``), gate
+    # the DAgger strategy on their presence here and fail fast with a helpful
+    # message instead of relying on the operator to pre-align the leader by
+    # hand.  See :func:`DAggerStrategy._apply_transition` for the matching
+    # disabled call sites.
     # if isinstance(cfg.strategy, DAggerStrategyConfig) and teleop is not None:
     #     required_teleop_methods = ("enable_torque", "disable_torque", "write_goal_positions")
     #     missing = [m for m in required_teleop_methods if not callable(getattr(teleop, m, None))]
@@ -274,9 +276,9 @@ def build_rollout_context(
     #         )
 
     # --- 4. Features + action-key reconciliation ---------------------
-    # TODO(Steven): Only `.pos` joint features are used for policy inference — velocity and
-    # torque channels are observation-only and must be excluded from the state
-    # and action tensors that the policy sees.
+    # TODO(Steven):Only ``.pos`` joint features are routed to the policy as state and as the
+    # action target; velocity and torque channels (when present) are kept in
+    # the raw observation but excluded from the policy-facing tensors.
     all_obs_features = robot.observation_features
     observation_features_hw = {
         k: v

@@ -14,8 +14,8 @@
 
 """Inference engine package — backend-agnostic action production.
 
-Concrete strategies (sync, RTC, …) expose the same small interface so
-rollout strategies never branch on the inference backend.
+Concrete backends (``sync``, ``rtc``, ...) expose the same small interface so
+rollout strategies never branch on which backend is in use.
 """
 
 from .base import InferenceEngine

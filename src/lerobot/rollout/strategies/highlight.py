@@ -64,8 +64,8 @@ class HighlightStrategy(RolloutStrategy):
     3. The episode is saved and the ring buffer resumes capturing.
 
     Requires ``streaming_encoding=True`` (enforced in config validation)
-    so that ``dataset.add_frame`` is a non-blocking queue put — draining
-    900 frames stays sub-ms per frame.
+    so that ``dataset.add_frame`` is a non-blocking queue put — flushing
+    the entire ring buffer in one tick must not stall the control loop.
     """
 
     config: HighlightStrategyConfig

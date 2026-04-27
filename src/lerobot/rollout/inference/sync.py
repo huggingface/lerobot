@@ -31,18 +31,19 @@ from .base import InferenceEngine
 logger = logging.getLogger(__name__)
 
 
-# TODO(Steven): support relative-action policies. The per-tick flow refreshes
+# TODO(Steven): support relative-action policies.  The per-tick flow refreshes
 # ``RelativeActionsProcessorStep._last_state`` every call, so cached chunk
 # actions popped on later ticks get reanchored to the *current* robot state and
-# absolute targets drift through the chunk. Rejected at context-build time for
-# now; RTC postprocesses the whole chunk and is unaffected.
+# absolute targets drift through the chunk.  Relative-action policies are
+# rejected at context-build time today; RTC postprocesses the whole chunk and
+# is unaffected.
 #
-# Candidate fix:
-# Drive the policy via ``predict_action_chunk`` and serve a local FIFO of postprocessed actions.
-# Eliminates drift by construction and saves per-tick pre/post work, but bypasses ``select_action``
-# — needs fallbacks for SAC (raises), ACT temporal ensembling (ensembler lives in ``select_action``),
-# and Diffusion-family (obs-history queues populated as a side effect of ``select_action``).
-# Not yet implemented for sake of keeping sync engine simple and focused on the most common use case.
+# Candidate fix: drive the policy via ``predict_action_chunk`` and serve a
+# local FIFO of postprocessed actions.  Eliminates drift by construction and
+# saves per-tick pre/post work, but bypasses ``select_action`` — needs
+# fallbacks for SAC (raises), ACT temporal ensembling (ensembler lives in
+# ``select_action``), and Diffusion-family (obs-history queues populated as a
+# side effect of ``select_action``).
 
 
 class SyncInferenceEngine(InferenceEngine):
