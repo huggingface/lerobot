@@ -12,9 +12,9 @@
   - local: in_translation
     title: (번역중) 나만의 하드웨어 가져오기
   - local: in_translation
-    title: (번역중) 강화학습으로 로봇 훈련하기
+    title: (번역중) 강화 학습으로 로봇 훈련하기
   - local: in_translation
-    title: (번역중) 시뮬레이션에서 강화학습 훈련하기
+    title: (번역중) 시뮬레이션에서 강화 학습 훈련하기
   - local: in_translation
     title: (번역중) 멀티 GPU 훈련
   - local: in_translation
