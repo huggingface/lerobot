@@ -439,6 +439,7 @@ class DAggerStrategy(RolloutStrategy):
                     obs = robot.get_observation()
 
                     # --- CORRECTING: human teleop control ---
+                    # TODO(Steven): This runs at interpolation FPS. We run at configured FPS and interpolate the actions from the teleop instead. Leaving it like this for now for simplicity.
                     if phase == DAggerPhase.CORRECTING:
                         obs_processed = ctx.processors.robot_observation_processor(obs)
                         teleop_action = teleop.get_action()
@@ -614,6 +615,7 @@ class DAggerStrategy(RolloutStrategy):
                     obs = robot.get_observation()
 
                     # --- CORRECTING: human teleop control + recording ---
+                    # TODO(Steven): This runs at interpolation FPS. We run at configured FPS and interpolate the actions from the teleop instead. Leaving it like this for now for simplicity.
                     if phase == DAggerPhase.CORRECTING:
                         obs_processed = ctx.processors.robot_observation_processor(obs)
                         teleop_action = teleop.get_action()
