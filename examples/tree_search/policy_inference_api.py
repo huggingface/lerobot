@@ -439,6 +439,8 @@ class ScoreResult:
     score: float
     reason: str
     prompt: str
+    images: Sequence[tuple[str, np.ndarray]] = field(default_factory=list)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
     raw_response: Any | None = None
 
 
@@ -509,10 +511,20 @@ class VLMHeuristicScorer:
             raise ValueError("VLM scoring requires at least one image.")
         prompt = self.build_prompt(task, image_labels=[label for label, _ in images], metadata=metadata)
         if success:
-            return ScoreResult(score=1.0, reason="Environment success predicate is true.", prompt=prompt)
+            return ScoreResult(
+                score=1.0,
+                reason="Environment success predicate is true.",
+                prompt=prompt,
+                images=list(images),
+                metadata=dict(metadata),
+            )
         if self.model is None:
             return ScoreResult(
-                score=0.0, reason="VLM API disabled; using success-only fallback.", prompt=prompt
+                score=0.0,
+                reason="VLM API disabled; using success-only fallback.",
+                prompt=prompt,
+                images=list(images),
+                metadata=dict(metadata),
             )
 
         try:
@@ -526,6 +538,7 @@ class VLMHeuristicScorer:
                         "image_url": {
                             "url": f"data:image/png;base64,{self._image_to_base64_png(image)}"
                         },
+                        "uuid": label,
                     }
                 )
             completion = client.chat.completions.create(
@@ -546,11 +559,24 @@ class VLMHeuristicScorer:
             raw = completion.model_dump() if hasattr(completion, "model_dump") else str(completion)
         except Exception as exc:
             logger.warning("VLM scoring failed: %s", exc)
-            return ScoreResult(score=0.0, reason=f"VLM scoring failed: {exc}", prompt=prompt)
+            return ScoreResult(
+                score=0.0,
+                reason=f"VLM scoring failed: {exc}",
+                prompt=prompt,
+                images=list(images),
+                metadata=dict(metadata),
+            )
 
         score = float(parsed.get("score", 0.0))
         score = min(1.0, max(0.0, score))
-        return ScoreResult(score=score, reason=str(parsed.get("reason", "")), prompt=prompt, raw_response=raw)
+        return ScoreResult(
+            score=score,
+            reason=str(parsed.get("reason", "")),
+            prompt=prompt,
+            images=list(images),
+            metadata=dict(metadata),
+            raw_response=raw,
+        )
 
     def _get_client(self):
         if self._client is not None:
@@ -640,6 +666,17 @@ class TraceRecorder:
         write_image(image, path)
         return str(path.relative_to(self.trace_dir))
 
+    def save_labeled_images(
+        self, node_id: str, images: Sequence[tuple[str, np.ndarray]]
+    ) -> list[dict[str, str]]:
+        saved: list[dict[str, str]] = []
+        for image_ix, (label, image) in enumerate(images):
+            safe_label = "".join(ch if ch.isalnum() else "_" for ch in label).strip("_")
+            image_path = self.save_image(f"{node_id}_vlm_{image_ix:02d}_{safe_label}", image)
+            if image_path is not None:
+                saved.append({"label": label, "path": image_path})
+        return saved
+
     def add_node(
         self,
         *,
@@ -657,6 +694,7 @@ class TraceRecorder:
         node_id = f"n{self._node_ix:06d}"
         self._node_ix += 1
         image_path = self.save_image(f"{node_id}_state", image)
+        vlm_images = self.save_labeled_images(node_id, score.images)
         node = {
             "id": node_id,
             "parent_id": parent_id,
@@ -668,6 +706,8 @@ class TraceRecorder:
             "vlm_score": score.score,
             "vlm_reason": score.reason,
             "vlm_raw_response": score.raw_response,
+            "vlm_images": vlm_images,
+            "vlm_metadata": _to_jsonable(dict(score.metadata)),
             "reward_sum": reward_sum,
             "success": success,
             "terminal": terminal,

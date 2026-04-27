@@ -322,6 +322,37 @@ INDEX_HTML = r"""<!doctype html>
       object-fit: contain;
     }
 
+    .vlm-gallery {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 8px;
+    }
+
+    .vlm-card {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .vlm-card img {
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      object-fit: contain;
+      display: block;
+      background: #111827;
+    }
+
+    .vlm-card div {
+      padding: 6px 7px;
+      color: var(--muted);
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
     .kv {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -788,13 +819,15 @@ INDEX_HTML = r"""<!doctype html>
 
         <section class="panel">
           <div class="panel-head">VLM</div>
+          ${vlmGallery(node)}
           <div class="panel-body">
             <div class="text-block"><strong>Reason</strong>\n${esc(node.vlm_reason || "")}</div>
           </div>
+          ${jsonPanel(node.vlm_metadata)}
           <div class="panel-body" style="border-top:1px solid var(--line)">
             <div class="text-block"><strong>Prompt</strong>\n${esc(node.prompt || "")}</div>
           </div>
-          ${node.vlm_raw_response ? `<div class="panel-body" style="border-top:1px solid var(--line)"><pre>${esc(JSON.stringify(node.vlm_raw_response, null, 2))}</pre></div>` : ""}
+          ${jsonPanel(node.vlm_raw_response)}
         </section>
 
         ${incoming ? edgePanel("Incoming Edge", incoming) : ""}
@@ -804,6 +837,32 @@ INDEX_HTML = r"""<!doctype html>
 
     function kv(label, value) {
       return `<div><span>${esc(label)}</span><strong>${esc(value ?? "-")}</strong></div>`;
+    }
+
+    function jsonPanel(value) {
+      if (!value) return "";
+      return `
+        <div class="panel-body" style="border-top:1px solid var(--line)">
+          <pre>${esc(JSON.stringify(value, null, 2))}</pre>
+        </div>
+      `;
+    }
+
+    function vlmGallery(node) {
+      const images = Array.isArray(node.vlm_images) ? node.vlm_images : [];
+      if (!images.length) return "";
+      return `
+        <div class="panel-body" style="border-bottom:1px solid var(--line)">
+          <div class="vlm-gallery">
+            ${images.map((item) => `
+              <div class="vlm-card" title="${esc(item.label || "")}">
+                <img src="${imageUrl(item.path)}" alt="${esc(item.label || "VLM input")}">
+                <div>${esc(item.label || "VLM input")}</div>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+      `;
     }
 
     function edgePanel(title, edge) {
