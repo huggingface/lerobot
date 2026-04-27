@@ -301,7 +301,8 @@ class EpisodeFrameReader:
         self.root = meta.root
         self.episode_index = episode_index
         self.episode = meta.episodes[episode_index]
-        self.episode_id = int(_coerce_scalar(self.episode.get("episode_index")) or episode_index)
+        self.dataset_from_index = int(self.episode["dataset_from_index"])
+        self.dataset_to_index = int(self.episode["dataset_to_index"])
         self.video_backend = video_backend
         self.tolerance_s = tolerance_s
         data_path = self.root / self.meta.get_data_file_path(episode_index)
@@ -309,14 +310,18 @@ class EpisodeFrameReader:
             raise FileNotFoundError(f"Episode data parquet is missing: {data_path}")
 
         df = pd.read_parquet(data_path)
-        if "episode_index" not in df.columns:
-            raise ValueError(f"Parquet file has no episode_index column: {data_path}")
-        df = df[df["episode_index"] == self.episode_id].reset_index(drop=True)
+        if "index" not in df.columns:
+            raise ValueError(f"Parquet file has no global index column: {data_path}")
+        df = df[
+            (df["index"] >= self.dataset_from_index) & (df["index"] < self.dataset_to_index)
+        ].reset_index(drop=True)
         if df.empty:
-            available = sorted(pd.read_parquet(data_path, columns=["episode_index"])["episode_index"].unique())
+            min_index = pd.read_parquet(data_path, columns=["index"])["index"].min()
+            max_index = pd.read_parquet(data_path, columns=["index"])["index"].max()
             raise ValueError(
-                f"Episode {self.episode_id} has no rows in {data_path}. Available episode_index values: "
-                f"{available[:20]}"
+                f"Metadata row {episode_index} has no frame rows in {data_path} for global index range "
+                f"[{self.dataset_from_index}, {self.dataset_to_index}). File index range is "
+                f"[{min_index}, {max_index}]."
             )
         self.df = df
 
