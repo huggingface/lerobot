@@ -28,7 +28,7 @@ from datasets import Dataset
 
 from lerobot.datasets.dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from lerobot.datasets.feature_utils import get_hf_features_from_features
-from lerobot.datasets.io_utils import hf_transform_to_torch, flatten_dict
+from lerobot.datasets.io_utils import flatten_dict, hf_transform_to_torch
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
@@ -40,7 +40,6 @@ from lerobot.datasets.utils import (
 )
 from lerobot.datasets.video_utils import encode_video_frames
 from lerobot.utils.constants import DEFAULT_FEATURES
-from lerobot.utils.utils import flatten_dict
 from tests.fixtures.constants import (
     DEFAULT_FPS,
     DUMMY_CAMERA_FEATURES,

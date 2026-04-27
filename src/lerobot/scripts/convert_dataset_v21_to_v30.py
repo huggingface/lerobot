@@ -71,7 +71,6 @@ from lerobot.datasets.io_utils import (
     get_parquet_num_frames,
     load_info,
     load_json,
-    flatten_dict,
     write_episodes,
     write_info,
     write_stats,
