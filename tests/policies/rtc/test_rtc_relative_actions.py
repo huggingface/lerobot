@@ -22,13 +22,14 @@ from lerobot.configs.types import (
     PolicyFeature,
     RTCAttentionSchedule,
 )
-from lerobot.processor import TransitionKey, batch_to_transition
+from lerobot.processor import TransitionKey, batch_to_transition, create_transition
 from lerobot.processor.normalize_processor import NormalizerProcessorStep, UnnormalizerProcessorStep
 from lerobot.processor.relative_action_processor import (
     AbsoluteActionsProcessorStep,
     RelativeActionsProcessorStep,
     to_relative_actions,
 )
+from lerobot.rollout.inference.rtc import _reanchor_relative_rtc_prefix
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 
@@ -218,7 +219,9 @@ class TestFullPipelineRelativeRTC:
 
     def test_roundtrip_with_identity_normalization(self):
         """Actions → relative → normalize → [model] → unnormalize → absolute should recover originals.
-        Using mean=0, std=1 normalization (identity)."""
+
+        Using mean=0, std=1 normalization (identity).
+        """
         relative_step, normalizer, unnormalizer, absolute_step = _make_relative_pipeline()
 
         state = torch.randn(1, ACTION_DIM)
@@ -398,6 +401,106 @@ class TestStateRebasingApproximation:
         # Last dim (excluded) should have zero error
         error_excluded = (relatives_old[..., -1] - relatives_new[..., -1]).abs().max()
         assert error_excluded < 1e-6, f"Excluded joint should have zero error, got {error_excluded}"
+
+
+class TestRTCReanchoringWithStateNormalizer:
+    """RTC re-anchoring under non-identity OBS_STATE normalization."""
+
+    @staticmethod
+    def _build_normalizer_with_state_stats():
+        """Build a relative-action preprocessor with non-trivial OBS_STATE stats."""
+        features = {
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(ACTION_DIM,)),
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(ACTION_DIM,)),
+        }
+        norm_map = {
+            FeatureType.ACTION: NormalizationMode.MEAN_STD,
+            FeatureType.STATE: NormalizationMode.MEAN_STD,
+        }
+        stats = {
+            ACTION: {
+                "mean": torch.zeros(ACTION_DIM).numpy(),
+                "std": (0.5 * torch.ones(ACTION_DIM)).numpy(),
+            },
+            OBS_STATE: {
+                "mean": (5.0 * torch.ones(ACTION_DIM)).numpy(),
+                "std": (2.0 * torch.ones(ACTION_DIM)).numpy(),
+            },
+        }
+        relative_step = RelativeActionsProcessorStep(enabled=True)
+        normalizer = NormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
+        return relative_step, normalizer
+
+    def test_reanchor_with_raw_state_matches_normalize_of_absolute_minus_state(self):
+        """Reanchoring with the raw cached state yields ``normalize(prev_actions_absolute - raw_state)``."""
+        relative_step, normalizer = self._build_normalizer_with_state_stats()
+
+        raw_state = torch.tensor([[7.0, 8.0, 9.0, 10.0, 11.0, 12.0]])
+        relative_step(batch_to_transition({OBS_STATE: raw_state.clone()}))
+
+        prev_actions_absolute = torch.tensor([[2.0, 3.0, 4.0, 5.0, 6.0, 7.0]] * 5)
+
+        result = _reanchor_relative_rtc_prefix(
+            prev_actions_absolute=prev_actions_absolute,
+            current_state=relative_step.get_cached_state(),
+            relative_step=relative_step,
+            normalizer_step=normalizer,
+            policy_device="cpu",
+        )
+
+        expected_relative = to_relative_actions(prev_actions_absolute, raw_state, [True] * ACTION_DIM)
+        expected = normalizer(create_transition(action=expected_relative))[TransitionKey.ACTION]
+        torch.testing.assert_close(result, expected, atol=1e-5, rtol=1e-5)
+
+    def test_reanchor_with_normalized_state_produces_wrong_result(self):
+        """Reanchoring with raw vs. normalized state produces meaningfully different outputs."""
+        relative_step, normalizer = self._build_normalizer_with_state_stats()
+
+        raw_state = torch.tensor([[7.0, 8.0, 9.0, 10.0, 11.0, 12.0]])
+        relative_step(batch_to_transition({OBS_STATE: raw_state.clone()}))
+
+        normalized_obs = normalizer(batch_to_transition({OBS_STATE: raw_state.clone()}))
+        normalized_state = normalized_obs[TransitionKey.OBSERVATION][OBS_STATE]
+        assert not torch.allclose(normalized_state, raw_state)
+
+        prev_actions_absolute = torch.tensor([[2.0, 3.0, 4.0, 5.0, 6.0, 7.0]] * 5)
+
+        result_raw = _reanchor_relative_rtc_prefix(
+            prev_actions_absolute=prev_actions_absolute,
+            current_state=raw_state,
+            relative_step=relative_step,
+            normalizer_step=normalizer,
+            policy_device="cpu",
+        )
+        result_normalized = _reanchor_relative_rtc_prefix(
+            prev_actions_absolute=prev_actions_absolute,
+            current_state=normalized_state,
+            relative_step=relative_step,
+            normalizer_step=normalizer,
+            policy_device="cpu",
+        )
+
+        max_abs_diff = (result_raw - result_normalized).abs().max()
+        assert max_abs_diff > 0.5, (
+            f"Raw and normalized state produced near-identical outputs (max diff {max_abs_diff:.4f}); "
+            "OBS_STATE stats are too close to identity to be sensitive."
+        )
+
+    def test_engine_pipeline_cached_state_is_raw_after_full_preprocess(self):
+        """``get_cached_state()`` returns raw OBS_STATE after the full preprocessor pipeline runs."""
+        relative_step, normalizer = self._build_normalizer_with_state_stats()
+
+        raw_state = torch.tensor([[7.0, 8.0, 9.0, 10.0, 11.0, 12.0]])
+
+        transition = batch_to_transition({OBS_STATE: raw_state.clone()})
+        transition = relative_step(transition)
+        preprocessed = normalizer(transition)
+
+        cached = relative_step.get_cached_state()
+        torch.testing.assert_close(cached, raw_state, atol=1e-6, rtol=1e-6)
+
+        post_normalize_state = preprocessed[TransitionKey.OBSERVATION][OBS_STATE]
+        assert not torch.allclose(cached, post_normalize_state, atol=1e-3)
 
 
 def _detect_relative_actions(preprocessor) -> bool:

@@ -43,7 +43,6 @@ from lerobot.processor import (
     create_transition,
     to_relative_actions,
 )
-from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.feature_utils import build_dataset_frame
 
 from ..robot_wrapper import ThreadSafeRobot
@@ -318,13 +317,15 @@ class RTCInferenceEngine(InferenceEngine):
                         preprocessed = self._preprocessor(obs_batch)
 
                         if prev_actions is not None and self._relative_step is not None:
-                            state_tensor = preprocessed.get(OBS_STATE)
-                            if state_tensor is not None:
+                            # Rebase against the raw cached state so the leftover tail stays in
+                            # the training-time coordinate frame.
+                            raw_state = self._relative_step.get_cached_state()
+                            if raw_state is not None:
                                 prev_abs = queue.get_processed_left_over()
                                 if prev_abs is not None and prev_abs.numel() > 0:
                                     prev_actions = _reanchor_relative_rtc_prefix(
                                         prev_actions_absolute=prev_abs,
-                                        current_state=state_tensor,
+                                        current_state=raw_state,
                                         relative_step=self._relative_step,
                                         normalizer_step=self._normalizer_step,
                                         policy_device=policy_device,
