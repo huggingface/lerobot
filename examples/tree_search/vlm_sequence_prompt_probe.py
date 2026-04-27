@@ -49,11 +49,15 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pandas as pd
 import torch
+from huggingface_hub import snapshot_download
 from PIL import Image, ImageDraw, ImageFont
 
-from lerobot.datasets import LeRobotDataset, LeRobotDatasetMetadata
+from lerobot.datasets import LeRobotDatasetMetadata
 from lerobot.datasets.image_writer import write_image
+from lerobot.datasets.video_utils import decode_video_frames
+from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
 from lerobot.utils.io_utils import write_video
 
 logger = logging.getLogger(__name__)
@@ -277,8 +281,79 @@ def _find_episode_for_task(
     )
 
 
-def _resolve_camera_keys(dataset: LeRobotDataset, requested: str) -> list[str]:
-    available = list(dataset.meta.camera_keys)
+class EpisodeFrameReader:
+    """Direct reader for one episode's parquet rows and video frames.
+
+    This avoids the Hugging Face Datasets filtered parquet path, which can fail
+    with "Instruction train corresponds to no data" on partially cached nested
+    LeRobot datasets.
+    """
+
+    def __init__(
+        self,
+        *,
+        meta: LeRobotDatasetMetadata,
+        episode_index: int,
+        video_backend: str | None,
+        tolerance_s: float = 1e-4,
+    ) -> None:
+        self.meta = meta
+        self.root = meta.root
+        self.episode_index = episode_index
+        self.episode = meta.episodes[episode_index]
+        self.episode_id = int(_coerce_scalar(self.episode.get("episode_index")) or episode_index)
+        self.video_backend = video_backend
+        self.tolerance_s = tolerance_s
+        data_path = self.root / self.meta.get_data_file_path(episode_index)
+        if not data_path.exists():
+            raise FileNotFoundError(f"Episode data parquet is missing: {data_path}")
+
+        df = pd.read_parquet(data_path)
+        if "episode_index" not in df.columns:
+            raise ValueError(f"Parquet file has no episode_index column: {data_path}")
+        df = df[df["episode_index"] == self.episode_id].reset_index(drop=True)
+        if df.empty:
+            available = sorted(pd.read_parquet(data_path, columns=["episode_index"])["episode_index"].unique())
+            raise ValueError(
+                f"Episode {self.episode_id} has no rows in {data_path}. Available episode_index values: "
+                f"{available[:20]}"
+            )
+        self.df = df
+
+    @property
+    def camera_keys(self) -> list[str]:
+        return list(self.meta.camera_keys)
+
+    def __len__(self) -> int:
+        return len(self.df)
+
+    def __getitem__(self, local_index: int) -> dict[str, Any]:
+        row = self.df.iloc[int(local_index)].to_dict()
+        item = dict(row)
+        timestamp = float(row["timestamp"])
+
+        for camera_key in self.meta.video_keys:
+            from_timestamp = float(self.episode[f"videos/{camera_key}/from_timestamp"])
+            video_path = self.root / self.meta.get_video_file_path(self.episode_index, camera_key)
+            if not video_path.exists():
+                raise FileNotFoundError(f"Episode video file is missing: {video_path}")
+            frames = decode_video_frames(
+                video_path,
+                [from_timestamp + timestamp],
+                self.tolerance_s,
+                self.video_backend,
+                return_uint8=True,
+            )
+            item[camera_key] = frames.squeeze(0)
+
+        task_index = _coerce_scalar(row.get("task_index"))
+        if task_index is not None:
+            item["task"] = str(self.meta.tasks.iloc[int(task_index)].name)
+        return item
+
+
+def _resolve_camera_keys(reader: EpisodeFrameReader, requested: str) -> list[str]:
+    available = list(reader.camera_keys)
     if requested.strip().lower() == "all":
         return available
     keys = [key.strip() for key in requested.split(",") if key.strip()]
@@ -666,28 +741,78 @@ def _score_monotonicity(scores: list[float], tolerance: float) -> dict[str, Any]
     }
 
 
-def _load_episode_dataset(args: argparse.Namespace, episode_index: int) -> LeRobotDataset:
-    kwargs = {
-        "repo_id": args.dataset_repo_id,
-        "root": args.dataset_root,
-        "revision": args.dataset_revision,
-        "episodes": [episode_index],
-        "video_backend": args.video_backend,
-        "download_videos": args.download_videos,
-        "force_cache_sync": args.force_cache_sync,
-    }
-    try:
-        return LeRobotDataset(**kwargs)
-    except ValueError as exc:
-        message = str(exc)
-        if args.force_cache_sync or "corresponds to no data" not in message:
-            raise
-        logger.warning(
-            "Selected episode load found no local data. Retrying with force_cache_sync=True "
-            "to download the episode parquet/video files."
+def _episode_file_patterns(
+    meta: LeRobotDatasetMetadata,
+    *,
+    episode_index: int,
+    include_videos: bool,
+) -> list[str]:
+    files = [str(meta.get_data_file_path(episode_index))]
+    if include_videos:
+        files.extend(str(meta.get_video_file_path(episode_index, video_key)) for video_key in meta.video_keys)
+    return sorted(set(files))
+
+
+def _ensure_episode_files(
+    args: argparse.Namespace,
+    meta: LeRobotDatasetMetadata,
+    *,
+    episode_index: int,
+) -> None:
+    files = _episode_file_patterns(
+        meta,
+        episode_index=episode_index,
+        include_videos=args.download_videos,
+    )
+    missing = [file for file in files if not (meta.root / file).exists()]
+    if not missing and not args.force_cache_sync:
+        return
+
+    logger.info(
+        "Downloading %d selected episode file(s) for episode=%s.",
+        len(files),
+        episode_index,
+    )
+    if args.dataset_root is None:
+        meta.root = Path(
+            snapshot_download(
+                args.dataset_repo_id,
+                repo_type="dataset",
+                revision=meta.revision,
+                cache_dir=HF_LEROBOT_HUB_CACHE,
+                allow_patterns=files,
+            )
         )
-        kwargs["force_cache_sync"] = True
-        return LeRobotDataset(**kwargs)
+    else:
+        args.dataset_root.mkdir(exist_ok=True, parents=True)
+        snapshot_download(
+            args.dataset_repo_id,
+            repo_type="dataset",
+            revision=meta.revision,
+            local_dir=args.dataset_root,
+            allow_patterns=files,
+        )
+        meta.root = args.dataset_root
+
+    still_missing = [file for file in files if not (meta.root / file).exists()]
+    if still_missing:
+        raise FileNotFoundError(
+            "Could not find selected episode files after download:\n"
+            + "\n".join(str(meta.root / file) for file in still_missing[:20])
+        )
+
+
+def _load_episode_reader(
+    args: argparse.Namespace,
+    meta: LeRobotDatasetMetadata,
+    episode_index: int,
+) -> EpisodeFrameReader:
+    _ensure_episode_files(args, meta, episode_index=episode_index)
+    return EpisodeFrameReader(
+        meta=meta,
+        episode_index=episode_index,
+        video_backend=args.video_backend,
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -774,8 +899,15 @@ def main() -> None:
         len(local_indices),
     )
 
-    dataset = _load_episode_dataset(args, episode_index)
-    camera_keys = _resolve_camera_keys(dataset, args.camera_keys)
+    reader = _load_episode_reader(args, meta, episode_index)
+    length = len(reader)
+    local_indices = _sample_local_indices(
+        length,
+        frame_stride=args.frame_stride,
+        max_frames=args.max_frames,
+    )
+    logger.info("Loaded direct episode reader with %s frame rows.", length)
+    camera_keys = _resolve_camera_keys(reader, args.camera_keys)
     reference_images = _load_reference_images(
         reference_image_dir=args.reference_image_dir,
         reference_image_paths=args.reference_image_paths,
@@ -791,7 +923,7 @@ def main() -> None:
     video_frames: list[np.ndarray] = []
 
     for sample_index, local_index in enumerate(local_indices):
-        item = dataset[local_index]
+        item = reader[local_index]
         dataset_index = int(_coerce_scalar(item.get("index")) or (from_idx + local_index))
         frame_index = _coerce_scalar(item.get("frame_index"))
         timestamp = _coerce_scalar(item.get("timestamp"))
