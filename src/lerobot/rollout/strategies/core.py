@@ -219,7 +219,7 @@ def estimate_max_episode_seconds(
     The estimate ignores codec-specific settings (CRF, preset) on purpose:
     we only need a rough lower bound on bitrate, not a precise prediction.
 
-    Falls back to 600 s (10 min) when no video features are present.
+    Falls back to 300 s (5 min) when no video features are present.
     """
     # 0.1 bits-per-pixel is a *low* estimate for CRF-30 streaming video of
     # robot footage (real-world is typically 0.1 – 0.3 bpp).  Under-
@@ -233,16 +233,16 @@ def estimate_max_episode_seconds(
         if feat.get("dtype") == "video":
             shape = feat.get("shape", ())
 
-            # Assuming shape could be (C, H, W) or (T, C, H, W)
+            # (H, W, C)
             # We want to extract the spatial dimensions.
-            if len(shape) >= 3:
-                h, w = shape[-2], shape[-1]
-                pixels = h * w
-                if pixels > 0:
-                    camera_pixels.append(pixels)
+            if len(shape) == 3:
+                pixels = shape[0] * shape[1] * shape[2]
+                camera_pixels.append(pixels)
+            else:
+                raise ValueError(f"Unexpected video feature shape: {shape}")
 
     if not camera_pixels:
-        return 600.0
+        return 300.0
 
     # Use the smallest camera: it produces the lowest bitrate and therefore
     # takes the longest to reach the target — the conservative choice.
@@ -252,7 +252,7 @@ def estimate_max_episode_seconds(
 
     # Guard against division by zero just in case
     if bytes_per_second <= 0:
-        return 600.0
+        return 300.0
 
     return (target_size_mb * 1024 * 1024) / bytes_per_second
 
