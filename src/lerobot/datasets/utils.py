@@ -162,11 +162,12 @@ class DatasetInfo:
     def from_dict(cls, data: dict) -> "DatasetInfo":
         """Construct from a raw dict (e.g. loaded directly from JSON).
 
-        Unknown keys are silently ignored for forward compatibility with
-        datasets that carry additional fields (e.g. ``total_videos`` from v2.x).
+        Unknown keys are ignored for forward compatibility with datasets that
+        carry additional fields (e.g. ``total_videos`` from v2.x). A warning is
+        logged when such fields are present.
         """
         known = {f.name for f in dataclasses.fields(cls)}
-        unknown = {k for k in data if k not in known}
+        unknown = sorted(k for k in data if k not in known)
         if unknown:
             logger.warning(f"Unknown fields in DatasetInfo: {unknown}. These will be ignored.")
         return cls(**{k: v for k, v in data.items() if k in known})
