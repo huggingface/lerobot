@@ -630,6 +630,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         streaming_encoding: bool = False,
         encoder_queue_maxsize: int = 30,
         encoder_threads: int | None = None,
+        video_files_size_in_mb: int | None = None,
+        data_files_size_in_mb: int | None = None,
     ) -> "LeRobotDataset":
         """Create a new LeRobotDataset from scratch for recording data.
 
@@ -677,6 +679,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             root=root,
             use_videos=use_videos,
             metadata_buffer_size=metadata_buffer_size,
+            video_files_size_in_mb=video_files_size_in_mb,
+            data_files_size_in_mb=data_files_size_in_mb,
         )
         obj.repo_id = obj.meta.repo_id
         obj._requested_root = obj.meta.root

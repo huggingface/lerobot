@@ -47,7 +47,7 @@ class RolloutRingBuffer:
         count.
     """
 
-    def __init__(self, max_seconds: float = 30.0, max_memory_mb: float = 2048.0, fps: float = 30.0) -> None:
+    def __init__(self, max_seconds: float = 30.0, max_memory_mb: int = 2048, fps: float = 30.0) -> None:
         self._max_frames = int(max_seconds * fps)
         self._max_bytes = int(max_memory_mb * 1024 * 1024)
         self._buffer: deque[dict] = deque(maxlen=self._max_frames)

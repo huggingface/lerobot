@@ -75,7 +75,7 @@ class SentryStrategyConfig(RolloutStrategyConfig):
     # Target video file size in MB for episode rotation.  Episodes are
     # saved once the estimated video duration would exceed this limit.
     # Defaults to DEFAULT_VIDEO_FILE_SIZE_IN_MB when set to None.
-    target_video_file_size_mb: float | None = None
+    target_video_file_size_mb: int | None = None
 
 
 @RolloutStrategyConfig.register_subclass("highlight")
@@ -90,7 +90,7 @@ class HighlightStrategyConfig(RolloutStrategyConfig):
     """
 
     ring_buffer_seconds: float = 10.0
-    ring_buffer_max_memory_mb: float = 1024.0
+    ring_buffer_max_memory_mb: int = 1024
     save_key: str = "s"
     push_key: str = "h"
 
@@ -150,7 +150,7 @@ class DAggerStrategyConfig(RolloutStrategyConfig):
     upload_every_n_episodes: int = 5
     # Target video file size in MB for episode rotation (record_autonomous
     # mode only).  Defaults to DEFAULT_VIDEO_FILE_SIZE_IN_MB when None.
-    target_video_file_size_mb: float | None = None
+    target_video_file_size_mb: int | None = None
     input_device: str = "keyboard"
     keyboard: DAggerKeyboardConfig = field(default_factory=DAggerKeyboardConfig)
     pedal: DAggerPedalConfig = field(default_factory=DAggerPedalConfig)
