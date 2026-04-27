@@ -320,10 +320,19 @@ def _snapshot_base_env(base_env: gym.Env) -> np.ndarray:
     return base_env.snapshot()
 
 
-def _restore_base_env(base_env: gym.Env, state: np.ndarray) -> Mapping[str, Any]:
+def _restore_base_env(
+    base_env: gym.Env, state: np.ndarray, *, timestep: int | None = None
+) -> Mapping[str, Any]:
     if not hasattr(base_env, "restore"):
         raise ValueError(f"Environment {type(base_env).__name__} does not expose restore().")
-    return base_env.restore(state)
+    try:
+        return base_env.restore(state, timestep=timestep)
+    except TypeError as exc:
+        if "unexpected keyword argument" not in str(exc):
+            raise
+        if timestep is not None:
+            logger.debug("Environment restore() does not accept timestep; restoring simulator state only.")
+        return base_env.restore(state)
 
 
 def _step_base_env_no_reset(
@@ -692,7 +701,7 @@ def _rollout_action_sequence(
             break
 
     if observation is None:
-        observation = _restore_base_env(base_env, _snapshot_base_env(base_env))
+        observation = _restore_base_env(base_env, _snapshot_base_env(base_env), timestep=start_env_step)
     frame = _render_base_env_frame(base_env)
     state = _snapshot_base_env(base_env)
     return SequenceRollout(
@@ -845,7 +854,7 @@ def _expand_mcts_node(
 
     node_state = states_by_id[node["id"]]
     node_observation = observations_by_id[node["id"]]
-    _restore_base_env(base_env, node_state)
+    _restore_base_env(base_env, node_state, timestep=int(node["env_step"]))
     policy_chunk = action_api.predict_action_chunk(
         node_observation,
         env=vector_env,
@@ -861,7 +870,7 @@ def _expand_mcts_node(
 
     created_children: list[dict[str, Any]] = []
     for candidate_index, (source, actions) in enumerate(candidates):
-        _restore_base_env(base_env, node_state)
+        _restore_base_env(base_env, node_state, timestep=int(node["env_step"]))
         rollout = _rollout_action_sequence(
             base_env=base_env,
             actions=actions,
@@ -922,7 +931,7 @@ def _expand_mcts_node(
         observations_by_id[child["id"]] = rollout.observation
         created_children.append(child)
 
-    _restore_base_env(base_env, node_state)
+    _restore_base_env(base_env, node_state, timestep=int(node["env_step"]))
     return created_children
 
 
@@ -1035,7 +1044,7 @@ def plan_mcts_action_chunk(
             float(pair[1]["vlm_score"]),
         ),
     )
-    _restore_base_env(base_env, root_state)
+    _restore_base_env(base_env, root_state, timestep=env_step)
     return np.asarray(best_edge["actions"], dtype=np.float32), {
         "root_id": root["id"],
         "selected_edge_id": best_edge["id"],

@@ -278,12 +278,24 @@ class LiberoEnv(gym.Env):
         assert self._env is not None
         return self._env.get_sim_state().copy()
 
-    def restore(self, mujoco_state: np.ndarray) -> RobotObservation:
+    def restore(self, mujoco_state: np.ndarray, timestep: int | None = None) -> RobotObservation:
         """Restore a MuJoCo simulator state and return the corresponding observation."""
         self._ensure_env()
         assert self._env is not None
         raw_obs = self._env.regenerate_obs_from_state(np.asarray(mujoco_state).copy())
+        self._restore_step_bookkeeping(timestep)
         return self._format_raw_obs(raw_obs)
+
+    def _restore_step_bookkeeping(self, timestep: int | None = None) -> None:
+        """Keep robosuite episode bookkeeping consistent with restored simulator states."""
+        assert self._env is not None
+        robosuite_env = getattr(self._env, "env", self._env)
+        robosuite_env.done = False
+        if timestep is None:
+            return
+        robosuite_env.timestep = int(timestep)
+        if hasattr(robosuite_env, "cur_time") and hasattr(robosuite_env, "control_timestep"):
+            robosuite_env.cur_time = robosuite_env.timestep * robosuite_env.control_timestep
 
     def _format_raw_obs(self, raw_obs: RobotObservation) -> RobotObservation:
         assert self._env is not None, "_format_raw_obs called before _ensure_env()"
