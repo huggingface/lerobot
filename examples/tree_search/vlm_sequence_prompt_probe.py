@@ -141,6 +141,22 @@ def _coerce_scalar(value: Any) -> float | int | bool | None:
 def _image_to_uint8_hwc(value: Any) -> np.ndarray:
     if isinstance(value, Image.Image):
         return np.asarray(value.convert("RGB"), dtype=np.uint8)
+    if isinstance(value, dict):
+        image_bytes = value.get("bytes")
+        if image_bytes is not None:
+            with Image.open(BytesIO(image_bytes)) as image:
+                return np.asarray(image.convert("RGB"), dtype=np.uint8)
+        image_path = value.get("path")
+        if image_path:
+            with Image.open(image_path) as image:
+                return np.asarray(image.convert("RGB"), dtype=np.uint8)
+        for key in ("array", "data"):
+            if key in value:
+                return _image_to_uint8_hwc(value[key])
+        raise ValueError(f"Unsupported image dictionary keys: {sorted(value)}")
+    if isinstance(value, bytes | bytearray):
+        with Image.open(BytesIO(value)) as image:
+            return np.asarray(image.convert("RGB"), dtype=np.uint8)
     if isinstance(value, torch.Tensor):
         value = value.detach().cpu().numpy()
     image = np.asarray(value)
