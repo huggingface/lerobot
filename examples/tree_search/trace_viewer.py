@@ -212,9 +212,14 @@ INDEX_HTML = r"""<!doctype html>
 
     .edge.selected { stroke: var(--blue); stroke-width: 3; }
 
+    .node {
+      cursor: pointer;
+    }
+
     .node-hit {
       fill: transparent;
       cursor: pointer;
+      pointer-events: all;
     }
 
     .node circle {
@@ -235,7 +240,8 @@ INDEX_HTML = r"""<!doctype html>
       stroke-linejoin: round;
       fill: #1f2937;
       font-size: 12px;
-      pointer-events: none;
+      cursor: pointer;
+      pointer-events: auto;
     }
 
     .legend {
@@ -744,12 +750,6 @@ INDEX_HTML = r"""<!doctype html>
         </g>
       `;
 
-      for (const element of svg.querySelectorAll(".node")) {
-        element.addEventListener("click", (event) => {
-          event.stopPropagation();
-          selectNode(element.dataset.nodeId);
-        });
-      }
     }
 
     function sum(values) {
@@ -868,6 +868,10 @@ INDEX_HTML = r"""<!doctype html>
       renderDetails();
     }
 
+    function closestNodeElement(target) {
+      return target instanceof Element ? target.closest(".node") : null;
+    }
+
     function fitTree() {
       const box = svg.getBoundingClientRect();
       const bounds = state.layoutBounds;
@@ -904,7 +908,15 @@ INDEX_HTML = r"""<!doctype html>
       renderTree();
     }, { passive: false });
 
+    svg.addEventListener("click", (event) => {
+      const nodeElement = closestNodeElement(event.target);
+      if (!nodeElement) return;
+      event.stopPropagation();
+      selectNode(nodeElement.dataset.nodeId);
+    });
+
     svg.addEventListener("pointerdown", (event) => {
+      if (closestNodeElement(event.target)) return;
       state.dragging = true;
       state.dragStart = { x: event.clientX, y: event.clientY, panX: state.panX, panY: state.panY };
       svg.classList.add("dragging");
