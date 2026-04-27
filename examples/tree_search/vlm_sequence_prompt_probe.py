@@ -87,6 +87,7 @@ class FrameScoreRecord:
     reason: str
     annotated_image_path: str
     vlm_input_images: list[dict[str, str]]
+    temporal_context_local_indices: list[int]
     prompt: str
     raw_response: Any | None
 
@@ -672,18 +673,19 @@ class VLMFrameScorer:
             )
         return (
             f'Task: "{task}"\n\n'
-            "You are scoring progress in a robot manipulation task from the supplied camera views. "
+            "You are scoring progress in a robot manipulation task from the supplied images. "
             "The images whose labels start with `reference.target.` are target-object reference images. "
             "They are not current state images; use them only to identify what the target object looks like "
-            "in the current camera views. The current state views may include a base camera and a wrist "
-            "camera. Judge whether the gripper is approaching, grasping, or moving the referenced target "
-            "object toward the task goal. Do not assume a visible distractor object is the target unless it "
-            "matches the task and target reference.\n\n"
+            "in the scene. The images whose labels start with `temporal.scene.` are consecutive whole-scene "
+            "views from a successful demonstration. The final `temporal.scene.current` image is the state to "
+            "score. Earlier temporal images provide context only. Return one score for the current image, "
+            "indicating how close it is to the final successful state. Do not score progress toward a "
+            "distractor object unless it matches the task and target reference.\n\n"
             f"Images are supplied in this order:\n{image_description}\n\n"
             "Return JSON only with keys `score` and `reason`.\n"
-            "Score meaning: 0.0 = no visible progress, 0.3 = robot is near or reaching the relevant object, "
-            "0.5 = object is grasped or moved toward the target, 0.8 = object is near/over the target but "
-            "completion is not certain, 1.0 = task appears complete."
+            "Score meaning: 0.0 = no visible progress toward success, 0.3 = gripper is near or aligned with "
+            "the target object, 0.5 = target object is grasped or being lifted, 0.8 = target object is near "
+            "or over the goal, 1.0 = task appears complete in the current image."
         )
 
     def _get_client(self):
@@ -779,6 +781,7 @@ def _write_records(records: list[FrameScoreRecord], output_dir: Path, summary: d
                 "score",
                 "reason",
                 "annotated_image_path",
+                "temporal_context_local_indices",
             ],
         )
         writer.writeheader()
@@ -794,6 +797,7 @@ def _write_records(records: list[FrameScoreRecord], output_dir: Path, summary: d
                     "score": record.score,
                     "reason": record.reason,
                     "annotated_image_path": record.annotated_image_path,
+                    "temporal_context_local_indices": record.temporal_context_local_indices,
                 }
             )
 
@@ -895,6 +899,17 @@ def _load_episode_reader(
     )
 
 
+def _temporal_context_indices(
+    sampled_indices: list[int],
+    sample_index: int,
+    *,
+    context_size: int,
+) -> list[int]:
+    context_size = max(1, int(context_size))
+    start = max(0, sample_index - context_size + 1)
+    return sampled_indices[start : sample_index + 1]
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset_repo_id", default="HuggingFaceVLA/libero")
@@ -909,6 +924,17 @@ def parse_args() -> argparse.Namespace:
         "--camera_keys",
         default="observation.images.image,observation.images.image2",
         help="'all' or comma-separated camera keys.",
+    )
+    parser.add_argument(
+        "--scene_camera_key",
+        default="observation.images.image",
+        help="Whole-scene camera used for temporal VLM context.",
+    )
+    parser.add_argument(
+        "--temporal_context",
+        type=int,
+        default=3,
+        help="Number of consecutive whole-scene frames to send to the VLM, including current.",
     )
     parser.add_argument("--output_dir", type=Path, required=True)
     parser.add_argument("--video_path", type=Path, default=None)
@@ -988,6 +1014,10 @@ def main() -> None:
     )
     logger.info("Loaded direct episode reader with %s frame rows.", length)
     camera_keys = _resolve_camera_keys(reader, args.camera_keys)
+    if args.scene_camera_key not in reader.camera_keys:
+        raise SystemExit(
+            f"Unknown scene_camera_key '{args.scene_camera_key}'. Available camera keys: {reader.camera_keys}"
+        )
     reference_images = _load_reference_images(
         reference_image_dir=args.reference_image_dir,
         reference_image_paths=args.reference_image_paths,
@@ -1013,7 +1043,22 @@ def main() -> None:
         for camera_key in camera_keys:
             current_images.append((f"current.{camera_key}", _image_to_uint8_hwc(item[camera_key])))
 
-        vlm_images = [*reference_images, *current_images]
+        temporal_indices = _temporal_context_indices(
+            local_indices,
+            sample_index,
+            context_size=args.temporal_context,
+        )
+        temporal_images: list[tuple[str, np.ndarray]] = []
+        for context_ix, context_local_index in enumerate(temporal_indices):
+            context_item = item if context_local_index == local_index else reader[context_local_index]
+            label = (
+                f"temporal.scene.current.{args.scene_camera_key}"
+                if context_local_index == local_index
+                else f"temporal.scene.prev_{len(temporal_indices) - context_ix - 1}.{args.scene_camera_key}"
+            )
+            temporal_images.append((label, _image_to_uint8_hwc(context_item[args.scene_camera_key])))
+
+        vlm_images = [*reference_images, *temporal_images]
         robot_state = _extract_robot_state(item)
         score = scorer.score(
             task=task,
@@ -1052,6 +1097,7 @@ def main() -> None:
             reason=score.reason,
             annotated_image_path=annotated_path.relative_to(args.output_dir).as_posix(),
             vlm_input_images=saved_inputs,
+            temporal_context_local_indices=temporal_indices,
             prompt=score.prompt,
             raw_response=score.raw_response,
         )
@@ -1078,6 +1124,8 @@ def main() -> None:
         "episode_dataset_from_index": from_idx,
         "episode_dataset_to_index": to_idx,
         "camera_keys": camera_keys,
+        "scene_camera_key": args.scene_camera_key,
+        "temporal_context": args.temporal_context,
         "reference_image_labels": [label for label, _ in reference_images],
         "video_path": str(args.video_path),
         **_score_monotonicity([record.score for record in records], args.monotonic_tolerance),
