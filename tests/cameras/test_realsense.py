@@ -202,6 +202,31 @@ def test_read_latest_too_old():
             _ = camera.read_latest(max_age_ms=0)  # immediately too old
 
 
+def test_async_read_depth_without_use_depth_raises():
+    """``async_read_depth`` must reject cameras configured without ``use_depth=True``."""
+    config = RealSenseCameraConfig(serial_number_or_name="042", warmup_s=0)
+    with RealSenseCamera(config) as camera, pytest.raises(RuntimeError, match="use_depth=False"):
+        _ = camera.async_read_depth()
+
+
+def test_read_latest_depth_without_use_depth_raises():
+    """``read_latest_depth`` must reject cameras configured without ``use_depth=True``."""
+    config = RealSenseCameraConfig(serial_number_or_name="042", warmup_s=0)
+    with RealSenseCamera(config) as camera, pytest.raises(RuntimeError, match="use_depth=False"):
+        _ = camera.read_latest_depth()
+
+
+def test_depth_to_meters_uses_depth_scale():
+    """``_depth_to_meters`` must scale uint16 raw depth into float32 metric meters."""
+    config = RealSenseCameraConfig(serial_number_or_name="042", warmup_s=0)
+    camera = RealSenseCamera(config)
+    camera.depth_scale = 0.001  # typical D-series scale (1 mm/unit)
+    raw = np.array([[0, 1000, 2500], [4095, 65535, 0]], dtype=np.uint16)
+    meters = camera._depth_to_meters(raw)
+    assert meters.dtype == np.float32
+    np.testing.assert_allclose(meters, raw.astype(np.float32) * 0.001)
+
+
 @pytest.mark.parametrize(
     "rotation",
     [
