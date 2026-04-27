@@ -86,11 +86,24 @@ def hw_to_dataset_features(
         }
 
     for key, shape in cam_fts.items():
-        features[f"{prefix}.images.{key}"] = {
-            "dtype": "video" if use_video else "image",
-            "shape": shape,
-            "names": ["height", "width", "channels"],
-        }
+        if len(shape) == 2:
+            # Single-channel feature (e.g. depth map). The hardware-side key is
+            # expected to use a "_depth" suffix to disambiguate from its color
+            # counterpart; we strip it so the dataset feature is published as
+            # ``{prefix}.depth.<bare>`` and aligned with ``observation.images.<bare>``.
+            bare = key.removesuffix("_depth") if key.endswith("_depth") else key
+            features[f"{prefix}.depth.{bare}"] = {
+                "dtype": "video" if use_video else "image",
+                "shape": shape,
+                "names": ["height", "width"],
+                "info": {"video.is_depth_map": True},
+            }
+        else:
+            features[f"{prefix}.images.{key}"] = {
+                "dtype": "video" if use_video else "image",
+                "shape": shape,
+                "names": ["height", "width", "channels"],
+            }
 
     _validate_feature_names(features)
     return features
@@ -120,7 +133,14 @@ def build_dataset_frame(
         elif ft["dtype"] == "float32" and len(ft["shape"]) == 1:
             frame[key] = np.array([values[name] for name in ft["names"]], dtype=np.float32)
         elif ft["dtype"] in ["image", "video"]:
-            frame[key] = values[key.removeprefix(f"{prefix}.images.")]
+            if key.startswith(f"{prefix}.depth."):
+                bare = key.removeprefix(f"{prefix}.depth.")
+                # Hardware emits depth values under "<bare>_depth" to disambiguate
+                # from the color stream stored at "<bare>" — fall back to the bare
+                # name when the producer already uses dataset-style keys.
+                frame[key] = values.get(f"{bare}_depth", values.get(bare))
+            else:
+                frame[key] = values[key.removeprefix(f"{prefix}.images.")]
 
     return frame
 
