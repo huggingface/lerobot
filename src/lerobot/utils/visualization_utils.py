@@ -63,10 +63,38 @@ def _is_scalar(x):
     )
 
 
+def _derive_depth_obs_keys(features: dict[str, dict] | None) -> set[str]:
+    """Derive the set of observation keys that correspond to depth-map features.
+
+    A feature is considered a depth map when its ``info`` dict carries
+    ``video.is_depth_map=True`` (the marker set by ``hw_to_dataset_features``
+    and persisted in ``info.json``). For each such feature, we record both
+    the fully-namespaced dataset key (e.g. ``observation.depth.front``) and
+    the corresponding raw observation key forms the robot is likely to emit
+    (``front`` and ``front_depth``) so a single membership check covers all
+    call sites.
+    """
+    keys: set[str] = set()
+    if not features:
+        return keys
+    depth_prefix = f"{OBS_STR}.depth."
+    for fk, fv in features.items():
+        info = fv.get("info") if isinstance(fv, dict) else None
+        if not isinstance(info, dict) or not info.get("video.is_depth_map", False):
+            continue
+        keys.add(fk)
+        if fk.startswith(depth_prefix):
+            bare = fk[len(depth_prefix) :]
+            keys.add(bare)
+            keys.add(f"{bare}_depth")
+    return keys
+
+
 def log_rerun_data(
     observation: RobotObservation | None = None,
     action: RobotAction | None = None,
     compress_images: bool = False,
+    features: dict[str, dict] | None = None,
 ) -> None:
     """
     Logs observation and action data to Rerun for real-time visualization.
@@ -76,6 +104,10 @@ def log_rerun_data(
     - Scalars values (floats, ints) are logged as `rr.Scalars`.
     - 3D NumPy arrays that resemble images (e.g., with 1, 3, or 4 channels first) are transposed
       from CHW to HWC format, (optionally) compressed to JPEG and logged as `rr.Image` or `rr.EncodedImage`.
+    - 2D NumPy arrays whose key matches a depth feature in ``features`` (i.e. carrying
+      ``video.is_depth_map=True``) are logged as ``rr.DepthImage`` with the Viridis
+      colormap and ``meter=1.0`` (depth values are expected in metric meters). Depth
+      images are never JPEG-compressed regardless of ``compress_images``.
     - 1D NumPy arrays are logged as a series of individual scalars, with each element indexed.
     - Other multi-dimensional arrays are flattened and logged as individual scalars.
 
@@ -85,10 +117,15 @@ def log_rerun_data(
         observation: An optional dictionary containing observation data to log.
         action: An optional dictionary containing action data to log.
         compress_images: Whether to compress images before logging to save bandwidth & memory in exchange for cpu and quality.
+        features: Optional dataset feature spec (e.g. ``LeRobotDataset.features``). When
+            provided, observation entries matching a depth-map feature are rendered with
+            ``rr.DepthImage`` instead of the generic ``rr.Image`` path.
     """
 
     require_package("rerun-sdk", extra="viz", import_name="rerun")
     import rerun as rr
+
+    depth_obs_keys = _derive_depth_obs_keys(features)
 
     if observation:
         for k, v in observation.items():
@@ -100,6 +137,19 @@ def log_rerun_data(
                 rr.log(key, rr.Scalars(float(v)))
             elif isinstance(v, np.ndarray):
                 arr = v
+                is_depth = bool(depth_obs_keys) and (k in depth_obs_keys or key in depth_obs_keys)
+                if is_depth and arr.ndim == 2:
+                    # Viridis-colormapped DepthImage; never JPEG-compress (lossy on float metric depth).
+                    rr.log(
+                        key,
+                        rr.DepthImage(
+                            arr,
+                            meter=1.0,
+                            colormap=rr.components.Colormap.Viridis,
+                        ),
+                        static=True,
+                    )
+                    continue
                 # Convert CHW -> HWC when needed
                 if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
                     arr = np.transpose(arr, (1, 2, 0))

@@ -43,11 +43,23 @@ def mock_rerun(monkeypatch):
         def __init__(self, arr):
             self.arr = arr
 
+    class DummyDepthImage:
+        def __init__(self, arr, meter=None, colormap=None, **kwargs):
+            self.arr = arr
+            self.meter = meter
+            self.colormap = colormap
+            self.kwargs = kwargs
+
     def dummy_log(key, obj=None, **kwargs):
         # Accept either positional `obj` or keyword `entity` and record remaining kwargs.
         if obj is None and "entity" in kwargs:
             obj = kwargs.pop("entity")
         calls.append((key, obj, kwargs))
+
+    class _Colormap:
+        Viridis = "viridis"
+
+    dummy_components = SimpleNamespace(Colormap=_Colormap)
 
     dummy_rr = SimpleNamespace(
         __name__="rerun",
@@ -55,6 +67,8 @@ def mock_rerun(monkeypatch):
         __spec__=SimpleNamespace(name="rerun", submodule_search_locations=None),
         Scalars=DummyScalar,
         Image=DummyImage,
+        DepthImage=DummyDepthImage,
+        components=dummy_components,
         log=dummy_log,
         init=lambda *a, **k: None,
         spawn=lambda *a, **k: None,
@@ -232,3 +246,68 @@ def test_log_rerun_data_kwargs_only(mock_rerun):
     a = _obj_for(calls, "action.a")
     assert type(a).__name__ == "DummyScalar"
     assert a.value == pytest.approx(1.0)
+
+
+def test_log_rerun_data_routes_depth_to_depth_image(mock_rerun):
+    """A 2D float depth obs whose key matches a depth feature must use ``rr.DepthImage``."""
+    vu, calls = mock_rerun
+
+    features = {
+        "observation.images.front": {
+            "dtype": "video",
+            "shape": (480, 640, 3),
+            "info": {"video.is_depth_map": False},
+        },
+        "observation.depth.front": {
+            "dtype": "video",
+            "shape": (480, 640),
+            "info": {"video.is_depth_map": True},
+        },
+    }
+    obs = {
+        "front": np.zeros((10, 12, 3), dtype=np.uint8),
+        "front_depth": np.full((10, 12), 0.7, dtype=np.float32),
+    }
+
+    vu.log_rerun_data(observation=obs, features=features)
+
+    rgb = _obj_for(calls, "observation.front")
+    assert type(rgb).__name__ == "DummyImage"
+
+    depth = _obj_for(calls, "observation.front_depth")
+    assert type(depth).__name__ == "DummyDepthImage"
+    assert depth.arr.shape == (10, 12)
+    assert depth.meter == pytest.approx(1.0)
+    assert depth.colormap == "viridis"
+    assert _kwargs_for(calls, "observation.front_depth").get("static", False) is True
+
+
+def test_log_rerun_data_depth_skips_compression(mock_rerun):
+    """Depth frames must never be JPEG-compressed even when ``compress_images=True``."""
+    vu, calls = mock_rerun
+
+    features = {
+        "observation.depth.front": {
+            "dtype": "video",
+            "shape": (8, 8),
+            "info": {"video.is_depth_map": True},
+        },
+    }
+    obs = {"front_depth": np.full((8, 8), 0.5, dtype=np.float32)}
+
+    vu.log_rerun_data(observation=obs, features=features, compress_images=True)
+
+    depth = _obj_for(calls, "observation.front_depth")
+    assert type(depth).__name__ == "DummyDepthImage"
+
+
+def test_log_rerun_data_no_features_falls_back_to_image(mock_rerun):
+    """Without ``features``, a 2D array still goes through the generic Image path (no depth detection)."""
+    vu, calls = mock_rerun
+
+    obs = {"front_depth": np.zeros((8, 8), dtype=np.float32)}
+
+    vu.log_rerun_data(observation=obs)
+
+    obj = _obj_for(calls, "observation.front_depth")
+    assert type(obj).__name__ == "DummyImage"

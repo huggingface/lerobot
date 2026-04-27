@@ -328,7 +328,10 @@ def record_loop(
 
         if display_data:
             log_rerun_data(
-                observation=obs_processed, action=action_values, compress_images=display_compressed_images
+                observation=obs_processed,
+                action=action_values,
+                compress_images=display_compressed_images,
+                features=dataset.features if dataset is not None else None,
             )
 
         dt_s = time.perf_counter() - start_loop_t
