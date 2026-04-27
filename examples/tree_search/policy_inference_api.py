@@ -26,7 +26,7 @@ import logging
 import math
 import os
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -93,6 +93,9 @@ class PolicyInferenceConfig:
     vlm_temperature: float = 0.0
     vlm_top_p: float = 1.0
     vlm_timeout_s: float = 30.0
+    vlm_observation_image_keys: str = "image2"
+    vlm_include_rendered_image: bool = True
+    vlm_include_robot_state: bool = True
     rename_map: dict[str, str] = field(default_factory=dict)
     trust_remote_code: bool = False
 
@@ -369,6 +372,68 @@ def _to_jsonable(value: Any) -> Any:
     return value
 
 
+def _image_array_for_vlm(image: Any, *, flip_hw: bool = False) -> np.ndarray | None:
+    if image is None:
+        return None
+    if isinstance(image, torch.Tensor):
+        image = image.detach().cpu().numpy()
+    image = np.asarray(image)
+    if image.ndim == 4:
+        image = image[0]
+    if image.ndim != 3:
+        return None
+    if image.shape[0] in {1, 3, 4} and image.shape[-1] not in {1, 3, 4}:
+        image = np.moveaxis(image, 0, -1)
+    if image.shape[-1] == 1:
+        image = np.repeat(image, 3, axis=-1)
+    if image.shape[-1] > 3:
+        image = image[..., :3]
+    if flip_hw:
+        image = image[::-1, ::-1]
+    if np.issubdtype(image.dtype, np.floating):
+        max_value = float(np.nanmax(image)) if image.size else 1.0
+        if max_value <= 1.0:
+            image = image * 255.0
+    return np.ascontiguousarray(np.clip(image, 0, 255).astype(np.uint8))
+
+
+def _extract_vlm_observation_images(
+    observation: Mapping[str, Any] | None,
+    image_keys: Sequence[str],
+) -> list[tuple[str, np.ndarray]]:
+    if observation is None:
+        return []
+    pixels = observation.get("pixels")
+    if not isinstance(pixels, Mapping):
+        return []
+
+    images: list[tuple[str, np.ndarray]] = []
+    for key in image_keys:
+        image = _image_array_for_vlm(pixels.get(key), flip_hw=True)
+        if image is not None:
+            images.append((f"observation.{key}", image))
+    return images
+
+
+def _extract_vlm_robot_state(observation: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    if observation is None:
+        return None
+    robot_state = observation.get("robot_state")
+    if not isinstance(robot_state, Mapping):
+        return None
+
+    eef = robot_state.get("eef", {})
+    gripper = robot_state.get("gripper", {})
+    if not isinstance(eef, Mapping) or not isinstance(gripper, Mapping):
+        return None
+
+    return {
+        "eef_position": _to_jsonable(eef.get("pos")),
+        "eef_quaternion": _to_jsonable(eef.get("quat")),
+        "gripper_qpos": _to_jsonable(gripper.get("qpos")),
+    }
+
+
 @dataclass
 class ScoreResult:
     score: float
@@ -394,12 +459,38 @@ class VLMHeuristicScorer:
         self.temperature = cfg.vlm_temperature
         self.top_p = cfg.vlm_top_p
         self.timeout_s = cfg.vlm_timeout_s
+        self.observation_image_keys = tuple(
+            key.strip() for key in cfg.vlm_observation_image_keys.split(",") if key.strip()
+        )
+        self.include_rendered_image = cfg.vlm_include_rendered_image
+        self.include_robot_state = cfg.vlm_include_robot_state
         self._client = None
 
-    def build_prompt(self, task: str) -> str:
+    def build_prompt(
+        self,
+        task: str,
+        *,
+        image_labels: Sequence[str],
+        metadata: Mapping[str, Any],
+    ) -> str:
+        image_description = "\n".join(
+            f"{ix}. {label}" for ix, label in enumerate(image_labels, start=1)
+        )
+        robot_state = metadata.get("robot_state")
+        robot_state_text = ""
+        if robot_state is not None:
+            robot_state_text = (
+                "\n\nRobot proprioception, if useful for judging gripper pose:\n"
+                f"{json.dumps(_to_jsonable(robot_state), indent=2)}"
+            )
         return (
             f'Task: "{task}"\n\n'
-            "You are scoring progress in a robot manipulation task from a single rendered image. "
+            "You are scoring progress in a robot manipulation task from the supplied camera views. "
+            "The views may include a rendered overview, a base camera, and a wrist camera. "
+            "Use all views, but do not assume a visible distractor object is the target "
+            "unless the task says so.\n\n"
+            f"Images are supplied in this order:\n{image_description}"
+            f"{robot_state_text}\n\n"
             "Return JSON only with keys `score` and `reason`.\n"
             "Score meaning: 0.0 = no visible progress, 0.3 = robot is near or reaching the relevant object, "
             "0.5 = object is grasped or moved toward the target, 0.8 = object is near/over the target but "
@@ -409,12 +500,14 @@ class VLMHeuristicScorer:
     def score(
         self,
         *,
-        image: np.ndarray,
+        images: Sequence[tuple[str, np.ndarray]],
         task: str,
         success: bool,
         metadata: Mapping[str, Any],
     ) -> ScoreResult:
-        prompt = self.build_prompt(task)
+        if not images:
+            raise ValueError("VLM scoring requires at least one image.")
+        prompt = self.build_prompt(task, image_labels=[label for label, _ in images], metadata=metadata)
         if success:
             return ScoreResult(score=1.0, reason="Environment success predicate is true.", prompt=prompt)
         if self.model is None:
@@ -424,20 +517,23 @@ class VLMHeuristicScorer:
 
         try:
             client = self._get_client()
+            content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+            for label, image in images:
+                content.append({"type": "text", "text": f"Image: {label}"})
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{self._image_to_base64_png(image)}"
+                        },
+                    }
+                )
             completion = client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {
                         "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{self._image_to_base64_png(image)}"
-                                },
-                            },
-                        ],
+                        "content": content,
                     }
                 ],
                 max_tokens=self.max_tokens,
@@ -843,11 +939,29 @@ def _score_state(
     *,
     scorer: VLMHeuristicScorer,
     image: np.ndarray,
+    observation: Mapping[str, Any] | None = None,
     task: str,
     success: bool,
     metadata: Mapping[str, Any],
 ) -> ScoreResult:
-    return scorer.score(image=image, task=task, success=success, metadata=metadata)
+    images: list[tuple[str, np.ndarray]] = []
+    if scorer.include_rendered_image:
+        rendered_image = _image_array_for_vlm(image)
+        if rendered_image is not None:
+            images.append(("rendered_overview", rendered_image))
+    images.extend(_extract_vlm_observation_images(observation, scorer.observation_image_keys))
+    if not images:
+        rendered_image = _image_array_for_vlm(image)
+        if rendered_image is not None:
+            images.append(("rendered_overview", rendered_image))
+
+    score_metadata = dict(metadata)
+    if scorer.include_robot_state:
+        robot_state = _extract_vlm_robot_state(observation)
+        if robot_state is not None:
+            score_metadata["robot_state"] = robot_state
+    score_metadata["vlm_image_labels"] = [label for label, _ in images]
+    return scorer.score(images=images, task=task, success=success, metadata=score_metadata)
 
 
 def _expand_search_node(
@@ -902,6 +1016,7 @@ def _expand_search_node(
         score = _score_state(
             scorer=scorer,
             image=rollout.frame,
+            observation=rollout.observation,
             task=task,
             success=rollout.success,
             metadata={
@@ -975,6 +1090,7 @@ def plan_mcts_action_chunk(
     root_score = _score_state(
         scorer=scorer,
         image=root_frame,
+        observation=observation,
         task=task,
         success=False,
         metadata={"planner": "mcts", "root": True, "env_step": env_step},
@@ -1124,6 +1240,7 @@ def plan_best_first_action_chunk(
     root_score = _score_state(
         scorer=scorer,
         image=root_frame,
+        observation=observation,
         task=task,
         success=False,
         metadata={"planner": "best_first", "root": True, "env_step": env_step},
@@ -1339,6 +1456,9 @@ def main(cfg: PolicyInferenceConfig) -> None:
             "vlm_model": cfg.vlm_model,
             "vlm_base_url": cfg.vlm_base_url or cfg.vlm_api_url,
             "vlm_api_key_env": cfg.vlm_api_key_env or "OPENAI_API_KEY",
+            "vlm_observation_image_keys": cfg.vlm_observation_image_keys,
+            "vlm_include_rendered_image": cfg.vlm_include_rendered_image,
+            "vlm_include_robot_state": cfg.vlm_include_robot_state,
         },
     )
 
@@ -1379,6 +1499,7 @@ def main(cfg: PolicyInferenceConfig) -> None:
                 root_score = _score_state(
                     scorer=scorer,
                     image=root_frame,
+                    observation=observation,
                     task=task,
                     success=False,
                     metadata={
@@ -1452,6 +1573,7 @@ def main(cfg: PolicyInferenceConfig) -> None:
             endpoint_score = _score_state(
                 scorer=scorer,
                 image=rollout.frame,
+                observation=rollout.observation,
                 task=task,
                 success=rollout.success,
                 metadata={
