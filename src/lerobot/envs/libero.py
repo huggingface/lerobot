@@ -272,6 +272,19 @@ class LiberoEnv(gym.Env):
         image = image[::-1, ::-1]  # flip both H and W for visualization
         return image
 
+    def snapshot(self) -> np.ndarray:
+        """Return a copy of the underlying MuJoCo simulator state."""
+        self._ensure_env()
+        assert self._env is not None
+        return self._env.get_sim_state().copy()
+
+    def restore(self, mujoco_state: np.ndarray) -> RobotObservation:
+        """Restore a MuJoCo simulator state and return the corresponding observation."""
+        self._ensure_env()
+        assert self._env is not None
+        raw_obs = self._env.regenerate_obs_from_state(np.asarray(mujoco_state).copy())
+        return self._format_raw_obs(raw_obs)
+
     def _format_raw_obs(self, raw_obs: RobotObservation) -> RobotObservation:
         assert self._env is not None, "_format_raw_obs called before _ensure_env()"
         images = {}
@@ -374,6 +387,36 @@ class LiberoEnv(gym.Env):
         observation = self._format_raw_obs(raw_obs)
         if terminated:
             self.reset()
+        truncated = False
+        return observation, reward, terminated, truncated, info
+
+    def step_no_reset(self, action: np.ndarray) -> tuple[RobotObservation, float, bool, bool, dict[str, Any]]:
+        """Step without autoresetting after success.
+
+        This is intended for planning algorithms that need to snapshot terminal
+        simulator states. The public ``step`` method keeps existing evaluation
+        behavior and autoresets after termination.
+        """
+        self._ensure_env()
+        assert self._env is not None
+        if action.ndim != 1:
+            raise ValueError(
+                f"Expected action to be 1-D (shape (action_dim,)), "
+                f"but got shape {action.shape} with ndim={action.ndim}"
+            )
+        raw_obs, reward, done, info = self._env.step(action)
+
+        is_success = self._env.check_success()
+        terminated = done or is_success
+        info.update(
+            {
+                "task": self.task,
+                "task_id": self.task_id,
+                "done": done,
+                "is_success": is_success,
+            }
+        )
+        observation = self._format_raw_obs(raw_obs)
         truncated = False
         return observation, reward, terminated, truncated, info
 
