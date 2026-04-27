@@ -68,14 +68,17 @@ class PolicyInferenceConfig:
     steps: int = 20
     planner: str = "baseline"
     chunk_size: int = 15
+    search_num_candidates: int = 4
+    search_noise_std: float = 0.05
+    search_noise_mode: str = "chunk"
     mcts_simulations: int = 16
     mcts_depth: int = 2
-    mcts_num_candidates: int = 4
-    mcts_noise_std: float = 0.05
-    mcts_noise_mode: str = "chunk"
     mcts_exploration: float = 1.4
     best_first_expansions: int = 16
     best_first_depth: int = 2
+    mcts_num_candidates: int | None = None
+    mcts_noise_std: float | None = None
+    mcts_noise_mode: str | None = None
     suite: str | None = None
     task_id: int | None = None
     seed: int | None = 1000
@@ -879,9 +882,9 @@ def _expand_search_node(
     )
     candidates = _make_action_candidates(
         policy_chunk,
-        num_candidates=cfg.mcts_num_candidates,
-        noise_std=cfg.mcts_noise_std,
-        noise_mode=cfg.mcts_noise_mode,
+        num_candidates=cfg.search_num_candidates,
+        noise_std=cfg.search_noise_std,
+        noise_mode=cfg.search_noise_mode,
         rng=rng,
     )
 
@@ -935,8 +938,8 @@ def _expand_search_node(
             step_records=rollout.step_records,
             source=source,
             extra={
-                "noise_std": cfg.mcts_noise_std if candidate_index else 0.0,
-                "noise_mode": cfg.mcts_noise_mode if candidate_index else "none",
+                "noise_std": cfg.search_noise_std if candidate_index else 0.0,
+                "noise_mode": cfg.search_noise_mode if candidate_index else "none",
                 "terminal": rollout.terminated,
                 "truncated": rollout.truncated,
                 "success": rollout.success,
@@ -1267,20 +1270,39 @@ def choose_action_with_external_planner(
     return action_api.select_action(observation, env=env)
 
 
+def _apply_deprecated_search_aliases(cfg: PolicyInferenceConfig) -> None:
+    aliases = {
+        "mcts_num_candidates": "search_num_candidates",
+        "mcts_noise_std": "search_noise_std",
+        "mcts_noise_mode": "search_noise_mode",
+    }
+    for deprecated_name, replacement_name in aliases.items():
+        value = getattr(cfg, deprecated_name)
+        if value is None:
+            continue
+        logger.warning(
+            "`--%s` is deprecated because candidate generation is shared by planners. Use `--%s`.",
+            deprecated_name,
+            replacement_name,
+        )
+        setattr(cfg, replacement_name, value)
+
+
 @parser.wrap()
 def main(cfg: PolicyInferenceConfig) -> None:
     if cfg.planner not in {"baseline", "mcts", "best_first"}:
         raise ValueError("`planner` must be one of: baseline, mcts, best_first")
+    _apply_deprecated_search_aliases(cfg)
     if cfg.chunk_size <= 0:
         raise ValueError("`chunk_size` must be positive.")
     if cfg.mcts_depth <= 0:
         raise ValueError("`mcts_depth` must be positive.")
     if cfg.mcts_simulations <= 0:
         raise ValueError("`mcts_simulations` must be positive.")
-    if cfg.mcts_num_candidates <= 0:
-        raise ValueError("`mcts_num_candidates` must be positive.")
-    if cfg.mcts_noise_mode not in {"iid", "chunk", "mixed"}:
-        raise ValueError("`mcts_noise_mode` must be one of: iid, chunk, mixed.")
+    if cfg.search_num_candidates <= 0:
+        raise ValueError("`search_num_candidates` must be positive.")
+    if cfg.search_noise_mode not in {"iid", "chunk", "mixed"}:
+        raise ValueError("`search_noise_mode` must be one of: iid, chunk, mixed.")
     if cfg.best_first_expansions <= 0:
         raise ValueError("`best_first_expansions` must be positive.")
     if cfg.best_first_depth <= 0:
@@ -1307,11 +1329,11 @@ def main(cfg: PolicyInferenceConfig) -> None:
             "steps": cfg.steps,
             "seed": cfg.seed,
             "policy": str(cfg.policy.pretrained_path) if cfg.policy is not None else None,
+            "search_num_candidates": cfg.search_num_candidates,
+            "search_noise_std": cfg.search_noise_std,
+            "search_noise_mode": cfg.search_noise_mode,
             "mcts_simulations": cfg.mcts_simulations,
             "mcts_depth": cfg.mcts_depth,
-            "mcts_num_candidates": cfg.mcts_num_candidates,
-            "mcts_noise_std": cfg.mcts_noise_std,
-            "mcts_noise_mode": cfg.mcts_noise_mode,
             "best_first_expansions": cfg.best_first_expansions,
             "best_first_depth": cfg.best_first_depth,
             "vlm_model": cfg.vlm_model,
