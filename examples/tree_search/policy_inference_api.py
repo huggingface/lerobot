@@ -59,6 +59,7 @@ from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import init_logging
 
 logger = logging.getLogger(__name__)
+TREE_SEARCH_DIR = Path(__file__).resolve().parent
 
 
 @dataclass
@@ -96,6 +97,11 @@ class PolicyInferenceConfig:
     vlm_observation_image_keys: str = "image2"
     vlm_include_rendered_image: bool = True
     vlm_include_robot_state: bool = True
+    vlm_reference_image_dir: Path | None = TREE_SEARCH_DIR / "references"
+    vlm_reference_image_paths: str | None = None
+    vlm_reference_image_glob: str = "**/*"
+    vlm_reference_image_max_size: int = 512
+    vlm_reference_filter_by_task: bool = True
     rename_map: dict[str, str] = field(default_factory=dict)
     trust_remote_code: bool = False
 
@@ -415,6 +421,110 @@ def _extract_vlm_observation_images(
     return images
 
 
+_REFERENCE_IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".webp"}
+
+
+def _iter_reference_image_paths(
+    *,
+    image_dir: Path | None,
+    image_paths: str | None,
+    image_glob: str,
+) -> list[Path]:
+    paths: list[Path] = []
+    explicit_paths = [token.strip() for token in (image_paths or "").split(",") if token.strip()]
+    for token in explicit_paths:
+        path = Path(token)
+        if path.is_dir():
+            paths.extend(
+                child
+                for child in sorted(path.glob(image_glob))
+                if child.is_file() and child.suffix.lower() in _REFERENCE_IMAGE_SUFFIXES
+            )
+        elif path.is_file() and path.suffix.lower() in _REFERENCE_IMAGE_SUFFIXES:
+            paths.append(path)
+        else:
+            raise FileNotFoundError(f"Reference image path does not exist or is not an image: {path}")
+
+    if image_dir is not None and image_dir.exists():
+        paths.extend(
+            child
+            for child in sorted(image_dir.glob(image_glob))
+            if child.is_file() and child.suffix.lower() in _REFERENCE_IMAGE_SUFFIXES
+        )
+
+    unique_paths: list[Path] = []
+    seen: set[Path] = set()
+    for path in paths:
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique_paths.append(path)
+    return unique_paths
+
+
+def _reference_image_matches_task(path: Path, task_id: int) -> bool:
+    task_tokens = {str(task_id), f"{task_id:02d}", f"{task_id:03d}"}
+    for part in [path.stem, *path.parent.parts]:
+        text = part.lower()
+        compact = re.sub(r"[^a-z0-9]+", "", text)
+        normalized = re.sub(r"[^a-z0-9]+", "_", text).strip("_")
+        for token in task_tokens:
+            marker_forms = {
+                token,
+                f"task{token}",
+                f"task_{token}",
+                f"task-{token}",
+                f"taskid{token}",
+                f"task_id_{token}",
+                f"task-id-{token}",
+            }
+            compact_marker_forms = {form.replace("_", "").replace("-", "") for form in marker_forms}
+            if normalized in marker_forms or compact in compact_marker_forms:
+                return True
+            if normalized.startswith((f"{token}_", f"{token}-", f"task_{token}_", f"task_{token}-")):
+                return True
+            if normalized.startswith((f"task{token}_", f"task{token}-")):
+                return True
+    return False
+
+
+def _load_vlm_reference_images(
+    cfg: PolicyInferenceConfig,
+    *,
+    task_id: int | None,
+) -> list[tuple[str, np.ndarray]]:
+    images: list[tuple[str, np.ndarray]] = []
+    paths = _iter_reference_image_paths(
+        image_dir=cfg.vlm_reference_image_dir,
+        image_paths=cfg.vlm_reference_image_paths,
+        image_glob=cfg.vlm_reference_image_glob,
+    )
+    if cfg.vlm_reference_filter_by_task and task_id is not None:
+        all_paths = paths
+        paths = [path for path in all_paths if _reference_image_matches_task(path, task_id)]
+        if all_paths and not paths:
+            logger.warning(
+                "Found %d reference image(s), but none matched task_id=%s. "
+                "Use names like `task_%s_*.png` or set `--vlm_reference_filter_by_task=false`.",
+                len(all_paths),
+                task_id,
+                task_id,
+            )
+    for image_ix, path in enumerate(paths):
+        with Image.open(path) as pil_image:
+            image = pil_image.convert("RGB")
+            if cfg.vlm_reference_image_max_size > 0:
+                max_size = int(cfg.vlm_reference_image_max_size)
+                image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+            task_label = f"task_{task_id}." if task_id is not None else ""
+            label = f"reference.target.{task_label}{image_ix:02d}.{path.stem}"
+            images.append((label, np.asarray(image, dtype=np.uint8)))
+    if images:
+        logger.info("Loaded %d VLM target reference image(s).", len(images))
+    return images
+
+
 def _extract_vlm_robot_state(observation: Mapping[str, Any] | None) -> dict[str, Any] | None:
     if observation is None:
         return None
@@ -453,7 +563,7 @@ class VLMHeuristicScorer:
     OpenAI-compatible provider such as NVIDIA NIM.
     """
 
-    def __init__(self, cfg: PolicyInferenceConfig) -> None:
+    def __init__(self, cfg: PolicyInferenceConfig, *, task_id: int | None = None) -> None:
         self.base_url = cfg.vlm_base_url or cfg.vlm_api_url
         self.api_key_env = cfg.vlm_api_key_env or "OPENAI_API_KEY"
         self.model = cfg.vlm_model
@@ -466,6 +576,8 @@ class VLMHeuristicScorer:
         )
         self.include_rendered_image = cfg.vlm_include_rendered_image
         self.include_robot_state = cfg.vlm_include_robot_state
+        self.reference_images = _load_vlm_reference_images(cfg, task_id=task_id)
+        self.reference_image_labels = tuple(label for label, _ in self.reference_images)
         self._client = None
 
     def build_prompt(
@@ -488,9 +600,12 @@ class VLMHeuristicScorer:
         return (
             f'Task: "{task}"\n\n'
             "You are scoring progress in a robot manipulation task from the supplied camera views. "
-            "The views may include a rendered overview, a base camera, and a wrist camera. "
-            "Use all views, but do not assume a visible distractor object is the target "
-            "unless the task says so.\n\n"
+            "The images whose labels start with `reference.target.` are target-object reference images. "
+            "They are not current state images; use them only to identify what the target object looks like "
+            "in the current camera views. The current state views may include a rendered overview, a base "
+            "camera, and a wrist camera. Judge whether the gripper is approaching, grasping, or moving the "
+            "referenced target object toward the task goal. Do not assume a visible distractor object is the "
+            "target unless it matches the task and target reference.\n\n"
             f"Images are supplied in this order:\n{image_description}"
             f"{robot_state_text}\n\n"
             "Return JSON only with keys `score` and `reason`.\n"
@@ -984,22 +1099,26 @@ def _score_state(
     success: bool,
     metadata: Mapping[str, Any],
 ) -> ScoreResult:
-    images: list[tuple[str, np.ndarray]] = []
+    state_images: list[tuple[str, np.ndarray]] = []
     if scorer.include_rendered_image:
         rendered_image = _image_array_for_vlm(image)
         if rendered_image is not None:
-            images.append(("rendered_overview", rendered_image))
-    images.extend(_extract_vlm_observation_images(observation, scorer.observation_image_keys))
-    if not images:
+            state_images.append(("rendered_overview", rendered_image))
+    state_images.extend(_extract_vlm_observation_images(observation, scorer.observation_image_keys))
+    if not state_images:
         rendered_image = _image_array_for_vlm(image)
         if rendered_image is not None:
-            images.append(("rendered_overview", rendered_image))
+            state_images.append(("rendered_overview", rendered_image))
+
+    images = [*scorer.reference_images, *state_images]
 
     score_metadata = dict(metadata)
     if scorer.include_robot_state:
         robot_state = _extract_vlm_robot_state(observation)
         if robot_state is not None:
             score_metadata["robot_state"] = robot_state
+    score_metadata["vlm_reference_image_labels"] = [label for label, _ in scorer.reference_images]
+    score_metadata["vlm_state_image_labels"] = [label for label, _ in state_images]
     score_metadata["vlm_image_labels"] = [label for label, _ in images]
     return scorer.score(images=images, task=task, success=success, metadata=score_metadata)
 
@@ -1474,7 +1593,7 @@ def main(cfg: PolicyInferenceConfig) -> None:
     base_env = _get_single_base_env(env)
     task = _infer_task(env)
     rng = np.random.default_rng(cfg.seed)
-    scorer = VLMHeuristicScorer(cfg)
+    scorer = VLMHeuristicScorer(cfg, task_id=task_id)
     trace = TraceRecorder(
         cfg.trace_dir,
         run_metadata={
@@ -1499,6 +1618,13 @@ def main(cfg: PolicyInferenceConfig) -> None:
             "vlm_observation_image_keys": cfg.vlm_observation_image_keys,
             "vlm_include_rendered_image": cfg.vlm_include_rendered_image,
             "vlm_include_robot_state": cfg.vlm_include_robot_state,
+            "vlm_reference_image_dir": str(cfg.vlm_reference_image_dir)
+            if cfg.vlm_reference_image_dir is not None
+            else None,
+            "vlm_reference_image_paths": cfg.vlm_reference_image_paths,
+            "vlm_reference_image_glob": cfg.vlm_reference_image_glob,
+            "vlm_reference_filter_by_task": cfg.vlm_reference_filter_by_task,
+            "vlm_reference_image_labels": list(scorer.reference_image_labels),
         },
     )
 
