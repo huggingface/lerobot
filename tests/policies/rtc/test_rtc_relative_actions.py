@@ -29,7 +29,6 @@ from lerobot.processor.relative_action_processor import (
     RelativeActionsProcessorStep,
     to_relative_actions,
 )
-from lerobot.rollout.inference.rtc import _reanchor_relative_rtc_prefix
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 
@@ -52,6 +51,9 @@ ActionQueue = _action_queue_mod.ActionQueue
 _rtc_debug_mod = _import_rtc_module("lerobot.policies.rtc.debug_tracker", "debug_tracker.py")
 _rtc_mod = _import_rtc_module("lerobot.policies.rtc.modeling_rtc", "modeling_rtc.py")
 RTCProcessor = _rtc_mod.RTCProcessor
+
+_rtc_relative_mod = _import_rtc_module("lerobot.policies.rtc.relative", "relative.py")
+reanchor_relative_rtc_prefix = _rtc_relative_mod.reanchor_relative_rtc_prefix
 
 ACTION_DIM = 6
 CHUNK_SIZE = 50
@@ -440,7 +442,7 @@ class TestRTCReanchoringWithStateNormalizer:
 
         prev_actions_absolute = torch.tensor([[2.0, 3.0, 4.0, 5.0, 6.0, 7.0]] * 5)
 
-        result = _reanchor_relative_rtc_prefix(
+        result = reanchor_relative_rtc_prefix(
             prev_actions_absolute=prev_actions_absolute,
             current_state=relative_step.get_cached_state(),
             relative_step=relative_step,
@@ -465,14 +467,14 @@ class TestRTCReanchoringWithStateNormalizer:
 
         prev_actions_absolute = torch.tensor([[2.0, 3.0, 4.0, 5.0, 6.0, 7.0]] * 5)
 
-        result_raw = _reanchor_relative_rtc_prefix(
+        result_raw = reanchor_relative_rtc_prefix(
             prev_actions_absolute=prev_actions_absolute,
             current_state=raw_state,
             relative_step=relative_step,
             normalizer_step=normalizer,
             policy_device="cpu",
         )
-        result_normalized = _reanchor_relative_rtc_prefix(
+        result_normalized = reanchor_relative_rtc_prefix(
             prev_actions_absolute=prev_actions_absolute,
             current_state=normalized_state,
             relative_step=relative_step,

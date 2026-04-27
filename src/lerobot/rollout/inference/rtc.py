@@ -32,16 +32,13 @@ from typing import Any
 import torch
 
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.rtc import ActionQueue, LatencyTracker
+from lerobot.policies.rtc import ActionQueue, LatencyTracker, reanchor_relative_rtc_prefix
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.policies.utils import prepare_observation_for_inference
 from lerobot.processor import (
     NormalizerProcessorStep,
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
-    TransitionKey,
-    create_transition,
-    to_relative_actions,
 )
 from lerobot.utils.feature_utils import build_dataset_frame
 
@@ -63,35 +60,6 @@ _RTC_JOIN_TIMEOUT_S: float = 3.0
 # ---------------------------------------------------------------------------
 # RTC helpers
 # ---------------------------------------------------------------------------
-
-
-def _reanchor_relative_rtc_prefix(
-    prev_actions_absolute: torch.Tensor,
-    current_state: torch.Tensor,
-    relative_step: RelativeActionsProcessorStep,
-    normalizer_step: NormalizerProcessorStep | None,
-    policy_device: torch.device | str,
-) -> torch.Tensor:
-    """Convert absolute leftover actions into model-space for relative-action RTC policies.
-
-    When using relative actions, the RTC prefix (previous chunk's unexecuted tail)
-    is stored in absolute coordinates. Before feeding it back to the policy, this
-    helper re-expresses those actions relative to the robot's current joint state
-    and optionally normalizes them so the policy receives correctly scaled inputs.
-    """
-    state = current_state.detach().cpu()
-    if state.dim() == 1:
-        state = state.unsqueeze(0)
-
-    action_cpu = prev_actions_absolute.detach().cpu()
-    mask = relative_step._build_mask(action_cpu.shape[-1])
-    relative_actions = to_relative_actions(action_cpu, state, mask)
-
-    transition = create_transition(action=relative_actions)
-    if normalizer_step is not None:
-        transition = normalizer_step(transition)
-
-    return transition[TransitionKey.ACTION].to(policy_device)
 
 
 def _normalize_prev_actions_length(prev_actions: torch.Tensor, target_steps: int) -> torch.Tensor:
@@ -323,7 +291,7 @@ class RTCInferenceEngine(InferenceEngine):
                             if raw_state is not None:
                                 prev_abs = queue.get_processed_left_over()
                                 if prev_abs is not None and prev_abs.numel() > 0:
-                                    prev_actions = _reanchor_relative_rtc_prefix(
+                                    prev_actions = reanchor_relative_rtc_prefix(
                                         prev_actions_absolute=prev_abs,
                                         current_state=raw_state,
                                         relative_step=self._relative_step,
