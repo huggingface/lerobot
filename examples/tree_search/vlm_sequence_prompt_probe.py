@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import csv
 import json
 import logging
@@ -281,6 +282,55 @@ def _find_episode_for_task(
     )
 
 
+def _parquet_index_range(path: Path) -> tuple[int, int] | None:
+    try:
+        index_column = pd.read_parquet(path, columns=["index"])["index"]
+    except Exception:
+        return None
+    if index_column.empty:
+        return None
+    return int(index_column.min()), int(index_column.max())
+
+
+def _find_episode_data_path(
+    root: Path,
+    *,
+    dataset_from_index: int,
+    dataset_to_index: int,
+) -> Path:
+    candidates = sorted((root / "data").glob("*/*.parquet"))
+    if not candidates:
+        raise FileNotFoundError(f"No data parquet files found under {root / 'data'}")
+
+    for path in candidates:
+        index_range = _parquet_index_range(path)
+        if index_range is None:
+            continue
+        min_index, max_index = index_range
+        if dataset_from_index >= min_index and dataset_from_index <= max_index:
+            return path
+        if dataset_to_index - 1 >= min_index and dataset_to_index - 1 <= max_index:
+            return path
+
+    ranges = []
+    for path in candidates[:8]:
+        index_range = _parquet_index_range(path)
+        if index_range is not None:
+            ranges.append(f"{path.relative_to(root)}={index_range}")
+    raise FileNotFoundError(
+        f"Could not find a data parquet containing global frame range "
+        f"[{dataset_from_index}, {dataset_to_index}). Sample available ranges: {ranges}"
+    )
+
+
+def _infer_video_path_from_data_path(root: Path, data_path: Path, camera_key: str) -> Path:
+    relative = data_path.relative_to(root)
+    parts = list(relative.parts)
+    if len(parts) < 3 or parts[0] != "data":
+        raise ValueError(f"Unexpected data parquet path: {data_path}")
+    return root / "videos" / camera_key / parts[1] / f"{Path(parts[2]).stem}.mp4"
+
+
 class EpisodeFrameReader:
     """Direct reader for one episode's parquet rows and video frames.
 
@@ -305,9 +355,14 @@ class EpisodeFrameReader:
         self.dataset_to_index = int(self.episode["dataset_to_index"])
         self.video_backend = video_backend
         self.tolerance_s = tolerance_s
-        data_path = self.root / self.meta.get_data_file_path(episode_index)
+        data_path = _find_episode_data_path(
+            self.root,
+            dataset_from_index=self.dataset_from_index,
+            dataset_to_index=self.dataset_to_index,
+        )
         if not data_path.exists():
             raise FileNotFoundError(f"Episode data parquet is missing: {data_path}")
+        self.data_path = data_path
 
         df = pd.read_parquet(data_path)
         if "index" not in df.columns:
@@ -339,7 +394,9 @@ class EpisodeFrameReader:
 
         for camera_key in self.meta.video_keys:
             from_timestamp = float(self.episode[f"videos/{camera_key}/from_timestamp"])
-            video_path = self.root / self.meta.get_video_file_path(self.episode_index, camera_key)
+            video_path = _infer_video_path_from_data_path(self.root, self.data_path, camera_key)
+            if not video_path.exists():
+                video_path = self.root / self.meta.get_video_file_path(self.episode_index, camera_key)
             if not video_path.exists():
                 raise FileNotFoundError(f"Episode video file is missing: {video_path}")
             frames = decode_video_frames(
@@ -746,38 +803,32 @@ def _score_monotonicity(scores: list[float], tolerance: float) -> dict[str, Any]
     }
 
 
-def _episode_file_patterns(
-    meta: LeRobotDatasetMetadata,
-    *,
-    episode_index: int,
-    include_videos: bool,
-) -> list[str]:
-    files = [str(meta.get_data_file_path(episode_index))]
-    if include_videos:
-        files.extend(str(meta.get_video_file_path(episode_index, video_key)) for video_key in meta.video_keys)
-    return sorted(set(files))
-
-
 def _ensure_episode_files(
     args: argparse.Namespace,
     meta: LeRobotDatasetMetadata,
     *,
     episode_index: int,
 ) -> None:
-    files = _episode_file_patterns(
-        meta,
-        episode_index=episode_index,
-        include_videos=args.download_videos,
-    )
-    missing = [file for file in files if not (meta.root / file).exists()]
-    if not missing and not args.force_cache_sync:
+    episode = meta.episodes[episode_index]
+    from_idx = int(episode["dataset_from_index"])
+    to_idx = int(episode["dataset_to_index"])
+    data_path: Path | None = None
+    with contextlib.suppress(FileNotFoundError):
+        data_path = _find_episode_data_path(meta.root, dataset_from_index=from_idx, dataset_to_index=to_idx)
+
+    data_patterns = ["data/**/*.parquet"] if data_path is None or args.force_cache_sync else []
+    video_patterns: list[str] = []
+    if data_path is not None and args.download_videos:
+        for video_key in meta.video_keys:
+            inferred = _infer_video_path_from_data_path(meta.root, data_path, video_key)
+            if args.force_cache_sync or not inferred.exists():
+                video_patterns.append(str(inferred.relative_to(meta.root)))
+
+    files = sorted(set(data_patterns + video_patterns))
+    if not files:
         return
 
-    logger.info(
-        "Downloading %d selected episode file(s) for episode=%s.",
-        len(files),
-        episode_index,
-    )
+    logger.info("Downloading %d dataset file pattern(s) for episode=%s.", len(files), episode_index)
     if args.dataset_root is None:
         meta.root = Path(
             snapshot_download(
@@ -799,11 +850,19 @@ def _ensure_episode_files(
         )
         meta.root = args.dataset_root
 
-    still_missing = [file for file in files if not (meta.root / file).exists()]
+    if data_path is None or args.force_cache_sync:
+        data_path = _find_episode_data_path(meta.root, dataset_from_index=from_idx, dataset_to_index=to_idx)
+
+    expected_files: list[Path] = [data_path]
+    if args.download_videos:
+        expected_files.extend(
+            _infer_video_path_from_data_path(meta.root, data_path, video_key) for video_key in meta.video_keys
+        )
+    still_missing = [path for path in expected_files if not path.exists()]
     if still_missing:
         raise FileNotFoundError(
             "Could not find selected episode files after download:\n"
-            + "\n".join(str(meta.root / file) for file in still_missing[:20])
+            + "\n".join(str(path) for path in still_missing[:20])
         )
 
 
