@@ -608,11 +608,11 @@ class VLMHeuristicScorer:
             "referenced target object toward the task goal. Do not assume a visible distractor object is the "
             "target unless it matches the task and target reference.\n\n"
             f"Images are supplied in this order:\n{image_description}"
-            f"{robot_state_text}\n\n"
+            # f"{robot_state_text}\n\n"
             "Return JSON only with keys `score` and `reason`.\n"
             "Score meaning: 0.0 = no visible progress, 0.3 = robot is near or reaching the relevant object, "
             "0.5 = object is grasped or moved toward the target, 0.8 = object is near/over the target but "
-            "completion is not certain, 1.0 = task appears complete."
+            "completion is not certain."
         )
 
     def score(
