@@ -49,9 +49,11 @@ from .sampler import EpisodeAwareSampler
 from .streaming_dataset import StreamingLeRobotDataset
 from .utils import DEFAULT_EPISODES_PATH, create_lerobot_dataset_card
 from .video_utils import (
+    DepthEncoderConfig,
     VideoEncoderConfig,
     VideoEncodingManager,
     camera_encoder_defaults,
+    depth_encoder_defaults,
 )
 
 # NOTE: Low-level I/O functions (cast_stats_to_numpy, get_parquet_file_size_in_mb, etc.)
@@ -67,9 +69,11 @@ __all__ = [
     "LeRobotDatasetMetadata",
     "MultiLeRobotDataset",
     "StreamingLeRobotDataset",
+    "DepthEncoderConfig",
     "VideoEncoderConfig",
     "VideoEncodingManager",
     "camera_encoder_defaults",
+    "depth_encoder_defaults",
     "add_features",
     "aggregate_datasets",
     "aggregate_pipeline_dataset_features",

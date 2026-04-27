@@ -104,10 +104,12 @@ from lerobot.common.control_utils import (
 from lerobot.configs import parser
 from lerobot.configs.dataset import DatasetRecordConfig
 from lerobot.datasets import (
+    DepthEncoderConfig,
     LeRobotDataset,
     VideoEncodingManager,
     aggregate_pipeline_dataset_features,
     create_initial_features,
+    depth_encoder_defaults,
     safe_stop_image_writer,
 )
 from lerobot.processor import (
@@ -399,6 +401,7 @@ def record(
                 root=cfg.dataset.root,
                 batch_encoding_size=cfg.dataset.video_encoding_batch_size,
                 camera_encoder_config=cfg.dataset.camera_encoder_config,
+                depth_encoder_config=cfg.dataset.depth_encoder_config,
                 encoder_threads=cfg.dataset.encoder_threads,
                 streaming_encoding=cfg.dataset.streaming_encoding,
                 encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
@@ -428,6 +431,7 @@ def record(
                 image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot.cameras),
                 batch_encoding_size=cfg.dataset.video_encoding_batch_size,
                 camera_encoder_config=cfg.dataset.camera_encoder_config,
+                depth_encoder_config=cfg.dataset.depth_encoder_config,
                 encoder_threads=cfg.dataset.encoder_threads,
                 streaming_encoding=cfg.dataset.streaming_encoding,
                 encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
