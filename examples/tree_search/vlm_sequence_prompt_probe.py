@@ -666,6 +666,30 @@ def _score_monotonicity(scores: list[float], tolerance: float) -> dict[str, Any]
     }
 
 
+def _load_episode_dataset(args: argparse.Namespace, episode_index: int) -> LeRobotDataset:
+    kwargs = {
+        "repo_id": args.dataset_repo_id,
+        "root": args.dataset_root,
+        "revision": args.dataset_revision,
+        "episodes": [episode_index],
+        "video_backend": args.video_backend,
+        "download_videos": args.download_videos,
+        "force_cache_sync": args.force_cache_sync,
+    }
+    try:
+        return LeRobotDataset(**kwargs)
+    except ValueError as exc:
+        message = str(exc)
+        if args.force_cache_sync or "corresponds to no data" not in message:
+            raise
+        logger.warning(
+            "Selected episode load found no local data. Retrying with force_cache_sync=True "
+            "to download the episode parquet/video files."
+        )
+        kwargs["force_cache_sync"] = True
+        return LeRobotDataset(**kwargs)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset_repo_id", default="HuggingFaceVLA/libero")
@@ -689,6 +713,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save_vlm_inputs", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--video_backend", default=None)
     parser.add_argument("--download_videos", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--force_cache_sync",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Force re-downloading selected episode data/video files from the Hub.",
+    )
     parser.add_argument("--reference_image_dir", type=Path, default=TREE_SEARCH_DIR / "references")
     parser.add_argument("--reference_image_paths", default=None)
     parser.add_argument("--reference_image_glob", default="**/*")
@@ -744,14 +774,7 @@ def main() -> None:
         len(local_indices),
     )
 
-    dataset = LeRobotDataset(
-        args.dataset_repo_id,
-        root=args.dataset_root,
-        revision=args.dataset_revision,
-        episodes=[episode_index],
-        video_backend=args.video_backend,
-        download_videos=args.download_videos,
-    )
+    dataset = _load_episode_dataset(args, episode_index)
     camera_keys = _resolve_camera_keys(dataset, args.camera_keys)
     reference_images = _load_reference_images(
         reference_image_dir=args.reference_image_dir,
