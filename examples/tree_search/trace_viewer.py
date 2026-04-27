@@ -324,8 +324,32 @@ INDEX_HTML = r"""<!doctype html>
 
     .vlm-gallery {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
       gap: 8px;
+    }
+
+    .vlm-summary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+
+    .vlm-section + .vlm-section {
+      margin-top: 12px;
+    }
+
+    .vlm-section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
     }
 
     .vlm-card {
@@ -334,7 +358,12 @@ INDEX_HTML = r"""<!doctype html>
       border-radius: 6px;
       overflow: hidden;
       background: #fff;
+      cursor: zoom-in;
     }
+
+    .vlm-card.reference { border-color: #b7a4e8; }
+    .vlm-card.state { border-color: #9cc7bc; }
+    .vlm-card.other { border-color: var(--line); }
 
     .vlm-card img {
       width: 100%;
@@ -351,6 +380,64 @@ INDEX_HTML = r"""<!doctype html>
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    .vlm-card strong {
+      display: block;
+      color: var(--ink);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .vlm-card span {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .lightbox {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      display: none;
+      grid-template-rows: auto 1fr;
+      background: rgba(12, 18, 31, 0.86);
+      color: #fff;
+    }
+
+    .lightbox.open { display: grid; }
+
+    .lightbox-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 14px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+    }
+
+    .lightbox-title {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 700;
+    }
+
+    .lightbox-body {
+      min-height: 0;
+      display: grid;
+      place-items: center;
+      padding: 16px;
+    }
+
+    .lightbox img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      background: #111827;
     }
 
     .kv {
@@ -515,6 +602,15 @@ INDEX_HTML = r"""<!doctype html>
         <div id="details" class="details-inner"></div>
       </aside>
     </main>
+    <div id="lightbox" class="lightbox" role="dialog" aria-modal="true" aria-label="VLM image preview">
+      <div class="lightbox-head">
+        <div id="lightbox-title" class="lightbox-title"></div>
+        <button id="lightbox-close" type="button">Close</button>
+      </div>
+      <div class="lightbox-body">
+        <img id="lightbox-image" alt="">
+      </div>
+    </div>
   </div>
 
   <script>
@@ -527,6 +623,10 @@ INDEX_HTML = r"""<!doctype html>
     const depthFilter = document.getElementById("depth-filter");
     const reloadBtn = document.getElementById("reload-btn");
     const fitBtn = document.getElementById("fit-btn");
+    const lightbox = document.getElementById("lightbox");
+    const lightboxTitle = document.getElementById("lightbox-title");
+    const lightboxImage = document.getElementById("lightbox-image");
+    const lightboxClose = document.getElementById("lightbox-close");
 
     const state = {
       tree: null,
@@ -848,18 +948,81 @@ INDEX_HTML = r"""<!doctype html>
       `;
     }
 
-    function vlmGallery(node) {
+    function arrayFromMetadata(value) {
+      return Array.isArray(value) ? value.map(String) : [];
+    }
+
+    function classifyVlmImage(item, metadata) {
+      const label = String(item.label || "");
+      const referenceLabels = new Set(arrayFromMetadata(metadata && metadata.vlm_reference_image_labels));
+      const stateLabels = new Set(arrayFromMetadata(metadata && metadata.vlm_state_image_labels));
+      if (label.startsWith("reference.target.") || referenceLabels.has(label)) return "reference";
+      if (stateLabels.has(label) || label === "rendered_overview" || label.startsWith("observation.")) return "state";
+      return "other";
+    }
+
+    function groupVlmImages(node) {
+      const metadata = node.vlm_metadata || {};
+      const groups = { reference: [], state: [], other: [] };
       const images = Array.isArray(node.vlm_images) ? node.vlm_images : [];
-      if (!images.length) return "";
+      for (const item of images) {
+        groups[classifyVlmImage(item, metadata)].push(item);
+      }
+      return groups;
+    }
+
+    function vlmGallery(node) {
+      const groups = groupVlmImages(node);
+      const total = groups.reference.length + groups.state.length + groups.other.length;
+      if (!total) {
+        const labels = node.vlm_metadata && node.vlm_metadata.vlm_image_labels;
+        return `
+          <div class="panel-body" style="border-bottom:1px solid var(--line)">
+            <div class="empty">
+              No VLM input images were stored for this node.
+              ${Array.isArray(labels) && labels.length ? `<br>Labels: ${esc(labels.join(", "))}` : ""}
+            </div>
+          </div>
+        `;
+      }
       return `
         <div class="panel-body" style="border-bottom:1px solid var(--line)">
+          <div class="vlm-summary">
+            <span class="pill">${total} images</span>
+            <span class="pill">${groups.reference.length} reference</span>
+            <span class="pill">${groups.state.length} state</span>
+            ${groups.other.length ? `<span class="pill">${groups.other.length} other</span>` : ""}
+          </div>
+          ${vlmGroup("Reference Target Images", groups.reference, "reference")}
+          ${vlmGroup("Current State Images", groups.state, "state")}
+          ${groups.other.length ? vlmGroup("Other Images", groups.other, "other") : ""}
+        </div>
+      `;
+    }
+
+    function vlmGroup(title, images, kind) {
+      if (!images.length) return "";
+      return `
+        <div class="vlm-section">
+          <div class="vlm-section-title">
+            <span>${esc(title)}</span>
+            <span>${images.length}</span>
+          </div>
           <div class="vlm-gallery">
-            ${images.map((item) => `
-              <div class="vlm-card" title="${esc(item.label || "")}">
-                <img src="${imageUrl(item.path)}" alt="${esc(item.label || "VLM input")}">
-                <div>${esc(item.label || "VLM input")}</div>
-              </div>
-            `).join("")}
+            ${images.map((item, index) => {
+              const label = item.label || `${title} ${index + 1}`;
+              const path = item.path || "";
+              return `
+                <div class="vlm-card ${kind}" title="${esc(label)}"
+                    data-preview-src="${esc(imageUrl(path))}" data-preview-label="${esc(label)}">
+                  ${path ? `<img src="${imageUrl(path)}" alt="${esc(label)}">` : ""}
+                  <div>
+                    <strong>${esc(kind)}</strong>
+                    <span>${esc(label)}</span>
+                  </div>
+                </div>
+              `;
+            }).join("")}
           </div>
         </div>
       `;
@@ -927,6 +1090,20 @@ INDEX_HTML = r"""<!doctype html>
       renderDetails();
     }
 
+    function openLightbox(src, label) {
+      if (!src) return;
+      lightboxTitle.textContent = label || "VLM input";
+      lightboxImage.src = src;
+      lightboxImage.alt = label || "VLM input";
+      lightbox.classList.add("open");
+    }
+
+    function closeLightbox() {
+      lightbox.classList.remove("open");
+      lightboxImage.removeAttribute("src");
+      lightboxImage.alt = "";
+    }
+
     function closestNodeElement(target) {
       return target instanceof Element ? target.closest(".node") : null;
     }
@@ -956,8 +1133,26 @@ INDEX_HTML = r"""<!doctype html>
     fitBtn.addEventListener("click", fitTree);
 
     details.addEventListener("click", (event) => {
+      if (!(event.target instanceof Element)) return;
+      const preview = event.target.closest("[data-preview-src]");
+      if (preview) {
+        openLightbox(preview.dataset.previewSrc, preview.dataset.previewLabel);
+        return;
+      }
       const row = event.target.closest("[data-node-id]");
       if (row) selectNode(row.dataset.nodeId);
+    });
+
+    lightboxClose.addEventListener("click", closeLightbox);
+    lightbox.addEventListener("click", (event) => {
+      if (
+        event.target === lightbox
+        || (event.target instanceof Element && event.target.classList.contains("lightbox-body"))
+      ) closeLightbox();
+    });
+
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") closeLightbox();
     });
 
     svg.addEventListener("wheel", (event) => {
