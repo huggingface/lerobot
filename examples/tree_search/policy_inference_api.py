@@ -18,10 +18,11 @@ uv run python examples/tree_search/policy_inference_api.py \
 ```
 """
 
-import logging
 import base64
+import heapq
 import io
 import json
+import logging
 import math
 import os
 import time
@@ -73,6 +74,8 @@ class PolicyInferenceConfig:
     mcts_noise_std: float = 0.05
     mcts_noise_mode: str = "chunk"
     mcts_exploration: float = 1.4
+    best_first_expansions: int = 16
+    best_first_depth: int = 2
     suite: str | None = None
     task_id: int | None = None
     seed: int | None = 1000
@@ -844,8 +847,9 @@ def _score_state(
     return scorer.score(image=image, task=task, success=success, metadata=metadata)
 
 
-def _expand_mcts_node(
+def _expand_search_node(
     *,
+    planner: str,
     node: dict[str, Any],
     nodes_by_id: dict[str, dict[str, Any]],
     child_edges: dict[str, dict[str, Any]],
@@ -859,7 +863,6 @@ def _expand_mcts_node(
     cfg: PolicyInferenceConfig,
     rng: np.random.Generator,
     task: str,
-    root_env_step: int,
     max_env_steps: int,
 ) -> list[dict[str, Any]]:
     if node["terminal"]:
@@ -888,8 +891,8 @@ def _expand_mcts_node(
         rollout = _rollout_action_sequence(
             base_env=base_env,
             actions=actions,
-            start_env_step=root_env_step + int(node["depth"]) * cfg.chunk_size,
-            max_steps=min(max_env_steps, root_env_step + (int(node["depth"]) + 1) * cfg.chunk_size),
+            start_env_step=int(node["env_step"]),
+            max_steps=min(max_env_steps, int(node["env_step"]) + cfg.chunk_size),
             trace=None,
             save_step_images=False,
         )
@@ -899,7 +902,7 @@ def _expand_mcts_node(
             task=task,
             success=rollout.success,
             metadata={
-                "planner": "mcts",
+                "planner": planner,
                 "parent_id": node["id"],
                 "candidate_index": candidate_index,
                 "source": source,
@@ -910,13 +913,13 @@ def _expand_mcts_node(
         child = trace.add_node(
             parent_id=node["id"],
             depth=int(node["depth"]) + 1,
-            env_step=root_env_step + int(node["depth"]) * cfg.chunk_size + rollout.action_count,
+            env_step=int(node["env_step"]) + rollout.action_count,
             image=rollout.frame,
             score=score,
             reward_sum=rollout.reward_sum,
             success=rollout.success,
             terminal=rollout.terminated or rollout.truncated or rollout.success,
-            planner="mcts",
+            planner=planner,
             extra={
                 "candidate_index": candidate_index,
                 "source": source,
@@ -1007,7 +1010,8 @@ def plan_mcts_action_chunk(
         if node["terminal"] or int(node["depth"]) >= cfg.mcts_depth:
             value = _node_mean_value(node)
         else:
-            created = _expand_mcts_node(
+            created = _expand_search_node(
+                planner="mcts",
                 node=node,
                 nodes_by_id=nodes_by_id,
                 child_edges=child_edges,
@@ -1021,7 +1025,6 @@ def plan_mcts_action_chunk(
                 cfg=cfg,
                 rng=rng,
                 task=task,
-                root_env_step=env_step,
                 max_env_steps=max_env_steps,
             )
             if not created:
@@ -1070,6 +1073,171 @@ def plan_mcts_action_chunk(
     }
 
 
+def _best_descendant_root_child(
+    *,
+    root: Mapping[str, Any],
+    nodes_by_id: Mapping[str, dict[str, Any]],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    descendants = [node for node in nodes_by_id.values() if node["id"] != root["id"]]
+    if not descendants:
+        return None, None
+
+    best_descendant = max(
+        descendants,
+        key=lambda node: (
+            bool(node.get("success", False)),
+            float(node.get("vlm_score", 0.0)),
+            int(node.get("visits", 0)),
+            int(node.get("depth", 0)),
+        ),
+    )
+
+    root_child = best_descendant
+    while root_child.get("parent_id") is not None and root_child["parent_id"] != root["id"]:
+        parent_id = root_child["parent_id"]
+        root_child = nodes_by_id[parent_id]
+
+    if root_child.get("parent_id") != root["id"]:
+        return None, best_descendant
+    return root_child, best_descendant
+
+
+def plan_best_first_action_chunk(
+    *,
+    action_api: LeRobotActionAPI,
+    base_env: gym.Env,
+    vector_env: gym.vector.VectorEnv,
+    observation: Mapping[str, Any],
+    task: str,
+    env_step: int,
+    scorer: VLMHeuristicScorer,
+    trace: TraceRecorder,
+    cfg: PolicyInferenceConfig,
+    rng: np.random.Generator,
+    max_env_steps: int,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    root_state = _snapshot_base_env(base_env)
+    root_frame = _render_base_env_frame(base_env)
+    root_score = _score_state(
+        scorer=scorer,
+        image=root_frame,
+        task=task,
+        success=False,
+        metadata={"planner": "best_first", "root": True, "env_step": env_step},
+    )
+    root = trace.add_node(
+        parent_id=None,
+        depth=0,
+        env_step=env_step,
+        image=root_frame,
+        score=root_score,
+        reward_sum=0.0,
+        success=False,
+        terminal=False,
+        planner="best_first",
+        extra={"root": True},
+    )
+
+    nodes_by_id = {root["id"]: root}
+    child_edges: dict[str, dict[str, Any]] = {}
+    states_by_id = {root["id"]: root_state}
+    observations_by_id = {root["id"]: observation}
+
+    frontier: list[tuple[float, int, int, str]] = []
+    push_ix = 0
+    heapq.heappush(frontier, (-float(root["vlm_score"]), int(root["depth"]), push_ix, root["id"]))
+    push_ix += 1
+    expanded: set[str] = set()
+
+    for expansion_ix in range(cfg.best_first_expansions):
+        while frontier:
+            _, _, _, node_id = heapq.heappop(frontier)
+            if node_id not in expanded:
+                break
+        else:
+            break
+
+        node = nodes_by_id[node_id]
+        if node["terminal"] or int(node["depth"]) >= cfg.best_first_depth:
+            continue
+
+        expanded.add(node_id)
+        node["visits"] = int(node.get("visits", 0)) + 1
+        node["value_sum"] = float(node.get("value_sum", 0.0)) + float(node.get("vlm_score", 0.0))
+
+        created = _expand_search_node(
+            planner="best_first",
+            node=node,
+            nodes_by_id=nodes_by_id,
+            child_edges=child_edges,
+            states_by_id=states_by_id,
+            observations_by_id=observations_by_id,
+            base_env=base_env,
+            vector_env=vector_env,
+            action_api=action_api,
+            scorer=scorer,
+            trace=trace,
+            cfg=cfg,
+            rng=rng,
+            task=task,
+            max_env_steps=max_env_steps,
+        )
+
+        for child in created:
+            if not child["terminal"] and int(child["depth"]) < cfg.best_first_depth:
+                priority = -float(child.get("vlm_score", 0.0))
+                heapq.heappush(frontier, (priority, int(child["depth"]), push_ix, child["id"]))
+                push_ix += 1
+
+        root_child, best_descendant = _best_descendant_root_child(root=root, nodes_by_id=nodes_by_id)
+        trace.write_event(
+            "best_first_expansion",
+            {
+                "expansion_ix": expansion_ix,
+                "expanded_node_id": node["id"],
+                "created_node_ids": [child["id"] for child in created],
+                "frontier_size": len(frontier),
+                "best_root_child_id": root_child["id"] if root_child is not None else None,
+                "best_descendant_id": best_descendant["id"] if best_descendant is not None else None,
+                "best_descendant_score": (
+                    best_descendant["vlm_score"] if best_descendant is not None else None
+                ),
+            },
+        )
+
+        if any(child.get("success", False) for child in created):
+            break
+
+    if not root["children"]:
+        fallback = action_api.predict_action_chunk(
+            observation, env=vector_env, task=task, horizon=cfg.chunk_size
+        )
+        return fallback, {"reason": "best_first_root_unexpanded", "root_id": root["id"]}
+
+    best_root_child, best_descendant = _best_descendant_root_child(root=root, nodes_by_id=nodes_by_id)
+    if best_root_child is None:
+        best_root_child = max(
+            (nodes_by_id[child_id] for child_id in root["children"]),
+            key=lambda child: float(child.get("vlm_score", 0.0)),
+        )
+        best_descendant = best_root_child
+
+    best_edge = child_edges[best_root_child["id"]]
+    _restore_base_env(base_env, root_state, timestep=env_step)
+    return np.asarray(best_edge["actions"], dtype=np.float32), {
+        "root_id": root["id"],
+        "selected_edge_id": best_edge["id"],
+        "selected_child_id": best_root_child["id"],
+        "selected_descendant_id": best_descendant["id"] if best_descendant is not None else None,
+        "selected_score": best_root_child["vlm_score"],
+        "selected_descendant_score": (
+            best_descendant["vlm_score"] if best_descendant is not None else None
+        ),
+        "expanded_count": len(expanded),
+        "frontier_size": len(frontier),
+    }
+
+
 def plan_baseline_action_chunk(
     *,
     action_api: LeRobotActionAPI,
@@ -1101,8 +1269,8 @@ def choose_action_with_external_planner(
 
 @parser.wrap()
 def main(cfg: PolicyInferenceConfig) -> None:
-    if cfg.planner not in {"baseline", "mcts"}:
-        raise ValueError("`planner` must be one of: baseline, mcts")
+    if cfg.planner not in {"baseline", "mcts", "best_first"}:
+        raise ValueError("`planner` must be one of: baseline, mcts, best_first")
     if cfg.chunk_size <= 0:
         raise ValueError("`chunk_size` must be positive.")
     if cfg.mcts_depth <= 0:
@@ -1113,6 +1281,10 @@ def main(cfg: PolicyInferenceConfig) -> None:
         raise ValueError("`mcts_num_candidates` must be positive.")
     if cfg.mcts_noise_mode not in {"iid", "chunk", "mixed"}:
         raise ValueError("`mcts_noise_mode` must be one of: iid, chunk, mixed.")
+    if cfg.best_first_expansions <= 0:
+        raise ValueError("`best_first_expansions` must be positive.")
+    if cfg.best_first_depth <= 0:
+        raise ValueError("`best_first_depth` must be positive.")
 
     set_seed(cfg.seed)
     action_api, envs_dict = make_action_api(cfg)
@@ -1140,6 +1312,8 @@ def main(cfg: PolicyInferenceConfig) -> None:
             "mcts_num_candidates": cfg.mcts_num_candidates,
             "mcts_noise_std": cfg.mcts_noise_std,
             "mcts_noise_mode": cfg.mcts_noise_mode,
+            "best_first_expansions": cfg.best_first_expansions,
+            "best_first_depth": cfg.best_first_depth,
             "vlm_model": cfg.vlm_model,
             "vlm_base_url": cfg.vlm_base_url or cfg.vlm_api_url,
             "vlm_api_key_env": cfg.vlm_api_key_env or "OPENAI_API_KEY",
@@ -1211,8 +1385,22 @@ def main(cfg: PolicyInferenceConfig) -> None:
                     task=task,
                     cfg=cfg,
                 )
-            else:
+            elif cfg.planner == "mcts":
                 actions, plan_info = plan_mcts_action_chunk(
+                    action_api=action_api,
+                    base_env=base_env,
+                    vector_env=env,
+                    observation=observation,
+                    task=task,
+                    env_step=env_step,
+                    scorer=scorer,
+                    trace=trace,
+                    cfg=cfg,
+                    rng=rng,
+                    max_env_steps=max_steps,
+                )
+            else:
+                actions, plan_info = plan_best_first_action_chunk(
                     action_api=action_api,
                     base_env=base_env,
                     vector_env=env,
