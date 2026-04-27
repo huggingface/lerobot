@@ -547,11 +547,15 @@ class LeRobotDatasetMetadata:
 
         video_keys = [video_key] if video_key is not None else self.video_keys
         for key in video_keys:
-            if not self.features[key].get("info", None):
+            existing = self.features[key].get("info") or {}
+            # Repopulate when codec metadata is missing — preserves user-provided
+            # markers like ``video.is_depth_map`` while still recording stream
+            # info on the first episode.
+            if not existing or "video.codec" not in existing:
                 video_path = self.root / self.video_path.format(video_key=key, chunk_index=0, file_index=0)
-                self.info.features[key]["info"] = get_video_info(
-                    video_path, camera_encoder_config=camera_encoder_config
-                )
+                stream_info = get_video_info(video_path, camera_encoder_config=camera_encoder_config)
+                merged = {**existing, **stream_info}
+                self.info.features[key]["info"] = merged
 
     def update_chunk_settings(
         self,

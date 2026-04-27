@@ -40,8 +40,11 @@ from PIL import Image
 
 from lerobot.datasets.pyav_utils import (
     check_video_encoder_config_pyav,
+    depth_to_video_frame,
     detect_available_encoders_pyav,
     decode_depth_frame,
+    encode_depth_frame_pyav,
+    decode_depth_frame_pyav,
 )
 from lerobot.datasets.depth_utils import (
     quantize_depth,
@@ -875,6 +878,7 @@ class _CameraEncoderThread(threading.Thread):
         frame_queue: queue.Queue,
         result_queue: queue.Queue,
         stop_event: threading.Event,
+        depth_encoder_config: "DepthEncoderConfig | None" = None,
     ):
         super().__init__(daemon=True)
         self.video_path = video_path
@@ -885,13 +889,16 @@ class _CameraEncoderThread(threading.Thread):
         self.frame_queue = frame_queue
         self.result_queue = result_queue
         self.stop_event = stop_event
+        self.depth_encoder_config = depth_encoder_config
+
 
     def run(self) -> None:
         from .compute_stats import RunningQuantileStats, auto_downsample_height_width
 
         container = None
         output_stream = None
-        stats_tracker = RunningQuantileStats()
+        is_depth = self.depth_encoder_config is not None
+        stats_tracker = RunningQuantileStats() if not is_depth else None
         frame_count = 0
 
         try:
@@ -909,12 +916,12 @@ class _CameraEncoderThread(threading.Thread):
                     # Sentinel: flush and close
                     break
 
-                # Ensure HWC uint8 numpy array
+                # Ensure HWC (RGB or depth) uint8 (RGB only) numpy array
                 if isinstance(frame_data, np.ndarray):
                     if frame_data.ndim == 3 and frame_data.shape[0] == 3:
                         # CHW -> HWC
                         frame_data = frame_data.transpose(1, 2, 0)
-                    if frame_data.dtype != np.uint8:
+                    if frame_data.dtype != np.uint8 and not is_depth:
                         frame_data = (frame_data * 255).astype(np.uint8)
 
                 # Open container on first frame (to get width/height)
@@ -929,21 +936,25 @@ class _CameraEncoderThread(threading.Thread):
                     output_stream.time_base = Fraction(1, self.fps)
 
                 # Encode frame with explicit timestamps
-                pil_img = Image.fromarray(frame_data)
-                video_frame = av.VideoFrame.from_image(pil_img)
+                if is_depth:
+                    video_frame = encode_depth_frame_pyav(frame_data, pix_fmt=self.pix_fmt, depth_min=self.depth_encoder_config.depth_min, depth_max=self.depth_encoder_config.depth_max, shift=self.depth_encoder_config.shift, use_log=self.depth_encoder_config.use_log)
+                else:
+                    pil_img = Image.fromarray(frame_data)
+                    video_frame = av.VideoFrame.from_image(pil_img)
                 video_frame.pts = frame_count
                 video_frame.time_base = Fraction(1, self.fps)
                 packet = output_stream.encode(video_frame)
                 if packet:
                     container.mux(packet)
 
-                # Update stats with downsampled frame (per-channel stats like compute_episode_stats)
-                img_chw = frame_data.transpose(2, 0, 1)  # HWC -> CHW
-                img_downsampled = auto_downsample_height_width(img_chw)
-                # Reshape CHW to (H*W, C) for per-channel stats
-                channels = img_downsampled.shape[0]
-                img_for_stats = img_downsampled.transpose(1, 2, 0).reshape(-1, channels)
-                stats_tracker.update(img_for_stats)
+                if not is_depth:
+                    # Update stats with downsampled frame (per-channel stats like compute_episode_stats)
+                    img_chw = frame_data.transpose(2, 0, 1)  # HWC -> CHW
+                    img_downsampled = auto_downsample_height_width(img_chw)
+                    # Reshape CHW to (H*W, C) for per-channel stats
+                    channels = img_downsampled.shape[0]
+                    img_for_stats = img_downsampled.transpose(1, 2, 0).reshape(-1, channels)
+                    stats_tracker.update(img_for_stats)
 
                 frame_count += 1
 
@@ -958,8 +969,10 @@ class _CameraEncoderThread(threading.Thread):
 
             av.logging.restore_default_callback()
 
-            # Get stats and put on result queue
-            if frame_count >= 2:
+            # Get stats and put on result queue (depth streams skip stats)
+            if is_depth:
+                self.result_queue.put(("ok", None))
+            elif frame_count >= 2:
                 stats = stats_tracker.get_statistics()
                 self.result_queue.put(("ok", stats))
             else:
@@ -992,6 +1005,8 @@ class StreamingVideoEncoder:
         encoder_threads: int | None = None,
         *,
         queue_maxsize: int = 30,
+        depth_encoder_config: "DepthEncoderConfig | None" = None,
+        depth_keys: list[str] | None = None,
     ):
         """
         Args:
@@ -1002,11 +1017,24 @@ class StreamingVideoEncoder:
                 ``None`` lets the codec decide.
             queue_maxsize: Max frames to buffer per camera before
                 back-pressure drops frames.
+            depth_encoder_config: Optional depth encoder configuration applied
+                to all depth video keys listed in ``depth_keys``.
+            depth_keys: Video keys (matching the dataset feature names) that
+                must be encoded as quantized depth maps using
+                ``depth_encoder_config``. Required when ``depth_encoder_config``
+                is provided.
         """
         self.fps = fps
         self._camera_encoder_config = camera_encoder_config or VideoEncoderConfig()
         self._encoder_threads = encoder_threads
         self.queue_maxsize = queue_maxsize
+        self._depth_encoder_config = depth_encoder_config
+        self._depth_keys: set[str] = set(depth_keys or [])
+        if self._depth_keys and self._depth_encoder_config is None:
+            raise ValueError(
+                "StreamingVideoEncoder received depth_keys without a depth_encoder_config; "
+                "either pass a DepthEncoderConfig or remove depth_keys."
+            )
 
         self._frame_queues: dict[str, queue.Queue] = {}
         self._result_queues: dict[str, queue.Queue] = {}
@@ -1037,19 +1065,28 @@ class StreamingVideoEncoder:
             temp_video_dir = Path(tempfile.mkdtemp(dir=temp_dir))
             video_path = temp_video_dir / f"{video_key.replace('/', '_')}_streaming.mp4"
 
-            vcodec = self._camera_encoder_config.vcodec
-            codec_options = self._camera_encoder_config.get_codec_options(
-                self._encoder_threads, as_strings=True
-            )
+            is_depth_key = video_key in self._depth_keys
+            encoder_cfg: VideoEncoderConfig
+            depth_cfg = None
+            if is_depth_key:
+                assert self._depth_encoder_config is not None  # guaranteed by __init__
+                encoder_cfg = self._depth_encoder_config
+                depth_cfg = self._depth_encoder_config
+            else:
+                encoder_cfg = self._camera_encoder_config
+
+            vcodec = encoder_cfg.vcodec
+            codec_options = encoder_cfg.get_codec_options(self._encoder_threads)
             encoder_thread = _CameraEncoderThread(
                 video_path=video_path,
                 fps=self.fps,
                 vcodec=vcodec,
-                pix_fmt=self._camera_encoder_config.pix_fmt,
+                pix_fmt=encoder_cfg.pix_fmt,
                 codec_options=codec_options,
                 frame_queue=frame_queue,
                 result_queue=result_queue,
                 stop_event=stop_event,
+                depth_encoder_config=depth_cfg,
             )
             encoder_thread.start()
 

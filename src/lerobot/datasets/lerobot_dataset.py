@@ -259,6 +259,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                     self._camera_encoder_config,
                     self._encoder_threads,
                     encoder_queue_maxsize,
+                    depth_encoder_config=self._depth_encoder_config,
+                    depth_keys=self.meta.depth_keys,
                 )
             self.writer = DatasetWriter(
                 meta=self.meta,
@@ -309,12 +311,17 @@ class LeRobotDataset(torch.utils.data.Dataset):
         camera_encoder_config: VideoEncoderConfig,
         encoder_threads: int | None,
         encoder_queue_maxsize: int,
+        *,
+        depth_encoder_config: DepthEncoderConfig | None = None,
+        depth_keys: list[str] | None = None,
     ) -> StreamingVideoEncoder:
         return StreamingVideoEncoder(
             fps=fps,
             camera_encoder_config=camera_encoder_config,
             encoder_threads=encoder_threads,
             queue_maxsize=encoder_queue_maxsize,
+            depth_encoder_config=depth_encoder_config,
+            depth_keys=depth_keys,
         )
 
     # ── Metadata properties ───────────────────────────────────────────
@@ -711,7 +718,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
         streaming_enc = None
         if streaming_encoding and len(obj.meta.video_keys) > 0:
             streaming_enc = cls._build_streaming_encoder(
-                fps, camera_encoder_config, encoder_threads, encoder_queue_maxsize
+                fps,
+                camera_encoder_config,
+                encoder_threads,
+                encoder_queue_maxsize,
+                depth_encoder_config=depth_encoder_config,
+                depth_keys=obj.meta.depth_keys,
             )
         obj.writer = DatasetWriter(
             meta=obj.meta,
@@ -822,7 +834,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
         streaming_enc = None
         if streaming_encoding and len(obj.meta.video_keys) > 0:
             streaming_enc = cls._build_streaming_encoder(
-                obj.meta.fps, camera_encoder_config, encoder_threads, encoder_queue_maxsize
+                obj.meta.fps,
+                camera_encoder_config,
+                encoder_threads,
+                encoder_queue_maxsize,
+                depth_encoder_config=depth_encoder_config,
+                depth_keys=obj.meta.depth_keys,
             )
         obj.writer = DatasetWriter(
             meta=obj.meta,
