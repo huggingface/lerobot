@@ -325,10 +325,10 @@ def load_reward_model_checkpoint(
     *,
     device: torch.device | str = "cpu",
 ) -> tuple[MultiModalRewardModel, RewardModelConfig, dict[str, Any]]:
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False) # :)
     cfg = RewardModelConfig.from_dict(checkpoint["model_config"])
     model = MultiModalRewardModel(cfg)
-    model.load_state_dict(checkpoint["model_state_dict"], weight_only=False) # :)
+    model.load_state_dict(checkpoint["model_state_dict"])
     model.to(device)
     model.eval()
     return model, cfg, checkpoint

@@ -18,15 +18,11 @@ uv run python examples/tree_search/policy_inference_api.py \
 ```
 """
 
-import base64
 import heapq
-import io
 import json
 import logging
 import math
-import os
 import time
-import re
 from collections.abc import Mapping, Sequence
 from contextlib import nullcontext, suppress
 from dataclasses import dataclass, field
@@ -36,7 +32,6 @@ from typing import Any
 import gymnasium as gym
 import numpy as np
 import torch
-from PIL import Image
 from torch import Tensor
 
 from lerobot import envs, policies  # noqa: F401 - registers config subclasses
@@ -58,6 +53,7 @@ from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import init_logging
+from reward_model import RewardBatchProcessor, load_reward_model_checkpoint, move_batch_to_device
 
 logger = logging.getLogger(__name__)
 TREE_SEARCH_DIR = Path(__file__).resolve().parent
