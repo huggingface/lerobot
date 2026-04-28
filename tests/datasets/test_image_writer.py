@@ -93,9 +93,32 @@ def test_image_array_to_pil_image_pytorch_format(img_array_factory):
 
 
 def test_image_array_to_pil_image_single_channel(img_array_factory):
+    # Single-channel inputs are routed to grayscale mode for raw depth maps.
     img_array = img_array_factory(channels=1)
-    with pytest.raises(NotImplementedError):
-        image_array_to_pil_image(img_array)
+    result_image = image_array_to_pil_image(img_array)
+    assert isinstance(result_image, Image.Image)
+    assert result_image.size == (100, 100)
+    assert result_image.mode == "L"
+    assert np.array_equal(np.array(result_image), img_array.squeeze(-1))
+
+
+def test_image_array_to_pil_image_single_channel_uint16(img_array_factory):
+    img_array = img_array_factory(channels=1, dtype=np.uint16)
+    result_image = image_array_to_pil_image(img_array)
+    assert isinstance(result_image, Image.Image)
+    assert result_image.size == (100, 100)
+    assert result_image.mode == "I;16"
+    # Bit-perfect: no rescaling, no clipping.
+    assert np.array_equal(np.array(result_image), img_array.squeeze(-1))
+
+
+def test_image_array_to_pil_image_single_channel_float32(img_array_factory):
+    img_array = img_array_factory(channels=1, dtype=np.float32)
+    result_image = image_array_to_pil_image(img_array)
+    assert isinstance(result_image, Image.Image)
+    assert result_image.size == (100, 100)
+    assert result_image.mode == "F"
+    assert np.array_equal(np.array(result_image), img_array.squeeze(-1))
 
 
 def test_image_array_to_pil_image_4_channels(img_array_factory):
@@ -139,6 +162,28 @@ def test_write_image_image(tmp_path, img_factory):
     saved_image = Image.open(fpath)
     assert list(saved_image.getdata()) == list(image_pil.getdata())
     assert np.array_equal(image_pil, saved_image)
+
+
+def test_write_image_tiff_uint16_bitperfect(tmp_path):
+    """16-bit grayscale TIFF round-trips bit-perfectly (raw depth maps)."""
+    image_array = np.random.randint(0, 65535, size=(32, 48), dtype=np.uint16)
+    fpath = tmp_path / "depth.tiff"
+    write_image(image_array, fpath)
+    assert fpath.exists()
+    saved = np.array(Image.open(fpath))
+    assert saved.dtype == np.uint16
+    assert np.array_equal(saved, image_array)
+
+
+def test_write_image_tiff_float32_bitperfect(tmp_path):
+    """Float32 TIFF round-trips bit-perfectly (metric depth in meters)."""
+    image_array = np.random.uniform(0.05, 4.0, size=(32, 48)).astype(np.float32)
+    fpath = tmp_path / "depth.tiff"
+    write_image(image_array, fpath)
+    assert fpath.exists()
+    saved = np.array(Image.open(fpath))
+    assert saved.dtype == np.float32
+    assert np.array_equal(saved, image_array)
 
 
 def test_write_image_exception(tmp_path):

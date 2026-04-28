@@ -46,6 +46,7 @@ from .io_utils import (
     write_info,
 )
 from .utils import (
+    DEFAULT_DEPTH_PATH,
     DEFAULT_EPISODES_PATH,
     DEFAULT_IMAGE_PATH,
     update_chunk_file_indices,
@@ -57,6 +58,7 @@ from .video_utils import (
     concatenate_video_files,
     encode_video_frames,
     get_video_duration_in_s,
+    is_depth_feature,
 )
 
 logger = logging.getLogger(__name__)
@@ -149,8 +151,16 @@ class DatasetWriter:
             ep_buffer[key] = current_ep_idx if key == "episode_index" else []
         return ep_buffer
 
+    def _is_depth_image_key(self, image_key: str) -> bool:
+        """Whether *image_key* is a depth feature stored as per-frame images."""
+        ft = self._meta.features.get(image_key)
+        if ft is None or ft.get("dtype") != "image":
+            return False
+        return is_depth_feature(ft.get("info") or {})
+
     def _get_image_file_path(self, episode_index: int, image_key: str, frame_index: int) -> Path:
-        fpath = DEFAULT_IMAGE_PATH.format(
+        path_template = DEFAULT_DEPTH_PATH if self._is_depth_image_key(image_key) else DEFAULT_IMAGE_PATH
+        fpath = path_template.format(
             image_key=image_key, episode_index=episode_index, frame_index=frame_index
         )
         return self._root / fpath
