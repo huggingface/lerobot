@@ -151,11 +151,11 @@ class RewardBatchProcessor:
             if value is None:
                 rows.append(torch.zeros(self.cfg.proprioception_dim, dtype=torch.float32))
                 continue
-            tensor = torch.as_tensor(value, dtype=torch.float32).flatten()
+            tensor = torch.as_tensor(np.asarray(value).copy(), dtype=torch.float32).flatten()
             if tensor.numel() != self.cfg.proprioception_dim:
                 raise ValueError(
                     "Expected proprioception vector with "
-                    f"{self.cfg.proprioception_dim} values, got shape {tuple(torch.as_tensor(value).shape)}."
+                    f"{self.cfg.proprioception_dim} values, got shape {tuple(np.asarray(value).shape)}."
                 )
             rows.append(tensor)
         return torch.stack(rows)
@@ -275,14 +275,29 @@ class MultiModalRewardModel(nn.Module):
             outputs = self.encoder.get_image_features(pixel_values=pixel_values)
         else:
             outputs = self.encoder(pixel_values)
-        return torch.nn.functional.normalize(outputs.float(), dim=-1)
+        features = self._pooled_feature_tensor(outputs, output_name="image")
+        return torch.nn.functional.normalize(features.float(), dim=-1)
 
     def _encode_text(self, *, input_ids: Tensor, attention_mask: Tensor | None) -> Tensor:
         kwargs: dict[str, Tensor] = {"input_ids": input_ids}
         if attention_mask is not None:
             kwargs["attention_mask"] = attention_mask
         outputs = self.encoder.get_text_features(**kwargs)
-        return torch.nn.functional.normalize(outputs.float(), dim=-1)
+        features = self._pooled_feature_tensor(outputs, output_name="text")
+        return torch.nn.functional.normalize(features.float(), dim=-1)
+
+    @staticmethod
+    def _pooled_feature_tensor(outputs: Any, *, output_name: str) -> Tensor:
+        """Return the pooled encoder feature from known HF output contracts."""
+        if isinstance(outputs, Tensor):
+            return outputs
+        pooler_output = getattr(outputs, "pooler_output", None)
+        if isinstance(pooler_output, Tensor):
+            return pooler_output
+        raise TypeError(
+            f"Expected {output_name} encoder output to be a Tensor or have a Tensor pooler_output; "
+            f"got {type(outputs).__name__}."
+        )
 
 
 def move_batch_to_device(batch: dict[str, Tensor], device: torch.device | str) -> dict[str, Tensor]:
