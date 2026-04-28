@@ -22,6 +22,7 @@ python examples/tree_search/train_reward_model.py \
   --ranking_weight=0.2 \
   --ranking_margin=0.05 \
   --val_fraction=0.2 \
+  --log_every_batches=5 \
   --seed=0 \
   --device="cuda" \
   --output_dir="outputs/tree_search/reward_model_libero_object"

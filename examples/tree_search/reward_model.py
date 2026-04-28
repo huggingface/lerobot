@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import logging
 from typing import Any
 
 import numpy as np
 import torch
 from PIL import Image
 from torch import Tensor, nn
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -75,6 +78,12 @@ class RewardBatchProcessor:
     def __init__(self, cfg: RewardModelConfig) -> None:
         self.cfg = cfg
         self.encoder_type = cfg.encoder_type.lower()
+        logger.info(
+            "Initializing reward batch processor encoder_type=%s model_id=%s use_proprioception=%s",
+            cfg.encoder_type,
+            cfg.encoder_model_id,
+            cfg.use_proprioception,
+        )
         if self.encoder_type in {"siglip2", "siglip", "clip"}:
             try:
                 from transformers import AutoProcessor
@@ -170,6 +179,12 @@ class MultiModalRewardModel(nn.Module):
         self.encoder_type = cfg.encoder_type.lower()
         self.encoder: nn.Module
         self.resnet_feature_dim: int | None = None
+        logger.info(
+            "Loading reward encoder encoder_type=%s model_id=%s freeze_encoder=%s",
+            cfg.encoder_type,
+            cfg.encoder_model_id,
+            cfg.freeze_encoder,
+        )
 
         if self.encoder_type in {"siglip2", "siglip", "clip"}:
             try:
@@ -185,6 +200,7 @@ class MultiModalRewardModel(nn.Module):
             self.encoder, self.resnet_feature_dim = self._make_resnet_encoder(self.encoder_type)
         else:
             raise ValueError(f"Unsupported reward encoder_type: {cfg.encoder_type}")
+        logger.info("Reward encoder loaded.")
 
         if cfg.freeze_encoder:
             self.encoder.requires_grad_(False)

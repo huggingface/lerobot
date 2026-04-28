@@ -13,6 +13,7 @@ import csv
 import json
 import logging
 import random
+import time
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -119,6 +120,7 @@ class LiberoRewardFrameDataset(Dataset):
         self.use_proprioception = use_proprioception
         self.reader_cache_size = max(1, reader_cache_size)
         self._reader_cache: OrderedDict[int, EpisodeFrameReader] = OrderedDict()
+        self._logged_first_sample = False
 
     def __len__(self) -> int:
         return len(self.specs)
@@ -143,6 +145,14 @@ class LiberoRewardFrameDataset(Dataset):
             if self.state_key not in item:
                 raise KeyError(f"Missing proprioception key '{self.state_key}' in dataset item.")
             sample["proprioception"] = item[self.state_key]
+        if not self._logged_first_sample:
+            self._logged_first_sample = True
+            logger.info(
+                "Loaded first sample episode=%s local_index=%s keys=%s",
+                spec.episode_index,
+                spec.local_index,
+                sorted(sample),
+            )
         return sample
 
     def _reader_for_episode(self, episode_index: int) -> EpisodeFrameReader:
@@ -151,7 +161,15 @@ class LiberoRewardFrameDataset(Dataset):
             self._reader_cache[episode_index] = reader
             return reader
 
+        start = time.perf_counter()
+        logger.info("Opening episode reader episode=%s", episode_index)
         reader = _load_episode_reader(self.reader_args, self.meta, episode_index)
+        logger.info(
+            "Opened episode reader episode=%s len=%s elapsed=%.2fs",
+            episode_index,
+            len(reader),
+            time.perf_counter() - start,
+        )
         self._reader_cache[episode_index] = reader
         while len(self._reader_cache) > self.reader_cache_size:
             self._reader_cache.popitem(last=False)
@@ -161,10 +179,21 @@ class LiberoRewardFrameDataset(Dataset):
 def build_sample_specs(args: argparse.Namespace, meta: LeRobotDatasetMetadata) -> tuple[list[RewardSampleSpec], dict[str, Any]]:
     all_specs: list[RewardSampleSpec] = []
     task_summaries: dict[str, Any] = {}
-    for task_order in parse_task_orders(args.task_orders):
+    task_orders = parse_task_orders(args.task_orders)
+    logger.info("Building sample specs for task_orders=%s", task_orders)
+    for task_order in task_orders:
+        start = time.perf_counter()
+        logger.info("Resolving task_order=%s", task_order)
         task_metadata = _get_libero_task(args.suite, task_order)
         task_language = str(task_metadata["language"])
+        logger.info("Finding episodes for task_order=%s task=%r", task_order, task_language)
         episodes = find_episodes_for_task(meta, task_metadata=task_metadata, limit=args.episodes_per_task)
+        logger.info(
+            "Found episodes for task_order=%s episodes=%s elapsed=%.2fs",
+            task_order,
+            episodes,
+            time.perf_counter() - start,
+        )
         task_summaries[str(task_order)] = {
             "task": task_language,
             "episodes": episodes,
@@ -179,6 +208,7 @@ def build_sample_specs(args: argparse.Namespace, meta: LeRobotDatasetMetadata) -
                 max_frames=args.max_frames_per_episode,
             )
             denom = max(1, length - 1)
+            before_count = len(all_specs)
             for local_index in local_indices:
                 all_specs.append(
                     RewardSampleSpec(
@@ -188,6 +218,14 @@ def build_sample_specs(args: argparse.Namespace, meta: LeRobotDatasetMetadata) -
                         label=float(local_index) / float(denom),
                     )
                 )
+            logger.info(
+                "Added samples task_order=%s episode=%s length=%s sampled=%s total=%s",
+                task_order,
+                episode_index,
+                length,
+                len(all_specs) - before_count,
+                len(all_specs),
+            )
 
     return all_specs, task_summaries
 
@@ -249,6 +287,8 @@ def run_epoch(
     device: torch.device,
     ranking_weight: float,
     ranking_margin: float,
+    epoch_name: str,
+    log_every_batches: int,
 ) -> dict[str, float]:
     is_train = optimizer is not None
     model.train(is_train)
@@ -257,7 +297,12 @@ def run_epoch(
     total_mae = 0.0
     total_count = 0
 
-    for batch in loader:
+    start = time.perf_counter()
+    total_batches = len(loader)
+    logger.info("%s start batches=%s samples=%s", epoch_name, total_batches, len(loader.dataset))
+    for batch_idx, batch in enumerate(loader):
+        if batch_idx == 0:
+            logger.info("%s first batch loaded keys=%s", epoch_name, sorted(batch))
         batch = move_batch_to_device(batch, device)
         labels = batch["labels"]
         with torch.enable_grad() if is_train else torch.no_grad():
@@ -277,6 +322,19 @@ def run_epoch(
         total_mse += float(mse.detach()) * count
         total_mae += float(torch.mean(torch.abs(pred.detach() - labels))) * count
         total_count += count
+        if log_every_batches > 0 and (batch_idx == 0 or (batch_idx + 1) % log_every_batches == 0):
+            elapsed = time.perf_counter() - start
+            logger.info(
+                "%s batch=%s/%s samples=%s loss=%.4f mse=%.4f rank=%.4f elapsed=%.1fs",
+                epoch_name,
+                batch_idx + 1,
+                total_batches,
+                total_count,
+                float(loss.detach()),
+                float(mse.detach()),
+                float(rank.detach()),
+                elapsed,
+            )
 
     denom = max(1, total_count)
     return {
@@ -380,6 +438,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ranking_weight", type=float, default=0.2)
     parser.add_argument("--ranking_margin", type=float, default=0.05)
     parser.add_argument("--val_fraction", type=float, default=0.2)
+    parser.add_argument("--log_every_batches", type=int, default=5)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--output_dir", type=Path, required=True)
@@ -387,18 +446,25 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     args = parse_args()
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
+    logger.info("Training args: %s", vars(args))
+    metadata_start = time.perf_counter()
     logger.info("Loading metadata for %s", args.dataset_repo_id)
     meta = LeRobotDatasetMetadata(
         args.dataset_repo_id,
         root=args.dataset_root,
         revision=args.dataset_revision,
+    )
+    logger.info(
+        "Loaded metadata total_episodes=%s elapsed=%.2fs",
+        meta.total_episodes,
+        time.perf_counter() - metadata_start,
     )
     specs, task_summaries = build_sample_specs(args, meta)
     train_specs, val_specs = split_specs(specs, val_fraction=args.val_fraction, seed=args.seed)
@@ -415,6 +481,7 @@ def main() -> None:
         head_hidden_dim=args.head_hidden_dim,
         head_dropout=args.head_dropout,
     )
+    logger.info("Model config: %s", model_cfg.to_dict())
     processor = RewardBatchProcessor(model_cfg)
     reader_args = _reader_args(args)
     train_ds = LiberoRewardFrameDataset(
@@ -440,7 +507,9 @@ def main() -> None:
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=0, collate_fn=processor)
 
     device = torch.device(args.device)
+    logger.info("Creating model on device=%s", device)
     model = MultiModalRewardModel(model_cfg).to(device)
+    logger.info("Model ready.")
     optimizer = torch.optim.AdamW(
         (param for param in model.parameters() if param.requires_grad),
         lr=args.lr,
@@ -457,6 +526,8 @@ def main() -> None:
             device=device,
             ranking_weight=args.ranking_weight,
             ranking_margin=args.ranking_margin,
+            epoch_name=f"train epoch={epoch}",
+            log_every_batches=args.log_every_batches,
         )
         val_metrics = (
             run_epoch(
@@ -466,6 +537,8 @@ def main() -> None:
                 device=device,
                 ranking_weight=args.ranking_weight,
                 ranking_margin=args.ranking_margin,
+                epoch_name=f"val epoch={epoch}",
+                log_every_batches=args.log_every_batches,
             )
             if len(val_ds)
             else {"loss": 0.0, "mse": 0.0, "mae": 0.0, "count": 0.0}
