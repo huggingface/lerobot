@@ -585,6 +585,10 @@ class VLMFrameScorer:
         self.max_tokens = args.vlm_max_tokens
         self.temperature = args.vlm_temperature
         self.top_p = args.vlm_top_p
+        self.presence_penalty = args.vlm_presence_penalty
+        self.top_k = args.vlm_top_k
+        self.min_p = args.vlm_min_p
+        self.repetition_penalty = args.vlm_repetition_penalty
         self.timeout_s = args.vlm_timeout_s
         self.prompt_template = (
             args.prompt_template_path.read_text() if args.prompt_template_path is not None else None
@@ -615,22 +619,30 @@ class VLMFrameScorer:
 
         try:
             client = self._get_client()
-            content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+            content: list[dict[str, Any]] = []
             for label, image in images:
-                content.append({"type": "text", "text": f"Image: {label}"})
+                content.append({"type": "text", "text": f"Image label: {label}"})
                 content.append(
                     {
                         "type": "image_url",
                         "image_url": {"url": _image_to_data_url(image)},
-                        "uuid": label,
                     }
                 )
+            content.append({"type": "text", "text": prompt})
+
+            extra_body: dict[str, Any] = {
+                "top_k": self.top_k,
+                "min_p": self.min_p,
+                "repetition_penalty": self.repetition_penalty,
+            }
             completion = client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": content}],
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
                 top_p=self.top_p,
+                presence_penalty=self.presence_penalty,
+                extra_body=extra_body,
                 stream=False,
             )
             message = completion.choices[0].message.content or ""
@@ -960,8 +972,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vlm_api_key_env", default="OPENAI_API_KEY")
     parser.add_argument("--vlm_model", default=None)
     parser.add_argument("--vlm_max_tokens", type=int, default=512)
-    parser.add_argument("--vlm_temperature", type=float, default=0.0)
-    parser.add_argument("--vlm_top_p", type=float, default=1.0)
+    parser.add_argument("--vlm_temperature", type=float, default=0.6)
+    parser.add_argument("--vlm_top_p", type=float, default=0.95)
+    parser.add_argument("--vlm_presence_penalty", type=float, default=0.0)
+    parser.add_argument("--vlm_top_k", type=int, default=20)
+    parser.add_argument("--vlm_min_p", type=float, default=0.0)
+    parser.add_argument("--vlm_repetition_penalty", type=float, default=1.0)
     parser.add_argument("--vlm_timeout_s", type=float, default=30.0)
     parser.add_argument("--prompt_template_path", type=Path, default=None)
     parser.add_argument("--monotonic_tolerance", type=float, default=0.02)
