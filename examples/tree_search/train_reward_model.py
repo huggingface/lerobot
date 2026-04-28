@@ -48,6 +48,11 @@ from vlm_sequence_prompt_probe import (
 logger = logging.getLogger(__name__)
 
 
+def stage(message: str) -> None:
+    print(f"[reward-train] {message}", flush=True)
+    logger.info(message)
+
+
 @dataclass
 class RewardSampleSpec:
     task: str
@@ -147,12 +152,7 @@ class LiberoRewardFrameDataset(Dataset):
             sample["proprioception"] = item[self.state_key]
         if not self._logged_first_sample:
             self._logged_first_sample = True
-            logger.info(
-                "Loaded first sample episode=%s local_index=%s keys=%s",
-                spec.episode_index,
-                spec.local_index,
-                sorted(sample),
-            )
+            stage(f"Loaded first sample episode={spec.episode_index} local_index={spec.local_index} keys={sorted(sample)}")
         return sample
 
     def _reader_for_episode(self, episode_index: int) -> EpisodeFrameReader:
@@ -162,14 +162,9 @@ class LiberoRewardFrameDataset(Dataset):
             return reader
 
         start = time.perf_counter()
-        logger.info("Opening episode reader episode=%s", episode_index)
+        stage(f"Opening episode reader episode={episode_index}")
         reader = _load_episode_reader(self.reader_args, self.meta, episode_index)
-        logger.info(
-            "Opened episode reader episode=%s len=%s elapsed=%.2fs",
-            episode_index,
-            len(reader),
-            time.perf_counter() - start,
-        )
+        stage(f"Opened episode reader episode={episode_index} len={len(reader)} elapsed={time.perf_counter() - start:.2f}s")
         self._reader_cache[episode_index] = reader
         while len(self._reader_cache) > self.reader_cache_size:
             self._reader_cache.popitem(last=False)
@@ -180,20 +175,15 @@ def build_sample_specs(args: argparse.Namespace, meta: LeRobotDatasetMetadata) -
     all_specs: list[RewardSampleSpec] = []
     task_summaries: dict[str, Any] = {}
     task_orders = parse_task_orders(args.task_orders)
-    logger.info("Building sample specs for task_orders=%s", task_orders)
+    stage(f"Building sample specs for task_orders={task_orders}")
     for task_order in task_orders:
         start = time.perf_counter()
-        logger.info("Resolving task_order=%s", task_order)
+        stage(f"Resolving task_order={task_order}")
         task_metadata = _get_libero_task(args.suite, task_order)
         task_language = str(task_metadata["language"])
-        logger.info("Finding episodes for task_order=%s task=%r", task_order, task_language)
+        stage(f"Finding episodes for task_order={task_order} task={task_language!r}")
         episodes = find_episodes_for_task(meta, task_metadata=task_metadata, limit=args.episodes_per_task)
-        logger.info(
-            "Found episodes for task_order=%s episodes=%s elapsed=%.2fs",
-            task_order,
-            episodes,
-            time.perf_counter() - start,
-        )
+        stage(f"Found episodes for task_order={task_order} episodes={episodes} elapsed={time.perf_counter() - start:.2f}s")
         task_summaries[str(task_order)] = {
             "task": task_language,
             "episodes": episodes,
@@ -218,13 +208,9 @@ def build_sample_specs(args: argparse.Namespace, meta: LeRobotDatasetMetadata) -
                         label=float(local_index) / float(denom),
                     )
                 )
-            logger.info(
-                "Added samples task_order=%s episode=%s length=%s sampled=%s total=%s",
-                task_order,
-                episode_index,
-                length,
-                len(all_specs) - before_count,
-                len(all_specs),
+            stage(
+                f"Added samples task_order={task_order} episode={episode_index} "
+                f"length={length} sampled={len(all_specs) - before_count} total={len(all_specs)}"
             )
 
     return all_specs, task_summaries
@@ -299,10 +285,10 @@ def run_epoch(
 
     start = time.perf_counter()
     total_batches = len(loader)
-    logger.info("%s start batches=%s samples=%s", epoch_name, total_batches, len(loader.dataset))
+    stage(f"{epoch_name} start batches={total_batches} samples={len(loader.dataset)}")
     for batch_idx, batch in enumerate(loader):
         if batch_idx == 0:
-            logger.info("%s first batch loaded keys=%s", epoch_name, sorted(batch))
+            stage(f"{epoch_name} first batch loaded keys={sorted(batch)}")
         batch = move_batch_to_device(batch, device)
         labels = batch["labels"]
         with torch.enable_grad() if is_train else torch.no_grad():
@@ -324,16 +310,10 @@ def run_epoch(
         total_count += count
         if log_every_batches > 0 and (batch_idx == 0 or (batch_idx + 1) % log_every_batches == 0):
             elapsed = time.perf_counter() - start
-            logger.info(
-                "%s batch=%s/%s samples=%s loss=%.4f mse=%.4f rank=%.4f elapsed=%.1fs",
-                epoch_name,
-                batch_idx + 1,
-                total_batches,
-                total_count,
-                float(loss.detach()),
-                float(mse.detach()),
-                float(rank.detach()),
-                elapsed,
+            stage(
+                f"{epoch_name} batch={batch_idx + 1}/{total_batches} samples={total_count} "
+                f"loss={float(loss.detach()):.4f} mse={float(mse.detach()):.4f} "
+                f"rank={float(rank.detach()):.4f} elapsed={elapsed:.1f}s"
             )
 
     denom = max(1, total_count)
@@ -447,30 +427,32 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    stage("Process started")
     args = parse_args()
+    stage("Args parsed")
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
+    stage(f"Creating output_dir={args.output_dir}")
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    logger.info("Training args: %s", vars(args))
+    stage(f"Training args={vars(args)}")
     metadata_start = time.perf_counter()
-    logger.info("Loading metadata for %s", args.dataset_repo_id)
+    stage(f"Loading metadata for dataset_repo_id={args.dataset_repo_id}")
     meta = LeRobotDatasetMetadata(
         args.dataset_repo_id,
         root=args.dataset_root,
         revision=args.dataset_revision,
     )
-    logger.info(
-        "Loaded metadata total_episodes=%s elapsed=%.2fs",
-        meta.total_episodes,
-        time.perf_counter() - metadata_start,
-    )
+    stage(f"Loaded metadata total_episodes={meta.total_episodes} elapsed={time.perf_counter() - metadata_start:.2f}s")
+    stage("Building sample specs")
     specs, task_summaries = build_sample_specs(args, meta)
+    stage("Splitting train/val specs")
     train_specs, val_specs = split_specs(specs, val_fraction=args.val_fraction, seed=args.seed)
-    logger.info("Built %d samples: train=%d val=%d", len(specs), len(train_specs), len(val_specs))
+    stage(f"Built samples total={len(specs)} train={len(train_specs)} val={len(val_specs)}")
 
     model_id = args.encoder_model_id or default_model_id(args.encoder_type)
+    stage(f"Preparing model config encoder_type={args.encoder_type} model_id={model_id}")
     model_cfg = RewardModelConfig(
         encoder_type=args.encoder_type,
         encoder_model_id=model_id,
@@ -481,9 +463,12 @@ def main() -> None:
         head_hidden_dim=args.head_hidden_dim,
         head_dropout=args.head_dropout,
     )
-    logger.info("Model config: %s", model_cfg.to_dict())
+    stage(f"Model config={model_cfg.to_dict()}")
+    stage("Creating RewardBatchProcessor")
     processor = RewardBatchProcessor(model_cfg)
+    stage("RewardBatchProcessor ready")
     reader_args = _reader_args(args)
+    stage("Creating datasets")
     train_ds = LiberoRewardFrameDataset(
         specs=train_specs,
         meta=meta,
@@ -502,23 +487,29 @@ def main() -> None:
         state_key=args.state_key,
         use_proprioception=args.use_proprioception,
     )
+    stage(f"Datasets ready train_len={len(train_ds)} val_len={len(val_ds)}")
 
+    stage("Creating DataLoaders")
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=0, collate_fn=processor)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=0, collate_fn=processor)
+    stage(f"DataLoaders ready train_batches={len(train_loader)} val_batches={len(val_loader)}")
 
     device = torch.device(args.device)
-    logger.info("Creating model on device=%s", device)
+    stage(f"Creating model on device={device}")
     model = MultiModalRewardModel(model_cfg).to(device)
-    logger.info("Model ready.")
+    stage("Model ready")
+    stage("Creating optimizer")
     optimizer = torch.optim.AdamW(
         (param for param in model.parameters() if param.requires_grad),
         lr=args.lr,
         weight_decay=args.weight_decay,
     )
+    stage("Optimizer ready; starting training")
 
     history: list[dict[str, Any]] = []
     best_val = float("inf")
     for epoch in range(args.epochs):
+        stage(f"Starting epoch={epoch}")
         train_metrics = run_epoch(
             model=model,
             loader=train_loader,
@@ -545,9 +536,10 @@ def main() -> None:
         )
         row = {"epoch": epoch, "train": train_metrics, "val": val_metrics}
         history.append(row)
-        logger.info("epoch=%s train=%s val=%s", epoch, train_metrics, val_metrics)
+        stage(f"Finished epoch={epoch} train={train_metrics} val={val_metrics}")
         if val_metrics["mse"] <= best_val:
             best_val = val_metrics["mse"]
+            stage(f"Saving best checkpoint epoch={epoch} best_val_mse={best_val:.6f}")
             torch.save(
                 {
                     "model_config": model_cfg.to_dict(),
@@ -559,6 +551,7 @@ def main() -> None:
                 args.output_dir / "best_reward_model.pt",
             )
 
+    stage("Running final evaluation records")
     eval_metrics, eval_records = (
         evaluate_records(
             model=model,
@@ -580,7 +573,7 @@ def main() -> None:
     }
     (args.output_dir / "train_summary.json").write_text(json.dumps(_to_jsonable(summary), indent=2))
     write_eval_outputs(eval_records, eval_metrics, args.output_dir)
-    logger.info("Saved reward model outputs to %s", args.output_dir)
+    stage(f"Saved reward model outputs to {args.output_dir}")
 
 
 if __name__ == "__main__":
