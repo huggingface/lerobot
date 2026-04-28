@@ -628,6 +628,7 @@ class VLMFrameScorer:
         self.retry_sleep_s = args.vlm_retry_sleep_s
         self.rate_limit_sleep_s = args.vlm_rate_limit_sleep_s
         self.log_response_chars = args.vlm_log_response_chars
+        self.verbose = args.vlm_verbose
         self.prompt_template = (
             args.prompt_template_path.read_text() if args.prompt_template_path is not None else None
         )
@@ -680,14 +681,15 @@ class VLMFrameScorer:
         max_attempts = self.max_retries + 1
         for attempt in range(1, max_attempts + 1):
             try:
-                logger.info(
-                    "VLM request attempt=%s/%s model=%s image_count=%s image_labels=%s",
-                    attempt,
-                    max_attempts,
-                    self.model,
-                    len(images),
-                    [label for label, _ in images],
-                )
+                if self.verbose:
+                    logger.info(
+                        "VLM request attempt=%s/%s model=%s image_count=%s image_labels=%s",
+                        attempt,
+                        max_attempts,
+                        self.model,
+                        len(images),
+                        [label for label, _ in images],
+                    )
                 self._wait_for_rate_limit()
                 completion = client.chat.completions.create(
                     model=self.model,
@@ -746,14 +748,15 @@ class VLMFrameScorer:
                 break
 
             score = min(1.0, max(0.0, float(parsed.get("score", 0.0))))
-            logger.info(
-                "VLM response parsed attempt=%s/%s score=%.3f reason=%r response_tail=%r",
-                attempt,
-                max_attempts,
-                score,
-                str(parsed.get("reason", ""))[:160],
-                response_tail,
-            )
+            if self.verbose:
+                logger.info(
+                    "VLM response parsed attempt=%s/%s score=%.3f reason=%r response_tail=%r",
+                    attempt,
+                    max_attempts,
+                    score,
+                    str(parsed.get("reason", ""))[:160],
+                    response_tail,
+                )
             return VLMScore(
                 score=score,
                 reason=str(parsed.get("reason", "")),
@@ -779,11 +782,12 @@ class VLMFrameScorer:
             elapsed_s = now - self._last_request_monotonic
             sleep_s = min_interval_s - elapsed_s
             if sleep_s > 0:
-                logger.info(
-                    "VLM throttle sleeping %.1fs for %.2f requests/minute limit.",
-                    sleep_s,
-                    self.requests_per_minute,
-                )
+                if self.verbose:
+                    logger.info(
+                        "VLM throttle sleeping %.1fs for %.2f requests/minute limit.",
+                        sleep_s,
+                        self.requests_per_minute,
+                    )
                 time.sleep(sleep_s)
         self._last_request_monotonic = time.monotonic()
 
@@ -1144,6 +1148,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=200,
         help="Number of response characters to include in VLM success/failure logs.",
+    )
+    parser.add_argument(
+        "--vlm_verbose",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Log every VLM request, throttle sleep, and successful response tail.",
     )
     parser.add_argument("--prompt_template_path", type=Path, default=None)
     parser.add_argument("--monotonic_tolerance", type=float, default=0.02)
