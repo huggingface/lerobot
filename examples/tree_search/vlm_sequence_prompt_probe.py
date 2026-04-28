@@ -44,6 +44,7 @@ import csv
 import json
 import logging
 import re
+import time
 from dataclasses import asdict, dataclass
 from io import BytesIO
 from pathlib import Path
@@ -577,6 +578,38 @@ def _parse_score_json(content: str) -> dict[str, Any]:
     return parsed
 
 
+def _error_status_code(exc: Exception) -> int | None:
+    status_code = getattr(exc, "status_code", None)
+    if status_code is None:
+        response = getattr(exc, "response", None)
+        status_code = getattr(response, "status_code", None) if response is not None else None
+    if status_code is not None:
+        with contextlib.suppress(TypeError, ValueError):
+            return int(status_code)
+
+    match = re.search(r"Error code:\s*(\d+)", str(exc))
+    return int(match.group(1)) if match else None
+
+
+def _is_rate_limit_error(exc: Exception) -> bool:
+    if _error_status_code(exc) == 429:
+        return True
+    return "rate limit" in str(exc).lower()
+
+
+def _retry_after_seconds(exc: Exception) -> float | None:
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None) if response is not None else None
+    if not headers:
+        return None
+    retry_after = headers.get("retry-after") if hasattr(headers, "get") else None
+    if retry_after is None:
+        return None
+    with contextlib.suppress(TypeError, ValueError):
+        return max(0.0, float(retry_after))
+    return None
+
+
 class VLMFrameScorer:
     def __init__(self, args: argparse.Namespace) -> None:
         self.model = args.vlm_model
@@ -590,10 +623,16 @@ class VLMFrameScorer:
         self.min_p = args.vlm_min_p
         self.repetition_penalty = args.vlm_repetition_penalty
         self.timeout_s = args.vlm_timeout_s
+        self.requests_per_minute = args.vlm_requests_per_minute
+        self.max_retries = args.vlm_max_retries
+        self.retry_sleep_s = args.vlm_retry_sleep_s
+        self.rate_limit_sleep_s = args.vlm_rate_limit_sleep_s
+        self.log_response_chars = args.vlm_log_response_chars
         self.prompt_template = (
             args.prompt_template_path.read_text() if args.prompt_template_path is not None else None
         )
         self._client = None
+        self._last_request_monotonic: float | None = None
 
     def score(
         self,
@@ -617,56 +656,150 @@ class VLMFrameScorer:
                 raw_response=None,
             )
 
-        message = ""
-        raw_response: Any | None = None
-        try:
-            client = self._get_client()
-            content: list[dict[str, Any]] = []
-            for label, image in images:
-                content.append({"type": "text", "text": f"Image label: {label}"})
-                content.append(
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": _image_to_data_url(image)},
-                    }
-                )
-            content.append({"type": "text", "text": prompt})
-
-            extra_body: dict[str, Any] = {
-                "top_k": self.top_k,
-                "min_p": self.min_p,
-                "repetition_penalty": self.repetition_penalty,
-            }
-            completion = client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": content}],
-                max_tokens=self.max_tokens,
-                temperature=self.temperature,
-                top_p=self.top_p,
-                presence_penalty=self.presence_penalty,
-                extra_body=extra_body,
-                stream=False,
+        client = self._get_client()
+        content: list[dict[str, Any]] = []
+        for label, image in images:
+            content.append({"type": "text", "text": f"Image label: {label}"})
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": _image_to_data_url(image)},
+                }
             )
+        content.append({"type": "text", "text": prompt})
+
+        extra_body: dict[str, Any] = {
+            "top_k": self.top_k,
+            "min_p": self.min_p,
+            "repetition_penalty": self.repetition_penalty,
+        }
+
+        last_error: Exception | None = None
+        last_message = ""
+        raw_response: Any | None = None
+        max_attempts = self.max_retries + 1
+        for attempt in range(1, max_attempts + 1):
+            try:
+                logger.info(
+                    "VLM request attempt=%s/%s model=%s image_count=%s image_labels=%s",
+                    attempt,
+                    max_attempts,
+                    self.model,
+                    len(images),
+                    [label for label, _ in images],
+                )
+                self._wait_for_rate_limit()
+                completion = client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": content}],
+                    max_tokens=self.max_tokens,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    presence_penalty=self.presence_penalty,
+                    extra_body=extra_body,
+                    stream=False,
+                )
+            except Exception as exc:
+                last_error = exc
+                if _is_rate_limit_error(exc) and attempt < max_attempts:
+                    sleep_s = self._rate_limit_retry_sleep_s(exc)
+                    logger.warning(
+                        "VLM rate limit hit on attempt %s/%s; retrying in %.1fs: %s",
+                        attempt,
+                        max_attempts,
+                        sleep_s,
+                        exc,
+                    )
+                    time.sleep(sleep_s)
+                    continue
+
+                logger.warning("VLM request failed on attempt %s/%s: %s", attempt, max_attempts, exc)
+                break
+
             raw_response = completion.model_dump() if hasattr(completion, "model_dump") else str(completion)
-            message = completion.choices[0].message.content or ""
-            parsed = _parse_score_json(message)
-        except Exception as exc:
-            response_tail = message[-50:] if message else "<empty>"
-            logger.warning("VLM scoring failed: %s; response_tail=%r", exc, response_tail)
+            last_message = completion.choices[0].message.content or ""
+            response_tail = self._response_tail(last_message)
+            try:
+                parsed = _parse_score_json(last_message)
+            except Exception as exc:
+                last_error = exc
+                if attempt < max_attempts:
+                    sleep_s = self._parse_retry_sleep_s()
+                    logger.warning(
+                        "VLM response parse failed on attempt %s/%s; response_tail=%r; retrying in %.1fs: %s",
+                        attempt,
+                        max_attempts,
+                        response_tail,
+                        sleep_s,
+                        exc,
+                    )
+                    time.sleep(sleep_s)
+                    continue
+
+                logger.warning(
+                    "VLM response parse failed on final attempt %s/%s; response_tail=%r: %s",
+                    attempt,
+                    max_attempts,
+                    response_tail,
+                    exc,
+                )
+                break
+
+            score = min(1.0, max(0.0, float(parsed.get("score", 0.0))))
+            logger.info(
+                "VLM response parsed attempt=%s/%s score=%.3f reason=%r response_tail=%r",
+                attempt,
+                max_attempts,
+                score,
+                str(parsed.get("reason", ""))[:160],
+                response_tail,
+            )
             return VLMScore(
-                score=0.0,
-                reason=f"VLM scoring failed: {exc}; response_tail={response_tail!r}",
+                score=score,
+                reason=str(parsed.get("reason", "")),
                 prompt=prompt,
                 raw_response=raw_response,
             )
 
-        score = min(1.0, max(0.0, float(parsed.get("score", 0.0))))
-        return VLMScore(
-            score=score,
-            reason=str(parsed.get("reason", "")),
-            prompt=prompt,
-            raw_response=raw_response,
-        )
+        response_tail = self._response_tail(last_message)
+        reason = f"VLM scoring failed after {max_attempts} attempt(s): {last_error}; response_tail={response_tail!r}"
+        return VLMScore(score=0.0, reason=reason, prompt=prompt, raw_response=raw_response)
+
+    def _min_request_interval_s(self) -> float:
+        if self.requests_per_minute <= 0:
+            return 0.0
+        return 60.0 / float(self.requests_per_minute)
+
+    def _wait_for_rate_limit(self) -> None:
+        min_interval_s = self._min_request_interval_s()
+        if min_interval_s <= 0:
+            return
+        now = time.monotonic()
+        if self._last_request_monotonic is not None:
+            elapsed_s = now - self._last_request_monotonic
+            sleep_s = min_interval_s - elapsed_s
+            if sleep_s > 0:
+                logger.info(
+                    "VLM throttle sleeping %.1fs for %.2f requests/minute limit.",
+                    sleep_s,
+                    self.requests_per_minute,
+                )
+                time.sleep(sleep_s)
+        self._last_request_monotonic = time.monotonic()
+
+    def _response_tail(self, message: str) -> str:
+        if not message:
+            return "<empty>"
+        return message[-self.log_response_chars :]
+
+    def _parse_retry_sleep_s(self) -> float:
+        return max(self.retry_sleep_s, self._min_request_interval_s())
+
+    def _rate_limit_retry_sleep_s(self, exc: Exception) -> float:
+        retry_after_s = _retry_after_seconds(exc)
+        if retry_after_s is not None:
+            return retry_after_s
+        return max(self.rate_limit_sleep_s, self.retry_sleep_s, self._min_request_interval_s())
 
     def build_prompt(
         self,
@@ -982,6 +1115,36 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vlm_min_p", type=float, default=0.0)
     parser.add_argument("--vlm_repetition_penalty", type=float, default=1.0)
     parser.add_argument("--vlm_timeout_s", type=float, default=30.0)
+    parser.add_argument(
+        "--vlm_requests_per_minute",
+        type=float,
+        default=10.0,
+        help="Throttle VLM request starts. Use 0 to disable throttling.",
+    )
+    parser.add_argument(
+        "--vlm_max_retries",
+        type=int,
+        default=3,
+        help="Retry count for 429 rate limits and malformed/empty VLM responses.",
+    )
+    parser.add_argument(
+        "--vlm_retry_sleep_s",
+        type=float,
+        default=6.0,
+        help="Minimum sleep before retrying a malformed/empty VLM response.",
+    )
+    parser.add_argument(
+        "--vlm_rate_limit_sleep_s",
+        type=float,
+        default=60.0,
+        help="Fallback sleep after HTTP 429 when the server does not provide Retry-After.",
+    )
+    parser.add_argument(
+        "--vlm_log_response_chars",
+        type=int,
+        default=200,
+        help="Number of response characters to include in VLM success/failure logs.",
+    )
     parser.add_argument("--prompt_template_path", type=Path, default=None)
     parser.add_argument("--monotonic_tolerance", type=float, default=0.02)
     return parser.parse_args()

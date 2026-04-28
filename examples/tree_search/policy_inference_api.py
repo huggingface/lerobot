@@ -28,7 +28,7 @@ import os
 import time
 import re
 from collections.abc import Mapping, Sequence
-from contextlib import nullcontext
+from contextlib import nullcontext, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -92,9 +92,18 @@ class PolicyInferenceConfig:
     vlm_base_url: str | None = None
     vlm_model: str | None = None
     vlm_max_tokens: int = 512
-    vlm_temperature: float = 0.0
-    vlm_top_p: float = 1.0
+    vlm_temperature: float = 0.6
+    vlm_top_p: float = 0.95
+    vlm_presence_penalty: float = 0.0
+    vlm_top_k: int = 20
+    vlm_min_p: float = 0.0
+    vlm_repetition_penalty: float = 1.0
     vlm_timeout_s: float = 30.0
+    vlm_requests_per_minute: float = 10.0
+    vlm_max_retries: int = 3
+    vlm_retry_sleep_s: float = 6.0
+    vlm_rate_limit_sleep_s: float = 60.0
+    vlm_log_response_chars: int = 200
     vlm_observation_image_keys: str = "image2"
     vlm_include_rendered_image: bool = True
     vlm_include_robot_state: bool = True
@@ -526,6 +535,38 @@ def _load_vlm_reference_images(
     return images
 
 
+def _error_status_code(exc: Exception) -> int | None:
+    status_code = getattr(exc, "status_code", None)
+    if status_code is None:
+        response = getattr(exc, "response", None)
+        status_code = getattr(response, "status_code", None) if response is not None else None
+    if status_code is not None:
+        with suppress(TypeError, ValueError):
+            return int(status_code)
+
+    match = re.search(r"Error code:\s*(\d+)", str(exc))
+    return int(match.group(1)) if match else None
+
+
+def _is_rate_limit_error(exc: Exception) -> bool:
+    if _error_status_code(exc) == 429:
+        return True
+    return "rate limit" in str(exc).lower()
+
+
+def _retry_after_seconds(exc: Exception) -> float | None:
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None) if response is not None else None
+    if not headers:
+        return None
+    retry_after = headers.get("retry-after") if hasattr(headers, "get") else None
+    if retry_after is None:
+        return None
+    with suppress(TypeError, ValueError):
+        return max(0.0, float(retry_after))
+    return None
+
+
 def _extract_vlm_robot_state(observation: Mapping[str, Any] | None) -> dict[str, Any] | None:
     if observation is None:
         return None
@@ -571,7 +612,16 @@ class VLMHeuristicScorer:
         self.max_tokens = cfg.vlm_max_tokens
         self.temperature = cfg.vlm_temperature
         self.top_p = cfg.vlm_top_p
+        self.presence_penalty = cfg.vlm_presence_penalty
+        self.top_k = cfg.vlm_top_k
+        self.min_p = cfg.vlm_min_p
+        self.repetition_penalty = cfg.vlm_repetition_penalty
         self.timeout_s = cfg.vlm_timeout_s
+        self.requests_per_minute = cfg.vlm_requests_per_minute
+        self.max_retries = cfg.vlm_max_retries
+        self.retry_sleep_s = cfg.vlm_retry_sleep_s
+        self.rate_limit_sleep_s = cfg.vlm_rate_limit_sleep_s
+        self.log_response_chars = cfg.vlm_log_response_chars
         self.observation_image_keys = tuple(
             key.strip() for key in cfg.vlm_observation_image_keys.split(",") if key.strip()
         )
@@ -580,6 +630,7 @@ class VLMHeuristicScorer:
         self.reference_images = _load_vlm_reference_images(cfg, task_id=task_id)
         self.reference_image_labels = tuple(label for label, _ in self.reference_images)
         self._client = None
+        self._last_request_monotonic: float | None = None
 
     def build_prompt(
         self,
@@ -643,56 +694,172 @@ class VLMHeuristicScorer:
                 metadata=dict(metadata),
             )
 
-        try:
-            client = self._get_client()
-            content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-            for label, image in images:
-                content.append({"type": "text", "text": f"Image: {label}"})
-                content.append(
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{self._image_to_base64_png(image)}"
-                        },
-                        "uuid": label,
-                    }
-                )
-            completion = client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": content,
-                    }
-                ],
-                max_tokens=self.max_tokens,
-                temperature=self.temperature,
-                top_p=self.top_p,
-                stream=False,
+        client = self._get_client()
+        request_content: list[dict[str, Any]] = []
+        for label, image in images:
+            request_content.append({"type": "text", "text": f"Image label: {label}"})
+            request_content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/png;base64,{self._image_to_base64_png(image)}"
+                    },
+                }
             )
-            content = completion.choices[0].message.content or ""
-            parsed = self._parse_score_json(content)
+        request_content.append({"type": "text", "text": prompt})
+
+        extra_body: dict[str, Any] = {
+            "top_k": self.top_k,
+            "min_p": self.min_p,
+            "repetition_penalty": self.repetition_penalty,
+        }
+
+        last_error: Exception | None = None
+        last_message = ""
+        raw: Any | None = None
+        max_attempts = self.max_retries + 1
+        for attempt in range(1, max_attempts + 1):
+            try:
+                logger.info(
+                    "VLM request attempt=%s/%s model=%s image_count=%s image_labels=%s metadata=%s",
+                    attempt,
+                    max_attempts,
+                    self.model,
+                    len(images),
+                    [label for label, _ in images],
+                    {
+                        key: metadata.get(key)
+                        for key in ("planner", "macro_step", "env_step", "parent_id", "candidate_index", "depth")
+                        if key in metadata
+                    },
+                )
+                self._wait_for_rate_limit()
+                completion = client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": request_content,
+                        }
+                    ],
+                    max_tokens=self.max_tokens,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    presence_penalty=self.presence_penalty,
+                    extra_body=extra_body,
+                    stream=False,
+                )
+            except Exception as exc:
+                last_error = exc
+                if _is_rate_limit_error(exc) and attempt < max_attempts:
+                    sleep_s = self._rate_limit_retry_sleep_s(exc)
+                    logger.warning(
+                        "VLM rate limit hit on attempt %s/%s; retrying in %.1fs: %s",
+                        attempt,
+                        max_attempts,
+                        sleep_s,
+                        exc,
+                    )
+                    time.sleep(sleep_s)
+                    continue
+
+                logger.warning("VLM request failed on attempt %s/%s: %s", attempt, max_attempts, exc)
+                break
+
             raw = completion.model_dump() if hasattr(completion, "model_dump") else str(completion)
-        except Exception as exc:
-            logger.warning("VLM scoring failed: %s", exc)
+            last_message = completion.choices[0].message.content or ""
+            response_tail = self._response_tail(last_message)
+            try:
+                parsed = self._parse_score_json(last_message)
+            except Exception as exc:
+                last_error = exc
+                if attempt < max_attempts:
+                    sleep_s = self._parse_retry_sleep_s()
+                    logger.warning(
+                        "VLM response parse failed on attempt %s/%s; response_tail=%r; retrying in %.1fs: %s",
+                        attempt,
+                        max_attempts,
+                        response_tail,
+                        sleep_s,
+                        exc,
+                    )
+                    time.sleep(sleep_s)
+                    continue
+
+                logger.warning(
+                    "VLM response parse failed on final attempt %s/%s; response_tail=%r: %s",
+                    attempt,
+                    max_attempts,
+                    response_tail,
+                    exc,
+                )
+                break
+
+            score = float(parsed.get("score", 0.0))
+            score = min(1.0, max(0.0, score))
+            logger.info(
+                "VLM response parsed attempt=%s/%s score=%.3f reason=%r response_tail=%r",
+                attempt,
+                max_attempts,
+                score,
+                str(parsed.get("reason", ""))[:160],
+                response_tail,
+            )
             return ScoreResult(
-                score=0.0,
-                reason=f"VLM scoring failed: {exc}",
+                score=score,
+                reason=str(parsed.get("reason", "")),
                 prompt=prompt,
                 images=list(images),
                 metadata=dict(metadata),
+                raw_response=raw,
             )
 
-        score = float(parsed.get("score", 0.0))
-        score = min(1.0, max(0.0, score))
+        response_tail = self._response_tail(last_message)
+        reason = f"VLM scoring failed after {max_attempts} attempt(s): {last_error}; response_tail={response_tail!r}"
         return ScoreResult(
-            score=score,
-            reason=str(parsed.get("reason", "")),
+            score=0.0,
+            reason=reason,
             prompt=prompt,
             images=list(images),
             metadata=dict(metadata),
             raw_response=raw,
         )
+
+    def _min_request_interval_s(self) -> float:
+        if self.requests_per_minute <= 0:
+            return 0.0
+        return 60.0 / float(self.requests_per_minute)
+
+    def _wait_for_rate_limit(self) -> None:
+        min_interval_s = self._min_request_interval_s()
+        if min_interval_s <= 0:
+            return
+        now = time.monotonic()
+        if self._last_request_monotonic is not None:
+            elapsed_s = now - self._last_request_monotonic
+            sleep_s = min_interval_s - elapsed_s
+            if sleep_s > 0:
+                logger.info(
+                    "VLM throttle sleeping %.1fs for %.2f requests/minute limit.",
+                    sleep_s,
+                    self.requests_per_minute,
+                )
+                time.sleep(sleep_s)
+        self._last_request_monotonic = time.monotonic()
+
+    def _parse_retry_sleep_s(self) -> float:
+        return max(self.retry_sleep_s, self._min_request_interval_s())
+
+    def _rate_limit_retry_sleep_s(self, exc: Exception) -> float:
+        retry_after_s = _retry_after_seconds(exc)
+        if retry_after_s is not None:
+            return retry_after_s
+        return max(self.rate_limit_sleep_s, self.retry_sleep_s, self._min_request_interval_s())
+
+    def _response_tail(self, message: str) -> str:
+        if not message:
+            return "<empty>"
+        return message[-self.log_response_chars :]
 
     def _get_client(self):
         if self._client is not None:
@@ -1147,6 +1314,14 @@ def _expand_search_node(
 
     node_state = states_by_id[node["id"]]
     node_observation = observations_by_id[node["id"]]
+    logger.info(
+        "%s expanding node=%s depth=%s env_step=%s terminal=%s",
+        planner,
+        node["id"],
+        node["depth"],
+        node["env_step"],
+        node["terminal"],
+    )
     _restore_base_env(base_env, node_state, timestep=int(node["env_step"]))
     policy_chunk = action_api.predict_action_chunk(
         node_observation,
@@ -1161,9 +1336,25 @@ def _expand_search_node(
         noise_mode=cfg.search_noise_mode,
         rng=rng,
     )
+    logger.info(
+        "%s node=%s generated %s candidate action chunk(s) policy_chunk_shape=%s",
+        planner,
+        node["id"],
+        len(candidates),
+        tuple(policy_chunk.shape),
+    )
 
     created_children: list[dict[str, Any]] = []
     for candidate_index, (source, actions) in enumerate(candidates):
+        logger.info(
+            "%s rollout candidate=%s/%s parent=%s source=%s action_shape=%s",
+            planner,
+            candidate_index,
+            len(candidates) - 1,
+            node["id"],
+            source,
+            tuple(actions.shape),
+        )
         _restore_base_env(base_env, node_state, timestep=int(node["env_step"]))
         rollout = _rollout_action_sequence(
             base_env=base_env,
@@ -1187,6 +1378,20 @@ def _expand_search_node(
                 "depth": int(node["depth"]) + 1,
                 "reward_sum": rollout.reward_sum,
             },
+        )
+        logger.info(
+            "%s candidate=%s parent=%s score=%.3f reward_sum=%.3f action_count=%s "
+            "terminal=%s truncated=%s success=%s reason=%r",
+            planner,
+            candidate_index,
+            node["id"],
+            score.score,
+            rollout.reward_sum,
+            rollout.action_count,
+            rollout.terminated,
+            rollout.truncated,
+            rollout.success,
+            score.reason[:180],
         )
         child = trace.add_node(
             parent_id=node["id"],
@@ -1255,6 +1460,12 @@ def plan_mcts_action_chunk(
         success=False,
         metadata={"planner": "mcts", "root": True, "env_step": env_step},
     )
+    logger.info(
+        "mcts root env_step=%s score=%.3f reason=%r",
+        env_step,
+        root_score.score,
+        root_score.reason[:180],
+    )
     root = trace.add_node(
         parent_id=None,
         depth=0,
@@ -1274,6 +1485,12 @@ def plan_mcts_action_chunk(
     observations_by_id = {root["id"]: observation}
 
     for simulation_ix in range(cfg.mcts_simulations):
+        logger.info(
+            "mcts simulation=%s/%s start root_children=%s",
+            simulation_ix + 1,
+            cfg.mcts_simulations,
+            len(root["children"]),
+        )
         node = root
         path = [node]
         while node["children"] and int(node["depth"]) < cfg.mcts_depth:
@@ -1314,6 +1531,14 @@ def plan_mcts_action_chunk(
                 value = float(selected["vlm_score"])
 
         _backup_path(path, value)
+        logger.info(
+            "mcts simulation=%s/%s leaf=%s value=%.3f path=%s",
+            simulation_ix + 1,
+            cfg.mcts_simulations,
+            path[-1]["id"],
+            value,
+            [item["id"] for item in path],
+        )
         trace.write_event(
             "mcts_simulation",
             {
@@ -1342,6 +1567,14 @@ def plan_mcts_action_chunk(
         ),
     )
     _restore_base_env(base_env, root_state, timestep=env_step)
+    logger.info(
+        "mcts selected child=%s edge=%s score=%.3f value=%.3f visits=%s",
+        best_child["id"],
+        best_edge["id"],
+        best_child["vlm_score"],
+        _node_mean_value(best_child),
+        best_child["visits"],
+    )
     return np.asarray(best_edge["actions"], dtype=np.float32), {
         "root_id": root["id"],
         "selected_edge_id": best_edge["id"],
@@ -1405,6 +1638,12 @@ def plan_best_first_action_chunk(
         success=False,
         metadata={"planner": "best_first", "root": True, "env_step": env_step},
     )
+    logger.info(
+        "best_first root env_step=%s score=%.3f reason=%r",
+        env_step,
+        root_score.score,
+        root_score.reason[:180],
+    )
     root = trace.add_node(
         parent_id=None,
         depth=0,
@@ -1439,11 +1678,27 @@ def plan_best_first_action_chunk(
 
         node = nodes_by_id[node_id]
         if node["terminal"] or int(node["depth"]) >= cfg.best_first_depth:
+            logger.info(
+                "best_first skip node=%s depth=%s terminal=%s frontier_size=%s",
+                node["id"],
+                node["depth"],
+                node["terminal"],
+                len(frontier),
+            )
             continue
 
         expanded.add(node_id)
         node["visits"] = int(node.get("visits", 0)) + 1
         node["value_sum"] = float(node.get("value_sum", 0.0)) + float(node.get("vlm_score", 0.0))
+        logger.info(
+            "best_first expansion=%s/%s node=%s depth=%s score=%.3f frontier_size=%s",
+            expansion_ix + 1,
+            cfg.best_first_expansions,
+            node["id"],
+            node["depth"],
+            float(node.get("vlm_score", 0.0)),
+            len(frontier),
+        )
 
         created = _expand_search_node(
             planner="best_first",
@@ -1470,6 +1725,17 @@ def plan_best_first_action_chunk(
                 push_ix += 1
 
         root_child, best_descendant = _best_descendant_root_child(root=root, nodes_by_id=nodes_by_id)
+        logger.info(
+            "best_first expansion=%s/%s created=%s frontier_size=%s best_root_child=%s "
+            "best_descendant=%s best_descendant_score=%s",
+            expansion_ix + 1,
+            cfg.best_first_expansions,
+            [child["id"] for child in created],
+            len(frontier),
+            root_child["id"] if root_child is not None else None,
+            best_descendant["id"] if best_descendant is not None else None,
+            best_descendant["vlm_score"] if best_descendant is not None else None,
+        )
         trace.write_event(
             "best_first_expansion",
             {
@@ -1504,6 +1770,17 @@ def plan_best_first_action_chunk(
 
     best_edge = child_edges[best_root_child["id"]]
     _restore_base_env(base_env, root_state, timestep=env_step)
+    logger.info(
+        "best_first selected root_child=%s edge=%s score=%.3f descendant=%s descendant_score=%s "
+        "expanded_count=%s frontier_size=%s",
+        best_root_child["id"],
+        best_edge["id"],
+        best_root_child["vlm_score"],
+        best_descendant["id"] if best_descendant is not None else None,
+        best_descendant["vlm_score"] if best_descendant is not None else None,
+        len(expanded),
+        len(frontier),
+    )
     return np.asarray(best_edge["actions"], dtype=np.float32), {
         "root_id": root["id"],
         "selected_edge_id": best_edge["id"],
@@ -1616,6 +1893,10 @@ def main(cfg: PolicyInferenceConfig) -> None:
             "vlm_model": cfg.vlm_model,
             "vlm_base_url": cfg.vlm_base_url or cfg.vlm_api_url,
             "vlm_api_key_env": cfg.vlm_api_key_env or "OPENAI_API_KEY",
+            "vlm_requests_per_minute": cfg.vlm_requests_per_minute,
+            "vlm_max_retries": cfg.vlm_max_retries,
+            "vlm_retry_sleep_s": cfg.vlm_retry_sleep_s,
+            "vlm_rate_limit_sleep_s": cfg.vlm_rate_limit_sleep_s,
             "vlm_observation_image_keys": cfg.vlm_observation_image_keys,
             "vlm_include_rendered_image": cfg.vlm_include_rendered_image,
             "vlm_include_robot_state": cfg.vlm_include_robot_state,
@@ -1630,11 +1911,15 @@ def main(cfg: PolicyInferenceConfig) -> None:
     )
 
     logger.info(
-        "Running planner=%s single-env inference on suite=%s task_id=%s chunk_size=%s",
+        "Running planner=%s single-env inference on suite=%s task_id=%s chunk_size=%s "
+        "vlm_model=%s vlm_rpm=%s vlm_max_retries=%s",
         cfg.planner,
         suite,
         task_id,
         cfg.chunk_size,
+        cfg.vlm_model,
+        cfg.vlm_requests_per_minute,
+        cfg.vlm_max_retries,
     )
 
     try:
@@ -1805,7 +2090,7 @@ def main(cfg: PolicyInferenceConfig) -> None:
             success = success or rollout.success
             logger.info(
                 "macro_step=%s env_step=%s reward_sum=%s done=%s success=%s "
-                "action_chunk_shape=%s vlm_score=%.3f",
+                "action_chunk_shape=%s vlm_score=%.3f vlm_reason=%r plan_info=%s",
                 macro_step - 1,
                 env_step,
                 last_reward_sum,
@@ -1813,6 +2098,8 @@ def main(cfg: PolicyInferenceConfig) -> None:
                 success,
                 actions.shape,
                 endpoint_score.score,
+                endpoint_score.reason[:180],
+                plan_info,
             )
 
         summary = {
