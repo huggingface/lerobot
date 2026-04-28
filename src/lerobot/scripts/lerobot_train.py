@@ -49,6 +49,7 @@ from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
+from lerobot.utils.model_profiling import TrainingProfiler
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
     cycle,
@@ -71,6 +72,7 @@ def update_policy(
     lr_scheduler=None,
     lock=None,
     rabc_weights_provider=None,
+    profiler: "TrainingProfiler | None" = None,
 ) -> tuple[MetricsTracker, dict]:
     """
     Performs a single training step to update the policy's weights.
@@ -103,8 +105,10 @@ def update_policy(
     if rabc_weights_provider is not None:
         rabc_batch_weights, rabc_batch_stats = rabc_weights_provider.compute_batch_weights(batch)
 
-    # Let accelerator handle mixed precision
-    with accelerator.autocast():
+    def _section(name: str) -> Any:
+        return profiler.section(name) if profiler is not None else nullcontext()
+
+    with _section("forward"), accelerator.autocast():
         # Use per-sample loss when RA-BC is enabled for proper weighting
         if rabc_batch_weights is not None:
             # Get per-sample losses
@@ -123,8 +127,8 @@ def update_policy(
 
         # TODO(rcadene): policy.unnormalize_outputs(out_dict)
 
-    # Use accelerator's backward method
-    accelerator.backward(loss)
+    with _section("backward"):
+        accelerator.backward(loss)
 
     # Clip gradients if specified
     if grad_clip_norm > 0:
@@ -134,8 +138,7 @@ def update_policy(
             policy.parameters(), float("inf"), error_if_nonfinite=False
         )
 
-    # Optimizer step
-    with lock if lock is not None else nullcontext():
+    with _section("optimizer"), lock if lock is not None else nullcontext():
         optimizer.step()
 
     optimizer.zero_grad()
@@ -316,6 +319,15 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
 
+    profiler = (
+        TrainingProfiler.from_cfg(cfg, device) if cfg.profile_mode != "off" and is_main_process else None
+    )
+    if profiler:
+        profiler.record_deterministic_forward(
+            policy=policy, dataset=dataset, batch_size=cfg.batch_size, preprocessor=preprocessor
+        )
+        profiler.start()
+
     # Load precomputed SARM progress for RA-BC if enabled
     # Generate progress using: src/lerobot/policies/sarm/compute_rabc_weights.py
     rabc_weights = None
@@ -449,6 +461,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             accelerator=accelerator,
             lr_scheduler=lr_scheduler,
             rabc_weights_provider=rabc_weights,
+            profiler=profiler,
         )
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
@@ -456,6 +469,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         step += 1
         if is_main_process:
             progbar.update(1)
+        if profiler:
+            profiler.step(step, train_tracker)
         train_tracker.step()
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0 and is_main_process
         is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
@@ -551,6 +566,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     if is_main_process:
         progbar.close()
+        if profiler:
+            profiler.finalize()
 
     if eval_env:
         close_envs(eval_env)

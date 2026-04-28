@@ -16,7 +16,7 @@ import datetime as dt
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import draccus
 from huggingface_hub import hf_hub_download
@@ -58,6 +58,8 @@ class TrainPipelineConfig(HubMixin):
     batch_size: int = 8
     prefetch_factor: int = 4
     persistent_workers: bool = True
+    profile_mode: Literal["off", "summary", "trace"] = "off"
+    profile_output_dir: Path | None = None
     steps: int = 100_000
     eval_freq: int = 20_000
     log_freq: int = 200
@@ -130,9 +132,15 @@ class TrainPipelineConfig(HubMixin):
             now = dt.datetime.now()
             train_dir = f"{now:%Y-%m-%d}/{now:%H-%M-%S}_{self.job_name}"
             self.output_dir = Path("outputs/train") / train_dir
+        if self.profile_mode != "off" and self.profile_output_dir is None:
+            self.profile_output_dir = self.output_dir / "profiling"
 
         if isinstance(self.dataset.repo_id, list):
             raise NotImplementedError("LeRobotMultiDataset is not currently implemented.")
+        if self.profile_mode not in {"off", "summary", "trace"}:
+            raise ValueError(
+                f"`profile_mode` must be one of 'off', 'summary', or 'trace', got {self.profile_mode}."
+            )
 
         if not self.use_policy_training_preset and (self.optimizer is None or self.scheduler is None):
             raise ValueError("Optimizer and Scheduler must be set when the policy presets are not used.")
