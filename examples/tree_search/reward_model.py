@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class RewardModelConfig:
-    encoder_type: str = "siglip2"
-    encoder_model_id: str = "google/siglip2-base-patch16-224"
+    encoder_type: str = "siglip"
+    encoder_model_id: str = "google/siglip-base-patch16-224"
     freeze_encoder: bool = True
     image_size: int = 224
     use_proprioception: bool = True
