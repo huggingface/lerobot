@@ -24,6 +24,7 @@ import numpy as np
 import torch
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
+from tqdm.auto import tqdm
 
 from lerobot.datasets import LeRobotDatasetMetadata
 
@@ -286,9 +287,15 @@ def run_epoch(
     start = time.perf_counter()
     total_batches = len(loader)
     stage(f"{epoch_name} start batches={total_batches} samples={len(loader.dataset)}")
-    for batch_idx, batch in enumerate(loader):
-        if batch_idx == 0:
-            stage(f"{epoch_name} first batch loaded keys={sorted(batch)}")
+    progress = tqdm(
+        enumerate(loader),
+        total=total_batches,
+        desc=epoch_name,
+        dynamic_ncols=True,
+        unit="batch",
+        leave=True,
+    )
+    for batch_idx, batch in progress:
         batch = move_batch_to_device(batch, device)
         labels = batch["labels"]
         with torch.enable_grad() if is_train else torch.no_grad():
@@ -310,10 +317,15 @@ def run_epoch(
         total_count += count
         if log_every_batches > 0 and (batch_idx == 0 or (batch_idx + 1) % log_every_batches == 0):
             elapsed = time.perf_counter() - start
-            stage(
-                f"{epoch_name} batch={batch_idx + 1}/{total_batches} samples={total_count} "
-                f"loss={float(loss.detach()):.4f} mse={float(mse.detach()):.4f} "
-                f"rank={float(rank.detach()):.4f} elapsed={elapsed:.1f}s"
+            progress.set_postfix(
+                {
+                    "loss": f"{float(loss.detach()):.4f}",
+                    "mse": f"{float(mse.detach()):.4f}",
+                    "rank": f"{float(rank.detach()):.4f}",
+                    "samples": total_count,
+                    "elapsed": f"{elapsed:.1f}s",
+                },
+                refresh=True,
             )
 
     denom = max(1, total_count)
@@ -340,13 +352,15 @@ def evaluate_records(
     total_mse = 0.0
     total_mae = 0.0
     total_count = 0
-    for batch in loader:
+    progress = tqdm(loader, total=len(loader), desc="final eval", dynamic_ncols=True, unit="batch", leave=True)
+    for batch in progress:
         batch = move_batch_to_device(batch, device)
         pred = model_forward(model, batch)
         labels = batch["labels"]
         total_mse += float(torch.nn.functional.mse_loss(pred, labels, reduction="sum"))
         total_mae += float(torch.sum(torch.abs(pred - labels)))
         total_count += int(labels.numel())
+        progress.set_postfix({"samples": total_count}, refresh=True)
         for ix in range(int(labels.numel())):
             records.append(
                 {
