@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-uv run python examples/tree_search/train_reward_model.py \
+python examples/tree_search/train_reward_model.py \
   --dataset_repo_id="HuggingFaceVLA/libero" \
   --suite="libero_object" \
   --task_orders="all" \
