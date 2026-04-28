@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class RewardProbeRecord:
+    variant: str
     sample_index: int
     episode_index: int
     dataset_index: int
@@ -49,6 +50,14 @@ class RewardProbeRecord:
     annotated_image_path: str
 
 
+@dataclass
+class ProbeVariant:
+    name: str
+    description: str
+    local_indices: list[int]
+    video_path: Path
+
+
 def _reader_args(args: argparse.Namespace) -> SimpleNamespace:
     return SimpleNamespace(
         dataset_repo_id=args.dataset_repo_id,
@@ -57,6 +66,137 @@ def _reader_args(args: argparse.Namespace) -> SimpleNamespace:
         download_videos=args.download_videos,
         video_backend=args.video_backend,
     )
+
+
+def _variant_video_paths(args: argparse.Namespace) -> dict[str, Path]:
+    if args.video_path is None:
+        base = args.output_dir / "reward_probe.mp4"
+    else:
+        base = args.video_path
+    return {
+        "success": base.with_name(f"{base.stem}_success{base.suffix}"),
+        "half_random": base.with_name(f"{base.stem}_half_random{base.suffix}"),
+        "random": base.with_name(f"{base.stem}_random{base.suffix}"),
+    }
+
+
+def _make_probe_variants(args: argparse.Namespace, local_indices: list[int], episode_length: int) -> list[ProbeVariant]:
+    rng = np.random.default_rng(args.random_seed)
+    max_index = max(0, episode_length - 1)
+    jitter = max(1, int(round(episode_length * args.partial_random_jitter_fraction)))
+
+    half_random: list[int] = []
+    for local_index in local_indices:
+        if rng.random() < args.partial_random_probability:
+            offset = int(rng.integers(-jitter, jitter + 1))
+            half_random.append(int(np.clip(local_index + offset, 0, max_index)))
+        else:
+            half_random.append(int(local_index))
+
+    fully_random = [int(rng.integers(0, max_index + 1)) for _ in local_indices]
+    video_paths = _variant_video_paths(args)
+    return [
+        ProbeVariant(
+            name="success",
+            description="Ordered successful demonstration frames.",
+            local_indices=[int(ix) for ix in local_indices],
+            video_path=video_paths["success"],
+        ),
+        ProbeVariant(
+            name="half_random",
+            description=(
+                "Successful path with random jitter applied to roughly half of the sampled frames. "
+                "This probes moderate temporal/action-like corruption."
+            ),
+            local_indices=half_random,
+            video_path=video_paths["half_random"],
+        ),
+        ProbeVariant(
+            name="random",
+            description="Fully random frame sequence sampled from the same episode.",
+            local_indices=fully_random,
+            video_path=video_paths["random"],
+        ),
+    ]
+
+
+def _score_variant(
+    *,
+    variant: ProbeVariant,
+    reader: Any,
+    args: argparse.Namespace,
+    model_cfg: Any,
+    processor: RewardBatchProcessor,
+    model: torch.nn.Module,
+    device: torch.device,
+    task_language: str,
+    episode_index: int,
+    denom: int,
+) -> tuple[list[RewardProbeRecord], list[np.ndarray]]:
+    records: list[RewardProbeRecord] = []
+    video_frames: list[np.ndarray] = []
+    frames_dir = args.output_dir / "annotated_frames" / variant.name
+    frames_dir.mkdir(parents=True, exist_ok=True)
+
+    for sample_index, local_index in enumerate(variant.local_indices):
+        item = reader[local_index]
+        scene_image = _image_to_uint8_hwc(item[args.scene_camera_key])
+        wrist_image = (
+            _image_to_uint8_hwc(item[args.wrist_camera_key])
+            if args.wrist_camera_key and args.wrist_camera_key in item
+            else None
+        )
+        sample = {
+            "task": task_language,
+            "episode_index": episode_index,
+            "local_index": local_index,
+            "label": float(local_index) / float(denom),
+            "scene_image": scene_image,
+            "wrist_image": wrist_image,
+        }
+        if model_cfg.use_proprioception:
+            if args.state_key not in item:
+                raise KeyError(f"Missing proprioception key '{args.state_key}' in dataset item.")
+            sample["proprioception"] = item[args.state_key]
+
+        with torch.no_grad():
+            batch = move_batch_to_device(processor([sample]), device)
+            prediction = float(model_forward(model, batch).detach().cpu()[0])
+
+        dataset_index = int(_coerce_scalar(item.get("index")) or (reader.dataset_from_index + local_index))
+        frame_index = _coerce_scalar(item.get("frame_index"))
+        timestamp = _coerce_scalar(item.get("timestamp"))
+        camera_images = [("scene", scene_image)]
+        if wrist_image is not None:
+            camera_images.append(("wrist", wrist_image))
+        annotated = _make_composite_frame(
+            camera_images,
+            score=prediction,
+            reason=f"{variant.name} target={sample['label']:.3f}",
+            local_index=local_index,
+            dataset_index=dataset_index,
+            tile_width=args.tile_width,
+            tile_height=args.tile_height,
+        )
+        annotated_path = frames_dir / f"frame_{sample_index:04d}_idx_{dataset_index:08d}.png"
+        write_image(annotated, annotated_path)
+        video_frames.append(annotated)
+        records.append(
+            RewardProbeRecord(
+                variant=variant.name,
+                sample_index=sample_index,
+                episode_index=episode_index,
+                dataset_index=dataset_index,
+                local_index=local_index,
+                frame_index=int(frame_index) if frame_index is not None else None,
+                timestamp=float(timestamp) if timestamp is not None else None,
+                task=task_language,
+                label=float(sample["label"]),
+                prediction=prediction,
+                annotated_image_path=annotated_path.relative_to(args.output_dir).as_posix(),
+            )
+        )
+    return records, video_frames
 
 
 def parse_args() -> argparse.Namespace:
@@ -81,6 +221,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--video_fps", type=int, default=2)
     parser.add_argument("--tile_width", type=int, default=256)
     parser.add_argument("--tile_height", type=int, default=256)
+    parser.add_argument("--random_seed", type=int, default=0)
+    parser.add_argument("--partial_random_probability", type=float, default=0.5)
+    parser.add_argument("--partial_random_jitter_fraction", type=float, default=0.15)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     return parser.parse_args()
 
@@ -89,11 +232,8 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    frames_dir = args.output_dir / "annotated_frames"
-    frames_dir.mkdir(parents=True, exist_ok=True)
-    if args.video_path is None:
-        args.video_path = args.output_dir / "reward_probe.mp4"
-    args.video_path.parent.mkdir(parents=True, exist_ok=True)
+    for video_path in _variant_video_paths(args).values():
+        video_path.parent.mkdir(parents=True, exist_ok=True)
 
     device = torch.device(args.device)
     model, model_cfg, checkpoint = load_reward_model_checkpoint(args.checkpoint, device=device)
@@ -118,73 +258,37 @@ def main() -> None:
     )
     denom = max(1, len(reader) - 1)
 
-    records: list[RewardProbeRecord] = []
-    video_frames: list[np.ndarray] = []
-    for sample_index, local_index in enumerate(local_indices):
-        item = reader[local_index]
-        scene_image = _image_to_uint8_hwc(item[args.scene_camera_key])
-        wrist_image = (
-            _image_to_uint8_hwc(item[args.wrist_camera_key])
-            if args.wrist_camera_key and args.wrist_camera_key in item
-            else None
+    variants = _make_probe_variants(args, local_indices, len(reader))
+    all_records: list[RewardProbeRecord] = []
+    variant_summaries: dict[str, Any] = {}
+    for variant in variants:
+        logger.info("Scoring probe variant=%s description=%s", variant.name, variant.description)
+        records, video_frames = _score_variant(
+            variant=variant,
+            reader=reader,
+            args=args,
+            model_cfg=model_cfg,
+            processor=processor,
+            model=model,
+            device=device,
+            task_language=task_language,
+            episode_index=episode_index,
+            denom=denom,
         )
-        sample = {
-            "task": task_language,
-            "episode_index": episode_index,
-            "local_index": local_index,
-            "label": float(local_index) / float(denom),
-            "scene_image": scene_image,
-            "wrist_image": wrist_image,
+        all_records.extend(records)
+        scores = [record.prediction for record in records]
+        variant_summaries[variant.name] = {
+            "description": variant.description,
+            "video_path": str(variant.video_path),
+            "local_indices": variant.local_indices,
+            "first_score": float(scores[0]) if scores else None,
+            "last_score": float(scores[-1]) if scores else None,
+            **_score_monotonicity(scores, tolerance=0.02),
         }
-        if model_cfg.use_proprioception:
-            if args.state_key not in item:
-                raise KeyError(f"Missing proprioception key '{args.state_key}' in dataset item.")
-            sample["proprioception"] = item[args.state_key]
-        with torch.no_grad():
-            batch = move_batch_to_device(processor([sample]), device)
-            prediction = float(model_forward(model, batch).detach().cpu()[0])
+        if video_frames:
+            write_video(str(variant.video_path), np.stack(video_frames), fps=args.video_fps)
+            logger.info("Wrote probe video variant=%s path=%s", variant.name, variant.video_path)
 
-        dataset_index = int(_coerce_scalar(item.get("index")) or (reader.dataset_from_index + local_index))
-        frame_index = _coerce_scalar(item.get("frame_index"))
-        timestamp = _coerce_scalar(item.get("timestamp"))
-        camera_images = [("scene", scene_image)]
-        if wrist_image is not None:
-            camera_images.append(("wrist", wrist_image))
-        annotated = _make_composite_frame(
-            camera_images,
-            score=prediction,
-            reason=f"target={sample['label']:.3f}",
-            local_index=local_index,
-            dataset_index=dataset_index,
-            tile_width=args.tile_width,
-            tile_height=args.tile_height,
-        )
-        annotated_path = frames_dir / f"frame_{sample_index:04d}_idx_{dataset_index:08d}.png"
-        write_image(annotated, annotated_path)
-        video_frames.append(annotated)
-        records.append(
-            RewardProbeRecord(
-                sample_index=sample_index,
-                episode_index=episode_index,
-                dataset_index=dataset_index,
-                local_index=local_index,
-                frame_index=int(frame_index) if frame_index is not None else None,
-                timestamp=float(timestamp) if timestamp is not None else None,
-                task=task_language,
-                label=float(sample["label"]),
-                prediction=prediction,
-                annotated_image_path=annotated_path.relative_to(args.output_dir).as_posix(),
-            )
-        )
-        logger.info(
-            "frame=%s local_index=%s label=%.3f prediction=%.3f",
-            sample_index,
-            local_index,
-            float(sample["label"]),
-            prediction,
-        )
-
-    scores = [record.prediction for record in records]
     summary = {
         "checkpoint": str(args.checkpoint),
         "model_config": model_cfg.to_dict(),
@@ -194,17 +298,21 @@ def main() -> None:
         "task_order": args.task_order,
         "task": task_language,
         "episode_index": episode_index,
-        **_score_monotonicity(scores, tolerance=0.02),
+        "random_seed": args.random_seed,
+        "partial_random_probability": args.partial_random_probability,
+        "partial_random_jitter_fraction": args.partial_random_jitter_fraction,
+        "variants": variant_summaries,
     }
     payload = {
         "summary": _to_jsonable(summary),
-        "frames": [_to_jsonable(asdict(record)) for record in records],
+        "frames": [_to_jsonable(asdict(record)) for record in all_records],
     }
     (args.output_dir / "reward_scores.json").write_text(json.dumps(payload, indent=2))
     with (args.output_dir / "reward_scores.csv").open("w", newline="") as f:
         writer = csv.DictWriter(
             f,
             fieldnames=[
+                "variant",
                 "sample_index",
                 "episode_index",
                 "dataset_index",
@@ -217,14 +325,10 @@ def main() -> None:
             ],
         )
         writer.writeheader()
-        for record in records:
+        for record in all_records:
             row = asdict(record)
             row.pop("task")
             writer.writerow(row)
-
-    if video_frames:
-        write_video(str(args.video_path), np.stack(video_frames), fps=args.video_fps)
-        logger.info("Wrote probe video: %s", args.video_path)
     logger.info("Wrote reward scores: %s", args.output_dir / "reward_scores.json")
 
 
