@@ -69,7 +69,7 @@ class ComputeProgressShards(PipelineStep):
         import torch
         from tqdm import tqdm
 
-        from lerobot.policies.sarm.compute_rabc_weights import (
+        from lerobot.rewards.sarm.compute_rabc_weights import (
             generate_all_frame_indices,
             interpolate_progress,
             load_sarm_resources,
@@ -231,7 +231,7 @@ class AggregateProgress(PipelineStep):
         import pyarrow as pa
         import pyarrow.parquet as pq
 
-        from lerobot.datasets.lerobot_dataset import LeRobotDataset
+        from lerobot.datasets import LeRobotDataset
         from lerobot.utils.utils import init_logging
 
         init_logging()

@@ -33,9 +33,10 @@ from torch import Tensor, nn
 from torchvision.models._utils import IntermediateLayerGetter
 from torchvision.ops.misc import FrozenBatchNorm2d
 
-from lerobot.policies.act.configuration_act import ACTConfig
-from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
+
+from ..pretrained import PreTrainedPolicy
+from .configuration_act import ACTConfig
 
 
 class ACTPolicy(PreTrainedPolicy):
@@ -141,9 +142,10 @@ class ACTPolicy(PreTrainedPolicy):
 
         actions_hat, (mu_hat, log_sigma_x2_hat) = self.model(batch)
 
-        l1_loss = (
-            F.l1_loss(batch[ACTION], actions_hat, reduction="none") * ~batch["action_is_pad"].unsqueeze(-1)
-        ).mean()
+        abs_err = F.l1_loss(batch[ACTION], actions_hat, reduction="none")
+        valid_mask = ~batch["action_is_pad"].unsqueeze(-1)
+        num_valid = valid_mask.sum() * abs_err.shape[-1]
+        l1_loss = (abs_err * valid_mask).sum() / num_valid.clamp_min(1)
 
         loss_dict = {"l1_loss": l1_loss.item()}
         if self.config.use_vae:

@@ -23,10 +23,10 @@ import datasets
 import pandas as pd
 import tqdm
 
-from lerobot.datasets.compute_stats import aggregate_stats
-from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-from lerobot.datasets.feature_utils import get_hf_features_from_features
-from lerobot.datasets.io_utils import (
+from .compute_stats import aggregate_stats
+from .dataset_metadata import LeRobotDatasetMetadata
+from .feature_utils import get_hf_features_from_features
+from .io_utils import (
     get_file_size_in_mb,
     get_parquet_file_size_in_mb,
     to_parquet_with_hf_images,
@@ -34,7 +34,7 @@ from lerobot.datasets.io_utils import (
     write_stats,
     write_tasks,
 )
-from lerobot.datasets.utils import (
+from .utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
@@ -43,7 +43,7 @@ from lerobot.datasets.utils import (
     DEFAULT_VIDEO_PATH,
     update_chunk_file_indices,
 )
-from lerobot.datasets.video_utils import concatenate_video_files, get_video_duration_in_s
+from .video_utils import concatenate_video_files, get_video_duration_in_s
 
 
 def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata]):
@@ -97,8 +97,8 @@ def update_data_df(df, src_meta, dst_meta):
         pd.DataFrame: Updated DataFrame with adjusted indices.
     """
 
-    df["episode_index"] = df["episode_index"] + dst_meta.info["total_episodes"]
-    df["index"] = df["index"] + dst_meta.info["total_frames"]
+    df["episode_index"] = df["episode_index"] + dst_meta.info.total_episodes
+    df["index"] = df["index"] + dst_meta.info.total_frames
 
     src_task_names = src_meta.tasks.index.take(df["task_index"].to_numpy())
     df["task_index"] = dst_meta.tasks.loc[src_task_names, "task_index"].to_numpy()
@@ -225,9 +225,9 @@ def update_meta_data(
         # Clean up temporary columns
         df = df.drop(columns=["_orig_chunk", "_orig_file"])
 
-    df["dataset_from_index"] = df["dataset_from_index"] + dst_meta.info["total_frames"]
-    df["dataset_to_index"] = df["dataset_to_index"] + dst_meta.info["total_frames"]
-    df["episode_index"] = df["episode_index"] + dst_meta.info["total_episodes"]
+    df["dataset_from_index"] = df["dataset_from_index"] + dst_meta.info.total_frames
+    df["dataset_to_index"] = df["dataset_to_index"] + dst_meta.info.total_frames
+    df["episode_index"] = df["episode_index"] + dst_meta.info.total_episodes
 
     return df
 
@@ -237,8 +237,8 @@ def aggregate_datasets(
     aggr_repo_id: str,
     roots: list[Path] | None = None,
     aggr_root: Path | None = None,
-    data_files_size_in_mb: float | None = None,
-    video_files_size_in_mb: float | None = None,
+    data_files_size_in_mb: int | None = None,
+    video_files_size_in_mb: int | None = None,
     chunk_size: int | None = None,
 ):
     """Aggregates multiple LeRobot datasets into a single unified dataset.
@@ -313,8 +313,8 @@ def aggregate_datasets(
         # to avoid interference between different source datasets
         data_idx.pop("src_to_dst", None)
 
-        dst_meta.info["total_episodes"] += src_meta.total_episodes
-        dst_meta.info["total_frames"] += src_meta.total_frames
+        dst_meta.info.total_episodes += src_meta.total_episodes
+        dst_meta.info.total_frames += src_meta.total_frames
 
     finalize_aggregation(dst_meta, all_metadata)
     logging.info("Aggregation complete.")
@@ -640,14 +640,10 @@ def finalize_aggregation(aggr_meta, all_metadata):
     write_tasks(aggr_meta.tasks, aggr_meta.root)
 
     logging.info("write info")
-    aggr_meta.info.update(
-        {
-            "total_tasks": len(aggr_meta.tasks),
-            "total_episodes": sum(m.total_episodes for m in all_metadata),
-            "total_frames": sum(m.total_frames for m in all_metadata),
-            "splits": {"train": f"0:{sum(m.total_episodes for m in all_metadata)}"},
-        }
-    )
+    aggr_meta.info.total_tasks = len(aggr_meta.tasks)
+    aggr_meta.info.total_episodes = sum(m.total_episodes for m in all_metadata)
+    aggr_meta.info.total_frames = sum(m.total_frames for m in all_metadata)
+    aggr_meta.info.splits = {"train": f"0:{sum(m.total_episodes for m in all_metadata)}"}
     write_info(aggr_meta.info, aggr_meta.root)
 
     logging.info("write stats")

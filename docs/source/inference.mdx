@@ -1,0 +1,261 @@
+# Policy Deployment (lerobot-rollout)
+
+`lerobot-rollout` is the single CLI for deploying trained policies on real robots. It supports multiple execution strategies and inference backends, from quick evaluation to continuous recording and human-in-the-loop data collection.
+
+## Quick Start
+
+No extra dependencies are needed beyond your robot and policy extras.
+
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --policy.path=lerobot/act_koch_real \
+    --robot.type=koch_follower \
+    --robot.port=/dev/ttyACM0 \
+    --task="pick up cube" \
+    --duration=30
+```
+
+This runs the policy for 30 seconds with no recording.
+
+---
+
+## Strategies
+
+Select a strategy with `--strategy.type=<name>`. Each strategy defines a different control loop with its own recording and interaction semantics.
+
+### Base (`--strategy.type=base`)
+
+Autonomous policy execution with no data recording. Use this for quick evaluation, demos, or when you only need to observe the robot.
+
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --policy.path=${HF_USER}/my_policy \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --task="Put lego brick into the box" \
+    --duration=60
+```
+
+| Flag             | Description                                            |
+| ---------------- | ------------------------------------------------------ |
+| `--duration`     | Run time in seconds (0 = infinite)                     |
+| `--task`         | Task description passed to the policy                  |
+| `--display_data` | Stream observations/actions to Rerun for visualization |
+
+### Sentry (`--strategy.type=sentry`)
+
+Continuous autonomous recording with periodic upload to the Hugging Face Hub. Episode boundaries are auto-computed from camera resolution and FPS so each saved episode produces a complete video file, keeping uploads efficient.
+
+Policy state (hidden state, RTC queue) persists across episode boundaries: the robot does not reset between episodes.
+
+```bash
+lerobot-rollout \
+    --strategy.type=sentry \
+    --strategy.upload_every_n_episodes=5 \
+    --policy.path=${HF_USER}/my_policy \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --dataset.repo_id=${HF_USER}/rollout_eval_data \
+    --dataset.single_task="Put lego brick into the box" \
+    --duration=3600
+```
+
+| Flag                                   | Description                                                 |
+| -------------------------------------- | ----------------------------------------------------------- |
+| `--strategy.upload_every_n_episodes`   | Push to Hub every N episodes (default: 5)                   |
+| `--strategy.target_video_file_size_mb` | Target video file size for episode rotation (default: auto) |
+| `--dataset.repo_id`                    | **Required.** Hub repository for the recorded dataset       |
+| `--dataset.push_to_hub`                | Whether to push to Hub on teardown (default: true)          |
+
+### Highlight (`--strategy.type=highlight`)
+
+Autonomous rollout with on-demand recording via a memory-bounded ring buffer. The robot runs continuously while the buffer captures the last N seconds of telemetry. Press the save key to flush the buffer and start live recording; press it again to save the episode.
+
+```bash
+lerobot-rollout \
+    --strategy.type=highlight \
+    --strategy.ring_buffer_seconds=30 \
+    --strategy.save_key=s \
+    --strategy.push_key=h \
+    --policy.path=${HF_USER}/my_policy \
+    --robot.type=koch_follower \
+    --robot.port=/dev/ttyACM0 \
+    --dataset.repo_id=${HF_USER}/rollout_highlight_data \
+    --dataset.single_task="Pick up the red cube"
+```
+
+**Keyboard controls:**
+
+| Key                | Action                                                   |
+| ------------------ | -------------------------------------------------------- |
+| `s` (configurable) | Start recording (flushes buffer) / stop and save episode |
+| `h` (configurable) | Push dataset to Hub                                      |
+| `ESC`              | Stop the session                                         |
+
+| Flag                                   | Description                                    |
+| -------------------------------------- | ---------------------------------------------- |
+| `--strategy.ring_buffer_seconds`       | Duration of buffered telemetry (default: 30)   |
+| `--strategy.ring_buffer_max_memory_mb` | Memory cap for the ring buffer (default: 2048) |
+| `--strategy.save_key`                  | Key to toggle recording (default: `s`)         |
+| `--strategy.push_key`                  | Key to push to Hub (default: `h`)              |
+
+### DAgger (`--strategy.type=dagger`)
+
+Human-in-the-loop data collection. Alternates between autonomous policy execution and human intervention via a teleoperator. Intervention frames are tagged with `intervention=True`. Requires a teleoperator (`--teleop.type`).
+
+See the [Human-In-the-Loop Data Collection](./hil_data_collection) guide for a detailed walkthrough.
+
+**Corrections-only mode** (default): Only human correction windows are recorded. Each correction becomes one episode.
+
+```bash
+lerobot-rollout \
+    --strategy.type=dagger \
+    --strategy.num_episodes=20 \
+    --policy.path=outputs/pretrain/checkpoints/last/pretrained_model \
+    --robot.type=bi_openarm_follower \
+    --teleop.type=openarm_mini \
+    --dataset.repo_id=${HF_USER}/rollout_hil_data \
+    --dataset.single_task="Fold the T-shirt"
+```
+
+**Continuous recording mode** (`--strategy.record_autonomous=true`): Both autonomous and correction frames are recorded with time-based episode rotation (same as Sentry).
+
+```bash
+lerobot-rollout \
+    --strategy.type=dagger \
+    --strategy.record_autonomous=true \
+    --strategy.num_episodes=50 \
+    --policy.path=${HF_USER}/my_policy \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/ttyACM1 \
+    --dataset.repo_id=${HF_USER}/rollout_dagger_data \
+    --dataset.single_task="Grasp the block"
+```
+
+**Keyboard controls** (default input device):
+
+| Key     | Action                                      |
+| ------- | ------------------------------------------- |
+| `Space` | Pause / resume policy execution             |
+| `Tab`   | Start / stop human correction               |
+| `Enter` | Push dataset to Hub (corrections-only mode) |
+| `ESC`   | Stop the session                            |
+
+Foot pedal input is also supported via `--strategy.input_device=pedal`. Configure pedal codes with `--strategy.pedal.*` flags.
+
+| Flag                                 | Description                                             |
+| ------------------------------------ | ------------------------------------------------------- |
+| `--strategy.num_episodes`            | Number of correction episodes to record (default: 10)   |
+| `--strategy.record_autonomous`       | Record autonomous frames too (default: false)           |
+| `--strategy.upload_every_n_episodes` | Push to Hub every N episodes (default: 5)               |
+| `--strategy.input_device`            | Input device: `keyboard` or `pedal` (default: keyboard) |
+| `--teleop.type`                      | **Required.** Teleoperator type                         |
+
+---
+
+## Inference Backends
+
+Select a backend with `--inference.type=<name>`. All strategies work with both backends.
+
+### Sync (default)
+
+One policy call per control tick. The main loop blocks until the action is computed.
+
+Works with all policies. No extra flags needed.
+
+### Real-Time Chunking (`--inference.type=rtc`)
+
+A background thread produces action chunks asynchronously. The main control loop polls for the next ready action while the policy computes the next chunk in parallel.
+
+Use RTC with large, slow VLA models (Pi0, Pi0.5, SmolVLA) for smooth, continuous motion despite high inference latency.
+
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --inference.type=rtc \
+    --inference.rtc.execution_horizon=10 \
+    --inference.rtc.max_guidance_weight=10.0 \
+    --policy.path=${HF_USER}/pi0_policy \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --task="Pick up the cube" \
+    --duration=60 \
+    --device=cuda
+```
+
+| Flag                                        | Description                                                    |
+| ------------------------------------------- | -------------------------------------------------------------- |
+| `--inference.rtc.execution_horizon`         | Steps to blend with previous chunk (default: varies by policy) |
+| `--inference.rtc.max_guidance_weight`       | Consistency enforcement strength (default: varies by policy)   |
+| `--inference.rtc.prefix_attention_schedule` | Blend schedule: `LINEAR`, `EXP`, `ONES`, `ZEROS`               |
+| `--inference.queue_threshold`               | Max queue size before backpressure (default: 30)               |
+
+See the [Real-Time Chunking](./rtc) guide for details on tuning RTC parameters.
+
+---
+
+## Common Flags
+
+| Flag                              | Description                                                       | Default |
+| --------------------------------- | ----------------------------------------------------------------- | ------- |
+| `--policy.path`                   | **Required.** HF Hub model ID or local checkpoint path            | --      |
+| `--robot.type`                    | **Required.** Robot type (e.g. `so100_follower`, `koch_follower`) | --      |
+| `--robot.port`                    | Serial port for the robot                                         | --      |
+| `--robot.cameras`                 | Camera configuration (JSON dict)                                  | --      |
+| `--fps`                           | Control loop frequency                                            | 30      |
+| `--duration`                      | Run time in seconds (0 = infinite)                                | 0       |
+| `--device`                        | Torch device (`cpu`, `cuda`, `mps`)                               | auto    |
+| `--task`                          | Task description (used when no dataset is provided)               | --      |
+| `--display_data`                  | Stream telemetry to Rerun visualization                           | false   |
+| `--display_ip` / `--display_port` | Remote Rerun server address                                       | --      |
+| `--interpolation_multiplier`      | Action interpolation factor                                       | 1       |
+| `--use_torch_compile`             | Enable `torch.compile` for inference                              | false   |
+| `--resume`                        | Resume a previous recording session                               | false   |
+| `--play_sounds`                   | Vocal synthesis for events                                        | true    |
+
+---
+
+## Programmatic Usage
+
+For custom deployments (e.g. with kinematics processors), use the rollout module API directly:
+
+```python
+from lerobot.rollout import BaseStrategyConfig, RolloutConfig, build_rollout_context
+from lerobot.rollout.inference import SyncInferenceConfig
+from lerobot.rollout.strategies import BaseStrategy
+from lerobot.utils.process import ProcessSignalHandler
+
+cfg = RolloutConfig(
+    robot=my_robot_config,
+    policy=my_policy_config,
+    strategy=BaseStrategyConfig(),
+    inference=SyncInferenceConfig(),
+    fps=30,
+    duration=60,
+    task="my task",
+)
+
+signal_handler = ProcessSignalHandler(use_threads=True)
+ctx = build_rollout_context(
+    cfg,
+    signal_handler.shutdown_event,
+    robot_action_processor=my_custom_action_processor,       # optional
+    robot_observation_processor=my_custom_obs_processor,     # optional
+)
+
+strategy = BaseStrategy(cfg.strategy)
+try:
+    strategy.setup(ctx)
+    strategy.run(ctx)
+finally:
+    strategy.teardown(ctx)
+```
+
+See `examples/so100_to_so100_EE/rollout.py` and `examples/phone_to_so100/rollout.py` for full examples with kinematics processors.

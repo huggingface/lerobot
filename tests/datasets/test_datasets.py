@@ -21,15 +21,18 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
+
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from huggingface_hub import HfApi
 from PIL import Image
 from safetensors.torch import load_file
+from torchvision.transforms import v2
 
-import lerobot
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.datasets.factory import make_dataset
-from lerobot.datasets.feature_utils import get_hf_features_from_features, hw_to_dataset_features
+from lerobot.datasets import make_dataset
+from lerobot.datasets.feature_utils import get_hf_features_from_features
 from lerobot.datasets.image_writer import image_array_to_pil_image
 from lerobot.datasets.io_utils import hf_transform_to_torch
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -44,7 +47,9 @@ from lerobot.datasets.video_utils import VALID_VIDEO_CODECS
 from lerobot.envs.factory import make_env_config
 from lerobot.policies.factory import make_policy_config
 from lerobot.robots import make_robot_from_config
+from lerobot.transforms import ImageTransforms, ImageTransformsConfig
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, OBS_STR, REWARD
+from lerobot.utils.feature_utils import hw_to_dataset_features
 from tests.fixtures.constants import DUMMY_CHW, DUMMY_HWC, DUMMY_REPO_ID
 from tests.mocks.mock_robot import MockRobotConfig
 from tests.utils import require_x86_64_kernel
@@ -355,6 +360,62 @@ def test_add_frame_image_pil(image_dataset):
     assert dataset[0]["image"].shape == torch.Size(DUMMY_CHW)
 
 
+def test_set_image_transforms_applies_transparently(image_dataset):
+    dataset = image_dataset
+    dataset.add_frame({"image": np.random.rand(*DUMMY_CHW), "task": "Dummy task"})
+    dataset.save_episode()
+    dataset.finalize()
+
+    dataset.set_image_transforms(v2.Resize((224, 224)))
+    assert dataset[0]["image"].shape == torch.Size((3, 224, 224))
+
+    dataset.set_image_transforms(v2.Resize((128, 128)))
+    assert dataset[0]["image"].shape == torch.Size((3, 128, 128))
+
+    dataset.clear_image_transforms()
+    assert dataset[0]["image"].shape == torch.Size(DUMMY_CHW)
+
+
+def test_set_image_transforms_supports_lerobot_image_transforms(image_dataset):
+    dataset = image_dataset
+    dataset.add_frame({"image": np.random.rand(*DUMMY_CHW), "task": "Dummy task"})
+    dataset.save_episode()
+    dataset.finalize()
+
+    image_transforms = ImageTransforms(ImageTransformsConfig(enable=False))
+    dataset.set_image_transforms(image_transforms)
+
+    assert dataset.image_transforms is image_transforms
+    assert dataset[0]["image"].shape == torch.Size(DUMMY_CHW)
+
+
+def test_set_image_transforms_supports_loaded_dataset(tmp_path, lerobot_dataset_factory):
+    dataset = lerobot_dataset_factory(root=tmp_path / "test", use_videos=False)
+    dataset.set_image_transforms(v2.Compose([v2.Resize((224, 224)), v2.Resize((112, 112))]))
+
+    camera_key = dataset.meta.camera_keys[0]
+    assert dataset[0][camera_key].shape == torch.Size((3, 112, 112))
+
+
+def test_multilerobot_dataset_set_image_transforms_propagates(tmp_path, lerobot_dataset_factory):
+    root = tmp_path / "multi"
+    repo_ids = ["lerobot/test_multi_a", "lerobot/test_multi_b"]
+
+    for repo_id in repo_ids:
+        lerobot_dataset_factory(root=root / repo_id, repo_id=repo_id, use_videos=False)
+
+    dataset = MultiLeRobotDataset(repo_ids, root=root, download_videos=False)
+    dataset.set_image_transforms(v2.Resize((96, 96)))
+
+    camera_key = dataset.camera_keys[0]
+    assert dataset[0][camera_key].shape == torch.Size((3, 96, 96))
+    assert all(child.image_transforms is dataset.image_transforms for child in dataset._datasets)
+
+    dataset.clear_image_transforms()
+    assert dataset.image_transforms is None
+    assert all(child.image_transforms is None for child in dataset._datasets)
+
+
 def test_image_array_to_pil_image_wrong_range_float_0_255():
     image = np.random.rand(*DUMMY_HWC) * 255
     with pytest.raises(ValueError):
@@ -391,6 +452,35 @@ def test_tmp_video_deletion(tmp_path, empty_lerobot_dataset_factory):
     assert not vid_img_dir.exists(), (
         "Temporary image directory should be removed when batch_encoding_size == 1"
     )
+
+
+def test_cleanup_interrupted_episode_removes_image_temp_dirs(tmp_path, empty_lerobot_dataset_factory):
+    """Verify interrupted episode cleanup removes temporary image directories for both image and video features."""
+    features = {
+        "image": {"dtype": "image", "shape": DUMMY_CHW, "names": ["channels", "height", "width"]},
+        "video": {"dtype": "video", "shape": DUMMY_HWC, "names": ["height", "width", "channels"]},
+    }
+    ds = empty_lerobot_dataset_factory(
+        root=tmp_path / "interrupted", features=features, streaming_encoding=False
+    )
+    # Add one frame without saving episode simulating an interruption
+    ds.add_frame(
+        {
+            "image": np.random.rand(*DUMMY_CHW),
+            "video": np.random.rand(*DUMMY_HWC),
+            "task": "Dummy task",
+        }
+    )
+    img_dir = ds.writer._get_image_file_dir(0, "image")
+    vid_img_dir = ds.writer._get_image_file_dir(0, "video")
+    # Precondition: both temp dirs exist after add_frame.
+    assert img_dir.exists()
+    assert vid_img_dir.exists()
+
+    ds.writer.cleanup_interrupted_episode(episode_index=0)
+
+    assert not img_dir.exists(), "image temp dir leaked after cleanup_interrupted_episode"
+    assert not vid_img_dir.exists(), "video temp dir leaked after cleanup_interrupted_episode"
 
 
 def test_tmp_mixed_deletion(tmp_path, empty_lerobot_dataset_factory):
@@ -435,13 +525,28 @@ def test_tmp_mixed_deletion(tmp_path, empty_lerobot_dataset_factory):
 # - [ ] remove old tests
 
 
+ENV_DATASET_POLICY_TRIPLETS = [
+    ("aloha", dataset, "act")
+    for dataset in [
+        "lerobot/aloha_sim_insertion_human",
+        "lerobot/aloha_sim_insertion_scripted",
+        "lerobot/aloha_sim_transfer_cube_human",
+        "lerobot/aloha_sim_transfer_cube_scripted",
+        "lerobot/aloha_sim_insertion_human_image",
+        "lerobot/aloha_sim_insertion_scripted_image",
+        "lerobot/aloha_sim_transfer_cube_human_image",
+        "lerobot/aloha_sim_transfer_cube_scripted_image",
+    ]
+] + [
+    ("pusht", dataset, policy)
+    for dataset in ["lerobot/pusht", "lerobot/pusht_image"]
+    for policy in ["diffusion", "vqbet"]
+]
+
+
 @pytest.mark.parametrize(
     "env_name, repo_id, policy_name",
-    # Single dataset
-    lerobot.env_dataset_policy_triplets,
-    # Multi-dataset
-    # TODO after fix multidataset
-    # + [("aloha", ["lerobot/aloha_sim_insertion_human", "lerobot/aloha_sim_transfer_cube_human"], "act")],
+    ENV_DATASET_POLICY_TRIPLETS,
 )
 def test_factory(env_name, repo_id, policy_name):
     """

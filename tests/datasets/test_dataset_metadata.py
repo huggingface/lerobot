@@ -20,6 +20,8 @@ import json
 import numpy as np
 import pytest
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.utils import INFO_PATH
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_ROBOT_TYPE
@@ -159,7 +161,7 @@ def test_init_loads_existing_metadata(tmp_path, lerobot_dataset_metadata_factory
 
     assert meta.total_episodes == 3
     assert meta.total_frames == 150
-    assert meta.fps == info["fps"]
+    assert meta.fps == info.fps
 
 
 # ── Property accessors ───────────────────────────────────────────────

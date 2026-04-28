@@ -41,15 +41,18 @@ import pyarrow.parquet as pq
 import torch
 from tqdm import tqdm
 
-from lerobot.datasets.aggregate import aggregate_datasets
-from lerobot.datasets.compute_stats import (
+from lerobot.utils.constants import ACTION, HF_LEROBOT_HOME, OBS_IMAGE, OBS_STATE
+from lerobot.utils.utils import flatten_dict
+
+from .aggregate import aggregate_datasets
+from .compute_stats import (
     aggregate_stats,
     compute_episode_stats,
     compute_mp4_video_stats,
     compute_relative_action_stats,
 )
-from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-from lerobot.datasets.io_utils import (
+from .dataset_metadata import LeRobotDatasetMetadata
+from .io_utils import (
     get_parquet_file_size_in_mb,
     load_episodes,
     load_stats,
@@ -58,21 +61,20 @@ from lerobot.datasets.io_utils import (
     write_stats,
     write_tasks,
 )
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import (
+from .lerobot_dataset import LeRobotDataset
+from .utils import (
     DATA_DIR,
     DEFAULT_DATA_PATH,
     DEFAULT_EPISODES_PATH,
     update_chunk_file_indices,
 )
-from lerobot.datasets.video_utils import (
+from .video_utils import (
     _get_codec_options,
     concatenate_video_files,
     encode_video_frames,
     get_video_duration_in_s,
     get_video_info,
 )
-from lerobot.utils.constants import ACTION, HF_LEROBOT_HOME, OBS_IMAGE, OBS_STATE
 
 
 def _load_episode_with_stats(src_dataset: LeRobotDataset, episode_idx: int) -> dict:
@@ -853,8 +855,6 @@ def _copy_and_reindex_episodes_metadata(
         data_metadata: Dict mapping new episode index to its data file metadata
         video_metadata: Optional dict mapping new episode index to its video metadata
     """
-    from lerobot.datasets.utils import flatten_dict
-
     if src_dataset.meta.episodes is None:
         src_dataset.meta.episodes = load_episodes(src_dataset.meta.root)
 
@@ -921,14 +921,10 @@ def _copy_and_reindex_episodes_metadata(
 
     dst_meta.finalize()
 
-    dst_meta.info.update(
-        {
-            "total_episodes": len(episode_mapping),
-            "total_frames": total_frames,
-            "total_tasks": len(dst_meta.tasks) if dst_meta.tasks is not None else 0,
-            "splits": {"train": f"0:{len(episode_mapping)}"},
-        }
-    )
+    dst_meta.info.total_episodes = len(episode_mapping)
+    dst_meta.info.total_frames = total_frames
+    dst_meta.info.total_tasks = len(dst_meta.tasks) if dst_meta.tasks is not None else 0
+    dst_meta.info.splits = {"train": f"0:{len(episode_mapping)}"}
     write_info(dst_meta.info, dst_meta.root)
 
     if not all_stats:
@@ -946,8 +942,8 @@ def _write_parquet(df: pd.DataFrame, path: Path, meta: LeRobotDatasetMetadata) -
 
     This ensures images are properly embedded and the file can be loaded correctly by HF datasets.
     """
-    from lerobot.datasets.feature_utils import get_hf_features_from_features
-    from lerobot.datasets.io_utils import embed_images
+    from .feature_utils import get_hf_features_from_features
+    from .io_utils import embed_images
 
     hf_features = get_hf_features_from_features(meta.features)
     ep_dataset = datasets.Dataset.from_dict(df.to_dict(orient="list"), features=hf_features, split="train")
@@ -1432,21 +1428,20 @@ def _copy_episodes_metadata_and_stats(
     if episodes_dir.exists():
         shutil.copytree(episodes_dir, dst_episodes_dir, dirs_exist_ok=True)
 
-    dst_meta.info.update(
-        {
-            "total_episodes": src_dataset.meta.total_episodes,
-            "total_frames": src_dataset.meta.total_frames,
-            "total_tasks": src_dataset.meta.total_tasks,
-            "splits": src_dataset.meta.info.get("splits", {"train": f"0:{src_dataset.meta.total_episodes}"}),
-        }
+    dst_meta.info.total_episodes = src_dataset.meta.total_episodes
+    dst_meta.info.total_frames = src_dataset.meta.total_frames
+    dst_meta.info.total_tasks = src_dataset.meta.total_tasks
+    # Preserve original splits if available, otherwise create default
+    dst_meta.info.splits = (
+        src_dataset.meta.info.splits
+        if src_dataset.meta.info.splits
+        else {"train": f"0:{src_dataset.meta.total_episodes}"}
     )
 
     if dst_meta.video_keys and src_dataset.meta.video_keys:
         for key in dst_meta.video_keys:
             if key in src_dataset.meta.features:
-                dst_meta.info["features"][key]["info"] = src_dataset.meta.info["features"][key].get(
-                    "info", {}
-                )
+                dst_meta.info.features[key]["info"] = src_dataset.meta.info.features[key].get("info", {})
 
     write_info(dst_meta.info, dst_meta.root)
 
@@ -1730,7 +1725,7 @@ def _copy_data_without_images(
         episode_indices: Episodes to include
         img_keys: Image keys to remove
     """
-    from lerobot.datasets.utils import DATA_DIR
+    from .utils import DATA_DIR
 
     data_dir = src_dataset.root / DATA_DIR
     parquet_files = sorted(data_dir.glob("*/*.parquet"))
@@ -1888,7 +1883,7 @@ def modify_tasks(
     write_tasks(new_task_df, root)
 
     # Update info.json
-    dataset.meta.info["total_tasks"] = len(unique_tasks)
+    dataset.meta.info.total_tasks = len(unique_tasks)
     write_info(dataset.meta.info, root)
 
     # Reload metadata to reflect changes
@@ -2221,10 +2216,10 @@ def convert_image_to_video_dataset(
         episodes_df.to_parquet(episodes_path, index=False)
 
         # Update metadata info
-        new_meta.info["total_episodes"] = len(episode_indices)
-        new_meta.info["total_frames"] = sum(ep["length"] for ep in all_episode_metadata.values())
-        new_meta.info["total_tasks"] = dataset.meta.total_tasks
-        new_meta.info["splits"] = {"train": f"0:{len(episode_indices)}"}
+        new_meta.info.total_episodes = len(episode_indices)
+        new_meta.info.total_frames = sum(ep["length"] for ep in all_episode_metadata.values())
+        new_meta.info.total_tasks = dataset.meta.total_tasks
+        new_meta.info.splits = {"train": f"0:{len(episode_indices)}"}
 
         # Update video info for all image keys (now videos)
         # We need to manually set video info since update_video_info() checks video_keys first
@@ -2233,7 +2228,7 @@ def convert_image_to_video_dataset(
                 video_path = new_meta.root / new_meta.video_path.format(
                     video_key=img_key, chunk_index=0, file_index=0
                 )
-                new_meta.info["features"][img_key]["info"] = get_video_info(video_path)
+                new_meta.info.features[img_key]["info"] = get_video_info(video_path)
 
         write_info(new_meta.info, new_meta.root)
 

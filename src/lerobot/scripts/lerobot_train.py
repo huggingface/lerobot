@@ -13,47 +13,53 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""Train a policy.
+
+Requires: pip install 'lerobot[training]'  (includes dataset + accelerate + wandb extras)
+"""
+
 import dataclasses
 import logging
 import time
 from contextlib import nullcontext
 from pprint import pformat
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from accelerate import Accelerator
 
 import torch
-from accelerate import Accelerator
 from termcolor import colored
 from torch.optim import Optimizer
 from tqdm import tqdm
 
-from lerobot.configs import parser
-from lerobot.configs.train import TrainPipelineConfig
-from lerobot.datasets.factory import make_dataset
-from lerobot.datasets.sampler import EpisodeAwareSampler
-from lerobot.datasets.utils import cycle
-from lerobot.envs.factory import make_env, make_env_pre_post_processors
-from lerobot.envs.utils import close_envs
-from lerobot.optim.factory import make_optimizer_and_scheduler
-from lerobot.policies.factory import make_policy, make_pre_post_processors
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.rl.wandb_utils import WandBLogger
-from lerobot.scripts.lerobot_eval import eval_policy_all
-from lerobot.utils.import_utils import register_third_party_plugins
-from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
-from lerobot.utils.random_utils import set_seed
-from lerobot.utils.train_utils import (
+from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
     get_step_identifier,
     load_training_state,
     save_checkpoint,
     update_last_checkpoint,
 )
+from lerobot.common.wandb_utils import WandBLogger
+from lerobot.configs import parser
+from lerobot.configs.train import TrainPipelineConfig
+from lerobot.datasets import EpisodeAwareSampler, make_dataset
+from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
+from lerobot.optim.factory import make_optimizer_and_scheduler
+from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
+from lerobot.rewards import make_reward_pre_post_processors
+from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
+from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
+    cycle,
     format_big_number,
     has_method,
     init_logging,
     inside_slurm,
 )
+
+from .lerobot_eval import eval_policy_all
 
 
 def update_policy(
@@ -62,11 +68,11 @@ def update_policy(
     batch: Any,
     optimizer: Optimizer,
     grad_clip_norm: float,
-    accelerator: Accelerator,
+    accelerator: "Accelerator",
     lr_scheduler=None,
     lock=None,
-    rabc_weights_provider=None,
-) -> tuple[MetricsTracker, dict]:
+    sample_weighter=None,
+) -> tuple[MetricsTracker, dict | None]:
     """
     Performs a single training step to update the policy's weights.
 
@@ -82,7 +88,7 @@ def update_policy(
         accelerator: The Accelerator instance for distributed training and mixed precision.
         lr_scheduler: An optional learning rate scheduler.
         lock: An optional lock for thread-safe optimizer updates.
-        rabc_weights_provider: Optional RABCWeights instance for sample weighting.
+        sample_weighter: Optional SampleWeighter instance for per-sample loss weighting.
 
     Returns:
         A tuple containing:
@@ -92,27 +98,31 @@ def update_policy(
     start_time = time.perf_counter()
     policy.train()
 
-    # Get RA-BC weights if enabled
-    rabc_batch_weights = None
-    rabc_batch_stats = None
-    if rabc_weights_provider is not None:
-        rabc_batch_weights, rabc_batch_stats = rabc_weights_provider.compute_batch_weights(batch)
+    # Compute sample weights if a weighter is provided
+    sample_weights = None
+    weight_stats = None
+    if sample_weighter is not None:
+        sample_weights, weight_stats = sample_weighter.compute_batch_weights(batch)
 
     # Let accelerator handle mixed precision
     with accelerator.autocast():
-        # Use per-sample loss when RA-BC is enabled for proper weighting
-        if rabc_batch_weights is not None:
-            # Get per-sample losses
+        if sample_weights is not None:
+            # Use per-sample loss for weighted training
+            # Note: Policies supporting sample weighting must implement forward(batch, reduction="none")
             per_sample_loss, output_dict = policy.forward(batch, reduction="none")
 
-            # Apply RA-BC weights: L_RA-BC = Σ(w_i * l_i) / (Σw_i + ε)
-            # rabc_batch_weights is already normalized to sum to batch_size
+            # Weighted loss: each sample's contribution is scaled by its weight.
+            # We divide by weight sum (not batch size) so that if some weights are zero,
+            # the remaining samples contribute proportionally more, preserving gradient scale.
+            # Weights are pre-normalized to sum to batch_size for stable training dynamics.
             epsilon = 1e-6
-            loss = (per_sample_loss * rabc_batch_weights).sum() / (rabc_batch_weights.sum() + epsilon)
-            # Log raw mean weight (before normalization) - this is the meaningful metric
-            output_dict["rabc_mean_weight"] = rabc_batch_stats["raw_mean_weight"]
-            output_dict["rabc_num_zero_weight"] = rabc_batch_stats["num_zero_weight"]
-            output_dict["rabc_num_full_weight"] = rabc_batch_stats["num_full_weight"]
+            loss = (per_sample_loss * sample_weights).sum() / (sample_weights.sum() + epsilon)
+
+            # Log weighting statistics
+            if output_dict is None:
+                output_dict = {}
+            for key, value in weight_stats.items():
+                output_dict[f"sample_weight_{key}"] = value
         else:
             loss, output_dict = policy.forward(batch)
 
@@ -151,7 +161,7 @@ def update_policy(
 
 
 @parser.wrap()
-def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
+def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     """
     Main function to train a policy.
 
@@ -167,6 +177,11 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         cfg: A `TrainPipelineConfig` object containing all training configurations.
         accelerator: Optional Accelerator instance. If None, one will be created automatically.
     """
+    from lerobot.utils.import_utils import require_package
+
+    require_package("accelerate", extra="training")
+    from accelerate import Accelerator
+
     cfg.validate()
 
     # Create Accelerator if not provided
@@ -178,8 +193,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
         ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
         # Accelerate auto-detects the device based on the available hardware and ignores the policy.device setting.
-        # Force the device to be CPU when policy.device is set to CPU.
-        force_cpu = cfg.policy.device == "cpu"
+        # Force the device to be CPU when the active config's device is set to CPU (works for both policy and reward model training).
+        force_cpu = cfg.trainable_config.device == "cpu"
         accelerator = Accelerator(
             step_scheduler_with_optimizer=False,
             kwargs_handlers=[ddp_kwargs],
@@ -235,26 +250,44 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         logging.info("Creating env")
         eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
 
-    if is_main_process:
-        logging.info("Creating policy")
-    policy = make_policy(
-        cfg=cfg.policy,
-        ds_meta=dataset.meta,
-        rename_map=cfg.rename_map,
-    )
+    if cfg.is_reward_model_training:
+        if is_main_process:
+            logging.info("Creating reward model")
+        from lerobot.rewards import make_reward_model
+
+        policy = make_reward_model(
+            cfg=cfg.reward_model,
+            dataset_stats=dataset.meta.stats,
+            dataset_meta=dataset.meta,
+        )
+        if not policy.is_trainable:
+            raise ValueError(
+                f"Reward model '{policy.name}' is zero-shot and cannot be trained via lerobot-train. "
+                "Use it directly for inference via compute_reward() (e.g. offline precompute)."
+            )
+    else:
+        if is_main_process:
+            logging.info("Creating policy")
+        policy = make_policy(
+            cfg=cfg.policy,
+            ds_meta=dataset.meta,
+            rename_map=cfg.rename_map,
+        )
 
     if cfg.peft is not None:
+        if cfg.is_reward_model_training:
+            raise ValueError("PEFT is only supported for policy training. ")
         logging.info("Using PEFT! Wrapping model.")
-        # Convert CLI peft config to dict for overrides
         peft_cli_overrides = dataclasses.asdict(cfg.peft)
         policy = policy.wrap_with_peft(peft_cli_overrides=peft_cli_overrides)
 
-    # Wait for all processes to finish policy creation before continuing
+    # Wait for all processes to finish model creation before continuing
     accelerator.wait_for_everyone()
 
-    processor_pretrained_path = cfg.policy.pretrained_path
+    active_cfg = cfg.trainable_config
+    processor_pretrained_path = active_cfg.pretrained_path
     if (
-        getattr(cfg.policy, "use_relative_actions", False)
+        getattr(active_cfg, "use_relative_actions", False)
         and processor_pretrained_path is not None
         and not cfg.resume
     ):
@@ -264,18 +297,15 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         )
         processor_pretrained_path = None
 
-    # Create processors - only provide dataset_stats if not resuming from saved processors
     processor_kwargs = {}
     postprocessor_kwargs = {}
     if (processor_pretrained_path and not cfg.resume) or not processor_pretrained_path:
-        # Only provide dataset_stats when not resuming from saved processor state
         processor_kwargs["dataset_stats"] = dataset.meta.stats
 
-    # For SARM, always provide dataset_meta for progress normalization
-    if cfg.policy.type == "sarm":
+    if cfg.is_reward_model_training:
         processor_kwargs["dataset_meta"] = dataset.meta
 
-    if processor_pretrained_path is not None:
+    if not cfg.is_reward_model_training and processor_pretrained_path is not None:
         processor_kwargs["preprocessor_overrides"] = {
             "device_processor": {"device": device.type},
             "normalizer_processor": {
@@ -295,38 +325,36 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             },
         }
 
-    preprocessor, postprocessor = make_pre_post_processors(
-        policy_cfg=cfg.policy,
-        pretrained_path=processor_pretrained_path,
-        **processor_kwargs,
-        **postprocessor_kwargs,
-    )
+    if cfg.is_reward_model_training:
+        preprocessor, postprocessor = make_reward_pre_post_processors(
+            cfg.reward_model,
+            **processor_kwargs,
+        )
+    else:
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy_cfg=cfg.policy,
+            pretrained_path=processor_pretrained_path,
+            **processor_kwargs,
+            **postprocessor_kwargs,
+        )
 
     if is_main_process:
         logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
 
-    # Load precomputed SARM progress for RA-BC if enabled
-    # Generate progress using: src/lerobot/policies/sarm/compute_rabc_weights.py
-    rabc_weights = None
-    if cfg.use_rabc:
-        from lerobot.utils.rabc import RABCWeights
+    # Create sample weighter if configured (e.g., for RA-BC training)
+    sample_weighter = None
+    if cfg.sample_weighting is not None:
+        from lerobot.utils.sample_weighting import make_sample_weighter
 
-        # Get chunk_size from policy config
-        chunk_size = getattr(policy.config, "chunk_size", None)
-        if chunk_size is None:
-            raise ValueError("Chunk size is not found in policy config")
-
-        head_mode = getattr(cfg, "rabc_head_mode", "sparse")
-        logging.info(f"Loading SARM progress for RA-BC from {cfg.rabc_progress_path}")
-        logging.info(f"Using chunk_size={chunk_size} from policy config, head_mode={head_mode}")
-        rabc_weights = RABCWeights(
-            progress_path=cfg.rabc_progress_path,
-            chunk_size=chunk_size,
-            head_mode=head_mode,
-            kappa=getattr(cfg, "rabc_kappa", 0.01),
-            epsilon=getattr(cfg, "rabc_epsilon", 1e-6),
-            device=device,
+        if is_main_process:
+            logging.info(f"Creating sample weighter: {cfg.sample_weighting.type}")
+        sample_weighter = make_sample_weighter(
+            cfg.sample_weighting,
+            policy,
+            device,
+            dataset_root=cfg.dataset.root,
+            dataset_repo_id=cfg.dataset.repo_id,
         )
 
     step = 0  # number of policy updates (forward + backward + optim)
@@ -355,13 +383,13 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
     # create dataloader for offline training
-    if hasattr(cfg.policy, "drop_n_last_frames"):
+    if hasattr(active_cfg, "drop_n_last_frames"):
         shuffle = False
         sampler = EpisodeAwareSampler(
             dataset.meta.episodes["dataset_from_index"],
             dataset.meta.episodes["dataset_to_index"],
             episode_indices_to_use=dataset.episodes,
-            drop_n_last_frames=cfg.policy.drop_n_last_frames,
+            drop_n_last_frames=active_cfg.drop_n_last_frames,
             shuffle=True,
         )
     else:
@@ -376,7 +404,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         sampler=sampler,
         pin_memory=device.type == "cuda",
         drop_last=False,
-        prefetch_factor=2 if cfg.num_workers > 0 else None,
+        prefetch_factor=cfg.prefetch_factor if cfg.num_workers > 0 else None,
+        persistent_workers=cfg.persistent_workers and cfg.num_workers > 0,
     )
 
     # Prepare everything with accelerator
@@ -423,6 +452,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
+        for cam_key in dataset.meta.camera_keys:
+            if cam_key in batch and batch[cam_key].dtype == torch.uint8:
+                batch[cam_key] = batch[cam_key].to(dtype=torch.float32) / 255.0
         batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
@@ -434,7 +466,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             cfg.optimizer.grad_clip_norm,
             accelerator=accelerator,
             lr_scheduler=lr_scheduler,
-            rabc_weights_provider=rabc_weights,
+            sample_weighter=sample_weighter,
         )
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
@@ -453,16 +485,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                 wandb_log_dict = train_tracker.to_dict()
                 if output_dict:
                     wandb_log_dict.update(output_dict)
-                # Log RA-BC statistics if enabled
-                if rabc_weights is not None:
-                    rabc_stats = rabc_weights.get_stats()
-                    wandb_log_dict.update(
-                        {
-                            "rabc_delta_mean": rabc_stats["delta_mean"],
-                            "rabc_delta_std": rabc_stats["delta_std"],
-                            "rabc_num_frames": rabc_stats["num_frames"],
-                        }
-                    )
+                # Log sample weighting statistics if enabled
+                if sample_weighter is not None:
+                    weighter_stats = sample_weighter.get_stats()
+                    wandb_log_dict.update({f"sample_weighting/{k}": v for k, v in weighter_stats.items()})
                 wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
 
@@ -544,14 +570,15 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if is_main_process:
         logging.info("End of training")
 
-        if cfg.policy.push_to_hub:
-            unwrapped_policy = accelerator.unwrap_model(policy)
-            if cfg.policy.use_peft:
-                unwrapped_policy.push_model_to_hub(cfg, peft_model=unwrapped_policy)
+        if getattr(active_cfg, "push_to_hub", False):
+            unwrapped_model = accelerator.unwrap_model(policy)
+            # PEFT only applies when training a policy — reward models use the plain path.
+            if not cfg.is_reward_model_training and cfg.policy.use_peft:
+                unwrapped_model.push_model_to_hub(cfg, peft_model=unwrapped_model)
             else:
-                unwrapped_policy.push_model_to_hub(cfg)
-            preprocessor.push_to_hub(cfg.policy.repo_id)
-            postprocessor.push_to_hub(cfg.policy.repo_id)
+                unwrapped_model.push_model_to_hub(cfg)
+            preprocessor.push_to_hub(active_cfg.repo_id)
+            postprocessor.push_to_hub(active_cfg.repo_id)
 
     # Properly clean up the distributed process group
     accelerator.wait_for_everyone()
