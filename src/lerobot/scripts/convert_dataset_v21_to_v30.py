@@ -168,7 +168,7 @@ def legacy_load_tasks(local_dir: Path) -> tuple[dict, dict]:
 def validate_local_dataset_version(local_path: Path) -> None:
     """Validate that the local dataset has the expected v2.1 version."""
     info = load_info(local_path)
-    dataset_version = info.get("codebase_version", "unknown")
+    dataset_version = info.codebase_version or "unknown"
     if dataset_version != V21:
         raise ValueError(
             f"Local dataset has codebase version '{dataset_version}', expected '{V21}'. "

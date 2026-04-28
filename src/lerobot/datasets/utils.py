@@ -416,7 +416,7 @@ def create_branch(repo_id: str, *, branch: str, repo_type: str | None = None) ->
 
 def create_lerobot_dataset_card(
     tags: list | None = None,
-    dataset_info: dict | None = None,
+    dataset_info: DatasetInfo | None = None,
     **kwargs,
 ) -> DatasetCard:
     """Create a `DatasetCard` for a LeRobot dataset.
@@ -427,7 +427,7 @@ def create_lerobot_dataset_card(
 
     Args:
         tags (list | None): A list of tags to add to the dataset card.
-        dataset_info (dict | None): The dataset's info dictionary, which will
+        dataset_info (DatasetInfo | None): The dataset's info object, which will
             be displayed on the card.
         **kwargs: Additional keyword arguments to populate the card template.
 
@@ -440,7 +440,7 @@ def create_lerobot_dataset_card(
         card_tags += tags
     if dataset_info:
         dataset_structure = "[meta/info.json](meta/info.json):\n"
-        dataset_structure += f"```json\n{json.dumps(dataset_info, indent=4)}\n```\n"
+        dataset_structure += f"```json\n{json.dumps(dataset_info.to_dict(), indent=4)}\n```\n"
         kwargs = {**kwargs, "dataset_structure": dataset_structure}
     card_data = DatasetCardData(
         license=kwargs.get("license"),
