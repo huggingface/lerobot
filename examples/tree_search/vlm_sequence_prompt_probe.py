@@ -617,6 +617,8 @@ class VLMFrameScorer:
                 raw_response=None,
             )
 
+        message = ""
+        raw_response: Any | None = None
         try:
             client = self._get_client()
             content: list[dict[str, Any]] = []
@@ -645,16 +647,17 @@ class VLMFrameScorer:
                 extra_body=extra_body,
                 stream=False,
             )
+            raw_response = completion.model_dump() if hasattr(completion, "model_dump") else str(completion)
             message = completion.choices[0].message.content or ""
             parsed = _parse_score_json(message)
-            raw_response = completion.model_dump() if hasattr(completion, "model_dump") else str(completion)
         except Exception as exc:
-            logger.warning("VLM scoring failed: %s", exc)
+            response_tail = message[-50:] if message else "<empty>"
+            logger.warning("VLM scoring failed: %s; response_tail=%r", exc, response_tail)
             return VLMScore(
                 score=0.0,
-                reason=f"VLM scoring failed: {exc}",
+                reason=f"VLM scoring failed: {exc}; response_tail={response_tail!r}",
                 prompt=prompt,
-                raw_response=None,
+                raw_response=raw_response,
             )
 
         score = min(1.0, max(0.0, float(parsed.get("score", 0.0))))
