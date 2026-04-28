@@ -83,33 +83,11 @@ class PolicyInferenceConfig:
     video_path: Path | None = None
     trace_dir: Path | None = None
     trace_save_step_images: bool = True
-    vlm_api_url: str | None = None
-    vlm_api_key_env: str | None = None
-    vlm_base_url: str | None = None
-    vlm_model: str | None = None
-    vlm_max_tokens: int = 512
-    vlm_temperature: float = 0.6
-    vlm_top_p: float = 0.95
-    vlm_presence_penalty: float = 0.0
-    vlm_top_k: int = 20
-    vlm_min_p: float = 0.0
-    vlm_repetition_penalty: float = 1.0
-    vlm_timeout_s: float = 30.0
-    vlm_requests_per_minute: float = 10.0
-    vlm_max_retries: int = 3
-    vlm_retry_sleep_s: float = 6.0
-    vlm_rate_limit_sleep_s: float = 60.0
-    vlm_log_response_chars: int = 200
-    vlm_verbose: bool = False
     search_verbose: bool = False
-    vlm_observation_image_keys: str = "image2"
-    vlm_include_rendered_image: bool = True
-    vlm_include_robot_state: bool = True
-    vlm_reference_image_dir: Path | None = TREE_SEARCH_DIR / "references"
-    vlm_reference_image_paths: str | None = None
-    vlm_reference_image_glob: str = "**/*"
-    vlm_reference_image_max_size: int = 512
-    vlm_reference_filter_by_task: bool = True
+    reward_model_checkpoint: Path | None = None
+    reward_scene_image_keys: str = "image,base_0_rgb"
+    reward_wrist_image_keys: str = "image2,left_wrist_0_rgb"
+    reward_use_rendered_fallback: bool = True
     rename_map: dict[str, str] = field(default_factory=dict)
     trust_remote_code: bool = False
 
@@ -386,7 +364,7 @@ def _to_jsonable(value: Any) -> Any:
     return value
 
 
-def _image_array_for_vlm(image: Any, *, flip_hw: bool = False) -> np.ndarray | None:
+def _image_array(image: Any, *, flip_hw: bool = False) -> np.ndarray | None:
     if image is None:
         return None
     if isinstance(image, torch.Tensor):
@@ -411,163 +389,63 @@ def _image_array_for_vlm(image: Any, *, flip_hw: bool = False) -> np.ndarray | N
     return np.ascontiguousarray(np.clip(image, 0, 255).astype(np.uint8))
 
 
-def _extract_vlm_observation_images(
+def _split_keys(raw: str) -> tuple[str, ...]:
+    return tuple(key.strip() for key in raw.split(",") if key.strip())
+
+
+def _first_observation_image(
     observation: Mapping[str, Any] | None,
     image_keys: Sequence[str],
-) -> list[tuple[str, np.ndarray]]:
+) -> tuple[str, np.ndarray] | None:
     if observation is None:
-        return []
+        return None
     pixels = observation.get("pixels")
     if not isinstance(pixels, Mapping):
-        return []
-
-    images: list[tuple[str, np.ndarray]] = []
+        return None
     for key in image_keys:
-        image = _image_array_for_vlm(pixels.get(key), flip_hw=True)
+        image = _image_array(pixels.get(key), flip_hw=True)
         if image is not None:
-            images.append((f"observation.{key}", image))
-    return images
-
-
-_REFERENCE_IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".webp"}
-
-
-def _iter_reference_image_paths(
-    *,
-    image_dir: Path | None,
-    image_paths: str | None,
-    image_glob: str,
-) -> list[Path]:
-    paths: list[Path] = []
-    explicit_paths = [token.strip() for token in (image_paths or "").split(",") if token.strip()]
-    for token in explicit_paths:
-        path = Path(token)
-        if path.is_dir():
-            paths.extend(
-                child
-                for child in sorted(path.glob(image_glob))
-                if child.is_file() and child.suffix.lower() in _REFERENCE_IMAGE_SUFFIXES
-            )
-        elif path.is_file() and path.suffix.lower() in _REFERENCE_IMAGE_SUFFIXES:
-            paths.append(path)
-        else:
-            raise FileNotFoundError(f"Reference image path does not exist or is not an image: {path}")
-
-    if image_dir is not None and image_dir.exists():
-        paths.extend(
-            child
-            for child in sorted(image_dir.glob(image_glob))
-            if child.is_file() and child.suffix.lower() in _REFERENCE_IMAGE_SUFFIXES
-        )
-
-    unique_paths: list[Path] = []
-    seen: set[Path] = set()
-    for path in paths:
-        resolved = path.resolve()
-        if resolved in seen:
-            continue
-        seen.add(resolved)
-        unique_paths.append(path)
-    return unique_paths
-
-
-def _reference_image_matches_task(path: Path, task_id: int) -> bool:
-    task_tokens = {str(task_id), f"{task_id:02d}", f"{task_id:03d}"}
-    for part in [path.stem, *path.parent.parts]:
-        text = part.lower()
-        compact = re.sub(r"[^a-z0-9]+", "", text)
-        normalized = re.sub(r"[^a-z0-9]+", "_", text).strip("_")
-        for token in task_tokens:
-            marker_forms = {
-                token,
-                f"task{token}",
-                f"task_{token}",
-                f"task-{token}",
-                f"taskid{token}",
-                f"task_id_{token}",
-                f"task-id-{token}",
-            }
-            compact_marker_forms = {form.replace("_", "").replace("-", "") for form in marker_forms}
-            if normalized in marker_forms or compact in compact_marker_forms:
-                return True
-            if normalized.startswith((f"{token}_", f"{token}-", f"task_{token}_", f"task_{token}-")):
-                return True
-            if normalized.startswith((f"task{token}_", f"task{token}-")):
-                return True
-    return False
-
-
-def _load_vlm_reference_images(
-    cfg: PolicyInferenceConfig,
-    *,
-    task_id: int | None,
-) -> list[tuple[str, np.ndarray]]:
-    images: list[tuple[str, np.ndarray]] = []
-    paths = _iter_reference_image_paths(
-        image_dir=cfg.vlm_reference_image_dir,
-        image_paths=cfg.vlm_reference_image_paths,
-        image_glob=cfg.vlm_reference_image_glob,
-    )
-    if cfg.vlm_reference_filter_by_task and task_id is not None:
-        all_paths = paths
-        paths = [path for path in all_paths if _reference_image_matches_task(path, task_id)]
-        if all_paths and not paths:
-            logger.warning(
-                "Found %d reference image(s), but none matched task_id=%s. "
-                "Use names like `task_%s_*.png` or set `--vlm_reference_filter_by_task=false`.",
-                len(all_paths),
-                task_id,
-                task_id,
-            )
-    for image_ix, path in enumerate(paths):
-        with Image.open(path) as pil_image:
-            image = pil_image.convert("RGB")
-            if cfg.vlm_reference_image_max_size > 0:
-                max_size = int(cfg.vlm_reference_image_max_size)
-                image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-            task_label = f"task_{task_id}." if task_id is not None else ""
-            label = f"reference.target.{task_label}{image_ix:02d}.{path.stem}"
-            images.append((label, np.asarray(image, dtype=np.uint8)))
-    if images:
-        logger.info("Loaded %d VLM target reference image(s).", len(images))
-    return images
-
-
-def _error_status_code(exc: Exception) -> int | None:
-    status_code = getattr(exc, "status_code", None)
-    if status_code is None:
-        response = getattr(exc, "response", None)
-        status_code = getattr(response, "status_code", None) if response is not None else None
-    if status_code is not None:
-        with suppress(TypeError, ValueError):
-            return int(status_code)
-
-    match = re.search(r"Error code:\s*(\d+)", str(exc))
-    return int(match.group(1)) if match else None
-
-
-def _is_rate_limit_error(exc: Exception) -> bool:
-    if _error_status_code(exc) == 429:
-        return True
-    return "rate limit" in str(exc).lower()
-
-
-def _retry_after_seconds(exc: Exception) -> float | None:
-    response = getattr(exc, "response", None)
-    headers = getattr(response, "headers", None) if response is not None else None
-    if not headers:
-        return None
-    retry_after = headers.get("retry-after") if hasattr(headers, "get") else None
-    if retry_after is None:
-        return None
-    with suppress(TypeError, ValueError):
-        return max(0.0, float(retry_after))
+            return f"observation.{key}", image
     return None
 
 
-def _extract_vlm_robot_state(observation: Mapping[str, Any] | None) -> dict[str, Any] | None:
+def _ensure_vector(value: Any, *, dim: int) -> np.ndarray | None:
+    if value is None:
+        return None
+    if isinstance(value, torch.Tensor):
+        value = value.detach().cpu().numpy()
+    array = np.asarray(value, dtype=np.float32)
+    if array.ndim == 2 and array.shape[0] == 1:
+        array = array[0]
+    array = array.reshape(-1)
+    if array.size != dim:
+        return None
+    return array.astype(np.float32, copy=True)
+
+
+def _quat_xyzw_to_axisangle(quat: np.ndarray) -> np.ndarray:
+    quat = np.asarray(quat, dtype=np.float32).reshape(4)
+    norm = float(np.linalg.norm(quat))
+    if norm <= 1e-8:
+        return np.zeros(3, dtype=np.float32)
+    quat = quat / norm
+    xyz = quat[:3]
+    w = float(np.clip(quat[3], -1.0, 1.0))
+    angle = 2.0 * math.acos(w)
+    denom = math.sqrt(max(1e-12, 1.0 - w * w))
+    if denom < 1e-6:
+        return np.zeros(3, dtype=np.float32)
+    return (xyz / denom * angle).astype(np.float32)
+
+
+def _extract_proprioception(observation: Mapping[str, Any] | None) -> np.ndarray | None:
     if observation is None:
         return None
+    for key in ("observation.state", "state"):
+        state = _ensure_vector(observation.get(key), dim=8)
+        if state is not None:
+            return state
+
     robot_state = observation.get("robot_state")
     if not isinstance(robot_state, Mapping):
         return None
@@ -577,344 +455,112 @@ def _extract_vlm_robot_state(observation: Mapping[str, Any] | None) -> dict[str,
     if not isinstance(eef, Mapping) or not isinstance(gripper, Mapping):
         return None
 
-    return {
-        "eef_position": _to_jsonable(eef.get("pos")),
-        "eef_quaternion": _to_jsonable(eef.get("quat")),
-        "gripper_qpos": _to_jsonable(gripper.get("qpos")),
-    }
+    eef_pos = _ensure_vector(eef.get("pos"), dim=3)
+    eef_quat = _ensure_vector(eef.get("quat"), dim=4)
+    gripper_qpos = _ensure_vector(gripper.get("qpos"), dim=2)
+    if eef_pos is None or eef_quat is None or gripper_qpos is None:
+        return None
+    return np.concatenate([eef_pos, _quat_xyzw_to_axisangle(eef_quat), gripper_qpos]).astype(np.float32)
 
 
 @dataclass
 class ScoreResult:
     score: float
     reason: str
-    prompt: str
     images: Sequence[tuple[str, np.ndarray]] = field(default_factory=list)
     metadata: Mapping[str, Any] = field(default_factory=dict)
-    raw_response: Any | None = None
 
 
-class VLMHeuristicScorer:
-    """Scores rendered states.
+class RewardModelScorer:
+    def __init__(self, cfg: PolicyInferenceConfig, *, device: torch.device | str) -> None:
+        self.scene_image_keys = _split_keys(cfg.reward_scene_image_keys)
+        self.wrist_image_keys = _split_keys(cfg.reward_wrist_image_keys)
+        self.use_rendered_fallback = cfg.reward_use_rendered_fallback
+        self.model = None
+        self.processor: RewardBatchProcessor | None = None
+        self.model_cfg = None
+        self.device = torch.device(device)
 
-    If ``vlm_api_url`` is not provided this returns a success-only score
-    (1.0 for environment success, otherwise 0.0). When ``vlm_model`` is
-    provided, it uses the OpenAI Python client. ``vlm_base_url`` can point to an
-    OpenAI-compatible provider such as NVIDIA NIM.
-    """
-
-    def __init__(self, cfg: PolicyInferenceConfig, *, task_id: int | None = None) -> None:
-        self.base_url = cfg.vlm_base_url or cfg.vlm_api_url
-        self.api_key_env = cfg.vlm_api_key_env or "OPENAI_API_KEY"
-        self.model = cfg.vlm_model
-        self.max_tokens = cfg.vlm_max_tokens
-        self.temperature = cfg.vlm_temperature
-        self.top_p = cfg.vlm_top_p
-        self.presence_penalty = cfg.vlm_presence_penalty
-        self.top_k = cfg.vlm_top_k
-        self.min_p = cfg.vlm_min_p
-        self.repetition_penalty = cfg.vlm_repetition_penalty
-        self.timeout_s = cfg.vlm_timeout_s
-        self.requests_per_minute = cfg.vlm_requests_per_minute
-        self.max_retries = cfg.vlm_max_retries
-        self.retry_sleep_s = cfg.vlm_retry_sleep_s
-        self.rate_limit_sleep_s = cfg.vlm_rate_limit_sleep_s
-        self.log_response_chars = cfg.vlm_log_response_chars
-        self.verbose = cfg.vlm_verbose
-        self.observation_image_keys = tuple(
-            key.strip() for key in cfg.vlm_observation_image_keys.split(",") if key.strip()
-        )
-        self.include_rendered_image = cfg.vlm_include_rendered_image
-        self.include_robot_state = cfg.vlm_include_robot_state
-        self.reference_images = _load_vlm_reference_images(cfg, task_id=task_id)
-        self.reference_image_labels = tuple(label for label, _ in self.reference_images)
-        self._client = None
-        self._last_request_monotonic: float | None = None
-
-    def build_prompt(
-        self,
-        task: str,
-        *,
-        image_labels: Sequence[str],
-        metadata: Mapping[str, Any],
-    ) -> str:
-        image_description = "\n".join(
-            f"{ix}. {label}" for ix, label in enumerate(image_labels, start=1)
-        )
-        robot_state = metadata.get("robot_state")
-        robot_state_text = ""
-        if robot_state is not None:
-            robot_state_text = (
-                "\n\nRobot proprioception, if useful for judging gripper pose:\n"
-                f"{json.dumps(_to_jsonable(robot_state), indent=2)}"
-            )
-        return (
-            f'Task: "{task}"\n\n'
-            "You are scoring progress in a robot manipulation task from the supplied camera views. "
-            "The images whose labels start with `reference.target.` are target-object reference images. "
-            "They are not current state images; use them only to identify what the target object looks like "
-            "in the current camera views. The current state views may include a rendered overview, a base "
-            "camera, and a wrist camera. Judge whether the gripper is approaching, grasping, or moving the "
-            "referenced target object toward the task goal. Do not assume a visible distractor object is the "
-            "target unless it matches the task and target reference.\n\n"
-            f"Images are supplied in this order:\n{image_description}"
-            # f"{robot_state_text}\n\n"
-            "Return JSON only with keys `score` and `reason`.\n"
-            "Score meaning: 0.0 = no visible progress, 0.3 = robot is near or reaching the relevant object, "
-            "0.5 = object is grasped or moved toward the target, 0.8 = object is near/over the target but "
-            "completion is not certain."
-        )
+        if cfg.reward_model_checkpoint is None:
+            logger.warning("No reward model checkpoint provided; scoring will use success-only fallback.")
+            return
+        model, model_cfg, _ = load_reward_model_checkpoint(cfg.reward_model_checkpoint, device=self.device)
+        self.model = model
+        self.model_cfg = model_cfg
+        self.processor = RewardBatchProcessor(model_cfg)
+        logger.info("Loaded reward model checkpoint: %s", cfg.reward_model_checkpoint)
 
     def score(
         self,
         *,
-        images: Sequence[tuple[str, np.ndarray]],
+        image: np.ndarray,
+        observation: Mapping[str, Any] | None,
         task: str,
         success: bool,
         metadata: Mapping[str, Any],
     ) -> ScoreResult:
-        if not images:
-            raise ValueError("VLM scoring requires at least one image.")
-        prompt = self.build_prompt(task, image_labels=[label for label, _ in images], metadata=metadata)
+        scene = _first_observation_image(observation, self.scene_image_keys)
+        if scene is None and self.use_rendered_fallback:
+            rendered = _image_array(image)
+            if rendered is not None:
+                scene = ("rendered_overview", rendered)
+        if scene is None:
+            raise ValueError(f"Could not find scene image from keys={self.scene_image_keys}.")
+
+        wrist = _first_observation_image(observation, self.wrist_image_keys)
+        score_images = [scene]
+        sample: dict[str, Any] = {
+            "task": task,
+            "label": 0.0,
+            "scene_image": scene[1],
+        }
+        if wrist is not None:
+            sample["wrist_image"] = wrist[1]
+            score_images.append(wrist)
+
+        proprioception = _extract_proprioception(observation)
+        if proprioception is not None:
+            sample["proprioception"] = proprioception
+
+        score_metadata = {
+            **dict(metadata),
+            "score_image_labels": [label for label, _ in score_images],
+            "has_proprioception": proprioception is not None,
+        }
         if success:
             return ScoreResult(
                 score=1.0,
                 reason="Environment success predicate is true.",
-                prompt=prompt,
-                images=list(images),
-                metadata=dict(metadata),
+                images=score_images,
+                metadata=score_metadata,
             )
-        if self.model is None:
+        if self.model is None or self.processor is None:
             return ScoreResult(
                 score=0.0,
-                reason="VLM API disabled; using success-only fallback.",
-                prompt=prompt,
-                images=list(images),
-                metadata=dict(metadata),
+                reason="Reward model disabled; using success-only fallback.",
+                images=score_images,
+                metadata=score_metadata,
             )
 
-        client = self._get_client()
-        request_content: list[dict[str, Any]] = []
-        for label, image in images:
-            request_content.append({"type": "text", "text": f"Image label: {label}"})
-            request_content.append(
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/png;base64,{self._image_to_base64_png(image)}"
-                    },
-                }
+        with torch.no_grad():
+            batch = move_batch_to_device(self.processor([sample]), self.device)
+            value = float(
+                self.model(
+                    scene_pixel_values=batch["scene_pixel_values"],
+                    wrist_pixel_values=batch.get("wrist_pixel_values"),
+                    input_ids=batch.get("input_ids"),
+                    attention_mask=batch.get("attention_mask"),
+                    proprioception=batch.get("proprioception"),
+                )
+                .detach()
+                .cpu()[0]
             )
-        request_content.append({"type": "text", "text": prompt})
-
-        extra_body: dict[str, Any] = {
-            "top_k": self.top_k,
-            "min_p": self.min_p,
-            "repetition_penalty": self.repetition_penalty,
-        }
-
-        last_error: Exception | None = None
-        last_message = ""
-        raw: Any | None = None
-        max_attempts = self.max_retries + 1
-        for attempt in range(1, max_attempts + 1):
-            try:
-                if self.verbose:
-                    logger.info(
-                        "VLM request attempt=%s/%s model=%s image_count=%s image_labels=%s metadata=%s",
-                        attempt,
-                        max_attempts,
-                        self.model,
-                        len(images),
-                        [label for label, _ in images],
-                        {
-                            key: metadata.get(key)
-                            for key in (
-                                "planner",
-                                "macro_step",
-                                "env_step",
-                                "parent_id",
-                                "candidate_index",
-                                "depth",
-                            )
-                            if key in metadata
-                        },
-                    )
-                self._wait_for_rate_limit()
-                completion = client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": request_content,
-                        }
-                    ],
-                    max_tokens=self.max_tokens,
-                    temperature=self.temperature,
-                    top_p=self.top_p,
-                    presence_penalty=self.presence_penalty,
-                    extra_body=extra_body,
-                    stream=False,
-                )
-            except Exception as exc:
-                last_error = exc
-                if _is_rate_limit_error(exc) and attempt < max_attempts:
-                    sleep_s = self._rate_limit_retry_sleep_s(exc)
-                    logger.warning(
-                        "VLM rate limit hit on attempt %s/%s; retrying in %.1fs: %s",
-                        attempt,
-                        max_attempts,
-                        sleep_s,
-                        exc,
-                    )
-                    time.sleep(sleep_s)
-                    continue
-
-                logger.warning("VLM request failed on attempt %s/%s: %s", attempt, max_attempts, exc)
-                break
-
-            raw = completion.model_dump() if hasattr(completion, "model_dump") else str(completion)
-            last_message = completion.choices[0].message.content or ""
-            response_tail = self._response_tail(last_message)
-            try:
-                parsed = self._parse_score_json(last_message)
-            except Exception as exc:
-                last_error = exc
-                if attempt < max_attempts:
-                    sleep_s = self._parse_retry_sleep_s()
-                    logger.warning(
-                        "VLM response parse failed on attempt %s/%s; response_tail=%r; retrying in %.1fs: %s",
-                        attempt,
-                        max_attempts,
-                        response_tail,
-                        sleep_s,
-                        exc,
-                    )
-                    time.sleep(sleep_s)
-                    continue
-
-                logger.warning(
-                    "VLM response parse failed on final attempt %s/%s; response_tail=%r: %s",
-                    attempt,
-                    max_attempts,
-                    response_tail,
-                    exc,
-                )
-                break
-
-            score = float(parsed.get("score", 0.0))
-            score = min(1.0, max(0.0, score))
-            if self.verbose:
-                logger.info(
-                    "VLM response parsed attempt=%s/%s score=%.3f reason=%r response_tail=%r",
-                    attempt,
-                    max_attempts,
-                    score,
-                    str(parsed.get("reason", ""))[:160],
-                    response_tail,
-                )
-            return ScoreResult(
-                score=score,
-                reason=str(parsed.get("reason", "")),
-                prompt=prompt,
-                images=list(images),
-                metadata=dict(metadata),
-                raw_response=raw,
-            )
-
-        response_tail = self._response_tail(last_message)
-        reason = f"VLM scoring failed after {max_attempts} attempt(s): {last_error}; response_tail={response_tail!r}"
         return ScoreResult(
-            score=0.0,
-            reason=reason,
-            prompt=prompt,
-            images=list(images),
-            metadata=dict(metadata),
-            raw_response=raw,
+            score=min(1.0, max(0.0, value)),
+            reason="Reward model prediction.",
+            images=score_images,
+            metadata=score_metadata,
         )
-
-    def _min_request_interval_s(self) -> float:
-        if self.requests_per_minute <= 0:
-            return 0.0
-        return 60.0 / float(self.requests_per_minute)
-
-    def _wait_for_rate_limit(self) -> None:
-        min_interval_s = self._min_request_interval_s()
-        if min_interval_s <= 0:
-            return
-        now = time.monotonic()
-        if self._last_request_monotonic is not None:
-            elapsed_s = now - self._last_request_monotonic
-            sleep_s = min_interval_s - elapsed_s
-            if sleep_s > 0:
-                if self.verbose:
-                    logger.info(
-                        "VLM throttle sleeping %.1fs for %.2f requests/minute limit.",
-                        sleep_s,
-                        self.requests_per_minute,
-                    )
-                time.sleep(sleep_s)
-        self._last_request_monotonic = time.monotonic()
-
-    def _parse_retry_sleep_s(self) -> float:
-        return max(self.retry_sleep_s, self._min_request_interval_s())
-
-    def _rate_limit_retry_sleep_s(self, exc: Exception) -> float:
-        retry_after_s = _retry_after_seconds(exc)
-        if retry_after_s is not None:
-            return retry_after_s
-        return max(self.rate_limit_sleep_s, self.retry_sleep_s, self._min_request_interval_s())
-
-    def _response_tail(self, message: str) -> str:
-        if not message:
-            return "<empty>"
-        return message[-self.log_response_chars :]
-
-    def _get_client(self):
-        if self._client is not None:
-            return self._client
-        try:
-            from openai import OpenAI
-        except ImportError as exc:
-            raise ImportError(
-                "VLM scoring with the OpenAI client requires `openai`. "
-                "Install it with `uv pip install openai` or `pip install openai`."
-            ) from exc
-
-        api_key = os.environ.get(self.api_key_env)
-        if not api_key:
-            raise ValueError(f"Missing API key environment variable: {self.api_key_env}")
-
-        kwargs: dict[str, Any] = {"api_key": api_key, "timeout": self.timeout_s}
-        if self.base_url:
-            kwargs["base_url"] = self.base_url
-        self._client = OpenAI(**kwargs)
-        return self._client
-
-    @staticmethod
-    def _parse_score_json(content: str) -> dict[str, Any]:
-        text = content.strip()
-        if text.startswith("```"):
-            lines = text.splitlines()
-            if lines and lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].startswith("```"):
-                lines = lines[:-1]
-            text = "\n".join(lines).strip()
-        start = text.find("{")
-        end = text.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            text = text[start : end + 1]
-        parsed = json.loads(text)
-        if not isinstance(parsed, dict):
-            raise ValueError(f"Expected JSON object from VLM, got: {type(parsed).__name__}")
-        return parsed
-
-    @staticmethod
-    def _image_to_base64_png(image: np.ndarray) -> str:
-        buffer = io.BytesIO()
-        Image.fromarray(image.astype(np.uint8)).save(buffer, format="PNG")
-        return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
 class TraceRecorder:
@@ -964,7 +610,7 @@ class TraceRecorder:
         saved: list[dict[str, str]] = []
         for image_ix, (label, image) in enumerate(images):
             safe_label = "".join(ch if ch.isalnum() else "_" for ch in label).strip("_")
-            image_path = self.save_image(f"{node_id}_vlm_{image_ix:02d}_{safe_label}", image)
+            image_path = self.save_image(f"{node_id}_score_{image_ix:02d}_{safe_label}", image)
             if image_path is not None:
                 saved.append({"label": label, "path": image_path})
         return saved
@@ -986,7 +632,7 @@ class TraceRecorder:
         node_id = f"n{self._node_ix:06d}"
         self._node_ix += 1
         image_path = self.save_image(f"{node_id}_state", image)
-        vlm_images = self.save_labeled_images(node_id, score.images)
+        score_images = self.save_labeled_images(node_id, score.images)
         node = {
             "id": node_id,
             "parent_id": parent_id,
@@ -994,12 +640,10 @@ class TraceRecorder:
             "env_step": env_step,
             "planner": planner,
             "image_path": image_path,
-            "prompt": score.prompt,
-            "vlm_score": score.score,
-            "vlm_reason": score.reason,
-            "vlm_raw_response": score.raw_response,
-            "vlm_images": vlm_images,
-            "vlm_metadata": _to_jsonable(dict(score.metadata)),
+            "score": score.score,
+            "score_reason": score.reason,
+            "score_images": score_images,
+            "score_metadata": _to_jsonable(dict(score.metadata)),
             "reward_sum": reward_sum,
             "success": success,
             "terminal": terminal,
@@ -1227,7 +871,7 @@ def _make_action_candidates(
 def _node_mean_value(node: Mapping[str, Any]) -> float:
     visits = int(node.get("visits", 0))
     if visits <= 0:
-        return float(node.get("vlm_score", 0.0))
+        return float(node.get("score", 0.0))
     return float(node.get("value_sum", 0.0)) / visits
 
 
@@ -1269,35 +913,20 @@ def _select_ucb_child(
 
 def _score_state(
     *,
-    scorer: VLMHeuristicScorer,
+    scorer: RewardModelScorer,
     image: np.ndarray,
     observation: Mapping[str, Any] | None = None,
     task: str,
     success: bool,
     metadata: Mapping[str, Any],
 ) -> ScoreResult:
-    state_images: list[tuple[str, np.ndarray]] = []
-    if scorer.include_rendered_image:
-        rendered_image = _image_array_for_vlm(image)
-        if rendered_image is not None:
-            state_images.append(("rendered_overview", rendered_image))
-    state_images.extend(_extract_vlm_observation_images(observation, scorer.observation_image_keys))
-    if not state_images:
-        rendered_image = _image_array_for_vlm(image)
-        if rendered_image is not None:
-            state_images.append(("rendered_overview", rendered_image))
-
-    images = [*scorer.reference_images, *state_images]
-
-    score_metadata = dict(metadata)
-    if scorer.include_robot_state:
-        robot_state = _extract_vlm_robot_state(observation)
-        if robot_state is not None:
-            score_metadata["robot_state"] = robot_state
-    score_metadata["vlm_reference_image_labels"] = [label for label, _ in scorer.reference_images]
-    score_metadata["vlm_state_image_labels"] = [label for label, _ in state_images]
-    score_metadata["vlm_image_labels"] = [label for label, _ in images]
-    return scorer.score(images=images, task=task, success=success, metadata=score_metadata)
+    return scorer.score(
+        image=image,
+        observation=observation,
+        task=task,
+        success=success,
+        metadata=metadata,
+    )
 
 
 def _expand_search_node(
@@ -1311,7 +940,7 @@ def _expand_search_node(
     base_env: gym.Env,
     vector_env: gym.vector.VectorEnv,
     action_api: LeRobotActionAPI,
-    scorer: VLMHeuristicScorer,
+    scorer: RewardModelScorer,
     trace: TraceRecorder,
     cfg: PolicyInferenceConfig,
     rng: np.random.Generator,
@@ -1457,7 +1086,7 @@ def plan_mcts_action_chunk(
     observation: Mapping[str, Any],
     task: str,
     env_step: int,
-    scorer: VLMHeuristicScorer,
+    scorer: RewardModelScorer,
     trace: TraceRecorder,
     cfg: PolicyInferenceConfig,
     rng: np.random.Generator,
@@ -1541,9 +1170,9 @@ def plan_mcts_action_chunk(
             if not created:
                 value = _node_mean_value(node)
             else:
-                selected = max(created, key=lambda child: float(child["vlm_score"]))
+                selected = max(created, key=lambda child: float(child["score"]))
                 path.append(selected)
-                value = float(selected["vlm_score"])
+                value = float(selected["score"])
 
         _backup_path(path, value)
         if cfg.search_verbose:
@@ -1579,7 +1208,7 @@ def plan_mcts_action_chunk(
         key=lambda pair: (
             _node_mean_value(pair[1]),
             int(pair[1].get("visits", 0)),
-            float(pair[1]["vlm_score"]),
+            float(pair[1]["score"]),
         ),
     )
     _restore_base_env(base_env, root_state, timestep=env_step)
@@ -1588,7 +1217,7 @@ def plan_mcts_action_chunk(
             "mcts selected child=%s edge=%s score=%.3f value=%.3f visits=%s",
             best_child["id"],
             best_edge["id"],
-            best_child["vlm_score"],
+            best_child["score"],
             _node_mean_value(best_child),
             best_child["visits"],
         )
@@ -1597,7 +1226,7 @@ def plan_mcts_action_chunk(
         "selected_edge_id": best_edge["id"],
         "selected_child_id": best_child["id"],
         "selected_value": _node_mean_value(best_child),
-        "selected_score": best_child["vlm_score"],
+        "selected_score": best_child["score"],
         "selected_visits": best_child["visits"],
     }
 
@@ -1615,7 +1244,7 @@ def _best_descendant_root_child(
         descendants,
         key=lambda node: (
             bool(node.get("success", False)),
-            float(node.get("vlm_score", 0.0)),
+            float(node.get("score", 0.0)),
             int(node.get("visits", 0)),
             int(node.get("depth", 0)),
         ),
@@ -1639,7 +1268,7 @@ def plan_best_first_action_chunk(
     observation: Mapping[str, Any],
     task: str,
     env_step: int,
-    scorer: VLMHeuristicScorer,
+    scorer: RewardModelScorer,
     trace: TraceRecorder,
     cfg: PolicyInferenceConfig,
     rng: np.random.Generator,
@@ -1682,7 +1311,7 @@ def plan_best_first_action_chunk(
 
     frontier: list[tuple[float, int, int, str]] = []
     push_ix = 0
-    heapq.heappush(frontier, (-float(root["vlm_score"]), int(root["depth"]), push_ix, root["id"]))
+    heapq.heappush(frontier, (-float(root["score"]), int(root["depth"]), push_ix, root["id"]))
     push_ix += 1
     expanded: set[str] = set()
 
@@ -1708,7 +1337,7 @@ def plan_best_first_action_chunk(
 
         expanded.add(node_id)
         node["visits"] = int(node.get("visits", 0)) + 1
-        node["value_sum"] = float(node.get("value_sum", 0.0)) + float(node.get("vlm_score", 0.0))
+        node["value_sum"] = float(node.get("value_sum", 0.0)) + float(node.get("score", 0.0))
         if cfg.search_verbose:
             logger.info(
                 "best_first expansion=%s/%s node=%s depth=%s score=%.3f frontier_size=%s",
@@ -1716,7 +1345,7 @@ def plan_best_first_action_chunk(
                 cfg.best_first_expansions,
                 node["id"],
                 node["depth"],
-                float(node.get("vlm_score", 0.0)),
+                float(node.get("score", 0.0)),
                 len(frontier),
             )
 
@@ -1740,7 +1369,7 @@ def plan_best_first_action_chunk(
 
         for child in created:
             if not child["terminal"] and int(child["depth"]) < cfg.best_first_depth:
-                priority = -float(child.get("vlm_score", 0.0))
+                priority = -float(child.get("score", 0.0))
                 heapq.heappush(frontier, (priority, int(child["depth"]), push_ix, child["id"]))
                 push_ix += 1
 
@@ -1755,7 +1384,7 @@ def plan_best_first_action_chunk(
                 len(frontier),
                 root_child["id"] if root_child is not None else None,
                 best_descendant["id"] if best_descendant is not None else None,
-                best_descendant["vlm_score"] if best_descendant is not None else None,
+                best_descendant["score"] if best_descendant is not None else None,
             )
         trace.write_event(
             "best_first_expansion",
@@ -1767,7 +1396,7 @@ def plan_best_first_action_chunk(
                 "best_root_child_id": root_child["id"] if root_child is not None else None,
                 "best_descendant_id": best_descendant["id"] if best_descendant is not None else None,
                 "best_descendant_score": (
-                    best_descendant["vlm_score"] if best_descendant is not None else None
+                    best_descendant["score"] if best_descendant is not None else None
                 ),
             },
         )
@@ -1785,7 +1414,7 @@ def plan_best_first_action_chunk(
     if best_root_child is None:
         best_root_child = max(
             (nodes_by_id[child_id] for child_id in root["children"]),
-            key=lambda child: float(child.get("vlm_score", 0.0)),
+            key=lambda child: float(child.get("score", 0.0)),
         )
         best_descendant = best_root_child
 
@@ -1797,9 +1426,9 @@ def plan_best_first_action_chunk(
             "expanded_count=%s frontier_size=%s",
             best_root_child["id"],
             best_edge["id"],
-            best_root_child["vlm_score"],
+            best_root_child["score"],
             best_descendant["id"] if best_descendant is not None else None,
-            best_descendant["vlm_score"] if best_descendant is not None else None,
+            best_descendant["score"] if best_descendant is not None else None,
             len(expanded),
             len(frontier),
         )
@@ -1808,9 +1437,9 @@ def plan_best_first_action_chunk(
         "selected_edge_id": best_edge["id"],
         "selected_child_id": best_root_child["id"],
         "selected_descendant_id": best_descendant["id"] if best_descendant is not None else None,
-        "selected_score": best_root_child["vlm_score"],
+        "selected_score": best_root_child["score"],
         "selected_descendant_score": (
-            best_descendant["vlm_score"] if best_descendant is not None else None
+            best_descendant["score"] if best_descendant is not None else None
         ),
         "expanded_count": len(expanded),
         "frontier_size": len(frontier),
@@ -1893,7 +1522,7 @@ def main(cfg: PolicyInferenceConfig) -> None:
     base_env = _get_single_base_env(env)
     task = _infer_task(env)
     rng = np.random.default_rng(cfg.seed)
-    scorer = VLMHeuristicScorer(cfg, task_id=task_id)
+    scorer = RewardModelScorer(cfg, device=action_api.device)
     trace = TraceRecorder(
         cfg.trace_dir,
         run_metadata={
@@ -1912,39 +1541,24 @@ def main(cfg: PolicyInferenceConfig) -> None:
             "mcts_depth": cfg.mcts_depth,
             "best_first_expansions": cfg.best_first_expansions,
             "best_first_depth": cfg.best_first_depth,
-            "vlm_model": cfg.vlm_model,
-            "vlm_base_url": cfg.vlm_base_url or cfg.vlm_api_url,
-            "vlm_api_key_env": cfg.vlm_api_key_env or "OPENAI_API_KEY",
-            "vlm_requests_per_minute": cfg.vlm_requests_per_minute,
-            "vlm_max_retries": cfg.vlm_max_retries,
-            "vlm_retry_sleep_s": cfg.vlm_retry_sleep_s,
-            "vlm_rate_limit_sleep_s": cfg.vlm_rate_limit_sleep_s,
-            "vlm_verbose": cfg.vlm_verbose,
             "search_verbose": cfg.search_verbose,
-            "vlm_observation_image_keys": cfg.vlm_observation_image_keys,
-            "vlm_include_rendered_image": cfg.vlm_include_rendered_image,
-            "vlm_include_robot_state": cfg.vlm_include_robot_state,
-            "vlm_reference_image_dir": str(cfg.vlm_reference_image_dir)
-            if cfg.vlm_reference_image_dir is not None
+            "reward_model_checkpoint": str(cfg.reward_model_checkpoint)
+            if cfg.reward_model_checkpoint is not None
             else None,
-            "vlm_reference_image_paths": cfg.vlm_reference_image_paths,
-            "vlm_reference_image_glob": cfg.vlm_reference_image_glob,
-            "vlm_reference_filter_by_task": cfg.vlm_reference_filter_by_task,
-            "vlm_reference_image_labels": list(scorer.reference_image_labels),
+            "reward_scene_image_keys": cfg.reward_scene_image_keys,
+            "reward_wrist_image_keys": cfg.reward_wrist_image_keys,
+            "reward_use_rendered_fallback": cfg.reward_use_rendered_fallback,
         },
     )
 
     logger.info(
         "Running planner=%s single-env inference on suite=%s task_id=%s chunk_size=%s "
-        "vlm_model=%s vlm_rpm=%s vlm_max_retries=%s vlm_verbose=%s search_verbose=%s",
+        "reward_model=%s search_verbose=%s",
         cfg.planner,
         suite,
         task_id,
         cfg.chunk_size,
-        cfg.vlm_model,
-        cfg.vlm_requests_per_minute,
-        cfg.vlm_max_retries,
-        cfg.vlm_verbose,
+        cfg.reward_model_checkpoint,
         cfg.search_verbose,
     )
 
@@ -2100,9 +1714,8 @@ def main(cfg: PolicyInferenceConfig) -> None:
                     "success": rollout.success,
                     "terminated": rollout.terminated,
                     "truncated": rollout.truncated,
-                    "vlm_score": endpoint_score.score,
-                    "vlm_reason": endpoint_score.reason,
-                    "prompt": endpoint_score.prompt,
+                    "score": endpoint_score.score,
+                    "score_reason": endpoint_score.reason,
                     "plan_info": plan_info,
                     "step_records": rollout.step_records,
                 }
@@ -2116,7 +1729,7 @@ def main(cfg: PolicyInferenceConfig) -> None:
             success = success or rollout.success
             logger.info(
                 "macro_step=%s env_step=%s reward_sum=%s done=%s success=%s "
-                "action_chunk_shape=%s vlm_score=%.3f vlm_reason=%r plan_info=%s",
+                "action_chunk_shape=%s score=%.3f score_reason=%r plan_info=%s",
                 macro_step - 1,
                 env_step,
                 last_reward_sum,

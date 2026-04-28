@@ -55,6 +55,7 @@ class ProbeVariant:
     name: str
     description: str
     local_indices: list[int]
+    task_language: str
     video_path: Path
 
 
@@ -75,47 +76,78 @@ def _variant_video_paths(args: argparse.Namespace) -> dict[str, Path]:
         base = args.video_path
     return {
         "success": base.with_name(f"{base.stem}_success{base.suffix}"),
-        "half_random": base.with_name(f"{base.stem}_half_random{base.suffix}"),
-        "random": base.with_name(f"{base.stem}_random{base.suffix}"),
+        "wrong_instruction": base.with_name(f"{base.stem}_wrong_instruction{base.suffix}"),
+        "reversed_actions": base.with_name(f"{base.stem}_reversed_actions{base.suffix}"),
     }
 
 
-def _make_probe_variants(args: argparse.Namespace, local_indices: list[int], episode_length: int) -> list[ProbeVariant]:
-    rng = np.random.default_rng(args.random_seed)
-    max_index = max(0, episode_length - 1)
-    jitter = max(1, int(round(episode_length * args.partial_random_jitter_fraction)))
+def _get_wrong_task_language(args: argparse.Namespace, correct_task_language: str) -> str:
+    if args.wrong_task_language is not None:
+        return args.wrong_task_language
 
-    half_random: list[int] = []
-    for local_index in local_indices:
-        if rng.random() < args.partial_random_probability:
-            offset = int(rng.integers(-jitter, jitter + 1))
-            half_random.append(int(np.clip(local_index + offset, 0, max_index)))
-        else:
-            half_random.append(int(local_index))
+    if args.wrong_task_order is not None:
+        return str(_get_libero_task(args.suite, args.wrong_task_order)["language"])
 
-    fully_random = [int(rng.integers(0, max_index + 1)) for _ in local_indices]
+    try:
+        from libero.libero import benchmark
+    except ImportError as exc:
+        raise SystemExit("LIBERO is required to select a default wrong task instruction.") from exc
+
+    benchmark_dict = benchmark.get_benchmark_dict()
+    if args.suite not in benchmark_dict:
+        raise SystemExit(f"Unknown suite '{args.suite}'. Available: {sorted(benchmark_dict)}")
+
+    suite = benchmark_dict[args.suite]()
+    n_tasks = int(getattr(suite, "n_tasks", len(getattr(suite, "tasks", []))))
+    if n_tasks <= 1:
+        raise SystemExit(
+            "Cannot auto-select a wrong task instruction from a suite with fewer than two tasks. "
+            "Pass --wrong_task_language explicitly."
+        )
+
+    for offset in range(1, n_tasks):
+        task_order = (int(args.task_order) + offset) % n_tasks
+        candidate = str(suite.get_task(task_order).language)
+        if candidate != correct_task_language:
+            return candidate
+    raise SystemExit("Could not find a wrong task instruction different from the selected task.")
+
+
+def _make_probe_variants(
+    args: argparse.Namespace,
+    local_indices: list[int],
+    *,
+    task_language: str,
+    wrong_task_language: str,
+) -> list[ProbeVariant]:
     video_paths = _variant_video_paths(args)
+    ordered_indices = [int(ix) for ix in local_indices]
     return [
         ProbeVariant(
             name="success",
             description="Ordered successful demonstration frames.",
-            local_indices=[int(ix) for ix in local_indices],
+            local_indices=ordered_indices,
+            task_language=task_language,
             video_path=video_paths["success"],
         ),
         ProbeVariant(
-            name="half_random",
+            name="wrong_instruction",
             description=(
-                "Successful path with random jitter applied to roughly half of the sampled frames. "
-                "This probes moderate temporal/action-like corruption."
+                "Same successful demonstration frames, but scored with an instruction for a different task."
             ),
-            local_indices=half_random,
-            video_path=video_paths["half_random"],
+            local_indices=ordered_indices,
+            task_language=wrong_task_language,
+            video_path=video_paths["wrong_instruction"],
         ),
         ProbeVariant(
-            name="random",
-            description="Fully random frame sequence sampled from the same episode.",
-            local_indices=fully_random,
-            video_path=video_paths["random"],
+            name="reversed_actions",
+            description=(
+                "Same successful demonstration frames in reverse temporal order, "
+                "scored with the correct instruction."
+            ),
+            local_indices=list(reversed(ordered_indices)),
+            task_language=task_language,
+            video_path=video_paths["reversed_actions"],
         ),
     ]
 
@@ -129,7 +161,6 @@ def _score_variant(
     processor: RewardBatchProcessor,
     model: torch.nn.Module,
     device: torch.device,
-    task_language: str,
     episode_index: int,
     denom: int,
 ) -> tuple[list[RewardProbeRecord], list[np.ndarray]]:
@@ -147,7 +178,7 @@ def _score_variant(
             else None
         )
         sample = {
-            "task": task_language,
+            "task": variant.task_language,
             "episode_index": episode_index,
             "local_index": local_index,
             "label": float(local_index) / float(denom),
@@ -172,7 +203,7 @@ def _score_variant(
         annotated = _make_composite_frame(
             camera_images,
             score=prediction,
-            reason=f"{variant.name} target={sample['label']:.3f}",
+            reason=f"{variant.name} target={sample['label']:.3f} task={variant.task_language}",
             local_index=local_index,
             dataset_index=dataset_index,
             tile_width=args.tile_width,
@@ -190,7 +221,7 @@ def _score_variant(
                 local_index=local_index,
                 frame_index=int(frame_index) if frame_index is not None else None,
                 timestamp=float(timestamp) if timestamp is not None else None,
-                task=task_language,
+                task=variant.task_language,
                 label=float(sample["label"]),
                 prediction=prediction,
                 annotated_image_path=annotated_path.relative_to(args.output_dir).as_posix(),
@@ -221,9 +252,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--video_fps", type=int, default=2)
     parser.add_argument("--tile_width", type=int, default=256)
     parser.add_argument("--tile_height", type=int, default=256)
-    parser.add_argument("--random_seed", type=int, default=0)
-    parser.add_argument("--partial_random_probability", type=float, default=0.5)
-    parser.add_argument("--partial_random_jitter_fraction", type=float, default=0.15)
+    parser.add_argument(
+        "--wrong_task_order",
+        type=int,
+        default=None,
+        help="LIBERO task order to use as the wrong instruction. Defaults to the next task in the suite.",
+    )
+    parser.add_argument(
+        "--wrong_task_language",
+        default=None,
+        help="Explicit wrong task instruction text. Overrides --wrong_task_order.",
+    )
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     return parser.parse_args()
 
@@ -257,8 +296,14 @@ def main() -> None:
         max_frames=args.max_frames,
     )
     denom = max(1, len(reader) - 1)
+    wrong_task_language = _get_wrong_task_language(args, task_language)
 
-    variants = _make_probe_variants(args, local_indices, len(reader))
+    variants = _make_probe_variants(
+        args,
+        local_indices,
+        task_language=task_language,
+        wrong_task_language=wrong_task_language,
+    )
     all_records: list[RewardProbeRecord] = []
     variant_summaries: dict[str, Any] = {}
     for variant in variants:
@@ -271,7 +316,6 @@ def main() -> None:
             processor=processor,
             model=model,
             device=device,
-            task_language=task_language,
             episode_index=episode_index,
             denom=denom,
         )
@@ -279,6 +323,7 @@ def main() -> None:
         scores = [record.prediction for record in records]
         variant_summaries[variant.name] = {
             "description": variant.description,
+            "task": variant.task_language,
             "video_path": str(variant.video_path),
             "local_indices": variant.local_indices,
             "first_score": float(scores[0]) if scores else None,
@@ -297,10 +342,8 @@ def main() -> None:
         "suite": args.suite,
         "task_order": args.task_order,
         "task": task_language,
+        "wrong_task_language": wrong_task_language,
         "episode_index": episode_index,
-        "random_seed": args.random_seed,
-        "partial_random_probability": args.partial_random_probability,
-        "partial_random_jitter_fraction": args.partial_random_jitter_fraction,
         "variants": variant_summaries,
     }
     payload = {
@@ -319,6 +362,7 @@ def main() -> None:
                 "local_index",
                 "frame_index",
                 "timestamp",
+                "task",
                 "label",
                 "prediction",
                 "annotated_image_path",
@@ -327,7 +371,6 @@ def main() -> None:
         writer.writeheader()
         for record in all_records:
             row = asdict(record)
-            row.pop("task")
             writer.writerow(row)
     logger.info("Wrote reward scores: %s", args.output_dir / "reward_scores.json")
 
