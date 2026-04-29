@@ -8,6 +8,7 @@ import yaml
 from lerobot.configs.parser import (
     _config_path_args,
     _config_yaml_overrides,
+    _flatten_to_cli_args,
     extract_path_fields_from_config,
     get_path_arg,
     get_yaml_overrides,
@@ -188,3 +189,30 @@ def test_get_yaml_overrides_empty_when_path_only():
 
     _config_path_args.clear()
     _config_yaml_overrides.clear()
+
+
+def test_flatten_bool_values():
+    """Test that boolean values are serialized as lowercase strings for draccus."""
+    d = {"push_to_hub": True, "use_rabc": False, "lr": 0.001, "name": "test"}
+    args = _flatten_to_cli_args(d)
+    assert "--push_to_hub=true" in args
+    assert "--use_rabc=false" in args
+    assert "--lr=0.001" in args
+    assert "--name=test" in args
+
+
+def test_flatten_none_values_skipped():
+    """Test that None values are not included in flattened args."""
+    d = {"lr": 0.001, "path_override": None, "name": "test"}
+    args = _flatten_to_cli_args(d)
+    assert any("lr=" in a for a in args)
+    assert any("name=" in a for a in args)
+    assert not any("path_override" in a for a in args)
+
+
+def test_flatten_nested_with_bools():
+    """Test that bools in nested dicts are handled correctly."""
+    d = {"optimizer": {"use_warmup": True, "lr": 0.01}}
+    args = _flatten_to_cli_args(d)
+    assert "--optimizer.use_warmup=true" in args
+    assert "--optimizer.lr=0.01" in args

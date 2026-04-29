@@ -50,9 +50,11 @@ def _flatten_to_cli_args(d: dict, prefix: str = "") -> list[str]:
         if key in (PATH_KEY, draccus.CHOICE_TYPE_KEY):
             continue
         full_key = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, bool):
+            value = str(value).lower()
         if isinstance(value, dict):
             args.extend(_flatten_to_cli_args(value, full_key))
-        elif not isinstance(value, list):
+        elif value is not None and not isinstance(value, list):
             args.append(f"--{full_key}={value}")
     return args
 
