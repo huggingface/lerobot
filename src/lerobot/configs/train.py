@@ -13,7 +13,9 @@
 # limitations under the License.
 import builtins
 import datetime as dt
+import json
 import os
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -33,6 +35,42 @@ from .policies import PreTrainedConfig
 from .rewards import RewardModelConfig
 
 TRAIN_CONFIG_NAME = "train_config.json"
+
+
+def _migrate_legacy_rabc_fields(config: dict[str, Any]) -> dict[str, Any] | None:
+    """Return migrated payload for legacy RA-BC fields, or None when no migration is needed."""
+    legacy_fields = (
+        "use_rabc",
+        "rabc_progress_path",
+        "rabc_kappa",
+        "rabc_epsilon",
+        "rabc_head_mode",
+    )
+    if not any(key in config for key in legacy_fields):
+        return None
+
+    migrated_config = dict(config)
+    use_rabc = bool(migrated_config.pop("use_rabc", False))
+    rabc_progress_path = migrated_config.pop("rabc_progress_path", None)
+    rabc_kappa = migrated_config.pop("rabc_kappa", None)
+    rabc_epsilon = migrated_config.pop("rabc_epsilon", None)
+    rabc_head_mode = migrated_config.pop("rabc_head_mode", None)
+
+    # New configs may already define sample_weighting explicitly. In that case,
+    # legacy fields are ignored after being stripped from the payload.
+    if migrated_config.get("sample_weighting") is None and use_rabc:
+        sample_weighting: dict[str, Any] = {"type": "rabc"}
+        if rabc_progress_path is not None:
+            sample_weighting["progress_path"] = rabc_progress_path
+        if rabc_kappa is not None:
+            sample_weighting["kappa"] = rabc_kappa
+        if rabc_epsilon is not None:
+            sample_weighting["epsilon"] = rabc_epsilon
+        if rabc_head_mode is not None:
+            sample_weighting["head_mode"] = rabc_head_mode
+        migrated_config["sample_weighting"] = sample_weighting
+
+    return migrated_config
 
 
 @dataclass
@@ -218,6 +256,15 @@ class TrainPipelineConfig(HubMixin):
                 ) from e
 
         cli_args = kwargs.pop("cli_args", [])
+        if config_file is not None:
+            with open(config_file) as f:
+                config = json.load(f)
+            migrated_config = _migrate_legacy_rabc_fields(config)
+            if migrated_config is not None:
+                with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as f:
+                    json.dump(migrated_config, f)
+                    config_file = f.name
+
         with draccus.config_type("json"):
             return draccus.parse(cls, config_file, args=cli_args)
 
