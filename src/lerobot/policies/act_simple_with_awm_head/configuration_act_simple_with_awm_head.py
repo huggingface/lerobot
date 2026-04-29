@@ -103,6 +103,8 @@ class ACTSimpleWithAWMHeadConfig(PreTrainedConfig):
     sigreg_weight: float = 0.09  # Weight on SIGReg loss term
     sigreg_knots: int = 17  # Number of knots for the Epps-Pulley characteristic function grid
     sigreg_num_proj: int = 1024  # Number of random projections for SIGReg
+    sigreg_target: str = "z_pred"  # Where to apply SIGReg: "z_pred" or "encoder_in"
+    wm_loss_type: str = "cosine"  # WM prediction loss: "cosine" (1 - cos_sim) or "mse"
     decoder_loss_weight: float = 0.1
     n_image_viz_pairs: int = 12
 

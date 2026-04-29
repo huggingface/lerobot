@@ -166,12 +166,16 @@ def _slice_obs_batch(batch: dict[str, Tensor], idx: int) -> dict[str, Tensor]:
     return result
 
 
-def _compute_wm_loss(z_pred: Tensor, z_target: Tensor, valid_wm: Tensor) -> Tensor:
-    """Cosine similarity world-model loss, masked at episode boundaries."""
+def _compute_wm_loss(z_pred: Tensor, z_target: Tensor, valid_wm: Tensor, loss_type: str = "cosine") -> Tensor:
+    """World-model prediction loss, masked at episode boundaries."""
     valid_wm_f = valid_wm.to(dtype=z_pred.dtype)
     valid_count = valid_wm_f.sum()
-    cos_sim = F.cosine_similarity(z_pred, z_target, dim=-1).mean(dim=0)  # (B,)
-    wm_loss = 1 - (cos_sim * valid_wm_f).sum() / valid_count.clamp(min=1.0)
+    if loss_type == "mse":
+        mse = (z_pred - z_target).pow(2).mean(dim=-1).mean(dim=0)  # (B,)
+        wm_loss = (mse * valid_wm_f).sum() / valid_count.clamp(min=1.0)
+    else:
+        cos_sim = F.cosine_similarity(z_pred, z_target, dim=-1).mean(dim=0)  # (B,)
+        wm_loss = 1 - (cos_sim * valid_wm_f).sum() / valid_count.clamp(min=1.0)
     return wm_loss
 
 
@@ -554,7 +558,7 @@ class ACTSimpleWithAWMHeadPolicy(PreTrainedPolicy):
         # WM loss.
         z_pred, z_target, decoded_curr, gt_curr_img, sigreg_loss = wm_tensors
         valid_wm = ~next_obs_is_pad[:, 1]  # (B,)
-        wm_loss = _compute_wm_loss(z_pred, z_target, valid_wm)
+        wm_loss = _compute_wm_loss(z_pred, z_target, valid_wm, loss_type=self.config.wm_loss_type)
 
         if self.config.wm_warmup_steps > 0 and self.training:
             warmup_frac = min(self._train_step / self.config.wm_warmup_steps, 1.0)
@@ -970,10 +974,13 @@ class ACTSimpleWithAWMHead(nn.Module):
         if self.config.normalize_wm_representations:
             z_pred = F.normalize(z_pred, dim=-1)
 
-        # SIGReg loss on predicted representations.
+        # SIGReg loss.
         sigreg_loss = None
         if self.config.use_sigreg:
-            sigreg_loss = self.sigreg(z_pred)
+            if self.config.sigreg_target == "encoder_in":
+                sigreg_loss = self.sigreg(encoder_in)
+            else:
+                sigreg_loss = self.sigreg(z_pred)
 
         # Image decoder.
         decoded_curr, gt_curr_img = None, None
