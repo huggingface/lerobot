@@ -3,7 +3,9 @@
 
 The default setup trains a frozen SigLIP2 encoder plus a small MLP head. Frames
 from successful demonstrations are labeled by normalized episode progress:
-0.0 at the first sampled frame and 1.0 at the final frame.
+0.0 at the first sampled frame and 1.0 at the final frame. It also adds
+wrong-instruction negatives by pairing each frame with another task text and a
+low reward label, so the rewarder is forced to use language conditioning.
 """
 
 from __future__ import annotations
@@ -60,6 +62,10 @@ class RewardSampleSpec:
     episode_index: int
     local_index: int
     label: float
+    source_task_order: int | None = None
+    text_task_order: int | None = None
+    is_text_mismatch: bool = False
+    source_task: str | None = None
 
 
 def parse_task_orders(raw: str) -> list[int]:
@@ -143,6 +149,10 @@ class LiberoRewardFrameDataset(Dataset):
             "episode_index": spec.episode_index,
             "local_index": spec.local_index,
             "label": spec.label,
+            "source_task_order": spec.source_task_order if spec.source_task_order is not None else -1,
+            "text_task_order": spec.text_task_order if spec.text_task_order is not None else -1,
+            "is_text_mismatch": spec.is_text_mismatch,
+            "source_task": spec.source_task or spec.task,
             "scene_image": _image_to_uint8_hwc(item[self.scene_camera_key]),
         }
         if self.wrist_camera_key is not None and self.wrist_camera_key in item:
@@ -176,12 +186,14 @@ def build_sample_specs(args: argparse.Namespace, meta: LeRobotDatasetMetadata) -
     all_specs: list[RewardSampleSpec] = []
     task_summaries: dict[str, Any] = {}
     task_orders = parse_task_orders(args.task_orders)
+    task_languages: dict[int, str] = {}
     stage(f"Building sample specs for task_orders={task_orders}")
     for task_order in task_orders:
         start = time.perf_counter()
         stage(f"Resolving task_order={task_order}")
         task_metadata = _get_libero_task(args.suite, task_order)
         task_language = str(task_metadata["language"])
+        task_languages[task_order] = task_language
         stage(f"Finding episodes for task_order={task_order} task={task_language!r}")
         episodes = find_episodes_for_task(meta, task_metadata=task_metadata, limit=args.episodes_per_task)
         stage(f"Found episodes for task_order={task_order} episodes={episodes} elapsed={time.perf_counter() - start:.2f}s")
@@ -207,11 +219,48 @@ def build_sample_specs(args: argparse.Namespace, meta: LeRobotDatasetMetadata) -
                         episode_index=episode_index,
                         local_index=local_index,
                         label=float(local_index) / float(denom),
+                        source_task_order=task_order,
+                        text_task_order=task_order,
+                        is_text_mismatch=False,
+                        source_task=task_language,
                     )
                 )
             stage(
                 f"Added samples task_order={task_order} episode={episode_index} "
                 f"length={length} sampled={len(all_specs) - before_count} total={len(all_specs)}"
+            )
+
+    negative_count = int(args.wrong_text_negatives_per_sample)
+    if negative_count > 0:
+        if len(task_languages) < 2:
+            stage("Skipping wrong-text negatives because fewer than two task texts are available.")
+        else:
+            rng = random.Random(args.seed)
+            positives = list(all_specs)
+            negative_specs: list[RewardSampleSpec] = []
+            for spec in positives:
+                if spec.is_text_mismatch:
+                    continue
+                candidates = [order for order in task_orders if order != spec.source_task_order]
+                rng.shuffle(candidates)
+                for wrong_order in candidates[:negative_count]:
+                    negative_specs.append(
+                        RewardSampleSpec(
+                            task=task_languages[wrong_order],
+                            episode_index=spec.episode_index,
+                            local_index=spec.local_index,
+                            label=float(args.wrong_text_negative_label),
+                            source_task_order=spec.source_task_order,
+                            text_task_order=wrong_order,
+                            is_text_mismatch=True,
+                            source_task=spec.source_task or spec.task,
+                        )
+                    )
+            all_specs.extend(negative_specs)
+            stage(
+                "Added wrong-text negatives "
+                f"count={len(negative_specs)} per_positive={negative_count} "
+                f"negative_label={args.wrong_text_negative_label} total={len(all_specs)}"
             )
 
     return all_specs, task_summaries
@@ -238,7 +287,7 @@ def split_specs(
     return train, val
 
 
-def model_forward(model: MultiModalRewardModel, batch: dict[str, Tensor]) -> Tensor:
+def model_forward(model: MultiModalRewardModel, batch: dict[str, Any]) -> Tensor:
     return model(
         scene_pixel_values=batch["scene_pixel_values"],
         wrist_pixel_values=batch.get("wrist_pixel_values"),
@@ -366,6 +415,11 @@ def evaluate_records(
                 {
                     "episode_index": int(batch["episode_indices"][ix].cpu()),
                     "local_index": int(batch["local_indices"][ix].cpu()),
+                    "source_task_order": int(batch["source_task_orders"][ix].cpu()),
+                    "text_task_order": int(batch["text_task_orders"][ix].cpu()),
+                    "is_text_mismatch": bool(batch["is_text_mismatch"][ix].cpu()),
+                    "source_task": batch["source_tasks"][ix],
+                    "task": batch["tasks"][ix],
                     "label": float(labels[ix].cpu()),
                     "prediction": float(pred[ix].cpu()),
                 }
@@ -395,7 +449,17 @@ def write_eval_outputs(records: list[dict[str, Any]], metrics: dict[str, Any], o
     with (output_dir / "eval_predictions.csv").open("w", newline="") as f:
         writer = csv.DictWriter(
             f,
-            fieldnames=["episode_index", "local_index", "label", "prediction"],
+            fieldnames=[
+                "episode_index",
+                "local_index",
+                "source_task_order",
+                "text_task_order",
+                "is_text_mismatch",
+                "source_task",
+                "task",
+                "label",
+                "prediction",
+            ],
         )
         writer.writeheader()
         writer.writerows(records)
@@ -431,6 +495,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--weight_decay", type=float, default=1e-4)
     parser.add_argument("--ranking_weight", type=float, default=0.2)
     parser.add_argument("--ranking_margin", type=float, default=0.05)
+    parser.add_argument("--wrong_text_negatives_per_sample", type=int, default=1)
+    parser.add_argument("--wrong_text_negative_label", type=float, default=0.0)
     parser.add_argument("--val_fraction", type=float, default=0.2)
     parser.add_argument("--log_every_batches", type=int, default=5)
     parser.add_argument("--seed", type=int, default=0)
@@ -582,6 +648,8 @@ def main() -> None:
         "task_summaries": task_summaries,
         "train_sample_count": len(train_specs),
         "val_sample_count": len(val_specs),
+        "train_text_mismatch_count": sum(int(spec.is_text_mismatch) for spec in train_specs),
+        "val_text_mismatch_count": sum(int(spec.is_text_mismatch) for spec in val_specs),
         "history": history,
         "eval": eval_metrics,
     }

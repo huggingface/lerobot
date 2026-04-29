@@ -109,8 +109,8 @@ class RewardBatchProcessor:
         else:
             raise ValueError(f"Unsupported reward encoder_type: {cfg.encoder_type}")
 
-    def __call__(self, samples: list[dict[str, Any]]) -> dict[str, Tensor]:
-        batch: dict[str, Tensor] = {
+    def __call__(self, samples: list[dict[str, Any]]) -> dict[str, Any]:
+        batch: dict[str, Any] = {
             "labels": torch.tensor([float(sample["label"]) for sample in samples], dtype=torch.float32),
             "episode_indices": torch.tensor(
                 [int(sample.get("episode_index", -1)) for sample in samples],
@@ -120,6 +120,20 @@ class RewardBatchProcessor:
                 [int(sample.get("local_index", -1)) for sample in samples],
                 dtype=torch.long,
             ),
+            "source_task_orders": torch.tensor(
+                [int(sample.get("source_task_order", -1)) for sample in samples],
+                dtype=torch.long,
+            ),
+            "text_task_orders": torch.tensor(
+                [int(sample.get("text_task_order", -1)) for sample in samples],
+                dtype=torch.long,
+            ),
+            "is_text_mismatch": torch.tensor(
+                [bool(sample.get("is_text_mismatch", False)) for sample in samples],
+                dtype=torch.bool,
+            ),
+            "tasks": [str(sample.get("task", "")) for sample in samples],
+            "source_tasks": [str(sample.get("source_task", sample.get("task", ""))) for sample in samples],
         }
         batch["scene_pixel_values"] = self._images_to_tensor([sample["scene_image"] for sample in samples])
         batch["wrist_pixel_values"] = self._images_to_tensor(
@@ -316,7 +330,7 @@ class MultiModalRewardModel(nn.Module):
         )
 
 
-def move_batch_to_device(batch: dict[str, Tensor], device: torch.device | str) -> dict[str, Tensor]:
+def move_batch_to_device(batch: dict[str, Any], device: torch.device | str) -> dict[str, Any]:
     return {key: value.to(device) if isinstance(value, Tensor) else value for key, value in batch.items()}
 
 
