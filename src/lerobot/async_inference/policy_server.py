@@ -31,7 +31,6 @@ import time
 from concurrent import futures
 from dataclasses import asdict
 from pprint import pformat
-from queue import Empty, Queue
 from typing import Any
 
 import draccus
@@ -47,7 +46,7 @@ from lerobot.transport import (
 from lerobot.transport.utils import receive_bytes_in_chunks
 from lerobot.types import PolicyAction
 
-from .configs import PolicyServerConfig
+from .configs import PolicyServerConfig, get_similarity_function
 from .constants import SUPPORTED_POLICIES
 from .helpers import (
     FPSTracker,
@@ -72,10 +71,15 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         # FPS measurement
         self.fps_tracker = FPSTracker(target_fps=config.fps)
 
-        self.observation_queue = Queue(maxsize=1)
-
         self._predicted_timesteps_lock = threading.Lock()
         self._predicted_timesteps = set()
+
+        # Single lock guards both _pending_obs and _inference_in_progress so that
+        # "check flag + store obs" and "grab obs + set flag" are each atomic.
+        self._state_lock = threading.Lock()
+        self._pending_obs: TimedObservation | None = None
+        self._inference_in_progress = False
+        self._obs_available = threading.Event()
 
         self.last_processed_obs = None
 
@@ -98,12 +102,15 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
     def _reset_server(self) -> None:
         """Flushes server state when new client connects."""
-        # only running inference on the latest observation received by the server
         self.shutdown_event.set()
-        self.observation_queue = Queue(maxsize=1)
 
         with self._predicted_timesteps_lock:
             self._predicted_timesteps = set()
+
+        with self._state_lock:
+            self._pending_obs = None
+            self._inference_in_progress = False
+            self._obs_available.clear()
 
     def Ready(self, request, context):  # noqa: N802
         client_id = context.peer()
@@ -145,6 +152,9 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.policy_type = policy_specs.policy_type  # act, pi0, etc.
         self.lerobot_features = policy_specs.lerobot_features
         self.actions_per_chunk = policy_specs.actions_per_chunk
+        # Update server config with similarity function from client
+        self.config.similarity_fn_name = policy_specs.similarity_fn_name
+        self.config.similarity_fn = get_similarity_function(policy_specs.similarity_fn_name)
 
         policy_class = get_policy_class(self.policy_type)
 
@@ -217,13 +227,30 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         client_id = context.peer()
         self.logger.debug(f"Client {client_id} connected for action streaming")
 
-        # Generate action based on the most recent observation and its timestep
+        # Clear the inference flag at the START of each call. This means the client
+        # has called GetActions again — implying it received the previous actions.
+        # The flag stays True between inference completion and this next call,
+        # preventing observations from being enqueued while actions are in transit.
+        with self._state_lock:
+            self._inference_in_progress = False
+
+        # Wait for an observation to become available
+        if not self._obs_available.wait(timeout=self.config.obs_queue_timeout):
+            return services_pb2.Empty()
+
+        # Atomically grab the pending observation and mark inference in progress
+        with self._state_lock:
+            obs = self._pending_obs
+            if obs is None:
+                return services_pb2.Empty()
+            self._pending_obs = None
+            self._obs_available.clear()
+            self._inference_in_progress = True
+
+        self.logger.info(f"Running inference for observation #{obs.get_timestep()} (must_go: {obs.must_go})")
+
         try:
             getactions_starts = time.perf_counter()
-            obs = self.observation_queue.get(timeout=self.config.obs_queue_timeout)
-            self.logger.info(
-                f"Running inference for observation #{obs.get_timestep()} (must_go: {obs.must_go})"
-            )
 
             with self._predicted_timesteps_lock:
                 self._predicted_timesteps.add(obs.get_timestep())
@@ -236,7 +263,6 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             actions_bytes = pickle.dumps(action_chunk)  # nosec
             serialize_time = time.perf_counter() - start_time
 
-            # Create and return the action chunk
             actions = services_pb2.Actions(data=actions_bytes)
 
             self.logger.info(
@@ -252,17 +278,21 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             )
 
             time.sleep(
-                max(0, self.config.inference_latency - max(0, time.perf_counter() - getactions_starts))
+                max(
+                    0,
+                    self.config.inference_latency - max(0, time.perf_counter() - getactions_starts),
+                )
             )  # sleep controls inference latency
 
+            # NOTE: _inference_in_progress intentionally stays True here.
+            # It will be cleared when the client calls GetActions again,
+            # confirming it received these actions.
             return actions
 
-        except Empty:  # no observation added to queue in obs_queue_timeout
-            return services_pb2.Empty()
-
         except Exception as e:
-            self.logger.error(f"Error in StreamActions: {e}")
-
+            self.logger.error(f"Error in GetActions: {e}")
+            with self._state_lock:
+                self._inference_in_progress = False
             return services_pb2.Empty()
 
     def _obs_sanity_checks(self, obs: TimedObservation, previous_obs: TimedObservation) -> bool:
@@ -274,40 +304,51 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             self.logger.debug(f"Skipping observation #{obs.get_timestep()} - Timestep predicted already!")
             return False
 
-        elif observations_similar(obs, previous_obs, lerobot_features=self.lerobot_features):
+        if observations_similar(
+            obs,
+            previous_obs,
+            lerobot_features=self.lerobot_features,
+            similarity_fn=self.config.similarity_fn,
+        ):
             self.logger.debug(
                 f"Skipping observation #{obs.get_timestep()} - Observation too similar to last obs predicted!"
             )
             return False
 
-        else:
-            return True
+        return True
 
     def _enqueue_observation(self, obs: TimedObservation) -> bool:
-        """Enqueue an observation if it must go through processing, otherwise skip it.
-        Observations not in queue are never run through the policy network"""
+        """Enqueue an observation if it should go through processing, otherwise skip it.
+        Observations not stored are never run through the policy network.
 
-        if (
+        The _state_lock ensures that checking _inference_in_progress and storing
+        _pending_obs is atomic — closing the race with GetActions."""
+
+        should_enqueue = (
             obs.must_go
             or self.last_processed_obs is None
             or self._obs_sanity_checks(obs, self.last_processed_obs)
-        ):
+        )
+
+        if not should_enqueue:
+            return False
+
+        with self._state_lock:
+            if self._inference_in_progress:
+                self.logger.debug(
+                    f"Skipping observation #{obs.get_timestep()} (must_go={obs.must_go}) - "
+                    "Inference already in progress!"
+                )
+                return False
+
             last_obs = self.last_processed_obs.get_timestep() if self.last_processed_obs else "None"
             self.logger.debug(
                 f"Enqueuing observation. Must go: {obs.must_go} | Last processed obs: {last_obs}"
             )
 
-            # If queue is full, get the old observation to make room
-            if self.observation_queue.full():
-                # pops from queue
-                _ = self.observation_queue.get_nowait()
-                self.logger.debug("Observation queue was full, removed oldest observation")
-
-            # Now put the new observation (never blocks as queue is non-full here)
-            self.observation_queue.put(obs)
+            self._pending_obs = obs
+            self._obs_available.set()
             return True
-
-        return False
 
     def _time_action_chunk(self, t_0: float, action_chunk: list[torch.Tensor], i_0: int) -> list[TimedAction]:
         """Turn a chunk of actions into a list of TimedAction instances,
@@ -315,7 +356,11 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         t_0 + i*environment_dt for i in range(len(action_chunk))
         """
         return [
-            TimedAction(timestamp=t_0 + i * self.config.environment_dt, timestep=i_0 + i, action=action)
+            TimedAction(
+                timestamp=t_0 + i * self.config.environment_dt,
+                timestep=i_0 + i,
+                action=action,
+            )
             for i, action in enumerate(action_chunk)
         ]
 
@@ -383,7 +428,9 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
         """5. Convert to TimedAction list"""
         action_chunk = self._time_action_chunk(
-            observation_t.get_timestamp(), list(action_tensor), observation_t.get_timestep()
+            observation_t.get_timestamp(),
+            list(action_tensor),
+            observation_t.get_timestep(),
         )
         postprocess_stops = time.perf_counter()
         postprocessing_time = postprocess_stops - start_postprocess
@@ -417,7 +464,9 @@ def serve(cfg: PolicyServerConfig):
     Args:
         config: PolicyServerConfig instance. If None, uses default configuration.
     """
-    logging.info(pformat(asdict(cfg)))
+    config_dict = asdict(cfg)
+    config_dict.pop("similarity_fn_name", None)
+    logging.info(pformat(config_dict))
 
     # Create the server instance first
     policy_server = PolicyServer(cfg)

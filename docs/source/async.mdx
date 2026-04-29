@@ -52,6 +52,7 @@ python -m lerobot.async_inference.robot_client \
     --actions_per_chunk=50 \ # POLICY: the number of actions to output at once
     --chunk_size_threshold=0.5 \ # CLIENT: the threshold for the chunk size before sending a new observation to the server
     --aggregate_fn_name=weighted_average \ # CLIENT: the function to aggregate actions on overlapping portions
+    --similarity_fn_name=euclidean \ # CLIENT: the function to check observation similarity (euclidean, disabled)
     --debug_visualize_queue_size=True # CLIENT: whether to visualize the queue size at runtime
 ```
 
@@ -66,6 +67,7 @@ Importantly,
 
 - `actions_per_chunk` and `chunk_size_threshold` are key parameters to tune for your setup.
 - `aggregate_fn_name` is the function to aggregate actions on overlapping portions. You can either add a new one to a registry of functions, or add your own in `robot_client.py` (see [here](NOTE:addlinktoLOC))
+- `similarity_fn_name` is the function to check if observations are similar enough to skip inference. Available options: `euclidean` (default, checks distance between observations), `disabled` (never skip observations). You can add custom functions to the `SIMILARITY_FUNCTIONS` registry in `configs.py`.
 - `debug_visualize_queue_size` is a useful tool to tune the `CLIENT` parameters.
 
 ## Done! You should see your robot moving around by now 😉
@@ -161,6 +163,7 @@ python -m lerobot.async_inference.robot_client \
     --actions_per_chunk=50 \ # POLICY: the number of actions to output at once
     --chunk_size_threshold=0.5 \ # CLIENT: the threshold for the chunk size before sending a new observation to the server
     --aggregate_fn_name=weighted_average \ # CLIENT: the function to aggregate actions on overlapping portions
+    --similarity_fn_name=euclidean \ # CLIENT: the function to check observation similarity (euclidean, disabled)
     --debug_visualize_queue_size=True # CLIENT: whether to visualize the queue size at runtime
 ```
 </hfoption>
