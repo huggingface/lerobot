@@ -150,7 +150,7 @@ class SO101FollowerDragontactile(SOFollower):
         normalized = (
             np.clip(sxx_db, self._spectrogram_min_db, self._spectrogram_max_db) - self._spectrogram_min_db
         ) / max(self._spectrogram_max_db - self._spectrogram_min_db, 1e-6)
-        image_32bit = np.flipud(normalized) * 255.0
+        image_32bit = np.uint8(np.flipud(normalized) * 255.0)
         spectro_bgr = cv2.cvtColor(image_32bit, cv2.COLOR_GRAY2BGR)
         spectro_bgr = cv2.resize(spectro_bgr, self._target_size, interpolation=cv2.INTER_LINEAR)
         spectro_rgb = cv2.cvtColor(spectro_bgr, cv2.COLOR_BGR2RGB)
