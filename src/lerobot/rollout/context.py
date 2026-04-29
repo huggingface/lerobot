@@ -27,7 +27,7 @@ from threading import Event
 
 import torch
 
-from lerobot.configs import FeatureType, PreTrainedConfig
+from lerobot.configs import FeatureType
 from lerobot.datasets import (
     LeRobotDataset,
     aggregate_pipeline_dataset_features,
@@ -178,33 +178,26 @@ def build_rollout_context(
     policy_config = cfg.policy
     policy_class = get_policy_class(policy_config.type)
 
-    full_config = PreTrainedConfig.from_pretrained(cfg.policy.pretrained_path)
-    for attr in ("device", "use_amp"):
-        if hasattr(cfg.policy, attr) and hasattr(full_config, attr):
-            cli_val = getattr(cfg.policy, attr)
-            if cli_val is not None:
-                setattr(full_config, attr, cli_val)
+    if hasattr(policy_config, "compile_model"):
+        policy_config.compile_model = cfg.use_torch_compile
 
-    if hasattr(full_config, "compile_model"):
-        full_config.compile_model = cfg.use_torch_compile
-
-    if full_config.type == "vqbet" and cfg.device == "mps":
+    if policy_config.type == "vqbet" and cfg.device == "mps":
         raise NotImplementedError(
             "Current implementation of VQBeT does not support `mps` backend. "
             "Please use `cpu` or `cuda` backend."
         )
 
-    if full_config.use_peft:
+    if policy_config.use_peft:
         from peft import PeftConfig, PeftModel
 
-        peft_path = cfg.policy.pretrained_path
+        peft_path = policy_config.pretrained_path
         peft_config = PeftConfig.from_pretrained(peft_path)
         policy = policy_class.from_pretrained(
-            pretrained_name_or_path=peft_config.base_model_name_or_path, config=full_config
+            pretrained_name_or_path=peft_config.base_model_name_or_path, config=policy_config
         )
         policy = PeftModel.from_pretrained(policy, peft_path, config=peft_config)
     else:
-        policy = policy_class.from_pretrained(cfg.policy.pretrained_path, config=full_config)
+        policy = policy_class.from_pretrained(policy_config.pretrained_path, config=policy_config)
 
     if is_rtc:
         policy.config.rtc_config = cfg.inference.rtc
@@ -315,7 +308,9 @@ def build_rollout_context(
     # Validate visual features if no rename_map is active
     rename_map = cfg.rename_map
     if not rename_map:
-        expected_visuals = {k for k, v in full_config.input_features.items() if v.type == FeatureType.VISUAL}
+        expected_visuals = {
+            k for k, v in policy_config.input_features.items() if v.type == FeatureType.VISUAL
+        }
         provided_visuals = {
             f"observation.images.{k}" for k, v in robot.observation_features.items() if isinstance(v, tuple)
         }
