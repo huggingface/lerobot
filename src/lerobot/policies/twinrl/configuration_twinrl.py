@@ -104,7 +104,10 @@ class TwinRLConfig(PreTrainedConfig):
     # Soft target update weight (τ)
     critic_target_update_weight: float = 0.005
 
-    # Update-to-data ratio
+    # Official TwinRL pretraining cadence: cta_ratio - 1 critic-only updates,
+    # followed by one actor+critic update.
+    cta_ratio: int = 1
+    # Backward-compatible alias used by the online RL learner.
     utd_ratio: int = 1
 
     state_encoder_hidden_dim: int = 256

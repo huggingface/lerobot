@@ -33,7 +33,10 @@ Paper: https://arxiv.org/abs/2602.09023
 """
 
 import math
+from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import asdict
+from functools import partial
 from typing import Literal
 
 import einops
@@ -240,6 +243,7 @@ class TwinRLPolicy(PreTrainedPolicy):
         self._init_encoders()
         self._init_critics(action_dim)
         self._init_actor(action_dim)
+        self.register_buffer("_offline_update_step", torch.zeros((), dtype=torch.long))
         self.to(config.device)
 
     def get_optim_params(self) -> list[dict]:
@@ -260,6 +264,10 @@ class TwinRLPolicy(PreTrainedPolicy):
 
     def reset(self):
         pass
+
+    def update(self):
+        self.update_target_networks()
+        self._offline_update_step.add_(1)
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
@@ -299,131 +307,191 @@ class TwinRLPolicy(PreTrainedPolicy):
 
         obs_features: Tensor | None = batch.get("observation_feature")
 
+        train_batch = self._prepare_training_batch(batch, observations, obs_features)
+
         # Handle specific model requests (learner.py style)
         if model == "critic":
-            if "next_state" in batch and isinstance(batch["next_state"], dict):
-                next_observations = batch["next_state"]
-            else:
-                next_observations = {
-                    k.replace("next.", ""): v for k, v in batch.items() if k.startswith("next.observation.")
-                }
+            if not train_batch["has_critic_data"]:
+                raise ValueError("TwinRL critic update requires reward and next observations.")
 
-            return {
-                "loss_critic": self.compute_loss_critic(
-                    observations=observations,
-                    actions=batch[ACTION],
-                    rewards=batch["reward"],
-                    next_observations=next_observations,
-                    done=batch["done"],
-                    mc_returns=self._get_mc_returns(batch),
-                    obs_features=obs_features,
-                    next_obs_features=batch.get("next_observation_feature"),
-                )
-            }
+            _, critic_info = self.calql_critic_loss_fn(batch, train_batch)
+            return critic_info
 
         if model == "actor":
-            return {
-                "loss_actor": self.compute_loss_actor(
-                    observations=observations,
-                    demo_actions=batch[ACTION],
-                    obs_features=obs_features,
-                )
-            }
+            _, actor_info = self.policy_loss_fn(batch, train_batch)
+            return actor_info
 
         # --- Offline training (lerobot_train.py style) ---
-        # If model is None, we assume we are in lerobot_train.py and return (loss, loss_dict)
+        # Mirrors examples/train_offline.py:
+        #   for _ in range(config.cta_ratio - 1): update_calql(..., {"critic"})
+        #   update_calql(..., {"critic", "actor"})
+        networks_to_update = self._lerobot_train_networks_to_update(train_batch)
+        return self.update_calql(batch, train_batch, networks_to_update=networks_to_update)
 
-        # Detect sequence dimension and extract current/next observations
-        # LeRobotDataset with delta_timestamps returns (b, horizon, ...)
+    def _should_update_actor(self) -> bool:
+        cta_ratio = max(1, self.config.cta_ratio)
+        return int(self._offline_update_step.item()) % cta_ratio == cta_ratio - 1
+
+    def _lerobot_train_networks_to_update(self, train_batch: dict) -> frozenset[str]:
+        train_critic_networks_to_update = frozenset({"critic"})
+        train_actor_networks_to_update = frozenset({"actor"})
+        train_networks_to_update = frozenset({"critic", "actor"})
+
+        if not train_batch["has_critic_data"]:
+            return train_actor_networks_to_update
+        if self._should_update_actor():
+            return train_networks_to_update
+        return train_critic_networks_to_update
+
+    def policy_loss_fn(self, batch: dict, train_batch: dict) -> tuple[Tensor, dict[str, Tensor]]:
+        actor_loss = self.compute_loss_actor(
+            observations=train_batch["actor_observations"],
+            demo_actions=train_batch["actions"],
+            obs_features=train_batch["obs_features"],
+        )
+        return actor_loss, {"loss_actor": actor_loss}
+
+    def critic_loss_fn(self, batch: dict, train_batch: dict) -> tuple[Tensor, dict[str, Tensor]]:
+        critic_loss = self.compute_loss_critic(
+            observations=train_batch["critic_observations"],
+            actions=train_batch["actions"],
+            rewards=train_batch["rewards"],
+            next_observations=train_batch["next_observations"],
+            done=train_batch["done"],
+            mc_returns=None,
+            obs_features=train_batch["obs_features"],
+            next_obs_features=batch.get("next_observation_feature"),
+            use_calql=False,
+        )
+        return critic_loss, {"loss_critic": critic_loss}
+
+    def calql_critic_loss_fn(self, batch: dict, train_batch: dict) -> tuple[Tensor, dict[str, Tensor]]:
+        critic_loss = self.compute_loss_critic(
+            observations=train_batch["critic_observations"],
+            actions=train_batch["actions"],
+            rewards=train_batch["rewards"],
+            next_observations=train_batch["next_observations"],
+            done=train_batch["done"],
+            mc_returns=self._get_mc_returns(batch),
+            obs_features=train_batch["obs_features"],
+            next_obs_features=batch.get("next_observation_feature"),
+        )
+        return critic_loss, {"loss_critic": critic_loss}
+
+    def calql_loss_fns(
+        self, batch: dict, train_batch: dict
+    ) -> dict[str, Callable[[], tuple[Tensor, dict[str, Tensor]]]]:
+        return {
+            "actor": partial(self.policy_loss_fn, batch, train_batch),
+            "critic": partial(self.calql_critic_loss_fn, batch, train_batch),
+        }
+
+    def loss_fns(
+        self, batch: dict, train_batch: dict
+    ) -> dict[str, Callable[[], tuple[Tensor, dict[str, Tensor]]]]:
+        return {
+            "actor": partial(self.policy_loss_fn, batch, train_batch),
+            "critic": partial(self.critic_loss_fn, batch, train_batch),
+        }
+
+    def update_calql(
+        self,
+        batch: dict,
+        train_batch: dict,
+        *,
+        networks_to_update: frozenset[str] = frozenset({"actor", "critic"}),
+    ) -> tuple[Tensor, dict[str, Tensor]]:
+        calql_loss_fns = self.calql_loss_fns(batch, train_batch)
+        if not networks_to_update.issubset(calql_loss_fns.keys()):
+            raise ValueError(f"Invalid gradient steps: {networks_to_update}")
+
+        # Only compute gradients for specified steps. The generic LeRobot
+        # trainer performs the backward call after this function returns.
+        loss_dict = {}
+        total_loss = None
+        for name in ("critic", "actor"):
+            if name not in networks_to_update:
+                continue
+
+            loss, info = calql_loss_fns[name]()
+            loss_dict.update(info)
+            total_loss = loss if total_loss is None else total_loss + loss
+
+        if total_loss is None:
+            total_loss = train_batch["actions"].sum() * 0.0
+
+        loss_dict["loss"] = total_loss
+        return total_loss, loss_dict
+
+    def _prepare_training_batch(
+        self,
+        batch: dict[str, Tensor | dict[str, Tensor]],
+        observations: dict[str, Tensor],
+        obs_features: Tensor | None,
+    ) -> dict:
+        # LeRobotDataset with delta_timestamps returns (b, horizon, ...).
         has_sequence = False
         horizon = 1
-        if len(observations) > 0:
-            for k, v in observations.items():
-                if k.startswith("observation.image") and v.ndim == 5:
-                    has_sequence = True
-                    horizon = v.shape[1]
-                    break
-                if k.startswith("observation.state") and v.ndim == 3:
-                    has_sequence = True
-                    horizon = v.shape[1]
-                    break
+        for key, value in observations.items():
+            if key.startswith("observation.image") and value.ndim == 5:
+                has_sequence = True
+                horizon = value.shape[1]
+                break
+            if key.startswith("observation.state") and value.ndim == 3:
+                has_sequence = True
+                horizon = value.shape[1]
+                break
 
-            if has_sequence:
-                if horizon == 2:
-                    # [0, 1] transitions: current is index 0, next is index 1
-                    current_observations = {k: v[:, 0] for k, v in observations.items()}
-                    next_obs_from_seq = {k: v[:, 1] for k, v in observations.items()}
-                else:
-                    # Horizon only (e.g. [-n, ..., 0]): use the whole sequence for the actor
-                    # but the last frame for anything else that expects single states.
-                    current_observations = observations
-                    next_obs_from_seq = None
-            else:
-                current_observations = observations
-                next_obs_from_seq = None
+        if has_sequence and horizon == 2:
+            actor_observations = {key: value[:, 0] for key, value in observations.items()}
+            next_obs_from_seq = {key: value[:, 1] for key, value in observations.items()}
+        elif has_sequence:
+            actor_observations = observations
+            next_obs_from_seq = None
         else:
-            current_observations = observations
+            actor_observations = observations
             next_obs_from_seq = None
 
-        # Squeeze singleton horizon dim for single-step actions/rewards if present
-        demo_actions = batch[ACTION]
-        if demo_actions.ndim == 3 and demo_actions.shape[1] == 1:
-            demo_actions = demo_actions.squeeze(1)
+        actions = batch[ACTION]
+        if actions.ndim == 3 and actions.shape[1] == 1:
+            actions = actions.squeeze(1)
 
-        actor_loss = self.compute_loss_actor(
-            observations=current_observations,
-            demo_actions=demo_actions,
-            obs_features=obs_features,
-        )
+        next_observations = None
+        if next_obs_from_seq is not None:
+            next_observations = next_obs_from_seq
+        elif "next_state" in batch and isinstance(batch["next_state"], dict):
+            next_observations = batch["next_state"]
+        elif any(key.startswith("next.observation.") for key in batch):
+            next_observations = {
+                key.replace("next.", ""): value
+                for key, value in batch.items()
+                if key.startswith("next.observation.")
+            }
 
-        loss_dict = {"loss_actor": actor_loss}
-        total_loss = actor_loss
+        rewards = batch.get("reward")
+        if rewards is not None and rewards.ndim == 2 and rewards.shape[1] == 1:
+            rewards = rewards.squeeze(1)
 
-        # Try to compute critic loss if transitions are available
-        has_critic_data = "reward" in batch and (
-            next_obs_from_seq is not None
-            or "next_state" in batch
-            or any(k.startswith("next.observation.") for k in batch)
-        )
-        if has_critic_data:
-            if next_obs_from_seq is not None:
-                next_observations = next_obs_from_seq
-            elif "next_state" in batch and isinstance(batch["next_state"], dict):
-                next_observations = batch["next_state"]
-            else:
-                next_observations = {
-                    k.replace("next.", ""): v for k, v in batch.items() if k.startswith("next.observation.")
-                }
-
-            rewards = batch["reward"]
-            if rewards.ndim == 2 and rewards.shape[1] == 1:
-                rewards = rewards.squeeze(1)
-
+        done = None
+        if rewards is not None:
             done = batch.get("done", batch.get("next.done", torch.zeros_like(rewards)))
             if done.ndim == 2 and done.shape[1] == 1:
                 done = done.squeeze(1)
 
-            # SACObservationEncoder (used by critic) expects 4D images, not 5D sequences.
-            # If current_observations is still a horizon > 2, we take the last frame.
-            critic_obs = current_observations
-            if has_sequence and horizon > 2:
-                critic_obs = {k: v[:, -1] for k, v in current_observations.items()}
+        critic_observations = actor_observations
+        if has_sequence and horizon > 2:
+            critic_observations = {key: value[:, -1] for key, value in actor_observations.items()}
 
-            critic_loss = self.compute_loss_critic(
-                observations=critic_obs,
-                actions=demo_actions,
-                rewards=rewards,
-                next_observations=next_observations,
-                done=done,
-                mc_returns=self._get_mc_returns(batch),
-                obs_features=obs_features,
-                next_obs_features=batch.get("next_observation_feature"),
-            )
-            loss_dict["loss_critic"] = critic_loss
-            total_loss = actor_loss + critic_loss
-
-        loss_dict["loss"] = total_loss
-        return total_loss, loss_dict
+        return {
+            "actions": actions,
+            "actor_observations": actor_observations,
+            "critic_observations": critic_observations,
+            "done": done,
+            "has_critic_data": rewards is not None and next_observations is not None,
+            "next_observations": next_observations,
+            "obs_features": obs_features,
+            "rewards": rewards,
+        }
 
     # ------------------------------------------------------------------
     # Actor loss: β * L_IL + η * L_Q  (paper Eq. 6)
@@ -465,12 +533,14 @@ class TwinRLPolicy(PreTrainedPolicy):
             x_t = torch.randn(b, demo_actions.shape[-1], device=device) * self.config.sigma_max
             sigma_top = self.actor.karras_sigmas[0].expand(b)
             new_actions = self.actor.base_network(x_t, sigma_top, obs_enc).clamp(-1, 1)
-            q_values = self._critic_forward(observations, new_actions, obs_features)
+            with self._critic_grad_disabled():
+                q_values = self._critic_forward(observations, new_actions, obs_features)
             q_loss = -q_values.mean(dim=0).mean()
         else:
             sampled_actions, _, mean_actions = self.actor(observations, obs_features)
             il_loss = torch.nn.functional.mse_loss(mean_actions, demo_actions)
-            q_values = self._critic_forward(observations, sampled_actions, obs_features)
+            with self._critic_grad_disabled():
+                q_values = self._critic_forward(observations, sampled_actions, obs_features)
             q_loss = -q_values.mean(dim=0).mean()
 
         return self.config.bc_weight * il_loss + self.config.q_weight * q_loss
@@ -489,6 +559,7 @@ class TwinRLPolicy(PreTrainedPolicy):
         mc_returns: Tensor | None = None,
         obs_features: Tensor | None = None,
         next_obs_features: Tensor | None = None,
+        use_calql: bool = True,
     ) -> Tensor:
         # --- TD target (standard Bellman) ---
         with torch.no_grad():
@@ -504,7 +575,7 @@ class TwinRLPolicy(PreTrainedPolicy):
         td_target_exp = einops.repeat(td_target, "b -> e b", e=q_preds.shape[0])
         td_loss = torch.nn.functional.mse_loss(q_preds, td_target_exp, reduction="none").mean(dim=1).sum()
 
-        if not self.config.use_calql or self.config.cql_alpha == 0.0:
+        if not use_calql or not self.config.use_calql or self.config.cql_alpha == 0.0:
             return td_loss
 
         # --- CQL penalty with optional Cal-QL MC lower bound ---
@@ -581,6 +652,18 @@ class TwinRLPolicy(PreTrainedPolicy):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    @contextmanager
+    def _critic_grad_disabled(self):
+        params = list(self.critic_ensemble.parameters())
+        previous = [param.requires_grad for param in params]
+        for param in params:
+            param.requires_grad_(False)
+        try:
+            yield
+        finally:
+            for param, requires_grad in zip(params, previous, strict=True):
+                param.requires_grad_(requires_grad)
 
     def _critic_forward(
         self,
