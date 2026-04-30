@@ -262,7 +262,7 @@ def _select_collection_tasks(
     elif task_id is not None:
         selected_task_ids = [int(task_id)]
     else:
-        selected_task_ids = [available_task_ids[0]]
+        selected_task_ids = available_task_ids
 
     missing = [task for task in selected_task_ids if task not in envs_dict[suite]]
     if missing:
