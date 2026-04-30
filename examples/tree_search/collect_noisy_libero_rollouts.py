@@ -414,6 +414,19 @@ def _pair_frames(clean_frames: list[np.ndarray], noisy_frames: list[np.ndarray])
     return paired
 
 
+def _write_debug_video(path: Path, frames: list[np.ndarray], *, fps: int) -> str | None:
+    if not frames:
+        return "No frames were available for debug video."
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        write_video(path, frames, fps=fps)
+    except Exception as exc:  # Debug video is optional; never abort data generation for it.
+        error = f"{type(exc).__name__}: {exc!s}"
+        print(f"[noisy-rollout] warning: failed to write debug video {path}: {error}", flush=True)
+        return error
+    return None
+
+
 def _close_env_quietly(env: gym.vector.VectorEnv) -> None:
     with suppress(Exception):
         env.close()
@@ -526,9 +539,14 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
 
             prefix = f"pair_{pair_ix:03d}_init_{init_state_id:04d}"
             pair_path = video_dir / f"{prefix}_clean_vs_noisy.mp4"
+            pair_video_error = None
             if cfg.save_debug_video:
                 assert clean is not None
-                write_video(pair_path, _pair_frames(clean["frames"], noisy["frames"]), fps=cfg.video_fps)
+                pair_video_error = _write_debug_video(
+                    pair_path,
+                    _pair_frames(clean["frames"], noisy["frames"]),
+                    fps=cfg.video_fps,
+                )
             dataset_episode_index = None
             if dataset is not None:
                 dataset_episode_index = int(dataset.meta.total_episodes)
@@ -543,8 +561,11 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
                     "seed": pair_seed,
                     "dataset_episode_index": dataset_episode_index,
                     "pair_video_path": (
-                        str(pair_path.relative_to(cfg.output_dir)) if cfg.save_debug_video else None
+                        str(pair_path.relative_to(cfg.output_dir))
+                        if cfg.save_debug_video and pair_video_error is None
+                        else None
                     ),
+                    "pair_video_error": pair_video_error,
                     "clean": (
                         {
                             "frame_count": len(clean["frames"]),
@@ -571,7 +592,7 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
                 f"clean_success={clean['success'] if clean is not None else None} "
                 f"noisy_success={noisy['success']} "
                 f"dataset_episode={dataset_episode_index} "
-                f"debug_video={pair_path if cfg.save_debug_video else None}",
+                f"debug_video={pair_path if cfg.save_debug_video and pair_video_error is None else None}",
                 flush=True,
             )
     finally:
