@@ -8,6 +8,7 @@ are meant to be inspected before generating a large negative set.
 """
 
 import json
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -19,7 +20,6 @@ from lerobot import envs, policies  # noqa: F401 - registers config subclasses
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.image_writer import write_image
-from lerobot.envs import close_envs
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import init_logging
 
@@ -241,6 +241,11 @@ def _pair_image(clean: np.ndarray, noisy: np.ndarray) -> np.ndarray:
     return canvas
 
 
+def _close_env_quietly(env: gym.vector.VectorEnv) -> None:
+    with suppress(Exception):
+        env.close()
+
+
 @parser.wrap()
 def main(cfg: NoisyLiberoRolloutConfig) -> None:
     if cfg.num_pairs <= 0:
@@ -359,10 +364,9 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
                 flush=True,
             )
     finally:
-        close_envs(env)
-
-    (cfg.output_dir / "manifest.json").write_text(json.dumps(_to_jsonable(manifest), indent=2))
-    print(f"[noisy-rollout] wrote {cfg.output_dir / 'manifest.json'}", flush=True)
+        (cfg.output_dir / "manifest.json").write_text(json.dumps(_to_jsonable(manifest), indent=2))
+        print(f"[noisy-rollout] wrote {cfg.output_dir / 'manifest.json'}", flush=True)
+        _close_env_quietly(env)
 
 
 if __name__ == "__main__":
