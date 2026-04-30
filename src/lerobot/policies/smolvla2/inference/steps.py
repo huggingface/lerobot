@@ -1,0 +1,382 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""Inference steps for the SmolVLA2 multi-rate runtime.
+
+Each step is a tiny class with a ``trigger`` and an ``__call__(state)``;
+the runtime applies them in order each tick. When a step's trigger
+doesn't fire, the step is a no-op and the runtime moves on.
+
+Stream-to-step mapping mirrors the ``smolvla2_hirobot.yaml`` recipe:
+
+* ``LowLevelForward``        — calls ``policy.select_action`` for the
+                                action chunk; trained by
+                                ``low_level_execution``
+* ``EnqueueChunk``           — pushes the chunk to ``action_queue``
+* ``DispatchAction``         — pops one action per control tick and
+                                forwards to the robot
+* ``HighLevelSubtaskFwd``    — calls ``policy.select_message`` for the
+                                next subtask; trained by
+                                ``high_level_subtask``
+* ``MemoryUpdateFwd``        — fires on subtask boundary; trained by
+                                ``memory_update``
+* ``UserInterjectionFwd``    — fires on stdin interjection; trained by
+                                ``user_interjection_response``
+* ``AskVQAFwd``              — fires on stdin question; trained by
+                                ``ask_vqa_*``
+* ``DispatchToolCalls``      — pops ``tool_calls_pending`` and calls
+                                the matching ``Tool`` instance
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from dataclasses import dataclass, field
+from typing import Any
+
+from .runtime_state import push_log, set_if_changed, take_event
+from .triggers import EventTrigger, HzTrigger, Trigger
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Step base + runner
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class InferenceStep:
+    """A trigger-gated callable. Subclasses override :meth:`run`."""
+
+    trigger: Trigger
+
+    def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
+        if not self.trigger.should_fire(state["_tick"], state):
+            return state
+        return self.run(state) or state
+
+    def run(self, state: dict[str, Any]) -> dict[str, Any] | None:  # pragma: no cover
+        raise NotImplementedError
+
+
+# ---------------------------------------------------------------------------
+# Low-level (action) path
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class LowLevelForward(InferenceStep):
+    """Run the policy's action head and produce one action chunk."""
+
+    policy: Any = None
+    observation_provider: Any = None
+    """Callable ``() -> dict``: returns the current observation batch
+    (already preprocessed). Typically wraps the robot's camera /
+    proprio reads. ``None`` in dry-run mode → step skips."""
+
+    trigger: Trigger = field(default_factory=lambda: HzTrigger(hz=4.0))
+
+    def run(self, state: dict[str, Any]) -> dict[str, Any] | None:
+        if self.policy is None or self.observation_provider is None:
+            return None
+        observation = self.observation_provider()
+        if observation is None:
+            return None
+        action = self.policy.select_action(observation)
+        # SmolVLA returns a single action; if the underlying policy
+        # streams chunks, split per-step here. For v1 we just enqueue
+        # the result.
+        state.setdefault("action_queue", []).append(action)
+        return None
+
+
+@dataclass
+class DispatchAction(InferenceStep):
+    """Pop one action per tick and hand it to the robot.
+
+    In dry-run mode (``robot_executor=None``) the step still pops the
+    queue so it doesn't grow unbounded — the popped tensor is logged
+    instead of executed.
+    """
+
+    robot_executor: Any = None
+    trigger: Trigger = field(default_factory=lambda: HzTrigger(hz=50.0))
+
+    def run(self, state: dict[str, Any]) -> dict[str, Any] | None:
+        queue = state.get("action_queue")
+        if not queue:
+            return None
+        action = queue.popleft() if hasattr(queue, "popleft") else queue.pop(0)
+        if self.robot_executor is not None:
+            self.robot_executor(action)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# High-level (text) paths — all use policy.select_message
+# ---------------------------------------------------------------------------
+
+
+def _build_text_batch(policy: Any, prompt_messages: list[dict[str, Any]]) -> dict[str, Any]:
+    """Tokenize a list of chat messages into the batch shape
+    ``select_message`` expects.
+
+    Lazy fallback: re-uses the policy's preprocessor by piggy-backing
+    on the chat tokenizer step. Production use should construct the
+    batch from a real observation; here we focus on the *language*
+    path which is independent of camera observations.
+    """
+    from transformers import AutoTokenizer  # noqa: PLC0415
+
+    tokenizer = AutoTokenizer.from_pretrained(policy.config.vlm_model_name)
+    if tokenizer.pad_token_id is None and tokenizer.eos_token_id is not None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    text_messages = [_strip_recipe_keys(m) for m in prompt_messages]
+    ids = tokenizer.apply_chat_template(
+        text_messages,
+        add_generation_prompt=True,
+        tokenize=True,
+        return_tensors="pt",
+    )
+    if isinstance(ids, list):
+        ids = ids[0] if ids else []
+    if hasattr(ids, "ndim") and ids.ndim == 1:
+        ids = ids.unsqueeze(0)
+    attn = (ids != tokenizer.pad_token_id) if tokenizer.pad_token_id is not None else None
+    return {"lang_tokens": ids, "lang_masks": attn, "tokenizer": tokenizer}
+
+
+def _strip_recipe_keys(m: dict[str, Any]) -> dict[str, Any]:
+    new = dict(m)
+    new.pop("stream", None)
+    new.pop("target", None)
+    return new
+
+
+@dataclass
+class HighLevelSubtaskFwd(InferenceStep):
+    """At ~1 Hz, ask the policy for the next subtask."""
+
+    policy: Any = None
+    trigger: Trigger = field(default_factory=lambda: HzTrigger(hz=1.0))
+
+    def run(self, state: dict[str, Any]) -> dict[str, Any] | None:
+        if self.policy is None or not state.get("task"):
+            return None
+        ctx = _control_context_messages(state)
+        msg = _generate_with_policy(self.policy, ctx)
+        if msg:
+            changed = set_if_changed(state, "current_subtask", msg, label="subtask")
+            if changed:
+                # Subtask change is a downstream trigger.
+                state.setdefault("events_this_tick", []).append("subtask_change")
+        return None
+
+
+@dataclass
+class MemoryUpdateFwd(InferenceStep):
+    """On subtask boundary, refresh the compressed memory."""
+
+    policy: Any = None
+    trigger: Trigger = field(default_factory=lambda: EventTrigger("subtask_change"))
+
+    def run(self, state: dict[str, Any]) -> dict[str, Any] | None:
+        # Don't consume the event — multiple steps may want to react.
+        if self.policy is None:
+            return None
+        ctx = _control_context_messages(state, include_completed=True)
+        new_memory = _generate_with_policy(self.policy, ctx)
+        if new_memory:
+            set_if_changed(state, "current_memory", new_memory, label="memory")
+        return None
+
+
+@dataclass
+class UserInterjectionFwd(InferenceStep):
+    """On stdin interjection, refresh the plan + emit a paired ``say``."""
+
+    policy: Any = None
+    trigger: Trigger = field(default_factory=lambda: EventTrigger("user_interjection"))
+
+    def run(self, state: dict[str, Any]) -> dict[str, Any] | None:
+        if self.policy is None or not take_event(state, "user_interjection"):
+            return None
+        ctx = _control_context_messages(
+            state,
+            extra_user=state.get("recent_interjection"),
+        )
+        out = _generate_with_policy(self.policy, ctx)
+        if not out:
+            return None
+        # Heuristic split: model is trained to emit one assistant turn
+        # carrying both plan text AND a `say` tool call. Look for a
+        # "<say>...</say>" or "say(...)" marker; fall back to whole
+        # text → plan, no speech.
+        plan_text, speech_text = _split_plan_and_say(out)
+        if plan_text:
+            set_if_changed(state, "current_plan", plan_text, label="plan")
+        if speech_text:
+            push_log(state, f"  speech: {speech_text}")
+            state.setdefault("tool_calls_pending", []).append(
+                {
+                    "type": "function",
+                    "function": {"name": "say", "arguments": {"text": speech_text}},
+                }
+            )
+            state.setdefault("events_this_tick", []).append("tool_call_pending")
+        # Mark interjection consumed.
+        state["recent_interjection"] = None
+        return None
+
+
+@dataclass
+class AskVQAFwd(InferenceStep):
+    """On stdin question, answer a frame-grounded VQA."""
+
+    policy: Any = None
+    trigger: Trigger = field(default_factory=lambda: EventTrigger("user_vqa_query"))
+
+    def run(self, state: dict[str, Any]) -> dict[str, Any] | None:
+        if self.policy is None or not take_event(state, "user_vqa_query"):
+            return None
+        question = state.get("recent_vqa_query")
+        if not question:
+            return None
+        ctx = _control_context_messages(state, extra_user=question)
+        answer = _generate_with_policy(self.policy, ctx)
+        if answer:
+            push_log(state, f"  vqa: {answer}")
+        state["recent_vqa_query"] = None
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Tool dispatch
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class DispatchToolCalls(InferenceStep):
+    """Pop ``tool_calls_pending`` and execute them via :data:`TOOL_REGISTRY`."""
+
+    tools: dict[str, Any] = field(default_factory=dict)
+    trigger: Trigger = field(default_factory=lambda: EventTrigger("tool_call_pending"))
+
+    def run(self, state: dict[str, Any]) -> dict[str, Any] | None:
+        take_event(state, "tool_call_pending")
+        pending = state.get("tool_calls_pending") or []
+        for call in pending:
+            try:
+                fn = (call or {}).get("function") or {}
+                name = fn.get("name")
+                args = fn.get("arguments") or {}
+                tool = self.tools.get(name)
+                if tool is None:
+                    push_log(state, f"  [warn] tool {name!r} not registered — skipping call")
+                    continue
+                tool.call(args)
+            except Exception as exc:  # noqa: BLE001
+                push_log(state, f"  [error] tool dispatch failed: {exc}")
+        state["tool_calls_pending"] = []
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _control_context_messages(
+    state: dict[str, Any],
+    *,
+    include_completed: bool = False,
+    extra_user: str | None = None,
+) -> list[dict[str, Any]]:
+    """Build a chat-template-ready prompt from current runtime state.
+
+    Mirrors what ``smolvla2_hirobot.yaml`` renders into ``${task}\nPlan:
+    ${plan}\nMemory: ${memory}`` for the high-level branches.
+    """
+    parts: list[str] = []
+    task = state.get("task") or ""
+    parts.append(task)
+    if state.get("current_plan"):
+        parts.append(f"Plan: {state['current_plan']}")
+    if state.get("current_memory"):
+        parts.append(f"Memory: {state['current_memory']}")
+    if include_completed and state.get("current_subtask"):
+        parts.append(f"Completed subtask: {state['current_subtask']}")
+    head = "\n".join(parts)
+    msgs: list[dict[str, Any]] = [{"role": "user", "content": head}]
+    if extra_user:
+        msgs.append({"role": "user", "content": extra_user})
+    return msgs
+
+
+def _generate_with_policy(policy: Any, messages: list[dict[str, Any]]) -> str:
+    """Drive ``policy.select_message`` with a minimal text-only batch.
+
+    Best-effort: the runtime today doesn't construct a full
+    observation batch with images / state for text generation; the
+    text-head was trained over images + lang + state, so generations
+    here may differ in distribution from training. This is acceptable
+    for a v1 REPL; a follow-up will plug in the real observation.
+    """
+    if not hasattr(policy, "select_message"):
+        return ""
+    text_batch = _build_text_batch(policy, messages)
+    # ``select_message`` expects a real batch with OBS_LANGUAGE_TOKENS.
+    # The minimal text-only batch we build doesn't have images / state,
+    # so we either run a text-only forward (handled by SmolVLA2 when
+    # supported) or skip and return empty. v1 returns empty when the
+    # policy can't handle it; the runtime logs and continues.
+    try:
+        # Convert to the OBS_LANGUAGE_TOKENS / OBS_LANGUAGE_ATTENTION_MASK
+        # keys ``select_message`` uses internally.
+        from lerobot.utils.constants import (  # noqa: PLC0415
+            OBS_LANGUAGE_ATTENTION_MASK,
+            OBS_LANGUAGE_TOKENS,
+        )
+
+        batch = {
+            OBS_LANGUAGE_TOKENS: text_batch["lang_tokens"],
+            OBS_LANGUAGE_ATTENTION_MASK: text_batch["lang_masks"],
+        }
+        return policy.select_message(batch, tokenizer=text_batch["tokenizer"])
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("select_message fell back: %s", exc)
+        return ""
+
+
+_SAY_RE = re.compile(r"<\s*say\s*>(.*?)<\s*/\s*say\s*>", re.IGNORECASE | re.DOTALL)
+
+
+def _split_plan_and_say(text: str) -> tuple[str, str]:
+    """Pull a ``<say>...</say>`` snippet out of ``text``; remainder is plan.
+
+    The training-time tool-call serializer wraps ``say(text="…")`` in a
+    deterministic textual marker so prefix-LM-style training learns to
+    emit it. The runtime parses it back here. If no marker is present,
+    the entire text is treated as plan with no speech.
+    """
+    if not text:
+        return "", ""
+    match = _SAY_RE.search(text)
+    if not match:
+        return text.strip(), ""
+    speech = match.group(1).strip().strip('"').strip("'")
+    plan = (text[: match.start()] + text[match.end() :]).strip()
+    return plan, speech

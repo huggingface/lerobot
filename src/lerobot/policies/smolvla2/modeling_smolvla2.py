@@ -36,6 +36,7 @@ datasets keep working unchanged.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import torch
@@ -236,9 +237,151 @@ class SmolVLA2Policy(SmolVLAPolicy):
             logits = logits[:, :common]
             text_labels = text_labels[:, :common]
 
+        # Standard next-token CE: hidden state at position t predicts
+        # token at position t+1. Shift logits left, labels right by 1.
+        # Without this, the loss is identity-mapped and the LM head
+        # learns nothing useful — see HuggingFace ``LlamaForCausalLM``
+        # for the same convention.
+        shift_logits = logits[:, :-1, :].contiguous()
+        shift_labels = text_labels[:, 1:].contiguous().long()
         loss = F.cross_entropy(
-            logits.reshape(-1, logits.shape[-1]),
-            text_labels.reshape(-1).long(),
+            shift_logits.reshape(-1, shift_logits.shape[-1]),
+            shift_labels.reshape(-1),
             ignore_index=-100,
         )
         return loss
+
+    # ------------------------------------------------------------------
+    # Inference: text generation
+    # ------------------------------------------------------------------
+
+    @torch.no_grad()
+    def select_message(
+        self,
+        batch: dict[str, Tensor],
+        *,
+        max_new_tokens: int = 256,
+        eos_token_id: int | None = None,
+        temperature: float = 0.0,
+        top_p: float = 1.0,
+        tokenizer: Any = None,
+    ) -> str:
+        """Generate text continuation from the chat-templated prompt.
+
+        AR decoding with KV caching reused from SmolVLA's inference
+        path. Batch size is assumed to be 1 (the runtime calls this
+        per-event). Returns the decoded string of new tokens (the
+        prompt itself is not included).
+
+        Parameters
+        ----------
+        batch:
+            Already through the SmolVLA2 preprocessor — expects
+            ``OBS_IMAGES_*``, ``OBS_STATE``, ``OBS_LANGUAGE_TOKENS``,
+            ``OBS_LANGUAGE_ATTENTION_MASK``.
+        max_new_tokens:
+            Hard cap on generated tokens; stops earlier on EOS.
+        eos_token_id:
+            Override the tokenizer's EOS. ``None`` ⇒ use the
+            tokenizer's default.
+        temperature, top_p:
+            ``temperature=0`` does greedy argmax (default — matches
+            training distribution most closely). Set ``temperature>0``
+            with optional ``top_p<1`` for nucleus sampling.
+        tokenizer:
+            Optional pre-loaded tokenizer to avoid the cold-start
+            ``AutoTokenizer.from_pretrained`` round-trip on every call.
+        """
+        self.eval()
+
+        if tokenizer is None:
+            from transformers import AutoTokenizer  # noqa: PLC0415
+
+            tokenizer = AutoTokenizer.from_pretrained(self.config.vlm_model_name)
+        if eos_token_id is None:
+            eos_token_id = tokenizer.eos_token_id
+
+        images, img_masks = self.prepare_images(batch)
+        state = self.prepare_state(batch)
+        lang_tokens = batch[OBS_LANGUAGE_TOKENS]
+        lang_masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
+
+        # 1) Embed prefix (images + lang + state) and run with KV cache.
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.model.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks, state=state
+        )
+        prefix_2d = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        prefix_pos = torch.cumsum(prefix_pad_masks, dim=1) - 1
+        out_pair, past_kv = self.model.vlm_with_expert.forward(
+            attention_mask=prefix_2d,
+            position_ids=prefix_pos,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=True,
+            fill_kv_cache=True,
+        )
+        prefix_out = out_pair[0] if isinstance(out_pair, (tuple, list)) else out_pair
+        if prefix_out is None:
+            raise RuntimeError("select_message: prefix forward returned no hidden states.")
+
+        vlm = self.model.vlm_with_expert.vlm
+
+        # 2) Initial logits — sample first new token from the last
+        #    prefix position.
+        last_hidden = prefix_out[:, -1:]
+        device = last_hidden.device
+        bsize = prefix_embs.shape[0]
+        cur_pos = int(prefix_embs.shape[1])
+
+        generated: list[int] = []
+        for _ in range(max_new_tokens):
+            logits_step = vlm.lm_head(last_hidden)[:, -1]  # (B, V)
+            next_ids = self._sample_next_token(logits_step, temperature, top_p)
+            tok_id = int(next_ids[0].item())
+            generated.append(tok_id)
+            if eos_token_id is not None and tok_id == eos_token_id:
+                break
+
+            # 3) Embed the new token and forward with KV cache.
+            new_emb = self.model.vlm_with_expert.embed_language_tokens(
+                next_ids.unsqueeze(0)
+            )
+            new_emb = new_emb * math.sqrt(new_emb.shape[-1])
+
+            new_pos = torch.full((bsize, 1), cur_pos, device=device, dtype=torch.long)
+            new_attn = torch.ones((bsize, cur_pos + 1), device=device, dtype=torch.bool)
+
+            out_pair, past_kv = self.model.vlm_with_expert.forward(
+                attention_mask=new_attn,
+                position_ids=new_pos,
+                past_key_values=past_kv,
+                inputs_embeds=[new_emb, None],
+                use_cache=True,
+                fill_kv_cache=True,
+            )
+            new_prefix_out = out_pair[0] if isinstance(out_pair, (tuple, list)) else out_pair
+            last_hidden = new_prefix_out[:, -1:]
+            cur_pos += 1
+
+        return tokenizer.decode(generated, skip_special_tokens=True).strip()
+
+    @staticmethod
+    def _sample_next_token(
+        logits: Tensor, temperature: float, top_p: float
+    ) -> Tensor:
+        """Pick one token id per batch row from ``logits``."""
+        if temperature <= 0.0:
+            return logits.argmax(dim=-1)
+        scaled = logits / max(temperature, 1e-6)
+        probs = F.softmax(scaled, dim=-1)
+        if top_p < 1.0:
+            sorted_probs, sorted_idx = probs.sort(dim=-1, descending=True)
+            cum = sorted_probs.cumsum(dim=-1)
+            mask = cum > top_p
+            # Always keep the most-likely token.
+            mask[..., 0] = False
+            sorted_probs = sorted_probs.masked_fill(mask, 0.0)
+            sorted_probs = sorted_probs / sorted_probs.sum(dim=-1, keepdim=True).clamp(min=1e-9)
+            pick = torch.multinomial(sorted_probs, num_samples=1)
+            return sorted_idx.gather(-1, pick).squeeze(-1)
+        return torch.multinomial(probs, num_samples=1).squeeze(-1)

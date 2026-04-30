@@ -307,6 +307,7 @@ lerobot-imgtransform-viz="lerobot.scripts.lerobot_imgtransform_viz:main"
 lerobot-edit-dataset="lerobot.scripts.lerobot_edit_dataset:main"
 lerobot-setup-can="lerobot.scripts.lerobot_setup_can:main"
 lerobot-annotate="lerobot.scripts.lerobot_annotate:main"
+lerobot-smolvla2-runtime="lerobot.scripts.lerobot_smolvla2_runtime:main"
 
 # ---------------- Tool Configurations ----------------
 [tool.setuptools.package-data]
