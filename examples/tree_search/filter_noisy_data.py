@@ -67,7 +67,7 @@ for old_ep in episode_indices:
             bad = bool(bad)
 
         dst.add_frame({
-            "task": row["task"],
+            "task_index": row["task_index"],
             "observation.images.image": image_to_np(row["observation.images.image"]),
             "observation.images.image2": image_to_np(row["observation.images.image2"]),
             "observation.state": np.asarray(row["observation.state"], dtype=np.float32),
