@@ -1,13 +1,13 @@
 #!/usr/bin/env python
-"""Collect paired clean/noisy LIBERO rollout videos for reward-model negatives.
+"""Collect noisy LIBERO rollouts for reward-model negatives.
 
-This is a debug-first collector. It starts from official LIBERO init states,
-runs the policy clean and with structured action noise from the same init state,
-then saves rollout videos plus a JSON manifest. The resulting videos
-are meant to be inspected before generating a large negative set.
+By default this writes noisy rollouts as a LeRobotDataset suitable for reward
+model training. Debug video export is optional; when enabled, only a side-by-side
+clean-vs-noisy video is saved for each init state.
 """
 
 import json
+import shutil
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,14 +19,17 @@ import numpy as np
 from lerobot import envs, policies  # noqa: F401 - registers config subclasses
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.datasets import LeRobotDataset
 from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import init_logging
 
 from policy_inference_api import (
     LeRobotActionAPI,
+    _extract_proprioception,
     _extract_success,
     _get_single_base_env,
+    _image_array,
     _infer_task,
     _render_base_env_frame,
     _select_env,
@@ -46,6 +49,7 @@ class NoisyLiberoRolloutConfig:
     seed: int | None = 1000
     num_pairs: int = 10
     steps: int = 80
+    save_debug_video: bool = False
     video_fps: int = 30
     init_state_start: int = 0
     init_state_stride: int = 1
@@ -57,7 +61,13 @@ class NoisyLiberoRolloutConfig:
     noise_gain_max: float = 1.3
     action_low: float = -1.0
     action_high: float = 1.0
-    save_pair_video: bool = True
+    save_dataset: bool = True
+    dataset_repo_id: str = "local/noisy_libero_rollouts"
+    dataset_root: Path | None = None
+    dataset_use_videos: bool = True
+    dataset_vcodec: str = "libsvtav1"
+    dataset_image_writer_threads: int = 4
+    overwrite_dataset: bool = False
     rename_map: dict[str, str] = field(default_factory=dict)
     trust_remote_code: bool = False
 
@@ -138,6 +148,113 @@ def _sample_gain(
     return gain
 
 
+def _dataset_features(*, height: int, width: int, use_videos: bool) -> dict[str, dict[str, Any]]:
+    image_dtype = "video" if use_videos else "image"
+    return {
+        "observation.images.image": {
+            "dtype": image_dtype,
+            "shape": (3, height, width),
+            "names": ["channel", "height", "width"],
+        },
+        "observation.images.image2": {
+            "dtype": image_dtype,
+            "shape": (3, height, width),
+            "names": ["channel", "height", "width"],
+        },
+        "observation.state": {
+            "dtype": "float32",
+            "shape": (8,),
+            "names": [
+                "eef_pos_x",
+                "eef_pos_y",
+                "eef_pos_z",
+                "eef_axisangle_x",
+                "eef_axisangle_y",
+                "eef_axisangle_z",
+                "gripper_qpos_0",
+                "gripper_qpos_1",
+            ],
+        },
+        "action": {
+            "dtype": "float32",
+            "shape": (7,),
+            "names": ["x", "y", "z", "rot_x", "rot_y", "rot_z", "gripper"],
+        },
+        "reward_model.label": {"dtype": "float32", "shape": (1,), "names": None},
+        "rollout.init_state_id": {"dtype": "int64", "shape": (1,), "names": None},
+        "rollout.pair_index": {"dtype": "int64", "shape": (1,), "names": None},
+        "rollout.step": {"dtype": "int64", "shape": (1,), "names": None},
+        "rollout.success": {"dtype": "int64", "shape": (1,), "names": None},
+        "rollout.terminal": {"dtype": "int64", "shape": (1,), "names": None},
+    }
+
+
+def _make_dataset(
+    cfg: NoisyLiberoRolloutConfig,
+    *,
+    height: int,
+    width: int,
+) -> LeRobotDataset | None:
+    if not cfg.save_dataset:
+        return None
+    root = cfg.dataset_root if cfg.dataset_root is not None else cfg.output_dir / "dataset"
+    if root.exists():
+        if not cfg.overwrite_dataset:
+            raise FileExistsError(
+                f"Dataset root already exists: {root}. Use --overwrite_dataset=true or choose a new root."
+            )
+        shutil.rmtree(root)
+    return LeRobotDataset.create(
+        repo_id=cfg.dataset_repo_id,
+        root=root,
+        fps=cfg.video_fps,
+        features=_dataset_features(height=height, width=width, use_videos=cfg.dataset_use_videos),
+        robot_type="libero",
+        use_videos=cfg.dataset_use_videos,
+        image_writer_threads=cfg.dataset_image_writer_threads,
+        vcodec=cfg.dataset_vcodec,
+    )
+
+
+def _observation_image(observation: dict[str, Any], key: str) -> np.ndarray:
+    pixels = observation.get("pixels")
+    if not isinstance(pixels, dict):
+        raise KeyError("Observation has no `pixels` dictionary.")
+    image = _image_array(pixels.get(key))
+    if image is None:
+        raise KeyError(f"Observation has no image key `pixels.{key}`.")
+    return image
+
+
+def _dataset_frame(
+    *,
+    observation: dict[str, Any],
+    action: np.ndarray,
+    task: str,
+    pair_index: int,
+    init_state_id: int,
+    step: int,
+    success: bool,
+    terminal: bool,
+) -> dict[str, Any]:
+    proprioception = _extract_proprioception(observation)
+    if proprioception is None:
+        raise ValueError("Could not extract observation.state proprioception for dataset frame.")
+    return {
+        "task": task,
+        "observation.images.image": _observation_image(observation, "image"),
+        "observation.images.image2": _observation_image(observation, "image2"),
+        "observation.state": proprioception.astype(np.float32),
+        "action": action.astype(np.float32),
+        "reward_model.label": np.array([0.0], dtype=np.float32),
+        "rollout.init_state_id": np.array([init_state_id], dtype=np.int64),
+        "rollout.pair_index": np.array([pair_index], dtype=np.int64),
+        "rollout.step": np.array([step], dtype=np.int64),
+        "rollout.success": np.array([int(success)], dtype=np.int64),
+        "rollout.terminal": np.array([int(terminal)], dtype=np.int64),
+    }
+
+
 def _reset_env_to_init_state(
     *,
     action_api: LeRobotActionAPI,
@@ -162,9 +279,12 @@ def _run_rollout(
     base_env: gym.Env,
     task: str,
     init_state_id: int,
+    pair_index: int,
     seed: int | None,
     steps: int,
     noisy: bool,
+    collect_frames: bool,
+    collect_dataset: bool,
     rng: np.random.Generator,
     cfg: NoisyLiberoRolloutConfig,
 ) -> dict[str, Any]:
@@ -183,7 +303,8 @@ def _run_rollout(
     mask: np.ndarray | None = None
     constant_noise: np.ndarray | None = None
     rollout_gain: np.ndarray | None = None
-    frames: list[np.ndarray] = [_render_base_env_frame(base_env)]
+    frames: list[np.ndarray] = [_render_base_env_frame(base_env)] if collect_frames else []
+    dataset_frames: list[dict[str, Any]] = []
     step_records: list[dict[str, Any]] = []
 
     for step in range(steps):
@@ -238,7 +359,21 @@ def _run_rollout(
         success = success or _extract_success(info)
         terminal = bool(terminated or truncated)
         reward_sum += float(reward)
-        frames.append(_render_base_env_frame(base_env))
+        if collect_frames:
+            frames.append(_render_base_env_frame(base_env))
+        if collect_dataset:
+            dataset_frames.append(
+                _dataset_frame(
+                    observation=observation,
+                    action=executed_action,
+                    task=task,
+                    pair_index=pair_index,
+                    init_state_id=init_state_id,
+                    step=step + 1,
+                    success=success,
+                    terminal=terminal,
+                )
+            )
         step_records.append(
             {
                 "step": step + 1,
@@ -258,6 +393,7 @@ def _run_rollout(
 
     return {
         "frames": frames,
+        "dataset_frames": dataset_frames,
         "success": bool(success),
         "terminal": bool(terminal),
         "reward_sum": float(reward_sum),
@@ -283,6 +419,11 @@ def _close_env_quietly(env: gym.vector.VectorEnv) -> None:
         env.close()
 
 
+def _camera_size_from_observation(observation: dict[str, Any]) -> tuple[int, int]:
+    image = _observation_image(observation, "image")
+    return int(image.shape[0]), int(image.shape[1])
+
+
 @parser.wrap()
 def main(cfg: NoisyLiberoRolloutConfig) -> None:
     if cfg.num_pairs <= 0:
@@ -295,12 +436,15 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
         raise ValueError("`noise_temporal_mode` must be one of: per_step, chunk, constant, gain.")
     if cfg.noise_probability < 0 or cfg.noise_probability > 1:
         raise ValueError("`noise_probability` must be in [0, 1].")
+    if not cfg.save_dataset and not cfg.save_debug_video:
+        raise ValueError("Nothing to write: enable --save_dataset=true or --save_debug_video=true.")
 
     init_logging()
     set_seed(cfg.seed)
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
-    video_dir = cfg.output_dir / "videos"
-    video_dir.mkdir(parents=True, exist_ok=True)
+    video_dir = cfg.output_dir / "debug_videos"
+    if cfg.save_debug_video:
+        video_dir.mkdir(parents=True, exist_ok=True)
 
     action_api, envs_dict = make_action_api(cfg)
     suite, task_id, env = _select_env(envs_dict, suite=cfg.suite, task_id=cfg.task_id)
@@ -309,6 +453,15 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
     base_env = _get_single_base_env(env)
     task = _infer_task(env)
     rng = np.random.default_rng(cfg.seed)
+    shape_observation = _reset_env_to_init_state(
+        action_api=action_api,
+        env=env,
+        base_env=base_env,
+        init_state_id=cfg.init_state_start,
+        seed=cfg.seed,
+    )
+    height, width = _camera_size_from_observation(shape_observation)
+    dataset = _make_dataset(cfg, height=height, width=width)
 
     manifest: dict[str, Any] = {
         "suite": suite,
@@ -317,6 +470,11 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
         "policy": str(cfg.policy.pretrained_path) if cfg.policy is not None else None,
         "num_pairs": cfg.num_pairs,
         "steps": cfg.steps,
+        "save_dataset": cfg.save_dataset,
+        "dataset_root": str(dataset.root) if dataset is not None else None,
+        "dataset_repo_id": dataset.repo_id if dataset is not None else None,
+        "dataset_use_videos": cfg.dataset_use_videos,
+        "save_debug_video": cfg.save_debug_video,
         "video_fps": cfg.video_fps,
         "init_state_start": cfg.init_state_start,
         "init_state_stride": cfg.init_state_stride,
@@ -333,57 +491,71 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
         for pair_ix in range(cfg.num_pairs):
             init_state_id = cfg.init_state_start + pair_ix * cfg.init_state_stride
             pair_seed = None if cfg.seed is None else int(cfg.seed) + pair_ix
-            clean = _run_rollout(
-                action_api=action_api,
-                env=env,
-                base_env=base_env,
-                task=task,
-                init_state_id=init_state_id,
-                seed=pair_seed,
-                steps=cfg.steps,
-                noisy=False,
-                rng=rng,
-                cfg=cfg,
-            )
+            clean = None
+            if cfg.save_debug_video:
+                clean = _run_rollout(
+                    action_api=action_api,
+                    env=env,
+                    base_env=base_env,
+                    task=task,
+                    init_state_id=init_state_id,
+                    pair_index=pair_ix,
+                    seed=pair_seed,
+                    steps=cfg.steps,
+                    noisy=False,
+                    collect_frames=True,
+                    collect_dataset=False,
+                    rng=rng,
+                    cfg=cfg,
+                )
             noisy = _run_rollout(
                 action_api=action_api,
                 env=env,
                 base_env=base_env,
                 task=task,
                 init_state_id=init_state_id,
+                pair_index=pair_ix,
                 seed=pair_seed,
                 steps=cfg.steps,
                 noisy=True,
+                collect_frames=cfg.save_debug_video,
+                collect_dataset=dataset is not None,
                 rng=rng,
                 cfg=cfg,
             )
 
             prefix = f"pair_{pair_ix:03d}_init_{init_state_id:04d}"
-            clean_path = video_dir / f"{prefix}_clean.mp4"
-            noisy_path = video_dir / f"{prefix}_noisy.mp4"
             pair_path = video_dir / f"{prefix}_clean_vs_noisy.mp4"
-            write_video(clean_path, clean["frames"], fps=cfg.video_fps)
-            write_video(noisy_path, noisy["frames"], fps=cfg.video_fps)
-            if cfg.save_pair_video:
+            if cfg.save_debug_video:
+                assert clean is not None
                 write_video(pair_path, _pair_frames(clean["frames"], noisy["frames"]), fps=cfg.video_fps)
+            dataset_episode_index = None
+            if dataset is not None:
+                dataset_episode_index = int(dataset.meta.total_episodes)
+                for frame in noisy["dataset_frames"]:
+                    dataset.add_frame(frame)
+                dataset.save_episode()
 
             manifest["pairs"].append(
                 {
                     "pair_index": pair_ix,
                     "init_state_id": init_state_id,
                     "seed": pair_seed,
-                    "clean_video_path": str(clean_path.relative_to(cfg.output_dir)),
-                    "noisy_video_path": str(noisy_path.relative_to(cfg.output_dir)),
+                    "dataset_episode_index": dataset_episode_index,
                     "pair_video_path": (
-                        str(pair_path.relative_to(cfg.output_dir)) if cfg.save_pair_video else None
+                        str(pair_path.relative_to(cfg.output_dir)) if cfg.save_debug_video else None
                     ),
-                    "clean": {
-                        "frame_count": len(clean["frames"]),
-                        "success": clean["success"],
-                        "terminal": clean["terminal"],
-                        "reward_sum": clean["reward_sum"],
-                        "last_step": clean["step_records"][-1] if clean["step_records"] else None,
-                    },
+                    "clean": (
+                        {
+                            "frame_count": len(clean["frames"]),
+                            "success": clean["success"],
+                            "terminal": clean["terminal"],
+                            "reward_sum": clean["reward_sum"],
+                            "last_step": clean["step_records"][-1] if clean["step_records"] else None,
+                        }
+                        if clean is not None
+                        else None
+                    ),
                     "noisy": {
                         "frame_count": len(noisy["frames"]),
                         "success": noisy["success"],
@@ -396,13 +568,17 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
             print(
                 "[noisy-rollout] "
                 f"pair={pair_ix} init_state={init_state_id} "
-                f"clean_success={clean['success']} noisy_success={noisy['success']} "
-                f"clean_video={clean_path} noisy_video={noisy_path}",
+                f"clean_success={clean['success'] if clean is not None else None} "
+                f"noisy_success={noisy['success']} "
+                f"dataset_episode={dataset_episode_index} "
+                f"debug_video={pair_path if cfg.save_debug_video else None}",
                 flush=True,
             )
     finally:
         (cfg.output_dir / "manifest.json").write_text(json.dumps(_to_jsonable(manifest), indent=2))
         print(f"[noisy-rollout] wrote {cfg.output_dir / 'manifest.json'}", flush=True)
+        if dataset is not None:
+            dataset.finalize()
         _close_env_quietly(env)
 
 
