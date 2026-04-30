@@ -6,6 +6,9 @@ from successful demonstrations are labeled by normalized episode progress:
 0.0 at the first sampled frame and 1.0 at the final frame. It also adds
 wrong-instruction negatives by pairing each frame with another task text and a
 low reward label, so the rewarder is forced to use language conditioning.
+Scene-camera inputs can be temporal windows while wrist/proprioception remain
+current-frame inputs. Multiple comma-separated dataset repo ids can be mixed
+when they share the same LeRobot/LIBERO schema.
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ import json
 import logging
 import random
 import time
+import math
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -58,6 +62,8 @@ def stage(message: str) -> None:
 
 @dataclass
 class RewardSampleSpec:
+    dataset_id: int
+    dataset_repo_id: str
     task: str
     episode_index: int
     local_index: int
@@ -68,6 +74,14 @@ class RewardSampleSpec:
     source_task: str | None = None
 
 
+@dataclass
+class DatasetSource:
+    dataset_id: int
+    repo_id: str
+    meta: LeRobotDatasetMetadata
+    reader_args: SimpleNamespace
+
+
 def parse_task_orders(raw: str) -> list[int]:
     text = raw.strip()
     if text.lower() == "all":
@@ -75,6 +89,13 @@ def parse_task_orders(raw: str) -> list[int]:
     if text.startswith("["):
         return [int(item) for item in json.loads(text)]
     return [int(item.strip()) for item in text.split(",") if item.strip()]
+
+
+def parse_dataset_repo_ids(raw: str) -> list[str]:
+    text = raw.strip()
+    if text.startswith("["):
+        return [str(item) for item in json.loads(text)]
+    return [item.strip() for item in text.split(",") if item.strip()]
 
 
 def find_episodes_for_task(
@@ -100,10 +121,10 @@ def find_episodes_for_task(
     return matches
 
 
-def _reader_args(args: argparse.Namespace) -> SimpleNamespace:
+def _reader_args(args: argparse.Namespace, *, dataset_repo_id: str, dataset_root: Path | None) -> SimpleNamespace:
     return SimpleNamespace(
-        dataset_repo_id=args.dataset_repo_id,
-        dataset_root=args.dataset_root,
+        dataset_repo_id=dataset_repo_id,
+        dataset_root=dataset_root,
         force_cache_sync=args.force_cache_sync,
         download_videos=args.download_videos,
         video_backend=args.video_backend,
@@ -115,23 +136,29 @@ class LiberoRewardFrameDataset(Dataset):
         self,
         *,
         specs: list[RewardSampleSpec],
-        meta: LeRobotDatasetMetadata,
-        reader_args: SimpleNamespace,
+        sources: list[DatasetSource],
         scene_camera_key: str,
         wrist_camera_key: str | None,
         state_key: str,
         use_proprioception: bool,
+        scene_temporal_window: int,
+        scene_temporal_stride: int,
+        bad_sequence_max_reward: float,
+        bad_sequence_decay: float,
         reader_cache_size: int = 3,
     ) -> None:
         self.specs = specs
-        self.meta = meta
-        self.reader_args = reader_args
+        self.sources = {source.dataset_id: source for source in sources}
         self.scene_camera_key = scene_camera_key
         self.wrist_camera_key = wrist_camera_key
         self.state_key = state_key
         self.use_proprioception = use_proprioception
+        self.scene_temporal_window = max(1, int(scene_temporal_window))
+        self.scene_temporal_stride = max(1, int(scene_temporal_stride))
+        self.bad_sequence_max_reward = float(bad_sequence_max_reward)
+        self.bad_sequence_decay = float(bad_sequence_decay)
         self.reader_cache_size = max(1, reader_cache_size)
-        self._reader_cache: OrderedDict[int, EpisodeFrameReader] = OrderedDict()
+        self._reader_cache: OrderedDict[tuple[int, int], EpisodeFrameReader] = OrderedDict()
         self._logged_first_sample = False
 
     def __len__(self) -> int:
@@ -139,21 +166,34 @@ class LiberoRewardFrameDataset(Dataset):
 
     def __getitem__(self, index: int) -> dict[str, Any]:
         spec = self.specs[int(index)]
-        reader = self._reader_for_episode(spec.episode_index)
+        source = self.sources[spec.dataset_id]
+        reader = self._reader_for_episode(spec.dataset_id, spec.episode_index)
         item = reader[spec.local_index]
         if self.scene_camera_key not in item:
             raise KeyError(f"Missing scene camera key '{self.scene_camera_key}' in dataset item.")
+        temporal_indices = self._temporal_indices(spec.local_index)
+        scene_images = [
+            _image_to_uint8_hwc(reader[temporal_index][self.scene_camera_key])
+            for temporal_index in temporal_indices
+        ]
+        is_bad_sequence = self._coerce_bool(item.get("is_bad_sequence", False))
+        label = self._label_for_sample(spec=spec, reader=reader, is_bad_sequence=is_bad_sequence)
 
         sample: dict[str, Any] = {
+            "dataset_id": spec.dataset_id,
+            "dataset_repo_id": spec.dataset_repo_id,
             "task": spec.task,
             "episode_index": spec.episode_index,
             "local_index": spec.local_index,
-            "label": spec.label,
+            "temporal_local_indices": temporal_indices,
+            "label": label,
+            "is_bad_sequence": is_bad_sequence,
             "source_task_order": spec.source_task_order if spec.source_task_order is not None else -1,
             "text_task_order": spec.text_task_order if spec.text_task_order is not None else -1,
             "is_text_mismatch": spec.is_text_mismatch,
             "source_task": spec.source_task or spec.task,
             "scene_image": _image_to_uint8_hwc(item[self.scene_camera_key]),
+            "scene_images": scene_images,
         }
         if self.wrist_camera_key is not None and self.wrist_camera_key in item:
             sample["wrist_image"] = _image_to_uint8_hwc(item[self.wrist_camera_key])
@@ -163,31 +203,85 @@ class LiberoRewardFrameDataset(Dataset):
             sample["proprioception"] = item[self.state_key]
         if not self._logged_first_sample:
             self._logged_first_sample = True
-            stage(f"Loaded first sample episode={spec.episode_index} local_index={spec.local_index} keys={sorted(sample)}")
+            stage(
+                f"Loaded first sample dataset={source.repo_id} episode={spec.episode_index} "
+                f"local_index={spec.local_index} temporal_indices={temporal_indices} keys={sorted(sample)}"
+            )
         return sample
 
-    def _reader_for_episode(self, episode_index: int) -> EpisodeFrameReader:
-        if episode_index in self._reader_cache:
-            reader = self._reader_cache.pop(episode_index)
-            self._reader_cache[episode_index] = reader
+    def _temporal_indices(self, local_index: int) -> list[int]:
+        return [
+            max(0, int(local_index) - self.scene_temporal_stride * offset)
+            for offset in reversed(range(self.scene_temporal_window))
+        ]
+
+    def _label_for_sample(
+        self,
+        *,
+        spec: RewardSampleSpec,
+        reader: EpisodeFrameReader,
+        is_bad_sequence: bool,
+    ) -> float:
+        if spec.is_text_mismatch:
+            return float(spec.label)
+        if not is_bad_sequence:
+            return float(spec.label)
+        if len(reader) <= 1:
+            return float(self.bad_sequence_max_reward)
+        progress = min(1.0, max(0.0, float(spec.local_index) / float(len(reader) - 1)))
+        if self.bad_sequence_decay <= 0:
+            return float(self.bad_sequence_max_reward * (1.0 - progress))
+        decay_end = math.exp(-float(self.bad_sequence_decay))
+        numerator = math.exp(-float(self.bad_sequence_decay) * progress) - decay_end
+        denominator = max(1e-8, 1.0 - decay_end)
+        return float(max(0.0, self.bad_sequence_max_reward * numerator / denominator))
+
+    @staticmethod
+    def _coerce_bool(value: Any) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, np.ndarray):
+            if value.size == 0:
+                return False
+            return bool(value.reshape(-1)[0])
+        try:
+            if np.isnan(value):
+                return False
+        except TypeError:
+            pass
+        return bool(value)
+
+    def _reader_for_episode(self, dataset_id: int, episode_index: int) -> EpisodeFrameReader:
+        key = (dataset_id, episode_index)
+        if key in self._reader_cache:
+            reader = self._reader_cache.pop(key)
+            self._reader_cache[key] = reader
             return reader
 
+        source = self.sources[dataset_id]
         start = time.perf_counter()
-        stage(f"Opening episode reader episode={episode_index}")
-        reader = _load_episode_reader(self.reader_args, self.meta, episode_index)
-        stage(f"Opened episode reader episode={episode_index} len={len(reader)} elapsed={time.perf_counter() - start:.2f}s")
-        self._reader_cache[episode_index] = reader
+        stage(f"Opening episode reader dataset={source.repo_id} episode={episode_index}")
+        reader = _load_episode_reader(source.reader_args, source.meta, episode_index)
+        stage(
+            f"Opened episode reader dataset={source.repo_id} episode={episode_index} "
+            f"len={len(reader)} elapsed={time.perf_counter() - start:.2f}s"
+        )
+        self._reader_cache[key] = reader
         while len(self._reader_cache) > self.reader_cache_size:
             self._reader_cache.popitem(last=False)
         return reader
 
 
-def build_sample_specs(args: argparse.Namespace, meta: LeRobotDatasetMetadata) -> tuple[list[RewardSampleSpec], dict[str, Any]]:
+def build_sample_specs(
+    args: argparse.Namespace,
+    source: DatasetSource,
+) -> tuple[list[RewardSampleSpec], dict[str, Any]]:
+    meta = source.meta
     all_specs: list[RewardSampleSpec] = []
     task_summaries: dict[str, Any] = {}
     task_orders = parse_task_orders(args.task_orders)
     task_languages: dict[int, str] = {}
-    stage(f"Building sample specs for task_orders={task_orders}")
+    stage(f"Building sample specs for dataset={source.repo_id} task_orders={task_orders}")
     for task_order in task_orders:
         start = time.perf_counter()
         stage(f"Resolving task_order={task_order}")
@@ -199,6 +293,7 @@ def build_sample_specs(args: argparse.Namespace, meta: LeRobotDatasetMetadata) -
         stage(f"Found episodes for task_order={task_order} episodes={episodes} elapsed={time.perf_counter() - start:.2f}s")
         task_summaries[str(task_order)] = {
             "task": task_language,
+            "dataset_repo_id": source.repo_id,
             "episodes": episodes,
         }
 
@@ -215,6 +310,8 @@ def build_sample_specs(args: argparse.Namespace, meta: LeRobotDatasetMetadata) -
             for local_index in local_indices:
                 all_specs.append(
                     RewardSampleSpec(
+                        dataset_id=source.dataset_id,
+                        dataset_repo_id=source.repo_id,
                         task=task_language,
                         episode_index=episode_index,
                         local_index=local_index,
@@ -230,7 +327,7 @@ def build_sample_specs(args: argparse.Namespace, meta: LeRobotDatasetMetadata) -
                 f"length={length} sampled={len(all_specs) - before_count} total={len(all_specs)}"
             )
 
-    negative_count = int(args.wrong_text_negatives_per_sample)
+    negative_count = int(args.wrong_text_negatives_per_sample) if args.use_wrong_text_negatives else 0
     if negative_count > 0:
         if len(task_languages) < 2:
             stage("Skipping wrong-text negatives because fewer than two task texts are available.")
@@ -246,6 +343,8 @@ def build_sample_specs(args: argparse.Namespace, meta: LeRobotDatasetMetadata) -
                 for wrong_order in candidates[:negative_count]:
                     negative_specs.append(
                         RewardSampleSpec(
+                            dataset_id=spec.dataset_id,
+                            dataset_repo_id=spec.dataset_repo_id,
                             task=task_languages[wrong_order],
                             episode_index=spec.episode_index,
                             local_index=spec.local_index,
@@ -272,9 +371,9 @@ def split_specs(
     val_fraction: float,
     seed: int,
 ) -> tuple[list[RewardSampleSpec], list[RewardSampleSpec]]:
-    by_episode: dict[int, list[RewardSampleSpec]] = defaultdict(list)
+    by_episode: dict[tuple[int, int], list[RewardSampleSpec]] = defaultdict(list)
     for spec in specs:
-        by_episode[spec.episode_index].append(spec)
+        by_episode[(spec.dataset_id, spec.episode_index)].append(spec)
     episode_indices = list(by_episode)
     rng = random.Random(seed)
     rng.shuffle(episode_indices)
@@ -413,8 +512,12 @@ def evaluate_records(
         for ix in range(int(labels.numel())):
             records.append(
                 {
-                    "episode_index": int(batch["episode_indices"][ix].cpu()),
+                    "dataset_id": int(batch["dataset_ids"][ix].cpu()),
+                    "dataset_repo_id": batch["dataset_repo_ids"][ix],
+                    "episode_index": int(batch["raw_episode_indices"][ix].cpu()),
                     "local_index": int(batch["local_indices"][ix].cpu()),
+                    "temporal_local_indices": batch["temporal_local_indices"][ix],
+                    "is_bad_sequence": bool(batch["is_bad_sequence"][ix].cpu()),
                     "source_task_order": int(batch["source_task_orders"][ix].cpu()),
                     "text_task_order": int(batch["text_task_orders"][ix].cpu()),
                     "is_text_mismatch": bool(batch["is_text_mismatch"][ix].cpu()),
@@ -426,9 +529,9 @@ def evaluate_records(
             )
 
     violations = 0
-    by_episode: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    by_episode: dict[tuple[int, int], list[dict[str, Any]]] = defaultdict(list)
     for record in records:
-        by_episode[int(record["episode_index"])].append(record)
+        by_episode[(int(record["dataset_id"]), int(record["episode_index"]))].append(record)
     for episode_records in by_episode.values():
         ordered = sorted(episode_records, key=lambda item: int(item["local_index"]))
         for prev, cur in zip(ordered, ordered[1:], strict=False):
@@ -451,7 +554,11 @@ def write_eval_outputs(records: list[dict[str, Any]], metrics: dict[str, Any], o
             f,
             fieldnames=[
                 "episode_index",
+                "dataset_id",
+                "dataset_repo_id",
                 "local_index",
+                "temporal_local_indices",
+                "is_bad_sequence",
                 "source_task_order",
                 "text_task_order",
                 "is_text_mismatch",
@@ -475,6 +582,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--episodes_per_task", type=int, default=5)
     parser.add_argument("--frame_stride", type=int, default=10)
     parser.add_argument("--max_frames_per_episode", type=int, default=32)
+    parser.add_argument("--scene_temporal_window", type=int, default=1)
+    parser.add_argument("--scene_temporal_stride", type=int, default=10)
     parser.add_argument("--scene_camera_key", default="observation.images.image")
     parser.add_argument("--wrist_camera_key", default="observation.images.image2")
     parser.add_argument("--state_key", default="observation.state")
@@ -495,8 +604,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--weight_decay", type=float, default=1e-4)
     parser.add_argument("--ranking_weight", type=float, default=0.2)
     parser.add_argument("--ranking_margin", type=float, default=0.05)
+    parser.add_argument("--use_wrong_text_negatives", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--wrong_text_negatives_per_sample", type=int, default=1)
     parser.add_argument("--wrong_text_negative_label", type=float, default=0.0)
+    parser.add_argument("--bad_sequence_max_reward", type=float, default=0.4)
+    parser.add_argument("--bad_sequence_decay", type=float, default=4.0)
     parser.add_argument("--val_fraction", type=float, default=0.2)
     parser.add_argument("--log_every_batches", type=int, default=5)
     parser.add_argument("--seed", type=int, default=0)
@@ -517,16 +629,45 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     stage(f"Training args={vars(args)}")
-    metadata_start = time.perf_counter()
-    stage(f"Loading metadata for dataset_repo_id={args.dataset_repo_id}")
-    meta = LeRobotDatasetMetadata(
-        args.dataset_repo_id,
-        root=args.dataset_root,
-        revision=args.dataset_revision,
-    )
-    stage(f"Loaded metadata total_episodes={meta.total_episodes} elapsed={time.perf_counter() - metadata_start:.2f}s")
-    stage("Building sample specs")
-    specs, task_summaries = build_sample_specs(args, meta)
+    dataset_repo_ids = parse_dataset_repo_ids(args.dataset_repo_id)
+    if len(dataset_repo_ids) > 1 and args.dataset_root is not None:
+        raise ValueError("--dataset_root can only be used with a single --dataset_repo_id.")
+
+    sources: list[DatasetSource] = []
+    specs: list[RewardSampleSpec] = []
+    task_summaries: dict[str, Any] = {}
+    for dataset_id, dataset_repo_id in enumerate(dataset_repo_ids):
+        metadata_start = time.perf_counter()
+        stage(f"Loading metadata for dataset_id={dataset_id} dataset_repo_id={dataset_repo_id}")
+        meta = LeRobotDatasetMetadata(
+            dataset_repo_id,
+            root=args.dataset_root if len(dataset_repo_ids) == 1 else None,
+            revision=args.dataset_revision,
+        )
+        stage(
+            f"Loaded metadata dataset_id={dataset_id} total_episodes={meta.total_episodes} "
+            f"elapsed={time.perf_counter() - metadata_start:.2f}s"
+        )
+        source = DatasetSource(
+            dataset_id=dataset_id,
+            repo_id=dataset_repo_id,
+            meta=meta,
+            reader_args=_reader_args(
+                args,
+                dataset_repo_id=dataset_repo_id,
+                dataset_root=args.dataset_root if len(dataset_repo_ids) == 1 else None,
+            ),
+        )
+        sources.append(source)
+        stage(f"Building sample specs for dataset_id={dataset_id}")
+        source_specs, source_task_summaries = build_sample_specs(args, source)
+        specs.extend(source_specs)
+        task_summaries[str(dataset_id)] = {
+            "dataset_repo_id": dataset_repo_id,
+            "tasks": source_task_summaries,
+            "sample_count": len(source_specs),
+        }
+
     stage("Splitting train/val specs")
     train_specs, val_specs = split_specs(specs, val_fraction=args.val_fraction, seed=args.seed)
     stage(f"Built samples total={len(specs)} train={len(train_specs)} val={len(val_specs)}")
@@ -540,6 +681,7 @@ def main() -> None:
         use_proprioception=args.use_proprioception,
         proprioception_dim=args.proprioception_dim,
         proprioception_hidden_dim=args.proprioception_hidden_dim,
+        scene_temporal_window=args.scene_temporal_window,
         head_hidden_dim=args.head_hidden_dim,
         head_dropout=args.head_dropout,
     )
@@ -547,25 +689,30 @@ def main() -> None:
     stage("Creating RewardBatchProcessor")
     processor = RewardBatchProcessor(model_cfg)
     stage("RewardBatchProcessor ready")
-    reader_args = _reader_args(args)
     stage("Creating datasets")
     train_ds = LiberoRewardFrameDataset(
         specs=train_specs,
-        meta=meta,
-        reader_args=reader_args,
+        sources=sources,
         scene_camera_key=args.scene_camera_key,
         wrist_camera_key=args.wrist_camera_key,
         state_key=args.state_key,
         use_proprioception=args.use_proprioception,
+        scene_temporal_window=args.scene_temporal_window,
+        scene_temporal_stride=args.scene_temporal_stride,
+        bad_sequence_max_reward=args.bad_sequence_max_reward,
+        bad_sequence_decay=args.bad_sequence_decay,
     )
     val_ds = LiberoRewardFrameDataset(
         specs=val_specs,
-        meta=meta,
-        reader_args=reader_args,
+        sources=sources,
         scene_camera_key=args.scene_camera_key,
         wrist_camera_key=args.wrist_camera_key,
         state_key=args.state_key,
         use_proprioception=args.use_proprioception,
+        scene_temporal_window=args.scene_temporal_window,
+        scene_temporal_stride=args.scene_temporal_stride,
+        bad_sequence_max_reward=args.bad_sequence_max_reward,
+        bad_sequence_decay=args.bad_sequence_decay,
     )
     stage(f"Datasets ready train_len={len(train_ds)} val_len={len(val_ds)}")
 
@@ -645,11 +792,17 @@ def main() -> None:
     )
     summary = {
         "model_config": model_cfg.to_dict(),
+        "dataset_repo_ids": dataset_repo_ids,
         "task_summaries": task_summaries,
         "train_sample_count": len(train_specs),
         "val_sample_count": len(val_specs),
+        "use_wrong_text_negatives": args.use_wrong_text_negatives,
         "train_text_mismatch_count": sum(int(spec.is_text_mismatch) for spec in train_specs),
         "val_text_mismatch_count": sum(int(spec.is_text_mismatch) for spec in val_specs),
+        "scene_temporal_window": args.scene_temporal_window,
+        "scene_temporal_stride": args.scene_temporal_stride,
+        "bad_sequence_max_reward": args.bad_sequence_max_reward,
+        "bad_sequence_decay": args.bad_sequence_decay,
         "history": history,
         "eval": eval_metrics,
     }

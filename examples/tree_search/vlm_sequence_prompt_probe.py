@@ -58,6 +58,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from lerobot.datasets import LeRobotDatasetMetadata
 from lerobot.datasets.image_writer import write_image
+from lerobot.datasets.utils import DEFAULT_IMAGE_PATH
 from lerobot.datasets.video_utils import decode_video_frames
 from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
 from lerobot.utils.io_utils import write_video
@@ -425,6 +426,36 @@ class EpisodeFrameReader:
                 return_uint8=True,
             )
             item[camera_key] = frames.squeeze(0)
+
+        frame_index = int(_coerce_scalar(row.get("frame_index")) or int(local_index))
+        for camera_key in self.meta.image_keys:
+            raw_value = item.get(camera_key)
+            if raw_value is not None:
+                with contextlib.suppress(Exception):
+                    item[camera_key] = _image_to_uint8_hwc(raw_value)
+                    continue
+
+            image_path = Path(
+                DEFAULT_IMAGE_PATH.format(
+                    image_key=camera_key,
+                    episode_index=self.episode_index,
+                    frame_index=frame_index,
+                )
+            )
+            candidates = [self.root / image_path]
+            raw_path = row.get(camera_key)
+            if isinstance(raw_path, str):
+                raw = Path(raw_path)
+                candidates.extend([raw, self.root / raw])
+            for candidate in candidates:
+                if candidate.exists():
+                    item[camera_key] = np.asarray(Image.open(candidate).convert("RGB"))
+                    break
+            else:
+                raise FileNotFoundError(
+                    f"Episode image file is missing for camera_key={camera_key} "
+                    f"episode={self.episode_index} frame={frame_index}. Tried: {candidates}"
+                )
 
         task_index = _coerce_scalar(row.get("task_index"))
         if task_index is not None:

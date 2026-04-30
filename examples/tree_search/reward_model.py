@@ -24,6 +24,7 @@ class RewardModelConfig:
     use_proprioception: bool = True
     proprioception_dim: int = 8
     proprioception_hidden_dim: int = 64
+    scene_temporal_window: int = 1
     head_hidden_dim: int = 512
     head_dropout: float = 0.1
     trust_remote_code: bool = False
@@ -113,12 +114,31 @@ class RewardBatchProcessor:
         batch: dict[str, Any] = {
             "labels": torch.tensor([float(sample["label"]) for sample in samples], dtype=torch.float32),
             "episode_indices": torch.tensor(
+                [
+                    int(sample.get("dataset_id", 0)) * 1_000_000_000 + int(sample.get("episode_index", -1))
+                    for sample in samples
+                ],
+                dtype=torch.long,
+            ),
+            "raw_episode_indices": torch.tensor(
                 [int(sample.get("episode_index", -1)) for sample in samples],
+                dtype=torch.long,
+            ),
+            "dataset_ids": torch.tensor(
+                [int(sample.get("dataset_id", -1)) for sample in samples],
                 dtype=torch.long,
             ),
             "local_indices": torch.tensor(
                 [int(sample.get("local_index", -1)) for sample in samples],
                 dtype=torch.long,
+            ),
+            "temporal_local_indices": [
+                [int(ix) for ix in sample.get("temporal_local_indices", [sample.get("local_index", -1)])]
+                for sample in samples
+            ],
+            "is_bad_sequence": torch.tensor(
+                [bool(sample.get("is_bad_sequence", False)) for sample in samples],
+                dtype=torch.bool,
             ),
             "source_task_orders": torch.tensor(
                 [int(sample.get("source_task_order", -1)) for sample in samples],
@@ -134,8 +154,11 @@ class RewardBatchProcessor:
             ),
             "tasks": [str(sample.get("task", "")) for sample in samples],
             "source_tasks": [str(sample.get("source_task", sample.get("task", ""))) for sample in samples],
+            "dataset_repo_ids": [str(sample.get("dataset_repo_id", "")) for sample in samples],
         }
-        batch["scene_pixel_values"] = self._images_to_tensor([sample["scene_image"] for sample in samples])
+        batch["scene_pixel_values"] = self._scene_sequences_to_tensor(
+            [self._scene_images(sample) for sample in samples]
+        )
         batch["wrist_pixel_values"] = self._images_to_tensor(
             [
                 sample["wrist_image"] if sample.get("wrist_image") is not None else blank_image(self.cfg.image_size)
@@ -167,6 +190,29 @@ class RewardBatchProcessor:
             return encoded["pixel_values"]
         assert self.resnet_transform is not None
         return torch.stack([self.resnet_transform(image) for image in pil_images])
+
+    def _scene_images(self, sample: dict[str, Any]) -> list[Any]:
+        images = sample.get("scene_images")
+        if images is None:
+            images = [sample["scene_image"]]
+        if not isinstance(images, list | tuple):
+            images = [images]
+        return list(images)
+
+    def _scene_sequences_to_tensor(self, sequences: list[list[Any]]) -> Tensor:
+        window = max(1, int(self.cfg.scene_temporal_window))
+        normalized: list[list[Any]] = []
+        for sequence in sequences:
+            if not sequence:
+                sequence = [blank_image(self.cfg.image_size)]
+            sequence = list(sequence)[-window:]
+            if len(sequence) < window:
+                sequence = [sequence[0]] * (window - len(sequence)) + sequence
+            normalized.append(sequence)
+
+        flat_images = [image for sequence in normalized for image in sequence]
+        flat_tensor = self._images_to_tensor(flat_images)
+        return flat_tensor.view(len(normalized), window, *flat_tensor.shape[1:])
 
     def _proprioception_to_tensor(self, values: list[Any]) -> Tensor:
         rows: list[Tensor] = []
@@ -285,8 +331,12 @@ class MultiModalRewardModel(nn.Module):
         attention_mask: Tensor | None = None,
         proprioception: Tensor | None = None,
     ) -> Tensor:
-        scene_feat = self._encode_image(scene_pixel_values)
-        wrist_feat = self._encode_image(wrist_pixel_values) if wrist_pixel_values is not None else torch.zeros_like(scene_feat)
+        scene_feat = self._encode_scene_sequence(scene_pixel_values)
+        if wrist_pixel_values is not None:
+            wrist_feat = self._encode_image(wrist_pixel_values)
+        else:
+            wrist_dim = scene_feat.shape[-1] // 3 if int(self.cfg.scene_temporal_window) > 1 else scene_feat.shape[-1]
+            wrist_feat = scene_feat.new_zeros((scene_feat.shape[0], wrist_dim))
 
         features = [scene_feat, wrist_feat]
         if self.encoder_type in {"siglip2", "siglip", "clip"} and input_ids is not None:
@@ -307,6 +357,24 @@ class MultiModalRewardModel(nn.Module):
             outputs = self.encoder(pixel_values)
         features = self._pooled_feature_tensor(outputs, output_name="image")
         return torch.nn.functional.normalize(features.float(), dim=-1)
+
+    def _encode_scene_sequence(self, pixel_values: Tensor) -> Tensor:
+        if pixel_values.ndim == 4:
+            return self._encode_image(pixel_values)
+        if pixel_values.ndim != 5:
+            raise ValueError(f"Expected scene pixel values with 4 or 5 dims, got shape {tuple(pixel_values.shape)}")
+
+        batch_size, window = pixel_values.shape[:2]
+        flat = pixel_values.reshape(batch_size * window, *pixel_values.shape[2:])
+        sequence_features = self._encode_image(flat).view(batch_size, window, -1)
+        current = sequence_features[:, -1]
+        if window <= 1 or int(self.cfg.scene_temporal_window) <= 1:
+            return current
+
+        oldest = sequence_features[:, 0]
+        context_mean = sequence_features[:, :-1].mean(dim=1)
+        delta_long = current - oldest
+        return torch.cat([current, delta_long, context_mean], dim=-1)
 
     def _encode_text(self, *, input_ids: Tensor, attention_mask: Tensor | None) -> Tensor:
         kwargs: dict[str, Tensor] = {"input_ids": input_ids}
