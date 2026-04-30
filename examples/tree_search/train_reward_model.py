@@ -424,8 +424,6 @@ def run_epoch(
     loader: DataLoader,
     optimizer: torch.optim.Optimizer | None,
     device: torch.device,
-    ranking_weight: float,
-    ranking_margin: float,
     epoch_name: str,
     log_every_batches: int,
 ) -> dict[str, float]:
@@ -453,8 +451,7 @@ def run_epoch(
         with torch.enable_grad() if is_train else torch.no_grad():
             pred = model_forward(model, batch)
             mse = torch.nn.functional.mse_loss(pred, labels)
-            rank = ranking_loss(pred, labels, batch["episode_indices"], margin=ranking_margin)
-            loss = mse + ranking_weight * rank
+            loss = mse
 
             if is_train:
                 assert optimizer is not None
@@ -473,7 +470,6 @@ def run_epoch(
                 {
                     "loss": f"{float(loss.detach()):.4f}",
                     "mse": f"{float(mse.detach()):.4f}",
-                    "rank": f"{float(rank.detach()):.4f}",
                     "samples": total_count,
                     "elapsed": f"{elapsed:.1f}s",
                 },
@@ -752,8 +748,6 @@ def main() -> None:
             loader=train_loader,
             optimizer=optimizer,
             device=device,
-            ranking_weight=args.ranking_weight,
-            ranking_margin=args.ranking_margin,
             epoch_name=f"train epoch={epoch}",
             log_every_batches=args.log_every_batches,
         )
@@ -763,8 +757,6 @@ def main() -> None:
                 loader=val_loader,
                 optimizer=None,
                 device=device,
-                ranking_weight=args.ranking_weight,
-                ranking_margin=args.ranking_margin,
                 epoch_name=f"val epoch={epoch}",
                 log_every_batches=args.log_every_batches,
             )
