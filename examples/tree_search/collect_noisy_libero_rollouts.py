@@ -1,9 +1,9 @@
 #!/usr/bin/env python
-"""Collect paired clean/noisy LIBERO rollout frames for reward-model negatives.
+"""Collect paired clean/noisy LIBERO rollout videos for reward-model negatives.
 
 This is a debug-first collector. It starts from official LIBERO init states,
 runs the policy clean and with structured action noise from the same init state,
-then saves side-by-side frame pairs plus a JSON manifest. The resulting frames
+then saves rollout videos plus a JSON manifest. The resulting videos
 are meant to be inspected before generating a large negative set.
 """
 
@@ -19,7 +19,7 @@ import numpy as np
 from lerobot import envs, policies  # noqa: F401 - registers config subclasses
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.datasets.image_writer import write_image
+from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import init_logging
 
@@ -46,17 +46,18 @@ class NoisyLiberoRolloutConfig:
     seed: int | None = 1000
     num_pairs: int = 10
     steps: int = 80
-    save_step: int = 60
+    video_fps: int = 30
     init_state_start: int = 0
     init_state_stride: int = 1
     noise_std: float = 0.1
     noise_probability: float = 1.0
     noise_dims: str = "xyz"
-    noise_temporal_mode: str = "per_step"
+    noise_temporal_mode: str = "constant"
+    noise_gain_min: float = 0.7
+    noise_gain_max: float = 1.3
     action_low: float = -1.0
     action_high: float = 1.0
-    save_clean_individual: bool = True
-    save_noisy_individual: bool = True
+    save_pair_video: bool = True
     rename_map: dict[str, str] = field(default_factory=dict)
     trust_remote_code: bool = False
 
@@ -117,6 +118,26 @@ def _sample_noise(
     return noise
 
 
+def _sample_gain(
+    *,
+    rng: np.random.Generator,
+    action_dim: int,
+    mask: np.ndarray,
+    gain_min: float,
+    gain_max: float,
+    probability: float,
+) -> np.ndarray:
+    gain = np.ones(action_dim, dtype=np.float32)
+    if probability <= 0 or not mask.any():
+        return gain
+    if rng.random() > probability:
+        return gain
+    low = min(gain_min, gain_max)
+    high = max(gain_min, gain_max)
+    gain[mask] = rng.uniform(low, high, size=int(mask.sum())).astype(np.float32)
+    return gain
+
+
 def _reset_env_to_init_state(
     *,
     action_api: LeRobotActionAPI,
@@ -143,7 +164,6 @@ def _run_rollout(
     init_state_id: int,
     seed: int | None,
     steps: int,
-    save_step: int,
     noisy: bool,
     rng: np.random.Generator,
     cfg: NoisyLiberoRolloutConfig,
@@ -159,11 +179,11 @@ def _run_rollout(
     terminal = False
     success = False
     reward_sum = 0.0
-    saved_frame = _render_base_env_frame(base_env)
-    saved_step = 0
     action_dim: int | None = None
     mask: np.ndarray | None = None
-    chunk_noise: np.ndarray | None = None
+    constant_noise: np.ndarray | None = None
+    rollout_gain: np.ndarray | None = None
+    frames: list[np.ndarray] = [_render_base_env_frame(base_env)]
     step_records: list[dict[str, Any]] = []
 
     for step in range(steps):
@@ -171,17 +191,27 @@ def _run_rollout(
         if action_dim is None:
             action_dim = int(policy_action.shape[0])
             mask = _noise_mask(action_dim, cfg.noise_dims)
-            if cfg.noise_temporal_mode == "chunk":
-                chunk_noise = _sample_noise(
+            if noisy and cfg.noise_temporal_mode in {"chunk", "constant"}:
+                constant_noise = _sample_noise(
                     rng=rng,
                     action_dim=action_dim,
                     mask=mask,
                     std=cfg.noise_std,
                     probability=cfg.noise_probability,
                 )
+            elif noisy and cfg.noise_temporal_mode == "gain":
+                rollout_gain = _sample_gain(
+                    rng=rng,
+                    action_dim=action_dim,
+                    mask=mask,
+                    gain_min=cfg.noise_gain_min,
+                    gain_max=cfg.noise_gain_max,
+                    probability=cfg.noise_probability,
+                )
         assert mask is not None
 
         noise = np.zeros_like(policy_action, dtype=np.float32)
+        gain = np.ones_like(policy_action, dtype=np.float32)
         if noisy:
             if cfg.noise_temporal_mode == "per_step":
                 noise = _sample_noise(
@@ -191,18 +221,24 @@ def _run_rollout(
                     std=cfg.noise_std,
                     probability=cfg.noise_probability,
                 )
-            elif cfg.noise_temporal_mode == "chunk":
-                assert chunk_noise is not None
-                noise = chunk_noise.astype(np.float32, copy=True)
+            elif cfg.noise_temporal_mode in {"chunk", "constant"}:
+                assert constant_noise is not None
+                noise = constant_noise.astype(np.float32, copy=True)
+            elif cfg.noise_temporal_mode == "gain":
+                assert rollout_gain is not None
+                gain = rollout_gain.astype(np.float32, copy=True)
             else:
-                raise ValueError("`noise_temporal_mode` must be one of: per_step, chunk.")
+                raise ValueError("`noise_temporal_mode` must be one of: per_step, chunk, constant, gain.")
 
-        executed_action = np.clip(policy_action + noise, cfg.action_low, cfg.action_high).astype(np.float32)
+        executed_action = np.clip(policy_action * gain + noise, cfg.action_low, cfg.action_high).astype(
+            np.float32
+        )
         observation, reward, terminated, truncated, info = _step_base_env_no_reset(base_env, executed_action)
         observation = dict(observation)
         success = success or _extract_success(info)
         terminal = bool(terminated or truncated)
         reward_sum += float(reward)
+        frames.append(_render_base_env_frame(base_env))
         step_records.append(
             {
                 "step": step + 1,
@@ -213,18 +249,15 @@ def _run_rollout(
                 "policy_action": policy_action.tolist(),
                 "executed_action": executed_action.tolist(),
                 "noise": noise.tolist(),
+                "gain": gain.tolist(),
             }
         )
 
-        if step + 1 == save_step or step == steps - 1 or terminal:
-            saved_frame = _render_base_env_frame(base_env)
-            saved_step = step + 1
         if terminal:
             break
 
     return {
-        "frame": saved_frame,
-        "saved_step": saved_step,
+        "frames": frames,
         "success": bool(success),
         "terminal": bool(terminal),
         "reward_sum": float(reward_sum),
@@ -232,13 +265,17 @@ def _run_rollout(
     }
 
 
-def _pair_image(clean: np.ndarray, noisy: np.ndarray) -> np.ndarray:
-    height = max(clean.shape[0], noisy.shape[0])
-    width = clean.shape[1] + noisy.shape[1]
-    canvas = np.zeros((height, width, 3), dtype=np.uint8)
-    canvas[: clean.shape[0], : clean.shape[1]] = clean
-    canvas[: noisy.shape[0], clean.shape[1] : clean.shape[1] + noisy.shape[1]] = noisy
-    return canvas
+def _pair_frames(clean_frames: list[np.ndarray], noisy_frames: list[np.ndarray]) -> list[np.ndarray]:
+    pair_count = min(len(clean_frames), len(noisy_frames))
+    paired: list[np.ndarray] = []
+    for clean, noisy in zip(clean_frames[:pair_count], noisy_frames[:pair_count], strict=False):
+        height = max(clean.shape[0], noisy.shape[0])
+        width = clean.shape[1] + noisy.shape[1]
+        canvas = np.zeros((height, width, 3), dtype=np.uint8)
+        canvas[: clean.shape[0], : clean.shape[1]] = clean
+        canvas[: noisy.shape[0], clean.shape[1] : clean.shape[1] + noisy.shape[1]] = noisy
+        paired.append(canvas)
+    return paired
 
 
 def _close_env_quietly(env: gym.vector.VectorEnv) -> None:
@@ -252,18 +289,18 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
         raise ValueError("`num_pairs` must be positive.")
     if cfg.steps <= 0:
         raise ValueError("`steps` must be positive.")
-    if cfg.save_step < 0:
-        raise ValueError("`save_step` must be non-negative.")
-    if cfg.noise_temporal_mode not in {"per_step", "chunk"}:
-        raise ValueError("`noise_temporal_mode` must be one of: per_step, chunk.")
+    if cfg.video_fps <= 0:
+        raise ValueError("`video_fps` must be positive.")
+    if cfg.noise_temporal_mode not in {"per_step", "chunk", "constant", "gain"}:
+        raise ValueError("`noise_temporal_mode` must be one of: per_step, chunk, constant, gain.")
     if cfg.noise_probability < 0 or cfg.noise_probability > 1:
         raise ValueError("`noise_probability` must be in [0, 1].")
 
     init_logging()
     set_seed(cfg.seed)
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
-    image_dir = cfg.output_dir / "images"
-    image_dir.mkdir(parents=True, exist_ok=True)
+    video_dir = cfg.output_dir / "videos"
+    video_dir.mkdir(parents=True, exist_ok=True)
 
     action_api, envs_dict = make_action_api(cfg)
     suite, task_id, env = _select_env(envs_dict, suite=cfg.suite, task_id=cfg.task_id)
@@ -272,7 +309,6 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
     base_env = _get_single_base_env(env)
     task = _infer_task(env)
     rng = np.random.default_rng(cfg.seed)
-    max_save_step = min(cfg.save_step if cfg.save_step > 0 else cfg.steps, cfg.steps)
 
     manifest: dict[str, Any] = {
         "suite": suite,
@@ -281,13 +317,15 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
         "policy": str(cfg.policy.pretrained_path) if cfg.policy is not None else None,
         "num_pairs": cfg.num_pairs,
         "steps": cfg.steps,
-        "save_step": max_save_step,
+        "video_fps": cfg.video_fps,
         "init_state_start": cfg.init_state_start,
         "init_state_stride": cfg.init_state_stride,
         "noise_std": cfg.noise_std,
         "noise_probability": cfg.noise_probability,
         "noise_dims": cfg.noise_dims,
         "noise_temporal_mode": cfg.noise_temporal_mode,
+        "noise_gain_min": cfg.noise_gain_min,
+        "noise_gain_max": cfg.noise_gain_max,
         "pairs": [],
     }
 
@@ -303,7 +341,6 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
                 init_state_id=init_state_id,
                 seed=pair_seed,
                 steps=cfg.steps,
-                save_step=max_save_step,
                 noisy=False,
                 rng=rng,
                 cfg=cfg,
@@ -316,39 +353,39 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
                 init_state_id=init_state_id,
                 seed=pair_seed,
                 steps=cfg.steps,
-                save_step=max_save_step,
                 noisy=True,
                 rng=rng,
                 cfg=cfg,
             )
 
             prefix = f"pair_{pair_ix:03d}_init_{init_state_id:04d}"
-            clean_path = image_dir / f"{prefix}_clean_step_{clean['saved_step']:04d}.png"
-            noisy_path = image_dir / f"{prefix}_noisy_step_{noisy['saved_step']:04d}.png"
-            pair_path = image_dir / f"{prefix}_clean_vs_noisy.png"
-            if cfg.save_clean_individual:
-                write_image(clean["frame"], clean_path)
-            if cfg.save_noisy_individual:
-                write_image(noisy["frame"], noisy_path)
-            write_image(_pair_image(clean["frame"], noisy["frame"]), pair_path)
+            clean_path = video_dir / f"{prefix}_clean.mp4"
+            noisy_path = video_dir / f"{prefix}_noisy.mp4"
+            pair_path = video_dir / f"{prefix}_clean_vs_noisy.mp4"
+            write_video(clean_path, clean["frames"], fps=cfg.video_fps)
+            write_video(noisy_path, noisy["frames"], fps=cfg.video_fps)
+            if cfg.save_pair_video:
+                write_video(pair_path, _pair_frames(clean["frames"], noisy["frames"]), fps=cfg.video_fps)
 
             manifest["pairs"].append(
                 {
                     "pair_index": pair_ix,
                     "init_state_id": init_state_id,
                     "seed": pair_seed,
-                    "clean_image_path": str(clean_path.relative_to(cfg.output_dir)),
-                    "noisy_image_path": str(noisy_path.relative_to(cfg.output_dir)),
-                    "pair_image_path": str(pair_path.relative_to(cfg.output_dir)),
+                    "clean_video_path": str(clean_path.relative_to(cfg.output_dir)),
+                    "noisy_video_path": str(noisy_path.relative_to(cfg.output_dir)),
+                    "pair_video_path": (
+                        str(pair_path.relative_to(cfg.output_dir)) if cfg.save_pair_video else None
+                    ),
                     "clean": {
-                        "saved_step": clean["saved_step"],
+                        "frame_count": len(clean["frames"]),
                         "success": clean["success"],
                         "terminal": clean["terminal"],
                         "reward_sum": clean["reward_sum"],
                         "last_step": clean["step_records"][-1] if clean["step_records"] else None,
                     },
                     "noisy": {
-                        "saved_step": noisy["saved_step"],
+                        "frame_count": len(noisy["frames"]),
                         "success": noisy["success"],
                         "terminal": noisy["terminal"],
                         "reward_sum": noisy["reward_sum"],
@@ -360,7 +397,7 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
                 "[noisy-rollout] "
                 f"pair={pair_ix} init_state={init_state_id} "
                 f"clean_success={clean['success']} noisy_success={noisy['success']} "
-                f"pair_image={pair_path}",
+                f"clean_video={clean_path} noisy_video={noisy_path}",
                 flush=True,
             )
     finally:
