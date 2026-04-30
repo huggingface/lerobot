@@ -15,6 +15,7 @@ from typing import Any
 
 import gymnasium as gym
 import numpy as np
+from huggingface_hub import HfApi
 
 from lerobot import envs, policies  # noqa: F401 - registers config subclasses
 from lerobot.configs import parser
@@ -428,6 +429,46 @@ def _write_debug_video(path: Path, frames: list[np.ndarray], *, fps: int) -> str
     return None
 
 
+def _push_dataset(dataset: LeRobotDataset, cfg: NoisyLiberoRolloutConfig) -> dict[str, Any]:
+    dataset.push_to_hub(
+        branch=cfg.push_branch,
+        private=cfg.push_private,
+        push_videos=cfg.push_videos,
+        upload_large_folder=cfg.upload_large_folder,
+    )
+
+    pushed_images = False
+    images_dir = dataset.root / "images"
+    if not cfg.dataset_use_videos and images_dir.exists():
+        # LeRobotDataset.push_to_hub() always ignores images/ because normal
+        # datasets are video-backed. For image-backed debug/negative datasets,
+        # upload images explicitly so the dataset is usable after download.
+        api = HfApi()
+        if cfg.upload_large_folder:
+            api.upload_large_folder(
+                repo_id=dataset.repo_id,
+                folder_path=dataset.root,
+                repo_type="dataset",
+                revision=cfg.push_branch,
+                private=cfg.push_private,
+                allow_patterns="images/**",
+            )
+        else:
+            api.upload_folder(
+                repo_id=dataset.repo_id,
+                folder_path=images_dir,
+                path_in_repo="images",
+                repo_type="dataset",
+                revision=cfg.push_branch,
+            )
+        pushed_images = True
+
+    return {
+        "pushed_images": pushed_images,
+        "visual_storage": "videos" if cfg.dataset_use_videos else "images",
+    }
+
+
 def _close_env_quietly(env: gym.vector.VectorEnv) -> None:
     with suppress(Exception):
         env.close()
@@ -615,15 +656,16 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
 
     if completed and dataset is not None and cfg.push_to_hub:
         print(f"[noisy-rollout] pushing dataset to Hugging Face Hub repo_id={dataset.repo_id}", flush=True)
-        dataset.push_to_hub(
-            branch=cfg.push_branch,
-            private=cfg.push_private,
-            push_videos=cfg.push_videos,
-            upload_large_folder=cfg.upload_large_folder,
-        )
+        push_info = _push_dataset(dataset, cfg)
         manifest["pushed_to_hub"] = True
+        manifest["push_info"] = push_info
         (cfg.output_dir / "manifest.json").write_text(json.dumps(_to_jsonable(manifest), indent=2))
-        print(f"[noisy-rollout] pushed dataset to Hugging Face Hub repo_id={dataset.repo_id}", flush=True)
+        print(
+            "[noisy-rollout] "
+            f"pushed dataset to Hugging Face Hub repo_id={dataset.repo_id} "
+            f"visual_storage={push_info['visual_storage']} pushed_images={push_info['pushed_images']}",
+            flush=True,
+        )
 
 
 if __name__ == "__main__":
