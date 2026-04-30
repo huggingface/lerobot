@@ -1,5 +1,6 @@
-import shutil
 from pathlib import Path
+import shutil
+
 import numpy as np
 from datasets import load_dataset, DatasetDict
 from huggingface_hub import HfApi
@@ -26,6 +27,7 @@ src_ds = loaded["train"] if isinstance(loaded, DatasetDict) else loaded
 
 print(src_ds)
 
+
 def image_to_np(value):
     if isinstance(value, Image.Image):
         return np.asarray(value.convert("RGB"))
@@ -35,6 +37,20 @@ def image_to_np(value):
         import io
         return np.asarray(Image.open(io.BytesIO(value["bytes"])).convert("RGB"))
     raise TypeError(f"Unsupported image value type: {type(value)}")
+
+
+def bool_scalar(value):
+    if isinstance(value, np.ndarray):
+        return bool(value.reshape(-1)[0])
+    if isinstance(value, list):
+        return bool(value[0])
+    return bool(value)
+
+
+task_by_index = {
+    int(row.task_index): str(task)
+    for task, row in src_meta.tasks.iterrows()
+}
 
 print(f"Creating LeRobot dataset at {dst_root}")
 dst = LeRobotDataset.create(
@@ -47,37 +63,55 @@ dst = LeRobotDataset.create(
     image_writer_threads=4,
 )
 
-episode_indices = sorted(set(int(x) for x in src_ds["episode_index"]))
+print(f"Filtering once: timestamp >= {timestamp_min}")
+filtered = src_ds.filter(lambda row: float(row["timestamp"]) >= timestamp_min)
+print(filtered)
+
+print("Sorting by episode_index then frame_index")
+filtered = filtered.sort(["episode_index", "frame_index"])
+
 written = 0
+current_episode = None
+current_episode_frames = 0
 
-for old_ep in episode_indices:
-    ep = src_ds.filter(lambda row: int(row["episode_index"]) == old_ep)
-    ep = ep.filter(lambda row: float(row["timestamp"]) >= timestamp_min)
+for i, row in enumerate(filtered):
+    old_ep = int(row["episode_index"])
+    if current_episode is None:
+        current_episode = old_ep
+    elif old_ep != current_episode:
+        dst.save_episode()
+        written += 1
+        print(
+            f"Wrote filtered episode old_ep={current_episode} "
+            f"frames={current_episode_frames} new_total={written}"
+        )
+        current_episode = old_ep
+        current_episode_frames = 0
 
-    if len(ep) == 0:
-        continue
+    task_index = int(row["task_index"])
+    if task_index not in task_by_index:
+        raise KeyError(f"task_index={task_index} is not present in source meta/tasks.parquet")
 
-    ep = ep.sort("frame_index")
+    dst.add_frame({
+        "task": task_by_index[task_index],
+        "observation.images.image": image_to_np(row["observation.images.image"]),
+        "observation.images.image2": image_to_np(row["observation.images.image2"]),
+        "observation.state": np.asarray(row["observation.state"], dtype=np.float32),
+        "action": np.asarray(row["action"], dtype=np.float32),
+        "is_bad_sequence": np.asarray([bool_scalar(row.get("is_bad_sequence", False))], dtype=np.bool_),
+    })
+    current_episode_frames += 1
 
-    for row in ep:
-        bad = row.get("is_bad_sequence", False)
-        if isinstance(bad, list):
-            bad = bool(bad[0])
-        else:
-            bad = bool(bad)
+    if (i + 1) % 1000 == 0:
+        print(f"Processed rows={i + 1}/{len(filtered)} current_old_ep={current_episode}")
 
-        dst.add_frame({
-            "task_index": row["task_index"],
-            "observation.images.image": image_to_np(row["observation.images.image"]),
-            "observation.images.image2": image_to_np(row["observation.images.image2"]),
-            "observation.state": np.asarray(row["observation.state"], dtype=np.float32),
-            "action": np.asarray(row["action"], dtype=np.float32),
-            "is_bad_sequence": np.asarray([bad], dtype=np.bool_),
-        })
-
+if current_episode is not None and current_episode_frames > 0:
     dst.save_episode()
     written += 1
-    print(f"Wrote filtered episode old_ep={old_ep} new_total={written}")
+    print(
+        f"Wrote filtered episode old_ep={current_episode} "
+        f"frames={current_episode_frames} new_total={written}"
+    )
 
 dst.finalize()
 
