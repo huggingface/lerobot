@@ -145,7 +145,8 @@ class LiberoRewardFrameDataset(Dataset):
         scene_temporal_stride: int,
         bad_sequence_max_reward: float,
         bad_sequence_decay: float,
-        reader_cache_size: int = 3,
+        reader_cache_size: int = 128,
+        log_reader_opens: bool = False,
     ) -> None:
         self.specs = specs
         self.sources = {source.dataset_id: source for source in sources}
@@ -158,6 +159,7 @@ class LiberoRewardFrameDataset(Dataset):
         self.bad_sequence_max_reward = float(bad_sequence_max_reward)
         self.bad_sequence_decay = float(bad_sequence_decay)
         self.reader_cache_size = max(1, reader_cache_size)
+        self.log_reader_opens = bool(log_reader_opens)
         self._reader_cache: OrderedDict[tuple[int, int], EpisodeFrameReader] = OrderedDict()
         self._logged_first_sample = False
 
@@ -260,12 +262,14 @@ class LiberoRewardFrameDataset(Dataset):
 
         source = self.sources[dataset_id]
         start = time.perf_counter()
-        stage(f"Opening episode reader dataset={source.repo_id} episode={episode_index}")
+        if self.log_reader_opens:
+            stage(f"Opening episode reader dataset={source.repo_id} episode={episode_index}")
         reader = _load_episode_reader(source.reader_args, source.meta, episode_index)
-        stage(
-            f"Opened episode reader dataset={source.repo_id} episode={episode_index} "
-            f"len={len(reader)} elapsed={time.perf_counter() - start:.2f}s"
-        )
+        if self.log_reader_opens:
+            stage(
+                f"Opened episode reader dataset={source.repo_id} episode={episode_index} "
+                f"len={len(reader)} elapsed={time.perf_counter() - start:.2f}s"
+            )
         self._reader_cache[key] = reader
         while len(self._reader_cache) > self.reader_cache_size:
             self._reader_cache.popitem(last=False)
@@ -611,6 +615,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bad_sequence_decay", type=float, default=4.0)
     parser.add_argument("--val_fraction", type=float, default=0.2)
     parser.add_argument("--log_every_batches", type=int, default=5)
+    parser.add_argument("--reader_cache_size", type=int, default=128)
+    parser.add_argument("--log_reader_opens", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--output_dir", type=Path, required=True)
@@ -701,6 +707,8 @@ def main() -> None:
         scene_temporal_stride=args.scene_temporal_stride,
         bad_sequence_max_reward=args.bad_sequence_max_reward,
         bad_sequence_decay=args.bad_sequence_decay,
+        reader_cache_size=args.reader_cache_size,
+        log_reader_opens=args.log_reader_opens,
     )
     val_ds = LiberoRewardFrameDataset(
         specs=val_specs,
@@ -713,6 +721,8 @@ def main() -> None:
         scene_temporal_stride=args.scene_temporal_stride,
         bad_sequence_max_reward=args.bad_sequence_max_reward,
         bad_sequence_decay=args.bad_sequence_decay,
+        reader_cache_size=args.reader_cache_size,
+        log_reader_opens=args.log_reader_opens,
     )
     stage(f"Datasets ready train_len={len(train_ds)} val_len={len(val_ds)}")
 
