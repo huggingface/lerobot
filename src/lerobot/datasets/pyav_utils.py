@@ -33,21 +33,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 FFMPEG_NUMERIC_OPTION_TYPES = ("INT", "INT64", "UINT64", "FLOAT", "DOUBLE")
-
-# Abstract tuning fields of VideoEncoderConfig
-TUNING_FIELDS: tuple[str, ...] = ("g", "crf", "preset", "fast_decode")
-
-# Codec-specific FFmpeg private option whose value is controlled by the
-# abstract ``crf`` tuning field.
-CRF_OPTION_BY_CODEC: dict[str, str] = {
-    "libsvtav1": "crf",
-    "h264": "crf",
-    "hevc": "crf",
-    "h264_nvenc": "qp",
-    "hevc_nvenc": "qp",
-    "h264_vaapi": "qp",
-    "h264_qsv": "global_quality",
-}
+FFMPEG_INTEGER_OPTION_TYPES = ("INT", "INT64", "UINT64")
 
 
 @functools.cache
@@ -95,85 +81,67 @@ def detect_available_encoders_pyav(encoders: list[str] | str) -> list[str]:
     return available
 
 
-def _is_field_supported(field_name: str, vcodec: str, options: dict[str, av.option.Option]) -> bool:
-    """Whether tuning option *field_name* is meaningful for *vcodec*."""
-    # GOP is a stream-level option (AVStream.gop_size) not stored in private options.
-    # Every video codec accepts it.
-    if field_name == "g":
-        return True
-    if field_name == "crf":
-        # Semantic "crf" maps to the codec's private option (see
-        # CRF_OPTION_BY_CODEC), or to stream-level q:v for VideoToolbox.
-        opt_name = CRF_OPTION_BY_CODEC.get(vcodec)
-        return (opt_name is not None and opt_name in options) or vcodec in {
-            "h264_videotoolbox",
-            "hevc_videotoolbox",
-        }
-    if field_name == "fast_decode":
-        # libsvtav1: svtav1-params:fast-decode=N — h264/hevc: tune=fastdecode.
-        return "svtav1-params" in options or "tune" in options
-    # preset and any future private-option-backed field: direct membership test.
-    return field_name in options
-
-
-def _check_numeric_range(label: str, num: float, opt: av.option.Option, vcodec: str) -> None:
-    """Raise if *num* lies outside *opt*'s numeric range (no-op if range is degenerate)."""
-    lo, hi = float(opt.min), float(opt.max)
-    if lo < hi and not (lo <= num <= hi):
-        raise ValueError(f"{label}={num} is out of range for codec {vcodec!r}; must be in [{lo}, {hi}]")
-
-
-def _validate_option_value(vcodec: str, field_name: str, value: Any, opt: av.option.Option) -> None:
-    """Range-check numeric *value* and choice-check string *value* against *opt*.
-
-    Type mismatches fall through to FFmpeg's own validation at encode time.
-    """
+def _check_option_value(vcodec: str, label: str, value: Any, opt: av.option.Option) -> None:
+    """Range-check numeric *value* and choice-check string *value* against *opt*."""
     type_name = opt.type.name
     if type_name in FFMPEG_NUMERIC_OPTION_TYPES:
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            return
-        _check_numeric_range(field_name, float(value), opt, vcodec)
-    elif type_name == "STRING":
-        if not isinstance(value, str):
-            return
-        choices = [c.name for c in (opt.choices or [])]
-        if choices and value not in choices:
+        if isinstance(value, bool):
             raise ValueError(
-                f"{field_name}={value!r} is not a supported choice for codec "
+                f"{label}={value!r} is not numeric; codec {vcodec!r} expects a number for this option."
+            )
+        elif isinstance(value, str):
+            try:
+                num_val = float(value)
+            except ValueError as e:
+                raise ValueError(
+                    f"{label}={value!r} is not numeric; codec {vcodec!r} expects a number for this option."
+                ) from e
+        elif isinstance(value, (float, int)):
+            num_val = value
+        else:
+            raise ValueError(
+                f"{label}={value!r} is not numeric; codec {vcodec!r} expects a number for this option."
+            )
+
+        # Check integer type compatibility
+        if type_name in FFMPEG_INTEGER_OPTION_TYPES and not num_val.is_integer():
+            raise ValueError(
+                f"{label}={num_val!r} must be an integer for codec {vcodec!r} "
+                f"(FFmpeg option {opt.name!r} is {type_name}); float values are not allowed."
+            )
+
+        # Check numeric range compatibility
+        lo, hi = float(opt.min), float(opt.max)
+        if lo < hi and not (lo <= num_val <= hi):
+            raise ValueError(f"{label}={num_val} is out of range for codec {vcodec!r}; must be in [{lo}, {hi}]")
+
+    elif type_name == "STRING":
+        if isinstance(value, bool):
+            raise ValueError(
+                f"{label}={value!r} is not a valid string value for codec {vcodec!r}."
+            )
+        if isinstance(value, str):
+            str_val = value
+        elif isinstance(value, (int, float)):
+            str_val = str(value)
+        else:
+            raise ValueError(
+                f"{label}={value!r} has unsupported type for STRING option on codec {vcodec!r}"
+            )
+
+        # Check string choice compatibility
+        choices = [c.name for c in (opt.choices or [])]
+        if choices and str_val not in choices:
+            raise ValueError(
+                f"{label}={str_val!r} is not a supported choice for codec "
                 f"{vcodec!r}; valid choices: {choices}"
             )
     else:
         return
 
 
-def _validate_extra_option(vcodec: str, key: str, value: Any, opt: av.option.Option) -> None:
-    """Validate an ``extra_options`` entry: enforce numeric range/type only.
-
-    Non-numeric options are passed through (FFmpeg accepts many ad-hoc strings).
-    """
-    if opt.type.name not in FFMPEG_NUMERIC_OPTION_TYPES:
-        return
-
-    label = f"extra_options[{key!r}]"
-    not_numeric = ValueError(
-        f"{label}={value!r} is not numeric; codec {vcodec!r} expects a number for this option."
-    )
-    if isinstance(value, bool):
-        raise not_numeric
-    if isinstance(value, (int, float)):
-        num = float(value)
-    elif isinstance(value, str):
-        try:
-            num = float(value)
-        except ValueError as e:
-            raise not_numeric from e
-    else:
-        raise not_numeric
-
-    _check_numeric_range(label, num, opt, vcodec)
-
-
-def _check_pixel_format(vcodec: str, pix_fmt: str, formats: tuple[str, ...]) -> None:
+def _check_pixel_format(vcodec: str, pix_fmt: str) -> None:
+    formats = _get_codec_video_formats(vcodec)
     if formats and pix_fmt not in formats:
         raise ValueError(
             f"pix_fmt={pix_fmt!r} is not supported by codec {vcodec!r}; "
@@ -181,57 +149,30 @@ def _check_pixel_format(vcodec: str, pix_fmt: str, formats: tuple[str, ...]) -> 
         )
 
 
-def _check_tuning_fields(
-    config: VideoEncoderConfig, vcodec: str, options: dict[str, av.option.Option]
+def _check_codec_options(
+    vcodec: str, codec_options: dict[str, Any], config: VideoEncoderConfig
 ) -> None:
-    supported_fields = [f for f in TUNING_FIELDS if _is_field_supported(f, vcodec, options)]
-    for field_name in TUNING_FIELDS:
-        value = getattr(config, field_name)
-        if not value:
-            continue
-        if field_name not in supported_fields:
-            raise ValueError(
-                f"{field_name}={value!r} is not supported by codec {vcodec!r}; "
-                f"supported fields for this codec: {supported_fields}"
-            )
-        # ``g`` is stream-level (AVCodecContext.gop_size), not in ``options``.
-        # Enforce a positive integer value.
-        if field_name == "g":
+    """Validate merged encoder options (typed) against the codec's published AVOptions."""
+    supported_options = _get_codec_options_by_name(vcodec)
+    for key, value in codec_options.items():
+        # GOP size is not a codec-specific option, it has to be validated separately.
+        if key == "g":
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(f"g={value!r} must be a positive integer for codec {vcodec!r}")
             continue
-        # Value shape is only cross-checkable when the field maps directly
-        # to a private option: ``preset`` is literally ``"preset"``;
-        # ``crf`` maps per-codec. ``fast_decode`` (composite) falls through
-        # to FFmpeg at encode time.
-        if field_name == "preset":
-            opt = options.get("preset")
-        elif field_name == "crf":
-            opt = options.get(CRF_OPTION_BY_CODEC.get(vcodec, ""))
-        else:
+        if key not in supported_options:
             continue
-        if opt is not None:
-            _validate_option_value(vcodec, field_name, value, opt)
-
-
-def _check_extra_options(
-    config: VideoEncoderConfig, vcodec: str, options: dict[str, av.option.Option]
-) -> None:
-    # Torchcodec-style: only validate keys the codec exposes as AVOptions,
-    # and only enforce numeric range / numeric-type. Everything else is
-    # passed through (muxer options, ``x264-params``-style strings, etc.).
-    for key, value in config.extra_options.items():
-        opt = options.get(key)
-        if opt is None:
-            continue
-        _validate_extra_option(vcodec, key, value, opt)
+        opt = supported_options[key]
+        label = f"extra_options[{key!r}]" if key in config.extra_options else key
+        _check_option_value(vcodec, label, value, opt)
 
 
 def check_video_encoder_config_pyav(config: VideoEncoderConfig) -> None:
     """Verify *config* is compatible with the bundled FFmpeg build.
 
-    Checks pixel format, tuning-field availability, value range/choices for
-    fields that map to a private option, and numeric ``extra_options``.
+    Checks pixel format, abstract tuning-field compatibility, and each merged
+    encoder option from :meth:`~lerobot.datasets.video_utils.VideoEncoderConfig.get_codec_options`
+    against PyAV (including numeric ``extra_options`` present in that dict).
     No-op when ``config.vcodec`` isn't in the local FFmpeg build.
 
     Raises:
@@ -245,6 +186,5 @@ def check_video_encoder_config_pyav(config: VideoEncoderConfig) -> None:
             vcodec,
         )
         return
-    _check_pixel_format(vcodec, config.pix_fmt, _get_codec_video_formats(vcodec))
-    _check_tuning_fields(config, vcodec, options)
-    _check_extra_options(config, vcodec, options)
+    _check_pixel_format(config.vcodec, config.pix_fmt)
+    _check_codec_options(config.vcodec, config.get_codec_options(), config)

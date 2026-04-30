@@ -61,29 +61,29 @@ class TestCodecOptions:
     def test_libsvtav1_defaults(self):
         cfg = VideoEncoderConfig()
         opts = cfg.get_codec_options()
-        assert opts["g"] == "2"
-        assert opts["crf"] == "30"
-        assert opts["preset"] == "12"
+        assert opts["g"] == 2
+        assert opts["crf"] == 30
+        assert opts["preset"] == 12
 
     @require_libsvtav1
     def test_libsvtav1_custom_preset(self):
         cfg = VideoEncoderConfig(preset=8)
-        assert cfg.get_codec_options()["preset"] == "8"
+        assert cfg.get_codec_options()["preset"] == 8
 
     @require_h264
     def test_h264_options(self):
         cfg = VideoEncoderConfig(vcodec="h264", g=10, crf=23, preset=None)
         opts = cfg.get_codec_options()
-        assert opts["g"] == "10"
-        assert opts["crf"] == "23"
+        assert opts["g"] == 10
+        assert opts["crf"] == 23
         assert "preset" not in opts
 
     @require_videotoolbox
     def test_videotoolbox_options(self):
         cfg = VideoEncoderConfig(vcodec="h264_videotoolbox", g=2, crf=30, preset=None)
         opts = cfg.get_codec_options()
-        assert opts["g"] == "2"
-        assert opts["q:v"] == "40"
+        assert opts["g"] == 2
+        assert opts["q:v"] == 40
         assert "crf" not in opts
 
     @_require_encoder("h264_nvenc")
@@ -91,19 +91,19 @@ class TestCodecOptions:
         cfg = VideoEncoderConfig(vcodec="h264_nvenc", g=2, crf=25, preset=None)
         opts = cfg.get_codec_options()
         assert opts["rc"] == "constqp"
-        assert opts["qp"] == "25"
+        assert opts["qp"] == 25
         assert "crf" not in opts
         assert "g" not in opts
 
     @_require_encoder("h264_vaapi")
     def test_vaapi_options(self):
         cfg = VideoEncoderConfig(vcodec="h264_vaapi", crf=28, preset=None)
-        assert cfg.get_codec_options()["qp"] == "28"
+        assert cfg.get_codec_options()["qp"] == 28
 
     @_require_encoder("h264_qsv")
     def test_qsv_options(self):
         cfg = VideoEncoderConfig(vcodec="h264_qsv", crf=25, preset=None)
-        assert cfg.get_codec_options()["global_quality"] == "25"
+        assert cfg.get_codec_options()["global_quality"] == 25
 
     @require_h264
     def test_no_g_no_crf(self):
@@ -121,13 +121,21 @@ class TestCodecOptions:
     @require_h264
     def test_encoder_threads_h264(self):
         cfg = VideoEncoderConfig(vcodec="h264", preset=None)
-        assert cfg.get_codec_options(encoder_threads=2)["threads"] == "2"
+        assert cfg.get_codec_options(encoder_threads=2)["threads"] == 2
 
     @require_libsvtav1
     def test_fast_decode_libsvtav1(self):
         cfg = VideoEncoderConfig(fast_decode=1)
         opts = cfg.get_codec_options()
         assert "fast-decode=1" in opts.get("svtav1-params", "")
+
+    @require_libsvtav1
+    def test_libsvtav1_fast_decode_clamped_to_svt_range(self):
+        """Out-of-range fast_decode is clamped to [0, 2] in svtav1-params (SVT-AV1 FastDecode)."""
+        cfg = VideoEncoderConfig(fast_decode=100)
+        assert "fast-decode=2" in cfg.get_codec_options().get("svtav1-params", "")
+        cfg_neg = VideoEncoderConfig(fast_decode=-5)
+        assert "fast-decode=0" in cfg_neg.get_codec_options().get("svtav1-params", "")
 
     @require_h264
     def test_fast_decode_h264(self):
@@ -156,10 +164,10 @@ class TestCodecOptions:
         assert cfg.get_codec_options()["preset"] == "slow"
 
     @require_videotoolbox
-    def test_preset_on_videotoolbox_raises(self):
+    def test_preset_on_videotoolbox_not_set(self):
         """videotoolbox has no preset option at all."""
-        with pytest.raises(ValueError, match="preset"):
-            VideoEncoderConfig(vcodec="h264_videotoolbox", preset="slow")
+        cfg = VideoEncoderConfig(vcodec="h264_videotoolbox", preset="slow")
+        assert "preset" not in cfg.get_codec_options()
 
     @require_libsvtav1
     def test_libsvtav1_preset_out_of_range_raises(self):
@@ -175,11 +183,36 @@ class TestCodecOptions:
         with pytest.raises(ValueError, match="crf.*out of range"):
             VideoEncoderConfig(vcodec="libsvtav1", crf=64)
 
+    @require_libsvtav1
+    def test_libsvtav1_crf_rejects_python_float(self):
+        """libsvtav1 exposes ``crf`` as an INT AVOption; Python float must not pass validation."""
+        with pytest.raises(ValueError, match="float values are not allowed"):
+            VideoEncoderConfig(vcodec="libsvtav1", crf=2.5)
+
+    @require_libsvtav1
+    def test_libsvtav1_extra_crf_rejects_fractional_string(self):
+        """INT options reject fractional values even when supplied only via ``extra_options``."""
+        with pytest.raises(ValueError, match="float values are not allowed"):
+            VideoEncoderConfig(
+                vcodec="libsvtav1",
+                crf=None,
+                extra_options={"crf": "2.5"},
+            )
+
+    @require_libsvtav1
+    def test_libsvtav1_extra_crf_rejects_float(self):
+        with pytest.raises(ValueError, match="float values are not allowed"):
+            VideoEncoderConfig(
+                vcodec="libsvtav1",
+                crf=None,
+                extra_options={"crf": 2.5},
+            )
+
     @require_h264
     def test_h264_crf_accepts_float_and_int(self):
         """x264 exposes crf as a FLOAT option, so both int and float are accepted."""
-        assert VideoEncoderConfig(vcodec="h264", crf=23).get_codec_options()["crf"] == "23"
-        assert VideoEncoderConfig(vcodec="h264", crf=23.5).get_codec_options()["crf"] == "23.5"
+        assert VideoEncoderConfig(vcodec="h264", crf=23).get_codec_options()["crf"] == 23
+        assert VideoEncoderConfig(vcodec="h264", crf=23.5).get_codec_options()["crf"] == 23.5
 
     @require_libsvtav1
     def test_validate_is_rerunnable(self):
@@ -188,12 +221,6 @@ class TestCodecOptions:
         cfg.preset = 100  # now out of range
         with pytest.raises(ValueError, match="out of range"):
             cfg.validate()
-
-    @require_videotoolbox
-    def test_fast_decode_on_videotoolbox_raises(self):
-        """videotoolbox has no `tune` option; fast_decode must not be silently dropped."""
-        with pytest.raises(ValueError, match="fast_decode"):
-            VideoEncoderConfig(vcodec="h264_videotoolbox", preset=None, fast_decode=1)
 
 
 class TestExtraOptions:
@@ -249,17 +276,18 @@ class TestExtraOptions:
 
     @require_libsvtav1
     def test_merged_into_codec_options_and_stringified(self):
-        """extra_options are merged into get_codec_options() as strings."""
+        """Typed merge by default; ``as_strings=True`` matches FFmpeg option dict."""
         cfg = VideoEncoderConfig(extra_options={"qp": 20})
         opts = cfg.get_codec_options()
-        assert opts["qp"] == "20"
-        assert isinstance(opts["qp"], str)
+        assert opts["qp"] == 20
+        assert isinstance(opts["qp"], int)
+        assert cfg.get_codec_options(as_strings=True)["qp"] == "20"
 
     @require_libsvtav1
     def test_structured_fields_win_on_collision(self):
         """A colliding extra_options key is discarded; the structured field wins."""
         cfg = VideoEncoderConfig(crf=30, extra_options={"crf": 18})
-        assert cfg.get_codec_options()["crf"] == "30"
+        assert cfg.get_codec_options()["crf"] == 30
 
 
 class TestEncoderDetection:
