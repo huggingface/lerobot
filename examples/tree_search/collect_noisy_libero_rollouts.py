@@ -68,6 +68,7 @@ class NoisyLiberoRolloutConfig:
     dataset_use_videos: bool = True
     dataset_vcodec: str = "libsvtav1"
     dataset_image_writer_threads: int = 4
+    dataset_flip_images: bool = True
     overwrite_dataset: bool = False
     push_to_hub: bool = False
     push_private: bool = False
@@ -232,11 +233,11 @@ def _validate_output_paths(cfg: NoisyLiberoRolloutConfig) -> None:
         )
 
 
-def _observation_image(observation: dict[str, Any], key: str) -> np.ndarray:
+def _observation_image(observation: dict[str, Any], key: str, *, flip_hw: bool) -> np.ndarray:
     pixels = observation.get("pixels")
     if not isinstance(pixels, dict):
         raise KeyError("Observation has no `pixels` dictionary.")
-    image = _image_array(pixels.get(key))
+    image = _image_array(pixels.get(key), flip_hw=flip_hw)
     if image is None:
         raise KeyError(f"Observation has no image key `pixels.{key}`.")
     return image
@@ -248,14 +249,15 @@ def _dataset_frame(
     action: np.ndarray,
     task: str,
     is_bad_sequence: bool,
+    flip_images: bool,
 ) -> dict[str, Any]:
     proprioception = _extract_proprioception(observation)
     if proprioception is None:
         raise ValueError("Could not extract observation.state proprioception for dataset frame.")
     return {
         "task": task,
-        "observation.images.image": _observation_image(observation, "image"),
-        "observation.images.image2": _observation_image(observation, "image2"),
+        "observation.images.image": _observation_image(observation, "image", flip_hw=flip_images),
+        "observation.images.image2": _observation_image(observation, "image2", flip_hw=flip_images),
         "observation.state": proprioception.astype(np.float32),
         "action": action.astype(np.float32),
         "is_bad_sequence": np.array([is_bad_sequence], dtype=np.bool_),
@@ -374,6 +376,7 @@ def _run_rollout(
                     action=executed_action,
                     task=task,
                     is_bad_sequence=True,
+                    flip_images=cfg.dataset_flip_images,
                 )
             )
         step_records.append(
@@ -475,7 +478,7 @@ def _close_env_quietly(env: gym.vector.VectorEnv) -> None:
 
 
 def _camera_size_from_observation(observation: dict[str, Any]) -> tuple[int, int]:
-    image = _observation_image(observation, "image")
+    image = _observation_image(observation, "image", flip_hw=False)
     return int(image.shape[0]), int(image.shape[1])
 
 
@@ -530,6 +533,7 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
         "dataset_root": str(dataset.root) if dataset is not None else None,
         "dataset_repo_id": dataset.repo_id if dataset is not None else None,
         "dataset_use_videos": cfg.dataset_use_videos,
+        "dataset_flip_images": cfg.dataset_flip_images,
         "dataset_extra_columns": ["is_bad_sequence"] if dataset is not None else [],
         "push_to_hub": cfg.push_to_hub,
         "push_branch": cfg.push_branch,
