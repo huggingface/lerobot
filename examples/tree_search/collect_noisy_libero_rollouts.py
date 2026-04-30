@@ -33,7 +33,6 @@ from policy_inference_api import (
     _image_array,
     _infer_task,
     _render_base_env_frame,
-    _select_env,
     _step_base_env_no_reset,
     _to_jsonable,
     make_action_api,
@@ -47,6 +46,7 @@ class NoisyLiberoRolloutConfig:
     output_dir: Path = Path("outputs/tree_search/noisy_libero_debug")
     suite: str | None = None
     task_id: int | None = None
+    task_ids: str | None = None
     seed: int | None = 1000
     num_pairs: int = 10
     steps: int = 80
@@ -231,6 +231,47 @@ def _validate_output_paths(cfg: NoisyLiberoRolloutConfig) -> None:
             f"Dataset root already exists: {root}. "
             "Pass --overwrite_dataset=true to replace it, or use a new --output_dir/--dataset_root."
         )
+
+
+def _parse_task_ids(raw: str, *, available_task_ids: list[int]) -> list[int]:
+    text = raw.strip()
+    if text.lower() == "all":
+        return list(available_task_ids)
+    if text.startswith("["):
+        task_ids = [int(item) for item in json.loads(text)]
+    else:
+        task_ids = [int(item.strip()) for item in text.split(",") if item.strip()]
+    return list(dict.fromkeys(task_ids))
+
+
+def _select_collection_tasks(
+    envs_dict: dict[str, dict[int, gym.vector.VectorEnv]],
+    *,
+    suite: str | None,
+    task_id: int | None,
+    task_ids: str | None,
+) -> tuple[str, list[int]]:
+    if suite is None:
+        suite = next(iter(envs_dict))
+    if suite not in envs_dict:
+        raise ValueError(f"Unknown suite '{suite}'. Available suites: {list(envs_dict)}")
+
+    available_task_ids = sorted(envs_dict[suite])
+    if task_ids is not None:
+        selected_task_ids = _parse_task_ids(task_ids, available_task_ids=available_task_ids)
+    elif task_id is not None:
+        selected_task_ids = [int(task_id)]
+    else:
+        selected_task_ids = [available_task_ids[0]]
+
+    missing = [task for task in selected_task_ids if task not in envs_dict[suite]]
+    if missing:
+        raise ValueError(
+            f"Unknown task_ids {missing} for suite '{suite}'. "
+            f"Available env task ids: {available_task_ids}. "
+            "Make sure --env.task_ids includes every requested task."
+        )
+    return suite, selected_task_ids
 
 
 def _observation_image(observation: dict[str, Any], key: str, *, flip_hw: bool) -> np.ndarray:
@@ -506,28 +547,42 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
         video_dir.mkdir(parents=True, exist_ok=True)
 
     action_api, envs_dict = make_action_api(cfg)
-    suite, task_id, env = _select_env(envs_dict, suite=cfg.suite, task_id=cfg.task_id)
-    if env.num_envs != 1:
-        raise ValueError(f"This collector expects a single env, got {env.num_envs}.")
-    base_env = _get_single_base_env(env)
-    task = _infer_task(env)
+    suite, selected_task_ids = _select_collection_tasks(
+        envs_dict,
+        suite=cfg.suite,
+        task_id=cfg.task_id,
+        task_ids=cfg.task_ids,
+    )
+    selected_envs = [envs_dict[suite][task] for task in selected_task_ids]
+    for selected_env in selected_envs:
+        if selected_env.num_envs != 1:
+            raise ValueError(f"This collector expects single envs, got {selected_env.num_envs}.")
     rng = np.random.default_rng(cfg.seed)
+
+    first_env = selected_envs[0]
+    first_base_env = _get_single_base_env(first_env)
     shape_observation = _reset_env_to_init_state(
         action_api=action_api,
-        env=env,
-        base_env=base_env,
+        env=first_env,
+        base_env=first_base_env,
         init_state_id=cfg.init_state_start,
         seed=cfg.seed,
     )
     height, width = _camera_size_from_observation(shape_observation)
     dataset = _make_dataset(cfg, height=height, width=width)
+    task_languages = {
+        str(task): _infer_task(envs_dict[suite][task])
+        for task in selected_task_ids
+    }
 
     manifest: dict[str, Any] = {
         "suite": suite,
-        "task_id": task_id,
-        "task": task,
+        "task_id": selected_task_ids[0] if len(selected_task_ids) == 1 else None,
+        "task_ids": selected_task_ids,
+        "tasks": task_languages,
         "policy": str(cfg.policy.pretrained_path) if cfg.policy is not None else None,
         "num_pairs": cfg.num_pairs,
+        "num_pairs_per_task": cfg.num_pairs,
         "steps": cfg.steps,
         "save_dataset": cfg.save_dataset,
         "dataset_root": str(dataset.root) if dataset is not None else None,
@@ -557,12 +612,31 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
 
     completed = False
     try:
-        for pair_ix in range(cfg.num_pairs):
-            init_state_id = cfg.init_state_start + pair_ix * cfg.init_state_stride
-            pair_seed = None if cfg.seed is None else int(cfg.seed) + pair_ix
-            clean = None
-            if cfg.save_debug_video:
-                clean = _run_rollout(
+        for task_id in selected_task_ids:
+            env = envs_dict[suite][task_id]
+            base_env = _get_single_base_env(env)
+            task = task_languages[str(task_id)]
+            for task_pair_ix in range(cfg.num_pairs):
+                pair_ix = len(manifest["pairs"])
+                init_state_id = cfg.init_state_start + task_pair_ix * cfg.init_state_stride
+                pair_seed = None if cfg.seed is None else int(cfg.seed) + pair_ix
+                clean = None
+                if cfg.save_debug_video:
+                    clean = _run_rollout(
+                        action_api=action_api,
+                        env=env,
+                        base_env=base_env,
+                        task=task,
+                        init_state_id=init_state_id,
+                        seed=pair_seed,
+                        steps=cfg.steps,
+                        noisy=False,
+                        collect_frames=True,
+                        collect_dataset=False,
+                        rng=rng,
+                        cfg=cfg,
+                    )
+                noisy = _run_rollout(
                     action_api=action_api,
                     env=env,
                     base_env=base_env,
@@ -570,85 +644,75 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
                     init_state_id=init_state_id,
                     seed=pair_seed,
                     steps=cfg.steps,
-                    noisy=False,
-                    collect_frames=True,
-                    collect_dataset=False,
+                    noisy=True,
+                    collect_frames=cfg.save_debug_video,
+                    collect_dataset=dataset is not None,
                     rng=rng,
                     cfg=cfg,
                 )
-            noisy = _run_rollout(
-                action_api=action_api,
-                env=env,
-                base_env=base_env,
-                task=task,
-                init_state_id=init_state_id,
-                seed=pair_seed,
-                steps=cfg.steps,
-                noisy=True,
-                collect_frames=cfg.save_debug_video,
-                collect_dataset=dataset is not None,
-                rng=rng,
-                cfg=cfg,
-            )
 
-            prefix = f"pair_{pair_ix:03d}_init_{init_state_id:04d}"
-            pair_path = video_dir / f"{prefix}_clean_vs_noisy.mp4"
-            pair_video_error = None
-            if cfg.save_debug_video:
-                assert clean is not None
-                pair_video_error = _write_debug_video(
-                    pair_path,
-                    _pair_frames(clean["frames"], noisy["frames"]),
-                    fps=cfg.video_fps,
+                prefix = f"task_{task_id:03d}_pair_{task_pair_ix:03d}_init_{init_state_id:04d}"
+                pair_path = video_dir / f"{prefix}_clean_vs_noisy.mp4"
+                pair_video_error = None
+                if cfg.save_debug_video:
+                    assert clean is not None
+                    pair_video_error = _write_debug_video(
+                        pair_path,
+                        _pair_frames(clean["frames"], noisy["frames"]),
+                        fps=cfg.video_fps,
+                    )
+                dataset_episode_index = None
+                if dataset is not None:
+                    dataset_episode_index = int(dataset.meta.total_episodes)
+                    for frame in noisy["dataset_frames"]:
+                        dataset.add_frame(frame)
+                    dataset.save_episode()
+
+                manifest["pairs"].append(
+                    {
+                        "pair_index": pair_ix,
+                        "task_pair_index": task_pair_ix,
+                        "task_id": task_id,
+                        "task": task,
+                        "init_state_id": init_state_id,
+                        "seed": pair_seed,
+                        "dataset_episode_index": dataset_episode_index,
+                        "pair_video_path": (
+                            str(pair_path.relative_to(cfg.output_dir))
+                            if cfg.save_debug_video and pair_video_error is None
+                            else None
+                        ),
+                        "pair_video_error": pair_video_error,
+                        "clean": (
+                            {
+                                "frame_count": len(clean["frames"]),
+                                "success": clean["success"],
+                                "terminal": clean["terminal"],
+                                "reward_sum": clean["reward_sum"],
+                                "last_step": clean["step_records"][-1] if clean["step_records"] else None,
+                            }
+                            if clean is not None
+                            else None
+                        ),
+                        "noisy": {
+                            "frame_count": len(noisy["frames"]),
+                            "success": noisy["success"],
+                            "terminal": noisy["terminal"],
+                            "reward_sum": noisy["reward_sum"],
+                            "last_step": noisy["step_records"][-1] if noisy["step_records"] else None,
+                        },
+                    }
                 )
-            dataset_episode_index = None
-            if dataset is not None:
-                dataset_episode_index = int(dataset.meta.total_episodes)
-                for frame in noisy["dataset_frames"]:
-                    dataset.add_frame(frame)
-                dataset.save_episode()
-
-            manifest["pairs"].append(
-                {
-                    "pair_index": pair_ix,
-                    "init_state_id": init_state_id,
-                    "seed": pair_seed,
-                    "dataset_episode_index": dataset_episode_index,
-                    "pair_video_path": (
-                        str(pair_path.relative_to(cfg.output_dir))
-                        if cfg.save_debug_video and pair_video_error is None
-                        else None
-                    ),
-                    "pair_video_error": pair_video_error,
-                    "clean": (
-                        {
-                            "frame_count": len(clean["frames"]),
-                            "success": clean["success"],
-                            "terminal": clean["terminal"],
-                            "reward_sum": clean["reward_sum"],
-                            "last_step": clean["step_records"][-1] if clean["step_records"] else None,
-                        }
-                        if clean is not None
-                        else None
-                    ),
-                    "noisy": {
-                        "frame_count": len(noisy["frames"]),
-                        "success": noisy["success"],
-                        "terminal": noisy["terminal"],
-                        "reward_sum": noisy["reward_sum"],
-                        "last_step": noisy["step_records"][-1] if noisy["step_records"] else None,
-                    },
-                }
-            )
-            print(
-                "[noisy-rollout] "
-                f"pair={pair_ix} init_state={init_state_id} "
-                f"clean_success={clean['success'] if clean is not None else None} "
-                f"noisy_success={noisy['success']} "
-                f"dataset_episode={dataset_episode_index} "
-                f"debug_video={pair_path if cfg.save_debug_video and pair_video_error is None else None}",
-                flush=True,
-            )
+                print(
+                    "[noisy-rollout] "
+                    f"task_id={task_id} pair={task_pair_ix} global_pair={pair_ix} "
+                    f"init_state={init_state_id} "
+                    f"clean_success={clean['success'] if clean is not None else None} "
+                    f"noisy_success={noisy['success']} "
+                    f"dataset_episode={dataset_episode_index} "
+                    f"debug_video={pair_path if cfg.save_debug_video and pair_video_error is None else None}",
+                    flush=True,
+                )
         completed = True
     finally:
         manifest["completed"] = completed
@@ -656,7 +720,8 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
         print(f"[noisy-rollout] wrote {cfg.output_dir / 'manifest.json'}", flush=True)
         if dataset is not None:
             dataset.finalize()
-        _close_env_quietly(env)
+        for selected_env in selected_envs:
+            _close_env_quietly(selected_env)
 
     if completed and dataset is not None and cfg.push_to_hub:
         print(f"[noisy-rollout] pushing dataset to Hugging Face Hub repo_id={dataset.repo_id}", flush=True)
