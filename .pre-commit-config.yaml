@@ -92,6 +92,7 @@ repos:
       - id: mypy
         args: [--config-file=pyproject.toml]
         exclude: ^(examples|benchmarks|tests)/
+        additional_dependencies: ["types-PyYAML"]
 
   ##### Docstring Checks #####
   # - repo: https://github.com/akaihola/darglint2
