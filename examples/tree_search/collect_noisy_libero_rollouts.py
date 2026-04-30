@@ -68,6 +68,11 @@ class NoisyLiberoRolloutConfig:
     dataset_vcodec: str = "libsvtav1"
     dataset_image_writer_threads: int = 4
     overwrite_dataset: bool = False
+    push_to_hub: bool = False
+    push_private: bool = False
+    push_videos: bool = True
+    push_branch: str | None = None
+    upload_large_folder: bool = False
     rename_map: dict[str, str] = field(default_factory=dict)
     trust_remote_code: bool = False
 
@@ -180,12 +185,7 @@ def _dataset_features(*, height: int, width: int, use_videos: bool) -> dict[str,
             "shape": (7,),
             "names": ["x", "y", "z", "rot_x", "rot_y", "rot_z", "gripper"],
         },
-        "reward_model.label": {"dtype": "float32", "shape": (1,), "names": None},
-        "rollout.init_state_id": {"dtype": "int64", "shape": (1,), "names": None},
-        "rollout.pair_index": {"dtype": "int64", "shape": (1,), "names": None},
-        "rollout.step": {"dtype": "int64", "shape": (1,), "names": None},
-        "rollout.success": {"dtype": "int64", "shape": (1,), "names": None},
-        "rollout.terminal": {"dtype": "int64", "shape": (1,), "names": None},
+        "is_bad_sequence": {"dtype": "bool", "shape": (1,), "names": None},
     }
 
 
@@ -197,7 +197,7 @@ def _make_dataset(
 ) -> LeRobotDataset | None:
     if not cfg.save_dataset:
         return None
-    root = cfg.dataset_root if cfg.dataset_root is not None else cfg.output_dir / "dataset"
+    root = _dataset_root(cfg)
     if root.exists():
         if not cfg.overwrite_dataset:
             raise FileExistsError(
@@ -216,6 +216,21 @@ def _make_dataset(
     )
 
 
+def _dataset_root(cfg: NoisyLiberoRolloutConfig) -> Path:
+    return cfg.dataset_root if cfg.dataset_root is not None else cfg.output_dir / "dataset"
+
+
+def _validate_output_paths(cfg: NoisyLiberoRolloutConfig) -> None:
+    if not cfg.save_dataset:
+        return
+    root = _dataset_root(cfg)
+    if root.exists() and not cfg.overwrite_dataset:
+        raise FileExistsError(
+            f"Dataset root already exists: {root}. "
+            "Pass --overwrite_dataset=true to replace it, or use a new --output_dir/--dataset_root."
+        )
+
+
 def _observation_image(observation: dict[str, Any], key: str) -> np.ndarray:
     pixels = observation.get("pixels")
     if not isinstance(pixels, dict):
@@ -231,11 +246,7 @@ def _dataset_frame(
     observation: dict[str, Any],
     action: np.ndarray,
     task: str,
-    pair_index: int,
-    init_state_id: int,
-    step: int,
-    success: bool,
-    terminal: bool,
+    is_bad_sequence: bool,
 ) -> dict[str, Any]:
     proprioception = _extract_proprioception(observation)
     if proprioception is None:
@@ -246,12 +257,7 @@ def _dataset_frame(
         "observation.images.image2": _observation_image(observation, "image2"),
         "observation.state": proprioception.astype(np.float32),
         "action": action.astype(np.float32),
-        "reward_model.label": np.array([0.0], dtype=np.float32),
-        "rollout.init_state_id": np.array([init_state_id], dtype=np.int64),
-        "rollout.pair_index": np.array([pair_index], dtype=np.int64),
-        "rollout.step": np.array([step], dtype=np.int64),
-        "rollout.success": np.array([int(success)], dtype=np.int64),
-        "rollout.terminal": np.array([int(terminal)], dtype=np.int64),
+        "is_bad_sequence": np.array([is_bad_sequence], dtype=np.bool_),
     }
 
 
@@ -279,7 +285,6 @@ def _run_rollout(
     base_env: gym.Env,
     task: str,
     init_state_id: int,
-    pair_index: int,
     seed: int | None,
     steps: int,
     noisy: bool,
@@ -367,11 +372,7 @@ def _run_rollout(
                     observation=observation,
                     action=executed_action,
                     task=task,
-                    pair_index=pair_index,
-                    init_state_id=init_state_id,
-                    step=step + 1,
-                    success=success,
-                    terminal=terminal,
+                    is_bad_sequence=True,
                 )
             )
         step_records.append(
@@ -455,6 +456,7 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
     init_logging()
     set_seed(cfg.seed)
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
+    _validate_output_paths(cfg)
     video_dir = cfg.output_dir / "debug_videos"
     if cfg.save_debug_video:
         video_dir.mkdir(parents=True, exist_ok=True)
@@ -487,6 +489,12 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
         "dataset_root": str(dataset.root) if dataset is not None else None,
         "dataset_repo_id": dataset.repo_id if dataset is not None else None,
         "dataset_use_videos": cfg.dataset_use_videos,
+        "dataset_extra_columns": ["is_bad_sequence"] if dataset is not None else [],
+        "push_to_hub": cfg.push_to_hub,
+        "push_branch": cfg.push_branch,
+        "push_private": cfg.push_private,
+        "push_videos": cfg.push_videos,
+        "upload_large_folder": cfg.upload_large_folder,
         "save_debug_video": cfg.save_debug_video,
         "video_fps": cfg.video_fps,
         "init_state_start": cfg.init_state_start,
@@ -498,8 +506,11 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
         "noise_gain_min": cfg.noise_gain_min,
         "noise_gain_max": cfg.noise_gain_max,
         "pairs": [],
+        "completed": False,
+        "pushed_to_hub": False,
     }
 
+    completed = False
     try:
         for pair_ix in range(cfg.num_pairs):
             init_state_id = cfg.init_state_start + pair_ix * cfg.init_state_stride
@@ -512,7 +523,6 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
                     base_env=base_env,
                     task=task,
                     init_state_id=init_state_id,
-                    pair_index=pair_ix,
                     seed=pair_seed,
                     steps=cfg.steps,
                     noisy=False,
@@ -527,7 +537,6 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
                 base_env=base_env,
                 task=task,
                 init_state_id=init_state_id,
-                pair_index=pair_ix,
                 seed=pair_seed,
                 steps=cfg.steps,
                 noisy=True,
@@ -595,12 +604,26 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
                 f"debug_video={pair_path if cfg.save_debug_video and pair_video_error is None else None}",
                 flush=True,
             )
+        completed = True
     finally:
+        manifest["completed"] = completed
         (cfg.output_dir / "manifest.json").write_text(json.dumps(_to_jsonable(manifest), indent=2))
         print(f"[noisy-rollout] wrote {cfg.output_dir / 'manifest.json'}", flush=True)
         if dataset is not None:
             dataset.finalize()
         _close_env_quietly(env)
+
+    if completed and dataset is not None and cfg.push_to_hub:
+        print(f"[noisy-rollout] pushing dataset to Hugging Face Hub repo_id={dataset.repo_id}", flush=True)
+        dataset.push_to_hub(
+            branch=cfg.push_branch,
+            private=cfg.push_private,
+            push_videos=cfg.push_videos,
+            upload_large_folder=cfg.upload_large_folder,
+        )
+        manifest["pushed_to_hub"] = True
+        (cfg.output_dir / "manifest.json").write_text(json.dumps(_to_jsonable(manifest), indent=2))
+        print(f"[noisy-rollout] pushed dataset to Hugging Face Hub repo_id={dataset.repo_id}", flush=True)
 
 
 if __name__ == "__main__":
