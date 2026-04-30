@@ -113,21 +113,19 @@ def _check_option_value(vcodec: str, label: str, value: Any, opt: av.option.Opti
         # Check numeric range compatibility
         lo, hi = float(opt.min), float(opt.max)
         if lo < hi and not (lo <= num_val <= hi):
-            raise ValueError(f"{label}={num_val} is out of range for codec {vcodec!r}; must be in [{lo}, {hi}]")
+            raise ValueError(
+                f"{label}={num_val} is out of range for codec {vcodec!r}; must be in [{lo}, {hi}]"
+            )
 
     elif type_name == "STRING":
         if isinstance(value, bool):
-            raise ValueError(
-                f"{label}={value!r} is not a valid string value for codec {vcodec!r}."
-            )
+            raise ValueError(f"{label}={value!r} is not a valid string value for codec {vcodec!r}.")
         if isinstance(value, str):
             str_val = value
         elif isinstance(value, (int, float)):
             str_val = str(value)
         else:
-            raise ValueError(
-                f"{label}={value!r} has unsupported type for STRING option on codec {vcodec!r}"
-            )
+            raise ValueError(f"{label}={value!r} has unsupported type for STRING option on codec {vcodec!r}")
 
         # Check string choice compatibility
         choices = [c.name for c in (opt.choices or [])]
@@ -149,9 +147,7 @@ def _check_pixel_format(vcodec: str, pix_fmt: str) -> None:
         )
 
 
-def _check_codec_options(
-    vcodec: str, codec_options: dict[str, Any], config: VideoEncoderConfig
-) -> None:
+def _check_codec_options(vcodec: str, codec_options: dict[str, Any], config: VideoEncoderConfig) -> None:
     """Validate merged encoder options (typed) against the codec's published AVOptions."""
     supported_options = _get_codec_options_by_name(vcodec)
     for key, value in codec_options.items():

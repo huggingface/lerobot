@@ -105,10 +105,8 @@ from lerobot.configs import parser
 from lerobot.configs.dataset import DatasetRecordConfig
 from lerobot.datasets import (
     LeRobotDataset,
-    VideoEncoderConfig,
     VideoEncodingManager,
     aggregate_pipeline_dataset_features,
-    camera_encoder_defaults,
     create_initial_features,
     safe_stop_image_writer,
 )

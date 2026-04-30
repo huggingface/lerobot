@@ -73,10 +73,10 @@ class VideoEncoderConfig:
             codec (``crf`` for software, ``qp`` for NVENC/VAAPI,
             ``q:v`` for VideoToolbox, ``global_quality`` for QSV).
         preset: Speed/quality preset. Accepted type is per-codec.
-        fast_decode: Fast-decode tuning. For ``libsvtav1`` this is a level (0-2) 
-            embedded in ``svtav1-params``. For ``h264`` and ``hevc`` non-zero values 
+        fast_decode: Fast-decode tuning. For ``libsvtav1`` this is a level (0-2)
+            embedded in ``svtav1-params``. For ``h264`` and ``hevc`` non-zero values
             set ``tune=fastdecode``. Ignored for other codecs.
-        video_backend: Python library driving FFmpeg for encoding. Only ``"pyav"`` 
+        video_backend: Python library driving FFmpeg for encoding. Only ``"pyav"``
             is currently supported.
         extra_options: Free-form dictionary of additional FFmpeg options
             (e.g. ``{"tune": "film", "profile:v": "high", "bf": 2}``).
@@ -139,15 +139,17 @@ class VideoEncoderConfig:
             return
         raise ValueError(f"Unsupported video codec: {self.vcodec} with video backend {self.video_backend}")
 
-    def get_codec_options(self, encoder_threads: int | None = None, as_strings: bool = False) -> dict[str, str]:
+    def get_codec_options(
+        self, encoder_threads: int | None = None, as_strings: bool = False
+    ) -> dict[str, str]:
         """Translate the tuning fields to codec-specific FFmpeg options.
 
         ``VideoEncoderConfig.extra_options`` are merged last but never override a structured field.
 
         Args:
-            encoder_threads: Number of encoder threads set globally for all VideoEncoderConfigs. 
-                For libsvtav1, this is mapped to ``lp`` via ``svtav1-params``. 
-                For h264/hevc, this is mapped to ``threads``. 
+            encoder_threads: Number of encoder threads set globally for all VideoEncoderConfigs.
+                For libsvtav1, this is mapped to ``lp`` via ``svtav1-params``.
+                For h264/hevc, this is mapped to ``threads``.
                 Hardware encoders ignore this parameter.
             as_strings: If ``True``, casts values to strings.
         """
@@ -165,7 +167,7 @@ class VideoEncoderConfig:
             set_if("preset", self.preset)
             svtav1_parts: list[str] = []
             if self.fast_decode is not None:
-                svtav1_parts.append(f"fast-decode={max(0, min(2, self.fast_decode))}")         
+                svtav1_parts.append(f"fast-decode={max(0, min(2, self.fast_decode))}")
             if encoder_threads is not None:
                 svtav1_parts.append(f"lp={encoder_threads}")
             if svtav1_parts:
