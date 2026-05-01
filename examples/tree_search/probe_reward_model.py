@@ -42,6 +42,7 @@ class RewardProbeRecord:
     episode_index: int
     dataset_index: int
     local_index: int
+    temporal_local_indices: list[int]
     frame_index: int | None
     timestamp: float | None
     task: str
@@ -152,6 +153,47 @@ def _make_probe_variants(
     ]
 
 
+def _checkpoint_arg(checkpoint: dict[str, Any], key: str, default: Any = None) -> Any:
+    args = checkpoint.get("args")
+    if isinstance(args, dict):
+        return args.get(key, default)
+    return default
+
+
+def _resolve_scene_temporal_stride(args: argparse.Namespace, checkpoint: dict[str, Any]) -> int:
+    if args.scene_temporal_stride is not None:
+        return max(1, int(args.scene_temporal_stride))
+    return max(1, int(_checkpoint_arg(checkpoint, "scene_temporal_stride", 10)))
+
+
+def _scene_temporal_indices(
+    *,
+    variant: ProbeVariant,
+    sample_index: int,
+    local_index: int,
+    window: int,
+    stride: int,
+) -> list[int]:
+    window = max(1, int(window))
+    stride = max(1, int(stride))
+    if window == 1:
+        return [int(local_index)]
+
+    if variant.name == "reversed_actions":
+        # For the reversed probe, build the temporal buffer in the presented
+        # reversed order. This tests whether the model reacts to sequence order
+        # instead of silently seeing normal demonstration history.
+        return [
+            int(variant.local_indices[max(0, sample_index - offset)])
+            for offset in reversed(range(window))
+        ]
+
+    return [
+        max(0, int(local_index) - stride * offset)
+        for offset in reversed(range(window))
+    ]
+
+
 def _score_variant(
     *,
     variant: ProbeVariant,
@@ -163,6 +205,7 @@ def _score_variant(
     device: torch.device,
     episode_index: int,
     denom: int,
+    scene_temporal_stride: int,
 ) -> tuple[list[RewardProbeRecord], list[np.ndarray]]:
     records: list[RewardProbeRecord] = []
     video_frames: list[np.ndarray] = []
@@ -171,6 +214,17 @@ def _score_variant(
 
     for sample_index, local_index in enumerate(variant.local_indices):
         item = reader[local_index]
+        temporal_local_indices = _scene_temporal_indices(
+            variant=variant,
+            sample_index=sample_index,
+            local_index=local_index,
+            window=model_cfg.scene_temporal_window,
+            stride=scene_temporal_stride,
+        )
+        scene_images = [
+            _image_to_uint8_hwc(reader[temporal_local_index][args.scene_camera_key])
+            for temporal_local_index in temporal_local_indices
+        ]
         scene_image = _image_to_uint8_hwc(item[args.scene_camera_key])
         wrist_image = (
             _image_to_uint8_hwc(item[args.wrist_camera_key])
@@ -181,8 +235,10 @@ def _score_variant(
             "task": variant.task_language,
             "episode_index": episode_index,
             "local_index": local_index,
+            "temporal_local_indices": temporal_local_indices,
             "label": float(local_index) / float(denom),
             "scene_image": scene_image,
+            "scene_images": scene_images,
             "wrist_image": wrist_image,
         }
         if model_cfg.use_proprioception:
@@ -203,7 +259,10 @@ def _score_variant(
         annotated = _make_composite_frame(
             camera_images,
             score=prediction,
-            reason=f"{variant.name} target={sample['label']:.3f} task={variant.task_language}",
+            reason=(
+                f"{variant.name} target={sample['label']:.3f} "
+                f"temporal={temporal_local_indices} task={variant.task_language}"
+            ),
             local_index=local_index,
             dataset_index=dataset_index,
             tile_width=args.tile_width,
@@ -219,6 +278,7 @@ def _score_variant(
                 episode_index=episode_index,
                 dataset_index=dataset_index,
                 local_index=local_index,
+                temporal_local_indices=temporal_local_indices,
                 frame_index=int(frame_index) if frame_index is not None else None,
                 timestamp=float(timestamp) if timestamp is not None else None,
                 task=variant.task_language,
@@ -241,6 +301,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--episode_index", type=int, default=None)
     parser.add_argument("--frame_stride", type=int, default=10)
     parser.add_argument("--max_frames", type=int, default=32)
+    parser.add_argument(
+        "--scene_temporal_stride",
+        type=int,
+        default=None,
+        help=(
+            "Frame stride between scene images in the temporal buffer. "
+            "Defaults to checkpoint training args when available, otherwise 10."
+        ),
+    )
     parser.add_argument("--scene_camera_key", default="observation.images.image")
     parser.add_argument("--wrist_camera_key", default="observation.images.image2")
     parser.add_argument("--state_key", default="observation.state")
@@ -277,6 +346,12 @@ def main() -> None:
     device = torch.device(args.device)
     model, model_cfg, checkpoint = load_reward_model_checkpoint(args.checkpoint, device=device)
     processor = RewardBatchProcessor(model_cfg)
+    scene_temporal_stride = _resolve_scene_temporal_stride(args, checkpoint)
+    logger.info(
+        "Reward probe temporal config: scene_temporal_window=%s scene_temporal_stride=%s",
+        model_cfg.scene_temporal_window,
+        scene_temporal_stride,
+    )
 
     task_metadata = _get_libero_task(args.suite, args.task_order)
     task_language = str(task_metadata["language"])
@@ -318,6 +393,7 @@ def main() -> None:
             device=device,
             episode_index=episode_index,
             denom=denom,
+            scene_temporal_stride=scene_temporal_stride,
         )
         all_records.extend(records)
         scores = [record.prediction for record in records]
@@ -326,6 +402,8 @@ def main() -> None:
             "task": variant.task_language,
             "video_path": str(variant.video_path),
             "local_indices": variant.local_indices,
+            "scene_temporal_window": model_cfg.scene_temporal_window,
+            "scene_temporal_stride": scene_temporal_stride,
             "first_score": float(scores[0]) if scores else None,
             "last_score": float(scores[-1]) if scores else None,
             **_score_monotonicity(scores, tolerance=0.02),
@@ -344,6 +422,8 @@ def main() -> None:
         "task": task_language,
         "wrong_task_language": wrong_task_language,
         "episode_index": episode_index,
+        "scene_temporal_window": model_cfg.scene_temporal_window,
+        "scene_temporal_stride": scene_temporal_stride,
         "variants": variant_summaries,
     }
     payload = {
@@ -360,6 +440,7 @@ def main() -> None:
                 "episode_index",
                 "dataset_index",
                 "local_index",
+                "temporal_local_indices",
                 "frame_index",
                 "timestamp",
                 "task",
