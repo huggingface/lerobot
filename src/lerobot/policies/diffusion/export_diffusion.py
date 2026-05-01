@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING
 import torch
 from torch import Tensor, nn
 
+from lerobot.export.adapters import IterativeDenoisingAdapter
 from lerobot.export.core import ExportSpec, make_batch_dynamic_axes_and_shapes
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
 
@@ -75,23 +76,24 @@ class DiffusionUNetWrapper(nn.Module):
         return self.unet(sample, timestep, global_cond=global_cond)
 
 
-class DiffusionDDIMWrapper(nn.Module):
-    """ONNX-compatible wrapper that bakes a full N-step DDIM denoising loop.
+class DiffusionDDIMWrapper(IterativeDenoisingAdapter):
+    """N-step deterministic DDIM denoising loop, unrolled into a single ONNX graph.
 
-    The loop is unrolled at trace time so that both the UNet calls and the
-    scheduler arithmetic end up as a single static ONNX graph.
+    Subclass of :class:`IterativeDenoisingAdapter`; the per-step model call
+    invokes the UNet, and ``_step`` implements the DDIM (eta=0) update rule.
 
     Restrictions:
 
     - Deterministic DDIM only (eta=0, no added noise).
-    - The number of denoising steps (``num_ddim_steps``) is fixed at export time.
-    - ``prediction_type`` is read from ``config`` and baked in.
+    - The number of denoising steps is fixed at export time.
+    - ``prediction_type`` (`epsilon` / `v_prediction` / `sample`) is read from
+      the policy's diffusion config and baked in.
 
-    Supports dynamic batch_size.
+    Supports dynamic batch_size at runtime.
     """
 
     def __init__(self, diffusion_model: DiffusionModel, num_ddim_steps: int) -> None:
-        super().__init__()
+        super().__init__(num_steps=num_ddim_steps)
         self.unet = diffusion_model.unet
         self.prediction_type: str = diffusion_model.config.prediction_type
         self.clip_sample: bool = diffusion_model.config.clip_sample
@@ -105,7 +107,7 @@ class DiffusionDDIMWrapper(nn.Module):
 
         alphas_cumprod = scheduler.alphas_cumprod  # (num_train_timesteps,)
         alpha_t = alphas_cumprod[timesteps]  # (num_ddim_steps,)
-        # prev_timesteps: shift by one step in the schedule
+        # prev_timesteps: shift by one step in the schedule.
         step_ratio = scheduler.config.num_train_timesteps // num_ddim_steps
         prev_timesteps = (timesteps - step_ratio).clamp(min=0)
         alpha_t_prev = alphas_cumprod[prev_timesteps]  # (num_ddim_steps,)
@@ -113,9 +115,17 @@ class DiffusionDDIMWrapper(nn.Module):
         self.register_buffer("timesteps_buf", timesteps)
         self.register_buffer("alpha_t_buf", alpha_t.float())
         self.register_buffer("alpha_t_prev_buf", alpha_t_prev.float())
-        self.num_ddim_steps = num_ddim_steps
 
-    def _ddim_step(self, sample: Tensor, model_output: Tensor, step_idx: int) -> Tensor:
+    def _call_model(self, sample: Tensor, step_idx: int, *cond: Tensor) -> Tensor:
+        """One UNet forward at the given step.
+
+        ``cond`` is expected to be ``(global_cond,)`` — a single (B, D) tensor.
+        """
+        (global_cond,) = cond
+        t = self.timesteps_buf[step_idx : step_idx + 1].expand(sample.shape[0])
+        return self.unet(sample, t, global_cond=global_cond)
+
+    def _step(self, sample: Tensor, model_output: Tensor, step_idx: int) -> Tensor:
         """One deterministic DDIM step (eta=0), implemented as pure tensor math."""
         alpha_t = self.alpha_t_buf[step_idx]
         alpha_t_prev = self.alpha_t_prev_buf[step_idx]
@@ -142,22 +152,6 @@ class DiffusionDDIMWrapper(nn.Module):
 
         pred_sample_direction = (1.0 - alpha_t_prev) ** 0.5 * pred_epsilon
         return alpha_t_prev**0.5 * pred_original + pred_sample_direction
-
-    def forward(self, noise: Tensor, global_cond: Tensor) -> Tensor:
-        """
-        Args:
-            noise:       ``(B, horizon, action_dim)`` Gaussian noise.
-            global_cond: ``(B, global_cond_dim)`` conditioning vector.
-
-        Returns:
-            ``(B, horizon, action_dim)`` denoised action trajectory (all steps baked in).
-        """
-        sample = noise
-        for i in range(self.num_ddim_steps):
-            t = self.timesteps_buf[i : i + 1].expand(sample.shape[0])
-            model_output = self.unet(sample, t, global_cond=global_cond)
-            sample = self._ddim_step(sample, model_output, i)
-        return sample
 
 
 # ──────────────────────────────────────────────────────────────────────────────

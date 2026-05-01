@@ -302,6 +302,98 @@ def test_export_to_tensorrt_raises_without_cuda(tmp_path: Path):
 # ──────────────────────────────────────────────────────────────────────────────
 
 
+def test_validate_onnx_multi_trial(tmp_path: Path):
+    """validate_onnx with num_random_trials runs baseline + N comparisons.
+
+    Uses a tiny linear model that is trivially traceable; both PyTorch and
+    ORT should produce identical outputs across all trials.
+    """
+    from torch import nn
+
+    from lerobot.export.validation import validate_onnx
+
+    class _TinyLinear(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.linear = nn.Linear(4, 2)
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return self.linear(x)
+
+    model = _TinyLinear()
+    model.eval()
+    sample = (torch.zeros(1, 4),)
+    onnx_path = tmp_path / "tiny.onnx"
+
+    with torch.no_grad():
+        torch.onnx.export(
+            model,
+            sample,
+            str(onnx_path),
+            opset_version=18,
+            input_names=["x"],
+            output_names=["y"],
+            dynamic_axes={"x": {0: "batch_size"}, "y": {0: "batch_size"}},
+        )
+
+    results = validate_onnx(
+        wrapper=model,
+        sample_inputs=sample,
+        onnx_path=onnx_path,
+        rtol=1e-4,
+        atol=1e-6,
+        num_random_trials=3,
+        seed=42,
+    )
+
+    assert results["allclose"], f"validation failed: {results}"
+    assert "trials" in results
+    assert len(results["trials"]) == 1 + 3  # baseline + 3 randoms
+    assert results["trials"][0]["trial"] == "baseline"
+    assert results["trials"][1]["trial"] == "random_0"
+    assert results["trials"][3]["trial"] == "random_2"
+    # Aggregated worst values must match the per-trial maxima/minima.
+    assert results["max_abs_error"] == max(t["max_abs_error"] for t in results["trials"])
+    assert results["cos_sim"] == min(t["cos_sim"] for t in results["trials"])
+
+
+def test_validate_onnx_zero_trials_keeps_legacy_shape():
+    """num_random_trials=0 (default) keeps existing single-comparison behaviour."""
+    from torch import nn
+
+    from lerobot.export.validation import validate_onnx
+
+    # Use the same export as above but inline (smallest possible model).
+    class _Identity(nn.Module):
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return x
+
+    model = _Identity()
+    model.eval()
+    sample = (torch.zeros(1, 4),)
+    onnx_path = Path(pytest.importorskip("tempfile").mkdtemp()) / "id.onnx"
+    with torch.no_grad():
+        torch.onnx.export(
+            model,
+            sample,
+            str(onnx_path),
+            opset_version=18,
+            input_names=["x"],
+            output_names=["y"],
+        )
+
+    results = validate_onnx(
+        wrapper=model,
+        sample_inputs=sample,
+        onnx_path=onnx_path,
+        rtol=1e-4,
+        atol=1e-6,
+    )
+    assert len(results["trials"]) == 1
+    assert results["trials"][0]["trial"] == "baseline"
+    assert results["allclose"]
+
+
 def test_onnx_export_invalid_exporter_raises(tmp_path: Path):
     """Invalid exporter value raises ValueError."""
     from torch import nn

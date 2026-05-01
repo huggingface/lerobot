@@ -53,7 +53,14 @@ def make_vqbet_wrapper(policy, cfg):
 - **Does NOT export**: VAE encoder (uses `latent = zeros` at inference), action queue, temporal ensembler.
 - Inputs: `(robot_state, cam_0, cam_1, ...)` — each camera is a separate named ONNX input.
 - Reconstructs `OBS_IMAGES` as a Python list inside `forward()`.
-- **Dynamic batch_size with `exporter=dynamo`**: legacy tracing bakes `torch.zeros([batch_size, latent_dim])` as a B=1 constant. The dynamo path (`torch.export` + `Dim`) symbolicizes it. With `exporter=legacy`, batch_size is fixed at 1.
+- **batch_size in the resulting ONNX**: the legacy tracer bakes
+  `torch.zeros([batch_size, latent_dim])` as a B=1 constant. The dynamo
+  exporter accepts a symbolic `Dim`, but `ACT.forward` still uses concrete
+  `batch_size` values for intermediate allocations, so the exporter ends up
+  specializing to 1 anyway. Both backends therefore produce a fixed-batch
+  ONNX in practice for ACT — see "Verification on real Hub models" for the
+  measured numbers. Removing the model-side batch-dependent allocations is a
+  follow-up.
 
 ### DiffusionUNetWrapper — default mode (`policies/diffusion/export_diffusion.py`)
 
@@ -98,17 +105,82 @@ inside ``lerobot/export/`` are required. The steps:
    def make_<type>_export_wrapper(policy, cfg) -> tuple[nn.Module, ExportSpec]:
        ...
    ```
-3. Use ``lerobot.export.core.make_batch_dynamic_axes_and_shapes`` for the common
-   batch-dynamic case so you don't repeat boilerplate.
+3. **Pick the closest adapter pattern** (see below) instead of writing a
+   bespoke ``nn.Module`` wrapper class.
 4. Add tests at ``tests/policies/test_export_<type>.py``.
-5. (Optional) Add a CLI smoke-test entry to the verification section below.
+
+The reusable adapters live in ``src/lerobot/export/adapters/``.
+
+#### Pattern A: DictBatch — `forward(batch: dict, **kwargs) -> Tensor`
+
+Use for: ACT, VQ-BeT (with ``rollout=True``), SAC actor (with thin pre-wrapping),
+TDMPC encoder, MultiTaskDiT observation_encoder, GR00T (with adapter).
+
+```python
+from lerobot.export.adapters import DictBatchAdapter, DictBatchSpec
+from lerobot.export.core import ExportSpec
+
+def make_my_export_wrapper(policy, cfg):
+    spec = DictBatchSpec(
+        input_feature_keys=[OBS_STATE, "observation.images.cam"],
+        image_keys=["observation.images.cam"],
+        image_convention="stacked",   # or "list" / "single"
+        image_stack_dim=2,             # for VQ-BeT-style (B, n_obs_steps, n_cams, ...)
+        extra_kwargs={"rollout": True},
+        output_index=None,             # or int / dict-key
+    )
+    wrapper = DictBatchAdapter(policy.<network_attr>, spec)
+    sample_inputs = ...   # build zero tensors matching spec.input_feature_keys
+    return wrapper, ExportSpec(...)
+```
 
 Reference implementations:
-- ``src/lerobot/policies/act/export_act.py`` (single-step, multi-camera, uses ACT image-list convention)
-- ``src/lerobot/policies/diffusion/export_diffusion.py`` (single-step UNet *and* unrolled DDIM loop)
+- ``src/lerobot/policies/act/export_act.py`` — single-step list-of-images
+- ``src/lerobot/policies/vqbet/export_vqbet.py`` — multi-step stacked images, `rollout=True`
 
-For third-party policies that live outside the lerobot package, use the
-runtime registration API instead:
+#### Pattern B: Iterative denoising — N-step unrolled loop
+
+Use for: Diffusion (DDIM), MultiTaskDiT, GR00T, flow-matching VLAs (pi0/pi05/smolvla/wall_x).
+
+```python
+from lerobot.export.adapters import IterativeDenoisingAdapter
+
+class MyDenoisingAdapter(IterativeDenoisingAdapter):
+    def __init__(self, model, num_steps):
+        super().__init__(num_steps=num_steps)
+        self.model = model
+        # Register schedule constants (alphas, sigmas, ...) as buffers here.
+        self.register_buffer("alpha_t_buf", ...)
+
+    def _call_model(self, sample, step_idx, *cond):
+        # One model forward at this step.
+        ...
+
+    def _step(self, sample, model_output, step_idx):
+        # Pure-tensor scheduler update.
+        ...
+```
+
+Reference implementation: ``src/lerobot/policies/diffusion/export_diffusion.py:DiffusionDDIMWrapper``.
+
+#### Pattern C: Bespoke single forward
+
+Use for: a single-step submodule whose forward is simple (e.g. Diffusion's
+UNet exposed independently of the scheduler). Subclass ``nn.Module`` directly.
+
+Reference implementation: ``src/lerobot/policies/diffusion/export_diffusion.py:DiffusionUNetWrapper``.
+
+#### Not exportable as a single ONNX module
+
+- **TDMPC**: CEM planning loop is iterative optimization, not a deterministic
+  forward. Export the encoder only as a partial deployment.
+- **pi0_fast**: autoregressive token decoding with KV cache; needs a custom
+  adapter (separate design).
+- **wall_x**: Mixture-of-Experts; ONNX MoE op coverage is limited.
+
+#### Third-party policies (outside lerobot)
+
+Skip the per-policy file convention and register at runtime:
 
 ```python
 from lerobot.export import register_export_wrapper
@@ -166,6 +238,12 @@ After every ONNX export, `validate_onnx()` compares PyTorch vs ONNX Runtime outp
 - **cos_sim** — cosine similarity (1.0 = identical)
 - **allclose** — `torch.allclose(rtol=1e-3, atol=1e-5)` pass/fail
 
+By default a single comparison runs on the baseline sample inputs (zeros). Pass
+`--validation-trials=N` (or `--validation_trials=N` in draccus underscore form)
+to run N additional comparisons with random Gaussian inputs (same shapes/dtypes
+as the baseline). The aggregated result reports the worst max_abs_error and the
+minimum cos_sim across all trials.
+
 ---
 
 ## File Structure
@@ -178,22 +256,29 @@ src/lerobot/
     __init__.py                # Public API
     core.py                    # ExportSpec, registry, make_export_wrapper (auto-discovery),
                                # make_batch_dynamic_axes_and_shapes helper
-    sample_inputs.py           # make_zero_inputs_from_features (generic helper for new policies)
+    adapters/                  # Reusable adapter primitives
+      __init__.py
+      dict_batch.py            # DictBatchAdapter + DictBatchSpec (Pattern A)
+      iterative.py             # IterativeDenoisingAdapter ABC (Pattern B)
+    sample_inputs.py           # make_zero_inputs_from_features (generic helper)
     onnx_export.py             # auto / dynamo / legacy branching
     tensorrt_export.py         # export_to_tensorrt() via trtexec subprocess
-    validation.py              # validate_onnx() — cos_sim + max_abs_err
+    validation.py              # validate_onnx() — cos_sim + max_abs_err + multi-trial
     normalization.py           # save_normalization_stats(), NormalizedWrapper
   policies/
     act/
-      export_act.py            # ACT-specific wrapper, factory, sample inputs
+      export_act.py            # ACT factory using DictBatchAdapter (Pattern A)
     diffusion/
-      export_diffusion.py      # Diffusion (UNet-only / DDIM) wrappers and factory
+      export_diffusion.py      # DiffusionUNetWrapper (C) + DiffusionDDIMWrapper (B)
+    vqbet/
+      export_vqbet.py          # VQ-BeT factory using DictBatchAdapter (Pattern A)
 
 tests/
   test_export.py               # Framework-level tests (registry, helpers, normalization, TRT)
   policies/
     test_export_act.py         # Per-policy ACT export tests
     test_export_diffusion.py   # Per-policy Diffusion export tests
+    test_export_vqbet.py       # Per-policy VQ-BeT export tests
 ```
 
 ## Modified Files
@@ -324,11 +409,87 @@ exports/act/
 
 ---
 
+## Verification on real Hub models
+
+End-to-end runs against pretrained checkpoints downloaded from the HuggingFace
+Hub, on macOS / CPU (Python 3.12, PyTorch 2.7+, opset 18). Both runs use the
+new `--validation_trials=5` flag (baseline + 5 random-input parity checks).
+
+### `lerobot/act_aloha_sim_insertion_human` (ACT, ~207 MB)
+
+```bash
+uv run lerobot-export \
+  --policy.path=lerobot/act_aloha_sim_insertion_human \
+  --output_path=./outputs/verify_act \
+  --device=cpu \
+  --exporter=legacy \
+  --validation_trials=5
+```
+
+Result:
+```
+Validation PASSED (baseline + 5 random trial(s)):
+  worst max_abs_error = 2.09e-06
+  min cos_sim         = 1.000000
+  allclose(rtol=1e-3, atol=1e-5) = True
+```
+
+ONNX I/O contract (verified independently with `onnxruntime`):
+- Inputs: `observation_state: (1, 14)`, `observation_images_top: (1, 3, 480, 640)`
+- Output: `action_chunk: (1, 100, 14)`
+- Shapes are fixed at batch_size=1.
+
+**Note on `--exporter=dynamo` for ACT**: `--exporter=dynamo` also runs to
+completion on this checkpoint (validation likewise PASSED, max_abs_error
+2.09e-06), but the resulting ONNX still has `batch_size=1` baked in. The
+specialization happens because `ACT.forward` allocates
+`torch.zeros([batch_size, latent_dim])` and a few other batch-dependent
+intermediates inside the model code, which causes `torch.export` to bind the
+symbolic `Dim` to its concrete trace value. Genuine batch>1 export for ACT
+needs an upstream change to `ACT.forward` (e.g. preallocating those tensors
+as buffers); that is out of scope for this PR.
+
+### `lerobot/diffusion_pusht` (Diffusion UNet, ~1.0 GB)
+
+```bash
+uv run lerobot-export \
+  --policy.path=lerobot/diffusion_pusht \
+  --output_path=./outputs/verify_diffusion \
+  --device=cpu \
+  --validation_trials=5
+```
+
+Result:
+```
+Validation PASSED (baseline + 5 random trial(s)):
+  worst max_abs_error = 9.06e-06
+  min cos_sim         = 1.000000
+  allclose(rtol=1e-3, atol=1e-5) = True
+```
+
+ONNX I/O contract (verified independently with `onnxruntime`, batch_size=4):
+- Inputs: `sample: (batch_size, 16, 2)`, `timestep: (batch_size,) int64`, `global_cond: (batch_size, 132)`
+- Output: `denoised: (batch_size, 16, 2)`
+- All inputs / outputs are dynamic over `batch_size`.
+
+### Notes
+
+- These older Hub checkpoints do not ship the new `policy_preprocessor.json`
+  format; the CLI logs a warning and falls back to processors built from the
+  config alone, so `normalization_stats.json` ends up empty (`{}`). Newer
+  models trained with the current pipeline (e.g. `lerobot/smolvla_base`) ship
+  the canonical artifacts and produce real stats.
+- TensorRT engine builds are out of scope for this verification (no CUDA on the
+  host). The ONNX → TRT path is exercised by `tests/test_export.py` via the
+  hardware-guard error path only; full GPU verification will land in a CI job.
+
+---
+
 ## Known Limitations and Follow-up Opportunities
 
 | Limitation | Status |
 |---|---|
-| ACT batch_size=1 under legacy tracing | **Resolved**: use `--exporter=dynamo` (default `auto`). |
+| ACT batch_size > 1 | **Not resolved by exporter switch alone**: even `--exporter=dynamo` produces a fixed batch_size=1 ONNX because of `torch.zeros([batch_size, ...])` calls inside `ACT.forward`. Requires modifying `ACT.forward` to remove the batch-dependent intermediates (preallocate as buffers). |
 | TDMPC | Out of scope; encoder-only export possible via `register_export_wrapper`. |
 | VLA models (PI0, SmoLVLA) | Out of scope; reference reflex-vla for guidance, register custom factory. |
 | VQBET / SAC | Out of scope; register custom factory bypassing queues / actor-critic. |

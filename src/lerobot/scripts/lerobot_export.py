@@ -49,12 +49,9 @@ lerobot-export --policy.path=lerobot/act_pusht_image --fold-normalization
 ```
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
 
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
@@ -90,14 +87,21 @@ class ExportConfig:
     # ONNX opset version (18 = native LayerNorm + better attention coverage).
     opset_version: int = 18
 
-    # ONNX exporter backend:
+    # ONNX exporter backend; one of:
     #   "auto"   — try the dynamo path, fall back to legacy with a warning on failure.
     #   "dynamo" — use torch.onnx.export(..., dynamo=True). Required for ACT batch_size > 1.
     #   "legacy" — use the TorchScript-based tracer. Only supports batch_size=1 for ACT.
-    exporter: Literal["auto", "dynamo", "legacy"] = "auto"
+    exporter: str = "auto"
 
     # Run numerical parity validation after ONNX export.
     validate: bool = True
+
+    # Number of additional random-input parity checks (in addition to the
+    # baseline zero-tensor comparison). Higher = stronger fidelity evidence.
+    validation_trials: int = 0
+
+    # Seed for the random-input generator used by validation_trials.
+    validation_seed: int = 0
 
     # Relative tolerance for torch.allclose during validation.
     rtol: float = 1e-3
@@ -127,6 +131,12 @@ class ExportConfig:
     diffusion_mode: str = "unet-only"
 
     def __post_init__(self) -> None:
+        if self.exporter not in {"auto", "dynamo", "legacy"}:
+            raise ValueError(
+                f"Invalid --exporter='{self.exporter}'. "
+                "Use 'auto', 'dynamo', or 'legacy'."
+            )
+
         policy_path = parser.get_path_arg("policy")
         if policy_path:
             cli_overrides = parser.get_cli_overrides("policy")
@@ -168,10 +178,23 @@ def export_policy(cfg: ExportConfig) -> None:
     # ── Load processor pipelines (separate from policy weights) ────────────────
     # `from_pretrained` only loads model weights — preprocessors must be loaded
     # explicitly. They carry the normalization stats we need for the export.
-    preprocessor, postprocessor = make_pre_post_processors(
-        policy_cfg=cfg.policy,
-        pretrained_path=str(cfg.policy.pretrained_path),
-    )
+    # Older Hub checkpoints predate the processor-pipeline format and only ship
+    # `model.safetensors` + `config.json`; in that case fall back to building
+    # processors from the config alone (without dataset stats).
+    try:
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy_cfg=cfg.policy,
+            pretrained_path=str(cfg.policy.pretrained_path),
+        )
+    except FileNotFoundError as exc:
+        logger.warning(
+            "Could not load saved processor pipelines from %s (%s). "
+            "Falling back to processors built from config alone — normalization "
+            "stats will be empty.",
+            cfg.policy.pretrained_path,
+            exc,
+        )
+        preprocessor, postprocessor = make_pre_post_processors(policy_cfg=cfg.policy)
 
     # ── Output directory ──────────────────────────────────────────────────────
     output_dir = Path(cfg.output_path)
@@ -214,6 +237,8 @@ def export_policy(cfg: ExportConfig) -> None:
             onnx_path=onnx_path,
             rtol=cfg.rtol,
             atol=cfg.atol,
+            num_random_trials=cfg.validation_trials,
+            seed=cfg.validation_seed,
         )
         if not results["allclose"]:
             logger.warning(

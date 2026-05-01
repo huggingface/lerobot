@@ -114,6 +114,7 @@ def export_to_onnx(
                 output_names=spec.output_names,
                 dynamic_axes=spec.dynamic_axes,
                 do_constant_folding=True,
+                dynamo=False,  # explicit: PyTorch 2.7+ may default this to True
             )
 
     if exporter == "dynamo":

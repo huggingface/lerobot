@@ -33,13 +33,11 @@ pytest.importorskip("onnxruntime", reason="onnxruntime not installed — skip AC
 pytest.importorskip("torchvision", reason="torchvision required for ACT backbone")
 
 from lerobot.configs.types import FeatureType, PolicyFeature  # noqa: E402
+from lerobot.export.adapters import DictBatchAdapter  # noqa: E402
 from lerobot.export.core import make_export_wrapper  # noqa: E402
 from lerobot.export.onnx_export import export_to_onnx  # noqa: E402
 from lerobot.export.validation import validate_onnx  # noqa: E402
-from lerobot.policies.act.export_act import (  # noqa: E402
-    ACTInferenceWrapper,
-    make_act_export_wrapper,
-)
+from lerobot.policies.act.export_act import make_act_export_wrapper  # noqa: E402
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE  # noqa: E402
 
 _STATE_DIM = 6
@@ -81,10 +79,10 @@ class _Cfg:
     batch_size = 1
 
 
-def test_act_wrapper_forward():
-    """ACTInferenceWrapper.forward returns (1, chunk_size, action_dim)."""
+def test_act_adapter_forward_shape():
+    """The DictBatchAdapter built for ACT returns (1, chunk_size, action_dim)."""
     policy = _make_act_policy()
-    wrapper = ACTInferenceWrapper(policy.model, policy.config)
+    wrapper, _ = make_act_export_wrapper(policy, _Cfg())
     wrapper.eval()
     state = torch.zeros(1, _STATE_DIM)
     with torch.no_grad():
@@ -93,18 +91,27 @@ def test_act_wrapper_forward():
 
 
 def test_make_act_export_wrapper_returns_correct_spec():
-    """The factory produces an ExportSpec with the expected structure."""
+    """The factory produces an ExportSpec aligned with the DictBatchAdapter.
+
+    ``DictBatchAdapter.forward`` uses ``*positional`` varargs, so torch.export
+    sees a single packed-tuple parameter. dynamic_shapes therefore wraps the
+    per-input dim specs in a one-element outer tuple.
+    """
     policy = _make_act_policy()
     wrapper, spec = make_act_export_wrapper(policy, _Cfg())
 
-    assert isinstance(wrapper, ACTInferenceWrapper)
+    assert isinstance(wrapper, DictBatchAdapter)
     assert spec.input_names == ["observation_state", "observation_images_cam"]
     assert spec.output_names == ["action_chunk"]
     assert len(spec.sample_inputs) == 2
-    # dynamic_shapes must align with positional inputs (tuple form).
+
     assert spec.dynamic_shapes is not None
-    assert len(spec.dynamic_shapes) == 2
-    for shape_spec in spec.dynamic_shapes:
+    # Outer structure: (varargs_spec,)
+    assert len(spec.dynamic_shapes) == 1
+    varargs_spec = spec.dynamic_shapes[0]
+    assert isinstance(varargs_spec, tuple)
+    assert len(varargs_spec) == 2  # state + 1 camera
+    for shape_spec in varargs_spec:
         assert 0 in shape_spec
 
 
@@ -112,7 +119,7 @@ def test_act_auto_discovery_via_make_export_wrapper():
     """make_export_wrapper finds policies/act/export_act.py via convention."""
     policy = _make_act_policy()
     wrapper, spec = make_export_wrapper(policy, _Cfg())
-    assert isinstance(wrapper, ACTInferenceWrapper)
+    assert isinstance(wrapper, DictBatchAdapter)
     assert spec.output_names == ["action_chunk"]
 
 

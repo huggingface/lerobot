@@ -39,20 +39,28 @@ from lerobot.policies.diffusion.export_diffusion import (  # noqa: E402
     DiffusionUNetWrapper,
     _get_global_cond_dim,
 )
-from lerobot.utils.constants import ACTION, OBS_STATE  # noqa: E402
+from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE  # noqa: E402
 
 _STATE_DIM = 6
 _ACTION_DIM = 6
+_IMG_C, _IMG_H, _IMG_W = 3, 96, 96
 
 
 def _make_diffusion_policy():
-    """Build a fresh Diffusion policy from a minimal toy config (no pretrained weights)."""
+    """Build a fresh Diffusion policy from a minimal toy config (no pretrained weights).
+
+    DiffusionConfig.validate_features requires at least one image or env_state,
+    so we always include a single tiny image feature.
+    """
     from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
     from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
 
     cfg = DiffusionConfig(
         input_features={
             OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(_STATE_DIM,)),
+            f"{OBS_IMAGES}.cam": PolicyFeature(
+                type=FeatureType.VISUAL, shape=(_IMG_C, _IMG_H, _IMG_W)
+            ),
         },
         output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(_ACTION_DIM,))},
         horizon=16,
