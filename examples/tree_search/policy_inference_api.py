@@ -64,6 +64,8 @@ class PolicyInferenceConfig:
     env: envs.EnvConfig
     policy: PreTrainedConfig | None = None
     steps: int = 20
+    n_episodes: int = 1
+    output_dir: Path = Path("outputs/tree_search/search_eval")
     planner: str = "baseline"
     chunk_size: int = 15
     search_num_candidates: int = 4
@@ -81,7 +83,9 @@ class PolicyInferenceConfig:
     task_id: int | None = None
     seed: int | None = 1000
     video_path: Path | None = None
+    max_episodes_rendered: int = 1
     trace_dir: Path | None = None
+    max_traces: int = 1
     trace_save_step_images: bool = True
     search_verbose: bool = False
     reward_model_checkpoint: Path | None = None
@@ -270,6 +274,29 @@ def _select_env(
         raise ValueError(f"Unknown task_id '{task_id}' for suite '{suite}'. Available: {list(task_envs)}")
 
     return suite, task_id, task_envs[task_id]
+
+
+def _iter_selected_envs(
+    envs_dict: dict[str, dict[int, gym.vector.VectorEnv]],
+    *,
+    suite: str | None,
+    task_id: int | None,
+) -> list[tuple[str, int, gym.vector.VectorEnv]]:
+    suite_names = [suite] if suite is not None else list(envs_dict)
+    selected: list[tuple[str, int, gym.vector.VectorEnv]] = []
+    for suite_name in suite_names:
+        if suite_name not in envs_dict:
+            raise ValueError(f"Unknown suite '{suite_name}'. Available suites: {list(envs_dict)}")
+        task_envs = envs_dict[suite_name]
+        task_ids = [task_id] if task_id is not None else list(task_envs)
+        for selected_task_id in task_ids:
+            if selected_task_id not in task_envs:
+                raise ValueError(
+                    f"Unknown task_id '{selected_task_id}' for suite '{suite_name}'. "
+                    f"Available: {list(task_envs)}"
+                )
+            selected.append((suite_name, int(selected_task_id), task_envs[int(selected_task_id)]))
+    return selected
 
 
 def _extract_success(info: Mapping[str, Any]) -> bool:
@@ -806,7 +833,7 @@ def _rollout_action_sequence(
     max_actions = min(len(actions), max(0, max_steps - start_env_step))
     for action_index, action in enumerate(actions[:max_actions]):
         observation, reward, terminated, truncated, info = _step_base_env_no_reset(base_env, action)
-        step_success = bool(info.get("is_success", False))
+        step_success = _extract_success(info)
         success = success or step_success
         rewards.append(float(reward))
 
@@ -1583,46 +1610,66 @@ def _apply_deprecated_search_aliases(cfg: PolicyInferenceConfig) -> None:
         setattr(cfg, replacement_name, value)
 
 
-@parser.wrap()
-def main(cfg: PolicyInferenceConfig) -> None:
-    if cfg.planner not in {"baseline", "mcts", "best_first"}:
-        raise ValueError("`planner` must be one of: baseline, mcts, best_first")
-    _apply_deprecated_search_aliases(cfg)
-    if cfg.chunk_size <= 0:
-        raise ValueError("`chunk_size` must be positive.")
-    if cfg.mcts_depth <= 0:
-        raise ValueError("`mcts_depth` must be positive.")
-    if cfg.mcts_simulations <= 0:
-        raise ValueError("`mcts_simulations` must be positive.")
-    if cfg.search_num_candidates <= 0:
-        raise ValueError("`search_num_candidates` must be positive.")
-    if cfg.search_noise_mode not in {"iid", "chunk", "mixed"}:
-        raise ValueError("`search_noise_mode` must be one of: iid, chunk, mixed.")
-    if cfg.best_first_expansions <= 0:
-        raise ValueError("`best_first_expansions` must be positive.")
-    if cfg.best_first_depth <= 0:
-        raise ValueError("`best_first_depth` must be positive.")
+def _artifact_paths_for_episode(
+    cfg: PolicyInferenceConfig,
+    *,
+    suite: str,
+    task_id: int,
+    episode_ix: int,
+    global_episode_ix: int,
+    total_episodes: int,
+) -> tuple[Path | None, Path | None]:
+    safe_suite = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in suite)
+    suffix = f"{safe_suite}_task{task_id:03d}_episode{episode_ix:03d}"
 
-    set_seed(cfg.seed)
-    action_api, envs_dict = make_action_api(cfg)
-    suite, task_id, env = _select_env(envs_dict, suite=cfg.suite, task_id=cfg.task_id)
+    trace_dir = None
+    if cfg.trace_dir is not None and (cfg.max_traces < 0 or global_episode_ix < cfg.max_traces):
+        trace_dir = cfg.trace_dir if total_episodes == 1 else cfg.trace_dir / suffix
+
+    video_path = None
+    if cfg.video_path is not None and (
+        cfg.max_episodes_rendered < 0 or global_episode_ix < cfg.max_episodes_rendered
+    ):
+        video_path = (
+            cfg.video_path
+            if total_episodes == 1
+            else cfg.video_path.with_name(f"{cfg.video_path.stem}_{suffix}{cfg.video_path.suffix or '.mp4'}")
+        )
+    return trace_dir, video_path
+
+
+def _run_search_episode(
+    *,
+    cfg: PolicyInferenceConfig,
+    action_api: LeRobotActionAPI,
+    env: gym.vector.VectorEnv,
+    suite: str,
+    task_id: int,
+    episode_ix: int,
+    global_episode_ix: int,
+    episode_seed: int | None,
+    scorer: RewardModelScorer,
+    trace_dir: Path | None,
+    video_path: Path | None,
+) -> dict[str, Any]:
     if env.num_envs != 1:
-        raise ValueError(f"This example only supports a single environment, got env.num_envs={env.num_envs}.")
+        raise ValueError(f"Search evaluation only supports single-env rollouts, got env.num_envs={env.num_envs}.")
 
     base_env = _get_single_base_env(env)
     task = _infer_task(env)
-    rng = np.random.default_rng(cfg.seed)
-    scorer = RewardModelScorer(cfg, device=action_api.device)
+    rng = np.random.default_rng(episode_seed)
     trace = TraceRecorder(
-        cfg.trace_dir,
+        trace_dir,
         run_metadata={
             "planner": cfg.planner,
             "chunk_size": cfg.chunk_size,
             "suite": suite,
             "task_id": task_id,
+            "episode_ix": episode_ix,
+            "global_episode_ix": global_episode_ix,
             "task": task,
             "steps": cfg.steps,
-            "seed": cfg.seed,
+            "seed": episode_seed,
             "policy": str(cfg.policy.pretrained_path) if cfg.policy is not None else None,
             "search_num_candidates": cfg.search_num_candidates,
             "search_noise_std": cfg.search_noise_std,
@@ -1641,26 +1688,16 @@ def main(cfg: PolicyInferenceConfig) -> None:
         },
     )
 
-    logger.info(
-        "Running planner=%s single-env inference on suite=%s task_id=%s chunk_size=%s "
-        "reward_model=%s search_verbose=%s",
-        cfg.planner,
-        suite,
-        task_id,
-        cfg.chunk_size,
-        cfg.reward_model_checkpoint,
-        cfg.search_verbose,
-    )
-
+    start = time.time()
     try:
         action_api.reset()
-        if cfg.seed is None:
+        if episode_seed is None:
             observation, _ = env.reset()
         else:
-            observation, _ = env.reset(seed=[cfg.seed])
+            observation, _ = env.reset(seed=[episode_seed])
 
         video_frames: list[np.ndarray] = []
-        if cfg.video_path is not None:
+        if video_path is not None:
             video_frames.append(_render_single_env_frame(env))
 
         done = False
@@ -1671,7 +1708,9 @@ def main(cfg: PolicyInferenceConfig) -> None:
 
         env_step = 0
         macro_step = 0
-        last_reward_sum = 0.0
+        episode_reward_sum = 0.0
+        episode_max_reward = -float("inf")
+        last_score = 0.0
         baseline_parent_id: str | None = None
         committed_scene_history: list[np.ndarray] = []
         while env_step < max_steps and not done:
@@ -1755,11 +1794,15 @@ def main(cfg: PolicyInferenceConfig) -> None:
                 max_steps=max_steps,
                 trace=trace,
                 save_step_images=cfg.trace_save_step_images,
-                collect_frames=cfg.video_path is not None,
+                collect_frames=video_path is not None,
                 step_image_prefix=f"commit_{macro_step:04d}",
             )
-            if cfg.video_path is not None:
+            if video_path is not None:
                 video_frames.extend(rollout.frames)
+
+            episode_reward_sum += rollout.reward_sum
+            if rollout.rewards:
+                episode_max_reward = max(episode_max_reward, max(rollout.rewards))
 
             endpoint_score = _score_state(
                 scorer=scorer,
@@ -1777,6 +1820,7 @@ def main(cfg: PolicyInferenceConfig) -> None:
                 },
                 scene_history=committed_scene_history,
             )
+            last_score = endpoint_score.score
             if endpoint_score.images:
                 committed_scene_history = scorer.extend_scene_history(
                     committed_scene_history,
@@ -1829,44 +1873,217 @@ def main(cfg: PolicyInferenceConfig) -> None:
             observation = rollout.observation
             env_step += rollout.action_count
             macro_step += 1
-            last_reward_sum = rollout.reward_sum
             done = rollout.terminated or rollout.truncated or rollout.action_count == 0
             success = success or rollout.success
             logger.info(
-                "macro_step=%s env_step=%s reward_sum=%s done=%s success=%s "
-                "action_chunk_shape=%s score=%.3f score_reason=%r plan_info=%s",
+                "suite=%s task_id=%s episode=%s macro_step=%s env_step=%s reward_sum=%.3f "
+                "done=%s success=%s score=%.3f",
+                suite,
+                task_id,
+                episode_ix,
                 macro_step - 1,
                 env_step,
-                last_reward_sum,
+                episode_reward_sum,
                 done,
                 success,
-                actions.shape,
                 endpoint_score.score,
-                endpoint_score.reason[:180],
-                plan_info,
             )
+
+        if episode_max_reward == -float("inf"):
+            episode_max_reward = 0.0
 
         summary = {
             "planner": cfg.planner,
             "suite": suite,
             "task_id": task_id,
+            "episode_ix": episode_ix,
+            "global_episode_ix": global_episode_ix,
             "task": task,
             "steps": env_step,
             "macro_steps": macro_step,
             "success": success,
-            "last_reward_sum": last_reward_sum,
-            "trace_dir": str(cfg.trace_dir) if cfg.trace_dir is not None else None,
+            "sum_reward": episode_reward_sum,
+            "max_reward": episode_max_reward,
+            "last_score": last_score,
+            "trace_dir": str(trace_dir) if trace_dir is not None else None,
         }
         trace.write_tree(summary=summary)
-        logger.info("Finished after %s step(s), %s macro step(s). success=%s", env_step, macro_step, success)
-        if cfg.video_path is not None and video_frames:
-            cfg.video_path.parent.mkdir(parents=True, exist_ok=True)
+        if video_path is not None and video_frames:
+            video_path.parent.mkdir(parents=True, exist_ok=True)
             fps = _infer_render_fps(env, fallback=cfg.env.fps)
-            write_video(str(cfg.video_path), np.stack(video_frames), fps)
-            logger.info("Saved rollout video to %s", cfg.video_path)
+            write_video(str(video_path), np.stack(video_frames), fps)
+            logger.info("Saved rollout video to %s", video_path)
+
+        return {
+            "episode_ix": episode_ix,
+            "global_episode_ix": global_episode_ix,
+            "suite": suite,
+            "task_id": task_id,
+            "task": task,
+            "seed": episode_seed,
+            "sum_reward": float(episode_reward_sum),
+            "max_reward": float(episode_max_reward),
+            "success": bool(success),
+            "steps": int(env_step),
+            "macro_steps": int(macro_step),
+            "last_score": float(last_score),
+            "eval_s": float(time.time() - start),
+            "video_path": str(video_path) if video_path is not None and video_frames else None,
+            "trace_dir": str(trace_dir) if trace_dir is not None else None,
+        }
     finally:
         trace.close()
+
+
+def _mean(values: Sequence[Any]) -> float:
+    if not values:
+        return float("nan")
+    return float(np.nanmean(np.asarray(values, dtype=float)))
+
+
+def _aggregate_episode_records(records: list[dict[str, Any]], *, elapsed_s: float | None = None) -> dict[str, Any]:
+    aggregate = {
+        "avg_sum_reward": _mean([record["sum_reward"] for record in records]),
+        "avg_max_reward": _mean([record["max_reward"] for record in records]),
+        "pc_success": _mean([record["success"] for record in records]) * 100 if records else float("nan"),
+        "n_episodes": len(records),
+        "video_paths": [record["video_path"] for record in records if record.get("video_path")],
+    }
+    if elapsed_s is not None:
+        aggregate["eval_s"] = float(elapsed_s)
+        aggregate["eval_ep_s"] = float(elapsed_s / max(1, len(records)))
+    return aggregate
+
+
+@parser.wrap()
+def main(cfg: PolicyInferenceConfig) -> None:
+    if cfg.planner not in {"baseline", "mcts", "best_first"}:
+        raise ValueError("`planner` must be one of: baseline, mcts, best_first")
+    _apply_deprecated_search_aliases(cfg)
+    if cfg.chunk_size <= 0:
+        raise ValueError("`chunk_size` must be positive.")
+    if cfg.mcts_depth <= 0:
+        raise ValueError("`mcts_depth` must be positive.")
+    if cfg.mcts_simulations <= 0:
+        raise ValueError("`mcts_simulations` must be positive.")
+    if cfg.search_num_candidates <= 0:
+        raise ValueError("`search_num_candidates` must be positive.")
+    if cfg.search_noise_mode not in {"iid", "chunk", "mixed"}:
+        raise ValueError("`search_noise_mode` must be one of: iid, chunk, mixed.")
+    if cfg.best_first_expansions <= 0:
+        raise ValueError("`best_first_expansions` must be positive.")
+    if cfg.best_first_depth <= 0:
+        raise ValueError("`best_first_depth` must be positive.")
+    if cfg.n_episodes <= 0:
+        raise ValueError("`n_episodes` must be positive.")
+
+    set_seed(cfg.seed)
+    cfg.output_dir.mkdir(parents=True, exist_ok=True)
+    action_api, envs_dict = make_action_api(cfg)
+    scorer = RewardModelScorer(cfg, device=action_api.device)
+    selected_envs = _iter_selected_envs(envs_dict, suite=cfg.suite, task_id=cfg.task_id)
+    total_episodes = len(selected_envs) * cfg.n_episodes
+    logger.info(
+        "Running sequential search eval planner=%s tasks=%s n_episodes=%s total_episodes=%s "
+        "chunk_size=%s reward_model=%s",
+        cfg.planner,
+        len(selected_envs),
+        cfg.n_episodes,
+        total_episodes,
+        cfg.chunk_size,
+        cfg.reward_model_checkpoint,
+    )
+
+    start_t = time.time()
+    all_records: list[dict[str, Any]] = []
+    per_task: list[dict[str, Any]] = []
+    try:
+        global_episode_ix = 0
+        for suite, task_id, env in selected_envs:
+            task_records: list[dict[str, Any]] = []
+            for episode_ix in range(cfg.n_episodes):
+                episode_seed = None if cfg.seed is None else int(cfg.seed) + global_episode_ix
+                trace_dir, video_path = _artifact_paths_for_episode(
+                    cfg,
+                    suite=suite,
+                    task_id=task_id,
+                    episode_ix=episode_ix,
+                    global_episode_ix=global_episode_ix,
+                    total_episodes=total_episodes,
+                )
+                record = _run_search_episode(
+                    cfg=cfg,
+                    action_api=action_api,
+                    env=env,
+                    suite=suite,
+                    task_id=task_id,
+                    episode_ix=episode_ix,
+                    global_episode_ix=global_episode_ix,
+                    episode_seed=episode_seed,
+                    scorer=scorer,
+                    trace_dir=trace_dir,
+                    video_path=video_path,
+                )
+                task_records.append(record)
+                all_records.append(record)
+                global_episode_ix += 1
+                running_success = _mean([item["success"] for item in all_records]) * 100
+                logger.info(
+                    "search eval progress episode=%s/%s suite=%s task_id=%s success=%s "
+                    "running_success_rate=%.1f%%",
+                    global_episode_ix,
+                    total_episodes,
+                    suite,
+                    task_id,
+                    record["success"],
+                    running_success,
+                )
+
+            per_task.append(
+                {
+                    "task_group": suite,
+                    "task_id": task_id,
+                    "metrics": {
+                        "sum_rewards": [record["sum_reward"] for record in task_records],
+                        "max_rewards": [record["max_reward"] for record in task_records],
+                        "successes": [record["success"] for record in task_records],
+                        "video_paths": [
+                            record["video_path"] for record in task_records if record.get("video_path")
+                        ],
+                        "trace_dirs": [
+                            record["trace_dir"] for record in task_records if record.get("trace_dir")
+                        ],
+                        "per_episode": task_records,
+                        "aggregated": _aggregate_episode_records(task_records),
+                    },
+                }
+            )
+    finally:
         close_envs(envs_dict)
+
+    elapsed_s = time.time() - start_t
+    per_group: dict[str, dict[str, Any]] = {}
+    for suite_name in sorted({record["suite"] for record in all_records}):
+        per_group[suite_name] = _aggregate_episode_records(
+            [record for record in all_records if record["suite"] == suite_name]
+        )
+    overall = _aggregate_episode_records(all_records, elapsed_s=elapsed_s)
+    info = {
+        "per_task": per_task,
+        "per_group": per_group,
+        "overall": overall,
+        "per_episode": all_records,
+    }
+    info_path = cfg.output_dir / "eval_info.json"
+    with info_path.open("w") as f:
+        json.dump(_to_jsonable(info), f, indent=2)
+
+    print("Overall Aggregated Metrics:")
+    print(json.dumps(_to_jsonable(overall), indent=2))
+    for suite_name, suite_info in per_group.items():
+        print(f"\nAggregated Metrics for {suite_name}:")
+        print(json.dumps(_to_jsonable(suite_info), indent=2))
+    logger.info("Wrote search eval info to %s", info_path)
 
 
 if __name__ == "__main__":
