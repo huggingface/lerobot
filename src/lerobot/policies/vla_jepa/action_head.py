@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 import torch
 import torch.nn.functional as F
@@ -203,7 +202,9 @@ class VLAJEPAActionHead(nn.Module):
             else None
         )
         self.future_tokens = nn.Embedding(config.num_action_tokens_per_timestep, config.action_hidden_size)
-        self.position_embedding = nn.Embedding(config.chunk_size + config.num_action_tokens_per_timestep + 4, config.action_hidden_size)
+        self.position_embedding = nn.Embedding(
+            config.chunk_size + config.num_action_tokens_per_timestep + 4, config.action_hidden_size
+        )
         self.beta_dist = Beta(config.action_noise_beta_alpha, config.action_noise_beta_beta)
 
     def sample_time(self, batch_size: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
@@ -268,7 +269,9 @@ class VLAJEPAActionHead(nn.Module):
         for step in range(self.num_inference_timesteps):
             t_cont = step / float(max(self.num_inference_timesteps, 1))
             t_value = int(t_cont * self.config.action_num_timestep_buckets)
-            timesteps = torch.full((batch_size,), t_value, device=conditioning_tokens.device, dtype=torch.long)
+            timesteps = torch.full(
+                (batch_size,), t_value, device=conditioning_tokens.device, dtype=torch.long
+            )
             hidden_states = self._build_inputs(conditioning_tokens, actions, state, timesteps)
             pred = self.model(
                 hidden_states=hidden_states,

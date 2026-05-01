@@ -27,12 +27,14 @@ class VLAJEPAConfig(PreTrainedConfig):
     jepa_encoder_name: str = "facebook/vjepa2-vitl-fpc64-256"
 
     tokenizer_padding_side: str = "left"
-    prompt_template: str = "{instruction}\n\nPredict {actions} and condition future prediction with {e_actions}."
+    prompt_template: str = (
+        "{instruction}\n\nPredict {actions} and condition future prediction with {e_actions}."
+    )
     special_action_token: str = "<|action_{}|>"
     embodied_action_token: str = "<|embodied_action|>"
 
     action_dim: int = 7
-    state_dim: int = 7
+    state_dim: int = 8
     future_action_window_size: int = 15
     past_action_window_size: int = 0
     num_action_tokens_per_timestep: int = 4
@@ -42,7 +44,7 @@ class VLAJEPAConfig(PreTrainedConfig):
     action_hidden_size: int = 1024
     action_model_type: str = "DiT-B"
     action_num_layers: int = 12
-    action_num_heads: int = 12
+    action_num_heads: int = 16
     action_attention_head_dim: int = 64
     action_dropout: float = 0.1
     action_num_timestep_buckets: int = 1000
