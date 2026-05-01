@@ -13,12 +13,18 @@
 # limitations under the License.
 """ONNX / TensorRT export utilities for LeRobot policies."""
 
-from .core import ExportSpec, make_export_wrapper, register_export_wrapper
+from .core import (
+    ExportSpec,
+    make_batch_dynamic_axes_and_shapes,
+    make_export_wrapper,
+    register_export_wrapper,
+)
 from .onnx_export import export_to_onnx
 from .validation import validate_onnx
 
 __all__ = [
     "ExportSpec",
+    "make_batch_dynamic_axes_and_shapes",
     "make_export_wrapper",
     "register_export_wrapper",
     "export_to_onnx",

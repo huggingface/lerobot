@@ -12,63 +12,32 @@ Users running trained policies on Jetson-class devices need an optimized inferen
 
 ## Architecture
 
-### Registry-based dispatch
+### Per-policy co-location with auto-discovery
+
+ONNX export adapters live next to each policy module under
+``src/lerobot/policies/<type>/export_<type>.py`` — same convention as
+``modeling_<type>.py`` / ``configuration_<type>.py`` / ``processor_<type>.py``.
+``make_export_wrapper`` resolves them by naming convention + dynamic import.
 
 ```python
 # core.py
-WRAPPER_REGISTRY: dict[str, WrapperFactory] = {
-    "act":       _make_act_wrapper,       # registered via setdefault on first lookup
-    "diffusion": _make_diffusion_wrapper,
-}
-
 def make_export_wrapper(policy, cfg) -> (nn.Module, ExportSpec):
-    factory = WRAPPER_REGISTRY.get(policy.config.type)
-    if factory is None:
-        return _make_generic_wrapper(policy, cfg)  # ACT-clone fallback only
-    return factory(policy, cfg)
+    policy_type = policy.config.type
 
-# Plugin API for third-party / follow-up PRs:
-@register_export_wrapper("vqbet")
-def make_vqbet_wrapper(policy, cfg):
-    return VQBeTStatelessWrapper(policy), ExportSpec(...)
+    # 1. Explicit registration (third-party / runtime overrides) wins.
+    if policy_type in WRAPPER_REGISTRY:
+        return WRAPPER_REGISTRY[policy_type](policy, cfg)
+
+    # 2. Auto-discover via convention.
+    factory = _try_load_builtin_factory(policy_type)
+    if factory is not None:
+        return factory(policy, cfg)
+
+    # 3. Otherwise raise NotImplementedError with a clear extension guide.
+    raise NotImplementedError(...)
 ```
 
-### ACTInferenceWrapper (`wrappers.py`)
-
-- **Exports**: ResNet backbone + Transformer encoder/decoder + action head.
-- **Does NOT export**: VAE encoder (uses `latent = zeros` at inference), action queue, temporal ensembler.
-- Inputs: `(robot_state, cam_0, cam_1, ...)` — each camera is a separate named ONNX input.
-- Reconstructs `OBS_IMAGES` as a Python list inside `forward()`.
-- **Dynamic batch_size with `exporter=dynamo`**: legacy tracing bakes `torch.zeros([batch_size, latent_dim])` as a B=1 constant. The dynamo path (`torch.export` + `Dim`) symbolicizes it. With `exporter=legacy`, batch_size is fixed at 1.
-
-### DiffusionUNetWrapper — default mode (`wrappers.py`)
-
-- Exports only `DiffusionConditionalUnet1d` — a single denoising step.
-- Inputs: `(sample, timestep, global_cond)` → dynamic batch_size supported on both exporter paths.
-- Caller runs the DDPM/DDIM loop in Python and calls this model at each step.
-- Caller computes `global_cond` via `policy.diffusion._prepare_global_conditioning(batch)`.
-
-### DiffusionDDIMWrapper — full loop mode (`wrappers.py`)
-
-- Activated with `--diffusion-mode=ddim-N` where N is the number of steps.
-- DDIM step is pure tensor math → traceable at export time.
-- Loop is **unrolled** N times in `forward()` so the full denoising trajectory is a single ONNX graph.
-- DDIM schedule (alpha/beta buffers) pre-computed and registered as ONNX constants.
-- Restriction: deterministic DDIM only (eta=0). Number of steps is **fixed** at export time.
-- Requires `noise_scheduler_type='DDIM'` in the Diffusion config.
-
-### GenericPolicyWrapper — strict fallback (`wrappers.py`)
-
-The generic fallback supports only ACT-clone style policies (`hasattr(policy, "model")` AND `n_obs_steps == 1` AND callable `policy.model`). For known-incompatible types it raises `NotImplementedError` with a clear pointer to the registration API:
-
-| Policy | Reason rejected |
-|---|---|
-| SAC | No `.model` attribute (uses `actor` / `critic`) |
-| VQBET | `model.forward(batch, rollout: bool)` signature mismatch |
-| TDMPC | Model decomposed into `encode/pi/dynamics`; planning loop not traceable |
-| PI0, PI0_Fast, SmoLVLA | `forward()` takes 7+ positional tensors, not a dict |
-
-For these types, register a custom factory:
+Plugin API for third-party packages or runtime overrides:
 
 ```python
 from lerobot.export import register_export_wrapper
@@ -77,6 +46,79 @@ from lerobot.export import register_export_wrapper
 def make_vqbet_wrapper(policy, cfg):
     return VQBeTStatelessWrapper(policy), ExportSpec(...)
 ```
+
+### ACTInferenceWrapper (`policies/act/export_act.py`)
+
+- **Exports**: ResNet backbone + Transformer encoder/decoder + action head.
+- **Does NOT export**: VAE encoder (uses `latent = zeros` at inference), action queue, temporal ensembler.
+- Inputs: `(robot_state, cam_0, cam_1, ...)` — each camera is a separate named ONNX input.
+- Reconstructs `OBS_IMAGES` as a Python list inside `forward()`.
+- **Dynamic batch_size with `exporter=dynamo`**: legacy tracing bakes `torch.zeros([batch_size, latent_dim])` as a B=1 constant. The dynamo path (`torch.export` + `Dim`) symbolicizes it. With `exporter=legacy`, batch_size is fixed at 1.
+
+### DiffusionUNetWrapper — default mode (`policies/diffusion/export_diffusion.py`)
+
+- Exports only `DiffusionConditionalUnet1d` — a single denoising step.
+- Inputs: `(sample, timestep, global_cond)` → dynamic batch_size supported on both exporter paths.
+- Caller runs the DDPM/DDIM loop in Python and calls this model at each step.
+- Caller computes `global_cond` via `policy.diffusion._prepare_global_conditioning(batch)`.
+
+### DiffusionDDIMWrapper — full loop mode (`policies/diffusion/export_diffusion.py`)
+
+- Activated with `--diffusion-mode=ddim-N` where N is the number of steps.
+- DDIM step is pure tensor math → traceable at export time.
+- Loop is **unrolled** N times in `forward()` so the full denoising trajectory is a single ONNX graph.
+- DDIM schedule (alpha/beta buffers) pre-computed and registered as ONNX constants.
+- Restriction: deterministic DDIM only (eta=0). Number of steps is **fixed** at export time.
+- Requires `noise_scheduler_type='DDIM'` in the Diffusion config.
+
+### Unsupported policies — explicit `NotImplementedError`
+
+For policies without a corresponding ``export_<type>.py``, ``make_export_wrapper``
+raises ``NotImplementedError`` with concrete instructions on how to add support.
+There is no silent fallback: the generic ACT-clone wrapper has been removed in
+favor of an honest "unsupported" signal, because:
+
+| Policy | Why a generic wrapper does not work |
+|---|---|
+| SAC | No `.model` attribute (uses `actor` / `critic`) |
+| VQBET | `model.forward(batch, rollout: bool)` signature mismatch |
+| TDMPC | Model decomposed into `encode/pi/dynamics`; planning loop not traceable |
+| PI0, PI0_Fast, SmoLVLA | `forward()` takes 7+ positional tensors, not a dict |
+
+For these (and any other) types, see the next section.
+
+### How to add export support for a new policy
+
+Adding ONNX export for a new policy type is a **localized change** — no edits
+inside ``lerobot/export/`` are required. The steps:
+
+1. Create ``src/lerobot/policies/<type>/export_<type>.py``.
+2. Define a function with the canonical name:
+   ```python
+   def make_<type>_export_wrapper(policy, cfg) -> tuple[nn.Module, ExportSpec]:
+       ...
+   ```
+3. Use ``lerobot.export.core.make_batch_dynamic_axes_and_shapes`` for the common
+   batch-dynamic case so you don't repeat boilerplate.
+4. Add tests at ``tests/policies/test_export_<type>.py``.
+5. (Optional) Add a CLI smoke-test entry to the verification section below.
+
+Reference implementations:
+- ``src/lerobot/policies/act/export_act.py`` (single-step, multi-camera, uses ACT image-list convention)
+- ``src/lerobot/policies/diffusion/export_diffusion.py`` (single-step UNet *and* unrolled DDIM loop)
+
+For third-party policies that live outside the lerobot package, use the
+runtime registration API instead:
+
+```python
+from lerobot.export import register_export_wrapper
+
+@register_export_wrapper("my_external_policy")
+def make_my_external_policy_export_wrapper(policy, cfg):
+    return MyWrapper(policy), ExportSpec(...)
+```
+
+Explicit registration takes precedence over auto-discovery.
 
 ### ONNX exporter backends (`onnx_export.py`)
 
@@ -134,17 +176,24 @@ src/lerobot/
     lerobot_export.py          # CLI entry point (ExportConfig + export_policy())
   export/
     __init__.py                # Public API
-    core.py                    # ExportSpec (dynamic_axes + dynamic_shapes), registry
-    wrappers.py                # ACTInferenceWrapper, DiffusionUNetWrapper,
-                               # DiffusionDDIMWrapper, GenericPolicyWrapper
-    sample_inputs.py           # make_sample_inputs() — policy-aware zero tensors
+    core.py                    # ExportSpec, registry, make_export_wrapper (auto-discovery),
+                               # make_batch_dynamic_axes_and_shapes helper
+    sample_inputs.py           # make_zero_inputs_from_features (generic helper for new policies)
     onnx_export.py             # auto / dynamo / legacy branching
     tensorrt_export.py         # export_to_tensorrt() via trtexec subprocess
     validation.py              # validate_onnx() — cos_sim + max_abs_err
     normalization.py           # save_normalization_stats(), NormalizedWrapper
+  policies/
+    act/
+      export_act.py            # ACT-specific wrapper, factory, sample inputs
+    diffusion/
+      export_diffusion.py      # Diffusion (UNet-only / DDIM) wrappers and factory
 
 tests/
-  test_export.py               # Unit tests (CPU, toy configs, no real backbone weights)
+  test_export.py               # Framework-level tests (registry, helpers, normalization, TRT)
+  policies/
+    test_export_act.py         # Per-policy ACT export tests
+    test_export_diffusion.py   # Per-policy Diffusion export tests
 ```
 
 ## Modified Files
