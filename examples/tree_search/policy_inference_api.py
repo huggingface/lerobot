@@ -1710,6 +1710,9 @@ def _run_search_episode(
         macro_step = 0
         episode_reward_sum = 0.0
         episode_max_reward = -float("inf")
+        episode_plan_s = 0.0
+        episode_rollout_s = 0.0
+        episode_score_s = 0.0
         last_score = 0.0
         baseline_parent_id: str | None = None
         committed_scene_history: list[np.ndarray] = []
@@ -1722,6 +1725,7 @@ def _run_search_episode(
                 )
 
             baseline_root: dict[str, Any] | None = None
+            plan_start = time.time()
             if cfg.planner == "baseline":
                 root_score = _score_state(
                     scorer=scorer,
@@ -1786,7 +1790,10 @@ def _run_search_episode(
                     max_env_steps=max_steps,
                     scene_history=committed_scene_history,
                 )
+            macro_plan_s = time.time() - plan_start
+            episode_plan_s += macro_plan_s
 
+            rollout_start = time.time()
             rollout = _rollout_action_sequence(
                 base_env=base_env,
                 actions=actions,
@@ -1797,6 +1804,8 @@ def _run_search_episode(
                 collect_frames=video_path is not None,
                 step_image_prefix=f"commit_{macro_step:04d}",
             )
+            macro_rollout_s = time.time() - rollout_start
+            episode_rollout_s += macro_rollout_s
             if video_path is not None:
                 video_frames.extend(rollout.frames)
 
@@ -1804,6 +1813,7 @@ def _run_search_episode(
             if rollout.rewards:
                 episode_max_reward = max(episode_max_reward, max(rollout.rewards))
 
+            score_start = time.time()
             endpoint_score = _score_state(
                 scorer=scorer,
                 image=rollout.frame,
@@ -1820,6 +1830,8 @@ def _run_search_episode(
                 },
                 scene_history=committed_scene_history,
             )
+            macro_score_s = time.time() - score_start
+            episode_score_s += macro_score_s
             last_score = endpoint_score.score
             if endpoint_score.images:
                 committed_scene_history = scorer.extend_scene_history(
@@ -1865,6 +1877,12 @@ def _run_search_episode(
                     "truncated": rollout.truncated,
                     "score": endpoint_score.score,
                     "score_reason": endpoint_score.reason,
+                    "macro_plan_s": macro_plan_s,
+                    "macro_rollout_s": macro_rollout_s,
+                    "macro_score_s": macro_score_s,
+                    "episode_plan_s": episode_plan_s,
+                    "episode_rollout_s": episode_rollout_s,
+                    "episode_score_s": episode_score_s,
                     "plan_info": plan_info,
                     "step_records": rollout.step_records,
                 }
@@ -1877,7 +1895,7 @@ def _run_search_episode(
             success = success or rollout.success
             logger.info(
                 "suite=%s task_id=%s episode=%s macro_step=%s env_step=%s reward_sum=%.3f "
-                "done=%s success=%s score=%.3f",
+                "done=%s success=%s score=%.3f plan_s=%.2f rollout_s=%.2f score_s=%.2f",
                 suite,
                 task_id,
                 episode_ix,
@@ -1887,6 +1905,9 @@ def _run_search_episode(
                 done,
                 success,
                 endpoint_score.score,
+                episode_plan_s,
+                episode_rollout_s,
+                episode_score_s,
             )
 
         if episode_max_reward == -float("inf"):
@@ -1905,6 +1926,10 @@ def _run_search_episode(
             "sum_reward": episode_reward_sum,
             "max_reward": episode_max_reward,
             "last_score": last_score,
+            "plan_s": episode_plan_s,
+            "rollout_s": episode_rollout_s,
+            "score_s": episode_score_s,
+            "eval_s": float(time.time() - start),
             "trace_dir": str(trace_dir) if trace_dir is not None else None,
         }
         trace.write_tree(summary=summary)
@@ -1928,6 +1953,9 @@ def _run_search_episode(
             "macro_steps": int(macro_step),
             "last_score": float(last_score),
             "eval_s": float(time.time() - start),
+            "plan_s": float(episode_plan_s),
+            "rollout_s": float(episode_rollout_s),
+            "score_s": float(episode_score_s),
             "video_path": str(video_path) if video_path is not None and video_frames else None,
             "trace_dir": str(trace_dir) if trace_dir is not None else None,
         }
@@ -1942,16 +1970,33 @@ def _mean(values: Sequence[Any]) -> float:
 
 
 def _aggregate_episode_records(records: list[dict[str, Any]], *, elapsed_s: float | None = None) -> dict[str, Any]:
+    total_plan_s = float(sum(float(record.get("plan_s", 0.0)) for record in records))
+    total_rollout_s = float(sum(float(record.get("rollout_s", 0.0)) for record in records))
+    total_score_s = float(sum(float(record.get("score_s", 0.0)) for record in records))
+    total_macro_steps = int(sum(int(record.get("macro_steps", 0)) for record in records))
     aggregate = {
         "avg_sum_reward": _mean([record["sum_reward"] for record in records]),
         "avg_max_reward": _mean([record["max_reward"] for record in records]),
         "pc_success": _mean([record["success"] for record in records]) * 100 if records else float("nan"),
         "n_episodes": len(records),
+        "total_macro_steps": total_macro_steps,
+        "total_plan_s": total_plan_s,
+        "total_rollout_s": total_rollout_s,
+        "total_score_s": total_score_s,
+        "avg_plan_s_per_episode": total_plan_s / max(1, len(records)),
+        "avg_rollout_s_per_episode": total_rollout_s / max(1, len(records)),
+        "avg_score_s_per_episode": total_score_s / max(1, len(records)),
+        "avg_plan_s_per_macro_step": total_plan_s / max(1, total_macro_steps),
+        "avg_rollout_s_per_macro_step": total_rollout_s / max(1, total_macro_steps),
+        "avg_score_s_per_macro_step": total_score_s / max(1, total_macro_steps),
         "video_paths": [record["video_path"] for record in records if record.get("video_path")],
     }
     if elapsed_s is not None:
         aggregate["eval_s"] = float(elapsed_s)
         aggregate["eval_ep_s"] = float(elapsed_s / max(1, len(records)))
+        aggregate["plan_fraction"] = float(total_plan_s / elapsed_s) if elapsed_s > 0 else float("nan")
+        aggregate["rollout_fraction"] = float(total_rollout_s / elapsed_s) if elapsed_s > 0 else float("nan")
+        aggregate["score_fraction"] = float(total_score_s / elapsed_s) if elapsed_s > 0 else float("nan")
     return aggregate
 
 
@@ -2077,6 +2122,9 @@ def main(cfg: PolicyInferenceConfig) -> None:
     info_path = cfg.output_dir / "eval_info.json"
     with info_path.open("w") as f:
         json.dump(_to_jsonable(info), f, indent=2)
+    overall_path = cfg.output_dir / "overall_metrics.json"
+    with overall_path.open("w") as f:
+        json.dump(_to_jsonable(overall), f, indent=2)
 
     print("Overall Aggregated Metrics:")
     print(json.dumps(_to_jsonable(overall), indent=2))
@@ -2084,6 +2132,7 @@ def main(cfg: PolicyInferenceConfig) -> None:
         print(f"\nAggregated Metrics for {suite_name}:")
         print(json.dumps(_to_jsonable(suite_info), indent=2))
     logger.info("Wrote search eval info to %s", info_path)
+    logger.info("Wrote overall metrics to %s", overall_path)
 
 
 if __name__ == "__main__":
