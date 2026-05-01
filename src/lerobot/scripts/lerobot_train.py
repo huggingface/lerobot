@@ -255,8 +255,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         # Only provide dataset_stats when not resuming from saved processor state
         processor_kwargs["dataset_stats"] = dataset.meta.stats
 
-    # For SARM, always provide dataset_meta for progress normalization
-    if cfg.policy.type == "sarm":
+    # For SARM (incl. ext plugin), always provide dataset_meta for progress normalization
+    if cfg.policy.type == "sarm" or cfg.policy.type.startswith("sarm_"):
         processor_kwargs["dataset_meta"] = dataset.meta
 
     if cfg.policy.pretrained_path is not None:
@@ -433,6 +433,14 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
         if is_log_step:
             logging.info(train_tracker)
+            if output_dict:
+                # Log SARM diagnostics (entropy, argmax dist) if present
+                diag_keys = ["sparse_stage_entropy", "sparse_argmax_frac0",
+                             "sparse_argmax_frac_max", "sparse_gt_frac0",
+                             "dense_stage_entropy", "dense_argmax_frac_max"]
+                diag_parts = [f"{k}={output_dict[k]:.3f}" for k in diag_keys if k in output_dict]
+                if diag_parts:
+                    logging.info("[SARM_DIAG] " + " ".join(diag_parts))
             if wandb_logger:
                 wandb_log_dict = train_tracker.to_dict()
                 if output_dict:
