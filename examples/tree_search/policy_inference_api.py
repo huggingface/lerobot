@@ -479,6 +479,7 @@ class RewardModelScorer:
         self.model = None
         self.processor: RewardBatchProcessor | None = None
         self.model_cfg = None
+        self.scene_temporal_window = 1
         self.device = torch.device(device)
 
         if cfg.reward_model_checkpoint is None:
@@ -487,8 +488,56 @@ class RewardModelScorer:
         model, model_cfg, _ = load_reward_model_checkpoint(cfg.reward_model_checkpoint, device=self.device)
         self.model = model
         self.model_cfg = model_cfg
+        self.scene_temporal_window = max(1, int(getattr(model_cfg, "scene_temporal_window", 1)))
         self.processor = RewardBatchProcessor(model_cfg)
-        logger.info("Loaded reward model checkpoint: %s", cfg.reward_model_checkpoint)
+        logger.info(
+            "Loaded reward model checkpoint: %s scene_temporal_window=%s",
+            cfg.reward_model_checkpoint,
+            self.scene_temporal_window,
+        )
+
+    def extend_scene_history(
+        self,
+        scene_history: Sequence[np.ndarray] | None,
+        current_scene: np.ndarray,
+    ) -> list[np.ndarray]:
+        history = list(scene_history or [])
+        history.append(np.asarray(current_scene).copy())
+        return history[-self.scene_temporal_window :]
+
+    def prior_history_for_current(self, scene_history: Sequence[np.ndarray] | None) -> list[np.ndarray]:
+        history = list(scene_history or [])
+        if not history:
+            return []
+        return history[:-1]
+
+    def _scene_images_for_score(
+        self,
+        *,
+        scene_history: Sequence[np.ndarray] | None,
+        current_scene: np.ndarray,
+    ) -> list[np.ndarray]:
+        sequence = [np.asarray(image).copy() for image in list(scene_history or [])]
+        sequence.append(np.asarray(current_scene).copy())
+        sequence = sequence[-self.scene_temporal_window :]
+        if len(sequence) < self.scene_temporal_window:
+            sequence = [sequence[0]] * (self.scene_temporal_window - len(sequence)) + sequence
+        return sequence
+
+    def current_scene_image(
+        self,
+        *,
+        image: np.ndarray,
+        observation: Mapping[str, Any] | None,
+    ) -> np.ndarray:
+        scene = _first_observation_image(observation, self.scene_image_keys)
+        if scene is None and self.use_rendered_fallback:
+            rendered = _image_array(image)
+            if rendered is not None:
+                scene = ("rendered_overview", rendered)
+        if scene is None:
+            raise ValueError(f"Could not find scene image from keys={self.scene_image_keys}.")
+        return scene[1]
 
     def score(
         self,
@@ -498,6 +547,7 @@ class RewardModelScorer:
         task: str,
         success: bool,
         metadata: Mapping[str, Any],
+        scene_history: Sequence[np.ndarray] | None = None,
     ) -> ScoreResult:
         scene = _first_observation_image(observation, self.scene_image_keys)
         if scene is None and self.use_rendered_fallback:
@@ -513,6 +563,10 @@ class RewardModelScorer:
             "task": task,
             "label": 0.0,
             "scene_image": scene[1],
+            "scene_images": self._scene_images_for_score(
+                scene_history=scene_history,
+                current_scene=scene[1],
+            ),
         }
         if wrist is not None:
             sample["wrist_image"] = wrist[1]
@@ -526,6 +580,9 @@ class RewardModelScorer:
             **dict(metadata),
             "score_image_labels": [label for label, _ in score_images],
             "has_proprioception": proprioception is not None,
+            "scene_temporal_window": self.scene_temporal_window,
+            "scene_temporal_count": len(sample["scene_images"]),
+            "scene_history_count": len(scene_history or []),
         }
         if success:
             return ScoreResult(
@@ -919,6 +976,7 @@ def _score_state(
     task: str,
     success: bool,
     metadata: Mapping[str, Any],
+    scene_history: Sequence[np.ndarray] | None = None,
 ) -> ScoreResult:
     return scorer.score(
         image=image,
@@ -926,6 +984,7 @@ def _score_state(
         task=task,
         success=success,
         metadata=metadata,
+        scene_history=scene_history,
     )
 
 
@@ -937,6 +996,7 @@ def _expand_search_node(
     child_edges: dict[str, dict[str, Any]],
     states_by_id: dict[str, np.ndarray],
     observations_by_id: dict[str, Mapping[str, Any]],
+    scene_histories_by_id: dict[str, list[np.ndarray]],
     base_env: gym.Env,
     vector_env: gym.vector.VectorEnv,
     action_api: LeRobotActionAPI,
@@ -1019,6 +1079,7 @@ def _expand_search_node(
                 "depth": int(node["depth"]) + 1,
                 "reward_sum": rollout.reward_sum,
             },
+            scene_history=scene_histories_by_id.get(node["id"], []),
         )
         if cfg.search_verbose:
             logger.info(
@@ -1072,6 +1133,13 @@ def _expand_search_node(
         child_edges[child["id"]] = edge
         states_by_id[child["id"]] = rollout.state
         observations_by_id[child["id"]] = rollout.observation
+        if score.images:
+            scene_histories_by_id[child["id"]] = scorer.extend_scene_history(
+                scene_histories_by_id.get(node["id"], []),
+                score.images[0][1],
+            )
+        else:
+            scene_histories_by_id[child["id"]] = list(scene_histories_by_id.get(node["id"], []))
         created_children.append(child)
 
     _restore_base_env(base_env, node_state, timestep=int(node["env_step"]))
@@ -1091,6 +1159,7 @@ def plan_mcts_action_chunk(
     cfg: PolicyInferenceConfig,
     rng: np.random.Generator,
     max_env_steps: int,
+    scene_history: Sequence[np.ndarray] | None = None,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     root_state = _snapshot_base_env(base_env)
     root_frame = _render_base_env_frame(base_env)
@@ -1101,6 +1170,7 @@ def plan_mcts_action_chunk(
         task=task,
         success=False,
         metadata={"planner": "mcts", "root": True, "env_step": env_step},
+        scene_history=scorer.prior_history_for_current(scene_history),
     )
     if cfg.search_verbose:
         logger.info(
@@ -1126,6 +1196,14 @@ def plan_mcts_action_chunk(
     child_edges: dict[str, dict[str, Any]] = {}
     states_by_id = {root["id"]: root_state}
     observations_by_id = {root["id"]: observation}
+    scene_histories_by_id = {
+        root["id"]: scorer.extend_scene_history(
+            scorer.prior_history_for_current(scene_history),
+            root_score.images[0][1],
+        )
+        if root_score.images
+        else list(scene_history or [])
+    }
 
     for simulation_ix in range(cfg.mcts_simulations):
         if cfg.search_verbose:
@@ -1157,6 +1235,7 @@ def plan_mcts_action_chunk(
                 child_edges=child_edges,
                 states_by_id=states_by_id,
                 observations_by_id=observations_by_id,
+                scene_histories_by_id=scene_histories_by_id,
                 base_env=base_env,
                 vector_env=vector_env,
                 action_api=action_api,
@@ -1273,6 +1352,7 @@ def plan_best_first_action_chunk(
     cfg: PolicyInferenceConfig,
     rng: np.random.Generator,
     max_env_steps: int,
+    scene_history: Sequence[np.ndarray] | None = None,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     root_state = _snapshot_base_env(base_env)
     root_frame = _render_base_env_frame(base_env)
@@ -1283,6 +1363,7 @@ def plan_best_first_action_chunk(
         task=task,
         success=False,
         metadata={"planner": "best_first", "root": True, "env_step": env_step},
+        scene_history=scorer.prior_history_for_current(scene_history),
     )
     if cfg.search_verbose:
         logger.info(
@@ -1308,6 +1389,14 @@ def plan_best_first_action_chunk(
     child_edges: dict[str, dict[str, Any]] = {}
     states_by_id = {root["id"]: root_state}
     observations_by_id = {root["id"]: observation}
+    scene_histories_by_id = {
+        root["id"]: scorer.extend_scene_history(
+            scorer.prior_history_for_current(scene_history),
+            root_score.images[0][1],
+        )
+        if root_score.images
+        else list(scene_history or [])
+    }
 
     frontier: list[tuple[float, int, int, str]] = []
     push_ix = 0
@@ -1356,6 +1445,7 @@ def plan_best_first_action_chunk(
             child_edges=child_edges,
             states_by_id=states_by_id,
             observations_by_id=observations_by_id,
+            scene_histories_by_id=scene_histories_by_id,
             base_env=base_env,
             vector_env=vector_env,
             action_api=action_api,
@@ -1583,8 +1673,14 @@ def main(cfg: PolicyInferenceConfig) -> None:
         macro_step = 0
         last_reward_sum = 0.0
         baseline_parent_id: str | None = None
+        committed_scene_history: list[np.ndarray] = []
         while env_step < max_steps and not done:
             root_frame = _render_base_env_frame(base_env)
+            if not committed_scene_history:
+                committed_scene_history = scorer.extend_scene_history(
+                    [],
+                    scorer.current_scene_image(image=root_frame, observation=observation),
+                )
 
             baseline_root: dict[str, Any] | None = None
             if cfg.planner == "baseline":
@@ -1600,6 +1696,7 @@ def main(cfg: PolicyInferenceConfig) -> None:
                         "env_step": env_step,
                         "root": True,
                     },
+                    scene_history=scorer.prior_history_for_current(committed_scene_history),
                 )
                 baseline_root = trace.add_node(
                     parent_id=baseline_parent_id,
@@ -1633,6 +1730,7 @@ def main(cfg: PolicyInferenceConfig) -> None:
                     cfg=cfg,
                     rng=rng,
                     max_env_steps=max_steps,
+                    scene_history=committed_scene_history,
                 )
             else:
                 actions, plan_info = plan_best_first_action_chunk(
@@ -1647,6 +1745,7 @@ def main(cfg: PolicyInferenceConfig) -> None:
                     cfg=cfg,
                     rng=rng,
                     max_env_steps=max_steps,
+                    scene_history=committed_scene_history,
                 )
 
             rollout = _rollout_action_sequence(
@@ -1676,7 +1775,13 @@ def main(cfg: PolicyInferenceConfig) -> None:
                     "plan_info": plan_info,
                     "reward_sum": rollout.reward_sum,
                 },
+                scene_history=committed_scene_history,
             )
+            if endpoint_score.images:
+                committed_scene_history = scorer.extend_scene_history(
+                    committed_scene_history,
+                    endpoint_score.images[0][1],
+                )
 
             if cfg.planner == "baseline" and baseline_root is not None:
                 child = trace.add_node(
