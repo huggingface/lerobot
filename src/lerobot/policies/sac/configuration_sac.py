@@ -47,6 +47,29 @@ class ConcurrencyConfig:
 
 
 @dataclass
+class ReplayMixingConfig:
+    """Controls how online and offline replay are mixed during RL updates."""
+
+    # Keep current behavior by default: 50/50 online-offline when offline data is available.
+    mode: str = "fixed"
+    online_ratio: float = 0.5
+    final_online_ratio: float = 1.0
+    schedule_steps: int = 250_000
+    keep_minimum_offline_samples: bool = True
+
+    def __post_init__(self) -> None:
+        valid_modes = {"fixed", "linear"}
+        if self.mode not in valid_modes:
+            raise ValueError(f"Replay mixing mode must be one of {sorted(valid_modes)}, got {self.mode!r}")
+        if not (0.0 <= self.online_ratio <= 1.0):
+            raise ValueError(f"online_ratio must be in [0, 1], got {self.online_ratio}")
+        if not (0.0 <= self.final_online_ratio <= 1.0):
+            raise ValueError(f"final_online_ratio must be in [0, 1], got {self.final_online_ratio}")
+        if self.schedule_steps <= 0:
+            raise ValueError(f"schedule_steps must be > 0, got {self.schedule_steps}")
+
+
+@dataclass
 class ActorLearnerConfig:
     learner_host: str = "127.0.0.1"
     learner_port: int = 50051
@@ -192,6 +215,8 @@ class SACConfig(PreTrainedConfig):
     actor_learner_config: ActorLearnerConfig = field(default_factory=ActorLearnerConfig)
     # Configuration for concurrency settings (you can use threads or processes for the actor and learner)
     concurrency: ConcurrencyConfig = field(default_factory=ConcurrencyConfig)
+    # Configuration for dynamic online/offline replay sampling.
+    replay_mixing: ReplayMixingConfig = field(default_factory=ReplayMixingConfig)
 
     # Optimizations
     use_torch_compile: bool = True
