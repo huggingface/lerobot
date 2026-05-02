@@ -17,10 +17,22 @@ Helper to set motor ids and baudrate.
 
 Example:
 
+Default: setup all the motors sequentially
+
 ```shell
 lerobot-setup-motors \
     --teleop.type=so100_leader \
     --teleop.port=/dev/tty.usbmodem575E0031751
+```
+
+Optional: setup specific motors by passing a list of motor names (e.g. "shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_pan", "gripper")
+This is useful when you have to replace a motor and don't want to redo the setup for the existing motors.
+
+```shell
+lerobot-setup-motors \
+    --teleop.type=so100_leader \
+    --teleop.port=/dev/tty.usbmodem575E0031751 \
+    --motors=[shoulder_pan,elbow_flex]
 ```
 """
 
@@ -65,10 +77,15 @@ COMPATIBLE_DEVICES = [
 class SetupConfig:
     teleop: TeleoperatorConfig | None = None
     robot: RobotConfig | None = None
+    motors: list[str] | None = None
 
     def __post_init__(self):
         if bool(self.teleop) == bool(self.robot):
             raise ValueError("Choose either a teleop or a robot.")
+        if self.motors is not None and len(self.motors) == 0:
+            raise ValueError(
+                "--motors flag is provided but the list is empty. Remove it or provide at least one motor name."
+            )
 
         self.device = self.robot if self.robot else self.teleop
 
@@ -83,7 +100,7 @@ def setup_motors(cfg: SetupConfig):
     else:
         device = make_teleoperator_from_config(cfg.device)
 
-    device.setup_motors()
+    device.setup_motors(motors=cfg.motors)
 
 
 def main():

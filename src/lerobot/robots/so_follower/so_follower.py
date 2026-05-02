@@ -168,8 +168,19 @@ class SOFollower(Robot):
                     self.bus.write("Protection_Current", motor, 250)  # 50% of max current to avoid burnout
                     self.bus.write("Overload_Torque", motor, 25)  # 25% torque when overloaded
 
-    def setup_motors(self) -> None:
-        for motor in reversed(self.bus.motors):
+    def setup_motors(self, motors: list[str] | None = None) -> None:
+        motors_to_setup: dict[str, Motor] = self.bus.motors
+
+        if motors is not None:
+            motors_to_setup = {}
+            for motor in motors:
+                if motor not in self.bus.motors:
+                    raise ValueError(
+                        f"Motor '{motor}' not found in the bus. Available motors: {list(self.bus.motors.keys())}"
+                    )
+                motors_to_setup[motor] = self.bus.motors[motor]
+
+        for motor in reversed(motors_to_setup):
             input(f"Connect the controller board to the '{motor}' motor only and press enter.")
             self.bus.setup_motor(motor)
             print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")

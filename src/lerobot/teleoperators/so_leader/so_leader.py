@@ -1,4 +1,4 @@
-# !/usr/bin/env python
+#!/usr/bin/env python
 
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
@@ -130,8 +130,19 @@ class SOLeader(Teleoperator):
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
-    def setup_motors(self) -> None:
-        for motor in reversed(self.bus.motors):
+    def setup_motors(self, motors: list[str] | None = None) -> None:
+        motors_to_setup: dict[str, Motor] = self.bus.motors
+
+        if motors is not None:
+            motors_to_setup = {}
+            for motor in motors:
+                if motor not in self.bus.motors:
+                    raise ValueError(
+                        f"Motor '{motor}' not found in the bus. Available motors: {list(self.bus.motors.keys())}"
+                    )
+                motors_to_setup[motor] = self.bus.motors[motor]
+
+        for motor in reversed(motors_to_setup):
             input(f"Connect the controller board to the '{motor}' motor only and press enter.")
             self.bus.setup_motor(motor)
             print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
