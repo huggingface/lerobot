@@ -59,11 +59,11 @@ def calibrate_partial(
         homing_offset = int(bus.set_half_turn_homings([motor])[motor])
         if motor in full_turn_motors:
             range_min_val, range_max_val = 0, 4095
-            input(
+            print(
                 f"'{motor}' is set as the full turn motor with a fixed range of [0, 4095]. Homing offset was recorded but no further calibration is needed. Press ENTER to continue..."
             )
         else:
-            input(
+            print(
                 f"Move {motor} through its entire range of motion (calibration of other motors won't be affected).\nRecording positions. Press ENTER to stop..."
             )
             range_mins, range_maxs = bus.record_ranges_of_motion([motor])

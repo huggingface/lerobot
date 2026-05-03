@@ -30,12 +30,13 @@ This is useful when you have to replace a motor and don't want to redo the setup
 
 ```shell
 lerobot-setup-motors \
-    --teleop.type=so100_leader \
+    --teleop.type=so101_leader \
     --teleop.port=/dev/tty.usbmodem575E0031751 \
-    --motors=[shoulder_pan,elbow_flex]
+    --motors=shoulder_pan,elbow_flex
 ```
 """
 
+import re
 from dataclasses import dataclass
 
 import draccus
@@ -77,15 +78,25 @@ COMPATIBLE_DEVICES = [
 class SetupConfig:
     teleop: TeleoperatorConfig | None = None
     robot: RobotConfig | None = None
-    motors: list[str] | None = None
+    motors: str | None = (
+        None  # comma-separated list of motor names to set up, e.g. "shoulder_pan,elbow_flex". If not provided, all motors will be set up.
+    )
 
     def __post_init__(self):
         if bool(self.teleop) == bool(self.robot):
             raise ValueError("Choose either a teleop or a robot.")
-        if self.motors is not None and len(self.motors) == 0:
-            raise ValueError(
-                "--motors flag is provided but the list is empty. Remove it or provide at least one motor name."
-            )
+        self.motors_list: list[str] | None = None
+        if self.motors is not None:
+            if not re.fullmatch(r"[\w ,]+", self.motors):
+                raise ValueError(
+                    f"Invalid characters in --motors='{self.motors}'. "
+                    "Use comma-separated names (letters, digits, underscores), e.g. shoulder_pan,elbow_flex"
+                )
+            self.motors_list = [m.strip() for m in self.motors.split(",") if m.strip()]
+            if not self.motors_list:
+                raise ValueError(
+                    "--motors flag is provided but the list is empty. Remove it or provide at least one motor name."
+                )
 
         self.device = self.robot if self.robot else self.teleop
 
@@ -100,7 +111,7 @@ def setup_motors(cfg: SetupConfig):
     else:
         device = make_teleoperator_from_config(cfg.device)
 
-    device.setup_motors(motors=cfg.motors)
+    device.setup_motors(motors=cfg.motors_list)
 
 
 def main():
