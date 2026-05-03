@@ -70,10 +70,15 @@ from lerobot.utils.utils import init_logging
 class CalibrateConfig:
     teleop: TeleoperatorConfig | None = None
     robot: RobotConfig | None = None
+    motors: list[str] | None = None
 
     def __post_init__(self):
         if bool(self.teleop) == bool(self.robot):
             raise ValueError("Choose either a teleop or a robot.")
+        if self.motors is not None and len(self.motors) == 0:
+            raise ValueError(
+                "--motors flag is provided but the list is empty. Remove it or provide at least one motor name."
+            )
 
         self.device = self.robot if self.robot else self.teleop
 
@@ -91,7 +96,7 @@ def calibrate(cfg: CalibrateConfig):
     device.connect(calibrate=False)
 
     try:
-        device.calibrate()
+        device.calibrate(motors=cfg.motors)
     finally:
         device.disconnect()
 
