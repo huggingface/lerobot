@@ -14,59 +14,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from contextlib import contextmanager
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
-from lerobot.motors import MotorCalibration
-from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
+from lerobot.motors import Motor, MotorCalibration
+from lerobot.motors.feetech.calibration import calibrate_partial
 
 
 def _make_bus_mock() -> MagicMock:
-    """Return a bus mock with just the attributes used by the robot."""
     bus = MagicMock(name="FeetechBusMock")
-    bus.is_connected = False
-
-    def _connect():
-        bus.is_connected = True
-
-    def _disconnect(_disable=True):
-        bus.is_connected = False
-
-    bus.connect.side_effect = _connect
-    bus.disconnect.side_effect = _disconnect
-
-    @contextmanager
-    def _dummy_cm():
-        yield
-
-    bus.torque_disabled.side_effect = _dummy_cm
-
+    bus.motors = {
+        name: Motor(i, "sts3215", None)
+        for i, name in enumerate(
+            ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"], 1
+        )
+    }
     return bus
-
-
-@pytest.fixture
-def follower():
-    bus_mock = _make_bus_mock()
-
-    def _bus_side_effect(*_args, **kwargs):
-        bus_mock.motors = kwargs["motors"]
-        bus_mock.is_calibrated = True
-        return bus_mock
-
-    with (
-        patch(
-            "lerobot.robots.so_follower.so_follower.FeetechMotorsBus",
-            side_effect=_bus_side_effect,
-        ),
-        patch.object(SO101Follower, "configure", lambda self: None),
-    ):
-        cfg = SO101FollowerConfig(port="/dev/null")
-        robot = SO101Follower(cfg)
-        yield robot
-        if robot.is_connected:
-            robot.disconnect()
 
 
 def _stub_calibration() -> dict[str, MotorCalibration]:
@@ -86,17 +50,24 @@ def verify_calibration_values(
         assert calibration[motor].range_max == expected_range_max, f"{motor} range_max mismatch"
 
 
-def test_partial_calibration_merges_only_targeted(follower, monkeypatch):
+def test_partial_calibration_merges_only_targeted(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda *_: "")
-    follower.calibration = _stub_calibration()
-    follower.bus.set_half_turn_homings.return_value = {"shoulder_pan": 900}
-    follower.bus.record_ranges_of_motion.return_value = ({"shoulder_pan": 50}, {"shoulder_pan": 3500})
+    bus = _make_bus_mock()
+    bus.set_half_turn_homings.return_value = {"shoulder_pan": 900}
+    bus.record_ranges_of_motion.return_value = ({"shoulder_pan": 50}, {"shoulder_pan": 3500})
+    existing_calibration = _stub_calibration()
 
-    follower.calibrate(motors=["shoulder_pan"])
+    result = calibrate_partial(
+        bus=bus,
+        existing_calibration=existing_calibration,
+        motors=["shoulder_pan"],
+        device_name="test_device",
+        full_turn_motors={"wrist_roll"},
+    )
 
     # the shoulder_pan should be updated, while the other motors should remain unchanged
     verify_calibration_values(
-        follower.calibration,
+        result,
         {
             "shoulder_pan": (50, 900, 3500),
             "shoulder_lift": (10, 100, 4000),
@@ -108,20 +79,27 @@ def test_partial_calibration_merges_only_targeted(follower, monkeypatch):
     )
 
 
-def test_partial_calibration_multiple_motors_merges_only_targeted(follower, monkeypatch):
+def test_partial_calibration_multiple_motors_merges_only_targeted(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda *_: "")
-    follower.calibration = _stub_calibration()
-    follower.bus.set_half_turn_homings.return_value = {"shoulder_pan": 900, "elbow_flex": 800}
-    follower.bus.record_ranges_of_motion.return_value = (
+    bus = _make_bus_mock()
+    bus.set_half_turn_homings.return_value = {"shoulder_pan": 900, "elbow_flex": 800}
+    bus.record_ranges_of_motion.return_value = (
         {"shoulder_pan": 50, "elbow_flex": 60},
         {"shoulder_pan": 3500, "elbow_flex": 3600},
     )
+    existing_calibration = _stub_calibration()
 
-    follower.calibrate(motors=["shoulder_pan", "elbow_flex"])
+    result = calibrate_partial(
+        bus=bus,
+        existing_calibration=existing_calibration,
+        motors=["shoulder_pan", "elbow_flex"],
+        device_name="test_device",
+        full_turn_motors={"wrist_roll"},
+    )
 
-    # only hsoulder_pan and elbow_flex should be updated
+    # only shoulder_pan and elbow_flex should be updated
     verify_calibration_values(
-        follower.calibration,
+        result,
         {
             "shoulder_pan": (50, 900, 3500),
             "shoulder_lift": (10, 100, 4000),
@@ -133,18 +111,25 @@ def test_partial_calibration_multiple_motors_merges_only_targeted(follower, monk
     )
 
 
-def test_partial_calibrate_full_turn_motor(follower, monkeypatch):
+def test_partial_calibrate_full_turn_motor(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda *_: "")
-    follower.calibration = _stub_calibration()
-    follower.bus.set_half_turn_homings.return_value = {"wrist_roll": 777}
+    bus = _make_bus_mock()
+    bus.set_half_turn_homings.return_value = {"wrist_roll": 777}
+    existing_calibration = _stub_calibration()
 
-    follower.calibrate(motors=["wrist_roll"])
+    result = calibrate_partial(
+        bus=bus,
+        existing_calibration=existing_calibration,
+        motors=["wrist_roll"],
+        device_name="test_device",
+        full_turn_motors={"wrist_roll"},
+    )
 
-    follower.bus.record_ranges_of_motion.assert_not_called()
+    bus.record_ranges_of_motion.assert_not_called()
 
     # the wrist_roll homing offset should be updated, but the range should remain unchanged [0, 4095]
     verify_calibration_values(
-        follower.calibration,
+        result,
         {
             "shoulder_pan": (10, 100, 4000),
             "shoulder_lift": (10, 100, 4000),
@@ -156,15 +141,29 @@ def test_partial_calibrate_full_turn_motor(follower, monkeypatch):
     )
 
 
-def test_partial_calibration_requires_existing_calibration(follower, monkeypatch):
+def test_partial_calibration_requires_existing_calibration(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda *_: "")
-    follower.calibration = {}
+    bus = _make_bus_mock()
+    existing_calibration = _stub_calibration()
     with pytest.raises(ValueError):
-        follower.calibrate(motors=["shoulder_pan"])
+        calibrate_partial(
+            bus=bus,
+            existing_calibration=existing_calibration,
+            motors=["shoulder_pan"],
+            device_name="test_device",
+            full_turn_motors={"wrist_roll"},
+        )
 
 
-def test_partial_calibration_unknown_motor(follower, monkeypatch):
+def test_partial_calibration_unknown_motor(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda *_: "")
-    follower.calibration = _stub_calibration()
+    bus = _make_bus_mock()
+    existing_calibration = _stub_calibration()
     with pytest.raises(ValueError):
-        follower.calibrate(motors=["joint_x"])
+        calibrate_partial(
+            bus=bus,
+            existing_calibration=existing_calibration,
+            motors=["joint_x"],
+            device_name="test_device",
+            full_turn_motors={"wrist_roll"},
+        )

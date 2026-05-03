@@ -56,7 +56,7 @@ def calibrate_partial(
     )
     for motor, m in motors_to_calibrate.items():
         input(f"Move {motor} to the middle of its range of motion and press ENTER....")
-        homing_offset = bus.set_half_turn_homings([motor])[motor]
+        homing_offset = int(bus.set_half_turn_homings([motor])[motor])
         if motor in full_turn_motors:
             range_min_val, range_max_val = 0, 4095
             input(
@@ -67,7 +67,7 @@ def calibrate_partial(
                 f"Move {motor} through its entire range of motion (calibration of other motors won't be affected).\nRecording positions. Press ENTER to stop..."
             )
             range_mins, range_maxs = bus.record_ranges_of_motion([motor])
-            range_min_val, range_max_val = range_mins[motor], range_maxs[motor]
+            range_min_val, range_max_val = int(range_mins[motor]), int(range_maxs[motor])
 
         updated_calibration[motor] = MotorCalibration(
             id=m.id,
