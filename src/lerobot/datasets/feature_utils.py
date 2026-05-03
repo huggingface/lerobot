@@ -28,6 +28,7 @@ from .utils import (
     DEFAULT_DATA_PATH,
     DEFAULT_VIDEO_FILE_SIZE_IN_MB,
     DEFAULT_VIDEO_PATH,
+    DatasetInfo,
 )
 
 
@@ -78,8 +79,8 @@ def create_empty_dataset_info(
     chunks_size: int | None = None,
     data_files_size_in_mb: int | None = None,
     video_files_size_in_mb: int | None = None,
-) -> dict:
-    """Create a template dictionary for a new dataset's `info.json`.
+) -> DatasetInfo:
+    """Create a template ``DatasetInfo`` object for a new dataset's ``meta/info.json``.
 
     Args:
         codebase_version (str): The version of the LeRobot codebase.
@@ -87,25 +88,24 @@ def create_empty_dataset_info(
         features (dict): The LeRobot features dictionary for the dataset.
         use_videos (bool): Whether the dataset will store videos.
         robot_type (str | None): The type of robot used, if any.
+        chunks_size (int | None): Max files per chunk directory. Defaults to ``DEFAULT_CHUNK_SIZE``.
+        data_files_size_in_mb (int | None): Max parquet file size in MB. Defaults to ``DEFAULT_DATA_FILE_SIZE_IN_MB``.
+        video_files_size_in_mb (int | None): Max video file size in MB. Defaults to ``DEFAULT_VIDEO_FILE_SIZE_IN_MB``.
 
     Returns:
-        dict: A dictionary with the initial dataset metadata.
+        DatasetInfo: A typed dataset information object with initial metadata.
     """
-    return {
-        "codebase_version": codebase_version,
-        "robot_type": robot_type,
-        "total_episodes": 0,
-        "total_frames": 0,
-        "total_tasks": 0,
-        "chunks_size": chunks_size or DEFAULT_CHUNK_SIZE,
-        "data_files_size_in_mb": data_files_size_in_mb or DEFAULT_DATA_FILE_SIZE_IN_MB,
-        "video_files_size_in_mb": video_files_size_in_mb or DEFAULT_VIDEO_FILE_SIZE_IN_MB,
-        "fps": fps,
-        "splits": {},
-        "data_path": DEFAULT_DATA_PATH,
-        "video_path": DEFAULT_VIDEO_PATH if use_videos else None,
-        "features": features,
-    }
+    return DatasetInfo(
+        codebase_version=codebase_version,
+        fps=fps,
+        features=features,
+        robot_type=robot_type,
+        chunks_size=chunks_size or DEFAULT_CHUNK_SIZE,
+        data_files_size_in_mb=data_files_size_in_mb or DEFAULT_DATA_FILE_SIZE_IN_MB,
+        video_files_size_in_mb=video_files_size_in_mb or DEFAULT_VIDEO_FILE_SIZE_IN_MB,
+        data_path=DEFAULT_DATA_PATH,
+        video_path=DEFAULT_VIDEO_PATH if use_videos else None,
+    )
 
 
 def check_delta_timestamps(

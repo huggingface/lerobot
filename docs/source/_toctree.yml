@@ -61,6 +61,8 @@
     title: SARM
   title: "Reward Models"
 - sections:
+  - local: inference
+    title: Policy Deployment (lerobot-rollout)
   - local: async
     title: Use Async Inference
   - local: rtc
@@ -77,10 +79,22 @@
     title: Adding a New Benchmark
   - local: libero
     title: LIBERO
+  - local: libero_plus
+    title: LIBERO-plus
   - local: metaworld
     title: Meta-World
+  - local: robotwin
+    title: RoboTwin 2.0
+  - local: robocasa
+    title: RoboCasa365
+  - local: robocerebra
+    title: RoboCerebra
+  - local: robomme
+    title: RoboMME
   - local: envhub_isaaclab_arena
     title: NVIDIA IsaacLab Arena Environments
+  - local: vlabench
+    title: VLABench
   title: "Benchmarks"
 - sections:
   - local: introduction_processors

@@ -36,7 +36,7 @@ import torch.nn.functional as F  # noqa: N812
 import torchvision
 from torch import Tensor
 
-from lerobot.utils.import_utils import _transformers_available
+from lerobot.utils.import_utils import _diffusers_available, _transformers_available, require_package
 
 from .configuration_multi_task_dit import MultiTaskDiTConfig
 
@@ -46,6 +46,13 @@ if TYPE_CHECKING or _transformers_available:
 else:
     CLIPTextModel = None
     CLIPVisionModel = None
+
+if TYPE_CHECKING or _diffusers_available:
+    from diffusers.schedulers.scheduling_ddim import DDIMScheduler
+    from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
+else:
+    DDIMScheduler = None
+    DDPMScheduler = None
 from lerobot.utils.constants import (
     ACTION,
     OBS_IMAGES,
@@ -65,6 +72,8 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
     name = "multi_task_dit"
 
     def __init__(self, config: MultiTaskDiTConfig, **kwargs):
+        require_package("transformers", extra="multi_task_dit")
+        require_package("diffusers", extra="multi_task_dit")
         super().__init__(config)
         config.validate_features()
         self.config = config
@@ -643,12 +652,6 @@ class DiffusionObjective(nn.Module):
             "prediction_type": config.prediction_type,
         }
 
-        from lerobot.utils.import_utils import require_package
-
-        require_package("diffusers", extra="multi_task_dit")
-        from diffusers.schedulers.scheduling_ddim import DDIMScheduler
-        from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
-
         if config.noise_scheduler_type == "DDPM":
             self.noise_scheduler: DDPMScheduler | DDIMScheduler = DDPMScheduler(**scheduler_kwargs)
         elif config.noise_scheduler_type == "DDIM":
@@ -685,8 +688,9 @@ class DiffusionObjective(nn.Module):
         loss = F.mse_loss(predicted, target, reduction="none")
 
         if self.do_mask_loss_for_padding and "action_is_pad" in batch:
-            valid_actions = ~batch["action_is_pad"]
-            loss = loss * valid_actions.unsqueeze(-1)
+            mask = ~batch["action_is_pad"].unsqueeze(-1)
+            num_valid = mask.sum() * loss.shape[-1]
+            return (loss * mask).sum() / num_valid.clamp_min(1)
 
         return loss.mean()
 
@@ -749,8 +753,9 @@ class FlowMatchingObjective(nn.Module):
         loss = F.mse_loss(predicted_velocity, target_velocity, reduction="none")
 
         if self.do_mask_loss_for_padding and "action_is_pad" in batch:
-            valid_mask = ~batch["action_is_pad"]
-            loss = loss * valid_mask.unsqueeze(-1)
+            mask = ~batch["action_is_pad"].unsqueeze(-1)
+            num_valid = mask.sum() * loss.shape[-1]
+            return (loss * mask).sum() / num_valid.clamp_min(1)
 
         return loss.mean()
 

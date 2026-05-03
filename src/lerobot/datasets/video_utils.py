@@ -123,6 +123,7 @@ def decode_video_frames(
     timestamps: list[float],
     tolerance_s: float,
     backend: str | None = None,
+    return_uint8: bool = False,
 ) -> torch.Tensor:
     """
     Decodes video frames using the specified backend.
@@ -131,19 +132,23 @@ def decode_video_frames(
         video_path (Path): Path to the video file.
         timestamps (list[float]): List of timestamps to extract frames.
         tolerance_s (float): Allowed deviation in seconds for frame retrieval.
-        backend (str, optional): Backend to use for decoding. Defaults to "torchcodec" when available in the platform; otherwise, defaults to "pyav"..
+        backend (str, optional): Backend to use for decoding. Defaults to "torchcodec" when available in the platform; otherwise, defaults to "pyav".
+        return_uint8 (bool): If True, return raw uint8 frames without float32 normalization.
+            This reduces memory for DataLoader IPC; normalization can be done on GPU afterward.
 
     Returns:
-        torch.Tensor: Decoded frames.
+        torch.Tensor: Decoded frames (float32 in [0,1] by default, or uint8 if return_uint8=True).
 
     Currently supports torchcodec on cpu and pyav.
     """
     if backend is None:
         backend = get_safe_default_codec()
     if backend == "torchcodec":
-        return decode_video_frames_torchcodec(video_path, timestamps, tolerance_s)
+        return decode_video_frames_torchcodec(video_path, timestamps, tolerance_s, return_uint8=return_uint8)
     elif backend in ["pyav", "video_reader"]:
-        return decode_video_frames_torchvision(video_path, timestamps, tolerance_s, backend)
+        return decode_video_frames_torchvision(
+            video_path, timestamps, tolerance_s, backend, return_uint8=return_uint8
+        )
     else:
         raise ValueError(f"Unsupported video backend: {backend}")
 
@@ -154,6 +159,7 @@ def decode_video_frames_torchvision(
     tolerance_s: float,
     backend: str = "pyav",
     log_loaded_timestamps: bool = False,
+    return_uint8: bool = False,
 ) -> torch.Tensor:
     """Loads frames associated to the requested timestamps of a video
 
@@ -240,14 +246,17 @@ def decode_video_frames_torchvision(
     if log_loaded_timestamps:
         logger.info(f"{closest_ts=}")
 
-    # convert to the pytorch format which is float32 in [0,1] range (and channel first)
-    closest_frames = closest_frames.type(torch.float32) / 255
-
     if len(timestamps) != len(closest_frames):
         raise FrameTimestampError(
             f"Number of retrieved frames ({len(closest_frames)}) does not match "
             f"number of queried timestamps ({len(timestamps)})"
         )
+
+    if return_uint8:
+        return closest_frames
+
+    # convert to the pytorch format which is float32 in [0,1] range (and channel first)
+    closest_frames = closest_frames.type(torch.float32) / 255
     return closest_frames
 
 
@@ -306,6 +315,7 @@ def decode_video_frames_torchcodec(
     tolerance_s: float,
     log_loaded_timestamps: bool = False,
     decoder_cache: VideoDecoderCache | None = None,
+    return_uint8: bool = False,
 ) -> torch.Tensor:
     """Loads frames associated with the requested timestamps of a video using torchcodec.
 
@@ -373,14 +383,16 @@ def decode_video_frames_torchcodec(
     if log_loaded_timestamps:
         logger.info(f"{closest_ts=}")
 
-    # convert to float32 in [0,1] range
-    closest_frames = (closest_frames / 255.0).type(torch.float32)
-
     if not len(timestamps) == len(closest_frames):
         raise FrameTimestampError(
             f"Retrieved timestamps differ from queried {set(closest_frames) - set(timestamps)}"
         )
 
+    if return_uint8:
+        return closest_frames
+
+    # convert to float32 in [0,1] range
+    closest_frames = (closest_frames / 255.0).type(torch.float32)
     return closest_frames
 
 

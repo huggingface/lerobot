@@ -26,7 +26,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
-from lerobot.utils.import_utils import _scipy_available, _transformers_available
+from lerobot.utils.import_utils import _scipy_available, _transformers_available, require_package
 
 # Conditional import for type checking and lazy loading
 if TYPE_CHECKING or _scipy_available:
@@ -35,7 +35,7 @@ else:
     idct = None
 
 if TYPE_CHECKING or _transformers_available:
-    from transformers import AutoTokenizer
+    from transformers import AutoProcessor, AutoTokenizer
     from transformers.models.auto import CONFIG_MAPPING
 
     from ..pi_gemma import (
@@ -44,6 +44,7 @@ if TYPE_CHECKING or _transformers_available:
     )
 else:
     CONFIG_MAPPING = None
+    AutoProcessor = None
     AutoTokenizer = None
     PiGemmaModel = None
     PaliGemmaForConditionalGenerationWithPiGemma = None
@@ -226,6 +227,7 @@ class PI0FastPaliGemma(nn.Module):
         # forward(..., adarms_cond=...) is supported (same as pi0/pi05).
         if use_adarms[0]:
             text_config = self.paligemma.config.text_config
+            del self.paligemma.model.language_model
             self.paligemma.model.language_model = PiGemmaModel(text_config)
 
         self.to_bfloat16_for_selected_params(precision)
@@ -826,14 +828,14 @@ class PI0FastPolicy(PreTrainedPolicy):
         Args:
             config: Policy configuration class instance.
         """
+        require_package("transformers", extra="pi")
+        require_package("scipy", extra="pi")
         super().__init__(config)
         config.validate_features()
         self.config = config
 
         # Load tokenizers first
         try:
-            from transformers import AutoProcessor, AutoTokenizer
-
             # Load FAST tokenizer
             self.action_tokenizer = AutoProcessor.from_pretrained(
                 config.action_tokenizer_name, trust_remote_code=True

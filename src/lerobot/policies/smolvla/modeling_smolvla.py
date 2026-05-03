@@ -62,6 +62,7 @@ from torch import Tensor, nn
 
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.utils.device_utils import get_safe_dtype
+from lerobot.utils.import_utils import require_package
 
 from ..pretrained import PreTrainedPolicy
 from ..rtc.modeling_rtc import RTCProcessor
@@ -239,6 +240,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
                     the configuration class is used.
         """
 
+        require_package("transformers", extra="smolvla")
         super().__init__(config)
         config.validate_features()
         self.config = config
@@ -392,13 +394,21 @@ class SmolVLAPolicy(PreTrainedPolicy):
         loss_dict["losses_after_rm_padding"] = losses.clone().mean().item()
 
         if reduction == "none":
-            # Return per-sample losses (B,) by averaging over time and action dims
-            per_sample_loss = losses.mean(dim=(1, 2))
+            # Return per-sample losses (B,) by averaging over valid (time, action) entries
+            if actions_is_pad is None:
+                per_sample_loss = losses.mean(dim=(1, 2))
+            else:
+                num_valid = ((~actions_is_pad).sum(dim=1) * losses.shape[-1]).clamp_min(1)
+                per_sample_loss = losses.sum(dim=(1, 2)) / num_valid
             loss_dict["loss"] = per_sample_loss.mean().item()
             return per_sample_loss, loss_dict
         else:
-            # Default: return scalar mean loss
-            loss = losses.mean()
+            # Default: return scalar mean loss over valid (time, action) entries
+            if actions_is_pad is None:
+                loss = losses.mean()
+            else:
+                num_valid = ((~actions_is_pad).sum() * losses.shape[-1]).clamp_min(1)
+                loss = losses.sum() / num_valid
             loss_dict["loss"] = loss.item()
             return loss, loss_dict
 

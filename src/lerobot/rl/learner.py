@@ -90,6 +90,7 @@ from lerobot.utils.constants import (
     TRAINING_STATE_DIR,
 )
 from lerobot.utils.device_utils import get_safe_torch_device
+from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.transition import move_state_dict_to_device, move_transition_to_device
 from lerobot.utils.utils import (
@@ -99,7 +100,6 @@ from lerobot.utils.utils import (
 
 from .buffer import ReplayBuffer, concatenate_batch_transitions
 from .learner_service import MAX_WORKERS, SHUTDOWN_TIMEOUT, LearnerService
-from .process import ProcessSignalHandler
 
 
 @parser.wrap()
