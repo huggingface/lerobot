@@ -41,10 +41,7 @@ def _compare_one(
     with torch.no_grad():
         pt_output = wrapper_cpu(*cpu_inputs)
 
-    ort_inputs = {
-        ort_session.get_inputs()[i].name: cpu_inputs[i].numpy()
-        for i in range(len(cpu_inputs))
-    }
+    ort_inputs = {ort_session.get_inputs()[i].name: cpu_inputs[i].numpy() for i in range(len(cpu_inputs))}
     ort_outputs = ort_session.run(None, ort_inputs)
     ort_output = torch.from_numpy(ort_outputs[0])
 
@@ -53,9 +50,7 @@ def _compare_one(
         pt_output.float().flatten().unsqueeze(0),
         ort_output.float().flatten().unsqueeze(0),
     ).item()
-    passed: bool = bool(
-        torch.allclose(pt_output.float(), ort_output.float(), rtol=rtol, atol=atol)
-    )
+    passed: bool = bool(torch.allclose(pt_output.float(), ort_output.float(), rtol=rtol, atol=atol))
     return {"max_abs_error": max_abs_error, "cos_sim": cos_sim, "allclose": passed}
 
 
@@ -144,11 +139,7 @@ def validate_onnx(
     all_passed = all(t["allclose"] for t in trials)
 
     level = logging.INFO if all_passed else logging.WARNING
-    summary = (
-        f"baseline + {num_random_trials} random trial(s)"
-        if num_random_trials > 0
-        else "baseline"
-    )
+    summary = f"baseline + {num_random_trials} random trial(s)" if num_random_trials > 0 else "baseline"
     logger.log(
         level,
         f"Validation {'PASSED' if all_passed else 'FAILED'} ({summary}): "
@@ -157,9 +148,7 @@ def validate_onnx(
         f"allclose(rtol={rtol}, atol={atol})={all_passed}",
     )
     if not all_passed:
-        per_trial = ", ".join(
-            f"{t['trial']}={t['max_abs_error']:.2e}" for t in trials if not t["allclose"]
-        )
+        per_trial = ", ".join(f"{t['trial']}={t['max_abs_error']:.2e}" for t in trials if not t["allclose"])
         logger.warning(
             "Output mismatch exceeds tolerance in: %s. "
             "Consider increasing rtol/atol or checking for non-deterministic ops.",

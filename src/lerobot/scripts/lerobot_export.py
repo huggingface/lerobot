@@ -24,9 +24,10 @@ Export an ACT policy to ONNX (CPU, FP32):
 lerobot-export --policy.path=lerobot/act_pusht_image --output-path=./exports/act
 ```
 
-Export a Diffusion policy with full DDIM loop unrolled to 10 steps:
+Export a Diffusion policy with full DDIM loop unrolled to 10 steps
+(the per-policy adapter reads ``mode`` out of ``--policy-options``):
 ```
-lerobot-export --policy.path=lerobot/diffusion_pusht --diffusion-mode=ddim-10
+lerobot-export --policy.path=lerobot/diffusion_pusht --policy-options.mode=ddim-10
 ```
 
 Export ACT to ONNX in FP16:
@@ -127,15 +128,15 @@ class ExportConfig:
     # Fold normalization stats into the ONNX graph so clients receive raw outputs.
     fold_normalization: bool = False
 
-    # Diffusion-only: "unet-only" (single denoising step) or "ddim-N" (full N-step loop).
-    diffusion_mode: str = "unet-only"
+    # Free-form per-policy export options. Each ``export_<type>.py`` is responsible
+    # for interpreting its own keys out of this dict, e.g. ``--policy-options.mode=ddim-10``
+    # for diffusion or ``--policy-options.num_steps=2`` for a flow-matching VLA.
+    # New policy types can plug in without editing ``ExportConfig``.
+    policy_options: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.exporter not in {"auto", "dynamo", "legacy"}:
-            raise ValueError(
-                f"Invalid --exporter='{self.exporter}'. "
-                "Use 'auto', 'dynamo', or 'legacy'."
-            )
+            raise ValueError(f"Invalid --exporter='{self.exporter}'. Use 'auto', 'dynamo', or 'legacy'.")
 
         policy_path = parser.get_path_arg("policy")
         if policy_path:
@@ -261,6 +262,20 @@ def export_policy(cfg: ExportConfig) -> None:
             calibration_data=cfg.calibration_data,
         )
 
+    # ── Optional: per-policy auxiliary ONNX artifacts ──────────────────────────
+    # If the per-policy export module exposes ``make_<type>_export_artifacts``,
+    # call it to produce auxiliary ONNX files (e.g. tokenizer / image preprocessor).
+    aux_paths: list[Path] = []
+    aux_factory = _try_load_artifacts_factory(cfg.policy.type)
+    if aux_factory is not None:
+        try:
+            aux_paths = list(aux_factory(policy, cfg, output_dir))
+        except Exception as exc:
+            logger.warning(
+                f"Auxiliary artifacts factory for '{cfg.policy.type}' raised: {exc}. "
+                "Main ONNX export is still complete."
+            )
+
     # ── Summary ────────────────────────────────────────────────────────────────
     logger.info("=" * 60)
     logger.info("Export complete!")
@@ -272,7 +287,26 @@ def export_policy(cfg: ExportConfig) -> None:
         logger.info(f"  TRT engine  : {engine_path}")
     if not cfg.fold_normalization:
         logger.info(f"  Norm stats  : {output_dir / 'normalization_stats.json'}")
+    for p in aux_paths:
+        logger.info(f"  Aux ONNX    : {p}")
     logger.info("=" * 60)
+
+
+def _try_load_artifacts_factory(policy_type: str):
+    """Auto-discover ``make_<type>_export_artifacts`` from the per-policy export module.
+
+    Mirrors the convention used by ``lerobot.export.core._try_load_builtin_factory``.
+    Returns ``None`` if either the module or the function is absent.
+    """
+    import importlib
+
+    module_path = f"lerobot.policies.{policy_type}.export_{policy_type}"
+    factory_name = f"make_{policy_type}_export_artifacts"
+    try:
+        module = importlib.import_module(module_path)
+    except ModuleNotFoundError:
+        return None
+    return getattr(module, factory_name, None)
 
 
 def main() -> None:

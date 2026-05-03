@@ -67,9 +67,7 @@ def export_to_onnx(
     import onnx
 
     if exporter not in ("auto", "dynamo", "legacy"):
-        raise ValueError(
-            f"Invalid exporter='{exporter}'. Use 'auto', 'dynamo', or 'legacy'."
-        )
+        raise ValueError(f"Invalid exporter='{exporter}'. Use 'auto', 'dynamo', or 'legacy'.")
 
     output_path = Path(output_path).with_suffix(".onnx")
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -79,13 +77,10 @@ def export_to_onnx(
 
     if precision == "fp16":
         wrapper = wrapper.half()
-        sample_inputs = tuple(
-            x.half() if x.is_floating_point() else x for x in sample_inputs
-        )
+        sample_inputs = tuple(x.half() if x.is_floating_point() else x for x in sample_inputs)
 
     logger.info(
-        f"Exporting ONNX to {output_path} "
-        f"(opset={opset_version}, precision={precision}, exporter={exporter})"
+        f"Exporting ONNX to {output_path} (opset={opset_version}, precision={precision}, exporter={exporter})"
     )
     if spec.policy_note:
         logger.info(f"  Note: {spec.policy_note}")
@@ -126,13 +121,12 @@ def export_to_onnx(
             _try_dynamo()
         except Exception as exc:
             logger.warning(
-                f"dynamo export failed ({exc.__class__.__name__}: {exc}); "
-                "falling back to legacy tracing."
+                f"dynamo export failed ({exc.__class__.__name__}: {exc}); falling back to legacy tracing."
             )
             _legacy()
 
-    # Structural validity check
-    model_proto = onnx.load(str(output_path))
-    onnx.checker.check_model(model_proto)
+    # Structural validity check. Pass the path so the checker can lazily
+    # load external data for >2 GiB models (e.g. VLA-class checkpoints).
+    onnx.checker.check_model(str(output_path))
     logger.info(f"ONNX export successful: {output_path}")
     return output_path

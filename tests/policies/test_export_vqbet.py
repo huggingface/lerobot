@@ -52,9 +52,7 @@ def _make_vqbet_policy():
     cfg = VQBeTConfig(
         input_features={
             OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(_STATE_DIM,)),
-            f"{OBS_IMAGES}.cam": PolicyFeature(
-                type=FeatureType.VISUAL, shape=(_IMG_C, _IMG_H, _IMG_W)
-            ),
+            f"{OBS_IMAGES}.cam": PolicyFeature(type=FeatureType.VISUAL, shape=(_IMG_C, _IMG_H, _IMG_W)),
         },
         output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(_ACTION_DIM,))},
         n_obs_steps=2,

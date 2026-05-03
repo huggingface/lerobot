@@ -77,8 +77,7 @@ class DictBatchAdapter(nn.Module):
         self._non_image_keys = [k for k in spec.input_feature_keys if k not in spec.image_keys]
         if spec.image_convention not in ("list", "stacked", "single"):
             raise ValueError(
-                f"Invalid image_convention='{spec.image_convention}'. "
-                "Use 'list', 'stacked', or 'single'."
+                f"Invalid image_convention='{spec.image_convention}'. Use 'list', 'stacked', or 'single'."
             )
 
     def forward(self, *positional: Tensor) -> Tensor:

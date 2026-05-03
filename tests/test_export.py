@@ -411,3 +411,84 @@ def test_onnx_export_invalid_exporter_raises(tmp_path: Path):
             output_path=tmp_path / "bogus",
             exporter="not-a-valid-mode",
         )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# CLI: policy_options propagation and aux-artifacts auto-discovery
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def test_policy_options_reaches_registered_factory():
+    """Whatever the CLI puts in ``cfg.policy_options`` must reach the per-policy factory."""
+    from torch import nn
+
+    class _DummyConfig:
+        type = "_test_policy_options"
+        input_features = {OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(4,))}
+        n_obs_steps = 1
+
+    class _DummyPolicy:
+        config = _DummyConfig()
+        model = nn.Linear(4, 2)
+
+    seen: dict = {}
+
+    @register_export_wrapper("_test_policy_options")
+    def _make(policy, cfg):
+        seen["options"] = cfg.policy_options
+        return policy.model, ExportSpec(
+            input_names=["x"],
+            output_names=["y"],
+            sample_inputs=(torch.zeros(1, 4),),
+            dynamic_axes={"x": {0: "batch_size"}, "y": {0: "batch_size"}},
+        )
+
+    class _Cfg:
+        policy_options = {"mode": "ddim-7", "extra": "v"}
+
+    try:
+        make_export_wrapper(_DummyPolicy(), _Cfg())
+        assert seen["options"] == {"mode": "ddim-7", "extra": "v"}
+    finally:
+        WRAPPER_REGISTRY.pop("_test_policy_options", None)
+
+
+def test_try_load_artifacts_factory_returns_none_for_unknown():
+    """The CLI helper returns None for unknown policy types (no exception)."""
+    from lerobot.scripts.lerobot_export import _try_load_artifacts_factory
+
+    assert _try_load_artifacts_factory("policy_that_does_not_exist") is None
+
+
+def test_try_load_artifacts_factory_discovers_module_attr(monkeypatch):
+    """A module exposing ``make_<type>_export_artifacts`` is auto-discovered."""
+    import sys
+    import types
+
+    from lerobot.scripts.lerobot_export import _try_load_artifacts_factory
+
+    fake_module_path = "lerobot.policies._test_aux.export__test_aux"
+    mod = types.ModuleType(fake_module_path)
+
+    def make__test_aux_export_artifacts(policy, cfg, output_dir):  # noqa: ARG001
+        return [output_dir / "stub.onnx"]
+
+    mod.make__test_aux_export_artifacts = make__test_aux_export_artifacts  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, fake_module_path, mod)
+
+    factory = _try_load_artifacts_factory("_test_aux")
+    assert factory is make__test_aux_export_artifacts
+
+
+def test_try_load_artifacts_factory_returns_none_when_attr_missing(monkeypatch):
+    """A module without ``make_<type>_export_artifacts`` yields None (not an error)."""
+    import sys
+    import types
+
+    from lerobot.scripts.lerobot_export import _try_load_artifacts_factory
+
+    fake_module_path = "lerobot.policies._test_aux2.export__test_aux2"
+    mod = types.ModuleType(fake_module_path)
+    monkeypatch.setitem(sys.modules, fake_module_path, mod)
+
+    assert _try_load_artifacts_factory("_test_aux2") is None

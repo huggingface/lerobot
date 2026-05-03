@@ -58,9 +58,7 @@ def _make_diffusion_policy():
     cfg = DiffusionConfig(
         input_features={
             OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(_STATE_DIM,)),
-            f"{OBS_IMAGES}.cam": PolicyFeature(
-                type=FeatureType.VISUAL, shape=(_IMG_C, _IMG_H, _IMG_W)
-            ),
+            f"{OBS_IMAGES}.cam": PolicyFeature(type=FeatureType.VISUAL, shape=(_IMG_C, _IMG_H, _IMG_W)),
         },
         output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(_ACTION_DIM,))},
         horizon=16,
@@ -79,7 +77,7 @@ def _make_diffusion_policy():
 class _Cfg:
     device = "cpu"
     batch_size = 1
-    diffusion_mode = "unet-only"
+    policy_options: dict[str, str] = {}
 
 
 def test_diffusion_unet_wrapper_forward():

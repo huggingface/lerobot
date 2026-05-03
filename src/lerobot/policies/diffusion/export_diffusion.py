@@ -13,7 +13,8 @@
 # limitations under the License.
 """ONNX export adapter for Diffusion Policy.
 
-Two modes are available, selected by ``cfg.diffusion_mode``:
+Two modes are available, selected by the per-policy CLI knob
+``--policy-options.mode=...``:
 
 - ``"unet-only"`` (default): Exports a single denoising step of
   ``DiffusionConditionalUnet1d``. Caller runs the scheduler loop in Python.
@@ -222,12 +223,11 @@ def _make_ddim_sample_inputs(
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def make_diffusion_export_wrapper(
-    policy: DiffusionPolicy, cfg
-) -> tuple[nn.Module, ExportSpec]:
+def make_diffusion_export_wrapper(policy: DiffusionPolicy, cfg) -> tuple[nn.Module, ExportSpec]:
     """Build (wrapper, ExportSpec) for Diffusion Policy export.
 
-    Mode is selected via ``cfg.diffusion_mode``:
+    Mode is selected via ``cfg.policy_options["mode"]`` (CLI:
+    ``--policy-options.mode=...``):
 
     - ``"unet-only"`` (default): single denoising step.
     - ``"ddim-N"``: full N-step deterministic DDIM loop, unrolled into the graph.
@@ -240,7 +240,8 @@ def make_diffusion_export_wrapper(
     device = torch.device(getattr(cfg, "device", "cpu"))
     batch_size = getattr(cfg, "batch_size", 1)
 
-    diffusion_mode: str = getattr(cfg, "diffusion_mode", "unet-only")
+    policy_options = getattr(cfg, "policy_options", {}) or {}
+    diffusion_mode: str = policy_options.get("mode", "unet-only")
 
     if diffusion_mode == "unet-only":
         wrapper = DiffusionUNetWrapper(raw_unet)
@@ -270,14 +271,14 @@ def make_diffusion_export_wrapper(
     # Full DDIM mode: "ddim-N" where N is the number of steps.
     if not diffusion_mode.startswith("ddim-"):
         raise ValueError(
-            f"Invalid diffusion_mode '{diffusion_mode}'. "
+            f"Invalid policy_options.mode='{diffusion_mode}' for diffusion. "
             "Use 'unet-only' or 'ddim-N' where N is the number of DDIM steps (e.g. 'ddim-10')."
         )
     if diffusion_model.config.noise_scheduler_type != "DDIM":
         raise ValueError(
             f"Full DDIM export requires noise_scheduler_type='DDIM', "
             f"but found '{diffusion_model.config.noise_scheduler_type}'. "
-            "Use --diffusion-mode=unet-only for DDPM policies."
+            "Use --policy-options.mode=unet-only for DDPM policies."
         )
     num_steps = int(diffusion_mode.split("-")[1])
     wrapper = DiffusionDDIMWrapper(diffusion_model, num_steps)

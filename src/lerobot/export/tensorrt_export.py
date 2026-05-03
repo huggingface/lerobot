@@ -88,9 +88,7 @@ def export_to_tensorrt(
 
     sm = _get_sm_version()
     if sm is None:
-        raise RuntimeError(
-            "CUDA is not available. TensorRT export requires a CUDA-capable GPU."
-        )
+        raise RuntimeError("CUDA is not available. TensorRT export requires a CUDA-capable GPU.")
 
     # ── precision guard ──────────────────────────────────────────────────────
     if precision == "fp8":
@@ -107,8 +105,7 @@ def export_to_tensorrt(
             )
         if calibration_data is None:
             raise ValueError(
-                "precision='int8' requires calibration data. "
-                "Provide a path via --calibration-data=<path>."
+                "precision='int8' requires calibration data. Provide a path via --calibration-data=<path>."
             )
     if precision == "fp16" and sm < 80:
         logger.warning(

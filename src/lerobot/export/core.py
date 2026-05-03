@@ -75,6 +75,7 @@ def register_export_wrapper(policy_type: str, factory: WrapperFactory | None = N
         register_export_wrapper("my_policy", make_my_wrapper)
     """
     if factory is None:
+
         def decorator(fn: WrapperFactory) -> WrapperFactory:
             WRAPPER_REGISTRY[policy_type] = fn
             return fn
