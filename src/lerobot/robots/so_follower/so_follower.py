@@ -42,6 +42,7 @@ class SOFollower(Robot):
 
     config_class = SOFollowerRobotConfig
     name = "so_follower"
+    _full_turn_motor = "wrist_roll"
 
     def __init__(self, config: SOFollowerRobotConfig):
         super().__init__(config)
@@ -108,7 +109,58 @@ class SOFollower(Robot):
     def is_calibrated(self) -> bool:
         return self.bus.is_calibrated
 
-    def calibrate(self) -> None:
+    def _calibrate_partial(self, motors: list[str]) -> None:
+        if not self.calibration:
+            raise ValueError(
+                "No existing calibration found. Run full calibration first before calibrating specific motors."
+            )
+
+        motors_to_calibrate: dict[str, Motor] = {}
+        logger.info(f"\nRunning partial calibration of {self} for motors: {set(motors)}")
+        self.bus.disable_torque()
+        for motor in motors:
+            if motor not in self.bus.motors:
+                raise ValueError(
+                    f"Motor '{motor}' not found in the bus. Available motors: {list(self.bus.motors.keys())}"
+                )
+            motors_to_calibrate[motor] = self.bus.motors[motor]
+            self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+
+        # calibrate motors one by one
+        print(
+            "Calibration of selected motors will be done sequentially. During calibration, all the motors will have their torque disabled and can be moved freely, but only the specified motor will be calibrated.\n"
+        )
+        for motor, m in motors_to_calibrate.items():
+            input(f"Move {motor} to the middle of its range of motion and press ENTER....")
+            homing_offset = self.bus.set_half_turn_homings([motor])[motor]
+            if motor == self._full_turn_motor:
+                range_min_val, range_max_val = 0, 4095
+                input(
+                    f"'{motor}' is set as the full turn motor with a fixed range of [0, 4095]. Homing offset was recorded but no further calibration is needed. Press ENTER to continue..."
+                )
+            else:
+                input(
+                    f"Move {motor} through its entire range of motion.\nRecording positions. Press ENTER to stop..."
+                )
+                range_mins, range_maxs = self.bus.record_ranges_of_motion([motor])
+                range_min_val, range_max_val = range_mins[motor], range_maxs[motor]
+            self.calibration[motor] = MotorCalibration(
+                id=m.id,
+                drive_mode=0,
+                homing_offset=homing_offset,
+                range_min=range_min_val,
+                range_max=range_max_val,
+            )
+
+        self.bus.write_calibration(self.calibration)
+        self._save_calibration()
+        print(f"Calibration saved to {self.calibration_fpath}")
+
+    def calibrate(self, motors: list[str] | None = None) -> None:
+        if motors is not None:
+            self._calibrate_partial(motors)
+            return
+
         if self.calibration:
             # Calibration file exists, ask user whether to use it or run new calibration
             user_input = input(
@@ -128,15 +180,14 @@ class SOFollower(Robot):
         homing_offsets = self.bus.set_half_turn_homings()
 
         # Attempt to call record_ranges_of_motion with a reduced motor set when appropriate.
-        full_turn_motor = "wrist_roll"
-        unknown_range_motors = [motor for motor in self.bus.motors if motor != full_turn_motor]
+        unknown_range_motors = [motor for motor in self.bus.motors if motor != self._full_turn_motor]
         print(
-            f"Move all joints except '{full_turn_motor}' sequentially through their "
+            f"Move all joints except '{self._full_turn_motor}' sequentially through their "
             "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
         )
         range_mins, range_maxes = self.bus.record_ranges_of_motion(unknown_range_motors)
-        range_mins[full_turn_motor] = 0
-        range_maxes[full_turn_motor] = 4095
+        range_mins[self._full_turn_motor] = 0
+        range_maxes[self._full_turn_motor] = 4095
 
         self.calibration = {}
         for motor, m in self.bus.motors.items():

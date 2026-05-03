@@ -100,6 +100,9 @@ class SOLeader(Teleoperator):
             self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
         # calibrate motors one by one
+        print(
+            "Calibration of selected motors will be done sequentially. During calibration, all the motors will have their torque disabled and can be moved freely, but only the specified motor will be calibrated.\n"
+        )
         for motor, m in motors_to_calibrate.items():
             input(f"Move {motor} to the middle of its range of motion and press ENTER....")
             homing_offset = self.bus.set_half_turn_homings([motor])[motor]
