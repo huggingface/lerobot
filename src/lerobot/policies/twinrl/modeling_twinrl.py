@@ -45,15 +45,113 @@ import torch.nn as nn
 from torch import Tensor
 
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.sac.configuration_sac import is_image_feature
 from lerobot.policies.sac.modeling_sac import (
-    MLP,
-    CriticEnsemble,
-    CriticHead,
     Policy,
-    SACObservationEncoder,
+    SpatialLearnedEmbeddings,
 )
 from lerobot.policies.twinrl.configuration_twinrl import TwinRLConfig
-from lerobot.utils.constants import ACTION
+from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE
+
+
+class TwinRLMLP(nn.Module):
+    """Matches JAX MLP precisely: Linear -> (Dropout) -> (LayerNorm) -> Activation.
+
+    Default behavior uses SiLU and NO LayerNorm, with xavier_uniform initialization.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dims: list[int],
+        activations: nn.Module = nn.Tanh(),
+        activate_final: bool = False,
+        dropout_rate: float | None = None,
+        use_layer_norm: bool = False,
+    ):
+        super().__init__()
+        layers = []
+        in_dim = input_dim
+        for i, out_dim in enumerate(hidden_dims):
+            layers.append(nn.Linear(in_dim, out_dim))
+            if i + 1 < len(hidden_dims) or activate_final:
+                if dropout_rate is not None and dropout_rate > 0:
+                    layers.append(nn.Dropout(dropout_rate))
+                if use_layer_norm:
+                    layers.append(nn.LayerNorm(out_dim))
+                layers.append(activations)
+            in_dim = out_dim
+        self.net = nn.Sequential(*layers)
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.net(x)
+
+
+class TwinRLCriticEnsemble(nn.Module):
+    """Matches JAX Critic precisely: shared final Dense(1) layer across ensemblized backbones."""
+
+    def __init__(
+        self,
+        encoder: nn.Module,
+        ensemble_size: int,
+        input_dim: int,
+        hidden_dims: list[int],
+        init_final: float | None = None,
+    ):
+        super().__init__()
+        self.encoder = encoder
+        # Ensemble of MLPs (the backbone)
+        self.mlps = nn.ModuleList(
+            [
+                TwinRLMLP(
+                    input_dim=input_dim,
+                    hidden_dims=hidden_dims,
+                    activations=nn.Tanh(),
+                    activate_final=False,
+                    use_layer_norm=True,
+                )
+                for _ in range(ensemble_size)
+            ]
+        )
+        # Shared final layer
+        self.shared_final = nn.Linear(hidden_dims[-1], 1)
+
+        # Initialization
+        if init_final is not None:
+            nn.init.uniform_(self.shared_final.weight, -init_final, init_final)
+            nn.init.uniform_(self.shared_final.bias, -init_final, init_final)
+        else:
+            nn.init.xavier_uniform_(self.shared_final.weight)
+            if self.shared_final.bias is not None:
+                nn.init.zeros_(self.shared_final.bias)
+
+    def forward(
+        self,
+        observations: dict[str, Tensor],
+        actions: Tensor,
+        observation_features: Tensor | None = None,
+    ) -> Tensor:
+        obs_enc = self.encoder(observations, cache=observation_features)
+        inputs = torch.cat([obs_enc, actions], dim=-1)
+
+        # Apply each MLP to the inputs
+        outputs = []
+        for mlp in self.mlps:
+            outputs.append(mlp(inputs))
+
+        # outputs shape: [ensemble_size, batch, hidden_dim]
+        outputs = torch.stack(outputs, dim=0)
+
+        # Apply shared final layer
+        q_values = self.shared_final(outputs).squeeze(-1)  # [ensemble_size, batch]
+        return q_values
 
 
 class OctoActorEncoder(nn.Module):
@@ -75,6 +173,20 @@ class OctoActorEncoder(nn.Module):
         for param in self.transformer.parameters():
             param.requires_grad = False
 
+        from lerobot.utils.constants import OBS_STATE
+
+        self.use_proprio = OBS_STATE in config.input_features
+        if self.use_proprio:
+            state_dim = config.input_features[OBS_STATE].shape[0]
+            self.state_encoder = nn.Sequential(
+                nn.Linear(state_dim, config.state_encoder_hidden_dim),
+                nn.LayerNorm(config.state_encoder_hidden_dim),
+                nn.Tanh(),
+            )
+            self._output_dim += config.state_encoder_hidden_dim
+        else:
+            self.state_encoder = None
+
     @property
     def output_dim(self) -> int:
         return self._output_dim
@@ -85,14 +197,21 @@ class OctoActorEncoder(nn.Module):
         obs_features: Tensor | None = None,
         cache: Tensor | None = None,
         detach: bool = False,
+        repeat: int = -1,
     ) -> Tensor:
         """Return (b, token_embedding_size) readout feature vector."""
         features = obs_features if obs_features is not None else cache
         if features is not None:
-            return features if not detach else features.detach()
+            feats = features if not detach else features.detach()
+            if repeat > 1:
+                return feats.unsqueeze(1).expand(-1, repeat, -1)
+            return feats
 
         device = next(self.transformer.parameters()).device
-        img = observations.get("image_primary", observations.get("observation.image"))
+        img = observations.get(
+            "image_primary",
+            observations.get("observation.image_primary", observations.get("observation.image")),
+        )
         if img is None:
             raise ValueError("OctoActorEncoder requires 'image_primary' in observations.")
 
@@ -115,8 +234,8 @@ class OctoActorEncoder(nn.Module):
             "pad_mask_dict": {"image_primary": torch.ones(b, horizon, dtype=torch.bool, device=device)},
         }
 
-        if "image_wrist" in observations:
-            w_img = observations["image_wrist"]
+        w_img = observations.get("image_wrist", observations.get("observation.image_wrist"))
+        if w_img is not None:
             if w_img.ndim == 4:
                 w_img = w_img.unsqueeze(1)
 
@@ -132,12 +251,18 @@ class OctoActorEncoder(nn.Module):
             obs_octo["image_wrist"] = w_img.permute(0, 1, 3, 4, 2)
             obs_octo["pad_mask_dict"]["image_wrist"] = torch.ones(bw, hw, dtype=torch.bool, device=device)
 
-        tasks = {
-            "language_instruction": self.text_processor.encode([""] * b),
-            "pad_mask_dict": {"language_instruction": torch.ones(b, dtype=torch.bool, device=device)},
-        }
-        for k, v in tasks["language_instruction"].items():
-            tasks["language_instruction"][k] = v.to(device)
+        # Skip language if empty (matching JAX Octo behavior)
+        instruction = observations.get("language_instruction", [""] * b)
+        if isinstance(instruction, list) and all(t == "" for t in instruction):
+            tasks = {}
+        else:
+            tasks = {
+                "language_instruction": self.text_processor.encode(instruction),
+                "pad_mask_dict": {"language_instruction": torch.ones(b, dtype=torch.bool, device=device)},
+            }
+            for k, v in tasks["language_instruction"].items():
+                if isinstance(v, torch.Tensor):
+                    tasks["language_instruction"][k] = v.to(device)
 
         window = obs_octo["image_primary"].shape[1]
         pad_mask = torch.ones(b, window, dtype=torch.bool, device=device)
@@ -147,7 +272,32 @@ class OctoActorEncoder(nn.Module):
 
         # tokens: (b, window, n_tokens, embed) → mean over tokens → last window step
         feats = outputs["readout_action"].tokens.mean(dim=-2)[:, -1, :]  # (b, embed)
+
+        if self.use_proprio:
+            from lerobot.utils.constants import OBS_STATE
+
+            state_feat = self.state_encoder(observations[OBS_STATE])
+            feats = torch.cat([feats, state_feat], dim=-1)
+
+        if repeat > 1:
+            feats = feats.unsqueeze(1).expand(-1, repeat, -1)
+
         return feats
+
+
+class _SinusoidalPosEmb(nn.Module):
+    """Matches JAX timeMLP's SinusoidalPosEmb: sin/cos of log-spaced frequencies."""
+
+    def __init__(self, dim: int):
+        super().__init__()
+        self.dim = dim
+
+    def forward(self, x: Tensor) -> Tensor:  # x: (b,)
+        half = self.dim // 2
+        freqs = math.log(10000) / (half - 1)
+        freqs = torch.exp(torch.arange(half, device=x.device) * -freqs)  # (half,)
+        emb = x.unsqueeze(-1) * freqs.unsqueeze(0)  # (b, half)
+        return torch.cat([torch.sin(emb), torch.cos(emb)], dim=-1)  # (b, dim)
 
 
 class ConsistencyActorHead(nn.Module):
@@ -156,13 +306,12 @@ class ConsistencyActorHead(nn.Module):
     base_network(x_t, sigma, obs_enc) predicts x_0 via boundary conditions:
         c_skip * x_t + c_out * network([c_in * x_t, t_embed, obs_enc])
 
-    Requires octo-pytorch package for FourierFeatures and MLPResNet primitives.
+    Backbone: flat TwinRLMLP matching JAX MLP (not ResNet).
+    Time embed: sinusoidal (JAX timeMLP) -> two-layer MLP projection.
     """
 
     def __init__(self, encoder: nn.Module, obs_enc_dim: int, action_dim: int, config):
         super().__init__()
-        from octo_pytorch.model.components.diffusion import FourierFeatures, MLPResNet
-
         self.encoder = encoder
         self.action_dim = action_dim
         self.sigma_min = config.sigma_min
@@ -170,24 +319,31 @@ class ConsistencyActorHead(nn.Module):
         self.sigma_data = config.sigma_data
 
         t_dim = config.consistency_t_dim
-        hidden_dim = config.actor_network_kwargs.hidden_dims[0]
-        num_blocks = len(config.actor_network_kwargs.hidden_dims)
+        hidden_dims = list(config.actor_network_kwargs.hidden_dims)
 
-        self.fourier = FourierFeatures(t_dim, learnable=True)
-        self.t_proj = nn.Sequential(nn.Linear(t_dim, 2 * t_dim), nn.SiLU(), nn.Linear(2 * t_dim, t_dim))
+        # JAX timeMLP: SinusoidalPosEmb(t_dim) -> Dense(2*t_dim) -> activations -> Dense(t_dim)
+        self.sinusoidal = _SinusoidalPosEmb(t_dim)
+        self.t_proj = nn.Sequential(nn.Linear(t_dim, 2 * t_dim), nn.Tanh(), nn.Linear(2 * t_dim, t_dim))
+        # JAX MLP backbone: flat hidden layers with activate_final=True
         net_in_dim = action_dim + t_dim + obs_enc_dim
-        self.network = MLPResNet(
-            num_blocks=num_blocks,
-            out_dim=hidden_dim,
-            in_dim=net_in_dim,
-            dropout_rate=None,
-            hidden_dim=hidden_dim,
+        self.network = TwinRLMLP(
+            input_dim=net_in_dim,
+            hidden_dims=hidden_dims,
+            activations=nn.Tanh(),
+            activate_final=False,
             use_layer_norm=True,
         )
-        self.output_proj = nn.Linear(hidden_dim, action_dim)
+        self.output_proj = nn.Linear(hidden_dims[-1], action_dim)
 
         sigmas = self._karras_sigmas(config.num_scales, config.sigma_min, config.sigma_max, config.rho)
         self.register_buffer("karras_sigmas", sigmas)
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
 
     @staticmethod
     def _karras_sigmas(n: int, sigma_min: float, sigma_max: float, rho: float) -> Tensor:
@@ -203,29 +359,216 @@ class ConsistencyActorHead(nn.Module):
         c_in = 1.0 / (sigma**2 + self.sigma_data**2) ** 0.5
         return c_skip, c_out, c_in
 
-    def base_network(self, x_t: Tensor, sigma: Tensor, obs_enc: Tensor) -> Tensor:
-        """Predict x_0 from noisy x_t at noise level sigma. sigma: (b,)."""
+    def base_network(self, x_t: Tensor, sigma: Tensor, obs_enc: Tensor, repeat: int = -1) -> Tensor:
+        """Predict x_0 from noisy x_t at noise level sigma.
+        sigma: (b,) or (b, r). x_t: (b, d) or (b, r, d).
+        """
         c_skip, c_out, c_in = self._scalings(sigma)
         c_skip = c_skip.unsqueeze(-1)
         c_out = c_out.unsqueeze(-1)
         c_in = c_in.unsqueeze(-1)
         rescaled_t = 1000.0 * 0.25 * torch.log(sigma + 1e-44)
-        t_embed = self.t_proj(self.fourier(rescaled_t.unsqueeze(-1)))  # (b, t_dim)
-        net_in = torch.cat([c_in * x_t, t_embed, obs_enc], dim=-1)
+        t_embed = self.t_proj(self.sinusoidal(rescaled_t))  # (b, t_dim) or (b, r, t_dim)
+
+        cont_axis = -1
+        if repeat > 1:
+            # Match JAX extend_and_repeat logic for t_embed and obs_enc
+            if t_embed.ndim == 2:
+                t_embed = t_embed.unsqueeze(1).expand(-1, repeat, -1)
+            if obs_enc.ndim == 2:
+                obs_enc = obs_enc.unsqueeze(1).expand(-1, repeat, -1)
+            cont_axis = 2
+
+        net_in = torch.cat([c_in * x_t, t_embed, obs_enc], dim=cont_axis)
         features = self.network(net_in)
         denoised = self.output_proj(features)
         return c_out * denoised + c_skip * x_t
 
-    def forward(self, observations: dict[str, Tensor], obs_features: Tensor | None = None):
-        """Single-step inference: denoise from x_t ~ N(0, sigma_max²).
-        Returns (x_0, None, x_0) to match Policy interface.
-        """
+    def forward(self, observations: dict[str, Tensor], obs_features: Tensor | None = None, repeat: int = -1):
+        """Single-step inference: denoise from x_t ~ N(0, sigma_max²)."""
         obs_enc = self.encoder(observations, obs_features)
         b, device = obs_enc.shape[0], obs_enc.device
-        x_t = torch.randn(b, self.action_dim, device=device) * self.sigma_max
+
+        x_shape = (b, repeat, self.action_dim) if repeat > 1 else (b, self.action_dim)
+        x_t = torch.randn(x_shape, device=device) * self.sigma_max
         sigma = self.karras_sigmas[0].expand(b)
-        x_0 = self.base_network(x_t, sigma, obs_enc).clamp(-1, 1)
+        if repeat > 1:
+            sigma = sigma.unsqueeze(1).expand(-1, repeat)
+
+        x_0 = self.base_network(x_t, sigma, obs_enc, repeat=repeat).clamp(-1, 1)
         return x_0, None, x_0
+
+
+class ResNetBlock(nn.Module):
+    def __init__(self, in_filters, out_filters, strides=(1, 1)):
+        super().__init__()
+        self.conv1 = nn.Conv2d(
+            in_filters,
+            out_filters,
+            kernel_size=3,
+            stride=strides,
+            padding=1 if strides == (1, 1) else 0,
+            bias=False,
+        )
+        self.norm1 = nn.GroupNorm(num_groups=4, num_channels=out_filters, eps=1e-5)
+        self.conv2 = nn.Conv2d(out_filters, out_filters, kernel_size=3, stride=1, padding=1, bias=False)
+        self.norm2 = nn.GroupNorm(num_groups=4, num_channels=out_filters, eps=1e-5)
+        self.act = nn.ReLU()
+
+        if strides != (1, 1) or in_filters != out_filters:
+            self.residual_proj = nn.Sequential(
+                nn.Conv2d(in_filters, out_filters, kernel_size=1, stride=strides, padding=0, bias=False),
+                nn.GroupNorm(num_groups=4, num_channels=out_filters, eps=1e-5),
+            )
+        else:
+            self.residual_proj = nn.Identity()
+
+    def forward(self, x):
+        # Handle asymmetric padding for stride 2 to match JAX "SAME"
+        # For kernel 3, stride 2, JAX "SAME" results in (0, 1, 0, 1) padding
+        if self.conv1.stride == (2, 2):
+            x_padded = torch.nn.functional.pad(x, (0, 1, 0, 1))  # Pad right and bottom
+            y = self.act(self.norm1(self.conv1(x_padded)))
+        else:
+            y = self.act(self.norm1(self.conv1(x)))
+
+        y = self.norm2(self.conv2(y))
+
+        # Residual projection: For kernel 1, stride 2, JAX "SAME" is symmetric (no padding needed)
+        residual = self.residual_proj(x)
+
+        return self.act(residual + y)
+
+
+class ResNet10Encoder(nn.Module):
+    def __init__(self, num_filters=64, num_spatial_blocks=8, bottleneck_dim=256, pretrained=False):
+        super().__init__()
+        self.image_size = (128, 128)
+        self.register_buffer("mean", torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
+        self.register_buffer("std", torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
+
+        self.conv_init = nn.Conv2d(3, num_filters, kernel_size=7, stride=2, padding=3, bias=False)
+        self.norm_init = nn.GroupNorm(num_groups=4, num_channels=num_filters, eps=1e-5)
+        self.act = nn.ReLU()
+        self.max_pool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)
+
+        self.layer1 = ResNetBlock(num_filters, num_filters)
+        self.layer2 = ResNetBlock(num_filters, num_filters * 2, strides=2)
+        self.layer3 = ResNetBlock(num_filters * 2, num_filters * 4, strides=2)
+        self.layer4 = ResNetBlock(num_filters * 4, num_filters * 8, strides=2)
+
+        if pretrained:
+            self.load_resnet10_weights()
+            # In JAX resnet-pretrained, the backbone is frozen
+            for param in self.parameters():
+                param.requires_grad = False
+
+        # Final spatial pooling (always trainable in SERL even if backbone is frozen)
+        self.spatial_pool = SpatialLearnedEmbeddings(4, 4, num_filters * 8, num_features=num_spatial_blocks)
+        # TODO: IS DETERMINISTIC NEEDED TO BE SET HERE
+        self.dropout = nn.Dropout(0.1)
+        self.bottleneck = nn.Sequential(
+            nn.Linear(num_filters * 8 * num_spatial_blocks, bottleneck_dim),
+            nn.LayerNorm(bottleneck_dim),
+            nn.Tanh(),
+        )
+        self.output_dim = bottleneck_dim
+
+    def load_resnet10_weights(self):
+        import os
+
+        weight_path = os.path.expanduser("~/.serl/resnet10_params.pt")
+        if not os.path.exists(weight_path):
+            raise FileNotFoundError(
+                f"Pretrained ResNet-10 weights not found at {weight_path}. Please run conversion script first."
+            )
+
+        state_dict = torch.load(weight_path, map_location="cpu", weights_only=True)
+        # Only load keys that exist in our model (backbone only)
+        model_dict = self.state_dict()
+        pretrained_dict = {k: v for k, v in state_dict.items() if k in model_dict}
+        model_dict.update(pretrained_dict)
+        self.load_state_dict(model_dict)
+        print(f"Loaded {len(pretrained_dict)} layers of pretrained ResNet-10 weights.")
+
+    def forward(self, x, train=True):
+        # Resize to 128x128
+        if x.shape[-2:] != self.image_size:
+            x = torch.nn.functional.interpolate(x, size=self.image_size, mode="bilinear", align_corners=False)
+
+        # Normalize [0, 1] to ImageNet
+        if x.max() > 1.1:
+            x = x / 255.0
+        x = (x - self.mean) / self.std
+
+        # Initial layers
+        x = self.act(self.norm_init(self.conv_init(x)))
+        # Asymmetric padding for max_pool to match JAX "SAME"
+        x = torch.nn.functional.pad(x, (0, 1, 0, 1))
+        x = self.max_pool(x)
+
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+
+        x = self.spatial_pool(x)
+        if train:
+            x = self.dropout(x)
+        x = self.bottleneck(x)
+        return x
+
+
+class TwinRLObservationEncoder(nn.Module):
+    def __init__(self, config: TwinRLConfig):
+        super().__init__()
+        self.config = config
+        self.image_keys = [k for k in config.input_features if is_image_feature(k)]
+        self.state_keys = [k for k in config.input_features if k in (OBS_STATE, OBS_ENV_STATE)]
+
+        self.image_encoders = nn.ModuleDict()
+        for key in self.image_keys:
+            name = key.replace(".", "_")
+            self.image_encoders[name] = ResNet10Encoder(
+                bottleneck_dim=config.latent_dim,
+                pretrained=(config.vision_encoder_name == "resnet-pretrained"),
+            )
+
+        self.use_proprio = OBS_STATE in config.input_features
+        if self.use_proprio:
+            state_dim = config.input_features[OBS_STATE].shape[0]
+            self.state_encoder = nn.Sequential(
+                nn.Linear(state_dim, config.state_encoder_hidden_dim),
+                nn.LayerNorm(config.state_encoder_hidden_dim),
+                nn.Tanh(),
+            )
+        else:
+            self.state_encoder = None
+
+        self._out_dim = len(self.image_keys) * config.latent_dim
+        if self.use_proprio:
+            self._out_dim += config.state_encoder_hidden_dim
+
+    @property
+    def output_dim(self):
+        return self._out_dim
+
+    def forward(self, obs, cache=None, detach=False):
+        parts = []
+        for key in self.image_keys:
+            name = key.replace(".", "_")
+            x = self.image_encoders[name](obs[key], train=self.training)
+            if detach:
+                x = x.detach()
+            parts.append(x)
+
+        if self.use_proprio:
+            x = self.state_encoder(obs[OBS_STATE])
+            if detach:
+                x = x.detach()
+            parts.append(x)
+
+        return torch.cat(parts, dim=-1)
 
 
 class TwinRLPolicy(PreTrainedPolicy):
@@ -352,7 +695,7 @@ class TwinRLPolicy(PreTrainedPolicy):
         return actor_loss, {"loss_actor": actor_loss}
 
     def critic_loss_fn(self, batch: dict, train_batch: dict) -> tuple[Tensor, dict[str, Tensor]]:
-        critic_loss = self.compute_loss_critic(
+        critic_loss, info = self.compute_loss_critic(
             observations=train_batch["critic_observations"],
             actions=train_batch["actions"],
             rewards=train_batch["rewards"],
@@ -363,10 +706,11 @@ class TwinRLPolicy(PreTrainedPolicy):
             next_obs_features=batch.get("next_observation_feature"),
             use_calql=False,
         )
-        return critic_loss, {"loss_critic": critic_loss}
+        info["loss_critic"] = critic_loss
+        return critic_loss, info
 
     def calql_critic_loss_fn(self, batch: dict, train_batch: dict) -> tuple[Tensor, dict[str, Tensor]]:
-        critic_loss = self.compute_loss_critic(
+        critic_loss, info = self.compute_loss_critic(
             observations=train_batch["critic_observations"],
             actions=train_batch["actions"],
             rewards=train_batch["rewards"],
@@ -376,7 +720,8 @@ class TwinRLPolicy(PreTrainedPolicy):
             obs_features=train_batch["obs_features"],
             next_obs_features=batch.get("next_observation_feature"),
         )
-        return critic_loss, {"loss_critic": critic_loss}
+        info["loss_critic"] = critic_loss
+        return critic_loss, info
 
     def calql_loss_fns(
         self, batch: dict, train_batch: dict
@@ -407,6 +752,7 @@ class TwinRLPolicy(PreTrainedPolicy):
 
         # Only compute gradients for specified steps. The generic LeRobot
         # trainer performs the backward call after this function returns.
+        print(f"  [DEBUG] update_calql: networks_to_update={list(networks_to_update)}")
         loss_dict = {}
         total_loss = None
         for name in ("critic", "actor"):
@@ -445,6 +791,9 @@ class TwinRLPolicy(PreTrainedPolicy):
         if has_sequence and horizon == 2:
             actor_observations = {key: value[:, 0] for key, value in observations.items()}
             next_obs_from_seq = {key: value[:, 1] for key, value in observations.items()}
+        elif has_sequence and horizon == 1:
+            actor_observations = {key: value.squeeze(1) for key, value in observations.items()}
+            next_obs_from_seq = None
         elif has_sequence:
             actor_observations = observations
             next_obs_from_seq = None
@@ -463,12 +812,14 @@ class TwinRLPolicy(PreTrainedPolicy):
             next_observations = batch["next_state"]
         elif any(key.startswith("next.observation.") for key in batch):
             next_observations = {
-                key.replace("next.", ""): value
+                key.replace("next.", ""): (
+                    value.squeeze(1) if value.ndim == 5 and value.shape[1] == 1 else value
+                )
                 for key, value in batch.items()
                 if key.startswith("next.observation.")
             }
 
-        rewards = batch.get("reward")
+        rewards = batch.get("reward", batch.get("next.reward"))
         if rewards is not None and rewards.ndim == 2 and rewards.shape[1] == 1:
             rewards = rewards.squeeze(1)
 
@@ -560,7 +911,7 @@ class TwinRLPolicy(PreTrainedPolicy):
         obs_features: Tensor | None = None,
         next_obs_features: Tensor | None = None,
         use_calql: bool = True,
-    ) -> Tensor:
+    ) -> tuple[Tensor, dict[str, Tensor]]:
         # --- TD target (standard Bellman) ---
         with torch.no_grad():
             next_actions, _, _ = self.actor(next_observations, next_obs_features)
@@ -573,10 +924,25 @@ class TwinRLPolicy(PreTrainedPolicy):
 
         q_preds = self._critic_forward(observations, actions, obs_features)
         td_target_exp = einops.repeat(td_target, "b -> e b", e=q_preds.shape[0])
-        td_loss = torch.nn.functional.mse_loss(q_preds, td_target_exp, reduction="none").mean(dim=1).sum()
+        td_loss = torch.nn.functional.mse_loss(q_preds, td_target_exp, reduction="mean")
+
+        info = {
+            "td_loss": td_loss,
+            "rewards": rewards.mean(),
+            "target_qs": td_target.mean(),
+            "predicted_qs": q_preds.mean(),
+        }
+
+        # DEBUG:
+        print(
+            f"  [DEBUG] q_preds: mean={q_preds.mean().item():.4f}, min={q_preds.min().item():.4f}, max={q_preds.max().item():.4f}"
+        )
+        print(
+            f"  [DEBUG] target_qs: mean={td_target_exp.mean().item():.4f}, min={td_target_exp.min().item():.4f}, max={td_target_exp.max().item():.4f}"
+        )
 
         if not use_calql or not self.config.use_calql or self.config.cql_alpha == 0.0:
-            return td_loss
+            return td_loss, info
 
         # --- CQL penalty with optional Cal-QL MC lower bound ---
         cql_diff = self._compute_cql_loss(
@@ -588,7 +954,11 @@ class TwinRLPolicy(PreTrainedPolicy):
             next_obs_features=next_obs_features,
         )
         cql_loss = cql_diff.clamp(self.config.cql_clip_diff_min, self.config.cql_clip_diff_max).mean()
-        return td_loss + self.config.cql_alpha * cql_loss
+
+        info["cql_loss"] = cql_loss
+        info["cql_diff"] = cql_diff.mean()
+
+        return td_loss + self.config.cql_alpha * cql_loss, info
 
     def _compute_cql_loss(
         self,
@@ -607,10 +977,8 @@ class TwinRLPolicy(PreTrainedPolicy):
         # Sample OOD actions: uniform random + policy at s + policy at s'
         random_actions = torch.rand(batch_size, n, action_dim, device=device) * 2 - 1
         with torch.no_grad():
-            policy_actions_s, _, _ = self.actor(observations, obs_features)
-            policy_actions_s_next, _, _ = self.actor(next_observations, next_obs_features)
-        policy_actions_s = policy_actions_s.unsqueeze(1).expand(-1, n, -1)
-        policy_actions_s_next = policy_actions_s_next.unsqueeze(1).expand(-1, n, -1)
+            policy_actions_s, _, _ = self.actor(observations, obs_features, repeat=n)
+            policy_actions_s_next, _, _ = self.actor(next_observations, next_obs_features, repeat=n)
 
         # Concatenate: (b, 3*n, action_dim)  — order: [random, current, next]
         all_actions = torch.cat([random_actions, policy_actions_s, policy_actions_s_next], dim=1)
@@ -716,7 +1084,7 @@ class TwinRLPolicy(PreTrainedPolicy):
     # ------------------------------------------------------------------
 
     def _init_encoders(self):
-        self.encoder_critic = SACObservationEncoder(self.config)
+        self.encoder_critic = TwinRLObservationEncoder(self.config)
         if self.config.actor_encoder_type == "octo":
             # Octo actor encoder is always separate from the SAC critic encoder
             self.encoder_actor = OctoActorEncoder(self.config)
@@ -724,22 +1092,28 @@ class TwinRLPolicy(PreTrainedPolicy):
         else:
             self.shared_encoder = self.config.shared_encoder
             self.encoder_actor = (
-                self.encoder_critic if self.shared_encoder else SACObservationEncoder(self.config)
+                self.encoder_critic if self.shared_encoder else TwinRLObservationEncoder(self.config)
             )
 
     def _init_critics(self, action_dim: int):
-        def _make_ensemble():
-            heads = [
-                CriticHead(
-                    input_dim=self.encoder_critic.output_dim + action_dim,
-                    **asdict(self.config.critic_network_kwargs),
-                )
-                for _ in range(self.config.num_critics)
-            ]
-            return CriticEnsemble(encoder=self.encoder_critic, ensemble=heads)
+        """Build shared-final critic ensemble matching JAX parity."""
+        hidden_dims = self.config.critic_network_kwargs.hidden_dims
+        init_final = getattr(self.config.critic_network_kwargs, "init_final", None)
 
-        self.critic_ensemble = _make_ensemble()
-        self.critic_target = _make_ensemble()
+        self.critic_ensemble = TwinRLCriticEnsemble(
+            encoder=self.encoder_critic,
+            ensemble_size=self.config.num_critics,
+            input_dim=self.encoder_critic.output_dim + action_dim,
+            hidden_dims=hidden_dims,
+            init_final=init_final,
+        )
+        self.critic_target = TwinRLCriticEnsemble(
+            encoder=self.encoder_critic,
+            ensemble_size=self.config.num_critics,
+            input_dim=self.encoder_critic.output_dim + action_dim,
+            hidden_dims=hidden_dims,
+            init_final=init_final,
+        )
         self.critic_target.load_state_dict(self.critic_ensemble.state_dict())
 
         if self.config.use_torch_compile:
@@ -757,7 +1131,7 @@ class TwinRLPolicy(PreTrainedPolicy):
         else:
             self.actor = Policy(
                 encoder=self.encoder_actor,
-                network=MLP(
+                network=TwinRLMLP(
                     input_dim=self.encoder_actor.output_dim,
                     **asdict(self.config.actor_network_kwargs),
                 ),

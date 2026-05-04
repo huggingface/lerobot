@@ -110,7 +110,7 @@ class TwinRLConfig(PreTrainedConfig):
     # Backward-compatible alias used by the online RL learner.
     utd_ratio: int = 1
 
-    state_encoder_hidden_dim: int = 256
+    state_encoder_hidden_dim: int = 64
     latent_dim: int = 256
     grad_clip_norm: float = 40.0
     use_torch_compile: bool = False
