@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .sac import SACAlgorithm as SACAlgorithm, SACAlgorithmConfig as SACAlgorithmConfig
+from .sac import SACAlgorithm, SACAlgorithmConfig
 
 __all__ = [
     "SACAlgorithm",

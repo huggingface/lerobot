@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lerobot.rl.algorithms.sac.configuration_sac import SACAlgorithmConfig
-from lerobot.rl.algorithms.sac.sac_algorithm import SACAlgorithm
+from .configuration_sac import SACAlgorithmConfig
+from .sac_algorithm import SACAlgorithm
 
 __all__ = ["SACAlgorithm", "SACAlgorithmConfig"]
