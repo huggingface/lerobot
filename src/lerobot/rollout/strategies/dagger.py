@@ -192,9 +192,8 @@ def _teleop_smooth_move_to(
 ) -> None:
     """Smoothly move an actuated teleop to ``target_pos`` via linear interpolation.
 
-    Enables torque for the duration of the move, then disables it so the
-    operator can move the arm freely.  ``target_pos`` must use the same key
-    space as ``teleop.feedback_features`` (i.e. ``"{motor}.pos"`` keys).
+    Requires the teleoperator to support feedback
+    (i.e. have non-empty ``feedback_features`` and implement ``disable_torque`` / ``enable_torque``).
     """
     teleop.enable_torque()
     current = teleop.get_action()
