@@ -62,7 +62,12 @@ from .utils import (
     DEFAULT_EPISODES_PATH,
     update_chunk_file_indices,
 )
-from .video_utils import VideoEncoderConfig, encode_video_frames, get_video_info
+from .video_utils import (
+    VideoEncoderConfig,
+    camera_encoder_defaults,
+    encode_video_frames,
+    get_video_info,
+)
 
 
 def _load_episode_with_stats(src_dataset: LeRobotDataset, episode_idx: int) -> dict:
@@ -101,7 +106,8 @@ def delete_episodes(
         episode_indices: List of episode indices to delete.
         output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
         repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
-        camera_encoder_config: Video encoder settings used when re-encoding video segments (default: :class:`VideoEncoderConfig()`).
+        camera_encoder_config: Video encoder settings used when re-encoding video segments
+            (``None`` uses :func:`~lerobot.datasets.video_utils.camera_encoder_defaults`).
     """
     if not episode_indices:
         raise ValueError("No episodes to delete")
@@ -165,7 +171,8 @@ def split_dataset(
         splits: Either a dict mapping split names to episode indices, or a dict mapping
                 split names to fractions (must sum to <= 1.0).
         output_dir: Root directory where the split datasets will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id.
-        camera_encoder_config: Video encoder settings used when re-encoding video segments (default: :class:`VideoEncoderConfig()`).
+        camera_encoder_config: Video encoder settings used when re-encoding video segments
+            (``None`` uses :func:`~lerobot.datasets.video_utils.camera_encoder_defaults`).
 
     Examples:
       Split by specific episodes
@@ -598,10 +605,11 @@ def _keep_episodes_from_video_with_av(
             Ranges are half-open intervals: [start_frame, end_frame), where start_frame
             is inclusive and end_frame is exclusive.
         fps: Frame rate of the video.
-        camera_encoder_config: Video encoder settings (default: :class:`VideoEncoderConfig()`).
+        camera_encoder_config: Video encoder settings
+            (``None`` uses :func:`~lerobot.datasets.video_utils.camera_encoder_defaults`).
     """
     if camera_encoder_config is None:
-        camera_encoder_config = VideoEncoderConfig()
+        camera_encoder_config = camera_encoder_defaults()
     from fractions import Fraction
 
     import av
@@ -705,13 +713,14 @@ def _copy_and_reindex_videos(
         src_dataset: Source dataset to copy from
         dst_meta: Destination metadata object
         episode_mapping: Mapping from old episode indices to new indices
-        camera_encoder_config: Video encoder settings used when re-encoding segments (default: :class:`VideoEncoderConfig()`).
+        camera_encoder_config: Video encoder settings used when re-encoding segments
+            (``None`` uses :func:`~lerobot.datasets.video_utils.camera_encoder_defaults`).
 
     Returns:
         dict mapping episode index to its video metadata (chunk_index, file_index, timestamps)
     """
     if camera_encoder_config is None:
-        camera_encoder_config = VideoEncoderConfig()
+        camera_encoder_config = camera_encoder_defaults()
     if src_dataset.meta.episodes is None:
         src_dataset.meta.episodes = load_episodes(src_dataset.meta.root)
 
@@ -1654,7 +1663,8 @@ def convert_image_to_video_dataset(
         dataset: The source LeRobot dataset with images
         output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
         repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
-        camera_encoder_config: Video encoder settings (default: :class:`VideoEncoderConfig()`).
+        camera_encoder_config: Video encoder settings
+            (``None`` uses :func:`~lerobot.datasets.video_utils.camera_encoder_defaults`).
         episode_indices: List of episode indices to convert (None = all episodes)
         num_workers: Number of threads for parallel processing (default: 4)
         max_episodes_per_batch: Maximum episodes per video batch to avoid memory issues (None = no limit)
@@ -1664,7 +1674,7 @@ def convert_image_to_video_dataset(
         New LeRobotDataset with images encoded as videos
     """
     if camera_encoder_config is None:
-        camera_encoder_config = VideoEncoderConfig()
+        camera_encoder_config = camera_encoder_defaults()
 
     # Check that it's an image dataset
     if len(dataset.meta.video_keys) > 0:

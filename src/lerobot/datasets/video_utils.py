@@ -506,7 +506,7 @@ def encode_video_frames(
 ) -> None:
     """More info on ffmpeg arguments tuning on `benchmark/video/README.md`"""
     if camera_encoder_config is None:
-        camera_encoder_config = VideoEncoderConfig()
+        camera_encoder_config = camera_encoder_defaults()
     vcodec = camera_encoder_config.vcodec
     pix_fmt = camera_encoder_config.pix_fmt
 
@@ -810,14 +810,14 @@ class StreamingVideoEncoder:
         Args:
             fps: Frames per second for the output videos.
             camera_encoder_config: Video encoder settings applied to all cameras.
-                When ``None``, :class:`VideoEncoderConfig` defaults are used.
+                When ``None``, :func:`camera_encoder_defaults` is used.
             encoder_threads: Number of encoder threads (global setting).
                 ``None`` lets the codec decide.
             queue_maxsize: Max frames to buffer per camera before
                 back-pressure drops frames.
         """
         self.fps = fps
-        self._camera_encoder_config = camera_encoder_config or VideoEncoderConfig()
+        self._camera_encoder_config = camera_encoder_config or camera_encoder_defaults()
         self._encoder_threads = encoder_threads
         self.queue_maxsize = queue_maxsize
 

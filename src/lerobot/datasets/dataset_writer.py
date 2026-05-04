@@ -53,6 +53,7 @@ from .utils import (
 from .video_utils import (
     StreamingVideoEncoder,
     VideoEncoderConfig,
+    camera_encoder_defaults,
     concatenate_video_files,
     encode_video_frames,
     get_video_duration_in_s,
@@ -95,7 +96,7 @@ class DatasetWriter:
         self,
         meta: LeRobotDatasetMetadata,
         root: Path,
-        camera_encoder_config: VideoEncoderConfig,
+        camera_encoder_config: VideoEncoderConfig | None,
         encoder_threads: int | None,
         batch_encoding_size: int,
         streaming_encoder: StreamingVideoEncoder | None = None,
@@ -108,6 +109,7 @@ class DatasetWriter:
                 settings, and episode persistence).
             root: Local dataset root directory.
             camera_encoder_config: Video encoder settings applied to all cameras.
+                ``None`` uses :func:`~lerobot.datasets.video_utils.camera_encoder_defaults`.
             encoder_threads: Number of encoder threads (global). ``None``
                 lets the codec decide.
             batch_encoding_size: Number of episodes to accumulate before
@@ -118,7 +120,7 @@ class DatasetWriter:
         """
         self._meta = meta
         self._root = root
-        self._camera_encoder_config = camera_encoder_config or VideoEncoderConfig()
+        self._camera_encoder_config = camera_encoder_config or camera_encoder_defaults()
         self._encoder_threads = encoder_threads
         self._batch_encoding_size = batch_encoding_size
         self._streaming_encoder = streaming_encoder

@@ -178,7 +178,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             batch_encoding_size (int, optional): Number of episodes to accumulate before batch encoding videos.
                 Set to 1 for immediate encoding (default), or higher for batched encoding. Defaults to 1.
             camera_encoder_config (VideoEncoderConfig | None, optional): Video encoder settings for cameras
-                (codec, quality, etc.).
+                (codec, quality, etc.). When ``None``, :func:`~lerobot.datasets.video_utils.camera_encoder_defaults`
+                is used by the writer.
             encoder_threads (int | None, optional): Number of encoder threads (global). ``None`` lets the
                 codec decide.
             streaming_encoding (bool, optional): If True, encode video frames in real-time during capture
@@ -298,7 +299,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
     @staticmethod
     def _build_streaming_encoder(
         fps: int,
-        camera_encoder_config: VideoEncoderConfig,
+        camera_encoder_config: VideoEncoderConfig | None,
         encoder_threads: int | None,
         encoder_queue_maxsize: int,
     ) -> StreamingVideoEncoder:
@@ -653,6 +654,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             batch_encoding_size: Number of episodes to accumulate before
                 batch-encoding videos. ``1`` means encode immediately.
             camera_encoder_config: Video encoder settings for cameras (codec, quality, etc.).
+                When ``None``, :func:`~lerobot.datasets.video_utils.camera_encoder_defaults` is used.
             encoder_threads: Number of encoder threads (global). ``None``
                 lets the codec decide.
             metadata_buffer_size: Number of episode metadata records to buffer
@@ -753,6 +755,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             batch_encoding_size: Number of episodes to accumulate before
                 batch-encoding videos.
             camera_encoder_config: Video encoder settings for cameras (codec, quality, etc.).
+                When ``None``, :func:`~lerobot.datasets.video_utils.camera_encoder_defaults` is used.
             encoder_threads: Number of encoder threads (global). ``None``
                 lets the codec decide.
             image_writer_processes: Subprocesses for async image writing.
