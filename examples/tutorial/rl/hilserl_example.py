@@ -9,7 +9,7 @@ from lerobot.datasets import LeRobotDataset
 from lerobot.envs.configs import HILSerlProcessorConfig, HILSerlRobotEnvConfig
 from lerobot.policies import GaussianActorConfig
 from lerobot.policies.gaussian_actor.modeling_gaussian_actor import GaussianActorPolicy
-from lerobot.policies.gaussian_actor.reward_model.modeling_classifier import Classifier
+from lerobot.rewards.classifier.modeling_classifier import Classifier
 from lerobot.rl.algorithms.sac import SACAlgorithm, SACAlgorithmConfig
 from lerobot.rl.buffer import ReplayBuffer
 from lerobot.rl.gym_manipulator import make_robot_env

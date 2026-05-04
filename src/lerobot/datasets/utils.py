@@ -14,9 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import contextlib
+import dataclasses
 import importlib.resources
 import json
 import logging
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import datasets
@@ -70,6 +72,9 @@ class ForwardCompatibilityError(CompatibilityError):
         super().__init__(message)
 
 
+logger = logging.getLogger(__name__)
+
+
 DEFAULT_CHUNK_SIZE = 1000  # Max number of files per chunk
 DEFAULT_DATA_FILE_SIZE_IN_MB = 100  # Max size per file
 DEFAULT_VIDEO_FILE_SIZE_IN_MB = 200  # Max size per file
@@ -92,6 +97,123 @@ DEFAULT_IMAGE_PATH = "images/{image_key}/episode-{episode_index:06d}/frame-{fram
 LEGACY_EPISODES_PATH = "meta/episodes.jsonl"
 LEGACY_EPISODES_STATS_PATH = "meta/episodes_stats.jsonl"
 LEGACY_TASKS_PATH = "meta/tasks.jsonl"
+
+
+@dataclass
+class DatasetInfo:
+    """Typed representation of the ``meta/info.json`` file for a LeRobot dataset.
+
+    Replaces the previously untyped ``dict`` returned by ``load_info()`` and
+    created by ``create_empty_dataset_info()``.  Using a dataclass provides
+    explicit field definitions, IDE auto-completion, and validation at
+    construction time.
+    """
+
+    codebase_version: str
+    fps: int
+    features: dict[str, dict]
+
+    # Episode / frame counters — start at zero for new datasets
+    total_episodes: int = 0
+    total_frames: int = 0
+    total_tasks: int = 0
+
+    # Storage settings
+    chunks_size: int = field(default=DEFAULT_CHUNK_SIZE)
+    data_files_size_in_mb: int = field(default=DEFAULT_DATA_FILE_SIZE_IN_MB)
+    video_files_size_in_mb: int = field(default=DEFAULT_VIDEO_FILE_SIZE_IN_MB)
+
+    # File path templates
+    data_path: str = field(default=DEFAULT_DATA_PATH)
+    video_path: str | None = field(default=DEFAULT_VIDEO_PATH)
+
+    # Optional metadata
+    robot_type: str | None = None
+    splits: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Coerce feature shapes from list to tuple — JSON deserialisation
+        # returns lists, but the rest of the codebase expects tuples.
+        for ft in self.features.values():
+            if isinstance(ft.get("shape"), list):
+                ft["shape"] = tuple(ft["shape"])
+
+        if self.fps <= 0:
+            raise ValueError(f"fps must be positive, got {self.fps}")
+        if self.chunks_size <= 0:
+            raise ValueError(f"chunks_size must be positive, got {self.chunks_size}")
+        if self.data_files_size_in_mb <= 0:
+            raise ValueError(f"data_files_size_in_mb must be positive, got {self.data_files_size_in_mb}")
+        if self.video_files_size_in_mb <= 0:
+            raise ValueError(f"video_files_size_in_mb must be positive, got {self.video_files_size_in_mb}")
+
+    def to_dict(self) -> dict:
+        """Return a JSON-serialisable dict.
+
+        Converts tuple shapes back to lists so ``json.dump`` can handle them.
+        """
+        d = dataclasses.asdict(self)
+        for ft in d["features"].values():
+            if isinstance(ft.get("shape"), tuple):
+                ft["shape"] = list(ft["shape"])
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "DatasetInfo":
+        """Construct from a raw dict (e.g. loaded directly from JSON).
+
+        Unknown keys are ignored for forward compatibility with datasets that
+        carry additional fields (e.g. ``total_videos`` from v2.x). A warning is
+        logged when such fields are present.
+        """
+        known = {f.name for f in dataclasses.fields(cls)}
+        unknown = sorted(k for k in data if k not in known)
+        if unknown:
+            logger.warning(f"Unknown fields in DatasetInfo: {unknown}. These will be ignored.")
+        return cls(**{k: v for k, v in data.items() if k in known})
+
+    # ---------------------------------------------------------------------------
+    # Temporary dict-style compatibility layer
+    # Allows existing ``info["key"]`` call-sites to keep working without changes.
+    # Once all callers have been migrated to attribute access, remove these.
+    # ---------------------------------------------------------------------------
+    def __getitem__(self, key: str):
+        import warnings
+
+        warnings.warn(
+            f"Accessing DatasetInfo with dict-style syntax info['{key}'] is deprecated. "
+            f"Use attribute access info.{key} instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        try:
+            return getattr(self, key)
+        except AttributeError as err:
+            raise KeyError(key) from err
+
+    def __setitem__(self, key: str, value) -> None:
+        import warnings
+
+        warnings.warn(
+            f"Setting DatasetInfo with dict-style syntax info['{key}'] = ... is deprecated. "
+            f"Use attribute assignment info.{key} = ... instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        if not hasattr(self, key):
+            raise KeyError(f"DatasetInfo has no field '{key}'")
+        setattr(self, key, value)
+
+    def __contains__(self, key: str) -> bool:
+        """Check if a field exists (dict-like interface)."""
+        return hasattr(self, key)
+
+    def get(self, key: str, default=None):
+        """Get attribute value with default fallback (dict-like interface)."""
+        try:
+            return getattr(self, key)
+        except AttributeError:
+            return default
 
 
 def has_legacy_hub_download_metadata(root: Path) -> bool:
@@ -294,7 +416,7 @@ def create_branch(repo_id: str, *, branch: str, repo_type: str | None = None) ->
 
 def create_lerobot_dataset_card(
     tags: list | None = None,
-    dataset_info: dict | None = None,
+    dataset_info: DatasetInfo | None = None,
     **kwargs,
 ) -> DatasetCard:
     """Create a `DatasetCard` for a LeRobot dataset.
@@ -305,7 +427,7 @@ def create_lerobot_dataset_card(
 
     Args:
         tags (list | None): A list of tags to add to the dataset card.
-        dataset_info (dict | None): The dataset's info dictionary, which will
+        dataset_info (DatasetInfo | None): The dataset's info object, which will
             be displayed on the card.
         **kwargs: Additional keyword arguments to populate the card template.
 
@@ -318,7 +440,7 @@ def create_lerobot_dataset_card(
         card_tags += tags
     if dataset_info:
         dataset_structure = "[meta/info.json](meta/info.json):\n"
-        dataset_structure += f"```json\n{json.dumps(dataset_info, indent=4)}\n```\n"
+        dataset_structure += f"```json\n{json.dumps(dataset_info.to_dict(), indent=4)}\n```\n"
         kwargs = {**kwargs, "dataset_structure": dataset_structure}
     card_data = DatasetCardData(
         license=kwargs.get("license"),

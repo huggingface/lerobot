@@ -80,18 +80,18 @@ def _write_dataset_tree(
     )
     tasks = tasks_factory(total_tasks=1)
     episodes = episodes_factory(
-        features=info["features"],
-        fps=info["fps"],
+        features=info.features,
+        fps=info.fps,
         total_episodes=1,
         total_frames=3,
         tasks=tasks,
     )
-    stats = stats_factory(features=info["features"])
+    stats = stats_factory(features=info.features)
     hf_dataset = hf_dataset_factory(
-        features=info["features"],
+        features=info.features,
         tasks=tasks,
         episodes=episodes,
-        fps=info["fps"],
+        fps=info.fps,
     )
 
     create_info(root, info)

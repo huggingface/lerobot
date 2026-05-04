@@ -25,18 +25,18 @@ need ~num_frames/30 queries instead of one per frame (~30x speedup).
 
 Usage:
     # Full RA-BC computation with visualizations
-    python src/lerobot/policies/sarm/compute_rabc_weights.py \\
+    python src/lerobot/rewards/sarm/compute_rabc_weights.py \\
         --dataset-repo-id lerobot/aloha_sim_insertion_human \\
         --reward-model-path <USER>/sarm_single_uni4
 
     # Faster computation with stride (compute every 5 frames, interpolate the rest)
-    python src/lerobot/policies/sarm/compute_rabc_weights.py \\
+    python src/lerobot/rewards/sarm/compute_rabc_weights.py \\
         --dataset-repo-id lerobot/aloha_sim_insertion_human \\
         --reward-model-path <USER>/sarm_single_uni4 \\
         --stride 5
 
     # Visualize predictions only (no RA-BC computation)
-    python src/lerobot/policies/sarm/compute_rabc_weights.py \\
+    python src/lerobot/rewards/sarm/compute_rabc_weights.py \\
         --dataset-repo-id lerobot/aloha_sim_insertion_human \\
         --reward-model-path <USER>/sarm_single_uni4 \\
         --visualize-only \\
@@ -58,10 +58,9 @@ import torch
 from tqdm import tqdm
 
 from lerobot.datasets import LeRobotDataset
-
-from .modeling_sarm import SARMRewardModel
-from .processor_sarm import make_sarm_pre_post_processors
-from .sarm_utils import normalize_stage_tau
+from lerobot.rewards.sarm.modeling_sarm import SARMRewardModel
+from lerobot.rewards.sarm.processor_sarm import make_sarm_pre_post_processors
+from lerobot.rewards.sarm.sarm_utils import normalize_stage_tau
 
 
 def get_reward_model_path_from_parquet(parquet_path: Path) -> str | None:
@@ -713,12 +712,12 @@ def main():
         epilog="""
 Examples:
     # Full RA-BC computation with visualizations
-    python src/lerobot/policies/sarm/compute_rabc_weights.py \\
+    python src/lerobot/rewards/sarm/compute_rabc_weights.py \\
         --dataset-repo-id lerobot/aloha_sim_insertion_human \\
         --reward-model-path <USER>/sarm_single_uni4
 
     # Visualize predictions only (no RA-BC computation)
-    python src/lerobot/policies/sarm/compute_rabc_weights.py \\
+    python src/lerobot/rewards/sarm/compute_rabc_weights.py \\
         --dataset-repo-id lerobot/aloha_sim_insertion_human \\
         --reward-model-path <USER>/sarm_single_uni4 \\
         --visualize-only \\
