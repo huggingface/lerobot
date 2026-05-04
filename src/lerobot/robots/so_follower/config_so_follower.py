@@ -44,6 +44,7 @@ class SOFollowerConfig:
 
 
 @RobotConfig.register_subclass("so101_follower")
+@RobotConfig.register_subclass("so101_follower_dragontactile")
 @RobotConfig.register_subclass("so100_follower")
 @dataclass
 class SOFollowerRobotConfig(RobotConfig, SOFollowerConfig):
@@ -52,11 +53,6 @@ class SOFollowerRobotConfig(RobotConfig, SOFollowerConfig):
 @RobotConfig.register_subclass("so101_follower_dragontactile")
 @dataclass
 class SO101FollowerDragontactileConfig(SOFollowerRobotConfig):
-    pass
-
-@RobotConfig.register_subclass("so101_follower_dragontactile")
-@dataclass
-class SO101FollowerDragontactileConfig(RobotConfig, SOFollowerConfig):
     pass
 
 SO100FollowerConfig = SOFollowerRobotConfig
