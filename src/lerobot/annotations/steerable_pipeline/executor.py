@@ -129,26 +129,24 @@ class Executor:
         written = self.writer.write_all(records, staging_dir, root)
         print(f"[annotate] wrote {len(written)} shard(s); pipeline complete", flush=True)
 
-        # Persist the tool catalog to meta/info.json so chat-template
-        # consumers (PR 3 SmolVLA2 / Pi0.5 / dataset visualizer) can read
-        # it via ``LeRobotDatasetMetadata.tools`` (PR 1). Idempotent and
-        # additive: anything the user pre-populated is preserved; we only
-        # ensure the canonical ``say`` schema is present.
-        self._ensure_tools_in_info(root)
+        # Keep meta/info.json aligned with the parquet schema we just wrote.
+        # Idempotent and additive: existing user metadata is preserved.
+        self._ensure_annotation_metadata_in_info(root)
 
         return PipelineRunSummary(phases=phases, written_paths=written, validation_report=report)
 
-    def _ensure_tools_in_info(self, root: Path) -> None:
-        """Write ``meta/info.json["tools"]`` if missing the canonical ``say``.
+    @staticmethod
+    def _ensure_annotation_metadata_in_info(root: Path) -> None:
+        """Write language features and canonical tools to ``meta/info.json``.
 
-        Reads any user-declared tools already in ``info.json`` and merges
-        the canonical ``SAY_TOOL_SCHEMA`` into the list (deduped by
-        ``function.name``). Writes back to disk only if the list
-        changed.
+        ``LanguageColumnsWriter`` adds ``language_persistent`` and
+        ``language_events`` to parquet shards. The metadata must advertise
+        those columns too, otherwise non-streaming ``LeRobotDataset`` loads
+        cast against the old schema and fail on the extra parquet columns.
         """
         import json  # noqa: PLC0415
 
-        from lerobot.datasets.language import SAY_TOOL_SCHEMA  # noqa: PLC0415
+        from lerobot.datasets.language import SAY_TOOL_SCHEMA, language_feature_info  # noqa: PLC0415
 
         info_path = root / "meta" / "info.json"
         if not info_path.exists():
@@ -158,6 +156,16 @@ class Executor:
         except Exception as exc:  # noqa: BLE001
             print(f"[annotate] could not read {info_path}: {exc}", flush=True)
             return
+
+        changed = False
+
+        features = info.get("features")
+        if not isinstance(features, dict):
+            features = {}
+        merged_features = {**features, **language_feature_info()}
+        if merged_features != features:
+            info["features"] = merged_features
+            changed = True
 
         existing = info.get("tools")
         if not isinstance(existing, list):
@@ -172,9 +180,14 @@ class Executor:
             merged.append(SAY_TOOL_SCHEMA)
         if merged != existing:
             info["tools"] = merged
+            changed = True
+
+        if changed:
             info_path.write_text(json.dumps(info, indent=2))
             print(
-                f"[annotate] meta/info.json: tools={[t['function']['name'] for t in merged]}",
+                "[annotate] meta/info.json: "
+                f"language_features={list(language_feature_info())}, "
+                f"tools={[t['function']['name'] for t in merged]}",
                 flush=True,
             )
 
