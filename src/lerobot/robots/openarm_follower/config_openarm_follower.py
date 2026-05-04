@@ -121,6 +121,8 @@ class OpenArmFollowerConfigBase:
 
 
 @RobotConfig.register_subclass("openarm_follower")
+@RobotConfig.register_subclass("openarm_follower_dragontactile")
+
 @dataclass
 class OpenArmFollowerConfig(RobotConfig, OpenArmFollowerConfigBase):
     pass

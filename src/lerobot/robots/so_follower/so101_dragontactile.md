@@ -7,12 +7,12 @@ The commande to run teleoperation, training,or evaluation is the same as for the
 ```bash
 lerobot-teleoperate \
   --robot.type=so101_follower_dragontactile \
-  --robot.port=/dev/ttyACM0 \
+  --robot.port=/dev/ttyACM1 \
   --robot.id=my_awesome_follower_arm \
   --robot.cameras="{ top: {type: opencv, index_or_path: \"/dev/video0\", width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: \"/dev/video2\", width: 640, height: 480, fps: 15} }" \
   --teleop.type=so101_leader \
-  --teleop.port=/dev/ttyACM1 \
-  --teleop.id=my_awesome_leader_arm \
+  --teleop.port=/dev/ttyACM0 \
+  --teleop.id=my_awesome_leader_arm
 ```
 
 TODO list :
