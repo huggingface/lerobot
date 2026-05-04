@@ -4,17 +4,18 @@ The user originally asked: "{episode_task}"
 
 You are shown the entire demonstration as a single video. Watch the
 whole clip, then segment it into a list of consecutive atomic subtasks
-the robot performs.
+the robot performs. Write compact action labels, not prose.
 
 Authoring rules — based on Hi Robot (Shi 2025) atom granularity and
-Pi0.7 (Physical Intelligence 2025) "how, not what" detail:
+pi0.7 (Physical Intelligence 2025) compact context prompts:
 
 - Each subtask is one atomic skill the low-level policy can execute,
   e.g. "pick up one piece of lettuce", "place the bowl into the box",
   "move the right arm to the left".
-- Capture HOW the subtask is performed, not only WHAT — e.g. prefer
+- Capture HOW when useful, but keep it brief — e.g. prefer
   "grasp the handle of the sponge with the left hand" to "pick up the
   sponge".
+- Use verb phrases, not full sentences.
 - Subtasks are non-overlapping and cover the full episode in order.
   Choose the cut points yourself based on what you see in the video
   (gripper open/close events, contact, regrasps, transitions).

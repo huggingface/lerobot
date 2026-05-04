@@ -18,8 +18,14 @@ Previous memory: {prior_memory}
 Just-completed subtask: "{completed_subtask}"
 Remaining subtasks (for relevance judgement only): {remaining_subtasks}
 
-Update the memory. Drop irrelevant detail. Compress completed steps.
-Keep WHAT happened, drop HOW. Shorter is better.
+Update the memory as a compact state note.
+
+Rules:
+- Keep only facts needed later.
+- Keep WHAT changed; drop HOW it was done.
+- Use fragments when clear.
+- Prefer: "bowl in box; lid still open"
+- Avoid: "The robot placed the bowl into the box and the lid remains open."
 
 Output strictly valid JSON:
-  {{ "memory": "<one or two short sentences>" }}
+  {{ "memory": "<brief state note>" }}

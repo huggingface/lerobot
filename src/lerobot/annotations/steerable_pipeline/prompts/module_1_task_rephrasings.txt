@@ -9,7 +9,7 @@ Original task:
 Generate exactly {n} alternative phrasings of the same task. Vary:
 
 - formality (casual / polite / curt)
-- verbosity (short imperative vs longer polite request)
+- verbosity (mostly short imperative; occasional polite request)
 - word choice (synonyms, different verbs)
 - sentence structure (imperative / question / suggestion)
 
@@ -17,7 +17,7 @@ Hard rules:
 - Each phrasing MUST preserve the exact meaning of the original task.
   Do not change which object is involved, the destination, or the
   action. Do not add extra steps. Do not invent new objects.
-- Each phrasing must be a single short sentence, plain prose, no
+- Each phrasing must be a short phrase or sentence, plain prose, no
   markdown, no quotes, no list numbers.
 - Phrasings must be distinct — no near-duplicates.
 - Output exactly {n} entries.
