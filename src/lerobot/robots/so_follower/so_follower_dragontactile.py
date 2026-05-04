@@ -24,7 +24,7 @@ import scipy.signal
 
 from lerobot.types import RobotObservation
 
-from .config_so_follower import SO101FollowerDragontactileConfig
+from .config_so_follower import SO101FollowerConfig
 from .so_follower import SOFollower
 
 logger = logging.getLogger(__name__)
@@ -33,10 +33,10 @@ logger = logging.getLogger(__name__)
 class SO101FollowerDragontactile(SOFollower):
     """SO101 follower with an additional tactile spectrogram observation."""
 
-    config_class = SO101FollowerDragontactileConfig
+    config_class = SO101FollowerConfig
     name = "so101_follower_dragontactile"
 
-    def __init__(self, config: SO101FollowerDragontactileConfig):
+    def __init__(self, config: SO101FollowerConfig):
         super().__init__(config)
         self._tactile_obs_key = "tactile_spectrogram"
 
