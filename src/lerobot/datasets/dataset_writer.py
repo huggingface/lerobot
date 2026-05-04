@@ -118,7 +118,7 @@ class DatasetWriter:
         """
         self._meta = meta
         self._root = root
-        self._camera_encoder_config = camera_encoder_config
+        self._camera_encoder_config = camera_encoder_config or VideoEncoderConfig()
         self._encoder_threads = encoder_threads
         self._batch_encoding_size = batch_encoding_size
         self._streaming_encoder = streaming_encoder
