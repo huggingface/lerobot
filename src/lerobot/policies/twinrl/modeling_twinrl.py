@@ -933,14 +933,6 @@ class TwinRLPolicy(PreTrainedPolicy):
             "predicted_qs": q_preds.mean(),
         }
 
-        # DEBUG:
-        print(
-            f"  [DEBUG] q_preds: mean={q_preds.mean().item():.4f}, min={q_preds.min().item():.4f}, max={q_preds.max().item():.4f}"
-        )
-        print(
-            f"  [DEBUG] target_qs: mean={td_target_exp.mean().item():.4f}, min={td_target_exp.min().item():.4f}, max={td_target_exp.max().item():.4f}"
-        )
-
         if not use_calql or not self.config.use_calql or self.config.cql_alpha == 0.0:
             return td_loss, info
 
