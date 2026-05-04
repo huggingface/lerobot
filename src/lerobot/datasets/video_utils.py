@@ -115,11 +115,12 @@ class VideoEncoderConfig:
             check_video_encoder_config_pyav(self)
 
     def resolve_vcodec(self) -> None:
-        """Validate vcodec and resolve 'auto' to best available HW encoder, fallback to libsvtav1.
+        """Check ``vcodec`` and, when it is ``"auto"``, pick a concrete encoder.
 
-        Any explicitly-requested codec that isn't in the local FFmpeg build is
-        also silently rewritten to ``libsvtav1`` so encoding never hard-fails on
-        a host missing the requested encoder.
+        For ``"auto"``, the first hardware encoder in the preference list that FFmpeg
+        exposes is chosen; if none are available, ``libsvtav1`` is used. If the
+        resolved codec (explicit or after auto-selection) is not present in the
+        local FFmpeg build, raises ``ValueError``.
         """
         if self.vcodec not in VALID_VIDEO_CODECS:
             raise ValueError(f"Invalid vcodec '{self.vcodec}'. Must be one of: {sorted(VALID_VIDEO_CODECS)}")
@@ -130,7 +131,7 @@ class VideoEncoderConfig:
                     logger.info(f"Auto-selected video codec: {encoder}")
                     self.vcodec = encoder
                     return
-            logger.info("No hardware encoder available, falling back to software encoder 'libsvtav1'")
+            logger.warning("No hardware encoder available, falling back to software encoder 'libsvtav1'")
             self.vcodec = "libsvtav1"
 
         if self.detect_available_encoders(self.vcodec):
