@@ -237,17 +237,25 @@ def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> 
     hub_versions = get_repo_versions(repo_id)
 
     if not hub_versions:
-        raise RevisionNotFoundError(
-            f"""Your dataset must be tagged with a codebase version.
-            Assuming _version_ is the codebase_version value in the info.json, you can run this:
-            ```python
-            from huggingface_hub import HfApi
-
-            hub_api = HfApi()
-            hub_api.create_tag("{repo_id}", tag="_version_", repo_type="dataset")
-            ```
-            """
+        msg = (
+            f"Repo {repo_id!r} has no codebase-version tags. "
+            f"Either the dataset doesn't exist on the Hub yet, or it was "
+            f"pushed without a version tag. To tag an existing dataset:\n"
+            f"```python\n"
+            f"from huggingface_hub import HfApi\n"
+            f"HfApi().create_tag({repo_id!r}, tag='_version_', repo_type='dataset')\n"
+            f"```"
         )
+        # ``RevisionNotFoundError`` extends ``HfHubHTTPError`` which on
+        # newer ``huggingface_hub`` versions makes ``response`` a required
+        # keyword arg. Pass ``response=None`` explicitly so this raises
+        # with a clean message instead of an upstream
+        # ``TypeError: __init__() missing 1 required keyword-only argument: 'response'``.
+        try:
+            raise RevisionNotFoundError(msg, response=None)
+        except TypeError:
+            # Older ``huggingface_hub`` (no ``response`` kwarg).
+            raise RevisionNotFoundError(msg)  # noqa: B904
 
     if target_version in hub_versions:
         return f"v{target_version}"
