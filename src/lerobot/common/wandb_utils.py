@@ -41,8 +41,12 @@ def cfg_to_group(
             return tag
         return tag[:max_tag_length]
 
+    if cfg.is_reward_model_training:
+        trainable_tag = f"reward_model:{cfg.reward_model.type}"
+    else:
+        trainable_tag = f"policy:{cfg.policy.type}"
     lst = [
-        f"policy:{cfg.policy.type}",
+        trainable_tag,
         f"seed:{cfg.seed}",
     ]
     if cfg.dataset is not None:

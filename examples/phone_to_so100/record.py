@@ -65,14 +65,15 @@ def main():
     robot = SO100Follower(robot_config)
     phone = Phone(teleop_config)
 
-    # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
+    # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo:
+    #   https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
     kinematics_solver = RobotKinematics(
         urdf_path="./SO101/so101_new_calib.urdf",
         target_frame_name="gripper_frame_link",
         joint_names=list(robot.bus.motors.keys()),
     )
 
-    # Build pipeline to convert phone action to EE action
+    # Build pipeline to convert phone action to EE action (with gripper velocity mapped to joint).
     phone_to_robot_ee_pose_processor = RobotProcessorPipeline[
         tuple[RobotAction, RobotObservation], RobotAction
     ](
@@ -94,7 +95,7 @@ def main():
         to_output=transition_to_robot_action,
     )
 
-    # Build pipeline to convert EE action to joints action
+    # Build pipeline to convert EE action to joints action (IK).
     robot_ee_to_joints_processor = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
         steps=[
             InverseKinematicsEEToJoints(
@@ -107,7 +108,7 @@ def main():
         to_output=transition_to_robot_action,
     )
 
-    # Build pipeline to convert joint observation to EE observation
+    # Build pipeline to convert joint observation to EE observation (FK).
     robot_joints_to_ee_pose = RobotProcessorPipeline[RobotObservation, RobotObservation](
         steps=[
             ForwardKinematicsJointsToEE(
@@ -118,13 +119,12 @@ def main():
         to_output=transition_to_observation,
     )
 
-    # Create the dataset
+    # Create the dataset, deriving features from the pipelines so the on-disk schema
+    # matches exactly what the pipelines produce at runtime.
     dataset = LeRobotDataset.create(
         repo_id=HF_REPO_ID,
         fps=FPS,
         features=combine_feature_dicts(
-            # Run the feature contract of the pipelines
-            # This tells you how the features would look like after the pipeline steps
             aggregate_pipeline_dataset_features(
                 pipeline=phone_to_robot_ee_pose_processor,
                 initial_features=create_initial_features(action=phone.action_features),
@@ -163,14 +163,14 @@ def main():
                 robot=robot,
                 events=events,
                 fps=FPS,
+                teleop_action_processor=phone_to_robot_ee_pose_processor,
+                robot_action_processor=robot_ee_to_joints_processor,
+                robot_observation_processor=robot_joints_to_ee_pose,
                 teleop=phone,
                 dataset=dataset,
                 control_time_s=EPISODE_TIME_SEC,
                 single_task=TASK_DESCRIPTION,
                 display_data=True,
-                teleop_action_processor=phone_to_robot_ee_pose_processor,
-                robot_action_processor=robot_ee_to_joints_processor,
-                robot_observation_processor=robot_joints_to_ee_pose,
             )
 
             # Reset the environment if not stopping or re-recording
@@ -182,13 +182,13 @@ def main():
                     robot=robot,
                     events=events,
                     fps=FPS,
+                    teleop_action_processor=phone_to_robot_ee_pose_processor,
+                    robot_action_processor=robot_ee_to_joints_processor,
+                    robot_observation_processor=robot_joints_to_ee_pose,
                     teleop=phone,
                     control_time_s=RESET_TIME_SEC,
                     single_task=TASK_DESCRIPTION,
                     display_data=True,
-                    teleop_action_processor=phone_to_robot_ee_pose_processor,
-                    robot_action_processor=robot_ee_to_joints_processor,
-                    robot_observation_processor=robot_joints_to_ee_pose,
                 )
 
             if events["rerecord_episode"]:
