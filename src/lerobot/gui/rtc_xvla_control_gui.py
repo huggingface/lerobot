@@ -249,6 +249,12 @@ class RTCXVLAControlGUI(tk.Tk):
                 _FieldSpec("inference_delay_steps", "Inference Delay Steps (optional)", "2", "optional_int"),
                 _FieldSpec("xvla_domain_id", "XVLA Domain ID (optional)", "15", "optional_int"),
             ],
+            "Recording": [
+                _FieldSpec(
+                    "record_obs_enable", "Record Observations", "false", "bool", ("true", "false")
+                ),
+                _FieldSpec("record_obs_dir", "Record Output Directory", "recorded_obs", "str"),
+            ],
             "Homing": [
                 _FieldSpec("homing_duration_start", "Homing Duration Start", "8.0", "float"),
                 _FieldSpec("homing_duration_after_stop", "Homing Duration After Stop", "8.0", "float"),
@@ -482,6 +488,8 @@ class RTCXVLAControlGUI(tk.Tk):
             rtc_debug_maxlen=self._parse_int("rtc_debug_maxlen"),
             inference_delay_steps=self._parse_optional_int("inference_delay_steps"),
             xvla_domain_id=self._parse_optional_int("xvla_domain_id"),
+            record_obs_enable=self._parse_bool("record_obs_enable"),
+            record_obs_dir=self._vars["record_obs_dir"].get().strip() or "recorded_obs",
         )
         return cfg
 

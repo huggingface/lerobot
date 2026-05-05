@@ -33,14 +33,16 @@ python -m lerobot.rtc_inference.robot_client \
 ```
 """
 
+import json
 import logging
 import pickle  # nosec
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import asdict
+from pathlib import Path
 from pprint import pformat
-from queue import Queue
+from queue import Empty, Queue
 from typing import Any
 
 import draccus
@@ -152,6 +154,13 @@ class RobotClient:
         # FPS measurement
         self.fps_tracker = FPSTracker(target_fps=self.config.fps)
 
+        # Observation recording
+        self._record_start_time: float | None = None
+        self._record_queue: Queue = Queue()
+        self._record_thread: threading.Thread | None = None
+        if self.config.record_obs_enable:
+            self._setup_recording(self.config.record_obs_dir)
+
         self.logger.info("Robot connected and ready")
         self.logger.info(
             "Observation timestep mode: %s",
@@ -170,6 +179,76 @@ class RobotClient:
     @property
     def running(self):
         return not self.shutdown_event.is_set()
+
+    def _setup_recording(self, record_dir: str) -> None:
+        import cv2  # local import — only needed when recording is enabled
+        self._cv2 = cv2
+
+        root = Path(record_dir)
+        self._record_root = root
+        self._record_meta_path = root / "metadata.jsonl"
+        root.mkdir(parents=True, exist_ok=True)
+        self.logger.info(f"Observation recording enabled → {root.resolve()}")
+
+        self._record_thread = threading.Thread(target=self._recording_worker, daemon=True)
+        self._record_thread.start()
+
+    def _recording_worker(self) -> None:
+        """Background thread: pops (timestep, elapsed_s, abs_timestamp, raw_observation) from queue and saves."""
+        with self._record_meta_path.open("a", encoding="utf-8") as meta_f:
+            while True:
+                try:
+                    item = self._record_queue.get(timeout=1.0)
+                except Empty:
+                    if self.shutdown_event.is_set():
+                        break
+                    continue
+
+                if item is None:  # sentinel
+                    break
+
+                timestep, elapsed_s, abs_timestamp, raw_obs = item
+                camera_keys = []
+
+                for key, value in raw_obs.items():
+                    if "image" not in key and "camera" not in key:
+                        continue
+
+                    try:
+                        import numpy as np
+
+                        if hasattr(value, "numpy"):
+                            frame = value.numpy()
+                        elif isinstance(value, np.ndarray):
+                            frame = value
+                        else:
+                            continue
+
+                        safe_key = key.replace(".", "_").replace("/", "_")
+                        cam_dir = self._record_root / "images" / safe_key
+                        cam_dir.mkdir(parents=True, exist_ok=True)
+                        img_path = cam_dir / f"{timestep:06d}.png"
+                        self._cv2.imwrite(str(img_path), self._cv2.cvtColor(frame, self._cv2.COLOR_RGB2BGR))
+                        camera_keys.append(key)
+                    except Exception as e:
+                        self.logger.debug(f"Recording: failed to save image for {key}: {e}")
+
+                meta = {
+                    "timestep": timestep,
+                    "elapsed_s": round(elapsed_s, 6),
+                    "abs_timestamp": round(abs_timestamp, 6),
+                    "cameras": camera_keys,
+                }
+                meta_f.write(json.dumps(meta) + "\n")
+                meta_f.flush()
+
+                self._record_queue.task_done()
+
+    def _record_observation(self, timestep: int, abs_timestamp: float, raw_obs: RawObservation) -> None:
+        if self._record_start_time is None:
+            self._record_start_time = abs_timestamp
+        elapsed_s = abs_timestamp - self._record_start_time
+        self._record_queue.put((timestep, elapsed_s, abs_timestamp, raw_obs))
 
     def start(self):
         """Start the robot client and connect to the policy server"""
@@ -204,6 +283,11 @@ class RobotClient:
     def stop(self):
         """Stop the robot client"""
         self.shutdown_event.set()
+
+        if self._record_thread is not None and self._record_thread.is_alive():
+            self._record_queue.put(None)  # sentinel
+            self._record_thread.join(timeout=10.0)
+            self.logger.info(f"Observation recording stopped. Data saved to: {self._record_root.resolve()}")
 
         self.robot.disconnect()
         self.logger.debug("Robot disconnected")
@@ -551,6 +635,8 @@ class RobotClient:
             sent_ok = self.send_observation(observation)
             if sent_ok:
                 self._last_obs_send_perf = time.perf_counter()
+                if self.config.record_obs_enable:
+                    self._record_observation(observation.get_timestep(), observation.get_timestamp(), raw_observation)
 
             if not self._transport_mode_logged:
                 raw_total = int(transport_stats.get("raw_total_bytes", 0))

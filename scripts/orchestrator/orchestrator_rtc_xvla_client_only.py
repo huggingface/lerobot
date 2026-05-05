@@ -65,6 +65,10 @@ class RTCXVLAClientOnlyConfig:
     interpolation_multiplier: int = 1
     debug_visualize_queue_size: bool = False
 
+    # Observation recording
+    record_obs_enable: bool = False
+    record_obs_dir: str = "recorded_obs"
+
     def __post_init__(self):
         if self.robot is None:
             raise ValueError("robot configuration is required")
@@ -96,6 +100,8 @@ class RTCXVLAClientOnlyConfig:
 
 def _to_robot_client_config(cfg: RTCXVLAClientOnlyConfig) -> RobotClientConfig:
     return RobotClientConfig(
+        record_obs_enable=cfg.record_obs_enable,
+        record_obs_dir=cfg.record_obs_dir,
         policy_type=cfg.policy_type,
         pretrained_name_or_path=cfg.pretrained_name_or_path,
         robot=cfg.robot,

@@ -206,6 +206,16 @@ class RobotClientConfig:
         default=False, metadata={"help": "Visualize the action queue size"}
     )
 
+    # Observation recording configuration
+    record_obs_enable: bool = field(
+        default=False,
+        metadata={"help": "Save observation images and metadata to disk during inference"},
+    )
+    record_obs_dir: str = field(
+        default="recorded_obs",
+        metadata={"help": "Directory to save recorded observation images and metadata"},
+    )
+
     @property
     def environment_dt(self) -> float:
         """Environment time step, in seconds"""
