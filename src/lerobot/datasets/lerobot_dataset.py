@@ -251,14 +251,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 streaming_enc = self._build_streaming_encoder(
                     self.meta.fps,
                     camera_encoder_config,
-                    self._encoder_threads,
                     encoder_queue_maxsize,
+                    encoder_threads,
                 )
             self.writer = DatasetWriter(
                 meta=self.meta,
                 root=self.root,
                 camera_encoder_config=camera_encoder_config,
-                encoder_threads=self._encoder_threads,
+                encoder_threads=encoder_threads,
                 batch_encoding_size=batch_encoding_size,
                 streaming_encoder=streaming_enc,
                 initial_frames=self.meta.total_frames,
@@ -300,14 +300,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def _build_streaming_encoder(
         fps: int,
         camera_encoder_config: VideoEncoderConfig | None,
-        encoder_threads: int | None,
         encoder_queue_maxsize: int,
+        encoder_threads: int | None,
     ) -> StreamingVideoEncoder:
         return StreamingVideoEncoder(
             fps=fps,
             camera_encoder_config=camera_encoder_config,
-            encoder_threads=encoder_threads,
             queue_maxsize=encoder_queue_maxsize,
+            encoder_threads=encoder_threads,
         )
 
     # ── Metadata properties ───────────────────────────────────────────
@@ -698,7 +698,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         streaming_enc = None
         if streaming_encoding and len(obj.meta.video_keys) > 0:
             streaming_enc = cls._build_streaming_encoder(
-                fps, camera_encoder_config, encoder_threads, encoder_queue_maxsize
+                fps, camera_encoder_config, encoder_queue_maxsize, encoder_threads
             )
         obj.writer = DatasetWriter(
             meta=obj.meta,
@@ -802,7 +802,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         streaming_enc = None
         if streaming_encoding and len(obj.meta.video_keys) > 0:
             streaming_enc = cls._build_streaming_encoder(
-                obj.meta.fps, camera_encoder_config, encoder_threads, encoder_queue_maxsize
+                obj.meta.fps, camera_encoder_config, encoder_queue_maxsize, encoder_threads
             )
         obj.writer = DatasetWriter(
             meta=obj.meta,

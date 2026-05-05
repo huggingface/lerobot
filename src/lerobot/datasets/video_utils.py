@@ -801,9 +801,8 @@ class StreamingVideoEncoder:
         self,
         fps: int,
         camera_encoder_config: VideoEncoderConfig | None = None,
-        encoder_threads: int | None = None,
-        *,
         queue_maxsize: int = 30,
+        encoder_threads: int | None = None,
     ):
         """
         Args:
