@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 import av
 
 if TYPE_CHECKING:
-    from lerobot.datasets.video_utils import VideoEncoderConfig
+    from .video_utils import VideoEncoderConfig
 
 logger = logging.getLogger(__name__)
 
