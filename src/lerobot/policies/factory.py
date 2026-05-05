@@ -356,6 +356,7 @@ def make_pre_post_processors(
         processors = make_pi0_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
+            rename_map=kwargs.get("rename_map"),
         )
 
     elif isinstance(policy_cfg, PI05Config):
@@ -364,6 +365,7 @@ def make_pre_post_processors(
         processors = make_pi05_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
+            rename_map=kwargs.get("rename_map"),
         )
 
     elif isinstance(policy_cfg, SACConfig):
@@ -380,6 +382,7 @@ def make_pre_post_processors(
         processors = make_smolvla_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
+            rename_map=kwargs.get("rename_map"),
         )
 
     elif isinstance(policy_cfg, GrootConfig):
@@ -398,6 +401,7 @@ def make_pre_post_processors(
         processors = make_xvla_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
+            rename_map=kwargs.get("rename_map"),
         )
 
     elif isinstance(policy_cfg, WallXConfig):
@@ -420,6 +424,7 @@ def make_pre_post_processors(
             processors = _make_processors_from_policy_config(
                 config=policy_cfg,
                 dataset_stats=kwargs.get("dataset_stats"),
+                rename_map=kwargs.get("rename_map"),
             )
         except Exception as e:
             raise ValueError(f"Processor for policy type '{policy_cfg.type}' is not implemented.") from e
@@ -599,6 +604,7 @@ def _get_policy_cls_from_policy_name(name: str) -> type[PreTrainedConfig]:
 def _make_processors_from_policy_config(
     config: PreTrainedConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    rename_map: dict[str, str] | None = None,
 ) -> tuple[Any, Any]:
     """Create pre- and post-processors from a policy configuration using dynamic imports.
 
@@ -607,6 +613,7 @@ def _make_processors_from_policy_config(
     Args:
         config: The policy configuration object.
         dataset_stats: Dataset statistics for normalization.
+        rename_map: Optional mapping of dataset or environment feature keys to match expected policy feature names.
     Returns:
         A tuple containing the input (pre-processor) and output (post-processor) pipelines.
     """
@@ -621,4 +628,4 @@ def _make_processors_from_policy_config(
     )
     module = importlib.import_module(module_path)
     function = getattr(module, function_name)
-    return function(config, dataset_stats=dataset_stats)
+    return function(config, dataset_stats=dataset_stats, rename_map=rename_map)
