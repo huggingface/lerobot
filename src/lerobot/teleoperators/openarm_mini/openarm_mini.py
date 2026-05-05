@@ -348,6 +348,7 @@ class OpenArmMini(Teleoperator):
         if left_goals:
             self.bus_left.sync_write("Goal_Position", left_goals)
 
+    @check_if_not_connected
     def send_feedback(self, feedback: dict[str, float]) -> None:
         self.write_goal_positions(feedback)
 

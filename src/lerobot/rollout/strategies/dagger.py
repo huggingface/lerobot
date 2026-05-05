@@ -194,6 +194,9 @@ def _teleop_smooth_move_to(
 
     Requires the teleoperator to support feedback
     (i.e. have non-empty ``feedback_features`` and implement ``disable_torque`` / ``enable_torque``).
+
+    TODO(Maxime): This blocks up to ``duration_s`` seconds, during this time
+    the follower robot doesn't receive new actions, this could be an issue on LeKiwi.
     """
     teleop.enable_torque()
     current = teleop.get_action()
@@ -751,6 +754,10 @@ class DAggerStrategy(RolloutStrategy):
             Slide the follower to the teleop's current pose so the robot meets
             the operator's hand rather than jumping to it on the first frame.
 
+        CORRECTING -> PAUSED (actuated teleop):
+            Re-enable torque to hold position after correction.
+            This will be potentially useful if cancelling the correction recording
+
         PAUSED -> AUTONOMOUS:
             Reset and resume the inference engine.
         """
@@ -760,6 +767,11 @@ class DAggerStrategy(RolloutStrategy):
             engine.pause()
 
             if _teleop_supports_feedback(teleop) and prev_action is not None:
+                # TODO(Maxime): prev_action is in robot action key space (output of robot_action_processor).
+                # send_feedback expects teleop feedback key space. For homogeneous setups (e.g. SO-101
+                # leader + SO-101 follower) the keys are identical so this works. If the processor pipeline
+                # does non-trivial key renaming (e.g. a rename_map on action keys), the interpolation in
+                # _teleop_smooth_move_to silently no-ops and the arm doesn't move.
                 logger.info("Smooth handover: moving leader arm to follower position")
                 _teleop_smooth_move_to(teleop, prev_action)
 
@@ -775,6 +787,10 @@ class DAggerStrategy(RolloutStrategy):
             # unlock the teleop for human control
             if _teleop_supports_feedback(teleop):
                 teleop.disable_torque()
+
+        elif old_phase == DAggerPhase.CORRECTING and new_phase == DAggerPhase.PAUSED:
+            if _teleop_supports_feedback(teleop):
+                teleop.enable_torque()
 
         elif new_phase == DAggerPhase.AUTONOMOUS:
             logger.info("Resuming autonomous mode - resetting engine and interpolator")
