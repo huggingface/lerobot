@@ -213,7 +213,7 @@ annotations = [
 # are isolated so adding a new tool doesn't bloat the base install.
 # Currently only `say` (Kyutai pocket-tts; CPU-only, ~100M params).
 tools = [
-    "pocket-tts>=0.1.0,<1.0.0",
+    "pocket-tts>=1.0.0,<3.0.0",
     "scipy>=1.11.0,<2.0.0",  # SayTool.output_dir uses scipy.io.wavfile
 ]
 
