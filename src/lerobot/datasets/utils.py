@@ -238,24 +238,23 @@ def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> 
 
     if not hub_versions:
         msg = (
-            f"Repo {repo_id!r} has no codebase-version tags. "
-            f"Either the dataset doesn't exist on the Hub yet, or it was "
-            f"pushed without a version tag. To tag an existing dataset:\n"
-            f"```python\n"
-            f"from huggingface_hub import HfApi\n"
-            f"HfApi().create_tag({repo_id!r}, tag='_version_', repo_type='dataset')\n"
-            f"```"
+            f"Repo {repo_id!r} has no codebase-version tags. The dataset "
+            f"either doesn't exist on the Hub yet, or it was uploaded "
+            f"without a ``v3.x``-style tag. To tag an existing dataset run:\n"
+            f"  from huggingface_hub import HfApi\n"
+            f"  HfApi().create_tag({repo_id!r}, tag='v3.0', repo_type='dataset', exist_ok=True)"
         )
-        # ``RevisionNotFoundError`` extends ``HfHubHTTPError`` which on
-        # newer ``huggingface_hub`` versions makes ``response`` a required
-        # keyword arg. Pass ``response=None`` explicitly so this raises
-        # with a clean message instead of an upstream
-        # ``TypeError: __init__() missing 1 required keyword-only argument: 'response'``.
-        try:
-            raise RevisionNotFoundError(msg, response=None)
-        except TypeError:
-            # Older ``huggingface_hub`` (no ``response`` kwarg).
-            raise RevisionNotFoundError(msg)  # noqa: B904
+        # ``RevisionNotFoundError`` extends ``HfHubHTTPError`` whose
+        # ``__init__`` indexes ``response.headers`` unconditionally on
+        # current ``huggingface_hub`` versions. Constructing it without
+        # a real ``Response`` object crashes with either
+        # ``TypeError: missing 1 required keyword-only argument`` (old
+        # builds) or ``AttributeError: 'NoneType' object has no attribute
+        # 'headers'`` (new builds). Skip that path entirely — this isn't
+        # really an HTTP error, it's a configuration issue — and raise a
+        # plain ``RuntimeError`` so the message actually reaches the
+        # caller.
+        raise RuntimeError(msg)
 
     if target_version in hub_versions:
         return f"v{target_version}"
