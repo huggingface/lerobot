@@ -197,9 +197,22 @@ def _load_policy_and_preprocessor(
 
         ds_meta = LeRobotDatasetMetadata(dataset_repo_id)
         policy = make_policy(cfg, ds_meta=ds_meta)
+        # NOTE: we deliberately pass ``pretrained_path=None`` here even
+        # though the checkpoint ships a ``policy_preprocessor.json``.
+        # ``RenderMessagesStep`` carries a ``TrainingRecipe`` field that
+        # isn't faithfully serialized into that JSON, so the saved
+        # pipeline can't currently be round-tripped via
+        # ``PolicyProcessorPipeline.from_pretrained`` — it crashes with
+        # ``RenderMessagesStep.__init__() missing 1 required argument:
+        # 'recipe'``. Building fresh from ``cfg`` re-runs
+        # ``make_smolvla2_pre_post_processors``, which loads the recipe
+        # YAML referenced by ``cfg.recipe_path`` and wires it back into
+        # ``RenderMessagesStep`` correctly. Normalization stats come
+        # from ``ds_meta.stats`` (the same dataset the user is feeding
+        # into the runtime), so no quality loss in practice.
         preprocessor, _ = make_pre_post_processors(
             cfg,
-            pretrained_path=policy_path,
+            pretrained_path=None,
             dataset_stats=ds_meta.stats,
         )
     else:
