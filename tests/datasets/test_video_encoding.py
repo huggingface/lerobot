@@ -312,7 +312,7 @@ class TestEncoderDetection:
         assert "h264_nvenc" in VALID_VIDEO_CODECS
 
 
-ARTIFACTS = Path(__file__).parent.parent / "fixtures" / "artifacts" / "videos"
+TEST_ARTIFACTS_DIR = Path(__file__).parent.parent / "artifacts" / "encoded_videos"
 
 # Default video feature set used by persistence tests.
 VIDEO_FEATURES = {
@@ -361,7 +361,7 @@ def _add_frames(dataset: LeRobotDataset, num_frames: int) -> None:
 
 class TestGetVideoInfo:
     def test_returns_all_stream_fields(self):
-        info = get_video_info(ARTIFACTS / "clip_4frames.mp4")
+        info = get_video_info(TEST_ARTIFACTS_DIR / "clip_4frames.mp4")
 
         assert info["video.height"] == 64
         assert info["video.width"] == 96
@@ -378,7 +378,7 @@ class TestGetVideoInfo:
     def test_merges_encoder_config_as_video_prefixed_entries(self):
         cfg = VideoEncoderConfig(vcodec="libsvtav1", g=2, crf=30, preset=12)
 
-        info = get_video_info(ARTIFACTS / "clip_4frames.mp4", camera_encoder_config=cfg)
+        info = get_video_info(TEST_ARTIFACTS_DIR / "clip_4frames.mp4", camera_encoder_config=cfg)
 
         assert info["video.g"] == 2
         assert info["video.crf"] == 30
@@ -391,7 +391,7 @@ class TestGetVideoInfo:
     def test_stream_derived_keys_take_precedence_over_config(self):
         cfg = VideoEncoderConfig(vcodec="libsvtav1", pix_fmt="yuv420p")
 
-        info = get_video_info(ARTIFACTS / "clip_4frames.mp4", camera_encoder_config=cfg)
+        info = get_video_info(TEST_ARTIFACTS_DIR / "clip_4frames.mp4", camera_encoder_config=cfg)
 
         assert info["video.codec"]  # populated from stream, not from config's vcodec
         assert info["video.pix_fmt"] == "yuv420p"
@@ -478,7 +478,7 @@ class TestConcatenateVideoFiles:
     def test_two_clips_frame_count(self, tmp_path):
         """Output frame count equals the sum of the two input frame counts."""
         out = tmp_path / "out.mp4"
-        concatenate_video_files([ARTIFACTS / "clip_6frames.mp4", ARTIFACTS / "clip_4frames.mp4"], out)
+        concatenate_video_files([TEST_ARTIFACTS_DIR / "clip_6frames.mp4", TEST_ARTIFACTS_DIR / "clip_4frames.mp4"], out)
 
         with av.open(str(out)) as container:
             total = sum(1 for _ in container.decode(video=0))
@@ -486,7 +486,7 @@ class TestConcatenateVideoFiles:
 
     def test_three_clips_frame_count(self, tmp_path):
         out = tmp_path / "out.mp4"
-        clip = ARTIFACTS / "clip_5frames.mp4"
+        clip = TEST_ARTIFACTS_DIR / "clip_5frames.mp4"
         concatenate_video_files([clip, clip, clip], out)
 
         with av.open(str(out)) as container:
@@ -497,7 +497,7 @@ class TestConcatenateVideoFiles:
     def test_geometry_preserved(self, tmp_path):
         """Output resolution, fps, codec and pixel format must match the inputs."""
         out = tmp_path / "out.mp4"
-        concatenate_video_files([ARTIFACTS / "clip_4frames.mp4", ARTIFACTS / "clip_4frames.mp4"], out)
+        concatenate_video_files([TEST_ARTIFACTS_DIR / "clip_4frames.mp4", TEST_ARTIFACTS_DIR / "clip_4frames.mp4"], out)
 
         info = get_video_info(out)
         assert info["video.height"] == 64
@@ -509,7 +509,7 @@ class TestConcatenateVideoFiles:
     def test_compatibility_check_raises_on_different_codec(self, tmp_path):
         with pytest.raises(ValueError):
             concatenate_video_files(
-                [ARTIFACTS / "clip_4frames.mp4", ARTIFACTS / "clip_h264.mp4"],
+                [TEST_ARTIFACTS_DIR / "clip_4frames.mp4", TEST_ARTIFACTS_DIR / "clip_h264.mp4"],
                 tmp_path / "out.mp4",
                 compatibility_check=True,
             )
@@ -517,7 +517,7 @@ class TestConcatenateVideoFiles:
     def test_compatibility_check_raises_on_different_resolution(self, tmp_path):
         with pytest.raises(ValueError):
             concatenate_video_files(
-                [ARTIFACTS / "clip_4frames.mp4", ARTIFACTS / "clip_32x48.mp4"],
+                [TEST_ARTIFACTS_DIR / "clip_4frames.mp4", TEST_ARTIFACTS_DIR / "clip_32x48.mp4"],
                 tmp_path / "out.mp4",
                 compatibility_check=True,
             )
