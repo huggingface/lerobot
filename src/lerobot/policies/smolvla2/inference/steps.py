@@ -91,10 +91,35 @@ class LowLevelForward(InferenceStep):
     def run(self, state: dict[str, Any]) -> dict[str, Any] | None:
         if self.policy is None or self.observation_provider is None:
             return None
+        if not state.get("task"):
+            # No task yet → nothing useful to condition on.
+            return None
         observation = self.observation_provider()
         if observation is None:
             return None
-        action = self.policy.select_action(observation)
+        # SmolVLA's ``select_action`` expects the full preprocessed
+        # batch, including ``OBS_LANGUAGE_TOKENS`` /
+        # ``OBS_LANGUAGE_ATTENTION_MASK``. The observation provider
+        # only returns image / state features (the runtime drives
+        # messages itself), so build a low-level prompt from current
+        # runtime state and tokenize it inline.
+        ctx = _control_context_messages(state)
+        if state.get("current_subtask"):
+            ctx = ctx + [{"role": "assistant", "content": state["current_subtask"]}]
+        text_batch = _build_text_batch(self.policy, ctx)
+        from lerobot.utils.constants import (  # noqa: PLC0415
+            OBS_LANGUAGE_ATTENTION_MASK,
+            OBS_LANGUAGE_TOKENS,
+        )
+
+        observation = dict(observation)
+        observation[OBS_LANGUAGE_TOKENS] = text_batch["lang_tokens"]
+        observation[OBS_LANGUAGE_ATTENTION_MASK] = text_batch["lang_masks"]
+        try:
+            action = self.policy.select_action(observation)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("select_action skipped: %s", exc)
+            return None
         # SmolVLA returns a single action; if the underlying policy
         # streams chunks, split per-step here. For v1 we just enqueue
         # the result.
