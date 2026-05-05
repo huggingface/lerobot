@@ -85,11 +85,11 @@ class MyProcessorStep(ProcessorStep):
 
 `transform_features`: 이 절차에서 feature의 형태(shape)나 타입이 어떻게 변형되는지 선언하는 데 사용됩니다.
 
-## DataProcessorPipeline: 범용 오케스트레이터
+### DataProcessorPipeline: 범용 오케스트레이터
 
 `DataProcessorPipeline[TInput, TOutput]`은 여러 `ProcessorStep` 인스턴스를 하나로 연결합니다:
 
-````python
+```python
 from lerobot.processor import RobotProcessorPipeline, PolicyProcessorPipeline
 
 # 로봇 하드웨어용 (비배치 데이터)
@@ -116,7 +116,7 @@ policy_processor = PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
 | **Data Format** | Unbatched, heterogeneous                     | Batched, homogeneous                     |
 | **Examples**    | `{"joint_1": 0.5}`                           | `{"observation.state": tensor([[0.5]])}` |
 
-**로봇 하드웨어 인터페이스에는 `RobotProcessorPipeline`을 사용하십시오:
+로봇 하드웨어 인터페이스에는 **`RobotProcessorPipeline`을 사용**해주세요:
 
 ```python
 # 로봇 데이터 구조: 관측 및 액션을 위한 dict[str, Any]
@@ -132,7 +132,7 @@ robot_action: dict[str, Any] = {
     "gripper": 0.8
 }
 
-**모델 학습 및 배치 처리에는 `PolicyProcessorPipeline`을 사용하십시오:
+모델 학습 및 배치 처리에는 **`PolicyProcessorPipeline`을 사용**해주세요:
 
 ```python
 # 정책 데이터 구조: 배치 딕셔너리 및 텐서
@@ -206,7 +206,7 @@ with torch.no_grad():
 
         policy_input = policy_preprocessor(raw_obs)  # 배치된 딕셔너리
 
-        policy_output = model.select_action(policy_input)  # 정책 텐서
+        policy_output = policy.select_action(policy_input)  # 정책 텐서
 
         policy_action = policy_postprocessor(policy_output)
 
@@ -297,7 +297,7 @@ LeRobot은 등록된 processor steps을 많이 제공합니다.
 ### 다음 단계
 
 - **[자신만의 프로세서 구현하기](./implement_your_own_processor)** - 커스텀 processor step 생성
-- **[파이프라인 디버깅하기](.debug_processor_pipeline)** - 파이프라인 문제 해결 및 최적화
+- **[파이프라인 디버깅하기](./debug_processor_pipeline)** - 파이프라인 문제 해결 및 최적화
 - **[로봇 원격 조작자를 위한 프로세서](./processors_robots_teleop)** - 실제 통합 패턴
 
 ## 요약
