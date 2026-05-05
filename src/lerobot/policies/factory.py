@@ -231,6 +231,7 @@ class ProcessorConfigKwargs(TypedDict, total=False):
     preprocessor_overrides: dict[str, Any] | None
     postprocessor_overrides: dict[str, Any] | None
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None
+    rename_map: dict[str, str] | None
 
 
 def make_pre_post_processors(

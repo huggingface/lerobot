@@ -101,6 +101,7 @@ class Pi0NewLineProcessor(ComplementaryDataProcessorStep):
 def make_pi0_pre_post_processors(
     config: PI0Config,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    rename_map: dict[str, str] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
@@ -136,9 +137,9 @@ def make_pi0_pre_post_processors(
         action_names=getattr(config, "action_feature_names", None),
     )
 
-    # OpenPI order: raw → relative → normalize → model → unnormalize → absolute
+    # OpenPI order: raw → rename → relative → normalize → model → unnormalize → absolute
     input_steps: list[ProcessorStep] = [
-        RenameObservationsProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
+        RenameObservationsProcessorStep(rename_map=rename_map or {}),
         AddBatchDimensionProcessorStep(),
         Pi0NewLineProcessor(),  # Add newlines before tokenization for PaliGemma
         TokenizerProcessorStep(
