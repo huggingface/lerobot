@@ -310,6 +310,11 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     if cfg.is_reward_model_training:
         processor_kwargs["dataset_meta"] = dataset.meta
 
+    if not cfg.is_reward_model_training:
+        # Always pass rename_map so it gets applied in the processor even when building
+        # processors from scratch (e.g., when use_relative_actions=True bypasses pretrained_path)
+        processor_kwargs["rename_map"] = cfg.rename_map
+
     if not cfg.is_reward_model_training and processor_pretrained_path is not None:
         processor_kwargs["preprocessor_overrides"] = {
             "device_processor": {"device": device.type},

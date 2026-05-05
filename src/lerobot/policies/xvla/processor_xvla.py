@@ -53,6 +53,7 @@ from .utils import rotate6d_to_axis_angle
 def make_xvla_pre_post_processors(
     config: XVLAConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    rename_map: dict[str, str] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
@@ -63,7 +64,7 @@ def make_xvla_pre_post_processors(
 
     features = {**config.input_features, **config.output_features}
     input_steps = [
-        RenameObservationsProcessorStep(rename_map={}),
+        RenameObservationsProcessorStep(rename_map=rename_map or {}),
         AddBatchDimensionProcessorStep(),
         TokenizerProcessorStep(
             tokenizer_name=config.tokenizer_name,
