@@ -177,10 +177,6 @@ def check_video_encoder_config_pyav(config: VideoEncoderConfig) -> None:
     vcodec = config.vcodec
     options = _get_codec_options_by_name(vcodec)
     if not options:
-        logger.warning(
-            "Codec %r is not available in the bundled FFmpeg build; ",
-            vcodec,
-        )
-        return
+        raise ValueError(f"Codec {vcodec!r} is not available in the bundled FFmpeg build")
     _check_pixel_format(config.vcodec, config.pix_fmt)
     _check_codec_options(config.vcodec, config.get_codec_options(), config)

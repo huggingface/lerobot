@@ -298,7 +298,7 @@ class TestEncoderDetection:
 
     @require_videotoolbox
     def test_auto_picks_videotoolbox_when_available(self):
-        """``h264_videotoolbox`` sits at the top of ``HW_ENCODERS`` so it wins when present."""
+        """``h264_videotoolbox`` sits at the top of ``HW_VIDEO_CODECS`` so it wins when present."""
         cfg = VideoEncoderConfig(vcodec="auto")
         assert cfg.vcodec == "h264_videotoolbox"
 

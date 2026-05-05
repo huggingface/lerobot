@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 
 # List of hardware encoders to probe for auto-selection. Availability depends on the platform and FFmpeg build.
 # Determines the order of preference for auto-selection when vcodec="auto" is used.
-HW_ENCODERS = [
+HW_VIDEO_CODECS = [
     "h264_videotoolbox",  # macOS
     "hevc_videotoolbox",  # macOS
     "h264_nvenc",  # NVIDIA GPU
@@ -55,7 +55,7 @@ HW_ENCODERS = [
     "h264_qsv",  # Intel Quick Sync
 ]
 
-VALID_VIDEO_CODECS = {"h264", "hevc", "libsvtav1", "auto"} | set(HW_ENCODERS)
+VALID_VIDEO_CODECS = {"h264", "hevc", "libsvtav1", "auto"} | set(HW_VIDEO_CODECS)
 
 LIBSVTAV1_DEFAULT_PRESET: int = 12
 
@@ -125,8 +125,8 @@ class VideoEncoderConfig:
         if self.vcodec not in VALID_VIDEO_CODECS:
             raise ValueError(f"Invalid vcodec '{self.vcodec}'. Must be one of: {sorted(VALID_VIDEO_CODECS)}")
         if self.vcodec == "auto":
-            available = self.detect_available_encoders(HW_ENCODERS)
-            for encoder in HW_ENCODERS:
+            available = self.detect_available_encoders(HW_VIDEO_CODECS)
+            for encoder in HW_VIDEO_CODECS:
                 if encoder in available:
                     logger.info(f"Auto-selected video codec: {encoder}")
                     self.vcodec = encoder
@@ -136,13 +136,12 @@ class VideoEncoderConfig:
 
         if self.detect_available_encoders(self.vcodec):
             logger.info(f"Using video codec: {self.vcodec}")
-            self.vcodec = self.vcodec
             return
         raise ValueError(f"Unsupported video codec: {self.vcodec} with video backend {self.video_backend}")
 
     def get_codec_options(
         self, encoder_threads: int | None = None, as_strings: bool = False
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         """Translate the tuning fields to codec-specific FFmpeg options.
 
         ``VideoEncoderConfig.extra_options`` are merged last but never override a structured field.
