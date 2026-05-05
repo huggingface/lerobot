@@ -53,10 +53,10 @@ CMD = (
     "--tensor-parallel-size 1 --max-model-len 32768 "
     '--gpu-memory-utilization 0.8 --uvicorn-log-level warning --port {port}" '
     "--vlm.serve_ready_timeout_s=1800 "
-    "--vlm.client_concurrency=256 "
+    "--vlm.client_concurrency=128 "
     "--vlm.max_new_tokens=512 "
     "--vlm.temperature=0.7 "
-    "--executor.episode_parallelism=32 "
+    "--executor.episode_parallelism=16 "
     "--vlm.chat_template_kwargs='{\"enable_thinking\": false}' "
     "--vlm.camera_key=observation.images.wrist "
     "--module_1.frames_per_second=1.0 "
@@ -64,9 +64,9 @@ CMD = (
     "--module_1.use_video_url_fps=1.0 "
     "--module_1.derive_task_from_video=always "
     "--module_1.n_task_rephrasings=30 "
-    "--module_2.max_interjections_per_episode=9 "
+    "--module_2.max_interjections_per_episode=6 "
     "--module_3.K=3 "
-    "--module_3.vqa_emission_hz=2.0 "
+    "--module_3.vqa_emission_hz=1.0 "
     "--push_to_hub=pepijn223/super_poulain_full_tool3"
 )
 
