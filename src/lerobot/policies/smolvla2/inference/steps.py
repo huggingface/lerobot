@@ -271,6 +271,9 @@ class HighLevelSubtaskFwd(InferenceStep):
         msg = _generate_with_policy(
             self.policy, ctx, observation=observation, state=state, label="subtask gen"
         )
+        if msg and _looks_like_gibberish(msg):
+            push_log(state, f"  [info] subtask gen rejected (gibberish): {msg[:60]!r}")
+            return None
         if msg:
             changed = set_if_changed(state, "current_subtask", msg, label="subtask")
             if changed:
@@ -307,6 +310,9 @@ class MemoryUpdateFwd(InferenceStep):
         new_memory = _generate_with_policy(
             self.policy, ctx, observation=observation, state=state, label="memory gen"
         )
+        if new_memory and _looks_like_gibberish(new_memory):
+            push_log(state, f"  [info] memory gen rejected (gibberish): {new_memory[:60]!r}")
+            return None
         if new_memory:
             set_if_changed(state, "current_memory", new_memory, label="memory")
         return None
@@ -340,11 +346,16 @@ class UserInterjectionFwd(InferenceStep):
         if not out:
             push_log(state, "  [info] plan/say gen produced no text this tick")
             return None
+        if _looks_like_gibberish(out):
+            push_log(state, f"  [info] plan/say gen rejected (gibberish): {out[:60]!r}")
+            return None
         # Heuristic split: model is trained to emit one assistant turn
         # carrying both plan text AND a `say` tool call. Look for a
         # "<say>...</say>" or "say(...)" marker; fall back to whole
         # text → plan, no speech.
         plan_text, speech_text = _split_plan_and_say(out)
+        if plan_text and _looks_like_gibberish(plan_text):
+            plan_text = ""
         if plan_text:
             set_if_changed(state, "current_plan", plan_text, label="plan")
         if speech_text:
@@ -390,6 +401,9 @@ class AskVQAFwd(InferenceStep):
         answer = _generate_with_policy(
             self.policy, ctx, observation=observation, state=state, label="vqa gen"
         )
+        # VQA answers are intentionally JSON-like during training, so
+        # ``_looks_like_gibberish`` would false-positive on them. Keep
+        # the answer as-is — the VQA panel line lets the user judge.
         if answer:
             push_log(state, f"  vqa: {answer}")
         state["recent_vqa_query"] = None
@@ -430,6 +444,38 @@ class DispatchToolCalls(InferenceStep):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _looks_like_gibberish(text: str) -> bool:
+    """Heuristically detect generation that's clearly off the rails.
+
+    Memorised models can collapse to dominant-mode outputs (often the
+    JSON-token salad ``":":":":...`` from VQA training) when the prompt
+    drifts even slightly from training distribution. If we accept those
+    as new state, they pollute the next tick's prompt and cascade into
+    worse outputs. Reject anything that looks pathological:
+
+    * empty / whitespace-only
+    * mostly punctuation (``"``, ``:``, ``,``)
+    * a single character repeated past the threshold
+    * starts with ``":"`` and contains no letters
+
+    The thresholds are intentionally lenient — a real subtask like
+    ``"close the gripper"`` has ~70%+ alpha characters, while gibberish
+    like ``":":":"`` has ~0%.
+    """
+    if not text or not text.strip():
+        return True
+    stripped = text.strip()
+    alpha = sum(1 for c in stripped if c.isalpha())
+    if alpha < max(3, len(stripped) // 8):
+        return True
+    if stripped.startswith('":') and stripped.count('"') > stripped.count(" "):
+        return True
+    # Single repeating char: e.g. ``""""""``
+    if len(set(stripped)) <= 2 and len(stripped) > 4:
+        return True
+    return False
 
 
 def _control_context_messages(
