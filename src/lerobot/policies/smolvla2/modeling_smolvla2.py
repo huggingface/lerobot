@@ -60,7 +60,7 @@ class SmolVLA2Policy(SmolVLAPolicy):
     config_class = SmolVLA2Config
     name = "smolvla2"
 
-    def __init__(self, config: SmolVLA2Config, dataset_stats: dict[str, dict[str, Tensor]] | None = None):
+    def __init__(self, config: SmolVLA2Config, **kwargs):
         if not isinstance(config, SmolVLA2Config):
             config = SmolVLA2Config(
                 **{
@@ -69,7 +69,7 @@ class SmolVLA2Policy(SmolVLAPolicy):
                     if hasattr(config, f.name)
                 }
             )
-        super().__init__(config, dataset_stats=dataset_stats)
+        super().__init__(config, **kwargs)
         if config.unfreeze_lm_head and config.text_loss_weight > 0:
             self._unfreeze_lm_head()
 
@@ -200,7 +200,7 @@ class SmolVLA2Policy(SmolVLAPolicy):
             past_key_values=None,
             inputs_embeds=[prefix_embs, None],
             use_cache=False,
-            fill_kv_cache=False,
+            fill_kv_cache=True,
         )
         prefix_out = out_pair[0] if isinstance(out_pair, (tuple, list)) else out_pair
         if prefix_out is None:
@@ -228,8 +228,8 @@ class SmolVLA2Policy(SmolVLAPolicy):
                 f"num_state={num_state})."
             )
 
-        lang_hidden = prefix_out[:, lang_start:lang_end]
         vlm = self.model.vlm_with_expert.vlm
+        lang_hidden = prefix_out[:, lang_start:lang_end].to(vlm.lm_head.weight.dtype)
         logits = vlm.lm_head(lang_hidden)  # (B, num_lang, vocab)
 
         if text_labels.shape[1] != num_lang:
@@ -244,12 +244,14 @@ class SmolVLA2Policy(SmolVLAPolicy):
         # for the same convention.
         shift_logits = logits[:, :-1, :].contiguous()
         shift_labels = text_labels[:, 1:].contiguous().long()
+        valid_labels = shift_labels != -100
         loss = F.cross_entropy(
             shift_logits.reshape(-1, shift_logits.shape[-1]),
             shift_labels.reshape(-1),
             ignore_index=-100,
+            reduction="sum",
         )
-        return loss
+        return loss / valid_labels.sum().clamp(min=1)
 
     # ------------------------------------------------------------------
     # Inference: text generation

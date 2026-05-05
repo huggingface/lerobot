@@ -62,14 +62,14 @@ blend:
   ask_vqa_top:
     weight: 0.10
     bindings:
-      vqa_query: "emitted_at(t, style=vqa, role=user, camera=observation.images.top)"
-      vqa: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.top)"
+      vqa_query: "emitted_at(t, style=vqa, role=user, camera=observation.images.front)"
+      vqa: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.front)"
     messages:
       - role: user
         stream: high_level
         if_present: vqa_query
         content:
-          - {type: image, feature: observation.images.top}
+          - {type: image, feature: observation.images.front}
           - {type: text, text: "${vqa_query}"}
       - {role: assistant, content: "${vqa}", stream: high_level, target: true, if_present: vqa}
 

@@ -99,85 +99,67 @@ class SmolVLA2ChatTokenizerStep(ProcessorStep):
             # falls back to whatever ``task`` is in the transition.
             return transition
 
-        message_streams: list[str | None] = list(comp.get("message_streams") or [])
-        target_indices: list[int] = sorted(
-            int(i) for i in (comp.get("target_message_indices") or [])
-        )
-
         tokenizer = self._get_tokenizer()
-        text_messages = [_strip_lerobot_blocks(m) for m in messages]
 
-        # Tokenize the full chat once.
-        full_ids = tokenizer.apply_chat_template(
-            text_messages,
-            tools=self.tools,
-            add_generation_prompt=False,
-            tokenize=True,
-            return_tensors=None,
+        if _is_batched_messages(messages):
+            encoded = [
+                self._encode_messages(
+                    tokenizer,
+                    msg,
+                    list(streams),
+                    sorted(int(i) for i in indices),
+                )
+                for msg, streams, indices in zip(
+                    messages,
+                    comp.get("message_streams") or [[] for _ in messages],
+                    comp.get("target_message_indices") or [[] for _ in messages],
+                    strict=True,
+                )
+            ]
+        else:
+            encoded = [
+                self._encode_messages(
+                    tokenizer,
+                    messages,
+                    list(comp.get("message_streams") or []),
+                    sorted(int(i) for i in (comp.get("target_message_indices") or [])),
+                )
+            ]
+
+        pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
+        target_length = self.max_length if self.padding == "max_length" else max(
+            len(ids) for ids, _, _ in encoded
         )
-        if isinstance(full_ids, list) and full_ids and isinstance(full_ids[0], list):
-            full_ids = full_ids[0]
+        target_length = min(target_length, self.max_length)
 
-        # Build the label mask by re-rendering progressively up to each
-        # target message and reading off the prefix length. This is the
-        # robust way to get exact token boundaries: we use the same
-        # tokenizer, the same ``tools=`` argument, and the same chat
-        # template — so the prefix tokens are guaranteed to be a prefix
-        # of the full sequence.
-        labels = [-100] * len(full_ids)
-        for tgt in target_indices:
-            prefix_ids = tokenizer.apply_chat_template(
-                text_messages[:tgt],
-                tools=self.tools,
-                add_generation_prompt=False,
-                tokenize=True,
-                return_tensors=None,
-            )
-            full_through_target = tokenizer.apply_chat_template(
-                text_messages[: tgt + 1],
-                tools=self.tools,
-                add_generation_prompt=False,
-                tokenize=True,
-                return_tensors=None,
-            )
-            if isinstance(prefix_ids, list) and prefix_ids and isinstance(prefix_ids[0], list):
-                prefix_ids = prefix_ids[0]
-            if (
-                isinstance(full_through_target, list)
-                and full_through_target
-                and isinstance(full_through_target[0], list)
-            ):
-                full_through_target = full_through_target[0]
-            start = len(prefix_ids)
-            end = min(len(full_through_target), len(full_ids))
-            for pos in range(start, end):
-                labels[pos] = int(full_ids[pos])
+        ids_batch = []
+        attn_batch = []
+        labels_batch = []
+        predict_actions = []
+        for ids, labels, predict_action in encoded:
+            ids = ids[:target_length]
+            labels = labels[:target_length]
+            attn = [1] * len(ids)
+            if len(ids) < target_length:
+                n_pad = target_length - len(ids)
+                ids = ids + [pad_id] * n_pad
+                labels = labels + [-100] * n_pad
+                attn = attn + [0] * n_pad
+            ids_batch.append(ids)
+            attn_batch.append(attn)
+            labels_batch.append(labels)
+            predict_actions.append(predict_action)
 
-        # Truncate / pad to ``max_length`` so batches collate cleanly.
-        # The SmolVLA pipeline downstream relies on a fixed length
-        # behaviour ("longest" or "max_length") — we mirror it here.
-        if len(full_ids) > self.max_length:
-            full_ids = full_ids[: self.max_length]
-            labels = labels[: self.max_length]
-        attn = [1] * len(full_ids)
-        if self.padding == "max_length" and len(full_ids) < self.max_length:
-            pad_id = (
-                tokenizer.pad_token_id
-                if tokenizer.pad_token_id is not None
-                else 0
-            )
-            n_pad = self.max_length - len(full_ids)
-            full_ids = full_ids + [pad_id] * n_pad
-            labels = labels + [-100] * n_pad
-            attn = attn + [0] * n_pad
+        ids_t = torch.tensor(ids_batch, dtype=torch.long)
+        attn_t = torch.tensor(attn_batch, dtype=torch.bool)
+        labels_t = torch.tensor(labels_batch, dtype=torch.long)
+        predict_actions_t = torch.tensor(predict_actions, dtype=torch.bool)
 
-        ids_t = torch.tensor(full_ids, dtype=torch.long)
-        attn_t = torch.tensor(attn, dtype=torch.bool)
-        labels_t = torch.tensor(labels, dtype=torch.long)
-        predict_actions = any(
-            i < len(message_streams) and message_streams[i] == "low_level"
-            for i in target_indices
-        )
+        if not _is_batched_messages(messages):
+            ids_t = ids_t.squeeze(0)
+            attn_t = attn_t.squeeze(0)
+            labels_t = labels_t.squeeze(0)
+            predict_actions_t = predict_actions_t.squeeze(0)
 
         new_complementary = dict(comp)
         # Drop the per-recipe sidecar keys; everything downstream needs
@@ -194,13 +176,60 @@ class SmolVLA2ChatTokenizerStep(ProcessorStep):
         observation[OBS_LANGUAGE_TOKENS] = ids_t
         observation[OBS_LANGUAGE_ATTENTION_MASK] = attn_t
         new_complementary["text_labels"] = labels_t
-        new_complementary["predict_actions"] = torch.tensor(predict_actions, dtype=torch.bool)
+        new_complementary["predict_actions"] = predict_actions_t
         new_complementary.pop("task", None)
 
         new_transition = dict(transition)
         new_transition[TransitionKey.COMPLEMENTARY_DATA] = new_complementary
         new_transition[TransitionKey.OBSERVATION] = observation
         return new_transition
+
+    def _encode_messages(
+        self,
+        tokenizer: Any,
+        messages: list[dict[str, Any]],
+        message_streams: list[str | None],
+        target_indices: list[int],
+    ) -> tuple[list[int], list[int], bool]:
+        text_messages = [_strip_lerobot_blocks(m) for m in messages]
+
+        full_ids = tokenizer.apply_chat_template(
+            text_messages,
+            tools=self.tools,
+            add_generation_prompt=False,
+            tokenize=True,
+            return_tensors=None,
+        )
+        full_ids = _as_token_ids(full_ids)
+
+        labels = [-100] * len(full_ids)
+        for tgt in target_indices:
+            prefix_ids = tokenizer.apply_chat_template(
+                text_messages[:tgt],
+                tools=self.tools,
+                add_generation_prompt=False,
+                tokenize=True,
+                return_tensors=None,
+            )
+            full_through_target = tokenizer.apply_chat_template(
+                text_messages[: tgt + 1],
+                tools=self.tools,
+                add_generation_prompt=False,
+                tokenize=True,
+                return_tensors=None,
+            )
+            prefix_ids = _as_token_ids(prefix_ids)
+            full_through_target = _as_token_ids(full_through_target)
+            start = len(prefix_ids)
+            end = min(len(full_through_target), len(full_ids))
+            for pos in range(start, end):
+                labels[pos] = int(full_ids[pos])
+
+        predict_actions = any(
+            i < len(message_streams) and message_streams[i] == "low_level"
+            for i in target_indices
+        )
+        return [int(i) for i in full_ids], labels, predict_actions
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
@@ -247,15 +276,11 @@ def _strip_lerobot_blocks(message: dict[str, Any]) -> dict[str, Any]:
                 continue
             if block.get("type") == "text":
                 text_parts.append({"type": "text", "text": str(block.get("text", ""))})
-        # If only one text block survives, flatten to a string for
-        # template friendliness; some chat templates choke on a single-
-        # element list.
-        if len(text_parts) == 1:
-            new["content"] = text_parts[0]["text"]
-        elif text_parts:
-            new["content"] = text_parts
-        else:
-            new["content"] = ""
+        new["content"] = text_parts or [{"type": "text", "text": ""}]
+    elif content is None:
+        new["content"] = [{"type": "text", "text": ""}]
+    else:
+        new["content"] = [{"type": "text", "text": str(content)}]
     if "tool_calls" in new and not new["tool_calls"]:
         # Drop empty tool_calls — some templates render them as a
         # spurious empty marker.
@@ -265,6 +290,20 @@ def _strip_lerobot_blocks(message: dict[str, Any]) -> dict[str, Any]:
     new.pop("stream", None)
     new.pop("target", None)
     return new
+
+
+def _is_batched_messages(messages: Any) -> bool:
+    return isinstance(messages, list) and bool(messages) and isinstance(messages[0], list)
+
+
+def _as_token_ids(value: Any) -> list[int]:
+    if isinstance(value, dict) or (hasattr(value, "keys") and "input_ids" in value.keys()):
+        value = value["input_ids"]
+    if hasattr(value, "tolist"):
+        value = value.tolist()
+    if isinstance(value, list) and value and isinstance(value[0], list):
+        value = value[0]
+    return [int(i) for i in value]
 
 
 # Re-export for tests / introspection
