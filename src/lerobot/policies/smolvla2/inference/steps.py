@@ -171,13 +171,19 @@ class HighLevelSubtaskFwd(InferenceStep):
     """At ~1 Hz, ask the policy for the next subtask."""
 
     policy: Any = None
+    observation_provider: Any = None
+    """Same shape as ``LowLevelForward.observation_provider``. When
+    set, the resulting observation is merged into ``select_message``'s
+    batch so text generation runs against real video + state."""
+
     trigger: Trigger = field(default_factory=lambda: HzTrigger(hz=1.0))
 
     def run(self, state: dict[str, Any]) -> dict[str, Any] | None:
         if self.policy is None or not state.get("task"):
             return None
         ctx = _control_context_messages(state)
-        msg = _generate_with_policy(self.policy, ctx)
+        observation = _maybe_observation(self.observation_provider)
+        msg = _generate_with_policy(self.policy, ctx, observation=observation)
         if msg:
             changed = set_if_changed(state, "current_subtask", msg, label="subtask")
             if changed:
@@ -191,6 +197,7 @@ class MemoryUpdateFwd(InferenceStep):
     """On subtask boundary, refresh the compressed memory."""
 
     policy: Any = None
+    observation_provider: Any = None
     trigger: Trigger = field(default_factory=lambda: EventTrigger("subtask_change"))
 
     def run(self, state: dict[str, Any]) -> dict[str, Any] | None:
@@ -198,7 +205,8 @@ class MemoryUpdateFwd(InferenceStep):
         if self.policy is None:
             return None
         ctx = _control_context_messages(state, include_completed=True)
-        new_memory = _generate_with_policy(self.policy, ctx)
+        observation = _maybe_observation(self.observation_provider)
+        new_memory = _generate_with_policy(self.policy, ctx, observation=observation)
         if new_memory:
             set_if_changed(state, "current_memory", new_memory, label="memory")
         return None
@@ -209,6 +217,7 @@ class UserInterjectionFwd(InferenceStep):
     """On stdin interjection, refresh the plan + emit a paired ``say``."""
 
     policy: Any = None
+    observation_provider: Any = None
     trigger: Trigger = field(default_factory=lambda: EventTrigger("user_interjection"))
 
     def run(self, state: dict[str, Any]) -> dict[str, Any] | None:
@@ -218,7 +227,8 @@ class UserInterjectionFwd(InferenceStep):
             state,
             extra_user=state.get("recent_interjection"),
         )
-        out = _generate_with_policy(self.policy, ctx)
+        observation = _maybe_observation(self.observation_provider)
+        out = _generate_with_policy(self.policy, ctx, observation=observation)
         if not out:
             return None
         # Heuristic split: model is trained to emit one assistant turn
@@ -247,6 +257,7 @@ class AskVQAFwd(InferenceStep):
     """On stdin question, answer a frame-grounded VQA."""
 
     policy: Any = None
+    observation_provider: Any = None
     trigger: Trigger = field(default_factory=lambda: EventTrigger("user_vqa_query"))
 
     def run(self, state: dict[str, Any]) -> dict[str, Any] | None:
@@ -256,7 +267,8 @@ class AskVQAFwd(InferenceStep):
         if not question:
             return None
         ctx = _control_context_messages(state, extra_user=question)
-        answer = _generate_with_policy(self.policy, ctx)
+        observation = _maybe_observation(self.observation_provider)
+        answer = _generate_with_policy(self.policy, ctx, observation=observation)
         if answer:
             push_log(state, f"  vqa: {answer}")
         state["recent_vqa_query"] = None
@@ -326,35 +338,54 @@ def _control_context_messages(
     return msgs
 
 
-def _generate_with_policy(policy: Any, messages: list[dict[str, Any]]) -> str:
-    """Drive ``policy.select_message`` with a minimal text-only batch.
+def _maybe_observation(provider: Any) -> dict | None:
+    """Pull one observation from ``provider`` if it's set, else ``None``.
 
-    Best-effort: the runtime today doesn't construct a full
-    observation batch with images / state for text generation; the
-    text-head was trained over images + lang + state, so generations
-    here may differ in distribution from training. This is acceptable
-    for a v1 REPL; a follow-up will plug in the real observation.
+    Errors from the provider are logged at debug level and swallowed —
+    text generation still runs (in text-only mode) so a flaky frame
+    source doesn't kill the REPL.
+    """
+    if provider is None:
+        return None
+    try:
+        return provider()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("observation_provider raised %s — falling back to text-only", exc)
+        return None
+
+
+def _generate_with_policy(
+    policy: Any,
+    messages: list[dict[str, Any]],
+    *,
+    observation: dict | None = None,
+) -> str:
+    """Drive ``policy.select_message`` with a chat batch (and optional obs).
+
+    When ``observation`` carries ``observation.images.*`` and
+    ``observation.state``, those are merged into the batch so
+    ``select_message`` runs the same VLM prefix the policy was trained
+    on. Without an observation the runtime falls back to a text-only
+    prompt — the text head still runs, but generations may drift from
+    the training distribution.
     """
     if not hasattr(policy, "select_message"):
         return ""
     text_batch = _build_text_batch(policy, messages)
-    # ``select_message`` expects a real batch with OBS_LANGUAGE_TOKENS.
-    # The minimal text-only batch we build doesn't have images / state,
-    # so we either run a text-only forward (handled by SmolVLA2 when
-    # supported) or skip and return empty. v1 returns empty when the
-    # policy can't handle it; the runtime logs and continues.
     try:
-        # Convert to the OBS_LANGUAGE_TOKENS / OBS_LANGUAGE_ATTENTION_MASK
-        # keys ``select_message`` uses internally.
         from lerobot.utils.constants import (  # noqa: PLC0415
             OBS_LANGUAGE_ATTENTION_MASK,
             OBS_LANGUAGE_TOKENS,
         )
 
-        batch = {
+        batch: dict[str, Any] = {
             OBS_LANGUAGE_TOKENS: text_batch["lang_tokens"],
             OBS_LANGUAGE_ATTENTION_MASK: text_batch["lang_masks"],
         }
+        if observation:
+            for k, v in observation.items():
+                if isinstance(k, str) and k.startswith("observation.") and k not in batch:
+                    batch[k] = v
         return policy.select_message(batch, tokenizer=text_batch["tokenizer"])
     except Exception as exc:  # noqa: BLE001
         logger.debug("select_message fell back: %s", exc)

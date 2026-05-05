@@ -40,6 +40,7 @@ from .steps import (
     UserInterjectionFwd,
 )
 from .triggers import EventTrigger, HzTrigger, Tick, TickClock, Trigger
+from .ui import make_state_panel, print_robot_lines, print_user_line
 
 __all__ = [
     # runtime
@@ -65,4 +66,8 @@ __all__ = [
     "UserInterjectionFwd",
     "AskVQAFwd",
     "DispatchToolCalls",
+    # UI
+    "make_state_panel",
+    "print_robot_lines",
+    "print_user_line",
 ]

@@ -82,10 +82,20 @@ class SmolVLA2Runtime:
             HighLevelSubtaskFwd(
                 trigger=HzTrigger(self.high_level_hz),
                 policy=self.policy,
+                observation_provider=self.observation_provider,
             ),
-            MemoryUpdateFwd(policy=self.policy),
-            UserInterjectionFwd(policy=self.policy),
-            AskVQAFwd(policy=self.policy),
+            MemoryUpdateFwd(
+                policy=self.policy,
+                observation_provider=self.observation_provider,
+            ),
+            UserInterjectionFwd(
+                policy=self.policy,
+                observation_provider=self.observation_provider,
+            ),
+            AskVQAFwd(
+                policy=self.policy,
+                observation_provider=self.observation_provider,
+            ),
             DispatchToolCalls(tools=self.tools),
         ]
         self.state = initial_runtime_state()
@@ -126,6 +136,39 @@ class SmolVLA2Runtime:
                 break
 
         self._on_shutdown()
+
+    # ------------------------------------------------------------------
+    # REPL helper: drive one full pipeline pass and return its logs
+    # ------------------------------------------------------------------
+
+    def step_once(self) -> list[str]:
+        """Run one tick of the pipeline and return the log lines.
+
+        Used by the interactive REPL: instead of a background thread,
+        the CLI drives ticks synchronously after each user input. Logs
+        are returned (not printed) so the caller can route them into
+        the rich-Live chat scrollback.
+        """
+        from .triggers import Tick  # noqa: PLC0415
+
+        # Synthesize a tick. We don't need the real wall-clock pacing
+        # here — the REPL drives the runtime, not vice versa — but
+        # ``HzTrigger`` uses ``tick.monotonic_seconds`` to gate, so we
+        # bump it generously so every Hz-triggered step considers
+        # itself due.
+        import time as _time  # noqa: PLC0415
+
+        prev_index = self.state.get("_tick").index if isinstance(self.state.get("_tick"), Tick) else 0
+        self.state["_tick"] = Tick(index=prev_index + 1, monotonic_seconds=_time.monotonic())
+        self.state["log_lines"] = []
+        # ``events_this_tick`` is set up by the caller before
+        # ``step_once`` (the REPL pushes user-driven events first).
+        self.state.setdefault("events_this_tick", [])
+
+        for step in self.pipeline:
+            self.state = step(self.state)
+
+        return list(self.state.get("log_lines") or [])
 
     # ------------------------------------------------------------------
     # I/O
