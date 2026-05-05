@@ -211,6 +211,17 @@ def _build_text_batch(policy: Any, prompt_messages: list[dict[str, Any]]) -> dic
         attn = torch.tensor(attn, dtype=torch.long)
         if attn.ndim == 1:
             attn = attn.unsqueeze(0)
+    # SmolVLA's ``eager_attention_forward`` does
+    # ``torch.where(attention_mask[..., None, :, :], ...)`` which
+    # requires a *bool* condition tensor; ``BatchEncoding``'s
+    # attention_mask is typically Long (0/1). Cast so the prefix
+    # forward doesn't blow up with ``where expected condition to be a
+    # boolean tensor, but got a tensor with dtype Long``.
+    if attn is not None and hasattr(attn, "dtype"):
+        import torch as _torch  # noqa: PLC0415
+
+        if attn.dtype != _torch.bool:
+            attn = attn.bool()
     # Move tokens onto the policy's device — otherwise prefix embedding
     # raises a device-mismatch on every forward (CPU tensor vs MPS / CUDA
     # model), which the caller's broad except would swallow silently.
