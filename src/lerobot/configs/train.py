@@ -13,7 +13,9 @@
 # limitations under the License.
 import builtins
 import datetime as dt
+import json
 import os
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -26,11 +28,49 @@ from lerobot import envs
 from lerobot.configs import parser
 from lerobot.optim import LRSchedulerConfig, OptimizerConfig
 from lerobot.utils.hub import HubMixin
+from lerobot.utils.sample_weighting import SampleWeightingConfig
 
 from .default import DatasetConfig, EvalConfig, PeftConfig, WandBConfig
 from .policies import PreTrainedConfig
+from .rewards import RewardModelConfig
 
 TRAIN_CONFIG_NAME = "train_config.json"
+
+
+def _migrate_legacy_rabc_fields(config: dict[str, Any]) -> dict[str, Any] | None:
+    """Return migrated payload for legacy RA-BC fields, or None when no migration is needed."""
+    legacy_fields = (
+        "use_rabc",
+        "rabc_progress_path",
+        "rabc_kappa",
+        "rabc_epsilon",
+        "rabc_head_mode",
+    )
+    if not any(key in config for key in legacy_fields):
+        return None
+
+    migrated_config = dict(config)
+    use_rabc = bool(migrated_config.pop("use_rabc", False))
+    rabc_progress_path = migrated_config.pop("rabc_progress_path", None)
+    rabc_kappa = migrated_config.pop("rabc_kappa", None)
+    rabc_epsilon = migrated_config.pop("rabc_epsilon", None)
+    rabc_head_mode = migrated_config.pop("rabc_head_mode", None)
+
+    # New configs may already define sample_weighting explicitly. In that case,
+    # legacy fields are ignored after being stripped from the payload.
+    if migrated_config.get("sample_weighting") is None and use_rabc:
+        sample_weighting: dict[str, Any] = {"type": "rabc"}
+        if rabc_progress_path is not None:
+            sample_weighting["progress_path"] = rabc_progress_path
+        if rabc_kappa is not None:
+            sample_weighting["kappa"] = rabc_kappa
+        if rabc_epsilon is not None:
+            sample_weighting["epsilon"] = rabc_epsilon
+        if rabc_head_mode is not None:
+            sample_weighting["head_mode"] = rabc_head_mode
+        migrated_config["sample_weighting"] = sample_weighting
+
+    return migrated_config
 
 
 @dataclass
@@ -38,6 +78,7 @@ class TrainPipelineConfig(HubMixin):
     dataset: DatasetConfig
     env: envs.EnvConfig | None = None
     policy: PreTrainedConfig | None = None
+    reward_model: RewardModelConfig | None = None
     # Set `dir` to where you would like to save all of the run outputs. If you run another training session
     # with the same value for `dir` its contents will be overwritten unless you set `resume` to true.
     output_dir: Path | None = None
@@ -72,27 +113,41 @@ class TrainPipelineConfig(HubMixin):
     wandb: WandBConfig = field(default_factory=WandBConfig)
     peft: PeftConfig | None = None
 
-    # RA-BC (Reward-Aligned Behavior Cloning) parameters
-    use_rabc: bool = False  # Enable reward-weighted training
-    rabc_progress_path: str | None = None  # Path to precomputed SARM progress parquet file
-    rabc_kappa: float = 0.01  # Hard threshold for high-quality samples
-    rabc_epsilon: float = 1e-6  # Small constant for numerical stability
-    rabc_head_mode: str | None = "sparse"  # For dual-head models: "sparse" or "dense"
+    # Sample weighting configuration (e.g., for RA-BC training)
+    sample_weighting: SampleWeightingConfig | None = None
 
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
     checkpoint_path: Path | None = field(init=False, default=None)
 
+    @property
+    def is_reward_model_training(self) -> bool:
+        """True when the config targets a reward model rather than a policy."""
+        return self.reward_model is not None
+
+    @property
+    def trainable_config(self) -> PreTrainedConfig | RewardModelConfig:
+        """Return whichever config (policy or reward_model) is active."""
+        if self.is_reward_model_training:
+            return self.reward_model  # type: ignore[return-value]
+        return self.policy  # type: ignore[return-value]
+
     def validate(self) -> None:
         # HACK: We parse again the cli args here to get the pretrained paths if there was some.
         policy_path = parser.get_path_arg("policy")
-        if policy_path:
-            # Only load the policy config
+        reward_model_path = parser.get_path_arg("reward_model")
+
+        if reward_model_path:
+            cli_overrides = parser.get_cli_overrides("reward_model")
+            self.reward_model = RewardModelConfig.from_pretrained(
+                reward_model_path, cli_overrides=cli_overrides
+            )
+            self.reward_model.pretrained_path = str(Path(reward_model_path))
+        elif policy_path:
             cli_overrides = parser.get_cli_overrides("policy")
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
             self.policy.pretrained_path = Path(policy_path)
         elif self.resume:
-            # The entire train config is already loaded, we just need to get the checkpoint dir
             config_path = parser.parse_arg("config_path")
             if not config_path:
                 raise ValueError(
@@ -108,18 +163,22 @@ class TrainPipelineConfig(HubMixin):
             policy_dir = Path(config_path).parent
             if self.policy is not None:
                 self.policy.pretrained_path = policy_dir
+            if self.reward_model is not None:
+                self.reward_model.pretrained_path = str(policy_dir)
             self.checkpoint_path = policy_dir.parent
 
-        if self.policy is None:
+        if self.policy is None and self.reward_model is None:
             raise ValueError(
-                "Policy is not configured. Please specify a pretrained policy with `--policy.path`."
+                "Neither policy nor reward_model is configured. "
+                "Please specify one with `--policy.path` or `--reward_model.path`."
             )
 
+        active_cfg = self.trainable_config
         if not self.job_name:
             if self.env is None:
-                self.job_name = f"{self.policy.type}"
+                self.job_name = f"{active_cfg.type}"
             else:
-                self.job_name = f"{self.env.type}_{self.policy.type}"
+                self.job_name = f"{self.env.type}_{active_cfg.type}"
 
         if not self.resume and isinstance(self.output_dir, Path) and self.output_dir.is_dir():
             raise FileExistsError(
@@ -137,26 +196,16 @@ class TrainPipelineConfig(HubMixin):
         if not self.use_policy_training_preset and (self.optimizer is None or self.scheduler is None):
             raise ValueError("Optimizer and Scheduler must be set when the policy presets are not used.")
         elif self.use_policy_training_preset and not self.resume:
-            self.optimizer = self.policy.get_optimizer_preset()
-            self.scheduler = self.policy.get_scheduler_preset()
+            self.optimizer = active_cfg.get_optimizer_preset()
+            self.scheduler = active_cfg.get_scheduler_preset()
 
-        if self.policy.push_to_hub and not self.policy.repo_id:
-            raise ValueError(
-                "'policy.repo_id' argument missing. Please specify it to push the model to the hub."
-            )
-
-        if self.use_rabc and not self.rabc_progress_path:
-            # Auto-detect from dataset path
-            repo_id = self.dataset.repo_id
-            if self.dataset.root:
-                self.rabc_progress_path = str(Path(self.dataset.root) / "sarm_progress.parquet")
-            else:
-                self.rabc_progress_path = f"hf://datasets/{repo_id}/sarm_progress.parquet"
+        if hasattr(active_cfg, "push_to_hub") and active_cfg.push_to_hub and not active_cfg.repo_id:
+            raise ValueError("'repo_id' argument missing. Please specify it to push the model to the hub.")
 
     @classmethod
     def __get_path_fields__(cls) -> list[str]:
-        """This enables the parser to load config from the policy using `--policy.path=local/dir`"""
-        return ["policy"]
+        """Keys for draccus pretrained-path loading."""
+        return ["policy", "reward_model"]
 
     def to_dict(self) -> dict[str, Any]:
         return draccus.encode(self)  # type: ignore[no-any-return]  # because of the third-party library draccus uses Any as the return type
@@ -207,6 +256,15 @@ class TrainPipelineConfig(HubMixin):
                 ) from e
 
         cli_args = kwargs.pop("cli_args", [])
+        if config_file is not None:
+            with open(config_file) as f:
+                config = json.load(f)
+            migrated_config = _migrate_legacy_rabc_fields(config)
+            if migrated_config is not None:
+                with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as f:
+                    json.dump(migrated_config, f)
+                    config_file = f.name
+
         with draccus.config_type("json"):
             return draccus.parse(cls, config_file, args=cli_args)
 

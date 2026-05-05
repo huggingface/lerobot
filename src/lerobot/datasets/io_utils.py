@@ -39,6 +39,7 @@ from .utils import (
     EPISODES_DIR,
     INFO_PATH,
     STATS_PATH,
+    DatasetInfo,
     serialize_dict,
 )
 
@@ -115,25 +116,21 @@ def embed_images(dataset: datasets.Dataset) -> datasets.Dataset:
     return dataset
 
 
-def write_info(info: dict, local_dir: Path) -> None:
-    write_json(info, local_dir / INFO_PATH)
+def write_info(info: DatasetInfo, local_dir: Path) -> None:
+    write_json(info.to_dict(), local_dir / INFO_PATH)
 
 
-def load_info(local_dir: Path) -> dict:
+def load_info(local_dir: Path) -> DatasetInfo:
     """Load dataset info metadata from its standard file path.
-
-    Also converts shape lists to tuples for consistency.
 
     Args:
         local_dir (Path): The root directory of the dataset.
 
     Returns:
-        dict: The dataset information dictionary.
+        DatasetInfo: The typed dataset information object.
     """
-    info = load_json(local_dir / INFO_PATH)
-    for ft in info["features"].values():
-        ft["shape"] = tuple(ft["shape"])
-    return info
+    raw = load_json(local_dir / INFO_PATH)
+    return DatasetInfo.from_dict(raw)
 
 
 def write_stats(stats: dict, local_dir: Path) -> None:

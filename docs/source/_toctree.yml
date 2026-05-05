@@ -61,6 +61,8 @@
     title: SARM
   title: "Reward Models"
 - sections:
+  - local: inference
+    title: Policy Deployment (lerobot-rollout)
   - local: async
     title: Use Async Inference
   - local: rtc

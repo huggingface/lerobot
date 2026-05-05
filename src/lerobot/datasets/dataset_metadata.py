@@ -37,13 +37,11 @@ from .io_utils import (
     load_subtasks,
     load_tasks,
     write_info,
-    write_json,
     write_stats,
     write_tasks,
 )
 from .utils import (
     DEFAULT_EPISODES_PATH,
-    INFO_PATH,
     check_version_compatibility,
     get_safe_version,
     has_legacy_hub_download_metadata,
@@ -228,7 +226,7 @@ class LeRobotDatasetMetadata:
     @property
     def _version(self) -> packaging.version.Version:
         """Codebase version used to create this dataset."""
-        return packaging.version.parse(self.info["codebase_version"])
+        return packaging.version.parse(self.info.codebase_version)
 
     def get_data_file_path(self, ep_index: int) -> Path:
         """Return the relative parquet file path for the given episode index.
@@ -283,27 +281,27 @@ class LeRobotDatasetMetadata:
     @property
     def data_path(self) -> str:
         """Formattable string for the parquet files."""
-        return self.info["data_path"]
+        return self.info.data_path
 
     @property
     def video_path(self) -> str | None:
         """Formattable string for the video files."""
-        return self.info["video_path"]
+        return self.info.video_path
 
     @property
     def robot_type(self) -> str | None:
         """Robot type used in recording this dataset."""
-        return self.info["robot_type"]
+        return self.info.robot_type
 
     @property
     def fps(self) -> int:
         """Frames per second used during data collection."""
-        return self.info["fps"]
+        return self.info.fps
 
     @property
     def features(self) -> dict[str, dict]:
         """All features contained in the dataset."""
-        return self.info["features"]
+        return self.info.features
 
     @property
     def image_keys(self) -> list[str]:
@@ -333,32 +331,32 @@ class LeRobotDatasetMetadata:
     @property
     def total_episodes(self) -> int:
         """Total number of episodes available."""
-        return self.info["total_episodes"]
+        return self.info.total_episodes
 
     @property
     def total_frames(self) -> int:
         """Total number of frames saved in this dataset."""
-        return self.info["total_frames"]
+        return self.info.total_frames
 
     @property
     def total_tasks(self) -> int:
         """Total number of different tasks performed in this dataset."""
-        return self.info["total_tasks"]
+        return self.info.total_tasks
 
     @property
     def chunks_size(self) -> int:
         """Max number of files per chunk."""
-        return self.info["chunks_size"]
+        return self.info.chunks_size
 
     @property
     def data_files_size_in_mb(self) -> int:
         """Max size of data file in mega bytes."""
-        return self.info["data_files_size_in_mb"]
+        return self.info.data_files_size_in_mb
 
     @property
     def video_files_size_in_mb(self) -> int:
         """Max size of video file in mega bytes."""
-        return self.info["video_files_size_in_mb"]
+        return self.info.video_files_size_in_mb
 
     def get_task_index(self, task: str) -> int | None:
         """
@@ -502,10 +500,10 @@ class LeRobotDatasetMetadata:
         self._save_episode_metadata(episode_dict)
 
         # Update info
-        self.info["total_episodes"] += 1
-        self.info["total_frames"] += episode_length
-        self.info["total_tasks"] = len(self.tasks)
-        self.info["splits"] = {"train": f"0:{self.info['total_episodes']}"}
+        self.info.total_episodes += 1
+        self.info.total_frames += episode_length
+        self.info.total_tasks = len(self.tasks)
+        self.info.splits = {"train": f"0:{self.info.total_episodes}"}
 
         write_info(self.info, self.root)
 
@@ -524,7 +522,7 @@ class LeRobotDatasetMetadata:
         for key in video_keys:
             if not self.features[key].get("info", None):
                 video_path = self.root / self.video_path.format(video_key=key, chunk_index=0, file_index=0)
-                self.info["features"][key]["info"] = get_video_info(video_path)
+                self.info.features[key]["info"] = get_video_info(video_path)
 
     def update_chunk_settings(
         self,
@@ -546,17 +544,17 @@ class LeRobotDatasetMetadata:
         if chunks_size is not None:
             if chunks_size <= 0:
                 raise ValueError(f"chunks_size must be positive, got {chunks_size}")
-            self.info["chunks_size"] = chunks_size
+            self.info.chunks_size = chunks_size
 
         if data_files_size_in_mb is not None:
             if data_files_size_in_mb <= 0:
                 raise ValueError(f"data_files_size_in_mb must be positive, got {data_files_size_in_mb}")
-            self.info["data_files_size_in_mb"] = data_files_size_in_mb
+            self.info.data_files_size_in_mb = data_files_size_in_mb
 
         if video_files_size_in_mb is not None:
             if video_files_size_in_mb <= 0:
                 raise ValueError(f"video_files_size_in_mb must be positive, got {video_files_size_in_mb}")
-            self.info["video_files_size_in_mb"] = video_files_size_in_mb
+            self.info.video_files_size_in_mb = video_files_size_in_mb
 
         # Update the info file on disk
         write_info(self.info, self.root)
@@ -653,7 +651,7 @@ class LeRobotDatasetMetadata:
                 f"Features contain video keys {obj.video_keys}, but 'use_videos' is set to False. "
                 "Either remove video features from the features dict, or set 'use_videos=True'."
             )
-        write_json(obj.info, obj.root / INFO_PATH)
+        write_info(obj.info, obj.root)
         obj.revision = None
         obj._pq_writer = None
         obj.latest_episode = None

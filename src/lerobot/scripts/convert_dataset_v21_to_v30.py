@@ -70,6 +70,7 @@ from lerobot.datasets.io_utils import (
     get_parquet_file_size_in_mb,
     get_parquet_num_frames,
     load_info,
+    load_json,
     write_episodes,
     write_info,
     write_stats,
@@ -81,9 +82,11 @@ from lerobot.datasets.utils import (
     DEFAULT_DATA_PATH,
     DEFAULT_VIDEO_FILE_SIZE_IN_MB,
     DEFAULT_VIDEO_PATH,
+    INFO_PATH,
     LEGACY_EPISODES_PATH,
     LEGACY_EPISODES_STATS_PATH,
     LEGACY_TASKS_PATH,
+    DatasetInfo,
     update_chunk_file_indices,
 )
 from lerobot.datasets.video_utils import concatenate_video_files, get_video_duration_in_s
@@ -165,7 +168,7 @@ def legacy_load_tasks(local_dir: Path) -> tuple[dict, dict]:
 def validate_local_dataset_version(local_path: Path) -> None:
     """Validate that the local dataset has the expected v2.1 version."""
     info = load_info(local_path)
-    dataset_version = info.get("codebase_version", "unknown")
+    dataset_version = info.codebase_version or "unknown"
     if dataset_version != V21:
         raise ValueError(
             f"Local dataset has codebase version '{dataset_version}', expected '{V21}'. "
@@ -256,14 +259,14 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):
 
 def get_video_keys(root):
     info = load_info(root)
-    features = info["features"]
+    features = info.features
     video_keys = [key for key, ft in features.items() if ft["dtype"] == "video"]
     return video_keys
 
 
 def get_image_keys(root):
     info = load_info(root)
-    features = info["features"]
+    features = info.features
     image_keys = [key for key, ft in features.items() if ft["dtype"] == "image"]
     return image_keys
 
@@ -434,7 +437,8 @@ def convert_episodes_metadata(root, new_root, episodes_metadata, episodes_video_
 
 
 def convert_info(root, new_root, data_file_size_in_mb, video_file_size_in_mb):
-    info = load_info(root)
+    # Load as raw dict to remove legacy v2.1 fields before constructing DatasetInfo.
+    info = load_json(root / INFO_PATH)
     info["codebase_version"] = V30
     del info["total_chunks"]
     del info["total_videos"]
@@ -449,7 +453,9 @@ def convert_info(root, new_root, data_file_size_in_mb, video_file_size_in_mb):
             # already has fps in video_info
             continue
         info["features"][key]["fps"] = info["fps"]
-    write_info(info, new_root)
+    # Convert raw dict to typed DatasetInfo before writing
+    dataset_info = DatasetInfo.from_dict(info)
+    write_info(dataset_info, new_root)
 
 
 def convert_dataset(
