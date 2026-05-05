@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import logging
 from typing import TYPE_CHECKING, Any, TypedDict, Unpack
 
@@ -224,6 +225,9 @@ class ProcessorConfigKwargs(TypedDict, total=False):
         preprocessor_overrides: A dictionary of overrides for the preprocessor configuration.
         postprocessor_overrides: A dictionary of overrides for the postprocessor configuration.
         dataset_stats: Dataset statistics for normalization.
+        rename_map: Optional mapping of dataset or environment feature keys to match expected
+            policy feature names. When provided, stats are renamed accordingly so that
+            NormalizerProcessorStep can locate them after observation keys are remapped.
     """
 
     preprocessor_config_filename: str | None
@@ -613,7 +617,8 @@ def _make_processors_from_policy_config(
     Args:
         config: The policy configuration object.
         dataset_stats: Dataset statistics for normalization.
-        rename_map: Optional mapping of dataset or environment feature keys to match expected policy feature names.
+        rename_map: Optional mapping of dataset or environment feature keys to match expected
+            policy feature names.
     Returns:
         A tuple containing the input (pre-processor) and output (post-processor) pipelines.
     """
@@ -628,4 +633,12 @@ def _make_processors_from_policy_config(
     )
     module = importlib.import_module(module_path)
     function = getattr(module, function_name)
-    return function(config, dataset_stats=dataset_stats, rename_map=rename_map)
+
+    # Try calling with rename_map first; fall back without it for third-party factories
+    # that only accept (config, dataset_stats=...) and don't have the rename_map parameter.
+    if rename_map is not None:
+        sig = inspect.signature(function)
+        if "rename_map" in sig.parameters:
+            return function(config, dataset_stats=dataset_stats, rename_map=rename_map)
+
+    return function(config, dataset_stats=dataset_stats)
