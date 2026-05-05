@@ -24,6 +24,7 @@ from lerobot.motors.feetech import (
     FeetechMotorsBus,
     OperatingMode,
 )
+from lerobot.motors.feetech.calibration import calibrate_partial
 from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
@@ -108,7 +109,31 @@ class SOFollower(Robot):
     def is_calibrated(self) -> bool:
         return self.bus.is_calibrated
 
-    def calibrate(self) -> None:
+    def calibrate(self, motors: list[str] | None = None) -> None:
+        full_turn_motor = "wrist_roll"
+        if motors is not None:
+            try:
+                new_calibration = calibrate_partial(
+                    bus=self.bus,
+                    existing_calibration=self.calibration,
+                    motors=motors,
+                    device_name=str(self),
+                    full_turn_motors={full_turn_motor},
+                )
+                self.calibration = new_calibration
+                self.bus.write_calibration(self.calibration)
+                self._save_calibration()
+                print(f"Partial calibration of motors {set(motors)} saved to {self.calibration_fpath}")
+                return
+            except Exception:
+                logger.exception(
+                    "Error occurred during partial calibration. Your previous calibration has been restored."
+                )
+                # Restore the original homing offsets of the motors that may have been modified during
+                # calibration before the error occurred.
+                self.bus.write_calibration(self.calibration)
+                raise
+
         if self.calibration:
             # Calibration file exists, ask user whether to use it or run new calibration
             user_input = input(
@@ -128,7 +153,6 @@ class SOFollower(Robot):
         homing_offsets = self.bus.set_half_turn_homings()
 
         # Attempt to call record_ranges_of_motion with a reduced motor set when appropriate.
-        full_turn_motor = "wrist_roll"
         unknown_range_motors = [motor for motor in self.bus.motors if motor != full_turn_motor]
         print(
             f"Move all joints except '{full_turn_motor}' sequentially through their "
@@ -168,8 +192,19 @@ class SOFollower(Robot):
                     self.bus.write("Protection_Current", motor, 250)  # 50% of max current to avoid burnout
                     self.bus.write("Overload_Torque", motor, 25)  # 25% torque when overloaded
 
-    def setup_motors(self) -> None:
-        for motor in reversed(self.bus.motors):
+    def setup_motors(self, motors: list[str] | None = None) -> None:
+        motors_to_setup: dict[str, Motor] = self.bus.motors
+
+        if motors is not None:
+            motors_to_setup = {}
+            for motor in motors:
+                if motor not in self.bus.motors:
+                    raise ValueError(
+                        f"Motor '{motor}' not found in the bus. Available motors: {list(self.bus.motors.keys())}"
+                    )
+                motors_to_setup[motor] = self.bus.motors[motor]
+
+        for motor in reversed(motors_to_setup):
             input(f"Connect the controller board to the '{motor}' motor only and press enter.")
             self.bus.setup_motor(motor)
             print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")

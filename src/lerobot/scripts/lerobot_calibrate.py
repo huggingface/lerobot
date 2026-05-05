@@ -19,15 +19,27 @@ Requires: pip install 'lerobot[hardware]'
 
 Example:
 
+Default: calibrate all the motors sequentially
 ```shell
 lerobot-calibrate \
     --teleop.type=so100_leader \
     --teleop.port=/dev/tty.usbmodem58760431551 \
     --teleop.id=blue
 ```
+
+Optional: calibrate specific motors by passing a list of motor names (e.g. "shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper")
+Use the flag `--motors` to specify a comma-separated list of motor names to calibrate. This is useful when you have to recalibrate a specific motor and don't want to redo the calibration for the other motors.
+```shell
+lerobot-calibrate \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/tty.usbmodem58760431551 \
+    --teleop.id=test \
+    --motors=shoulder_pan,elbow_flex
+```
 """
 
 import logging
+import re
 from dataclasses import asdict, dataclass
 from pprint import pformat
 
@@ -70,10 +82,23 @@ from lerobot.utils.utils import init_logging
 class CalibrateConfig:
     teleop: TeleoperatorConfig | None = None
     robot: RobotConfig | None = None
+    motors: str | None = None  # comma-separated list of motors to calibrate, e.g. "shoulder_pan,elbow_flex"
 
     def __post_init__(self):
         if bool(self.teleop) == bool(self.robot):
             raise ValueError("Choose either a teleop or a robot.")
+        self.motors_list: list[str] | None = None
+        if self.motors is not None:
+            if not re.fullmatch(r"[\w ,]+", self.motors):
+                raise ValueError(
+                    f"Invalid characters in --motors='{self.motors}'. "
+                    "Use comma-separated names (letters, digits, underscores), e.g. shoulder_pan,elbow_flex"
+                )
+            self.motors_list = [m.strip() for m in self.motors.split(",") if m.strip()]
+            if not self.motors_list:
+                raise ValueError(
+                    "--motors flag is provided but the list is empty. Remove it or provide at least one motor name."
+                )
 
         self.device = self.robot if self.robot else self.teleop
 
@@ -91,7 +116,7 @@ def calibrate(cfg: CalibrateConfig):
     device.connect(calibrate=False)
 
     try:
-        device.calibrate()
+        device.calibrate(motors=cfg.motors_list)
     finally:
         device.disconnect()
 
