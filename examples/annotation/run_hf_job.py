@@ -23,6 +23,18 @@ token = os.environ.get("HF_TOKEN") or get_token()
 if not token:
     raise RuntimeError("No HF token. Run `huggingface-cli login` or `export HF_TOKEN=hf_...`")
 
+# --- Diversity knobs (Pi0.7-style prompt expansion) -----------------------
+# Bumped roughly 3x across the board to fight memorization on small datasets.
+# A single dataset trained for many epochs with deterministic atom wording
+# converges to perfect recall on training prompts but produces JSON-token
+# garbage at inference for any wording that drifts slightly. More atom
+# variants per episode + higher sampling temperature widens the training
+# distribution so the model has to actually use its language head, not
+# just memorize.
+#
+# Pushes to a *new* hub repo (``_tool3``) so the previous annotation pass
+# (``_tool2``) stays intact — re-train from scratch on the new dataset and
+# compare loss-curve shapes to verify the diversity bump is doing something.
 CMD = (
     "apt-get update -qq && apt-get install -y -qq git ffmpeg && "
     "pip install --no-deps "
@@ -43,6 +55,7 @@ CMD = (
     "--vlm.serve_ready_timeout_s=1800 "
     "--vlm.client_concurrency=256 "
     "--vlm.max_new_tokens=512 "
+    "--vlm.temperature=0.7 "
     "--executor.episode_parallelism=32 "
     "--vlm.chat_template_kwargs='{\"enable_thinking\": false}' "
     "--vlm.camera_key=observation.images.wrist "
@@ -50,10 +63,11 @@ CMD = (
     "--module_1.use_video_url=true "
     "--module_1.use_video_url_fps=1.0 "
     "--module_1.derive_task_from_video=always "
-    "--module_1.n_task_rephrasings=10 "
-    "--module_3.K=1 "
-    "--module_3.vqa_emission_hz=1.0 "
-    "--push_to_hub=pepijn223/super_poulain_full_tool2"
+    "--module_1.n_task_rephrasings=30 "
+    "--module_2.max_interjections_per_episode=9 "
+    "--module_3.K=3 "
+    "--module_3.vqa_emission_hz=2.0 "
+    "--push_to_hub=pepijn223/super_poulain_full_tool3"
 )
 
 job = run_job(
