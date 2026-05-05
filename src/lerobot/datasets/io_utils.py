@@ -13,7 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import json
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +28,10 @@ from datasets.table import embed_table_storage
 from PIL import Image as PILImage
 from torchvision import transforms
 
-from lerobot.datasets.utils import (
+from lerobot.utils.io_utils import load_json, write_json
+from lerobot.utils.utils import SuppressProgressBars, flatten_dict, unflatten_dict
+
+from .utils import (
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_EPISODES_PATH,
     DEFAULT_SUBTASKS_PATH,
@@ -37,11 +39,9 @@ from lerobot.datasets.utils import (
     EPISODES_DIR,
     INFO_PATH,
     STATS_PATH,
-    flatten_dict,
+    DatasetInfo,
     serialize_dict,
-    unflatten_dict,
 )
-from lerobot.utils.utils import SuppressProgressBars
 
 
 def get_parquet_file_size_in_mb(parquet_path: str | Path) -> float:
@@ -116,52 +116,21 @@ def embed_images(dataset: datasets.Dataset) -> datasets.Dataset:
     return dataset
 
 
-def load_json(fpath: Path) -> Any:
-    """Load data from a JSON file.
-
-    Args:
-        fpath (Path): Path to the JSON file.
-
-    Returns:
-        Any: The data loaded from the JSON file.
-    """
-    with open(fpath) as f:
-        return json.load(f)
+def write_info(info: DatasetInfo, local_dir: Path) -> None:
+    write_json(info.to_dict(), local_dir / INFO_PATH)
 
 
-def write_json(data: dict, fpath: Path) -> None:
-    """Write data to a JSON file.
-
-    Creates parent directories if they don't exist.
-
-    Args:
-        data (dict): The dictionary to write.
-        fpath (Path): The path to the output JSON file.
-    """
-    fpath.parent.mkdir(exist_ok=True, parents=True)
-    with open(fpath, "w") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
-
-
-def write_info(info: dict, local_dir: Path) -> None:
-    write_json(info, local_dir / INFO_PATH)
-
-
-def load_info(local_dir: Path) -> dict:
+def load_info(local_dir: Path) -> DatasetInfo:
     """Load dataset info metadata from its standard file path.
-
-    Also converts shape lists to tuples for consistency.
 
     Args:
         local_dir (Path): The root directory of the dataset.
 
     Returns:
-        dict: The dataset information dictionary.
+        DatasetInfo: The typed dataset information object.
     """
-    info = load_json(local_dir / INFO_PATH)
-    for ft in info["features"].values():
-        ft["shape"] = tuple(ft["shape"])
-    return info
+    raw = load_json(local_dir / INFO_PATH)
+    return DatasetInfo.from_dict(raw)
 
 
 def write_stats(stats: dict, local_dir: Path) -> None:

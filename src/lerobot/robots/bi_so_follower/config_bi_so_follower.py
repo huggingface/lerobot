@@ -16,9 +16,8 @@
 
 from dataclasses import dataclass
 
-from lerobot.robots.so_follower import SOFollowerConfig
-
 from ..config import RobotConfig
+from ..so_follower import SOFollowerConfig
 
 
 @RobotConfig.register_subclass("bi_so_follower")

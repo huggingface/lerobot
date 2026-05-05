@@ -37,6 +37,8 @@ import torchvision
 from datasets.features.features import register_feature
 from PIL import Image
 
+from lerobot.utils.import_utils import get_safe_default_codec
+
 logger = logging.getLogger(__name__)
 
 # List of hardware encoders to probe for auto-selection. Availability depends on the platform and FFmpeg build.
@@ -116,21 +118,12 @@ def resolve_vcodec(vcodec: str) -> str:
     return "libsvtav1"
 
 
-def get_safe_default_codec():
-    if importlib.util.find_spec("torchcodec"):
-        return "torchcodec"
-    else:
-        logger.warning(
-            "'torchcodec' is not available in your platform, falling back to 'pyav' as a default decoder"
-        )
-        return "pyav"
-
-
 def decode_video_frames(
     video_path: Path | str,
     timestamps: list[float],
     tolerance_s: float,
     backend: str | None = None,
+    return_uint8: bool = False,
 ) -> torch.Tensor:
     """
     Decodes video frames using the specified backend.
@@ -139,19 +132,23 @@ def decode_video_frames(
         video_path (Path): Path to the video file.
         timestamps (list[float]): List of timestamps to extract frames.
         tolerance_s (float): Allowed deviation in seconds for frame retrieval.
-        backend (str, optional): Backend to use for decoding. Defaults to "torchcodec" when available in the platform; otherwise, defaults to "pyav"..
+        backend (str, optional): Backend to use for decoding. Defaults to "torchcodec" when available in the platform; otherwise, defaults to "pyav".
+        return_uint8 (bool): If True, return raw uint8 frames without float32 normalization.
+            This reduces memory for DataLoader IPC; normalization can be done on GPU afterward.
 
     Returns:
-        torch.Tensor: Decoded frames.
+        torch.Tensor: Decoded frames (float32 in [0,1] by default, or uint8 if return_uint8=True).
 
     Currently supports torchcodec on cpu and pyav.
     """
     if backend is None:
         backend = get_safe_default_codec()
     if backend == "torchcodec":
-        return decode_video_frames_torchcodec(video_path, timestamps, tolerance_s)
+        return decode_video_frames_torchcodec(video_path, timestamps, tolerance_s, return_uint8=return_uint8)
     elif backend in ["pyav", "video_reader"]:
-        return decode_video_frames_torchvision(video_path, timestamps, tolerance_s, backend)
+        return decode_video_frames_torchvision(
+            video_path, timestamps, tolerance_s, backend, return_uint8=return_uint8
+        )
     else:
         raise ValueError(f"Unsupported video backend: {backend}")
 
@@ -162,6 +159,7 @@ def decode_video_frames_torchvision(
     tolerance_s: float,
     backend: str = "pyav",
     log_loaded_timestamps: bool = False,
+    return_uint8: bool = False,
 ) -> torch.Tensor:
     """Loads frames associated to the requested timestamps of a video
 
@@ -248,14 +246,17 @@ def decode_video_frames_torchvision(
     if log_loaded_timestamps:
         logger.info(f"{closest_ts=}")
 
-    # convert to the pytorch format which is float32 in [0,1] range (and channel first)
-    closest_frames = closest_frames.type(torch.float32) / 255
-
     if len(timestamps) != len(closest_frames):
         raise FrameTimestampError(
             f"Number of retrieved frames ({len(closest_frames)}) does not match "
             f"number of queried timestamps ({len(timestamps)})"
         )
+
+    if return_uint8:
+        return closest_frames
+
+    # convert to the pytorch format which is float32 in [0,1] range (and channel first)
+    closest_frames = closest_frames.type(torch.float32) / 255
     return closest_frames
 
 
@@ -271,7 +272,10 @@ class VideoDecoderCache:
         if importlib.util.find_spec("torchcodec"):
             from torchcodec.decoders import VideoDecoder
         else:
-            raise ImportError("torchcodec is required but not available.")
+            raise ImportError(
+                "'torchcodec' is required but not installed. "
+                "Install it with: pip install 'lerobot[dataset]' (or uv pip install 'lerobot[dataset]')"
+            )
 
         video_path = str(video_path)
 
@@ -311,6 +315,7 @@ def decode_video_frames_torchcodec(
     tolerance_s: float,
     log_loaded_timestamps: bool = False,
     decoder_cache: VideoDecoderCache | None = None,
+    return_uint8: bool = False,
 ) -> torch.Tensor:
     """Loads frames associated with the requested timestamps of a video using torchcodec.
 
@@ -378,14 +383,16 @@ def decode_video_frames_torchcodec(
     if log_loaded_timestamps:
         logger.info(f"{closest_ts=}")
 
-    # convert to float32 in [0,1] range
-    closest_frames = (closest_frames / 255.0).type(torch.float32)
-
     if not len(timestamps) == len(closest_frames):
         raise FrameTimestampError(
             f"Retrieved timestamps differ from queried {set(closest_frames) - set(timestamps)}"
         )
 
+    if return_uint8:
+        return closest_frames
+
+    # convert to float32 in [0,1] range
+    closest_frames = (closest_frames / 255.0).type(torch.float32)
     return closest_frames
 
 
@@ -606,7 +613,7 @@ class _CameraEncoderThread(threading.Thread):
         self.encoder_threads = encoder_threads
 
     def run(self) -> None:
-        from lerobot.datasets.compute_stats import RunningQuantileStats, auto_downsample_height_width
+        from .compute_stats import RunningQuantileStats, auto_downsample_height_width
 
         container = None
         output_stream = None
@@ -741,6 +748,7 @@ class StreamingVideoEncoder:
         self._video_paths: dict[str, Path] = {}
         self._dropped_frames: dict[str, int] = {}
         self._episode_active = False
+        self._closed = False
 
     def start_episode(self, video_keys: list[str], temp_dir: Path) -> None:
         """Start encoder threads for a new episode.
@@ -895,8 +903,11 @@ class StreamingVideoEncoder:
 
     def close(self) -> None:
         """Close the encoder, canceling any in-progress episode."""
+        if self._closed:
+            return
         if self._episode_active:
             self.cancel_episode()
+        self._closed = True
 
     def _cleanup(self) -> None:
         """Clean up queues and thread tracking dicts."""
@@ -1063,43 +1074,19 @@ class VideoEncodingManager:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        streaming_encoder = getattr(self.dataset, "_streaming_encoder", None)
+        writer = self.dataset.writer
+        if writer is not None:
+            if exc_type is not None and writer._streaming_encoder is not None:
+                writer.cancel_pending_videos()
 
-        if streaming_encoder is not None:
-            # Handle streaming encoder cleanup
-            if exc_type is not None:
-                streaming_encoder.cancel_episode()
-            streaming_encoder.close()
-        elif self.dataset.episodes_since_last_encoding > 0:
-            # Handle any remaining episodes that haven't been batch encoded
-            if exc_type is not None:
-                logger.info("Exception occurred. Encoding remaining episodes before exit...")
-            else:
-                logger.info("Recording stopped. Encoding remaining episodes...")
+            # finalize() handles flush_pending_videos + parquet + metadata
+            self.dataset.finalize()
 
-            start_ep = self.dataset.num_episodes - self.dataset.episodes_since_last_encoding
-            end_ep = self.dataset.num_episodes
-            logger.info(
-                f"Encoding remaining {self.dataset.episodes_since_last_encoding} episodes, "
-                f"from episode {start_ep} to {end_ep - 1}"
-            )
-            self.dataset._batch_save_episode_video(start_ep, end_ep)
-
-        # Finalize the dataset to properly close all writers
-        self.dataset.finalize()
-
-        # Clean up episode images if recording was interrupted (only for non-streaming mode)
-        if exc_type is not None and streaming_encoder is None:
-            interrupted_episode_index = self.dataset.num_episodes
-            for key in self.dataset.meta.video_keys:
-                img_dir = self.dataset._get_image_file_path(
-                    episode_index=interrupted_episode_index, image_key=key, frame_index=0
-                ).parent
-                if img_dir.exists():
-                    logger.debug(
-                        f"Cleaning up interrupted episode images for episode {interrupted_episode_index}, camera {key}"
-                    )
-                    shutil.rmtree(img_dir)
+            # Clean up episode images if recording was interrupted (only for non-streaming mode)
+            if exc_type is not None and writer._streaming_encoder is None:
+                writer.cleanup_interrupted_episode(self.dataset.num_episodes)
+        else:
+            self.dataset.finalize()
 
         # Clean up any remaining images directory if it's empty
         img_dir = self.dataset.root / "images"

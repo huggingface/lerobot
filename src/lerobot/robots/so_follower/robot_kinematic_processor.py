@@ -19,8 +19,8 @@ from typing import Any
 
 import numpy as np
 
-from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.model.kinematics import RobotKinematics
+from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.model import RobotKinematics
 from lerobot.processor import (
     EnvTransition,
     ObservationProcessorStep,

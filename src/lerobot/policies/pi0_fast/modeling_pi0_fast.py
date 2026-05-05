@@ -16,7 +16,6 @@
 
 import builtins
 import logging
-import math
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypedDict, Unpack
@@ -26,7 +25,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
-from lerobot.utils.import_utils import _scipy_available, _transformers_available
+from lerobot.utils.import_utils import _scipy_available, _transformers_available, require_package
 
 # Conditional import for type checking and lazy loading
 if TYPE_CHECKING or _scipy_available:
@@ -35,23 +34,21 @@ else:
     idct = None
 
 if TYPE_CHECKING or _transformers_available:
-    from transformers import AutoTokenizer
+    from transformers import AutoProcessor, AutoTokenizer
     from transformers.models.auto import CONFIG_MAPPING
 
-    from lerobot.policies.pi_gemma import (
+    from ..pi_gemma import (
         PaliGemmaForConditionalGenerationWithPiGemma,
         PiGemmaModel,
     )
 else:
     CONFIG_MAPPING = None
+    AutoProcessor = None
     AutoTokenizer = None
     PiGemmaModel = None
     PaliGemmaForConditionalGenerationWithPiGemma = None
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig
-from lerobot.policies.pretrained import PreTrainedPolicy, T
-from lerobot.policies.rtc.modeling_rtc import RTCProcessor
+from lerobot.configs import PreTrainedConfig
 from lerobot.utils.constants import (
     ACTION,
     ACTION_TOKEN_MASK,
@@ -60,6 +57,10 @@ from lerobot.utils.constants import (
     OBS_LANGUAGE_TOKENS,
     OPENPI_ATTENTION_MASK_VALUE,
 )
+
+from ..pretrained import PreTrainedPolicy, T
+from ..rtc.modeling_rtc import RTCProcessor
+from .configuration_pi0_fast import PI0FastConfig
 
 
 class ActionSelectKwargs(TypedDict, total=False):
@@ -225,6 +226,7 @@ class PI0FastPaliGemma(nn.Module):
         # forward(..., adarms_cond=...) is supported (same as pi0/pi05).
         if use_adarms[0]:
             text_config = self.paligemma.config.text_config
+            del self.paligemma.model.language_model
             self.paligemma.model.language_model = PiGemmaModel(text_config)
 
         self.to_bfloat16_for_selected_params(precision)
@@ -258,13 +260,15 @@ class PI0FastPaliGemma(nn.Module):
         if image.dtype != torch.float32:
             image = image.to(torch.float32)
         image_outputs = self.paligemma.model.get_image_features(image)
-        features = image_outputs.pooler_output * self.paligemma.config.text_config.hidden_size**0.5
+        features = image_outputs.pooler_output
+        norm = 2048**0.5
+        features = features / norm * norm
         if features.dtype != out_dtype:
             features = features.to(out_dtype)
         return features
 
     def embed_language_tokens(self, tokens: torch.Tensor):
-        return self.paligemma.model.language_model.embed_tokens(tokens)
+        return self.paligemma.model.language_model.get_input_embeddings()(tokens)
 
     def forward(
         self,
@@ -414,8 +418,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         # Process language instruction tokens
         def lang_embed_func(tokens):
             lang_emb = self.paligemma_with_expert.embed_language_tokens(tokens)
-            lang_emb_dim = lang_emb.shape[-1]
-            return lang_emb * math.sqrt(lang_emb_dim)
+            return lang_emb
 
         lang_emb = self._apply_checkpoint(lang_embed_func, tokens)
         embs.append(lang_emb)
@@ -429,8 +432,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
 
             def fast_action_embed_func(fast_action_tokens):
                 fast_emb = self.paligemma_with_expert.embed_language_tokens(fast_action_tokens)
-                fast_emb_dim = fast_emb.shape[-1]
-                return fast_emb * math.sqrt(fast_emb_dim)
+                return fast_emb
 
             fast_action_emb = self._apply_checkpoint(fast_action_embed_func, fast_action_tokens)
             embs.append(fast_action_emb)
@@ -663,7 +665,6 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
             if t < max_decoding_steps - 1:
                 # embed the newly generated token
                 next_token_emb = self.paligemma_with_expert.embed_language_tokens(next_token)
-                next_token_emb = next_token_emb * math.sqrt(next_token_emb.shape[-1])
                 if prefix_embs.dtype == torch.bfloat16:
                     next_token_emb = next_token_emb.to(dtype=torch.bfloat16)
 
@@ -768,7 +769,6 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
             # Embed the single previous token
             # We use embed_language_tokens directly to avoid overhead of full prefix embedding
             next_token_emb = self.paligemma_with_expert.embed_language_tokens(next_token)
-            next_token_emb = next_token_emb * math.sqrt(next_token_emb.shape[-1])
             if prefix_embs.dtype == torch.bfloat16:
                 next_token_emb = next_token_emb.to(dtype=torch.bfloat16)
 
@@ -825,14 +825,14 @@ class PI0FastPolicy(PreTrainedPolicy):
         Args:
             config: Policy configuration class instance.
         """
+        require_package("transformers", extra="pi")
+        require_package("scipy", extra="pi")
         super().__init__(config)
         config.validate_features()
         self.config = config
 
         # Load tokenizers first
         try:
-            from transformers import AutoProcessor, AutoTokenizer
-
             # Load FAST tokenizer
             self.action_tokenizer = AutoProcessor.from_pretrained(
                 config.action_tokenizer_name, trust_remote_code=True

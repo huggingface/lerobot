@@ -18,10 +18,8 @@
 
 from dataclasses import dataclass, field
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import NormalizationMode
-from lerobot.optim.optimizers import AdamConfig
-from lerobot.optim.schedulers import VQBeTSchedulerConfig
+from lerobot.configs import NormalizationMode, PreTrainedConfig
+from lerobot.optim import AdamConfig, VQBeTSchedulerConfig
 
 
 @PreTrainedConfig.register_subclass("vqbet")

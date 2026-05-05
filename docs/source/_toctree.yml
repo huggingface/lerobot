@@ -17,8 +17,12 @@
     title: Train RL in Simulation
   - local: multi_gpu_training
     title: Multi GPU training
+  - local: hil_data_collection
+    title: Human In the Loop Data Collection
   - local: peft_training
     title: Training with PEFT (e.g., LoRA)
+  - local: rename_map
+    title: Using Rename Map and Empty Cameras
   title: "Tutorials"
 - sections:
   - local: lerobot-dataset-v3
@@ -47,6 +51,8 @@
     title: NVIDIA GR00T N1.5
   - local: xvla
     title: X-VLA
+  - local: multi_task_dit
+    title: Multitask DiT Policy
   - local: walloss
     title: WALL-OSS
   title: "Policies"
@@ -55,6 +61,8 @@
     title: SARM
   title: "Reward Models"
 - sections:
+  - local: inference
+    title: Policy Deployment (lerobot-rollout)
   - local: async
     title: Use Async Inference
   - local: rtc
@@ -65,13 +73,29 @@
     title: Environments from the Hub
   - local: envhub_leisaac
     title: Control & Train Robots in Sim (LeIsaac)
+  title: "Simulation"
+- sections:
+  - local: adding_benchmarks
+    title: Adding a New Benchmark
+  - local: libero
+    title: LIBERO
+  - local: libero_plus
+    title: LIBERO-plus
+  - local: metaworld
+    title: Meta-World
+  - local: robotwin
+    title: RoboTwin 2.0
+  - local: robocasa
+    title: RoboCasa365
+  - local: robocerebra
+    title: RoboCerebra
+  - local: robomme
+    title: RoboMME
   - local: envhub_isaaclab_arena
     title: NVIDIA IsaacLab Arena Environments
-  - local: libero
-    title: Using Libero
-  - local: metaworld
-    title: Using MetaWorld
-  title: "Simulation"
+  - local: vlabench
+    title: VLABench
+  title: "Benchmarks"
 - sections:
   - local: introduction_processors
     title: Introduction to Robot Processors
@@ -83,6 +107,8 @@
     title: Processors for Robots and Teleoperators
   - local: env_processor
     title: Environment Processors
+  - local: action_representations
+    title: Action Representations
   title: "Robot Processors"
 - sections:
   - local: so101
