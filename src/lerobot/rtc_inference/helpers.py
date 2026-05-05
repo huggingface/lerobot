@@ -24,7 +24,7 @@ import numpy as np
 import torch
 
 from lerobot.configs.types import PolicyFeature, RTCAttentionSchedule
-from lerobot.datasets.feature_utils import build_dataset_frame, hw_to_dataset_features
+from lerobot.utils.feature_utils import build_dataset_frame, hw_to_dataset_features
 
 # NOTE: Configs need to be loaded for the client to be able to instantiate the policy config
 from lerobot.policies import (  # noqa: F401
