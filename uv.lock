@@ -960,7 +960,7 @@ name = "cuda-bindings"
 version = "12.9.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-pathfinder", marker = "platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l' and sys_platform == 'linux'" },
+    { name = "cuda-pathfinder", marker = "platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l' and platform_machine != 's390x' and sys_platform == 'linux'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a9/c1/dabe88f52c3e3760d861401bb994df08f672ec893b8f7592dc91626adcf3/cuda_bindings-12.9.4-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:fda147a344e8eaeca0c6ff113d2851ffca8f7dfc0a6c932374ee5c47caa649c8", size = 12151019, upload-time = "2025-10-21T14:51:43.167Z" },
@@ -1047,7 +1047,7 @@ name = "decord"
 version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", marker = "(platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l') or sys_platform != 'linux'" },
+    { name = "numpy", marker = "(platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l' and platform_machine != 's390x') or (platform_machine != 's390x' and sys_platform != 'linux')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/11/79/936af42edf90a7bd4e41a6cac89c913d4b47fa48a26b042d5129a9242ee3/decord-0.6.0-py3-none-manylinux2010_x86_64.whl", hash = "sha256:51997f20be8958e23b7c4061ba45d0efcd86bffd5fe81c695d0befee0d442976", size = 13602299, upload-time = "2021-06-14T21:30:55.486Z" },
@@ -2614,6 +2614,9 @@ all = [
     { name = "mock-serial", marker = "sys_platform != 'win32'" },
     { name = "mypy" },
     { name = "num2words" },
+    { name = "onnx" },
+    { name = "onnxruntime" },
+    { name = "openvino" },
     { name = "pandas" },
     { name = "peft" },
     { name = "placo" },
@@ -2631,6 +2634,7 @@ all = [
     { name = "pytest-cov" },
     { name = "pytest-timeout" },
     { name = "python-can" },
+    { name = "pyyaml" },
     { name = "pyzmq" },
     { name = "qwen-vl-utils" },
     { name = "reachy2-sdk" },
@@ -2725,6 +2729,12 @@ dynamixel = [
 ]
 evaluation = [
     { name = "av" },
+]
+export = [
+    { name = "onnx" },
+    { name = "onnxruntime" },
+    { name = "openvino" },
+    { name = "pyyaml" },
 ]
 feetech = [
     { name = "deepdiff" },
@@ -2988,6 +2998,7 @@ requires-dist = [
     { name = "lerobot", extras = ["diffusers-dep"], marker = "extra == 'multi-task-dit'" },
     { name = "lerobot", extras = ["diffusion"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["dynamixel"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["export"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["feetech"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["feetech"], marker = "extra == 'hopejr'" },
     { name = "lerobot", extras = ["feetech"], marker = "extra == 'lekiwi'" },
@@ -3067,9 +3078,12 @@ requires-dist = [
     { name = "ninja", marker = "extra == 'groot'", specifier = ">=1.11.1,<2.0.0" },
     { name = "num2words", marker = "extra == 'smolvla'", specifier = ">=0.5.14,<0.6.0" },
     { name = "numpy", specifier = ">=2.0.0,<2.3.0" },
+    { name = "onnx", marker = "extra == 'export'", specifier = ">=1.16.0,<2.0.0" },
     { name = "onnx", marker = "extra == 'unitree-g1'", specifier = ">=1.16.0,<2.0.0" },
+    { name = "onnxruntime", marker = "extra == 'export'", specifier = ">=1.16.0,<2.0.0" },
     { name = "onnxruntime", marker = "extra == 'unitree-g1'", specifier = ">=1.16.0,<2.0.0" },
     { name = "opencv-python-headless", specifier = ">=4.9.0,<4.14.0" },
+    { name = "openvino", marker = "extra == 'export'", specifier = ">=2025.0.0,<2027.0.0" },
     { name = "packaging", specifier = ">=24.2,<26.0" },
     { name = "pandas", marker = "extra == 'dataset'", specifier = ">=2.0.0,<3.0.0" },
     { name = "pandas", marker = "extra == 'video-benchmark'", specifier = ">=2.2.2,<2.4.0" },
@@ -3090,6 +3104,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=5.0.0,<8.0.0" },
     { name = "pytest-timeout", marker = "extra == 'test'", specifier = ">=2.4.0,<3.0.0" },
     { name = "python-can", marker = "extra == 'can-dep'", specifier = ">=4.2.0,<5.0.0" },
+    { name = "pyyaml", marker = "extra == 'export'", specifier = ">=6.0,<7.0" },
     { name = "pyzmq", marker = "extra == 'pyzmq-dep'", specifier = ">=26.2.1,<28.0.0" },
     { name = "qwen-vl-utils", marker = "extra == 'qwen-vl-utils-dep'", specifier = ">=0.0.11,<0.1.0" },
     { name = "reachy2-sdk", marker = "extra == 'reachy2'", specifier = ">=1.0.15,<1.1.0" },
@@ -3112,7 +3127,7 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'transformers-dep'", specifier = ">=5.4.0,<5.6.0" },
     { name = "wandb", marker = "extra == 'training'", specifier = ">=0.24.0,<0.25.0" },
 ]
-provides-extras = ["dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "grpcio-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "smolvla", "multi-task-dit", "groot", "sarm", "xvla", "hilserl", "async", "peft", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
+provides-extras = ["dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "grpcio-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "smolvla", "multi-task-dit", "groot", "sarm", "xvla", "hilserl", "async", "peft", "export", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
 
 [[package]]
 name = "librt"
@@ -3988,7 +4003,7 @@ name = "nvidia-cudnn-cu12"
 version = "9.10.2.21"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas-cu12", marker = "platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l' and sys_platform == 'linux'" },
+    { name = "nvidia-cublas-cu12", marker = "platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l' and platform_machine != 's390x' and sys_platform == 'linux'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ba/51/e123d997aa098c61d029f76663dedbfb9bc8dcf8c60cbd6adbe42f76d049/nvidia_cudnn_cu12-9.10.2.21-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:949452be657fa16687d0930933f032835951ef0892b37d2d53824d1a84dc97a8", size = 706758467, upload-time = "2025-06-06T21:54:08.597Z" },
@@ -3999,7 +4014,7 @@ name = "nvidia-cufft-cu12"
 version = "11.3.3.83"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12", marker = "platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l' and sys_platform == 'linux'" },
+    { name = "nvidia-nvjitlink-cu12", marker = "platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l' and platform_machine != 's390x' and sys_platform == 'linux'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1f/13/ee4e00f30e676b66ae65b4f08cb5bcbb8392c03f54f2d5413ea99a5d1c80/nvidia_cufft_cu12-11.3.3.83-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:4d2dd21ec0b88cf61b62e6b43564355e5222e4a3fb394cac0db101f2dd0d4f74", size = 193118695, upload-time = "2025-03-07T01:45:27.821Z" },
@@ -4026,9 +4041,9 @@ name = "nvidia-cusolver-cu12"
 version = "11.7.3.90"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas-cu12", marker = "platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l' and sys_platform == 'linux'" },
-    { name = "nvidia-cusparse-cu12", marker = "platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l' and sys_platform == 'linux'" },
-    { name = "nvidia-nvjitlink-cu12", marker = "platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l' and sys_platform == 'linux'" },
+    { name = "nvidia-cublas-cu12", marker = "platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l' and platform_machine != 's390x' and sys_platform == 'linux'" },
+    { name = "nvidia-cusparse-cu12", marker = "platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l' and platform_machine != 's390x' and sys_platform == 'linux'" },
+    { name = "nvidia-nvjitlink-cu12", marker = "platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l' and platform_machine != 's390x' and sys_platform == 'linux'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/85/48/9a13d2975803e8cf2777d5ed57b87a0b6ca2cc795f9a4f59796a910bfb80/nvidia_cusolver_cu12-11.7.3.90-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:4376c11ad263152bd50ea295c05370360776f8c3427b30991df774f9fb26c450", size = 267506905, upload-time = "2025-03-07T01:47:16.273Z" },
@@ -4039,7 +4054,7 @@ name = "nvidia-cusparse-cu12"
 version = "12.5.8.93"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12", marker = "platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l' and sys_platform == 'linux'" },
+    { name = "nvidia-nvjitlink-cu12", marker = "platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l' and platform_machine != 's390x' and sys_platform == 'linux'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c2/f5/e1854cb2f2bcd4280c44736c93550cc300ff4b8c95ebe370d0aa7d2b473d/nvidia_cusparse_cu12-12.5.8.93-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:1ec05d76bbbd8b61b06a80e1eaf8cf4959c3d4ce8e711b65ebd0443bb0ebb13b", size = 288216466, upload-time = "2025-03-07T01:48:13.779Z" },
@@ -4194,6 +4209,40 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/4b/33/b5db29a6c00eb8f50708110d8d453747ca125c8b805bc437b289dbdcc057/opencv_python_headless-4.13.0.92-cp37-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:0bd48544f77c68b2941392fcdf9bcd2b9cdf00e98cb8c29b2455d194763cf99e", size = 60391106, upload-time = "2026-02-05T10:30:14.236Z" },
     { url = "https://files.pythonhosted.org/packages/fb/c3/52cfea47cd33e53e8c0fbd6e7c800b457245c1fda7d61660b4ffe9596a7f/opencv_python_headless-4.13.0.92-cp37-abi3-win32.whl", hash = "sha256:a7cf08e5b191f4ebb530791acc0825a7986e0d0dee2a3c491184bd8599848a4b", size = 30812232, upload-time = "2026-02-05T07:02:29.594Z" },
     { url = "https://files.pythonhosted.org/packages/4a/90/b338326131ccb2aaa3c2c85d00f41822c0050139a4bfe723cfd95455bd2d/opencv_python_headless-4.13.0.92-cp37-abi3-win_amd64.whl", hash = "sha256:77a82fe35ddcec0f62c15f2ba8a12ecc2ed4207c17b0902c7a3151ae29f37fb6", size = 40070414, upload-time = "2026-02-05T07:02:26.448Z" },
+]
+
+[[package]]
+name = "openvino"
+version = "2026.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "openvino-telemetry" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ae/ee/9efdb99429a01f3f9705a62a93149b8f5ef34405d5840e2c48fcebde9a4a/openvino-2026.1.0-21367-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:d4e8389590b4419adfc4b060a621a20471961624c4f36b05396054389518678e", size = 30887535, upload-time = "2026-04-07T14:18:26.804Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/6a/e71fdc9d07668a149c7dc9dcbfe87d121b329e8297da080201c3ea2abb7e/openvino-2026.1.0-21367-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:4b0559cafdc6ebd96544c7e4a50700cf46c608b7189a947e3a496d5a38badf3a", size = 56819721, upload-time = "2026-04-07T14:18:31.333Z" },
+    { url = "https://files.pythonhosted.org/packages/db/9e/24497251b2ae226d7e9ce5beea3b667169cf0287203a4d138d58e3944736/openvino-2026.1.0-21367-cp312-cp312-manylinux_2_35_aarch64.whl", hash = "sha256:12e3ecb96950173cd3e17a48763f47744f1f048bae7dd8f7bc416f0c665c24e3", size = 26852687, upload-time = "2026-04-07T14:18:34.95Z" },
+    { url = "https://files.pythonhosted.org/packages/73/cb/07035dcbf60347c0706c4f8d3ffb003c34fe8205e4041699a6655cc858c3/openvino-2026.1.0-21367-cp312-cp312-win_amd64.whl", hash = "sha256:21fbc8f9aa765d9ded024311f4e48e38118643cda0f0139dcfa5422c0c457eb6", size = 71174500, upload-time = "2026-04-07T14:18:41.069Z" },
+    { url = "https://files.pythonhosted.org/packages/36/7b/721bd8e5cd18c31e73ab0ae5143ff222aa7af639fbde9276059e408dcae9/openvino-2026.1.0-21367-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:e19cf36e0d65d2905492d1465af2481315a055fb1224e3ba65c94def943b3ee9", size = 30887829, upload-time = "2026-04-07T14:18:44.628Z" },
+    { url = "https://files.pythonhosted.org/packages/7b/7e/6edb62a43cc206d8227da0b570f15a64d5ea122e002e299b733203f4fdfe/openvino-2026.1.0-21367-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:8c066dcd0f9f901759d8d69fa3a01eb97f3274497ec77341f1802654e6c5e1ad", size = 56819471, upload-time = "2026-04-07T14:18:48.957Z" },
+    { url = "https://files.pythonhosted.org/packages/cc/4d/5d6dea187afba680b9c0ac18e42cd2c9188f4ff1d2bb93e47c81fb404ab8/openvino-2026.1.0-21367-cp313-cp313-manylinux_2_35_aarch64.whl", hash = "sha256:0ba1a760423d6f61d45927df84eb7a5c4bca34c8a0018256bce528d167495914", size = 26852804, upload-time = "2026-04-07T14:18:52.867Z" },
+    { url = "https://files.pythonhosted.org/packages/ab/09/32b2b6a394bb0347b66497eb521ad6cc516b11aecdcb18755b7e886b6efd/openvino-2026.1.0-21367-cp313-cp313-win_amd64.whl", hash = "sha256:b413b92fa9340c4fee586b9272b3a7a7dc06324c0fb4885ea7c24f258348d433", size = 71174470, upload-time = "2026-04-07T14:18:58.292Z" },
+    { url = "https://files.pythonhosted.org/packages/8d/09/b586842336070e864d2b805a5876d5b23110c45133f6a1e99c9acd471fb4/openvino-2026.1.0-21367-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:abf4347c9f9206b5abfab9c2163e7b8abab7e506525b1178117b4a1a712feca6", size = 30867454, upload-time = "2026-04-07T14:19:02.15Z" },
+    { url = "https://files.pythonhosted.org/packages/13/2d/f847cdc25113515510927229960bdbfaff53ed5eb1e768bb4fc191229976/openvino-2026.1.0-21367-cp314-cp314-manylinux_2_28_x86_64.whl", hash = "sha256:727c5c7e74634d8bc8f736e6b26704fbcc7899a1b591a045819defff7da4f358", size = 56823210, upload-time = "2026-04-07T14:19:07.317Z" },
+    { url = "https://files.pythonhosted.org/packages/62/38/c917105e370ae75a49e925a90ce3dc787716e3d9011ac8d13d027a0cb60b/openvino-2026.1.0-21367-cp314-cp314-win_amd64.whl", hash = "sha256:592b0b9708ae3ad93dc2d2994d87a355874861245ac01f9ebceabe046267d2d2", size = 71178943, upload-time = "2026-04-07T14:19:12.337Z" },
+    { url = "https://files.pythonhosted.org/packages/84/28/6d10e4f1c255d4a1d1c760e688e4ed03f305903c682a07cef21dd3e49626/openvino-2026.1.0-21367-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:8ab9630707d2abaffc046a1858f2f1f074322bf79170cde1b58c88482d7f81fc", size = 31094589, upload-time = "2026-04-07T14:19:16.286Z" },
+    { url = "https://files.pythonhosted.org/packages/da/61/4825f80dd1e4bceddad950f6426766df9574215c383adb8fc8fa9bed9a3f/openvino-2026.1.0-21367-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:cb4d6906ed2f8dff8355e68321f2c9a70ea043020666caa38d2989e1d6c70b38", size = 56867904, upload-time = "2026-04-07T14:19:21.275Z" },
+    { url = "https://files.pythonhosted.org/packages/30/6f/dd9495d36f46bd90193c4f1db2fb27807730add7ebde1b9c6488a37c878d/openvino-2026.1.0-21367-cp314-cp314t-win_amd64.whl", hash = "sha256:6518fc55c95d161ca5a48518cb35504717121470a7e11b71a3fbb32109cd5c3d", size = 71344883, upload-time = "2026-04-07T14:19:26.367Z" },
+]
+
+[[package]]
+name = "openvino-telemetry"
+version = "2025.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/71/8a/89d82f1a9d913fb266c2e6dc2f6030935db24b7152963a8db6c4f039787f/openvino_telemetry-2025.2.0.tar.gz", hash = "sha256:8bf8127218e51e99547bf38b8fb85a8b31c9bf96e6f3a82eb0b3b6a34155977c", size = 18894, upload-time = "2025-07-07T10:29:51.159Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3b/ac/5ab0ca0aa269ad3c73f7bfc3801b10e5f56f75a31bf68c1ae8bd51cf70a4/openvino_telemetry-2025.2.0-py3-none-any.whl", hash = "sha256:bcb667e83a44f202ecf4cfa49281715c6d7e21499daec04ff853b7f964833599", size = 25227, upload-time = "2025-07-07T10:29:50.189Z" },
 ]
 
 [[package]]
@@ -4881,10 +4930,10 @@ name = "pyobjc-framework-applicationservices"
 version = "12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "sys_platform != 'emscripten' and sys_platform != 'linux'" },
-    { name = "pyobjc-framework-cocoa", marker = "sys_platform != 'emscripten' and sys_platform != 'linux'" },
-    { name = "pyobjc-framework-coretext", marker = "sys_platform != 'emscripten' and sys_platform != 'linux'" },
-    { name = "pyobjc-framework-quartz", marker = "sys_platform != 'emscripten' and sys_platform != 'linux'" },
+    { name = "pyobjc-core", marker = "(platform_machine != 's390x' and sys_platform == 'win32') or (sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "pyobjc-framework-cocoa", marker = "(platform_machine != 's390x' and sys_platform == 'win32') or (sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "pyobjc-framework-coretext", marker = "(platform_machine != 's390x' and sys_platform == 'win32') or (sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "pyobjc-framework-quartz", marker = "(platform_machine != 's390x' and sys_platform == 'win32') or (sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/be/6a/d4e613c8e926a5744fc47a9e9fea08384a510dc4f27d844f7ad7a2d793bd/pyobjc_framework_applicationservices-12.1.tar.gz", hash = "sha256:c06abb74f119bc27aeb41bf1aef8102c0ae1288aec1ac8665ea186a067a8945b", size = 103247, upload-time = "2025-11-14T10:08:52.18Z" }
 wheels = [
@@ -4900,7 +4949,7 @@ name = "pyobjc-framework-cocoa"
 version = "12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "sys_platform != 'emscripten' and sys_platform != 'linux'" },
+    { name = "pyobjc-core", marker = "(platform_machine != 's390x' and sys_platform == 'win32') or (sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/02/a3/16ca9a15e77c061a9250afbae2eae26f2e1579eb8ca9462ae2d2c71e1169/pyobjc_framework_cocoa-12.1.tar.gz", hash = "sha256:5556c87db95711b985d5efdaaf01c917ddd41d148b1e52a0c66b1a2e2c5c1640", size = 2772191, upload-time = "2025-11-14T10:13:02.069Z" }
 wheels = [
@@ -4916,9 +4965,9 @@ name = "pyobjc-framework-coretext"
 version = "12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "sys_platform != 'emscripten' and sys_platform != 'linux'" },
-    { name = "pyobjc-framework-cocoa", marker = "sys_platform != 'emscripten' and sys_platform != 'linux'" },
-    { name = "pyobjc-framework-quartz", marker = "sys_platform != 'emscripten' and sys_platform != 'linux'" },
+    { name = "pyobjc-core", marker = "(platform_machine != 's390x' and sys_platform == 'win32') or (sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "pyobjc-framework-cocoa", marker = "(platform_machine != 's390x' and sys_platform == 'win32') or (sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "pyobjc-framework-quartz", marker = "(platform_machine != 's390x' and sys_platform == 'win32') or (sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/29/da/682c9c92a39f713bd3c56e7375fa8f1b10ad558ecb075258ab6f1cdd4a6d/pyobjc_framework_coretext-12.1.tar.gz", hash = "sha256:e0adb717738fae395dc645c9e8a10bb5f6a4277e73cba8fa2a57f3b518e71da5", size = 90124, upload-time = "2025-11-14T10:14:38.596Z" }
 wheels = [
@@ -4934,8 +4983,8 @@ name = "pyobjc-framework-quartz"
 version = "12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "sys_platform != 'emscripten' and sys_platform != 'linux'" },
-    { name = "pyobjc-framework-cocoa", marker = "sys_platform != 'emscripten' and sys_platform != 'linux'" },
+    { name = "pyobjc-core", marker = "(platform_machine != 's390x' and sys_platform == 'win32') or (sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "pyobjc-framework-cocoa", marker = "(platform_machine != 's390x' and sys_platform == 'win32') or (sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/94/18/cc59f3d4355c9456fc945eae7fe8797003c4da99212dd531ad1b0de8a0c6/pyobjc_framework_quartz-12.1.tar.gz", hash = "sha256:27f782f3513ac88ec9b6c82d9767eef95a5cf4175ce88a1e5a65875fee799608", size = 3159099, upload-time = "2025-11-14T10:21:24.31Z" }
 wheels = [

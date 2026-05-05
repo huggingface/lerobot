@@ -1,0 +1,64 @@
+{
+  "format": "policy_package",
+  "version": "1.0",
+  "policy": {
+    "name": "act",
+    "source": {
+      "repo_id": "lerobot/act_aloha_sim_transfer_cube_human",
+      "class_path": "physicalai.policies.act.policy.ACT"
+    }
+  },
+  "model": {
+    "n_obs_steps": 1,
+    "runner": {
+      "type": "single_pass",
+      "chunk_size": 100,
+      "n_action_steps": 100
+    },
+    "artifacts": {
+      "model": "model.onnx"
+    },
+    "preprocessors": [
+      {
+        "type": "normalize",
+        "mode": "mean_std",
+        "artifact": "stats.safetensors",
+        "features": ["observation.state"]
+      }
+    ],
+    "postprocessors": [
+      {
+        "type": "denormalize",
+        "mode": "mean_std",
+        "artifact": "stats.safetensors",
+        "features": ["action"]
+      }
+    ]
+  },
+  "hardware": {
+    "robots": [
+      {
+        "name": "main",
+        "type": "SO-100",
+        "state": {
+          "shape": [6],
+          "dtype": "float32",
+          "order": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
+        },
+        "action": {
+          "shape": [6],
+          "dtype": "float32",
+          "order": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
+        }
+      }
+    ],
+    "cameras": [
+      {"name": "top", "shape": [3, 480, 640], "dtype": "uint8"},
+      {"name": "wrist", "shape": [3, 480, 640], "dtype": "uint8"}
+    ]
+  },
+  "metadata": {
+    "created_at": "2026-03-27T12:00:00Z",
+    "created_by": "lerobot.export"
+  }
+}

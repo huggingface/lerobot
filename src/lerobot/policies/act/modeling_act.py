@@ -33,10 +33,36 @@ from torch import Tensor, nn
 from torchvision.models._utils import IntermediateLayerGetter
 from torchvision.ops.misc import FrozenBatchNorm2d
 
+from lerobot.export.configs import SinglePassExportConfig
+from lerobot.export.protocols import ExportInputs
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
 
 from ..pretrained import PreTrainedPolicy
 from .configuration_act import ACTConfig
+
+
+class ACTInferenceModule(nn.Module):
+    """Wrapper around ACT model for ONNX export.
+
+    Accepts flat observation tensors as positional args and returns
+    the action chunk tensor of shape ``(B, chunk_size, action_dim)``.
+    """
+
+    def __init__(self, policy: "ACTPolicy", input_keys: list[str]) -> None:
+        super().__init__()
+        self.model = policy.model
+        self.config = policy.config
+        self._input_keys = input_keys
+        self._image_keys = [k for k in input_keys if k in (policy.config.image_features or {})]
+
+    def forward(self, *args: Tensor) -> Tensor:
+        batch: dict[str, Tensor] = dict(zip(self._input_keys, args, strict=True))
+
+        if self._image_keys:
+            batch[OBS_IMAGES] = [batch[k] for k in self._image_keys]
+
+        actions, _ = self.model(batch)
+        return actions
 
 
 class ACTPolicy(PreTrainedPolicy):
@@ -68,6 +94,52 @@ class ACTPolicy(PreTrainedPolicy):
             self.temporal_ensembler = ACTTemporalEnsembler(config.temporal_ensemble_coeff, config.chunk_size)
 
         self.reset()
+
+    # ------------------------------------------------------------------
+    # Export protocol: Exportable
+    # ------------------------------------------------------------------
+
+    def get_inference_type(self) -> str:
+        return "single_pass"
+
+    def get_export_config(self) -> SinglePassExportConfig:
+        return SinglePassExportConfig(
+            chunk_size=self.config.chunk_size,
+            action_dim=self.config.action_feature.shape[0],
+            n_action_steps=self.config.n_action_steps,
+        )
+
+    def get_export_modules(self) -> dict[str, nn.Module]:
+        input_keys = list(self._export_input_keys())
+        module = ACTInferenceModule(self, input_keys)
+        module.eval()
+        return {"model": module}
+
+    def prepare_inputs(
+        self,
+        example_batch: dict[str, Tensor],
+    ) -> dict[str, ExportInputs]:
+        input_keys = list(self._export_input_keys())
+        return {
+            "model": ExportInputs(
+                tensors=tuple(example_batch[k] for k in input_keys),
+                input_names=input_keys,
+                output_names=["action"],
+            )
+        }
+
+    def prepare_runtime_inputs(self, stage_name: str, runtime_context: dict[str, object]) -> ExportInputs:
+        raise NotImplementedError(f"{self.__class__.__name__} does not use runtime export inputs.")
+
+    def _export_input_keys(self):
+        keys: list[str] = []
+        if self.config.robot_state_feature:
+            keys.append(OBS_STATE)
+        if self.config.env_state_feature:
+            keys.append(OBS_ENV_STATE)
+        if self.config.image_features:
+            keys.extend(self.config.image_features)
+        return keys
 
     def get_optim_params(self) -> dict:
         # TODO(aliberts, rcadene): As of now, lr_backbone == lr

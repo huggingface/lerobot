@@ -199,6 +199,12 @@ hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.13,<0.2.0", "lerobot[grpci
 # Features
 async = ["lerobot[grpcio-dep]", "lerobot[matplotlib-dep]"]
 peft = ["lerobot[transformers-dep]", "lerobot[peft-dep]"]
+export = [
+    "onnx>=1.16.0,<2.0.0",
+    "onnxruntime>=1.16.0,<2.0.0",
+    "openvino>=2025.0.0,<2027.0.0",
+    "pyyaml>=6.0,<7.0",
+]
 
 # Development
 dev = ["pre-commit>=3.7.0,<5.0.0", "debugpy>=1.8.1,<1.9.0", "lerobot[grpcio-dep]", "grpcio-tools==1.73.1", "mypy>=1.19.1", "ruff>=0.14.1", "lerobot[notebook]"]
@@ -259,6 +265,7 @@ all = [
     "lerobot[xvla]",
     "lerobot[hilserl]",
     "lerobot[async]",
+    "lerobot[export]",
     "lerobot[dev]",
     "lerobot[test]",
     "lerobot[video_benchmark]",
@@ -360,6 +367,7 @@ skips = ["B101", "B311", "B404", "B603", "B615"]
 default.extend-ignore-re = [
     "(?Rm)^.*(#|//)\\s*spellchecker:disable-line$",                      # spellchecker:disable-line
     "(?s)(#|//)\\s*spellchecker:off.*?\\n\\s*(#|//)\\s*spellchecker:on", # spellchecker:<on|off>
+    "\"id\": \"[0-9a-f]{8}\"",                                           # jupyter notebook cell ids
 ]
 default.extend-ignore-identifiers-re = [
     # Add individual words here to ignore them
@@ -370,7 +378,8 @@ default.extend-ignore-identifiers-re = [
     "thw",
     "inpt",
     "ROBOTIS",
-    "OT_VALUE"
+    "OT_VALUE",
+    "ScatterND",
 ]
 
 # TODO: Uncomment when ready to use

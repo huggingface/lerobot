@@ -18,14 +18,19 @@ import builtins
 import copy
 import logging
 import math
+import shutil
 from collections import deque
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypedDict, Unpack
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, Unpack
 
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
+from lerobot.export.configs import KVCacheFlowExportConfig
+from lerobot.export.manifest import ProcessorSpec
+from lerobot.export.processors import build_pi05_processor_specs
+from lerobot.export.protocols import ExportInputs
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 # Conditional import for type checking and lazy loading
@@ -58,6 +63,8 @@ from ..pretrained import PreTrainedPolicy, T
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_pi05 import DEFAULT_IMAGE_SIZE, PI05Config
 
+PI05_TOKENIZER_NAME = "google/paligemma-3b-pt-224"
+
 
 class ActionSelectKwargs(TypedDict, total=False):
     inference_delay: int | None
@@ -88,7 +95,8 @@ def create_sinusoidal_pos_embedding(  # see openpi `create_sinusoidal_pos_embedd
     if time.ndim != 1:
         raise ValueError("The time tensor is expected to be of shape `(batch_size, )`.")
 
-    dtype = get_safe_dtype(torch.float64, device.type)
+    dtype = torch.float32
+    time = time.to(device=device, dtype=dtype)
     fraction = torch.linspace(0.0, 1.0, dimension // 2, dtype=dtype, device=device)
     period = min_period * (max_period / min_period) ** fraction
 
@@ -132,10 +140,12 @@ def make_att_2d_masks(pad_masks, att_masks):  # see openpi `make_att_2d_masks` (
     if pad_masks.ndim != 2:
         raise ValueError(pad_masks.ndim)
 
-    cumsum = torch.cumsum(att_masks, dim=1)
+    # Cast to int64 before cumsum for ONNX compatibility (CumSum doesn't accept bool)
+    cumsum = torch.cumsum(att_masks.to(torch.int64), dim=1)
     att_2d_masks = cumsum[:, None, :] <= cumsum[:, :, None]
-    pad_2d_masks = pad_masks[:, None, :] * pad_masks[:, :, None]
-    return att_2d_masks & pad_2d_masks
+    pad_masks_int = pad_masks.to(torch.int64)
+    pad_2d_masks = pad_masks_int[:, None, :] * pad_masks_int[:, :, None]
+    return att_2d_masks & pad_2d_masks.bool()
 
 
 def pad_vector(vector, new_dim):
@@ -441,7 +451,13 @@ class PaliGemmaWithExpertModel(
         if image.dtype != torch.float32:
             image = image.to(torch.float32)
         image_outputs = self.paligemma.model.get_image_features(image)
-        features = image_outputs.pooler_output * self.paligemma.config.text_config.hidden_size**0.5
+        if isinstance(image_outputs, torch.Tensor):
+            features = image_outputs
+        elif hasattr(image_outputs, "pooler_output") and image_outputs.pooler_output is not None:
+            features = image_outputs.pooler_output
+        else:
+            features = image_outputs.last_hidden_state
+        features = features * self.paligemma.config.text_config.hidden_size**0.5
         if features.dtype != out_dtype:
             features = features.to(out_dtype)
         return features
@@ -897,6 +913,166 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         return self.action_out_proj(suffix_out)
 
 
+class PI05EncoderModule(nn.Module):
+    """ONNX-exportable encoder for the PI05 KV-cache pipeline.
+
+    Wraps embed_prefix() + VLM forward with use_cache=True, flattening
+    the KV cache into individual tensors for ONNX output.
+
+    Inputs:
+        (image_0, ..., img_mask_0, ..., lang_tokens, lang_masks)
+    Outputs:
+        (prefix_pad_mask, past_key_0, past_value_0, past_key_1, ...)
+    """
+
+    def __init__(self, pi05_model: PI05Pytorch, num_images: int = 1):
+        super().__init__()
+        self.pi05_model = pi05_model
+        self.num_images = num_images
+        config = pi05_model.config
+        self.num_layers = get_gemma_config(config.paligemma_variant).depth
+
+    def forward(self, *args):
+        n = self.num_images
+        images = list(args[:n])
+        img_masks = [m > 0.5 for m in args[n : 2 * n]]
+        lang_tokens = args[2 * n]
+        lang_masks = args[2 * n + 1] > 0.5
+
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.pi05_model.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks
+        )
+        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        prefix_position_ids = torch.cumsum(prefix_pad_masks.to(torch.int64), dim=1) - 1
+
+        att_2d_masks_4d = self.pi05_model._prepare_attention_masks_4d(prefix_att_2d_masks)
+        self.pi05_model.paligemma_with_expert.paligemma.model.language_model.config._attn_implementation = (
+            "eager"
+        )
+
+        _, past_key_values = self.pi05_model.paligemma_with_expert.forward(
+            attention_mask=att_2d_masks_4d,
+            position_ids=prefix_position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=True,
+        )
+
+        outputs = [prefix_pad_masks.float()]
+        if hasattr(past_key_values, "layers"):
+            for layer_idx in range(self.num_layers):
+                outputs.append(past_key_values.layers[layer_idx].keys.float())
+                outputs.append(past_key_values.layers[layer_idx].values.float())
+        elif hasattr(past_key_values, "key_cache") and hasattr(past_key_values, "value_cache"):
+            for layer_idx in range(self.num_layers):
+                outputs.append(past_key_values.key_cache[layer_idx].float())
+                outputs.append(past_key_values.value_cache[layer_idx].float())
+        else:
+            raise AttributeError("Unsupported DynamicCache layout: expected layers or key_cache/value_cache")
+
+        return tuple(outputs)
+
+
+class PI05DenoiseModule(nn.Module):
+    """ONNX-exportable single denoise step for PI05.
+
+    Wraps embed_suffix() + expert forward with KV cache → action_out_proj.
+    Manually iterates through expert layers to avoid non-traceable DynamicCache.
+
+    Inputs:
+        (x_t, timestep, prefix_pad_mask, past_key_0, past_value_0, ...)
+    Outputs:
+        v_t [B, chunk_size, action_dim]
+    """
+
+    def __init__(self, pi05_model: PI05Pytorch):
+        super().__init__()
+        self.pi05_model = pi05_model
+        config = pi05_model.config
+        self.num_layers = get_gemma_config(config.paligemma_variant).depth
+        self.chunk_size = config.chunk_size
+
+    def forward(self, x_t, timestep, prefix_pad_mask, *kv_args):
+        prefix_pad_masks = prefix_pad_mask > 0.5
+
+        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.pi05_model.embed_suffix(
+            x_t, timestep
+        )
+
+        suffix_len = suffix_pad_masks.shape[1]
+        batch_size = prefix_pad_masks.shape[0]
+        prefix_len = prefix_pad_masks.shape[1]
+
+        prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
+        suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
+        full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
+
+        prefix_offsets = torch.sum(prefix_pad_masks.to(torch.int64), dim=-1)[:, None]
+        position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks.to(torch.int64), dim=1) - 1
+
+        full_att_2d_masks_4d = self.pi05_model._prepare_attention_masks_4d(full_att_2d_masks)
+
+        expert_model = self.pi05_model.paligemma_with_expert.gemma_expert.model
+        expert_model.config._attn_implementation = "eager"
+
+        hidden_states = suffix_embs
+        if (
+            len(expert_model.layers) > 0
+            and expert_model.layers[0].self_attn.q_proj.weight.dtype == torch.bfloat16
+        ):
+            hidden_states = hidden_states.to(torch.bfloat16)
+
+        position_embeddings = expert_model.rotary_emb(hidden_states, position_ids)
+
+        for layer_idx in range(self.num_layers):
+            layer = expert_model.layers[layer_idx]
+            past_key = kv_args[2 * layer_idx]
+            past_value = kv_args[2 * layer_idx + 1]
+
+            residual = hidden_states
+            hidden_states, gate = layer.input_layernorm(hidden_states, cond=adarms_cond)
+
+            input_shape = hidden_states.shape[:-1]
+            hidden_shape = (*input_shape, -1, layer.self_attn.head_dim)
+
+            query_states = layer.self_attn.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+            key_states = layer.self_attn.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+            value_states = layer.self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+
+            cos, sin = position_embeddings
+            from transformers.models.gemma.modeling_gemma import apply_rotary_pos_emb, eager_attention_forward
+
+            query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+
+            key_states = torch.cat([past_key, key_states], dim=2)
+            value_states = torch.cat([past_value, value_states], dim=2)
+
+            attn_output, _ = eager_attention_forward(
+                layer.self_attn,
+                query_states,
+                key_states,
+                value_states,
+                full_att_2d_masks_4d,
+                dropout=0.0,
+                scaling=layer.self_attn.scaling,
+            )
+            attn_output = attn_output.reshape(*input_shape, -1).contiguous()
+            hidden_states = layer.self_attn.o_proj(attn_output)
+
+            hidden_states = _gated_residual(residual, hidden_states, gate)
+
+            residual = hidden_states
+            hidden_states, gate = layer.post_attention_layernorm(hidden_states, cond=adarms_cond)
+            hidden_states = layer.mlp(hidden_states)
+            hidden_states = _gated_residual(residual, hidden_states, gate)
+
+        hidden_states, _ = expert_model.norm(hidden_states, adarms_cond)
+
+        suffix_out = hidden_states[:, -self.chunk_size :]
+        suffix_out = suffix_out.to(dtype=torch.float32)
+        return self.pi05_model.action_out_proj(suffix_out)
+
+
 class PI05Policy(PreTrainedPolicy):
     """PI05 Policy for LeRobot."""
 
@@ -928,6 +1104,248 @@ class PI05Policy(PreTrainedPolicy):
         self.model.to(config.device)
 
         self.reset()
+
+    # ------------------------------------------------------------------
+    # Export protocol: Exportable
+    # ------------------------------------------------------------------
+
+    def get_inference_type(self) -> str:
+        """Return the inference type identifier for runner selection.
+
+        Returns:
+            ``"kv_cache_flow"`` — PI05 uses the KV-cache flow-matching runner.
+        """
+        return "kv_cache_flow"
+
+    def get_export_config(self) -> KVCacheFlowExportConfig:
+        """Build the KV-cache flow-matching export configuration from the policy config.
+
+        Reads Gemma architecture parameters (depth, num_kv_heads, head_dim)
+        from the PaliGemma variant config and combines them with policy-level
+        settings (chunk_size, action_dim, num_inference_steps).
+
+        Returns:
+            A :class:`~lerobot.export.configs.KVCacheFlowExportConfig` instance
+            describing the model dimensions needed for export.
+        """
+        gemma_cfg = get_gemma_config(self.config.paligemma_variant)
+        return KVCacheFlowExportConfig(
+            num_layers=gemma_cfg.depth,
+            num_kv_heads=gemma_cfg.num_kv_heads,
+            head_dim=gemma_cfg.head_dim,
+            chunk_size=self.config.chunk_size,
+            action_dim=self.config.max_action_dim,
+            state_dim=None,
+            num_steps=self.config.num_inference_steps,
+        )
+
+    def get_export_modules(self) -> dict[str, nn.Module]:
+        """Build the encoder and denoise wrapper modules for export.
+
+        Both modules are set to eval mode before being returned.
+
+        Returns:
+            Dict with keys ``"encoder"`` (:class:`PI05EncoderModule`) and
+            ``"denoise"`` (:class:`PI05DenoiseModule`).
+        """
+        num_images = len(self.config.image_features) if self.config.image_features else 0
+        encoder = PI05EncoderModule(self.model, num_images=num_images)
+        denoise = PI05DenoiseModule(self.model)
+        encoder.eval()
+        denoise.eval()
+        return {"encoder": encoder, "denoise": denoise}
+
+    def prepare_inputs(
+        self,
+        example_batch: dict[str, Tensor],
+    ) -> dict[str, ExportInputs]:
+        """Prepare encoder stage inputs from an example observation batch.
+
+        Extracts images, image masks, language tokens, and language attention
+        masks from the batch, builds the ordered tensor tuple and name list
+        for the encoder stage, and records the ``input_mapping`` that maps
+        observation keys to ONNX input names.
+
+        Args:
+            example_batch: Representative observation batch containing image
+                tensors, language tokens, and language attention masks.
+
+        Returns:
+            Dict with a single key ``"encoder"`` mapping to an
+            :class:`~lerobot.export.protocols.ExportInputs` instance.
+        """
+        device = next(self.parameters()).device
+        images, img_masks = self._preprocess_images(example_batch)
+        lang_tokens = example_batch[OBS_LANGUAGE_TOKENS]
+        lang_masks = example_batch[OBS_LANGUAGE_ATTENTION_MASK]
+
+        num_images = len(images)
+        input_mapping: dict[str, str] = {}
+
+        tensors: list[Tensor] = []
+        names: list[str] = []
+
+        for i, img in enumerate(images):
+            tensors.append(img.to(device))
+            name = f"image_{i}"
+            names.append(name)
+            img_key = (
+                list(self.config.image_features.keys())[i]
+                if i < len(self.config.image_features)
+                else f"observation.images.{i}"
+            )
+            input_mapping[img_key] = name
+
+        for i, mask in enumerate(img_masks):
+            tensors.append(mask.float().to(device))
+            names.append(f"img_mask_{i}")
+
+        tensors.append(lang_tokens.to(device))
+        names.append("lang_tokens")
+        input_mapping[OBS_LANGUAGE_TOKENS] = "lang_tokens"
+
+        tensors.append(lang_masks.float().to(device))
+        names.append("lang_masks")
+        input_mapping[OBS_LANGUAGE_ATTENTION_MASK] = "lang_masks"
+
+        output_names = ["prefix_pad_mask"]
+        num_layers = get_gemma_config(self.config.paligemma_variant).depth
+        for layer_idx in range(num_layers):
+            output_names.append(f"past_key_{layer_idx}")
+            output_names.append(f"past_value_{layer_idx}")
+
+        return {
+            "encoder": ExportInputs(
+                tensors=tuple(tensors),
+                input_names=names,
+                output_names=output_names,
+                metadata={"num_images": num_images, "input_mapping": input_mapping},
+            )
+        }
+
+    def prepare_runtime_inputs(
+        self,
+        stage_name: str,
+        runtime_context: dict[str, Any],
+        timestep: float = 1.0,
+    ) -> ExportInputs:
+        """Build example inputs for the denoise stage at export time.
+
+        Constructs synthetic tensors (``x_t``, ``timestep``,
+        ``prefix_pad_mask``, and per-layer ``past_key_*`` / ``past_value_*``
+        KV tensors) with the correct shapes for tracing the denoise module.
+
+        Args:
+            stage_name: Must be ``"denoise"``; other values raise
+                :exc:`ValueError`.
+            runtime_context: Dict with required keys ``"prefix_len"`` (int)
+                and ``"device"`` (``torch.device`` or str).
+            timestep: Initial timestep value used to fill the timestep tensor.
+
+        Returns:
+            An :class:`~lerobot.export.protocols.ExportInputs` instance for
+            the denoise stage with output names ``["v_t"]``.
+
+        Raises:
+            ValueError: If ``stage_name`` is not ``"denoise"``.
+        """
+        if stage_name != "denoise":
+            raise ValueError(f"Unsupported runtime stage {stage_name!r}")
+
+        prefix_len = runtime_context["prefix_len"]
+        device = runtime_context["device"]
+        batch_size = 1
+        gemma_cfg = get_gemma_config(self.config.paligemma_variant)
+        num_layers = gemma_cfg.depth
+        num_kv_heads = gemma_cfg.num_kv_heads
+        head_dim = gemma_cfg.head_dim
+
+        x_t = torch.randn(batch_size, self.config.chunk_size, self.config.max_action_dim, device=device)
+        timestep = torch.full((batch_size,), timestep, device=device, dtype=torch.float32)
+        prefix_pad_mask = torch.ones(batch_size, prefix_len, device=device)
+
+        tensors: list[Tensor] = [x_t, timestep, prefix_pad_mask]
+        names: list[str] = ["x_t", "timestep", "prefix_pad_mask"]
+
+        for layer_idx in range(num_layers):
+            k = torch.randn(batch_size, num_kv_heads, prefix_len, head_dim, device=device)
+            v = torch.randn(batch_size, num_kv_heads, prefix_len, head_dim, device=device)
+            tensors.append(k)
+            names.append(f"past_key_{layer_idx}")
+            tensors.append(v)
+            names.append(f"past_value_{layer_idx}")
+
+        return ExportInputs(
+            tensors=tuple(tensors),
+            input_names=names,
+            output_names=["v_t"],
+        )
+
+    def export_processor_specs(
+        self,
+        *,
+        include_normalization: bool,
+        stats_artifact: str | None,
+        assets: dict[str, str] | None = None,
+    ) -> tuple[list[ProcessorSpec], list[ProcessorSpec]]:
+        assets = assets or {}
+        preprocessors, postprocessors = build_pi05_processor_specs(
+            self.config,
+            tokenizer_artifact=assets.get("tokenizer_artifact"),
+        )
+        if not include_normalization:
+            return preprocessors, postprocessors
+
+        base_preprocessors, base_postprocessors = super().export_processor_specs(
+            include_normalization=include_normalization,
+            stats_artifact=stats_artifact,
+            assets=assets,
+        )
+        return [preprocessors[0], *base_preprocessors, *preprocessors[1:]], [
+            *base_postprocessors,
+            *postprocessors,
+        ]
+
+    def export_assets(self, output_dir: Path) -> dict[str, str]:
+        from transformers import AutoTokenizer
+
+        tokenizer_dir = output_dir / "tokenizer"
+        tokenizer_dir.mkdir(exist_ok=True)
+
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(
+                PI05_TOKENIZER_NAME,
+                add_eos_token=True,
+                add_bos_token=False,
+                local_files_only=True,
+            )
+        except OSError as e:
+            raise ValueError(
+                f"PI05 tokenizer {PI05_TOKENIZER_NAME!r} not found in the local Hugging Face cache "
+                f"(loaded with local_files_only=True). Run any code path that fetches it online once "
+                f"(e.g. AutoTokenizer.from_pretrained({PI05_TOKENIZER_NAME!r})) to populate the cache, "
+                f"then re-run export. Underlying error: {e}"
+            ) from e
+        tokenizer.save_pretrained(tokenizer_dir)
+
+        chat_template = getattr(tokenizer, "chat_template", None)
+        if chat_template is not None:
+            chat_template_path = tokenizer_dir / "chat_template.jinja"
+            if not chat_template_path.exists():
+                chat_template_path.write_text(chat_template, encoding="utf-8")
+
+        for extra_name in ["special_tokens_map.json", "tokenizer.json", "tokenizer_config.json"]:
+            extra_path = tokenizer_dir / extra_name
+            if extra_path.exists():
+                continue
+            source = getattr(tokenizer, "name_or_path", None)
+            if source is None:
+                continue
+            source_path = Path(source) / extra_name
+            if source_path.exists():
+                shutil.copy2(source_path, extra_path)
+
+        return {"tokenizer_artifact": "tokenizer"}
 
     @classmethod
     def from_pretrained(
