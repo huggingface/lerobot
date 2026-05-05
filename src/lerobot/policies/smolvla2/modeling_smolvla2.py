@@ -351,7 +351,15 @@ class SmolVLA2Policy(SmolVLAPolicy):
             new_emb = new_emb * math.sqrt(new_emb.shape[-1])
 
             new_pos = torch.full((bsize, 1), cur_pos, device=device, dtype=torch.long)
-            new_attn = torch.ones((bsize, cur_pos + 1), device=device, dtype=torch.bool)
+            # SmolVLA's attention layer expects ``attention_mask`` shape
+            # ``[B, query_len, key_len]`` (3D bool) so it can broadcast to
+            # ``[B, 1, query_len, key_len]`` via ``mask[:, None, :, :]``.
+            # During KV-cache decoding query_len = 1 and key_len =
+            # ``cur_pos + 1`` (prefix + every token already generated).
+            # A 2D ``[B, key_len]`` tensor here trips
+            # ``IndexError: too many indices for tensor of dimension 2``
+            # in ``eager_attention_forward``.
+            new_attn = torch.ones((bsize, 1, cur_pos + 1), device=device, dtype=torch.bool)
 
             out_pair, past_kv = self.model.vlm_with_expert.forward(
                 attention_mask=new_attn,
