@@ -29,6 +29,17 @@ def test_message_recipe_validates_unknown_binding():
         )
 
 
+def test_message_turn_requires_a_stream():
+    """Every turn must declare a stream — None is rejected at construction.
+
+    Previously this only failed at render time (``_validate_rendered``);
+    catching it here means a malformed recipe YAML errors at load instead
+    of at the first training sample.
+    """
+    with pytest.raises(ValueError, match="missing a stream"):
+        MessageTurn(role="user", content="${task}")
+
+
 def test_message_recipe_requires_at_least_one_target():
     with pytest.raises(ValueError, match="target"):
         TrainingRecipe(

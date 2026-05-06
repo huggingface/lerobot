@@ -65,6 +65,16 @@ def active_at(
     )
 
 
+EMITTED_AT_TOLERANCE_S = 0.1
+"""Half-window for matching persistent rows to a frame timestamp in
+``emitted_at``. Persistent timestamps come from parquet (float64) and ``t``
+is also a float64 from parquet, so in the ideal hot path an exact match
+would suffice — but any caller that derives ``t`` arithmetically (e.g.
+``frame_idx / fps``) breaks bit-equality. A 0.1 s tolerance covers
+common arithmetic drift without admitting frames that are visibly far
+apart at typical control rates (30–100 Hz)."""
+
+
 def emitted_at(
     t: float,
     *,
@@ -78,17 +88,19 @@ def emitted_at(
     """Return the row of ``style`` emitted at exactly time ``t``.
 
     For persistent styles, this matches persistent rows whose own ``timestamp``
-    equals ``t``. For event styles, the ``events`` list is assumed to come from
-    the dataset row at frame ``t`` (event rows carry no timestamp of their own),
-    so all matching event rows are considered emitted at ``t``. ``camera``
-    filters by the row's ``camera`` field — required to disambiguate when
-    multiple view-dependent rows share ``(t, role)`` across cameras.
+    is within ``EMITTED_AT_TOLERANCE_S`` of ``t`` (see that constant for why
+    we use a tolerance instead of bit-equality). For event styles, the
+    ``events`` list is assumed to come from the dataset row at frame ``t``
+    (event rows carry no timestamp of their own), so all matching event rows
+    are considered emitted at ``t``. ``camera`` filters by the row's
+    ``camera`` field — required to disambiguate when multiple view-dependent
+    rows share ``(t, role)`` across cameras.
     """
     if column_for_style(style) == LANGUAGE_PERSISTENT:
         matches = [
             row
             for row in _matching_rows(persistent, style=style, role=role, tool_name=tool_name, camera=camera)
-            if _timestamp(row) == t
+            if abs(_timestamp(row) - t) <= EMITTED_AT_TOLERANCE_S
         ]
     else:
         matches = _matching_rows(events, style=style, role=role, tool_name=tool_name, camera=camera)
@@ -391,9 +403,9 @@ def _validate_rendered(rendered: RenderedMessages) -> None:
     for idx in target_indices:
         if idx < 0 or idx >= len(messages):
             raise ValueError(f"Target message index {idx} is out of bounds.")
-    for idx, stream in enumerate(streams):
-        if stream is None:
-            raise ValueError(f"Rendered message {idx} has no stream.")
+    # ``stream`` is enforced non-None at MessageTurn construction time
+    # (see ``MessageTurn.__post_init__``), so a missing stream here would
+    # mean the dataclass invariant was bypassed; no need to re-check.
 
 
 def _nth_relative(

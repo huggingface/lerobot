@@ -64,7 +64,17 @@ class MessageTurn:
         """Validate role, stream, and content after dataclass construction."""
         if self.role not in _VALID_ROLES:
             raise ValueError(f"Unsupported message role: {self.role!r}")
-        if self.stream is not None and self.stream not in _VALID_STREAMS:
+        # ``stream`` is typed Optional only so the dataclass can keep its
+        # field ordering, but recipes must always tag every turn with a
+        # stream — the renderer's ``_validate_rendered`` would reject
+        # ``None`` later on. Fail at construction so the bad recipe is
+        # caught at YAML load time rather than at the first sample.
+        if self.stream is None:
+            raise ValueError(
+                f"MessageTurn(role={self.role!r}) is missing a stream — "
+                f"every turn must declare one of {sorted(_VALID_STREAMS)}."
+            )
+        if self.stream not in _VALID_STREAMS:
             raise ValueError(f"Unsupported message stream: {self.stream!r}")
         if self.content is None and self.tool_calls_from is None:
             raise ValueError("MessageTurn.content is required unless tool_calls_from is set.")

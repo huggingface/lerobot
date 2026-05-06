@@ -6,6 +6,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from lerobot.configs.recipe import MessageTurn, TrainingRecipe  # noqa: E402
 from lerobot.datasets.language_render import (  # noqa: E402
+    EMITTED_AT_TOLERANCE_S,
     active_at,
     emitted_at,
     nth_next,
@@ -340,6 +341,21 @@ def test_resolve_task_explicit_override_beats_rephrasings():
         dataset_ctx={"task": "canonical"},
     )
     assert rendered["messages"][0]["content"] == "explicit override wins"
+
+
+def test_emitted_at_persistent_tolerates_small_timestamp_drift():
+    """Persistent ``emitted_at`` should match within EMITTED_AT_TOLERANCE_S
+    so callers that derive ``t`` arithmetically (``frame_idx / fps``) still
+    line up with the parquet-stored timestamp.
+    """
+    rows = [persistent_row("assistant", "memo", "memory", 1.0)]
+    # Half a tolerance window — bit-different float, comfortably inside
+    inside = emitted_at(1.0 + EMITTED_AT_TOLERANCE_S / 2, persistent=rows, events=[], style="memory")
+    assert inside is not None and inside["content"] == "memo"
+
+    # Just past the window — no match
+    outside = emitted_at(1.0 + EMITTED_AT_TOLERANCE_S * 2, persistent=rows, events=[], style="memory")
+    assert outside is None
 
 
 def test_render_sample_rejects_non_dict_language_rows():
