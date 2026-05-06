@@ -199,84 +199,50 @@ def test_emitted_at_raises_on_ambiguous_per_camera_vqa():
         )
 
 
-def test_per_camera_blend_renders_both_views():
-    recipe = TrainingRecipe(
-        blend={
-            "top": TrainingRecipe(
-                weight=1.0,
-                bindings={
-                    "vqa_query": ("emitted_at(t, style=vqa, role=user, camera=observation.images.top)"),
-                    "vqa": ("emitted_at(t, style=vqa, role=assistant, camera=observation.images.top)"),
-                },
-                messages=[
-                    MessageTurn(
-                        role="user",
-                        content=[
-                            {"type": "image", "feature": "observation.images.top"},
-                            {"type": "text", "text": "${vqa_query}"},
-                        ],
-                        stream="high_level",
-                        if_present="vqa_query",
-                    ),
-                    MessageTurn(
-                        role="assistant",
-                        content="${vqa}",
-                        stream="high_level",
-                        target=True,
-                        if_present="vqa",
-                    ),
-                ],
+def _vqa_subrecipe(camera: str) -> TrainingRecipe:
+    return TrainingRecipe(
+        weight=1.0,
+        bindings={
+            "vqa_query": f"emitted_at(t, style=vqa, role=user, camera={camera})",
+            "vqa": f"emitted_at(t, style=vqa, role=assistant, camera={camera})",
+        },
+        messages=[
+            MessageTurn(
+                role="user",
+                content=[{"type": "image", "feature": camera}, {"type": "text", "text": "${vqa_query}"}],
+                stream="high_level",
+                if_present="vqa_query",
             ),
-            "wrist": TrainingRecipe(
-                weight=1.0,
-                bindings={
-                    "vqa_query": ("emitted_at(t, style=vqa, role=user, camera=observation.images.wrist)"),
-                    "vqa": ("emitted_at(t, style=vqa, role=assistant, camera=observation.images.wrist)"),
-                },
-                messages=[
-                    MessageTurn(
-                        role="user",
-                        content=[
-                            {"type": "image", "feature": "observation.images.wrist"},
-                            {"type": "text", "text": "${vqa_query}"},
-                        ],
-                        stream="high_level",
-                        if_present="vqa_query",
-                    ),
-                    MessageTurn(
-                        role="assistant",
-                        content="${vqa}",
-                        stream="high_level",
-                        target=True,
-                        if_present="vqa",
-                    ),
-                ],
+            MessageTurn(
+                role="assistant",
+                content="${vqa}",
+                stream="high_level",
+                target=True,
+                if_present="vqa",
             ),
-        }
+        ],
     )
 
-    rendered_top = render_sample(
-        recipe=recipe.blend["top"],
-        persistent=PERSISTENT,
-        events=EVENTS_AT_3_TWO_CAMERAS,
-        t=3.0,
-        sample_idx=0,
-    )
-    rendered_wrist = render_sample(
-        recipe=recipe.blend["wrist"],
+
+@pytest.mark.parametrize(
+    ("camera", "expected_query", "expected_answer"),
+    [
+        ("observation.images.top", "how many cups (top)?", '{"count": 3}'),
+        ("observation.images.wrist", "how many cups (wrist)?", '{"count": 1}'),
+    ],
+)
+def test_per_camera_blend_renders_both_views(camera, expected_query, expected_answer):
+    rendered = render_sample(
+        recipe=_vqa_subrecipe(camera),
         persistent=PERSISTENT,
         events=EVENTS_AT_3_TWO_CAMERAS,
         t=3.0,
         sample_idx=0,
     )
 
-    assert rendered_top["messages"][0]["content"][0]["feature"] == "observation.images.top"
-    assert rendered_top["messages"][0]["content"][1]["text"] == "how many cups (top)?"
-    assert rendered_top["messages"][1]["content"] == '{"count": 3}'
-
-    assert rendered_wrist["messages"][0]["content"][0]["feature"] == "observation.images.wrist"
-    assert rendered_wrist["messages"][0]["content"][1]["text"] == "how many cups (wrist)?"
-    assert rendered_wrist["messages"][1]["content"] == '{"count": 1}'
+    assert rendered["messages"][0]["content"][0]["feature"] == camera
+    assert rendered["messages"][0]["content"][1]["text"] == expected_query
+    assert rendered["messages"][1]["content"] == expected_answer
 
 
 def test_resolve_task_picks_rephrasing_deterministically_per_sample():
