@@ -205,12 +205,8 @@ def test_per_camera_blend_renders_both_views():
             "top": TrainingRecipe(
                 weight=1.0,
                 bindings={
-                    "vqa_query": (
-                        "emitted_at(t, style=vqa, role=user, camera=observation.images.top)"
-                    ),
-                    "vqa": (
-                        "emitted_at(t, style=vqa, role=assistant, camera=observation.images.top)"
-                    ),
+                    "vqa_query": ("emitted_at(t, style=vqa, role=user, camera=observation.images.top)"),
+                    "vqa": ("emitted_at(t, style=vqa, role=assistant, camera=observation.images.top)"),
                 },
                 messages=[
                     MessageTurn(
@@ -234,12 +230,8 @@ def test_per_camera_blend_renders_both_views():
             "wrist": TrainingRecipe(
                 weight=1.0,
                 bindings={
-                    "vqa_query": (
-                        "emitted_at(t, style=vqa, role=user, camera=observation.images.wrist)"
-                    ),
-                    "vqa": (
-                        "emitted_at(t, style=vqa, role=assistant, camera=observation.images.wrist)"
-                    ),
+                    "vqa_query": ("emitted_at(t, style=vqa, role=user, camera=observation.images.wrist)"),
+                    "vqa": ("emitted_at(t, style=vqa, role=assistant, camera=observation.images.wrist)"),
                 },
                 messages=[
                     MessageTurn(
@@ -317,11 +309,19 @@ def test_resolve_task_picks_rephrasing_deterministically_per_sample():
     assert seen == {r["content"] for r in rephrasings}
     # Same sample_idx → same pick (determinism).
     a = render_sample(
-        recipe=recipe, persistent=rephrasings, events=[], t=0.0, sample_idx=42,
+        recipe=recipe,
+        persistent=rephrasings,
+        events=[],
+        t=0.0,
+        sample_idx=42,
         dataset_ctx={"task": "canonical"},
     )
     b = render_sample(
-        recipe=recipe, persistent=rephrasings, events=[], t=0.0, sample_idx=42,
+        recipe=recipe,
+        persistent=rephrasings,
+        events=[],
+        t=0.0,
+        sample_idx=42,
         dataset_ctx={"task": "canonical"},
     )
     assert a["messages"][0]["content"] == b["messages"][0]["content"]

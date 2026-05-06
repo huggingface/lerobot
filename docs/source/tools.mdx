@@ -29,7 +29,10 @@ Two layers.
         "parameters": {
           "type": "object",
           "properties": {
-            "text": { "type": "string", "description": "The verbatim text to speak." }
+            "text": {
+              "type": "string",
+              "description": "The verbatim text to speak."
+            }
           },
           "required": ["text"]
         }
@@ -67,9 +70,9 @@ prompt_str = tokenizer.apply_chat_template(
 `src/lerobot/tools/`, one file per tool. The canonical `say`
 implementation wraps Kyutai's pocket-tts model.
 
-## Per-row tool *invocations*
+## Per-row tool _invocations_
 
-The catalog above describes *what can be called*. The actual *call* — the
+The catalog above describes _what can be called_. The actual _call_ — the
 function name plus the argument values — is stored per-row, on the
 assistant atoms in `language_events`:
 
@@ -94,13 +97,18 @@ user_interjection_response:
   bindings:
     speech: "emitted_at(t, role=assistant, tool_name=say)"
   messages:
-    - { role: user,      content: "${task}",         stream: high_level }
-    - { role: assistant, content: "${current_plan}", stream: high_level,
-        target: true, tool_calls_from: speech }
+    - { role: user, content: "${task}", stream: high_level }
+    - {
+        role: assistant,
+        content: "${current_plan}",
+        stream: high_level,
+        target: true,
+        tool_calls_from: speech,
+      }
 ```
 
 The model's training target is one assistant turn that carries both the
-plan text *and* the `say` tool call. At inference, the runtime parses
+plan text _and_ the `say` tool call. At inference, the runtime parses
 the generated text back into structured `tool_calls` and dispatches to
 the matching implementation.
 
@@ -113,7 +121,7 @@ loop.
 ### Step 1 — declare the schema
 
 Add an entry under `meta/info.json["tools"]`. Either edit the file
-directly on disk *before* running the annotation pipeline (it'll be
+directly on disk _before_ running the annotation pipeline (it'll be
 preserved) or hand it to `lerobot-annotate` via a config flag.
 
 ```json
@@ -128,7 +136,10 @@ preserved) or hand it to `lerobot-annotate` via a config flag.
         "parameters": {
           "type": "object",
           "properties": {
-            "label": { "type": "string", "description": "Short label for the saved image." }
+            "label": {
+              "type": "string",
+              "description": "Short label for the saved image."
+            }
           },
           "required": ["label"]
         }
@@ -183,7 +194,7 @@ That's it. At runtime `get_tools(meta)` looks up each schema in
 `meta.tools`, instantiates the matching registered class, and returns
 a name → instance dict the dispatcher can route into.
 
-If you want to use a tool *without* writing an implementation (e.g. for
+If you want to use a tool _without_ writing an implementation (e.g. for
 training-time chat-template formatting only), step 1 alone is enough —
-the model still learns to *generate* the call. Steps 2 and 3 are only
-needed to actually *execute* it at inference.
+the model still learns to _generate_ the call. Steps 2 and 3 are only
+needed to actually _execute_ it at inference.

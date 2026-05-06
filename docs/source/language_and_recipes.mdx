@@ -100,7 +100,13 @@ ask_vqa_top:
       content:
         - { type: image, feature: observation.images.top }
         - { type: text, text: "${vqa_query}" }
-    - { role: assistant, content: "${vqa}", stream: high_level, target: true, if_present: vqa }
+    - {
+        role: assistant,
+        content: "${vqa}",
+        stream: high_level,
+        target: true,
+        if_present: vqa,
+      }
 ```
 
 Add one such sub-recipe per camera the dataset records.
