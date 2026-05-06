@@ -23,3 +23,19 @@ from ..config import TeleoperatorConfig
 @dataclass
 class GamepadTeleopConfig(TeleoperatorConfig):
     use_gripper: bool = True
+
+    # Per-axis sign flips applied in GamepadTeleop.get_action(). Use these when the robot's
+    # base-frame x/y/z axes don't match the operator's intuitive forward/back/left/right/up/down
+    # at the workstation (e.g. UR10e mounted facing the operator versus RC10's frame). Defaults
+    # are False so existing robots (RC10, etc.) are unaffected.
+    invert_delta_x: bool = False
+    invert_delta_y: bool = False
+    invert_delta_z: bool = False
+
+    # Symmetric deadzone applied to each stick axis BEFORE sign-flip. Any |delta| <= deadzone
+    # is forced to 0.0; values above are linearly rescaled so 1.0 still maps to full deflection
+    # (no jump at the deadzone edge). Catches resting-stick drift AND the spring-back overshoot
+    # that occurs when an analog stick momentarily reads past-center on release — without this,
+    # robots that latch deltas into a target (UR10e) accumulate the spring-back as a real
+    # backward move. Default is small enough to be invisible on healthy sticks.
+    # deadzone: float = 0.1

@@ -67,6 +67,7 @@ from lerobot.processor import TransitionKey
 from lerobot.rl.process import ProcessSignalHandler
 from lerobot.rl.queue import get_last_item_from_queue
 from lerobot.robots import rc10 as _rc10_register  # noqa: F401
+from lerobot.robots import ur10 as _ur10_register  # noqa: F401  # register UR10RobotConfig
 from lerobot.teleoperators import gamepad, so_leader  # noqa: F401
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.transport import services_pb2, services_pb2_grpc

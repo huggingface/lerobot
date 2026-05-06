@@ -94,8 +94,34 @@ class GamepadTeleop(Teleoperator):
         # Get movement deltas from the controller
         delta_x, delta_y, delta_z = self.gamepad.get_deltas()
 
+        # Apply symmetric deadzone with linear rescale outside it. Eliminates resting-stick
+        # drift and spring-back overshoot that would otherwise accumulate into latched targets.
+        # dz = max(0.0, float(self.config.deadzone))
+        # if dz > 0.0 and dz < 1.0:
+        #     scale = 1.0 / (1.0 - dz)
+
+        #     def _dz(v: float) -> float:
+        #         if v > dz:
+        #             return (v - dz) * scale
+        #         if v < -dz:
+        #             return (v + dz) * scale
+        #         return 0.0
+
+        #     delta_x = _dz(float(delta_x))
+        #     delta_y = _dz(float(delta_y))
+        #     delta_z = _dz(float(delta_z))
+
+        # Apply per-axis sign flips so the same physical stick direction maps to the
+        # operator's intuitive forward/back/left/right/up/down regardless of the robot's
+        # base-frame orientation at the workstation.
+        sx = -1.0 if self.config.invert_delta_x else 1.0
+        sy = -1.0 if self.config.invert_delta_y else 1.0
+        sz = -1.0 if self.config.invert_delta_z else 1.0
+
         # Create action from gamepad input
-        gamepad_action = np.array([delta_x, delta_y, delta_z], dtype=np.float32)
+        gamepad_action = np.array(
+            [sx * delta_x, sy * delta_y, sz * delta_z], dtype=np.float32
+        )
 
         action_dict = {
             "delta_x": gamepad_action[0],

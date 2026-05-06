@@ -23,7 +23,7 @@
         }
     },
     "dataset": {
-        "repo_id": "local/panda_sim_usb_insertion_demos",
+        "repo_id": "local/panda_sim_usb_insertion_dense_demos",
         "root": null,
         "task": "PandaUSBInsertionGamepad-v0",
         "num_episodes_to_record": 20,

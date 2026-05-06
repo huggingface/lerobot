@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-cam_ids = [0, 2, 4]
+cam_ids = [11, 12, 14]
 caps = [cv2.VideoCapture(i) for i in cam_ids]
 
 # Verification: Check if all cameras opened
@@ -15,9 +15,12 @@ while True:
     frames = []
     for cap in caps:
         ret, frame = cap.read()
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        # print(f"{fps} frames per second")
+
         if not ret:
             # Create a black placeholder if a frame is missing
-            frame = np.zeros((480, 640, 3), dtype=np.uint8)
+            frame = np.zeros((640, 360, 3), dtype=np.uint8)
         
         # Resize to the desired resolution
         frame = cv2.resize(frame, (128, 128))

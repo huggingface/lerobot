@@ -58,6 +58,7 @@ from lerobot.robots import (  # noqa: F401
     so_follower,
 )
 from lerobot.robots import rc10 as _rc10_register  # noqa: F401  # register RC10RobotConfig
+from lerobot.robots import ur10 as _ur10_register  # noqa: F401  # register UR10RobotConfig
 from lerobot.robots.robot import Robot
 from lerobot.robots.so_follower.robot_kinematic_processor import (
     EEBoundsAndSafety,
@@ -366,6 +367,50 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
         teleop_device.connect()
         return env, teleop_device
 
+    # UR10e real robot environment (Cartesian servoL streaming)
+    if cfg.name == "ur10":
+        from lerobot.robots.ur10 import UR10Robot, UR10RobotEnv, UR10RobotEnvConfig
+
+        assert cfg.robot is not None, "Robot config must be provided for UR10 environment"
+        assert cfg.teleop is not None, "Teleop config must be provided for UR10 environment"
+
+        # cfg.robot is already parsed by draccus as a UR10RobotConfig instance.
+        robot = UR10Robot(cfg.robot)
+        robot.connect()
+
+        ik_cfg = cfg.processor.inverse_kinematics
+        reset_cfg = cfg.processor.reset
+        use_gripper = cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else True
+
+        # `fixed_reset_joint_positions` is a misnomer in the lerobot config schema — it carries
+        # the home TCP pose [x, y, z, rx, ry, rz] in axis-angle. Same convention as RC10.
+        home_tcp = list(reset_cfg.fixed_reset_joint_positions) if reset_cfg \
+                   else [0.5, 0.0, 0.4, 3.14159, 0.0, 0.0]
+
+        env_config = UR10RobotEnvConfig(
+            ee_step_sizes=ik_cfg.end_effector_step_sizes if ik_cfg
+                          else {"x": 0.002, "y": 0.002, "z": 0.002},
+            ee_bounds_min=ik_cfg.end_effector_bounds["min"] if ik_cfg and ik_cfg.end_effector_bounds
+                          else [-0.5, -0.5, 0.05],
+            ee_bounds_max=ik_cfg.end_effector_bounds["max"] if ik_cfg and ik_cfg.end_effector_bounds
+                          else [0.5, 0.5, 0.7],
+            fixed_rx=home_tcp[3] if len(home_tcp) > 3 else 3.14159,
+            fixed_ry=home_tcp[4] if len(home_tcp) > 4 else 0.0,
+            fixed_rz=home_tcp[5] if len(home_tcp) > 5 else 0.0,
+            home_tcp=home_tcp,
+            reset_time_s=reset_cfg.reset_time_s if reset_cfg else 5.0,
+            use_gripper=use_gripper,
+            randomization_xy=reset_cfg.randomization_xy if reset_cfg else 0.0,
+            randomization_z=reset_cfg.randomization_z if reset_cfg else 0.0,
+        )
+        env = UR10RobotEnv(robot, env_config)
+        # The env starts the streaming thread internally using cfg.stream_frequency_hz;
+        # the policy loop's frequency (cfg.fps) is decoupled from the controller's.
+
+        teleop_device = make_teleoperator_from_config(cfg.teleop)
+        teleop_device.connect()
+        return env, teleop_device
+
     # Real robot environment (SO101 and other motor-bus robots)
     assert cfg.robot is not None, "Robot config must be provided for real robot environment"
     assert cfg.teleop is not None, "Teleop config must be provided for real robot environment"
@@ -462,6 +507,64 @@ def make_processors(
         if cfg.processor.reset is not None:
             env_pipeline_steps.append(
                 TimeLimitProcessorStep(max_episode_steps=int(cfg.processor.reset.control_time_s * cfg.fps))
+            )
+
+        env_pipeline_steps.append(AddBatchDimensionProcessorStep())
+        env_pipeline_steps.append(DeviceProcessorStep(device=device))
+
+        return DataProcessorPipeline(
+            steps=env_pipeline_steps, to_transition=identity_transition, to_output=identity_transition
+        ), DataProcessorPipeline(
+            steps=action_pipeline_steps, to_transition=identity_transition, to_output=identity_transition
+        )
+
+    if cfg.name == "ur10":
+        from lerobot.robots.ur10 import UR10GripperPenaltyProcessorStep
+
+        use_gripper = cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else True
+
+        # Action pipeline: teleop reads + intervention handling + tensor to numpy.
+        # No Python-side IK — UR10e's controller does IK at 500 Hz when servoL is called.
+        action_pipeline_steps = [
+            AddTeleopActionAsComplimentaryDataStep(teleop_device=teleop_device),
+            AddTeleopEventsAsInfoStep(teleop_device=teleop_device),
+            InterventionActionProcessorStep(
+                use_gripper=use_gripper,
+                terminate_on_success=terminate_on_success,
+            ),
+            Torch2NumpyActionProcessorStep(),
+        ]
+
+        # Env pipeline: numpy to torch action + observation processing + optional image
+        # crop/resize + time limit + (optional) discrete-gripper penalty + batch + device.
+        env_pipeline_steps = [
+            Numpy2TorchActionProcessorStep(),
+            VanillaObservationProcessorStep(),
+        ]
+
+        if cfg.processor.image_preprocessing is not None:
+            env_pipeline_steps.append(
+                ImageCropResizeProcessorStep(
+                    crop_params_dict=cfg.processor.image_preprocessing.crop_params_dict,
+                    resize_size=cfg.processor.image_preprocessing.resize_size,
+                )
+            )
+
+        if cfg.processor.reset is not None:
+            env_pipeline_steps.append(
+                TimeLimitProcessorStep(max_episode_steps=int(cfg.processor.reset.control_time_s * cfg.fps))
+            )
+
+        # UR10-specific discrete-gripper penalty. Inserted before AddBatchDimension so the
+        # state vector is 1-D and the action is a flat torch.Tensor — simplifies indexing.
+        if (
+            cfg.processor.gripper is not None
+            and cfg.processor.gripper.use_gripper
+        ):
+            env_pipeline_steps.append(
+                UR10GripperPenaltyProcessorStep(
+                    penalty=cfg.processor.gripper.gripper_penalty,
+                )
             )
 
         env_pipeline_steps.append(AddBatchDimensionProcessorStep())

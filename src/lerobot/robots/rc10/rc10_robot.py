@@ -168,15 +168,17 @@ class RC10Robot:
         """
         joint_pos = self.controller.get_current_joint()       # (6,)
         joint_vel = self.controller.get_current_joint_vel()    # (6,)
+        joint_torques = self.controller.get_current_torque()   # (6,)
         tcp = self.controller.get_current_tcp()                # (6,) [x,y,z,r,p,y]
         gripper_state = float(self.gripper.is_open)            # 0.0 or 1.0
 
         agent_pos = np.concatenate([
             joint_pos,              # 6
             joint_vel,              # 6
+            joint_torques,          # 6
             [gripper_state],        # 1
             tcp[:3],                # 3  (x, y, z)
-        ]).astype(np.float32)       # total: 16
+        ]).astype(np.float32)       # total: 22
 
         pixels = {}
         for name, cam in self.cameras.items():
@@ -355,9 +357,10 @@ class RC10RobotEnv(gym.Env):
         delta_xyz = continuous * self.ee_step
         new_xyz = np.clip(current_xyz + delta_xyz, self.ee_min, self.ee_max)
 
+        # Update: removed for usb insertion task 
         # Safety: hardcoded for avoid colliding with the sorter (we can use the accurate urdf of the env later to avoid collision with the physical env objects)
-        if new_xyz[1] >=0.535:
-            new_xyz[2] = 0.25
+        # if new_xyz[1] >=0.535:
+        #     new_xyz[2] = 0.25
 
         self.robot.send_target(
             float(new_xyz[0]), float(new_xyz[1]), float(new_xyz[2]),

@@ -118,6 +118,7 @@ def main():
             # -- read state --------------------------------------------------
             joint_pos = controller.get_current_joint()       # (6,)
             joint_vel = controller.get_current_joint_vel()    # (6,)
+            joint_torques = controller.get_current_torque()     # (6,)
             tcp_full = controller.get_current_tcp()           # (6,)
 
             # -- phase logic -------------------------------------------------
@@ -140,6 +141,8 @@ def main():
                     max_joint_pos = joint_pos.copy()
                     min_joint_vel = joint_vel.copy()
                     max_joint_vel = joint_vel.copy()
+                    min_joint_torques = joint_torques.copy()
+                    max_joint_torques = joint_torques.copy()
                     min_tcp = tcp_full.copy()
                     max_tcp = tcp_full.copy()
                     warmup_done = True
@@ -149,6 +152,8 @@ def main():
                 max_joint_pos = np.maximum(max_joint_pos, joint_pos)
                 min_joint_vel = np.minimum(min_joint_vel, joint_vel)
                 max_joint_vel = np.maximum(max_joint_vel, joint_vel)
+                min_joint_torques = np.minimum(min_joint_torques, joint_torques)
+                max_joint_torques = np.maximum(max_joint_torques, joint_torques)
                 min_tcp = np.minimum(min_tcp, tcp_full)
                 max_tcp = np.maximum(max_tcp, tcp_full)
 
@@ -190,6 +195,10 @@ def main():
     print(f"min_joint_vel = {np.round(min_joint_vel, r).tolist()}")
     print(f"max_joint_vel = {np.round(max_joint_vel, r).tolist()}")
 
+    print("\n# Joint Torque Limits (N-m) — 6 values")
+    print(f"min_joint_torques = {np.round(min_joint_torques, r).tolist()}")
+    print(f"max_joint_torques = {np.round(max_joint_torques, r).tolist()}")
+
     print("\n# TCP Limits [x, y, z, roll, pitch, yaw]")
     print(f"min_tcp = {np.round(min_tcp, r).tolist()}")
     print(f"max_tcp = {np.round(max_tcp, r).tolist()}")
@@ -202,11 +211,11 @@ def main():
     gripper_min = 0.0
     gripper_max = 1.0
 
-    obs_min = np.concatenate([min_joint_pos, min_joint_vel, [gripper_min], min_tcp[:3]])
-    obs_max = np.concatenate([max_joint_pos, max_joint_vel, [gripper_max], max_tcp[:3]])
+    obs_min = np.concatenate([min_joint_pos, min_joint_vel, min_joint_torques, [gripper_min], min_tcp[:3]])
+    obs_max = np.concatenate([max_joint_pos, max_joint_vel, max_joint_torques, [gripper_max], max_tcp[:3]])
 
-    print("\n# dataset_stats for observation.state (16D)")
-    print("# Order: [6 joint_pos, 6 joint_vel, 1 gripper, 3 tcp_xyz]")
+    print("\n# dataset_stats for observation.state (22D)")
+    print("# Order: [6 joint_pos, 6 joint_vel, 6 joint_torques, 1 gripper, 3 tcp_xyz]")
     print(f'"min": {np.round(obs_min, r).tolist()}')
     print(f'"max": {np.round(obs_max, r).tolist()}')
 

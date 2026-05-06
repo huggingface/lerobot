@@ -1,6 +1,6 @@
 {
     "output_dir": null,
-    "job_name": "rc10_sac",
+    "job_name": "usb_insertion4",
     "resume": false,
     "seed": 1000,
     "num_workers": 4,
@@ -15,37 +15,39 @@
     "scheduler": null,
     "wandb": {
         "enable": false,
-        "project": "rc10_hilserl",
+        "project": "ur10_hilserl",
         "disable_artifact": true
     },
     "dataset": {
-        "repo_id": "local/rc10_usb_insertion",
+        "repo_id": "local/ur10_usb_insertion4",
         "use_imagenet_stats": false
     },
     "env": {
         "type": "gym_manipulator",
-        "name": "rc10",
-        "task": "usb_insertion",
+        "name": "ur10",
+        "task": "usb_insertion4",
         "fps": 10,
         "robot": {
-            "type": "rc10",
-            "ip": "10.10.10.10",
-            "rate_hz": 100,
-            "velocity": 1.0,
-            "acceleration": 1.0,
-            "threshold_position": 0.001,
-            "threshold_angle": 1.0,
+            "type": "ur10",
+            "ip": "192.168.0.100",
+            "rtde_frequency": 500,
+            "tcp_offset": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            "payload_mass": 0.3,
+            "payload_cog": [0.0, 0.0, 0.0],
             "gripper_port": "/dev/ttyUSB0",
             "gripper_baudrate": 115200,
             "cameras": {
-                "front": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30},
-                "side": {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 30},
-                "wrist": {"type": "opencv", "index_or_path": 4, "width": 640, "height": 480, "fps": 30}
+                "front": {"type": "intelrealsense", "serial_number_or_name": "409122272284", "width": 640, "height": 480, "fps": 30},
+                "side":  {"type": "intelrealsense", "serial_number_or_name": "409122273078", "width": 640, "height": 480, "fps": 30},
+                "wrist": {"type": "opencv", "index_or_path": "/dev/v4l/by-id/usb-Vimicro_Corp._UVC_USB_2.0_pc-amcap-video-index0", "width": 640, "height": 480, "fps": 30}
             }
         },
         "teleop": {
             "type": "gamepad",
-            "use_gripper": true
+            "use_gripper": true,
+            "invert_delta_x": true,
+            "invert_delta_y": true,
+            "invert_delta_z": false
         },
         "processor": {
             "control_mode": "gamepad",
@@ -54,9 +56,9 @@
                 "gripper_penalty": -0.02
             },
             "reset": {
-                "fixed_reset_joint_positions": [0.095, 0.46, 0.25, 3.14159, 0.0, 0.0],
-                "reset_time_s": 7.0,
-                "control_time_s": 15.0,
+                "fixed_reset_joint_positions": [-0.2001, -0.4956, 0.1487, 3.14159, 0.0, 0.0],
+                "reset_time_s": 5.0,
+                "control_time_s": 25.0,
                 "terminate_on_success": true,
                 "randomization_xy": 0.0
             },
@@ -64,13 +66,18 @@
                 "display_cameras": true
             },
             "image_preprocessing": {
+                "crop_params_dict": {
+                    "observation.images.front": [140, 147, 288, 353],
+                    "observation.images.side":  [3, 47, 324, 426],
+                    "observation.images.wrist": [113, 55, 365, 479]
+                },
                 "resize_size": [128, 128]
             },
             "inverse_kinematics": {
-                "end_effector_step_sizes": {"x": 0.01, "y": 0.01, "z": 0.01},
+                "end_effector_step_sizes": {"x": 0.001, "y": 0.001, "z": 0.001},
                 "end_effector_bounds": {
-                    "min": [0.0095, 0.46, 0.2249],
-                    "max": [0.1533, 0.53, 0.281]
+                    "min": [-0.2166, -0.5254, 0.1377],
+                    "max": [-0.1863, -0.4851, 0.1487]
                 }
             }
         },
@@ -89,7 +96,7 @@
             },
             "observation.state": {
                 "type": "STATE",
-                "shape": [22]
+                "shape": [16]
             },
             "action": {
                 "type": "ACTION",
@@ -98,7 +105,7 @@
         },
         "features_map": {
             "observation.images.front": "observation.images.front",
-            "observation.images.side": "observation.images.side",
+            "observation.images.side":  "observation.images.side",
             "observation.images.wrist": "observation.images.wrist",
             "observation.state": "observation.state",
             "action": "action"
@@ -128,7 +135,7 @@
             },
             "observation.state": {
                 "type": "STATE",
-                "shape": [22]
+                "shape": [16]
             }
         },
         "output_features": {
@@ -153,15 +160,15 @@
                 "std": [0.229, 0.224, 0.225]
             },
             "observation.state": {
-                "min": [-2.2697, -1.8247, 2.3195, -2.405, -1.5662, -0.7026, -0.1541, -0.1192, -0.1155, -0.1588, -0.0065, -0.1561, -34.4428, -60.1731, -60.2494, -17.4564, -16.9859, -9.9594, 0.0, 0.0095, 0.46, 0.2249],
-                "max": [-1.9658, -1.6241, 2.5994, -2.2158, -1.5639, -0.3983, 0.1372, 0.1604, 0.1275, 0.1521, 0.0256, 0.1337, 35.252, 14.9082, -14.019, 5.9592, 21.0952, 9.7492, 1.0, 0.1533, 0.53, 0.281]
+                "min": [0.8373, -1.3503, 2.4156, 3.5673, 4.7123, 2.4082, -0.0174, -0.0157, -0.0178, -0.0262, -0.0001, -0.0178, -0.1, -0.1, -0.1, 0.0],
+                "max": [0.8904, -1.3003, 2.4856, 3.5975, 4.7125, 2.4612, 0.018, 0.023, 0.0215, 0.0181, 0.0001, 0.0176, 0.1, 0.1, 0.1, 1.0]
             },
             "action": {
                 "min": [-1.0, -1.0, -1.0],
                 "max": [1.0, 1.0, 1.0]
             }
         },
-        "repo_id": "local/rc10_usb_insertion",
+        "repo_id": "local/ur10_usb_insertion4",
         "storage_device": "cpu",
         "vision_encoder_name": "helper2424/resnet10",
         "freeze_vision_encoder": true,
