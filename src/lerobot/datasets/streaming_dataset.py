@@ -434,7 +434,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
     def _make_padding_camera_frame(self, camera_key: str):
         """Variable-shape padding frame for given camera keys, given in (H, W, C)"""
-        return torch.zeros(self.meta.info["features"][camera_key]["shape"]).permute(-1, 0, 1)
+        return torch.zeros(self.meta.info.features[camera_key]["shape"]).permute(-1, 0, 1)
 
     def _get_video_frame_padding_mask(
         self,

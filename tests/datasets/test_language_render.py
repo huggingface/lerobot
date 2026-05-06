@@ -1,7 +1,5 @@
 #!/usr/bin/env python
 
-from pathlib import Path
-
 import pytest
 
 from lerobot.configs.recipe import MessageTurn, TrainingRecipe
@@ -370,9 +368,27 @@ def test_resolve_task_explicit_override_beats_rephrasings():
     assert rendered["messages"][0]["content"] == "explicit override wins"
 
 
-def test_canonical_recipe_can_render_low_level_branch():
-    recipe = TrainingRecipe.from_yaml(Path("src/lerobot/configs/recipes/pi05_hirobot.yaml"))
-    low_level = TrainingRecipe(blend={"low": recipe.blend["low_level_execution"]})
+def test_low_level_branch_renders_active_subtask():
+    low_level = TrainingRecipe(
+        blend={
+            "low": TrainingRecipe(
+                weight=1.0,
+                messages=[
+                    MessageTurn(
+                        role="user",
+                        content="${task}\nPlan: ${plan}\nMemory: ${memory}",
+                        stream="high_level",
+                    ),
+                    MessageTurn(
+                        role="assistant",
+                        content="${subtask}",
+                        stream="low_level",
+                        target=True,
+                    ),
+                ],
+            )
+        }
+    )
 
     rendered = render_sample(
         recipe=low_level,

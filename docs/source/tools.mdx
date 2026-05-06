@@ -6,9 +6,9 @@ runtime dispatches to a real implementation (TTS, controller, logger, …).
 
 This page covers:
 
-1. Where the tool catalog lives (PR 1).
-2. How the annotation pipeline produces tool-call atoms (PR 2).
-3. How to add your own tool (PR 3).
+1. Where the tool catalog lives.
+2. How the annotation pipeline produces tool-call atoms.
+3. How to add your own tool.
 
 ## Where tools are declared
 
@@ -64,8 +64,8 @@ prompt_str = tokenizer.apply_chat_template(
 ```
 
 **The implementations** — runnable Python — live under
-`src/lerobot/tools/`, one file per tool. The `say` implementation
-arrives in PR 3 and wraps Kyutai's pocket-tts model.
+`src/lerobot/tools/`, one file per tool. The canonical `say`
+implementation wraps Kyutai's pocket-tts model.
 
 ## Per-row tool *invocations*
 
@@ -114,8 +114,7 @@ loop.
 
 Add an entry under `meta/info.json["tools"]`. Either edit the file
 directly on disk *before* running the annotation pipeline (it'll be
-preserved) or hand it to `lerobot-annotate` via a config flag (PR 2 —
-exact CLI lands with the pipeline change).
+preserved) or hand it to `lerobot-annotate` via a config flag.
 
 ```json
 {
@@ -167,12 +166,12 @@ class RecordObservationTool:
 ```
 
 One file per tool keeps dependencies isolated — `record_observation`
-might pull `pillow`, while `say` (PR 3) pulls `pocket-tts`. Users
-installing only the tools they need avoid heavy transitive deps.
+might pull `pillow`, while `say` pulls `pocket-tts`. Users installing
+only the tools they need avoid heavy transitive deps.
 
 ### Step 3 — register it
 
-Add to `src/lerobot/tools/registry.py` (PR 3):
+Add to `src/lerobot/tools/registry.py`:
 
 ```python
 from .record_observation import RecordObservationTool
@@ -183,14 +182,6 @@ TOOL_REGISTRY["record_observation"] = RecordObservationTool
 That's it. At runtime `get_tools(meta)` looks up each schema in
 `meta.tools`, instantiates the matching registered class, and returns
 a name → instance dict the dispatcher can route into.
-
-## Where this fits in the three-PR stack
-
-| Layer | PR | What lands |
-|---|---|---|
-| Catalog storage in `meta/info.json` + `meta.tools` accessor | PR 1 | This page; `SAY_TOOL_SCHEMA`, `DEFAULT_TOOLS` constants in `lerobot.datasets.language`; `LeRobotDatasetMetadata.tools` property |
-| Annotation pipeline writes `tools` to meta after a run; honors anything users pre-populated | PR 2 | `lerobot-annotate` ensures `meta/info.json["tools"]` includes the canonical `say` and merges any user-declared tools |
-| Runnable implementations under `src/lerobot/tools/`; runtime dispatcher; `say.py` wired to Kyutai's pocket-tts | PR 3 | One file per tool; `Tool` protocol; `TOOL_REGISTRY`; optional `[tools]` extra in `pyproject.toml` |
 
 If you want to use a tool *without* writing an implementation (e.g. for
 training-time chat-template formatting only), step 1 alone is enough —
