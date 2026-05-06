@@ -178,9 +178,7 @@ def validate_camera_field(style: str | None, camera: str | None) -> None:
                 f"field referencing an 'observation.images.*' feature key."
             )
     elif camera is not None:
-        raise ValueError(
-            f"Rows of style {style!r} must have camera=None; got camera={camera!r}."
-        )
+        raise ValueError(f"Rows of style {style!r} must have camera=None; got camera={camera!r}.")
 
 
 # --- Tool registry --------------------------------------------------------
