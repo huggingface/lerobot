@@ -316,16 +316,19 @@ def check_version_compatibility(
         logging.warning(FUTURE_MESSAGE.format(repo_id=repo_id, version=v_check))
 
 
-def get_repo_versions(repo_id: str) -> list[packaging.version.Version]:
+def get_repo_versions(repo_id: str, token: str | bool | None = None) -> list[packaging.version.Version]:
     """Return available valid versions (branches and tags) on a given Hub repo.
 
     Args:
         repo_id (str): The repository ID on the Hugging Face Hub.
+        token: Hugging Face authentication token. Pass ``True`` to use the
+            stored token, a string for an explicit token, or ``None`` to let
+            the hub library resolve it automatically.
 
     Returns:
         list[packaging.version.Version]: A list of valid versions found.
     """
-    api = HfApi()
+    api = HfApi(token=token)
     repo_refs = api.list_repo_refs(repo_id, repo_type="dataset")
     repo_refs = [b.name for b in repo_refs.branches + repo_refs.tags]
     repo_versions = []
@@ -336,7 +339,9 @@ def get_repo_versions(repo_id: str) -> list[packaging.version.Version]:
     return repo_versions
 
 
-def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> str:
+def get_safe_version(
+    repo_id: str, version: str | packaging.version.Version, token: str | bool | None = None
+) -> str:
     """Return the specified version if available on repo, or the latest compatible one.
 
     If the exact version is not found, it looks for the latest version with the
@@ -357,7 +362,7 @@ def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> 
     target_version = (
         packaging.version.parse(version) if not isinstance(version, packaging.version.Version) else version
     )
-    hub_versions = get_repo_versions(repo_id)
+    hub_versions = get_repo_versions(repo_id, token=token)
 
     if not hub_versions:
         raise RevisionNotFoundError(
