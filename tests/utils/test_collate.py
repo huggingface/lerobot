@@ -1,8 +1,12 @@
 #!/usr/bin/env python
 
-import torch
+import pytest
 
-from lerobot.utils.collate import lerobot_collate_fn
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
+import torch  # noqa: E402
+
+from lerobot.utils.collate import lerobot_collate_fn  # noqa: E402
 
 
 def test_lerobot_collate_preserves_messages_and_drops_raw_language():

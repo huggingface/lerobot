@@ -2,8 +2,16 @@
 
 import pytest
 
-from lerobot.configs.recipe import MessageTurn, TrainingRecipe
-from lerobot.datasets.language_render import active_at, emitted_at, nth_next, nth_prev, render_sample
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
+from lerobot.configs.recipe import MessageTurn, TrainingRecipe  # noqa: E402
+from lerobot.datasets.language_render import (  # noqa: E402
+    active_at,
+    emitted_at,
+    nth_next,
+    nth_prev,
+    render_sample,
+)
 
 
 def persistent_row(role, content, style, timestamp, tool_calls=None, camera=None):
