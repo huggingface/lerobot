@@ -20,7 +20,7 @@ from functools import cached_property
 from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
-from ..openarm_follower import OpenArmFollower, OpenArmFollowerConfig
+from ..openarm_follower import OpenArmFollower,OpenFollowerDragonTacile, OpenArmFollowerConfig
 from ..robot import Robot
 from .config_bi_openarm_follower import BiOpenArmFollowerConfig
 
@@ -87,7 +87,7 @@ class BiOpenArmFollower(Robot):
             joint_limits=config.right_arm_config.joint_limits,
         )
 
-        self.left_arm = OpenArmFollower(left_arm_config)
+        self.left_arm = OpenFollowerDragonTacile(left_arm_config)
         self.right_arm = OpenArmFollower(right_arm_config)
 
         # Only for compatibility with other parts of the codebase that expect a `robot.cameras` attribute

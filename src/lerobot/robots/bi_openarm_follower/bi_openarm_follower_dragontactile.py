@@ -26,34 +26,21 @@ from lerobot.types import RobotObservation
 
 from ..openarm_follower import OpenFollowerDragonTacile
 from .bi_openarm_follower import BiOpenArmFollower
-from .bi_config_openarm_follower import BiOpenArmFollowerConfigBase
+from .config_bi_openarm_follower import BiOpenArmFollowerConfig
 
 logger = logging.getLogger(__name__)
 
 
 class BiOpenFollowerDragonTacile(BiOpenArmFollower) :
 
-    config_class = BiOpenArmFollowerConfigBase
+    config_class = BiOpenArmFollowerConfig
     name = "bi_openarm_follower_dragontactile"
 
-    def __init__(self, config: BiOpenArmFollowerConfigBase):
+    def __init__(self, config: BiOpenArmFollowerConfig):
 
         super().__init__(config)
 
-        # 1. Define specific tactile configurations
-        self._tactile_obs_key = "tactile_spectrogram"
-        self._sampling_rate = 20_000 
-        self._nfft = 1024
-        self._width, self._height = 224, 224 
-        self._target_size = (self._width, self._height)
-        
-        self._spectrogram_min_db = -70.0
-        self._spectrogram_max_db = 40.0
-        self._diff_max_min_db = max(self._spectrogram_max_db - self._spectrogram_min_db, 1e-6)
 
-        display_buffer_size = int(self._sampling_rate * 0.1) # Default window
-        self._display_buffer = np.zeros(display_buffer_size, dtype=np.float32)
-        self._last_spectrogram_frame: np.ndarray | None = None
 
         # 2. Re-initialize the Right Arm with your custom class
         right_arm_config = self.right_arm.config 

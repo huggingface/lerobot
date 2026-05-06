@@ -133,10 +133,19 @@ def say(text: str, blocking: bool = False):
     else:
         raise RuntimeError("Unsupported operating system for text-to-speech.")
 
-    if blocking:
-        subprocess.run(cmd, check=True)
-    else:
-        subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW if system == "Windows" else 0)
+    try:
+        if blocking:
+            subprocess.run(cmd, check=True)
+        else:
+            subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW if system == "Windows" else 0)
+    except KeyboardInterrupt:
+        logging.warning("Text-to-speech interrupted by user.")
+    except FileNotFoundError:
+        logging.warning(f"Text-to-speech command not found: {cmd[0]}. Skipping audio output.")
+    except subprocess.CalledProcessError as e:
+        logging.warning(f"Text-to-speech command failed with exit code {e.returncode}. Continuing without audio.")
+    except Exception as e:
+        logging.warning(f"Error during text-to-speech: {e}. Continuing without audio.")
 
 
 def log_say(text: str, play_sounds: bool = True, blocking: bool = False):

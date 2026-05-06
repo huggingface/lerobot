@@ -106,15 +106,18 @@ class OpenFollowerDragonTacile(OpenArmFollower) :
         except Exception:
             logger.debug("Could not configure IEPE amplifier with default settings.")
 
+    @property
+    def _cameras_ft(self) -> dict[str, tuple]:
+        """Camera features plus tactile spectrogram for observation space."""
+        return {
+            **super()._cameras_ft,
+            self._tactile_obs_key: (self._height, self._width, 3),
+        }
+
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        features = dict(super().observation_features)
-        features[self._tactile_obs_key] = (self._target_size[1], self._target_size[0], 3)
-
-        # downsample_factor = 1000  # Downsample the time-series data for the tactile display to reduce dimensionality -> 20 Fps
-        # lite_size = len(self._display_buffer[::downsample_factor]) 
-        # features["tactile_display_lite"] = (lite_size,)
-        return features
+        """Observation features including motor states, cameras, and tactile spectrogram."""
+        return {**self._motors_ft, **self._cameras_ft}
 
     def _read_tactile_spectrogram(self) -> np.ndarray | None:
         if self._reader is None:
@@ -173,15 +176,6 @@ class OpenFollowerDragonTacile(OpenArmFollower) :
         if spectrogram is not None:
             obs[self._tactile_obs_key] = spectrogram
 
-
-        # Capture images from cameras
-        for cam_key, cam in self.cameras.items():
-            start = time.perf_counter()
-            obs_dict[cam_key] = cam.read_latest()
-            dt_ms = (time.perf_counter() - start) * 1e3
-            logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
-
-            
         total_latency = (time.perf_counter() - tick_start) * 1000
         logger.debug(f"Observation tick sync completed in {total_latency:.2f}ms")
         return obs
