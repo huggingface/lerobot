@@ -342,6 +342,29 @@ def test_resolve_task_explicit_override_beats_rephrasings():
     assert rendered["messages"][0]["content"] == "explicit override wins"
 
 
+def test_render_sample_rejects_non_dict_language_rows():
+    """``_normalize_rows`` must surface malformed inputs as TypeError.
+
+    A pipeline that hands the renderer a non-dict (e.g. a stray string)
+    is a real upstream bug — silent skipping would let it propagate.
+    """
+    recipe = TrainingRecipe(
+        messages=[
+            MessageTurn(role="user", content="${task}", stream="high_level"),
+            MessageTurn(role="assistant", content="ok", stream="high_level", target=True),
+        ]
+    )
+    with pytest.raises(TypeError, match="must be dictionaries"):
+        render_sample(
+            recipe=recipe,
+            persistent=["not a dict"],
+            events=[],
+            t=0.0,
+            sample_idx=0,
+            task="x",
+        )
+
+
 def test_low_level_branch_renders_active_subtask():
     low_level = TrainingRecipe(
         blend={

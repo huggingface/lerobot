@@ -34,7 +34,10 @@ DEFAULT_BINDINGS = {
     "vqa_query": "emitted_at(t, style=vqa, role=user)",
 }
 
-_PLACEHOLDER_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+PLACEHOLDER_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+"""``${name}`` placeholder pattern used by both recipe binding-reference
+discovery (here) and rendered-message substitution (in ``language_render``)."""
+
 _VALID_ROLES = frozenset(get_args(MessageRole))
 _VALID_STREAMS = frozenset(get_args(MessageStream))
 
@@ -178,13 +181,13 @@ def _placeholders_in_content(content: str | list[dict[str, Any]] | None) -> set[
     if content is None:
         return set()
     if isinstance(content, str):
-        return set(_PLACEHOLDER_RE.findall(content))
+        return set(PLACEHOLDER_RE.findall(content))
 
     names: set[str] = set()
     for block in content:
         for value in block.values():
             if isinstance(value, str):
-                names.update(_PLACEHOLDER_RE.findall(value))
+                names.update(PLACEHOLDER_RE.findall(value))
     return names
 
 

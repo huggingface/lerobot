@@ -31,6 +31,7 @@ from torchvision import transforms
 from lerobot.utils.io_utils import load_json, write_json
 from lerobot.utils.utils import SuppressProgressBars, flatten_dict, unflatten_dict
 
+from .language import LANGUAGE_COLUMNS
 from .utils import (
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_EPISODES_PATH,
@@ -256,7 +257,7 @@ def hf_transform_to_torch(items_dict: dict[str, list[Any]]) -> dict[str, list[to
         dict: The batch with items converted to torch tensors.
     """
     for key in items_dict:
-        if key in {"language_persistent", "language_events"}:
+        if key in LANGUAGE_COLUMNS:
             continue
         first_item = items_dict[key][0]
         if isinstance(first_item, PILImage.Image):
@@ -297,12 +298,9 @@ def item_to_torch(item: dict) -> dict:
     Returns:
         dict: Dictionary with all tensor-like items converted to torch.Tensor.
     """
+    skip_keys = {"task", *LANGUAGE_COLUMNS}
     for key, val in item.items():
-        if isinstance(val, (np.ndarray | list)) and key not in [
-            "task",
-            "language_persistent",
-            "language_events",
-        ]:
+        if isinstance(val, (np.ndarray | list)) and key not in skip_keys:
             # Convert numpy arrays and lists to torch tensors
             item[key] = torch.tensor(val)
     return item

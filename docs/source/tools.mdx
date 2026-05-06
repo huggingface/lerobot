@@ -66,9 +66,11 @@ prompt_str = tokenizer.apply_chat_template(
 )
 ```
 
-**The implementations** — runnable Python — live under
-`src/lerobot/tools/`, one file per tool. The canonical `say`
-implementation wraps Kyutai's pocket-tts model.
+**The implementations** — runnable Python — will live under
+`src/lerobot/tools/`, one file per tool. The runtime dispatcher and
+the canonical `say` implementation (wrapping Kyutai's pocket-tts) land
+in a follow-up PR; this PR ships only the catalog storage and
+fallback constant.
 
 ## Per-row tool _invocations_
 
@@ -113,6 +115,14 @@ the generated text back into structured `tool_calls` and dispatches to
 the matching implementation.
 
 ## How to add your own tool
+
+> **Note:** Steps 2 and 3 below describe the runtime layer
+> (`src/lerobot/tools/`, the `Tool` protocol, `TOOL_REGISTRY`,
+> `get_tools(meta)`) which lands in a follow-up PR. Today (this PR
+> only), Step 1 is enough to make the tool visible to the chat
+> template via `meta.tools` so the model can learn to _generate_ the
+> call. Executing the call at inference is what the follow-up PR
+> wires up.
 
 Three steps. Concrete example: a `record_observation` tool the policy
 can call to capture an extra observation outside the regular control

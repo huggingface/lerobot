@@ -22,7 +22,7 @@ import re
 from collections.abc import Sequence
 from typing import Any
 
-from lerobot.configs.recipe import DEFAULT_BINDINGS, TrainingRecipe
+from lerobot.configs.recipe import DEFAULT_BINDINGS, PLACEHOLDER_RE, TrainingRecipe
 
 from .language import LANGUAGE_PERSISTENT, column_for_style
 
@@ -30,7 +30,6 @@ LanguageRow = dict[str, Any]
 RenderedMessages = dict[str, list[Any]]
 
 _RESOLVER_RE = re.compile(r"^(?P<name>[A-Za-z_][A-Za-z0-9_]*)\((?P<args>.*)\)$")
-_PLACEHOLDER_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 def active_at(
@@ -376,7 +375,7 @@ def _substitute(template: str, bindings: dict[str, LanguageRow | str | None]) ->
             return "" if content is None else str(content)
         return str(value)
 
-    return _PLACEHOLDER_RE.sub(replace, template)
+    return PLACEHOLDER_RE.sub(replace, template)
 
 
 def _validate_rendered(rendered: RenderedMessages) -> None:
