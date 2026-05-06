@@ -109,6 +109,7 @@ from lerobot.robots import (  # noqa: F401
     reachy2,
     so_follower,
     unitree_g1 as unitree_g1_robot,
+    onerobotics_follower,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
@@ -119,11 +120,13 @@ from lerobot.teleoperators import (  # noqa: F401
     koch_leader,
     make_teleoperator_from_config,
     omx_leader,
+    onerobotics_leader,
     openarm_leader,
     openarm_mini,
     reachy2_teleoperator,
     so_leader,
     unitree_g1,
+    onerobotics_leader,
 )
 from lerobot.teleoperators.keyboard import KeyboardTeleop
 from lerobot.utils.constants import ACTION, OBS_STR
