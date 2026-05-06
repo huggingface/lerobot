@@ -468,20 +468,23 @@ def _select_one(
     tool_name: str | None,
     camera: str | None,
 ) -> LanguageRow | None:
-    """Return the single matching row, or raise if the selectors are ambiguous.
+    """Return the single matching row, or raise if the resolver is ambiguous.
 
-    Ties are broken deterministically by ``_row_sort_key`` so that
-    multiple rows with identical ``(style, role, tool_name, camera)`` still
-    resolve to a stable choice.
+    Multiple matches always raise — even when the caller already passed
+    some selectors — because remaining ambiguity means the data has
+    several rows that look identical to the resolver and the caller
+    needs to pin down a specific one (e.g. add ``camera=...`` for VQA
+    rows shared across cameras).
     """
     if not rows:
         return None
-    if len(rows) > 1 and role is None and tool_name is None and camera is None:
+    if len(rows) > 1:
         raise ValueError(
-            f"Ambiguous resolver for style={style!r}; add role=..., tool_name=..., "
-            f"or camera=... to disambiguate."
+            f"Ambiguous resolver for style={style!r} role={role!r} "
+            f"tool_name={tool_name!r} camera={camera!r}: {len(rows)} matching rows. "
+            f"Add a selector that distinguishes them."
         )
-    return sorted(rows, key=_row_sort_key)[0]
+    return rows[0]
 
 
 def _row_sort_key(row: LanguageRow) -> tuple[float, str, str]:
