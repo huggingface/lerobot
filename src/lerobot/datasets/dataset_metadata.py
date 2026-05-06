@@ -317,6 +317,17 @@ class LeRobotDatasetMetadata:
         return [key for key, ft in self.features.items() if ft["dtype"] in ["video", "image"]]
 
     @property
+    def has_language_columns(self) -> bool:
+        """Return ``True`` if the dataset declares any language column.
+
+        Used to gate language-aware code paths (collate, render step) so
+        unannotated datasets keep PyTorch's default collate behavior.
+        """
+        from .language import LANGUAGE_COLUMNS  # noqa: PLC0415  (avoid circular import)
+
+        return any(col in self.features for col in LANGUAGE_COLUMNS)
+
+    @property
     def tools(self) -> list[dict]:
         """OpenAI-style tool schemas declared by this dataset.
 
@@ -333,8 +344,8 @@ class LeRobotDatasetMetadata:
         """
         from .language import DEFAULT_TOOLS  # noqa: PLC0415  (avoid circular import)
 
-        declared = self.info.get("tools")
-        if isinstance(declared, list) and declared:
+        declared = self.info.tools
+        if declared:
             return [dict(t) for t in declared]
         return [dict(t) for t in DEFAULT_TOOLS]
 

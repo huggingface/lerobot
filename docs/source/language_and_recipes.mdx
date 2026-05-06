@@ -46,10 +46,11 @@ tool_calls: list[Json] | null
 ```
 
 The `camera` field tags rows whose `content` is grounded in a specific camera
-view. Rows of view-dependent styles (`vqa`, and the reserved `motion` /
-`trace`) MUST set `camera` to the matching `observation.images.*` feature key.
-Rows of every other style MUST leave `camera` as `null`. Pipeline writers and
-the validator enforce this via `validate_camera_field(style, camera)`.
+view. Rows of view-dependent styles (`vqa` and `trace`) MUST set `camera` to
+the matching `observation.images.*` feature key. Rows of every other style —
+including `motion`, which describes robot-frame primitives in joint / Cartesian
+terms — MUST leave `camera` as `null`. Pipeline writers and the validator
+enforce this via `validate_camera_field(style, camera)`.
 
 `meta/tasks.parquet` remains the canonical source for the task. The special `${task}` recipe binding always reads that task string and does not depend on language annotations.
 
@@ -81,7 +82,7 @@ Exact event matching has no tolerance window, so writers must stamp event rows w
 
 ### View-dependent resolution
 
-For view-dependent styles (`vqa`, `motion`, `trace`), the resolver gains a
+For view-dependent styles (`vqa` and `trace`), the resolver gains a
 `camera=` filter parallel to `role=` and `tool_name=`. Datasets with multiple
 cameras typically emit one (`vqa`, `user`) + (`vqa`, `assistant`) pair per
 camera at the same timestamp; without `camera=`, those resolvers see two

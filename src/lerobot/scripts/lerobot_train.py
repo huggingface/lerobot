@@ -402,6 +402,10 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         shuffle = True
         sampler = None
 
+    # Only swap in the language-aware collate when the dataset actually
+    # declares language columns; otherwise stay on PyTorch's default
+    # collate so non-language training runs are unaffected.
+    collate_fn = lerobot_collate_fn if dataset.meta.has_language_columns else None
     dataloader = torch.utils.data.DataLoader(
         dataset,
         num_workers=cfg.num_workers,
@@ -410,7 +414,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         sampler=sampler,
         pin_memory=device.type == "cuda",
         drop_last=False,
-        collate_fn=lerobot_collate_fn,
+        collate_fn=collate_fn,
         prefetch_factor=cfg.prefetch_factor if cfg.num_workers > 0 else None,
         persistent_workers=cfg.persistent_workers and cfg.num_workers > 0,
     )
