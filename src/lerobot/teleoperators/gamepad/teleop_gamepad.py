@@ -56,6 +56,12 @@ class GamepadTeleop(Teleoperator):
 
         self.gamepad = None
         self._pending_gripper_state_fn = None
+        # Persistent gripper-width target in [-1, 1]; only used when
+        # config.record_gripper_width is True. close = -1, open = +1
+        # (uniform with the other action dims). Init to OPEN so the recorded
+        # command stream matches the sim's default-open state before the user
+        # ever presses the toggle.
+        self._gripper_width_target: float = 1.0
 
     def set_gripper_state_fn(self, fn) -> None:
         """Register a callable that returns the env's current gripper state in
@@ -120,7 +126,17 @@ class GamepadTeleop(Teleoperator):
         # Default gripper action is to stay
         if self.config.use_gripper:
             gripper_command = self.gamepad.gripper_command()
-            action_dict["gripper"] = gripper_action_map[gripper_command]
+            if getattr(self.config, "record_gripper_width", False):
+                # Continuous-width mode: emit a [-1, +1] target uniform with
+                # the other action dims. close → -1, open → +1, stay → hold
+                # last. Persistent so policy commands are stable.
+                if gripper_command == "close":
+                    self._gripper_width_target = -1.0
+                elif gripper_command == "open":
+                    self._gripper_width_target = 1.0
+                action_dict["gripper"] = float(self._gripper_width_target)
+            else:
+                action_dict["gripper"] = gripper_action_map[gripper_command]
 
         return action_dict
 
@@ -171,6 +187,18 @@ class GamepadTeleop(Teleoperator):
             TeleopEvents.RERECORD_EPISODE: rerecord_episode,
             TeleopEvents.STAGE_ADVANCE: stage_advance,
         }
+
+    def reset_episode_state(self) -> None:
+        """Clear latched per-episode state on the underlying controller so
+        a new episode starts neutral. Safe to call before ``connect()``
+        (no-op if the controller isn't initialized yet). Called by
+        ``gym_manipulator.control_loop`` after each ``env.reset()``."""
+        if self.gamepad is not None and hasattr(self.gamepad, "reset_episode_state"):
+            self.gamepad.reset_episode_state()
+        # Re-arm the continuous-width gripper target to OPEN so the previous
+        # episode's last-latched state does not carry over into a fresh
+        # episode.
+        self._gripper_width_target = 1.0
 
     def disconnect(self) -> None:
         """Disconnect from the gamepad."""

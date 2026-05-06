@@ -372,6 +372,11 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
                 ee_bounds_min = tuple(b["min"])
             if b.get("max") is not None:
                 ee_bounds_max = tuple(b["max"])
+        record_gripper_width = (
+            cfg.processor.gripper.record_gripper_width
+            if cfg.processor.gripper is not None
+            else False
+        )
         env_kwargs = {
             "control_hz": float(cfg.fps),
             "mode": sim_mode,
@@ -384,8 +389,18 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
             "object_spawn_offset": object_spawn_offset,
             "ee_bounds_min": ee_bounds_min,
             "ee_bounds_max": ee_bounds_max,
+            "record_gripper_width": record_gripper_width,
+            "image_size": tuple(getattr(cfg, "image_size", (224, 224))),
         }
         env = gym.make(f"sim_assembling/{cfg.task}", **env_kwargs)
+        # gym.make consumes `max_episode_steps` for its TimeLimit wrapper and does
+        # NOT forward it to the entry_point. The inner AssemblingEnv keeps its
+        # default cap (300) and truncates first. Sync it so long teleop sessions
+        # actually run for max_ep steps.
+        try:
+            env.unwrapped.max_episode_steps = max_ep
+        except AttributeError:
+            pass
 
         teleop_device = None
         if cfg.teleop is not None:
@@ -517,6 +532,16 @@ def make_processors(
     if cfg.name in ("gym_hil", "sim_assembling"):
         # Same obs/action shape contract as gym-hil; same processor pipeline applies.
         use_gripper = cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else True
+        cont_gripper = (
+            cfg.processor.gripper.continuous_gripper
+            if cfg.processor.gripper is not None
+            else False
+        )
+        cont_gripper_deadband = (
+            cfg.processor.gripper.continuous_gripper_deadband
+            if cfg.processor.gripper is not None
+            else 0.33
+        )
         action_pipeline_steps: list = []
         if teleop_device is not None:
             action_pipeline_steps.extend(
@@ -531,11 +556,31 @@ def make_processors(
                 terminate_on_success=terminate_on_success,
             )
         )
+        record_gripper_width = (
+            cfg.processor.gripper.record_gripper_width
+            if cfg.processor.gripper is not None
+            else False
+        )
+        # When record_gripper_width is on, the teleop already emits gripper as
+        # a continuous width target in [0, 1], the dataset stores it that way,
+        # and the env adapter passes it through unchanged. Skip both Int↔Cont
+        # discretization steps entirely.
+        if cont_gripper and not record_gripper_width:
+            from lerobot.processor.gripper_continuous import (
+                GripperContToIntStep,
+                GripperIntToContStep,
+            )
+
+            # Right after intervention: ensure stored action is uniformly continuous.
+            action_pipeline_steps.append(GripperIntToContStep())
         stage_names = list(cfg.processor.stage_names or [])
         if stage_names:
             from lerobot.processor.stage_annotator import StageAnnotatorProcessorStep
 
             action_pipeline_steps.append(StageAnnotatorProcessorStep(stage_names=stage_names))
+        if cont_gripper and not record_gripper_width:
+            # Last action-side step before env.step receives action: threshold to int.
+            action_pipeline_steps.append(GripperContToIntStep(deadband=cont_gripper_deadband))
         action_pipeline_steps.append(Torch2NumpyActionProcessorStep())
 
         env_pipeline_steps = [
@@ -792,6 +837,7 @@ def _write_stage_annotations_to_dataset(
     stage_names: list[str],
     ep_annotations: list,
     resume_offset: int = 0,
+    ep_extensions: list[int] | None = None,
 ) -> None:
     """Patch a finalized LeRobotDataset with SARM sparse/dual stage annotations.
 
@@ -822,12 +868,22 @@ def _write_stage_annotations_to_dataset(
         return
 
     frame_counts: dict[str, int] = {name: 0 for name in stage_names}
-    for names, starts, ends in ep_annotations:
+    if ep_extensions is None:
+        ep_extensions = [0] * len(ep_annotations)
+    for (names, starts, ends), ext in zip(ep_annotations, ep_extensions, strict=True):
         if names is None:
             continue
-        for n, s, e in zip(names, starts, ends, strict=True):
-            if n in frame_counts:
-                frame_counts[n] += max(0, e - s + 1)
+        last_row = len(names) - 1
+        for i, (n, s, e) in enumerate(zip(names, starts, ends, strict=True)):
+            if n not in frame_counts:
+                continue
+            count = max(0, e - s + 1)
+            # The last reported stage has its end extended over the partial
+            # (dropped) stage's frames. Strip those so temporal_proportions
+            # reflect real stage durations only.
+            if i == last_row:
+                count = max(0, count - int(ext))
+            frame_counts[n] += count
 
     for path in ep_meta_paths:
         df = pd.read_parquet(path)
@@ -914,6 +970,8 @@ def control_loop(
     )
     env_processor.reset()
     action_processor.reset()
+    if teleop_device is not None and hasattr(teleop_device, "reset_episode_state"):
+        teleop_device.reset_episode_state()
 
     # Locate the optional StageAnnotatorProcessorStep so we can flush per-ep
     # annotations and patch the dataset's episodes.parquet after finalize.
@@ -928,6 +986,7 @@ def control_loop(
     except Exception:
         stage_annotator = None
     all_ep_stage_annotations: list = []
+    all_ep_stage_extensions: list[int] = []
 
     # Process initial observation
     transition = create_transition(observation=obs, info=info, complementary_data=complementary_data)
@@ -1043,7 +1102,31 @@ def control_loop(
     episode_step = 0
     episode_start_time = time.perf_counter()
 
-    while episode_idx < cfg.dataset.num_episodes_to_record:
+    # Install a SIGINT handler that sets a stop flag instead of raising
+    # KeyboardInterrupt. The loop polls the flag so we exit cleanly at the
+    # next iteration boundary and the finalize/patch-annotations code below
+    # still runs. Without this, Ctrl-C between episodes bypasses
+    # dataset.finalize() and leaves the chunk parquet unflushed (corrupted).
+    import signal as _signal
+
+    _stop_requested = [False]
+
+    def _on_sigint(_signum, _frame):
+        if not _stop_requested[0]:
+            _stop_requested[0] = True
+            logging.info(
+                "Ctrl-C received — finishing current step, discarding any "
+                "in-progress episode buffer, and finalizing dataset. "
+                "Press Ctrl-C again to force-quit."
+            )
+        else:
+            # Second Ctrl-C: restore default and re-raise to force-exit.
+            _signal.signal(_signal.SIGINT, _prev_sigint_handler)
+            raise KeyboardInterrupt
+
+    _prev_sigint_handler = _signal.signal(_signal.SIGINT, _on_sigint)
+
+    while episode_idx < cfg.dataset.num_episodes_to_record and not _stop_requested[0]:
         # print(f"Starting episode {episode_idx+1}/{cfg.dataset.num_episodes_to_record}...", end="\r", flush=True)
         step_start_time = time.perf_counter()
 
@@ -1053,8 +1136,22 @@ def control_loop(
         act_dim = int(getattr(env.action_space, "shape", (4,))[0])
         neutral_action = torch.zeros(act_dim, dtype=torch.float32)
         if use_gripper:
-            # Gripper is the last slot. 1.0 = stay (matches RC10 + sim_assembling "noop" bucket).
-            neutral_action[-1] = 1.0
+            # Gripper neutral depends on the recording mode:
+            #  - legacy discrete: 1.0 = "stay" int.
+            #  - record_gripper_width: read teleop's persistent width target so
+            #    that releasing intervention mid-episode does NOT flip the
+            #    gripper to a default value (would otherwise force open at 1.0).
+            _record_gripper_width = (
+                cfg.env.processor.gripper.record_gripper_width
+                if (cfg.env.processor is not None and cfg.env.processor.gripper is not None)
+                else False
+            )
+            if _record_gripper_width and teleop_device is not None and hasattr(
+                teleop_device, "_gripper_width_target"
+            ):
+                neutral_action[-1] = float(teleop_device._gripper_width_target)
+            else:
+                neutral_action[-1] = 1.0
 
         # LEROBOT_RECORD_RANDOM_ACTION=1 replaces neutral action with a random
         # sample from env.action_space — used to collect OOD negative frames for
@@ -1180,31 +1277,68 @@ def control_loop(
                     logging.info(f"Saving episode {episode_idx}")
                     dataset.save_episode()
                     if stage_annotator is not None:
-                        annot = stage_annotator.flush_episode_annotation()
+                        # Success for stage labeling: operator pressed the
+                        # SUCCESS button, or env terminated with positive
+                        # reward. If neither, the last-entered stage is
+                        # treated as partial (τ=0 equivalent).
+                        info_at_end = transition[TransitionKey.INFO] or {}
+                        reward_at_end = float(
+                            transition.get(TransitionKey.REWARD, 0.0) or 0.0
+                        )
+                        episode_succeeded = bool(
+                            info_at_end.get(TeleopEvents.SUCCESS, False)
+                        ) or (bool(terminated) and reward_at_end > 0.0)
+                        annot = stage_annotator.flush_episode_annotation(
+                            episode_succeeded=episode_succeeded
+                        )
                         all_ep_stage_annotations.append(annot)
+                        all_ep_stage_extensions.append(
+                            stage_annotator.extension_frame_count()
+                        )
                         names, _, _ = annot
                         n_configured = len(stage_annotator.stage_names)
                         n_recorded = 0 if names is None else len(names)
                         if n_recorded < n_configured:
                             logging.warning(
-                                "[STAGE] ep %d: only %d/%d stages annotated (%s). "
-                                "Press the stage-advance button during teleop to advance.",
+                                "[STAGE] ep %d: only %d/%d stages annotated (%s)"
+                                "%s.",
                                 episode_idx - 1,
                                 n_recorded,
                                 n_configured,
                                 names if names else "none",
+                                " — last-entered stage dropped (partial)"
+                                if not episode_succeeded
+                                else "",
                             )
 
             # Reset for new episode
             obs, info = env.reset()
             env_processor.reset()
             action_processor.reset()
+            if teleop_device is not None and hasattr(teleop_device, "reset_episode_state"):
+                teleop_device.reset_episode_state()
 
             transition = create_transition(observation=obs, info=info)
             transition = env_processor(transition)
 
         # Maintain fps timing
         precise_sleep(max(dt - (time.perf_counter() - step_start_time), 0.0))
+
+    # Drop any partially-recorded episode buffer left over from a
+    # mid-episode Ctrl-C so it doesn't corrupt finalize().
+    if _stop_requested[0] and dataset is not None and episode_step > 0:
+        logging.info(
+            "Discarding in-progress episode buffer (%d frames) after Ctrl-C.",
+            episode_step,
+        )
+        try:
+            dataset.clear_episode_buffer()
+        except Exception as e:
+            logging.warning("clear_episode_buffer failed: %r", e)
+
+    # Restore the previous SIGINT handler so any later Ctrl-C (e.g. during
+    # push_to_hub) uses default behavior.
+    _signal.signal(_signal.SIGINT, _prev_sigint_handler)
 
     # Bug fix: we need to handle the saving and pushing to hub separately
     if dataset is not None:
@@ -1218,6 +1352,7 @@ def control_loop(
                 stage_names=stage_annotator.stage_names,
                 ep_annotations=all_ep_stage_annotations,
                 resume_offset=stage_annotation_resume_offset,
+                ep_extensions=all_ep_stage_extensions,
             )
     if cfg.dataset.push_to_hub:
         logging.info("Pushing dataset to hub")

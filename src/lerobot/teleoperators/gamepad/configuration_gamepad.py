@@ -32,3 +32,7 @@ class GamepadTeleopConfig(TeleoperatorConfig):
     # via SDL2, which the existing gamepad update() loop leaves unhandled.
     # Remap per-controller via env JSON if 0 collides on your pad.
     stage_advance_button: int = 0
+    # When True, emit gripper as a continuous width target in [0, 1]
+    # (close → 0.0, open → 1.0, stay → hold last). Pairs with the env-side
+    # `record_gripper_width` flag to record continuous gripper datasets.
+    record_gripper_width: bool = False

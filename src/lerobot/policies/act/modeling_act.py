@@ -133,7 +133,7 @@ class ACTPolicy(PreTrainedPolicy):
         actions = self.model(batch)[0]
         return actions
 
-    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
+    def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict]:
         """Run the batch through the model and compute the loss for training or validation."""
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
@@ -141,25 +141,23 @@ class ACTPolicy(PreTrainedPolicy):
 
         actions_hat, (mu_hat, log_sigma_x2_hat) = self.model(batch)
 
-        l1_loss = (
+        l1_per = (
             F.l1_loss(batch[ACTION], actions_hat, reduction="none") * ~batch["action_is_pad"].unsqueeze(-1)
-        ).mean()
+        )
+        # Per-sample loss: mean over (chunk, action_dim), keep batch dim.
+        l1_per_sample = l1_per.mean(dim=tuple(range(1, l1_per.ndim)))
 
-        loss_dict = {"l1_loss": l1_loss.item()}
+        loss_dict = {"l1_loss": l1_per_sample.mean().item()}
         if self.config.use_vae:
-            # Calculate Dₖₗ(latent_pdf || standard_normal). Note: After computing the KL-divergence for
-            # each dimension independently, we sum over the latent dimension to get the total
-            # KL-divergence per batch element, then take the mean over the batch.
-            # (See App. B of https://huggingface.co/papers/1312.6114 for more details).
-            mean_kld = (
-                (-0.5 * (1 + log_sigma_x2_hat - mu_hat.pow(2) - (log_sigma_x2_hat).exp())).sum(-1).mean()
-            )
-            loss_dict["kld_loss"] = mean_kld.item()
-            loss = l1_loss + mean_kld * self.config.kl_weight
+            kld_per_sample = (-0.5 * (1 + log_sigma_x2_hat - mu_hat.pow(2) - (log_sigma_x2_hat).exp())).sum(-1)
+            loss_dict["kld_loss"] = kld_per_sample.mean().item()
+            per_sample = l1_per_sample + kld_per_sample * self.config.kl_weight
         else:
-            loss = l1_loss
+            per_sample = l1_per_sample
 
-        return loss, loss_dict
+        if reduction == "none":
+            return per_sample, loss_dict
+        return per_sample.mean(), loss_dict
 
 
 class ACTTemporalEnsembler:

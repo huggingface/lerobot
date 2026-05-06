@@ -218,6 +218,15 @@ class EnvRewardModelConfig:
     reward_mode: str = "binary"
     stats_dataset_repo_id: str | None = None
     eval_every_n_steps: int = 1
+    verbose: bool = False
+    verbose_every_n_steps: int = 10
+    # Extra reward added on the step that first crosses success_threshold (any
+    # reward_mode). 0.0 = disabled. Used by SARM step for residual RL.
+    success_terminal_bonus: float = 0.0
+    # When True, the reward model does NOT terminate the episode when progress
+    # crosses success_threshold. Reward / bonus still fires; termination is
+    # left to the human SUCCESS button (gamepad) or env truncation.
+    disable_threshold_termination: bool = False
 
 
 @dataclass
@@ -246,6 +255,17 @@ class GripperConfig:
 
     use_gripper: bool = True
     gripper_penalty: float = 0.0
+    # When True, treat the 5th action dim as a continuous gripper command in
+    # [-1, +1] (close, stay, open) and threshold to {0, 1, 2} only at the env
+    # boundary. Used by V6+ HIL-SERL to drop the discrete-critic head.
+    continuous_gripper: bool = False
+    continuous_gripper_deadband: float = 0.33
+    # When True, record the gripper as a *continuous width target in [0, 1]*
+    # (0 = closed, 1 = open) instead of the discrete CLOSE/STAY/OPEN convention.
+    # Toggle buttons emit 0.0 / 1.0 directly; the action processor pipeline
+    # skips discretization; adapter passes the value straight to the gripper
+    # actuator. Used for ACT BC datasets that learn continuous gripper control.
+    record_gripper_width: bool = False
 
 
 @dataclass
@@ -325,6 +345,11 @@ class HILSerlRobotEnvConfig(EnvConfig):
     # three nested objects near (-0.15, -0.65, 0.16..0.18). An offset of
     # (0.25, 0.0, 0.0) re-centers them directly under the EE.
     object_spawn_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+    # Camera render size (sim_assembling only). Default 224 — set to 128 to
+    # match SARM ckpts trained on 128x128 datasets. CLIP processor will still
+    # internally resize to 224 for encoding; this only affects the source.
+    image_size: tuple[int, int] = (224, 224)
 
     @property
     def gym_kwargs(self) -> dict:

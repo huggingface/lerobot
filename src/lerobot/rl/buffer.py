@@ -36,6 +36,12 @@ class BatchTransition(TypedDict):
     done: torch.Tensor
     truncated: torch.Tensor
     complementary_info: dict[str, torch.Tensor | float | int] | None = None
+    # Pre-computed vision-encoder features (output of frozen image_encoder), one
+    # tensor per image key. Populated only when the buffer's cache has been
+    # built via `precompute_image_features`. Lets the learner skip the image
+    # encoder for offline samples — usually the dominant per-opt-step cost.
+    image_features: dict[str, torch.Tensor] | None = None
+    next_image_features: dict[str, torch.Tensor] | None = None
 
 
 def random_crop_vectorized(images: torch.Tensor, output_size: tuple) -> torch.Tensor:
@@ -129,6 +135,15 @@ class ReplayBuffer:
             self.image_augmentation_function = torch.compile(base_function)
         self.use_drq = use_drq
 
+        # Persistent vision-encoder feature cache. When populated by
+        # `precompute_image_features`, sample() returns these features alongside
+        # the raw image observations, letting the learner skip the (frozen)
+        # image-encoder forward for offline samples — typically the dominant
+        # per-opt-step cost. Active only for offline buffers (online frames keep
+        # arriving and would invalidate the cache).
+        self.cached_image_features: dict[str, torch.Tensor] | None = None
+        self.cached_next_image_features: dict[str, torch.Tensor] | None = None
+
     def _initialize_storage(
         self,
         state: dict[str, torch.Tensor],
@@ -187,6 +202,67 @@ class ReplayBuffer:
     def __len__(self):
         return self.size
 
+    def precompute_image_features(
+        self,
+        image_encoder: torch.nn.Module,
+        encode_batch_size: int = 64,
+        encode_device: str | None = None,
+    ) -> None:
+        """Pre-compute frozen-encoder image features for every stored frame.
+
+        Once built, `sample()` returns these features alongside the raw images so
+        the learner can skip the image-encoder forward (typically the dominant
+        per-opt-step cost). Only safe for read-only buffers (offline demos): the
+        cache is invalidated by `add()` and would silently drift on online data.
+        """
+        if not self.initialized or self.size == 0:
+            return
+        image_keys = [k for k in self.states if k.startswith(OBS_IMAGE)]
+        if not image_keys:
+            return
+
+        dev = encode_device or (
+            "cuda" if torch.cuda.is_available() and "cuda" in str(self.device) else self.storage_device
+        )
+        image_encoder = image_encoder.to(dev).eval()
+        n = self.size
+        self.cached_image_features = {}
+        prev_grad = torch.is_grad_enabled()
+        torch.set_grad_enabled(False)
+        try:
+            for key in image_keys:
+                # Probe the output shape with a single image.
+                probe = self.states[key][0:1].to(dev)
+                feat = image_encoder(probe)
+                feat_shape = feat.shape[1:]
+                self.cached_image_features[key] = torch.empty(
+                    (self.capacity, *feat_shape), device=self.storage_device, dtype=feat.dtype
+                )
+                # Encode in chunks.
+                for start in range(0, n, encode_batch_size):
+                    end = min(start + encode_batch_size, n)
+                    imgs = self.states[key][start:end].to(dev, non_blocking=True)
+                    f = image_encoder(imgs)
+                    self.cached_image_features[key][start:end] = f.to(self.storage_device)
+            # `next_image_features` is only needed when we don't have the
+            # optimize_memory shortcut (next state == states[(i+1) % cap]).
+            if not self.optimize_memory:
+                self.cached_next_image_features = {}
+                for key in image_keys:
+                    feat_shape = self.cached_image_features[key].shape[1:]
+                    self.cached_next_image_features[key] = torch.empty(
+                        (self.capacity, *feat_shape),
+                        device=self.storage_device,
+                        dtype=self.cached_image_features[key].dtype,
+                    )
+                    for start in range(0, n, encode_batch_size):
+                        end = min(start + encode_batch_size, n)
+                        imgs = self.next_states[key][start:end].to(dev, non_blocking=True)
+                        f = image_encoder(imgs)
+                        self.cached_next_image_features[key][start:end] = f.to(self.storage_device)
+        finally:
+            torch.set_grad_enabled(prev_grad)
+
     def add(
         self,
         state: dict[str, torch.Tensor],
@@ -201,6 +277,11 @@ class ReplayBuffer:
         # Initialize storage if this is the first transition
         if not self.initialized:
             self._initialize_storage(state=state, action=action, complementary_info=complementary_info)
+        # Any write invalidates the precomputed feature cache; drop it so we do
+        # not silently serve stale features.
+        if self.cached_image_features is not None:
+            self.cached_image_features = None
+            self.cached_next_image_features = None
 
         # Store the transition in pre-allocated tensors
         for key in self.states:
@@ -293,6 +374,22 @@ class ReplayBuffer:
             for key in self.complementary_info_keys:
                 batch_complementary_info[key] = self.complementary_info[key][idx].to(self.device)
 
+        batch_image_features = None
+        batch_next_image_features = None
+        if self.cached_image_features is not None:
+            batch_image_features = {
+                k: v[idx].to(self.device) for k, v in self.cached_image_features.items()
+            }
+            if self.cached_next_image_features is not None:
+                batch_next_image_features = {
+                    k: v[idx].to(self.device) for k, v in self.cached_next_image_features.items()
+                }
+            elif self.optimize_memory:
+                next_idx = (idx + 1) % self.capacity
+                batch_next_image_features = {
+                    k: v[next_idx].to(self.device) for k, v in self.cached_image_features.items()
+                }
+
         return BatchTransition(
             state=batch_state,
             action=batch_actions,
@@ -301,6 +398,8 @@ class ReplayBuffer:
             done=batch_dones,
             truncated=batch_truncateds,
             complementary_info=batch_complementary_info,
+            image_features=batch_image_features,
+            next_image_features=batch_next_image_features,
         )
 
     def get_iterator(
@@ -422,6 +521,8 @@ class ReplayBuffer:
         use_drq: bool = True,
         storage_device: str = "cpu",
         optimize_memory: bool = False,
+        stride: int = 1,
+        drop_idle_threshold: float = 0.0,
     ) -> "ReplayBuffer":
         """
         Convert a LeRobotDataset into a ReplayBuffer.
@@ -441,12 +542,23 @@ class ReplayBuffer:
         Returns:
             ReplayBuffer: The replay buffer with dataset transitions.
         """
-        if capacity is None:
-            capacity = len(lerobot_dataset)
+        if stride < 1:
+            raise ValueError(f"stride must be >= 1, got {stride}")
 
-        if capacity < len(lerobot_dataset):
+        # Estimate number of strided transitions across episodes.
+        if stride == 1:
+            min_capacity = len(lerobot_dataset)
+        else:
+            # Approx ceil(N / stride); accurate counter is computed in _lerobotdataset_to_transitions.
+            min_capacity = (len(lerobot_dataset) + stride - 1) // stride
+
+        if capacity is None:
+            capacity = min_capacity
+
+        if capacity < min_capacity:
             raise ValueError(
-                "The capacity of the ReplayBuffer must be greater than or equal to the length of the LeRobotDataset."
+                f"The capacity of the ReplayBuffer ({capacity}) must be >= number of strided "
+                f"transitions ({min_capacity}) from the LeRobotDataset (len={len(lerobot_dataset)}, stride={stride})."
             )
 
         # Create replay buffer with image augmentation and DrQ settings
@@ -461,7 +573,12 @@ class ReplayBuffer:
         )
 
         # Convert dataset to transitions
-        list_transition = cls._lerobotdataset_to_transitions(dataset=lerobot_dataset, state_keys=state_keys)
+        list_transition = cls._lerobotdataset_to_transitions(
+            dataset=lerobot_dataset,
+            state_keys=state_keys,
+            stride=stride,
+            drop_idle_threshold=drop_idle_threshold,
+        )
 
         # Initialize the buffer with the first transition to set up storage tensors
         if list_transition:
@@ -615,6 +732,8 @@ class ReplayBuffer:
     def _lerobotdataset_to_transitions(
         dataset: LeRobotDataset,
         state_keys: Sequence[str] | None = None,
+        stride: int = 1,
+        drop_idle_threshold: float = 0.0,
     ) -> list[Transition]:
         """
         Convert a LeRobotDataset into a list of RL (s, a, r, s', done) transitions.
@@ -659,8 +778,39 @@ class ReplayBuffer:
         if not has_done_key:
             print("'next.done' key not found in dataset. Inferring from episode boundaries...")
 
+        if stride > 1:
+            print(f"[ReplayBuffer] Subsampling dataset with stride={stride} (k-step transitions).")
+        if drop_idle_threshold > 0.0:
+            print(
+                f"[ReplayBuffer] Dropping frames where ||action[:4]||_inf < {drop_idle_threshold}."
+            )
+        idle_dropped = 0
+
+        # Iterate by 1, but only emit a transition when (i % stride == 0) within the
+        # current episode. This builds k-step transitions: action=a[i], reward=Σ r over
+        # stride frames, next_state=s[i+stride] (or end-of-episode sample).
+        ep_start_idx = 0
+        prev_ep = int(dataset[0]["episode_index"].item()) if num_frames > 0 else None
+
         for i in tqdm(range(num_frames)):
             current_sample = dataset[i]
+            ep_idx = int(current_sample["episode_index"].item())
+            if ep_idx != prev_ep:
+                ep_start_idx = i
+                prev_ep = ep_idx
+
+            # Skip frames not aligned to the stride within this episode.
+            if (i - ep_start_idx) % stride != 0:
+                continue
+
+            # Skip idle frames (no xyz/yaw motion) — used by BC pretrain to remove
+            # teleop-pause demo frames that pull the actor toward zero action.
+            if drop_idle_threshold > 0.0:
+                a = current_sample[ACTION]
+                if a.dim() == 1 and a.shape[0] >= 4:
+                    if torch.max(torch.abs(a[:4])).item() < drop_idle_threshold:
+                        idle_dropped += 1
+                        continue
 
             # ----- 1) Current state -----
             current_state: dict[str, torch.Tensor] = {}
@@ -672,42 +822,52 @@ class ReplayBuffer:
             action = current_sample[ACTION].unsqueeze(0)  # Add batch dimension
 
             # ----- 3) Reward and done -----
-            reward = float(current_sample[REWARD].item())  # ensure float
-
-            # Determine done flag - use next.done if available, otherwise infer from episode boundaries
-            if has_done_key:
-                done = bool(current_sample[DONE].item())  # ensure bool
-            else:
-                # If this is the last frame or if next frame is in a different episode, mark as done
-                done = False
-                if i == num_frames - 1:
+            # For stride=1: reward = r[i], next = i+1.
+            # For stride>1: reward = Σ r[i..i+stride-1] within the same episode, next = i+stride
+            #   (or last in-ep frame if episode ends earlier).
+            reward = 0.0
+            done = False
+            next_idx = i  # start at current; advance below
+            for k in range(stride):
+                step_idx = i + k
+                if step_idx >= num_frames:
                     done = True
-                elif i < num_frames - 1:
-                    next_sample = dataset[i + 1]
-                    if next_sample["episode_index"] != current_sample["episode_index"]:
-                        done = True
+                    break
+                step_sample = dataset[step_idx]
+                if int(step_sample["episode_index"].item()) != ep_idx:
+                    done = True
+                    break
+                reward += float(step_sample[REWARD].item())
+                next_idx = step_idx
+                if has_done_key and bool(step_sample[DONE].item()):
+                    done = True
+                    break
+            # Advance one more for the next-state lookup (next state is at next_idx + 1).
+            next_idx += 1
+            if next_idx >= num_frames:
+                done = True
+                next_idx = num_frames - 1
+            else:
+                next_sample_for_check = dataset[next_idx]
+                if int(next_sample_for_check["episode_index"].item()) != ep_idx:
+                    done = True
 
             # TODO: (azouitine) Handle truncation (using the same value as done for now)
             truncated = done
 
             # ----- 4) Next state -----
-            # If not done and the next sample is in the same episode, we pull the next sample's state.
-            # Otherwise (done=True or next sample crosses to a new episode), next_state = current_state.
-            next_state = current_state  # default
-            if not done and (i < num_frames - 1):
-                next_sample = dataset[i + 1]
-                if next_sample["episode_index"] == current_sample["episode_index"]:
-                    # Build next_state from the same keys
-                    next_state_data: dict[str, torch.Tensor] = {}
-                    for key in state_keys:
-                        val = next_sample[key]
-                        next_state_data[key] = val.unsqueeze(0)  # Add batch dimension
-                    next_state = next_state_data
+            next_state = current_state  # default if done / cross-episode
+            if not done:
+                next_sample = dataset[next_idx]
+                next_state_data: dict[str, torch.Tensor] = {}
+                for key in state_keys:
+                    val = next_sample[key]
+                    next_state_data[key] = val.unsqueeze(0)
+                next_state = next_state_data
 
             # ----- 5) Complementary info (if available) -----
-            complementary_info = None
+            complementary_info = {}
             if has_complementary_info:
-                complementary_info = {}
                 for key in complementary_info_keys:
                     # Strip the "complementary_info." prefix to get the actual key
                     clean_key = key[len("complementary_info.") :]
@@ -719,6 +879,13 @@ class ReplayBuffer:
                         # TODO: (azouitine) Check if it's necessary to convert to tensor
                         # For non-tensor values, use directly
                         complementary_info[clean_key] = val
+            # Always preserve original dataset index so downstream code (e.g., RABC
+            # weight lookup) can map a buffer transition back to its source frame.
+            if "index" in current_sample:
+                idx_val = current_sample["index"]
+                if not isinstance(idx_val, torch.Tensor):
+                    idx_val = torch.tensor(int(idx_val), dtype=torch.long)
+                complementary_info["dataset_index"] = idx_val.unsqueeze(0).long()
 
             # ----- Construct the Transition -----
             transition = Transition(
@@ -731,6 +898,13 @@ class ReplayBuffer:
                 complementary_info=complementary_info,
             )
             transitions.append(transition)
+
+        if drop_idle_threshold > 0.0:
+            print(
+                f"[ReplayBuffer] Dropped {idle_dropped} idle frames "
+                f"({idle_dropped / max(1, num_frames) * 100:.1f}% of dataset). "
+                f"Kept {len(transitions)} transitions."
+            )
 
         return transitions
 

@@ -65,6 +65,19 @@ class InputController:
         """Ensure resources are released when exiting 'with' block."""
         self.stop()
 
+    def reset_episode_state(self):
+        """Clear latched per-episode state so a new episode starts neutral.
+
+        Called by the record control_loop right after ``env.reset()``. Does
+        NOT reset the connection or the live-polled intervention flag —
+        only the latched derivatives that would otherwise leak from the
+        previous episode (e.g. a held gripper-close command or a stale
+        success flag).
+        """
+        self.close_gripper_command = False
+        self.open_gripper_command = False
+        self.episode_end_status = None
+
     def get_episode_end_status(self):
         """
         Get the current episode end status.
@@ -247,6 +260,20 @@ class GamepadController(InputController):
         pending = self._stage_advance_pending
         self._stage_advance_pending = False
         return pending
+
+    def reset_episode_state(self):
+        """Clear pygame-specific latched state on env reset.
+
+        Beyond the base close/open-command flags, we clear the R2 toggle
+        desired-state and arm ``_r2_pressed=True`` so a held R2 across the
+        reset boundary doesn't immediately re-fire: the user must drop R2
+        below 0.3 before the next press registers. Also clears pending
+        stage-advance.
+        """
+        super().reset_episode_state()
+        self._gripper_closed_desired = False
+        self._r2_pressed = True
+        self._stage_advance_pending = False
 
     def start(self):
         """Initialize pygame and the gamepad."""

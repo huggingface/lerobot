@@ -25,6 +25,10 @@ from pathlib import Path
 import torch
 from tqdm import tqdm
 
+# Side-effect import: registers the external `sarm_ext` policy class so SARM
+# checkpoints saved with type='sarm_ext' can be reloaded here.
+import lerobot_policy_sarm  # noqa: F401
+
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.processor.reward_model.sarm import (
     SARMRewardConfig,
@@ -69,6 +73,8 @@ def relabel(
     task_text: str | None = None,
     success_threshold: float = 0.9,
     device: str = "cuda",
+    sarm_type: str = "sarm",
+    stats_override: str | None = None,
 ) -> LeRobotDataset:
     src = LeRobotDataset(repo_id=src_repo_id, root=src_root)
 
@@ -86,19 +92,22 @@ def relabel(
 
     if new_repo_id is None:
         new_repo_id = f"{src_repo_id}_sarm_{reward_mode}"
-    new_root = Path(str(src.root) + f"_sarm_{reward_mode}")
+        new_root = Path(str(src.root) + f"_sarm_{reward_mode}")
+    else:
+        new_root = src.root.parent.parent / new_repo_id
 
     # stats_dataset_repo_id pinned to source — source has populated stats by
     # construction; a split dataset may have empty stats, producing OOD input.
     sarm_step = SARMRewardProcessorStep(
         config=SARMRewardConfig(
+            type=sarm_type,
             pretrained_path=sarm_checkpoint,
             device=device,
             task=task_text,
             head_mode=head_mode,
             reward_mode=reward_mode,
             success_threshold=success_threshold,
-            stats_dataset_repo_id=src_repo_id,
+            stats_dataset_repo_id=stats_override or src_repo_id,
         ),
         terminate_on_success=False,
     )
@@ -201,6 +210,10 @@ def main() -> None:
     parser.add_argument("--head-mode", type=str, default="sparse", choices=["sparse", "dense"])
     parser.add_argument("--success-threshold", type=float, default=0.9)
     parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--type", type=str, default="sarm",
+                        help="SARM variant: 'sarm' (upstream) or 'sarm_ext' (plugin).")
+    parser.add_argument("--stats", type=str, default=None,
+                        help="Override stats_dataset_repo_id (defaults to src-repo-id).")
     args = parser.parse_args()
 
     relabel(
@@ -213,6 +226,8 @@ def main() -> None:
         task_text=args.task,
         success_threshold=args.success_threshold,
         device=args.device,
+        sarm_type=args.type,
+        stats_override=args.stats,
     )
 
 

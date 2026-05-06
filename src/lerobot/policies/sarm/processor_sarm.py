@@ -432,8 +432,10 @@ class SARMEncodingProcessorStep(ProcessorStep):
             inputs = self.clip_processor(images=batch_imgs, return_tensors="pt")
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
-            # Get image embeddings
-            embeddings = self.clip_model.get_image_features(**inputs).detach().cpu()
+            # Get image embeddings. transformers ≥5.x returns
+            # BaseModelOutputWithPooling; older returns a tensor directly.
+            out = self.clip_model.get_image_features(**inputs)
+            embeddings = (out.pooler_output if hasattr(out, "pooler_output") else out).detach().cpu()
 
             # Handle single frame case
             if embeddings.dim() == 1:
@@ -460,7 +462,8 @@ class SARMEncodingProcessorStep(ProcessorStep):
         inputs = self.clip_processor.tokenizer([text], return_tensors="pt", padding=True, truncation=True)
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
-        text_embedding = self.clip_model.get_text_features(**inputs).detach().cpu()
+        out = self.clip_model.get_text_features(**inputs)
+        text_embedding = (out.pooler_output if hasattr(out, "pooler_output") else out).detach().cpu()
         text_embedding = text_embedding.expand(batch_size, -1)
 
         return text_embedding

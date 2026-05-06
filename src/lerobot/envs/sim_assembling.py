@@ -74,7 +74,7 @@ class AssemblingHILAdapter(gym.Wrapper):
     def __init__(
         self,
         env: AssemblingEnv,
-        image_size: tuple[int, int] = (128, 128),
+        image_size: tuple[int, int] = (224, 224),
         cam_front_key: str = "cam_front",
         cam_wrist_key: str = "cam_gripper",
         action_step_size: float = 0.025,
@@ -85,6 +85,7 @@ class AssemblingHILAdapter(gym.Wrapper):
         object_spawn_offset: tuple[float, float, float] = (0.0, 0.0, 0.0),
         ee_bounds_min: tuple[float, float, float] | None = None,
         ee_bounds_max: tuple[float, float, float] | None = None,
+        record_gripper_width: bool = False,
     ):
         super().__init__(env)
         assert env.use_task_space, "AssemblingHILAdapter requires use_task_space=True"
@@ -103,6 +104,9 @@ class AssemblingHILAdapter(gym.Wrapper):
         self.use_gripper = bool(use_gripper)
         self.num_discrete_actions = int(num_discrete_actions) if use_gripper else 0
         self.include_yaw_slot = bool(include_yaw_slot)
+        # If True, action[gripper_idx] is the *width target in [0, 1]*
+        # (0=closed, 1=open) and is passed straight to the gripper actuator.
+        self.record_gripper_width = bool(record_gripper_width)
 
         # [dx, dy, dz] + optional [dyaw] + optional [gripper]
         low = [-1.0, -1.0, -1.0]
@@ -111,8 +115,13 @@ class AssemblingHILAdapter(gym.Wrapper):
             low.append(-1.0)
             high.append(1.0)
         if self.use_gripper:
-            low.append(0.0)
-            high.append(float(max(num_discrete_actions - 1, 1)))
+            if self.record_gripper_width:
+                # Continuous width target in [-1, +1] (close → -1, open → +1).
+                low.append(-1.0)
+                high.append(1.0)
+            else:
+                low.append(0.0)
+                high.append(float(max(num_discrete_actions - 1, 1)))
         self.action_space = spaces.Box(
             low=np.asarray(low, dtype=np.float32),
             high=np.asarray(high, dtype=np.float32),
@@ -120,6 +129,10 @@ class AssemblingHILAdapter(gym.Wrapper):
         )
 
         h, w = image_size
+        # When record_gripper_width is on, observation.state is the slim
+        # 7-D vector [arm_joints(6), gripper_width(1)]. Otherwise the legacy
+        # 15-D vector [joint_pos(7), ee_pos(3), ee_quat(4), gripper_qpos(1)].
+        _state_dim = 7 if self.record_gripper_width else 15
         self.observation_space = spaces.Dict(
             {
                 "pixels": spaces.Dict(
@@ -128,7 +141,7 @@ class AssemblingHILAdapter(gym.Wrapper):
                         "wrist": spaces.Box(0, 255, shape=(h, w, 3), dtype=np.uint8),
                     }
                 ),
-                "agent_pos": spaces.Box(-np.inf, np.inf, shape=(15,), dtype=np.float32),
+                "agent_pos": spaces.Box(-np.inf, np.inf, shape=(_state_dim,), dtype=np.float32),
             }
         )
 
@@ -138,12 +151,17 @@ class AssemblingHILAdapter(gym.Wrapper):
 
     def _adapt_obs(self, obs: dict) -> dict:
         state = obs["state"]
-        joint_pos = np.asarray(state["joint_pos"], dtype=np.float32)  # 7
-        ee_pos = np.asarray(state["ee_pos"], dtype=np.float32)  # 3
-        ee_quat = np.asarray(state["ee_quat"], dtype=np.float32)  # 4
-        # last joint is gripper driver — use it as the gripper proxy.
-        gripper_q = np.asarray([joint_pos[-1]], dtype=np.float32)
-        agent_pos = np.concatenate([joint_pos, ee_pos, ee_quat, gripper_q]).astype(np.float32)
+        joint_pos = np.asarray(state["joint_pos"], dtype=np.float32)  # 7 (arm 6 + gripper driver 1)
+        if self.record_gripper_width:
+            arm = joint_pos[:6]  # 6 arm joints only
+            grip_w = float(state.get("gripper_width", 0.0))
+            agent_pos = np.concatenate([arm, [grip_w]]).astype(np.float32)
+        else:
+            ee_pos = np.asarray(state["ee_pos"], dtype=np.float32)  # 3
+            ee_quat = np.asarray(state["ee_quat"], dtype=np.float32)  # 4
+            # last joint is gripper driver — use it as the gripper proxy.
+            gripper_q = np.asarray([joint_pos[-1]], dtype=np.float32)
+            agent_pos = np.concatenate([joint_pos, ee_pos, ee_quat, gripper_q]).astype(np.float32)
 
         imgs = obs.get("images", {})
         front = imgs.get(self.cam_front_key)
@@ -234,7 +252,15 @@ class AssemblingHILAdapter(gym.Wrapper):
 
         gripper_idx = 4 if self.include_yaw_slot else 3
         if self.use_gripper and a.shape[0] > gripper_idx:
-            self._gripper_cmd = float(np.clip(self._decode_gripper(a[gripper_idx]), 0.0, 1.0))
+            if self.record_gripper_width:
+                # Continuous-width mode: action[gripper_idx] in [-1, +1]
+                # (close = -1, open = +1). Map linearly to width in [0, 1]
+                # then to sim's actuator convention (1.0 = closed).
+                a_g = float(np.clip(a[gripper_idx], -1.0, 1.0))
+                w = (a_g + 1.0) * 0.5
+                self._gripper_cmd = 1.0 - w
+            else:
+                self._gripper_cmd = float(np.clip(self._decode_gripper(a[gripper_idx]), 0.0, 1.0))
 
         sim_action = np.concatenate(
             [self._ee_ref_pos, self._ee_ref_quat, [self._gripper_cmd]]
@@ -251,7 +277,7 @@ def make_assembling_env(
     mode: str = "fast",
     max_episode_steps: int = 300,
     render_mode: str = "rgb_array",
-    image_size: tuple[int, int] = (128, 128),
+    image_size: tuple[int, int] = (224, 224),
     action_step_size: float = 0.025,
     yaw_step_size: float = 0.05,
     use_gripper: bool = True,
@@ -260,6 +286,7 @@ def make_assembling_env(
     object_spawn_offset: tuple[float, float, float] = (0.0, 0.0, 0.0),
     ee_bounds_min: tuple[float, float, float] | None = None,
     ee_bounds_max: tuple[float, float, float] | None = None,
+    record_gripper_width: bool = False,
     **_ignored: Any,
 ) -> gym.Env:
     """Factory used by ``gym.make("sim_assembling/AssembleBase-v0", ...)``.
@@ -290,6 +317,7 @@ def make_assembling_env(
         object_spawn_offset=object_spawn_offset,
         ee_bounds_min=ee_bounds_min,
         ee_bounds_max=ee_bounds_max,
+        record_gripper_width=record_gripper_width,
     )
 
 

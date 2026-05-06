@@ -337,6 +337,25 @@ def add_actor_information_and_train(
             storage_device=storage_device,
         )
         batch_size: int = batch_size // 2  # We will sample from both replay buffer
+        # Pre-encode all offline images once with the (frozen) image encoder so
+        # subsequent offline samples can skip the dominant per-opt-step cost.
+        if (
+            policy.config.vision_encoder_name is not None
+            and policy.config.freeze_vision_encoder
+        ):
+            logging.info(
+                "Precomputing image features for offline buffer (%d frames)…",
+                len(offline_replay_buffer),
+            )
+            t0 = time.time()
+            offline_replay_buffer.precompute_image_features(
+                image_encoder=policy.actor.encoder.image_encoder,
+                encode_batch_size=64,
+                encode_device=device,
+            )
+            logging.info(
+                "Offline image-feature cache built in %.1fs", time.time() - t0
+            )
 
     logging.info("Starting learner thread")
     interaction_message = None
@@ -346,6 +365,38 @@ def add_actor_information_and_train(
     dataset_repo_id = None
     if cfg.dataset is not None:
         dataset_repo_id = cfg.dataset.repo_id
+
+    # ---- BC + RABC auxiliary loss setup ----
+    bc_loss_weight_init = float(getattr(policy.config, "bc_loss_weight", 0.0))
+    bc_loss_weight_final = float(getattr(policy.config, "bc_loss_weight_final", 0.0))
+    bc_anneal_steps = int(getattr(policy.config, "bc_anneal_steps", 0))
+    bc_use_rabc = bool(getattr(policy.config, "bc_use_rabc", False))
+    rabc_provider = None
+    if bc_loss_weight_init > 0.0 and bc_use_rabc:
+        rabc_path = getattr(policy.config, "bc_rabc_progress_path", None)
+        if rabc_path:
+            from lerobot.utils.rabc import RABCWeights
+
+            rabc_provider = RABCWeights(
+                progress_path=rabc_path,
+                chunk_size=int(policy.config.bc_rabc_chunk_size),
+                head_mode=str(policy.config.bc_rabc_head_mode),
+                kappa=float(policy.config.bc_rabc_kappa),
+                device=device,
+            )
+            logging.info("BC+RABC enabled: %s", rabc_provider.get_stats())
+        else:
+            logging.warning(
+                "bc_use_rabc=True but bc_rabc_progress_path not set; BC will run uniform-weighted."
+            )
+
+    def _current_bc_weight(step: int) -> float:
+        if bc_loss_weight_init <= 0.0:
+            return 0.0
+        if bc_anneal_steps <= 0 or step >= bc_anneal_steps:
+            return bc_loss_weight_final if bc_anneal_steps > 0 else bc_loss_weight_init
+        frac = step / float(bc_anneal_steps)
+        return bc_loss_weight_init + frac * (bc_loss_weight_final - bc_loss_weight_init)
 
     # Initialize iterators
     online_iterator = None
@@ -394,9 +445,14 @@ def add_actor_information_and_train(
         for _ in range(utd_ratio - 1):
             # Sample from the iterators
             batch = next(online_iterator)
+            online_size_inner = batch[ACTION].shape[0]
+            offline_img_feat_inner = None
+            offline_next_img_feat_inner = None
 
             if dataset_repo_id is not None:
                 batch_offline = next(offline_iterator)
+                offline_img_feat_inner = batch_offline.get("image_features")
+                offline_next_img_feat_inner = batch_offline.get("next_image_features")
                 batch = concatenate_batch_transitions(
                     left_batch_transitions=batch, right_batch_transition=batch_offline
                 )
@@ -409,7 +465,12 @@ def add_actor_information_and_train(
             check_nan_in_transition(observations=observations, actions=actions, next_state=next_observations)
 
             observation_features, next_observation_features = get_observation_features(
-                policy=policy, observations=observations, next_observations=next_observations
+                policy=policy,
+                observations=observations,
+                next_observations=next_observations,
+                online_size=online_size_inner if offline_img_feat_inner is not None else None,
+                offline_image_features=offline_img_feat_inner,
+                offline_next_image_features=offline_next_img_feat_inner,
             )
 
             # Create a batch dictionary with all required elements for the forward method
@@ -452,9 +513,16 @@ def add_actor_information_and_train(
 
         # Sample for the last update in the UTD ratio
         batch = next(online_iterator)
+        online_size = batch[ACTION].shape[0]
+        batch_offline_for_bc = None
+        offline_img_feat = None
+        offline_next_img_feat = None
 
         if dataset_repo_id is not None:
             batch_offline = next(offline_iterator)
+            batch_offline_for_bc = batch_offline
+            offline_img_feat = batch_offline.get("image_features")
+            offline_next_img_feat = batch_offline.get("next_image_features")
             batch = concatenate_batch_transitions(
                 left_batch_transitions=batch, right_batch_transition=batch_offline
             )
@@ -468,7 +536,12 @@ def add_actor_information_and_train(
         check_nan_in_transition(observations=observations, actions=actions, next_state=next_observations)
 
         observation_features, next_observation_features = get_observation_features(
-            policy=policy, observations=observations, next_observations=next_observations
+            policy=policy,
+            observations=observations,
+            next_observations=next_observations,
+            online_size=online_size if offline_img_feat is not None else None,
+            offline_image_features=offline_img_feat,
+            offline_next_image_features=offline_next_img_feat,
         )
 
         # Create a batch dictionary with all required elements for the forward method
@@ -497,6 +570,38 @@ def add_actor_information_and_train(
             "loss_critic": loss_critic.item(),
             "critic_grad_norm": critic_grad_norm,
         }
+
+        # Build BC inputs from offline batch (demo actions) for actor opt step.
+        bc_w_now = _current_bc_weight(optimization_step)
+        if bc_w_now > 0.0 and batch_offline_for_bc is not None:
+            bc_state = batch_offline_for_bc["state"]
+            bc_action = batch_offline_for_bc[ACTION]
+            # Reuse the offline tail of the just-encoded features rather than
+            # running the image encoder a third time on bc_state.
+            if observation_features is not None:
+                bc_obs_feat = {k: v[online_size:] for k, v in observation_features.items()}
+            else:
+                bc_obs_feat = None
+            bc_weights_tensor = None
+            if rabc_provider is not None:
+                # RABCWeights expects a flat `index` field; thread it through from the
+                # offline buffer's complementary_info (preserved at ingestion time).
+                rabc_batch = dict(batch_offline_for_bc)
+                comp = batch_offline_for_bc.get("complementary_info") or {}
+                if "dataset_index" in comp and "index" not in rabc_batch:
+                    rabc_batch["index"] = comp["dataset_index"]
+                bc_weights_tensor, bc_w_stats = rabc_provider.compute_batch_weights(rabc_batch)
+                training_infos["bc_rabc_mean_weight"] = float(
+                    bc_w_stats.get("raw_mean_weight", 0.0)
+                )
+                training_infos["bc_rabc_num_zero"] = int(bc_w_stats.get("num_zero_weight", 0))
+                training_infos["bc_rabc_num_full"] = int(bc_w_stats.get("num_full_weight", 0))
+            forward_batch["bc_state"] = bc_state
+            forward_batch["bc_action"] = bc_action
+            forward_batch["bc_observation_feature"] = bc_obs_feat
+            forward_batch["bc_weights"] = bc_weights_tensor
+            forward_batch["bc_loss_weight"] = bc_w_now
+            training_infos["bc_loss_weight"] = bc_w_now
 
         # Discrete critic optimization (if available)
         if policy.config.num_discrete_actions is not None:
@@ -529,6 +634,10 @@ def add_actor_information_and_train(
                 # Add actor info to training info
                 training_infos["loss_actor"] = loss_actor.item()
                 training_infos["actor_grad_norm"] = actor_grad_norm
+                if "loss_actor_sac" in actor_output:
+                    training_infos["loss_actor_sac"] = float(actor_output["loss_actor_sac"].item())
+                if "loss_actor_bc" in actor_output:
+                    training_infos["loss_actor_bc"] = float(actor_output["loss_actor_bc"].item())
 
                 # Temperature optimization
                 temperature_output = policy.forward(forward_batch, model="temperature")
@@ -999,7 +1108,13 @@ def initialize_offline_replay_buffer(
             root=dataset_offline_path,
         )
 
-    logging.info("Convert to a offline replay buffer")
+    stride = int(getattr(cfg, "offline_dataset_stride", 1))
+    drop_idle = float(getattr(cfg, "offline_drop_idle_threshold", 0.0))
+    logging.info(
+        "Convert to a offline replay buffer (stride=%d, drop_idle=%s)",
+        stride,
+        drop_idle,
+    )
     offline_replay_buffer = ReplayBuffer.from_lerobot_dataset(
         offline_dataset,
         device=device,
@@ -1007,6 +1122,11 @@ def initialize_offline_replay_buffer(
         storage_device=storage_device,
         optimize_memory=True,
         capacity=cfg.policy.offline_buffer_capacity,
+        stride=stride,
+        drop_idle_threshold=drop_idle,
+        # Frozen vision encoder + precomputed feature cache make image
+        # augmentation a wasted CPU/GPU pass on offline samples.
+        use_drq=False,
     )
     return offline_replay_buffer
 
@@ -1015,28 +1135,54 @@ def initialize_offline_replay_buffer(
 
 
 def get_observation_features(
-    policy: SACPolicy, observations: torch.Tensor, next_observations: torch.Tensor
+    policy: SACPolicy,
+    observations: torch.Tensor,
+    next_observations: torch.Tensor,
+    online_size: int | None = None,
+    offline_image_features: dict[str, torch.Tensor] | None = None,
+    offline_next_image_features: dict[str, torch.Tensor] | None = None,
 ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
-    """
-    Get observation features from the policy encoder. It act as cache for the observation features.
-    when the encoder is frozen, the observation features are not updated.
-    We can save compute by caching the observation features.
+    """Encode current/next observation images, optionally splicing pre-computed
+    features for the offline portion of the batch.
 
-    Args:
-        policy: The policy model
-        observations: The current observations
-        next_observations: The next observations
-
-    Returns:
-        tuple: observation_features, next_observation_features
+    When `offline_image_features` is provided, it must already correspond to the
+    offline tail of `observations` (i.e. observations[online_size:]). Only the
+    online prefix is run through the (frozen) image encoder; the cached offline
+    features are concatenated on the channel-batch dim.
     """
 
     if policy.config.vision_encoder_name is None or not policy.config.freeze_vision_encoder:
         return None, None
 
     with torch.no_grad():
-        observation_features = policy.actor.encoder.get_cached_image_features(observations)
-        next_observation_features = policy.actor.encoder.get_cached_image_features(next_observations)
+        if offline_image_features is None:
+            observation_features = policy.actor.encoder.get_cached_image_features(observations)
+            next_observation_features = policy.actor.encoder.get_cached_image_features(next_observations)
+        else:
+            assert online_size is not None, (
+                "online_size must be provided when offline_image_features is supplied"
+            )
+            online_obs = {k: observations[k][:online_size] for k in observations}
+            online_next = {k: next_observations[k][:online_size] for k in next_observations}
+            online_feat = policy.actor.encoder.get_cached_image_features(online_obs)
+            online_next_feat = policy.actor.encoder.get_cached_image_features(online_next)
+            observation_features = {
+                k: torch.cat([online_feat[k], offline_image_features[k]], dim=0)
+                for k in online_feat
+            }
+            if offline_next_image_features is None:
+                # Offline buffer is built with optimize_memory=True so next state
+                # is just states[(i+1) % cap]. Without an explicit cache, we have
+                # to encode the offline next images. Fall back to single-pass
+                # encode of the full next batch.
+                next_observation_features = policy.actor.encoder.get_cached_image_features(
+                    next_observations
+                )
+            else:
+                next_observation_features = {
+                    k: torch.cat([online_next_feat[k], offline_next_image_features[k]], dim=0)
+                    for k in online_next_feat
+                }
 
     return observation_features, next_observation_features
 

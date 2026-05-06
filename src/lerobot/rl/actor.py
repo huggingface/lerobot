@@ -267,6 +267,16 @@ def act_with_policy(
     transition = create_transition(observation=obs, info=info)
     transition = env_processor(transition)
 
+    # Residual mode: cache a frozen base policy + action_dim to attach
+    # `observation.base_action` onto every observation flowing into the
+    # buffer. ACT manages its own chunk queue across calls.
+    _residual_mode = getattr(cfg.policy, "residual_mode", False)
+    _base_policy = getattr(policy, "_base_policy", None) if _residual_mode else None
+    if _residual_mode and _base_policy is not None:
+        _base_policy.reset()
+        _ba = _base_policy.select_action(transition[TransitionKey.OBSERVATION])
+        transition[TransitionKey.OBSERVATION]["observation.base_action"] = _ba
+
     # NOTE: For the moment we will solely handle the case of a single environment
     sum_reward_episode = 0
     list_transition_to_send_to_learner = []
@@ -274,6 +284,18 @@ def act_with_policy(
     # Add counters for intervention rate calculation
     episode_intervention_steps = 0
     episode_total_steps = 0
+    # Track SARM progress per episode (independent of reward shaping mode).
+    last_sarm_progress = 0.0
+    max_sarm_progress = 0.0
+    # Per-episode gripper diagnostics (residual mode only): we want to confirm
+    # the residual is actually using its gripper dim. Tracks running sums of
+    # base / combined / residual gripper values across the episode and counts
+    # how many steps the residual flipped the post-deadband band.
+    grip_base_sum = 0.0
+    grip_combined_sum = 0.0
+    grip_residual_abs_sum = 0.0
+    grip_residual_signed_sum = 0.0
+    grip_flip_count = 0  # frac of steps where deadband band(base) != band(combined)
 
     policy_timer = TimerManager("Policy inference", log=False)
 
@@ -295,6 +317,65 @@ def act_with_policy(
 
         log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)
 
+        # Residual-mode gripper diagnostics: track per-step base / combined /
+        # residual gripper to confirm the residual head actually moves it.
+        if _residual_mode:
+            try:
+                _act_full = action.detach().cpu().numpy().flatten() if hasattr(action, "detach") else np.asarray(action).flatten()
+                _base_full = observation["observation.base_action"].detach().cpu().numpy().flatten()
+                _g_base = float(_base_full[-1])
+                _g_combined = float(_act_full[-1])
+                _g_residual = _g_combined - _g_base
+                grip_base_sum += _g_base
+                grip_combined_sum += _g_combined
+                grip_residual_signed_sum += _g_residual
+                grip_residual_abs_sum += abs(_g_residual)
+                # Deadband band classification: -1 if a < -db, +1 if a > db, else 0.
+                _db = (
+                    cfg.env.processor.gripper.continuous_gripper_deadband
+                    if cfg.env.processor.gripper is not None
+                    else 0.33
+                )
+                _band_base = -1 if _g_base < -_db else (1 if _g_base > _db else 0)
+                _band_comb = -1 if _g_combined < -_db else (1 if _g_combined > _db else 0)
+                if _band_base != _band_comb:
+                    grip_flip_count += 1
+            except Exception:
+                pass
+
+        # Visualization: pass action arrows to the underlying mujoco env so the
+        # passive viewer renders them on top of the simulation. In residual
+        # mode we draw two arrows (base direction in green, residual delta in
+        # red); otherwise one arrow showing the executed action.
+        try:
+            inner_env = online_env
+            while hasattr(inner_env, "env"):
+                inner_env = inner_env.env
+            if hasattr(inner_env, "set_action_arrows") and hasattr(inner_env, "get_tcp_position"):
+                tcp = np.asarray(inner_env.get_tcp_position(), dtype=np.float64).flatten()
+                # Visible-arrow length tuning: typical normed action mag ~ 0.5,
+                # we want arrow ~5cm. Scale = 0.10 m / unit.
+                arrow_scale = 0.10
+                act_np = action.detach().cpu().numpy().flatten() if hasattr(action, "detach") else np.asarray(action).flatten()
+                act_np = act_np.astype(np.float64)
+                arrows: list = []
+                if _residual_mode:
+                    base_np = observation["observation.base_action"].detach().cpu().numpy().flatten().astype(np.float64)
+                    end_base = tcp + arrow_scale * base_np[:3]
+                    arrows.append((tcp, end_base, (0.0, 1.0, 0.2, 0.9)))  # base = green
+                    res_np = act_np[:3] - base_np[:3]
+                    if np.linalg.norm(res_np) > 1e-4:
+                        end_res = end_base + arrow_scale * 3.0 * res_np  # 3x to make small residual visible
+                        arrows.append((end_base, end_res, (1.0, 0.2, 0.0, 0.9)))  # residual = red
+                else:
+                    end_act = tcp + arrow_scale * act_np[:3]
+                    arrows.append((tcp, end_act, (0.0, 0.6, 1.0, 0.9)))  # policy action = blue
+                inner_env.set_action_arrows(arrows)
+        except Exception as _viz_err:
+            # Visualization is best-effort; don't kill training on render bugs.
+            if interaction_step < 5:
+                logging.warning("[ACTOR] action arrow viz failed: %s", _viz_err)
+
         # Use the new step function
         new_transition = step_env_and_process_transition(
             env=online_env,
@@ -303,6 +384,13 @@ def act_with_policy(
             env_processor=env_processor,
             action_processor=action_processor,
         )
+
+        # Residual mode: attach next base_action to next observation. Done
+        # *after* env_processor so the obs is in the canonical (CHW float)
+        # form expected by the base policy. ACT will pop from its chunk queue.
+        if _residual_mode and _base_policy is not None:
+            _ba = _base_policy.select_action(new_transition[TransitionKey.OBSERVATION])
+            new_transition[TransitionKey.OBSERVATION]["observation.base_action"] = _ba
 
         # Display camera feeds if configured
         display_cameras = (
@@ -366,6 +454,15 @@ def act_with_policy(
         if intervention_info.get(TeleopEvents.IS_INTERVENTION, False):
             episode_intervention = True
             episode_intervention_steps += 1
+        # Track SARM progress (set by SARMRewardProcessorStep regardless of reward_mode).
+        sp = intervention_info.get("sarm_progress")
+        if sp is not None:
+            try:
+                last_sarm_progress = float(sp)
+                if last_sarm_progress > max_sarm_progress:
+                    max_sarm_progress = last_sarm_progress
+            except (TypeError, ValueError):
+                pass
 
         complementary_info = {
             "discrete_penalty": torch.tensor(
@@ -408,14 +505,28 @@ def act_with_policy(
             if episode_total_steps > 0:
                 intervention_rate = episode_intervention_steps / episode_total_steps
 
+            # Per-episode gripper diagnostics (residual mode).
+            grip_metrics = {}
+            if _residual_mode and episode_total_steps > 0:
+                grip_metrics = {
+                    "Gripper base mean": grip_base_sum / episode_total_steps,
+                    "Gripper combined mean": grip_combined_sum / episode_total_steps,
+                    "Gripper residual mean": grip_residual_signed_sum / episode_total_steps,
+                    "Gripper residual abs mean": grip_residual_abs_sum / episode_total_steps,
+                    "Gripper band-flip rate": grip_flip_count / episode_total_steps,
+                }
+
             # Send episodic reward to the learner
             interactions_queue.put(
                 python_object_to_bytes(
                     {
                         "Episodic reward": sum_reward_episode,
+                        "Episode terminal SARM progress": last_sarm_progress,
+                        "Episode max SARM progress": max_sarm_progress,
                         "Interaction step": interaction_step,
                         "Episode intervention": int(episode_intervention),
                         "Intervention rate": intervention_rate,
+                        **grip_metrics,
                         **stats,
                     }
                 )
@@ -426,6 +537,13 @@ def act_with_policy(
             episode_intervention = False
             episode_intervention_steps = 0
             episode_total_steps = 0
+            last_sarm_progress = 0.0
+            max_sarm_progress = 0.0
+            grip_base_sum = 0.0
+            grip_combined_sum = 0.0
+            grip_residual_signed_sum = 0.0
+            grip_residual_abs_sum = 0.0
+            grip_flip_count = 0
 
             # Reset environment and processors
             obs, info = online_env.reset()
@@ -435,6 +553,12 @@ def act_with_policy(
             # Process initial observation
             transition = create_transition(observation=obs, info=info)
             transition = env_processor(transition)
+
+            # Residual mode: clear ACT's chunk queue and attach fresh base_action.
+            if _residual_mode and _base_policy is not None:
+                _base_policy.reset()
+                _ba = _base_policy.select_action(transition[TransitionKey.OBSERVATION])
+                transition[TransitionKey.OBSERVATION]["observation.base_action"] = _ba
 
         if cfg.env.fps is not None:
             dt_time = time.perf_counter() - start_time

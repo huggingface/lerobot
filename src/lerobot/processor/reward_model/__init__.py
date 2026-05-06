@@ -67,9 +67,13 @@ def build_reward_model_step(cfg: dict | None):
             config=CNNRewardConfig(**_filter_cfg(cfg, CNNRewardConfig)),
             terminate_on_success=terminate,
         )
-    if rtype == "sarm":
+    if rtype in ("sarm", "sarm_ext"):
+        # Both route through SARMRewardProcessorStep; type is preserved in cfg so
+        # the wrapper's internal import dispatches to upstream or ext plugin.
+        cfg_fields = _filter_cfg(cfg, SARMRewardConfig)
+        cfg_fields["type"] = rtype
         return SARMRewardProcessorStep(
-            config=SARMRewardConfig(**_filter_cfg(cfg, SARMRewardConfig)),
+            config=SARMRewardConfig(**cfg_fields),
             terminate_on_success=terminate,
         )
     raise ValueError(f"Unknown reward_model.type: {rtype!r}")

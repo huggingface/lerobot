@@ -197,6 +197,40 @@ class SACConfig(PreTrainedConfig):
     # Optimizations
     use_torch_compile: bool = True
 
+    # ---- RABC-weighted BC auxiliary loss (paper SARM eq8-9) ----
+    # When > 0, an auxiliary `-w_i * log_prob(a_demo|o_demo)` term is added to
+    # the actor loss. Demo (obs, actions) sourced from the offline replay buffer.
+    bc_loss_weight: float = 0.0
+    # When True, use RABC weights from precomputed SARM-progress parquet.
+    # When False but bc_loss_weight>0, BC is uniform-weighted.
+    bc_use_rabc: bool = False
+    bc_rabc_progress_path: str | None = None
+    bc_rabc_chunk_size: int = 50
+    bc_rabc_head_mode: str = "sparse"
+    bc_rabc_kappa: float = 0.01
+    # Linearly anneal bc_loss_weight to `bc_loss_weight_final` over `bc_anneal_steps`.
+    bc_loss_weight_final: float = 0.0
+    bc_anneal_steps: int = 0  # 0 = no annealing
+
+    # ---- Residual SAC (ResFiT-style) ----
+    # When True, freeze a base policy and have the SAC actor produce a small
+    # residual added to its output. See docs/port/2026-04-29-residual-hilserl-design.md.
+    residual_mode: bool = False
+    base_policy_path: str | None = None  # path to pretrained_model dir for ACT/Diffusion
+    base_policy_type: str = "act"  # "act" | "diffusion"
+    # Residual magnitude in normed action space. Either a scalar (applied to all
+    # dims) or a list of length action_dim (per-dim scale). Per-dim is critical
+    # for chunked bases with discrete-ish gripper: the gripper dim needs scale
+    # >= 1.0 to be able to flip the base policy's gripper command across the
+    # post-residual deadband, while xyz/yaw should stay small (~0.1) for
+    # stability.
+    residual_action_scale: float | list[float] = 0.1
+    freeze_base_policy: bool = True
+    # Optional: clip target Q to reward range to mitigate overestimation w/ dense reward.
+    clip_q_target_to_reward_range: bool = False
+    q_target_clip_min: float = 0.0
+    q_target_clip_max: float = 1.0
+
     def __post_init__(self):
         super().__post_init__()
         # Any validation specific to SAC configuration
@@ -225,6 +259,27 @@ class SACConfig(PreTrainedConfig):
 
         if ACTION not in self.output_features:
             raise ValueError("You must provide 'action' in the output features")
+
+        # Residual mode: register observation.base_action as a state-like input
+        # feature of size action_dim and provide identity (min=-1,max=1) stats so
+        # the input normalizer is a no-op on the (already normed) base action.
+        if self.residual_mode:
+            from lerobot.configs.types import FeatureType, PolicyFeature
+
+            action_shape = self.output_features[ACTION].shape
+            self.input_features.setdefault(
+                "observation.base_action",
+                PolicyFeature(type=FeatureType.STATE, shape=action_shape),
+            )
+            if self.dataset_stats is None:
+                self.dataset_stats = {}
+            self.dataset_stats.setdefault(
+                "observation.base_action",
+                {
+                    "min": [-1.0] * action_shape[0],
+                    "max": [1.0] * action_shape[0],
+                },
+            )
 
     @property
     def image_features(self) -> list[str]:

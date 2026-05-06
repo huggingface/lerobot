@@ -392,9 +392,13 @@ def make_pre_post_processors(
 
     else:
         try:
+            extra = {}
+            if kwargs.get("dataset_meta") is not None:
+                extra["dataset_meta"] = kwargs["dataset_meta"]
             processors = _make_processors_from_policy_config(
                 config=policy_cfg,
                 dataset_stats=kwargs.get("dataset_stats"),
+                **extra,
             )
         except Exception as e:
             raise ValueError(f"Processor for policy type '{policy_cfg.type}' is not implemented.") from e
@@ -565,6 +569,7 @@ def _get_policy_cls_from_policy_name(name: str) -> type[PreTrainedConfig]:
 def _make_processors_from_policy_config(
     config: PreTrainedConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    **extra_kwargs: Any,
 ) -> tuple[Any, Any]:
     """Create pre- and post-processors from a policy configuration using dynamic imports.
 
@@ -587,4 +592,4 @@ def _make_processors_from_policy_config(
     )
     module = importlib.import_module(module_path)
     function = getattr(module, function_name)
-    return function(config, dataset_stats=dataset_stats)
+    return function(config, dataset_stats=dataset_stats, **extra_kwargs)
