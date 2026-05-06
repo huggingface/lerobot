@@ -49,6 +49,7 @@ class BiOpenArmLeader(Teleoperator):
             can_data_bitrate=config.left_arm_config.can_data_bitrate,
             motor_config=config.left_arm_config.motor_config,
             manual_control=config.left_arm_config.manual_control,
+            use_velocity_and_torque=config.left_arm_config.use_velocity_and_torque,
             position_kd=config.left_arm_config.position_kd,
             position_kp=config.left_arm_config.position_kp,
         )
@@ -63,6 +64,7 @@ class BiOpenArmLeader(Teleoperator):
             can_data_bitrate=config.right_arm_config.can_data_bitrate,
             motor_config=config.right_arm_config.motor_config,
             manual_control=config.right_arm_config.manual_control,
+            use_velocity_and_torque=config.right_arm_config.use_velocity_and_torque,
             position_kd=config.right_arm_config.position_kd,
             position_kp=config.right_arm_config.position_kp,
         )
