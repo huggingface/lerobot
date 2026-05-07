@@ -204,7 +204,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.reader = None
         self.set_image_transforms(image_transforms)
         self.delta_timestamps = delta_timestamps
-        self.episodes = episodes
         self.tolerance_s = tolerance_s
         self.revision = revision if revision else CODEBASE_VERSION
         self._video_backend = video_backend if video_backend else get_safe_default_codec()
@@ -223,14 +222,16 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.root = self.meta.root
         self.revision = self.meta.revision
 
+        if episodes is not None and any(episode>=self.meta.total_episodes or episode<0 for episode in episodes):
+            logger.warning(f"Some episodes in the provided episodes list are out of range for this dataset ({self.meta.total_episodes}).")
+            
         if episode_filter is not None:
             resolved = self.meta.filter_episodes(episode_filter, candidates=episodes)
-            pool = len(episodes) if episodes is not None else self.meta.total_episodes
             if not resolved:
-                raise ValueError(f"episode_filter did not match any episode over {pool} episode(s).")
-            logger.info(f"episode_filter matched {len(resolved)} episode(s) over {pool} episode(s).")
+                raise ValueError(f"The episode filter did not match any episode. Make sure the filter and episodes list are valid and compatible.")
+            logger.info(f"The episode filter matched {len(resolved)} episode(s).")
             episodes = resolved
-            self.episodes = resolved
+        self.episodes = episodes
 
         # Create reader (hf_dataset loaded below)
         self.reader = DatasetReader(
