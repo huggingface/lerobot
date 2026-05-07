@@ -19,6 +19,10 @@ import logging
 import time
 from multiprocessing import Event, Queue
 
+from lerobot.utils.import_utils import require_package
+
+require_package("grpcio", extra="hilserl", import_name="grpc")
+
 from lerobot.transport import services_pb2, services_pb2_grpc
 from lerobot.transport.utils import receive_bytes_in_chunks, send_bytes_in_chunks
 

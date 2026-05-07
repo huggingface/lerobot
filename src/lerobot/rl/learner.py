@@ -53,6 +53,10 @@ from pathlib import Path
 from pprint import pformat
 from typing import Any
 
+from lerobot.utils.import_utils import require_package
+
+require_package("grpcio", extra="hilserl", import_name="grpc")
+
 import grpc
 import torch
 from termcolor import colored

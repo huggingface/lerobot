@@ -332,6 +332,9 @@ ignore = [
 "__init__.py" = ["F401", "F403", "E402"]
 # E402: conditional-import guards (TYPE_CHECKING / is_package_available) must precede the imports they protect
 "src/lerobot/scripts/convert_dataset_v21_to_v30.py" = ["E402"]
+"src/lerobot/rl/actor.py" = ["E402"]
+"src/lerobot/rl/learner.py" = ["E402"]
+"src/lerobot/rl/learner_service.py" = ["E402"]
 "src/lerobot/policies/wall_x/**" = ["N801", "N812", "SIM102", "SIM108", "SIM210", "SIM211", "B006", "B007", "SIM118"] # Supprese these as they are coming from original Qwen2_5_vl code TODO(pepijn): refactor original
 
 [tool.ruff.lint.isort]
