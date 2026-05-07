@@ -901,6 +901,7 @@ jobs:
                 --env.type=vlabench \
                 --env.task=select_fruit,select_toy,select_book,select_painting,select_drink,select_ingredient,select_billiards,select_poker,add_condiment,insert_flower \
                 --env.episode_length=50 \
+                --env.max_parallel_tasks=5 \
                 --eval.batch_size=1 \
                 --eval.n_episodes=1 \
                 --eval.use_async_envs=false \
