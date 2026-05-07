@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import contextlib
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -188,6 +189,28 @@ class LeRobotDatasetMetadata:
         """
         if self.episodes is None:
             self._load_metadata()
+
+    def filter_episodes(
+        self,
+        predicate: Callable[[dict], bool],
+        candidates: list[int] | None = None,
+    ) -> list[int]:
+        """Filter episodes whose metadata satisfies a given predicate.
+
+        Args:
+            predicate: Predicate over per-episode metadata rows used to select episodes.
+            candidates: Optional list of episode indices to restrict evaluation to.
+
+        Returns:
+            List of sorted episode indices that satisfy the predicate.
+        """
+        self.ensure_readable()
+        ep_table = self.episodes
+        if candidates is not None:
+            candidate_set = set(candidates)
+            ep_table = ep_table.filter(lambda ep: ep["episode_index"] in candidate_set)
+        filtered = ep_table.filter(predicate)
+        return sorted(int(idx) for idx in filtered["episode_index"])
 
     def _pull_from_repo(
         self,

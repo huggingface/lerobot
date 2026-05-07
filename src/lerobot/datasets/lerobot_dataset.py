@@ -49,6 +49,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         repo_id: str,
         root: str | Path | None = None,
         episodes: list[int] | None = None,
+        episode_filter: Callable[[dict], bool] | None = None,
         image_transforms: Callable | None = None,
         delta_timestamps: dict[str, list[float]] | None = None,
         tolerance_s: float = 1e-4,
@@ -153,6 +154,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 ``$HF_LEROBOT_HOME/hub``.
             episodes (list[int] | None, optional): If specified, this will only load episodes specified by
                 their episode_index in this list. Defaults to None.
+            episode_filter (Callable[[dict], bool] | None, optional): Predicate over per-episode
+                metadata rows used to select episodes; evaluated against ``meta/`` only, so
+                non-matches skip ``data/`` and ``videos/`` downloads. Intersected with ``episodes``
+                when both are set. Example: ``lambda ep: ep["length"] >= 100``. Defaults to None.
             image_transforms (Callable | None, optional):
                 Transform applied to visual modalities inside `__getitem__` after image decoding / tensor
                 conversion. This works for both image-backed and video-backed observations and can later be
@@ -217,6 +222,17 @@ class LeRobotDataset(torch.utils.data.Dataset):
         )
         self.root = self.meta.root
         self.revision = self.meta.revision
+
+        if episode_filter is not None:
+            resolved = self.meta.filter_episodes(episode_filter, candidates=episodes)
+            pool = len(episodes) if episodes is not None else self.meta.total_episodes
+            if not resolved:
+                raise ValueError(f"episode_filter did not match any episode over {pool} episode(s).")
+            logger.info(
+                f"episode_filter matched {len(resolved)} episode(s) over {pool} episode(s)."
+            )
+            episodes = resolved
+            self.episodes = resolved
 
         # Create reader (hf_dataset loaded below)
         self.reader = DatasetReader(
