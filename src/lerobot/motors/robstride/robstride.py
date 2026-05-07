@@ -48,6 +48,7 @@ from .tables import (
     NORMALIZED_DATA,
     PARAM_TIMEOUT,
     RUNNING_TIMEOUT,
+    HANDSHAKE_TIMEOUT_S,
     STATE_CACHE_TTL_S,
     ControlMode,
     MotorType,
@@ -215,14 +216,17 @@ class RobstrideMotorsBus(MotorsBusBase):
             self._is_connected = False
             raise ConnectionError(f"Failed to connect to CAN bus: {e}") from e
 
-    def _query_status_via_clear_fault(self, motor: NameOrID) -> tuple[bool, can.Message | None]:
+    def _query_status_via_clear_fault(
+        self, motor: NameOrID, timeout: float | None = None
+    ) -> tuple[bool, can.Message | None]:
         motor_name = self._get_motor_name(motor)
         motor_id = self._get_motor_id(motor_name)
         recv_id = self._get_motor_recv_id(motor_name)
         data = [0xFF] * 7 + [CAN_CMD_CLEAR_FAULT]
         msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
         self._bus().send(msg)
-        return self._recv_status_via_clear_fault(expected_recv_id=recv_id)
+        wait_s = RUNNING_TIMEOUT if timeout is None else float(timeout)
+        return self._recv_status_via_clear_fault(expected_recv_id=recv_id, timeout=wait_s)
 
     def _recv_status_via_clear_fault(
         self, expected_recv_id: int | None = None, timeout: float = RUNNING_TIMEOUT
@@ -280,7 +284,7 @@ class RobstrideMotorsBus(MotorsBusBase):
         faulted_motors = []
 
         for motor_name in self.motors:
-            has_fault, msg = self._query_status_via_clear_fault(motor_name)
+            has_fault, msg = self._query_status_via_clear_fault(motor_name, timeout=HANDSHAKE_TIMEOUT_S)
             if msg is None:
                 missing_motors.append(motor_name)
             elif has_fault:
