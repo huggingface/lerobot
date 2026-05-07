@@ -25,6 +25,12 @@
     title: Using Rename Map and Empty Cameras
   title: "Tutorials"
 - sections:
+  - local: hardware_guide
+    title: Compute Hardware Guide
+  - local: torch_accelerators
+    title: PyTorch accelerators
+  title: "Compute & Hardware"
+- sections:
   - local: lerobot-dataset-v3
     title: Using LeRobotDataset
   - local: porting_datasets_v3
@@ -143,10 +149,6 @@
     title: Cameras
   title: "Sensors"
 - sections:
-  - local: torch_accelerators
-    title: PyTorch accelerators
-  title: "Supported Hardware"
-- sections:
   - local: notebooks
     title: Notebooks
   - local: feetech
@@ -157,6 +159,8 @@
 - sections:
   - local: contributing
     title: Contribute to LeRobot
+  - local: contributing_a_policy
+    title: Contributing a Policy
   - local: backwardcomp
     title: Backward compatibility
   title: "About"
