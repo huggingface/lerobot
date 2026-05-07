@@ -370,13 +370,18 @@ def record_loop(
             break
 
         # Get robot observation
+        _t0 = time.perf_counter()
         obs = robot.get_observation()
+        _t_obs = time.perf_counter() - _t0
 
         # Applies a pipeline to the raw robot observation, default is IdentityProcessor
         obs_processed = robot_observation_processor(obs)
 
         if policy is not None or dataset is not None:
             observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
+
+        _t_policy = 0.0
+        _t_send = 0.0
 
         # Track whether this iteration should be recorded to the dataset.
         # Interpolated-only iterations send actions to the robot but don't record frames,
@@ -390,6 +395,9 @@ def record_loop(
                 ran_inference = False
 
                 if interpolator.needs_new_action():
+                    # HACK: training j7 was always 0; force obs to match training distribution
+                    if "observation.state" in observation_frame and len(observation_frame["observation.state"]) > 6:
+                        observation_frame["observation.state"][6] = 0.0
                     action_values = predict_action(
                         observation=observation_frame,
                         policy=policy,
@@ -416,6 +424,16 @@ def record_loop(
 
                 is_record_frame = ran_inference
             else:
+                _tp0 = time.perf_counter()
+                _q_before = len(policy._action_queue) if hasattr(policy, "_action_queue") else -1
+                # HACK: training j7 was always 0; force obs to match training distribution
+                if "observation.state" in observation_frame and len(observation_frame["observation.state"]) > 6:
+                    observation_frame["observation.state"][6] = 0.0
+                print(
+                    f"[obs.state] t={timestamp:6.2f}s "
+                    f"state={observation_frame['observation.state'].tolist()}",
+                    flush=True,
+                )
                 action_values = predict_action(
                     observation=observation_frame,
                     policy=policy,
@@ -426,10 +444,50 @@ def record_loop(
                     task=single_task,
                     robot_type=robot.robot_type,
                 )
+                _t_policy = time.perf_counter() - _tp0
+                _replanned = (_q_before == 0)
                 act_processed_policy: RobotAction = make_robot_action(action_values, dataset.features)
                 # Applies a pipeline to the action, default is IdentityProcessor
                 robot_action_to_send = robot_action_processor((act_processed_policy, obs))
                 action_values = robot_action_to_send
+
+                # DEBUG: log policy output vs current state
+                try:
+                    deltas = []
+                    for i in range(1, 8):
+                        k = f"joint{i}.pos"
+                        if k in action_values and k in obs:
+                            deltas.append(f"{action_values[k] - obs[k]:+.3f}")
+                    g_act = action_values.get("gripper.position")
+                    g_obs = obs.get("gripper.position")
+                    g_str = f"{g_act - g_obs:+.1f}" if (g_act is not None and g_obs is not None) else "-"
+                    j4_act = action_values.get("joint4.pos")
+                    j4_obs = obs.get("joint4.pos")
+                    # DEBUG: image content stats — covered camera should show mean << 30
+                    _img_stats = ""
+                    for _k, _v in obs.items():
+                        if "camera" in _k or "image" in _k:
+                            try:
+                                import numpy as _np
+                                _arr = _np.asarray(_v)
+                                _img_stats += (
+                                    f" {_k}(shape={_arr.shape},dtype={_arr.dtype},"
+                                    f"min={_arr.min()},max={_arr.max()},"
+                                    f"mean={float(_arr.mean()):.2f})"
+                                )
+                            except Exception as _ie:
+                                _img_stats += f" {_k}(stats-fail: {_ie})"
+                    print(
+                        f"[policy Δ] t={timestamp:6.2f}s "
+                        f"policy_ms={_t_policy*1000:6.1f} "
+                        f"replan={'Y' if _replanned else '.'} "
+                        f"q_before={_q_before:3d} "
+                        f"joints={deltas} gripper={g_str} "
+                        f"abs_j4={j4_act} obs_j4={j4_obs}{_img_stats}",
+                        flush=True,
+                    )
+                except Exception:
+                    pass
 
         elif policy is None and isinstance(teleop, Teleoperator):
             act = teleop.get_action()
@@ -464,7 +522,23 @@ def record_loop(
         # Action can eventually be clipped using `max_relative_target`,
         # so action actually sent is saved in the dataset. action = postprocessor.process(action)
         # TODO(steven, pepijn, adil): we should use a pipeline step to clip the action, so the sent action is the action that we input to the robot.
+        _ts0 = time.perf_counter()
         _sent_action = robot.send_action(robot_action_to_send)
+        _t_send = time.perf_counter() - _ts0
+
+        # DEBUG: closed-loop check — read observation AFTER send_action and compare
+        # against the target we just sent. Large residual ⇒ command not executed.
+        if policy is not None:
+            try:
+                _post_obs = robot.get_observation()
+                _post_deltas = []
+                for i in range(1, 8):
+                    k = f"joint{i}.pos"
+                    if k in robot_action_to_send and k in _post_obs:
+                        _post_deltas.append(f"{_post_obs[k] - robot_action_to_send[k]:+.4f}")
+                print(f"[post-send Δ] (post_obs - target) joints={_post_deltas}", flush=True)
+            except Exception as _e:
+                print(f"[post-send Δ] read-back failed: {_e}", flush=True)
 
         # Write to dataset (only on real policy frames, not interpolated-only iterations)
         if dataset is not None and is_record_frame:
@@ -478,6 +552,17 @@ def record_loop(
             )
 
         dt_s = time.perf_counter() - start_loop_t
+
+        # Timing breakdown for debugging low framerate
+        try:
+            import logging as _lg
+            _lg.getLogger("onero_arm").info(
+                f"[timing] loop={dt_s*1000:.1f}ms obs={_t_obs*1000:.1f}ms "
+                f"policy={_t_policy*1000:.1f}ms send={_t_send*1000:.1f}ms "
+                f"other={(dt_s - _t_obs - _t_policy - _t_send)*1000:.1f}ms"
+            )
+        except Exception:
+            pass
 
         sleep_time_s: float = control_interval - dt_s
         if sleep_time_s < 0:

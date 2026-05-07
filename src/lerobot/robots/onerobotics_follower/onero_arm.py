@@ -61,6 +61,12 @@ class OneroAdapter:
         self._arm = None
         self._prev_observation = None
         self._gripper = None
+        self._last_target_pos: list[float] | None = None
+        self._last_send_time: float | None = None
+        # Fallback cache for gripper status when the shared CAN bus returns a
+        # malformed frame (C++ side raises ValueError: stoi). Initialized to
+        # (open, no-force) which matches the training distribution.
+        self._last_gripper_obs: tuple[float, float] = (100.0, 0.0)
 
         # Internal state for observation calculation
         self.dof = 7  # As per documentation
@@ -119,7 +125,30 @@ class OneroAdapter:
                 if not self._gripper.initialize(self.config.port, self.config.slcan_type):
                     logger.warning("Failed to initialize gripper, continuing without it.")
                 else:
-                    logger.info(f"{self} gripper initialized successfully.")
+                    # Match Teleop2 init sequence: clear buffer -> enable motors.
+                    # Without enable_motors(), set_position() silently does nothing.
+                    try:
+                        if hasattr(self._gripper, "clear_buffer_before_enable"):
+                            self._gripper.clear_buffer_before_enable()
+                            time.sleep(0.2)
+                        self._gripper.enable_motors()
+                        time.sleep(0.3)
+                        # Seed the training-time initial gripper target (100 = closed in
+                        # this setup) immediately after enable, otherwise the firmware
+                        # holds whatever default it lands on and can drift during the
+                        # arm's runtohome motion.
+                        try:
+                            self._gripper.set_position(100)
+                            time.sleep(0.3)
+                            logger.info(
+                                f"{self} gripper seeded target=100 after enable; "
+                                f"status={self._gripper.get_gripper_status().position:.1f}"
+                            )
+                        except Exception:
+                            logger.exception("Failed to seed gripper target after enable")
+                        logger.info(f"{self} gripper initialized and motors enabled.")
+                    except Exception:
+                        logger.exception("Failed to enable gripper motors")
 
             # Connect cameras
             if not self.config.is_teleop_leader:
@@ -221,7 +250,28 @@ class OneroAdapter:
 
     def _execute_joint_control(self, action: dict, params: dict):
         target_joints = [float(action[f"joint{i}.pos"]) for i in range(1, self.dof + 1)]
-        self._arm.movej(target_joints, speed_scale=0.8, trajectory_connect=0)
+        target_vel = [0.0 for _ in range(self.dof)]
+
+        _tgt_str = "[" + ", ".join(f"{v:+.4f}" for v in target_joints) + "]"
+        _mj_t0 = time.perf_counter()
+        self._arm.send_trajectory_point(target_joints, target_vel)
+        self._arm.execute_buffered_trajectory()
+        _mj_dt = (time.perf_counter() - _mj_t0) * 1000.0
+
+        try:
+            reached = self._arm.get_joint_positions_from_motors()
+            _reached_str = "[" + ", ".join(f"{v:+.4f}" for v in reached) + "]"
+            _resid_str = "[" + ", ".join(f"{reached[i] - target_joints[i]:+.4f}" for i in range(self.dof)) + "]"
+        except Exception as e:
+            _reached_str = f"<read-back failed: {e}>"
+            _resid_str = "-"
+        logger.info(
+            f"[send->traj_pt] target={_tgt_str} send_dt={_mj_dt:.1f}ms "
+            f"reached={_reached_str} resid(reached-target)={_resid_str}"
+        )
+
+        if self.config.enable_gripper and "gripper.position" in action:
+            self._execute_gripper_control(action, params)
 
     def _execute_pose_control(self, action: dict, params: dict):
         target_pose = self._parse_pose(action["pose"])
@@ -238,7 +288,10 @@ class OneroAdapter:
             return
 
         position = int(action["gripper.position"])
-        self._gripper.set_position(position)
+        try:
+            self._gripper.set_position(position)
+        except (ValueError, RuntimeError) as e:
+            logger.warning(f"gripper set_position({position}) failed ({e}); skipping this frame")
 
     # --- Utility Functions: Complex Data Conversion ---
 
@@ -284,8 +337,10 @@ class OneroAdapter:
 
         obs_dict = {}
 
+        _arm_t0 = time.perf_counter()
         current_joints = self._arm.get_joint_positions_from_motors()
-        current_joints_vel = self._arm.get_joint_velocities()
+        current_joints_vel = self._arm.get_joint_velocities() if self.config.use_velocity else None
+        _arm_dt = time.perf_counter() - _arm_t0
 
         for i in range(self.dof):
             # API uses 0-based index likely, joint names usually 1-based
@@ -294,18 +349,45 @@ class OneroAdapter:
                 obs_dict[f"joint{i + 1}.vel"] = current_joints_vel[i]
 
         if self.config.enable_gripper:
-            gripper_status = self._gripper.get_gripper_status()
-            obs_dict["gripper.position"] = gripper_status.position
-            obs_dict["gripper.force"] = gripper_status.force
+            try:
+                gripper_status = self._gripper.get_gripper_status()
+                self._last_gripper_obs = (
+                    float(gripper_status.position),
+                    float(gripper_status.force),
+                )
+            except (ValueError, RuntimeError) as e:
+                logger.warning(f"gripper status read failed ({e}); using last cached value")
+            pos, force = self._last_gripper_obs
+            obs_dict["gripper.position"] = pos
+            obs_dict["gripper.force"] = force
 
-        # Capture images from cameras
+        # Capture images from cameras.
+        # Instead of cam.async_read() which waits for a brand-new frame (bounded
+        # by camera hw fps), we directly copy the latest cached frame that the
+        # camera's background thread has already captured. This matches the
+        # "take most recent" semantics used during recording and prevents the
+        # control loop from being paced by camera fps.
+        _cam_times = {}
         if not self.config.is_teleop_leader:
             for cam_key, cam in self.cameras.items():
                 start = time.perf_counter()
-                obs_dict[cam_key] = cam.async_read()
+                if cam.latest_frame is None:
+                    # First frame not captured yet: block briefly to get one.
+                    obs_dict[cam_key] = cam.async_read()
+                else:
+                    with cam.frame_lock:
+                        obs_dict[cam_key] = cam.latest_frame.copy()
                 dt_ms = (time.perf_counter() - start) * 1e3
+                _cam_times[cam_key] = dt_ms
                 logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
         self._prev_observation = obs_dict
+
+        _joints_str = "[" + ", ".join(f"{v:+.4f}" for v in current_joints) + "]"
+        logger.info(
+            f"[obs-timing] arm={_arm_dt*1000:.1f}ms "
+            + " ".join(f"{k}={v:.1f}ms" for k, v in _cam_times.items())
+            + f" joints={_joints_str}"
+        )
 
         return obs_dict
 
@@ -315,6 +397,8 @@ class OneroAdapter:
         Internal property defining the feature types for motors.
         """
         motors = {f"joint{i}.pos": float for i in range(1, self.dof + 1)}
+        if self.config.enable_gripper:
+            motors["gripper.position"] = float
         return motors
 
     @property
@@ -432,15 +516,22 @@ class OneroTeleopFollower(OneroAdapter):
                 action = self.mirror_action(action)
             r = range(1, self.dof + 1)
             target_pos = [float(action[f"joint{i}.pos"]) for i in r]
-
-            # target_vel = [float(action[f"joint{i}.vel"]) for i in r]
             target_vel = [0.0 for _ in r]
 
+            # Push the setpoint, then immediately flush the trajectory buffer.
+            # Teleop2's 100Hz loop appears to rely on an external MIT control
+            # thread (the leader's ArmGravityCompensation loop) to consume
+            # buffered points; in eval we have no such loop, so we trigger
+            # execution ourselves after each send.
             self._arm.send_trajectory_point(target_pos, target_vel)
+            self._arm.execute_buffered_trajectory()
 
             gripper_pos = action.get("gripper.position")
             if self.config.enable_gripper and gripper_pos is not None:
-                self._gripper.set_position(gripper_pos)
+                try:
+                    self._gripper.set_position(gripper_pos)
+                except (ValueError, RuntimeError) as e:
+                    logger.warning(f"gripper set_position({gripper_pos}) failed ({e}); skipping")
 
         except KeyError:
             # Fall back to standard handler if not all joints are specified
@@ -496,4 +587,45 @@ class OneroTeleopFollower(OneroAdapter):
             self._arm.movej(home_joints, speed_scale=0.8, trajectory_connect=0)
         except Exception:
             logger.exception("Failed to move to home joints position")
-        self._initialized = True
+
+        # 3. optionally traverse a ready-pose waypoint sequence
+        self.move_through_waypoints(getattr(self.config, "ready_waypoints", None))
+
+        # 4. reset gripper to the training-distribution initial target (100 = closed here)
+        if self.config.enable_gripper and self._gripper is not None:
+            try:
+                self._gripper.set_position(100)
+                time.sleep(1.0)
+                try:
+                    pos = self._gripper.get_gripper_status().position
+                    logger.info(f"{self} gripper reset target=100 readback={pos:.1f}")
+                except Exception:
+                    pass
+            except Exception:
+                logger.exception("Failed to reset gripper target during runtohome")
+        return
+
+    def move_through_waypoints(
+        self,
+        waypoints: list[list[float]] | None,
+        speed_scale: float = 0.6,
+        dwell: float = 1.0,
+    ) -> None:
+        """
+        Sequentially move the follower arm through a list of joint waypoints.
+
+        Mirrors the ready-pose motion used during Teleop2 recording so inference
+        can drive the arm into a consistent starting pose before rollouts.
+        """
+        if not waypoints:
+            return
+
+        logger.info(f"moving through {len(waypoints)} ready waypoint(s)")
+        for idx, wp in enumerate(waypoints):
+            target = [float(x) for x in wp]
+            try:
+                self._arm.movej(target, speed_scale=speed_scale, trajectory_connect=0)
+            except Exception:
+                logger.exception(f"Failed to move to waypoint {idx}: {target}")
+                return
+            time.sleep(dwell)

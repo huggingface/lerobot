@@ -52,6 +52,10 @@ class OneroRobotConfig(RobotConfig):
 
     enable_gripper: bool = True  # Whether to enable gripper control
 
+    # Optional sequence of joint waypoints to traverse after reaching home,
+    # used to drive the arm into a task-ready pose before recording/inference.
+    ready_waypoints: list[list[float]] | None = None
+
     # Optional low-level MIT gains passed to oneroarm_api_py (length should match dof)
     mit_kp: list[float] | None = None
     mit_kd: list[float] | None = None
