@@ -228,9 +228,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             pool = len(episodes) if episodes is not None else self.meta.total_episodes
             if not resolved:
                 raise ValueError(f"episode_filter did not match any episode over {pool} episode(s).")
-            logger.info(
-                f"episode_filter matched {len(resolved)} episode(s) over {pool} episode(s)."
-            )
+            logger.info(f"episode_filter matched {len(resolved)} episode(s) over {pool} episode(s).")
             episodes = resolved
             self.episodes = resolved
 
