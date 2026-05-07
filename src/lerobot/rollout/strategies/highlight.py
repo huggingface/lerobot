@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import contextlib
+import enum
 import logging
 import os
 import sys
@@ -36,6 +37,7 @@ from ..configs import HighlightStrategyConfig
 from ..context import RolloutContext
 from ..ring_buffer import RolloutRingBuffer
 from .core import RolloutStrategy, safe_push_to_hub, send_next_action
+from .display import HighlightDisplay
 
 PYNPUT_AVAILABLE = _pynput_available
 keyboard = None
@@ -51,6 +53,13 @@ if PYNPUT_AVAILABLE:
         logging.info(f"Could not import pynput: {e}")
 
 logger = logging.getLogger(__name__)
+
+
+class HighlightPhase(enum.Enum):
+    """Observable phases of a Highlight session."""
+
+    BUFFERING = "buffering"  # Ring buffer accumulating frames, not recording
+    RECORDING = "recording"  # Live recording active
 
 
 class HighlightStrategy(RolloutStrategy):
@@ -105,6 +114,13 @@ class HighlightStrategy(RolloutStrategy):
             self.config.save_key,
             self.config.push_key,
         )
+        self._display = HighlightDisplay(
+            ring_buffer_seconds=self.config.ring_buffer_seconds,
+            save_key=self.config.save_key,
+            push_key=self.config.push_key,
+        )
+        self._display.show_banner()
+        self._display.show_state(HighlightPhase.BUFFERING)
 
     def run(self, ctx: RolloutContext) -> None:
         """Run the autonomous loop, buffering frames and recording on demand."""
@@ -162,6 +178,7 @@ class HighlightStrategy(RolloutStrategy):
                                 for buffered_frame in ring.drain():
                                     dataset.add_frame(buffered_frame)
                                 self._recording_live.set()
+                                self._display.show_state(HighlightPhase.RECORDING)
                             else:
                                 dataset.add_frame(frame)
                                 with self._episode_lock:
@@ -172,6 +189,7 @@ class HighlightStrategy(RolloutStrategy):
                                     play_sounds,
                                 )
                                 self._recording_live.clear()
+                                self._display.show_state(HighlightPhase.BUFFERING)
                                 continue  # frame already consumed — skip ring.append
 
                         if self._push_requested.is_set():
@@ -188,9 +206,7 @@ class HighlightStrategy(RolloutStrategy):
                     if (sleep_t := control_interval - dt) > 0:
                         precise_sleep(sleep_t)
                     else:
-                        logger.warning(
-                            f"Record loop is running slower ({1 / dt:.1f} Hz) than the target FPS ({cfg.fps} Hz). Dataset frames might be dropped and robot control might be unstable. Common causes are: 1) Camera FPS not keeping up 2) Policy inference taking too long 3) CPU starvation"
-                        )
+                        self._warn_slow_loop(dt, control_interval, cfg.fps)
 
             finally:
                 logger.info("Highlight control loop ended")
@@ -255,7 +271,7 @@ class HighlightStrategy(RolloutStrategy):
 
             self._listener = keyboard.Listener(on_press=on_press)
             self._listener.start()
-            logger.info("Keyboard listener started (save='%s', push='%s', ESC=stop)", save_key, push_key)
+            logger.debug("Keyboard listener started (save='%s', push='%s', ESC=stop)", save_key, push_key)
         except ImportError:
             logger.warning("pynput not available — keyboard listener disabled")
 

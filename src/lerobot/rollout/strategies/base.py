@@ -23,6 +23,7 @@ from lerobot.utils.robot_utils import precise_sleep
 
 from ..context import RolloutContext
 from .core import RolloutStrategy, send_next_action
+from .display import BaseDisplay
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,8 @@ class BaseStrategy(RolloutStrategy):
         """Initialise the inference engine."""
         self._init_engine(ctx)
         logger.info("Base strategy ready")
+        self._display = BaseDisplay(duration=ctx.runtime.cfg.duration)
+        self._display.show_banner()
 
     def run(self, ctx: RolloutContext) -> None:
         """Run the autonomous control loop until shutdown or duration expires."""
@@ -72,9 +75,7 @@ class BaseStrategy(RolloutStrategy):
             if (sleep_t := control_interval - dt) > 0:
                 precise_sleep(sleep_t)
             else:
-                logger.warning(
-                    f"Record loop is running slower ({1 / dt:.1f} Hz) than the target FPS ({cfg.fps} Hz). Dataset frames might be dropped and robot control might be unstable. Common causes are: 1) Camera FPS not keeping up 2) Policy inference taking too long 3) CPU starvation"
-                )
+                self._warn_slow_loop(dt, control_interval, cfg.fps)
 
     def teardown(self, ctx: RolloutContext) -> None:
         """Disconnect hardware and stop inference."""
