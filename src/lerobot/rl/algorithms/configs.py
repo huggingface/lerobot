@@ -16,13 +16,9 @@ from __future__ import annotations
 
 import abc
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import draccus
-import torch
-
-if TYPE_CHECKING:
-    from .base import RLAlgorithm
 
 
 @dataclass
@@ -57,14 +53,6 @@ class RLAlgorithmConfig(draccus.ChoiceRegistry, abc.ABC):
         if not isinstance(choice_name, str):
             raise TypeError(f"Expected string from get_choice_name, got {type(choice_name)}")
         return choice_name
-
-    @abc.abstractmethod
-    def build_algorithm(self, policy: torch.nn.Module) -> RLAlgorithm:
-        """Construct the :class:`RLAlgorithm` for this config.
-
-        Must be overridden by every registered config subclass.
-        """
-        raise NotImplementedError(f"{type(self).__name__} must implement build_algorithm()")
 
     @classmethod
     @abc.abstractmethod

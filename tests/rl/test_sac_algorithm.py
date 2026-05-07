@@ -501,25 +501,17 @@ def test_training_stats_generic_losses():
 
 
 # ===========================================================================
-# Registry-driven build_algorithm
+# Registry-driven make_algorithm
 # ===========================================================================
 
 
-def test_build_algorithm_via_config():
-    """SACAlgorithmConfig.build_algorithm should produce a working SACAlgorithm."""
+def test_make_algorithm_builds_sac():
+    """make_algorithm should look up the SAC class from the registry and instantiate it."""
     sac_cfg = _make_sac_config()
     algo_config = SACAlgorithmConfig.from_policy_config(sac_cfg)
     algo_config.utd_ratio = 2
     policy = GaussianActorPolicy(config=sac_cfg)
 
-    algorithm = algo_config.build_algorithm(policy)
+    algorithm = make_algorithm(cfg=algo_config, policy=policy)
     assert isinstance(algorithm, SACAlgorithm)
     assert algorithm.config.utd_ratio == 2
-
-
-def test_make_algorithm_uses_build_algorithm():
-    """make_algorithm should delegate to config.build_algorithm (no hardcoded if/else)."""
-    sac_cfg = _make_sac_config()
-    policy = GaussianActorPolicy(config=sac_cfg)
-    algorithm = make_algorithm(cfg=SACAlgorithmConfig.from_policy_config(sac_cfg), policy=policy)
-    assert isinstance(algorithm, SACAlgorithm)

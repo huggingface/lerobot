@@ -43,5 +43,57 @@ def make_algorithm_config(algorithm_type: str, **kwargs) -> RLAlgorithmConfig:
     return cls(**kwargs)
 
 
+def get_algorithm_class(name: str) -> type[RLAlgorithm]:
+    """
+    Retrieves an RL algorithm class by its registered name.
+
+    This function uses dynamic imports to avoid loading all algorithm classes into
+    memory at once, improving startup time and reducing dependencies.
+
+    Args:
+        name: The name of the algorithm. Supported names are "sac".
+
+    Returns:
+        The algorithm class corresponding to the given name.
+
+    Raises:
+        ValueError: If the algorithm name is not recognized.
+    """
+    if name == "sac":
+        from .sac.sac_algorithm import SACAlgorithm
+
+        return SACAlgorithm
+    raise ValueError(
+        f"Algorithm type '{name}' is not available. "
+        f"Known: {list(RLAlgorithmConfig.get_known_choices().keys())}"
+    )
+
+
 def make_algorithm(cfg: RLAlgorithmConfig, policy: torch.nn.Module) -> RLAlgorithm:
-    return cfg.build_algorithm(policy)
+    """
+    Instantiate an RL algorithm.
+
+    This factory function looks up the :class:`RLAlgorithm` subclass that matches
+    ``cfg.type`` and instantiates it with the provided policy. It also enforces
+    that ``cfg.policy_config`` has been populated before construction (this is
+    normally handled by :meth:`TrainRLServerPipelineConfig.validate`).
+
+    Args:
+        cfg: The algorithm configuration. Must have ``policy_config`` set.
+        policy: The policy module the algorithm will train.
+
+    Returns:
+        An instantiated :class:`RLAlgorithm`.
+
+    Raises:
+        ValueError: If ``cfg.policy_config`` is ``None`` or ``cfg.type`` is not
+            registered.
+    """
+    if getattr(cfg, "policy_config", None) is None:
+        raise ValueError(
+            f"{type(cfg).__name__}.policy_config is None. "
+            "It must be populated (typically by TrainRLServerPipelineConfig.validate) "
+            "before calling make_algorithm()."
+        )
+    cls = get_algorithm_class(cfg.type)
+    return cls(policy=policy, config=cfg)

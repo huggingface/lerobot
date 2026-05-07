@@ -15,9 +15,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
-
-import torch
 
 from lerobot.policies.gaussian_actor.configuration_gaussian_actor import (
     CriticNetworkConfig,
@@ -25,9 +22,6 @@ from lerobot.policies.gaussian_actor.configuration_gaussian_actor import (
 )
 
 from ..configs import RLAlgorithmConfig
-
-if TYPE_CHECKING:
-    from .sac_algorithm import SACAlgorithm
 
 
 @RLAlgorithmConfig.register_subclass("sac")
@@ -102,15 +96,3 @@ class SACAlgorithmConfig(RLAlgorithmConfig):
             policy_config=policy_cfg,
             discrete_critic_network_kwargs=policy_cfg.discrete_critic_network_kwargs,
         )
-
-    def build_algorithm(self, policy: torch.nn.Module) -> SACAlgorithm:
-        if self.policy_config is None:
-            raise ValueError(
-                "SACAlgorithmConfig.policy_config is None. "
-                "It must be populated (typically by TrainRLServerPipelineConfig.validate) "
-                "before calling build_algorithm()."
-            )
-
-        from .sac_algorithm import SACAlgorithm
-
-        return SACAlgorithm(policy=policy, config=self)
