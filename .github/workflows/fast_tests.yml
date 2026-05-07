@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# This workflow handles fast testing.
+# This workflow validates each optional-dependency tier in isolation.
+# Each tier installs a different extra and runs the full test suite.
+# Tests that require an extra not installed in the current tier are
+# skipped automatically via pytest.importorskip guards.
 name: Fast Tests
 
 on:
@@ -27,6 +30,7 @@ on:
       - "tests/**"
       - ".github/workflows/**"
       - "pyproject.toml"
+      - "uv.lock"
       - "Makefile"
   push:
     branches:
@@ -36,6 +40,7 @@ on:
       - "tests/**"
       - ".github/workflows/**"
       - "pyproject.toml"
+      - "uv.lock"
       - "Makefile"
 
 permissions:
@@ -52,8 +57,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # This job runs pytests with the default dependencies.
-  # It runs everytime we commit to a PR or push to main
+  # This job runs pytests in isolated dependency tiers.
+  # Each tier installs a different extra and runs the full suite;
+  # tests gated behind other extras skip automatically.
   fast-pytest-tests:
     name: Fast Pytest Tests
     runs-on: ubuntu-latest
@@ -63,7 +69,7 @@ jobs:
       HF_LEROBOT_HOME: /mnt/cache/.cache/huggingface/lerobot
       HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           persist-credentials: false
           lfs: true
@@ -81,14 +87,15 @@ jobs:
           libusb-1.0-0-dev speech-dispatcher libgeos-dev portaudio19-dev
 
       - name: Setup uv and Python
-        uses: astral-sh/setup-uv@v6 # zizmor: ignore[unpinned-uses]
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
         with:
           enable-cache: true
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install lerobot with test extras
-        run: uv sync --extra "test"
+      # ── Tier 1: Base ──────────────────────────────────────
+      - name: "Tier 1 — Install: base"
+        run: uv sync --locked --extra test
 
       - name: Login to Hugging Face
         if: env.HF_USER_TOKEN != ''
@@ -96,5 +103,26 @@ jobs:
           uv run hf auth login --token "$HF_USER_TOKEN" --add-to-git-credential
           uv run hf auth whoami
 
-      - name: Run pytest
+      - name: "Tier 1 — Test: base"
+        run: uv run pytest tests -vv --maxfail=10
+
+      # ── Tier 2: Dataset ──────────────────────────────────
+      - name: "Tier 2 — Install: dataset"
+        run: uv sync --locked --extra test --extra dataset
+
+      - name: "Tier 2 — Test: dataset"
+        run: uv run pytest tests -vv --maxfail=10
+
+      # ── Tier 3: Hardware ─────────────────────────────────
+      - name: "Tier 3 — Install: hardware"
+        run: uv sync --locked --extra test --extra hardware
+
+      - name: "Tier 3 — Test: hardware"
+        run: uv run pytest tests -vv --maxfail=10
+
+      # ── Tier 4: Viz ──────────────────────────────────────
+      - name: "Tier 4 — Install: viz"
+        run: uv sync --locked --extra test --extra viz
+
+      - name: "Tier 4 — Test: viz"
         run: uv run pytest tests -vv --maxfail=10

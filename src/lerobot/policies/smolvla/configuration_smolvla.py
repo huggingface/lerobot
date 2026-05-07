@@ -14,14 +14,11 @@
 
 from dataclasses import dataclass, field
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.optim.optimizers import AdamWConfig
-from lerobot.optim.schedulers import (
-    CosineDecayWithWarmupSchedulerConfig,
-)
-from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import OBS_IMAGES
+
+from ..rtc.configuration_rtc import RTCConfig
 
 
 @PreTrainedConfig.register_subclass("smolvla")
@@ -55,7 +52,7 @@ class SmolVLAConfig(PreTrainedConfig):
     # the space used by the pi internal runtime which was used to train the base model.
     adapt_to_pi_aloha: bool = False
 
-    # Converts joint dimensions to deltas with respect to the current state before passing to the model.
+    # Converts joint dimensions to relative values with respect to the current state before passing to the model.
     # Gripper dimensions will remain in absolute values.
     use_delta_joint_actions_aloha: bool = False
 

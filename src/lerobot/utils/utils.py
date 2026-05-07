@@ -22,11 +22,12 @@ import select
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
 from copy import copy, deepcopy
 from datetime import datetime
 from pathlib import Path
 from statistics import mean
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -94,6 +95,8 @@ def init_logging(
         file_handler.setFormatter(formatter)
         file_handler.setLevel(file_level.upper())
         logger.addHandler(file_handler)
+
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 def format_big_number(num, precision=0):
@@ -197,6 +200,80 @@ def get_elapsed_time_in_days_hours_minutes_seconds(elapsed_time_s: float):
     return days, hours, minutes, seconds
 
 
+def flatten_dict(d: dict, parent_key: str = "", sep: str = "/") -> dict:
+    """Flatten a nested dictionary by joining keys with a separator.
+
+    Example:
+        >>> dct = {"a": {"b": 1, "c": {"d": 2}}, "e": 3}
+        >>> print(flatten_dict(dct))
+        {'a/b': 1, 'a/c/d': 2, 'e': 3}
+
+    Args:
+        d (dict): The dictionary to flatten.
+        parent_key (str): The base key to prepend to the keys in this level.
+        sep (str): The separator to use between keys.
+
+    Returns:
+        dict: A flattened dictionary.
+    """
+    items = []
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
+
+
+def unflatten_dict(d: dict, sep: str = "/") -> dict:
+    """Unflatten a dictionary with delimited keys into a nested dictionary.
+
+    Example:
+        >>> flat_dct = {"a/b": 1, "a/c/d": 2, "e": 3}
+        >>> print(unflatten_dict(flat_dct))
+        {'a': {'b': 1, 'c': {'d': 2}}, 'e': 3}
+
+    Args:
+        d (dict): A dictionary with flattened keys.
+        sep (str): The separator used in the keys.
+
+    Returns:
+        dict: A nested dictionary.
+    """
+    outdict = {}
+    for key, value in d.items():
+        parts = key.split(sep)
+        d_inner = outdict
+        for part in parts[:-1]:
+            if part not in d_inner:
+                d_inner[part] = {}
+            d_inner = d_inner[part]
+        d_inner[parts[-1]] = value
+    return outdict
+
+
+def cycle(iterable: Any) -> Iterator[Any]:
+    """Create a dataloader-safe cyclical iterator.
+
+    This is an equivalent of `itertools.cycle` but is safe for use with
+    PyTorch DataLoaders with multiple workers.
+    See https://github.com/pytorch/pytorch/issues/23900 for details.
+
+    Args:
+        iterable: The iterable to cycle over.
+
+    Yields:
+        Items from the iterable, restarting from the beginning when exhausted.
+    """
+    iterator = iter(iterable)
+    while True:
+        try:
+            yield next(iterator)
+        except StopIteration:
+            iterator = iter(iterable)
+
+
 class SuppressProgressBars:
     """
     Context manager to suppress progress bars.
@@ -210,14 +287,22 @@ class SuppressProgressBars:
     """
 
     def __enter__(self):
-        from datasets.utils.logging import disable_progress_bar
+        try:
+            from datasets.utils.logging import disable_progress_bar
 
-        disable_progress_bar()
+            disable_progress_bar()
+        except ImportError:
+            logging.getLogger(__name__).debug(
+                "SuppressProgressBars is a no-op because 'datasets' is not installed."
+            )
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        from datasets.utils.logging import enable_progress_bar
+        try:
+            from datasets.utils.logging import enable_progress_bar
 
-        enable_progress_bar()
+            enable_progress_bar()
+        except ImportError:
+            pass
 
 
 class TimerManager:

@@ -17,8 +17,10 @@
 """
 Edit LeRobot datasets using various transformation tools.
 
+Requires: pip install 'lerobot[dataset]'
+
 This script allows you to delete episodes, split datasets, merge datasets,
-remove features, modify tasks, and convert image datasets to video format.
+remove features, modify tasks, recompute stats, and convert image datasets to video format.
 When new_repo_id is specified, creates a new dataset.
 
 Path semantics (v2): --root and --new_root are exact dataset folders containing
@@ -148,6 +150,34 @@ Show dataset information without feature details:
         --operation.type info \
         --operation.show_features false
 
+Recompute dataset statistics (saves to lerobot/pusht_recomputed_stats by default):
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht \
+        --operation.type recompute_stats
+
+Recompute stats and save to a specific new repo_id:
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht \
+        --new_repo_id lerobot/pusht_new_stats \
+        --operation.type recompute_stats
+
+Recompute stats in-place (overwrites original dataset stats):
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht \
+        --new_repo_id lerobot/pusht \
+        --operation.type recompute_stats \
+        --operation.overwrite true
+
+Recompute stats for relative actions and push to hub:
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht \
+        --operation.type recompute_stats \
+        --operation.relative_action true \
+        --operation.chunk_size 50 \
+        --operation.relative_exclude_joints "['gripper']" \
+        --operation.num_workers 4 \
+        --push_to_hub true
+
 Using JSON config file:
     lerobot-edit-dataset \
         --config_path path/to/edit_config.json
@@ -163,15 +193,16 @@ from pathlib import Path
 import draccus
 
 from lerobot.configs import parser
-from lerobot.datasets.dataset_tools import (
+from lerobot.datasets import (
+    LeRobotDataset,
     convert_image_to_video_dataset,
     delete_episodes,
     merge_datasets,
     modify_tasks,
+    recompute_stats,
     remove_feature,
     split_dataset,
 )
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.utils import init_logging
 
@@ -230,6 +261,17 @@ class ConvertImageToVideoConfig(OperationConfig):
     max_frames_per_batch: int | None = None
 
 
+@OperationConfig.register_subclass("recompute_stats")
+@dataclass
+class RecomputeStatsConfig(OperationConfig):
+    skip_image_video: bool = True
+    relative_action: bool = False
+    relative_exclude_joints: list[str] | None = None
+    chunk_size: int = 50
+    num_workers: int = 0
+    overwrite: bool = False
+
+
 @OperationConfig.register_subclass("info")
 @dataclass
 class InfoConfig(OperationConfig):
@@ -252,16 +294,30 @@ class EditDatasetConfig:
     push_to_hub: bool = False
 
 
+def _resolve_io_paths(
+    repo_id: str,
+    new_repo_id: str | None,
+    root: Path | str | None,
+    new_root: Path | str | None,
+    default_new_repo_id: str | None = None,
+) -> tuple[str, Path, Path]:
+    """Resolve input/output paths and repo_id for dataset operations.
+
+    Returns (output_repo_id, input_path, output_path) with resolved (symlink-safe) paths.
+    """
+    input_path = (Path(root) if root else HF_LEROBOT_HOME / repo_id).resolve()
+    output_repo_id = new_repo_id or default_new_repo_id or repo_id
+    output_path = (Path(new_root) if new_root else HF_LEROBOT_HOME / output_repo_id).resolve()
+    return output_repo_id, input_path, output_path
+
+
 def get_output_path(
     repo_id: str,
     new_repo_id: str | None,
     root: Path | str | None,
     new_root: Path | str | None,
 ) -> tuple[str, Path]:
-    input_path = Path(root) if root else HF_LEROBOT_HOME / repo_id
-
-    output_repo_id = new_repo_id if new_repo_id else repo_id
-    output_path = Path(new_root) if new_root else HF_LEROBOT_HOME / output_repo_id
+    output_repo_id, input_path, output_path = _resolve_io_paths(repo_id, new_repo_id, root, new_root)
 
     # In case of in-place modification, create a backup of the original dataset (if it exists)
     if output_path == input_path:
@@ -525,6 +581,67 @@ def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
         logging.info("Dataset saved locally (not pushed to hub)")
 
 
+def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
+    if not isinstance(cfg.operation, RecomputeStatsConfig):
+        raise ValueError("Operation config must be RecomputeStatsConfig")
+
+    # Determine whether this is an in-place operation
+    output_repo_id, input_root, output_root = _resolve_io_paths(
+        cfg.repo_id,
+        cfg.new_repo_id,
+        cfg.root,
+        cfg.new_root,
+        default_new_repo_id=f"{cfg.repo_id}_recomputed_stats",
+    )
+    in_place = output_root == input_root
+
+    if in_place and not cfg.operation.overwrite:
+        raise ValueError(
+            f"recompute_stats would overwrite the dataset in-place at {input_root}. "
+            "Pass --operation.overwrite true to allow in-place modification, "
+            "or use --new_repo_id / --new_root to write to a different location. "
+            f"Default output repo_id when neither is set: '{cfg.repo_id}_recomputed_stats'."
+        )
+
+    if in_place:
+        logging.warning(
+            f"Overwriting dataset stats in-place at {input_root}. The original stats will be lost."
+        )
+        dataset = LeRobotDataset(cfg.repo_id, root=input_root)
+    else:
+        logging.info(f"Copying dataset from {input_root} to {output_root}")
+        if output_root.exists():
+            backup_path = output_root.with_name(output_root.name + "_old")
+            logging.warning(f"Output directory {output_root} already exists. Moving to {backup_path}")
+            if backup_path.exists():
+                shutil.rmtree(backup_path)
+            shutil.move(output_root, backup_path)
+        shutil.copytree(input_root, output_root)
+        dataset = LeRobotDataset(output_repo_id, root=output_root)
+
+    logging.info(f"Recomputing stats for {cfg.repo_id}")
+    if cfg.operation.relative_action:
+        logging.info(
+            f"Relative action stats enabled (chunk_size={cfg.operation.chunk_size}, "
+            f"exclude_joints={cfg.operation.relative_exclude_joints})"
+        )
+
+    recompute_stats(
+        dataset,
+        skip_image_video=cfg.operation.skip_image_video,
+        relative_action=cfg.operation.relative_action,
+        relative_exclude_joints=cfg.operation.relative_exclude_joints,
+        chunk_size=cfg.operation.chunk_size,
+        num_workers=cfg.operation.num_workers,
+    )
+
+    logging.info(f"Stats written to {dataset.root}")
+
+    if cfg.push_to_hub:
+        logging.info(f"Pushing to hub as {dataset.repo_id}...")
+        dataset.push_to_hub()
+
+
 def _get_dataset_size(repo_path):
     import os
 
@@ -596,6 +713,8 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
         handle_modify_tasks(cfg)
     elif operation_type == "convert_image_to_video":
         handle_convert_image_to_video(cfg)
+    elif operation_type == "recompute_stats":
+        handle_recompute_stats(cfg)
     elif operation_type == "info":
         handle_info(cfg)
     else:

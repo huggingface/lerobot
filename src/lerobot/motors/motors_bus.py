@@ -29,11 +29,21 @@ from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
 from pprint import pformat
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-import serial
-from deepdiff import DeepDiff
 from tqdm import tqdm
+
+from lerobot.utils.import_utils import _deepdiff_available, _serial_available, require_package
+
+if TYPE_CHECKING or _serial_available:
+    import serial
+else:
+    serial = None  # type: ignore[assignment]
+
+if TYPE_CHECKING or _deepdiff_available:
+    from deepdiff import DeepDiff
+else:
+    DeepDiff = None  # type: ignore[assignment, misc]
 
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.utils import enter_pressed, move_cursor_up
@@ -346,6 +356,8 @@ class SerialMotorsBus(MotorsBusBase):
         motors: dict[str, Motor],
         calibration: dict[str, MotorCalibration] | None = None,
     ):
+        require_package("pyserial", extra="pyserial-dep", import_name="serial")
+        require_package("deepdiff", extra="deepdiff-dep")
         super().__init__(port, motors, calibration)
 
         self.port_handler: PortHandler

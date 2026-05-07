@@ -20,9 +20,12 @@ import queue
 import threading
 from unittest.mock import patch
 
-import av
 import numpy as np
 import pytest
+
+pytest.importorskip("av", reason="av is required (install lerobot[dataset])")
+
+import av  # noqa: E402
 
 from lerobot.datasets.video_utils import (
     VALID_VIDEO_CODECS,
@@ -534,7 +537,7 @@ class TestStreamingEncoderIntegration:
             streaming_encoding=True,
         )
 
-        assert dataset._streaming_encoder is not None
+        assert dataset.writer._streaming_encoder is not None
 
         num_frames = 20
         for _ in range(num_frames):
@@ -580,7 +583,7 @@ class TestStreamingEncoderIntegration:
             streaming_encoding=False,
         )
 
-        assert dataset._streaming_encoder is None
+        assert dataset.writer._streaming_encoder is None
 
         num_frames = 5
         for _ in range(num_frames):

@@ -685,6 +685,10 @@ Example configuration for training the [reward classifier](https://huggingface.c
 
 ```json
 {
+  "dataset": {
+    "repo_id": "hf_username/dataset_name",
+    "root": null
+  },
   "policy": {
     "type": "reward_classifier",
     "model_name": "helper2424/resnet10",
@@ -705,8 +709,28 @@ Example configuration for training the [reward classifier](https://huggingface.c
         "type": "VISUAL",
         "shape": [3, 128, 128]
       }
-    }
-  }
+    },
+    "push_to_hub": true,
+    "repo_id": "hf_username/model_repo"
+  },
+  "batch_size": 16,
+  "num_workers": 4,
+  "steps": 5000,
+  "log_freq": 10,
+  "eval_freq": 1000,
+  "save_freq": 1000,
+  "save_checkpoint": true,
+  "seed": 2,
+  "resume": false,
+  "optimizer": {
+    "grad_clip_norm": 10.0
+  },
+  "wandb": {
+    "enable": true,
+    "project": "reward-classifier",
+    "disable_artifact": false
+  },
+  "job_name": "reward-classifier"
 }
 ```
 

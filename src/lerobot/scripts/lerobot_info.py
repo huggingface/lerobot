@@ -65,6 +65,7 @@ def get_sys_info() -> dict[str, str]:
         "Platform": platform.platform(),
         "Python version": platform.python_version(),
         "Huggingface Hub version": get_package_version("huggingface_hub"),
+        "Transformers version": get_package_version("transformers"),
         "Datasets version": get_package_version("datasets"),
         "Numpy version": get_package_version("numpy"),
         "FFmpeg version": get_ffmpeg_version(),

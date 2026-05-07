@@ -18,7 +18,7 @@ from typing import TypedDict
 
 import torch
 
-from lerobot.utils.constants import ACTION
+from .constants import ACTION
 
 
 class Transition(TypedDict):

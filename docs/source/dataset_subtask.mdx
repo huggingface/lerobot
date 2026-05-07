@@ -95,7 +95,7 @@ After completing your annotation:
 When you load a dataset with subtask annotations, the subtask information is automatically available:
 
 ```python
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 
 # Load a dataset with subtask annotations
 dataset = LeRobotDataset("jadechoghari/collect-fruit-annotated")
@@ -133,11 +133,10 @@ if has_subtasks:
 The `TokenizerProcessor` automatically handles subtask tokenization for Vision-Language Action (VLA) models:
 
 ```python
-from lerobot.processor.tokenizer_processor import TokenizerProcessor
-from lerobot.processor.pipeline import ProcessorPipeline
+from lerobot.processor import TokenizerProcessorStep
 
-# Create a tokenizer processor
-tokenizer_processor = TokenizerProcessor(
+# Create a tokenizer processor step
+tokenizer_processor = TokenizerProcessorStep(
     tokenizer_name_or_path="google/paligemma-3b-pt-224",
     padding="max_length",
     max_length=64,
@@ -158,7 +157,7 @@ When subtasks are available in the batch, the tokenizer processor adds:
 
 ```python
 import torch
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 
 dataset = LeRobotDataset("jadechoghari/collect-fruit-annotated")
 
@@ -182,7 +181,7 @@ for batch in dataloader:
 Try loading a dataset with subtask annotations:
 
 ```python
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 
 # Example dataset with subtask annotations
 dataset = LeRobotDataset("jadechoghari/collect-fruit-annotated")

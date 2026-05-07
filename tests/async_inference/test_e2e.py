@@ -35,8 +35,10 @@ from concurrent import futures
 import pytest
 import torch
 
-# Skip entire module if grpc is not available
+# Skip entire module if required deps are not available
 pytest.importorskip("grpc")
+pytest.importorskip("serial", reason="pyserial is required (install lerobot[hardware])")
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 # -----------------------------------------------------------------------------
 # End-to-end test

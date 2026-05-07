@@ -17,9 +17,8 @@
 
 from dataclasses import dataclass, field
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import NormalizationMode
-from lerobot.optim.optimizers import MultiAdamConfig
+from lerobot.configs import NormalizationMode, PreTrainedConfig
+from lerobot.optim import MultiAdamConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_STATE
 
 
