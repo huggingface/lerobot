@@ -1739,9 +1739,21 @@ def test_episode_filter_no_match_raises(tmp_path, lerobot_dataset_factory):
     """An empty match in LeRobotDataset's episode_filter raises a ValueError rather than silently returning an empty dataset."""
     dataset = lerobot_dataset_factory(root=tmp_path / "test", total_episodes=4, total_frames=100)
 
-    with pytest.raises(ValueError, match=r"episode_filter did not match any episode"):
+    with pytest.raises(ValueError, match=r"The episode filter did not match any episode"):
         LeRobotDataset(
             dataset.repo_id,
             root=dataset.root,
             episode_filter=lambda ep: ep["length"] < 0,
+        )
+
+
+def test_episode_filter_unknown_key_raises(tmp_path, lerobot_dataset_factory):
+    """A predicate referencing a column absent from meta.episodes surfaces a clear KeyError."""
+    dataset = lerobot_dataset_factory(root=tmp_path / "test", total_episodes=4, total_frames=100)
+
+    with pytest.raises(KeyError, match="not_a_real_field"):
+        LeRobotDataset(
+            dataset.repo_id,
+            root=dataset.root,
+            episode_filter=lambda ep: ep["not_a_real_field"] > 0,
         )
