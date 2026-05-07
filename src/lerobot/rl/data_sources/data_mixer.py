@@ -27,7 +27,7 @@ class DataMixer(abc.ABC):
     @abc.abstractmethod
     def sample(self, batch_size: int) -> BatchType:
         """Draw one batch of ``batch_size`` transitions."""
-        ...
+        raise NotImplementedError
 
     def get_iterator(
         self,
