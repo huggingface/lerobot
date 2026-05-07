@@ -31,7 +31,7 @@ from lerobot.policies.groot.processor_groot import make_groot_pre_post_processor
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.types import PolicyAction
 from lerobot.utils.device_utils import auto_select_torch_device
-from tests.utils import require_cuda  # noqa: E402
+from tests.utils import require_cuda
 
 pytest.importorskip("transformers")
 

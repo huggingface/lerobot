@@ -20,6 +20,8 @@ import numpy as np
 import pytest
 from PIL import Image
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.datasets.image_writer import (
     AsyncImageWriter,
     image_array_to_pil_image,

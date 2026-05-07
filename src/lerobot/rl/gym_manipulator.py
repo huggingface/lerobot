@@ -25,9 +25,9 @@ import torch
 
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.envs.configs import HILSerlRobotEnvConfig
-from lerobot.model.kinematics import RobotKinematics
+from lerobot.datasets import LeRobotDataset
+from lerobot.envs import HILSerlRobotEnvConfig
+from lerobot.model import RobotKinematics
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     AddTeleopActionAsComplimentaryDataStep,
@@ -50,8 +50,8 @@ from lerobot.processor import (
     TransitionKey,
     VanillaObservationProcessorStep,
     create_transition,
+    identity_transition,
 )
-from lerobot.processor.converters import identity_transition
 from lerobot.robots import (  # noqa: F401
     RobotConfig,
     make_robot_from_config,
@@ -551,8 +551,8 @@ def step_env_and_process_transition(
     terminated = terminated or processed_action_transition[TransitionKey.DONE]
     truncated = truncated or processed_action_transition[TransitionKey.TRUNCATED]
     complementary_data = processed_action_transition[TransitionKey.COMPLEMENTARY_DATA].copy()
-    new_info = processed_action_transition[TransitionKey.INFO].copy()
-    new_info.update(info)
+    new_info = info.copy()
+    new_info.update(processed_action_transition[TransitionKey.INFO])
 
     new_transition = create_transition(
         observation=obs,

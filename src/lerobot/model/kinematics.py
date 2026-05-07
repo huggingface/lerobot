@@ -12,7 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import numpy as np
+
+from lerobot.utils.import_utils import _placo_available, require_package
+
+if TYPE_CHECKING or _placo_available:
+    import placo  # type: ignore[import-not-found]
+else:
+    placo = None
 
 
 class RobotKinematics:
@@ -32,13 +43,7 @@ class RobotKinematics:
             target_frame_name (str): Name of the end-effector frame in the URDF
             joint_names (list[str] | None): List of joint names to use for the kinematics solver
         """
-        try:
-            import placo  # type: ignore[import-not-found] # C++ library with Python bindings, no type stubs available. TODO: Create stub file or request upstream typing support.
-        except ImportError as e:
-            raise ImportError(
-                "placo is required for RobotKinematics. "
-                "Please install the optional dependencies of `kinematics` in the package."
-            ) from e
+        require_package("placo", extra="placo-dep")
 
         self.robot = placo.RobotWrapper(urdf_path)
         self.solver = placo.KinematicsSolver(self.robot)
