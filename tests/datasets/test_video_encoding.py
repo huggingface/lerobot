@@ -478,7 +478,9 @@ class TestConcatenateVideoFiles:
     def test_two_clips_frame_count(self, tmp_path):
         """Output frame count equals the sum of the two input frame counts."""
         out = tmp_path / "out.mp4"
-        concatenate_video_files([TEST_ARTIFACTS_DIR / "clip_6frames.mp4", TEST_ARTIFACTS_DIR / "clip_4frames.mp4"], out)
+        concatenate_video_files(
+            [TEST_ARTIFACTS_DIR / "clip_6frames.mp4", TEST_ARTIFACTS_DIR / "clip_4frames.mp4"], out
+        )
 
         with av.open(str(out)) as container:
             total = sum(1 for _ in container.decode(video=0))
@@ -497,7 +499,9 @@ class TestConcatenateVideoFiles:
     def test_geometry_preserved(self, tmp_path):
         """Output resolution, fps, codec and pixel format must match the inputs."""
         out = tmp_path / "out.mp4"
-        concatenate_video_files([TEST_ARTIFACTS_DIR / "clip_4frames.mp4", TEST_ARTIFACTS_DIR / "clip_4frames.mp4"], out)
+        concatenate_video_files(
+            [TEST_ARTIFACTS_DIR / "clip_4frames.mp4", TEST_ARTIFACTS_DIR / "clip_4frames.mp4"], out
+        )
 
         info = get_video_info(out)
         assert info["video.height"] == 64
