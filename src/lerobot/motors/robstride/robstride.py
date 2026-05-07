@@ -519,28 +519,21 @@ class RobstrideMotorsBus(MotorsBusBase):
         Receive frames until the bus goes quiet.
 
         Args:
-            wait_for_first_s: Timeout waiting for the first frame. Use 0.0 for
-                non-blocking drain of already queued frames.
-            poll_timeout_s: Poll timeout used while draining remaining frames.
+            timeout: Poll timeout used for each recv() call. Collection stops
+                when one recv() times out (quiet gap).
             max_messages: Safety cap to prevent unbounded loops.
         """
         out: list[can.Message] = []
         cap = max(1, int(max_messages))
-        first_wait = max(0.0, float(timeout))
-        poll_wait = max(0.0, float(timeout))
+        recv_timeout = max(0.0, float(timeout))
 
         try:
-            first = self._bus().recv(timeout=first_wait)
-            if first is None:
-                return out
-            out.append(first)
-
             while len(out) < cap:
-                msg = self._bus().recv(timeout=poll_wait)
+                msg = self._bus().recv(timeout=recv_timeout)
                 if msg is None:
                     break
                 out.append(msg)
-        except Exception as e:
+        except (can.CanError, OSError) as e:
             logger.debug("Error draining CAN RX queue on %s: %s", self.port, e)
 
         return out
@@ -586,6 +579,8 @@ class RobstrideMotorsBus(MotorsBusBase):
 
         This is used by higher-level controllers to drop stale feedback before issuing
         a fresh read cycle, so subsequent state reads are based on most recent replies.
+        It should also be called once when a controller instance is created/connected,
+        to clear residual frames left on the interface from previous sessions.
         """
         drained = 0
         timeout_s = max(0.0, float(poll_timeout_s))
@@ -746,7 +741,7 @@ class RobstrideMotorsBus(MotorsBusBase):
 
         for recv_id, motor_name in recv_id_to_motor.items():
             if recv_id not in processed_recv_ids:
-                logger.warning(f"Packet drop: {motor_name} (ID: 0x{recv_id:02X}). Using last known state.")
+                logger.warning("Packet drop: %s (ID: 0x%02X). Using last known state.", motor_name, recv_id)
 
     def _float_to_uint(self, x: float, x_min: float, x_max: float, bits: int) -> int:
         """Convert float to unsigned integer for CAN transmission."""
@@ -950,23 +945,14 @@ class RobstrideMotorsBus(MotorsBusBase):
             data = [0xFF] * 7 + [CAN_CMD_CLEAR_FAULT]
             msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
             self._bus().send(msg)
-            updated_motors.append(motor)
 
-        expected_recv_ids = [self._get_motor_recv_id(motor) for motor in updated_motors]
-        responses = self._recv_all_responses(expected_recv_ids, timeout=RUNNING_TIMEOUT)
-
-        for response in responses.values():
-            payload_motor_name = self._recv_id_to_motor.get(response.data[0])
-            if payload_motor_name is not None:
-                self._process_response(payload_motor_name, response)
-            else:
-                # Fallback: still attempt to decode based on payload byte0 mapping.
-                self._decode_motor_state(response.data)
+        messages = self._recv_all_messages_until_quiet(timeout=RUNNING_TIMEOUT)
+        processed_recv_ids = self._process_feedback_messages(messages)
 
         for motor in updated_motors:
             recv_id = self._get_motor_recv_id(motor)
-            if recv_id not in responses:
-                logger.warning(f"Packet drop: {motor} (ID: 0x{recv_id:02X}). Using last known state.")
+            if recv_id not in processed_recv_ids:
+                logger.warning("Packet drop: %s (ID: 0x%02X). Using last known state.", motor, recv_id)
 
     def read_calibration(self) -> dict[str, MotorCalibration]:
         """Read calibration data from motors."""
