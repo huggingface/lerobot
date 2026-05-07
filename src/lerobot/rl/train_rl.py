@@ -20,9 +20,10 @@ from dataclasses import dataclass
 
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.rl.algorithms.configs import RLAlgorithmConfig
-from lerobot.rl.algorithms.factory import make_algorithm_config
-from lerobot.rl.algorithms.sac import SACAlgorithmConfig  # noqa: F401
+
+from .algorithms.configs import RLAlgorithmConfig
+from .algorithms.factory import make_algorithm_config
+from .algorithms.sac import SACAlgorithmConfig  # noqa: F401
 
 
 @dataclass(kw_only=True)

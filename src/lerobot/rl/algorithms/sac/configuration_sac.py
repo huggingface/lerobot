@@ -23,34 +23,57 @@ from lerobot.policies.gaussian_actor.configuration_gaussian_actor import (
     CriticNetworkConfig,
     GaussianActorConfig,
 )
-from lerobot.rl.algorithms.configs import RLAlgorithmConfig
+
+from ..configs import RLAlgorithmConfig
 
 if TYPE_CHECKING:
-    from lerobot.rl.algorithms.sac.sac_algorithm import SACAlgorithm
+    from .sac_algorithm import SACAlgorithm
 
 
 @RLAlgorithmConfig.register_subclass("sac")
 @dataclass
 class SACAlgorithmConfig(RLAlgorithmConfig):
-    """SAC algorithm hyperparameters."""
+    """Soft Actor-Critic (SAC) algorithm configuration.
+
+    SAC is an off-policy actor-critic deep RL algorithm based on the maximum
+    entropy reinforcement learning framework. It learns a policy and a Q-function
+    simultaneously using experience collected from the environment.
+
+    This configuration class contains the algorithm-side hyperparameters: critic
+    ensemble, target networks, temperature / entropy tuning, and the Bellman
+    update loop. The policy-side (actor + observation encoder) lives in
+    :class:`~lerobot.policies.gaussian_actor.GaussianActorConfig` and is
+    referenced via :attr:`policy_config`.
+    """
 
     # Optimizer learning rates
+    # Learning rate for the actor network
     actor_lr: float = 3e-4
+    # Learning rate for the critic network
     critic_lr: float = 3e-4
+    # Learning rate for the temperature parameter
     temperature_lr: float = 3e-4
 
     # Bellman update
+    # Discount factor for the SAC algorithm
     discount: float = 0.99
+    # Whether to use backup entropy for the SAC algorithm
     use_backup_entropy: bool = True
+    # Weight for the critic target update
     critic_target_update_weight: float = 0.005
 
     # Critic ensemble
+    # Number of critics in the ensemble
     num_critics: int = 2
+    # Number of subsampled critics for training
     num_subsample_critics: int | None = None
+    # Configuration for the critic network architecture
     critic_network_kwargs: CriticNetworkConfig = field(default_factory=CriticNetworkConfig)
+    # Configuration for the discrete critic network
     discrete_critic_network_kwargs: CriticNetworkConfig = field(default_factory=CriticNetworkConfig)
 
     # Temperature / entropy
+    # Initial temperature value
     temperature_init: float = 1.0
     # Target entropy for automatic temperature tuning. If ``None``, defaults to
     # ``-|A|/2`` where ``|A|`` is the total action dimension (continuous + 1 if
@@ -58,8 +81,11 @@ class SACAlgorithmConfig(RLAlgorithmConfig):
     target_entropy: float | None = None
 
     # Update loop
+    # Update-to-data ratio. Set to >1 to enable extra critic updates per env step.
     utd_ratio: int = 1
+    # Frequency of policy updates
     policy_update_freq: int = 1
+    # Gradient clipping norm for the SAC algorithm
     grad_clip_norm: float = 40.0
 
     # Optimizations
@@ -85,6 +111,6 @@ class SACAlgorithmConfig(RLAlgorithmConfig):
                 "before calling build_algorithm()."
             )
 
-        from lerobot.rl.algorithms.sac.sac_algorithm import SACAlgorithm
+        from .sac_algorithm import SACAlgorithm
 
         return SACAlgorithm(policy=policy, config=self)

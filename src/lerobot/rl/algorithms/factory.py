@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import torch
 
-from lerobot.rl.algorithms.base import RLAlgorithm
-from lerobot.rl.algorithms.configs import RLAlgorithmConfig
+from .base import RLAlgorithm
+from .configs import RLAlgorithmConfig
 
 
 def make_algorithm_config(algorithm_type: str, **kwargs) -> RLAlgorithmConfig:

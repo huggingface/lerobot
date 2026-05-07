@@ -16,8 +16,9 @@ from __future__ import annotations
 
 import abc
 
-from lerobot.rl.algorithms.base import BatchType
-from lerobot.rl.buffer import ReplayBuffer, concatenate_batch_transitions
+from lerobot.types import BatchType
+
+from ..buffer import ReplayBuffer, concatenate_batch_transitions
 
 
 class DataMixer(abc.ABC):

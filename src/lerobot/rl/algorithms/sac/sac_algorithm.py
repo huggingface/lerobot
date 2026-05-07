@@ -35,11 +35,13 @@ from lerobot.policies.gaussian_actor.modeling_gaussian_actor import (
     orthogonal_init,
 )
 from lerobot.policies.utils import get_device_from_parameters
-from lerobot.rl.algorithms.base import BatchType, RLAlgorithm
-from lerobot.rl.algorithms.configs import TrainingStats
-from lerobot.rl.algorithms.sac.configuration_sac import SACAlgorithmConfig
+from lerobot.types import BatchType
 from lerobot.utils.constants import ACTION
 from lerobot.utils.transition import move_state_dict_to_device
+
+from ..base import RLAlgorithm
+from ..configs import TrainingStats
+from .configuration_sac import SACAlgorithmConfig
 
 
 class SACAlgorithm(RLAlgorithm):
@@ -175,6 +177,25 @@ class SACAlgorithm(RLAlgorithm):
         return q_values
 
     def update(self, batch_iterator: Iterator[BatchType]) -> TrainingStats:
+        """Run one SAC training step (critic / discrete-critic / actor / temperature).
+
+        Pulls ``utd_ratio`` batches from ``batch_iterator``, computes the relevant
+        losses, backpropagates each, and updates target networks.
+
+        Args:
+            batch_iterator: yields batches each containing
+                - ``action``: Action tensor
+                - ``reward``: Reward tensor
+                - ``state``: Observations tensor dict
+                - ``next_state``: Next observations tensor dict
+                - ``done``: Done mask tensor
+                - ``observation_feature``: Optional pre-computed observation features
+                - ``next_observation_feature``: Optional pre-computed next observation features
+                - ``complementary_info`` (optional): per-step extras like discrete penalties
+
+        Returns:
+            TrainingStats with per-component losses and grad norms.
+        """
         clip = self.config.grad_clip_norm
 
         for _ in range(self.config.utd_ratio - 1):
@@ -248,12 +269,14 @@ class SACAlgorithm(RLAlgorithm):
         return stats
 
     def _compute_loss_critic(self, batch: dict[str, Any]) -> Tensor:
+        # Extract common components from batch
         observations = batch["state"]
         actions = batch[ACTION]
+        observation_features = batch.get("observation_feature")
+        # Extract critic-specific components
         rewards = batch["reward"]
         next_observations = batch["next_state"]
         done = batch["done"]
-        observation_features = batch.get("observation_feature")
         next_observation_features = batch.get("next_observation_feature")
 
         with torch.no_grad():

@@ -25,6 +25,7 @@ from torch import Tensor
 from torch.distributions import MultivariateNormal, TanhTransform, Transform, TransformedDistribution
 
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE
+from lerobot.utils.transition import move_state_dict_to_device
 
 from ..pretrained import PreTrainedPolicy
 from ..utils import get_device_from_parameters
@@ -113,8 +114,6 @@ class GaussianActorPolicy(
         return {"action": actions, "log_prob": log_probs, "action_mean": means}
 
     def load_actor_weights(self, state_dicts: dict[str, Any], device: str | torch.device = "cpu") -> None:
-        from lerobot.utils.transition import move_state_dict_to_device
-
         actor_state_dict = move_state_dict_to_device(state_dicts["policy"], device=device)
         self.actor.load_state_dict(actor_state_dict)
 

@@ -22,7 +22,7 @@ import draccus
 import torch
 
 if TYPE_CHECKING:
-    from lerobot.rl.algorithms.base import RLAlgorithm
+    from .base import RLAlgorithm
 
 
 @dataclass

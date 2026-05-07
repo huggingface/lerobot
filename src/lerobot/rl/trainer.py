@@ -17,9 +17,11 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Any
 
-from lerobot.rl.algorithms.base import BatchType, RLAlgorithm
-from lerobot.rl.algorithms.configs import TrainingStats
-from lerobot.rl.data_sources.data_mixer import DataMixer
+from lerobot.types import BatchType
+
+from .algorithms.base import RLAlgorithm
+from .algorithms.configs import TrainingStats
+from .data_sources.data_mixer import DataMixer
 
 
 class RLTrainer:

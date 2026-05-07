@@ -143,34 +143,48 @@ class GaussianActorConfig(PreTrainedConfig):
     latent_dim: int = 256
 
     # Online training (TODO(Khalil): relocate to TrainRLServerPipelineConfig)
+    # Number of steps for online training
     online_steps: int = 1000000
+    # Capacity of the online replay buffer
     online_buffer_capacity: int = 100000
+    # Capacity of the offline replay buffer
     offline_buffer_capacity: int = 100000
+    # Whether to use asynchronous prefetching for the buffers
     async_prefetch: bool = False
+    # Number of steps before learning starts
     online_step_before_learning: int = 100
 
     # Actor-learner transport (TODO(Khalil): relocate to TrainRLServerPipelineConfig).
+    # Configuration for actor-learner architecture
     actor_learner_config: ActorLearnerConfig = field(default_factory=ActorLearnerConfig)
+    # Configuration for concurrency settings (you can use threads or processes for the actor and learner)
     concurrency: ConcurrencyConfig = field(default_factory=ConcurrencyConfig)
 
     # Network architecture
-    # Actor network
+    # Configuration for the actor network architecture
     actor_network_kwargs: ActorNetworkConfig = field(default_factory=ActorNetworkConfig)
-    # Gaussian head parameters
+    # Configuration for the policy parameters (Gaussian head)
     policy_kwargs: PolicyConfig = field(default_factory=PolicyConfig)
-    # Discrete critic
+    # Configuration for the discrete critic network
     discrete_critic_network_kwargs: CriticNetworkConfig = field(default_factory=CriticNetworkConfig)
 
     def __post_init__(self):
         super().__post_init__()
+        # Any validation specific to GaussianActor configuration
 
     def get_optimizer_preset(self) -> MultiAdamConfig:
+        # Default learning rate used to satisfy the abstract ``get_optimizer_preset()``
+        # contract from ``PreTrainedConfig``. The actual optimizers used during RL
+        # training are built by ``SACAlgorithm.make_optimizers_and_scheduler()`` from
+        # ``SACAlgorithmConfig.{actor_lr,critic_lr,temperature_lr}`` and fully bypass
+        # this preset.
+        default_lr = 3e-4
         return MultiAdamConfig(
             weight_decay=0.0,
             optimizer_groups={
-                "actor": {"lr": 3e-4},
-                "critic": {"lr": 3e-4},
-                "temperature": {"lr": 3e-4},
+                "actor": {"lr": default_lr},
+                "critic": {"lr": default_lr},
+                "temperature": {"lr": default_lr},
             },
         )
 

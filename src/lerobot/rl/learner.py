@@ -71,12 +71,6 @@ from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import parser
 from lerobot.datasets import LeRobotDataset, make_dataset
 from lerobot.policies import make_policy, make_pre_post_processors
-from lerobot.rl.algorithms.base import RLAlgorithm
-from lerobot.rl.algorithms.factory import make_algorithm
-from lerobot.rl.buffer import ReplayBuffer
-from lerobot.rl.data_sources import OnlineOfflineMixer
-from lerobot.rl.train_rl import TrainRLServerPipelineConfig
-from lerobot.rl.trainer import RLTrainer
 from lerobot.robots import so_follower  # noqa: F401
 from lerobot.teleoperators import gamepad, so_leader  # noqa: F401
 from lerobot.teleoperators.utils import TeleopEvents
@@ -102,7 +96,13 @@ from lerobot.utils.utils import (
     init_logging,
 )
 
+from .algorithms.base import RLAlgorithm
+from .algorithms.factory import make_algorithm
+from .buffer import ReplayBuffer
+from .data_sources import OnlineOfflineMixer
 from .learner_service import MAX_WORKERS, SHUTDOWN_TIMEOUT, LearnerService
+from .train_rl import TrainRLServerPipelineConfig
+from .trainer import RLTrainer
 
 
 @parser.wrap()

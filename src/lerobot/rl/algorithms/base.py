@@ -21,12 +21,12 @@ from typing import TYPE_CHECKING, Any
 import torch
 from torch.optim import Optimizer
 
-from lerobot.rl.algorithms.configs import RLAlgorithmConfig, TrainingStats
+from lerobot.types import BatchType
+
+from .configs import RLAlgorithmConfig, TrainingStats
 
 if TYPE_CHECKING:
-    from lerobot.rl.data_sources.data_mixer import DataMixer
-
-BatchType = dict[str, Any]
+    from ..data_sources.data_mixer import DataMixer
 
 
 class RLAlgorithm(abc.ABC):
