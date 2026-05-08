@@ -22,11 +22,20 @@ transitions (e.g. DAgger handovers) to avoid jerky position changes.
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from lerobot.robots import Robot
     from lerobot.teleoperators import Teleoperator
+
+
+class _SupportsSendAction(Protocol):
+    """Structural type for any robot exposing a ``send_action`` method.
+
+    Satisfied by :class:`lerobot.robots.Robot` and by the rollout-only
+    :class:`lerobot.rollout.robot_wrapper.ThreadSafeRobot` wrapper.
+    """
+
+    def send_action(self, action: dict[str, Any]) -> Any: ...
 
 
 def teleop_supports_feedback(teleop: Teleoperator) -> bool:
@@ -73,7 +82,7 @@ def teleop_smooth_move_to(
 
 
 def follower_smooth_move_to(
-    robot: Robot, current: dict, target: dict, duration_s: float = 1.0, fps: int = 30
+    robot: _SupportsSendAction, current: dict, target: dict, duration_s: float = 1.0, fps: int = 30
 ) -> None:
     """Smoothly move the follower robot from ``current`` to ``target`` action.
 
