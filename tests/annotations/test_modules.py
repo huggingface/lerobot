@@ -126,12 +126,26 @@ def test_module2_at_t0_emits_speech_only_no_interjection(fixture_dataset_root: P
 def test_module2_mid_episode_emits_paired_interjection_and_speech(
     fixture_dataset_root: Path, tmp_path: Path
 ) -> None:
+    """Module 2 anchors interjections on Module 1's subtask boundaries.
+
+    The executor runs Module 1 first, then Module 2 reads the subtask
+    rows back from the same staging tree (see
+    ``_mid_episode_interjections``). Reproduce that contract here by
+    seeding the staging with two subtask rows so a single ``0 → 1``
+    boundary exists for Module 2 to anchor on.
+    """
     vlm = make_canned_responder(
         {
             "acknowledgement the robot": {"text": "OK."},
-            "ONE realistic interruption": {
-                "interjection": "actually skip the dishes",
-                "speech": "Skipping the dishes.",
+            # Marker matches the distinctive line of
+            # ``module_2_interjection.txt``. The old marker
+            # ("ONE realistic interruption") came from a previous prompt
+            # version that asked for counterfactual interjections; the
+            # current design anchors on subtask boundaries instead, so
+            # the prompt and its marker changed.
+            "Write ONE interjection": {
+                "interjection": "now wipe the counter please",
+                "speech": "On it.",
             },
         },
     )
@@ -142,6 +156,29 @@ def test_module2_mid_episode_emits_paired_interjection_and_speech(
     )
     record = next(iter_episodes(fixture_dataset_root))
     staging = EpisodeStaging(tmp_path / "stage", record.episode_index)
+    # Seed Module 1's subtask staging so Module 2 has a boundary to
+    # anchor on (it bails with zero rows when no spans exist — the
+    # production executor guarantees Module 1 ran first).
+    boundary_ts = float(record.frame_timestamps[len(record.frame_timestamps) // 2])
+    staging.write(
+        "module_1",
+        [
+            {
+                "role": "assistant",
+                "content": "grasp the sponge",
+                "style": "subtask",
+                "timestamp": float(record.frame_timestamps[0]),
+                "tool_calls": None,
+            },
+            {
+                "role": "assistant",
+                "content": "wipe the counter",
+                "style": "subtask",
+                "timestamp": boundary_ts,
+                "tool_calls": None,
+            },
+        ],
+    )
     module.run_episode(record, staging)
     rows = staging.read("module_2")
 
@@ -163,9 +200,7 @@ def test_module3_vqa_unique_per_frame_and_camera(single_episode_root: Path, tmp_
         vlm=vlm,
         config=Module3Config(vqa_emission_hz=1.0, K=3),
         seed=1,
-        frame_provider=_StubFrameProvider(
-            cameras=("observation.images.top", "observation.images.wrist")
-        ),
+        frame_provider=_StubFrameProvider(cameras=("observation.images.top", "observation.images.wrist")),
     )
     record = next(iter_episodes(single_episode_root))
     staging = EpisodeStaging(tmp_path / "stage", record.episode_index)
@@ -176,13 +211,9 @@ def test_module3_vqa_unique_per_frame_and_camera(single_episode_root: Path, tmp_
         assert r["style"] == "vqa"
         assert r.get("camera") in {"observation.images.top", "observation.images.wrist"}
     # at most one (vqa, user) and one (vqa, assistant) per (timestamp, camera)
-    user_keys = [
-        (r["timestamp"], r["camera"]) for r in rows if r["role"] == "user" and r["style"] == "vqa"
-    ]
+    user_keys = [(r["timestamp"], r["camera"]) for r in rows if r["role"] == "user" and r["style"] == "vqa"]
     assistant_keys = [
-        (r["timestamp"], r["camera"])
-        for r in rows
-        if r["role"] == "assistant" and r["style"] == "vqa"
+        (r["timestamp"], r["camera"]) for r in rows if r["role"] == "assistant" and r["style"] == "vqa"
     ]
     assert len(user_keys) == len(set(user_keys))
     assert len(assistant_keys) == len(set(assistant_keys))
@@ -222,17 +253,32 @@ def test_module1_attaches_video_block_to_subtask_prompt(fixture_dataset_root: Pa
     provider = _StubFrameProvider()
     module = PlanSubtasksMemoryModule(
         vlm=StubVlmClient(responder=responder),
-        config=Module1Config(max_video_frames=5, frames_per_second=10.0),
+        # Disable the rephrasings sub-prompt so the test's only video-bearing
+        # call is the subtask one — keeps the assertions below focused on
+        # ``_generate_subtasks`` rather than fighting the order of unrelated
+        # text-only Module-1 sub-prompts.
+        config=Module1Config(max_video_frames=5, frames_per_second=10.0, n_task_rephrasings=0),
         frame_provider=provider,
     )
     record = next(iter_episodes(fixture_dataset_root))
     staging = EpisodeStaging(tmp_path / "stage", record.episode_index)
     module.run_episode(record, staging)
 
-    # the subtask call (the first VLM call) must carry exactly one video block
+    # Find the call carrying the subtask prompt rather than blindly taking
+    # captured[0] — Module 1 issues several sub-prompts and their order is
+    # not part of the contract.
     assert captured, "no VLM calls made"
-    first_call = captured[0]
-    content = first_call[0]["content"]
+
+    def _prompt_text(messages):
+        for m in messages:
+            for block in m.get("content", []):
+                if isinstance(block, dict) and block.get("type") == "text":
+                    return block.get("text", "")
+        return ""
+
+    subtask_calls = [m for m in captured if "atomic subtasks" in _prompt_text(m)]
+    assert len(subtask_calls) == 1, "expected exactly one subtask-prompt VLM call"
+    content = subtask_calls[0][0]["content"]
     video_blocks = [b for b in content if isinstance(b, dict) and b.get("type") == "video"]
     image_blocks = [b for b in content if isinstance(b, dict) and b.get("type") == "image"]
     text_blocks = [b for b in content if isinstance(b, dict) and b.get("type") == "text"]
