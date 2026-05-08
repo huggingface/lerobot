@@ -44,6 +44,8 @@ For more details on the complete HILSerl training workflow, see:
 https://github.com/michel-aractingi/lerobot-hilserl-guide
 """
 
+from __future__ import annotations
+
 import logging
 import os
 import shutil
@@ -51,13 +53,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from pprint import pformat
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from lerobot.utils.import_utils import require_package
-
-require_package("grpcio", extra="hilserl", import_name="grpc")
-
-import grpc
 import torch
 from termcolor import colored
 from torch import nn
@@ -78,13 +75,6 @@ from lerobot.policies import make_policy, make_pre_post_processors
 from lerobot.robots import so_follower  # noqa: F401
 from lerobot.teleoperators import gamepad, so_leader  # noqa: F401
 from lerobot.teleoperators.utils import TeleopEvents
-from lerobot.transport import services_pb2_grpc
-from lerobot.transport.utils import (
-    MAX_MESSAGE_SIZE,
-    bytes_to_python_object,
-    bytes_to_transitions,
-    state_to_bytes,
-)
 from lerobot.utils.constants import (
     ACTION,
     CHECKPOINTS_DIR,
@@ -93,12 +83,31 @@ from lerobot.utils.constants import (
     TRAINING_STATE_DIR,
 )
 from lerobot.utils.device_utils import get_safe_torch_device
+from lerobot.utils.import_utils import _grpc_available, require_package
 from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
     format_big_number,
     init_logging,
 )
+
+if TYPE_CHECKING or _grpc_available:
+    import grpc
+
+    from lerobot.transport import services_pb2_grpc
+    from lerobot.transport.utils import (
+        MAX_MESSAGE_SIZE,
+        bytes_to_python_object,
+        bytes_to_transitions,
+        state_to_bytes,
+    )
+else:
+    grpc = None
+    services_pb2_grpc = None
+    MAX_MESSAGE_SIZE = None
+    bytes_to_python_object = None
+    bytes_to_transitions = None
+    state_to_bytes = None
 
 from .algorithms.base import RLAlgorithm
 from .algorithms.factory import make_algorithm
@@ -111,6 +120,7 @@ from .trainer import RLTrainer
 
 @parser.wrap()
 def train_cli(cfg: TrainRLServerPipelineConfig):
+    require_package("grpcio", extra="hilserl", import_name="grpc")
     if not use_threads(cfg):
         import torch.multiprocessing as mp
 

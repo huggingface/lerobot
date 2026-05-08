@@ -46,18 +46,15 @@ For more details on the complete HILSerl training workflow, see:
 https://github.com/michel-aractingi/lerobot-hilserl-guide
 """
 
+from __future__ import annotations
+
 import logging
 import os
 import time
 from functools import lru_cache
 from queue import Empty
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from lerobot.utils.import_utils import require_package
-
-require_package("grpcio", extra="hilserl", import_name="grpc")
-
-import grpc
 import torch
 from torch import nn
 from torch.multiprocessing import Queue
@@ -69,16 +66,8 @@ from lerobot.processor import TransitionKey
 from lerobot.robots import so_follower  # noqa: F401
 from lerobot.teleoperators import gamepad, so_leader  # noqa: F401
 from lerobot.teleoperators.utils import TeleopEvents
-from lerobot.transport import services_pb2, services_pb2_grpc
-from lerobot.transport.utils import (
-    bytes_to_state_dict,
-    grpc_channel_options,
-    python_object_to_bytes,
-    receive_bytes_in_chunks,
-    send_bytes_in_chunks,
-    transitions_to_bytes,
-)
 from lerobot.utils.device_utils import get_safe_torch_device
+from lerobot.utils.import_utils import _grpc_available, require_package
 from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.robot_utils import precise_sleep
@@ -90,6 +79,29 @@ from lerobot.utils.utils import (
     TimerManager,
     init_logging,
 )
+
+if TYPE_CHECKING or _grpc_available:
+    import grpc
+
+    from lerobot.transport import services_pb2, services_pb2_grpc
+    from lerobot.transport.utils import (
+        bytes_to_state_dict,
+        grpc_channel_options,
+        python_object_to_bytes,
+        receive_bytes_in_chunks,
+        send_bytes_in_chunks,
+        transitions_to_bytes,
+    )
+else:
+    grpc = None
+    services_pb2 = None
+    services_pb2_grpc = None
+    bytes_to_state_dict = None
+    grpc_channel_options = None
+    python_object_to_bytes = None
+    receive_bytes_in_chunks = None
+    send_bytes_in_chunks = None
+    transitions_to_bytes = None
 
 from .gym_manipulator import (
     make_processors,
@@ -105,6 +117,7 @@ from .train_rl import TrainRLServerPipelineConfig
 
 @parser.wrap()
 def actor_cli(cfg: TrainRLServerPipelineConfig):
+    require_package("grpcio", extra="hilserl", import_name="grpc")
     cfg.validate()
     display_pid = False
     if not use_threads(cfg):
