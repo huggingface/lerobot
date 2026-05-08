@@ -23,6 +23,7 @@ Two notes:
 
 - The `README.md` next to the source is a **symlink** into `docs/source/policy_<name>_README.md` — the actual file lives under `docs/`. Existing policies (act, smolvla, diffusion, …) all do this; copy one of those symlinks. The policy README is conventionally minimal: paper link + BibTeX citation.
 - The user-facing tutorial — what to install, how to train, hyperparameters, benchmark numbers — lives separately at `docs/source/<my_policy>.mdx` and is registered in `_toctree.yml` under "Policies".
+- In src/lerobot/policies/**init**.py export only MyPolicyConfig.
 
 The file names are load-bearing: the factory does lazy imports by name, and the processor is discovered by the `make_<policy_name>_pre_post_processors` convention.
 
@@ -40,14 +41,14 @@ class MyPolicy(PreTrainedPolicy):
 
 The methods called by the train/eval loops:
 
-| Method                                                            | Used by           | What it does                                                                                                                                           |
-| ----------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `reset() -> None`                                                 | `lerobot-eval`    | Clear per-episode state at the start of each episode.                                                                                                  |
-| `select_action(batch, **kwargs) -> Tensor`                        | `lerobot-eval`    | Return the next action `(B, action_dim)`. Called every step.                                                                                           |
-| `predict_action_chunk(batch, **kwargs) -> Tensor`                 | the policy itself | Return an action chunk `(B, chunk_size, action_dim)`. Currently abstract on the base class — raise `NotImplementedError` if your policy doesn't chunk. |
-| `forward(batch, reduction="mean") -> tuple[Tensor, dict \| None]` | `lerobot-train`   | Return `(loss, output_dict)`. Must accept `reduction="none"` for per-sample weighting.                                                                 |
+| Method                                                            | Used by           | What it does                                                                                                                                                                                                                                         |
+| ----------------------------------------------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reset() -> None`                                                 | `lerobot-eval`    | Clear per-episode state at the start of each episode.                                                                                                                                                                                                |
+| `select_action(batch, **kwargs) -> Tensor`                        | `lerobot-eval`    | Return the next action `(B, action_dim)`. Called every step.                                                                                                                                                                                         |
+| `predict_action_chunk(batch, **kwargs) -> Tensor`                 | the policy itself | Return an action chunk `(B, chunk_size, action_dim)`. Currently abstract on the base class — raise `NotImplementedError` if your policy doesn't chunk.                                                                                               |
+| `forward(batch, reduction="mean") -> tuple[Tensor, dict \| None]` | `lerobot-train`   | Return `(loss, output_dict)`. Must accept `reduction="none"` for per-sample weighting.                                                                                                                                                               |
 | `get_optim_params() -> dict`                                      | the optimizer     | Return `self.parameters()` for simple policies; return a named parameter dict for [multi-optimizer policies](https://github.com/huggingface/lerobot/blob/ecd38c50d7d15b4184cf42649ff1185ee2e11eeb/src/lerobot/policies/sac/modeling_sac.py#L61-L73). |
-| `update() -> None` _(optional)_                                   | `lerobot-train`   | Called after each optimizer step _if defined_. Use for EMA, target nets, replay buffers (TDMPC uses this).                                             |
+| `update() -> None` _(optional)_                                   | `lerobot-train`   | Called after each optimizer step _if defined_. Use for EMA, target nets, replay buffers (TDMPC uses this).                                                                                                                                           |
 
 Batches are flat dictionaries keyed by the constants in [`lerobot.utils.constants`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/utils/constants.py): `OBS_STATE` (`observation.state.<motor>`), `OBS_IMAGES` (`observation.images.<camera>`), `OBS_LANGUAGE`, `ACTION`, etc. Reuse the constants — don't invent new prefixes.
 
@@ -112,7 +113,7 @@ A new policy is much easier to review — and far more useful — when it ships 
 
 **Pick at least one in-tree benchmark.** LeRobot ships sim benchmarks with per-benchmark Docker images (LIBERO, LIBERO-plus, Meta-World, RoboTwin 2.0, RoboCasa365, RoboCerebra, RoboMME, VLABench and more). Pick the one that matches your policy's modality — VLAs usually go to LIBERO or VLABench; image-only BC to LIBERO or Meta-World. The full list lives under [Benchmarks](./libero) in the docs sidebar.
 
-**Push the checkpoint** to the Hub under `lerobot/<policy>_<benchmark>` (or your namespace if you don't have write access; a maintainer can mirror it). Use `PreTrainedPolicy.push_model_to_hub` so the repo gets `config.json`, `model.safetensors`, and a model card.
+**Push the checkpoint & processesors** to the Hub under `lerobot/<policy>_<benchmark>` (or your namespace if you don't have write access; a maintainer can mirror it). Use `PreTrainedPolicy.push_model_to_hub` so the repo gets `config.json`, `model.safetensors`, and a model card.
 
 **Report results in your policy's MDX**, with the exact `lerobot-eval` command and hardware so anyone can re-run:
 
