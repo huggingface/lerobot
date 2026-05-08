@@ -37,7 +37,13 @@ CORE_STYLES = {
     "trace",
     "task_aug",
 }
-EXTENDED_STYLES = set()
+# Project-local styles can be registered at import time by appending to
+# ``EXTENDED_STYLES`` before ``column_for_style`` is called. Anything added
+# here is treated as a known style alongside ``CORE_STYLES`` for resolver
+# validation. Empty by default — populate from a downstream module that
+# also extends ``PERSISTENT_STYLES`` or ``EVENT_ONLY_STYLES`` to declare
+# the new style's column.
+EXTENDED_STYLES: set[str] = set()
 STYLE_REGISTRY = CORE_STYLES | EXTENDED_STYLES
 
 PERSISTENT_STYLES = {"subtask", "plan", "memory", "motion", "task_aug"}
@@ -178,9 +184,7 @@ def validate_camera_field(style: str | None, camera: str | None) -> None:
                 f"field referencing an 'observation.images.*' feature key."
             )
     elif camera is not None:
-        raise ValueError(
-            f"Rows of style {style!r} must have camera=None; got camera={camera!r}."
-        )
+        raise ValueError(f"Rows of style {style!r} must have camera=None; got camera={camera!r}.")
 
 
 # --- Tool registry --------------------------------------------------------

@@ -93,8 +93,9 @@ class OpenArmFollower(Robot):
         features: dict[str, type] = {}
         for motor in self.bus.motors:
             features[f"{motor}.pos"] = float
-            features[f"{motor}.vel"] = float  # Add this
-            features[f"{motor}.torque"] = float  # Add this
+            if self.config.use_velocity_and_torque:
+                features[f"{motor}.vel"] = float
+                features[f"{motor}.torque"] = float
         return features
 
     @property
@@ -235,8 +236,9 @@ class OpenArmFollower(Robot):
         for motor in self.bus.motors:
             state = states.get(motor, {})
             obs_dict[f"{motor}.pos"] = state.get("position", 0.0)
-            obs_dict[f"{motor}.vel"] = state.get("velocity", 0.0)
-            obs_dict[f"{motor}.torque"] = state.get("torque", 0.0)
+            if self.config.use_velocity_and_torque:
+                obs_dict[f"{motor}.vel"] = state.get("velocity", 0.0)
+                obs_dict[f"{motor}.torque"] = state.get("torque", 0.0)
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():

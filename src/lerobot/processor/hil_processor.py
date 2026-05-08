@@ -557,7 +557,7 @@ class RewardClassifierProcessorStep(ProcessorStep):
     def __post_init__(self):
         """Initializes the reward classifier model after the dataclass is created."""
         if self.pretrained_path is not None:
-            from lerobot.policies.sac.reward_model.modeling_classifier import Classifier
+            from lerobot.rewards.classifier.modeling_classifier import Classifier
 
             self.reward_classifier = Classifier.from_pretrained(self.pretrained_path)
             self.reward_classifier.to(self.device)

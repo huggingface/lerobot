@@ -92,10 +92,10 @@ class ActionQueue:
         Returns:
             int: Number of unconsumed actions.
         """
-        if self.queue is None:
-            return 0
-        length = len(self.queue)
-        return length - self.last_index
+        with self.lock:
+            if self.queue is None:
+                return 0
+            return len(self.queue) - self.last_index
 
     def empty(self) -> bool:
         """Check if the queue is empty.
@@ -103,11 +103,10 @@ class ActionQueue:
         Returns:
             bool: True if no actions remain, False otherwise.
         """
-        if self.queue is None:
-            return True
-
-        length = len(self.queue)
-        return length - self.last_index <= 0
+        with self.lock:
+            if self.queue is None:
+                return True
+            return len(self.queue) - self.last_index <= 0
 
     def get_action_index(self) -> int:
         """Get the current action consumption index.
@@ -115,7 +114,8 @@ class ActionQueue:
         Returns:
             int: Index of the next action to be consumed.
         """
-        return self.last_index
+        with self.lock:
+            return self.last_index
 
     def get_left_over(self) -> Tensor | None:
         """Get leftover original actions for RTC prev_chunk_left_over.

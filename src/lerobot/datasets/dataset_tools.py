@@ -897,14 +897,10 @@ def _copy_and_reindex_episodes_metadata(
 
     dst_meta.finalize()
 
-    dst_meta.info.update(
-        {
-            "total_episodes": len(episode_mapping),
-            "total_frames": total_frames,
-            "total_tasks": len(dst_meta.tasks) if dst_meta.tasks is not None else 0,
-            "splits": {"train": f"0:{len(episode_mapping)}"},
-        }
-    )
+    dst_meta.info.total_episodes = len(episode_mapping)
+    dst_meta.info.total_frames = total_frames
+    dst_meta.info.total_tasks = len(dst_meta.tasks) if dst_meta.tasks is not None else 0
+    dst_meta.info.splits = {"train": f"0:{len(episode_mapping)}"}
     write_info(dst_meta.info, dst_meta.root)
 
     if not all_stats:
@@ -1069,21 +1065,20 @@ def _copy_episodes_metadata_and_stats(
     if episodes_dir.exists():
         shutil.copytree(episodes_dir, dst_episodes_dir, dirs_exist_ok=True)
 
-    dst_meta.info.update(
-        {
-            "total_episodes": src_dataset.meta.total_episodes,
-            "total_frames": src_dataset.meta.total_frames,
-            "total_tasks": src_dataset.meta.total_tasks,
-            "splits": src_dataset.meta.info.get("splits", {"train": f"0:{src_dataset.meta.total_episodes}"}),
-        }
+    dst_meta.info.total_episodes = src_dataset.meta.total_episodes
+    dst_meta.info.total_frames = src_dataset.meta.total_frames
+    dst_meta.info.total_tasks = src_dataset.meta.total_tasks
+    # Preserve original splits if available, otherwise create default
+    dst_meta.info.splits = (
+        src_dataset.meta.info.splits
+        if src_dataset.meta.info.splits
+        else {"train": f"0:{src_dataset.meta.total_episodes}"}
     )
 
     if dst_meta.video_keys and src_dataset.meta.video_keys:
         for key in dst_meta.video_keys:
             if key in src_dataset.meta.features:
-                dst_meta.info["features"][key]["info"] = src_dataset.meta.info["features"][key].get(
-                    "info", {}
-                )
+                dst_meta.info.features[key]["info"] = src_dataset.meta.info.features[key].get("info", {})
 
     write_info(dst_meta.info, dst_meta.root)
 
@@ -1525,7 +1520,7 @@ def modify_tasks(
     write_tasks(new_task_df, root)
 
     # Update info.json
-    dataset.meta.info["total_tasks"] = len(unique_tasks)
+    dataset.meta.info.total_tasks = len(unique_tasks)
     write_info(dataset.meta.info, root)
 
     # Reload metadata to reflect changes
@@ -1858,10 +1853,10 @@ def convert_image_to_video_dataset(
         episodes_df.to_parquet(episodes_path, index=False)
 
         # Update metadata info
-        new_meta.info["total_episodes"] = len(episode_indices)
-        new_meta.info["total_frames"] = sum(ep["length"] for ep in all_episode_metadata.values())
-        new_meta.info["total_tasks"] = dataset.meta.total_tasks
-        new_meta.info["splits"] = {"train": f"0:{len(episode_indices)}"}
+        new_meta.info.total_episodes = len(episode_indices)
+        new_meta.info.total_frames = sum(ep["length"] for ep in all_episode_metadata.values())
+        new_meta.info.total_tasks = dataset.meta.total_tasks
+        new_meta.info.splits = {"train": f"0:{len(episode_indices)}"}
 
         # Update video info for all image keys (now videos)
         # We need to manually set video info since update_video_info() checks video_keys first
@@ -1870,7 +1865,7 @@ def convert_image_to_video_dataset(
                 video_path = new_meta.root / new_meta.video_path.format(
                     video_key=img_key, chunk_index=0, file_index=0
                 )
-                new_meta.info["features"][img_key]["info"] = get_video_info(video_path)
+                new_meta.info.features[img_key]["info"] = get_video_info(video_path)
 
         write_info(new_meta.info, new_meta.root)
 

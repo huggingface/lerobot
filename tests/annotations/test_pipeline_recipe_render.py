@@ -35,14 +35,60 @@ from lerobot.annotations.steerable_pipeline.modules import (
 )
 from lerobot.annotations.steerable_pipeline.validator import StagingValidator
 from lerobot.annotations.steerable_pipeline.writer import LanguageColumnsWriter
-from lerobot.configs.recipe import TrainingRecipe
+from lerobot.configs.recipe import MessageTurn, TrainingRecipe
 from lerobot.datasets.language_render import render_sample
 
 from ._helpers import make_canned_responder
 
-_RECIPE_PATH = (
-    Path(__file__).resolve().parents[2] / "src" / "lerobot" / "configs" / "recipes" / "pi05_hirobot.yaml"
-)
+
+def _build_pr1_style_blend_recipe() -> TrainingRecipe:
+    """Inline blend recipe that consumes every style this pipeline produces.
+
+    PR 1 used to ship ``src/lerobot/configs/recipes/pi05_hirobot.yaml`` as
+    a canonical example, but that file was dropped during PR 1 review. The
+    cross-PR contract this test guards is "the recipe DSL can render
+    non-empty messages from pipeline output", which doesn't require a
+    specific YAML — so we build the equivalent blend in code.
+    """
+    return TrainingRecipe(
+        blend={
+            "low_level_execution": TrainingRecipe(
+                weight=0.35,
+                messages=[
+                    MessageTurn(
+                        role="user",
+                        content="${task}\nPlan: ${plan}\nMemory: ${memory}",
+                        stream="high_level",
+                    ),
+                    MessageTurn(role="assistant", content="${subtask}", stream="low_level", target=True),
+                ],
+            ),
+            "user_interjection_response": TrainingRecipe(
+                weight=0.16,
+                bindings={
+                    "speech": "emitted_at(t, role=assistant, tool_name=say)",
+                    "interjection": "emitted_at(t, style=interjection)",
+                },
+                messages=[
+                    MessageTurn(role="user", content="${task}", stream="high_level"),
+                    MessageTurn(
+                        role="user",
+                        content="${interjection}",
+                        stream="high_level",
+                        if_present="interjection",
+                    ),
+                    MessageTurn(
+                        role="assistant",
+                        content="${plan}",
+                        stream="high_level",
+                        target=True,
+                        if_present="plan",
+                        tool_calls_from="speech",
+                    ),
+                ],
+            ),
+        }
+    )
 
 
 def _build_executor() -> Executor:
@@ -96,13 +142,7 @@ def test_pr1_canonical_recipe_renders_nonempty_from_pipeline_output(
     events_lists = table.column("language_events").to_pylist()
     timestamps = table.column("timestamp").to_pylist()
 
-    recipe = TrainingRecipe.from_yaml(_RECIPE_PATH) if hasattr(TrainingRecipe, "from_yaml") else None
-    if recipe is None:
-        # PR 1 may not expose from_yaml; load via PyYAML and TrainingRecipe(**...)
-        import yaml
-
-        loaded = yaml.safe_load(_RECIPE_PATH.read_text(encoding="utf-8"))
-        recipe = TrainingRecipe(**loaded)
+    recipe = _build_pr1_style_blend_recipe()
 
     rendered_any = False
     for ts, persistent, events in zip(timestamps, persistent_lists, events_lists, strict=True):

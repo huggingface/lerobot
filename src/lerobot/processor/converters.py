@@ -153,49 +153,30 @@ def from_tensor_to_numpy(x: torch.Tensor | Any) -> np.ndarray | float | int | An
     return x
 
 
+_COMPLEMENTARY_KEYS = (
+    "task",
+    "index",
+    "task_index",
+    "episode_index",
+    "timestamp",
+    "language_persistent",
+    "language_events",
+    "messages",
+    "message_streams",
+    "target_message_indices",
+)
+
+
 def _extract_complementary_data(batch: dict[str, Any]) -> dict[str, Any]:
-    """
-    Extract complementary data from a batch dictionary.
+    """Extract complementary data from a batch dictionary.
 
-    This includes padding flags, task description, and indices.
-
-    Args:
-        batch: The batch dictionary.
-
-    Returns:
-        A dictionary with the extracted complementary data.
+    Includes padding flags (any key containing ``_is_pad``) plus the fixed
+    set of metadata / language keys defined in ``_COMPLEMENTARY_KEYS`` —
+    each only when present in ``batch``.
     """
     pad_keys = {k: v for k, v in batch.items() if "_is_pad" in k}
-    task_key = {"task": batch["task"]} if "task" in batch else {}
-    index_key = {"index": batch["index"]} if "index" in batch else {}
-    task_index_key = {"task_index": batch["task_index"]} if "task_index" in batch else {}
-    episode_index_key = {"episode_index": batch["episode_index"]} if "episode_index" in batch else {}
-    timestamp_key = {"timestamp": batch["timestamp"]} if "timestamp" in batch else {}
-    language_persistent_key = (
-        {"language_persistent": batch["language_persistent"]} if "language_persistent" in batch else {}
-    )
-    language_events_key = {"language_events": batch["language_events"]} if "language_events" in batch else {}
-    messages_key = {"messages": batch["messages"]} if "messages" in batch else {}
-    message_streams_key = {"message_streams": batch["message_streams"]} if "message_streams" in batch else {}
-    target_message_indices_key = (
-        {"target_message_indices": batch["target_message_indices"]}
-        if "target_message_indices" in batch
-        else {}
-    )
-
-    return {
-        **pad_keys,
-        **task_key,
-        **index_key,
-        **task_index_key,
-        **episode_index_key,
-        **timestamp_key,
-        **language_persistent_key,
-        **language_events_key,
-        **messages_key,
-        **message_streams_key,
-        **target_message_indices_key,
-    }
+    extras = {k: batch[k] for k in _COMPLEMENTARY_KEYS if k in batch}
+    return {**pad_keys, **extras}
 
 
 def create_transition(

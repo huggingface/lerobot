@@ -35,7 +35,7 @@ class RTCConfig:
     """
 
     # Infrastructure
-    enabled: bool = False
+    enabled: bool = True
 
     # Core RTC settings
     # Todo change to exp

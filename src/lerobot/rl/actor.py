@@ -76,6 +76,7 @@ from lerobot.transport.utils import (
 )
 from lerobot.types import TransitionKey
 from lerobot.utils.device_utils import get_safe_torch_device
+from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.transition import (
@@ -94,7 +95,6 @@ from .gym_manipulator import (
     make_robot_env,
     step_env_and_process_transition,
 )
-from .process import ProcessSignalHandler
 from .queue import get_last_item_from_queue
 
 # Main entry point

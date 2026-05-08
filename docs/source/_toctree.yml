@@ -51,6 +51,8 @@
     title: π₀-FAST (Pi0Fast)
   - local: pi05
     title: π₀.₅ (Pi05)
+  - local: eo1
+    title: EO-1
   - local: groot
     title: NVIDIA GR00T N1.5
   - local: xvla
@@ -65,6 +67,8 @@
     title: SARM
   title: "Reward Models"
 - sections:
+  - local: inference
+    title: Policy Deployment (lerobot-rollout)
   - local: async
     title: Use Async Inference
   - local: rtc

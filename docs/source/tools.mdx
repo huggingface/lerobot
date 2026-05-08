@@ -6,9 +6,9 @@ runtime dispatches to a real implementation (TTS, controller, logger, …).
 
 This page covers:
 
-1. Where the tool catalog lives (PR 1).
-2. How the annotation pipeline produces tool-call atoms (PR 2).
-3. How to add your own tool (PR 3).
+1. Where the tool catalog lives.
+2. How the annotation pipeline produces tool-call atoms.
+3. How to add your own tool.
 
 ## Where tools are declared
 
@@ -29,7 +29,10 @@ Two layers.
         "parameters": {
           "type": "object",
           "properties": {
-            "text": { "type": "string", "description": "The verbatim text to speak." }
+            "text": {
+              "type": "string",
+              "description": "The verbatim text to speak."
+            }
           },
           "required": ["text"]
         }
@@ -63,13 +66,15 @@ prompt_str = tokenizer.apply_chat_template(
 )
 ```
 
-**The implementations** — runnable Python — live under
-`src/lerobot/tools/`, one file per tool. The `say` implementation
-arrives in PR 3 and wraps Kyutai's pocket-tts model.
+**The implementations** — runnable Python — will live under
+`src/lerobot/tools/`, one file per tool. The runtime dispatcher and
+the canonical `say` implementation (wrapping Kyutai's pocket-tts) are
+not part of the catalog layer described here; today this layer ships
+only the schema storage and the `DEFAULT_TOOLS` fallback constant.
 
-## Per-row tool *invocations*
+## Per-row tool _invocations_
 
-The catalog above describes *what can be called*. The actual *call* — the
+The catalog above describes _what can be called_. The actual _call_ — the
 function name plus the argument values — is stored per-row, on the
 assistant atoms in `language_events`:
 
@@ -94,17 +99,30 @@ user_interjection_response:
   bindings:
     speech: "emitted_at(t, role=assistant, tool_name=say)"
   messages:
-    - { role: user,      content: "${task}",         stream: high_level }
-    - { role: assistant, content: "${current_plan}", stream: high_level,
-        target: true, tool_calls_from: speech }
+    - { role: user, content: "${task}", stream: high_level }
+    - {
+        role: assistant,
+        content: "${current_plan}",
+        stream: high_level,
+        target: true,
+        tool_calls_from: speech,
+      }
 ```
 
 The model's training target is one assistant turn that carries both the
-plan text *and* the `say` tool call. At inference, the runtime parses
+plan text _and_ the `say` tool call. At inference, the runtime parses
 the generated text back into structured `tool_calls` and dispatches to
 the matching implementation.
 
 ## How to add your own tool
+
+> **Note:** Steps 2 and 3 below describe the runtime layer
+> (`src/lerobot/tools/`, the `Tool` protocol, `TOOL_REGISTRY`,
+> `get_tools(meta)`) which is not part of the catalog layer shipped
+> today — those modules don't yet exist in the tree. Step 1 alone is
+> enough to make the tool visible to the chat template via
+> `meta.tools` so the model can learn to _generate_ the call;
+> executing the call at inference requires the runtime layer.
 
 Three steps. Concrete example: a `record_observation` tool the policy
 can call to capture an extra observation outside the regular control
@@ -113,9 +131,8 @@ loop.
 ### Step 1 — declare the schema
 
 Add an entry under `meta/info.json["tools"]`. Either edit the file
-directly on disk *before* running the annotation pipeline (it'll be
-preserved) or hand it to `lerobot-annotate` via a config flag (PR 2 —
-exact CLI lands with the pipeline change).
+directly on disk _before_ running the annotation pipeline (it'll be
+preserved) or hand it to `lerobot-annotate` via a config flag.
 
 ```json
 {
@@ -129,7 +146,10 @@ exact CLI lands with the pipeline change).
         "parameters": {
           "type": "object",
           "properties": {
-            "label": { "type": "string", "description": "Short label for the saved image." }
+            "label": {
+              "type": "string",
+              "description": "Short label for the saved image."
+            }
           },
           "required": ["label"]
         }
@@ -167,12 +187,12 @@ class RecordObservationTool:
 ```
 
 One file per tool keeps dependencies isolated — `record_observation`
-might pull `pillow`, while `say` (PR 3) pulls `pocket-tts`. Users
-installing only the tools they need avoid heavy transitive deps.
+might pull `pillow`, while `say` pulls `pocket-tts`. Users installing
+only the tools they need avoid heavy transitive deps.
 
 ### Step 3 — register it
 
-Add to `src/lerobot/tools/registry.py` (PR 3):
+Add to `src/lerobot/tools/registry.py`:
 
 ```python
 from .record_observation import RecordObservationTool
@@ -184,15 +204,7 @@ That's it. At runtime `get_tools(meta)` looks up each schema in
 `meta.tools`, instantiates the matching registered class, and returns
 a name → instance dict the dispatcher can route into.
 
-## Where this fits in the three-PR stack
-
-| Layer | PR | What lands |
-|---|---|---|
-| Catalog storage in `meta/info.json` + `meta.tools` accessor | PR 1 | This page; `SAY_TOOL_SCHEMA`, `DEFAULT_TOOLS` constants in `lerobot.datasets.language`; `LeRobotDatasetMetadata.tools` property |
-| Annotation pipeline writes `tools` to meta after a run; honors anything users pre-populated | PR 2 | `lerobot-annotate` ensures `meta/info.json["tools"]` includes the canonical `say` and merges any user-declared tools |
-| Runnable implementations under `src/lerobot/tools/`; runtime dispatcher; `say.py` wired to Kyutai's pocket-tts | PR 3 | One file per tool; `Tool` protocol; `TOOL_REGISTRY`; optional `[tools]` extra in `pyproject.toml` |
-
-If you want to use a tool *without* writing an implementation (e.g. for
+If you want to use a tool _without_ writing an implementation (e.g. for
 training-time chat-template formatting only), step 1 alone is enough —
-the model still learns to *generate* the call. Steps 2 and 3 are only
-needed to actually *execute* it at inference.
+the model still learns to _generate_ the call. Steps 2 and 3 are only
+needed to actually _execute_ it at inference.

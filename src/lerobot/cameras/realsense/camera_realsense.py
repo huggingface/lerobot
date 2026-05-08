@@ -17,6 +17,7 @@ Provides the RealSenseCamera class for capturing frames from Intel RealSense cam
 """
 
 import logging
+import sys
 import time
 from threading import Event, Lock, Thread
 from typing import TYPE_CHECKING, Any
@@ -41,6 +42,7 @@ from ..utils import get_cv2_rotation
 from .configuration_realsense import RealSenseCameraConfig
 
 logger = logging.getLogger(__name__)
+pkg_name = "pyrealsense2-macosx" if sys.platform == "darwin" else "pyrealsense2"
 
 
 class RealSenseCamera(Camera):
@@ -114,7 +116,7 @@ class RealSenseCamera(Camera):
         Args:
             config: The configuration settings for the camera.
         """
-        require_package("pyrealsense2", extra="intelrealsense")
+        require_package(pkg_name, extra="intelrealsense", import_name="pyrealsense2")
         super().__init__(config)
 
         self.config = config

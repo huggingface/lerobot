@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass, field
+from dataclasses import field
 from typing import TYPE_CHECKING
 
 import torch
@@ -109,7 +109,6 @@ class MultiEmbodimentActionEncoder(nn.Module):
         return x
 
 
-@dataclass
 class FlowmatchingActionHeadConfig(PretrainedConfig):
     """NOTE: N1.5 uses XEmbFlowmatchingPolicyHeadConfig as action head"""
 

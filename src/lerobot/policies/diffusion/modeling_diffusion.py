@@ -380,7 +380,9 @@ class DiffusionModel(nn.Module):
                     f"{self.config.do_mask_loss_for_padding=}."
                 )
             in_episode_bound = ~batch["action_is_pad"]
-            loss = loss * in_episode_bound.unsqueeze(-1)
+            mask = in_episode_bound.unsqueeze(-1)
+            num_valid = mask.sum() * loss.shape[-1]
+            return (loss * mask).sum() / num_valid.clamp_min(1)
 
         return loss.mean()
 
