@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.gaussian_actor.configuration_gaussian_actor import (
     CriticNetworkConfig,
     GaussianActorConfig,
@@ -87,7 +88,7 @@ class SACAlgorithmConfig(RLAlgorithmConfig):
     use_torch_compile: bool = False
 
     # Policy config
-    policy_config: GaussianActorConfig | None = None
+    policy_config: PreTrainedConfig | None = None
 
     @classmethod
     def from_policy_config(cls, policy_cfg: GaussianActorConfig) -> SACAlgorithmConfig:

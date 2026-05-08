@@ -513,6 +513,46 @@ class SACAlgorithm(RLAlgorithm):
         """Load actor + discrete-critic weights into the policy."""
         self.policy.load_actor_weights(weights, device=device)
 
+    def state_dict(self) -> dict[str, torch.Tensor]:
+        """Algorithm-owned trainable tensors.
+
+        Encoder weights are stripped because they are owned by the policy
+        (``policy.encoder_critic``) and already saved via ``policy.save_pretrained``.
+        """
+        bundle: dict[str, torch.Tensor] = {}
+        for k, v in _strip_encoder_keys(self.critic_ensemble.state_dict()).items():
+            bundle[f"critic_ensemble.{k}"] = v
+        for k, v in _strip_encoder_keys(self.critic_target.state_dict()).items():
+            bundle[f"critic_target.{k}"] = v
+        if self.discrete_critic_target is not None:
+            for k, v in _strip_encoder_keys(self.discrete_critic_target.state_dict()).items():
+                bundle[f"discrete_critic_target.{k}"] = v
+        bundle["log_alpha"] = self.log_alpha.detach()
+        return bundle
+
+    def load_state_dict(
+        self,
+        state_dict: dict[str, torch.Tensor],
+        device: str | torch.device = "cpu",
+    ) -> None:
+        """In-place load of algorithm-owned tensors.
+
+        ``log_alpha`` is restored via ``Parameter.data.copy_`` so the
+        ``temperature`` optimizer's reference to the parameter object stays
+        valid after resume.
+        """
+        critic_ensemble_state = _split_prefix(state_dict, "critic_ensemble.")
+        critic_target_state = _split_prefix(state_dict, "critic_target.")
+        self.critic_ensemble.load_state_dict(critic_ensemble_state, strict=False)
+        self.critic_target.load_state_dict(critic_target_state, strict=False)
+
+        if self.discrete_critic_target is not None:
+            discrete_target_state = _split_prefix(state_dict, "discrete_critic_target.")
+            self.discrete_critic_target.load_state_dict(discrete_target_state, strict=False)
+
+        if "log_alpha" in state_dict:
+            self.log_alpha.data.copy_(state_dict["log_alpha"].to(self.log_alpha.device))
+
     def get_observation_features(
         self, observations: Tensor, next_observations: Tensor
     ) -> tuple[Tensor | None, Tensor | None]:
@@ -538,6 +578,16 @@ class SACAlgorithm(RLAlgorithm):
             next_observation_features = self.policy.actor.encoder.get_cached_image_features(next_observations)
 
         return observation_features, next_observation_features
+
+
+def _strip_encoder_keys(state: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    """Drop ``encoder.*`` keys from a critic-module state dict."""
+    return {k: v for k, v in state.items() if not k.startswith("encoder.")}
+
+
+def _split_prefix(state: dict[str, torch.Tensor], prefix: str) -> dict[str, torch.Tensor]:
+    """Return the subset of ``state`` whose keys start with ``prefix``, prefix-stripped."""
+    return {k.removeprefix(prefix): v for k, v in state.items() if k.startswith(prefix)}
 
 
 class CriticHead(nn.Module):

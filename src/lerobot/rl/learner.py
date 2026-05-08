@@ -56,6 +56,8 @@ from pprint import pformat
 from typing import TYPE_CHECKING, Any
 
 import torch
+from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
+from safetensors.torch import load_file as load_safetensors
 from termcolor import colored
 from torch import nn
 from torch.multiprocessing import Queue
@@ -77,13 +79,16 @@ from lerobot.teleoperators import gamepad, so_leader  # noqa: F401
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.utils.constants import (
     ACTION,
+    ALGORITHM_DIR,
     CHECKPOINTS_DIR,
     LAST_CHECKPOINT_LINK,
     PRETRAINED_MODEL_DIR,
     TRAINING_STATE_DIR,
+    TRAINING_STEP,
 )
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.import_utils import _grpc_available, require_package
+from lerobot.utils.io_utils import load_json, write_json
 from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
@@ -370,7 +375,9 @@ def add_actor_information_and_train(
 
     # If we are resuming, we need to load the training state
     optimizers = algorithm.get_optimizers()
-    resume_optimization_step, resume_interaction_step = load_training_state(cfg=cfg, optimizers=optimizers)
+    resume_optimization_step, resume_interaction_step = load_training_state(
+        cfg=cfg, optimizers=optimizers, algorithm=algorithm, device=device
+    )
 
     logging.info("Starting learner thread")
     interaction_message = None
@@ -464,6 +471,7 @@ def add_actor_information_and_train(
                 policy=policy,
                 optimizers=optimizers,
                 replay_buffer=replay_buffer,
+                algorithm=algorithm,
                 offline_replay_buffer=offline_replay_buffer,
                 dataset_repo_id=dataset_repo_id,
                 fps=fps,
@@ -550,6 +558,7 @@ def save_training_checkpoint(
     policy: nn.Module,
     optimizers: dict[str, Optimizer],
     replay_buffer: ReplayBuffer,
+    algorithm: RLAlgorithm | None = None,
     offline_replay_buffer: ReplayBuffer | None = None,
     dataset_repo_id: str | None = None,
     fps: int = 30,
@@ -588,7 +597,7 @@ def save_training_checkpoint(
     # Create checkpoint directory
     checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, online_steps, optimization_step)
 
-    # Save checkpoint
+    # Save policy artifacts (pretrained_model/) + Trainer scaffolding (training_state/).
     save_checkpoint(
         checkpoint_dir=checkpoint_dir,
         step=optimization_step,
@@ -600,11 +609,18 @@ def save_training_checkpoint(
         postprocessor=postprocessor,
     )
 
-    # Save interaction step manually
-    training_state_dir = os.path.join(checkpoint_dir, TRAINING_STATE_DIR)
-    os.makedirs(training_state_dir, exist_ok=True)
-    training_state = {"step": optimization_step, "interaction_step": interaction_step}
-    torch.save(training_state, os.path.join(training_state_dir, "training_state.pt"))
+    # Algorithm-owned tensors live in their own component subfolder
+    # so they can be `push_to_hub`'d independently and don't bloat the inference artifact.
+    if algorithm is not None:
+        algorithm.save_pretrained(checkpoint_dir / ALGORITHM_DIR)
+
+    # Enrich training_step.json with the RL-specific interaction_step counter so
+    # both can be restored from a single file.
+    training_state_dir = checkpoint_dir / TRAINING_STATE_DIR
+    write_json(
+        {"step": optimization_step, "interaction_step": interaction_step},
+        training_state_dir / TRAINING_STEP,
+    )
 
     # Update the "last" symlink
     update_last_checkpoint(checkpoint_dir)
@@ -698,13 +714,20 @@ def handle_resume_logic(cfg: TrainRLServerPipelineConfig) -> TrainRLServerPipeli
 def load_training_state(
     cfg: TrainRLServerPipelineConfig,
     optimizers: Optimizer | dict[str, Optimizer],
+    algorithm: RLAlgorithm | None = None,
+    device: str | torch.device = "cpu",
 ):
     """
-    Loads the training state (optimizers, step count, etc.) from a checkpoint.
+    Loads the training state (optimizers, RNG, step + interaction step, and
+    algorithm-owned tensors) from the most recent checkpoint.
 
     Args:
-        cfg (TrainRLServerPipelineConfig): Training configuration
-        optimizers (Optimizer | dict): Optimizers to load state into
+        cfg: Training configuration.
+        optimizers: Optimizers to load state into.
+        algorithm: Algorithm whose state dict should be restored.
+            Required for full main-equivalent resume;
+            the policy itself is restored separately via ``make_policy``.
+        device: Device on which to place loaded algorithm tensors.
 
     Returns:
         tuple: (optimization_step, interaction_step) or (None, None) if not resuming
@@ -713,20 +736,31 @@ def load_training_state(
         return None, None
 
     # Construct path to the last checkpoint directory
-    checkpoint_dir = os.path.join(cfg.output_dir, CHECKPOINTS_DIR, LAST_CHECKPOINT_LINK)
+    checkpoint_dir = Path(cfg.output_dir) / CHECKPOINTS_DIR / LAST_CHECKPOINT_LINK
 
     logging.info(f"Loading training state from {checkpoint_dir}")
 
     try:
-        # Use the utility function from train_utils which loads the optimizer state
-        step, optimizers, _ = utils_load_training_state(Path(checkpoint_dir), optimizers, None)
+        # Restore optimizers + RNG + step from the standard `training_state/` folder
+        step, optimizers, _ = utils_load_training_state(checkpoint_dir, optimizers, None)
 
-        # Load interaction step separately from training_state.pt
-        training_state_path = os.path.join(checkpoint_dir, TRAINING_STATE_DIR, "training_state.pt")
-        interaction_step = 0
-        if os.path.exists(training_state_path):
-            training_state = torch.load(training_state_path, weights_only=False)  # nosec B614: Safe usage of torch.load
-            interaction_step = training_state.get("interaction_step", 0)
+        # Restore algorithm-owned tensors
+        if algorithm is not None:
+            algo_dir = checkpoint_dir / ALGORITHM_DIR
+            if algo_dir.is_dir():
+                tensors = load_safetensors(str(algo_dir / SAFETENSORS_SINGLE_FILE))
+                algorithm.load_state_dict(tensors, device=device)
+                logging.info(f"Loaded algorithm state from {algo_dir}")
+            else:
+                logging.warning(
+                    f"No algorithm state found at {algo_dir}; "
+                    "will keep their freshly-initialised values. Adam moments restored from the "
+                    "old optimizer state may not match these reset parameters."
+                )
+
+        # Read interaction_step from the enriched training_step.json
+        training_step_path = checkpoint_dir / TRAINING_STATE_DIR / TRAINING_STEP
+        interaction_step = int(load_json(training_step_path).get("interaction_step", 0))
 
         logging.info(f"Resuming from step {step}, interaction step {interaction_step}")
         return step, interaction_step

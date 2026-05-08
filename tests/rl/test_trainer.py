@@ -68,6 +68,12 @@ class _DummyRLAlgorithm(RLAlgorithm):
     def load_weights(self, weights, device="cpu") -> None:
         _ = (weights, device)
 
+    def state_dict(self) -> dict[str, torch.Tensor]:
+        return {}
+
+    def load_state_dict(self, state_dict, device="cpu") -> None:
+        _ = (state_dict, device)
+
 
 class _SimpleMixer:
     def get_iterator(self, batch_size: int, async_prefetch: bool = True, queue_size: int = 2):
