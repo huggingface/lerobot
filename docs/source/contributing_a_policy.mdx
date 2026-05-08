@@ -12,7 +12,7 @@ A note on tone: robot-learning is an actively evolving field, and "what a policy
 
 ```
 src/lerobot/policies/my_policy/
-├── __init__.py                    # re-exports config + processor factory (NOT modeling)
+├── __init__.py                    # re-exports config + modeling + processor factory
 ├── configuration_my_policy.py     # MyPolicyConfig + @register_subclass
 ├── modeling_my_policy.py          # MyPolicy(PreTrainedPolicy)
 ├── processor_my_policy.py         # make_my_policy_pre_post_processors
@@ -46,7 +46,7 @@ The methods called by the train/eval loops:
 | `select_action(batch, **kwargs) -> Tensor`                        | `lerobot-eval`    | Return the next action `(B, action_dim)`. Called every step.                                                                                           |
 | `predict_action_chunk(batch, **kwargs) -> Tensor`                 | the policy itself | Return an action chunk `(B, chunk_size, action_dim)`. Currently abstract on the base class — raise `NotImplementedError` if your policy doesn't chunk. |
 | `forward(batch, reduction="mean") -> tuple[Tensor, dict \| None]` | `lerobot-train`   | Return `(loss, output_dict)`. Must accept `reduction="none"` for per-sample weighting.                                                                 |
-| `get_optim_params() -> dict`                                      | the optimizer     | Return parameter groups; `{"params": self.parameters()}` is fine if you don't need per-group settings.                                                 |
+| `get_optim_params() -> dict`                                      | the optimizer     | Return `self.parameters()` for simple policies; return a named parameter dict for [multi-optimizer policies](https://github.com/huggingface/lerobot/blob/ecd38c50d7d15b4184cf42649ff1185ee2e11eeb/src/lerobot/policies/sac/modeling_sac.py#L61-L73). |
 | `update() -> None` _(optional)_                                   | `lerobot-train`   | Called after each optimizer step _if defined_. Use for EMA, target nets, replay buffers (TDMPC uses this).                                             |
 
 Batches are flat dictionaries keyed by the constants in [`lerobot.utils.constants`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/utils/constants.py): `OBS_STATE` (`observation.state.<motor>`), `OBS_IMAGES` (`observation.images.<camera>`), `OBS_LANGUAGE`, `ACTION`, etc. Reuse the constants — don't invent new prefixes.
@@ -112,7 +112,7 @@ A new policy is much easier to review — and far more useful — when it ships 
 
 **Pick at least one in-tree benchmark.** LeRobot ships sim benchmarks with per-benchmark Docker images (LIBERO, LIBERO-plus, Meta-World, RoboTwin 2.0, RoboCasa365, RoboCerebra, RoboMME, VLABench and more). Pick the one that matches your policy's modality — VLAs usually go to LIBERO or VLABench; image-only BC to LIBERO or Meta-World. The full list lives under [Benchmarks](./libero) in the docs sidebar.
 
-**Push the checkpoint** to the Hub under `lerobot/<policy>_<benchmark>` (or your namespace if you don't have write access; a maintainer can mirror it). Use `PreTrainedPolicy.push_to_hub` so the repo gets `config.json`, `model.safetensors`, and a model card.
+**Push the checkpoint** to the Hub under `lerobot/<policy>_<benchmark>` (or your namespace if you don't have write access; a maintainer can mirror it). Use `PreTrainedPolicy.push_model_to_hub` so the repo gets `config.json`, `model.safetensors`, and a model card.
 
 **Report results in your policy's MDX**, with the exact `lerobot-eval` command and hardware so anyone can re-run:
 
@@ -134,7 +134,7 @@ Reproduce: `lerobot-eval --policy.path=lerobot/<policy>_libero --env.type=libero
 
 Use `n_episodes ≥ 50` per suite for stable success-rate estimates.
 
-If your policy is real-robot-only and no sim benchmark applies, swap the sim eval for: a public training dataset on the Hub, the `lerobot-train` command, the checkpoint, and a real-robot success rate over ≥10 episodes via `lerobot-record --policy.path=...`.
+If your policy is real-robot-only and no sim benchmark applies, swap the sim eval for: a public training dataset on the Hub, the `lerobot-train` command, the checkpoint, and a real-robot success rate over ≥10 episodes via `lerobot-rollout --policy.path=...`.
 
 ---
 
@@ -146,7 +146,7 @@ The general expectations are in [`CONTRIBUTING.md`](https://github.com/huggingfa
 - [ ] `factory.py` and `policies/__init__.py` are wired (lazy imports for modeling).
 - [ ] `make_my_policy_pre_post_processors` follows the naming convention.
 - [ ] Optional deps live behind a `[project.optional-dependencies]` extra and the `TYPE_CHECKING + require_package` guard.
-- [ ] `tests/policies/` updated; backward-compat artifact committed & policy-specifictests.
+- [ ] `tests/policies/` updated; backward-compat artifact committed & policy-specific tests.
 - [ ] `src/lerobot/policies/<name>/README.md` symlinked into `docs/source/policy_<name>_README.md`; user-facing `docs/source/<name>.mdx` written and added to `_toctree.yml`.
 - [ ] At least one reproducible benchmark eval in the policy MDX with a published checkpoint (sim benchmark, or real-robot dataset + checkpoint).
 
