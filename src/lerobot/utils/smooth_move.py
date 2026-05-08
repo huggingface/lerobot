@@ -51,6 +51,14 @@ def teleop_smooth_move_to(
     TODO(Maxime): This blocks up to ``duration_s`` seconds, during this time
     the follower robot doesn't receive new actions, this could be an issue on LeKiwi.
     """
+    if not teleop_supports_feedback(teleop):
+        raise ValueError(
+            "teleop_smooth_move_to requires an actuated teleop with feedback support "
+            "(non-empty feedback_features and enable_torque/disable_torque methods)."
+        )
+    if duration_s < 0:
+        raise ValueError(f"duration_s must be non-negative, got {duration_s}")
+
     teleop.enable_torque()
     current = teleop.get_action()
     steps = max(int(duration_s * fps), 1)
@@ -73,6 +81,9 @@ def follower_smooth_move_to(
     to the follower, we bring the follower to the teleop's current pose.
     Both ``current`` and ``target`` must be in robot-action key space.
     """
+    if duration_s < 0:
+        raise ValueError(f"duration_s must be non-negative, got {duration_s}")
+
     steps = max(int(duration_s * fps), 1)
 
     for step in range(steps + 1):
