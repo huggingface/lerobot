@@ -61,6 +61,8 @@
 - sections:
   - local: sarm
     title: SARM
+  - local: vita
+    title: VITA
   title: "Reward Models"
 - sections:
   - local: inference

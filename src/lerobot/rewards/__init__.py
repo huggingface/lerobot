@@ -21,11 +21,13 @@ from .factory import (
 )
 from .pretrained import PreTrainedRewardModel as PreTrainedRewardModel
 from .sarm.configuration_sarm import SARMConfig as SARMConfig
+from .vita.configuration_vita import VitaConfig as VitaConfig
 
 __all__ = [
     # Configuration classes
     "RewardClassifierConfig",
     "SARMConfig",
+    "VitaConfig",
     # Base class
     "PreTrainedRewardModel",
     # Factory functions
