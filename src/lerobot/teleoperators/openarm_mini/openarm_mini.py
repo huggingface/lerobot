@@ -112,7 +112,7 @@ class OpenArmMini(Teleoperator):
 
     @property
     def feedback_features(self) -> dict[str, type]:
-        return {}
+        return self.action_features
 
     @property
     def is_connected(self) -> bool:
@@ -348,8 +348,9 @@ class OpenArmMini(Teleoperator):
         if left_goals:
             self.bus_left.sync_write("Goal_Position", left_goals)
 
+    @check_if_not_connected
     def send_feedback(self, feedback: dict[str, float]) -> None:
-        raise NotImplementedError("Feedback is not yet implemented for OpenArm Mini.")
+        self.write_goal_positions(feedback)
 
     @check_if_not_connected
     def disconnect(self) -> None:
