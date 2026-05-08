@@ -264,7 +264,13 @@ class LanguageColumnsWriter:
         new_table = self._materialize_table(
             table, per_row_persistent, per_row_events, drop_old=self.drop_existing_subtask_index
         )
-        pq.write_table(new_table, path)
+        # Atomic replace: write to a sibling tmp path and rename so a crash
+        # mid-write can't leave a half-written shard that ``pq.read_table``
+        # would then fail to open. ``Path.replace`` is atomic on POSIX +
+        # Windows when source and target sit on the same filesystem.
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        pq.write_table(new_table, tmp_path)
+        tmp_path.replace(path)
 
     def _materialize_table(
         self,

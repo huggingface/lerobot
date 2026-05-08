@@ -31,8 +31,8 @@ rows into memory at once.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from dataclasses import dataclass
+from collections.abc import Iterator, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -53,14 +53,34 @@ class EpisodeRecord:
     row_offset: int  # row offset within the parquet file where this episode starts
     row_count: int  # number of rows for this episode
 
-    def frames_df(self):  # type: ignore[no-untyped-def]
-        """Lazy-load the pandas slice for this episode."""
-        import pandas as pd  # noqa: PLC0415  - deferred for optional dataset extra
+    # Memoized parquet slice — populated on first ``frames_df()`` call so
+    # repeat queries from different modules don't re-read the whole shard.
+    _frames_df_cache: Any = field(default=None, init=False, repr=False, compare=False)
 
-        table = pq.read_table(self.data_path)
-        df: pd.DataFrame = table.to_pandas()
-        slice_ = df.iloc[self.row_offset : self.row_offset + self.row_count].reset_index(drop=True)
-        return slice_
+    def frames_df(self):  # type: ignore[no-untyped-def]
+        """Lazy-load the pandas slice for this episode (memoized)."""
+        if self._frames_df_cache is None:
+            import pandas as pd  # noqa: PLC0415  - deferred for optional dataset extra
+
+            table = pq.read_table(self.data_path)
+            df: pd.DataFrame = table.to_pandas()
+            self._frames_df_cache = df.iloc[self.row_offset : self.row_offset + self.row_count].reset_index(
+                drop=True
+            )
+        return self._frames_df_cache
+
+
+def snap_to_frame(t: float, frame_timestamps: Sequence[float]) -> float:
+    """Snap an arbitrary float to the nearest exact source frame timestamp.
+
+    Modules use this when emitting event-style rows so the row's
+    timestamp matches a real parquet frame (event rows must land on an
+    exact frame, see PR 1's "exact event matching" rule).
+    """
+    if not frame_timestamps:
+        return float(t)
+    nearest = min(frame_timestamps, key=lambda f: abs(f - t))
+    return float(nearest)
 
 
 def _load_tasks_lookup(root: Path) -> dict[int, str]:

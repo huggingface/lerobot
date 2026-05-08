@@ -26,23 +26,14 @@ from ..config import Module1Config
 from ..frames import (
     FrameProvider,
     VideoFrameProvider,
-    episode_clip_path,
     null_provider,
     to_video_block,
     to_video_url_block,
 )
 from ..prompts import load as load_prompt
-from ..reader import EpisodeRecord
+from ..reader import EpisodeRecord, snap_to_frame
 from ..staging import EpisodeStaging
 from ..vlm_client import VlmClient
-
-
-def _snap_to_frame(t: float, frame_timestamps: Sequence[float]) -> float:
-    """Snap an arbitrary float to the nearest exact source frame timestamp."""
-    if not frame_timestamps:
-        return float(t)
-    nearest = min(frame_timestamps, key=lambda f: abs(f - t))
-    return float(nearest)
 
 
 @dataclass
@@ -109,7 +100,7 @@ class PlanSubtasksMemoryModule:
                     "role": "assistant",
                     "content": span["text"],
                     "style": "subtask",
-                    "timestamp": _snap_to_frame(span["start"], record.frame_timestamps),
+                    "timestamp": snap_to_frame(span["start"], record.frame_timestamps),
                     "tool_calls": None,
                 }
             )
@@ -132,7 +123,7 @@ class PlanSubtasksMemoryModule:
             remaining = [s["text"] for s in subtask_spans[i:]]
             mem_text = self._generate_memory(record, prior_memory, completed, remaining, task=effective_task)
             if mem_text:
-                ts = _snap_to_frame(span["start"], record.frame_timestamps)
+                ts = snap_to_frame(span["start"], record.frame_timestamps)
                 rows.append(
                     {
                         "role": "assistant",
@@ -239,7 +230,7 @@ class PlanSubtasksMemoryModule:
             return []
         if self.config.use_video_url and isinstance(self.frame_provider, VideoFrameProvider):
             cache_dir = Path(self.frame_provider.root) / ".annotate_staging" / ".video_clips"
-            clip = episode_clip_path(record, self.frame_provider, cache_dir)
+            clip = self.frame_provider.episode_clip_path(record, cache_dir)
             return (
                 to_video_url_block(f"file://{clip}", fps=self.config.use_video_url_fps)
                 if clip is not None
@@ -278,7 +269,7 @@ class PlanSubtasksMemoryModule:
             else [str(t) if t else None for t in interjection_texts]
         )
         for raw_t, inter_text in zip(interjection_times, texts, strict=True):
-            t = _snap_to_frame(raw_t, record.frame_timestamps)
+            t = snap_to_frame(raw_t, record.frame_timestamps)
             if t in already_planned:
                 continue
             already_planned.add(t)

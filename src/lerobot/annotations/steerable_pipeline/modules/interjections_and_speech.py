@@ -40,16 +40,10 @@ from typing import Any
 from ..config import Module2Config
 from ..frames import FrameProvider, null_provider, to_image_blocks
 from ..prompts import load as load_prompt
-from ..reader import EpisodeRecord
+from ..reader import EpisodeRecord, snap_to_frame
 from ..staging import EpisodeStaging
 from ..vlm_client import VlmClient
 from ..writer import speech_atom
-
-
-def _snap_to_frame(t: float, frame_timestamps: Sequence[float]) -> float:
-    if not frame_timestamps:
-        return float(t)
-    return float(min(frame_timestamps, key=lambda f: abs(f - t)))
 
 
 @dataclass
@@ -161,7 +155,7 @@ class InterjectionsAndSpeechModule:
 
         out: list[dict[str, Any]] = []
         for t, prev_subtask, next_subtask in chosen:
-            t_snap = _snap_to_frame(t, record.frame_timestamps)
+            t_snap = snap_to_frame(t, record.frame_timestamps)
             # Window straddles the boundary so the VLM sees the end of the
             # previous subtask and the start of the next one — same
             # conditioning the policy will see at training time.
@@ -197,9 +191,7 @@ class InterjectionsAndSpeechModule:
             out.append(speech_atom(t_snap, speech_text.strip()))
         return out
 
-    def _window_timestamps(
-        self, t_anchor: float, frame_timestamps: Sequence[float]
-    ) -> list[float]:
+    def _window_timestamps(self, t_anchor: float, frame_timestamps: Sequence[float]) -> list[float]:
         """Return a small set of frame timestamps centered on ``t_anchor``.
 
         The window straddles the subtask boundary the interjection sits
@@ -224,7 +216,7 @@ class InterjectionsAndSpeechModule:
         seen: set[float] = set()
         for tgt in targets:
             clamped = min(last_ts, max(0.0, tgt))
-            t = _snap_to_frame(clamped, frame_timestamps)
+            t = snap_to_frame(clamped, frame_timestamps)
             if t not in seen:
                 seen.add(t)
                 snapped.append(t)

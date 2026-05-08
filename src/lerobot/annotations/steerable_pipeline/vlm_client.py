@@ -116,7 +116,9 @@ def _extract_first_json_object(text: str) -> str | None:
         if ch == "\\":
             escape = True
             continue
-        if ch == '"' and not escape:
+        # Note: ``escape`` is always False here — the ``if escape`` branch
+        # above already handled and reset it.
+        if ch == '"':
             in_string = not in_string
             continue
         if in_string:
@@ -247,9 +249,8 @@ def _make_transformers_client(config: VlmConfig) -> VlmClient:
         from transformers import AutoProcessor  # type: ignore[import-not-found]
     except ImportError as exc:
         raise ImportError("transformers + torch are required for backend='transformers'.") from exc
-    auto_cls = (
-        getattr(transformers, "AutoModelForImageTextToText", None)
-        or getattr(transformers, "AutoModelForVision2Seq", None)
+    auto_cls = getattr(transformers, "AutoModelForImageTextToText", None) or getattr(
+        transformers, "AutoModelForVision2Seq", None
     )
     if auto_cls is None:
         raise ImportError(
@@ -257,9 +258,7 @@ def _make_transformers_client(config: VlmConfig) -> VlmClient:
             "transformers version. Install transformers>=4.45 (which has AutoModelForImageTextToText) "
             "for VL models."
         )
-    processor = AutoProcessor.from_pretrained(
-        config.model_id, trust_remote_code=config.trust_remote_code
-    )
+    processor = AutoProcessor.from_pretrained(config.model_id, trust_remote_code=config.trust_remote_code)
     import os as _os  # noqa: PLC0415
 
     use_accelerate = _os.environ.get("LEROBOT_TRANSFORMERS_DEVICE_MAP", "manual") != "manual"
@@ -327,8 +326,7 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
         from openai import OpenAI  # type: ignore[import-not-found]
     except ImportError as exc:
         raise ImportError(
-            "openai package is required for backend='openai'. "
-            "Install with `pip install openai`."
+            "openai package is required for backend='openai'. Install with `pip install openai`."
         ) from exc
 
     api_base = config.api_base
@@ -357,22 +355,17 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
             print(f"[lerobot-annotate] server ready at {api_base}", flush=True)
 
     clients = [OpenAI(base_url=base, api_key=api_key) for base in api_bases]
-    client = clients[0]
     # round-robin counter for parallel mode
     rr_counter = {"i": 0}
 
     # ``mm_processor_kwargs`` is a vllm-specific extra; transformers serve
     # rejects it with HTTP 422. Send it only when explicitly opted in via
     # an env var (e.g. ``LEROBOT_OPENAI_SEND_MM_KWARGS=1`` for vllm).
-    send_mm_kwargs = os.environ.get(
-        "LEROBOT_OPENAI_SEND_MM_KWARGS", ""
-    ).lower() in {"1", "true", "yes"}
+    send_mm_kwargs = os.environ.get("LEROBOT_OPENAI_SEND_MM_KWARGS", "").lower() in {"1", "true", "yes"}
 
     rr_lock = threading.Lock()
 
-    def _one_call(
-        messages: Sequence[dict[str, Any]], max_tok: int, temp: float
-    ) -> str:
+    def _one_call(messages: Sequence[dict[str, Any]], max_tok: int, temp: float) -> str:
         api_messages, mm_kwargs = _to_openai_messages(messages)
         kwargs: dict[str, Any] = {
             "model": config.model_id,
@@ -393,9 +386,7 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
         response = chosen.chat.completions.create(**kwargs)
         return response.choices[0].message.content or ""
 
-    def _gen(
-        batch: Sequence[Sequence[dict[str, Any]]], max_tok: int, temp: float
-    ) -> list[str]:
+    def _gen(batch: Sequence[Sequence[dict[str, Any]]], max_tok: int, temp: float) -> list[str]:
         if len(batch) <= 1 or config.client_concurrency <= 1:
             return [_one_call(messages, max_tok, temp) for messages in batch]
         # Parallel fan-out — vllm batches these on the server side.
@@ -403,9 +394,7 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
 
         max_workers = min(config.client_concurrency, len(batch))
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = [
-                pool.submit(_one_call, messages, max_tok, temp) for messages in batch
-            ]
+            futures = [pool.submit(_one_call, messages, max_tok, temp) for messages in batch]
             return [f.result() for f in futures]
 
     return _GenericTextClient(_gen, config)
@@ -462,11 +451,7 @@ def _spawn_parallel_inference_servers(config: VlmConfig) -> list[str]:
         gpu = i % num_gpus
         env = _os.environ.copy()
         env["CUDA_VISIBLE_DEVICES"] = str(gpu)
-        cmd = base_cmd
-        if "{port}" in cmd:
-            cmd = cmd.replace("{port}", str(port))
-        else:
-            cmd = f"{cmd} --port {port}"
+        cmd = base_cmd.replace("{port}", str(port)) if "{port}" in base_cmd else f"{base_cmd} --port {port}"
         api_base = f"http://localhost:{port}/v1"
         api_bases.append(api_base)
         print(f"[server-{i}] launching on GPU {gpu} port {port}: {cmd}", flush=True)
@@ -530,9 +515,7 @@ def _spawn_parallel_inference_servers(config: VlmConfig) -> list[str]:
                 )
         time.sleep(2)
     if any(not ev.is_set() for ev in ready_events):
-        raise RuntimeError(
-            f"[server] not all replicas became ready within {config.serve_ready_timeout_s}s"
-        )
+        raise RuntimeError(f"[server] not all replicas became ready within {config.serve_ready_timeout_s}s")
     print(f"[lerobot-annotate] all {n} servers ready: {api_bases}", flush=True)
     return api_bases
 
@@ -542,8 +525,12 @@ def _server_is_up(api_base: str) -> bool:
     import urllib.request  # noqa: PLC0415
 
     url = api_base.rstrip("/") + "/models"
+    # ``api_base`` is the user-configured local-server URL we just spawned
+    # or the user passed in via ``--vlm.api_base``; the bandit B310 warning
+    # is for arbitrary user-controlled URLs with file:/ schemes which
+    # cannot reach this code path.
     try:
-        with urllib.request.urlopen(url, timeout=2) as resp:
+        with urllib.request.urlopen(url, timeout=2) as resp:  # noqa: S310  # nosec B310
             return resp.status == 200
     except Exception:  # noqa: BLE001
         return False
@@ -566,7 +553,6 @@ def _spawn_inference_server(config: VlmConfig) -> str:
     import sys  # noqa: PLC0415
     import threading  # noqa: PLC0415
     import time  # noqa: PLC0415
-    import urllib.request  # noqa: PLC0415
 
     cmd = config.serve_command
     if not cmd:
@@ -657,9 +643,7 @@ def _spawn_inference_server(config: VlmConfig) -> str:
         if ready_event.wait(timeout=2):
             return api_base
     proc.terminate()
-    raise RuntimeError(
-        f"[server] did not become ready within {config.serve_ready_timeout_s}s"
-    )
+    raise RuntimeError(f"[server] did not become ready within {config.serve_ready_timeout_s}s")
 
 
 def _to_openai_messages(
@@ -693,9 +677,7 @@ def _to_openai_messages(
             elif block_type == "video":
                 frames = block.get("video", [])
                 for img in frames:
-                    out_blocks.append(
-                        {"type": "image_url", "image_url": {"url": _pil_to_data_url(img)}}
-                    )
+                    out_blocks.append({"type": "image_url", "image_url": {"url": _pil_to_data_url(img)}})
             elif block_type == "video_url":
                 video_url = dict(block["video_url"])
                 url = video_url.get("url", "")

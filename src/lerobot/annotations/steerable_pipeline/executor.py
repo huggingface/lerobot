@@ -13,9 +13,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""In-process executor that runs the four annotation phases.
+"""In-process executor that runs the annotation phases.
 
-The executor plans **four phases** with the dependency order from the plan:
+The executor plans **six phases** in the dependency order from the plan:
 
     phase 1: Module 1 (plan + subtasks + memory)
     phase 2: Module 2 (interjections + speech)
