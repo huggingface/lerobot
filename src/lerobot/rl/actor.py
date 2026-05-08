@@ -61,7 +61,7 @@ from torch.multiprocessing import Queue
 
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
-from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
+from lerobot.policies import make_policy, make_pre_post_processors
 from lerobot.processor import TransitionKey
 from lerobot.robots import so_follower  # noqa: F401
 from lerobot.teleoperators import gamepad, so_leader  # noqa: F401
@@ -79,6 +79,9 @@ from lerobot.utils.utils import (
     TimerManager,
     init_logging,
 )
+
+from .algorithms.base import RLAlgorithm
+from .algorithms.factory import make_algorithm
 
 if TYPE_CHECKING or _grpc_available:
     import grpc
@@ -277,6 +280,9 @@ def act_with_policy(
     policy = policy.to(device).eval()
     assert isinstance(policy, nn.Module)
 
+    # Build the algorithm
+    algorithm = make_algorithm(cfg=cfg.algorithm, policy=policy)
+
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy,
         dataset_stats=cfg.policy.dataset_stats,
@@ -380,7 +386,7 @@ def act_with_policy(
         if done or truncated:
             logging.info(f"[ACTOR] Global step {interaction_step}: Episode reward: {sum_reward_episode}")
 
-            update_policy_parameters(policy=policy, parameters_queue=parameters_queue, device=device)
+            update_policy_parameters(algorithm=algorithm, parameters_queue=parameters_queue, device=device)
 
             if len(list_transition_to_send_to_learner) > 0:
                 push_transitions_to_transport_queue(
@@ -675,7 +681,8 @@ def interactions_stream(
 #  Policy functions
 
 
-def update_policy_parameters(policy: PreTrainedPolicy, parameters_queue: Queue, device):
+def update_policy_parameters(algorithm: RLAlgorithm, parameters_queue: Queue, device):
+    """Drain the latest learner-pushed weights into ``algorithm.policy``."""
     bytes_state_dict = get_last_item_from_queue(parameters_queue, block=False)
     if bytes_state_dict is not None:
         logging.info("[ACTOR] Load new parameters from Learner.")
@@ -690,7 +697,7 @@ def update_policy_parameters(policy: PreTrainedPolicy, parameters_queue: Queue, 
         # - Send critic's encoder state when shared_encoder=True
         # - Skip encoder params entirely when freeze_vision_encoder=True
         # - Ensure discrete_critic gets correct encoder state (currently uses encoder_critic)
-        policy.load_actor_weights(state_dicts, device=device)
+        algorithm.load_weights(state_dicts, device=device)
 
 
 #  Utilities functions

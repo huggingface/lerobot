@@ -511,7 +511,11 @@ class SACAlgorithm(RLAlgorithm):
 
     def load_weights(self, weights: dict[str, Any], device: str | torch.device = "cpu") -> None:
         """Load actor + discrete-critic weights into the policy."""
-        self.policy.load_actor_weights(weights, device=device)
+        actor_sd = move_state_dict_to_device(weights["policy"], device=device)
+        self.policy.actor.load_state_dict(actor_sd)
+        if "discrete_critic" in weights and self.policy.discrete_critic is not None:
+            discrete_sd = move_state_dict_to_device(weights["discrete_critic"], device=device)
+            self.policy.discrete_critic.load_state_dict(discrete_sd)
 
     def state_dict(self) -> dict[str, torch.Tensor]:
         """Algorithm-owned trainable tensors.

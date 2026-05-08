@@ -17,7 +17,6 @@
 
 from collections.abc import Callable
 from dataclasses import asdict
-from typing import Any
 
 import torch
 import torch.nn as nn
@@ -25,7 +24,6 @@ from torch import Tensor
 from torch.distributions import MultivariateNormal, TanhTransform, Transform, TransformedDistribution
 
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE
-from lerobot.utils.transition import move_state_dict_to_device
 
 from ..pretrained import PreTrainedPolicy
 from ..utils import get_device_from_parameters
@@ -112,16 +110,6 @@ class GaussianActorPolicy(
         observation_features = batch.get("observation_feature") if isinstance(batch, dict) else None
         actions, log_probs, means = self.actor(observations, observation_features)
         return {"action": actions, "log_prob": log_probs, "action_mean": means}
-
-    def load_actor_weights(self, state_dicts: dict[str, Any], device: str | torch.device = "cpu") -> None:
-        actor_state_dict = move_state_dict_to_device(state_dicts["policy"], device=device)
-        self.actor.load_state_dict(actor_state_dict)
-
-        if "discrete_critic" in state_dicts and self.discrete_critic is not None:
-            discrete_critic_state_dict = move_state_dict_to_device(
-                state_dicts["discrete_critic"], device=device
-            )
-            self.discrete_critic.load_state_dict(discrete_critic_state_dict)
 
     def _init_encoders(self):
         """Initialize shared or separate encoders for actor and critic."""
