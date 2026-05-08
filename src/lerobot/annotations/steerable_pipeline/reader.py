@@ -70,6 +70,37 @@ class EpisodeRecord:
         return self._frames_df_cache
 
 
+def reconstruct_subtask_spans(
+    rows: Sequence[dict[str, Any]],
+    *,
+    episode_end_t: float | None = None,
+) -> list[dict[str, Any]]:
+    """Turn ``style="subtask"`` rows into ``{text, start, end}`` spans.
+
+    Each span's ``end`` is the next span's ``start``. The final span's
+    ``end`` defaults to its own ``start`` (zero-duration) — pass
+    ``episode_end_t`` to extend it to the episode's last frame instead,
+    which is what downstream consumers (memory, interjection boundary
+    selection) expect.
+
+    Used by Module 1 (plan-update pass) and Module 2 (interjection
+    anchoring), which both need the same span shape.
+    """
+    sorted_rows = sorted(
+        (r for r in rows if r.get("style") == "subtask"),
+        key=lambda r: float(r["timestamp"]),
+    )
+    spans: list[dict[str, Any]] = []
+    for r in sorted_rows:
+        t = float(r["timestamp"])
+        if spans:
+            spans[-1]["end"] = t
+        spans.append({"text": r.get("content") or "", "start": t, "end": t})
+    if spans and episode_end_t is not None and float(episode_end_t) > spans[-1]["start"]:
+        spans[-1]["end"] = float(episode_end_t)
+    return spans
+
+
 def snap_to_frame(t: float, frame_timestamps: Sequence[float]) -> float:
     """Snap an arbitrary float to the nearest exact source frame timestamp.
 

@@ -21,16 +21,18 @@ from huggingface_hub import get_token, run_job
 
 token = os.environ.get("HF_TOKEN") or get_token()
 if not token:
-    raise RuntimeError(
-        "No HF token. Run `huggingface-cli login` or `export HF_TOKEN=hf_...`"
-    )
+    raise RuntimeError("No HF token. Run `huggingface-cli login` or `export HF_TOKEN=hf_...`")
 
 CMD = (
     "apt-get update -qq && apt-get install -y -qq git ffmpeg && "
     "pip install --no-deps "
     "'lerobot @ git+https://github.com/huggingface/lerobot.git@feat/language-annotation-pipeline' && "
     "pip install --upgrade-strategy only-if-needed "
-    "datasets pyarrow av jsonlines draccus gymnasium torchcodec mergedeep pyyaml-include toml typing-inspect && "
+    # Mirror lerobot's [annotations] runtime deps. ``openai`` is required
+    # because ``VlmConfig.backend`` defaults to ``"openai"`` (which talks
+    # to a vllm/transformers/ktransformers OpenAI-compatible server).
+    "datasets pyarrow av jsonlines draccus gymnasium torchcodec mergedeep pyyaml-include "
+    "toml typing-inspect openai && "
     "export VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 && "
     "export VLLM_VIDEO_BACKEND=pyav && "
     "lerobot-annotate "

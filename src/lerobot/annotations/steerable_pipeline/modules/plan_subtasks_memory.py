@@ -31,7 +31,7 @@ from ..frames import (
     to_video_url_block,
 )
 from ..prompts import load as load_prompt
-from ..reader import EpisodeRecord, snap_to_frame
+from ..reader import EpisodeRecord, reconstruct_subtask_spans, snap_to_frame
 from ..staging import EpisodeStaging
 from ..vlm_client import VlmClient
 
@@ -259,7 +259,12 @@ class PlanSubtasksMemoryModule:
         without telling it what the user said).
         """
         existing = staging.read("module_1")
-        spans = self._reconstruct_subtasks_from_rows(existing)
+        # Pass the episode's last frame timestamp so the final subtask
+        # span is closed (otherwise its ``end`` equals its ``start``,
+        # zero duration, and the "current subtask at refresh_t" lookup
+        # in ``_generate_plan`` misses any refresh that lands inside it).
+        episode_end_t = float(record.frame_timestamps[-1]) if record.frame_timestamps else None
+        spans = reconstruct_subtask_spans(existing, episode_end_t=episode_end_t)
         already_planned: set[float] = {float(r["timestamp"]) for r in existing if r.get("style") == "plan"}
         new_rows = list(existing)
 
@@ -285,21 +290,6 @@ class PlanSubtasksMemoryModule:
                     }
                 )
         staging.write("module_1", new_rows)
-
-    @staticmethod
-    def _reconstruct_subtasks_from_rows(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
-        out = []
-        last_t: float | None = None
-        for row in sorted(
-            (r for r in rows if r.get("style") == "subtask"),
-            key=lambda r: float(r["timestamp"]),
-        ):
-            t = float(row["timestamp"])
-            if last_t is not None:
-                out[-1]["end"] = t
-            out.append({"text": row.get("content") or "", "start": t, "end": t})
-            last_t = t
-        return out
 
     def _generate_subtasks(self, record: EpisodeRecord, *, task: str | None = None) -> list[dict[str, Any]]:
         if record.row_count == 0 or not record.frame_timestamps:

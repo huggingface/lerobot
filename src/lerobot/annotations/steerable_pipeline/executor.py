@@ -170,7 +170,11 @@ class Executor:
             changed = True
 
         if changed:
-            info_path.write_text(json.dumps(info, indent=2))
+            # Atomic replace — info.json is load-bearing for dataset
+            # metadata, so a crash mid-write would brick the dataset.
+            tmp_info = info_path.with_suffix(info_path.suffix + ".tmp")
+            tmp_info.write_text(json.dumps(info, indent=2))
+            tmp_info.replace(info_path)
             print(
                 "[annotate] meta/info.json: "
                 f"language_features={list(language_feature_info())}, "
@@ -254,4 +258,10 @@ class Executor:
             if interjection_times:
                 self.module_1.run_plan_updates(record, staging, interjection_times, interjection_texts)
                 processed += 1
-        return PhaseResult(name="module_1_plan_update", episodes_processed=processed, episodes_skipped=0)
+        # Episodes without any interjections are skipped (no plan refresh
+        # needed); count them so the summary's processed+skipped == total.
+        return PhaseResult(
+            name="module_1_plan_update",
+            episodes_processed=processed,
+            episodes_skipped=len(records) - processed,
+        )

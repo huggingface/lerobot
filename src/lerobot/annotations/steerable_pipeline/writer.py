@@ -99,6 +99,13 @@ def _normalize_persistent_row(row: dict[str, Any]) -> dict[str, Any]:
         )
     if "timestamp" not in row:
         raise ValueError(f"persistent row missing timestamp: {row!r}")
+    if "role" not in row:
+        # Surface a friendly error from the writer rather than letting
+        # the raw KeyError bubble out of the dict access below — modules
+        # are expected to always emit ``role``, but the validator
+        # currently doesn't check this so a future bug would otherwise
+        # be hard to triage.
+        raise ValueError(f"persistent row missing role: {row!r}")
     camera = row.get("camera")
     validate_camera_field(style, camera)
     return {
@@ -120,6 +127,8 @@ def _normalize_event_row(row: dict[str, Any]) -> dict[str, Any]:
         )
     if column_for_style(style) != LANGUAGE_EVENTS:
         raise ValueError(f"event row with style {style!r} would not route to language_events")
+    if "role" not in row:
+        raise ValueError(f"event row missing role: {row!r}")
     camera = row.get("camera")
     validate_camera_field(style, camera)
     return {

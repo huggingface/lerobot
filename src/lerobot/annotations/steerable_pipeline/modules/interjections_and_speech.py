@@ -40,7 +40,7 @@ from typing import Any
 from ..config import Module2Config
 from ..frames import FrameProvider, null_provider, to_image_blocks
 from ..prompts import load as load_prompt
-from ..reader import EpisodeRecord, snap_to_frame
+from ..reader import EpisodeRecord, reconstruct_subtask_spans, snap_to_frame
 from ..staging import EpisodeStaging
 from ..vlm_client import VlmClient
 from ..writer import speech_atom
@@ -69,23 +69,10 @@ class InterjectionsAndSpeechModule:
         # Pull Module 1's subtask spans for this episode so the
         # interjection prompt can ground itself in the actual current
         # subtask at each chosen timestamp. Module 1 ran first.
-        subtask_spans = self._read_subtask_spans(staging)
+        episode_end_t = float(record.frame_timestamps[-1]) if record.frame_timestamps else None
+        subtask_spans = reconstruct_subtask_spans(staging.read("module_1"), episode_end_t=episode_end_t)
         rows.extend(self._mid_episode_interjections(record, subtask_spans))
         staging.write("module_2", rows)
-
-    @staticmethod
-    def _read_subtask_spans(staging: EpisodeStaging) -> list[dict[str, Any]]:
-        rows = [r for r in staging.read("module_1") if r.get("style") == "subtask"]
-        rows.sort(key=lambda r: float(r["timestamp"]))
-        spans: list[dict[str, Any]] = []
-        last_t: float | None = None
-        for r in rows:
-            t = float(r["timestamp"])
-            if last_t is not None and spans:
-                spans[-1]["end"] = t
-            spans.append({"text": r.get("content") or "", "start": t, "end": t})
-            last_t = t
-        return spans
 
     @staticmethod
     def _subtask_at(spans: Sequence[dict[str, Any]], t: float) -> str | None:
