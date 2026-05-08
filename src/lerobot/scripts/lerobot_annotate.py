@@ -16,16 +16,15 @@
 """``lerobot-annotate`` — populate ``language_persistent`` and
 ``language_events`` columns on a LeRobot dataset.
 
-Annotations live directly in ``data/chunk-*/file-*.parquet``: there is no
-flavor namespace and no sidecar tree. Multiple revisions of the same dataset
-mean multiple dataset copies.
+Annotations live directly in ``data/chunk-*/file-*.parquet``.
 
 Example:
 
   uv run lerobot-annotate \\
       --root=/path/to/dataset \\
-      --vlm.backend=transformers \\
       --vlm.model_id=Qwen/Qwen2.5-VL-7B-Instruct
+
+For distributed runs, see ``examples/annotation/run_hf_job.py``.
 """
 
 import logging

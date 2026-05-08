@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Executor selection: local vs SLURM via datatrove.
+"""In-process executor that runs the four annotation phases.
 
 The executor plans **four phases** with the dependency order from the plan:
 
@@ -25,8 +25,14 @@ The executor plans **four phases** with the dependency order from the plan:
     phase 5: validator
     phase 6: writer
 
-Phase 3 is why ``executor.py`` documents the dependency: Module 1 must be
-re-entered after Module 2 to refresh ``plan`` rows at interjection times.
+Phase 3 is why Module 1 must be re-entered after Module 2 — to refresh
+``plan`` rows at interjection timestamps.
+
+Distributed execution is provided by Hugging Face Jobs (see
+``examples/annotation/run_hf_job.py``); the runner inside the job
+invokes ``lerobot-annotate`` which uses this in-process executor.
+Episode-level concurrency is controlled by
+``ExecutorConfig.episode_parallelism``.
 """
 
 from __future__ import annotations
@@ -36,7 +42,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .config import AnnotationPipelineConfig, ExecutorConfig
+from .config import AnnotationPipelineConfig
 from .reader import EpisodeRecord, iter_episodes
 from .staging import EpisodeStaging
 from .validator import StagingValidator
@@ -63,28 +69,14 @@ class PipelineRunSummary:
     validation_report: Any  # ValidationReport, kept Any to avoid import cycle
 
 
-def select_executor_class(num_episodes: int, config: ExecutorConfig) -> str:
-    """Return ``"local"`` or ``"slurm"`` based on the threshold.
-
-    The plan's "executor selection threshold" lives in
-    :class:`ExecutorConfig.auto_threshold`. ``force_local`` always wins.
-    """
-    if config.force_local:
-        return "local"
-    return "local" if num_episodes <= config.auto_threshold else "slurm"
-
-
 @dataclass
 class Executor:
-    """Run all four phases over a dataset root.
+    """Run all four phases over a dataset root in-process.
 
-    The executor is intentionally framework-agnostic: by default it runs the
-    phases inline (suitable for tests, small datasets, and the CLI's
-    ``--force-local`` mode). It will optionally hand off to datatrove's
-    :class:`LocalPipelineExecutor` or :class:`SlurmPipelineExecutor` when those
-    are installed and the dataset is large enough to benefit from them.
-
-    Tests construct the executor directly with stub modules.
+    Episode-level concurrency comes from ``ExecutorConfig.episode_parallelism``
+    (a thread pool); cluster-level concurrency comes from running this
+    executor inside a Hugging Face Job. Tests construct the executor
+    directly with stub modules.
     """
 
     config: AnnotationPipelineConfig
@@ -100,8 +92,7 @@ class Executor:
         if n == 0:
             raise ValueError(f"No episodes found under {root}/data/")
 
-        executor_kind = select_executor_class(n, self.config.executor)
-        print(f"[annotate] {n} episodes total; executor={executor_kind}", flush=True)
+        print(f"[annotate] {n} episodes total", flush=True)
 
         staging_dir = self.config.resolved_staging_dir(root)
         staging_dir.mkdir(parents=True, exist_ok=True)
@@ -170,11 +161,7 @@ class Executor:
         existing = info.get("tools")
         if not isinstance(existing, list):
             existing = []
-        names = {
-            (t.get("function") or {}).get("name")
-            for t in existing
-            if isinstance(t, dict)
-        }
+        names = {(t.get("function") or {}).get("name") for t in existing if isinstance(t, dict)}
         merged = list(existing)
         if SAY_TOOL_SCHEMA["function"]["name"] not in names:
             merged.append(SAY_TOOL_SCHEMA)
@@ -207,8 +194,7 @@ class Executor:
         n = len(records)
         parallelism = max(1, min(self.config.executor.episode_parallelism, n))
         print(
-            f"[annotate] phase={name} starting on {n} episode(s) "
-            f"(parallelism={parallelism})",
+            f"[annotate] phase={name} starting on {n} episode(s) (parallelism={parallelism})",
             flush=True,
         )
         t0 = _time.time()
@@ -226,8 +212,7 @@ class Executor:
                 _, ep_idx, elapsed = _do((i, record))
                 processed += 1
                 print(
-                    f"[annotate]   {name} episode {i}/{n} "
-                    f"(idx={ep_idx}) done in {elapsed:.1f}s",
+                    f"[annotate]   {name} episode {i}/{n} (idx={ep_idx}) done in {elapsed:.1f}s",
                     flush=True,
                 )
         else:
@@ -262,15 +247,11 @@ class Executor:
         for record in records:
             staging = EpisodeStaging(staging_dir, record.episode_index)
             interjection_rows = [
-                row
-                for row in staging.read("module_2")
-                if row.get("style") == "interjection"
+                row for row in staging.read("module_2") if row.get("style") == "interjection"
             ]
             interjection_times = [float(row["timestamp"]) for row in interjection_rows]
             interjection_texts = [str(row.get("content") or "") for row in interjection_rows]
             if interjection_times:
-                self.module_1.run_plan_updates(
-                    record, staging, interjection_times, interjection_texts
-                )
+                self.module_1.run_plan_updates(record, staging, interjection_times, interjection_texts)
                 processed += 1
         return PhaseResult(name="module_1_plan_update", episodes_processed=processed, episodes_skipped=0)

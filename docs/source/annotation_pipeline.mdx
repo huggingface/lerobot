@@ -3,8 +3,7 @@
 `lerobot-annotate` populates the two language columns introduced by the
 [Language Columns and Recipes](./language_and_recipes) page —
 `language_persistent` and `language_events` — directly into
-`data/chunk-*/file-*.parquet`. There is no flavor namespace and no sidecar
-file tree: multiple revisions of a dataset mean multiple dataset copies.
+`data/chunk-*/file-*.parquet`.
 
 ## What the pipeline produces
 
@@ -16,18 +15,16 @@ rewrites the data shards in place:
 | `subtask` (Pi0.7-style "how, not what")     | `language_persistent` | Module 1 |
 | `plan` (initial + refresh on interjection)  | `language_persistent` | Module 1 |
 | `memory` (MEM-style compression)            | `language_persistent` | Module 1 |
+| `task_aug` (rephrasings of canonical task)  | `language_persistent` | Module 1 |
 | `interjection`                              | `language_events`     | Module 2 |
 | speech tool-call atom (`style=null`, `say`) | `language_events`     | Module 2 |
 | `vqa` (user / assistant pair)               | `language_events`     | Module 3 |
 
-The writer drops the legacy `subtask_index` column. It does **not** add a
-`tools` column to the parquet — the tool catalog lives at
-`meta/info.json["tools"]` instead (see [Tools](./tools)). After every
-annotation run the pipeline ensures the canonical `say` schema is
-present in that list, preserving any tools the user pre-declared. Chat-
-template consumers read the catalog through
-`LeRobotDatasetMetadata.tools` and pass it to
-`apply_chat_template(messages, tools=meta.tools, ...)`.
+The writer does **not** add a `tools` column to the parquet — the tool
+catalog lives at `meta/info.json["tools"]` instead (see
+[Tools](./tools)). After every annotation run the pipeline ensures the
+canonical `say` schema is present in that list, preserving any tools the
+user pre-declared.
 
 If you want to declare additional tools for a dataset before annotation
 runs, edit `meta/info.json["tools"]` directly — the pipeline preserves
@@ -35,17 +32,17 @@ anything already there. Implementations of those tools live under
 `src/lerobot/tools/`; one file per tool, registered via
 `TOOL_REGISTRY`. See the [Tools](./tools) doc for the authoring guide.
 
-## How to run it locally or on SLURM
+## Running locally
 
-Install the extra and invoke the console script:
+Install the extra and invoke the console script. Episode-level
+concurrency comes from `--executor.episode_parallelism` (default 16);
+that is the only knob the in-process executor exposes.
 
 ```bash
 uv sync --extra annotations
 uv run lerobot-annotate \
-  --repo_id=imstevenpmwork/super_poulain_draft \
-  --vlm.backend=vllm \
-  --vlm.model_id=Qwen/Qwen3.6-27B-FP8 \
-  --vlm.tensor_parallel_size=2
+  --root=/path/to/dataset \
+  --vlm.model_id=Qwen/Qwen2.5-VL-7B-Instruct
 ```
 
 The pipeline attaches actual camera footage to every Module 1/2/3 prompt
@@ -58,40 +55,56 @@ text-only prompts automatically.
 decomposition gets a `{"type":"video", "video":[<frames>]}` block
 covering the entire demonstration; Qwen-VL pools temporally on its own
 and decides where to cut. There is no keyframe stride or count knob —
-`--module_1.max_video_frames` (default 32) only caps the frames packed
+`--module_1.max_video_frames` (default 128) only caps the frames packed
 into the video block as a model-capacity bound. Module 2 attaches a
-single still frame at the interjection timestamp; Module 3 attaches the
-exact emission frame to each VQA pair.
+short window of frames around the interjection timestamp; Module 3
+attaches the exact emission frame to each VQA pair.
 
-The executor picks `LocalPipelineExecutor` for small datasets and
-`SlurmPipelineExecutor` for large ones based on
-`--executor.auto_threshold` (default 32 episodes). Force local with
-`--executor.force_local=true`. SLURM jobs honour `--executor.slurm_partition`,
-`--executor.slurm_gpus`, and `--executor.slurm_time`.
+## Running on Hugging Face Jobs
+
+Distributed annotation is delegated to
+[Hugging Face Jobs](https://huggingface.co/docs/hub/en/jobs). The repo
+ships a launcher script you copy and edit for your dataset:
+
+```bash
+HF_TOKEN=hf_... uv run python examples/annotation/run_hf_job.py
+```
+
+[`examples/annotation/run_hf_job.py`](https://github.com/huggingface/lerobot/blob/main/examples/annotation/run_hf_job.py)
+spawns one `h200x2` job that:
+
+1. installs the branch under test plus the annotation extras,
+2. boots two vllm servers (one per GPU) for the chosen model,
+3. runs Modules 1 / 2 / 3 across the dataset via `lerobot-annotate`,
+4. uploads the annotated dataset to `--push_to_hub`.
+
+To target a different dataset, model, or hub repo, edit the `CMD` block
+inside the script — every flag in there maps directly onto a CLI flag of
+`lerobot-annotate` (see `lerobot-annotate --help` for the full list).
 
 ## Style-to-recipe consumer mapping
 
-The pipeline produces exactly the styles consumed by
-`src/lerobot/configs/recipes/pi05_hirobot.yaml`:
+The pipeline's outputs are designed to be consumed by recipes (see
+[Language Columns and Recipes](./language_and_recipes)) — typically:
 
-- `low_level_execution`, `high_level_subtask`, `memory_update` consume
+- low-level / high-level / memory-update branches consume
   `subtask`/`plan`/`memory` from `language_persistent`.
-- `user_interjection_response` consumes `interjection` events plus the
-  paired speech atom (merged into one assistant target turn via
+- An interjection-response branch consumes `interjection` events plus
+  the paired speech atom (merged into one assistant target turn via
   `tool_calls_from`) and the same-timestamp `plan` refresh.
-- `ask_vqa` consumes the `(vqa, user)` and `(vqa, assistant)` pairs from
-  `language_events`.
+- A VQA branch consumes the `(vqa, user)` and `(vqa, assistant)` pairs
+  from `language_events`.
 
-## Why the design is scoped to the canonical recipe
+## Why the design splits state from events
 
 Two things drive the scope:
 
-1. **Persistent state vs exact-event split.** Persistent rows (`subtask`,
-   `plan`, `memory`) broadcast per episode and answer "what state is in
-   force at this frame?". Event rows (`interjection`, `vqa`, speech) only
-   appear on the exact frame whose timestamp matches the emission. The
-   pipeline writes timestamps taken straight from the source parquet — no
-   floating-point recomputation.
+1. **Persistent state vs exact-event split.** Persistent rows
+   (`subtask`, `plan`, `memory`) broadcast per episode and answer "what
+   state is in force at this frame?". Event rows (`interjection`, `vqa`,
+   speech) only appear on the exact frame whose timestamp matches the
+   emission. The pipeline writes timestamps taken straight from the
+   source parquet — no floating-point recomputation.
 2. **One Qwen-VL pass.** All three modules share a single VLM client
    (vLLM if available, transformers fallback) so the cost is one model
    load per dataset, not three.
@@ -134,7 +147,9 @@ Errors abort the writer (`--skip_validation=true` overrides for debugging).
 arguments:{text:...}}}]`).
 - **Module 3 — VQA.** ECoT ([Zawalski 2024](https://arxiv.org/abs/2407.08693))
   grounded features (bounding boxes in pixel `[x_min, y_min, x_max, y_max]`,
-  keypoints) and Steerable Policies' multi-abstraction grounding.
+  keypoints) and Steerable VLA Policies ([Zhao 2025](https://arxiv.org/abs/2509.07626))
+  multi-abstraction grounding. Pi0.7 also grounds answers across
+  multiple abstraction levels.
 
 Future maintainers should adjust the prompt templates in
 `src/lerobot/annotations/steerable_pipeline/prompts/` against these

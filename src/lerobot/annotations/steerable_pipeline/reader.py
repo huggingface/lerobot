@@ -26,9 +26,7 @@ episode containing:
 - ``frames_df``: pandas.DataFrame slice for the episode (only loaded on demand)
 
 This shape lets each module operate per-episode without loading all parquet
-rows into memory at once. It deliberately does not depend on datatrove —
-datatrove integration wraps this generator inside a ``PipelineStep`` in
-:mod:`.executor`.
+rows into memory at once.
 """
 
 from __future__ import annotations

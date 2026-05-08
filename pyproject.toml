@@ -200,12 +200,13 @@ hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.13,<0.2.0", "lerobot[grpci
 async = ["lerobot[grpcio-dep]", "lerobot[matplotlib-dep]"]
 peft = ["lerobot[transformers-dep]", "lerobot[peft-dep]"]
 
-# Annotation pipeline (lerobot-annotate). datatrove is mandatory; vllm is
-# the preferred backend on Linux, with a transformers fallback elsewhere.
+# Annotation pipeline (lerobot-annotate). vllm is the preferred backend on
+# Linux, with a transformers fallback elsewhere. Distributed execution is
+# delegated to Hugging Face Jobs (see examples/annotation/run_hf_job.py),
+# so this pipeline pulls no cluster-scheduler dependency.
 annotations = [
     "lerobot[dataset]",
     "lerobot[transformers-dep]",
-    "datatrove>=0.4.0,<2.0.0",
     "vllm>=0.6.0,<1.0.0; sys_platform == 'linux'",
 ]
 
