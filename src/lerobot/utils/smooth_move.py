@@ -25,7 +25,7 @@ import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from lerobot.rollout.robot_wrapper import ThreadSafeRobot
+    from lerobot.robots import Robot
     from lerobot.teleoperators import Teleoperator
 
 
@@ -73,7 +73,7 @@ def teleop_smooth_move_to(
 
 
 def follower_smooth_move_to(
-    robot: ThreadSafeRobot, current: dict, target: dict, duration_s: float = 1.0, fps: int = 30
+    robot: Robot, current: dict, target: dict, duration_s: float = 1.0, fps: int = 30
 ) -> None:
     """Smoothly move the follower robot from ``current`` to ``target`` action.
 
