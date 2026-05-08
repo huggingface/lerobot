@@ -16,8 +16,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
+from pathlib import Path
 
 from lerobot.utils.robot_utils import precise_sleep
 
@@ -36,8 +38,51 @@ class BaseStrategy(RolloutStrategy):
 
     def setup(self, ctx: RolloutContext) -> None:
         """Initialise the inference engine."""
+        if self.config.seed_start_position:
+            self._seed_start_position(ctx)
         self._init_engine(ctx)
         logger.info("Base strategy ready")
+
+    def _seed_start_position(self, ctx: RolloutContext) -> None:
+        """Move the robot to the first-frame position of the training dataset."""
+        policy_path = Path(ctx.runtime.cfg.policy.pretrained_path)
+        train_config_path = policy_path / "train_config.json"
+        if not train_config_path.exists():
+            logger.warning("train_config.json not found at %s; skipping seed", policy_path)
+            return
+
+        with open(train_config_path) as f:
+            train_cfg = json.load(f)
+        repo_id = train_cfg.get("dataset", {}).get("repo_id")
+        if not repo_id:
+            logger.warning("No dataset.repo_id in train_config.json; skipping seed")
+            return
+
+        episode = self.config.seed_episode
+        logger.info("Seeding start position from '%s' episode %d ...", repo_id, episode)
+
+        from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+        ds = LeRobotDataset(repo_id, episodes=[episode])
+        state = ds[0]["observation.state"]  # [state_dim]
+
+        state_feature = ctx.data.dataset_features.get("observation.state")
+        if state_feature is None or "names" not in state_feature:
+            logger.warning("observation.state names not found in dataset features; skipping seed")
+            return
+
+        motor_names = state_feature["names"]
+        if len(motor_names) != state.shape[0]:
+            logger.warning(
+                "Motor name count (%d) != state dim (%d); skipping seed",
+                len(motor_names),
+                state.shape[0],
+            )
+            return
+
+        target = {name: state[i].item() for i, name in enumerate(motor_names)}
+        logger.info("Moving to dataset start position: %s", {k: f"{v:.3f}" for k, v in target.items()})
+        self._move_to_position(ctx.hardware.robot_wrapper, target)
 
     def run(self, ctx: RolloutContext) -> None:
         """Run the autonomous control loop until shutdown or duration expires."""

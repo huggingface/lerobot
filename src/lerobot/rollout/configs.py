@@ -55,7 +55,8 @@ class RolloutStrategyConfig(draccus.ChoiceRegistry, abc.ABC):
 class BaseStrategyConfig(RolloutStrategyConfig):
     """Autonomous rollout with no data recording."""
 
-    pass
+    seed_start_position: bool = False
+    seed_episode: int = 0
 
 
 @RolloutStrategyConfig.register_subclass("sentry")

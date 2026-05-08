@@ -138,6 +138,21 @@ class RolloutStrategy(abc.ABC):
             teleop.disconnect()
 
     @staticmethod
+    def _move_to_position(robot, target: dict, duration_s: float = 3.0, fps: int = 50) -> None:
+        """Smoothly interpolate the robot from its current position to *target*."""
+        try:
+            current_obs = robot.get_observation()
+            current_pos = {k: current_obs[k] for k in target if k in current_obs}
+            steps = max(int(duration_s * fps), 1)
+            for step in range(1, steps + 1):
+                t = step / steps
+                interp = {k: current_pos[k] * (1 - t) + target[k] * t for k in current_pos}
+                robot.send_action(interp)
+                precise_sleep(1 / fps)
+        except Exception as e:
+            logger.warning("Could not move to target position: %s", e)
+
+    @staticmethod
     def _return_to_initial_position(hw: HardwareContext, duration_s: float = 3.0, fps: int = 50) -> None:
         """Smoothly interpolate the robot back to its initial position."""
         robot = hw.robot_wrapper
