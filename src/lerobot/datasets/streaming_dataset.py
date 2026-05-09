@@ -92,8 +92,8 @@ class Backtrackable[T]:
     def __init__(self, iterable: Iterable[T], *, history: int = 1, lookahead: int = 0):
         if history < 1:
             raise ValueError("history must be >= 1")
-        if lookahead <= 0:
-            raise ValueError("lookahead must be > 0")
+        if lookahead < 0:
+            raise ValueError("lookahead must be >= 0")
 
         self._source: Iterator[T] = iter(iterable)
         self._back_buf: deque[T] = deque(maxlen=history)
