@@ -1,0 +1,35 @@
+dataset:
+  repo_id: local/sim_assemble_binary_v2-train
+  root: /home/dom-iva/.cache/huggingface/lerobot/local/sim_assemble_binary_v2-train
+
+policy:
+  type: reward_classifier
+  device: cuda
+  use_amp: true
+  push_to_hub: false
+  model_name: helper2424/resnet10
+  model_type: cnn
+  num_classes: 2
+  num_cameras: 2
+  hidden_dim: 256
+  dropout_rate: 0.2
+  learning_rate: 1.0e-4
+  input_features:
+    observation.images.front:
+      type: VISUAL
+      shape: [3, 128, 128]
+    observation.images.wrist:
+      type: VISUAL
+      shape: [3, 128, 128]
+
+batch_size: 64
+steps: 10000
+save_freq: 2000
+log_freq: 100
+output_dir: outputs/sim_assembling_cnn_reward_v2
+job_name: sim_assembling_cnn_reward_v2
+
+wandb:
+  enable: false
+  project: sim_assembling_cnn_reward
+  disable_artifact: true

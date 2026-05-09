@@ -76,3 +76,42 @@ Hypothesis: stage_argmax_acc only ~0.24 on full eps → model rarely confident e
 - 100% of full eps reach max≥0.5
 
 Doesn't pass strict gates (succ_term, last_stage, zero_max), but should be sufficient for ACT residual training where SARM gives smooth 0→0.5+ reward.
+
+# Paper-recipe ablation plan (lerobot-93)
+
+Audited arxiv 2509.25358v4 against current impl. 5 mismatches found. Each tested in isolation against baseline.
+
+## Baseline
+`v4_succ3w 7k`: wrist-only, sw=3, 14k steps, frame_gap=20, centered window, 1-layer linear heads, causal mask. **mean_mid=0.302, last_stage_max=0.144** (current best).
+
+## Identified mismatches with paper
+| # | Detail | Paper | Ours |
+|---|--------|-------|------|
+| M1 | Camera | top-down only (Table 7 ablates wrist away) | wrist-only |
+| M2 | Transformer mask | non-causal/bidirectional aggregator | causal triu mask |
+| M3 | Output heads | 2-layer MLP hidden=512 | 1-layer linear |
+| M4 | First frame | literal ep_start (frame 0), then 8 consecutive at gap | centered window [-4*gap..0..+4*gap] clamped |
+| M5 | stage_loss_weight × epochs | sw≈1, 2 epochs | sw=3, ~6 epochs |
+
+Other paper details we already match: CLIP frozen, 8-layer 12-head 768-hidden, AdamW lr=5e-5 wd=1e-3, rewind_aug≤4 frames reversed, lang perturbation, position bias only on first frame.
+
+## Experiment matrix
+| name | change vs baseline | hypothesis |
+|------|-------------------|-----------|
+| abl_front | image_keys: wrist→front | top-down view distinguishes scene state better |
+| abl_nocausal | drop causal mask | bidirectional attn helps stage classification |
+| abl_mlpheads | head: Linear → Linear(d,512)+ReLU+Linear(512,k) | more head capacity |
+| abl_epstart | obs_delta: pin index 0 to ep_start, rest forward at gap | episode-anchor context |
+| abl_sw1_short | sw 3→1, steps 14k→1500 | match paper's 2-epoch training |
+| full_paper | all 5 above combined | true paper reproduction |
+
+## Files to touch
+- `lerobot_policy_sarm/src/lerobot_policy_sarm/configuration_sarm.py` — `observation_delta_indices` property (M4)
+- `lerobot_policy_sarm/src/lerobot_policy_sarm/modeling_sarm.py` — heads (M3), causal mask (M2)
+- `lerobot_policy_sarm/src/lerobot_policy_sarm/processor_sarm.py` — frame indexing (M4 inference path)
+- New cfgs in `lerobot/src/lerobot/rl/sim_3stage_sarm_v4_abl_*_train.json`
+
+## Sequence
+Run sequentially on local GPU 0, ~35min each. Eval after each. ETA ~3.5h total.
+
+PAUSED awaiting user direction.

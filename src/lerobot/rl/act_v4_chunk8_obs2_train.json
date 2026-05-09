@@ -1,0 +1,25 @@
+{
+    "output_dir": "outputs/act_v4_chunk8_obs2",
+    "job_name": "act_v4_chunk8_obs2",
+    "resume": false, "seed": 1000, "num_workers": 4, "batch_size": 16, "steps": 40000,
+    "eval_freq": 0, "log_freq": 200, "save_freq": 10000, "save_checkpoint": true,
+    "use_policy_training_preset": true,
+    "wandb": {"enable": false},
+    "dataset": {
+        "repo_id": "domrachev03/sim_3stage_v4_success_train_fs",
+        "use_imagenet_stats": true,
+        "image_transforms": {"enable": true, "max_num_transforms": 3, "random_order": false}
+    },
+    "policy": {
+        "type": "act", "repo_id": "local/act_v4_chunk8_obs2", "push_to_hub": false,
+        "normalization_mapping": {"VISUAL": "MEAN_STD", "STATE": "MIN_MAX", "ACTION": "MIN_MAX"},
+        "n_obs_steps": 1, "chunk_size": 8, "n_action_steps": 4,
+        "vision_backbone": "resnet18",
+        "pretrained_backbone_weights": "ResNet18_Weights.IMAGENET1K_V1",
+        "use_vae": true, "kl_weight": 10.0,
+        "dim_model": 512, "n_heads": 8, "dim_feedforward": 3200,
+        "n_encoder_layers": 4, "n_decoder_layers": 1, "dropout": 0.1,
+        "optimizer_lr": 1e-5, "optimizer_lr_backbone": 1e-5, "optimizer_weight_decay": 1e-4,
+        "device": "cuda", "use_amp": true
+    }
+}

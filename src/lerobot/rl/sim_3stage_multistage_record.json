@@ -1,0 +1,68 @@
+{
+    "env": {
+        "name": "sim_assembling",
+        "task": "AssembleBase-v0",
+        "fps": 20,
+        "realtime": false,
+        "robot": null,
+        "teleop": {
+            "type": "gamepad",
+            "use_gripper": true,
+            "use_yaw": true,
+            "stage_advance_button": 0,
+            "record_gripper_width": true
+        },
+        "processor": {
+            "control_mode": "gamepad",
+            "gripper": {
+                "use_gripper": true,
+                "gripper_penalty": 0.0,
+                "record_gripper_width": true
+            },
+            "reset": {
+                "reset_time_s": 0.0,
+                "control_time_s": 40.0,
+                "terminate_on_success": true
+            },
+            "stage_names": [
+                "approach_box",
+                "bring_box",
+                "approach_target",
+                "place_target_in_the_box",
+                "approach_cover",
+                "place_cover_on_the_box"
+            ],
+            "inverse_kinematics": {
+                "end_effector_bounds": {
+                    "min": [
+                        -0.14,
+                        -0.77,
+                        0.33
+                    ],
+                    "max": [
+                        0.18,
+                        -0.4845,
+                        0.38
+                    ]
+                }
+            }
+        },
+        "render_mode": "all",
+        "action_step_size": 0.01,
+        "include_yaw_slot": true,
+        "yaw_step_size": 0.1,
+        "object_spawn_offset": [
+            0.1,
+            0.0,
+            0.0
+        ]
+    },
+    "mode": "record",
+    "dataset": {
+        "repo_id": "domrachev03/sim_3stage_v2_different_ep_labelling",
+        "task": "Three-stage assembly",
+        "num_episodes_to_record": 100,
+        "overwrite": false
+    },
+    "device": "cpu"
+}

@@ -1,0 +1,55 @@
+{
+    "output_dir": "outputs/dp_v4_succ",
+    "job_name": "dp_v4_succ",
+    "resume": false,
+    "seed": 1000,
+    "num_workers": 4,
+    "batch_size": 64,
+    "steps": 50000,
+    "eval_freq": 0,
+    "log_freq": 200,
+    "save_freq": 10000,
+    "save_checkpoint": true,
+    "use_policy_training_preset": true,
+    "wandb": {"enable": false},
+    "dataset": {
+        "repo_id": "domrachev03/sim_3stage_v4_success_train_fs",
+        "use_imagenet_stats": true,
+        "image_transforms": {
+            "enable": true,
+            "max_num_transforms": 3,
+            "random_order": false
+        }
+    },
+    "policy": {
+        "type": "diffusion",
+        "repo_id": "local/dp_v4_succ",
+        "push_to_hub": false,
+        "normalization_mapping": {
+            "VISUAL": "MEAN_STD",
+            "STATE": "MIN_MAX",
+            "ACTION": "MIN_MAX"
+        },
+        "n_obs_steps": 2,
+        "horizon": 16,
+        "n_action_steps": 8,
+        "vision_backbone": "resnet18",
+        "pretrained_backbone_weights": "ResNet18_Weights.IMAGENET1K_V1",
+        "use_group_norm": false,
+        "device": "cuda",
+        "use_amp": true,
+        "optimizer_lr": 1e-4,
+        "optimizer_betas": [0.95, 0.999],
+        "optimizer_eps": 1e-8,
+        "optimizer_weight_decay": 1e-6,
+        "scheduler_warmup_steps": 500,
+        "diffusion_step_embed_dim": 128,
+        "down_dims": [256, 512, 1024],
+        "kernel_size": 5,
+        "n_groups": 8,
+        "use_film_scale_modulation": true,
+        "noise_scheduler_type": "DDIM",
+        "num_train_timesteps": 100,
+        "num_inference_steps": 10
+    }
+}

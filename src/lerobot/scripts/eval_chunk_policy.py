@@ -54,6 +54,10 @@ def parse_aux_args() -> argparse.Namespace:
         default=None,
         help="If set, write per-episode rollout MP4s here (front+wrist side-by-side).",
     )
+    ap.add_argument("--cnn-ckpt", type=str, default=None,
+                    help="Path to CNN binary success classifier (best.pt). Scores P(succ) per frame.")
+    ap.add_argument("--cnn-thr", type=float, default=0.5,
+                    help="P(succ) threshold for ep-level success (≥1 frame above => success).")
     args, remaining = ap.parse_known_args()
     sys.argv = [sys.argv[0]] + remaining
     return args
@@ -117,15 +121,44 @@ def run_eval(
     task: str,
     device: str,
     video_dir=None,
+    cnn_ckpt: str = None,
+    cnn_thr: float = 0.5,
 ) -> dict:
     rewards: list[float] = []
     successes: list[int] = []
     episode_lens: list[int] = []
+    cnn_successes: list[int] = []
+    cnn_max_probs: list[float] = []
 
     if video_dir is not None:
         from pathlib import Path as _P
         video_dir = _P(video_dir)
         video_dir.mkdir(parents=True, exist_ok=True)
+
+    cnn_model = None
+    cnn_tx = None
+    if cnn_ckpt is not None:
+        import torchvision.models as tvm
+        import torch.nn as nn
+        from torchvision import transforms
+
+        class _CNNCls(nn.Module):
+            def __init__(self):
+                super().__init__()
+                bb = tvm.resnet18(weights=None)
+                bb.fc = nn.Linear(bb.fc.in_features, 2)
+                self.net = bb
+
+            def forward(self, x):
+                return self.net(x)
+
+        cnn_model = _CNNCls().to(device).eval()
+        cnn_model.load_state_dict(torch.load(cnn_ckpt, map_location=device, weights_only=True))
+        cnn_tx = transforms.Compose([
+            transforms.Resize((224, 224), antialias=True),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
+        logging.info(f"CNN classifier loaded from {cnn_ckpt}, threshold={cnn_thr}")
 
     for ep in range(n_episodes):
         obs, info = env.reset()
@@ -143,6 +176,8 @@ def run_eval(
         ep_len = 0
         max_step_r = 0.0
         max_cum_r = 0.0
+        cnn_max_p = 0.0
+        cnn_success = False
         ep_frames: list = []
         while True:
             obs_dict = transition[TransitionKey.OBSERVATION]
@@ -150,6 +185,22 @@ def run_eval(
                 fr = _frame_from_obs(obs_dict)
                 if fr is not None:
                     ep_frames.append(fr)
+            if cnn_model is not None:
+                front = obs_dict.get("observation.images.front")
+                if front is not None:
+                    if front.ndim == 3:
+                        ft = front.unsqueeze(0)
+                    else:
+                        ft = front
+                    if ft.dtype == torch.uint8:
+                        ft = ft.float() / 255.0
+                    ft = cnn_tx(ft.to(device))
+                    with torch.no_grad():
+                        logits = cnn_model(ft)
+                        p_succ = float(torch.softmax(logits, dim=-1)[0, 1].cpu())
+                    cnn_max_p = max(cnn_max_p, p_succ)
+                    if p_succ >= cnn_thr:
+                        cnn_success = True
             batch = _to_batch(obs_dict, device, task)
             action = policy.select_action(batch)  # (1, action_dim)
             action = action.squeeze(0)
@@ -171,14 +222,17 @@ def run_eval(
         rewards.append(ep_reward)
         successes.append(int(success))
         episode_lens.append(ep_len)
-        logging.info("ep %d: success=%s len=%d reward=%.3f max_step_r=%.3f max_cum=%.3f", ep, success, ep_len, ep_reward, max_step_r, max_cum_r)
+        cnn_successes.append(int(cnn_success))
+        cnn_max_probs.append(cnn_max_p)
+        logging.info("ep %d: success=%s len=%d reward=%.3f max_step_r=%.3f max_cum=%.3f cnn_succ=%s cnn_max=%.3f",
+                     ep, success, ep_len, ep_reward, max_step_r, max_cum_r, cnn_success, cnn_max_p)
         if video_dir is not None and ep_frames:
             tag = "succ" if success else "fail"
             out = video_dir / f"ep{ep:02d}_{tag}_len{ep_len}_bestR{max_cum_r:.2f}.mp4"
             _save_video(ep_frames, out, fps=20)
             logging.info("  -> %s", out)
 
-    return {
+    out = {
         "n_episodes": n_episodes,
         "success_rate": float(np.mean(successes)),
         "n_success": int(sum(successes)),
@@ -187,6 +241,12 @@ def run_eval(
         "min_reward": float(np.min(rewards)),
         "mean_len": float(np.mean(episode_lens)),
     }
+    if cnn_model is not None:
+        out["cnn_success_rate"] = float(np.mean(cnn_successes))
+        out["cnn_n_success"] = int(sum(cnn_successes))
+        out["cnn_max_prob_mean"] = float(np.mean(cnn_max_probs))
+        out["cnn_max_prob_max"] = float(np.max(cnn_max_probs))
+    return out
 
 
 @parser.wrap()
@@ -245,7 +305,7 @@ def main(cfg: TrainRLServerPipelineConfig) -> None:
 
     results = run_eval(
         env, env_proc, action_proc, policy, aux.n_episodes, aux.task, device,
-        video_dir=aux.video_dir,
+        video_dir=aux.video_dir, cnn_ckpt=aux.cnn_ckpt, cnn_thr=aux.cnn_thr,
     )
     logging.info("=" * 60)
     logging.info("CHUNK-POLICY EVAL RESULTS (%s)", aux.policy_type)

@@ -1,0 +1,109 @@
+{
+    "type": "sarm_ext",
+    "n_obs_steps": 8,
+    "input_features": {
+        "observation.images.wrist": {
+            "type": "VISUAL",
+            "shape": [
+                480,
+                640,
+                3
+            ]
+        },
+        "observation.state": {
+            "type": "STATE",
+            "shape": [
+                32
+            ]
+        }
+    },
+    "output_features": {
+        "action": {
+            "type": "ACTION",
+            "shape": [
+                5
+            ]
+        }
+    },
+    "device": "cuda",
+    "use_amp": false,
+    "use_peft": false,
+    "push_to_hub": false,
+    "repo_id": null,
+    "private": null,
+    "tags": null,
+    "license": null,
+    "pretrained_path": null,
+    "annotation_mode": "dual",
+    "frame_gap": 20,
+    "max_rewind_steps": 4,
+    "image_dim": 512,
+    "text_dim": 512,
+    "hidden_dim": 768,
+    "num_heads": 12,
+    "num_layers": 8,
+    "max_state_dim": 32,
+    "drop_n_last_frames": 1,
+    "batch_size": 32,
+    "clip_batch_size": 32,
+    "dropout": 0.1,
+    "stage_loss_weight": 3.0,
+    "progress_loss_weight": 1.0,
+    "peak_lr": 5e-05,
+    "decay_lr": 5e-06,
+    "num_warmup_steps": 500,
+    "num_decay_steps": 50000,
+    "gt_stage_ratio": 0.75,
+    "stage_class_weights": "inverse_freq",
+    "rewind_probability": 0.8,
+    "language_perturbation_probability": 0.2,
+    "use_causal_mask": true,
+    "mlp_heads": false,
+    "disable_state": false,
+    "num_sparse_stages": 6,
+    "sparse_subtask_names": [
+        "approach_box",
+        "bring_box",
+        "approach_target",
+        "place_target_in_the_box",
+        "approach_cover",
+        "place_cover_on_the_box"
+    ],
+    "sparse_temporal_proportions": [
+        0.10318239858560063,
+        0.11801394754935665,
+        0.10320695413024261,
+        0.18276691877025833,
+        0.1255033886651606,
+        0.3673263922993812
+    ],
+    "num_dense_stages": 6,
+    "dense_subtask_names": [
+        "approach_box",
+        "bring_box",
+        "approach_target",
+        "place_target_in_the_box",
+        "approach_cover",
+        "place_cover_on_the_box"
+    ],
+    "dense_temporal_proportions": [
+        0.10318239858560063,
+        0.11801394754935665,
+        0.10320695413024261,
+        0.18276691877025833,
+        0.1255033886651606,
+        0.3673263922993812
+    ],
+    "pretrained_model_path": null,
+    "image_key": "observation.images.top",
+    "image_keys": [
+        "observation.images.wrist"
+    ],
+    "state_key": "observation.state",
+    "normalization_mapping": {
+        "VISUAL": "IDENTITY",
+        "STATE": "MEAN_STD",
+        "LANGUAGE": "IDENTITY",
+        "REWARD": "IDENTITY"
+    }
+}

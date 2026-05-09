@@ -1,0 +1,12 @@
+{
+  "name": "policy_postprocessor",
+  "steps": [
+    {
+      "registry_name": "device_processor",
+      "config": {
+        "device": "cpu",
+        "float_dtype": null
+      }
+    }
+  ]
+}
