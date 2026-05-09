@@ -304,11 +304,64 @@ def test_save_episode_shape_1_numeric_is_scalarized_before_hf_encoding(
     monkeypatch.setattr(datasets.Dataset, "from_dict", classmethod(_from_dict_spy))
 
     dataset.save_episode()
+    dataset.finalize()
 
     assert "state" in captured
     assert isinstance(captured["state"], np.ndarray)
     assert captured["state"].shape == (2,)
     np.testing.assert_allclose(captured["state"], np.array([1.0, 2.0], dtype=np.float32))
+
+
+def test_save_episode_shape_1_int_is_scalarized_before_hf_encoding(
+    tmp_path, empty_lerobot_dataset_factory, monkeypatch
+):
+    features = {"state": {"dtype": "int64", "shape": (1,), "names": None}}
+    dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
+    dataset.add_frame({"state": np.array([1], dtype=np.int64), "task": "Dummy task"})
+    dataset.add_frame({"state": np.array([2], dtype=np.int64), "task": "Dummy task"})
+
+    captured = {}
+    original_from_dict = datasets.Dataset.from_dict
+
+    def _from_dict_spy(cls, mapping, *args, **kwargs):
+        captured["state"] = mapping["state"]
+        return original_from_dict(mapping, *args, **kwargs)
+
+    monkeypatch.setattr(datasets.Dataset, "from_dict", classmethod(_from_dict_spy))
+
+    dataset.save_episode()
+    dataset.finalize()
+
+    assert "state" in captured
+    assert isinstance(captured["state"], np.ndarray)
+    assert captured["state"].shape == (2,)
+    np.testing.assert_array_equal(captured["state"], np.array([1, 2], dtype=np.int64))
+
+
+def test_save_episode_shape_1_bool_is_scalarized_before_hf_encoding(
+    tmp_path, empty_lerobot_dataset_factory, monkeypatch
+):
+    features = {"state": {"dtype": "bool", "shape": (1,), "names": None}}
+    dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
+    dataset.add_frame({"state": np.array([True], dtype=np.bool_), "task": "Dummy task"})
+    dataset.add_frame({"state": np.array([False], dtype=np.bool_), "task": "Dummy task"})
+
+    captured = {}
+    original_from_dict = datasets.Dataset.from_dict
+
+    def _from_dict_spy(cls, mapping, *args, **kwargs):
+        captured["state"] = mapping["state"]
+        return original_from_dict(mapping, *args, **kwargs)
+
+    monkeypatch.setattr(datasets.Dataset, "from_dict", classmethod(_from_dict_spy))
+
+    dataset.save_episode()
+    dataset.finalize()
+
+    assert "state" in captured
+    assert isinstance(captured["state"], np.ndarray)
+    assert captured["state"].shape == (2,)
+    np.testing.assert_array_equal(captured["state"], np.array([True, False], dtype=np.bool_))
 
 
 def test_add_frame_string(tmp_path, empty_lerobot_dataset_factory):
