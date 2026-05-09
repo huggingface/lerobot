@@ -107,7 +107,8 @@ def train_cli(cfg: TrainRLServerPipelineConfig):
     if not use_threads(cfg):
         import torch.multiprocessing as mp
 
-        mp.set_start_method("spawn")
+        if mp.get_start_method(allow_none=True) is None:
+            mp.set_start_method("spawn")
 
     # Use the job_name from the config
     train(
