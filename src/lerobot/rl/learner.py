@@ -44,8 +44,6 @@ For more details on the complete HILSerl training workflow, see:
 https://github.com/michel-aractingi/lerobot-hilserl-guide
 """
 
-from __future__ import annotations
-
 import logging
 import os
 import shutil
