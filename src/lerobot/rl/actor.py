@@ -52,74 +52,63 @@ import time
 from collections.abc import Generator
 from functools import lru_cache
 from queue import Empty
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-import torch
-from torch import nn
-from torch.multiprocessing import Queue
+from lerobot.utils.import_utils import require_package
 
-from lerobot.cameras import opencv  # noqa: F401
-from lerobot.configs import parser
-from lerobot.policies import make_policy, make_pre_post_processors
-from lerobot.processor import TransitionKey
-from lerobot.robots import so_follower  # noqa: F401
-from lerobot.teleoperators import gamepad, so_leader  # noqa: F401
-from lerobot.teleoperators.utils import TeleopEvents
-from lerobot.utils.device_utils import get_safe_torch_device
-from lerobot.utils.import_utils import _grpc_available, require_package
-from lerobot.utils.process import ProcessSignalHandler
-from lerobot.utils.random_utils import set_seed
-from lerobot.utils.robot_utils import precise_sleep
-from lerobot.utils.transition import (
+# Fail fast with a friendly error if the optional ``hilserl`` extra is missing.
+require_package("grpcio", extra="hilserl", import_name="grpc")
+
+import grpc  # noqa: E402
+import torch  # noqa: E402
+from torch import nn  # noqa: E402
+from torch.multiprocessing import Queue  # noqa: E402
+
+from lerobot.cameras import opencv  # noqa: F401, E402
+from lerobot.configs import parser  # noqa: E402
+from lerobot.policies import make_policy, make_pre_post_processors  # noqa: E402
+from lerobot.processor import TransitionKey  # noqa: E402
+from lerobot.robots import so_follower  # noqa: F401, E402
+from lerobot.teleoperators import gamepad, so_leader  # noqa: F401, E402
+from lerobot.teleoperators.utils import TeleopEvents  # noqa: E402
+from lerobot.transport import services_pb2, services_pb2_grpc  # noqa: E402
+from lerobot.transport.utils import (  # noqa: E402
+    bytes_to_state_dict,
+    grpc_channel_options,
+    python_object_to_bytes,
+    receive_bytes_in_chunks,
+    send_bytes_in_chunks,
+    transitions_to_bytes,
+)
+from lerobot.utils.device_utils import get_safe_torch_device  # noqa: E402
+from lerobot.utils.process import ProcessSignalHandler  # noqa: E402
+from lerobot.utils.random_utils import set_seed  # noqa: E402
+from lerobot.utils.robot_utils import precise_sleep  # noqa: E402
+from lerobot.utils.transition import (  # noqa: E402
     Transition,
     move_transition_to_device,
 )
-from lerobot.utils.utils import (
+from lerobot.utils.utils import (  # noqa: E402
     TimerManager,
     init_logging,
 )
 
-from .algorithms.base import RLAlgorithm
-from .algorithms.factory import make_algorithm
-
-if TYPE_CHECKING or _grpc_available:
-    import grpc
-
-    from lerobot.transport import services_pb2, services_pb2_grpc
-    from lerobot.transport.utils import (
-        bytes_to_state_dict,
-        grpc_channel_options,
-        python_object_to_bytes,
-        receive_bytes_in_chunks,
-        send_bytes_in_chunks,
-        transitions_to_bytes,
-    )
-else:
-    grpc = None
-    services_pb2 = None
-    services_pb2_grpc = None
-    bytes_to_state_dict = None
-    grpc_channel_options = None
-    python_object_to_bytes = None
-    receive_bytes_in_chunks = None
-    send_bytes_in_chunks = None
-    transitions_to_bytes = None
-
-from .gym_manipulator import (
+from .algorithms.base import RLAlgorithm  # noqa: E402
+from .algorithms.factory import make_algorithm  # noqa: E402
+from .gym_manipulator import (  # noqa: E402
     make_processors,
     make_robot_env,
     reset_and_build_transition,
     step_env_and_process_transition,
 )
-from .queue import get_last_item_from_queue
-from .train_rl import TrainRLServerPipelineConfig
+from .queue import get_last_item_from_queue  # noqa: E402
+from .train_rl import TrainRLServerPipelineConfig  # noqa: E402
 
 # Main entry point
 
 
 @parser.wrap()
 def actor_cli(cfg: TrainRLServerPipelineConfig):
-    require_package("grpcio", extra="hilserl", import_name="grpc")
     cfg.validate()
     display_pid = False
     if not use_threads(cfg):
@@ -432,7 +421,7 @@ def act_with_policy(
 
 
 def establish_learner_connection(
-    stub: "services_pb2_grpc.LearnerServiceStub",
+    stub: services_pb2_grpc.LearnerServiceStub,
     shutdown_event: Any,  # Event
     attempts: int = 30,
 ) -> bool:
@@ -465,7 +454,7 @@ def establish_learner_connection(
 def learner_service_client(
     host: str = "127.0.0.1",
     port: int = 50051,
-) -> "tuple[services_pb2_grpc.LearnerServiceStub, grpc.Channel]":
+) -> tuple[services_pb2_grpc.LearnerServiceStub, grpc.Channel]:
     """Return a client for the learner service.
 
     GRPC uses HTTP/2, which is a binary protocol and multiplexes requests over a single connection.
@@ -488,8 +477,8 @@ def receive_policy(
     cfg: TrainRLServerPipelineConfig,
     parameters_queue: Queue,
     shutdown_event: Any,  # Event
-    learner_client: "services_pb2_grpc.LearnerServiceStub | None" = None,
-    grpc_channel: "grpc.Channel | None" = None,
+    learner_client: services_pb2_grpc.LearnerServiceStub | None = None,
+    grpc_channel: grpc.Channel | None = None,
 ) -> None:
     """Receive parameters from the learner.
 
@@ -542,8 +531,8 @@ def send_transitions(
     cfg: TrainRLServerPipelineConfig,
     transitions_queue: Queue,
     shutdown_event: Any,  # Event
-    learner_client: "services_pb2_grpc.LearnerServiceStub | None" = None,
-    grpc_channel: "grpc.Channel | None" = None,
+    learner_client: services_pb2_grpc.LearnerServiceStub | None = None,
+    grpc_channel: grpc.Channel | None = None,
 ) -> None:
     """Send transitions to the learner.
 
@@ -598,8 +587,8 @@ def send_interactions(
     cfg: TrainRLServerPipelineConfig,
     interactions_queue: Queue,
     shutdown_event: Any,  # Event
-    learner_client: "services_pb2_grpc.LearnerServiceStub | None" = None,
-    grpc_channel: "grpc.Channel | None" = None,
+    learner_client: services_pb2_grpc.LearnerServiceStub | None = None,
+    grpc_channel: grpc.Channel | None = None,
 ) -> None:
     """Send interactions to the learner.
 
@@ -657,7 +646,7 @@ def transitions_stream(
     shutdown_event: Any,  # Event
     transitions_queue: Queue,
     timeout: float,
-) -> "Generator[Any, None, services_pb2.Empty]":
+) -> Generator[Any, None, services_pb2.Empty]:
     while not shutdown_event.is_set():
         try:
             message = transitions_queue.get(block=True, timeout=timeout)
@@ -676,7 +665,7 @@ def interactions_stream(
     shutdown_event: Any,  # Event
     interactions_queue: Queue,
     timeout: float,
-) -> "Generator[Any, None, services_pb2.Empty]":
+) -> Generator[Any, None, services_pb2.Empty]:
     while not shutdown_event.is_set():
         try:
             message = interactions_queue.get(block=True, timeout=timeout)

@@ -18,29 +18,22 @@
 import logging
 import time
 from multiprocessing import Event, Queue
-from typing import TYPE_CHECKING
 
-from lerobot.utils.import_utils import _grpc_available, require_package
+from lerobot.utils.import_utils import require_package
 
-if TYPE_CHECKING or _grpc_available:
-    from lerobot.transport import services_pb2, services_pb2_grpc
-    from lerobot.transport.utils import receive_bytes_in_chunks, send_bytes_in_chunks
+# Fail fast with a friendly error if the optional ``hilserl`` extra is missing.
+require_package("grpcio", extra="hilserl", import_name="grpc")
 
-    _ServicerBase = services_pb2_grpc.LearnerServiceServicer
-else:
-    services_pb2 = None
-    services_pb2_grpc = None
-    receive_bytes_in_chunks = None
-    send_bytes_in_chunks = None
-    _ServicerBase = object
+from lerobot.transport import services_pb2, services_pb2_grpc  # noqa: E402
+from lerobot.transport.utils import receive_bytes_in_chunks, send_bytes_in_chunks  # noqa: E402
 
-from .queue import get_last_item_from_queue
+from .queue import get_last_item_from_queue  # noqa: E402
 
 MAX_WORKERS = 3  # Stream parameters, send transitions and interactions
 SHUTDOWN_TIMEOUT = 10
 
 
-class LearnerService(_ServicerBase):
+class LearnerService(services_pb2_grpc.LearnerServiceServicer):
     """
     Implementation of the LearnerService gRPC service
     This service is used to send parameters to the Actor and receive transitions and interactions from the Actor
@@ -56,7 +49,6 @@ class LearnerService(_ServicerBase):
         interaction_message_queue: Queue,
         queue_get_timeout: float = 0.001,
     ):
-        require_package("grpcio", extra="hilserl", import_name="grpc")
         self.shutdown_event = shutdown_event
         self.parameters_queue = parameters_queue
         self.seconds_between_pushes = seconds_between_pushes
