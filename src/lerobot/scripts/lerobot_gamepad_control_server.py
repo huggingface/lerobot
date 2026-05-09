@@ -64,12 +64,13 @@ except ImportError:
 try:
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
     from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
-    from lerobot.cameras.configs import Cv2Backends
+    from lerobot.cameras.configs import Cv2Backends, Cv2Rotation
     RECORDING_AVAILABLE = True
 except Exception as _rec_err:
     print(f"⚠️  lerobot dataset/camera import failed: {_rec_err}  — recording disabled")
     LeRobotDataset = None
     Cv2Backends = None
+    Cv2Rotation = None
     RECORDING_AVAILABLE = False
 
 # Arm control (lerobot SO-101)
@@ -390,7 +391,12 @@ def _parse_camera_spec(camera_spec: str) -> dict:
         # Split "name: { key: val, key: val }" into name and inner dict
         colon_pos = block.index(":")
         name = block[:colon_pos].strip().strip("\"'")
-        inner = block[colon_pos+1:].strip().strip("{}")
+        inner_raw = block[colon_pos+1:].strip()
+        if not inner_raw.startswith("{"):
+            cameras[name] = {"index_or_path": inner_raw.strip().strip("\"'")}
+            continue
+
+        inner = inner_raw.strip("{}")
 
         # Parse inner key:value pairs (same depth-aware split)
         cfg = {}
@@ -417,6 +423,13 @@ def _parse_camera_spec(camera_spec: str) -> dict:
         cameras[name] = cfg
 
     return cameras
+
+
+def _parse_cv2_rotation(value: str):
+    raw = str(value).strip()
+    if raw.upper().startswith("ROTATE_"):
+        return Cv2Rotation[raw.upper()]
+    return Cv2Rotation(int(raw))
 
 
 def connect_cameras(camera_spec: str) -> dict:
@@ -457,12 +470,19 @@ def connect_cameras(camera_spec: str) -> dict:
             if "width"  in cfg_dict: kwargs["width"]  = int(cfg_dict["width"])
             if "height" in cfg_dict: kwargs["height"] = int(cfg_dict["height"])
             if "fps"    in cfg_dict: kwargs["fps"]    = int(cfg_dict["fps"])
+            if "rotation" in cfg_dict:
+                kwargs["rotation"] = _parse_cv2_rotation(cfg_dict["rotation"])
+            elif name == "base":
+                kwargs["rotation"] = Cv2Rotation.ROTATE_180
 
             cfg = OpenCVCameraConfig(**kwargs)
             cam = OpenCVCamera(cfg)
             cam.connect()
             cameras[name] = cam
-            print(f"✓ Camera '{name}' connected ({raw_path})")
+            detail = f"{raw_path}"
+            if cfg.rotation != Cv2Rotation.NO_ROTATION:
+                detail += f", rotation={cfg.rotation.value}"
+            print(f"✓ Camera '{name}' connected ({detail})")
         except Exception as e:
             print(f"⚠️  Camera '{name}' failed: {e}")
     return cameras
