@@ -28,7 +28,6 @@ import collections
 import json
 import socket
 import struct
-import threading
 import time
 from pathlib import Path
 
@@ -46,10 +45,11 @@ except Exception as _arm_err:
 # ── lerobot cameras ─────────────────────────────────────────────────────────
 try:
     from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
+    from lerobot.cameras.configs import Cv2Backends
     CAMERAS_AVAILABLE = True
 except Exception as _cam_err:
     print(f"⚠️  lerobot camera import failed: {_cam_err}  — cameras disabled")
-    OpenCVCamera = OpenCVCameraConfig = None
+    OpenCVCamera = OpenCVCameraConfig = Cv2Backends = None
     CAMERAS_AVAILABLE = False
 
 # ── OpenCV for JPEG encoding ─────────────────────────────────────────────────
@@ -274,6 +274,14 @@ def _parse_camera_spec(camera_spec: str) -> dict:
     return cameras
 
 
+def _coerce_cv2_backend(value: str) -> int:
+    if Cv2Backends is None:
+        return int(value)
+    if str(value).lstrip("-").isdigit():
+        return int(value)
+    return int(Cv2Backends[str(value).upper()])
+
+
 def connect_cameras(camera_spec: str) -> dict:
     if not camera_spec or not CAMERAS_AVAILABLE:
         return {}
@@ -288,18 +296,24 @@ def connect_cameras(camera_spec: str) -> dict:
             raw_path = cfg_dict.get("index_or_path", "0")
             if str(raw_path).lstrip("-").isdigit():
                 index = int(raw_path)
-            elif str(raw_path).startswith("/dev/video"):
-                index = int(raw_path.replace("/dev/video", ""))
             else:
-                index = raw_path
+                index = Path(raw_path)
             kwargs = {"index_or_path": index}
             if "width"  in cfg_dict: kwargs["width"]  = int(cfg_dict["width"])
             if "height" in cfg_dict: kwargs["height"] = int(cfg_dict["height"])
             if "fps"    in cfg_dict: kwargs["fps"]    = int(cfg_dict["fps"])
+            if "fourcc" in cfg_dict: kwargs["fourcc"] = str(cfg_dict["fourcc"])
+            if "backend" in cfg_dict: kwargs["backend"] = _coerce_cv2_backend(cfg_dict["backend"])
+            if "warmup_s" in cfg_dict: kwargs["warmup_s"] = int(cfg_dict["warmup_s"])
             cam = OpenCVCamera(OpenCVCameraConfig(**kwargs))
             cam.connect()
             cameras[name] = cam
-            print(f"✓ Camera '{name}' connected ({raw_path})")
+            detail = f"{raw_path}"
+            if "fourcc" in kwargs:
+                detail += f", fourcc={kwargs['fourcc']}"
+            if "backend" in kwargs:
+                detail += f", backend={kwargs['backend']}"
+            print(f"✓ Camera '{name}' connected ({detail})")
         except Exception as e:
             print(f"⚠️  Camera '{name}' failed: {e}")
     return cameras
@@ -316,34 +330,35 @@ def encode_image_jpeg(img: np.ndarray, quality: int = 70) -> str:
 
 
 class CameraBuffer:
-    """Background-thread camera capture — always holds the latest frame."""
-    def __init__(self, cameras: dict):
-        self._cameras  = cameras
-        self._frames   = {n: None for n in cameras}
-        self._lock     = threading.Lock()
-        self._stop_evt = threading.Event()
+    """Non-blocking camera snapshot helper.
+
+    OpenCVCamera already owns a background capture thread. This wrapper peeks at
+    that latest frame and refuses stale frames instead of silently resending the
+    last good image forever.
+    """
+    def __init__(self, cameras: dict, max_age_ms: int = 1000, verbose: bool = False):
+        self._cameras = cameras
+        self._max_age_ms = max_age_ms
+        self._verbose = verbose
+        self._last_warn_t = {n: 0.0 for n in cameras}
 
     def start(self):
-        for name, cam in self._cameras.items():
-            t = threading.Thread(target=self._loop, args=(name, cam), daemon=True)
-            t.start()
-
-    def _loop(self, name, cam):
-        while not self._stop_evt.is_set():
-            try:
-                img = cam.read()
-                if img is not None:
-                    with self._lock:
-                        self._frames[name] = img
-            except Exception:
-                pass
+        return None
 
     def get_latest(self) -> dict:
-        with self._lock:
-            return dict(self._frames)
+        frames = {}
+        for name, cam in self._cameras.items():
+            try:
+                frames[name] = cam.read_latest(max_age_ms=self._max_age_ms)
+            except Exception as e:
+                now = time.perf_counter()
+                if self._verbose and now - self._last_warn_t[name] > 2.0:
+                    print(f"[server] camera '{name}' has no fresh frame: {e}")
+                    self._last_warn_t[name] = now
+        return frames
 
     def stop(self):
-        self._stop_evt.set()
+        return None
 
 
 # ──────────────────────────────────────────────────────────────
@@ -482,6 +497,8 @@ def main():
                         help="lerobot-style camera spec")
     parser.add_argument("--image-quality", type=int, default=70,
                         help="JPEG quality sent to client (1-100, default: 70)")
+    parser.add_argument("--camera-max-age-ms", type=int, default=1000,
+                        help="Drop camera frames older than this many ms (default: 1000)")
     # Motors (optional)
     parser.add_argument("--no-motors",  action="store_true")
     parser.add_argument("--m1-fwd",     type=int, default=17)
@@ -512,7 +529,7 @@ def main():
     if args.cameras:
         cameras = connect_cameras(args.cameras)
         if cameras:
-            cam_buffer = CameraBuffer(cameras)
+            cam_buffer = CameraBuffer(cameras, max_age_ms=args.camera_max_age_ms, verbose=args.verbose)
             cam_buffer.start()
             print(f"✓  Cameras: {list(cameras.keys())}  (JPEG quality={args.image_quality})")
     else:

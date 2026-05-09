@@ -321,6 +321,7 @@ def run_inference(
     fps:       int,
     dry_run:   bool,
     show_imgs: bool = False,
+    image_refresh_hz: float = 10.0,
 ):
     """
     Inference loop — ACT's internal queue handles chunking transparently.
@@ -353,6 +354,8 @@ def run_inference(
     next_step_t = time.perf_counter()
 
     obs: dict | None = None
+    next_image_t = time.perf_counter()
+    image_refresh_dt = 1.0 / image_refresh_hz if image_refresh_hz > 0 else float("inf")
 
     try:
         while True:
@@ -363,15 +366,34 @@ def run_inference(
                 t0 = time.perf_counter()
                 new_obs = get_obs(sock, want_images=True)
                 elapsed = time.perf_counter() - t0
+                next_image_t = time.perf_counter() + image_refresh_dt
 
                 state = new_obs.get("observation.state", np.array([]))
+                image_keys = [k for k in new_obs if k.startswith("observation.images.")]
                 if len(state) == 0:
                     logging.warning("step=%d: server returned empty state — reusing cached obs", step)
+                elif not image_keys:
+                    logging.warning("step=%d: server returned no fresh images — reusing cached obs", step)
                 else:
                     obs = new_obs
                     stats.record_obs(elapsed)
                     if show_imgs:
                         show_images(obs)
+            elif show_imgs and time.perf_counter() >= next_image_t:
+                # Debug display only. ACT action chunks intentionally reuse the
+                # cached policy observation, but the preview should still move.
+                try:
+                    preview_obs = get_obs(sock, want_images=True)
+                    show_images(preview_obs)
+                except Exception as e:
+                    logging.warning("step=%d: image preview refresh failed: %s", step, e)
+                finally:
+                    next_image_t = time.perf_counter() + image_refresh_dt
+
+            if obs is None:
+                logging.warning("step=%d: waiting for first complete observation", step)
+                time.sleep(min(control_dt, 0.1))
+                continue
 
             # ── 2. Predict next action ────────────────────────────────
             # ACT runs the NN only when its queue is empty (every n_action_steps
@@ -431,6 +453,8 @@ def main():
                         help="Print actions without sending them to the robot")
     parser.add_argument("--show-images", action="store_true",
                         help="Display camera frames in cv2 windows during inference")
+    parser.add_argument("--image-refresh-hz", type=float, default=10.0,
+                        help="Preview refresh rate for --show-images (default: 10)")
     args = parser.parse_args()
 
     policy = PolicyRunner(args.policy_path, dataset_repo_id=args.dataset_repo_id, device=args.device)
@@ -447,7 +471,8 @@ def main():
     sock = connect_to_server(args.host, args.tcp_port)
     try:
         run_inference(sock, policy, fps=args.fps, dry_run=dry_run,
-                      show_imgs=args.show_images)
+                      show_imgs=args.show_images,
+                      image_refresh_hz=args.image_refresh_hz)
     finally:
         sock.close()
         print("✓ Socket closed.")
