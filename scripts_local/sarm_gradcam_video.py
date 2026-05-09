@@ -70,7 +70,7 @@ def main():
     ap.add_argument("--n-context", type=int, default=8)
     ap.add_argument("--gap", type=int, default=5)
     ap.add_argument("--task", default="Three-stage assembly")
-    ap.add_argument("--fps", type=int, default=10)
+    ap.add_argument("--fps", type=int, default=20, help="output video fps (matches dataset 20fps default)")
     ap.add_argument("--alpha", type=float, default=0.5, help="overlay blend (0..1)")
     args = ap.parse_args()
 
