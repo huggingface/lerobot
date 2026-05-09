@@ -286,6 +286,21 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         **postprocessor_kwargs,
     )
 
+    # SARM end-to-end CLIP fine-tune: wire policy.clip_model into the SARM
+    # encoding processor step so backprop flows from total_loss through CLIP.
+    # Triggered by SARMConfig.freeze_clip=False (policy owns the CLIP submodule).
+    if getattr(cfg.policy, "freeze_clip", True) is False and getattr(policy, "clip_model", None) is not None:
+        try:
+            for step in getattr(preprocessor, "steps", []):
+                if hasattr(step, "set_external_clip"):
+                    step.set_external_clip(policy.clip_model)
+                    if is_main_process:
+                        logging.info(f"Wired SARMRewardModel.clip_model into preprocessor step {type(step).__name__}")
+                    break
+        except Exception as e:
+            if is_main_process:
+                logging.warning(f"Could not wire shared CLIP into processor: {e}")
+
     if is_main_process:
         logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
