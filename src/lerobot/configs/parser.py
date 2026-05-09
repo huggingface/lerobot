@@ -26,7 +26,7 @@ from types import ModuleType
 from typing import Any, TypeVar, cast
 
 import draccus
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 from lerobot.utils.utils import has_method
 
