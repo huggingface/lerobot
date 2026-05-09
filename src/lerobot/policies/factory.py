@@ -638,7 +638,17 @@ def _make_processors_from_policy_config(
     # that only accept (config, dataset_stats=...) and don't have the rename_map parameter.
     if rename_map is not None:
         sig = inspect.signature(function)
-        if "rename_map" in sig.parameters:
+        accepts_rename_map = "rename_map" in sig.parameters
+        accepts_var_keyword = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+        if accepts_rename_map or accepts_var_keyword:
             return function(config, dataset_stats=dataset_stats, rename_map=rename_map)
+        logging.warning(
+            "Policy factory '%s' does not accept `rename_map`; "
+            "observation rename will not be applied. "
+            "Consider updating the factory to accept a `rename_map` parameter.",
+            function_name,
+        )
 
     return function(config, dataset_stats=dataset_stats)

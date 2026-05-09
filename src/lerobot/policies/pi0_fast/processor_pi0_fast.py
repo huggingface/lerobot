@@ -137,6 +137,9 @@ def make_pi0_fast_pre_post_processors(
     )
 
     # Pi0Fast order: rename → relative → normalize → tokenize → model → unnormalize → absolute
+    # Note: relative_step runs before NormalizerProcessorStep, which is safe because
+    # state features pass through unchanged (only actions are relativized), so the
+    # state tokenizer still sees normalized state in [-1, 1].
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map=rename_map or {}),
         AddBatchDimensionProcessorStep(),

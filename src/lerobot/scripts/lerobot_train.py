@@ -315,9 +315,9 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         # Always pass rename_map so it gets applied in the processor even when building
         # processors from scratch (e.g., when use_relative_actions=True bypasses pretrained_path)
         processor_kwargs["rename_map"] = cfg.rename_map
-        # When rename_map is provided and stats are used (fresh-build path), rename stats keys
-        # so NormalizerProcessorStep can find them after observations are renamed.
-        if cfg.rename_map and ((processor_pretrained_path and not cfg.resume) or not processor_pretrained_path):
+        # Rename stats whenever we'll build processors fresh —
+        # i.e., unless we're resuming from a pretrained checkpoint that already has renamed stats.
+        if cfg.rename_map and not (processor_pretrained_path and cfg.resume):
             processor_kwargs["dataset_stats"] = rename_stats(dataset.meta.stats, cfg.rename_map)
 
     if not cfg.is_reward_model_training and processor_pretrained_path is not None:
