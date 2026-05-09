@@ -298,7 +298,11 @@ def connect_cameras(camera_spec: str) -> dict:
                 index = int(raw_path)
             else:
                 index = Path(raw_path)
-            kwargs = {"index_or_path": index}
+            kwargs = {
+                "index_or_path": index,
+                "fourcc": "MJPG",
+                "backend": Cv2Backends.V4L2,
+            }
             if "width"  in cfg_dict: kwargs["width"]  = int(cfg_dict["width"])
             if "height" in cfg_dict: kwargs["height"] = int(cfg_dict["height"])
             if "fps"    in cfg_dict: kwargs["fps"]    = int(cfg_dict["fps"])

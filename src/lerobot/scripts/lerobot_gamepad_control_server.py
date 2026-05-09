@@ -64,10 +64,12 @@ except ImportError:
 try:
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
     from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
+    from lerobot.cameras.configs import Cv2Backends
     RECORDING_AVAILABLE = True
 except Exception as _rec_err:
     print(f"⚠️  lerobot dataset/camera import failed: {_rec_err}  — recording disabled")
     LeRobotDataset = None
+    Cv2Backends = None
     RECORDING_AVAILABLE = False
 
 # Arm control (lerobot SO-101)
@@ -447,7 +449,11 @@ def connect_cameras(camera_spec: str) -> dict:
             else:
                 index = raw_path
 
-            kwargs = {"index_or_path": index}
+            kwargs = {
+                "index_or_path": index,
+                "fourcc": "MJPG",
+                "backend": Cv2Backends.V4L2,
+            }
             if "width"  in cfg_dict: kwargs["width"]  = int(cfg_dict["width"])
             if "height" in cfg_dict: kwargs["height"] = int(cfg_dict["height"])
             if "fps"    in cfg_dict: kwargs["fps"]    = int(cfg_dict["fps"])
