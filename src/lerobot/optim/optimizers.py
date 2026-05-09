@@ -305,6 +305,10 @@ def _save_single_optimizer_state(optimizer: torch.optim.Optimizer, save_dir: Pat
     state = optimizer.state_dict()
     param_groups = state.pop("param_groups")
     flat_state = flatten_dict(state)
+    # safetensors requires contiguous tensors; CLIP's visual_projection.weight is
+    # non-contiguous which propagates to optimizer exp_avg/exp_avg_sq during
+    # CLIP fine-tuning. Force contiguous on all tensor values before saving.
+    flat_state = {k: (v.contiguous() if isinstance(v, torch.Tensor) else v) for k, v in flat_state.items()}
     save_file(flat_state, save_dir / OPTIMIZER_STATE)
     write_json(param_groups, save_dir / OPTIMIZER_PARAM_GROUPS)
 
