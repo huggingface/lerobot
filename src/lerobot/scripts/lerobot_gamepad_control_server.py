@@ -562,49 +562,36 @@ def kb_ready() -> bool:
 
 
 class CameraBuffer:
-    """
-    Runs each camera in its own background thread, always holding the
-    latest frame. The control loop calls get_latest() which returns
-    instantly without ever waiting on the camera hardware.
+    """Non-blocking camera snapshot helper.
 
-    Usage:
-        buf = CameraBuffer(cameras)   # cameras = {name: OpenCVCamera}
-        buf.start()
-        frame = buf.get_latest()      # {name: np.ndarray} — never blocks
-        buf.stop()
+    OpenCVCamera already owns a background capture thread. This wrapper peeks at
+    that latest frame and refuses stale frames instead of silently resending the
+    last good image forever.
     """
 
-    def __init__(self, cameras: dict):
-        self._cameras  = cameras
-        self._frames   : dict[str, np.ndarray | None] = {n: None for n in cameras}
-        self._lock     = threading.Lock()
-        self._stop_evt = threading.Event()
-        self._threads  : list[threading.Thread] = []
+    def __init__(self, cameras: dict, max_age_ms: int = 1000, verbose: bool = False):
+        self._cameras = cameras
+        self._max_age_ms = max_age_ms
+        self._verbose = verbose
+        self._last_warn_t = {n: 0.0 for n in cameras}
 
     def start(self) -> None:
-        for name, cam in self._cameras.items():
-            t = threading.Thread(target=self._capture_loop, args=(name, cam),
-                                 daemon=True, name=f"cam-{name}")
-            t.start()
-            self._threads.append(t)
-
-    def _capture_loop(self, name: str, cam) -> None:
-        while not self._stop_evt.is_set():
-            try:
-                img = cam.read()
-                if img is not None:
-                    with self._lock:
-                        self._frames[name] = img
-            except Exception:
-                pass   # keep running even if one frame fails
+        return None
 
     def get_latest(self) -> dict:
-        """Return a shallow copy of the latest frames dict. Never blocks."""
-        with self._lock:
-            return dict(self._frames)
+        frames = {}
+        for name, cam in self._cameras.items():
+            try:
+                frames[name] = cam.read_latest(max_age_ms=self._max_age_ms)
+            except Exception as e:
+                now = time.perf_counter()
+                if self._verbose and now - self._last_warn_t[name] > 2.0:
+                    print(f"[server] camera '{name}' has no fresh frame: {e}")
+                    self._last_warn_t[name] = now
+        return frames
 
     def stop(self) -> None:
-        self._stop_evt.set()
+        return None
 
 
 # ──────────────────────────────────────────────────────────────
@@ -969,6 +956,8 @@ def main():
                         help="Dataset FPS (default: 30)")
     parser.add_argument("--cameras",       default="",
                         help="Camera spec: 'name:/dev/videoN,name2:/dev/videoM'")
+    parser.add_argument("--camera-max-age-ms", type=int, default=1000,
+                        help="Drop camera frames older than this many ms (default: 1000)")
     parser.add_argument("--no-push",       action="store_true",
                         help="Skip uploading dataset to HuggingFace Hub")
     args = parser.parse_args()
@@ -1022,7 +1011,7 @@ def main():
     if args.cameras:
         cameras = connect_cameras(args.cameras)
         if cameras:
-            cam_buffer = CameraBuffer(cameras)
+            cam_buffer = CameraBuffer(cameras, max_age_ms=args.camera_max_age_ms, verbose=args.verbose)
             cam_buffer.start()
             print(f"✓  Camera buffer started ({len(cameras)} cameras)")
     else:
