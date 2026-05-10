@@ -21,7 +21,6 @@ import math
 import os
 import platform
 import time
-from pathlib import Path
 from threading import Event, Lock, Thread
 from typing import Any
 
@@ -38,6 +37,7 @@ from lerobot.utils.errors import DeviceNotConnectedError
 from ..camera import Camera
 from ..utils import get_cv2_rotation
 from .configuration_opencv import ColorMode, OpenCVCameraConfig
+from .linux_v4l2 import find_linux_video_devices
 
 # NOTE(Steven): The maximum opencv device index depends on your operating system. For instance,
 # if you have 3 cameras, they should be associated to index 0, 1, and 2. This is the case
@@ -287,51 +287,56 @@ class OpenCVCamera(Camera):
         """
         Detects available OpenCV cameras connected to the system.
 
-        On Linux, it scans '/dev/video*' paths. On other systems (like macOS, Windows),
-        it checks indices from 0 up to `MAX_OPENCV_INDEX`.
+        On Linux, discovery enumerates video device paths without opening them. Opening devices
+        through OpenCV can mutate active V4L2 settings on some backend/package combinations.
+        On other systems (like macOS, Windows), it checks indices from 0 up to `MAX_OPENCV_INDEX`.
 
         Returns:
             List[Dict[str, Any]]: A list of dictionaries,
             where each dictionary contains 'type', 'id' (port index or path),
-            and the default profile properties (width, height, fps, format).
+            and the default profile properties. Linux discovery may return unknown profile values
+            because it avoids opening the camera.
         """
-        found_cameras_info = []
-
-        targets_to_scan: list[str | int]
         if platform.system() == "Linux":
-            possible_paths = sorted(Path("/dev").glob("video*"), key=lambda p: p.name)
-            targets_to_scan = [str(p) for p in possible_paths]
-        else:
-            targets_to_scan = [int(i) for i in range(MAX_OPENCV_INDEX)]
+            return find_linux_video_devices()
 
+        return OpenCVCamera._find_cameras_with_opencv([int(i) for i in range(MAX_OPENCV_INDEX)])
+
+    @staticmethod
+    def _find_cameras_with_opencv(targets_to_scan: list[str | int]) -> list[dict[str, Any]]:
+        found_cameras_info = []
         for target in targets_to_scan:
             camera = cv2.VideoCapture(target)
-            if camera.isOpened():
+            try:
+                if not camera.isOpened():
+                    continue
+
                 default_width = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
                 default_height = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
                 default_fps = camera.get(cv2.CAP_PROP_FPS)
                 default_format = camera.get(cv2.CAP_PROP_FORMAT)
 
-                # Get FOURCC code and convert to string
-                default_fourcc_code = camera.get(cv2.CAP_PROP_FOURCC)
-                default_fourcc_code_int = int(default_fourcc_code)
-                default_fourcc = "".join([chr((default_fourcc_code_int >> 8 * i) & 0xFF) for i in range(4)])
+                default_fourcc_code_int = int(camera.get(cv2.CAP_PROP_FOURCC))
+                default_fourcc = "".join(
+                    [chr((default_fourcc_code_int >> 8 * i) & 0xFF) for i in range(4)]
+                )
 
-                camera_info = {
-                    "name": f"OpenCV Camera @ {target}",
-                    "type": "OpenCV",
-                    "id": target,
-                    "backend_api": camera.getBackendName(),
-                    "default_stream_profile": {
-                        "format": default_format,
-                        "fourcc": default_fourcc,
-                        "width": default_width,
-                        "height": default_height,
-                        "fps": default_fps,
-                    },
-                }
-
-                found_cameras_info.append(camera_info)
+                found_cameras_info.append(
+                    {
+                        "name": f"OpenCV Camera @ {target}",
+                        "type": "OpenCV",
+                        "id": target,
+                        "backend_api": camera.getBackendName(),
+                        "default_stream_profile": {
+                            "format": default_format,
+                            "fourcc": default_fourcc,
+                            "width": default_width,
+                            "height": default_height,
+                            "fps": default_fps,
+                        },
+                    }
+                )
+            finally:
                 camera.release()
 
         return found_cameras_info
