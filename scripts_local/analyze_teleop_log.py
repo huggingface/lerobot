@@ -31,6 +31,9 @@ def main():
     stage_name = [r.get("stage_name", "?") for r in rows]
     bufs = [r.get("buffer_len", 0) for r in rows]
     deltas = rows[0].get("delta_indices")
+    gt_stage_idx = [r.get("gt_stage_idx") for r in rows]
+    gt_starts = [(r["step"], r["gt_stage_idx"], r.get("gt_stage_name"))
+                 for r in rows if r.get("gt_stage_started_this_frame") is not None]
 
     # Detect regressions: stage_idx[i] < max(stage_idx[:i])
     max_so_far = np.maximum.accumulate(stage_idx)
@@ -42,6 +45,18 @@ def main():
     print(f"unique stages : {dict(Counter(stage_name))}")
     print(f"unique progress values: {len(set(progress))} ({sorted(set(progress))[:8]}{'...' if len(set(progress))>8 else ''})")
     print(f"regressions   : {len(regression_steps)} (stage drops back)")
+    if gt_starts:
+        print(f"gt stage entries (step, idx, name):")
+        for s, gi, gn in gt_starts:
+            print(f"  step={s} → stage {gi} ({gn})")
+    # Compute lag per gt entry
+    if gt_starts and any(g is not None for g in gt_stage_idx):
+        for gs, gi, gn in gt_starts:
+            i_gs = next((i for i, s in enumerate(steps) if s >= gs), None)
+            if i_gs is None: continue
+            j = next((i for i in range(i_gs, len(steps)) if stage_idx[i] >= gi), None)
+            if j is not None:
+                print(f"  gt stage {gi} ({gn}) entered step={gs}; SARM caught up at step={steps[j]} (lag={steps[j]-gs})")
     if regression_steps:
         runs = []
         cur = [regression_steps[0]]
@@ -64,12 +79,18 @@ def main():
     axes[0].set_title(f"SARM teleop trace  (regressions={len(regression_steps)})")
     axes[0].grid(alpha=0.3)
 
-    axes[1].plot(steps, stage_idx, "-", color="C1", lw=1.2)
+    axes[1].plot(steps, stage_idx, "-", color="C1", lw=1.2, label="SARM pred")
+    if any(g is not None for g in gt_stage_idx):
+        gt_x = [s for s, g in zip(steps, gt_stage_idx) if g is not None]
+        gt_y = [g for g in gt_stage_idx if g is not None]
+        axes[1].step(gt_x, gt_y, where="post", color="green", lw=2, label="GT (user)")
     axes[1].plot(steps, max_so_far, "--", color="gray", lw=0.8, label="max_so_far")
     axes[1].fill_between(steps, 0, 6, where=regress_mask, color="red", alpha=0.15, label="regressions")
+    for gs, gi, gn in gt_starts:
+        axes[1].axvline(gs, color="green", lw=0.7, alpha=0.5)
     axes[1].set_ylabel("stage_idx")
     axes[1].set_yticks(range(7))
-    axes[1].legend(loc="upper left")
+    axes[1].legend(loc="upper left", fontsize=8)
     axes[1].grid(alpha=0.3)
 
     axes[2].plot(steps, stage_conf, "-", color="C2", lw=1)

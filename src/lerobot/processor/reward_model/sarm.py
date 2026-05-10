@@ -469,6 +469,9 @@ class SARMRewardProcessorStep(BaseRewardProcessorStep):
                 "stage_probs": [float(x) for x in sp.tolist()],
                 "delta_indices": list(self._delta_indices) if self._delta_indices else None,
                 "buffer_len": len(self._image_bufs.get(self._image_keys[0], [])) if self._image_bufs else 0,
+                "gt_stage_idx": getattr(self, "_gt_stage_idx", None),
+                "gt_stage_name": getattr(self, "_gt_stage_name", None),
+                "gt_stage_started_this_frame": getattr(self, "_gt_stage_started_this_frame", None),
             }
             with open(log_path, "a") as f:
                 f.write(_json.dumps(entry) + "\n")
@@ -478,6 +481,13 @@ class SARMRewardProcessorStep(BaseRewardProcessorStep):
         observation = new_transition.get(TransitionKey.OBSERVATION)
         if observation is None:
             return new_transition
+
+        # Capture GT stage from upstream StageAnnotatorProcessorStep (if any)
+        # so the JSONL log can include user-pressed stage advances.
+        info_in = new_transition.get(TransitionKey.INFO, {}) or {}
+        self._gt_stage_idx = info_in.get("stage_index")
+        self._gt_stage_name = info_in.get("stage_name")
+        self._gt_stage_started_this_frame = info_in.get("stage_started_this_frame")
 
         self._step_counter += 1
         if self.config.verbose and (self._step_counter % max(1, self.config.verbose_every_n_steps) == 0):
