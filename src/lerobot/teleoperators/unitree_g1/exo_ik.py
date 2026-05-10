@@ -22,6 +22,7 @@ visualizing the result in meshcat after calibration.
 import logging
 import os
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -136,11 +137,11 @@ class ExoskeletonIKHelper:
             ),
         ]
 
-        self.exo = {}  # side -> pin.RobotWrapper
-        self.q_exo = {}  # side -> q
-        self.ee_id_exo = {}  # side -> frame id
-        self.qmap = {}  # side -> {joint_name: q_idx}
-        self.ee_id_g1 = {}  # side -> frame id
+        self.exo: dict[str, Any] = {}  # side -> pin.RobotWrapper
+        self.q_exo: dict[str, Any] = {}  # side -> q
+        self.ee_id_exo: dict[str, int] = {}  # side -> frame id
+        self.qmap: dict[str, dict[str, int]] = {}  # side -> {joint_name: q_idx}
+        self.ee_id_g1: dict[str, int | None] = {}  # side -> frame id
 
         self._load_exo_models(assets_dir)
         for a in self.arms:
@@ -149,7 +150,7 @@ class ExoskeletonIKHelper:
         self.viewer = None
         self.markers: Markers | None = None
         self.viz_g1 = None
-        self.viz_exo = {}  # side -> viz
+        self.viz_exo: dict[str, Any] = {}  # side -> viz
 
     def _frozen_joint_indices(self) -> dict[str, int]:
         out = {}

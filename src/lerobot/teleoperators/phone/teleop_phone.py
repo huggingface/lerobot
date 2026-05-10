@@ -69,11 +69,11 @@ class BasePhone:
     @property
     def feedback_features(self) -> dict[str, type]:
         # No haptic or other feedback implemented yet
-        pass
+        raise NotImplementedError
 
     def configure(self) -> None:
         # No additional configuration required for phone teleop
-        pass
+        raise NotImplementedError
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
         # We could add haptic feedback (vibrations) here, but it's not implemented yet
@@ -142,6 +142,7 @@ class IOSPhone(BasePhone, Teleoperator):
             if button_b is not None:
                 button_b1_pressed = bool(button_b.get_int(1))
             if button_b1_pressed:
+                assert position is not None and rotation is not None
                 return position, rotation
 
             time.sleep(0.01)
@@ -162,6 +163,7 @@ class IOSPhone(BasePhone, Teleoperator):
             - The orientation as a `Rotation` object, or None if not available.
             - The raw HEBI feedback object for accessing other data like button presses.
         """
+        assert self._group is not None
         fbk = self._group.get_next_feedback()
         pose = fbk[0]
         ar_pos = getattr(pose, "ar_position", None)
@@ -204,7 +206,9 @@ class IOSPhone(BasePhone, Teleoperator):
             self._reapply_position_calibration(raw_position)
 
         # Apply calibration
+        assert self._calib_pos is not None and self._calib_rot_inv is not None
         pos_cal = self._calib_rot_inv.apply(raw_position - self._calib_pos)
+        assert raw_rotation is not None
         rot_cal = self._calib_rot_inv * raw_rotation
 
         self._enabled = enable
@@ -229,10 +233,10 @@ class AndroidPhone(BasePhone, Teleoperator):
         require_package("teleop", extra="phone")
         super().__init__(config)
         self.config = config
-        self._teleop = None
-        self._teleop_thread = None
+        self._teleop: Teleop | None = None
+        self._teleop_thread: threading.Thread | None = None
         self._latest_pose = None
-        self._latest_message = None
+        self._latest_message: dict | None = None
         self._android_lock = threading.Lock()
 
     @property
@@ -277,11 +281,12 @@ class AndroidPhone(BasePhone, Teleoperator):
         """
         while True:
             with self._android_lock:
-                msg = self._latest_message or {}
+                msg: dict = self._latest_message or {}
 
             if bool(msg.get("move", False)):
                 ok, pos, rot, _pose = self._read_current_pose()
                 if ok:
+                    assert pos is not None and rot is not None
                     return pos, rot
 
             time.sleep(0.01)
@@ -349,7 +354,9 @@ class AndroidPhone(BasePhone, Teleoperator):
             self._reapply_position_calibration(raw_pos)
 
         # Apply calibration
+        assert self._calib_pos is not None and self._calib_rot_inv is not None
         pos_cal = self._calib_rot_inv.apply(raw_pos - self._calib_pos)
+        assert raw_rot is not None
         rot_cal = self._calib_rot_inv * raw_rot
 
         self._enabled = enable
@@ -399,7 +406,7 @@ class Phone(Teleoperator):
     def is_connected(self) -> bool:
         return self._phone_impl.is_connected
 
-    def connect(self) -> None:
+    def connect(self, calibrate: bool = True) -> None:
         return self._phone_impl.connect()
 
     def calibrate(self) -> None:

@@ -17,7 +17,7 @@
 import logging
 import time
 from functools import cached_property
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from lerobot.robots.unitree_g1.g1_utils import REMOTE_AXES, G1_29_JointArmIndex
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
@@ -208,7 +208,7 @@ class UnitreeG1Teleoperator(Teleoperator):
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        remote_features = dict.fromkeys(self.remote_controller.remote_action, float)
+        remote_features: dict[str, type] = dict.fromkeys(self.remote_controller.remote_action, float)
         if not self._arm_control_enabled:
             return remote_features
         joint_features = {f"{name}.q": float for name in self._g1_arm_joint_names}
@@ -269,33 +269,13 @@ class UnitreeG1Teleoperator(Teleoperator):
         pass
 
     def get_action(self) -> dict[str, float]:
-        joint_action = {}
-        left_raw = None
-        right_raw = None
-        if self._arm_control_enabled:
-            left_raw = self.left_arm.read_raw()
-            right_raw = self.right_arm.read_raw()
+        left_angles = self.left_arm.get_angles()
+        right_angles = self.right_arm.get_angles()
+        assert self.ik_helper is not None
+        return self.ik_helper.compute_g1_joints_from_exo(left_angles, right_angles)
 
-            left_angles = self.left_arm.get_angles()
-            right_angles = self.right_arm.get_angles()
-            joint_action = self.ik_helper.compute_g1_joints_from_exo(left_angles, right_angles)
-
-        # Wireless remote has priority when non-zero; otherwise, use exo joystick.
-        rc = self.remote_controller
-        wireless_active = (
-            abs(rc.lx) > 1e-3 or abs(rc.ly) > 1e-3 or abs(rc.rx) > 1e-3 or abs(rc.ry) > 1e-3
-        ) or any(rc.button)
-        if self._arm_control_enabled and not wireless_active:
-            rc.set_from_exo(left_raw, "left")
-            rc.set_from_exo(right_raw, "right")
-
-        rc._sync_remote_action()
-        return {**joint_action, **rc.remote_action}
-
-    def send_feedback(self, feedback: dict[str, Any]) -> None:
-        wireless_remote = feedback.get("wireless_remote")
-        if wireless_remote is not None:
-            self.remote_controller.set_from_wireless(wireless_remote)
+    def send_feedback(self, feedback: dict[str, float]) -> None:
+        raise NotImplementedError("Exoskeleton arms do not support feedback")
 
     def disconnect(self) -> None:
         self.left_arm.disconnect()
