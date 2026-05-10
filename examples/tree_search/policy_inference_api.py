@@ -92,6 +92,7 @@ class PolicyInferenceConfig:
     reward_scene_image_keys: str = "image,base_0_rgb"
     reward_wrist_image_keys: str = "image2,left_wrist_0_rgb"
     reward_use_rendered_fallback: bool = True
+    task_language_map: Path | None = None
     rename_map: dict[str, str] = field(default_factory=dict)
     trust_remote_code: bool = False
 
@@ -254,6 +255,53 @@ def _infer_task(env: gym.vector.VectorEnv | None) -> str:
             return str(env.call("task")[0])
         except (AttributeError, NotImplementedError):
             return ""
+
+
+def _load_task_language_map(path: Path | None) -> dict[str, str]:
+    if path is None:
+        return {}
+    with path.open() as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError(f"Expected task language map JSON object, got {type(data).__name__}: {path}")
+
+    translations: dict[str, str] = {}
+
+    def add_mapping(key: object, value: object, *, prefix: str | None = None) -> None:
+        if not isinstance(value, str):
+            raise ValueError(f"Expected translated task language string for key={key!r} in {path}")
+        text_key = str(key)
+        translations[text_key] = value
+        if prefix is not None:
+            translations[f"{prefix}.{text_key}"] = value
+
+    for key, value in data.items():
+        if isinstance(value, dict):
+            for nested_key, nested_value in value.items():
+                add_mapping(nested_key, nested_value, prefix=str(key))
+        else:
+            add_mapping(key, value)
+    return translations
+
+
+def _translate_task_language(
+    task: str,
+    *,
+    suite: str,
+    task_id: int,
+    translations: Mapping[str, str],
+) -> str:
+    for key in (
+        f"{suite}.{task_id}",
+        f"{suite}:{task_id}",
+        f"{suite}/task_{task_id}",
+        f"task_{task_id}",
+        str(task_id),
+        task,
+    ):
+        if key in translations:
+            return translations[key]
+    return task
 
 
 def _select_env(
@@ -1651,12 +1699,19 @@ def _run_search_episode(
     scorer: RewardModelScorer,
     trace_dir: Path | None,
     video_path: Path | None,
+    task_language_translations: Mapping[str, str],
 ) -> dict[str, Any]:
     if env.num_envs != 1:
         raise ValueError(f"Search evaluation only supports single-env rollouts, got env.num_envs={env.num_envs}.")
 
     base_env = _get_single_base_env(env)
-    task = _infer_task(env)
+    original_task = _infer_task(env)
+    task = _translate_task_language(
+        original_task,
+        suite=suite,
+        task_id=task_id,
+        translations=task_language_translations,
+    )
     rng = np.random.default_rng(episode_seed)
     trace = TraceRecorder(
         trace_dir,
@@ -1668,6 +1723,7 @@ def _run_search_episode(
             "episode_ix": episode_ix,
             "global_episode_ix": global_episode_ix,
             "task": task,
+            "original_task": original_task,
             "steps": cfg.steps,
             "seed": episode_seed,
             "policy": str(cfg.policy.pretrained_path) if cfg.policy is not None else None,
@@ -1920,6 +1976,7 @@ def _run_search_episode(
             "episode_ix": episode_ix,
             "global_episode_ix": global_episode_ix,
             "task": task,
+            "original_task": original_task,
             "steps": env_step,
             "macro_steps": macro_step,
             "success": success,
@@ -1945,6 +2002,7 @@ def _run_search_episode(
             "suite": suite,
             "task_id": task_id,
             "task": task,
+            "original_task": original_task,
             "seed": episode_seed,
             "sum_reward": float(episode_reward_sum),
             "max_reward": float(episode_max_reward),
@@ -2026,6 +2084,7 @@ def main(cfg: PolicyInferenceConfig) -> None:
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
     action_api, envs_dict = make_action_api(cfg)
     scorer = RewardModelScorer(cfg, device=action_api.device)
+    task_language_translations = _load_task_language_map(cfg.task_language_map)
     selected_envs = _iter_selected_envs(envs_dict, suite=cfg.suite, task_id=cfg.task_id)
     total_episodes = len(selected_envs) * cfg.n_episodes
     logger.info(
@@ -2038,6 +2097,12 @@ def main(cfg: PolicyInferenceConfig) -> None:
         cfg.chunk_size,
         cfg.reward_model_checkpoint,
     )
+    if task_language_translations:
+        logger.info(
+            "Loaded task language translations from %s with %s keys",
+            cfg.task_language_map,
+            len(task_language_translations),
+        )
 
     start_t = time.time()
     all_records: list[dict[str, Any]] = []
@@ -2068,6 +2133,7 @@ def main(cfg: PolicyInferenceConfig) -> None:
                     scorer=scorer,
                     trace_dir=trace_dir,
                     video_path=video_path,
+                    task_language_translations=task_language_translations,
                 )
                 task_records.append(record)
                 all_records.append(record)
