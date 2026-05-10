@@ -105,6 +105,41 @@ def test_exclude_joints_supports_partial_name_matching():
     assert step._build_mask(len(names)) == [True, False, True, False]
 
 
+def test_exclude_joints_supports_nested_action_names():
+    names = [
+        ["r_joint.pos", "r_gripper.pos"],
+        ["l_joint.pos", "l_gripper.pos"],
+    ]
+    step = RelativeActionsProcessorStep(
+        enabled=True,
+        exclude_joints=["gripper"],
+        action_names=names,
+    )
+    assert step._build_mask(2) == [True, False]
+    assert step.action_names is names
+
+
+def test_relative_processor_uses_nested_action_names_mask():
+    names = [
+        ["r_joint.pos", "r_gripper.pos"],
+        ["l_joint.pos", "l_gripper.pos"],
+    ]
+    step = RelativeActionsProcessorStep(
+        enabled=True,
+        exclude_joints=["gripper"],
+        action_names=names,
+    )
+    batch = {
+        ACTION: torch.tensor([[3.0, 4.0]]),
+        OBS_STATE: torch.tensor([[1.0, 2.0]]),
+    }
+    result = step(batch_to_transition(batch))
+    torch.testing.assert_close(
+        result[TransitionKey.ACTION],
+        torch.tensor([[2.0, 4.0]]),
+    )
+
+
 # Chunk-level relative stats test
 
 
