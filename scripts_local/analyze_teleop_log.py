@@ -53,16 +53,23 @@ def select_episode(eps, mode: str, idx: int | None):
 
 
 def detect_sync_lag(deltas):
-    """If sync_inference applied, deltas are all <=0 and the abs of the most-
-    negative non-sentinel delta is the inference lag in env steps. 0 if async."""
-    if not deltas:
+    """If sync_inference applied, the original 'current' slot (delta=0) has
+    been shifted by -lag. For epstart_anchor mode, slot index 1 is the
+    current/anchor slot. Returns abs of that shifted value. Returns 0 if
+    async (any positive delta present) or unable to detect."""
+    if not deltas or len(deltas) < 2:
         return 0
     non_sentinel = [d for d in deltas if abs(d) < 1000]
-    if not non_sentinel:
+    if not non_sentinel or any(d > 0 for d in non_sentinel):
         return 0
-    if any(d > 0 for d in non_sentinel):
-        return 0  # async, future-positive deltas → no shift
-    return -min(non_sentinel)
+    # epstart_anchor: slot 0 = ep_start sentinel, slot 1 = anchor frame.
+    # In sync mode that anchor was originally delta=0, now shifted by -lag.
+    anchor = deltas[1]
+    if anchor < 0 and abs(anchor) < 1000:
+        return -anchor
+    # Fallback: use the max (closest to 0) non-sentinel delta — that's
+    # the original largest future delta (now 0) minus lag.
+    return -max(non_sentinel)
 
 
 def plot_one(ep, ax_progress, ax_stage, ax_conf, title_prefix="", lag_shift: int = 0):
