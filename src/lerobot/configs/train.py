@@ -256,7 +256,9 @@ class TrainPipelineConfig(HubMixin):
                 ) from e
 
         cli_args = kwargs.pop("cli_args", [])
-        if config_file is not None:
+        # Legacy RA-BC migration only applies to framework-saved checkpoints (always JSON).
+        # Hand-written YAML/TOML configs are expected to use the current sample_weighting schema.
+        if config_file is not None and config_file.endswith(".json"):
             with open(config_file) as f:
                 config = json.load(f)
             migrated_config = _migrate_legacy_rabc_fields(config)

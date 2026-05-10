@@ -277,9 +277,14 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     if cfg.peft is not None:
         if cfg.is_reward_model_training:
             raise ValueError("PEFT is only supported for policy training. ")
-        logging.info("Using PEFT! Wrapping model.")
-        peft_cli_overrides = dataclasses.asdict(cfg.peft)
-        policy = policy.wrap_with_peft(peft_cli_overrides=peft_cli_overrides)
+        from peft import PeftModel
+
+        if isinstance(policy, PeftModel):
+            logging.info("PEFT adapter already loaded from checkpoint, skipping wrap_with_peft.")
+        else:
+            logging.info("Using PEFT! Wrapping model.")
+            peft_cli_overrides = dataclasses.asdict(cfg.peft)
+            policy = policy.wrap_with_peft(peft_cli_overrides=peft_cli_overrides)
 
     # Wait for all processes to finish model creation before continuing
     accelerator.wait_for_everyone()
