@@ -62,12 +62,13 @@ except ImportError:
 
 # Dataset recording (lerobot)
 try:
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    from lerobot.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
     from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
     from lerobot.cameras.configs import Cv2Backends, Cv2Rotation
     RECORDING_AVAILABLE = True
 except Exception as _rec_err:
     print(f"⚠️  lerobot dataset/camera import failed: {_rec_err}  — recording disabled")
+    CODEBASE_VERSION = "v3.0"
     LeRobotDataset = None
     Cv2Backends = None
     Cv2Rotation = None
@@ -432,6 +433,15 @@ def _parse_cv2_rotation(value: str):
     return Cv2Rotation(int(raw))
 
 
+def _should_recreate_local_dataset(err: Exception) -> bool:
+    msg = str(err)
+    return (
+        "must be tagged with a codebase version" in msg
+        or "Repository Not Found" in msg
+        or "404 Client Error" in msg
+    )
+
+
 def connect_cameras(camera_spec: str) -> dict:
     """
     Parse lerobot-style camera spec and connect each OpenCVCamera.
@@ -501,15 +511,12 @@ def build_dataset(repo_id: str, fps: int, cameras: dict) -> "LeRobotDataset | No
             if meta_file.exists():
                 print(f"  Resuming existing dataset at {local_root} …")
                 try:
-                    ds = LeRobotDataset(repo_id=repo_id, root=local_root)
+                    ds = LeRobotDataset(repo_id=repo_id, root=local_root, revision=CODEBASE_VERSION)
                     print(f"✓ Dataset '{repo_id}' resumed ({ds.num_episodes} existing episodes)")
                     return ds
                 except Exception as resume_err:
-                    if "must be tagged with a codebase version" in str(resume_err):
-                        # Hub repo exists but has no version tag (dataset never pushed).
-                        # This only triggers when there are no local parquet files, so it
-                        # is safe to delete and recreate the local metadata directory.
-                        print(f"  No Hub version tag — recreating local dataset …")
+                    if _should_recreate_local_dataset(resume_err):
+                        print(f"  Existing local dataset is not resumable — recreating {local_root} …")
                         shutil.rmtree(local_root)
                     else:
                         raise
