@@ -29,7 +29,6 @@ import json
 import socket
 import struct
 import time
-from pathlib import Path
 
 import numpy as np
 
@@ -45,11 +44,11 @@ except Exception as _arm_err:
 # ── lerobot cameras ─────────────────────────────────────────────────────────
 try:
     from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
-    from lerobot.cameras.configs import Cv2Backends
+    from lerobot.cameras.configs import Cv2Backends, Cv2Rotation
     CAMERAS_AVAILABLE = True
 except Exception as _cam_err:
     print(f"⚠️  lerobot camera import failed: {_cam_err}  — cameras disabled")
-    OpenCVCamera = OpenCVCameraConfig = Cv2Backends = None
+    OpenCVCamera = OpenCVCameraConfig = Cv2Backends = Cv2Rotation = None
     CAMERAS_AVAILABLE = False
 
 # ── OpenCV for JPEG encoding ─────────────────────────────────────────────────
@@ -254,7 +253,12 @@ def _parse_camera_spec(camera_spec: str) -> dict:
     for block in blocks:
         colon = block.index(":")
         name  = block[:colon].strip().strip("\"'")
-        inner = block[colon+1:].strip().strip("{}")
+        inner_raw = block[colon+1:].strip()
+        if not inner_raw.startswith("{"):
+            cameras[name] = {"index_or_path": inner_raw.strip().strip("\"'")}
+            continue
+
+        inner = inner_raw.strip("{}")
         cfg   = {}
         pairs, depth, current = [], 0, ""
         for ch in inner:
@@ -282,6 +286,13 @@ def _coerce_cv2_backend(value: str) -> int:
     return int(Cv2Backends[str(value).upper()])
 
 
+def _parse_cv2_rotation(value: str):
+    raw = str(value).strip()
+    if raw.upper().startswith("ROTATE_"):
+        return Cv2Rotation[raw.upper()]
+    return Cv2Rotation(int(raw))
+
+
 def connect_cameras(camera_spec: str) -> dict:
     if not camera_spec or not CAMERAS_AVAILABLE:
         return {}
@@ -296,8 +307,10 @@ def connect_cameras(camera_spec: str) -> dict:
             raw_path = cfg_dict.get("index_or_path", "0")
             if str(raw_path).lstrip("-").isdigit():
                 index = int(raw_path)
+            elif str(raw_path).startswith("/dev/video"):
+                index = int(raw_path.replace("/dev/video", ""))
             else:
-                index = Path(raw_path)
+                index = raw_path
             kwargs = {
                 "index_or_path": index,
                 "fourcc": "MJPG",
@@ -309,14 +322,18 @@ def connect_cameras(camera_spec: str) -> dict:
             if "fourcc" in cfg_dict: kwargs["fourcc"] = str(cfg_dict["fourcc"])
             if "backend" in cfg_dict: kwargs["backend"] = _coerce_cv2_backend(cfg_dict["backend"])
             if "warmup_s" in cfg_dict: kwargs["warmup_s"] = int(cfg_dict["warmup_s"])
-            cam = OpenCVCamera(OpenCVCameraConfig(**kwargs))
+            if "rotation" in cfg_dict:
+                kwargs["rotation"] = _parse_cv2_rotation(cfg_dict["rotation"])
+            elif name == "base":
+                kwargs["rotation"] = Cv2Rotation.ROTATE_180
+            cfg = OpenCVCameraConfig(**kwargs)
+            cam = OpenCVCamera(cfg)
             cam.connect()
             cameras[name] = cam
             detail = f"{raw_path}"
-            if "fourcc" in kwargs:
-                detail += f", fourcc={kwargs['fourcc']}"
-            if "backend" in kwargs:
-                detail += f", backend={kwargs['backend']}"
+            if cfg.rotation != Cv2Rotation.NO_ROTATION:
+                detail += f", rotation={cfg.rotation.value}"
+            detail += f", fourcc={cfg.fourcc}, backend={cfg.backend}"
             print(f"✓ Camera '{name}' connected ({detail})")
         except Exception as e:
             print(f"⚠️  Camera '{name}' failed: {e}")

@@ -433,6 +433,14 @@ def _parse_cv2_rotation(value: str):
     return Cv2Rotation(int(raw))
 
 
+def _coerce_cv2_backend(value: str) -> int:
+    if Cv2Backends is None:
+        return int(value)
+    if str(value).lstrip("-").isdigit():
+        return int(value)
+    return int(Cv2Backends[str(value).upper()])
+
+
 def _should_recreate_local_dataset(err: Exception) -> bool:
     msg = str(err)
     return (
@@ -480,6 +488,9 @@ def connect_cameras(camera_spec: str) -> dict:
             if "width"  in cfg_dict: kwargs["width"]  = int(cfg_dict["width"])
             if "height" in cfg_dict: kwargs["height"] = int(cfg_dict["height"])
             if "fps"    in cfg_dict: kwargs["fps"]    = int(cfg_dict["fps"])
+            if "fourcc" in cfg_dict: kwargs["fourcc"] = str(cfg_dict["fourcc"])
+            if "backend" in cfg_dict: kwargs["backend"] = _coerce_cv2_backend(cfg_dict["backend"])
+            if "warmup_s" in cfg_dict: kwargs["warmup_s"] = int(cfg_dict["warmup_s"])
             if "rotation" in cfg_dict:
                 kwargs["rotation"] = _parse_cv2_rotation(cfg_dict["rotation"])
             elif name == "base":
@@ -492,6 +503,7 @@ def connect_cameras(camera_spec: str) -> dict:
             detail = f"{raw_path}"
             if cfg.rotation != Cv2Rotation.NO_ROTATION:
                 detail += f", rotation={cfg.rotation.value}"
+            detail += f", fourcc={cfg.fourcc}, backend={cfg.backend}"
             print(f"✓ Camera '{name}' connected ({detail})")
         except Exception as e:
             print(f"⚠️  Camera '{name}' failed: {e}")
