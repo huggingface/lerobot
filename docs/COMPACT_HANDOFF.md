@@ -2,74 +2,119 @@
 
 **Read first.** Authoritative state.
 
-## Current goal (epic lerobot-146)
-
-**9/10 sync gates @ lag ≤0.4s (max ≤0.2s)**.
-
-Sync gates evaluate SARM offline using REAL future frames in the obs window
-(`observation_delta_indices = [-1M, 0, gap, 2*gap, ..., (n_obs-1)*gap]`).
-Teleop online with `sync_inference=true` flag = real past frames as proxy →
-output describes frame `t - max_future_delta`. Lag = max_future_delta * dt.
+## Champion artifacts (2026-05-11)
 
 ```
-PROD paperfull:  n_obs=8, frame_gap=5  →  max_future = 35 frames @ 20fps = 1.75s lag
-Target:                                                       ≤  8 frames =  0.40s
-Max plan:                                                     ≤  4 frames =  0.20s
+SARM:        outputs/sarm_shorthor_k_n4g2_sw20/checkpoints/002500/pretrained_model
+             10/11 gates  mean_max=0.961  succ=0.83  lag=0.30s
+
+ACT RA-BC:   outputs/act_v2_tail30_chunk80_rabc_K_kappa01/checkpoints/080000/pretrained_model
+             80% success  mean_rew=0.82  max=0.96  mean_len=270  (K SARM sync_inference eval)
+
+Eval cfg:    src/lerobot/rl/sim_3stage_act_eval_env_K_sync.json   (sync_inference=true)
+
+Progress:    ~/.cache/huggingface/lerobot/local/sim_3stage_v2_full_v2_succonly_destale_tail30/sarm_progress.parquet
+             (K SARM, 205 eps × 42094 frames, stride=5)
 ```
 
-## Active iteration (T1: lerobot-147 in_progress)
+## How to launch (recipes)
 
-4 short-horizon **CLIP-FT** variants on remote DL_A6000, 2.5k steps each
-(save_freq=1000 → 2 ckpts + last), bs=8, ETA ~2h parallel. paperfull
-recipe + `freeze_clip=False` + `clip_lr=5e-7` (matches clipft iter1+2 winners
-that hit 9/10 sync gates @ 2k). Strategy: take 9/10 baseline + shrink
-horizon to drop teleop sync_inference lag.
+### 1. Train SARM (shorthor variant)
 
-| variant | n_obs | gap | max_delta | lag | output_dir |
-|---|---|---|---|---|---|
-| A | 4 | 2 |  6 | 0.30s | `outputs/sarm_shorthor_a_n4g2` |
-| B | 4 | 1 |  3 | 0.15s | `outputs/sarm_shorthor_b_n4g1` |
-| C | 6 | 2 | 10 | 0.50s | `outputs/sarm_shorthor_c_n6g2` |
-| D | 8 | 1 |  7 | 0.35s | `outputs/sarm_shorthor_d_n8g1` |
+```bash
+ssh -p 8003 dom_iva@143.248.121.169
+cd ~/github.com/orel/lerobot/lerobot
+df -h ~ | tail -1   # CHECK DISK FIRST. CLIP-FT 2cam ~9GB/run. Need >= 9N+5GB.
+ps -eo pid,etime,pcpu,cmd --sort=-pcpu | grep -aE "python|uv " | head   # CHECK STALE PROCS
+CUDA_VISIBLE_DEVICES=N nohup ~/.local/bin/uv run python -m \
+  lerobot.scripts.lerobot_train \
+  --config_path=src/lerobot/rl/sarm_shorthor_k_n4g2_sw20_train.json \
+  > /tmp/<name>.log 2>&1 &
+```
 
-PIDs `1139769,1139771,1139773,1139775` on G0/G1/G2/G3. VRAM 14-18GB each.
-Logs `/tmp/shorthor_*.log`.
+K's recipe (n_obs=4, gap=2, sw=20, freeze_clip=false, clip_lr=5e-7, paperfull base, 2.5k steps).
 
-## Recent findings
+### 2. Generate RA-BC progress parquet
 
-### Sync vs async inference (the key insight)
+```bash
+# /tmp/compute_rabc_weights_ext.py is the 2cam ext-aware patched script.
+ssh -p 8003 dom_iva@143.248.121.169 \
+  'cd ~/github.com/orel/lerobot/lerobot && \
+   CUDA_VISIBLE_DEVICES=0 ~/.local/bin/uv run python /tmp/compute_rabc_weights_ext.py \
+     --dataset-repo-id local/sim_3stage_v2_full_v2_succonly_destale_tail30 \
+     --reward-model-path outputs/sarm_shorthor_k_n4g2_sw20/checkpoints/002500/pretrained_model \
+     --stride 5'
+# Writes ~/.cache/.../sarm_progress.parquet (~500KB, ~10min @ stride=5).
+# Crash on HF push at end is harmless — parquet already saved.
+```
 
-- Paper-arch SARM trained with **bidirectional** windows (real future frames at
-  offsets +5..+35 from anchor frame).
-- Old async inference (default before May 10): replicates current frame for
-  all positive deltas → window OOD vs training → noisy stage transitions.
-- New `sync_inference: true` (added in `lerobot/processor/reward_model/sarm.py`):
-  shifts deltas to non-positive (use real past frames). Window matches
-  training distribution. Trade-off: 1.75s lag.
-- Verified on user teleop run: per-stage SARM-vs-GT lag 28-40 steps ≈ design
-  35 = 1.75s. All 6 stages tracked correctly. Mono.
+### 3. Train ACT RA-BC
 
-### CLIP fine-tune outcomes
+```bash
+CUDA_VISIBLE_DEVICES=N nohup ~/.local/bin/uv run python -m \
+  lerobot.scripts.lerobot_train \
+  --config_path=src/lerobot/rl/act_v2_tail30_chunk80_rabc_K_kappa01_train.json \
+  > /tmp/act_rabc_K_kappa01.log 2>&1 &
+# 80k steps ~1h on A6000. Saves at 20k/40k/60k/80k.
+```
 
-`clipft_a/b/e 2k = 9/10 sync gates` (vs PROD 5/10). All overfit past 2k. But
-in async/teleop tests, clipft models DEGRADED — overfit to future-frame
-context that doesn't exist online. PROD paperfull_lowlr/24k stays the
-production teleop ckpt.
+### 4. Evaluate ACT (10 eps)
 
-### Buffer prewarm (in `processor/reward_model/sarm.py`)
+```bash
+DISPLAY=:1 CUDA_VISIBLE_DEVICES=0 uv run python -m lerobot.scripts.eval_chunk_policy \
+  --config_path=src/lerobot/rl/sim_3stage_act_eval_env_K_sync.json \
+  --pretrained=outputs/act_v2_tail30_chunk80_rabc_K_kappa01/checkpoints/080000/pretrained_model \
+  --task "Three-stage assembly" \
+  --policy-type=act \
+  --n-episodes=10
+```
 
-When sync_inference active and buffer empty (episode start), replicate
-first observation to fill ring buffer maxlen → no "all-zero progress for
-first 35 steps" artifact.
+**Use sync env config** (`_K_sync.json` not `_K_async.json`) — sync_inference=true gives 2× ACT success rate (in-distribution SARM input).
 
-### Logging + analysis
+### 5. Eval SARM 11-gate
 
-- `SARMRewardConfig.log_jsonl_path` → per-step JSONL (progress, stage_idx,
-  stage_conf, stage_probs, delta_indices, buffer_len, gt_stage_idx,
-  gt_stage_started_this_frame, ts).
-- `scripts_local/analyze_teleop_log.py` → per-episode plot, `detect_sync_lag`
-  reads anchor-slot delta (slot 1 for epstart_anchor) for shift, plots raw
-  + lag-shifted views.
+```bash
+ssh -p 8003 dom_iva@143.248.121.169 \
+  'cd ~/github.com/orel/lerobot/lerobot && \
+   CUDA_VISIBLE_DEVICES=N ~/.local/bin/uv run python -m \
+     lerobot_policy_sarm.eval_sarm_sim_assemble \
+     --dataset domrachev03/sim_3stage_v2_val_fs \
+     --pretrained outputs/sarm_shorthor_k_n4g2_sw20/checkpoints/002500/pretrained_model \
+     --task "Three-stage assembly" \
+     --stats local/sim_3stage_v2_full_v2_nostale \
+     --image-key observation.images.wrist \
+     --type sarm_ext --head-mode sparse \
+     --out outputs/sarm_gate_eval_<label> --label <label>'
+```
+
+## SARM iteration leaderboard (24 ckpts evaluated)
+
+```
+ckpt              gates  mean_max  succ   lag    recipe
+K_2.5k            10/11  0.961    0.83   0.30s  n=4 g=2 sw=20  ← CHAMPION
+E_2.5k             9/11  0.958    0.84   0.30s  n=4 g=2 sw=15
+N_2.5k             9/11  0.931    0.00   0.20s  n=3 g=2 sw=20  (lin best)
+L_2k               9/11  0.936    0.00   0.40s  n=5 g=2 sw=15
+A_2.5k             9/11  0.935    0.00   0.30s  n=4 g=2 sw=10
+PROD paperfull/24k 5/11  0.953    0.44   1.75s  n=8 g=5 sw=10
+```
+
+Sw scaling: 10→15 cured succ_term gates (0→0.84). 15→20 cured zero_max (10→11/11).
+Lag floor 0.30s. Tighter (gap=1 or n_obs=3) loses terminal grasp.
+
+## ACT eval leaderboard (10 eps each, K SARM sync mode)
+
+```
+ckpt              mode    succ%  mean_rew  max    len    notes
+K RA-BC κ=0.01    sync    80%    0.82     0.96   270    🏆 CHAMPION
+K RA-BC κ=0.05    async   60%    0.68     0.96   519
+K RA-BC κ=0.01    async   50%    0.62     0.96   681
+PROD BC chunk80   sync    40%    0.58     0.95   751
+BC chunk40        sync     0%    0.45     0.80   1200   chunk40 worse
+PROD BC chunk80   async   10%    0.47     0.95   1098
+PROD RA-BC (old)  async    0%    0.27     0.29   1200   PROD SARM was bad
+K RA-BC κ=0.05    sync     0%    0.28     0.31   1200   κ=0.05+sync unstable
+```
 
 ## Infra reference
 
@@ -79,146 +124,54 @@ first 35 steps" artifact.
 host: irislab.asuscomm.com:8003 (DNS flaky)
 fallback: ssh -p 8003 -o StrictHostKeyChecking=no dom_iva@143.248.121.169
 ssh alias: DL_A6000
-4× A6000 (G0-G3), uv-managed venv at ~/.local/bin/uv
+4× A6000 (G0-G3), uv at ~/.local/bin/uv
 disk: 1.8TB, ~58G free post-cleanup; PRUNE OFTEN
-code sync: rsync (no git remote on remote machine)
+code sync: rsync (no git remote on remote)
+
+# Quick state check
+ssh -p 8003 dom_iva@143.248.121.169 'df -h ~ | tail -1; \
+  nvidia-smi --query-gpu=index,utilization.gpu,memory.used --format=csv,noheader; \
+  pgrep -af "python|uv " | grep -v grep | head'
 ```
 
-### Train: launch + monitor
-
-```bash
-# Launch (template)
-ssh DL_A6000 'cd ~/github.com/orel/lerobot/lerobot && \
-  CUDA_VISIBLE_DEVICES=N nohup ~/.local/bin/uv run python -m \
-    lerobot.scripts.lerobot_train \
-    --config_path=src/lerobot/rl/<cfg>.json > /tmp/<name>.log 2>&1 & echo $!'
-
-# Track progress (poll loop)
-ssh DL_A6000 'tail -1 /tmp/<name>.log | tr "\r" "\n" | tail -2'
-
-# Ckpt list
-ssh DL_A6000 'ls ~/github.com/orel/lerobot/lerobot/outputs/<run>/checkpoints/'
-```
-
-Use `Monitor` tool with `until <ckpt-saved>; do sleep 60; done` for
-event-driven notifications instead of polling.
-
-### Eval: sync (default) val_fs
-
-```bash
-ssh DL_A6000 'cd ~/github.com/orel/lerobot/lerobot && \
-  CUDA_VISIBLE_DEVICES=N ~/.local/bin/uv run python -m \
-    lerobot_policy_sarm.eval_sarm_sim_assemble \
-    --dataset domrachev03/sim_3stage_v2_val_fs \
-    --pretrained outputs/<run>/checkpoints/<step>/pretrained_model \
-    --task "Three-stage assembly" \
-    --stats local/sim_3stage_v2_full_v2_nostale \
-    --image-key observation.images.wrist \
-    --type sarm_ext --head-mode sparse \
-    --out outputs/sarm_gate_eval_<label> --label <label>'
-
-# Gates: 11 total (sT, sT5, lin_mad, mid, mono, last, ft, zero_max,
-# plateau, stNE, stNB). PROD = 5/10, clipft 2k = 9/10.
-
-# Async eval (matches teleop if sync_inference=false): add --mode async
-```
-
-Leaderboard dump (run on remote):
-
-```bash
-ssh DL_A6000 'python3 /tmp/dump_all.py' | head -25
-```
-
-(`/tmp/dump_all.py` reads every `outputs/sarm_gate_eval_*/metrics.json`;
-sorts by `gates_passed`.)
-
-### Teleop test
-
-```bash
-DISPLAY=:0 uv run python -m lerobot.rl.gym_manipulator \
-  --config_path=src/lerobot/rl/sim_3stage_sarm_teleop_env.json
-```
-
-Currently wired: `paperfull_lowlr/024000` + `sync_inference: true` +
-`log_jsonl_path: outputs/teleop_logs/sarm_teleop.jsonl`.
-
-User presses gamepad stage-advance to log GT. After episode:
-
-```bash
-uv run python scripts_local/analyze_teleop_log.py \
-  outputs/teleop_logs/sarm_teleop.jsonl
-```
-
-Auto-detects sync lag, plots raw + shifted views.
-
-## Storage paths
-
-### Local (`/home/dom-iva/github.com/orel/lerobot/lerobot/outputs/`)
-
-See `MEMORY.md → reference_local_weights_inventory.md` for full inventory.
-Highlights:
+### Local
 
 ```
-sim_3stage_sarm_v2_full_v2_paperfull_lowlr/checkpoints/024000/  # PROD 5/10
-sarm_clipft_a_baseline/checkpoints/002000/                       # 9/10 sync
-act_v2_full_v2_tail30_chunk80/checkpoints/080000/                # ACT prod
-cnn_v2_front_v1/best.pt                                          # success cls
+RTX 4070 Ti Super (G0, 16GB)
+DISPLAY=:1 (mujoco rendering works; remote DOES NOT have display)
+ACT eval MUST run local (sim_3stage_act_eval_env_K_sync.json + DISPLAY)
 ```
 
-### Remote (~58G free, kept minimal)
-
-- `outputs/sim_3stage_sarm_v2_full_v2_paperfull_lowlr` (PROD baseline for retrain)
-- `outputs/act_v2_full_v2_tail30_chunk80*` (ACT prod ×2)
-- `outputs/sarm_gate_eval_*/` (~50 metric dirs, ~2GB)
-- `outputs/sarm_shorthor_{a,b,c,d}*` (active iteration)
-
-### Datasets (HF cache)
+## Datasets (HF cache)
 
 ```
-~/.cache/huggingface/lerobot/local/sim_3stage_v2_full_v2_nostale          # train, 307 eps
-~/.cache/huggingface/lerobot/domrachev03/sim_3stage_v2_val_fs              # val, 158 eps
-~/.cache/huggingface/lerobot/local/sim_3stage_v2_full_v2_succonly_nostale  # 205 succ
-~/.cache/huggingface/lerobot/local/sim_3stage_v2_honest_val                # 30 full eps
+local/sim_3stage_v2_full_v2_nostale          307 eps  (SARM K train)
+domrachev03/sim_3stage_v2_val_fs              158 eps  (SARM eval)
+local/sim_3stage_v2_full_v2_succonly_destale_tail30  205 eps  (RA-BC train, ACT)
+local/sim_3stage_v2_honest_val                30 full eps
 ```
 
-## Beads epic open
+## Beads epic state
 
 ```
-lerobot-146 EPIC: SARM 9/10 sync gates @ lag <0.4s
-  lerobot-147 T1: train 4 short-horizon variants    (in_progress)
-  lerobot-148 T2: sync val_fs eval all ckpts        (open)
-  lerobot-149 T3: pick winner + wire teleop         (open)
-  lerobot-150 T4: brainstorm next iter              (open)
+lerobot-146 SARM 9/10 sync gates @ lag <0.4s        DONE (10/11 hit + targets exceeded)
+lerobot-147 train 4 short-horizon variants          CLOSED
+lerobot-148 sync val_fs eval all ckpts              CLOSED
+lerobot-149 pick winner + wire teleop               in_progress
+lerobot-XXX K-RA-BC kappa=0.01 sync hits 80%        OPEN (logged)
 ```
-
-## Iteration cycle (autonomous)
-
-1. **Wait** for ckpts to save (Monitor on output_dir/checkpoints/).
-2. **Eval** each ckpt sync mode on val_fs.
-3. **Dump leaderboard**, identify gate_pass max.
-4. If best <9/10: brainstorm + deploy next variants (e.g. longer steps,
-   different sw/plw, dataset variant).
-5. If best ≥9/10: wire winner into teleop, verify lag matches design,
-   close epic.
-6. **Don't stop** until target met OR user explicitly halts.
-
-## Caveman ultra mode
-
-Active. Drop articles/filler/hedging; fragments OK; abbreviate aggressively.
-Code/commits/security: write normal. User says `normal` to revert.
 
 ## Memory pointers
 
-- `feedback_keep_iterating.md` — don't stop on plateau; brainstorm + deploy
-- `feedback_dump_state_at_95pct.md` — write COMPACT_HANDOFF.md when ctx near full
 - `reference_local_weights_inventory.md` — every kept ckpt path
 - `reference_dl_a6000_server.md` — DNS, ssh, disk
+- `feedback_check_stale_procs_first.md` — `ps -eo etime,pcpu` first when slow
+- `feedback_no_eval_during_training.md` — eval+train co-run = 6× slowdown
+- `feedback_check_disk_before_train.md` — `df -h ~` first; 9GB/run; corrupt safetensors on disk-full
+- `feedback_act_rabc_sync_inference.md` — sync_inference=true → 2× ACT success
+- `feedback_keep_iterating.md` — don't stop on plateau
 - `feedback_no_kill_in_progress.md` — never pkill without explicit ask
-- `feedback_eval_on_same_gpu.md` — pin CUDA_VISIBLE_DEVICES on freed GPU
-- `feedback_check_config_alignment_before_model_fixes.md` — diff env/scene before model fixes
 
-## Compact prompt
+## Caveman ultra mode
 
-After compaction, run `bd ready` to refresh open task list. Re-read
-`docs/COMPACT_HANDOFF.md` for state. Caveman ultra is on (`/caveman ultra`
-re-arm if needed). User reserves local G0; remote is iteration target.
+Active. Drop articles/filler/hedging; abbreviate aggressively. Code/commits/security: write normal.
