@@ -59,6 +59,7 @@ class NoisyLiberoRolloutConfig:
     noise_std: float = 0.1
     noise_probability: float = 1.0
     noise_dims: str = "xyz"
+    randomize_noise_dims: bool = False
     noise_temporal_mode: str = "constant"
     noise_gain_min: float = 0.7
     noise_gain_max: float = 1.3
@@ -119,6 +120,18 @@ def _noise_mask(action_dim: int, noise_dims: str) -> np.ndarray:
     else:
         raise ValueError("`noise_dims` must be one of: all, xyz, rotation, gripper, xyz_gripper.")
     return mask
+
+
+def _randomize_noise_mask(*, rng: np.random.Generator, mask: np.ndarray) -> np.ndarray:
+    randomized = np.zeros_like(mask, dtype=bool)
+    eligible = np.flatnonzero(mask)
+    if eligible.size == 0:
+        return randomized
+    keep = rng.random(eligible.size) < 0.5
+    if not keep.any():
+        keep[int(rng.integers(0, eligible.size))] = True
+    randomized[eligible[keep]] = True
+    return randomized
 
 
 def _sample_noise(
@@ -364,6 +377,8 @@ def _run_rollout(
         if action_dim is None:
             action_dim = int(policy_action.shape[0])
             mask = _noise_mask(action_dim, cfg.noise_dims)
+            if noisy and cfg.randomize_noise_dims:
+                mask = _randomize_noise_mask(rng=rng, mask=mask)
             if noisy and cfg.noise_temporal_mode in {"chunk", "constant"}:
                 constant_noise = _sample_noise(
                     rng=rng,
@@ -436,6 +451,7 @@ def _run_rollout(
                 "policy_action": policy_action.tolist(),
                 "executed_action": executed_action.tolist(),
                 "noise": noise.tolist(),
+                "noise_mask": mask.astype(bool).tolist(),
                 "gain": gain.tolist(),
             }
         )
@@ -449,6 +465,7 @@ def _run_rollout(
         "success": bool(success),
         "terminal": bool(terminal),
         "reward_sum": float(reward_sum),
+        "noise_mask": mask.astype(bool).tolist() if mask is not None else None,
         "step_records": step_records,
     }
 
@@ -620,6 +637,7 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
         "noise_std": cfg.noise_std,
         "noise_probability": cfg.noise_probability,
         "noise_dims": cfg.noise_dims,
+        "randomize_noise_dims": cfg.randomize_noise_dims,
         "noise_temporal_mode": cfg.noise_temporal_mode,
         "noise_gain_min": cfg.noise_gain_min,
         "noise_gain_max": cfg.noise_gain_max,
@@ -719,6 +737,7 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
                                 "success": clean["success"],
                                 "terminal": clean["terminal"],
                                 "reward_sum": clean["reward_sum"],
+                                "noise_mask": clean["noise_mask"],
                                 "last_step": clean["step_records"][-1] if clean["step_records"] else None,
                             }
                             if clean is not None
@@ -729,6 +748,7 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
                             "success": noisy["success"],
                             "terminal": noisy["terminal"],
                             "reward_sum": noisy["reward_sum"],
+                            "noise_mask": noisy["noise_mask"],
                             "last_step": noisy["step_records"][-1] if noisy["step_records"] else None,
                         },
                     }
