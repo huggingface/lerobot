@@ -21,6 +21,11 @@ from lerobot.cameras import CameraConfig
 from ..config import RobotConfig
 
 
+def _validate_position_p_coefficient(value: object) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 255:
+        raise ValueError(f"position_p_coefficient must be an integer in [0, 255], got {value!r}")
+
+
 @dataclass
 class SOFollowerConfig:
     """Base configuration class for SO Follower robots."""
@@ -41,12 +46,20 @@ class SOFollowerConfig:
     # Set to `True` for backward compatibility with previous policies/dataset
     use_degrees: bool = True
 
+    # Position-mode proportional gain written to Feetech STS3215 motors at connect time.
+    position_p_coefficient: int = 16
+
+    def __post_init__(self) -> None:
+        _validate_position_p_coefficient(self.position_p_coefficient)
+
 
 @RobotConfig.register_subclass("so101_follower")
 @RobotConfig.register_subclass("so100_follower")
 @dataclass
 class SOFollowerRobotConfig(RobotConfig, SOFollowerConfig):
-    pass
+    def __post_init__(self) -> None:
+        RobotConfig.__post_init__(self)
+        _validate_position_p_coefficient(self.position_p_coefficient)
 
 
 SO100FollowerConfig = SOFollowerRobotConfig

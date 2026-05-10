@@ -58,6 +58,7 @@ class BiSOFollower(BimanualMixin, Robot):
             port=config.left_arm_config.port,
             disable_torque_on_disconnect=config.left_arm_config.disable_torque_on_disconnect,
             max_relative_target=config.left_arm_config.max_relative_target,
+            position_p_coefficient=config.left_arm_config.position_p_coefficient,
             use_degrees=config.left_arm_config.use_degrees,
             cameras=left_arm_cameras,
         )
@@ -68,6 +69,7 @@ class BiSOFollower(BimanualMixin, Robot):
             port=config.right_arm_config.port,
             disable_torque_on_disconnect=config.right_arm_config.disable_torque_on_disconnect,
             max_relative_target=config.right_arm_config.max_relative_target,
+            position_p_coefficient=config.right_arm_config.position_p_coefficient,
             use_degrees=config.right_arm_config.use_degrees,
             cameras=config.right_arm_config.cameras,
         )
