@@ -32,8 +32,10 @@ from policy_inference_api import (
     _get_single_base_env,
     _image_array,
     _infer_task,
+    _load_task_language_map,
     _render_base_env_frame,
     _step_base_env_no_reset,
+    _translate_task_language,
     _to_jsonable,
     make_action_api,
 )
@@ -75,6 +77,7 @@ class NoisyLiberoRolloutConfig:
     push_videos: bool = True
     push_branch: str | None = None
     upload_large_folder: bool = False
+    task_language_map: Path | None = None
     rename_map: dict[str, str] = field(default_factory=dict)
     trust_remote_code: bool = False
 
@@ -405,8 +408,9 @@ def _run_rollout(
         )
         observation, reward, terminated, truncated, info = _step_base_env_no_reset(base_env, executed_action)
         observation = dict(observation)
-        success = success or _extract_success(info)
-        terminal = bool(terminated or truncated)
+        step_success = _extract_success(info)
+        success = success or step_success
+        terminal = bool(terminated or truncated or step_success)
         reward_sum += float(reward)
         if collect_frames:
             frames.append(_render_base_env_frame(base_env))
@@ -427,6 +431,8 @@ def _run_rollout(
                 "terminated": bool(terminated),
                 "truncated": bool(truncated),
                 "success": bool(success),
+                "step_success": bool(step_success),
+                "terminal": bool(terminal),
                 "policy_action": policy_action.tolist(),
                 "executed_action": executed_action.tolist(),
                 "noise": noise.tolist(),
@@ -570,8 +576,18 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
     )
     height, width = _camera_size_from_observation(shape_observation)
     dataset = _make_dataset(cfg, height=height, width=width)
-    task_languages = {
+    task_language_translations = _load_task_language_map(cfg.task_language_map)
+    original_task_languages = {
         str(task): _infer_task(envs_dict[suite][task])
+        for task in selected_task_ids
+    }
+    task_languages = {
+        str(task): _translate_task_language(
+            original_task_languages[str(task)],
+            suite=suite,
+            task_id=task,
+            translations=task_language_translations,
+        )
         for task in selected_task_ids
     }
 
@@ -580,6 +596,8 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
         "task_id": selected_task_ids[0] if len(selected_task_ids) == 1 else None,
         "task_ids": selected_task_ids,
         "tasks": task_languages,
+        "original_tasks": original_task_languages,
+        "task_language_map": str(cfg.task_language_map) if cfg.task_language_map is not None else None,
         "policy": str(cfg.policy.pretrained_path) if cfg.policy is not None else None,
         "num_pairs": cfg.num_pairs,
         "num_pairs_per_task": cfg.num_pairs,
@@ -605,6 +623,8 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
         "noise_temporal_mode": cfg.noise_temporal_mode,
         "noise_gain_min": cfg.noise_gain_min,
         "noise_gain_max": cfg.noise_gain_max,
+        "accepted_pairs": 0,
+        "skipped_successful_noisy_pairs": 0,
         "pairs": [],
         "completed": False,
         "pushed_to_hub": False,
@@ -616,6 +636,7 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
             env = envs_dict[suite][task_id]
             base_env = _get_single_base_env(env)
             task = task_languages[str(task_id)]
+            original_task = original_task_languages[str(task_id)]
             for task_pair_ix in range(cfg.num_pairs):
                 pair_ix = len(manifest["pairs"])
                 init_state_id = cfg.init_state_start + task_pair_ix * cfg.init_state_stride
@@ -662,11 +683,17 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
                         fps=cfg.video_fps,
                     )
                 dataset_episode_index = None
-                if dataset is not None:
+                accepted = not noisy["success"]
+                skip_reason = "noisy_rollout_succeeded" if not accepted else None
+                if dataset is not None and accepted:
                     dataset_episode_index = int(dataset.meta.total_episodes)
                     for frame in noisy["dataset_frames"]:
                         dataset.add_frame(frame)
                     dataset.save_episode()
+                if accepted:
+                    manifest["accepted_pairs"] += 1
+                else:
+                    manifest["skipped_successful_noisy_pairs"] += 1
 
                 manifest["pairs"].append(
                     {
@@ -674,8 +701,11 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
                         "task_pair_index": task_pair_ix,
                         "task_id": task_id,
                         "task": task,
+                        "original_task": original_task,
                         "init_state_id": init_state_id,
                         "seed": pair_seed,
+                        "accepted": accepted,
+                        "skip_reason": skip_reason,
                         "dataset_episode_index": dataset_episode_index,
                         "pair_video_path": (
                             str(pair_path.relative_to(cfg.output_dir))
@@ -709,6 +739,7 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
                     f"init_state={init_state_id} "
                     f"clean_success={clean['success'] if clean is not None else None} "
                     f"noisy_success={noisy['success']} "
+                    f"accepted={accepted} "
                     f"dataset_episode={dataset_episode_index} "
                     f"debug_video={pair_path if cfg.save_debug_video and pair_video_error is None else None}",
                     flush=True,
