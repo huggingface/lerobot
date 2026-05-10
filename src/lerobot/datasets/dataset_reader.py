@@ -213,22 +213,33 @@ class DatasetReader:
 
         return query_timestamps
 
+    def _to_relative_indices(self, query_indices: list[int]) -> list[int]:
+        if self._absolute_to_relative_idx is None:
+            return query_indices
+        return [self._absolute_to_relative_idx[idx] for idx in query_indices]
+
     def _query_hf_dataset(self, query_indices: dict[str, list[int]]) -> dict:
         """Query dataset for indices across keys, skipping video keys."""
-        result: dict = {}
-        for key, q_idx in query_indices.items():
-            if key in self._meta.video_keys:
-                continue
-            relative_indices = (
-                q_idx
-                if self._absolute_to_relative_idx is None
-                else [self._absolute_to_relative_idx[idx] for idx in q_idx]
+        relative_indices_by_key = {
+            key: self._to_relative_indices(q_idx)
+            for key, q_idx in query_indices.items()
+            if key not in self._meta.video_keys
+        }
+        if not relative_indices_by_key:
+            return {}
+
+        unique_relative_indices = list(
+            dict.fromkeys(
+                idx for indices in relative_indices_by_key.values() for idx in indices
             )
-            try:
-                result[key] = torch.stack(self.hf_dataset[key][relative_indices])
-            except (KeyError, TypeError, IndexError):
-                result[key] = torch.stack(self.hf_dataset[relative_indices][key])
-        return result
+        )
+        batch = self.hf_dataset[unique_relative_indices]
+        position_by_index = {idx: pos for pos, idx in enumerate(unique_relative_indices)}
+
+        return {
+            key: torch.stack([batch[key][position_by_index[idx]] for idx in relative_indices])
+            for key, relative_indices in relative_indices_by_key.items()
+        }
 
     def _query_videos(self, query_timestamps: dict[str, list[float]], ep_idx: int) -> dict[str, torch.Tensor]:
         """Note: When using data workers (e.g. DataLoader with num_workers>0), do not call this function

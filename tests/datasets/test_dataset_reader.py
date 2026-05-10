@@ -16,11 +16,19 @@
 """Contract tests for DatasetReader."""
 
 import pytest
+import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
-from lerobot.datasets.dataset_reader import DatasetReader
-from lerobot.utils.import_utils import get_safe_default_codec
+from lerobot.datasets.dataset_reader import DatasetReader  # noqa: E402
+from lerobot.datasets.io_utils import hf_transform_to_torch  # noqa: E402
+from lerobot.datasets.lerobot_dataset import LeRobotDataset  # noqa: E402
+from lerobot.utils.import_utils import get_safe_default_codec  # noqa: E402
+
+
+def _row_first_stack(reader: DatasetReader, key: str, indices: list[int]) -> torch.Tensor:
+    return torch.stack(reader.hf_dataset[indices][key])
+
 
 # ── Loading ──────────────────────────────────────────────────────────
 
@@ -119,6 +127,117 @@ def test_get_item_values_are_correct(tmp_path, lerobot_dataset_factory):
 
     assert item_0["index"].item() == 0
     assert item_0["episode_index"].item() == 0
+
+
+# ── HF dataset queries ────────────────────────────────────────────────
+
+
+def test_query_hf_dataset_matches_row_fetch_for_multiple_keys(tmp_path, lerobot_dataset_factory):
+    """_query_hf_dataset returns the same values as row-first access for each key."""
+    dataset = lerobot_dataset_factory(
+        root=tmp_path / "ds", total_episodes=2, total_frames=20, use_videos=False
+    )
+    reader = dataset.reader
+    query_indices = {
+        "state": [0, 2, 2, 1],
+        "action": [3, 3, 4],
+        "laptop": [0, 1],
+    }
+
+    result = reader._query_hf_dataset(query_indices)
+
+    assert set(result) == set(query_indices)
+    for key, indices in query_indices.items():
+        torch.testing.assert_close(result[key], _row_first_stack(reader, key, indices))
+
+
+def test_query_hf_dataset_fetches_shared_batch_once(tmp_path, lerobot_dataset_factory):
+    """Multiple non-video keys should share one transformed row-batch fetch."""
+    dataset = lerobot_dataset_factory(
+        root=tmp_path / "ds", total_episodes=2, total_frames=20, use_videos=False
+    )
+    calls = {"count": 0}
+
+    def counting_transform(items):
+        calls["count"] += 1
+        return hf_transform_to_torch(items)
+
+    dataset.reader.hf_dataset.set_transform(counting_transform)
+
+    dataset.reader._query_hf_dataset(
+        {
+            "state": [0, 1, 2],
+            "action": [0, 1, 2],
+            "laptop": [0, 1, 2],
+        }
+    )
+
+    assert calls["count"] == 1
+
+
+def test_query_hf_dataset_preserves_duplicate_indices(tmp_path, lerobot_dataset_factory):
+    """Boundary-clamped delta indices can contain duplicates and must preserve them."""
+    dataset = lerobot_dataset_factory(
+        root=tmp_path / "ds", total_episodes=2, total_frames=20, use_videos=False
+    )
+    query_indices = {"state": [0, 0, 1]}
+
+    result = dataset.reader._query_hf_dataset(query_indices)
+
+    torch.testing.assert_close(result["state"], _row_first_stack(dataset.reader, "state", [0, 0, 1]))
+
+
+def test_query_hf_dataset_remaps_absolute_indices_with_episode_filter(
+    tmp_path, empty_lerobot_dataset_factory
+):
+    """Episode-filtered readers receive absolute frame indices from delta timestamp logic."""
+    features = {
+        "state": {"dtype": "float32", "shape": (1,), "names": ["x"]},
+        "action": {"dtype": "float32", "shape": (1,), "names": ["x"]},
+    }
+    dataset = empty_lerobot_dataset_factory(
+        root=tmp_path / "recorded", features=features, use_videos=False, fps=10
+    )
+    for ep_idx in range(3):
+        for frame_idx in range(3):
+            value = ep_idx * 10 + frame_idx
+            dataset.add_frame(
+                {
+                    "state": torch.tensor([value], dtype=torch.float32),
+                    "action": torch.tensor([value], dtype=torch.float32),
+                    "task": f"task_{ep_idx}",
+                }
+            )
+        dataset.save_episode()
+    dataset.finalize()
+
+    filtered_dataset = LeRobotDataset(dataset.repo_id, root=dataset.root, episodes=[1])
+    reader = filtered_dataset.reader
+    first_rows = reader.hf_dataset[[0, 1]]
+    absolute_indices = [int(idx.item()) for idx in first_rows["index"]]
+    query_indices = {"state": [absolute_indices[0], absolute_indices[1], absolute_indices[1]]}
+
+    result = reader._query_hf_dataset(query_indices)
+
+    expected = torch.stack([first_rows["state"][0], first_rows["state"][1], first_rows["state"][1]])
+    torch.testing.assert_close(result["state"], expected)
+
+
+def test_query_hf_dataset_skips_video_keys(tmp_path, lerobot_dataset_factory):
+    """Video keys are decoded separately and should not be queried from the HF parquet data."""
+    dataset = lerobot_dataset_factory(
+        root=tmp_path / "ds",
+        total_episodes=2,
+        total_frames=20,
+        use_videos=True,
+        download_videos=False,
+    )
+    video_key = dataset.meta.video_keys[0]
+
+    result = dataset.reader._query_hf_dataset({"state": [0, 1], video_key: [0, 1]})
+
+    assert set(result) == {"state"}
+    torch.testing.assert_close(result["state"], _row_first_stack(dataset.reader, "state", [0, 1]))
 
 
 # ── Transforms ───────────────────────────────────────────────────────
