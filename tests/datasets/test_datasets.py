@@ -1717,11 +1717,10 @@ def test_episode_filter_intersects_with_episodes(tmp_path, lerobot_dataset_facto
     """When both episodes and episode_filter are given to LeRobotDataset, the result is their intersection."""
     dataset = lerobot_dataset_factory(root=tmp_path / "test", total_episodes=8, total_frames=200)
     lengths = dataset.meta.episodes["length"]
-    threshold = sorted(lengths)[len(lengths) // 2]
     candidates = [0, 2, 4, 6]
+    candidate_lengths = [lengths[i] for i in candidates]
+    threshold = sorted(candidate_lengths)[len(candidate_lengths) // 2]
     expected_eps = [i for i in candidates if lengths[i] >= threshold]
-    if not expected_eps:
-        pytest.skip("multinomial draw produced no candidate above threshold")
 
     filtered = LeRobotDataset(
         dataset.repo_id,
