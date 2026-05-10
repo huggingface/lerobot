@@ -382,6 +382,7 @@ jobs:
                 --policy.path=\"\$ROBOTWIN_POLICY\" \
                 --env.type=robotwin \
                 --env.task=\"\$ROBOTWIN_TASKS\" \
+                --env.max_parallel_tasks=5 \
                 --eval.batch_size=1 \
                 --eval.n_episodes=1 \
                 --eval.use_async_envs=false \
@@ -482,6 +483,7 @@ jobs:
                 --policy.path=lerobot/smolvla_robocasa \
                 --env.type=robocasa \
                 --env.task=CloseFridge,OpenCabinet,OpenDrawer,TurnOnMicrowave,TurnOffStove,CloseToasterOvenDoor,SlideDishwasherRack,TurnOnSinkFaucet,NavigateKitchen,TurnOnElectricKettle \
+                --env.max_parallel_tasks=5 \
                 --eval.batch_size=1 \
                 --eval.n_episodes=1 \
                 --eval.use_async_envs=false \
@@ -693,6 +695,7 @@ jobs:
                 --env.task=\"\$ROBOMME_TASKS\" \
                 --env.dataset_split=test \
                 --env.task_ids=[0] \
+                --env.max_parallel_tasks=5 \
                 --eval.batch_size=1 \
                 --eval.n_episodes=1 \
                 --eval.use_async_envs=false \
@@ -800,6 +803,7 @@ jobs:
                 --env.type=libero_plus \
                 --env.task=\"\$LIBERO_PLUS_SUITE\" \
                 --env.task_ids=\"\$LIBERO_PLUS_TASK_IDS\" \
+                --env.max_parallel_tasks=5 \
                 --eval.batch_size=1 \
                 --eval.n_episodes=1 \
                 --eval.use_async_envs=false \
@@ -900,6 +904,8 @@ jobs:
                 --policy.path=lerobot/smolvla_vlabench \
                 --env.type=vlabench \
                 --env.task=select_fruit,select_toy,select_book,select_painting,select_drink,select_ingredient,select_billiards,select_poker,add_condiment,insert_flower \
+                --env.episode_length=50 \
+                --env.max_parallel_tasks=5 \
                 --eval.batch_size=1 \
                 --eval.n_episodes=1 \
                 --eval.use_async_envs=false \
