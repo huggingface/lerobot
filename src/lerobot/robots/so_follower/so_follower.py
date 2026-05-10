@@ -208,6 +208,12 @@ class SOFollower(Robot):
         """
 
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
+        if not goal_pos:
+            expected_keys = [f"{motor}.pos" for motor in self.bus.motors]
+            raise ValueError(
+                f"{self.__class__.__name__} expected at least one '*.pos' action key from "
+                f"{expected_keys}, but received {list(action)}."
+            )
 
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.

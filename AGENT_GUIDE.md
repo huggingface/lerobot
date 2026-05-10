@@ -103,6 +103,17 @@ lerobot-teleoperate \
   --display_data=true
 ```
 
+No leader arm available? Use keyboard joint control for a quick follower-only sanity check:
+
+```bash
+lerobot-teleoperate \
+  --robot.type=so101_follower --robot.port=<FOLLOWER_PORT> --robot.id=my_follower \
+  --teleop.type=keyboard
+```
+
+Keyboard controls: `a`/`d` shoulder pan, `w`/`s` shoulder lift, `i`/`k` elbow flex,
+`j`/`l` wrist flex, `u`/`o` wrist roll, `r`/`f` gripper target.
+
 > **Feetech timeout / comms error on SO-100 / SO-101?** Before touching software, check the **red motor LEDs** on the daisy chain.
 >
 > - **All steady red, gripper → base chain** → wiring OK.

@@ -109,3 +109,13 @@ def test_send_action(follower):
 
     goal_pos = {m: (i + 1) * 10 for i, m in enumerate(follower.bus.motors)}
     follower.bus.sync_write.assert_called_once_with("Goal_Position", goal_pos)
+
+
+@pytest.mark.parametrize("action", [{}, {"w": None}])
+def test_send_action_rejects_action_without_joint_positions(follower, action):
+    follower.connect()
+
+    with pytest.raises(ValueError, match="expected at least one '\\*.pos' action key"):
+        follower.send_action(action)
+
+    follower.bus.sync_write.assert_not_called()

@@ -111,6 +111,14 @@ def test__serialize_data_large_number():
         bus._serialize_data(2**32, 4)  # 4-byte max is 0xFFFFFFFF
 
 
+def test_sync_write_rejects_empty_values(dummy_motors):
+    bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
+    bus.connect(handshake=False)
+
+    with pytest.raises(ValueError, match="Cannot sync write 'Goal_Position' with no motor values."):
+        bus.sync_write("Goal_Position", {})
+
+
 @pytest.mark.parametrize(
     "data_name, id_, value",
     [
