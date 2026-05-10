@@ -102,6 +102,86 @@ from .buffer import ReplayBuffer, concatenate_batch_transitions
 from .learner_service import MAX_WORKERS, SHUTDOWN_TIMEOUT, LearnerService
 
 
+def compute_online_replay_ratio(cfg: TrainRLServerPipelineConfig, optimization_step: int) -> float:
+    """Return the online replay sampling ratio for the current optimization step."""
+    mixing_cfg = cfg.policy.replay_mixing
+    if mixing_cfg.mode == "fixed":
+        return mixing_cfg.online_ratio
+
+    # Linear schedule from online_ratio -> final_online_ratio over schedule_steps.
+    progress = min(max(optimization_step, 0), mixing_cfg.schedule_steps) / float(mixing_cfg.schedule_steps)
+    return mixing_cfg.online_ratio + (mixing_cfg.final_online_ratio - mixing_cfg.online_ratio) * progress
+
+
+def compute_replay_batch_sizes(
+    total_batch_size: int,
+    online_ratio: float,
+    use_offline_buffer: bool,
+    keep_minimum_offline_samples: bool = True,
+) -> tuple[int, int]:
+    """Compute online/offline batch sizes from a ratio and total batch size."""
+    if not use_offline_buffer:
+        return total_batch_size, 0
+
+    online_batch_size = int(round(total_batch_size * online_ratio))
+    online_batch_size = max(0, min(total_batch_size, online_batch_size))
+    offline_batch_size = total_batch_size - online_batch_size
+
+    # Optional safeguard to keep both sources active during mixed training.
+    if keep_minimum_offline_samples and total_batch_size > 1:
+        if online_batch_size == 0:
+            online_batch_size = 1
+            offline_batch_size = total_batch_size - 1
+        if offline_batch_size == 0:
+            offline_batch_size = 1
+            online_batch_size = total_batch_size - 1
+
+    return online_batch_size, offline_batch_size
+
+
+def sample_training_batch(
+    cfg: TrainRLServerPipelineConfig,
+    replay_buffer: ReplayBuffer,
+    offline_replay_buffer: ReplayBuffer | None,
+    total_batch_size: int,
+    optimization_step: int,
+    async_prefetch: bool,
+    online_iterators: dict[int, any],
+    offline_iterators: dict[int, any],
+) -> tuple[dict, float, int, int]:
+    """Sample a batch according to the configured online/offline replay mix."""
+    online_ratio = compute_online_replay_ratio(cfg, optimization_step)
+    online_batch_size, offline_batch_size = compute_replay_batch_sizes(
+        total_batch_size=total_batch_size,
+        online_ratio=online_ratio,
+        use_offline_buffer=offline_replay_buffer is not None,
+        keep_minimum_offline_samples=cfg.policy.replay_mixing.keep_minimum_offline_samples,
+    )
+
+    if online_batch_size > 0 and online_batch_size not in online_iterators:
+        online_iterators[online_batch_size] = replay_buffer.get_iterator(
+            batch_size=online_batch_size, async_prefetch=async_prefetch, queue_size=2
+        )
+
+    if offline_batch_size > 0 and offline_batch_size not in offline_iterators and offline_replay_buffer is not None:
+        offline_iterators[offline_batch_size] = offline_replay_buffer.get_iterator(
+            batch_size=offline_batch_size, async_prefetch=async_prefetch, queue_size=2
+        )
+
+    batch = next(online_iterators[online_batch_size]) if online_batch_size > 0 else None
+    if offline_batch_size > 0 and offline_replay_buffer is not None:
+        batch_offline = next(offline_iterators[offline_batch_size])
+        if batch is None:
+            batch = batch_offline
+        else:
+            batch = concatenate_batch_transitions(
+                left_batch_transitions=batch,
+                right_batch_transition=batch_offline,
+            )
+
+    return batch, online_ratio, online_batch_size, offline_batch_size
+
+
 @parser.wrap()
 def train_cli(cfg: TrainRLServerPipelineConfig):
     if not use_threads(cfg):
@@ -338,7 +418,6 @@ def add_actor_information_and_train(
             device=device,
             storage_device=storage_device,
         )
-        batch_size: int = batch_size // 2  # We will sample from both replay buffer
 
     logging.info("Starting learner thread")
     interaction_message = None
@@ -349,9 +428,8 @@ def add_actor_information_and_train(
     if cfg.dataset is not None:
         dataset_repo_id = cfg.dataset.repo_id
 
-    # Initialize iterators
-    online_iterator = None
-    offline_iterator = None
+    online_iterators = {}
+    offline_iterators = {}
 
     # NOTE: THIS IS THE MAIN LOOP OF THE LEARNER
     while True:
@@ -382,26 +460,18 @@ def add_actor_information_and_train(
         if len(replay_buffer) < online_step_before_learning:
             continue
 
-        if online_iterator is None:
-            online_iterator = replay_buffer.get_iterator(
-                batch_size=batch_size, async_prefetch=async_prefetch, queue_size=2
-            )
-
-        if offline_replay_buffer is not None and offline_iterator is None:
-            offline_iterator = offline_replay_buffer.get_iterator(
-                batch_size=batch_size, async_prefetch=async_prefetch, queue_size=2
-            )
-
         time_for_one_optimization_step = time.time()
         for _ in range(utd_ratio - 1):
-            # Sample from the iterators
-            batch = next(online_iterator)
-
-            if dataset_repo_id is not None:
-                batch_offline = next(offline_iterator)
-                batch = concatenate_batch_transitions(
-                    left_batch_transitions=batch, right_batch_transition=batch_offline
-                )
+            batch, _, _, _ = sample_training_batch(
+                cfg=cfg,
+                replay_buffer=replay_buffer,
+                offline_replay_buffer=offline_replay_buffer,
+                total_batch_size=batch_size,
+                optimization_step=optimization_step,
+                async_prefetch=async_prefetch,
+                online_iterators=online_iterators,
+                offline_iterators=offline_iterators,
+            )
 
             actions = batch[ACTION]
             rewards = batch["reward"]
@@ -452,14 +522,16 @@ def add_actor_information_and_train(
             # Update target networks (main and discrete)
             policy.update_target_networks()
 
-        # Sample for the last update in the UTD ratio
-        batch = next(online_iterator)
-
-        if dataset_repo_id is not None:
-            batch_offline = next(offline_iterator)
-            batch = concatenate_batch_transitions(
-                left_batch_transitions=batch, right_batch_transition=batch_offline
-            )
+        batch, online_ratio, online_batch_size, offline_batch_size = sample_training_batch(
+            cfg=cfg,
+            replay_buffer=replay_buffer,
+            offline_replay_buffer=offline_replay_buffer,
+            total_batch_size=batch_size,
+            optimization_step=optimization_step,
+            async_prefetch=async_prefetch,
+            online_iterators=online_iterators,
+            offline_iterators=offline_iterators,
+        )
 
         actions = batch[ACTION]
         rewards = batch["reward"]
@@ -498,6 +570,9 @@ def add_actor_information_and_train(
         training_infos = {
             "loss_critic": loss_critic.item(),
             "critic_grad_norm": critic_grad_norm,
+            "online_replay_ratio": online_ratio,
+            "online_batch_size": online_batch_size,
+            "offline_batch_size": offline_batch_size,
         }
 
         # Discrete critic optimization (if available)

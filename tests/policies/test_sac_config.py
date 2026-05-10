@@ -23,6 +23,7 @@ from lerobot.policies.sac.configuration_sac import (
     ConcurrencyConfig,
     CriticNetworkConfig,
     PolicyConfig,
+    ReplayMixingConfig,
     SACConfig,
 )
 from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_STATE
@@ -133,12 +134,16 @@ def test_sac_config_default_initialization():
     # Concurrency configuration
     assert config.concurrency.actor == "threads"
     assert config.concurrency.learner == "threads"
+    assert config.replay_mixing.mode == "fixed"
+    assert config.replay_mixing.online_ratio == 0.5
+    assert config.replay_mixing.final_online_ratio == 1.0
 
     assert isinstance(config.actor_network_kwargs, ActorNetworkConfig)
     assert isinstance(config.critic_network_kwargs, CriticNetworkConfig)
     assert isinstance(config.policy_kwargs, PolicyConfig)
     assert isinstance(config.actor_learner_config, ActorLearnerConfig)
     assert isinstance(config.concurrency, ConcurrencyConfig)
+    assert isinstance(config.replay_mixing, ReplayMixingConfig)
 
 
 def test_critic_network_kwargs():
@@ -173,6 +178,20 @@ def test_concurrency_config():
     config = ConcurrencyConfig()
     assert config.actor == "threads"
     assert config.learner == "threads"
+
+
+def test_replay_mixing_config():
+    config = ReplayMixingConfig()
+    assert config.mode == "fixed"
+    assert config.online_ratio == 0.5
+    assert config.final_online_ratio == 1.0
+    assert config.schedule_steps == 250000
+    assert config.keep_minimum_offline_samples is True
+
+
+def test_replay_mixing_config_rejects_invalid_mode():
+    with pytest.raises(ValueError, match="Replay mixing mode"):
+        ReplayMixingConfig(mode="cosine")
 
 
 def test_sac_config_custom_initialization():
