@@ -146,6 +146,32 @@ lerobot-train \
   --eval_freq=1000
 ```
 
+### Diffusion Policy with task language
+
+Classic Diffusion Policy does not use language by default, matching the original visuomotor policy.
+To train a language-conditioned Diffusion model on LIBERO task descriptions, enable the opt-in
+language path:
+
+```bash
+lerobot-train \
+  --policy.type=diffusion \
+  --policy.use_language_conditioning=true \
+  --policy.repo_id=${HF_USER}/libero-diffusion-language \
+  --dataset.repo_id=HuggingFaceVLA/libero \
+  --env.type=libero \
+  --env.task=libero_10 \
+  --output_dir=./outputs/ \
+  --steps=100000 \
+  --batch_size=4 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=1 \
+  --eval_freq=1000
+```
+
+Enabling language conditioning changes the Diffusion architecture because the U-Net receives an
+additional projected text feature. Existing non-language Diffusion checkpoints should be evaluated
+with the default disabled setting.
+
 ## Reproducing published results
 
 We reproduce the results of Pi0.5 on the LIBERO benchmark. We take the Physical Intelligence LIBERO base model (`pi05_libero`) and finetune for an additional 6k steps in bfloat16, with batch size of 256 on 8 H100 GPUs using the [HuggingFace LIBERO dataset](https://huggingface.co/datasets/HuggingFaceVLA/libero).
