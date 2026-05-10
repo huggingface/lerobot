@@ -14,10 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
+from lerobot.common.policy_metadata import save_policy_dataset_metadata
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.optim import (
     load_optimizer_state,
@@ -36,6 +38,9 @@ from lerobot.utils.constants import (
 )
 from lerobot.utils.io_utils import load_json, write_json
 from lerobot.utils.random_utils import load_rng_state, save_rng_state
+
+if TYPE_CHECKING:
+    from lerobot.datasets import LeRobotDatasetMetadata
 
 
 def get_step_identifier(step: int, total_steps: int) -> str:
@@ -75,6 +80,7 @@ def save_checkpoint(
     scheduler: LRScheduler | None = None,
     preprocessor: PolicyProcessorPipeline | None = None,
     postprocessor: PolicyProcessorPipeline | None = None,
+    dataset_meta: "LeRobotDatasetMetadata | None" = None,
 ) -> None:
     """This function creates the following directory structure:
 
@@ -83,6 +89,7 @@ def save_checkpoint(
     │   ├── config.json  # policy config
     │   ├── model.safetensors  # policy weights
     │   ├── train_config.json  # train config
+    │   ├── dataset_metadata.json  # training dataset metadata snapshot (if provided)
     │   ├── processor.json  # processor config (if preprocessor provided)
     │   └── step_*.safetensors  # processor state files (if any)
     └── training_state/
@@ -99,10 +106,12 @@ def save_checkpoint(
         optimizer (Optimizer | None, optional): The optimizer to save the state from. Defaults to None.
         scheduler (LRScheduler | None, optional): The scheduler to save the state from. Defaults to None.
         preprocessor: The preprocessor/pipeline to save. Defaults to None.
+        dataset_meta: Training dataset metadata to snapshot beside the policy. Defaults to None.
     """
     pretrained_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
     policy.save_pretrained(pretrained_dir)
     cfg.save_pretrained(pretrained_dir)
+    save_policy_dataset_metadata(pretrained_dir, dataset_meta)
     if cfg.peft is not None:
         # When using PEFT, policy.save_pretrained will only write the adapter weights + config, not the
         # policy config which we need for loading the model. In this case we'll write it ourselves.

@@ -19,7 +19,7 @@ import os
 from importlib.resources import files
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TypedDict, TypeVar, Unpack
+from typing import TYPE_CHECKING, TypedDict, TypeVar, Unpack
 
 import packaging
 import safetensors
@@ -29,11 +29,15 @@ from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import load_model as load_model_as_safetensor, save_model as save_model_as_safetensor
 from torch import Tensor, nn
 
+from lerobot.common.policy_metadata import save_policy_dataset_metadata
 from lerobot.configs import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.utils.hub import HubMixin
 
 from .utils import log_model_loading_keys
+
+if TYPE_CHECKING:
+    from lerobot.datasets import LeRobotDatasetMetadata
 
 T = TypeVar("T", bound="PreTrainedPolicy")
 
@@ -208,6 +212,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         self,
         cfg: TrainPipelineConfig,
         peft_model=None,
+        dataset_meta: "LeRobotDatasetMetadata | None" = None,
     ):
         api = HfApi()
         repo_id = api.create_repo(
@@ -226,6 +231,8 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 self.config.save_pretrained(saved_path)
             else:
                 self.save_pretrained(saved_path)  # Calls _save_pretrained and stores model tensors
+
+            save_policy_dataset_metadata(saved_path, dataset_meta)
 
             card = self.generate_model_card(
                 cfg.dataset.repo_id, self.config.type, self.config.license, self.config.tags

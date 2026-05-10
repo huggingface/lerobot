@@ -17,6 +17,9 @@
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import numpy as np
+
+from lerobot.common.policy_metadata import POLICY_DATASET_METADATA_NAME
 from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
     get_step_identifier,
@@ -28,6 +31,7 @@ from lerobot.common.train_utils import (
     update_last_checkpoint,
 )
 from lerobot.utils.constants import (
+    ACTION,
     CHECKPOINTS_DIR,
     LAST_CHECKPOINT_LINK,
     OPTIMIZER_PARAM_GROUPS,
@@ -37,6 +41,43 @@ from lerobot.utils.constants import (
     TRAINING_STATE_DIR,
     TRAINING_STEP,
 )
+
+
+def _make_dataset_metadata():
+    features = {
+        ACTION: {
+            "dtype": "float32",
+            "shape": (2,),
+            "names": ["shoulder", "gripper"],
+        },
+        "observation.state": {
+            "dtype": "float32",
+            "shape": (2,),
+            "names": ["shoulder", "gripper"],
+        },
+    }
+    info_dict = {
+        "codebase_version": "v3.0",
+        "fps": 30,
+        "features": features,
+        "robot_type": "test_bot",
+        "total_episodes": 1,
+        "total_frames": 4,
+        "total_tasks": 1,
+        "splits": {"train": "0:1"},
+    }
+
+    class Info:
+        def to_dict(self):
+            return info_dict
+
+    class DatasetMetadata:
+        repo_id = "user/dataset"
+        revision = "v3.0"
+        info = Info()
+        stats = {ACTION: {"mean": np.array([0.1, 0.2]), "std": np.array([1.0, 1.5])}}
+
+    return DatasetMetadata()
 
 
 def test_get_step_identifier():
@@ -76,6 +117,7 @@ def test_update_last_checkpoint(tmp_path):
 def test_save_checkpoint(mock_save_training_state, tmp_path, optimizer):
     policy = Mock()
     cfg = Mock()
+    cfg.peft = None
     save_checkpoint(tmp_path, 10, cfg, policy, optimizer)
     policy.save_pretrained.assert_called_once()
     cfg.save_pretrained.assert_called_once()
@@ -88,11 +130,25 @@ def test_save_checkpoint_peft(mock_save_training_state, tmp_path, optimizer):
     policy.config = Mock()
     policy.config.save_pretrained = Mock()
     cfg = Mock()
-    cfg.use_peft = True
+    cfg.peft = Mock()
     save_checkpoint(tmp_path, 10, cfg, policy, optimizer)
     policy.save_pretrained.assert_called_once()
     cfg.save_pretrained.assert_called_once()
     policy.config.save_pretrained.assert_called_once()
+    mock_save_training_state.assert_called_once()
+
+
+@patch("lerobot.common.train_utils.save_training_state")
+def test_save_checkpoint_writes_policy_dataset_metadata(mock_save_training_state, tmp_path, optimizer):
+    policy = Mock()
+    cfg = Mock()
+    cfg.peft = None
+    ds_meta = _make_dataset_metadata()
+
+    save_checkpoint(tmp_path / "checkpoint", 10, cfg, policy, optimizer, dataset_meta=ds_meta)
+
+    metadata_path = tmp_path / "checkpoint" / "pretrained_model" / POLICY_DATASET_METADATA_NAME
+    assert metadata_path.is_file()
     mock_save_training_state.assert_called_once()
 
 

@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import inspect
+import json
 from copy import deepcopy
 from pathlib import Path
 
@@ -26,6 +27,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 from packaging import version
 from safetensors.torch import load_file
 
+from lerobot.common.policy_metadata import save_policy_dataset_metadata
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
@@ -298,6 +300,97 @@ def test_save_and_load_pretrained(dummy_dataset_metadata, tmp_path, policy_name:
     policy.save_pretrained(save_dir)
     loaded_policy = policy_cls.from_pretrained(save_dir, config=policy_cfg)
     torch.testing.assert_close(list(policy.parameters()), list(loaded_policy.parameters()), rtol=0, atol=0)
+
+
+def test_make_policy_from_pretrained_without_dataset_uses_saved_config(dummy_dataset_metadata, tmp_path):
+    policy_cfg = make_policy_config("act", device="cpu")
+    policy = make_policy(policy_cfg, ds_meta=dummy_dataset_metadata)
+    save_dir = tmp_path / "act_policy"
+    policy.save_pretrained(save_dir)
+
+    runtime_cfg = make_policy_config("act", pretrained_path=save_dir, device="cpu")
+    runtime_cfg.input_features = {}
+    runtime_cfg.output_features = {}
+
+    loaded_policy = make_policy(runtime_cfg)
+
+    assert isinstance(loaded_policy, PreTrainedPolicy)
+    assert loaded_policy.config.input_features == policy.config.input_features
+    assert loaded_policy.config.output_features == policy.config.output_features
+    assert loaded_policy.config.pretrained_path == save_dir
+
+
+def test_make_policy_from_pretrained_without_dataset_uses_metadata_fallback(
+    dummy_dataset_metadata, tmp_path, monkeypatch
+):
+    policy_cls = get_policy_class("act")
+    original_init = policy_cls.__init__
+    captured_dataset_stats = []
+
+    def capture_dataset_stats(self, config, **kwargs):
+        captured_dataset_stats.append(kwargs.get("dataset_stats"))
+        original_init(self, config, **kwargs)
+
+    monkeypatch.setattr(policy_cls, "__init__", capture_dataset_stats)
+
+    policy_cfg = make_policy_config("act", device="cpu")
+    policy = make_policy(policy_cfg, ds_meta=dummy_dataset_metadata)
+    save_dir = tmp_path / "act_policy"
+    policy.save_pretrained(save_dir)
+    save_policy_dataset_metadata(save_dir, dummy_dataset_metadata)
+
+    config_path = save_dir / "config.json"
+    with open(config_path) as f:
+        config = json.load(f)
+    config["input_features"] = None
+    config["output_features"] = None
+    with open(config_path, "w") as f:
+        json.dump(config, f)
+
+    runtime_cfg = make_policy_config("act", pretrained_path=save_dir, device="cpu")
+    runtime_cfg.input_features = {}
+    runtime_cfg.output_features = {}
+
+    loaded_policy = make_policy(runtime_cfg)
+
+    assert isinstance(loaded_policy, PreTrainedPolicy)
+    assert loaded_policy.config.input_features == policy.config.input_features
+    assert loaded_policy.config.output_features == policy.config.output_features
+    assert captured_dataset_stats[-1] is not None
+    torch.testing.assert_close(
+        torch.as_tensor(captured_dataset_stats[-1][ACTION]["mean"]),
+        torch.as_tensor(dummy_dataset_metadata.stats[ACTION]["mean"]),
+    )
+
+
+def test_make_policy_from_pretrained_without_dataset_uses_metadata_if_config_missing(
+    dummy_dataset_metadata, tmp_path
+):
+    policy_cfg = make_policy_config("act", device="cpu")
+    policy = make_policy(policy_cfg, ds_meta=dummy_dataset_metadata)
+    save_dir = tmp_path / "act_policy"
+    policy.save_pretrained(save_dir)
+    save_policy_dataset_metadata(save_dir, dummy_dataset_metadata)
+    (save_dir / "config.json").unlink()
+
+    runtime_cfg = make_policy_config("act", pretrained_path=save_dir, device="cpu")
+    runtime_cfg.input_features = {}
+    runtime_cfg.output_features = {}
+
+    loaded_policy = make_policy(runtime_cfg)
+
+    assert isinstance(loaded_policy, PreTrainedPolicy)
+    assert loaded_policy.config.input_features == policy.config.input_features
+    assert loaded_policy.config.output_features == policy.config.output_features
+
+
+def test_make_policy_from_pretrained_without_metadata_fails_clearly(tmp_path):
+    runtime_cfg = make_policy_config("act", pretrained_path=tmp_path, device="cpu")
+    runtime_cfg.input_features = {}
+    runtime_cfg.output_features = {}
+
+    with pytest.raises(ValueError, match="Pass `ds_meta=dataset.meta`"):
+        make_policy(runtime_cfg)
 
 
 @pytest.mark.parametrize("multikey", [True, False])
