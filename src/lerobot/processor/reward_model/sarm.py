@@ -304,6 +304,17 @@ class SARMRewardProcessorStep(BaseRewardProcessorStep):
     def _push_obs_to_buffer(self, observation: dict[str, Any]) -> bool:
         current_state = observation.get(self._state_key)
 
+        # Buffer prewarm: when the buffer is empty (first push of an episode),
+        # replicate the observation max_back times so sync-mode windows can
+        # build a full window immediately instead of clamping to the same
+        # frame for ~35 steps. Triggered by sync_inference flag or by any
+        # config that needs a deep history.
+        prewarm = (
+            self._image_bufs[self._image_keys[0]].__len__() == 0
+            and getattr(self.config, "sync_inference", False)
+            and self._delta_indices is not None
+        )
+
         pushed_any = False
         for key in self._image_keys:
             cur_img = observation.get(key)
@@ -311,15 +322,23 @@ class SARMRewardProcessorStep(BaseRewardProcessorStep):
                 return False
             if cur_img.ndim == 4 and cur_img.shape[0] == 1:
                 cur_img = cur_img.squeeze(0)
-            self._image_bufs[key].append(cur_img.detach().cpu())
+            cpu_img = cur_img.detach().cpu()
+            if prewarm:
+                # Fill buffer up to its maxlen with copies of the very first frame.
+                pad = (self._image_bufs[key].maxlen or 1) - 1
+                for _ in range(min(pad, 100)):  # cap to avoid mishaps if maxlen is huge
+                    self._image_bufs[key].append(cpu_img)
+            self._image_bufs[key].append(cpu_img)
             pushed_any = True
 
         if isinstance(current_state, torch.Tensor) and current_state.ndim == 2 and current_state.shape[0] == 1:
             current_state = current_state.squeeze(0)
-        if isinstance(current_state, torch.Tensor):
-            self._state_buf.append(current_state.detach().cpu())
-        else:
-            self._state_buf.append(None)
+        cpu_state = current_state.detach().cpu() if isinstance(current_state, torch.Tensor) else None
+        if prewarm:
+            pad = (self._state_buf.maxlen or 1) - 1
+            for _ in range(min(pad, 100)):
+                self._state_buf.append(cpu_state)
+        self._state_buf.append(cpu_state)
         return pushed_any
 
     def _snapshot_buffers(self):
