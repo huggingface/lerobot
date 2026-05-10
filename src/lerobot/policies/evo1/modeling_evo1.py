@@ -299,23 +299,30 @@ class EVO1Policy(PreTrainedPolicy):
         camera_keys = self._camera_keys or sorted(key for key in batch if key.startswith(f"{OBS_IMAGES}."))
         if not camera_keys:
             raise ValueError("EVO1 requires at least one visual observation feature.")
-        batch_size = batch[camera_keys[0]].shape[0]
+
+        # Normalize each camera tensor to (B, C, H, W) up-front so that batch_size is read
+        # from a real batch dim and not from C in the unbatched (C, H, W) case.
+        normalized: dict[str, Tensor] = {}
+        for camera_key in camera_keys[: self.config.max_views]:
+            image = batch[camera_key]
+            if image.dim() == 3:
+                image = image.unsqueeze(0)
+            elif image.dim() == 5:
+                image = image[:, -1]
+            elif image.dim() != 4:
+                raise ValueError(
+                    f"Unsupported image tensor shape for EVO1: key={camera_key} shape={tuple(image.shape)}"
+                )
+            normalized[camera_key] = image
+
+        batch_size = normalized[camera_keys[0]].shape[0]
         image_batches: list[list[Tensor]] = []
         image_masks = torch.zeros(batch_size, self.config.max_views, dtype=torch.bool)
 
         for batch_index in range(batch_size):
             sample_images: list[Tensor] = []
             for camera_key in camera_keys[: self.config.max_views]:
-                image = batch[camera_key]
-                if image.dim() == 3:
-                    image = image.unsqueeze(0)
-                elif image.dim() == 5:
-                    image = image[:, -1]
-                elif image.dim() != 4:
-                    raise ValueError(
-                        f"Unsupported image tensor shape for EVO1: key={camera_key} shape={tuple(image.shape)}"
-                    )
-                sample_images.append(image[batch_index].detach().cpu())
+                sample_images.append(normalized[camera_key][batch_index].detach().cpu())
             if not sample_images:
                 raise ValueError("EVO1 received a batch without any image tensor.")
             while len(sample_images) < self.config.max_views:
