@@ -17,6 +17,7 @@ from __future__ import annotations
 import functools
 import logging
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import torch
 import torch.nn as nn
@@ -24,7 +25,13 @@ import torchvision.transforms.functional as TF
 from PIL import Image
 from torchvision.transforms.functional import to_pil_image
 
-from lerobot.utils.import_utils import require_package
+from lerobot.utils.import_utils import _transformers_available, require_package
+
+if TYPE_CHECKING or _transformers_available:
+    from transformers import AutoModel, AutoTokenizer
+else:
+    AutoModel = None
+    AutoTokenizer = None
 
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
@@ -111,7 +118,6 @@ class InternVL3Embedder(nn.Module):
         self.gradient_checkpointing_use_reentrant = bool(gradient_checkpointing_use_reentrant)
 
         require_package("transformers", extra="evo1")
-        from transformers import AutoModel, AutoTokenizer
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
         if isinstance(model_dtype, str):

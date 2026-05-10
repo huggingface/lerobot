@@ -3079,6 +3079,7 @@ requires-dist = [
     { name = "lerobot", extras = ["diffusers-dep"], marker = "extra == 'multi-task-dit'" },
     { name = "lerobot", extras = ["diffusion"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["dynamixel"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["evo1"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["feetech"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["feetech"], marker = "extra == 'hopejr'" },
     { name = "lerobot", extras = ["feetech"], marker = "extra == 'lekiwi'" },

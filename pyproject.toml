@@ -259,6 +259,7 @@ all = [
     "lerobot[smolvla]",
     # "lerobot[groot]", TODO(Steven): Gr00t requires specific installation instructions for flash-attn
     "lerobot[xvla]",
+    "lerobot[evo1]",
     "lerobot[hilserl]",
     "lerobot[async]",
     "lerobot[dev]",
