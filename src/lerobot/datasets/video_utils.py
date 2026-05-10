@@ -268,10 +268,14 @@ class VideoDecoderCache:
         video_path = str(video_path)
 
         with self._lock:
-            entry = self._cache.get(video_path)
-            if entry is not None:
-                self._cache.move_to_end(video_path)
-                return entry[0]
+            if video_path not in self._cache:
+                file_handle = fsspec.open(video_path).__enter__()
+                try:
+                    decoder = VideoDecoder(file_handle, seek_mode="approximate")
+                except Exception:
+                    file_handle.close()
+                    raise
+                self._cache[video_path] = (decoder, file_handle)
 
             file_handle = fsspec.open(video_path).__enter__()
             try:
