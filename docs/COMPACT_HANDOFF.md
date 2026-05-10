@@ -1,169 +1,222 @@
-# Project state handoff — SARM/ACT 6-stage v2
+# Project handoff (compact-ready) — SARM 6-stage v2
 
-Beads: epic `lerobot-123`. mds: `outputs/sarm_iterations.md`, `outputs/act_iterations.md`.
+**Read first.** Authoritative state.
 
-## Goal
+## Current goal (epic lerobot-146)
 
-IL-only (no HIL-SERL/residual): SARM passes 10 gates, ACT 95% threshold + ≥10% succ@CNN-cls / ≥80% reach last stage.
+**9/10 sync gates @ lag ≤0.4s (max ≤0.2s)**.
 
-## Production winners (local paths, also on remote DL_A6000)
+Sync gates evaluate SARM offline using REAL future frames in the obs window
+(`observation_delta_indices = [-1M, 0, gap, 2*gap, ..., (n_obs-1)*gap]`).
+Teleop online with `sync_inference=true` flag = real past frames as proxy →
+output describes frame `t - max_future_delta`. Lag = max_future_delta * dt.
 
-### SARM
-- **Best (5/10 gates)**: `outputs/sim_3stage_sarm_v2_full_v2_paperfull_lowlr/checkpoints/024000/pretrained_model`
-- recipe: paper arch (`epstart_anchor=true, use_causal_mask=false, mlp_heads=true`) + `peak_lr=2e-5` + sw=10 + 2cam + 24k steps + dataset `local/sim_3stage_v2_full_v2_nostale` (307 eps mixed, 205 succ + 102 partial)
-- gates pass: lin_mad=0.24 ✓, mean_mid=0.45 ✓, fail_term=0 ✓, zero_max=0 ✓✓, stage_ne=0.97 ✓
-- gates fail: succ_term=0.44, mono=0.73, last_stage=0.87, plateau=0.29, stage_nb=0.39
-- alt: `paperfull_24k` (4/10, succ_term=0.85 better but zero_max=0.11)
-
-### ACT (best-by-mean_reward, all 0/20 CNN succ)
-- **Best**: `outputs/act_v2_full_v2_tail30_chunk80_lowlr_rabc/checkpoints/080000/pretrained_model` (mean=0.242, max=0.78, cnn_max=0.31)
-- recipe: chunk=80, n_obs=1, ResNet18, kl=10, RABC kappa=0.01, source = paperfull_lowlr-relabeled tail-30-destale dataset
-- chunk=80 = sweet spot (cnn_max=0.37 BC, 0.31 RABC). Larger chunks ↑ mean_rew, ↓ cnn signal.
-
-### CNN binary success classifier
-- `outputs/cnn_v2_front_v1/best.pt` (ResNet18 + `net.` prefix)
-- trained on `local/sim_3stage_v2_full_v2_nostale` front cam
-- v2 holdout: 100% recall last5_max>0.5, 0% FP first5_max>0.5
-- recommended threshold: P(succ) ≥ 0.5
-
-## Datasets
-
-| repo_id | eps | use |
-|---|---|---|
-| `domrachev03/sim_3stage_v2_train_fs` | 158 | base recordings (raw) |
-| `domrachev03/sim_3stage_v2_extra` | 122 (drop 4,84) | newer recordings, 224x224 |
-| `domrachev03/sim_3stage_v2_extra_partial` | 29 | partial-fail demos |
-| `local/sim_3stage_v2_full_v2_nostale` | 307 | SARM train (mixed, ds 128x128) |
-| `local/sim_3stage_v2_full_v2_succonly_nostale` | 205 | success-only filtered |
-| `local/sim_3stage_v2_full_v2_succonly_destale_tail30` | 205 | tail-30 destale ACT base |
-| `local/sim_3stage_v2_full_v2_succonly_paperfull_lowlr_delta` | 205 | RA-BC reward-relabeled |
-| `domrachev03/sim_3stage_v2_val_fs` | 158 (100 full + bucket 0/6..5/6) | SARM 10-gate eval |
-
-## Eval pipeline
-
-### SARM 10-gate
 ```
-uv run python -m lerobot_policy_sarm.eval_sarm_sim_assemble \
-  --dataset domrachev03/sim_3stage_v2_val_fs \
-  --pretrained <ckpt> \
-  --task "Three-stage assembly" \
-  --stats <ckpt-train-stats> \
-  --image-key observation.images.wrist \
-  --type sarm_ext --head-mode sparse \
-  --out outputs/sarm_gate_eval_<name> --label <name>
+PROD paperfull:  n_obs=8, frame_gap=5  →  max_future = 35 frames @ 20fps = 1.75s lag
+Target:                                                       ≤  8 frames =  0.40s
+Max plan:                                                     ≤  4 frames =  0.20s
 ```
 
-Gates (fully implemented, including `succ_term_max5_rate` from last5 frames):
-- succ_term_rate ≥ 0.95, succ_term_max5_rate ≥ 0.95
-- lin_mad ≤ 0.25
-- mean_mid ≥ 0.25
-- monotonicity ≥ 0.85
-- last_stage_max_prog_rate ≥ 1.0
-- fail_term_rate = 0
-- zero_max_ge_0.5 = 0 (priority for non-progress eps)
-- plateau_ok_rate ≥ 0.8
-- stage_not_exceed_rate ≥ 0.9 (#1 priority)
-- stage_not_below_rate ≥ 0.7 (#3 priority)
+## Active iteration (T1: lerobot-147 in_progress)
 
-### ACT eval (gym_manipulator + SARM-reward + CNN cls)
-```
-CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run python -m lerobot.scripts.eval_chunk_policy \
-  --config_path=src/lerobot/rl/sim_3stage_act_succonly_sarmrew_eval_env.json \
-  --pretrained=<act-ckpt> \
-  --n-episodes=20 --policy-type=act --task="Three-stage assembly" \
-  --video-dir=outputs/<rollouts> \
-  --cnn-ckpt=outputs/cnn_v2_front_v1/best.pt --cnn-thr=0.5
-```
-- eval env JSON points to **paperfull_24k** SARM as reward (see `src/lerobot/rl/sim_3stage_act_succonly_sarmrew_eval_env.json`)
-- patched eval_chunk_policy.py adds `max_cum`, `cnn_succ`, `cnn_max_prob` per ep
-- success_thr at sim cfg = 0.5 (NOT used for cls — uses CNN as honest oracle)
+4 short-horizon variants on remote DL_A6000, 12k steps each, 4 ckpts each
+(save_freq=3000), ETA ~1h parallel. paperfull recipe otherwise (sw=10,
+epstart_anchor=true, mlp_heads=true, use_causal_mask=false, peak_lr=2e-5,
+batch=32, 2cam, frozen CLIP).
 
-## Teleop env (current target)
+| variant | n_obs | gap | max_delta | lag | output_dir |
+|---|---|---|---|---|---|
+| A | 4 | 2 |  6 | 0.30s | `outputs/sarm_shorthor_a_n4g2` |
+| B | 4 | 1 |  3 | 0.15s | `outputs/sarm_shorthor_b_n4g1` |
+| C | 6 | 2 | 10 | 0.50s | `outputs/sarm_shorthor_c_n6g2` |
+| D | 8 | 1 |  7 | 0.35s | `outputs/sarm_shorthor_d_n8g1` |
 
-`src/lerobot/rl/sim_3stage_sarm_teleop_env.json` — wired to **succonly_paperfull** (last user toggled). Run:
+PIDs `1131807,1131809,1131811,1131813` on G0/G1/G2/G3. Logs `/tmp/shorthor_*.log`.
+
+## Recent findings
+
+### Sync vs async inference (the key insight)
+
+- Paper-arch SARM trained with **bidirectional** windows (real future frames at
+  offsets +5..+35 from anchor frame).
+- Old async inference (default before May 10): replicates current frame for
+  all positive deltas → window OOD vs training → noisy stage transitions.
+- New `sync_inference: true` (added in `lerobot/processor/reward_model/sarm.py`):
+  shifts deltas to non-positive (use real past frames). Window matches
+  training distribution. Trade-off: 1.75s lag.
+- Verified on user teleop run: per-stage SARM-vs-GT lag 28-40 steps ≈ design
+  35 = 1.75s. All 6 stages tracked correctly. Mono.
+
+### CLIP fine-tune outcomes
+
+`clipft_a/b/e 2k = 9/10 sync gates` (vs PROD 5/10). All overfit past 2k. But
+in async/teleop tests, clipft models DEGRADED — overfit to future-frame
+context that doesn't exist online. PROD paperfull_lowlr/24k stays the
+production teleop ckpt.
+
+### Buffer prewarm (in `processor/reward_model/sarm.py`)
+
+When sync_inference active and buffer empty (episode start), replicate
+first observation to fill ring buffer maxlen → no "all-zero progress for
+first 35 steps" artifact.
+
+### Logging + analysis
+
+- `SARMRewardConfig.log_jsonl_path` → per-step JSONL (progress, stage_idx,
+  stage_conf, stage_probs, delta_indices, buffer_len, gt_stage_idx,
+  gt_stage_started_this_frame, ts).
+- `scripts_local/analyze_teleop_log.py` → per-episode plot, `detect_sync_lag`
+  reads anchor-slot delta (slot 1 for epstart_anchor) for shift, plots raw
+  + lag-shifted views.
+
+## Infra reference
+
+### Remote DL_A6000
+
 ```
+host: irislab.asuscomm.com:8003 (DNS flaky)
+fallback: ssh -p 8003 -o StrictHostKeyChecking=no dom_iva@143.248.121.169
+ssh alias: DL_A6000
+4× A6000 (G0-G3), uv-managed venv at ~/.local/bin/uv
+disk: 1.8TB, ~58G free post-cleanup; PRUNE OFTEN
+code sync: rsync (no git remote on remote machine)
+```
+
+### Train: launch + monitor
+
+```bash
+# Launch (template)
+ssh DL_A6000 'cd ~/github.com/orel/lerobot/lerobot && \
+  CUDA_VISIBLE_DEVICES=N nohup ~/.local/bin/uv run python -m \
+    lerobot.scripts.lerobot_train \
+    --config_path=src/lerobot/rl/<cfg>.json > /tmp/<name>.log 2>&1 & echo $!'
+
+# Track progress (poll loop)
+ssh DL_A6000 'tail -1 /tmp/<name>.log | tr "\r" "\n" | tail -2'
+
+# Ckpt list
+ssh DL_A6000 'ls ~/github.com/orel/lerobot/lerobot/outputs/<run>/checkpoints/'
+```
+
+Use `Monitor` tool with `until <ckpt-saved>; do sleep 60; done` for
+event-driven notifications instead of polling.
+
+### Eval: sync (default) val_fs
+
+```bash
+ssh DL_A6000 'cd ~/github.com/orel/lerobot/lerobot && \
+  CUDA_VISIBLE_DEVICES=N ~/.local/bin/uv run python -m \
+    lerobot_policy_sarm.eval_sarm_sim_assemble \
+    --dataset domrachev03/sim_3stage_v2_val_fs \
+    --pretrained outputs/<run>/checkpoints/<step>/pretrained_model \
+    --task "Three-stage assembly" \
+    --stats local/sim_3stage_v2_full_v2_nostale \
+    --image-key observation.images.wrist \
+    --type sarm_ext --head-mode sparse \
+    --out outputs/sarm_gate_eval_<label> --label <label>'
+
+# Gates: 11 total (sT, sT5, lin_mad, mid, mono, last, ft, zero_max,
+# plateau, stNE, stNB). PROD = 5/10, clipft 2k = 9/10.
+
+# Async eval (matches teleop if sync_inference=false): add --mode async
+```
+
+Leaderboard dump (run on remote):
+
+```bash
+ssh DL_A6000 'python3 /tmp/dump_all.py' | head -25
+```
+
+(`/tmp/dump_all.py` reads every `outputs/sarm_gate_eval_*/metrics.json`;
+sorts by `gates_passed`.)
+
+### Teleop test
+
+```bash
 DISPLAY=:0 uv run python -m lerobot.rl.gym_manipulator \
   --config_path=src/lerobot/rl/sim_3stage_sarm_teleop_env.json
 ```
 
-## Key code mods
+Currently wired: `paperfull_lowlr/024000` + `sync_inference: true` +
+`log_jsonl_path: outputs/teleop_logs/sarm_teleop.jsonl`.
 
-- `lerobot_policy_sarm/.../configuration_sarm.py`: `epstart_anchor`, `mlp_heads`, `use_causal_mask`, `progress_loss_weight`, `stage_class_weights`, `peak_lr`
-- `lerobot_policy_sarm/.../eval_sarm_sim_assemble.py`: added `terminal_max5` metric + `succ_term_max5_rate` gate
-- `lerobot/.../policies/act/modeling_act.py`: `forward(batch, reduction="none")` for per-sample loss → RA-BC weighting
-- `lerobot/.../scripts/lerobot_train.py`: wires `rabc_weights_provider` → per-sample-weighted loss
-- `lerobot/.../scripts/eval_chunk_policy.py`: `--cnn-ckpt`, `--cnn-thr`, per-ep `cnn_max_prob`, `cnn_success`
-- `simulator_for_IL_RL/simulator_for_il_rl/env.py`: `Renderer(model, height=128, width=128)` (was 224, broke v2 visual match)
-- `scripts_local/`: `combine_datasets.py`, `resize_videos.py`, `filter_stale_state_frames.py`, `discretize_gripper.py`, `train_cnn_success_classifier.py`, `cnn_eval_v2.py`, `subset_episodes.py`
-- `src/lerobot/scripts/destale_actions.py`: `--last-frac 0.3` for tail-30 destale
+User presses gamepad stage-advance to log GT. After episode:
 
-## SARM iteration history (24+ variants on v2_full_v2_nostale)
+```bash
+uv run python scripts_local/analyze_teleop_log.py \
+  outputs/teleop_logs/sarm_teleop.jsonl
+```
 
-Best by zero_max (priority gate):
-- paperfull (M2+M3+M4 sw=10, 14k): zero_max=0.000 ✓ — first to hit
-- paperfull_lowlr (peak_lr=2e-5, 24k): zero_max=0.000, **5/10 gates** ← prod
-- paperfull seed=42: high seed variance (3/10 vs 4/10 seed=1000)
+Auto-detects sync lag, plots raw + shifted views.
 
-Levers tested (didn't beat paperfull_lowlr):
-- sw ∈ {3,5,10,20}: sw=10 optimal (+ paperfull arch)
-- plw ∈ {0.3,1,1.5,2,3,5}: non-monotonic, plw=1 default best with paperfull
-- frame_gap ∈ {3,5,10}: 5 optimal
-- n_obs ∈ {8,12,16}: 8 optimal
-- max_rewind ∈ {3,5}: 3 optimal
-- batch ∈ {16,32}: 32 optimal w/ paperfull
-- steps: 14k/24k/40k → 24k optimal for paperfull, lowlr stable longer
-- lr: 5e-5 default → 2e-5 (lowlr) better
-- iter4 recipe (5k steps, sw=3, wrist-only, batch=16, no paper-arch): 2/10 → undertrained for 6-stage
-- succplusfew (succ + few partials): 3/10 (zero_max=0.78)
-- succonly: 2/10 (zero_max=1.0 — never sees no-progress)
-- raw (no nostale): 3/10
-- inverse_freq stage weights: no help
-- bigger CLIP backbone B/16, L/14: worse on v3 era
-- drop_n_last_frames=0: no help
+## Storage paths
 
-## ACT iteration history
+### Local (`/home/dom-iva/github.com/orel/lerobot/lerobot/outputs/`)
 
-Phase 1 baseline = chunk20 RABC w/ succonly_sw3 SARM. SARM hallucinated → mean_reward=0.62 misleading.
+See `MEMORY.md → reference_local_weights_inventory.md` for full inventory.
+Highlights:
 
-After CNN added as honest oracle: all variants 0/20 CNN succ.
+```
+sim_3stage_sarm_v2_full_v2_paperfull_lowlr/checkpoints/024000/  # PROD 5/10
+sarm_clipft_a_baseline/checkpoints/002000/                       # 9/10 sync
+act_v2_full_v2_tail30_chunk80/checkpoints/080000/                # ACT prod
+cnn_v2_front_v1/best.pt                                          # success cls
+```
 
-Best by mean_reward + cnn_max_prob:
-- chunk=80 BC tail30: cnn_max=0.368 (peak)
-- chunk=80 + lowlr RABC: mean_rew=0.242 (peak)
-- chunk=160 BC tail30: mean_rew=0.233
+### Remote (~58G free, kept minimal)
 
-Levers tested:
-- chunk ∈ {10,20,40,80,120,160}: chunk=80 optimal for CNN
-- ResNet18 vs ResNet50: RN50 doesn't help when combined w/ chunk=40 (combo dropped CNN signal)
-- RA-BC kappa ∈ {0.005,0.01,0.05}: 0.01 default best
-- BC vs RA-BC: similar, RA-BC slightly better w/ best SARM
-- RABC source SARM: paperfull, paperfull_24k, paperfull_lowlr — no major diff
-- tail-30 destale: helps mean_reward 5x but doesn't break CNN ceiling
+- `outputs/sim_3stage_sarm_v2_full_v2_paperfull_lowlr` (PROD baseline for retrain)
+- `outputs/act_v2_full_v2_tail30_chunk80*` (ACT prod ×2)
+- `outputs/sarm_gate_eval_*/` (~50 metric dirs, ~2GB)
+- `outputs/sarm_shorthor_{a,b,c,d}*` (active iteration)
 
-## Lessons
+### Datasets (HF cache)
 
-- **paperfull (M2+M3+M4 paper arch) breakthrough**: zero_max=0 first time. Critical lever.
-- **lowlr**: paperfull's seed-variance problem solved by peak_lr=2e-5. 4/10→5/10.
-- **paperfull SARM hallucinates on ACT rollouts**: passes recorded-demo gates but rates ACT visual gripper-open as completion. CNN is orthogonal honest oracle.
-- **chunk size matters more than RABC weighting**: chunk=80 BC alone beats chunk=20 RABC w/ paperfull SARM.
-- **2-stage 40% champion (epic-52)**: used 15-D state w/ EE pose + tail-30 destale + chunk=10. Untested on 6-stage: state augmentation w/ FK is the only big remaining lever.
-- **ACT plateau hypothesis**: 6-stage genuinely harder + state lacks EE pose precision needed for cover placement. CNN ceiling ~0.37.
+```
+~/.cache/huggingface/lerobot/local/sim_3stage_v2_full_v2_nostale          # train, 307 eps
+~/.cache/huggingface/lerobot/domrachev03/sim_3stage_v2_val_fs              # val, 158 eps
+~/.cache/huggingface/lerobot/local/sim_3stage_v2_full_v2_succonly_nostale  # 205 succ
+~/.cache/huggingface/lerobot/local/sim_3stage_v2_honest_val                # 30 full eps
+```
 
-## Open paths
+## Beads epic open
 
-1. **15-D state w/ FK-augmented EE pose** (untested, biggest pending lever)
-2. record more demos (current ≤ 200 succ may be insufficient)
-3. CNN-as-reward for RABC (user dropped this option)
-4. stage-conditioned ACT (user dropped)
+```
+lerobot-146 EPIC: SARM 9/10 sync gates @ lag <0.4s
+  lerobot-147 T1: train 4 short-horizon variants    (in_progress)
+  lerobot-148 T2: sync val_fs eval all ckpts        (open)
+  lerobot-149 T3: pick winner + wire teleop         (open)
+  lerobot-150 T4: brainstorm next iter              (open)
+```
 
-## Resource notes
+## Iteration cycle (autonomous)
 
-- `DL_A6000` ssh alias = irislab.asuscomm.com:8003 (DNS flaky); fallback IP 143.248.121.169:8003 (need `-o StrictHostKeyChecking=no`)
-- Disk on remote: 1.8TB used, ~30G free typical, fills mid-train. Cleanup ckpts often.
-- Recording requires `DISPLAY=:1` (X session); EGL doesn't work for teleop
+1. **Wait** for ckpts to save (Monitor on output_dir/checkpoints/).
+2. **Eval** each ckpt sync mode on val_fs.
+3. **Dump leaderboard**, identify gate_pass max.
+4. If best <9/10: brainstorm + deploy next variants (e.g. longer steps,
+   different sw/plw, dataset variant).
+5. If best ≥9/10: wire winner into teleop, verify lag matches design,
+   close epic.
+6. **Don't stop** until target met OR user explicitly halts.
 
-## Recent active runs
+## Caveman ultra mode
 
-paperfull_lowlr_40k done (4/10 best ckpt — no improvement vs 24k). Production stays paperfull_lowlr 24k.
+Active. Drop articles/filler/hedging; fragments OK; abbreviate aggressively.
+Code/commits/security: write normal. User says `normal` to revert.
 
-succonly_paperfull retrain killed (per user request). Local `outputs/sim_3stage_sarm_v2_full_v2_succonly_paperfull/checkpoints/014000` exists from earlier — wired to teleop now.
+## Memory pointers
+
+- `feedback_keep_iterating.md` — don't stop on plateau; brainstorm + deploy
+- `feedback_dump_state_at_95pct.md` — write COMPACT_HANDOFF.md when ctx near full
+- `reference_local_weights_inventory.md` — every kept ckpt path
+- `reference_dl_a6000_server.md` — DNS, ssh, disk
+- `feedback_no_kill_in_progress.md` — never pkill without explicit ask
+- `feedback_eval_on_same_gpu.md` — pin CUDA_VISIBLE_DEVICES on freed GPU
+- `feedback_check_config_alignment_before_model_fixes.md` — diff env/scene before model fixes
+
+## Compact prompt
+
+After compaction, run `bd ready` to refresh open task list. Re-read
+`docs/COMPACT_HANDOFF.md` for state. Caveman ultra is on (`/caveman ultra`
+re-arm if needed). User reserves local G0; remote is iteration target.

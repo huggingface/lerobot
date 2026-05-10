@@ -1,0 +1,9 @@
+{"output_dir":"outputs/sarm_shorthor_c_n6g2","job_name":"sarm_shorthor_c_n6g2",
+"resume":false,"seed":1000,"num_workers":12,"batch_size":32,"steps":12000,
+"eval_freq":0,"log_freq":100,"save_checkpoint":true,"save_freq":3000,
+"use_policy_training_preset":true,"wandb":{"enable":false},
+"dataset":{"repo_id":"local/sim_3stage_v2_full_v2_nostale","use_imagenet_stats":false},
+"policy":{"type":"sarm_ext","annotation_mode":"dual","device":"cuda","push_to_hub":false,
+"image_keys":["observation.images.front","observation.images.wrist"],"state_key":"observation.state",
+"n_obs_steps":6,"frame_gap":2,"max_rewind_steps":2,"batch_size":32,"clip_batch_size":32,
+"stage_loss_weight":10.0,"epstart_anchor":true,"use_causal_mask":false,"mlp_heads":true,"peak_lr":2e-5}}
