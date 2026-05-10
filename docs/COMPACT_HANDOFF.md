@@ -19,10 +19,11 @@ Max plan:                                                     ≤  4 frames =  0
 
 ## Active iteration (T1: lerobot-147 in_progress)
 
-4 short-horizon variants on remote DL_A6000, 12k steps each, 4 ckpts each
-(save_freq=3000), ETA ~1h parallel. paperfull recipe otherwise (sw=10,
-epstart_anchor=true, mlp_heads=true, use_causal_mask=false, peak_lr=2e-5,
-batch=32, 2cam, frozen CLIP).
+4 short-horizon **CLIP-FT** variants on remote DL_A6000, 2.5k steps each
+(save_freq=1000 → 2 ckpts + last), bs=8, ETA ~2h parallel. paperfull
+recipe + `freeze_clip=False` + `clip_lr=5e-7` (matches clipft iter1+2 winners
+that hit 9/10 sync gates @ 2k). Strategy: take 9/10 baseline + shrink
+horizon to drop teleop sync_inference lag.
 
 | variant | n_obs | gap | max_delta | lag | output_dir |
 |---|---|---|---|---|---|
@@ -31,7 +32,8 @@ batch=32, 2cam, frozen CLIP).
 | C | 6 | 2 | 10 | 0.50s | `outputs/sarm_shorthor_c_n6g2` |
 | D | 8 | 1 |  7 | 0.35s | `outputs/sarm_shorthor_d_n8g1` |
 
-PIDs `1131807,1131809,1131811,1131813` on G0/G1/G2/G3. Logs `/tmp/shorthor_*.log`.
+PIDs `1139769,1139771,1139773,1139775` on G0/G1/G2/G3. VRAM 14-18GB each.
+Logs `/tmp/shorthor_*.log`.
 
 ## Recent findings
 
