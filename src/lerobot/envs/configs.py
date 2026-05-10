@@ -227,6 +227,11 @@ class EnvRewardModelConfig:
     # crosses success_threshold. Reward / bonus still fires; termination is
     # left to the human SUCCESS button (gamepad) or env truncation.
     disable_threshold_termination: bool = False
+    # SARM only: when True, run "sync" inference (shift positive deltas to past,
+    # adds latency = max_future_delta * dt). Matches offline sync eval.
+    sync_inference: bool = False
+    # SARM only: optional JSONL append path for per-step debug log.
+    log_jsonl_path: str | None = None
 
 
 @dataclass

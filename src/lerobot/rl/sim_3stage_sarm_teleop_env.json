@@ -34,16 +34,18 @@
             ],
             "reward_model": {
                 "type": "sarm_ext",
-                "pretrained_path": "outputs/sarm_clipft_a_baseline/checkpoints/002000/pretrained_model",
+                "pretrained_path": "outputs/sim_3stage_sarm_v2_full_v2_paperfull_lowlr/checkpoints/024000/pretrained_model",
                 "device": "cuda",
                 "task": "Three-stage assembly",
                 "head_mode": "sparse",
                 "reward_mode": "delta",
                 "success_threshold": 0.5,
                 "stats_dataset_repo_id": "local/sim_3stage_v2_full_v2_nostale",
-                "eval_every_n_steps": 2,
+                "eval_every_n_steps": 1,
                 "verbose": true,
-                "verbose_every_n_steps": 2
+                "verbose_every_n_steps": 2,
+                "sync_inference": true,
+                "log_jsonl_path": "outputs/teleop_logs/sarm_teleop.jsonl"
             },
             "inverse_kinematics": {
                 "end_effector_bounds": {

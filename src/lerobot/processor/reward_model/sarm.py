@@ -68,6 +68,17 @@ class SARMRewardConfig(RewardModelConfig):
     # by threshold). Reward / bonus still fires. Termination must come from
     # an external source (e.g. gamepad SUCCESS button).
     disable_threshold_termination: bool = False
+    # When True, run SARM in "sync" mode: shift positive observation_delta_indices
+    # to non-positive (past). Output progress for frame t-max_future_delta using
+    # window built only from past frames in the ring buffer. Adds latency =
+    # max_future_delta frames * dt (~1.75s for paperfull). Matches training-time
+    # offline-eval distribution (which sees real future frames). Default False
+    # = legacy async behavior (replicates current frame for future deltas).
+    sync_inference: bool = False
+    # Path to JSONL log file. If set, every verbose SARM step appends
+    # {step, stage_idx, stage_name, stage_conf, progress, delta_indices, ts}.
+    # Used to diagnose teleop vs eval distribution gap.
+    log_jsonl_path: str | None = None
 
     def __post_init__(self) -> None:
         allowed = {"binary", "dense", "delta"}
@@ -138,6 +149,18 @@ class SARMRewardProcessorStep(BaseRewardProcessorStep):
             self._center_idx = 1
         else:
             self._center_idx = n_obs // 2
+
+        # SYNC inference: shift positive (future) deltas to non-positive (past).
+        # Effect: output progress is for frame `t - max_future_delta`, using past
+        # frames from the ring buffer. Matches the offline sync eval distribution.
+        if getattr(self.config, "sync_inference", False):
+            max_future_delta = max((d for d in self._delta_indices if d > 0), default=0)
+            if max_future_delta > 0:
+                self._delta_indices = [d - max_future_delta for d in self._delta_indices]
+                logging.info(
+                    "SARM sync_inference: shifted delta_indices by -%d → %s (latency=%.2fs at 20fps)",
+                    max_future_delta, self._delta_indices, max_future_delta / 20.0,
+                )
 
         max_back = max(-min(self._delta_indices), 0)
         self._image_bufs = {k: deque(maxlen=max_back + 1) for k in self._image_keys}
@@ -431,6 +454,24 @@ class SARMRewardProcessorStep(BaseRewardProcessorStep):
         filled = int(prog * bar_w)
         bar = "▓" * filled + "░" * (bar_w - filled)
         print(f"[SARM step={self._step_counter:5d}] |{bar}| {prog:.3f}  stage={stage_name}({stage_conf:.2f})", flush=True)
+        # Optional JSONL debug log
+        log_path = getattr(self.config, "log_jsonl_path", None)
+        if log_path:
+            import json as _json, time as _time, os as _os
+            _os.makedirs(_os.path.dirname(log_path) or ".", exist_ok=True)
+            entry = {
+                "ts": _time.time(),
+                "step": int(self._step_counter),
+                "progress": float(prog),
+                "stage_idx": int(stage_idx),
+                "stage_name": str(stage_name),
+                "stage_conf": float(stage_conf),
+                "stage_probs": [float(x) for x in sp.tolist()],
+                "delta_indices": list(self._delta_indices) if self._delta_indices else None,
+                "buffer_len": len(self._image_bufs.get(self._image_keys[0], [])) if self._image_bufs else 0,
+            }
+            with open(log_path, "a") as f:
+                f.write(_json.dumps(entry) + "\n")
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         new_transition = transition.copy()
