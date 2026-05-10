@@ -29,8 +29,10 @@ from .feature_utils import get_hf_features_from_features
 from .io_utils import (
     get_file_size_in_mb,
     get_parquet_file_size_in_mb,
+    read_lerobot_data_frame,
     to_parquet_with_hf_images,
     write_info,
+    write_lerobot_data_frame,
     write_stats,
     write_tasks,
 )
@@ -457,10 +459,7 @@ def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_si
     }
 
     unique_chunk_file_ids = sorted(unique_chunk_file_ids)
-    contains_images = len(dst_meta.image_keys) > 0
-
-    # retrieve features schema for proper image typing in parquet
-    hf_features = get_hf_features_from_features(dst_meta.features) if contains_images else None
+    hf_features = get_hf_features_from_features(dst_meta.features)
 
     # Track source to destination file mapping for metadata update
     # This is critical for handling datasets that are already results of a merge
@@ -470,12 +469,7 @@ def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_si
         src_path = src_meta.root / DEFAULT_DATA_PATH.format(
             chunk_index=src_chunk_idx, file_index=src_file_idx
         )
-        if contains_images:
-            # Use HuggingFace datasets to read source data to preserve image format
-            src_ds = datasets.Dataset.from_parquet(str(src_path))
-            df = src_ds.to_pandas()
-        else:
-            df = pd.read_parquet(src_path)
+        df = read_lerobot_data_frame(src_path, hf_features)
         df = update_data_df(df, src_meta, dst_meta)
 
         # Write data and get the actual destination file it was written to
@@ -487,7 +481,6 @@ def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_si
             data_files_size_in_mb,
             chunk_size,
             DEFAULT_DATA_PATH,
-            contains_images=contains_images,
             aggr_root=dst_meta.root,
             hf_features=hf_features,
         )
@@ -592,8 +585,10 @@ def append_or_create_parquet_file(
 
     if not dst_path.exists():
         dst_path.parent.mkdir(parents=True, exist_ok=True)
-        if contains_images:
-            to_parquet_with_hf_images(df, dst_path, features=hf_features)
+        if hf_features is not None:
+            write_lerobot_data_frame(df, dst_path, hf_features)
+        elif contains_images:
+            to_parquet_with_hf_images(df, dst_path)
         else:
             df.to_parquet(dst_path)
         return idx, (dst_chunk, dst_file)
@@ -609,17 +604,19 @@ def append_or_create_parquet_file(
         final_df = df
         target_path = new_path
     else:
-        if contains_images:
-            # Use HuggingFace datasets to read existing data to preserve image format
-            existing_ds = datasets.Dataset.from_parquet(str(dst_path))
-            existing_df = existing_ds.to_pandas()
+        if hf_features is not None:
+            existing_df = read_lerobot_data_frame(dst_path, hf_features)
+        elif contains_images:
+            existing_df = datasets.Dataset.from_parquet(str(dst_path)).to_pandas()
         else:
             existing_df = pd.read_parquet(dst_path)
         final_df = pd.concat([existing_df, df], ignore_index=True)
         target_path = dst_path
 
-    if contains_images:
-        to_parquet_with_hf_images(final_df, target_path, features=hf_features)
+    if hf_features is not None:
+        write_lerobot_data_frame(final_df, target_path, hf_features)
+    elif contains_images:
+        to_parquet_with_hf_images(final_df, target_path)
     else:
         final_df.to_parquet(target_path)
 

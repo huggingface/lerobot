@@ -29,10 +29,8 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-import datasets
 import numpy as np
 import pandas as pd
-import pyarrow.parquet as pq
 import torch
 from tqdm import tqdm
 
@@ -46,10 +44,13 @@ from .compute_stats import (
     compute_relative_action_stats,
 )
 from .dataset_metadata import LeRobotDatasetMetadata
+from .feature_utils import get_hf_features_from_features
 from .io_utils import (
     get_parquet_file_size_in_mb,
     load_episodes,
+    read_lerobot_data_frame,
     write_info,
+    write_lerobot_data_frame,
     write_stats,
     write_tasks,
 )
@@ -504,11 +505,12 @@ def _copy_and_reindex_data(
 
     global_index = 0
     episode_data_metadata: dict[int, dict] = {}
+    src_hf_features = get_hf_features_from_features(src_dataset.meta.features)
 
     if dst_meta.tasks is None:
         all_task_indices = set()
         for src_path in file_to_episodes:
-            df = pd.read_parquet(src_dataset.root / src_path)
+            df = read_lerobot_data_frame(src_dataset.root / src_path, src_hf_features)
             mask = df["episode_index"].isin(list(episode_mapping.keys()))
             task_series: pd.Series = df[mask]["task_index"]
             all_task_indices.update(task_series.unique().tolist())
@@ -523,7 +525,7 @@ def _copy_and_reindex_data(
             task_mapping[old_task_idx] = new_task_idx
 
     for src_path in tqdm(sorted(file_to_episodes.keys()), desc="Processing data files"):
-        df = pd.read_parquet(src_dataset.root / src_path)
+        df = read_lerobot_data_frame(src_dataset.root / src_path, src_hf_features)
 
         all_episodes_in_file = set(df["episode_index"].unique())
         episodes_to_keep = file_to_episodes[src_path]
@@ -918,19 +920,8 @@ def _write_parquet(df: pd.DataFrame, path: Path, meta: LeRobotDatasetMetadata) -
 
     This ensures images are properly embedded and the file can be loaded correctly by HF datasets.
     """
-    from .feature_utils import get_hf_features_from_features
-    from .io_utils import embed_images
-
     hf_features = get_hf_features_from_features(meta.features)
-    ep_dataset = datasets.Dataset.from_dict(df.to_dict(orient="list"), features=hf_features, split="train")
-
-    if len(meta.image_keys) > 0:
-        ep_dataset = embed_images(ep_dataset)
-
-    table = ep_dataset.with_format("arrow")[:]
-    writer = pq.ParquetWriter(path, schema=table.schema, compression="snappy", use_dictionary=True)
-    writer.write_table(table)
-    writer.close()
+    write_lerobot_data_frame(df, path, hf_features)
 
 
 def _save_data_chunk(
@@ -981,9 +972,10 @@ def _copy_data_with_feature_changes(
         raise ValueError(f"No parquet files found in {data_dir}")
 
     frame_idx = 0
+    src_hf_features = get_hf_features_from_features(dataset.meta.features)
 
     for src_path in tqdm(parquet_files, desc="Processing data files"):
-        df = pd.read_parquet(src_path).reset_index(drop=True)
+        df = read_lerobot_data_frame(src_path, src_hf_features).reset_index(drop=True)
 
         relative_path = src_path.relative_to(dataset.root)
         chunk_dir = relative_path.parts[1]
@@ -1371,9 +1363,11 @@ def _copy_data_without_images(
         raise ValueError(f"No parquet files found in {data_dir}")
 
     episode_set = set(episode_indices)
+    src_hf_features = get_hf_features_from_features(src_dataset.meta.features)
+    dst_hf_features = get_hf_features_from_features(dst_meta.features)
 
     for src_path in tqdm(parquet_files, desc="Processing data files"):
-        df = pd.read_parquet(src_path).reset_index(drop=True)
+        df = read_lerobot_data_frame(src_path, src_hf_features).reset_index(drop=True)
 
         # Filter to only include selected episodes
         df = df[df["episode_index"].isin(episode_set)].copy()
@@ -1395,8 +1389,7 @@ def _copy_data_without_images(
 
         # Write to destination without pandas index
         dst_path = dst_meta.root / f"data/chunk-{chunk_idx:03d}/file-{file_idx:03d}.parquet"
-        dst_path.parent.mkdir(parents=True, exist_ok=True)
-        df.to_parquet(dst_path, index=False)
+        write_lerobot_data_frame(df, dst_path, dst_hf_features)
 
 
 # Video conversion constants
@@ -1491,9 +1484,10 @@ def modify_tasks(
     # Update data files - modify task_index column
     logging.info("Updating data files...")
     data_dir = root / DATA_DIR
+    hf_features = get_hf_features_from_features(dataset.meta.features)
 
     for parquet_path in tqdm(sorted(data_dir.rglob("*.parquet")), desc="Updating data"):
-        df = pd.read_parquet(parquet_path)
+        df = read_lerobot_data_frame(parquet_path, hf_features)
 
         # Build a mapping from episode_index to new task_index for rows in this file
         episode_indices_in_file = df["episode_index"].unique()
@@ -1503,7 +1497,7 @@ def modify_tasks(
 
         # Update task_index column
         df["task_index"] = df["episode_index"].map(ep_to_new_task_idx)
-        df.to_parquet(parquet_path, index=False)
+        write_lerobot_data_frame(df, parquet_path, hf_features)
 
     # Update episodes metadata - modify tasks column
     logging.info("Updating episodes metadata...")
@@ -1600,9 +1594,10 @@ def recompute_stats(
 
     all_episode_stats = []
     numeric_keys = [k for k, v in features_to_compute.items() if v["dtype"] not in ["image", "video"]]
+    hf_features = get_hf_features_from_features(dataset.meta.features)
 
     for parquet_path in tqdm(parquet_files, desc="Computing stats from data files"):
-        df = pd.read_parquet(parquet_path)
+        df = read_lerobot_data_frame(parquet_path, hf_features)
 
         for ep_idx in sorted(df["episode_index"].unique()):
             ep_df = df[df["episode_index"] == ep_idx]

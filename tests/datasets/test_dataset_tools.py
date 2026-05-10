@@ -23,15 +23,19 @@ import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+import datasets  # noqa: E402
+
 from lerobot.datasets.dataset_tools import (
     add_features,
     delete_episodes,
     merge_datasets,
     modify_features,
     modify_tasks,
+    recompute_stats,
     remove_feature,
     split_dataset,
 )
+from lerobot.datasets.feature_utils import get_hf_features_from_features
 from lerobot.scripts.lerobot_edit_dataset import convert_image_to_video_dataset
 
 
@@ -62,6 +66,50 @@ def sample_dataset(tmp_path, empty_lerobot_dataset_factory):
 
     dataset.finalize()
     return dataset
+
+
+def make_nested_array_dataset(
+    root,
+    empty_lerobot_dataset_factory,
+    num_episodes: int = 3,
+    frames_per_episode: int = 4,
+):
+    """Create a no-image dataset with fixed-shape nested array columns."""
+    features = {
+        "ctrl.joint_angles": {"dtype": "float32", "shape": (2, 7), "names": None},
+        "ctrl.gripper_width": {"dtype": "float32", "shape": (2, 1), "names": None},
+    }
+    dataset = empty_lerobot_dataset_factory(root=root, features=features)
+
+    for ep_idx in range(num_episodes):
+        for frame_idx in range(frames_per_episode):
+            dataset.add_frame(
+                {
+                    "ctrl.joint_angles": np.full((2, 7), ep_idx + frame_idx / 10, dtype=np.float32),
+                    "ctrl.gripper_width": np.full((2, 1), frame_idx, dtype=np.float32),
+                    "task": f"task_{ep_idx % 2}",
+                }
+            )
+        dataset.save_episode()
+
+    dataset.finalize()
+    return dataset
+
+
+def assert_nested_arrays_load(dataset):
+    item = dataset[0]
+    assert item["ctrl.joint_angles"].shape == torch.Size([2, 7])
+    assert item["ctrl.joint_angles"].dtype == torch.float32
+    assert item["ctrl.gripper_width"].shape == torch.Size([2, 1])
+    assert item["ctrl.gripper_width"].dtype == torch.float32
+
+
+def assert_nested_array_parquet_schema(dataset):
+    hf_features = get_hf_features_from_features(dataset.meta.features)
+    parquet_path = dataset.root / dataset.meta.get_data_file_path(0)
+    direct = datasets.Dataset.from_parquet(str(parquet_path), features=hf_features)
+    assert direct.features["ctrl.joint_angles"].shape == (2, 7)
+    assert direct.features["ctrl.gripper_width"].shape == (2, 1)
 
 
 def test_delete_single_episode(sample_dataset, tmp_path):
@@ -295,6 +343,155 @@ def test_merge_empty_list(tmp_path):
     """Test error when merging empty list."""
     with pytest.raises(ValueError, match="No datasets to merge"):
         merge_datasets([], output_repo_id="merged", output_dir=tmp_path)
+
+
+def test_merge_datasets_with_nested_array_features_no_images(tmp_path, empty_lerobot_dataset_factory):
+    """Test merging no-image datasets with fixed-shape nested array features."""
+    dataset1 = make_nested_array_dataset(
+        tmp_path / "nested_dataset1", empty_lerobot_dataset_factory, num_episodes=2
+    )
+    dataset2 = make_nested_array_dataset(
+        tmp_path / "nested_dataset2", empty_lerobot_dataset_factory, num_episodes=3
+    )
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(tmp_path / "merged_nested")
+
+        merged = merge_datasets(
+            [dataset1, dataset2],
+            output_repo_id="merged_nested",
+            output_dir=tmp_path / "merged_nested",
+        )
+
+    assert merged.meta.total_episodes == dataset1.meta.total_episodes + dataset2.meta.total_episodes
+    assert merged.meta.total_frames == dataset1.meta.total_frames + dataset2.meta.total_frames
+    episode_indices = sorted({int(idx.item()) for idx in merged.hf_dataset["episode_index"]})
+    assert episode_indices == list(range(merged.meta.total_episodes))
+    assert_nested_arrays_load(merged)
+    assert_nested_array_parquet_schema(merged)
+
+
+def test_split_dataset_with_nested_array_features_no_images(tmp_path, empty_lerobot_dataset_factory):
+    """Test splitting no-image datasets with fixed-shape nested array features."""
+    dataset = make_nested_array_dataset(tmp_path / "nested_dataset", empty_lerobot_dataset_factory)
+    splits = {"train": [0, 2], "val": [1]}
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+
+        def mock_snapshot(repo_id, **kwargs):
+            for split_name in splits:
+                if split_name in repo_id:
+                    return str(tmp_path / f"{dataset.repo_id}_{split_name}")
+            return str(kwargs.get("local_dir", tmp_path))
+
+        mock_snapshot_download.side_effect = mock_snapshot
+        result = split_dataset(dataset, splits=splits, output_dir=tmp_path)
+
+    assert set(result) == {"train", "val"}
+    assert result["train"].meta.total_episodes == 2
+    assert result["train"].meta.total_frames == 8
+    assert result["val"].meta.total_episodes == 1
+    assert result["val"].meta.total_frames == 4
+
+    train_episodes = sorted({int(idx.item()) for idx in result["train"].hf_dataset["episode_index"]})
+    val_episodes = sorted({int(idx.item()) for idx in result["val"].hf_dataset["episode_index"]})
+    assert train_episodes == [0, 1]
+    assert val_episodes == [0]
+    assert_nested_arrays_load(result["train"])
+    assert_nested_arrays_load(result["val"])
+    assert_nested_array_parquet_schema(result["train"])
+
+
+def test_delete_episodes_with_nested_array_features_no_images(tmp_path, empty_lerobot_dataset_factory):
+    """Test deleting episodes from no-image datasets with nested array features."""
+    dataset = make_nested_array_dataset(tmp_path / "nested_dataset", empty_lerobot_dataset_factory)
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(tmp_path / "filtered_nested")
+
+        filtered = delete_episodes(dataset, episode_indices=[1], output_dir=tmp_path / "filtered_nested")
+
+    assert filtered.meta.total_episodes == 2
+    assert filtered.meta.total_frames == 8
+    episode_indices = sorted({int(idx.item()) for idx in filtered.hf_dataset["episode_index"]})
+    assert episode_indices == [0, 1]
+    assert_nested_arrays_load(filtered)
+    assert_nested_array_parquet_schema(filtered)
+
+
+def test_modify_features_with_nested_array_features_no_images(tmp_path, empty_lerobot_dataset_factory):
+    """Test adding and removing features preserves existing nested array columns."""
+    dataset = make_nested_array_dataset(tmp_path / "nested_dataset", empty_lerobot_dataset_factory)
+    success_values = np.ones((dataset.meta.total_frames, 1), dtype=np.float32)
+    feature_info = {"dtype": "float32", "shape": (1,), "names": None}
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.side_effect = lambda repo_id, **kwargs: str(kwargs.get("local_dir", tmp_path))
+
+        with_success = add_features(
+            dataset,
+            features={"success": (success_values, feature_info)},
+            output_dir=tmp_path / "with_success",
+        )
+        without_success = remove_feature(
+            with_success,
+            feature_names="success",
+            output_dir=tmp_path / "without_success",
+        )
+
+    assert "success" in with_success.meta.features
+    assert_nested_arrays_load(with_success)
+    assert "success" not in without_success.meta.features
+    assert_nested_arrays_load(without_success)
+    assert_nested_array_parquet_schema(without_success)
+
+
+def test_modify_tasks_with_nested_array_features_no_images(tmp_path, empty_lerobot_dataset_factory):
+    """Test task edits preserve nested array feature columns."""
+    dataset = make_nested_array_dataset(tmp_path / "nested_dataset", empty_lerobot_dataset_factory)
+    episode_tasks = {
+        0: "Alpha task",
+        1: "Beta task",
+        2: "Alpha task",
+    }
+
+    modified = modify_tasks(dataset, episode_tasks=episode_tasks)
+
+    assert_nested_arrays_load(modified)
+    assert_nested_array_parquet_schema(modified)
+    for i in range(len(modified)):
+        item = modified[i]
+        ep_idx = item["episode_index"].item()
+        assert item["task"] == episode_tasks[ep_idx]
+
+
+def test_recompute_stats_with_nested_array_features_no_images(tmp_path, empty_lerobot_dataset_factory):
+    """Test recomputing stats can read fixed-shape nested array data parquet."""
+    dataset = make_nested_array_dataset(tmp_path / "nested_dataset", empty_lerobot_dataset_factory)
+
+    recomputed = recompute_stats(dataset)
+
+    assert {"ctrl.joint_angles", "ctrl.gripper_width"}.issubset(recomputed.meta.stats)
+    assert recomputed.meta.stats["ctrl.joint_angles"]["mean"].shape == (7,)
+    assert recomputed.meta.stats["ctrl.gripper_width"]["mean"].shape == (1,)
+    assert_nested_arrays_load(recomputed)
+    assert_nested_array_parquet_schema(recomputed)
 
 
 def test_add_features_with_values(sample_dataset, tmp_path):
