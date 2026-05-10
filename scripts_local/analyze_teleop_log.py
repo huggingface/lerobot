@@ -52,7 +52,20 @@ def select_episode(eps, mode: str, idx: int | None):
     return [max(eps, key=len)] if eps else []
 
 
-def plot_one(ep, ax_progress, ax_stage, ax_conf, title_prefix=""):
+def detect_sync_lag(deltas):
+    """If sync_inference applied, deltas are all <=0 and the abs of the most-
+    negative non-sentinel delta is the inference lag in env steps. 0 if async."""
+    if not deltas:
+        return 0
+    non_sentinel = [d for d in deltas if abs(d) < 1000]
+    if not non_sentinel:
+        return 0
+    if any(d > 0 for d in non_sentinel):
+        return 0  # async, future-positive deltas → no shift
+    return -min(non_sentinel)
+
+
+def plot_one(ep, ax_progress, ax_stage, ax_conf, title_prefix="", lag_shift: int = 0):
     steps = [r["step"] for r in ep]
     progress = [r["progress"] for r in ep]
     stage_idx = [r["stage_idx"] for r in ep]
@@ -73,19 +86,25 @@ def plot_one(ep, ax_progress, ax_stage, ax_conf, title_prefix=""):
     regress_mask = np.array(stage_idx) < max_so_far
     n_regress = int(regress_mask.sum())
 
-    ax_progress.plot(steps, progress, "-", color="C0", lw=1.1)
+    # When sync_inference applied, SARM output at env step t describes frame
+    # t - lag_shift. Subtract the shift so the prediction line aligns with
+    # the env step the prediction is ABOUT.
+    pred_steps = [s - lag_shift for s in steps]
+    title_lag = f" (lag_shift={lag_shift})" if lag_shift else ""
+
+    ax_progress.plot(pred_steps, progress, "-", color="C0", lw=1.1)
     ax_progress.set_ylabel("progress")
     ax_progress.set_ylim(-0.05, 1.05)
-    ax_progress.set_title(f"{title_prefix}SARM trace  steps={steps[0]}..{steps[-1]}  regressions={n_regress}")
+    ax_progress.set_title(f"{title_prefix}SARM trace{title_lag}  steps={steps[0]}..{steps[-1]}  regressions={n_regress}")
     ax_progress.grid(alpha=0.3)
 
-    ax_stage.plot(steps, stage_idx, "-", color="C1", lw=1.4, label="SARM pred")
+    ax_stage.plot(pred_steps, stage_idx, "-", color="C1", lw=1.4, label="SARM pred")
     if any(g is not None for g in gt_stage_idx):
         gx = [s for s, g in zip(steps, gt_stage_idx) if g is not None]
         gy = [g for g in gt_stage_idx if g is not None]
         ax_stage.step(gx, gy, where="post", color="green", lw=2.2, label="GT (user)")
-    ax_stage.plot(steps, max_so_far, "--", color="gray", lw=0.7, label="max_so_far")
-    ax_stage.fill_between(steps, 0, 6, where=regress_mask, color="red", alpha=0.10, label="regressions")
+    ax_stage.plot(pred_steps, max_so_far, "--", color="gray", lw=0.7, label="max_so_far")
+    ax_stage.fill_between(pred_steps, 0, 6, where=regress_mask, color="red", alpha=0.10, label="regressions")
     for gs, gi, gn in gt_starts:
         ax_stage.axvline(gs, color="green", lw=0.6, alpha=0.4)
     ax_stage.set_ylabel("stage_idx")
@@ -94,7 +113,7 @@ def plot_one(ep, ax_progress, ax_stage, ax_conf, title_prefix=""):
     ax_stage.legend(loc="upper left", fontsize=8)
     ax_stage.grid(alpha=0.3)
 
-    ax_conf.plot(steps, stage_conf, "-", color="C2", lw=1)
+    ax_conf.plot(pred_steps, stage_conf, "-", color="C2", lw=1)
     ax_conf.set_ylabel("stage_conf")
     ax_conf.set_ylim(-0.05, 1.05)
     ax_conf.set_xlabel("env step")
@@ -143,25 +162,31 @@ def main():
         print("no episode selected"); return
 
     n = len(selected)
-    fig, axes = plt.subplots(3 * n, 1, figsize=(11, 4 + 2.5 * n), sharex=False)
-    if n == 1:
-        axes = np.array(axes).reshape(3, 1)
-    else:
-        axes = np.array(axes).reshape(3 * n, 1)
+    # Detect sync lag from first ep's delta_indices; if >0 we plot two charts
+    # (raw + lag-shifted) so user can read both views.
+    lag = detect_sync_lag(selected[0][0].get("delta_indices") if selected else None)
+    n_charts = 2 if lag > 0 else 1
+    if lag > 0:
+        print(f"detected sync_inference lag = {lag} env steps; plotting raw + shifted")
 
-    for i, ep in enumerate(selected):
-        prefix = f"ep{i}: " if n > 1 else ""
-        ax_p = axes[3 * i, 0]
-        ax_s = axes[3 * i + 1, 0]
-        ax_c = axes[3 * i + 2, 0]
-        gt, sidx, steps, nreg = plot_one(ep, ax_p, ax_s, ax_c, title_prefix=prefix)
-        if n == 1 or i == n - 1:
-            print()
-        if n == 1:
-            summarize(ep, gt, sidx, steps)
-        else:
-            print(f"\n--- ep{i} ({len(ep)} samples) ---")
-            summarize(ep, gt, sidx, steps)
+    rows_total = 3 * n * n_charts
+    fig, axes = plt.subplots(rows_total, 1, figsize=(11, 4 + 2.2 * n * n_charts), sharex=False)
+    axes = np.array(axes).reshape(rows_total, 1)
+
+    for ci, shift in enumerate([0, lag] if n_charts == 2 else [0]):
+        for i, ep in enumerate(selected):
+            prefix = f"[{'shifted' if shift else 'raw'}] ep{i}: " if n > 1 else f"[{'shifted' if shift else 'raw'}] "
+            base = ci * 3 * n + 3 * i
+            ax_p = axes[base, 0]
+            ax_s = axes[base + 1, 0]
+            ax_c = axes[base + 2, 0]
+            gt, sidx, steps, nreg = plot_one(ep, ax_p, ax_s, ax_c, title_prefix=prefix, lag_shift=shift)
+            if shift == 0:  # only print summary once
+                if n == 1 and i == 0:
+                    print()
+                if n > 1:
+                    print(f"\n--- ep{i} ({len(ep)} samples) ---")
+                summarize(ep, gt, sidx, steps)
 
     plt.tight_layout()
     out = Path(args.out) if args.out else p.with_suffix(".png")
