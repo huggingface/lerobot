@@ -63,6 +63,8 @@ class NoisyLiberoRolloutConfig:
     noise_temporal_mode: str = "constant"
     noise_gain_min: float = 0.7
     noise_gain_max: float = 1.3
+    dataset_clip_initial_min: int = 50
+    dataset_clip_initial_max: int = 80
     action_low: float = -1.0
     action_high: float = 1.0
     save_dataset: bool = True
@@ -364,6 +366,11 @@ def _run_rollout(
     terminal = False
     success = False
     reward_sum = 0.0
+    dataset_clip_initial = (
+        int(rng.integers(cfg.dataset_clip_initial_min, cfg.dataset_clip_initial_max + 1))
+        if noisy and collect_dataset and cfg.dataset_clip_initial_max > 0
+        else 0
+    )
     action_dim: int | None = None
     mask: np.ndarray | None = None
     constant_noise: np.ndarray | None = None
@@ -429,7 +436,7 @@ def _run_rollout(
         reward_sum += float(reward)
         if collect_frames:
             frames.append(_render_base_env_frame(base_env))
-        if collect_dataset:
+        if collect_dataset and step + 1 > dataset_clip_initial:
             dataset_frames.append(
                 _dataset_frame(
                     observation=observation,
@@ -466,6 +473,8 @@ def _run_rollout(
         "terminal": bool(terminal),
         "reward_sum": float(reward_sum),
         "noise_mask": mask.astype(bool).tolist() if mask is not None else None,
+        "dataset_clip_initial": dataset_clip_initial,
+        "dataset_frame_count": len(dataset_frames),
         "step_records": step_records,
     }
 
@@ -558,6 +567,10 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
         raise ValueError("`noise_temporal_mode` must be one of: per_step, chunk, constant, gain.")
     if cfg.noise_probability < 0 or cfg.noise_probability > 1:
         raise ValueError("`noise_probability` must be in [0, 1].")
+    if cfg.dataset_clip_initial_min < 0 or cfg.dataset_clip_initial_max < 0:
+        raise ValueError("`dataset_clip_initial_min/max` must be non-negative.")
+    if cfg.dataset_clip_initial_min > cfg.dataset_clip_initial_max:
+        raise ValueError("`dataset_clip_initial_min` must be <= `dataset_clip_initial_max`.")
     if not cfg.save_dataset and not cfg.save_debug_video:
         raise ValueError("Nothing to write: enable --save_dataset=true or --save_debug_video=true.")
 
@@ -641,6 +654,8 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
         "noise_temporal_mode": cfg.noise_temporal_mode,
         "noise_gain_min": cfg.noise_gain_min,
         "noise_gain_max": cfg.noise_gain_max,
+        "dataset_clip_initial_min": cfg.dataset_clip_initial_min,
+        "dataset_clip_initial_max": cfg.dataset_clip_initial_max,
         "accepted_pairs": 0,
         "skipped_successful_noisy_pairs": 0,
         "pairs": [],
@@ -738,6 +753,8 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
                                 "terminal": clean["terminal"],
                                 "reward_sum": clean["reward_sum"],
                                 "noise_mask": clean["noise_mask"],
+                                "dataset_clip_initial": clean["dataset_clip_initial"],
+                                "dataset_frame_count": clean["dataset_frame_count"],
                                 "last_step": clean["step_records"][-1] if clean["step_records"] else None,
                             }
                             if clean is not None
@@ -749,6 +766,8 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
                             "terminal": noisy["terminal"],
                             "reward_sum": noisy["reward_sum"],
                             "noise_mask": noisy["noise_mask"],
+                            "dataset_clip_initial": noisy["dataset_clip_initial"],
+                            "dataset_frame_count": noisy["dataset_frame_count"],
                             "last_step": noisy["step_records"][-1] if noisy["step_records"] else None,
                         },
                     }
