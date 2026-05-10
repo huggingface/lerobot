@@ -100,8 +100,8 @@ class DiffusionConfig(PreTrainedConfig):
 
     # Inputs / output structure.
     n_obs_steps: int = 2
-    horizon: int = 16
-    n_action_steps: int = 8
+    horizon: int = 64
+    n_action_steps: int = 32
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -122,10 +122,10 @@ class DiffusionConfig(PreTrainedConfig):
     crop_ratio: float = 1.0
     crop_shape: tuple[int, int] | None = None
     crop_is_random: bool = True
-    pretrained_backbone_weights: str | None = None
-    use_group_norm: bool = True
+    pretrained_backbone_weights: str | None = "ResNet18_Weights.IMAGENET1K_V1"
+    use_group_norm: bool = False
     spatial_softmax_num_keypoints: int = 32
-    use_separate_rgb_encoder_per_camera: bool = False
+    use_separate_rgb_encoder_per_camera: bool = True
     # Unet.
     down_dims: tuple[int, ...] = (512, 1024, 2048)
     kernel_size: int = 5

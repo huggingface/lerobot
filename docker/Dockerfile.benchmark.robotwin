@@ -35,7 +35,7 @@ USER root
 ARG ROBOTWIN_SHA=0aeea2d669c0f8516f4d5785f0aa33ba812c14b4
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-         cuda-nvcc-12-4 cuda-cudart-dev-12-4 \
+         cuda-nvcc-12-6 cuda-cudart-dev-12-6 \
          libvulkan1 vulkan-tools \
     && mkdir -p /usr/share/vulkan/icd.d \
     && echo '{"file_format_version":"1.0.0","ICD":{"library_path":"libGLX_nvidia.so.0","api_version":"1.3.0"}}' \
