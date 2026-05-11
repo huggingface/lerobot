@@ -668,6 +668,29 @@ INDEX_HTML = r"""<!doctype html>
       return path ? "/trace/" + path.split("/").map(encodeURIComponent).join("/") : "";
     }
 
+    function nodeScore(node) {
+      return node && (node.vlm_score ?? node.score ?? 0);
+    }
+
+    function nodeReason(node) {
+      return node && (node.vlm_reason ?? node.score_reason ?? "");
+    }
+
+    function nodeMetadata(node) {
+      return node && (node.vlm_metadata ?? node.score_metadata ?? null);
+    }
+
+    function nodeImages(node) {
+      return node && (node.vlm_images ?? node.score_images ?? []);
+    }
+
+    function adaptiveNoise(value) {
+      if (!value) return null;
+      if (value.adaptive_noise) return value.adaptive_noise;
+      if (value.parent_adaptive_noise) return value.parent_adaptive_noise;
+      return null;
+    }
+
     function scoreColor(score, success) {
       if (success) return "#7c3aed";
       const value = Math.max(0, Math.min(1, Number(score) || 0));
@@ -728,7 +751,7 @@ INDEX_HTML = r"""<!doctype html>
           const edgeA = state.edgeByChild.get(a.id) || {};
           const edgeB = state.edgeByChild.get(b.id) || {};
           return (edgeA.candidate_index ?? 0) - (edgeB.candidate_index ?? 0)
-            || Number(b.vlm_score || 0) - Number(a.vlm_score || 0)
+            || Number(nodeScore(b) || 0) - Number(nodeScore(a) || 0)
             || String(a.id).localeCompare(String(b.id));
         });
       }
@@ -759,8 +782,9 @@ INDEX_HTML = r"""<!doctype html>
           node.parent_id,
           node.planner,
           node.source,
-          node.vlm_reason,
+          nodeReason(node),
           node.prompt,
+          JSON.stringify(adaptiveNoise(node) || {}),
           node.success ? "success" : "",
           node.terminal ? "terminal" : "",
         ].join(" ").toLowerCase();
@@ -862,14 +886,15 @@ INDEX_HTML = r"""<!doctype html>
         const related = node.id === selectedParent || selectedChildren.has(node.id);
         const opacity = node._match || selected || related ? 1 : 0.22;
         const radius = selected ? 17 : node.terminal ? 15 : 13;
-        const color = scoreColor(node.vlm_score, node.success);
-        const label = `${node.id.replace("n", "")}  ${fmt(node.vlm_score, 2)}`;
+        const score = nodeScore(node);
+        const color = scoreColor(score, node.success);
+        const label = `${node.id.replace("n", "")}  ${fmt(score, 2)}`;
         return `<g class="node ${selected ? "selected" : ""}" opacity="${opacity}"
             transform="translate(${node._x}, ${node._y})" data-node-id="${esc(node.id)}">
           <circle r="${radius}" fill="${color}"></circle>
           <circle class="node-hit" r="28"></circle>
           <text x="24" y="4">${esc(label)}</text>
-          <title>${esc(node.id)} score=${esc(fmt(node.vlm_score, 3))} step=${esc(node.env_step)}</title>
+          <title>${esc(node.id)} score=${esc(fmt(score, 3))} step=${esc(node.env_step)}</title>
         </g>`;
       }).join("");
 
@@ -905,7 +930,7 @@ INDEX_HTML = r"""<!doctype html>
           ${node.image_path ? `<div class="image-box"><img src="${imageUrl(node.image_path)}" alt="${esc(node.id)}"></div>` : ""}
           <div class="panel-body">
             <div class="kv">
-              ${kv("Score", fmt(node.vlm_score, 3))}
+              ${kv("Score", fmt(nodeScore(node), 3))}
               ${kv("Step", node.env_step)}
               ${kv("Depth", node.depth)}
               ${kv("Visits", node.visits)}
@@ -917,13 +942,15 @@ INDEX_HTML = r"""<!doctype html>
           </div>
         </section>
 
+        ${adaptiveNoisePanel("Adaptive Noise", adaptiveNoise(node))}
+
         <section class="panel">
-          <div class="panel-head">VLM</div>
+          <div class="panel-head">Reward Model</div>
           ${vlmGallery(node)}
           <div class="panel-body">
-            <div class="text-block"><strong>Reason</strong>\n${esc(node.vlm_reason || "")}</div>
+            <div class="text-block"><strong>Reason</strong>\n${esc(nodeReason(node))}</div>
           </div>
-          ${jsonPanel(node.vlm_metadata)}
+          ${jsonPanel(nodeMetadata(node))}
           <div class="panel-body" style="border-top:1px solid var(--line)">
             <div class="text-block"><strong>Prompt</strong>\n${esc(node.prompt || "")}</div>
           </div>
@@ -948,6 +975,31 @@ INDEX_HTML = r"""<!doctype html>
       `;
     }
 
+    function adaptiveNoisePanel(title, info) {
+      if (!info) return "";
+      return `
+        <section class="panel">
+          <div class="panel-head">${esc(title)}</div>
+          <div class="panel-body">
+            <div class="kv">
+              ${kv("Enabled", info.enabled)}
+              ${kv("Base Std", fmt(info.base_noise_std, 4))}
+              ${kv("Effective Std", fmt(info.effective_noise_std, 4))}
+              ${kv("Scale", fmt(info.noise_scale, 3))}
+              ${kv("Time", fmt(info.time_ratio, 3))}
+              ${kv("Score", fmt(info.current_score, 3))}
+              ${kv("Stagnation", fmt(info.stagnation, 3))}
+              ${kv("Oscillation", fmt(info.oscillation, 3))}
+              ${kv("Improvement", fmt(info.improvement, 3))}
+              ${kv("Slope", fmt(info.slope, 3))}
+              ${kv("Damping", fmt(info.high_score_damping, 3))}
+            </div>
+          </div>
+          ${jsonPanel(info)}
+        </section>
+      `;
+    }
+
     function arrayFromMetadata(value) {
       return Array.isArray(value) ? value.map(String) : [];
     }
@@ -962,9 +1014,9 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function groupVlmImages(node) {
-      const metadata = node.vlm_metadata || {};
+      const metadata = nodeMetadata(node) || {};
       const groups = { reference: [], state: [], other: [] };
-      const images = Array.isArray(node.vlm_images) ? node.vlm_images : [];
+      const images = Array.isArray(nodeImages(node)) ? nodeImages(node) : [];
       for (const item of images) {
         groups[classifyVlmImage(item, metadata)].push(item);
       }
@@ -975,7 +1027,8 @@ INDEX_HTML = r"""<!doctype html>
       const groups = groupVlmImages(node);
       const total = groups.reference.length + groups.state.length + groups.other.length;
       if (!total) {
-        const labels = node.vlm_metadata && node.vlm_metadata.vlm_image_labels;
+        const metadata = nodeMetadata(node);
+        const labels = metadata && (metadata.vlm_image_labels || metadata.score_image_labels);
         return `
           <div class="panel-body" style="border-bottom:1px solid var(--line)">
             <div class="empty">
@@ -1040,9 +1093,13 @@ INDEX_HTML = r"""<!doctype html>
               ${kv("Source", edge.source)}
               ${kv("Candidate", edge.candidate_index)}
               ${kv("Actions", edge.action_count)}
+              ${kv("Noise Std", fmt(edge.noise_std, 4))}
+              ${kv("Noise Scale", fmt(edge.noise_scale, 3))}
+              ${kv("Noise Mode", edge.noise_mode)}
               ${kv("Reward Sum", fmt(sum(edge.rewards), 3))}
             </div>
           </div>
+          ${adaptiveNoisePanel("Edge Adaptive Noise", adaptiveNoise(edge))}
           <div class="panel-body" style="border-top:1px solid var(--line)">
             <pre>${esc(JSON.stringify({ first_action: firstAction, last_action: lastAction }, null, 2))}</pre>
           </div>
@@ -1064,19 +1121,22 @@ INDEX_HTML = r"""<!doctype html>
       if (!children.length) return "";
       const rows = children.map((child) => {
         const edge = state.edgeByChild.get(child.id) || {};
+        const noise = adaptiveNoise(edge) || adaptiveNoise(child);
         return `<tr class="clickable" data-node-id="${esc(child.id)}">
           <td>${esc(child.id)}</td>
-          <td>${esc(fmt(child.vlm_score, 3))}</td>
+          <td>${esc(fmt(nodeScore(child), 3))}</td>
           <td>${esc(edge.source || child.source || "-")}</td>
           <td>${esc(child.env_step)}</td>
-          <td>${esc(short(child.vlm_reason || "", 56))}</td>
+          <td>${noise ? esc(fmt(noise.effective_noise_std, 4)) : "-"}</td>
+          <td>${noise ? esc(fmt(noise.stagnation, 2)) : "-"}</td>
+          <td>${esc(short(nodeReason(child), 56))}</td>
         </tr>`;
       }).join("");
       return `
         <section class="panel">
           <div class="panel-head">Children</div>
           <table>
-            <thead><tr><th>Node</th><th>Score</th><th>Source</th><th>Step</th><th>Reason</th></tr></thead>
+            <thead><tr><th>Node</th><th>Score</th><th>Source</th><th>Step</th><th>Noise</th><th>Stag.</th><th>Reason</th></tr></thead>
             <tbody>${rows}</tbody>
           </table>
         </section>
