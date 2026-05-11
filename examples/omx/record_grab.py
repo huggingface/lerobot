@@ -152,11 +152,14 @@ def record_episode_spline(
     dataset: LeRobotDataset,
     task: str,
 ) -> None:
-    """Execute a Catmull-Rom spline through waypoints, recording each frame.
+    """Execute a Catmull-Rom-style spline through waypoints, recording each frame.
 
-    Uses non-uniform chord-length parameterization for interior tangents and
-    clamped (zero-velocity) endpoints so the arm starts and stops smoothly.
-    Each segment is cubic Hermite, giving C1 continuity at every waypoint.
+    Segment durations are parameterized from the maximum absolute joint delta
+    between consecutive waypoints divided by the requested segment speed,
+    producing non-uniform timing in joint space. Interior tangents are derived
+    from the adjacent per-segment velocities, with clamped (zero-velocity)
+    endpoints so the arm starts and stops smoothly. Each segment is cubic
+    Hermite, giving C1 continuity at every waypoint.
     """
     pts = [pose_to_array(w) for w in waypoints]
     n = len(pts)
