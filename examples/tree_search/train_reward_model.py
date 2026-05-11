@@ -103,6 +103,7 @@ def find_episodes_for_task(
     *,
     task_metadata: dict[str, Any],
     limit: int,
+    allowed_frame_indices: set[int] | None = None,
 ) -> list[int]:
     targets = {
         _normalize_text(str(task_metadata.get("language", ""))),
@@ -112,6 +113,12 @@ def find_episodes_for_task(
     matches: list[int] = []
     for ep_idx in range(meta.total_episodes):
         episode = meta.episodes[ep_idx]
+        episode_from = int(episode["dataset_from_index"])
+        episode_to = int(episode["dataset_to_index"])
+        if allowed_frame_indices is not None and not any(
+            frame_index in allowed_frame_indices for frame_index in range(episode_from, episode_to)
+        ):
+            continue
         if any(_normalize_text(task) in targets for task in _episode_tasks(meta, episode)):
             matches.append(ep_idx)
             if len(matches) >= limit:
@@ -119,6 +126,62 @@ def find_episodes_for_task(
     if not matches:
         raise SystemExit(f"No dataset episodes matched task targets: {sorted(targets)}")
     return matches
+
+
+def _parse_split_range(value: str, *, total_frames: int) -> set[int]:
+    text = str(value).strip()
+    if not text:
+        return set()
+    if "," in text:
+        indices: set[int] = set()
+        for part in text.split(","):
+            indices.update(_parse_split_range(part, total_frames=total_frames))
+        return indices
+    if ":" in text:
+        start_raw, end_raw = text.split(":", 1)
+        start = int(start_raw) if start_raw else 0
+        end = int(end_raw) if end_raw else total_frames
+        start = max(0, start)
+        end = min(total_frames, end)
+        if end < start:
+            raise ValueError(f"Invalid split range {value!r}: end < start")
+        return set(range(start, end))
+    frame_index = int(text)
+    if frame_index < 0 or frame_index >= total_frames:
+        raise ValueError(f"Frame index {frame_index} out of range [0, {total_frames - 1}]")
+    return {frame_index}
+
+
+def dataset_split_frames(meta: LeRobotDatasetMetadata, *, repo_id: str) -> dict[str, set[int]]:
+    raw_splits = meta.info.get("splits")
+    if not isinstance(raw_splits, dict):
+        raise ValueError(f"Dataset {repo_id} does not define meta/info.json splits.")
+    split_unit = str(meta.info.get("split_unit", "frame"))
+    if split_unit != "frame":
+        raise ValueError(
+            f"Dataset {repo_id} must define frame-based splits with meta/info.json split_unit='frame'; "
+            f"got split_unit={split_unit!r}."
+        )
+    missing = [split for split in ("train", "validation") if split not in raw_splits]
+    if missing:
+        raise ValueError(
+            f"Dataset {repo_id} must define train and validation splits in meta/info.json; "
+            f"missing={missing}, available={sorted(raw_splits)}"
+        )
+    splits = {
+        name: _parse_split_range(value, total_frames=int(meta.info.get("total_frames", 0)))
+        for name, value in raw_splits.items()
+    }
+    train = splits["train"]
+    validation = splits["validation"]
+    if not train:
+        raise ValueError(f"Dataset {repo_id} has an empty train frame split.")
+    if not validation:
+        raise ValueError(f"Dataset {repo_id} has an empty validation frame split.")
+    overlap = train & validation
+    if overlap:
+        raise ValueError(f"Dataset {repo_id} train/validation frame splits overlap: {sorted(overlap)[:10]}")
+    return splits
 
 
 def _reader_args(args: argparse.Namespace, *, dataset_repo_id: str, dataset_root: Path | None) -> SimpleNamespace:
@@ -137,6 +200,7 @@ class LiberoRewardFrameDataset(Dataset):
         *,
         specs: list[RewardSampleSpec],
         sources: list[DatasetSource],
+        split_frame_indices_by_dataset: dict[int, set[int]],
         scene_camera_key: str,
         wrist_camera_key: str | None,
         state_key: str,
@@ -150,6 +214,7 @@ class LiberoRewardFrameDataset(Dataset):
     ) -> None:
         self.specs = specs
         self.sources = {source.dataset_id: source for source in sources}
+        self.split_frame_indices_by_dataset = split_frame_indices_by_dataset
         self.scene_camera_key = scene_camera_key
         self.wrist_camera_key = wrist_camera_key
         self.state_key = state_key
@@ -173,7 +238,13 @@ class LiberoRewardFrameDataset(Dataset):
         item = reader[spec.local_index]
         if self.scene_camera_key not in item:
             raise KeyError(f"Missing scene camera key '{self.scene_camera_key}' in dataset item.")
-        temporal_indices = self._temporal_indices(spec.local_index)
+        episode = source.meta.episodes[spec.episode_index]
+        episode_from = int(episode["dataset_from_index"])
+        temporal_indices = self._temporal_indices(
+            spec.local_index,
+            dataset_id=spec.dataset_id,
+            episode_from=episode_from,
+        )
         scene_images = [
             _image_to_uint8_hwc(reader[temporal_index][self.scene_camera_key])
             for temporal_index in temporal_indices
@@ -211,11 +282,19 @@ class LiberoRewardFrameDataset(Dataset):
             )
         return sample
 
-    def _temporal_indices(self, local_index: int) -> list[int]:
-        return [
-            max(0, int(local_index) - self.scene_temporal_stride * offset)
-            for offset in reversed(range(self.scene_temporal_window))
-        ]
+    def _temporal_indices(self, local_index: int, *, dataset_id: int, episode_from: int) -> list[int]:
+        allowed = self.split_frame_indices_by_dataset.get(dataset_id)
+        current = int(local_index)
+        indices: list[int] = []
+        for offset in reversed(range(self.scene_temporal_window)):
+            candidate = max(0, current - self.scene_temporal_stride * offset)
+            if allowed is not None:
+                while candidate < current and episode_from + candidate not in allowed:
+                    candidate += 1
+                if episode_from + candidate not in allowed:
+                    candidate = current
+            indices.append(candidate)
+        return indices
 
     def _label_for_sample(
         self,
@@ -279,13 +358,18 @@ class LiberoRewardFrameDataset(Dataset):
 def build_sample_specs(
     args: argparse.Namespace,
     source: DatasetSource,
+    split_frame_indices: set[int],
+    split_name: str,
 ) -> tuple[list[RewardSampleSpec], dict[str, Any]]:
     meta = source.meta
     all_specs: list[RewardSampleSpec] = []
     task_summaries: dict[str, Any] = {}
     task_orders = parse_task_orders(args.task_orders)
     task_languages: dict[int, str] = {}
-    stage(f"Building sample specs for dataset={source.repo_id} task_orders={task_orders}")
+    stage(
+        f"Building sample specs for dataset={source.repo_id} split={split_name} "
+        f"frames={len(split_frame_indices)} task_orders={task_orders}"
+    )
     for task_order in task_orders:
         start = time.perf_counter()
         stage(f"Resolving task_order={task_order}")
@@ -293,11 +377,20 @@ def build_sample_specs(
         task_language = str(task_metadata["language"])
         task_languages[task_order] = task_language
         stage(f"Finding episodes for task_order={task_order} task={task_language!r}")
-        episodes = find_episodes_for_task(meta, task_metadata=task_metadata, limit=args.episodes_per_task)
-        stage(f"Found episodes for task_order={task_order} episodes={episodes} elapsed={time.perf_counter() - start:.2f}s")
+        episodes = find_episodes_for_task(
+            meta,
+            task_metadata=task_metadata,
+            limit=args.episodes_per_task,
+            allowed_frame_indices=split_frame_indices,
+        )
+        stage(
+            f"Found episodes for task_order={task_order} split={split_name} "
+            f"episodes={episodes} elapsed={time.perf_counter() - start:.2f}s"
+        )
         task_summaries[str(task_order)] = {
             "task": task_language,
             "dataset_repo_id": source.repo_id,
+            "split": split_name,
             "episodes": episodes,
         }
 
@@ -309,6 +402,14 @@ def build_sample_specs(
                 frame_stride=args.frame_stride,
                 max_frames=args.max_frames_per_episode,
             )
+            episode_from = int(episode["dataset_from_index"])
+            local_indices = [
+                local_index
+                for local_index in local_indices
+                if episode_from + int(local_index) in split_frame_indices
+            ]
+            if not local_indices:
+                continue
             denom = max(1, length - 1)
             before_count = len(all_specs)
             for local_index in local_indices:
@@ -367,27 +468,6 @@ def build_sample_specs(
             )
 
     return all_specs, task_summaries
-
-
-def split_specs(
-    specs: list[RewardSampleSpec],
-    *,
-    val_fraction: float,
-    seed: int,
-) -> tuple[list[RewardSampleSpec], list[RewardSampleSpec]]:
-    by_episode: dict[tuple[int, int], list[RewardSampleSpec]] = defaultdict(list)
-    for spec in specs:
-        by_episode[(spec.dataset_id, spec.episode_index)].append(spec)
-    episode_indices = list(by_episode)
-    rng = random.Random(seed)
-    rng.shuffle(episode_indices)
-    val_count = max(1, round(len(episode_indices) * val_fraction)) if len(episode_indices) > 1 else 0
-    val_episodes = set(episode_indices[:val_count])
-    train = [spec for spec in specs if spec.episode_index not in val_episodes]
-    val = [spec for spec in specs if spec.episode_index in val_episodes]
-    if not train:
-        train, val = specs, []
-    return train, val
 
 
 def model_forward(model: MultiModalRewardModel, batch: dict[str, Any]) -> Tensor:
@@ -609,7 +689,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wrong_text_negative_label", type=float, default=0.0)
     parser.add_argument("--bad_sequence_max_reward", type=float, default=0.4)
     parser.add_argument("--bad_sequence_decay", type=float, default=4.0)
-    parser.add_argument("--val_fraction", type=float, default=0.2)
     parser.add_argument("--log_every_batches", type=int, default=5)
     parser.add_argument("--reader_cache_size", type=int, default=128)
     parser.add_argument("--log_reader_opens", action=argparse.BooleanOptionalAction, default=False)
@@ -636,7 +715,10 @@ def main() -> None:
         raise ValueError("--dataset_root can only be used with a single --dataset_repo_id.")
 
     sources: list[DatasetSource] = []
-    specs: list[RewardSampleSpec] = []
+    train_specs: list[RewardSampleSpec] = []
+    val_specs: list[RewardSampleSpec] = []
+    train_split_frames_by_dataset: dict[int, set[int]] = {}
+    val_split_frames_by_dataset: dict[int, set[int]] = {}
     task_summaries: dict[str, Any] = {}
     for dataset_id, dataset_repo_id in enumerate(dataset_repo_ids):
         metadata_start = time.perf_counter()
@@ -661,18 +743,47 @@ def main() -> None:
             ),
         )
         sources.append(source)
-        stage(f"Building sample specs for dataset_id={dataset_id}")
-        source_specs, source_task_summaries = build_sample_specs(args, source)
-        specs.extend(source_specs)
+        split_frames = dataset_split_frames(meta, repo_id=dataset_repo_id)
+        train_split_frames_by_dataset[dataset_id] = split_frames["train"]
+        val_split_frames_by_dataset[dataset_id] = split_frames["validation"]
+        stage(
+            f"Dataset splits dataset_id={dataset_id} "
+            f"train_frames={len(split_frames['train'])} "
+            f"validation_frames={len(split_frames['validation'])}"
+        )
+        stage(f"Building train sample specs for dataset_id={dataset_id}")
+        source_train_specs, source_train_task_summaries = build_sample_specs(
+            args,
+            source,
+            split_frame_indices=split_frames["train"],
+            split_name="train",
+        )
+        stage(f"Building validation sample specs for dataset_id={dataset_id}")
+        source_val_specs, source_val_task_summaries = build_sample_specs(
+            args,
+            source,
+            split_frame_indices=split_frames["validation"],
+            split_name="validation",
+        )
+        train_specs.extend(source_train_specs)
+        val_specs.extend(source_val_specs)
         task_summaries[str(dataset_id)] = {
             "dataset_repo_id": dataset_repo_id,
-            "tasks": source_task_summaries,
-            "sample_count": len(source_specs),
+            "split_unit": "frame",
+            "split_frame_counts": {name: len(indices) for name, indices in split_frames.items()},
+            "tasks": {
+                "train": source_train_task_summaries,
+                "validation": source_val_task_summaries,
+            },
+            "train_sample_count": len(source_train_specs),
+            "val_sample_count": len(source_val_specs),
         }
 
-    stage("Splitting train/val specs")
-    train_specs, val_specs = split_specs(specs, val_fraction=args.val_fraction, seed=args.seed)
-    stage(f"Built samples total={len(specs)} train={len(train_specs)} val={len(val_specs)}")
+    if not train_specs:
+        raise ValueError("No training samples were built from dataset train splits.")
+    if not val_specs:
+        raise ValueError("No validation samples were built from dataset validation splits.")
+    stage(f"Built samples total={len(train_specs) + len(val_specs)} train={len(train_specs)} val={len(val_specs)}")
 
     model_id = args.encoder_model_id or default_model_id(args.encoder_type)
     stage(f"Preparing model config encoder_type={args.encoder_type} model_id={model_id}")
@@ -695,6 +806,7 @@ def main() -> None:
     train_ds = LiberoRewardFrameDataset(
         specs=train_specs,
         sources=sources,
+        split_frame_indices_by_dataset=train_split_frames_by_dataset,
         scene_camera_key=args.scene_camera_key,
         wrist_camera_key=args.wrist_camera_key,
         state_key=args.state_key,
@@ -709,6 +821,7 @@ def main() -> None:
     val_ds = LiberoRewardFrameDataset(
         specs=val_specs,
         sources=sources,
+        split_frame_indices_by_dataset=val_split_frames_by_dataset,
         scene_camera_key=args.scene_camera_key,
         wrist_camera_key=args.wrist_camera_key,
         state_key=args.state_key,
@@ -789,12 +902,14 @@ def main() -> None:
             batch_size=args.batch_size,
             device=device,
         )
-        if len(specs)
+        if len(val_specs)
         else ({}, [])
     )
     summary = {
         "model_config": model_cfg.to_dict(),
         "dataset_repo_ids": dataset_repo_ids,
+        "split_source": "dataset_meta_info",
+        "split_unit": "frame",
         "task_summaries": task_summaries,
         "train_sample_count": len(train_specs),
         "val_sample_count": len(val_specs),

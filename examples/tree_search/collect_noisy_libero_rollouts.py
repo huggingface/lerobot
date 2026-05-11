@@ -560,22 +560,25 @@ def _push_dataset(dataset: LeRobotDataset, cfg: NoisyLiberoRolloutConfig) -> dic
 def _apply_dataset_splits(dataset: LeRobotDataset, cfg: NoisyLiberoRolloutConfig) -> dict[str, Any]:
     if cfg.dataset_val_fraction < 0 or cfg.dataset_val_fraction >= 1:
         raise ValueError("`dataset_val_fraction` must be in [0, 1).")
-    total_episodes = int(dataset.meta.info.get("total_episodes", 0))
-    if total_episodes <= 1 or cfg.dataset_val_fraction == 0:
-        splits = {"train": f"0:{total_episodes}"}
+    total_frames = int(dataset.meta.info.get("total_frames", 0))
+    if total_frames <= 1 or cfg.dataset_val_fraction == 0:
+        splits = {"train": f"0:{total_frames}"}
     else:
-        val_count = max(1, int(round(total_episodes * cfg.dataset_val_fraction)))
-        val_count = min(val_count, total_episodes - 1)
-        train_count = total_episodes - val_count
+        val_count = max(1, int(round(total_frames * cfg.dataset_val_fraction)))
+        val_count = min(val_count, total_frames - 1)
+        train_count = total_frames - val_count
         splits = {
             "train": f"0:{train_count}",
-            "validation": f"{train_count}:{total_episodes}",
+            "validation": f"{train_count}:{total_frames}",
         }
     dataset.meta.info["splits"] = splits
+    dataset.meta.info["split_unit"] = "frame"
     write_info(dataset.meta.info, dataset.root)
     return {
         "splits": splits,
-        "total_episodes": total_episodes,
+        "split_unit": "frame",
+        "total_frames": total_frames,
+        "total_episodes": int(dataset.meta.info.get("total_episodes", 0)),
         "val_fraction": cfg.dataset_val_fraction,
     }
 
