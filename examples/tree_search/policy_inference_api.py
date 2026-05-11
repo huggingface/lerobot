@@ -71,6 +71,15 @@ class PolicyInferenceConfig:
     search_num_candidates: int = 4
     search_noise_std: float = 0.05
     search_noise_mode: str = "chunk"
+    search_adaptive_noise: bool = True
+    search_adaptive_window: int = 4
+    search_adaptive_improvement_threshold: float = 0.03
+    search_adaptive_time_gain: float = 1.0
+    search_adaptive_stagnation_gain: float = 1.0
+    search_adaptive_oscillation_gain: float = 0.5
+    search_adaptive_high_score_damping: float = 0.6
+    search_noise_min_scale: float = 0.25
+    search_noise_max_scale: float = 4.0
     mcts_simulations: int = 16
     mcts_depth: int = 2
     mcts_exploration: float = 1.4
@@ -1000,6 +1009,86 @@ def _make_action_candidates(
     return candidates
 
 
+def _oscillation_score(values: Sequence[float]) -> float:
+    if len(values) < 4:
+        return 0.0
+    deltas = np.diff(np.asarray(values, dtype=np.float32))
+    deltas = deltas[np.abs(deltas) > 1e-6]
+    if len(deltas) < 2:
+        return 0.0
+    sign_changes = np.sign(deltas[1:]) != np.sign(deltas[:-1])
+    return float(np.mean(sign_changes))
+
+
+def _adaptive_noise_schedule(
+    *,
+    cfg: PolicyInferenceConfig,
+    env_step: int,
+    max_env_steps: int,
+    current_score: float,
+    reward_history: Sequence[float] | None,
+) -> dict[str, Any]:
+    base_noise = max(0.0, float(cfg.search_noise_std))
+    max_steps = max(1, int(max_env_steps))
+    time_ratio = min(1.0, max(0.0, float(env_step) / float(max_steps)))
+    history = [float(value) for value in list(reward_history or []) if np.isfinite(value)]
+    score = float(current_score)
+    values = history + [score]
+    window = max(1, int(cfg.search_adaptive_window))
+    recent = values[-window:]
+
+    previous_best = max(history[-window:]) if history else score
+    recent_best = max(recent) if recent else score
+    recent_mean = float(np.mean(recent)) if recent else score
+    improvement = float(recent_best - previous_best)
+    slope = float(score - history[-1]) if history else 0.0
+    threshold = max(0.0, float(cfg.search_adaptive_improvement_threshold))
+    stagnation = 1.0 if len(values) >= 2 and improvement < threshold and slope <= threshold else 0.0
+    oscillation = _oscillation_score(recent)
+    high_score_damping = 1.0 - float(cfg.search_adaptive_high_score_damping) * min(1.0, max(0.0, score))
+    high_score_damping = max(0.0, high_score_damping)
+
+    raw_scale = (
+        1.0
+        + float(cfg.search_adaptive_time_gain) * time_ratio
+        + float(cfg.search_adaptive_stagnation_gain) * stagnation
+        + float(cfg.search_adaptive_oscillation_gain) * oscillation
+    ) * high_score_damping
+    min_scale = max(0.0, float(cfg.search_noise_min_scale))
+    max_scale = max(min_scale, float(cfg.search_noise_max_scale))
+    scale = float(np.clip(raw_scale, min_scale, max_scale))
+    effective_noise = base_noise * scale if cfg.search_adaptive_noise else base_noise
+
+    return {
+        "enabled": bool(cfg.search_adaptive_noise),
+        "base_noise_std": base_noise,
+        "effective_noise_std": float(effective_noise),
+        "noise_scale": float(scale if cfg.search_adaptive_noise else 1.0),
+        "raw_noise_scale": float(raw_scale),
+        "min_scale": min_scale,
+        "max_scale": max_scale,
+        "time_ratio": float(time_ratio),
+        "env_step": int(env_step),
+        "max_env_steps": int(max_env_steps),
+        "current_score": score,
+        "history_count": len(history),
+        "window": window,
+        "recent_scores": recent,
+        "recent_mean": recent_mean,
+        "recent_best": recent_best,
+        "previous_best": previous_best,
+        "improvement": improvement,
+        "slope": slope,
+        "improvement_threshold": threshold,
+        "stagnation": float(stagnation),
+        "oscillation": float(oscillation),
+        "high_score_damping": float(high_score_damping),
+        "time_gain": float(cfg.search_adaptive_time_gain),
+        "stagnation_gain": float(cfg.search_adaptive_stagnation_gain),
+        "oscillation_gain": float(cfg.search_adaptive_oscillation_gain),
+    }
+
+
 def _node_mean_value(node: Mapping[str, Any]) -> float:
     visits = int(node.get("visits", 0))
     if visits <= 0:
@@ -1081,6 +1170,7 @@ def _expand_search_node(
     rng: np.random.Generator,
     task: str,
     max_env_steps: int,
+    reward_history: Sequence[float] | None = None,
 ) -> list[dict[str, Any]]:
     if node["terminal"]:
         return []
@@ -1103,10 +1193,27 @@ def _expand_search_node(
         task=task,
         horizon=cfg.chunk_size,
     )
+    noise_schedule = _adaptive_noise_schedule(
+        cfg=cfg,
+        env_step=int(node["env_step"]),
+        max_env_steps=max_env_steps,
+        current_score=float(node.get("score", 0.0)),
+        reward_history=reward_history,
+    )
+    node["adaptive_noise"] = _to_jsonable(noise_schedule)
+    trace.write_event(
+        "adaptive_noise",
+        {
+            "planner": planner,
+            "node_id": node["id"],
+            "depth": int(node["depth"]),
+            **noise_schedule,
+        },
+    )
     candidates = _make_action_candidates(
         policy_chunk,
         num_candidates=cfg.search_num_candidates,
-        noise_std=cfg.search_noise_std,
+        noise_std=float(noise_schedule["effective_noise_std"]),
         noise_mode=cfg.search_noise_mode,
         rng=rng,
     )
@@ -1153,6 +1260,7 @@ def _expand_search_node(
                 "source": source,
                 "depth": int(node["depth"]) + 1,
                 "reward_sum": rollout.reward_sum,
+                "adaptive_noise": noise_schedule,
             },
             scene_history=scene_histories_by_id.get(node["id"], []),
         )
@@ -1185,6 +1293,7 @@ def _expand_search_node(
                 "candidate_index": candidate_index,
                 "source": source,
                 "action_count": rollout.action_count,
+                "parent_adaptive_noise": noise_schedule,
             },
         )
         edge = trace.add_edge(
@@ -1196,8 +1305,11 @@ def _expand_search_node(
             step_records=rollout.step_records,
             source=source,
             extra={
-                "noise_std": cfg.search_noise_std if candidate_index else 0.0,
+                "noise_std": float(noise_schedule["effective_noise_std"]) if candidate_index else 0.0,
+                "base_noise_std": float(noise_schedule["base_noise_std"]) if candidate_index else 0.0,
+                "noise_scale": float(noise_schedule["noise_scale"]) if candidate_index else 0.0,
                 "noise_mode": cfg.search_noise_mode if candidate_index else "none",
+                "adaptive_noise": noise_schedule,
                 "terminal": rollout.terminated,
                 "truncated": rollout.truncated,
                 "success": rollout.success,
@@ -1235,6 +1347,7 @@ def plan_mcts_action_chunk(
     rng: np.random.Generator,
     max_env_steps: int,
     scene_history: Sequence[np.ndarray] | None = None,
+    reward_history: Sequence[float] | None = None,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     root_state = _snapshot_base_env(base_env)
     root_frame = _render_base_env_frame(base_env)
@@ -1320,6 +1433,7 @@ def plan_mcts_action_chunk(
                 rng=rng,
                 task=task,
                 max_env_steps=max_env_steps,
+                reward_history=reward_history,
             )
             if not created:
                 value = _node_mean_value(node)
@@ -1382,6 +1496,7 @@ def plan_mcts_action_chunk(
         "selected_value": _node_mean_value(best_child),
         "selected_score": best_child["score"],
         "selected_visits": best_child["visits"],
+        "adaptive_noise": root.get("adaptive_noise"),
     }
 
 
@@ -1428,6 +1543,7 @@ def plan_best_first_action_chunk(
     rng: np.random.Generator,
     max_env_steps: int,
     scene_history: Sequence[np.ndarray] | None = None,
+    reward_history: Sequence[float] | None = None,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     root_state = _snapshot_base_env(base_env)
     root_frame = _render_base_env_frame(base_env)
@@ -1530,6 +1646,7 @@ def plan_best_first_action_chunk(
             rng=rng,
             task=task,
             max_env_steps=max_env_steps,
+            reward_history=reward_history,
         )
 
         for child in created:
@@ -1608,6 +1725,7 @@ def plan_best_first_action_chunk(
         ),
         "expanded_count": len(expanded),
         "frontier_size": len(frontier),
+        "adaptive_noise": root.get("adaptive_noise"),
     }
 
 
@@ -1730,6 +1848,15 @@ def _run_search_episode(
             "search_num_candidates": cfg.search_num_candidates,
             "search_noise_std": cfg.search_noise_std,
             "search_noise_mode": cfg.search_noise_mode,
+            "search_adaptive_noise": cfg.search_adaptive_noise,
+            "search_adaptive_window": cfg.search_adaptive_window,
+            "search_adaptive_improvement_threshold": cfg.search_adaptive_improvement_threshold,
+            "search_adaptive_time_gain": cfg.search_adaptive_time_gain,
+            "search_adaptive_stagnation_gain": cfg.search_adaptive_stagnation_gain,
+            "search_adaptive_oscillation_gain": cfg.search_adaptive_oscillation_gain,
+            "search_adaptive_high_score_damping": cfg.search_adaptive_high_score_damping,
+            "search_noise_min_scale": cfg.search_noise_min_scale,
+            "search_noise_max_scale": cfg.search_noise_max_scale,
             "mcts_simulations": cfg.mcts_simulations,
             "mcts_depth": cfg.mcts_depth,
             "best_first_expansions": cfg.best_first_expansions,
@@ -1770,6 +1897,7 @@ def _run_search_episode(
         episode_rollout_s = 0.0
         episode_score_s = 0.0
         last_score = 0.0
+        reward_score_history: list[float] = []
         baseline_parent_id: str | None = None
         committed_scene_history: list[np.ndarray] = []
         while env_step < max_steps and not done:
@@ -1830,6 +1958,7 @@ def _run_search_episode(
                     rng=rng,
                     max_env_steps=max_steps,
                     scene_history=committed_scene_history,
+                    reward_history=reward_score_history,
                 )
             else:
                 actions, plan_info = plan_best_first_action_chunk(
@@ -1845,6 +1974,7 @@ def _run_search_episode(
                     rng=rng,
                     max_env_steps=max_steps,
                     scene_history=committed_scene_history,
+                    reward_history=reward_score_history,
                 )
             macro_plan_s = time.time() - plan_start
             episode_plan_s += macro_plan_s
@@ -1889,6 +2019,7 @@ def _run_search_episode(
             macro_score_s = time.time() - score_start
             episode_score_s += macro_score_s
             last_score = endpoint_score.score
+            reward_score_history.append(float(endpoint_score.score))
             if endpoint_score.images:
                 committed_scene_history = scorer.extend_scene_history(
                     committed_scene_history,
@@ -2073,6 +2204,12 @@ def main(cfg: PolicyInferenceConfig) -> None:
         raise ValueError("`search_num_candidates` must be positive.")
     if cfg.search_noise_mode not in {"iid", "chunk", "mixed"}:
         raise ValueError("`search_noise_mode` must be one of: iid, chunk, mixed.")
+    if cfg.search_adaptive_window <= 0:
+        raise ValueError("`search_adaptive_window` must be positive.")
+    if cfg.search_noise_min_scale < 0:
+        raise ValueError("`search_noise_min_scale` must be non-negative.")
+    if cfg.search_noise_max_scale < cfg.search_noise_min_scale:
+        raise ValueError("`search_noise_max_scale` must be >= `search_noise_min_scale`.")
     if cfg.best_first_expansions <= 0:
         raise ValueError("`best_first_expansions` must be positive.")
     if cfg.best_first_depth <= 0:
