@@ -51,44 +51,47 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from pprint import pformat
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from lerobot.utils.import_utils import require_package
+from lerobot.utils.import_utils import _grpc_available, require_package
 
-# Fail fast with a friendly error if the optional ``hilserl`` extra is missing.
-require_package("grpcio", extra="hilserl", import_name="grpc")
+if TYPE_CHECKING or _grpc_available:
+    import grpc
 
-import grpc  # noqa: E402
-import torch  # noqa: E402
-from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE  # noqa: E402
-from safetensors.torch import load_file as load_safetensors  # noqa: E402
-from termcolor import colored  # noqa: E402
-from torch import nn  # noqa: E402
-from torch.multiprocessing import Queue  # noqa: E402
-from torch.optim.optimizer import Optimizer  # noqa: E402
+    from lerobot.transport import services_pb2_grpc
+else:
+    grpc = None
+    services_pb2_grpc = None
 
-from lerobot.cameras import opencv  # noqa: F401, E402
-from lerobot.common.train_utils import (  # noqa: E402
+import torch
+from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
+from safetensors.torch import load_file as load_safetensors
+from termcolor import colored
+from torch import nn
+from torch.multiprocessing import Queue
+from torch.optim.optimizer import Optimizer
+
+from lerobot.cameras import opencv  # noqa: F401
+from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
     load_training_state as utils_load_training_state,
     save_checkpoint,
     update_last_checkpoint,
 )
-from lerobot.common.wandb_utils import WandBLogger  # noqa: E402
-from lerobot.configs import parser  # noqa: E402
-from lerobot.datasets import LeRobotDataset, make_dataset  # noqa: E402
-from lerobot.policies import make_policy, make_pre_post_processors  # noqa: E402
-from lerobot.robots import so_follower  # noqa: F401, E402
-from lerobot.teleoperators import gamepad, so_leader  # noqa: F401, E402
-from lerobot.teleoperators.utils import TeleopEvents  # noqa: E402
-from lerobot.transport import services_pb2_grpc  # noqa: E402
-from lerobot.transport.utils import (  # noqa: E402
+from lerobot.common.wandb_utils import WandBLogger
+from lerobot.configs import parser
+from lerobot.datasets import LeRobotDataset, make_dataset
+from lerobot.policies import make_policy, make_pre_post_processors
+from lerobot.robots import so_follower  # noqa: F401
+from lerobot.teleoperators import gamepad, so_leader  # noqa: F401
+from lerobot.teleoperators.utils import TeleopEvents
+from lerobot.transport.utils import (
     MAX_MESSAGE_SIZE,
     bytes_to_python_object,
     bytes_to_transitions,
     state_to_bytes,
 )
-from lerobot.utils.constants import (  # noqa: E402
+from lerobot.utils.constants import (
     ACTION,
     ALGORITHM_DIR,
     CHECKPOINTS_DIR,
@@ -97,26 +100,28 @@ from lerobot.utils.constants import (  # noqa: E402
     TRAINING_STATE_DIR,
     TRAINING_STEP,
 )
-from lerobot.utils.device_utils import get_safe_torch_device  # noqa: E402
-from lerobot.utils.io_utils import load_json, write_json  # noqa: E402
-from lerobot.utils.process import ProcessSignalHandler  # noqa: E402
-from lerobot.utils.random_utils import set_seed  # noqa: E402
-from lerobot.utils.utils import (  # noqa: E402
+from lerobot.utils.device_utils import get_safe_torch_device
+from lerobot.utils.io_utils import load_json, write_json
+from lerobot.utils.process import ProcessSignalHandler
+from lerobot.utils.random_utils import set_seed
+from lerobot.utils.utils import (
     format_big_number,
     init_logging,
 )
 
-from .algorithms.base import RLAlgorithm  # noqa: E402
-from .algorithms.factory import make_algorithm  # noqa: E402
-from .buffer import ReplayBuffer  # noqa: E402
-from .data_sources import OnlineOfflineMixer  # noqa: E402
-from .learner_service import MAX_WORKERS, SHUTDOWN_TIMEOUT, LearnerService  # noqa: E402
-from .train_rl import TrainRLServerPipelineConfig  # noqa: E402
-from .trainer import RLTrainer  # noqa: E402
+from .algorithms.base import RLAlgorithm
+from .algorithms.factory import make_algorithm
+from .buffer import ReplayBuffer
+from .data_sources import OnlineOfflineMixer
+from .learner_service import MAX_WORKERS, SHUTDOWN_TIMEOUT, LearnerService
+from .train_rl import TrainRLServerPipelineConfig
+from .trainer import RLTrainer
 
 
 @parser.wrap()
 def train_cli(cfg: TrainRLServerPipelineConfig):
+    # Fail fast with a friendly error if the optional ``hilserl`` extra is missing.
+    require_package("grpcio", extra="hilserl", import_name="grpc")
     if not use_threads(cfg):
         import torch.multiprocessing as mp
 
