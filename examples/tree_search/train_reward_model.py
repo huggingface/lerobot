@@ -105,6 +105,7 @@ def find_episodes_for_task(
     task_metadata: dict[str, Any],
     limit: int,
     allowed_frame_indices: set[int] | None = None,
+    require_matches: bool = True,
 ) -> list[int]:
     targets = {
         _normalize_text(str(task_metadata.get("language", ""))),
@@ -124,7 +125,7 @@ def find_episodes_for_task(
             matches.append(ep_idx)
             if len(matches) >= limit:
                 break
-    if not matches:
+    if not matches and require_matches:
         raise SystemExit(f"No dataset episodes matched task targets: {sorted(targets)}")
     return matches
 
@@ -406,6 +407,7 @@ def build_sample_specs(
     split_frame_indices: set[int],
     split_name: str,
     task_language_translations: dict[str, str],
+    require_task_matches: bool,
 ) -> tuple[list[RewardSampleSpec], dict[str, Any]]:
     meta = source.meta
     all_specs: list[RewardSampleSpec] = []
@@ -437,7 +439,21 @@ def build_sample_specs(
             task_metadata=task_metadata,
             limit=args.episodes_per_task,
             allowed_frame_indices=split_frame_indices,
+            require_matches=require_task_matches,
         )
+        if not episodes:
+            stage(
+                f"No episodes for task_order={task_order} split={split_name}; skipping this task in this split."
+            )
+            task_summaries[str(task_order)] = {
+                "task": task_language,
+                "original_task": original_task_language,
+                "dataset_repo_id": source.repo_id,
+                "split": split_name,
+                "episodes": [],
+                "skipped": True,
+            }
+            continue
         stage(
             f"Found episodes for task_order={task_order} split={split_name} "
             f"episodes={episodes} elapsed={time.perf_counter() - start:.2f}s"
@@ -825,6 +841,7 @@ def main() -> None:
             split_frame_indices=split_frames["train"],
             split_name="train",
             task_language_translations=task_language_translations,
+            require_task_matches=True,
         )
         stage(f"Building validation sample specs for dataset_id={dataset_id}")
         source_val_specs, source_val_task_summaries = build_sample_specs(
@@ -833,6 +850,7 @@ def main() -> None:
             split_frame_indices=split_frames["validation"],
             split_name="validation",
             task_language_translations=task_language_translations,
+            require_task_matches=False,
         )
         train_specs.extend(source_train_specs)
         val_specs.extend(source_val_specs)
