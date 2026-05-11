@@ -197,11 +197,11 @@ def record_episode_spline(
             commanded = h00 * p0 + h10 * m0 + h01 * p1 + h11 * m1
 
             action = array_to_pose(commanded)
+            robot.send_action(action)
             obs = robot.get_observation()
             obs_frame = build_dataset_frame(dataset.features, obs, prefix=OBS_STR)
             action_frame = build_dataset_frame(dataset.features, action, prefix=ACTION)
             dataset.add_frame({**obs_frame, **action_frame, "task": task})
-            robot.send_action(action)
             precise_sleep(dt)
 
 
