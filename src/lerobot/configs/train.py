@@ -99,13 +99,10 @@ class TrainPipelineConfig(HubMixin):
     batch_size: int = 8
     prefetch_factor: int = 4
     persistent_workers: bool = True
-    # DataLoader multiprocessing start method. "spawn" is the safe default on
-    # Linux because workers do not inherit fork-time state from the parent —
-    # "fork" can crash with non-fork-safe libraries that the parent has loaded
-    # (e.g. PyAV / torchcodec / ffmpeg) with errors like
-    # `multiprocessing.context.AuthenticationError: digest received was wrong`,
-    # `Pin memory thread exited unexpectedly`, or random worker segfaults.
-    # See https://github.com/huggingface/lerobot/issues/2488.
+    # DataLoader worker start method. "spawn" is safer than "fork" with
+    # non-fork-safe libs (PyAV / torchcodec / ffmpeg — see #2488), but
+    # adds some worker-startup time per run since workers re-import
+    # modules instead of inheriting parent state.
     dataloader_multiprocessing_context: str = "spawn"
     steps: int = 100_000
     eval_freq: int = 20_000
