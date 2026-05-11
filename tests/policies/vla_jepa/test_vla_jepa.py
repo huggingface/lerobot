@@ -17,6 +17,9 @@ from lerobot.policies.vla_jepa.configuration_vla_jepa import VLAJEPAConfig
 from lerobot.policies.vla_jepa.modeling_vla_jepa import VLAJEPAPolicy
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
+pytest.importorskip("transformers")
+pytest.importorskip("diffusers")
+
 pytestmark = pytest.mark.filterwarnings(
     "ignore:In CPU autocast, but the target dtype is not supported:UserWarning"
 )

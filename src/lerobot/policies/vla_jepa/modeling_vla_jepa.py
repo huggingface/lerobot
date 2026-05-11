@@ -2,17 +2,24 @@ from __future__ import annotations
 
 from collections import deque
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
 from PIL import Image
 from torch import Tensor, nn
-from transformers import AutoModel, AutoVideoProcessor
 
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 from lerobot.policies.utils import populate_queues
 from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.import_utils import _transformers_available, require_package
+
+if TYPE_CHECKING or _transformers_available:
+    from transformers import AutoModel, AutoVideoProcessor
+else:
+    AutoModel = None
+    AutoVideoProcessor = None
 
 from .action_head import VLAJEPAActionHead
 from .configuration_vla_jepa import VLAJEPAConfig
@@ -43,6 +50,7 @@ class VLAJEPAModel(nn.Module):
 
     def __init__(self, config: VLAJEPAConfig) -> None:
         super().__init__()
+        require_package("transformers", extra="vla_jepa")
         self.config = config
 
         # Vision-language backbone

@@ -1,15 +1,30 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import torch
 import torch.nn.functional as F  # noqa: N812
-from diffusers import ConfigMixin, ModelMixin
-from diffusers.configuration_utils import register_to_config
-from diffusers.models.attention import Attention, FeedForward
-from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from torch import nn
 from torch.distributions import Beta
+
+from lerobot.utils.import_utils import _diffusers_available
+
+if TYPE_CHECKING or _diffusers_available:
+    from diffusers import ConfigMixin, ModelMixin
+    from diffusers.configuration_utils import register_to_config
+    from diffusers.models.attention import Attention, FeedForward
+    from diffusers.models.embeddings import TimestepEmbedding, Timesteps
+else:
+
+    class ModelMixin:  # type: ignore[no-redef]
+        pass
+
+    class ConfigMixin:  # type: ignore[no-redef]
+        pass
+
+    register_to_config = lambda f: f  # noqa: E731
+    Attention = FeedForward = TimestepEmbedding = Timesteps = None
 
 from .configuration_vla_jepa import VLAJEPAConfig
 
