@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
 from diffusers import ConfigMixin, ModelMixin
 from diffusers.configuration_utils import register_to_config
 from diffusers.models.attention import Attention, FeedForward

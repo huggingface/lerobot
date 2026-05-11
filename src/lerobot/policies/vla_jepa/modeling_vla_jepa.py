@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
 from PIL import Image
 from torch import Tensor, nn
 from transformers import AutoModel, AutoVideoProcessor
@@ -139,18 +139,18 @@ class VLAJEPAModel(nn.Module):
                 return_dict=True,
             )
             last_hidden = qwen_outputs.hidden_states[-1]  # [B, seq_len, H]
-            B, _, H = last_hidden.shape
+            b, _, h = last_hidden.shape
 
-            action_tokens = last_hidden[action_indices[0], action_indices[1], :].view(B, -1, H)
+            action_tokens = last_hidden[action_indices[0], action_indices[1], :].view(b, -1, h)
 
-            embodied_action_tokens = last_hidden[embodied_indices[0], embodied_indices[1], :].view(B, -1, H)
+            embodied_action_tokens = last_hidden[embodied_indices[0], embodied_indices[1], :].view(b, -1, h)
 
         # ---- Step 2: JEPA Encoder (same as original) ----
-        B, V, T_frames, C, H_img, W_img = batch_videos.shape
-        batch_videos_flat = batch_videos.reshape(B * V, T_frames, C, H_img, W_img)
+        b, v, t_frames, c, h_img, w_img = batch_videos.shape
+        batch_videos_flat = batch_videos.reshape(b * v, t_frames, c, h_img, w_img)
 
         video_pixels = []
-        for i in range(B * V):
+        for i in range(b * v):
             video_pixels.append(
                 self.video_processor(videos=batch_videos_flat[i], return_tensors="pt")[
                     "pixel_values_videos"
@@ -161,41 +161,41 @@ class VLAJEPAModel(nn.Module):
         with torch.no_grad():
             video_embeddings = self.video_encoder.get_vision_features(pixel_values_videos=video_pixels)
             # Merge views: [B*V, ...] -> [B, ..., V*embed_dim]
-            video_embeddings = torch.cat(torch.chunk(video_embeddings, chunks=V, dim=0), dim=2)
+            video_embeddings = torch.cat(torch.chunk(video_embeddings, chunks=v, dim=0), dim=2)
 
         # ---- Step 3: JEPA Predictor (same as original) ----
         tubelet_size = self.video_encoder.config.tubelet_size
-        T_enc = T_frames // tubelet_size
+        t_enc = t_frames // tubelet_size
         device_wm = video_embeddings.device
 
-        if T_enc < 2:
+        if t_enc < 2:
             # Not enough frames for JEPA prediction (need at least 2 encoded frames)
             wm_loss = torch.tensor(0.0, device=device_wm)
         else:
-            tokens_per_frame = video_embeddings.shape[1] // T_enc
+            tokens_per_frame = video_embeddings.shape[1] // t_enc
 
             # input_states: frames 0..T-2 [B, (T-1)*tokens_per_frame, D]
             # gt_states:     frames 1..T-1 [B, (T-1)*tokens_per_frame, D]
-            input_states = video_embeddings[:, : tokens_per_frame * (T_enc - 1), :]
+            input_states = video_embeddings[:, : tokens_per_frame * (t_enc - 1), :]
             gt_states = video_embeddings[:, tokens_per_frame:, :]
-            D_emb = input_states.shape[-1]
+            d_emb = input_states.shape[-1]
 
             # Reshape to 4D for ActionConditionedVideoPredictor:
             # [B, (T-1)*tokens, D] → [B, T-1, tokens, D]
-            input_states_4d = input_states.view(B, T_enc - 1, tokens_per_frame, D_emb)
+            input_states_4d = input_states.view(b, t_enc - 1, tokens_per_frame, d_emb)
 
             # Reshape action tokens: [B, total_acts, D] → [B, T-1, per_step, D]
-            expected_actions = (T_enc - 1) * self.config.num_action_tokens_per_timestep
+            expected_actions = (t_enc - 1) * self.config.num_action_tokens_per_timestep
             if action_tokens.shape[1] < expected_actions:
                 pad = action_tokens[:, -1:].repeat(1, expected_actions - action_tokens.shape[1], 1)
                 action_tokens = torch.cat([action_tokens, pad], dim=1)
             act_4d = action_tokens[:, :expected_actions].view(
-                B, T_enc - 1, self.config.num_action_tokens_per_timestep, -1
+                b, t_enc - 1, self.config.num_action_tokens_per_timestep, -1
             )
 
             # Cast to float32 for predictor (Linear layers are float32)
             pred_4d = self.video_predictor(input_states_4d.float(), act_4d.float())
-            predicted_states = pred_4d.reshape(B, -1, D_emb)
+            predicted_states = pred_4d.reshape(b, -1, d_emb)
 
             wm_loss = F.l1_loss(predicted_states, gt_states.float(), reduction="mean")
 
@@ -261,8 +261,8 @@ class VLAJEPAModel(nn.Module):
                 return_dict=True,
             )
             last_hidden = qwen_outputs.hidden_states[-1]
-            B, _, H = last_hidden.shape
-            embodied_action_tokens = last_hidden[embodied_indices[0], embodied_indices[1], :].view(B, -1, H)
+            b, _, h = last_hidden.shape
+            embodied_action_tokens = last_hidden[embodied_indices[0], embodied_indices[1], :].view(b, -1, h)
 
         state_tensor = None
         if state is not None:
@@ -349,8 +349,6 @@ class VLAJEPAPolicy(PreTrainedPolicy):
 
         # ---- Collect videos per sample ----
         # Build video arrays: for each sample, stack views as [V, T, H, W, 3]
-        num_views = len(image_keys)
-        has_video = any(batch[k].ndim == 5 for k in image_keys if k in batch)
         # Check whether any image feature has a time dimension
         video_source = None
         for k in image_keys:
