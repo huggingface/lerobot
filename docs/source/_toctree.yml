@@ -8,7 +8,7 @@
   - local: il_robots
     title: Imitation Learning for Robots
   - local: bring_your_own_policies
-    title: Bring Your Own Policies
+    title: Adding a Policy
   - local: integrate_hardware
     title: Bring Your Own Hardware
   - local: hilserl
@@ -159,8 +159,6 @@
 - sections:
   - local: contributing
     title: Contribute to LeRobot
-  - local: contributing_a_policy
-    title: Contributing a Policy
   - local: backwardcomp
     title: Backward compatibility
   title: "About"
