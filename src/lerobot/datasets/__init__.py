@@ -40,19 +40,9 @@ from .io_utils import load_episodes, write_stats
 from .lerobot_dataset import LeRobotDataset
 from .multi_dataset import MultiLeRobotDataset
 from .pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
-from .pyav_utils import (
-    check_video_encoder_config_pyav,
-    detect_available_encoders_pyav,
-    get_codec,
-)
 from .sampler import EpisodeAwareSampler
 from .streaming_dataset import StreamingLeRobotDataset
 from .utils import DEFAULT_EPISODES_PATH, create_lerobot_dataset_card
-from .video_utils import (
-    VideoEncoderConfig,
-    VideoEncodingManager,
-    camera_encoder_defaults,
-)
 
 # NOTE: Low-level I/O functions (cast_stats_to_numpy, get_parquet_file_size_in_mb, etc.)
 # and legacy migration constants are intentionally NOT re-exported here.
@@ -67,20 +57,14 @@ __all__ = [
     "LeRobotDatasetMetadata",
     "MultiLeRobotDataset",
     "StreamingLeRobotDataset",
-    "VideoEncoderConfig",
-    "VideoEncodingManager",
-    "camera_encoder_defaults",
     "add_features",
     "aggregate_datasets",
     "aggregate_pipeline_dataset_features",
     "aggregate_stats",
-    "check_video_encoder_config_pyav",
     "convert_image_to_video_dataset",
     "create_initial_features",
     "create_lerobot_dataset_card",
     "delete_episodes",
-    "detect_available_encoders_pyav",
-    "get_codec",
     "get_feature_stats",
     "load_episodes",
     "make_dataset",

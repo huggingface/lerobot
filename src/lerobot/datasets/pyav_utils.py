@@ -23,12 +23,11 @@ from __future__ import annotations
 
 import functools
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import av
 
-if TYPE_CHECKING:
-    from .video_utils import VideoEncoderConfig
+from lerobot.configs.video import VideoEncoderConfig
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +166,7 @@ def check_video_encoder_config_pyav(config: VideoEncoderConfig) -> None:
     """Verify *config* is compatible with the bundled FFmpeg build.
 
     Checks pixel format, abstract tuning-field compatibility, and each merged
-    encoder option from :meth:`~lerobot.datasets.video_utils.VideoEncoderConfig.get_codec_options`
+    encoder option from :meth:`~lerobot.configs.video.VideoEncoderConfig.get_codec_options`
     against PyAV (including numeric ``extra_options`` present in that dict).
     No-op when ``config.vcodec`` isn't in the local FFmpeg build.
 

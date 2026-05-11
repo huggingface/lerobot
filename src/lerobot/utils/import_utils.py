@@ -128,6 +128,9 @@ _hidapi_available = is_package_available("hidapi", import_name="hid")
 _pandas_available = is_package_available("pandas")
 _faker_available = is_package_available("faker")
 
+# Video encoding / decoding
+_av_available = is_package_available("av")
+
 # Misc
 _pynput_available = is_package_available("pynput")
 _pygame_available = is_package_available("pygame")

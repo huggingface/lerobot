@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from lerobot.datasets.video_utils import VideoEncoderConfig, camera_encoder_defaults
+from .video import VideoEncoderConfig, camera_encoder_defaults
 
 
 @dataclass

@@ -26,13 +26,12 @@ pytest.importorskip("av", reason="av is required (install lerobot[dataset])")
 
 import av  # noqa: E402
 
+from lerobot.configs.video import VALID_VIDEO_CODECS, VideoEncoderConfig
 from lerobot.datasets.image_writer import write_image
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pyav_utils import get_codec
 from lerobot.datasets.utils import INFO_PATH
 from lerobot.datasets.video_utils import (
-    VALID_VIDEO_CODECS,
-    VideoEncoderConfig,
     concatenate_video_files,
     encode_video_frames,
     get_video_info,

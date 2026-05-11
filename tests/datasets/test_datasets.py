@@ -31,6 +31,7 @@ from torchvision.transforms import v2
 
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
+from lerobot.configs.video import VALID_VIDEO_CODECS, VideoEncoderConfig
 from lerobot.datasets import make_dataset
 from lerobot.datasets.feature_utils import get_hf_features_from_features
 from lerobot.datasets.image_writer import image_array_to_pil_image
@@ -43,7 +44,6 @@ from lerobot.datasets.utils import (
     DEFAULT_VIDEO_FILE_SIZE_IN_MB,
     create_branch,
 )
-from lerobot.datasets.video_utils import VALID_VIDEO_CODECS, VideoEncoderConfig
 from lerobot.envs.factory import make_env_config
 from lerobot.policies.factory import make_policy_config
 from lerobot.robots import make_robot_from_config
