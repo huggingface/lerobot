@@ -72,6 +72,7 @@ class RewardSampleSpec:
     source_task_order: int | None = None
     text_task_order: int | None = None
     is_text_mismatch: bool = False
+    is_bad_sequence: bool = False
     source_task: str | None = None
 
 
@@ -307,6 +308,7 @@ class LiberoRewardFrameDataset(Dataset):
             "temporal_local_indices": temporal_indices,
             "label": label,
             "is_bad_sequence": is_bad_sequence,
+            "spec_is_bad_sequence": spec.is_bad_sequence,
             "source_task_order": spec.source_task_order if spec.source_task_order is not None else -1,
             "text_task_order": spec.text_task_order if spec.text_task_order is not None else -1,
             "is_text_mismatch": spec.is_text_mismatch,
@@ -484,7 +486,15 @@ def build_sample_specs(
                 continue
             denom = max(1, length - 1)
             before_count = len(all_specs)
+            reader_for_flags: EpisodeFrameReader | None = None
             for local_index in local_indices:
+                is_bad_sequence = False
+                if "is_bad_sequence" in getattr(meta, "features", {}):
+                    if reader_for_flags is None:
+                        reader_for_flags = _load_episode_reader(source.reader_args, meta, episode_index)
+                    is_bad_sequence = LiberoRewardFrameDataset._coerce_bool(
+                        reader_for_flags[int(local_index)].get("is_bad_sequence", False)
+                    )
                 all_specs.append(
                     RewardSampleSpec(
                         dataset_id=source.dataset_id,
@@ -496,6 +506,7 @@ def build_sample_specs(
                         source_task_order=task_order,
                         text_task_order=task_order,
                         is_text_mismatch=False,
+                        is_bad_sequence=is_bad_sequence,
                         source_task=task_language,
                     )
                 )
@@ -513,7 +524,7 @@ def build_sample_specs(
             positives = list(all_specs)
             negative_specs: list[RewardSampleSpec] = []
             for spec in positives:
-                if spec.is_text_mismatch:
+                if spec.is_text_mismatch or spec.is_bad_sequence:
                     continue
                 candidates = [order for order in task_orders if order != spec.source_task_order]
                 rng.shuffle(candidates)
@@ -529,6 +540,7 @@ def build_sample_specs(
                             source_task_order=spec.source_task_order,
                             text_task_order=wrong_order,
                             is_text_mismatch=True,
+                            is_bad_sequence=False,
                             source_task=spec.source_task or spec.task,
                         )
                     )
