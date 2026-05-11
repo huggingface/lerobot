@@ -18,13 +18,18 @@ from __future__ import annotations
 
 import importlib
 import logging
+import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict, Unpack
 
 import torch
+from huggingface_hub.constants import CONFIG_NAME
+from huggingface_hub.errors import EntryNotFoundError
 
 if TYPE_CHECKING:
     from lerobot.datasets import LeRobotDatasetMetadata
 
+from lerobot.common.policy_metadata import PolicyDatasetMetadata, load_policy_dataset_metadata
 from lerobot.configs import FeatureType, PreTrainedConfig
 from lerobot.envs import EnvConfig, env_to_policy_features
 from lerobot.processor import (
@@ -233,6 +238,74 @@ class ProcessorConfigKwargs(TypedDict, total=False):
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None
 
 
+def _load_policy_metadata_if_available(pretrained_path: str | Path | None) -> PolicyDatasetMetadata | None:
+    if pretrained_path is None:
+        return None
+    return load_policy_dataset_metadata(pretrained_path)
+
+
+def _has_policy_features(cfg: PreTrainedConfig) -> bool:
+    return bool(cfg.input_features) and bool(cfg.output_features)
+
+
+def _features_from_policy_config(cfg: PreTrainedConfig) -> dict[str, Any]:
+    if not _has_policy_features(cfg):
+        raise ValueError("Policy config does not contain input and output features.")
+    return {**(cfg.input_features or {}), **(cfg.output_features or {})}
+
+
+def _load_pretrained_policy_config_for_factory(cfg: PreTrainedConfig) -> PreTrainedConfig | None:
+    if cfg.pretrained_path is None:
+        return None
+
+    model_id = str(cfg.pretrained_path)
+    if Path(model_id).is_dir() and CONFIG_NAME not in os.listdir(model_id):
+        return None
+
+    try:
+        return PreTrainedConfig.from_pretrained(cfg.pretrained_path)
+    except (EntryNotFoundError, FileNotFoundError):
+        return None
+
+
+def _apply_runtime_overrides(
+    pretrained_cfg: PreTrainedConfig, runtime_cfg: PreTrainedConfig
+) -> PreTrainedConfig:
+    if pretrained_cfg.type != runtime_cfg.type:
+        logging.warning(
+            "Policy type from pretrained config (%s) differs from requested policy type (%s). "
+            "Using the pretrained config type.",
+            pretrained_cfg.type,
+            runtime_cfg.type,
+        )
+
+    pretrained_cfg.device = runtime_cfg.device
+    pretrained_cfg.use_amp = runtime_cfg.use_amp
+    pretrained_cfg.pretrained_path = runtime_cfg.pretrained_path
+    pretrained_cfg.use_peft = pretrained_cfg.use_peft or runtime_cfg.use_peft
+
+    for attr in ("repo_id", "private", "tags", "license"):
+        value = getattr(runtime_cfg, attr)
+        if value is not None:
+            setattr(pretrained_cfg, attr, value)
+    return pretrained_cfg
+
+
+def _set_action_feature_names_from_metadata(
+    cfg: PreTrainedConfig, metadata: LeRobotDatasetMetadata | PolicyDatasetMetadata | None
+) -> None:
+    if metadata is None or not hasattr(cfg, "action_feature_names"):
+        return
+    if getattr(cfg, "action_feature_names", None):
+        return
+    if isinstance(metadata, PolicyDatasetMetadata):
+        action_names = metadata.action_names
+    else:
+        action_names = metadata.features.get(ACTION, {}).get("names")
+    if action_names is not None:
+        cfg.action_feature_names = list(action_names)
+
+
 def make_pre_post_processors(
     policy_cfg: PreTrainedConfig,
     pretrained_path: str | None = None,
@@ -266,6 +339,11 @@ def make_pre_post_processors(
     if pretrained_path:
         # TODO(Steven): Temporary patch, implement correctly the processors for Gr00t
         if isinstance(policy_cfg, GrootConfig):
+            if kwargs.get("dataset_stats") is None:
+                policy_metadata = _load_policy_metadata_if_available(pretrained_path)
+                if policy_metadata is not None and policy_metadata.stats:
+                    kwargs["dataset_stats"] = policy_metadata.stats
+
             # GROOT handles normalization in groot_pack_inputs_v3 step
             # Need to override both stats AND normalize_min_max since saved config might be empty
             preprocessor_overrides = {}
@@ -458,8 +536,10 @@ def make_policy(
         NotImplementedError: If attempting to use an unsupported policy-backend
                              combination (e.g., VQBeT with 'mps').
     """
-    if bool(ds_meta) == bool(env_cfg):
-        raise ValueError("Either one of a dataset metadata or a sim env must be provided.")
+    if ds_meta is not None and env_cfg is not None:
+        raise ValueError("Only one of a dataset metadata or a sim env must be provided.")
+    if ds_meta is None and env_cfg is None and cfg.pretrained_path is None:
+        raise ValueError("Either a dataset metadata, a sim env, or a pretrained path must be provided.")
 
     # NOTE: Currently, if you try to run vqbet with mps backend, you'll get this error.
     # TODO(aliberts, rcadene): Implement a check_backend_compatibility in policies?
@@ -474,37 +554,51 @@ def make_policy(
             "Please use `cpu` or `cuda` backend."
         )
 
-    policy_cls = get_policy_class(cfg.type)
-
-    kwargs = {}
+    runtime_cfg = cfg
+    policy_metadata = None
     if ds_meta is not None:
         features = dataset_to_policy_features(ds_meta.features)
-    else:
+    elif env_cfg is not None:
         if not cfg.pretrained_path:
             logging.warning(
                 "You are instantiating a policy from scratch and its features are parsed from an environment "
                 "rather than a dataset. Normalization modules inside the policy will have infinite values "
                 "by default without stats from a dataset."
             )
-        if env_cfg is None:
-            raise ValueError("env_cfg cannot be None when ds_meta is not provided")
         features = env_to_policy_features(env_cfg)
+    else:
+        policy_metadata = _load_policy_metadata_if_available(cfg.pretrained_path)
+        pretrained_cfg = _load_pretrained_policy_config_for_factory(cfg)
+        if pretrained_cfg is not None:
+            cfg = _apply_runtime_overrides(pretrained_cfg, runtime_cfg)
+
+        if _has_policy_features(cfg):
+            features = _features_from_policy_config(cfg)
+        elif policy_metadata is not None:
+            features = dataset_to_policy_features(policy_metadata.features)
+        else:
+            raise ValueError(
+                f"Policy '{cfg.type}' cannot be instantiated from pretrained path '{cfg.pretrained_path}' "
+                "without feature metadata. Pass `ds_meta=dataset.meta`, pass `env_cfg=...`, or re-save "
+                "this policy with a newer LeRobot version."
+            )
 
     cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     if not cfg.input_features:
         cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
 
-    # Store action feature names for relative_exclude_joints support
-    if ds_meta is not None and hasattr(cfg, "action_feature_names"):
-        action_names = ds_meta.features.get(ACTION, {}).get("names")
-        if action_names is not None:
-            cfg.action_feature_names = list(action_names)
+    # Store action feature names for relative_exclude_joints support.
+    _set_action_feature_names_from_metadata(cfg, ds_meta or policy_metadata)
 
+    policy_cls = get_policy_class(cfg.type)
+    kwargs = {}
     kwargs["config"] = cfg
 
-    # Pass dataset_stats to the policy if available (needed for some policies like SARM)
+    # Pass dataset_stats to the policy if available (needed for some policies like SARM).
     if ds_meta is not None and hasattr(ds_meta, "stats"):
         kwargs["dataset_stats"] = ds_meta.stats
+    elif policy_metadata is not None and policy_metadata.stats:
+        kwargs["dataset_stats"] = policy_metadata.stats
 
     if ds_meta is not None:
         kwargs["dataset_meta"] = ds_meta

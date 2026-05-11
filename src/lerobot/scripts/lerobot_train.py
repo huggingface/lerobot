@@ -510,6 +510,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     scheduler=lr_scheduler,
                     preprocessor=preprocessor,
                     postprocessor=postprocessor,
+                    dataset_meta=dataset.meta,
                 )
                 update_last_checkpoint(checkpoint_dir)
                 if wandb_logger:
@@ -578,10 +579,12 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         if getattr(active_cfg, "push_to_hub", False):
             unwrapped_model = accelerator.unwrap_model(policy)
             # PEFT only applies when training a policy — reward models use the plain path.
-            if not cfg.is_reward_model_training and cfg.policy.use_peft:
-                unwrapped_model.push_model_to_hub(cfg, peft_model=unwrapped_model)
-            else:
+            if cfg.is_reward_model_training:
                 unwrapped_model.push_model_to_hub(cfg)
+            elif cfg.policy.use_peft:
+                unwrapped_model.push_model_to_hub(cfg, peft_model=unwrapped_model, dataset_meta=dataset.meta)
+            else:
+                unwrapped_model.push_model_to_hub(cfg, dataset_meta=dataset.meta)
             preprocessor.push_to_hub(active_cfg.repo_id)
             postprocessor.push_to_hub(active_cfg.repo_id)
 
