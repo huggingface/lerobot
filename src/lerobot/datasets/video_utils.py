@@ -948,6 +948,9 @@ def get_video_info(
     # Add additional encoder configuration if provided
     if camera_encoder_config is not None:
         for field_name, field_value in asdict(camera_encoder_config).items():
+            # vcodec is already populated from the video stream
+            if field_name == "vcodec":
+                continue
             video_info.setdefault(f"video.{field_name}", field_value)
 
     return video_info
