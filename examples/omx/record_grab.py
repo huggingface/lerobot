@@ -46,7 +46,6 @@ from lerobot.utils.robot_utils import precise_sleep
 
 from .reset_environment import (
     APPROACH_SPEED,
-    CONTROL_HZ,
     GRIPPER_CLOSE_POS,
     HOME_POSE,
     PUSH_END_ELBOW_FLEX,
@@ -169,9 +168,9 @@ def record_episode_spline(
     timestamps = []
     for i in range(n - 1):
         max_dist = float(np.max(np.abs(pts[i + 1] - pts[i])))
-        ns = max(1, int(max_dist / speeds[i] * CONTROL_HZ)) if max_dist >= 0.5 else 0
+        ns = max(1, int(max_dist / speeds[i] * dataset.fps)) if max_dist >= 0.5 else 0
         n_steps_list.append(ns)
-        timestamps.append(ns / CONTROL_HZ)
+        timestamps.append(ns / dataset.fps)
 
     # Velocity tangents (deg/sec) — clamped at endpoints, Catmull-Rom for interior
     vels = [np.zeros_like(pts[0])]
@@ -181,7 +180,7 @@ def record_episode_spline(
         vels.append(0.5 * (v_prev + v_next))
     vels.append(np.zeros_like(pts[0]))
 
-    dt = 1.0 / CONTROL_HZ
+    dt = 1.0 / dataset.fps
     for seg in range(n - 1):
         ns = n_steps_list[seg]
         if ns == 0:
@@ -313,8 +312,9 @@ def record_grab_episode(
 
     # Dwell at HOME for ~0.5 s before next episode
     home_action = build_dataset_frame(dataset.features, HOME_POSE, prefix=ACTION)
-    dt = 1.0 / CONTROL_HZ
-    for _ in range(int(CONTROL_HZ * 0.5)):
+    dt = 1.0 / dataset.fps
+    for _ in range(int(dataset.fps * 0.5)):
+        robot.send_action(HOME_POSE)
         obs = robot.get_observation()
         obs_frame = build_dataset_frame(dataset.features, obs, prefix=OBS_STR)
         dataset.add_frame({**obs_frame, **home_action, "task": task})
@@ -395,7 +395,12 @@ def record_grab(cfg: OmxRecordGrabConfig) -> LeRobotDataset:
                 recovery_start = cfg.recovery_prob > 0 and float(rng.random()) < cfg.recovery_prob
                 logger.info(f"Step 2: recording {'recovery ' if recovery_start else ''}grab episode...")
                 record_grab_episode(
-                    robot, dataset, pan, t, cfg.dataset.single_task, recovery_start=recovery_start
+                    robot,
+                    dataset,
+                    pan,
+                    t,
+                    cfg.dataset.single_task,
+                    recovery_start=recovery_start,
                 )
 
                 dataset.save_episode()
