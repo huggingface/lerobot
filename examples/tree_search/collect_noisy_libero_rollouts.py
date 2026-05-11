@@ -506,6 +506,11 @@ def _write_debug_video(path: Path, frames: list[np.ndarray], *, fps: int) -> str
 
 
 def _push_dataset(dataset: LeRobotDataset, cfg: NoisyLiberoRolloutConfig) -> dict[str, Any]:
+    data_dir = dataset.root / "data"
+    has_data_files = data_dir.exists() and any(data_dir.rglob("*.parquet"))
+    images_dir = dataset.root / "images"
+    has_image_files = images_dir.exists() and any(path.is_file() for path in images_dir.rglob("*"))
+
     dataset.push_to_hub(
         branch=cfg.push_branch,
         private=cfg.push_private,
@@ -513,12 +518,12 @@ def _push_dataset(dataset: LeRobotDataset, cfg: NoisyLiberoRolloutConfig) -> dic
         upload_large_folder=cfg.upload_large_folder,
     )
 
-    pushed_images = False
-    images_dir = dataset.root / "images"
-    if not cfg.dataset_use_videos and images_dir.exists():
-        # LeRobotDataset.push_to_hub() always ignores images/ because normal
-        # datasets are video-backed. For image-backed debug/negative datasets,
-        # upload images explicitly so the dataset is usable after download.
+    pushed_image_files = False
+    if not cfg.dataset_use_videos and has_image_files:
+        # LeRobotDataset.push_to_hub() ignores images/ because regular datasets
+        # are usually video-backed. If a local image directory remains, upload it
+        # explicitly. In the common image-backed path, images are already embedded
+        # into data/*.parquet and this directory is removed after save_episode().
         api = HfApi()
         if cfg.upload_large_folder:
             api.upload_large_folder(
@@ -532,15 +537,20 @@ def _push_dataset(dataset: LeRobotDataset, cfg: NoisyLiberoRolloutConfig) -> dic
         else:
             api.upload_folder(
                 repo_id=dataset.repo_id,
-                folder_path=images_dir,
-                path_in_repo="images",
+                folder_path=dataset.root,
                 repo_type="dataset",
                 revision=cfg.push_branch,
+                allow_patterns="images/**",
             )
-        pushed_images = True
+        pushed_image_files = True
+
+    embedded_images_in_parquet = bool(not cfg.dataset_use_videos and has_data_files)
 
     return {
-        "pushed_images": pushed_images,
+        "pushed_images": bool(embedded_images_in_parquet or pushed_image_files),
+        "embedded_images_in_parquet": embedded_images_in_parquet,
+        "pushed_image_files": pushed_image_files,
+        "has_data_files": has_data_files,
         "visual_storage": "videos" if cfg.dataset_use_videos else "images",
     }
 
@@ -802,7 +812,9 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
         print(
             "[noisy-rollout] "
             f"pushed dataset to Hugging Face Hub repo_id={dataset.repo_id} "
-            f"visual_storage={push_info['visual_storage']} pushed_images={push_info['pushed_images']}",
+            f"visual_storage={push_info['visual_storage']} pushed_images={push_info['pushed_images']} "
+            f"embedded_images_in_parquet={push_info['embedded_images_in_parquet']} "
+            f"pushed_image_files={push_info['pushed_image_files']}",
             flush=True,
         )
 
