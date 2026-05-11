@@ -21,6 +21,7 @@ from lerobot import envs, policies  # noqa: F401 - registers config subclasses
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets import LeRobotDataset
+from lerobot.datasets.io_utils import write_info
 from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import init_logging
@@ -71,6 +72,7 @@ class NoisyLiberoRolloutConfig:
     dataset_repo_id: str = "local/noisy_libero_rollouts"
     dataset_root: Path | None = None
     dataset_use_videos: bool = True
+    dataset_val_fraction: float = 0.2
     dataset_vcodec: str = "libsvtav1"
     dataset_image_writer_threads: int = 4
     dataset_flip_images: bool = True
@@ -555,6 +557,29 @@ def _push_dataset(dataset: LeRobotDataset, cfg: NoisyLiberoRolloutConfig) -> dic
     }
 
 
+def _apply_dataset_splits(dataset: LeRobotDataset, cfg: NoisyLiberoRolloutConfig) -> dict[str, Any]:
+    if cfg.dataset_val_fraction < 0 or cfg.dataset_val_fraction >= 1:
+        raise ValueError("`dataset_val_fraction` must be in [0, 1).")
+    total_episodes = int(dataset.meta.info.get("total_episodes", 0))
+    if total_episodes <= 1 or cfg.dataset_val_fraction == 0:
+        splits = {"train": f"0:{total_episodes}"}
+    else:
+        val_count = max(1, int(round(total_episodes * cfg.dataset_val_fraction)))
+        val_count = min(val_count, total_episodes - 1)
+        train_count = total_episodes - val_count
+        splits = {
+            "train": f"0:{train_count}",
+            "validation": f"{train_count}:{total_episodes}",
+        }
+    dataset.meta.info["splits"] = splits
+    write_info(dataset.meta.info, dataset.root)
+    return {
+        "splits": splits,
+        "total_episodes": total_episodes,
+        "val_fraction": cfg.dataset_val_fraction,
+    }
+
+
 def _close_env_quietly(env: gym.vector.VectorEnv) -> None:
     with suppress(Exception):
         env.close()
@@ -581,6 +606,8 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
         raise ValueError("`dataset_clip_initial_min/max` must be non-negative.")
     if cfg.dataset_clip_initial_min > cfg.dataset_clip_initial_max:
         raise ValueError("`dataset_clip_initial_min` must be <= `dataset_clip_initial_max`.")
+    if cfg.dataset_val_fraction < 0 or cfg.dataset_val_fraction >= 1:
+        raise ValueError("`dataset_val_fraction` must be in [0, 1).")
     if not cfg.save_dataset and not cfg.save_debug_video:
         raise ValueError("Nothing to write: enable --save_dataset=true or --save_debug_video=true.")
 
@@ -646,6 +673,7 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
         "dataset_root": str(dataset.root) if dataset is not None else None,
         "dataset_repo_id": dataset.repo_id if dataset is not None else None,
         "dataset_use_videos": cfg.dataset_use_videos,
+        "dataset_val_fraction": cfg.dataset_val_fraction,
         "dataset_flip_images": cfg.dataset_flip_images,
         "dataset_extra_columns": ["is_bad_sequence"] if dataset is not None else [],
         "push_to_hub": cfg.push_to_hub,
@@ -802,6 +830,12 @@ def main(cfg: NoisyLiberoRolloutConfig) -> None:
             dataset.finalize()
         for selected_env in selected_envs:
             _close_env_quietly(selected_env)
+
+    if completed and dataset is not None:
+        split_info = _apply_dataset_splits(dataset, cfg)
+        manifest["dataset_split_info"] = split_info
+        (cfg.output_dir / "manifest.json").write_text(json.dumps(_to_jsonable(manifest), indent=2))
+        print(f"[noisy-rollout] dataset splits={split_info['splits']}", flush=True)
 
     if completed and dataset is not None and cfg.push_to_hub:
         print(f"[noisy-rollout] pushing dataset to Hugging Face Hub repo_id={dataset.repo_id}", flush=True)
