@@ -62,7 +62,7 @@ python -m examples.omx.record_grab \
     --robot.id=omx_follower \
     --robot.cameras="$ROBOT_CAMERAS" \
     --dataset.repo_id=$HF_USERNAME/omx_pickandplace \
-    --dataset.root=data/omx_collect \
+    --dataset.root=data/omx_pickandplace \
     --dataset.num_episodes=50 \
     --dataset.single_task="Pick the cube and place it in the blue square" \
     --dataset.streaming_encoding=true \
@@ -91,6 +91,8 @@ lerobot-train \
     --steps=20000 \
     --wandb.enable=true
 ```
+
+A pretrained `ACT` policy is already available here [`maximellerbach/omx_pickandplace_act`](https://huggingface.co/maximellerbach/omx_pickandplace_act).
 
 ## Step 3 — Rollout
 
