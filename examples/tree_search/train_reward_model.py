@@ -407,7 +407,6 @@ def build_sample_specs(
     split_frame_indices: set[int],
     split_name: str,
     task_language_translations: dict[str, str],
-    require_task_matches: bool,
 ) -> tuple[list[RewardSampleSpec], dict[str, Any]]:
     meta = source.meta
     all_specs: list[RewardSampleSpec] = []
@@ -439,7 +438,7 @@ def build_sample_specs(
             task_metadata=task_metadata,
             limit=args.episodes_per_task,
             allowed_frame_indices=split_frame_indices,
-            require_matches=require_task_matches,
+            require_matches=False,
         )
         if not episodes:
             stage(
@@ -841,7 +840,7 @@ def main() -> None:
             split_frame_indices=split_frames["train"],
             split_name="train",
             task_language_translations=task_language_translations,
-            require_task_matches=True,
+            require_task_matches=False,
         )
         stage(f"Building validation sample specs for dataset_id={dataset_id}")
         source_val_specs, source_val_task_summaries = build_sample_specs(
