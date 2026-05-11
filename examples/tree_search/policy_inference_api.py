@@ -266,7 +266,7 @@ def _infer_task(env: gym.vector.VectorEnv | None) -> str:
             return ""
 
 
-def _load_task_language_map(path: Path | None) -> dict[str, str]:
+def _load_task_language_map(path: Path | None) -> dict[str, Any]:
     if path is None:
         return {}
     with path.open() as f:
@@ -274,7 +274,7 @@ def _load_task_language_map(path: Path | None) -> dict[str, str]:
     if not isinstance(data, dict):
         raise ValueError(f"Expected task language map JSON object, got {type(data).__name__}: {path}")
 
-    translations: dict[str, str] = {}
+    translations: dict[str, Any] = {}
 
     def add_mapping(key: object, value: object, *, prefix: str | None = None) -> None:
         if not isinstance(value, str):
@@ -285,6 +285,24 @@ def _load_task_language_map(path: Path | None) -> dict[str, str]:
             translations[f"{prefix}.{text_key}"] = value
 
     for key, value in data.items():
+        if str(key) in {"stop_words", "_stop_words"}:
+            if isinstance(value, str):
+                translations["__stop_words__"] = [value]
+            elif isinstance(value, list | tuple):
+                translations["__stop_words__"] = [str(item) for item in value]
+            elif isinstance(value, dict):
+                words: list[str] = []
+                for nested_value in value.values():
+                    if isinstance(nested_value, str):
+                        words.append(nested_value)
+                    elif isinstance(nested_value, list | tuple):
+                        words.extend(str(item) for item in nested_value)
+                    else:
+                        raise ValueError(f"Unsupported stop_words entry in {path}: {nested_value!r}")
+                translations["__stop_words__"] = words
+            else:
+                raise ValueError(f"Expected stop_words to be a string/list/object in {path}")
+            continue
         if isinstance(value, dict):
             for nested_key, nested_value in value.items():
                 add_mapping(nested_key, nested_value, prefix=str(key))
@@ -298,7 +316,7 @@ def _translate_task_language(
     *,
     suite: str,
     task_id: int,
-    translations: Mapping[str, str],
+    translations: Mapping[str, Any],
 ) -> str:
     for key in (
         f"{suite}.{task_id}",
@@ -691,6 +709,9 @@ class RewardModelScorer:
                     wrist_pixel_values=batch.get("wrist_pixel_values"),
                     input_ids=batch.get("input_ids"),
                     attention_mask=batch.get("attention_mask"),
+                    query_input_ids=batch.get("query_input_ids"),
+                    query_attention_mask=batch.get("query_attention_mask"),
+                    text_query_mask=batch.get("text_query_mask"),
                     proprioception=batch.get("proprioception"),
                 )
                 .detach()
@@ -1817,7 +1838,7 @@ def _run_search_episode(
     scorer: RewardModelScorer,
     trace_dir: Path | None,
     video_path: Path | None,
-    task_language_translations: Mapping[str, str],
+    task_language_translations: Mapping[str, Any],
 ) -> dict[str, Any]:
     if env.num_envs != 1:
         raise ValueError(f"Search evaluation only supports single-env rollouts, got env.num_envs={env.num_envs}.")

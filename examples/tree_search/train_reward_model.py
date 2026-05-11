@@ -24,7 +24,7 @@ from collections import OrderedDict, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Mapping
 
 import numpy as np
 import torch
@@ -59,6 +59,17 @@ logger = logging.getLogger(__name__)
 def stage(message: str) -> None:
     print(f"[reward-train] {message}", flush=True)
     logger.info(message)
+
+
+def _language_map_stop_words(translations: Mapping[str, Any]) -> tuple[str, ...] | None:
+    value = translations.get("__stop_words__")
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return (value,)
+    if isinstance(value, list | tuple):
+        return tuple(str(item) for item in value)
+    raise ValueError(f"Unsupported __stop_words__ value in task language map: {value!r}")
 
 
 @dataclass
@@ -408,7 +419,7 @@ def build_sample_specs(
     source: DatasetSource,
     split_frame_indices: set[int],
     split_name: str,
-    task_language_translations: dict[str, str],
+    task_language_translations: Mapping[str, Any],
     require_task_matches: bool = False,
 ) -> tuple[list[RewardSampleSpec], dict[str, Any]]:
     meta = source.meta
@@ -560,6 +571,9 @@ def model_forward(model: MultiModalRewardModel, batch: dict[str, Any]) -> Tensor
         wrist_pixel_values=batch.get("wrist_pixel_values"),
         input_ids=batch.get("input_ids"),
         attention_mask=batch.get("attention_mask"),
+        query_input_ids=batch.get("query_input_ids"),
+        query_attention_mask=batch.get("query_attention_mask"),
+        text_query_mask=batch.get("text_query_mask"),
         proprioception=batch.get("proprioception"),
     )
 
@@ -761,6 +775,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--use_proprioception", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--proprioception_dim", type=int, default=8)
     parser.add_argument("--proprioception_hidden_dim", type=int, default=64)
+    parser.add_argument("--use_patch_text_fusion", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--text_query_ngram_window", type=int, default=3)
+    parser.add_argument("--text_query_ngram_stride", type=int, default=2)
+    parser.add_argument("--text_query_include_full", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--text_query_include_tail", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--text_query_max_count", type=int, default=12)
+    parser.add_argument("--patch_attention_dim", type=int, default=256)
+    parser.add_argument("--scene_summary_dim", type=int, default=512)
+    parser.add_argument("--wrist_summary_dim", type=int, default=128)
     parser.add_argument("--head_hidden_dim", type=int, default=512)
     parser.add_argument("--head_dropout", type=float, default=0.1)
     parser.add_argument("--batch_size", type=int, default=16)
@@ -772,7 +795,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--use_wrong_text_negatives", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--wrong_text_negatives_per_sample", type=int, default=1)
     parser.add_argument("--wrong_text_negative_label", type=float, default=0.0)
-    parser.add_argument("--bad_sequence_max_reward", type=float, default=0.4)
+    parser.add_argument("--bad_sequence_max_reward", type=float, default=0.2)
     parser.add_argument("--bad_sequence_decay", type=float, default=4.0)
     parser.add_argument("--fallback_val_fraction", type=float, default=0.2)
     parser.add_argument("--log_every_batches", type=int, default=5)
@@ -793,10 +816,13 @@ def main() -> None:
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     task_language_translations = _load_task_language_map(args.task_language_map)
+    map_stop_words = _language_map_stop_words(task_language_translations)
     if task_language_translations:
         stage(
             f"Loaded task language map path={args.task_language_map} keys={len(task_language_translations)}"
         )
+    if map_stop_words:
+        stage(f"Loaded text-query stop_words from language map count={len(map_stop_words)}")
     stage(f"Creating output_dir={args.output_dir}")
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -895,6 +921,18 @@ def main() -> None:
         proprioception_dim=args.proprioception_dim,
         proprioception_hidden_dim=args.proprioception_hidden_dim,
         scene_temporal_window=args.scene_temporal_window,
+        use_patch_text_fusion=args.use_patch_text_fusion,
+        text_query_ngram_window=args.text_query_ngram_window,
+        text_query_ngram_stride=args.text_query_ngram_stride,
+        text_query_include_full=args.text_query_include_full,
+        text_query_include_tail=args.text_query_include_tail,
+        text_query_max_count=args.text_query_max_count,
+        text_query_stop_words=map_stop_words
+        if map_stop_words is not None
+        else RewardModelConfig().text_query_stop_words,
+        patch_attention_dim=args.patch_attention_dim,
+        scene_summary_dim=args.scene_summary_dim,
+        wrist_summary_dim=args.wrist_summary_dim,
         head_hidden_dim=args.head_hidden_dim,
         head_dropout=args.head_dropout,
     )

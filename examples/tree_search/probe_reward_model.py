@@ -86,7 +86,7 @@ def _variant_video_paths(args: argparse.Namespace) -> dict[str, Path]:
 def _get_wrong_task_language(
     args: argparse.Namespace,
     correct_original_task_language: str,
-    task_language_translations: dict[str, str],
+    task_language_translations: dict[str, Any],
 ) -> str:
     if args.wrong_task_language is not None:
         return args.wrong_task_language

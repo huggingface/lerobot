@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import logging
+import math
+import re
 from typing import Any
 
 import numpy as np
@@ -25,6 +27,34 @@ class RewardModelConfig:
     proprioception_dim: int = 8
     proprioception_hidden_dim: int = 64
     scene_temporal_window: int = 1
+    use_patch_text_fusion: bool = True
+    text_query_ngram_window: int = 3
+    text_query_ngram_stride: int = 2
+    text_query_include_full: bool = True
+    text_query_include_tail: bool = True
+    text_query_max_count: int = 12
+    text_query_stop_words: tuple[str, ...] = (
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "to",
+        "in",
+        "on",
+        "at",
+        "of",
+        "with",
+        "from",
+        "into",
+        "onto",
+        "it",
+        "this",
+        "that",
+    )
+    patch_attention_dim: int = 256
+    scene_summary_dim: int = 512
+    wrist_summary_dim: int = 128
     head_hidden_dim: int = 512
     head_dropout: float = 0.1
     trust_remote_code: bool = False
@@ -71,6 +101,39 @@ def image_to_pil(image: Any) -> Image.Image:
 
 def blank_image(size: int = 224) -> Image.Image:
     return Image.new("RGB", (size, size), color=(0, 0, 0))
+
+
+def normalize_text_queries(text: str, cfg: RewardModelConfig) -> list[str]:
+    text = str(text).lower()
+    text = re.sub(r"[^a-z0-9ğüşöçıİĞÜŞÖÇ]+", " ", text, flags=re.IGNORECASE)
+    words = [word for word in text.split() if len(word) > 1]
+    stop_words = {str(word).lower() for word in cfg.text_query_stop_words}
+    content_words = [word for word in words if word.lower() not in stop_words]
+    if not content_words:
+        content_words = words or [str(text).strip() or "object"]
+
+    queries: list[str] = []
+    normalized_full = " ".join(content_words)
+    if cfg.text_query_include_full and normalized_full:
+        queries.append(normalized_full)
+
+    window = max(1, int(cfg.text_query_ngram_window))
+    stride = max(1, int(cfg.text_query_ngram_stride))
+    if len(content_words) <= window:
+        if normalized_full and normalized_full not in queries:
+            queries.append(normalized_full)
+    else:
+        starts = list(range(0, len(content_words) - window + 1, stride))
+        tail_start = len(content_words) - window
+        if cfg.text_query_include_tail and tail_start not in starts:
+            starts.append(tail_start)
+        for start in starts:
+            query = " ".join(content_words[start : start + window])
+            if query and query not in queries:
+                queries.append(query)
+
+    max_count = max(1, int(cfg.text_query_max_count))
+    return queries[:max_count] or [str(text).strip() or "object"]
 
 
 class RewardBatchProcessor:
@@ -177,6 +240,27 @@ class RewardBatchProcessor:
                 batch["input_ids"] = text_inputs["input_ids"]
             if "attention_mask" in text_inputs:
                 batch["attention_mask"] = text_inputs["attention_mask"]
+            query_lists = [normalize_text_queries(str(sample.get("task", "")), self.cfg) for sample in samples]
+            query_count = max(1, min(max(len(queries) for queries in query_lists), int(self.cfg.text_query_max_count)))
+            padded_queries: list[str] = []
+            query_mask: list[list[bool]] = []
+            for queries in query_lists:
+                queries = queries[:query_count]
+                fallback = queries[0] if queries else str(samples[0].get("task", "object"))
+                query_mask.append([ix < len(queries) for ix in range(query_count)])
+                padded_queries.extend(queries + [fallback] * (query_count - len(queries)))
+            query_inputs = self.processor(
+                text=padded_queries,
+                padding=True,
+                truncation=True,
+                return_tensors="pt",
+            )
+            if "input_ids" in query_inputs:
+                batch["query_input_ids"] = query_inputs["input_ids"].view(len(samples), query_count, -1)
+            if "attention_mask" in query_inputs:
+                batch["query_attention_mask"] = query_inputs["attention_mask"].view(len(samples), query_count, -1)
+            batch["text_query_mask"] = torch.tensor(query_mask, dtype=torch.bool)
+            batch["text_queries"] = query_lists
         if self.cfg.use_proprioception:
             batch["proprioception"] = self._proprioception_to_tensor(
                 [sample.get("proprioception") for sample in samples]
@@ -290,6 +374,33 @@ class MultiModalRewardModel(nn.Module):
             if cfg.use_proprioception
             else None
         )
+        self.use_patch_text_fusion = bool(
+            cfg.use_patch_text_fusion and self.encoder_type in {"siglip2", "siglip", "clip"}
+        )
+        if self.use_patch_text_fusion:
+            self.patch_key = nn.LazyLinear(cfg.patch_attention_dim)
+            self.patch_value = nn.LazyLinear(cfg.patch_attention_dim)
+            self.query_proj = nn.LazyLinear(cfg.patch_attention_dim)
+            self.scene_summary_mlp = nn.Sequential(
+                nn.LayerNorm(cfg.patch_attention_dim * max(1, int(cfg.scene_temporal_window))),
+                nn.Linear(cfg.patch_attention_dim * max(1, int(cfg.scene_temporal_window)), cfg.scene_summary_dim),
+                nn.GELU(),
+                nn.Dropout(cfg.head_dropout),
+                nn.Linear(cfg.scene_summary_dim, cfg.scene_summary_dim),
+                nn.GELU(),
+            )
+        else:
+            self.patch_key = None
+            self.patch_value = None
+            self.query_proj = None
+            self.scene_summary_mlp = None
+
+        self.wrist_mlp = nn.Sequential(
+            nn.LazyLinear(cfg.wrist_summary_dim),
+            nn.LayerNorm(cfg.wrist_summary_dim),
+            nn.GELU(),
+            nn.Dropout(cfg.head_dropout),
+        )
         self.head = nn.Sequential(
             nn.LazyLinear(cfg.head_hidden_dim),
             nn.LayerNorm(cfg.head_hidden_dim),
@@ -329,17 +440,30 @@ class MultiModalRewardModel(nn.Module):
         wrist_pixel_values: Tensor | None = None,
         input_ids: Tensor | None = None,
         attention_mask: Tensor | None = None,
+        query_input_ids: Tensor | None = None,
+        query_attention_mask: Tensor | None = None,
+        text_query_mask: Tensor | None = None,
         proprioception: Tensor | None = None,
     ) -> Tensor:
-        scene_feat = self._encode_scene_sequence(scene_pixel_values)
-        if wrist_pixel_values is not None:
-            wrist_feat = self._encode_image(wrist_pixel_values)
+        if self.use_patch_text_fusion and query_input_ids is not None:
+            scene_feat = self._encode_scene_sequence_with_patch_text(
+                scene_pixel_values=scene_pixel_values,
+                query_input_ids=query_input_ids,
+                query_attention_mask=query_attention_mask,
+                text_query_mask=text_query_mask,
+            )
+            append_text_to_head = False
         else:
-            wrist_dim = scene_feat.shape[-1] // 3 if int(self.cfg.scene_temporal_window) > 1 else scene_feat.shape[-1]
+            scene_feat = self._encode_scene_sequence(scene_pixel_values)
+            append_text_to_head = True
+        if wrist_pixel_values is not None:
+            wrist_feat = self.wrist_mlp(self._encode_image(wrist_pixel_values))
+        else:
+            wrist_dim = int(self.cfg.wrist_summary_dim)
             wrist_feat = scene_feat.new_zeros((scene_feat.shape[0], wrist_dim))
 
         features = [scene_feat, wrist_feat]
-        if self.encoder_type in {"siglip2", "siglip", "clip"} and input_ids is not None:
+        if append_text_to_head and self.encoder_type in {"siglip2", "siglip", "clip"} and input_ids is not None:
             text_feat = self._encode_text(input_ids=input_ids, attention_mask=attention_mask)
             features.append(text_feat)
         if self.proprioception_mlp is not None:
@@ -358,6 +482,21 @@ class MultiModalRewardModel(nn.Module):
         features = self._pooled_feature_tensor(outputs, output_name="image")
         return torch.nn.functional.normalize(features.float(), dim=-1)
 
+    def _encode_image_patch_tokens(self, pixel_values: Tensor) -> Tensor:
+        if self.encoder_type not in {"siglip2", "siglip", "clip"}:
+            raise ValueError("Patch-token image encoding is only available for SigLIP/SigLIP2/CLIP encoders.")
+        vision_model = getattr(self.encoder, "vision_model", None)
+        if vision_model is None:
+            raise TypeError(f"Encoder {type(self.encoder).__name__} does not expose `vision_model`.")
+        outputs = vision_model(pixel_values=pixel_values)
+        tokens = getattr(outputs, "last_hidden_state", None)
+        if not isinstance(tokens, Tensor):
+            raise TypeError(f"Expected vision_model output to expose last_hidden_state, got {type(outputs).__name__}.")
+        projection = getattr(self.encoder, "visual_projection", None)
+        if projection is not None:
+            tokens = projection(tokens)
+        return torch.nn.functional.normalize(tokens.float(), dim=-1)
+
     def _encode_scene_sequence(self, pixel_values: Tensor) -> Tensor:
         if pixel_values.ndim == 4:
             return self._encode_image(pixel_values)
@@ -375,6 +514,63 @@ class MultiModalRewardModel(nn.Module):
         context_mean = sequence_features[:, :-1].mean(dim=1)
         delta_long = current - oldest
         return torch.cat([current, delta_long, context_mean], dim=-1)
+
+    def _encode_scene_sequence_with_patch_text(
+        self,
+        *,
+        scene_pixel_values: Tensor,
+        query_input_ids: Tensor,
+        query_attention_mask: Tensor | None,
+        text_query_mask: Tensor | None,
+    ) -> Tensor:
+        if scene_pixel_values.ndim == 4:
+            scene_pixel_values = scene_pixel_values[:, None]
+        if scene_pixel_values.ndim != 5:
+            raise ValueError(
+                f"Expected scene pixel values with 4 or 5 dims, got shape {tuple(scene_pixel_values.shape)}"
+            )
+        batch_size, window = scene_pixel_values.shape[:2]
+        flat_images = scene_pixel_values.reshape(batch_size * window, *scene_pixel_values.shape[2:])
+        patch_tokens = self._encode_image_patch_tokens(flat_images)
+        patch_tokens = patch_tokens.view(batch_size, window, patch_tokens.shape[-2], patch_tokens.shape[-1])
+
+        if query_input_ids.ndim != 3:
+            raise ValueError(f"Expected query_input_ids with shape (B, Q, L), got {tuple(query_input_ids.shape)}")
+        query_count = query_input_ids.shape[1]
+        flat_query_ids = query_input_ids.reshape(batch_size * query_count, query_input_ids.shape[-1])
+        flat_query_mask = (
+            query_attention_mask.reshape(batch_size * query_count, query_attention_mask.shape[-1])
+            if query_attention_mask is not None
+            else None
+        )
+        query_features = self._encode_text(input_ids=flat_query_ids, attention_mask=flat_query_mask)
+        query_features = query_features.view(batch_size, query_count, -1)
+
+        assert self.patch_key is not None
+        assert self.patch_value is not None
+        assert self.query_proj is not None
+        patch_key = self.patch_key(patch_tokens)
+        patch_value = self.patch_value(patch_tokens)
+        query = self.query_proj(query_features)
+
+        scale = math.sqrt(max(1, patch_key.shape[-1]))
+        attention_logits = torch.einsum("bqa,bwna->bwqn", query, patch_key) / scale
+        patch_weights = torch.softmax(attention_logits, dim=-1)
+        query_frame_features = torch.einsum("bwqn,bwna->bwqa", patch_weights, patch_value)
+
+        if text_query_mask is None:
+            query_mask = query_frame_features.new_ones((batch_size, query_count), dtype=torch.bool)
+        else:
+            query_mask = text_query_mask.to(device=query_frame_features.device, dtype=torch.bool)
+        query_mask_float = query_mask[:, None, :, None].float()
+        denom = query_mask_float.sum(dim=2).clamp_min(1.0)
+        frame_features = (query_frame_features * query_mask_float).sum(dim=2) / denom
+
+        assert self.scene_summary_mlp is not None
+        expected_window = max(1, int(self.cfg.scene_temporal_window))
+        if window != expected_window:
+            raise ValueError(f"Expected scene temporal window {expected_window}, got {window}.")
+        return self.scene_summary_mlp(frame_features.reshape(batch_size, window * frame_features.shape[-1]))
 
     def _encode_text(self, *, input_ids: Tensor, attention_mask: Tensor | None) -> Tensor:
         kwargs: dict[str, Tensor] = {"input_ids": input_ids}

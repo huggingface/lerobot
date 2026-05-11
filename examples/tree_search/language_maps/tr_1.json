@@ -10,5 +10,6 @@
       "7": "sütü al ve sepete koy",
       "8": "çikolatalı pudingi al ve sepete koy",
       "9": "portakal suyunu al ve sepete koy"
-    }
+    },
+    "stop_words":["ve", "veya", "yada"]
 }
