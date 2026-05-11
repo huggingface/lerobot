@@ -129,28 +129,36 @@ def find_episodes_for_task(
     return matches
 
 
-def _parse_split_range(value: str, *, total_frames: int) -> set[int]:
+def _parse_split_range(value: str, *, total_count: int) -> set[int]:
     text = str(value).strip()
     if not text:
         return set()
     if "," in text:
         indices: set[int] = set()
         for part in text.split(","):
-            indices.update(_parse_split_range(part, total_frames=total_frames))
+            indices.update(_parse_split_range(part, total_count=total_count))
         return indices
     if ":" in text:
         start_raw, end_raw = text.split(":", 1)
         start = int(start_raw) if start_raw else 0
-        end = int(end_raw) if end_raw else total_frames
+        end = int(end_raw) if end_raw else total_count
         start = max(0, start)
-        end = min(total_frames, end)
+        end = min(total_count, end)
         if end < start:
             raise ValueError(f"Invalid split range {value!r}: end < start")
         return set(range(start, end))
-    frame_index = int(text)
-    if frame_index < 0 or frame_index >= total_frames:
-        raise ValueError(f"Frame index {frame_index} out of range [0, {total_frames - 1}]")
-    return {frame_index}
+    index = int(text)
+    if index < 0 or index >= total_count:
+        raise ValueError(f"Split index {index} out of range [0, {total_count - 1}]")
+    return {index}
+
+
+def _episode_indices_to_frame_indices(meta: LeRobotDatasetMetadata, episode_indices: set[int]) -> set[int]:
+    frame_indices: set[int] = set()
+    for episode_index in episode_indices:
+        episode = meta.episodes[int(episode_index)]
+        frame_indices.update(range(int(episode["dataset_from_index"]), int(episode["dataset_to_index"])))
+    return frame_indices
 
 
 def _fallback_frame_splits(total_frames: int, *, val_fraction: float) -> dict[str, set[int]]:
@@ -175,15 +183,30 @@ def dataset_split_frames(
     raw_splits = meta.info.get("splits")
     if not isinstance(raw_splits, dict):
         return _fallback_frame_splits(total_frames, val_fraction=fallback_val_fraction), "fallback_frame_fraction"
-    split_unit = str(meta.info.get("split_unit", "frame"))
-    if split_unit != "frame":
+    split_unit = str(meta.info.get("split_unit", "episode"))
+    if split_unit == "frame":
+        splits = {
+            name: _parse_split_range(value, total_count=total_frames)
+            for name, value in raw_splits.items()
+        }
+        split_source = "dataset_meta_info"
+    elif split_unit == "episode":
+        episode_splits = {
+            name: _parse_split_range(value, total_count=meta.total_episodes)
+            for name, value in raw_splits.items()
+        }
+        splits = {
+            name: _episode_indices_to_frame_indices(meta, episode_indices)
+            for name, episode_indices in episode_splits.items()
+        }
+        split_source = "dataset_meta_info_episode_ranges"
+    else:
         raise ValueError(
-            f"Dataset {repo_id} must define frame-based splits with meta/info.json split_unit='frame'; "
+            f"Dataset {repo_id} must define split_unit as 'frame' or omit it for legacy episode ranges; "
             f"got split_unit={split_unit!r}."
         )
     if "train" not in raw_splits:
         raise ValueError(f"Dataset {repo_id} must define a train split if meta/info.json splits are present.")
-    splits = {name: _parse_split_range(value, total_frames=total_frames) for name, value in raw_splits.items()}
     if "validation" not in splits:
         train = splits["train"]
         validation = set(range(total_frames)) - train
@@ -194,8 +217,6 @@ def dataset_split_frames(
         splits["train"] = train
         splits["validation"] = validation
         split_source = "fallback_frame_fraction"
-    else:
-        split_source = "dataset_meta_info"
     train = splits["train"]
     validation = splits["validation"]
     if not train:
