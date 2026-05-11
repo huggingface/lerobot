@@ -1,4 +1,4 @@
-# OMX Follower — Cube Grab Example
+# OMX Follower — Cube Pick And Place Example
 
 This is an example of what is possible to do with LeRobot on a phyisical Setup.
 It is a WIP and being used internally at LeRobot and specific to our setup, but we hope it can be a useful reference for how to use LeRobot APIs and CLIs.
@@ -7,11 +7,10 @@ It includes an end-to-end example for the **OMX Follower** robot arm: pick and p
 
 ## Hardware
 
-| Component | Value                                        |
-| --------- | -------------------------------------------- |
-| Robot     | OMX Follower (USB serial)                    |
-| Cameras   | 2× OpenCV cameras (wrist + top-down)         |
-| Port      | `/dev/ttyACM0` (adjust to match your system) |
+| Component | Value                                |
+| --------- | ------------------------------------ |
+| Robot     | OMX Follower                         |
+| Cameras   | 2× OpenCV cameras (wrist + top-down) |
 
 ## Scripts
 
@@ -23,21 +22,49 @@ It includes an end-to-end example for the **OMX Follower** robot arm: pick and p
 
 ## Setup
 
-Make sure you have LeRobot installed in your env
+Make sure you have LeRobot installed in your env. (See [the installation guide](https://huggingface.co/docs/lerobot/installation))
+
+Next, we will declare some environment variables for convenience. Adjust the camera indices and robot port to match your system configuration.
+
+```bash
+export ROBOT_PORT=/dev/ttyACM0
+export TELEOP_PORT=/dev/ttyACM1
+export HF_USERNAME=<your_hf_username>
+export ROBOT_CAMERAS="{ wrist: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30, fourcc: MJPG}, top: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30, fourcc: MJPG} }"
+```
 
 ## Step 1 — Collect Data
 
-/!\ This is specific to our setup and the task of picking and placing a cube. It is not a general-purpose data collection script.
+```bash
+lerobot-record \
+    --robot.type=omx_follower \
+    --robot.port=$ROBOT_PORT \
+    --robot.id=omx_follower \
+    --robot.cameras="$ROBOT_CAMERAS" \
+    --teleop.type=omx_leader \
+    --teleop.port=$TELEOP_PORT \
+    --teleop.id=omx_leader \
+    --dataset.repo_id=$HF_USERNAME/omx_pickandplace \
+    --dataset.root=data/omx_pickandplace \
+    --dataset.num_episodes=50 \
+    --dataset.single_task="Pick the cube and place it in the blue square" \
+    --dataset.streaming_encoding=true \
+    --dataset.push_to_hub=true
+```
+
+### Bonus Auto-Collect script
+
+/!\ This is specific to our setup and the task of picking and placing a cube. It is not a general-purpose data collection script. As you may notice, it doesn't require a teleop.
 
 ```bash
 cd examples/omx
 
 python record_grab.py \
     --robot.type=omx_follower \
-    --robot.port=/dev/ttyACM0 \
+    --robot.port=$ROBOT_PORT \
     --robot.id=omx_follower \
-    --robot.cameras="{ wrist: {type: opencv, index_or_path: 6, width: 640, height: 480, fps: 30, fourcc: MJPG}, top: {type: opencv, index_or_path: 4, width: 640, height: 480, fps: 30, fourcc: MJPG} }" \
-    --dataset.repo_id=maximellerbach/omx_autocollect \
+    --robot.cameras="$ROBOT_CAMERAS" \
+    --dataset.repo_id=$HF_USERNAME/omx_autocollect \
     --dataset.root=data/omx_collect \
     --dataset.num_episodes=50 \
     --dataset.single_task="Pick the cube and place it in the blue square" \
@@ -55,26 +82,31 @@ A dataset is already available here [`maximellerbach/omx_autocollect`](https://h
 
 ## Step 2 — Train
 
+To train a simple `ACT` policy on the collected dataset, you can use the `lerobot-train` CLI:
+
 ```bash
 lerobot-train \
-    --dataset.repo_id=<hf_username>/omx_pickandplace \
+    --dataset.repo_id=$HF_USERNAME/omx_pickandplace \
     --policy.type=act \
     --output_dir=outputs/train/omx_pickandplace_act \
+    --policy.device=cuda \
+    --policy.repo_id=$HF_USERNAME/omx_pickandplace_act \
+    --steps=20000 \
     --wandb.enable=true
 ```
 
 ## Step 3 — Rollout
 
-use the `lerobot-rollout` CLI:
+Use the `lerobot-rollout` CLI with base strategy:
 
 ```bash
 lerobot-rollout \
     --strategy.type=base \
     --robot.type=omx_follower \
-    --robot.port=/dev/ttyACM0 \
+    --robot.port=$ROBOT_PORT \
     --robot.id=omx_follower \
-    --robot.cameras="{ wrist: {type: opencv, index_or_path: 6, width: 640, height: 480, fps: 30, fourcc: MJPG}, top: {type: opencv, index_or_path: 4, width: 640, height: 480, fps: 30, fourcc: MJPG} }" \
-    --policy.path=<hf_username>/<model_repo_id>
+    --robot.cameras="$ROBOT_CAMERAS" \
+    --policy.path=$HF_USERNAME/<model_repo_id>
 ```
 
 For continuous recording with automatic upload (sentry mode):
@@ -84,25 +116,25 @@ lerobot-rollout \
     --strategy.type=sentry \
     --strategy.upload_every_n_episodes=10 \
     --robot.type=omx_follower \
-    --robot.port=/dev/ttyACM0 \
+    --robot.port=$ROBOT_PORT \
     --robot.id=omx_follower \
-    --robot.cameras="{ wrist: {type: opencv, index_or_path: 6, width: 640, height: 480, fps: 30, fourcc: MJPG}, top: {type: opencv, index_or_path: 4, width: 640, height: 480, fps: 30, fourcc: MJPG} }" \
-    --policy.path=<hf_username>/<model_repo_id> \
-    --dataset.repo_id=<hf_username>/rollout_omx_grab
+    --robot.cameras="$ROBOT_CAMERAS" \
+    --policy.path=$HF_USERNAME/<model_repo_id> \
+    --dataset.repo_id=$HF_USERNAME/rollout_omx_grab
 ```
 
 ## Environment Reset Utility
 
-Those are specific to this particular setup. Those are scripts that execute hardcoded sequences of actions on the robot to reset the environment, which is useful for data collection and evaluation. They are not general-purpose scripts.
+Those are specific to this particular physical setup. Those are scripts that execute hardcoded sequences of actions on the robot to reset the environment, which is useful for data collection and evaluation. They are not general-purpose scripts.
 
 `reset_environment.py` can be run standalone to prepare the workspace:
 
 ```bash
 # Sweep the workspace (cube back to center)
-python reset_environment.py --port /dev/ttyACM0 --mode reset
+python reset_environment.py --port $ROBOT_PORT --mode reset
 
 # Grab cube + place it at a random position
-python reset_environment.py --port /dev/ttyACM0 --mode grab_and_place
+python reset_environment.py --port $ROBOT_PORT --mode grab_and_place
 ```
 
 It also exposes `grab_cube(robot)` and `place_cube(robot)` for use in custom scripts.
