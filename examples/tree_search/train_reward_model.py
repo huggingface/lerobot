@@ -540,6 +540,10 @@ def build_sample_specs(
                 candidates = [order for order in task_orders if order != spec.source_task_order]
                 rng.shuffle(candidates)
                 for wrong_order in candidates[:negative_count]:
+                    wrong_label = min(
+                        float(args.wrong_text_negative_max),
+                        float(spec.label) * float(args.wrong_text_negative_scale),
+                    )
                     negative_specs.append(
                         RewardSampleSpec(
                             dataset_id=spec.dataset_id,
@@ -547,7 +551,7 @@ def build_sample_specs(
                             task=task_languages[wrong_order],
                             episode_index=spec.episode_index,
                             local_index=spec.local_index,
-                            label=float(args.wrong_text_negative_label),
+                            label=float(wrong_label),
                             source_task_order=spec.source_task_order,
                             text_task_order=wrong_order,
                             is_text_mismatch=True,
@@ -559,7 +563,8 @@ def build_sample_specs(
             stage(
                 "Added wrong-text negatives "
                 f"count={len(negative_specs)} per_positive={negative_count} "
-                f"negative_label={args.wrong_text_negative_label} total={len(all_specs)}"
+                f"scale={args.wrong_text_negative_scale} max={args.wrong_text_negative_max} "
+                f"total={len(all_specs)}"
             )
 
     return all_specs, task_summaries
@@ -794,7 +799,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ranking_margin", type=float, default=0.05)
     parser.add_argument("--use_wrong_text_negatives", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--wrong_text_negatives_per_sample", type=int, default=1)
-    parser.add_argument("--wrong_text_negative_label", type=float, default=0.0)
+    parser.add_argument("--wrong_text_negative_scale", type=float, default=0.25)
+    parser.add_argument("--wrong_text_negative_max", type=float, default=0.3)
+    parser.add_argument(
+        "--wrong_text_negative_label",
+        type=float,
+        default=0.0,
+        help="Deprecated; wrong-text labels now use min(source_label * scale, max).",
+    )
     parser.add_argument("--bad_sequence_max_reward", type=float, default=0.2)
     parser.add_argument("--bad_sequence_decay", type=float, default=4.0)
     parser.add_argument("--fallback_val_fraction", type=float, default=0.2)
@@ -1054,6 +1066,8 @@ def main() -> None:
         "train_sample_count": len(train_specs),
         "val_sample_count": len(val_specs),
         "use_wrong_text_negatives": args.use_wrong_text_negatives,
+        "wrong_text_negative_scale": args.wrong_text_negative_scale,
+        "wrong_text_negative_max": args.wrong_text_negative_max,
         "train_text_mismatch_count": sum(int(spec.is_text_mismatch) for spec in train_specs),
         "val_text_mismatch_count": sum(int(spec.is_text_mismatch) for spec in val_specs),
         "scene_temporal_window": args.scene_temporal_window,
