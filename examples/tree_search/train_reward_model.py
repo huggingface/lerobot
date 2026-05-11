@@ -41,6 +41,7 @@ from reward_model import (
     default_model_id,
     move_batch_to_device,
 )
+from policy_inference_api import _load_task_language_map, _translate_task_language
 from vlm_sequence_prompt_probe import (
     EpisodeFrameReader,
     _episode_tasks,
@@ -152,36 +153,59 @@ def _parse_split_range(value: str, *, total_frames: int) -> set[int]:
     return {frame_index}
 
 
-def dataset_split_frames(meta: LeRobotDatasetMetadata, *, repo_id: str) -> dict[str, set[int]]:
+def _fallback_frame_splits(total_frames: int, *, val_fraction: float) -> dict[str, set[int]]:
+    if val_fraction <= 0 or total_frames <= 1:
+        return {"train": set(range(total_frames)), "validation": set()}
+    val_count = max(1, int(round(total_frames * val_fraction)))
+    val_count = min(val_count, total_frames - 1)
+    train_count = total_frames - val_count
+    return {
+        "train": set(range(0, train_count)),
+        "validation": set(range(train_count, total_frames)),
+    }
+
+
+def dataset_split_frames(
+    meta: LeRobotDatasetMetadata,
+    *,
+    repo_id: str,
+    fallback_val_fraction: float,
+) -> tuple[dict[str, set[int]], str]:
+    total_frames = int(meta.info.get("total_frames", 0))
     raw_splits = meta.info.get("splits")
     if not isinstance(raw_splits, dict):
-        raise ValueError(f"Dataset {repo_id} does not define meta/info.json splits.")
+        return _fallback_frame_splits(total_frames, val_fraction=fallback_val_fraction), "fallback_frame_fraction"
     split_unit = str(meta.info.get("split_unit", "frame"))
     if split_unit != "frame":
         raise ValueError(
             f"Dataset {repo_id} must define frame-based splits with meta/info.json split_unit='frame'; "
             f"got split_unit={split_unit!r}."
         )
-    missing = [split for split in ("train", "validation") if split not in raw_splits]
-    if missing:
-        raise ValueError(
-            f"Dataset {repo_id} must define train and validation splits in meta/info.json; "
-            f"missing={missing}, available={sorted(raw_splits)}"
-        )
-    splits = {
-        name: _parse_split_range(value, total_frames=int(meta.info.get("total_frames", 0)))
-        for name, value in raw_splits.items()
-    }
+    if "train" not in raw_splits:
+        raise ValueError(f"Dataset {repo_id} must define a train split if meta/info.json splits are present.")
+    splits = {name: _parse_split_range(value, total_frames=total_frames) for name, value in raw_splits.items()}
+    if "validation" not in splits:
+        train = splits["train"]
+        validation = set(range(total_frames)) - train
+        if not validation:
+            fallback = _fallback_frame_splits(total_frames, val_fraction=fallback_val_fraction)
+            train = fallback["train"]
+            validation = fallback["validation"]
+        splits["train"] = train
+        splits["validation"] = validation
+        split_source = "fallback_frame_fraction"
+    else:
+        split_source = "dataset_meta_info"
     train = splits["train"]
     validation = splits["validation"]
     if not train:
         raise ValueError(f"Dataset {repo_id} has an empty train frame split.")
     if not validation:
-        raise ValueError(f"Dataset {repo_id} has an empty validation frame split.")
+        stage(f"Dataset {repo_id} has no validation frames; final eval will be skipped for this dataset.")
     overlap = train & validation
     if overlap:
         raise ValueError(f"Dataset {repo_id} train/validation frame splits overlap: {sorted(overlap)[:10]}")
-    return splits
+    return {"train": train, "validation": validation}, split_source
 
 
 def _reader_args(args: argparse.Namespace, *, dataset_repo_id: str, dataset_root: Path | None) -> SimpleNamespace:
@@ -360,6 +384,7 @@ def build_sample_specs(
     source: DatasetSource,
     split_frame_indices: set[int],
     split_name: str,
+    task_language_translations: dict[str, str],
 ) -> tuple[list[RewardSampleSpec], dict[str, Any]]:
     meta = source.meta
     all_specs: list[RewardSampleSpec] = []
@@ -374,9 +399,18 @@ def build_sample_specs(
         start = time.perf_counter()
         stage(f"Resolving task_order={task_order}")
         task_metadata = _get_libero_task(args.suite, task_order)
-        task_language = str(task_metadata["language"])
+        original_task_language = str(task_metadata["language"])
+        task_language = _translate_task_language(
+            original_task_language,
+            suite=args.suite,
+            task_id=task_order,
+            translations=task_language_translations,
+        )
         task_languages[task_order] = task_language
-        stage(f"Finding episodes for task_order={task_order} task={task_language!r}")
+        stage(
+            f"Finding episodes for task_order={task_order} task={original_task_language!r} "
+            f"train_text={task_language!r}"
+        )
         episodes = find_episodes_for_task(
             meta,
             task_metadata=task_metadata,
@@ -389,6 +423,7 @@ def build_sample_specs(
         )
         task_summaries[str(task_order)] = {
             "task": task_language,
+            "original_task": original_task_language,
             "dataset_repo_id": source.repo_id,
             "split": split_name,
             "episodes": episodes,
@@ -664,6 +699,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_frames_per_episode", type=int, default=32)
     parser.add_argument("--scene_temporal_window", type=int, default=1)
     parser.add_argument("--scene_temporal_stride", type=int, default=10)
+    parser.add_argument("--task_language_map", type=Path, default=None)
     parser.add_argument("--scene_camera_key", default="observation.images.image")
     parser.add_argument("--wrist_camera_key", default="observation.images.image2")
     parser.add_argument("--state_key", default="observation.state")
@@ -689,6 +725,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wrong_text_negative_label", type=float, default=0.0)
     parser.add_argument("--bad_sequence_max_reward", type=float, default=0.4)
     parser.add_argument("--bad_sequence_decay", type=float, default=4.0)
+    parser.add_argument("--fallback_val_fraction", type=float, default=0.2)
     parser.add_argument("--log_every_batches", type=int, default=5)
     parser.add_argument("--reader_cache_size", type=int, default=128)
     parser.add_argument("--log_reader_opens", action=argparse.BooleanOptionalAction, default=False)
@@ -706,6 +743,11 @@ def main() -> None:
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
+    task_language_translations = _load_task_language_map(args.task_language_map)
+    if task_language_translations:
+        stage(
+            f"Loaded task language map path={args.task_language_map} keys={len(task_language_translations)}"
+        )
     stage(f"Creating output_dir={args.output_dir}")
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -743,7 +785,11 @@ def main() -> None:
             ),
         )
         sources.append(source)
-        split_frames = dataset_split_frames(meta, repo_id=dataset_repo_id)
+        split_frames, split_source = dataset_split_frames(
+            meta,
+            repo_id=dataset_repo_id,
+            fallback_val_fraction=args.fallback_val_fraction,
+        )
         train_split_frames_by_dataset[dataset_id] = split_frames["train"]
         val_split_frames_by_dataset[dataset_id] = split_frames["validation"]
         stage(
@@ -757,6 +803,7 @@ def main() -> None:
             source,
             split_frame_indices=split_frames["train"],
             split_name="train",
+            task_language_translations=task_language_translations,
         )
         stage(f"Building validation sample specs for dataset_id={dataset_id}")
         source_val_specs, source_val_task_summaries = build_sample_specs(
@@ -764,12 +811,14 @@ def main() -> None:
             source,
             split_frame_indices=split_frames["validation"],
             split_name="validation",
+            task_language_translations=task_language_translations,
         )
         train_specs.extend(source_train_specs)
         val_specs.extend(source_val_specs)
         task_summaries[str(dataset_id)] = {
             "dataset_repo_id": dataset_repo_id,
             "split_unit": "frame",
+            "split_source": split_source,
             "split_frame_counts": {name: len(indices) for name, indices in split_frames.items()},
             "tasks": {
                 "train": source_train_task_summaries,
@@ -782,7 +831,7 @@ def main() -> None:
     if not train_specs:
         raise ValueError("No training samples were built from dataset train splits.")
     if not val_specs:
-        raise ValueError("No validation samples were built from dataset validation splits.")
+        stage("No validation samples were built; validation metrics and final eval will be skipped.")
     stage(f"Built samples total={len(train_specs) + len(val_specs)} train={len(train_specs)} val={len(val_specs)}")
 
     model_id = args.encoder_model_id or default_model_id(args.encoder_type)
@@ -908,8 +957,10 @@ def main() -> None:
     summary = {
         "model_config": model_cfg.to_dict(),
         "dataset_repo_ids": dataset_repo_ids,
-        "split_source": "dataset_meta_info",
+        "split_source": "dataset_meta_info_or_fallback_frame_fraction",
         "split_unit": "frame",
+        "task_language_map": str(args.task_language_map) if args.task_language_map is not None else None,
+        "task_language_map_keys": len(task_language_translations),
         "task_summaries": task_summaries,
         "train_sample_count": len(train_specs),
         "val_sample_count": len(val_specs),
