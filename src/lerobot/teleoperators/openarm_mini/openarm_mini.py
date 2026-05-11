@@ -32,7 +32,7 @@ from .config_openarm_mini import OpenArmMiniConfig
 logger = logging.getLogger(__name__)
 
 # Motors whose direction is inverted during readout
-RIGHT_MOTORS_TO_FLIP = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"]
+RIGHT_MOTORS_TO_FLIP = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_7"]
 LEFT_MOTORS_TO_FLIP = ["joint_1", "joint_3", "joint_4", "joint_5", "joint_6", "joint_7"]
 
 # Leader joint 6 maps to follower joint 7 and vice versa
@@ -284,7 +284,7 @@ class OpenArmMini(Teleoperator):
         right_positions = self.bus_right.sync_read("Present_Position")
         right_velocities = self.bus_right.sync_read("Present_Velocity")
         right_torques = self.bus_right.sync_read("Present_Load")
-        
+
         left_positions = self.bus_left.sync_read("Present_Position")
         left_velocities = self.bus_left.sync_read("Present_Velocity")
         left_torques = self.bus_left.sync_read("Present_Load")
@@ -293,33 +293,33 @@ class OpenArmMini(Teleoperator):
         # and the dataset feature names recorded during data collection.
         # Joint 6↔7 remap: leader joint_6 → follower joint_7 and vice versa.
         action: dict[str, Any] = {}
-        
+
         # Right arm
         for motor, pos_val in right_positions.items():
             vel_val = right_velocities.get(motor, 0)
             torque_val = right_torques.get(motor, 0)
             target = JOINT_REMAP.get(motor, motor)
-            
+
             if motor == "gripper":
                 # Convert gripper from teleop 0-100 to openarms degrees: 0→0°, 100→-65°
                 action[f"right_{target}.pos"] = pos_val * GRIPPER_TELEOP_TO_DEGREES
             else:
                 action[f"right_{target}.pos"] = -pos_val if motor in RIGHT_MOTORS_TO_FLIP else pos_val
-                
+
             action[f"right_{target}.vel"] = -vel_val if motor in RIGHT_MOTORS_TO_FLIP else vel_val
             action[f"right_{target}.torque"] = -torque_val if motor in RIGHT_MOTORS_TO_FLIP else torque_val
-        
+
         # Left arm
         for motor, pos_val in left_positions.items():
             vel_val = left_velocities.get(motor, 0)
             torque_val = left_torques.get(motor, 0)
             target = JOINT_REMAP.get(motor, motor)
-            
+
             if motor == "gripper":
                 action[f"left_{target}.pos"] = pos_val * GRIPPER_TELEOP_TO_DEGREES
             else:
                 action[f"left_{target}.pos"] = -pos_val if motor in LEFT_MOTORS_TO_FLIP else pos_val
-                
+
             action[f"left_{target}.vel"] = -vel_val if motor in LEFT_MOTORS_TO_FLIP else vel_val
             action[f"left_{target}.torque"] = -torque_val if motor in LEFT_MOTORS_TO_FLIP else torque_val
 
