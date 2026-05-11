@@ -1,6 +1,6 @@
 # OMX Follower — Cube Pick And Place Example
 
-This is an example of what is possible to do with LeRobot on a phyisical Setup.
+This is an example of what is possible to do with LeRobot on a physical setup.
 It is a WIP and being used internally at LeRobot and specific to our setup, but we hope it can be a useful reference for how to use LeRobot APIs and CLIs.
 
 It includes an end-to-end example for the **OMX Follower** robot arm: pick and place a cube dataset, train a policy, and deploy it autonomously.
@@ -18,7 +18,6 @@ It includes an end-to-end example for the **OMX Follower** robot arm: pick and p
 | ---------------------- | --------------------------------------------------------------- |
 | `reset_environment.py` | Standalone utility: sweep workspace, grab cube, place cube      |
 | `record_grab.py`       | Automated data collection: reset → place → record grab episodes |
-| `rollout.py`           | Deploy a trained policy on the robot                            |
 
 ## Setup
 
@@ -57,14 +56,12 @@ lerobot-record \
 /!\ This is specific to our setup and the task of picking and placing a cube. It is not a general-purpose data collection script. As you may notice, it doesn't require a teleop.
 
 ```bash
-cd examples/omx
-
-python record_grab.py \
+python -m examples.omx.record_grab \
     --robot.type=omx_follower \
     --robot.port=$ROBOT_PORT \
     --robot.id=omx_follower \
     --robot.cameras="$ROBOT_CAMERAS" \
-    --dataset.repo_id=$HF_USERNAME/omx_autocollect \
+    --dataset.repo_id=$HF_USERNAME/omx_pickandplace \
     --dataset.root=data/omx_collect \
     --dataset.num_episodes=50 \
     --dataset.single_task="Pick the cube and place it in the blue square" \
@@ -78,7 +75,7 @@ Each episode:
 2. The arm returns to HOME.
 3. A targeted grab is recorded: HOME → approach raised → lower onto cube → grasp → lift → carry → drop → HOME.
 
-A dataset is already available here [`maximellerbach/omx_autocollect`](https://huggingface.co/datasets/maximellerbach/omx_autocollect), so you can skip directly to training if you want.
+A dataset is already available here [`maximellerbach/omx_pickandplace`](https://huggingface.co/datasets/maximellerbach/omx_pickandplace), so you can skip directly to training if you want.
 
 ## Step 2 — Train
 
@@ -106,7 +103,7 @@ lerobot-rollout \
     --robot.port=$ROBOT_PORT \
     --robot.id=omx_follower \
     --robot.cameras="$ROBOT_CAMERAS" \
-    --policy.path=$HF_USERNAME/<model_repo_id>
+    --policy.path=$HF_USERNAME/omx_pickandplace_act \
 ```
 
 For continuous recording with automatic upload (sentry mode):
@@ -119,8 +116,8 @@ lerobot-rollout \
     --robot.port=$ROBOT_PORT \
     --robot.id=omx_follower \
     --robot.cameras="$ROBOT_CAMERAS" \
-    --policy.path=$HF_USERNAME/<model_repo_id> \
-    --dataset.repo_id=$HF_USERNAME/rollout_omx_grab
+    --policy.path=$HF_USERNAME/omx_pickandplace_act \
+    --dataset.repo_id=$HF_USERNAME/rollout_omx_pickandplace_act \
 ```
 
 ## Environment Reset Utility
@@ -130,11 +127,8 @@ Those are specific to this particular physical setup. Those are scripts that exe
 `reset_environment.py` can be run standalone to prepare the workspace:
 
 ```bash
-# Sweep the workspace (cube back to center)
-python reset_environment.py --port $ROBOT_PORT --mode reset
-
-# Grab cube + place it at a random position
-python reset_environment.py --port $ROBOT_PORT --mode grab_and_place
+# Grab cube + place it at a random position on the left side
+python -m examples.omx.reset_environment --port $ROBOT_PORT --mode grab_and_place
 ```
 
 It also exposes `grab_cube(robot)` and `place_cube(robot)` for use in custom scripts.

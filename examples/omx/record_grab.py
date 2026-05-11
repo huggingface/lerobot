@@ -8,8 +8,8 @@ Each episode cycle:
   3. record_grab     — execute a targeted grab to the stored position while recording
                        observations + actions to a LeRobotDataset
 
-Usage:
-    python record_grab.py \\
+Usage (run from repo root):
+    python -m examples.omx.record_grab \\
         --robot.type=omx_follower \\
         --robot.port=/dev/ttyACM0 \\
         --robot.id=omx_follower \\
@@ -22,32 +22,10 @@ Usage:
 """
 
 import logging
-import sys
 from dataclasses import dataclass
-from pathlib import Path
 from pprint import pformat
 
 import numpy as np
-
-# Make reset_environment importable from the same directory
-sys.path.insert(0, str(Path(__file__).parent))
-
-from reset_environment import (
-    APPROACH_SPEED,
-    CONTROL_HZ,
-    GRIPPER_CLOSE_POS,
-    HOME_POSE,
-    PUSH_END_ELBOW_FLEX,
-    PUSH_END_SHOULDER_LIFT,
-    PUSH_START_ELBOW_FLEX,
-    PUSH_START_SHOULDER_LIFT,
-    array_to_pose,
-    grab_cube,
-    horizontal_wrist_flex,
-    move_to_pose,
-    place_cube,
-    pose_to_array,
-)
 
 from lerobot.cameras import CameraConfig  # noqa: F401
 from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
@@ -65,6 +43,23 @@ from lerobot.robots.omx_follower import OmxFollower
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
 from lerobot.utils.robot_utils import precise_sleep
+
+from .reset_environment import (
+    APPROACH_SPEED,
+    CONTROL_HZ,
+    GRIPPER_CLOSE_POS,
+    HOME_POSE,
+    PUSH_END_ELBOW_FLEX,
+    PUSH_END_SHOULDER_LIFT,
+    PUSH_START_ELBOW_FLEX,
+    PUSH_START_SHOULDER_LIFT,
+    array_to_pose,
+    grab_cube,
+    horizontal_wrist_flex,
+    move_to_pose,
+    place_cube,
+    pose_to_array,
+)
 
 # ── Grab-episode motion parameters ────────────────────────────────────────────
 
@@ -168,18 +163,18 @@ def record_episode_spline(
 
     # Steps and duration per segment
     n_steps_list = []
-    t = []
+    timestamps = []
     for i in range(n - 1):
         max_dist = float(np.max(np.abs(pts[i + 1] - pts[i])))
         ns = max(1, int(max_dist / speeds[i] * CONTROL_HZ)) if max_dist >= 0.5 else 0
         n_steps_list.append(ns)
-        t.append(ns / CONTROL_HZ)
+        timestamps.append(ns / CONTROL_HZ)
 
     # Velocity tangents (deg/sec) — clamped at endpoints, Catmull-Rom for interior
     vels = [np.zeros_like(pts[0])]
     for i in range(1, n - 1):
-        v_prev = (pts[i] - pts[i - 1]) / t[i - 1] if t[i - 1] > 0 else np.zeros_like(pts[0])
-        v_next = (pts[i + 1] - pts[i]) / t[i] if t[i] > 0 else np.zeros_like(pts[0])
+        v_prev = (pts[i] - pts[i - 1]) / timestamps[i - 1] if timestamps[i - 1] > 0 else np.zeros_like(pts[0])
+        v_next = (pts[i + 1] - pts[i]) / timestamps[i] if timestamps[i] > 0 else np.zeros_like(pts[0])
         vels.append(0.5 * (v_prev + v_next))
     vels.append(np.zeros_like(pts[0]))
 
@@ -190,8 +185,8 @@ def record_episode_spline(
             continue
         p0, p1 = pts[seg], pts[seg + 1]
         # Scale velocity (deg/sec) to t-space tangent (deg/t-unit, where t: 0→1 over ns steps)
-        m0 = vels[seg] * t[seg]
-        m1 = vels[seg + 1] * t[seg]
+        m0 = vels[seg] * timestamps[seg]
+        m1 = vels[seg + 1] * timestamps[seg]
 
         for step in range(1, ns + 1):
             t = step / ns
@@ -331,8 +326,7 @@ def record_grab(cfg: OmxRecordGrabConfig) -> LeRobotDataset:
     robot = make_robot_from_config(cfg.robot)
     use_videos = cfg.dataset.video
 
-    _, _, robot_obs_processor = make_default_processors()
-    teleop_action_processor, _, _ = make_default_processors()
+    teleop_action_processor, _, robot_obs_processor = make_default_processors()
 
     dataset_features = combine_feature_dicts(
         aggregate_pipeline_dataset_features(

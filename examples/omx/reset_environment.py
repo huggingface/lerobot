@@ -5,12 +5,10 @@ Auto-reset and cube-grab utility for the OMX robot arm.
 Provides:
   - grab_cube(robot): sweep workspace, center cube, close gripper
   - place_cube(robot): carry cube to a random position, release
-  - reset_environment(robot): sweep workspace back to starting config
 
-Standalone usage:
-    python reset_environment.py --port /dev/ttyACM1 --mode reset
-    python reset_environment.py --port /dev/ttyACM1 --mode grab
-    python reset_environment.py --port /dev/ttyACM1 --mode grab_and_place
+Standalone usage (run from repo root):
+    python -m examples.omx.reset_environment --port /dev/ttyACM1 --mode grab
+    python -m examples.omx.reset_environment --port /dev/ttyACM1 --mode grab_and_place
 
 Joint range: -100 to 100 for arm joints; gripper: 50 = closed, 80 = open.
 
@@ -184,9 +182,9 @@ def grab_cube(robot: Robot) -> None:
 
     for pan, end_pan in [
         (SWEEP_LEFT_PAN, GRAB_PAN - SWEEP_END_OFFSET),
-        # (SWEEP_RIGHT_PAN, GRAB_PAN + SWEEP_END_OFFSET),
+        (SWEEP_RIGHT_PAN, GRAB_PAN + SWEEP_END_OFFSET),
     ]:
-        logging.info(f"Sweeping {'left' if pan < 0 else 'right'} → center...")
+        logger.info(f"Sweeping {'left' if pan < 0 else 'right'} → center...")
         move_to_pose(robot, _high_sweep_pose(pan), APPROACH_SPEED)
         move_to_pose(
             robot, _low_sweep_pose(pan, SWEEP_LOW_ELBOW_FLEX_START, wrist_flex=-20.0), APPROACH_SPEED
@@ -194,22 +192,26 @@ def grab_cube(robot: Robot) -> None:
         move_to_pose(robot, _low_sweep_pose(end_pan, SWEEP_LOW_ELBOW_FLEX_END, wrist_flex=0.0), SWEEP_SPEED)
         move_to_pose(robot, HOME_POSE, APPROACH_SPEED)
 
-    logging.info("Extending to push cube into gripper...")
+    logger.info("Extending to push cube into gripper...")
     move_to_pose(
-        robot, _push_pose(PUSH_START_SHOULDER_LIFT - PUSH_RAISE_OFFSET, PUSH_START_ELBOW_FLEX), APPROACH_SPEED
+        robot,
+        _push_pose(PUSH_START_SHOULDER_LIFT - PUSH_RAISE_OFFSET, PUSH_START_ELBOW_FLEX),
+        APPROACH_SPEED,
     )
     move_to_pose(
-        robot, _push_pose(PUSH_END_SHOULDER_LIFT - PUSH_RAISE_OFFSET, PUSH_END_ELBOW_FLEX), SWEEP_SPEED
+        robot,
+        _push_pose(PUSH_END_SHOULDER_LIFT - PUSH_RAISE_OFFSET, PUSH_END_ELBOW_FLEX),
+        SWEEP_SPEED,
     )
 
-    logging.info("Closing gripper...")
+    logger.info("Closing gripper...")
     move_to_pose(
         robot,
         _push_pose(PUSH_END_SHOULDER_LIFT, PUSH_END_ELBOW_FLEX, gripper=GRIPPER_CLOSE_POS),
         APPROACH_SPEED,
     )
 
-    logging.info("Grab complete.")
+    logger.info("Grab complete.")
 
 
 def place_cube(robot: Robot) -> tuple[float, float]:
@@ -222,7 +224,7 @@ def place_cube(robot: Robot) -> tuple[float, float]:
     t = float(np.random.uniform(*PLACE_REACH_RANGE))
     sl = PUSH_START_SHOULDER_LIFT + t * (PUSH_END_SHOULDER_LIFT - PUSH_START_SHOULDER_LIFT)
     ef = PUSH_START_ELBOW_FLEX + t * (PUSH_END_ELBOW_FLEX - PUSH_START_ELBOW_FLEX)
-    logging.info(f"Placing cube at pan={pan:.1f}, reach={t:.2f}...")
+    logger.info(f"Placing cube at pan={pan:.1f}, reach={t:.2f}...")
 
     move_to_pose(robot, {**HOME_POSE, "gripper.pos": GRIPPER_CLOSE_POS}, APPROACH_SPEED)
     move_to_pose(
@@ -230,24 +232,9 @@ def place_cube(robot: Robot) -> tuple[float, float]:
     )
     move_to_pose(robot, _push_pose(sl, ef, pan=pan, gripper=GRIPPER_CLOSE_POS), APPROACH_SPEED)
     move_to_pose(robot, _push_pose(sl, ef, pan=pan, gripper=80.0), APPROACH_SPEED)
-    precise_sleep(0.5)  # let the cube settle before pulling away
     move_to_pose(robot, HOME_POSE, APPROACH_SPEED)
-    logging.info("Place complete.")
+    logger.info("Place complete.")
     return pan, t
-
-
-def reset_environment(robot: Robot) -> None:
-    """Sweep the workspace and return to HOME."""
-    pan = float(np.random.uniform(*SWEEP_END_PAN_RANGE))
-    waypoints = [*SWEEP_WAYPOINTS[:-1], {**SWEEP_WAYPOINTS[-1], "shoulder_pan.pos": pan}]
-
-    move_to_pose(robot, HOME_POSE, APPROACH_SPEED)
-    for i, waypoint in enumerate(waypoints):
-        logging.info(f"Waypoint {i + 1}/{len(waypoints)}...")
-        move_to_pose(robot, waypoint, APPROACH_SPEED if i == 0 else SWEEP_SPEED)
-    move_to_pose(robot, HOME_POSE, APPROACH_SPEED)
-
-    logging.info("Reset complete.")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -257,21 +244,21 @@ def main():
     parser = argparse.ArgumentParser(description="OMX arm reset / grab script")
     parser.add_argument("--port", default="/dev/ttyACM1")
     parser.add_argument("--robot_id", default="omx_follower")
-    parser.add_argument("--mode", choices=["reset", "grab", "grab_and_place"], default="reset")
+    parser.add_argument("--mode", choices=["grab", "grab_and_place"], default="grab_and_place")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
     robot = OmxFollower(OmxFollowerConfig(port=args.port, id=args.robot_id))
     robot.connect(calibrate=True)
+
     try:
         if args.mode == "grab":
             grab_cube(robot)
         elif args.mode == "grab_and_place":
             grab_cube(robot)
             place_cube(robot)
-        else:
-            reset_environment(robot)
+
     finally:
         robot.disconnect()
 
