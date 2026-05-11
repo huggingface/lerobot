@@ -20,10 +20,10 @@ import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
-from lerobot.datasets.dataset_reader import DatasetReader  # noqa: E402
-from lerobot.datasets.io_utils import hf_transform_to_torch  # noqa: E402
-from lerobot.datasets.lerobot_dataset import LeRobotDataset  # noqa: E402
-from lerobot.utils.import_utils import get_safe_default_codec  # noqa: E402
+from lerobot.datasets.dataset_reader import DatasetReader
+from lerobot.datasets.io_utils import hf_transform_to_torch
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.utils.import_utils import get_safe_default_codec
 
 
 def _row_first_stack(reader: DatasetReader, key: str, indices: list[int]) -> torch.Tensor:
