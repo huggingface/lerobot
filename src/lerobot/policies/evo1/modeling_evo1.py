@@ -295,6 +295,14 @@ class EVO1Policy(PreTrainedPolicy):
             embodiment_ids = embodiment_ids[:, -1]
         return embodiment_ids.to(device=self.config.device, dtype=torch.long)
 
+    @property
+    def _tracks_vlm_gradients(self) -> bool:
+        return bool(
+            self.config.finetune_vlm
+            or self.config.finetune_language_model
+            or self.config.finetune_vision_model
+        )
+
     def _collect_image_batches(self, batch: dict[str, Tensor]) -> tuple[list[list[Tensor]], Tensor]:
         camera_keys = self._camera_keys or sorted(key for key in batch if key.startswith(f"{OBS_IMAGES}."))
         if not camera_keys:
@@ -338,12 +346,28 @@ class EVO1Policy(PreTrainedPolicy):
         image_batches: list[list[Tensor]],
         image_masks: Tensor,
     ) -> Tensor:
-        fused_tokens = self.model.get_vl_embeddings(
-            images=image_batches,
-            image_mask=image_masks,
-            prompt=prompts,
-            return_cls_only=self.config.return_cls_only,
-        )
+        track_vlm_gradients = self._tracks_vlm_gradients
+        grad_context = nullcontext() if track_vlm_gradients else torch.no_grad()
+        embedder = getattr(self.model, "embedder", None)
+        embedder_was_training = embedder.training if embedder is not None else None
+
+        if not track_vlm_gradients and embedder is not None:
+            embedder.eval()
+
+        try:
+            with grad_context:
+                fused_tokens = self.model.get_vl_embeddings(
+                    images=image_batches,
+                    image_mask=image_masks,
+                    prompt=prompts,
+                    return_cls_only=self.config.return_cls_only,
+                )
+        finally:
+            if not track_vlm_gradients and embedder is not None and embedder_was_training is not None:
+                embedder.train(embedder_was_training)
+
+        if not track_vlm_gradients:
+            fused_tokens = fused_tokens.detach()
         return fused_tokens.to(device=self.config.device, dtype=self._compute_dtype)
 
     def _compute_masked_loss(

@@ -1,1 +1,1 @@
-../../../../docs/source/evo1.mdx
+../../../../docs/source/policy_evo1_README.md

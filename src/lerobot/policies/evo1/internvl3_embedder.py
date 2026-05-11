@@ -16,11 +16,14 @@ from __future__ import annotations
 
 import functools
 import logging
+import types
 from collections.abc import Sequence
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 import torch
 import torch.nn as nn
+import torch.utils.checkpoint
 import torchvision.transforms.functional as TF
 from PIL import Image
 from torchvision.transforms.functional import to_pil_image
@@ -42,12 +45,63 @@ IMG_END_TOKEN = "</img>"  # nosec B105
 logger = logging.getLogger(__name__)
 
 
+def _patch_vision_encoder_checkpointing(encoder: nn.Module, use_reentrant: bool) -> None:
+    if getattr(encoder, "_evo1_checkpoint_patch_applied", False):
+        encoder.gradient_checkpointing_use_reentrant = use_reentrant
+        return
+
+    original_forward = encoder.forward
+
+    def forward_with_checkpoint_kwargs(self, *args, **kwargs):
+        original_checkpoint = torch.utils.checkpoint.checkpoint
+
+        def checkpoint(function, *checkpoint_args, **checkpoint_kwargs):
+            checkpoint_kwargs.setdefault("use_reentrant", self.gradient_checkpointing_use_reentrant)
+            return original_checkpoint(function, *checkpoint_args, **checkpoint_kwargs)
+
+        torch.utils.checkpoint.checkpoint = checkpoint
+        try:
+            return original_forward(*args, **kwargs)
+        finally:
+            torch.utils.checkpoint.checkpoint = original_checkpoint
+
+    encoder.gradient_checkpointing_use_reentrant = use_reentrant
+    encoder.forward = types.MethodType(forward_with_checkpoint_kwargs, encoder)
+    encoder._evo1_checkpoint_patch_applied = True
+
+
 def flash_attn_is_available() -> bool:
     try:
         import flash_attn  # noqa: F401
     except ModuleNotFoundError:
         return False
     return True
+
+
+@contextmanager
+def _internvl_transformers5_load_compatibility():
+    from transformers.modeling_utils import PreTrainedModel
+
+    original_linspace = torch.linspace
+    original_mark_tied = PreTrainedModel.mark_tied_weights_as_initialized
+
+    def linspace(*args, **kwargs):
+        if kwargs.get("device") is None:
+            kwargs["device"] = torch.device("cpu")
+        return original_linspace(*args, **kwargs)
+
+    def mark_tied_weights_as_initialized(self, loading_info):
+        if not hasattr(self, "all_tied_weights_keys"):
+            self.all_tied_weights_keys = {}
+        return original_mark_tied(self, loading_info)
+
+    torch.linspace = linspace
+    PreTrainedModel.mark_tied_weights_as_initialized = mark_tied_weights_as_initialized
+    try:
+        yield
+    finally:
+        torch.linspace = original_linspace
+        PreTrainedModel.mark_tied_weights_as_initialized = original_mark_tied
 
 
 @functools.lru_cache(maxsize=10000)
@@ -130,14 +184,19 @@ class InternVL3Embedder(nn.Module):
         if use_flash_attn and not resolved_use_flash_attn:
             logger.warning("flash_attn is not installed. Falling back to standard attention.")
 
-        self.model = AutoModel.from_pretrained(
-            model_name,
-            torch_dtype=model_dtype,
-            trust_remote_code=True,
-            use_flash_attn=resolved_use_flash_attn,
-            low_cpu_mem_usage=True,
-            _fast_init=False,
-        ).to(self._requested_device)
+        # InternVL3 remote code predates Transformers 5 post-init conventions:
+        # it computes stochastic-depth scalars via torch.linspace(...).item()
+        # while Transformers initializes under torch.device("meta"), and it
+        # does not populate all_tied_weights_keys before loading finalization.
+        with _internvl_transformers5_load_compatibility():
+            self.model = AutoModel.from_pretrained(
+                model_name,
+                torch_dtype=model_dtype,
+                trust_remote_code=True,
+                use_flash_attn=resolved_use_flash_attn,
+                low_cpu_mem_usage=True,
+                _fast_init=False,
+            ).to(self._requested_device)
 
         if hasattr(self.model.language_model, "model"):
             layers = self.model.language_model.model.layers
@@ -192,7 +251,11 @@ class InternVL3Embedder(nn.Module):
         enabled_any = _enable_ckpt(self.model)
 
         if hasattr(self.model, "vision_model") and hasattr(self.model.vision_model, "encoder"):
-            self.model.vision_model.encoder.gradient_checkpointing = True
+            encoder = self.model.vision_model.encoder
+            encoder.gradient_checkpointing = True
+            _patch_vision_encoder_checkpointing(
+                encoder, use_reentrant=self.gradient_checkpointing_use_reentrant
+            )
             enabled_any = True
 
         language_model = getattr(self.model, "language_model", None)

@@ -2723,6 +2723,7 @@ all = [
     { name = "scikit-image" },
     { name = "scipy" },
     { name = "teleop" },
+    { name = "timm" },
     { name = "torchcodec", marker = "(platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l' and sys_platform == 'linux') or (platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torchdiffeq" },
     { name = "transformers" },
@@ -2815,6 +2816,7 @@ evaluation = [
     { name = "av" },
 ]
 evo1 = [
+    { name = "timm" },
     { name = "transformers" },
 ]
 feetech = [
@@ -3198,6 +3200,7 @@ requires-dist = [
     { name = "setuptools", specifier = ">=71.0.0,<81.0.0" },
     { name = "teleop", marker = "extra == 'phone'", specifier = ">=0.1.0,<0.2.0" },
     { name = "termcolor", specifier = ">=2.4.0,<4.0.0" },
+    { name = "timm", marker = "extra == 'evo1'", specifier = ">=1.0.0,<1.1.0" },
     { name = "timm", marker = "extra == 'groot'", specifier = ">=1.0.0,<1.1.0" },
     { name = "torch", specifier = ">=2.7,<2.13.0" },
     { name = "torchcodec", marker = "(platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l' and sys_platform == 'linux' and extra == 'dataset') or (platform_machine != 'x86_64' and sys_platform == 'darwin' and extra == 'dataset') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'dataset')", specifier = ">=0.3.0,<0.13.0" },

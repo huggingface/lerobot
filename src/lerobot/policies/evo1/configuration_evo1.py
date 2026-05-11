@@ -89,6 +89,9 @@ class Evo1Config(PreTrainedConfig):
     finetune_language_model: bool | None = None
     finetune_vision_model: bool | None = None
     finetune_action_head: bool | None = None
+    # Reapply stage defaults after loading checkpoint configs so stage2 cannot
+    # accidentally inherit the frozen VLM flags stored by a stage1 checkpoint.
+    apply_training_stage_defaults: bool = True
 
     task_field: str = "task"
     embodiment_id_field: str | None = None
@@ -110,7 +113,18 @@ class Evo1Config(PreTrainedConfig):
                 f"Unsupported EVO1 training_stage '{self.training_stage}', expected 'stage1' or 'stage2'"
             )
 
-        if self.training_stage == "stage1":
+        if self.apply_training_stage_defaults:
+            if self.training_stage == "stage1":
+                self.finetune_vlm = False
+                self.finetune_language_model = False
+                self.finetune_vision_model = False
+                self.finetune_action_head = True
+            elif self.training_stage == "stage2":
+                self.finetune_vlm = True
+                self.finetune_language_model = True
+                self.finetune_vision_model = True
+                self.finetune_action_head = True
+        elif self.training_stage == "stage1":
             if self.finetune_vlm is None:
                 self.finetune_vlm = False
             if self.finetune_language_model is None:

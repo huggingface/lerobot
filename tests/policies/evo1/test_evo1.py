@@ -38,15 +38,20 @@ class DummyEVO1(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
+        self.embedder = nn.Dropout(p=0.0)
         self.action_head = nn.Linear(1, 1)
         self.get_vl_embeddings_calls = 0
+        self.grad_enabled_calls = []
+        self.embedder_training_calls = []
 
     def set_finetune_flags(self):
         return None
 
     def get_vl_embeddings(self, images, image_mask, prompt=None, return_cls_only=False):
         self.get_vl_embeddings_calls += 1
-        return torch.ones(len(images), 4, EMBED_DIM)
+        self.grad_enabled_calls.append(torch.is_grad_enabled())
+        self.embedder_training_calls.append(self.embedder.training)
+        return torch.ones(len(images), 4, EMBED_DIM, requires_grad=torch.is_grad_enabled())
 
     def forward(
         self,
@@ -136,8 +141,27 @@ def test_evo1_stage_defaults_and_consistency():
     )
     assert stage2.finetune_action_head is True
 
+    stage2_from_stage1_checkpoint_flags = make_config(
+        training_stage="stage2",
+        finetune_vlm=False,
+        finetune_language_model=False,
+        finetune_vision_model=False,
+        finetune_action_head=False,
+    )
+    assert (
+        stage2_from_stage1_checkpoint_flags.finetune_vlm,
+        stage2_from_stage1_checkpoint_flags.finetune_language_model,
+        stage2_from_stage1_checkpoint_flags.finetune_vision_model,
+    ) == (
+        True,
+        True,
+        True,
+    )
+    assert stage2_from_stage1_checkpoint_flags.finetune_action_head is True
+
     explicit_off = make_config(
         training_stage="stage2",
+        apply_training_stage_defaults=False,
         finetune_vlm=False,
         finetune_language_model=False,
         finetune_vision_model=False,
@@ -155,7 +179,12 @@ def test_evo1_stage_defaults_and_consistency():
     assert explicit_off.finetune_action_head is False
 
     try:
-        make_config(training_stage="stage2", finetune_vlm=True, finetune_language_model=False)
+        make_config(
+            training_stage="stage2",
+            apply_training_stage_defaults=False,
+            finetune_vlm=True,
+            finetune_language_model=False,
+        )
     except ValueError as exc:
         assert "Inconsistent EVO1 finetune config" in str(exc)
     else:
@@ -178,6 +207,33 @@ def test_evo1_policy_forward_and_inference_use_batched_embedding(monkeypatch):
     policy.reset()
     selected = policy.select_action(make_batch(include_action=False))
     assert selected.shape == (2, ACTION_DIM)
+
+
+def test_stage1_frozen_vlm_embeddings_do_not_track_gradients(monkeypatch):
+    monkeypatch.setattr(modeling_evo1, "EVO1", DummyEVO1)
+    policy = modeling_evo1.EVO1Policy(make_config(training_stage="stage1"))
+    policy.train()
+
+    image_batches, image_masks = policy._collect_image_batches(make_batch(include_action=False))
+    fused_tokens = policy._compute_fused_tokens(["pick", "place"], image_batches, image_masks)
+
+    assert policy.model.grad_enabled_calls == [False]
+    assert policy.model.embedder_training_calls == [False]
+    assert not fused_tokens.requires_grad
+    assert policy.model.embedder.training is True
+
+
+def test_stage2_vlm_embeddings_track_gradients(monkeypatch):
+    monkeypatch.setattr(modeling_evo1, "EVO1", DummyEVO1)
+    policy = modeling_evo1.EVO1Policy(make_config(training_stage="stage2"))
+    policy.train()
+
+    image_batches, image_masks = policy._collect_image_batches(make_batch(include_action=False))
+    fused_tokens = policy._compute_fused_tokens(["pick", "place"], image_batches, image_masks)
+
+    assert policy.model.grad_enabled_calls == [True]
+    assert policy.model.embedder_training_calls == [True]
+    assert fused_tokens.requires_grad
 
 
 def test_collect_image_batches_handles_unbatched_chw(monkeypatch):
