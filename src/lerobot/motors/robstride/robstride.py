@@ -217,7 +217,7 @@ class RobstrideMotorsBus(MotorsBusBase):
             raise ConnectionError(f"Failed to connect to CAN bus: {e}") from e
 
     def _query_status_via_clear_fault(
-        self, motor: NameOrID, timeout: float | None = None
+        self, motor: NameOrID, timeout: float = RUNNING_TIMEOUT
     ) -> tuple[bool, can.Message | None]:
         motor_name = self._get_motor_name(motor)
         motor_id = self._get_motor_id(motor_name)
@@ -225,8 +225,7 @@ class RobstrideMotorsBus(MotorsBusBase):
         data = [0xFF] * 7 + [CAN_CMD_CLEAR_FAULT]
         msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
         self._bus().send(msg)
-        wait_s = RUNNING_TIMEOUT if timeout is None else float(timeout)
-        return self._recv_status_via_clear_fault(expected_recv_id=recv_id, timeout=wait_s)
+        return self._recv_status_via_clear_fault(expected_recv_id=recv_id, timeout=timeout)
 
     def _recv_status_via_clear_fault(
         self, expected_recv_id: int | None = None, timeout: float = RUNNING_TIMEOUT
@@ -512,7 +511,7 @@ class RobstrideMotorsBus(MotorsBusBase):
     def _recv_all_messages_until_quiet(
         self,
         *,
-        timeout: float,
+        timeout: float = RUNNING_TIMEOUT,
         max_messages: int = 4096,
     ) -> list[can.Message]:
         """
@@ -524,17 +523,17 @@ class RobstrideMotorsBus(MotorsBusBase):
             max_messages: Safety cap to prevent unbounded loops.
         """
         out: list[can.Message] = []
-        cap = max(1, int(max_messages))
-        recv_timeout = max(0.0, float(timeout))
+        max_messages = max(1, max_messages)
+        timeout = max(0.0, timeout)
 
         try:
-            while len(out) < cap:
-                msg = self._bus().recv(timeout=recv_timeout)
+            while len(out) < max_messages:
+                msg = self._bus().recv(timeout=timeout)
                 if msg is None:
                     break
                 out.append(msg)
         except (can.CanError, OSError) as e:
-            logger.debug("Error draining CAN RX queue on %s: %s", self.port, e)
+            logger.debug(f"Error draining CAN RX queue on {self.port}: {e}")
 
         return out
 
@@ -583,11 +582,11 @@ class RobstrideMotorsBus(MotorsBusBase):
         to clear residual frames left on the interface from previous sessions.
         """
         drained = 0
-        timeout_s = max(0.0, float(poll_timeout_s))
-        cap = max(1, int(max_messages))
+        poll_timeout_s = max(0.0, poll_timeout_s)
+        max_messages = max(1, max_messages)
         try:
-            while drained < cap:
-                msg = self._bus().recv(timeout=timeout_s)
+            while drained < max_messages:
+                msg = self._bus().recv(timeout=poll_timeout_s)
                 if msg is None:
                     break
                 drained += 1
@@ -736,7 +735,7 @@ class RobstrideMotorsBus(MotorsBusBase):
             recv_id_to_motor[self._get_motor_recv_id(motor)] = motor_name
         # Read every feedback frame until RX goes quiet, then decode all of them.
         # This avoids dropping useful frames when responses from different motors interleave.
-        messages = self._recv_all_messages_until_quiet(timeout=RUNNING_TIMEOUT)
+        messages = self._recv_all_messages_until_quiet()
         processed_recv_ids = self._process_feedback_messages(messages)
 
         for recv_id, motor_name in recv_id_to_motor.items():
@@ -946,7 +945,7 @@ class RobstrideMotorsBus(MotorsBusBase):
             msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
             self._bus().send(msg)
 
-        messages = self._recv_all_messages_until_quiet(timeout=RUNNING_TIMEOUT)
+        messages = self._recv_all_messages_until_quiet()
         processed_recv_ids = self._process_feedback_messages(messages)
 
         for motor in updated_motors:
