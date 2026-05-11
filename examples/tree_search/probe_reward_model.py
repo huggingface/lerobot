@@ -19,6 +19,7 @@ from lerobot.datasets import LeRobotDatasetMetadata
 from lerobot.datasets.image_writer import write_image
 from lerobot.utils.io_utils import write_video
 
+from policy_inference_api import _load_task_language_map, _translate_task_language
 from reward_model import RewardBatchProcessor, load_reward_model_checkpoint, move_batch_to_device
 from train_reward_model import find_episodes_for_task, model_forward
 from vlm_sequence_prompt_probe import (
@@ -82,12 +83,22 @@ def _variant_video_paths(args: argparse.Namespace) -> dict[str, Path]:
     }
 
 
-def _get_wrong_task_language(args: argparse.Namespace, correct_task_language: str) -> str:
+def _get_wrong_task_language(
+    args: argparse.Namespace,
+    correct_original_task_language: str,
+    task_language_translations: dict[str, str],
+) -> str:
     if args.wrong_task_language is not None:
         return args.wrong_task_language
 
     if args.wrong_task_order is not None:
-        return str(_get_libero_task(args.suite, args.wrong_task_order)["language"])
+        wrong_original = str(_get_libero_task(args.suite, args.wrong_task_order)["language"])
+        return _translate_task_language(
+            wrong_original,
+            suite=args.suite,
+            task_id=int(args.wrong_task_order),
+            translations=task_language_translations,
+        )
 
     try:
         from libero.libero import benchmark
@@ -109,8 +120,13 @@ def _get_wrong_task_language(args: argparse.Namespace, correct_task_language: st
     for offset in range(1, n_tasks):
         task_order = (int(args.task_order) + offset) % n_tasks
         candidate = str(suite.get_task(task_order).language)
-        if candidate != correct_task_language:
-            return candidate
+        if candidate != correct_original_task_language:
+            return _translate_task_language(
+                candidate,
+                suite=args.suite,
+                task_id=task_order,
+                translations=task_language_translations,
+            )
     raise SystemExit("Could not find a wrong task instruction different from the selected task.")
 
 
@@ -298,6 +314,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset_revision", default=None)
     parser.add_argument("--suite", default="libero_object")
     parser.add_argument("--task_order", type=int, required=True)
+    parser.add_argument(
+        "--task_language_map",
+        type=Path,
+        default=None,
+        help=(
+            "Optional JSON mapping from LIBERO suite/task ids or English task strings to replacement "
+            "task text used by the reward model. Episode lookup still uses the original LIBERO task."
+        ),
+    )
     parser.add_argument("--episode_index", type=int, default=None)
     parser.add_argument("--frame_stride", type=int, default=10)
     parser.add_argument("--max_frames", type=int, default=32)
@@ -347,6 +372,7 @@ def main() -> None:
     model, model_cfg, checkpoint = load_reward_model_checkpoint(args.checkpoint, device=device)
     processor = RewardBatchProcessor(model_cfg)
     scene_temporal_stride = _resolve_scene_temporal_stride(args, checkpoint)
+    task_language_translations = _load_task_language_map(args.task_language_map)
     logger.info(
         "Reward probe temporal config: scene_temporal_window=%s scene_temporal_stride=%s",
         model_cfg.scene_temporal_window,
@@ -354,7 +380,15 @@ def main() -> None:
     )
 
     task_metadata = _get_libero_task(args.suite, args.task_order)
-    task_language = str(task_metadata["language"])
+    original_task_language = str(task_metadata["language"])
+    task_language = _translate_task_language(
+        original_task_language,
+        suite=args.suite,
+        task_id=int(args.task_order),
+        translations=task_language_translations,
+    )
+    if task_language != original_task_language:
+        logger.info("Using translated task text: original=%r translated=%r", original_task_language, task_language)
     meta = LeRobotDatasetMetadata(
         args.dataset_repo_id,
         root=args.dataset_root,
@@ -371,7 +405,11 @@ def main() -> None:
         max_frames=args.max_frames,
     )
     denom = max(1, len(reader) - 1)
-    wrong_task_language = _get_wrong_task_language(args, task_language)
+    wrong_task_language = _get_wrong_task_language(
+        args,
+        original_task_language,
+        task_language_translations,
+    )
 
     variants = _make_probe_variants(
         args,
@@ -420,6 +458,9 @@ def main() -> None:
         "suite": args.suite,
         "task_order": args.task_order,
         "task": task_language,
+        "original_task": original_task_language,
+        "task_language_map": str(args.task_language_map) if args.task_language_map is not None else None,
+        "task_language_map_keys": sorted(task_language_translations.keys()),
         "wrong_task_language": wrong_task_language,
         "episode_index": episode_index,
         "scene_temporal_window": model_cfg.scene_temporal_window,
