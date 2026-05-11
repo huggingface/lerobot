@@ -70,8 +70,9 @@ class OpenArmLeader(Teleoperator):
         features: dict[str, type] = {}
         for motor in self.bus.motors:
             features[f"{motor}.pos"] = float
-            features[f"{motor}.vel"] = float
-            features[f"{motor}.torque"] = float
+            if self.config.use_velocity_and_torque:
+                features[f"{motor}.vel"] = float
+                features[f"{motor}.torque"] = float
         return features
 
     @property
@@ -201,8 +202,9 @@ class OpenArmLeader(Teleoperator):
         for motor in self.bus.motors:
             state = states.get(motor, {})
             action_dict[f"{motor}.pos"] = state.get("position")
-            action_dict[f"{motor}.vel"] = state.get("velocity")
-            action_dict[f"{motor}.torque"] = state.get("torque")
+            if self.config.use_velocity_and_torque:
+                action_dict[f"{motor}.vel"] = state.get("velocity")
+                action_dict[f"{motor}.torque"] = state.get("torque")
 
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")

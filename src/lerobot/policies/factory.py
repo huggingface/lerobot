@@ -46,6 +46,7 @@ from lerobot.utils.feature_utils import dataset_to_policy_features
 
 from .act.configuration_act import ACTConfig
 from .diffusion.configuration_diffusion import DiffusionConfig
+from .eo1.configuration_eo1 import EO1Config
 from .groot.configuration_groot import GrootConfig
 from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
 from .pi0.configuration_pi0 import PI0Config
@@ -150,6 +151,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.vla_jepa.modeling_vla_jepa import VLAJEPAPolicy
 
         return VLAJEPAPolicy
+    elif name == "eo1":
+        from .eo1.modeling_eo1 import EO1Policy
+
+        return EO1Policy
     else:
         try:
             return _get_policy_cls_from_policy_name(name=name)
@@ -202,6 +207,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return WallXConfig(**kwargs)
     elif policy_type == "vla_jepa":
         return VLAJEPAConfig(**kwargs)
+    elif policy_type == "eo1":
+        return EO1Config(**kwargs)
     else:
         try:
             config_cls = PreTrainedConfig.get_choice_class(policy_type)
@@ -405,6 +412,13 @@ def make_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
+    elif isinstance(policy_cfg, EO1Config):
+        from .eo1.processor_eo1 import make_eo1_pre_post_processors
+
+        processors = make_eo1_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
 
     elif isinstance(policy_cfg, VLAJEPAConfig):
         from lerobot.policies.vla_jepa.processor_vla_jepa import make_vla_jepa_pre_post_processors
@@ -528,7 +542,7 @@ def make_policy(
 
         logging.info("Loading policy's PEFT adapter.")
 
-        peft_pretrained_path = cfg.pretrained_path
+        peft_pretrained_path = str(cfg.pretrained_path)
         peft_config = PeftConfig.from_pretrained(peft_pretrained_path)
 
         kwargs["pretrained_name_or_path"] = peft_config.base_model_name_or_path
@@ -541,7 +555,9 @@ def make_policy(
             )
 
         policy = policy_cls.from_pretrained(**kwargs)
-        policy = PeftModel.from_pretrained(policy, peft_pretrained_path, config=peft_config)
+        policy = PeftModel.from_pretrained(
+            policy, peft_pretrained_path, config=peft_config, is_trainable=True
+        )
 
     else:
         # Make a fresh policy.

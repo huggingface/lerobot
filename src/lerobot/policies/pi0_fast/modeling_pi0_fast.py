@@ -16,7 +16,6 @@
 
 import builtins
 import logging
-import math
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypedDict, Unpack
@@ -261,13 +260,15 @@ class PI0FastPaliGemma(nn.Module):
         if image.dtype != torch.float32:
             image = image.to(torch.float32)
         image_outputs = self.paligemma.model.get_image_features(image)
-        features = image_outputs.pooler_output * self.paligemma.config.text_config.hidden_size**0.5
+        features = image_outputs.pooler_output
+        norm = 2048**0.5
+        features = features / norm * norm
         if features.dtype != out_dtype:
             features = features.to(out_dtype)
         return features
 
     def embed_language_tokens(self, tokens: torch.Tensor):
-        return self.paligemma.model.language_model.embed_tokens(tokens)
+        return self.paligemma.model.language_model.get_input_embeddings()(tokens)
 
     def forward(
         self,
@@ -417,8 +418,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         # Process language instruction tokens
         def lang_embed_func(tokens):
             lang_emb = self.paligemma_with_expert.embed_language_tokens(tokens)
-            lang_emb_dim = lang_emb.shape[-1]
-            return lang_emb * math.sqrt(lang_emb_dim)
+            return lang_emb
 
         lang_emb = self._apply_checkpoint(lang_embed_func, tokens)
         embs.append(lang_emb)
@@ -432,8 +432,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
 
             def fast_action_embed_func(fast_action_tokens):
                 fast_emb = self.paligemma_with_expert.embed_language_tokens(fast_action_tokens)
-                fast_emb_dim = fast_emb.shape[-1]
-                return fast_emb * math.sqrt(fast_emb_dim)
+                return fast_emb
 
             fast_action_emb = self._apply_checkpoint(fast_action_embed_func, fast_action_tokens)
             embs.append(fast_action_emb)
@@ -666,7 +665,6 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
             if t < max_decoding_steps - 1:
                 # embed the newly generated token
                 next_token_emb = self.paligemma_with_expert.embed_language_tokens(next_token)
-                next_token_emb = next_token_emb * math.sqrt(next_token_emb.shape[-1])
                 if prefix_embs.dtype == torch.bfloat16:
                     next_token_emb = next_token_emb.to(dtype=torch.bfloat16)
 
@@ -771,7 +769,6 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
             # Embed the single previous token
             # We use embed_language_tokens directly to avoid overhead of full prefix embedding
             next_token_emb = self.paligemma_with_expert.embed_language_tokens(next_token)
-            next_token_emb = next_token_emb * math.sqrt(next_token_emb.shape[-1])
             if prefix_embs.dtype == torch.bfloat16:
                 next_token_emb = next_token_emb.to(dtype=torch.bfloat16)
 
