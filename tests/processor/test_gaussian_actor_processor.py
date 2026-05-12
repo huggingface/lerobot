@@ -21,8 +21,8 @@ import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.policies.sac.configuration_sac import SACConfig
-from lerobot.policies.sac.processor_sac import make_sac_pre_post_processors
+from lerobot.policies.gaussian_actor.configuration_gaussian_actor import GaussianActorConfig
+from lerobot.policies.gaussian_actor.processor_gaussian_actor import make_gaussian_actor_pre_post_processors
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DataProcessorPipeline,
@@ -38,7 +38,7 @@ from lerobot.utils.constants import ACTION, OBS_STATE
 
 def create_default_config():
     """Create a default SAC configuration for testing."""
-    config = SACConfig()
+    config = GaussianActorConfig()
     config.input_features = {
         OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(10,)),
     }
@@ -66,7 +66,7 @@ def test_make_sac_processor_basic():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_sac_pre_post_processors(
+    preprocessor, postprocessor = make_gaussian_actor_pre_post_processors(
         config,
         stats,
     )
@@ -88,12 +88,12 @@ def test_make_sac_processor_basic():
     assert isinstance(postprocessor.steps[1], DeviceProcessorStep)
 
 
-def test_sac_processor_normalization_modes():
+def test_gaussian_actor_processor_normalization_modes():
     """Test that SAC processor correctly handles different normalization modes."""
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_sac_pre_post_processors(
+    preprocessor, postprocessor = make_gaussian_actor_pre_post_processors(
         config,
         stats,
     )
@@ -121,13 +121,13 @@ def test_sac_processor_normalization_modes():
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-def test_sac_processor_cuda():
+def test_gaussian_actor_processor_cuda():
     """Test SAC processor with CUDA device."""
     config = create_default_config()
     config.device = "cuda"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_sac_pre_post_processors(
+    preprocessor, postprocessor = make_gaussian_actor_pre_post_processors(
         config,
         stats,
     )
@@ -153,13 +153,13 @@ def test_sac_processor_cuda():
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-def test_sac_processor_accelerate_scenario():
+def test_gaussian_actor_processor_accelerate_scenario():
     """Test SAC processor in simulated Accelerate scenario."""
     config = create_default_config()
     config.device = "cuda:0"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_sac_pre_post_processors(
+    preprocessor, postprocessor = make_gaussian_actor_pre_post_processors(
         config,
         stats,
     )
@@ -180,13 +180,13 @@ def test_sac_processor_accelerate_scenario():
 
 
 @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires at least 2 GPUs")
-def test_sac_processor_multi_gpu():
+def test_gaussian_actor_processor_multi_gpu():
     """Test SAC processor with multi-GPU setup."""
     config = create_default_config()
     config.device = "cuda:0"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_sac_pre_post_processors(
+    preprocessor, postprocessor = make_gaussian_actor_pre_post_processors(
         config,
         stats,
     )
@@ -206,11 +206,11 @@ def test_sac_processor_multi_gpu():
     assert processed[TransitionKey.ACTION.value].device == device
 
 
-def test_sac_processor_without_stats():
+def test_gaussian_actor_processor_without_stats():
     """Test SAC processor creation without dataset statistics."""
     config = create_default_config()
 
-    preprocessor, postprocessor = make_sac_pre_post_processors(config, dataset_stats=None)
+    preprocessor, postprocessor = make_gaussian_actor_pre_post_processors(config, dataset_stats=None)
 
     # Should still create processors
     assert preprocessor is not None
@@ -226,12 +226,12 @@ def test_sac_processor_without_stats():
     assert processed is not None
 
 
-def test_sac_processor_save_and_load():
+def test_gaussian_actor_processor_save_and_load():
     """Test saving and loading SAC processor."""
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_sac_pre_post_processors(
+    preprocessor, postprocessor = make_gaussian_actor_pre_post_processors(
         config,
         stats,
     )
@@ -257,14 +257,14 @@ def test_sac_processor_save_and_load():
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-def test_sac_processor_mixed_precision():
+def test_gaussian_actor_processor_mixed_precision():
     """Test SAC processor with mixed precision."""
     config = create_default_config()
     config.device = "cuda"
     stats = create_default_stats()
 
     # Create processor
-    preprocessor, postprocessor = make_sac_pre_post_processors(
+    preprocessor, postprocessor = make_gaussian_actor_pre_post_processors(
         config,
         stats,
     )
@@ -304,12 +304,12 @@ def test_sac_processor_mixed_precision():
     assert processed[TransitionKey.ACTION.value].dtype == torch.float16
 
 
-def test_sac_processor_batch_data():
+def test_gaussian_actor_processor_batch_data():
     """Test SAC processor with batched data."""
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_sac_pre_post_processors(
+    preprocessor, postprocessor = make_gaussian_actor_pre_post_processors(
         config,
         stats,
     )
@@ -329,12 +329,12 @@ def test_sac_processor_batch_data():
     assert processed[TransitionKey.ACTION.value].shape == (batch_size, 5)
 
 
-def test_sac_processor_edge_cases():
+def test_gaussian_actor_processor_edge_cases():
     """Test SAC processor with edge cases."""
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_sac_pre_post_processors(
+    preprocessor, postprocessor = make_gaussian_actor_pre_post_processors(
         config,
         stats,
     )
@@ -358,13 +358,13 @@ def test_sac_processor_edge_cases():
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-def test_sac_processor_bfloat16_device_float32_normalizer():
+def test_gaussian_actor_processor_bfloat16_device_float32_normalizer():
     """Test: DeviceProcessor(bfloat16) + NormalizerProcessor(float32) → output bfloat16 via automatic adaptation"""
     config = create_default_config()
     config.device = "cuda"
     stats = create_default_stats()
 
-    preprocessor, _ = make_sac_pre_post_processors(
+    preprocessor, _ = make_gaussian_actor_pre_post_processors(
         config,
         stats,
     )

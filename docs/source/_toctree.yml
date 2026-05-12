@@ -8,7 +8,7 @@
   - local: il_robots
     title: Imitation Learning for Robots
   - local: bring_your_own_policies
-    title: Bring Your Own Policies
+    title: Adding a Policy
   - local: integrate_hardware
     title: Bring Your Own Hardware
   - local: hilserl
@@ -24,6 +24,12 @@
   - local: rename_map
     title: Using Rename Map and Empty Cameras
   title: "Tutorials"
+- sections:
+  - local: hardware_guide
+    title: Compute Hardware Guide
+  - local: torch_accelerators
+    title: PyTorch accelerators
+  title: "Compute & Hardware"
 - sections:
   - local: lerobot-dataset-v3
     title: Using LeRobotDataset
@@ -142,10 +148,6 @@
   - local: cameras
     title: Cameras
   title: "Sensors"
-- sections:
-  - local: torch_accelerators
-    title: PyTorch accelerators
-  title: "Supported Hardware"
 - sections:
   - local: notebooks
     title: Notebooks

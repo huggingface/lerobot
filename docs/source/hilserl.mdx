@@ -62,7 +62,7 @@ pip install -e ".[hilserl]"
 
 ### Understanding Configuration
 
-The training process begins with proper configuration for the HILSerl environment. The main configuration class is `GymManipulatorConfig` in `lerobot/rl/gym_manipulator.py`, which contains nested `HILSerlRobotEnvConfig` and `DatasetConfig`. The configuration is organized into focused, nested sub-configs:
+The training process begins with proper configuration for the HILSERl environment. The main configuration class is `GymManipulatorConfig` in `lerobot/rl/gym_manipulator.py`, which contains nested `HILSerlRobotEnvConfig` (defined in `lerobot/envs/configs.py`) and `DatasetConfig`. The configuration is organized into focused, nested sub-configs:
 
 <!-- prettier-ignore-start -->
 ```python
@@ -95,6 +95,7 @@ class HILSerlProcessorConfig:
 class ObservationConfig:
     add_joint_velocity_to_observation: bool = False    # Add joint velocities to state
     add_current_to_observation: bool = False    # Add motor currents to state
+    add_ee_pose_to_observation: bool = False    # Add end-effector pose to state
     display_cameras: bool = False    # Display camera feeds during execution
 
 class ImagePreprocessingConfig:
@@ -326,14 +327,22 @@ lerobot-find-joint-limits \
    Max joint positions [-20.0, -20.0, -20.0, -20.0, -20.0, -20.0]
    Min joint positions [50.0, 50.0, 50.0, 50.0, 50.0, 50.0]
    ```
-3. Use these values in the configuration of your teleoperation device (TeleoperatorConfig) under the `end_effector_bounds` field
+3. Use these values in your environment configuration under `env.processor.inverse_kinematics.end_effector_bounds` (see `InverseKinematicsConfig` in `lerobot/envs/configs.py`)
 
 **Example Configuration**
 
 ```json
-"end_effector_bounds": {
-    "max": [0.24, 0.20, 0.10],
-    "min": [0.16, -0.08, 0.03]
+{
+  "env": {
+    "processor": {
+      "inverse_kinematics": {
+        "end_effector_bounds": {
+          "max": [0.24, 0.2, 0.1],
+          "min": [0.16, -0.08, 0.03]
+        }
+      }
+    }
+  }
 }
 ```
 
@@ -404,30 +413,24 @@ We support using a gamepad or a keyboard or the leader arm of the robot.
 
 HIL-Serl learns actions in the end-effector space of the robot. Therefore, the teleoperation will control the end-effector's x,y,z displacements.
 
-For that we need to define a version of the robot that takes actions in the end-effector space. Check the robot class `SO100FollowerEndEffector` and its configuration `SO100FollowerEndEffectorConfig` for the default parameters related to the end-effector space.
+The end-effector transformation is applied by the processor pipeline (`InverseKinematicsRLStep`, `EEBoundsAndSafety`, `EEReferenceAndDelta`, `GripperVelocityToJoint`) configured under `env.processor.inverse_kinematics` (`InverseKinematicsConfig`) and `env.processor.gripper` / `env.processor.max_gripper_pos`. The defaults related to the end-effector space are:
 
 <!-- prettier-ignore-start -->
 ```python
-class SO100FollowerEndEffectorConfig(SO100FollowerConfig):
-    """Configuration for the SO100FollowerEndEffector robot."""
+class InverseKinematicsConfig:
+    """Configuration for inverse kinematics processing."""
 
-    # Default bounds for the end-effector position (in meters)
-    end_effector_bounds: dict[str, list[float]] = field( # bounds for the end-effector in x,y,z direction
-        default_factory=lambda: {
-            "min": [-1.0, -1.0, -1.0],  # min x, y, z
-            "max": [1.0, 1.0, 1.0],  # max x, y, z
-        }
-    )
+    urdf_path: str | None = None
+    target_frame_name: str | None = None
+    # bounds for the end-effector in x,y,z direction
+    end_effector_bounds: dict[str, list[float]] | None = None
+    # maximum step size for the end-effector in x,y,z direction
+    end_effector_step_sizes: dict[str, float] | None = None
 
-    max_gripper_pos: float = 50 # maximum gripper position that the gripper will be open at
-
-    end_effector_step_sizes: dict[str, float] = field( # maximum step size for the end-effector in x,y,z direction
-        default_factory=lambda: {
-            "x": 0.02,
-            "y": 0.02,
-            "z": 0.02,
-        }
-    )
+class HILSerlProcessorConfig:
+    ...
+    # maximum gripper position that the gripper will be open at
+    max_gripper_pos: float | None = 100.0
 ```
 <!-- prettier-ignore-end -->
 
@@ -606,11 +609,11 @@ This guide explains how to train a reward classifier for human-in-the-loop reinf
 
 **Note**: Training a reward classifier is optional. You can start the first round of RL experiments by annotating the success manually with your gamepad or keyboard device.
 
-The reward classifier implementation in `modeling_classifier.py` uses a pretrained vision model to process the images. It can output either a single value for binary rewards to predict success/fail cases or multiple values for multi-class settings.
+The reward classifier implementation in `lerobot/rewards/classifier/modeling_classifier.py` uses a pretrained vision model to process the images. It can output either a single value for binary rewards to predict success/fail cases or multiple values for multi-class settings.
 
 **Collecting a Dataset for the reward classifier**
 
-Before training, you need to collect a dataset with labeled examples. The `record_dataset` function in `gym_manipulator.py` enables the process of collecting a dataset of observations, actions, and rewards.
+Before training, you need to collect a dataset with labeled examples. Setting `mode: "record"` in your config and running `gym_manipulator.py` enables the process of collecting a dataset of observations, actions, and rewards.
 
 To collect a dataset, you need to modify some parameters in the environment configuration based on HILSerlRobotEnvConfig.
 
@@ -658,7 +661,7 @@ Example configuration section for data collection:
   },
   "dataset": {
     "repo_id": "hf_username/dataset_name",
-    "dataset_root": "data/your_dataset",
+    "root": "data/your_dataset",
     "task": "reward_classifier_task",
     "num_episodes_to_record": 20,
     "replay_episode": null,
@@ -671,7 +674,7 @@ Example configuration section for data collection:
 
 **Reward Classifier Configuration**
 
-The reward classifier is configured using `configuration_classifier.py`. Here are the key parameters:
+The reward classifier is configured using `lerobot/rewards/classifier/configuration_classifier.py`. Here are the key parameters:
 
 - **model_name**: Base model architecture (e.g., we mainly use `"helper2424/resnet10"`)
 - **model_type**: `"cnn"` or `"transformer"`
@@ -689,7 +692,7 @@ Example configuration for training the [reward classifier](https://huggingface.c
     "repo_id": "hf_username/dataset_name",
     "root": null
   },
-  "policy": {
+  "reward_model": {
     "type": "reward_classifier",
     "model_name": "helper2424/resnet10",
     "model_type": "cnn",
@@ -699,7 +702,6 @@ Example configuration for training the [reward classifier](https://huggingface.c
     "dropout_rate": 0.1,
     "learning_rate": 1e-4,
     "device": "cuda",
-    "use_amp": true,
     "input_features": {
       "observation.images.front": {
         "type": "VISUAL",
@@ -818,13 +820,14 @@ The LeRobot system uses a distributed actor-learner architecture for training. T
 
 **Configuration Setup**
 
-Create a training configuration file (example available [here](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/rl/train_config.json)). The training config is based on the main `TrainRLServerPipelineConfig` class in `lerobot/configs/train.py`.
+Create a training configuration file (example available [here](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/rl/train_config.json)). The training config is based on the main `TrainRLServerPipelineConfig` class in `lerobot/rl/train_rl.py`.
 
-1. Configure the policy settings (`type="sac"`, `device`, etc.)
-2. Set `dataset` to your cropped dataset
-3. Configure environment settings with crop parameters
-4. Check the other parameters related to SAC in [configuration_sac.py](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/sac/configuration_sac.py#L79).
-5. Verify that the `policy` config is correct with the right `input_features` and `output_features` for your task.
+1. Configure the policy settings (`type="gaussian_actor"`, `device`, etc.)
+2. Configure the algorithm settings under the top-level `algorithm` block (`type="sac"`, learning rates, discount, etc., defined in `lerobot/rl/algorithms/sac/configuration_sac.py`).
+3. Set `dataset` to your cropped dataset
+4. Configure environment settings with crop parameters
+5. Check the other parameters related to the Gaussian Actor in [configuration_gaussian_actor.py](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/gaussian_actor/configuration_gaussian_actor.py#L79).
+6. Verify that the `policy` config is correct with the right `input_features` and `output_features` for your task.
 
 **Starting the Learner**
 
@@ -926,7 +929,7 @@ The ideal behaviour is that your intervention rate should drop gradually during 
 
 Some configuration values have a disproportionate impact on training stability and speed:
 
-- **`temperature_init`** (`policy.temperature_init`) – initial entropy temperature in SAC. Higher values encourage more exploration; lower values make the policy more deterministic early on. A good starting point is `1e-2`. We observed that setting it too high can make human interventions ineffective and slow down learning.
+- **`temperature_init`** (`algorithm.temperature_init`) – initial entropy temperature in SAC. Higher values encourage more exploration; lower values make the policy more deterministic early on. A good starting point is `1e-2`. We observed that setting it too high can make human interventions ineffective and slow down learning.
 - **`policy_parameters_push_frequency`** (`policy.actor_learner_config.policy_parameters_push_frequency`) – interval in _seconds_ between two weight pushes from the learner to the actor. The default is `4 s`. Decrease to **1-2 s** to provide fresher weights (at the cost of more network traffic); increase only if your connection is slow, as this will reduce sample efficiency.
 - **`storage_device`** (`policy.storage_device`) – device on which the learner keeps the policy parameters. If you have spare GPU memory, set this to `"cuda"` (instead of the default `"cpu"`). Keeping the weights on-GPU removes CPU→GPU transfer overhead and can significantly increase the number of learner updates per second.
 
