@@ -259,6 +259,35 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Stop after N ticks (debug / smoke-test).",
     )
+    p.add_argument(
+        "--text_min_new_tokens",
+        type=int,
+        default=0,
+        help=(
+            "Debug knob for under-trained checkpoints: force the LM head "
+            "to emit at least N non-EOS tokens before EOS is allowed. "
+            "Use when the head's prior at position 0 still favours EOS "
+            "(short training run on a chat-pretrained backbone). 3-5 "
+            "is usually enough to reveal whether the model has real "
+            "subtask-token mass under the EOS argmax."
+        ),
+    )
+    p.add_argument(
+        "--text_temperature",
+        type=float,
+        default=0.0,
+        help=(
+            "Sampling temperature for high-level text gen. 0 = greedy "
+            "argmax (default, matches training). Set 0.3-0.7 with an "
+            "under-trained checkpoint to escape stuck-at-EOS argmax."
+        ),
+    )
+    p.add_argument(
+        "--text_top_p",
+        type=float,
+        default=1.0,
+        help="Nucleus filtering for high-level text gen.",
+    )
     p.add_argument("-v", "--verbose", action="store_true", help="Enable DEBUG logging.")
     return p.parse_args(argv)
 
@@ -1296,6 +1325,14 @@ def main(argv: list[str] | None = None) -> int:
         ctrl_hz=args.ctrl_hz,
         high_level_hz=args.high_level_hz,
     )
+    # Stash text-gen knobs on the state dict so the high-level steps
+    # (which read state) can pick them up and forward them to
+    # policy.select_message. Letting the operator try
+    # ``--text_min_new_tokens=5 --text_temperature=0.6`` on an
+    # under-trained checkpoint without recompiling.
+    runtime.state["text_gen_min_new_tokens"] = int(getattr(args, "text_min_new_tokens", 0) or 0)
+    runtime.state["text_gen_temperature"] = float(getattr(args, "text_temperature", 0.0) or 0.0)
+    runtime.state["text_gen_top_p"] = float(getattr(args, "text_top_p", 1.0) or 1.0)
     if args.task:
         runtime.set_task(args.task)
     # Seed plan/memory/subtask so the first prompt the runtime builds

@@ -365,24 +365,22 @@ class HighLevelSubtaskFwd(InferenceStep):
             return None
         ctx = _msgs_for_subtask(state)
         observation = _maybe_observation(self.observation_provider)
-        # Match training: greedy argmax, no min_new_tokens, no
-        # special-token suppression. Earlier experiments forced
-        # min_new_tokens=5 + sampling because the LM head was
-        # collapsing to EOS at position 0 — but that turned out to
-        # be a visual-distribution shift (camera frames being fed
-        # at the camera's native resolution rather than the
-        # dataset's recorded resolution), not a head pathology.
-        # With the camera frame resized to the dataset's
-        # ``ds_features['observation.images.*']['shape']`` shape,
-        # the visual prefix is back on-distribution and the same
-        # greedy decoding that works in ``--no_robot`` dry-run also
-        # works on the live robot.
+        # Default: greedy argmax, no min_new_tokens, no special-token
+        # suppression — matches training. Operator can override via
+        # ``--text_min_new_tokens=N --text_temperature=T --text_top_p=P``
+        # on the CLI; useful for under-trained checkpoints whose LM
+        # head still favours EOS at position 0 (pre-trained chat
+        # backbone's short-turn prior hasn't been fully overridden
+        # by the fine-tuning supervision yet).
         msg = _generate_with_policy(
             self.policy,
             ctx,
             observation=observation,
             state=state,
             label="subtask gen",
+            min_new_tokens=int(state.get("text_gen_min_new_tokens") or 0),
+            temperature=float(state.get("text_gen_temperature") or 0.0),
+            top_p=float(state.get("text_gen_top_p") or 1.0),
         )
         # Diagnostics: surface what the model is *actually* producing
         # at chunk boundaries, even when the output gets rejected or
