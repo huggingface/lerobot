@@ -167,23 +167,59 @@ class DispatchAction(InferenceStep):
     In dry-run mode (``robot_executor=None``) the step still pops the
     queue so it doesn't grow unbounded — the popped tensor is logged
     instead of executed.
+
+    Wall-clock catch-up: the action queue represents an open-loop
+    trajectory at a fixed step rate (``trigger.hz`` ≈ ``ctrl_hz``).
+    When the main loop stalls — e.g. an LLM call for the high-level
+    subtask blocks for ~2 s on MPS — the dispatch trigger fires only
+    once over that whole interval. Naively popping a single entry per
+    fire makes the robot lag further and further behind the planned
+    timeline, and a 50-step chunk would take ~125 s to drain instead
+    of ~1.7 s. Track real elapsed time between dispatches and pop
+    ``round(elapsed * hz)`` entries, sending the most recent one. The
+    skipped intermediate joint targets are stale anyway — the dynamixel
+    will smooth toward the latest goal position.
     """
 
     robot_executor: Any = None
     trigger: Trigger = field(default_factory=lambda: HzTrigger(hz=50.0))
+    _last_dispatch_t: float | None = field(default=None, init=False)
 
     def run(self, state: dict[str, Any]) -> dict[str, Any] | None:
+        import time as _time  # noqa: PLC0415
+
         queue = state.get("action_queue")
         if not queue:
+            # Reset wall-clock anchor when the queue is empty so the
+            # next chunk doesn't see a huge fake "elapsed" window.
+            self._last_dispatch_t = None
             return None
-        action = queue.popleft() if hasattr(queue, "popleft") else queue.pop(0)
-        if self.robot_executor is not None:
-            self.robot_executor(action)
-        # Track lifetime dispatch count so the REPL panel can show
-        # whether the action loop is actually doing useful work, even
-        # while the text head produces gibberish (the typical real-
-        # robot failure mode for a memorised model).
-        state["actions_dispatched"] = state.get("actions_dispatched", 0) + 1
+
+        now = _time.monotonic()
+        hz = getattr(self.trigger, "hz", 30.0)
+        if self._last_dispatch_t is None or hz <= 0:
+            n_to_pop = 1
+        else:
+            elapsed = now - self._last_dispatch_t
+            # ``max(1, ...)`` so we always pop at least one when the
+            # trigger fires; ``min(len(queue), ...)`` so we don't run
+            # off the end of the chunk.
+            n_to_pop = max(1, min(len(queue), int(round(elapsed * hz))))
+        self._last_dispatch_t = now
+
+        # Drain ``n_to_pop`` stale entries, keep only the latest as the
+        # action actually sent. The intermediate joint targets would
+        # all be ~10–30 ms apart in chunk time — the robot can't track
+        # them individually anyway when the host loop is slow.
+        latest = None
+        for _ in range(n_to_pop):
+            if not queue:
+                break
+            latest = queue.popleft() if hasattr(queue, "popleft") else queue.pop(0)
+            state["actions_dispatched"] = state.get("actions_dispatched", 0) + 1
+
+        if latest is not None and self.robot_executor is not None:
+            self.robot_executor(latest)
         return None
 
 
@@ -315,6 +351,17 @@ class HighLevelSubtaskFwd(InferenceStep):
 
     def run(self, state: dict[str, Any]) -> dict[str, Any] | None:
         if self.policy is None or not state.get("task"):
+            return None
+        # Gate to chunk boundaries: only generate a fresh subtask when
+        # the action queue is empty (i.e. right before LowLevelForward
+        # refreshes the chunk). ``select_message`` takes ~2 s on MPS,
+        # and running it every loop iteration starves DispatchAction
+        # at ctrl_hz=30 — the queue drains at ~0.4 actions/sec instead
+        # of 30/sec and the robot barely moves. Tying it to the same
+        # "queue empty" condition as the chunk refresh produces a
+        # clean sense → think → act cycle.
+        queue = state.get("action_queue") or []
+        if len(queue) > 0:
             return None
         ctx = _msgs_for_subtask(state)
         observation = _maybe_observation(self.observation_provider)
