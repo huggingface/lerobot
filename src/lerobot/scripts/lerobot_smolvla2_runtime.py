@@ -594,6 +594,40 @@ def _build_robot_observation_provider(
         getattr(robot, "config", None), "type", None
     )
 
+    # Pre-compute the camera-key → target (H, W) map from
+    # ``ds_features``. The training distribution sees frames at the
+    # recorded resolution (e.g. 480×640); a live Mac/USB camera will
+    # almost always hand us a different native size (720p / 1080p).
+    # SmolVLA's internal ``resize_with_pad(512, 512)`` does pad the
+    # input to a fixed canvas, but the *geometry* of that pad differs
+    # by input aspect ratio — top/left padding varies, so the visual
+    # tokens at each tile carry different content than what the model
+    # saw at training. The action expert tolerates this (flow head
+    # rides broad geometry); the LM head, supervised much more
+    # tightly on visual features, goes out of distribution and the
+    # head's distribution at position 0 collapses to its dominant
+    # mode (a memorised ``\n``-only run in this checkpoint).
+    target_image_shapes: dict[str, tuple[int, int]] = {}
+    if ds_features:
+        for fkey, fmeta in ds_features.items():
+            if not isinstance(fmeta, dict):
+                continue
+            dtype = fmeta.get("dtype")
+            if dtype not in ("image", "video"):
+                continue
+            shape = fmeta.get("shape")
+            if not shape or len(shape) != 3:
+                continue
+            names = fmeta.get("names") or []
+            # Feature schema stores either (H, W, C) or (C, H, W);
+            # disambiguate by the ``names`` ordering when present.
+            if names and len(names) == 3 and names[0] == "channels":
+                _, h, w = shape
+            else:
+                h, w, _ = shape
+            cam_key = fkey.removeprefix("observation.images.")
+            target_image_shapes[cam_key] = (int(h), int(w))
+
     def _provider() -> dict | None:
         try:
             raw = robot.get_observation()
@@ -605,6 +639,32 @@ def _build_robot_observation_provider(
         # supplies messages itself).
         for k in ("language_persistent", "language_events"):
             raw.pop(k, None)
+
+        # Force-match the training-time visual distribution:
+        # every camera frame the model trained on came from the
+        # dataset at its recorded (H, W). Resize the live frame to
+        # that exact shape so the downstream resize_with_pad geometry
+        # matches training. Without this the LM head is OOD on every
+        # tick.
+        if target_image_shapes:
+            try:
+                import cv2 as _cv2  # noqa: PLC0415
+                import numpy as _np  # noqa: PLC0415
+
+                for cam_key, (target_h, target_w) in target_image_shapes.items():
+                    img = raw.get(cam_key)
+                    if img is None or not isinstance(img, _np.ndarray):
+                        continue
+                    if img.ndim != 3:
+                        continue
+                    cur_h, cur_w = img.shape[:2]
+                    if (cur_h, cur_w) == (target_h, target_w):
+                        continue
+                    raw[cam_key] = _cv2.resize(
+                        img, (target_w, target_h), interpolation=_cv2.INTER_AREA
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("camera resize to dataset shape failed: %s", exc)
 
         try:
             if ds_features:

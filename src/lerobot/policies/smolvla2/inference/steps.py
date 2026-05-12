@@ -365,23 +365,24 @@ class HighLevelSubtaskFwd(InferenceStep):
             return None
         ctx = _msgs_for_subtask(state)
         observation = _maybe_observation(self.observation_provider)
-        # Force the head to commit to ≥ 5 real tokens before it can
-        # close the turn, and sample at moderate temperature with
-        # nucleus filtering. On a memorised head whose argmax at
-        # position 0 is EOS, greedy decoding silently produced empty
-        # completions every chunk boundary (visible as the
-        # ``empty:N`` counter climbing). Temp 0.4 + top_p 0.9 is well
-        # below where SmolVLM goes incoherent and above where greedy
-        # collapse re-emerges.
+        # Match training: greedy argmax, no min_new_tokens, no
+        # special-token suppression. Earlier experiments forced
+        # min_new_tokens=5 + sampling because the LM head was
+        # collapsing to EOS at position 0 — but that turned out to
+        # be a visual-distribution shift (camera frames being fed
+        # at the camera's native resolution rather than the
+        # dataset's recorded resolution), not a head pathology.
+        # With the camera frame resized to the dataset's
+        # ``ds_features['observation.images.*']['shape']`` shape,
+        # the visual prefix is back on-distribution and the same
+        # greedy decoding that works in ``--no_robot`` dry-run also
+        # works on the live robot.
         msg = _generate_with_policy(
             self.policy,
             ctx,
             observation=observation,
             state=state,
             label="subtask gen",
-            min_new_tokens=5,
-            temperature=0.4,
-            top_p=0.9,
         )
         # Diagnostics: surface what the model is *actually* producing
         # at chunk boundaries, even when the output gets rejected or
@@ -474,9 +475,6 @@ class MemoryUpdateFwd(InferenceStep):
             observation=observation,
             state=state,
             label="memory gen",
-            min_new_tokens=5,
-            temperature=0.4,
-            top_p=0.9,
         )
         state["last_memory_raw"] = new_memory or ""
         if new_memory and _looks_like_gibberish(new_memory):
@@ -520,9 +518,6 @@ class UserInterjectionFwd(InferenceStep):
             observation=observation,
             state=state,
             label="plan/say gen",
-            min_new_tokens=10,
-            temperature=0.5,
-            top_p=0.9,
         )
         if not out:
             # Don't log every empty completion — happens repeatedly on
@@ -592,9 +587,6 @@ class AskVQAFwd(InferenceStep):
             observation=observation,
             state=state,
             label="vqa gen",
-            min_new_tokens=3,
-            temperature=0.4,
-            top_p=0.9,
         )
         # VQA answers are intentionally JSON-like during training, so
         # ``_looks_like_gibberish`` would false-positive on them. Keep
