@@ -69,16 +69,18 @@ class SmolVLA2Runtime:
     _stop: bool = field(default=False, init=False)
 
     def __post_init__(self) -> None:
+        # Pipeline order matters. Both ``HighLevelSubtaskFwd`` and
+        # ``LowLevelForward`` are gated on "action queue is empty" so
+        # the slow LLM call (select_message) doesn't starve dispatch.
+        # If LowLevelForward runs first, it refills the queue and the
+        # high-level step never sees ``queue == 0`` afterwards.
+        #
+        # Order is therefore: high-level steps that read state (subtask,
+        # memory, interjection, vqa) → low-level chunk refresh → action
+        # dispatch → tool dispatch. So on an empty-queue tick the
+        # subtask refreshes first, the new subtask string flows into
+        # the next chunk's prompt, and DispatchAction drains.
         self.pipeline = [
-            LowLevelForward(
-                trigger=HzTrigger(self.chunk_hz),
-                policy=self.policy,
-                observation_provider=self.observation_provider,
-            ),
-            DispatchAction(
-                trigger=HzTrigger(self.ctrl_hz),
-                robot_executor=self.robot_executor,
-            ),
             HighLevelSubtaskFwd(
                 trigger=HzTrigger(self.high_level_hz),
                 policy=self.policy,
@@ -95,6 +97,15 @@ class SmolVLA2Runtime:
             AskVQAFwd(
                 policy=self.policy,
                 observation_provider=self.observation_provider,
+            ),
+            LowLevelForward(
+                trigger=HzTrigger(self.chunk_hz),
+                policy=self.policy,
+                observation_provider=self.observation_provider,
+            ),
+            DispatchAction(
+                trigger=HzTrigger(self.ctrl_hz),
+                robot_executor=self.robot_executor,
             ),
             DispatchToolCalls(tools=self.tools),
         ]
