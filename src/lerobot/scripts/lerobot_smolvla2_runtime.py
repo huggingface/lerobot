@@ -671,6 +671,22 @@ def _build_robot_observation_provider(
                         img, (target_w, target_h), interpolation=_cv2.INTER_AREA
                     )
                 _resize_logged["done"] = True
+                # Also print the state vector once so the operator
+                # can eyeball it against the dataset's stats. State
+                # OOD is a real failure mode for VLAs — the prefix
+                # carries state via the projection layer, and a
+                # neutral home pose can easily sit a couple σ off
+                # the supervised support region.
+                if "observation.state" in (ds_features or {}):
+                    state_names = (
+                        ds_features["observation.state"].get("names") or []
+                    )
+                    state_vals = [raw.get(n) for n in state_names]
+                    logger.warning(
+                        "robot state at startup: %s",
+                        {n: round(v, 2) if isinstance(v, float) else v
+                         for n, v in zip(state_names, state_vals, strict=False)},
+                    )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("camera resize to dataset shape failed: %s", exc)
 
