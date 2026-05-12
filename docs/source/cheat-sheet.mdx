@@ -1,1 +1,48 @@
-#cheat-sheet
+# Cheat sheet
+All of the LeRobot commands in one place. If you forgot how to use a specific command or want to learn about a new one you can do it here.
+
+❗ For all of the commands listed below remember to change the ports/names/ids to your own values!
+
+> [!TIP]
+> Another grate way to look at all the comands and get them configured for your specific setup is to use this [Jupyter Notebook](https://github.com/huggingface/lerobot/blob/main/examples/notebooks/quickstart.ipynb).
+
+### Install
+
+### Useful tools
+###### Find port
+
+```bash
+lerobot-find-port
+```
+
+###### Find cameras
+```bash
+lerobot-find-cameras
+```
+
+### Calibration
+
+### Teleoperation
+
+### Recording a dataset
+
+### Training
+
+### Inference
+
+Inference means running the trained policy/model on a robot. For that we use ```lerobot-rollout```. You will need to provide a path to your policy. It can be a local path or a path to Hugging Face for example "lerobot/folding_latest". You cameras configuration need to match what was used when collecting the dataset. Duration is in seconds if unspecified it will run forever.
+
+> [!TIP]
+> If you are using the previous release V0.5.1 instead of ```lerobot-rollout``` you need to use ```lerobot-record```
+
+``` bash
+lerobot-rollout \
+  --strategy.type=base \
+  --policy.path=${HF_USER}/my_policy \
+  --robot.type=so101_follower \
+  --robot.port=/dev/ttyACM1 \
+  --robot.cameras="{ up: {type: opencv, index_or_path: /dev/video1, width: 640, height: 480, fps: 30}, side: {type: opencv, index_or_path: /dev/video5, width: 640, height: 480, fps: 30}}" \
+  --task="Put lego brick into the transparent box" \
+  --duration=60
+```
+
