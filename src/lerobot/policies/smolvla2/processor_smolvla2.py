@@ -83,6 +83,9 @@ def make_smolvla2_pre_post_processors(
             tokenizer_name=config.vlm_model_name,
             max_length=config.tokenizer_max_length,
             padding=config.pad_language_to,
+            plan_dropout_prob=getattr(config, "plan_dropout_prob", 0.0),
+            memory_dropout_prob=getattr(config, "memory_dropout_prob", 0.0),
+            subtask_dropout_prob=getattr(config, "subtask_dropout_prob", 0.0),
         ),
         DeviceProcessorStep(device=config.device),
         NormalizerProcessorStep(

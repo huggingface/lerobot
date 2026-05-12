@@ -70,6 +70,22 @@ class SmolVLA2ChatTokenizerStep(ProcessorStep):
     padding: str = "longest"
     padding_side: str = "right"
     tools: list[dict[str, Any]] | None = None
+    # --- Per-component prompt dropout (Pi0.7 §V.E, plan follow-up
+    # ``feat/pi05-prompt-dropout``). At training, drop non-target
+    # messages whose content was substituted from the named recipe
+    # binding with the given probability. Forces the model to handle
+    # missing context at inference — directly attacks the memorisation
+    # collapse where ``current_subtask=""`` puts the prompt OOD. All
+    # default to 0.0 (no dropout) so behaviour is identical until
+    # explicitly opted in via the training config.
+    plan_dropout_prob: float = 0.0
+    memory_dropout_prob: float = 0.0
+    subtask_dropout_prob: float = 0.0
+    interjection_dropout_prob: float = 0.0
+    # Optional seed for the per-sample RNG. ``None`` ⇒ use
+    # ``sample_idx`` derived from the transition (when present), so
+    # dropout is reproducible across runs but varies per sample.
+    dropout_seed: int | None = None
 
     def __post_init__(self) -> None:
         # Lazy: don't load the tokenizer until the step actually runs,
@@ -101,19 +117,38 @@ class SmolVLA2ChatTokenizerStep(ProcessorStep):
 
         tokenizer = self._get_tokenizer()
 
+        # Pull a sample_idx for the dropout RNG. ``index`` is the
+        # canonical per-frame key on ``LeRobotDataset`` samples and
+        # flows through into ``COMPLEMENTARY_DATA`` unchanged. When
+        # absent (e.g. inference) we fall back to 0 which is harmless
+        # because the dropout probs are also 0 at inference time.
+        sample_idx_raw = comp.get("index")
+        if hasattr(sample_idx_raw, "item"):
+            try:
+                sample_idx_raw = sample_idx_raw.item()
+            except Exception:  # noqa: BLE001
+                pass
+
         if _is_batched_messages(messages):
+            indices_iter = (
+                sample_idx_raw
+                if isinstance(sample_idx_raw, (list, tuple))
+                else [sample_idx_raw] * len(messages)
+            )
             encoded = [
                 self._encode_messages(
                     tokenizer,
                     msg,
                     list(streams),
-                    sorted(int(i) for i in indices),
+                    sorted(int(i) for i in tgt_indices),
+                    sample_idx=int(s_idx) if s_idx is not None else None,
                 )
-                for msg, streams, indices in zip(
+                for msg, streams, tgt_indices, s_idx in zip(
                     messages,
                     comp.get("message_streams") or [[] for _ in messages],
                     comp.get("target_message_indices") or [[] for _ in messages],
-                    strict=True,
+                    indices_iter,
+                    strict=False,
                 )
             ]
         else:
@@ -123,6 +158,7 @@ class SmolVLA2ChatTokenizerStep(ProcessorStep):
                     messages,
                     list(comp.get("message_streams") or []),
                     sorted(int(i) for i in (comp.get("target_message_indices") or [])),
+                    sample_idx=int(sample_idx_raw) if sample_idx_raw is not None else None,
                 )
             ]
 
@@ -190,7 +226,15 @@ class SmolVLA2ChatTokenizerStep(ProcessorStep):
         messages: list[dict[str, Any]],
         message_streams: list[str | None],
         target_indices: list[int],
+        sample_idx: int | None = None,
     ) -> tuple[list[int], list[int], bool]:
+        # Apply per-component prompt dropout *before* tokenisation, so
+        # the dropped messages don't contribute tokens or label-mask
+        # positions at all. Re-maps ``target_indices`` to account for
+        # removed messages.
+        messages, target_indices = self._apply_prompt_dropout(
+            messages, target_indices, sample_idx
+        )
         text_messages = [_strip_lerobot_blocks(m) for m in messages]
 
         full_ids = tokenizer.apply_chat_template(
@@ -230,6 +274,62 @@ class SmolVLA2ChatTokenizerStep(ProcessorStep):
             for i in target_indices
         )
         return [int(i) for i in full_ids], labels, predict_actions
+
+    def _apply_prompt_dropout(
+        self,
+        messages: list[dict[str, Any]],
+        target_indices: list[int],
+        sample_idx: int | None,
+    ) -> tuple[list[dict[str, Any]], list[int]]:
+        """Probabilistically drop non-target context messages.
+
+        Heuristic content sniffing — matches the prefix strings that
+        ``smolvla2_hirobot.yaml``'s recipes use when injecting plan /
+        memory / subtask / interjection content. Anything else is
+        kept unchanged. Target messages are never dropped (we still
+        need their tokens for supervision).
+
+        Returns ``(new_messages, new_target_indices)`` where the
+        indices are re-mapped to point at the same target turns in
+        the trimmed list.
+        """
+        probs = {
+            "plan": float(self.plan_dropout_prob or 0.0),
+            "memory": float(self.memory_dropout_prob or 0.0),
+            "subtask": float(self.subtask_dropout_prob or 0.0),
+            "interjection": float(self.interjection_dropout_prob or 0.0),
+        }
+        if not any(p > 0.0 for p in probs.values()):
+            return messages, target_indices
+
+        # Deterministic per-sample RNG so dropout is reproducible
+        # across runs (matters for debugging / repro) but varies
+        # frame-to-frame.
+        import random  # noqa: PLC0415
+
+        seed_int = self.dropout_seed if self.dropout_seed is not None else (sample_idx or 0)
+        rng = random.Random(int(seed_int) & 0xFFFFFFFF)
+
+        target_set = set(target_indices)
+        keep_flags: list[bool] = []
+        for i, msg in enumerate(messages):
+            if i in target_set:
+                keep_flags.append(True)
+                continue
+            kind = _classify_message_for_dropout(msg)
+            if kind and rng.random() < probs.get(kind, 0.0):
+                keep_flags.append(False)
+            else:
+                keep_flags.append(True)
+
+        new_messages = [m for m, keep in zip(messages, keep_flags) if keep]
+        # Re-map target_indices: each old index drops by the count of
+        # falsy flags before it.
+        new_target_indices: list[int] = []
+        for old_idx in target_indices:
+            dropped_before = sum(1 for k in keep_flags[:old_idx] if not k)
+            new_target_indices.append(old_idx - dropped_before)
+        return new_messages, sorted(new_target_indices)
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
@@ -294,6 +394,39 @@ def _strip_lerobot_blocks(message: dict[str, Any]) -> dict[str, Any]:
 
 def _is_batched_messages(messages: Any) -> bool:
     return isinstance(messages, list) and bool(messages) and isinstance(messages[0], list)
+
+
+def _classify_message_for_dropout(message: dict[str, Any]) -> str | None:
+    """Best-effort classification of which recipe binding contributed
+    to this message, used for per-component dropout.
+
+    The canonical recipe authors plan/memory/subtask injections with
+    distinctive prefix strings in the rendered content. Matching on
+    those prefixes is brittle if a future recipe author uses
+    different wording — but it's also localised to one place and
+    only affects the dropout fraction (never the actual semantics).
+    Returns ``None`` for messages we don't recognise; those are
+    always kept.
+    """
+    content = message.get("content")
+    if isinstance(content, list):
+        text_parts: list[str] = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                t = block.get("text")
+                if isinstance(t, str):
+                    text_parts.append(t)
+        content = "\n".join(text_parts)
+    if not isinstance(content, str):
+        return None
+    head = content.lstrip().lower()
+    if head.startswith("plan:") or head.startswith("previous plan"):
+        return "plan"
+    if head.startswith("memory:") or head.startswith("previous memory"):
+        return "memory"
+    if head.startswith("current subtask") or head.startswith("completed subtask"):
+        return "subtask"
+    return None
 
 
 def _as_token_ids(value: Any) -> list[int]:

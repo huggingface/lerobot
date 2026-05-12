@@ -84,6 +84,24 @@ class SmolVLA2Config(SmolVLAConfig):
     effectively reduces SmolVLA2 back to SmolVLA's flow-only training,
     which is occasionally useful for ablations."""
 
+    # Per-component prompt dropout (Pi0.7 §V.E) ---------------------------
+    # At training, randomly drop non-target context messages whose
+    # content was substituted from the named recipe binding. Forces
+    # the model to handle missing context — directly attacks the
+    # memorisation collapse where a stale or missing plan/memory at
+    # inference puts the prompt out-of-distribution and the LM head
+    # falls back to dominant-mode fragments. All default to 0.0 so
+    # behaviour is identical until explicitly enabled.
+    plan_dropout_prob: float = 0.0
+    """Drop messages whose content starts with ``Plan:`` or ``Previous plan``
+    with this probability per sample."""
+    memory_dropout_prob: float = 0.0
+    """Drop messages whose content starts with ``Memory:`` or ``Previous memory``
+    with this probability per sample."""
+    subtask_dropout_prob: float = 0.0
+    """Drop messages whose content starts with ``Current subtask`` or
+    ``Completed subtask`` with this probability per sample."""
+
     def __post_init__(self) -> None:
         super().__post_init__()
         # Backbone needs gradients flowing through its text path when the
