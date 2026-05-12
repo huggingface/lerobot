@@ -263,6 +263,7 @@ class SmolVLA2Policy(SmolVLAPolicy):
         batch: dict[str, Tensor],
         *,
         max_new_tokens: int = 256,
+        min_new_tokens: int = 0,
         eos_token_id: int | None = None,
         temperature: float = 0.0,
         top_p: float = 1.0,
@@ -365,6 +366,19 @@ class SmolVLA2Policy(SmolVLAPolicy):
 
             last_hidden = prefix_out[:, -1:].to(vlm.lm_head.weight.dtype)
             logits_step = vlm.lm_head(last_hidden)[:, -1]  # (B, V)
+            # Suppress EOS until we've decoded ``min_new_tokens`` real
+            # tokens. Without this, a memorised LM head whose argmax
+            # at position 0 is EOS produces an empty completion every
+            # time — confirmed in the real-robot run (the runtime's
+            # ``subtask_empty_count`` climbed every chunk boundary
+            # with no exception). Masking EOS for the first N steps
+            # forces the head to commit to a real token before it can
+            # close the turn.
+            if (
+                eos_token_id is not None
+                and len(generated) < min_new_tokens
+            ):
+                logits_step[..., eos_token_id] = float("-inf")
             next_ids = self._sample_next_token(logits_step, temperature, top_p)
             tok_id = int(next_ids[0].item())
             generated.append(tok_id)

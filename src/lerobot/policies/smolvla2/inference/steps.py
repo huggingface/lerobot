@@ -365,8 +365,23 @@ class HighLevelSubtaskFwd(InferenceStep):
             return None
         ctx = _msgs_for_subtask(state)
         observation = _maybe_observation(self.observation_provider)
+        # Force the head to commit to ≥ 5 real tokens before it can
+        # close the turn, and sample at moderate temperature with
+        # nucleus filtering. On a memorised head whose argmax at
+        # position 0 is EOS, greedy decoding silently produced empty
+        # completions every chunk boundary (visible as the
+        # ``empty:N`` counter climbing). Temp 0.4 + top_p 0.9 is well
+        # below where SmolVLM goes incoherent and above where greedy
+        # collapse re-emerges.
         msg = _generate_with_policy(
-            self.policy, ctx, observation=observation, state=state, label="subtask gen"
+            self.policy,
+            ctx,
+            observation=observation,
+            state=state,
+            label="subtask gen",
+            min_new_tokens=5,
+            temperature=0.4,
+            top_p=0.9,
         )
         # Diagnostics: surface what the model is *actually* producing
         # at chunk boundaries, even when the output gets rejected or
@@ -447,7 +462,14 @@ class MemoryUpdateFwd(InferenceStep):
         ctx = _msgs_for_memory(state)
         observation = _maybe_observation(self.observation_provider)
         new_memory = _generate_with_policy(
-            self.policy, ctx, observation=observation, state=state, label="memory gen"
+            self.policy,
+            ctx,
+            observation=observation,
+            state=state,
+            label="memory gen",
+            min_new_tokens=5,
+            temperature=0.4,
+            top_p=0.9,
         )
         state["last_memory_raw"] = new_memory or ""
         if new_memory and _looks_like_gibberish(new_memory):
@@ -486,7 +508,14 @@ class UserInterjectionFwd(InferenceStep):
         ctx = _msgs_for_interjection(state)
         observation = _maybe_observation(self.observation_provider)
         out = _generate_with_policy(
-            self.policy, ctx, observation=observation, state=state, label="plan/say gen"
+            self.policy,
+            ctx,
+            observation=observation,
+            state=state,
+            label="plan/say gen",
+            min_new_tokens=10,
+            temperature=0.5,
+            top_p=0.9,
         )
         if not out:
             # Don't log every empty completion — happens repeatedly on
@@ -551,7 +580,14 @@ class AskVQAFwd(InferenceStep):
         ctx = _msgs_for_vqa(question)
         observation = _maybe_observation(self.observation_provider)
         answer = _generate_with_policy(
-            self.policy, ctx, observation=observation, state=state, label="vqa gen"
+            self.policy,
+            ctx,
+            observation=observation,
+            state=state,
+            label="vqa gen",
+            min_new_tokens=3,
+            temperature=0.4,
+            top_p=0.9,
         )
         # VQA answers are intentionally JSON-like during training, so
         # ``_looks_like_gibberish`` would false-positive on them. Keep
@@ -763,6 +799,9 @@ def _generate_with_policy(
     observation: dict | None = None,
     state: dict[str, Any] | None = None,
     label: str = "select_message",
+    min_new_tokens: int = 0,
+    temperature: float = 0.0,
+    top_p: float = 1.0,
 ) -> str:
     """Drive ``policy.select_message`` with a chat batch (and optional obs).
 
@@ -797,7 +836,13 @@ def _generate_with_policy(
             for k, v in observation.items():
                 if isinstance(k, str) and k.startswith("observation.") and k not in batch:
                     batch[k] = v
-        return policy.select_message(batch, tokenizer=text_batch["tokenizer"])
+        return policy.select_message(
+            batch,
+            tokenizer=text_batch["tokenizer"],
+            min_new_tokens=min_new_tokens,
+            temperature=temperature,
+            top_p=top_p,
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning("%s failed: %s", label, exc, exc_info=logger.isEnabledFor(logging.DEBUG))
         if state is not None:
