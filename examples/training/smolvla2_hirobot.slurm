@@ -52,7 +52,7 @@ echo "  GPUs:         $NUM_PROCESSES"
 echo "  batch:        $BATCH_SIZE / GPU (global=$((NUM_PROCESSES * BATCH_SIZE)))"
 echo "  steps:        $STEPS"
 echo "  output:       $OUTPUT_DIR"
-echo "  augmentation: image_transforms ON, prompt dropout {plan:0.15 memory:0.15 subtask:0.20}"
+echo "  augmentation: image_transforms ON (wide), prompt dropout {plan:0.20 memory:0.20 subtask:0.30}"
 
 accelerate launch --multi_gpu --num_processes="$NUM_PROCESSES" \
     -m lerobot.scripts.lerobot_train \
@@ -62,11 +62,16 @@ accelerate launch --multi_gpu --num_processes="$NUM_PROCESSES" \
     --dataset.revision=main \
     --dataset.video_backend=pyav \
     --dataset.image_transforms.enable=true \
-    --dataset.image_transforms.max_num_transforms=3 \
+    --dataset.image_transforms.max_num_transforms=4 \
     --dataset.image_transforms.random_order=true \
-    --policy.plan_dropout_prob=0.15 \
-    --policy.memory_dropout_prob=0.15 \
-    --policy.subtask_dropout_prob=0.20 \
+    --dataset.image_transforms.tfs.brightness.kwargs='{"brightness": [0.5, 1.6]}' \
+    --dataset.image_transforms.tfs.contrast.kwargs='{"contrast": [0.6, 1.5]}' \
+    --dataset.image_transforms.tfs.saturation.kwargs='{"saturation": [0.3, 1.7]}' \
+    --dataset.image_transforms.tfs.hue.kwargs='{"hue": [-0.1, 0.1]}' \
+    --dataset.image_transforms.tfs.affine.kwargs='{"degrees": [-15.0, 15.0], "translate": [0.15, 0.15]}' \
+    --policy.plan_dropout_prob=0.20 \
+    --policy.memory_dropout_prob=0.20 \
+    --policy.subtask_dropout_prob=0.30 \
     --output_dir="$OUTPUT_DIR" \
     --job_name="$JOB_NAME" \
     --policy.repo_id="$POLICY_REPO_ID" \
