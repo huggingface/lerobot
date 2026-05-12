@@ -1318,6 +1318,15 @@ def main(argv: list[str] | None = None) -> int:
             initial_task=args.task,
             max_ticks=args.max_ticks,
         )
+    # Fire the observation provider once at startup so the
+    # ``_log_obs_tensors_once`` diagnostic prints before the REPL
+    # blocks on stdin. The REPL otherwise only ticks on user input —
+    # useful for the train/inference tensor-comparison workflow.
+    if observation_provider is not None:
+        try:
+            _ = observation_provider()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("startup obs probe failed: %s", exc)
     return _run_repl(runtime, initial_task=args.task, max_ticks=args.max_ticks)
 
 
