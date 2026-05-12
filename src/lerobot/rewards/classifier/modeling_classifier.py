@@ -105,6 +105,7 @@ class Classifier(PreTrainedRewardModel):
     def __init__(
         self,
         config: RewardClassifierConfig,
+        **kwargs,
     ):
         from transformers import AutoModel
 

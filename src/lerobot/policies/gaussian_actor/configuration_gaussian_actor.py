@@ -1,4 +1,4 @@
-# !/usr/bin/env python
+#!/usr/bin/env python
 
 # Copyright 2025 The HuggingFace Inc. team.
 # All rights reserved.
@@ -75,18 +75,19 @@ class PolicyConfig:
     init_final: float = 0.05
 
 
-@PreTrainedConfig.register_subclass("sac")
+@PreTrainedConfig.register_subclass("gaussian_actor")
 @dataclass
-class SACConfig(PreTrainedConfig):
-    """Soft Actor-Critic (SAC) configuration.
+class GaussianActorConfig(PreTrainedConfig):
+    """Gaussian actor configuration.
 
-    SAC is an off-policy actor-critic deep RL algorithm based on the maximum entropy
-    reinforcement learning framework. It learns a policy and a Q-function simultaneously
-    using experience collected from the environment.
+    This configures the policy-side (actor + observation encoder) of a Gaussian
+    policy, as used by SAC and related maximum-entropy continuous-control algorithms.
+    By default the actor output is a tanh-squashed diagonal Gaussian
+    (``TanhMultivariateNormalDiag``); the tanh squashing can be disabled via
+    ``policy_kwargs.use_tanh_squash``. The critics, temperature, and Bellman-update
+    logic live on the algorithm side (see ``lerobot.rl.algorithms.sac``).
 
-    This configuration class contains all the parameters needed to define a SAC agent,
-    including network architectures, optimization settings, and algorithm-specific
-    hyperparameters.
+    CLI: ``--policy.type=gaussian_actor``.
     """
 
     # Mapping of feature types to normalization modes
@@ -122,7 +123,7 @@ class SACConfig(PreTrainedConfig):
     device: str = "cpu"
     # Device to store the model on
     storage_device: str = "cpu"
-    # Name of the vision encoder model (Set to "helper2424/resnet10" for hil serl resnet10)
+    # Name of the vision encoder model (Set to "lerobot/resnet10" for hil serl resnet10)
     vision_encoder_name: str | None = None
     # Whether to freeze the vision encoder during training
     freeze_vision_encoder: bool = True
@@ -135,7 +136,13 @@ class SACConfig(PreTrainedConfig):
     # Dimension of the image embedding pooling
     image_embedding_pooling_dim: int = 8
 
-    # Training parameter
+    # Encoder architecture
+    # Hidden dimension size for the state encoder
+    state_encoder_hidden_dim: int = 256
+    # Dimension of the latent space
+    latent_dim: int = 256
+
+    # Online training (TODO(Khalil): relocate to TrainRLServerPipelineConfig)
     # Number of steps for online training
     online_steps: int = 1000000
     # Capacity of the online replay buffer
@@ -146,67 +153,38 @@ class SACConfig(PreTrainedConfig):
     async_prefetch: bool = False
     # Number of steps before learning starts
     online_step_before_learning: int = 100
-    # Frequency of policy updates
-    policy_update_freq: int = 1
 
-    # SAC algorithm parameters
-    # Discount factor for the SAC algorithm
-    discount: float = 0.99
-    # Initial temperature value
-    temperature_init: float = 1.0
-    # Number of critics in the ensemble
-    num_critics: int = 2
-    # Number of subsampled critics for training
-    num_subsample_critics: int | None = None
-    # Learning rate for the critic network
-    critic_lr: float = 3e-4
-    # Learning rate for the actor network
-    actor_lr: float = 3e-4
-    # Learning rate for the temperature parameter
-    temperature_lr: float = 3e-4
-    # Weight for the critic target update
-    critic_target_update_weight: float = 0.005
-    # Update-to-data ratio for the UTD algorithm (If you want enable utd_ratio, you need to set it to >1)
-    utd_ratio: int = 1
-    # Hidden dimension size for the state encoder
-    state_encoder_hidden_dim: int = 256
-    # Dimension of the latent space
-    latent_dim: int = 256
-    # Target entropy for the SAC algorithm
-    target_entropy: float | None = None
-    # Whether to use backup entropy for the SAC algorithm
-    use_backup_entropy: bool = True
-    # Gradient clipping norm for the SAC algorithm
-    grad_clip_norm: float = 40.0
-
-    # Network configuration
-    # Configuration for the critic network architecture
-    critic_network_kwargs: CriticNetworkConfig = field(default_factory=CriticNetworkConfig)
-    # Configuration for the actor network architecture
-    actor_network_kwargs: ActorNetworkConfig = field(default_factory=ActorNetworkConfig)
-    # Configuration for the policy parameters
-    policy_kwargs: PolicyConfig = field(default_factory=PolicyConfig)
-    # Configuration for the discrete critic network
-    discrete_critic_network_kwargs: CriticNetworkConfig = field(default_factory=CriticNetworkConfig)
+    # Actor-learner transport (TODO(Khalil): relocate to TrainRLServerPipelineConfig).
     # Configuration for actor-learner architecture
     actor_learner_config: ActorLearnerConfig = field(default_factory=ActorLearnerConfig)
     # Configuration for concurrency settings (you can use threads or processes for the actor and learner)
     concurrency: ConcurrencyConfig = field(default_factory=ConcurrencyConfig)
 
-    # Optimizations
-    use_torch_compile: bool = True
+    # Network architecture
+    # Configuration for the actor network architecture
+    actor_network_kwargs: ActorNetworkConfig = field(default_factory=ActorNetworkConfig)
+    # Configuration for the policy parameters (Gaussian head)
+    policy_kwargs: PolicyConfig = field(default_factory=PolicyConfig)
+    # Configuration for the discrete critic network
+    discrete_critic_network_kwargs: CriticNetworkConfig = field(default_factory=CriticNetworkConfig)
 
     def __post_init__(self):
         super().__post_init__()
-        # Any validation specific to SAC configuration
+        # Any validation specific to GaussianActor configuration
 
     def get_optimizer_preset(self) -> MultiAdamConfig:
+        # Default learning rate used to satisfy the abstract ``get_optimizer_preset()``
+        # contract from ``PreTrainedConfig``. The actual optimizers used during RL
+        # training are built by ``SACAlgorithm.make_optimizers_and_scheduler()`` from
+        # ``SACAlgorithmConfig.{actor_lr,critic_lr,temperature_lr}`` and fully bypass
+        # this preset.
+        default_lr = 3e-4
         return MultiAdamConfig(
             weight_decay=0.0,
             optimizer_groups={
-                "actor": {"lr": self.actor_lr},
-                "critic": {"lr": self.critic_lr},
-                "temperature": {"lr": self.temperature_lr},
+                "actor": {"lr": default_lr},
+                "critic": {"lr": default_lr},
+                "temperature": {"lr": default_lr},
             },
         )
 
