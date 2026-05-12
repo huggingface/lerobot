@@ -29,6 +29,7 @@ from ..teleoperator import Teleoperator
 from ..utils import TeleopEvents
 from .configuration_keyboard import (
     KeyboardEndEffectorTeleopConfig,
+    KeyboardJointTeleopConfig,
     KeyboardRoverTeleopConfig,
     KeyboardTeleopConfig,
 )
@@ -103,15 +104,24 @@ class KeyboardTeleop(Teleoperator):
         pass
 
     def _on_press(self, key):
-        if hasattr(key, "char"):
-            self.event_queue.put((key.char, True))
+        key_value = self._normalize_key(key)
+        if key_value is not None:
+            self.event_queue.put((key_value, True))
 
     def _on_release(self, key):
-        if hasattr(key, "char"):
-            self.event_queue.put((key.char, False))
+        key_value = self._normalize_key(key)
+        if key_value is not None:
+            self.event_queue.put((key_value, False))
         if key == keyboard.Key.esc:
             logging.info("ESC pressed, disconnecting.")
             self.disconnect()
+
+    def _normalize_key(self, key):
+        if key is None:
+            return None
+        if hasattr(key, "char") and key.char is not None:
+            return key.char.lower()
+        return key
 
     def _drain_pressed_keys(self):
         while not self.event_queue.empty():
@@ -158,64 +168,87 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
 
     @property
     def action_features(self) -> dict:
-        if self.config.use_gripper:
-            return {
-                "dtype": "float32",
-                "shape": (4,),
-                "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2, "gripper": 3},
-            }
-        else:
-            return {
-                "dtype": "float32",
-                "shape": (3,),
-                "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2},
-            }
+        names = {
+            "enabled": 0,
+            "target_x": 1,
+            "target_y": 2,
+            "target_z": 3,
+            "target_wx": 4,
+            "target_wy": 5,
+            "target_wz": 6,
+            "gripper_vel": 7,
+        }
+        return {
+            "dtype": "float32",
+            "shape": (len(names),),
+            "names": names,
+        }
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:
         self._drain_pressed_keys()
-        delta_x = 0.0
-        delta_y = 0.0
-        delta_z = 0.0
-        gripper_action = 1.0
 
-        # Generate action based on current key states
+        enabled = True
+        if self.config.require_deadman:
+            enabled = bool(self.current_pressed.get(keyboard.Key.space, False))
+
+        # Base-frame translation controls.
+        x_plus = int(self.current_pressed.get(keyboard.Key.left, False))
+        x_minus = int(self.current_pressed.get(keyboard.Key.right, False))
+        y_plus = int(self.current_pressed.get(keyboard.Key.down, False))
+        y_minus = int(self.current_pressed.get(keyboard.Key.up, False))
+        z_plus = int(self.current_pressed.get(keyboard.Key.shift_r, False))
+        z_minus = int(self.current_pressed.get(keyboard.Key.shift, False))
+
+        target_x = (x_plus - x_minus) * self.config.linear_step
+        target_y = (y_plus - y_minus) * self.config.linear_step
+        target_z = (z_plus - z_minus) * self.config.linear_step
+
+        # Orientation controls are character-based for portability.
+        target_wx = 0.0
+        target_wy = 0.0
+        target_wz = 0.0
+        if self.config.use_orientation:
+            wx_plus = int(self.current_pressed.get("i", False))
+            wx_minus = int(self.current_pressed.get("k", False))
+            wy_plus = int(self.current_pressed.get("j", False))
+            wy_minus = int(self.current_pressed.get("l", False))
+            wz_plus = int(self.current_pressed.get("u", False))
+            wz_minus = int(self.current_pressed.get("o", False))
+            target_wx = (wx_plus - wx_minus) * self.config.angular_step
+            target_wy = (wy_plus - wy_minus) * self.config.angular_step
+            target_wz = (wz_plus - wz_minus) * self.config.angular_step
+
+        gripper_vel = 0.0
+        if self.config.use_gripper:
+            grip_open = int(self.current_pressed.get("x", False) or self.current_pressed.get(keyboard.Key.ctrl_r, False))
+            grip_close = int(self.current_pressed.get("z", False) or self.current_pressed.get(keyboard.Key.ctrl_l, False))
+            gripper_vel = (grip_open - grip_close) * self.config.gripper_step
+
+        # While disabled, publish explicit no-motion command to keep behavior deterministic.
+        if not enabled:
+            target_x = 0.0
+            target_y = 0.0
+            target_z = 0.0
+            target_wx = 0.0
+            target_wy = 0.0
+            target_wz = 0.0
+            gripper_vel = 0.0
+
         for key, val in self.current_pressed.items():
-            if key == keyboard.Key.up:
-                delta_y = -int(val)
-            elif key == keyboard.Key.down:
-                delta_y = int(val)
-            elif key == keyboard.Key.left:
-                delta_x = int(val)
-            elif key == keyboard.Key.right:
-                delta_x = -int(val)
-            elif key == keyboard.Key.shift:
-                delta_z = -int(val)
-            elif key == keyboard.Key.shift_r:
-                delta_z = int(val)
-            elif key == keyboard.Key.ctrl_r:
-                # Gripper actions are expected to be between 0 (close), 1 (stay), 2 (open)
-                gripper_action = int(val) + 1
-            elif key == keyboard.Key.ctrl_l:
-                gripper_action = int(val) - 1
-            elif val:
-                # If the key is pressed, add it to the misc_keys_queue
-                # this will record key presses that are not part of the delta_x, delta_y, delta_z
-                # this is useful for retrieving other events like interventions for RL, episode success, etc.
+            if val and isinstance(key, str) and key in {"s", "r", "q"}:
                 self.misc_keys_queue.put(key)
 
-        self.current_pressed.clear()
-
-        action_dict = {
-            "delta_x": delta_x,
-            "delta_y": delta_y,
-            "delta_z": delta_z,
+        return {
+            "enabled": float(enabled),
+            "target_x": float(target_x),
+            "target_y": float(target_y),
+            "target_z": float(target_z),
+            "target_wx": float(target_wx),
+            "target_wy": float(target_wy),
+            "target_wz": float(target_wz),
+            "gripper_vel": float(gripper_vel),
         }
-
-        if self.config.use_gripper:
-            action_dict["gripper"] = gripper_action
-
-        return action_dict
 
     def get_teleop_events(self) -> dict[str, Any]:
         """
@@ -253,6 +286,14 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
             keyboard.Key.shift_r,
             keyboard.Key.ctrl_r,
             keyboard.Key.ctrl_l,
+            "i",
+            "k",
+            "j",
+            "l",
+            "u",
+            "o",
+            "x",
+            "z",
         ]
         is_intervention = any(self.current_pressed.get(key, False) for key in movement_keys)
 
@@ -279,6 +320,142 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
             TeleopEvents.SUCCESS: success,
             TeleopEvents.RERECORD_EPISODE: rerecord_episode,
         }
+
+
+class KeyboardJointTeleop(Teleoperator):
+    """
+    键盘关节级遥操作：按键直接输出各关节增量，无需运动学求解。
+    使用 termios 从 stdin 读取按键，不依赖 pynput/X11/curses，终端内直接可用。
+
+    按键映射:
+        Q/A: joint1 +/-
+        W/S: joint2 +/-
+        E/D: joint3 +/-
+        R/F: joint4 +/-
+        T/G: joint5 +/-
+        Y/H: joint6 +/-
+        U/J: joint7 +/-
+        1/2: 夹爪 开/合
+        ESC: 断开连接
+    """
+
+    config_class = KeyboardJointTeleopConfig
+    name = "keyboard_joint"
+
+    JOINT_PLUS = [ord("q"), ord("w"), ord("e"), ord("r"), ord("t"), ord("y"), ord("u")]
+    JOINT_MINUS = [ord("a"), ord("s"), ord("d"), ord("f"), ord("g"), ord("h"), ord("j")]
+    GRIPPER_OPEN = ord("1")
+    GRIPPER_CLOSE = ord("2")
+
+    def __init__(self, config: KeyboardJointTeleopConfig):
+        super().__init__(config)
+        self.config = config
+        self.current_pressed: set[int] = set()
+        self._old_term = None
+        self._connected = False
+
+    @property
+    def action_features(self) -> dict:
+        names = {f"joint{i+1}.delta": i for i in range(self.config.num_joints)}
+        names["gripper.delta"] = self.config.num_joints
+        names["enabled"] = self.config.num_joints + 1
+        return {
+            "dtype": "float32",
+            "shape": (len(names),),
+            "names": names,
+        }
+
+    @property
+    def feedback_features(self) -> dict:
+        return {}
+
+    @property
+    def is_connected(self) -> bool:
+        return self._connected
+
+    @property
+    def is_calibrated(self) -> bool:
+        return True
+
+    @check_if_already_connected
+    def connect(self) -> None:
+        import select
+        import sys
+        import termios
+        import tty
+
+        self._old_term = termios.tcgetattr(sys.stdin.fileno())
+        tty.setcbreak(sys.stdin.fileno())
+        self._connected = True
+        logging.info("KeyboardJointTeleop connected (termios stdin mode).")
+
+    def calibrate(self) -> None:
+        pass
+
+    def configure(self):
+        pass
+
+    def _read_keys(self):
+        import select
+        import sys
+
+        newly_pressed: set[int] = set()
+        while select.select([sys.stdin], [], [], 0)[0]:
+            ch = sys.stdin.read(1)
+            if not ch:
+                break
+            b = ord(ch)
+            if b == 27:
+                logging.info("ESC pressed, disconnecting.")
+                self.disconnect()
+                return
+            newly_pressed.add(b)
+
+        if newly_pressed:
+            self.current_pressed = newly_pressed
+        else:
+            self.current_pressed = set()
+
+    @check_if_not_connected
+    def get_action(self) -> RobotAction:
+        self._read_keys()
+
+        action = {"enabled": 1.0}
+
+        for i in range(self.config.num_joints):
+            delta = 0.0
+            if self.JOINT_PLUS[i] in self.current_pressed:
+                delta += self.config.joint_step
+            if self.JOINT_MINUS[i] in self.current_pressed:
+                delta -= self.config.joint_step
+            action[f"joint{i+1}.delta"] = float(delta)
+
+        gripper_delta = 0.0
+        if self.GRIPPER_OPEN in self.current_pressed:
+            gripper_delta += self.config.gripper_step
+        if self.GRIPPER_CLOSE in self.current_pressed:
+            gripper_delta -= self.config.gripper_step
+        action["gripper.delta"] = float(gripper_delta)
+
+        return action
+
+    def send_feedback(self, feedback: dict[str, Any]) -> None:
+        pass
+
+    @check_if_already_connected
+    def disconnect(self) -> None:
+        import sys
+        import termios
+
+        if self._old_term is not None:
+            try:
+                termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, self._old_term)
+            except Exception:
+                pass
+            self._old_term = None
+        self._connected = False
+        self.current_pressed = set()
+        logging.info("KeyboardJointTeleop disconnected.")
 
 
 class KeyboardRoverTeleop(KeyboardTeleop):

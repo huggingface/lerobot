@@ -83,6 +83,7 @@ from lerobot.robots import (  # noqa: F401
     so_follower,
     unitree_g1 as unitree_g1_robot,
 )
+from lerobot.robots.nero_follower.config_nero_follower import NEOFollowerRobotConfig  # noqa: F401
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
@@ -104,6 +105,33 @@ from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import init_logging, move_cursor_up
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data, shutdown_rerun
+
+
+def _build_processors(cfg: "TeleoperateConfig"):
+    teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
+
+    if cfg.robot.type == "nero_follower" and cfg.teleop.type == "keyboard_ee":
+        if getattr(cfg.robot, "keyboard_ee", None) is None or not cfg.robot.keyboard_ee.enabled:
+            logging.info("NERO keyboard EE processor disabled by robot.keyboard_ee.enabled=false")
+        else:
+            from lerobot.robots.nero_follower import make_nero_keyboard_ee_robot_action_processor
+
+            robot_action_processor = make_nero_keyboard_ee_robot_action_processor(cfg.robot)
+            logging.info("Using NERO keyboard end-effector IK processor for teleoperation")
+
+    if cfg.robot.type == "nero_follower" and cfg.teleop.type == "keyboard_joint":
+        from lerobot.robots.nero_follower.robot_joint_delta_processor import (
+            make_nero_keyboard_joint_robot_action_processor,
+        )
+
+        robot_action_processor = make_nero_keyboard_joint_robot_action_processor(
+            joint_names=[f"joint{i}" for i in range(1, 8)],
+            gripper_min=0.0,
+            gripper_max=100.0,
+        )
+        logging.info("Using NERO keyboard joint-delta processor for teleoperation")
+
+    return teleop_action_processor, robot_action_processor, robot_observation_processor
 
 
 @dataclass
@@ -219,7 +247,7 @@ def teleoperate(cfg: TeleoperateConfig):
 
     teleop = make_teleoperator_from_config(cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
-    teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
+    teleop_action_processor, robot_action_processor, robot_observation_processor = _build_processors(cfg)
 
     teleop.connect()
     robot.connect()

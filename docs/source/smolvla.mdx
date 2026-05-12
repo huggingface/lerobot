@@ -117,3 +117,58 @@ lerobot-record \
 ```
 
 Depending on your evaluation setup, you can configure the duration and the number of episodes to record for your evaluation suite.
+
+## Run SmolVLA base model (zero-shot) on NERO Follower
+
+If you want to test the SmolVLA base model without fine-tuning on a NERO Follower robot:
+
+1. Login to HuggingFace Hub:
+
+```bash
+huggingface-cli login
+```
+
+2. Download the pretrained model (use mirror if network is slow):
+
+```bash
+# Option 1: huggingface_hub
+HF_ENDPOINT=https://hf-mirror.com python3 -c "from huggingface_hub import snapshot_download; snapshot_download('lerobot/smolvla_base', local_dir='$HOME/models/smolvla_base')"
+
+# Option 2: git clone
+git lfs install
+git clone https://hf-mirror.com/lerobot/smolvla_base ~/models/smolvla_base
+```
+
+Required files in the model directory:
+
+```
+config.json
+model.safetensors
+policy_postprocessor.json
+policy_postprocessor_step_0_unnormalizer_processor.safetensors
+policy_preprocessor.json
+policy_preprocessor_step_5_normalizer_processor.safetensors
+```
+
+3. Run zero-shot inference:
+
+```bash
+lerobot-record \
+    --robot.type=nero_follower \
+    --robot.channel=can0 \
+    --robot.interface=socketcan \
+    --robot.firmeware_version=default \
+    --robot.speed_percent=10 \
+    --robot.disable_torque_on_disconnect=False \
+    --robot.cameras='{ front: {type: opencv, index_or_path: 6, width: 640, height: 480, fps: 30, fourcc: "MJPG"}, side: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30, fourcc: "MJPG"} }' \
+    --policy.path=$HOME/models/smolvla_base \
+    --dataset.repo_id=yuhang/nero_smolvla_test \
+    --dataset.num_episodes=1 \
+    --dataset.single_task="pick up the object" \
+    --dataset.push_to_hub=false \
+    --display_data=true
+```
+
+<Warning>
+The base model has not been fine-tuned for the NERO Follower robot. Expect poor performance. Fine-tune on your own dataset for meaningful results.
+</Warning>

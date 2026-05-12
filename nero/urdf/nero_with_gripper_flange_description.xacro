@@ -1,0 +1,30 @@
+<!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by Stephen Brawner (brawner@gmail.com) 
+     Commit Version: 1.6.0-4-g7f85cfe  Build Version: 1.6.7995.38578
+     For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="nero">
+<xacro:include filename="$(find agx_arm_description)/agx_arm_urdf/nero/urdf/nero_description.urdf"/>
+    <link name="gripper_flange">
+        <inertial>
+            <origin xyz="0.0 0.0 -0.00032" rpy="0 0 0"/>
+            <mass value="0.04771096"/>
+            <inertia ixx="2.697e-05" ixy="0" ixz="0" iyy="4.311e-05" iyz="0" izz="2.479e-05"/>
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <mesh filename="package://agx_arm_description/agx_arm_urdf/nero/meshes/dae/gripper_flange.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <mesh filename="package://agx_arm_description/agx_arm_urdf/nero/meshes/gripper_flange.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="gripper_flange_joint" type="fixed">
+        <origin xyz="0.032 0 -0.0235" rpy="-1.5708 0 -1.5708"/>
+        <parent link="link7"/>
+        <child link="gripper_flange"/>
+    </joint>
+</robot>

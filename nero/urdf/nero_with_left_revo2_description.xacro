@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by Stephen Brawner (brawner@gmail.com) 
+     Commit Version: 1.6.0-4-g7f85cfe  Build Version: 1.6.7995.38578
+     For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="nero">
+<xacro:include filename="$(find agx_arm_description)/agx_arm_urdf/revo2/urdf/revo2_left_hand.urdf"/>
+<xacro:include filename="$(find agx_arm_description)/agx_arm_urdf/nero/urdf/nero_with_revo2_flange_description.xacro"/>
+    <joint name="hand_base_joint" type="fixed">
+        <origin xyz="0.0 0.0 0.012" rpy="0 0 3.1415926"/>
+        <parent link="revo2_flange"/>
+        <child link="left_base_link"/>
+        <axis xyz="0 0 0"/>
+        <limit lower="0.0" upper="0.0" effort="0.0" velocity="0.0"/>
+    </joint>
+</robot>
