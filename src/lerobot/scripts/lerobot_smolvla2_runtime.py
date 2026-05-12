@@ -452,14 +452,41 @@ def _build_robot(
     commanded joint position relative to the current measured one
     before issuing it on the bus.
     """
+    import importlib  # noqa: PLC0415
     import json  # noqa: PLC0415
+    import pkgutil  # noqa: PLC0415
 
+    import lerobot.robots as _robots_pkg  # noqa: PLC0415
     from lerobot.robots import (  # noqa: PLC0415
         RobotConfig,
         make_robot_from_config,
     )
 
-    cls = RobotConfig.get_choice_class(robot_type)
+    # ``RobotConfig._choice_registry`` is populated lazily — each robot's
+    # ``config_<name>.py`` calls ``@RobotConfig.register_subclass`` at
+    # import time. ``lerobot.robots/__init__.py`` doesn't import the
+    # individual robot packages, so ``get_choice_class(robot_type)``
+    # raises ``KeyError`` until at least one robot module has been
+    # imported. Mirror what ``make_robot_from_config`` does internally:
+    # walk the robots package's submodules and import each so the
+    # decorator side-effect runs. Slow only on the first call (~200ms
+    # for ~10 dataclass modules); negligible for an autonomous run that
+    # then loops at ctrl_hz for minutes.
+    for _modinfo in pkgutil.iter_modules(_robots_pkg.__path__):
+        if _modinfo.name.startswith("_"):
+            continue
+        try:
+            importlib.import_module(f"lerobot.robots.{_modinfo.name}")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("could not import lerobot.robots.%s: %s", _modinfo.name, exc)
+
+    try:
+        cls = RobotConfig.get_choice_class(robot_type)
+    except KeyError as exc:
+        available = sorted(RobotConfig._choice_registry.keys())
+        raise ValueError(
+            f"Unknown robot type {robot_type!r}. Available choices: {available}"
+        ) from exc
     kwargs: dict[str, Any] = {}
     if robot_port:
         kwargs["port"] = robot_port
