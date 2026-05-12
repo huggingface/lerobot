@@ -150,7 +150,7 @@ def save_image(
         logger.error(f"Failed to save image for camera {camera_identifier} (type {camera_type}): {e}")
 
 
-def create_camera_instance(cam_meta: dict[str, Any]) -> dict[str, Any] | None:
+def create_camera_instance(cam_meta: dict[str, Any], *, warmup_s: int = 1) -> dict[str, Any] | None:
     """Create and connect to a camera instance based on metadata."""
     cam_type = cam_meta.get("type")
     cam_id = cam_meta.get("id")
@@ -163,12 +163,14 @@ def create_camera_instance(cam_meta: dict[str, Any]) -> dict[str, Any] | None:
             cv_config = OpenCVCameraConfig(
                 index_or_path=cam_id,
                 color_mode=ColorMode.RGB,
+                warmup_s=warmup_s,
             )
             instance = OpenCVCamera(cv_config)
         elif cam_type == "RealSense":
             rs_config = RealSenseCameraConfig(
                 serial_number_or_name=cam_id,
                 color_mode=ColorMode.RGB,
+                warmup_s=warmup_s,
             )
             instance = RealSenseCamera(rs_config)
         else:
@@ -225,6 +227,7 @@ def save_images_from_all_cameras(
     output_dir: Path,
     record_time_s: float = 2.0,
     camera_type: str | None = None,
+    warmup_s: int = 1,
 ):
     """
     Connects to detected cameras (optionally filtered by type) and saves images from each.
@@ -235,6 +238,7 @@ def save_images_from_all_cameras(
         record_time_s: Duration in seconds to record images.
         camera_type: Optional string to filter cameras ("realsense" or "opencv").
                             If None, uses all detected cameras.
+        warmup_s: Duration in seconds to warmup camera before recording images.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"Saving images to {output_dir}")
@@ -250,7 +254,7 @@ def save_images_from_all_cameras(
 
     try:
         for cam_meta in all_camera_metadata:
-            cam_dict = create_camera_instance(cam_meta)
+            cam_dict = create_camera_instance(cam_meta, warmup_s=warmup_s)
             if cam_dict is None:
                 continue
             start_time = time.perf_counter()
@@ -288,6 +292,12 @@ def main():
         type=float,
         default=6.0,
         help="Time duration to attempt capturing frames. Default: 6 seconds.",
+    )
+    parser.add_argument(
+        "--warmup-s",
+        type=int,
+        default=1,
+        help="Time duration to warmup camera before attempting to capture frames. Default: 1 second.",
     )
     args = parser.parse_args()
     save_images_from_all_cameras(**vars(args))
