@@ -785,16 +785,31 @@ def _run_autonomous(
             # Typing a rephrasing of the current task as an
             # interjection is the trained way to redirect without
             # resetting the high-level plan from scratch.
+            # ``task: <text>``     — full task switch, clears plan/memory/subtask
+            # ``rephrase: <text>`` — swap the task string in place,
+            #                       keep plan/memory/subtask. Tests
+            #                       prompt robustness from the
+            #                       n_task_rephrasings training
+            #                       augmentation: the model should
+            #                       behave the same on equivalent
+            #                       phrasings of the same task.
+            # bare line ending in ``?``  — VQA
+            # bare line                  — interjection
             if lower.startswith("task:"):
                 new_task = line[5:].strip()
                 if new_task:
                     runtime.set_task(new_task)
-                    # Clear stale plan/memory/subtask so the next
-                    # high-level pass regenerates from the new task
-                    # rather than carrying over context from the old.
                     runtime.state["current_plan"] = None
                     runtime.state["current_memory"] = None
                     runtime.state["current_subtask"] = None
+                continue
+            if lower.startswith("rephrase:"):
+                rephrased = line[len("rephrase:"):].strip()
+                if rephrased:
+                    runtime.state["task"] = rephrased
+                    runtime.state.setdefault("log_lines", []).append(
+                        f"Task rephrased: {rephrased}  (plan/memory preserved)"
+                    )
                 continue
             if not runtime.state.get("task"):
                 runtime.set_task(line)
@@ -1110,6 +1125,13 @@ def _run_repl(runtime: Any, *, initial_task: str | None, max_ticks: int | None) 
                     runtime.state["current_plan"] = None
                     runtime.state["current_memory"] = None
                     runtime.state["current_subtask"] = None
+            elif lower.startswith("rephrase:"):
+                rephrased = line[len("rephrase:"):].strip()
+                if rephrased:
+                    runtime.state["task"] = rephrased
+                    runtime.state.setdefault("log_lines", []).append(
+                        f"Task rephrased: {rephrased}  (plan/memory preserved)"
+                    )
             elif not runtime.state.get("task"):
                 runtime.set_task(line)
             elif lower.endswith("?"):
