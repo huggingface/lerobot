@@ -31,3 +31,9 @@ class BiYamLeaderConfig(TeleoperatorConfig):
 
     # Server host (usually localhost for local setup)
     server_host: str = "localhost"
+
+    # Bilateral control stiffness multiplier for synchronizing follower to leader
+    # Higher values = stiffer tracking, lower values = gentler following
+    # Typical values: 0.5 (gentle) to 2.0 (firm)
+    # Final kp = bilateral_kp * robot's natural kp
+    bilateral_kp: float = 1.0
