@@ -1272,7 +1272,7 @@ sdist = { url = "https://files.pythonhosted.org/packages/a2/55/8f8cab2afd404cf57
 
 [[package]]
 name = "draccus"
-version = "0.10.0"
+version = "0.11.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "mergedeep" },
@@ -1281,9 +1281,9 @@ dependencies = [
     { name = "toml" },
     { name = "typing-inspect" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4e/e2/f5012fda17ee5d1eaf3481b6ca3e11dffa5348e5e08ab745538fdc8041bb/draccus-0.10.0.tar.gz", hash = "sha256:8dd08304219becdcd66cd16058ba98e9c3e6b7bfe48ccb9579dae39f8d37ae19", size = 62243, upload-time = "2025-02-05T07:27:48.182Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5c/68/9a054c0d242a948c41b7ae9416a4148bf562df7d244c7a39a4b67e7ff742/draccus-0.11.5.tar.gz", hash = "sha256:b82e2c2027030ae1a0f105515125f914e050c0766ab518df3a0560a07d10ddc9", size = 67384, upload-time = "2025-04-22T20:41:48.972Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c4/9a/a83083b230d352ee5d205757b74006dbe084448ca45e3bc5ca99215b1e55/draccus-0.10.0-py3-none-any.whl", hash = "sha256:90243418ae0e9271c390a59cafb6acfd37001193696ed36fcc8525f791a83282", size = 71783, upload-time = "2025-02-05T07:27:46.1Z" },
+    { url = "https://files.pythonhosted.org/packages/b9/52/3144a4a8341f125d357a8f6e07aeb23b0bde7133dabbd0c78b984c079a1f/draccus-0.11.5-py3-none-any.whl", hash = "sha256:67da70bfbdea8fe67667322c64068d6d8cd832694a418b6c71d9d3b9f5c3c005", size = 78447, upload-time = "2025-04-22T20:41:47.414Z" },
 ]
 
 [[package]]
@@ -3037,7 +3037,7 @@ requires-dist = [
     { name = "deepdiff", marker = "extra == 'deepdiff-dep'", specifier = ">=7.0.1,<9.0.0" },
     { name = "diffusers", marker = "extra == 'diffusers-dep'", specifier = ">=0.27.2,<0.36.0" },
     { name = "dm-tree", marker = "extra == 'groot'", specifier = ">=0.1.8,<1.0.0" },
-    { name = "draccus", specifier = "==0.10.0" },
+    { name = "draccus", specifier = "==0.11.5" },
     { name = "dynamixel-sdk", marker = "extra == 'dynamixel'", specifier = ">=3.7.31,<3.9.0" },
     { name = "einops", specifier = ">=0.8.0,<0.9.0" },
     { name = "faker", marker = "extra == 'sarm'", specifier = ">=33.0.0,<35.0.0" },

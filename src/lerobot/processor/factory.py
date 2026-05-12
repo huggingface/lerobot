@@ -14,8 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lerobot.types import RobotAction, RobotObservation
-
 from .converters import (
     observation_to_transition,
     robot_action_observation_to_transition,
@@ -23,6 +21,7 @@ from .converters import (
     transition_to_robot_action,
 )
 from .pipeline import IdentityProcessorStep, RobotProcessorPipeline
+from .types import RobotAction, RobotObservation
 
 
 def make_default_teleop_action_processor() -> RobotProcessorPipeline[

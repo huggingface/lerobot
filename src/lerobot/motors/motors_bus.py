@@ -33,17 +33,12 @@ from typing import TYPE_CHECKING, Protocol
 
 from tqdm import tqdm
 
-from lerobot.utils.import_utils import _deepdiff_available, _serial_available, require_package
+from lerobot.utils.import_utils import _serial_available, require_package
 
 if TYPE_CHECKING or _serial_available:
     import serial
 else:
     serial = None  # type: ignore[assignment]
-
-if TYPE_CHECKING or _deepdiff_available:
-    from deepdiff import DeepDiff
-else:
-    DeepDiff = None  # type: ignore[assignment, misc]
 
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.utils import enter_pressed, move_cursor_up
@@ -357,7 +352,6 @@ class SerialMotorsBus(MotorsBusBase):
         calibration: dict[str, MotorCalibration] | None = None,
     ):
         require_package("pyserial", extra="pyserial-dep", import_name="serial")
-        require_package("deepdiff", extra="deepdiff-dep")
         super().__init__(port, motors, calibration)
 
         self.port_handler: PortHandler
@@ -390,9 +384,7 @@ class SerialMotorsBus(MotorsBusBase):
             return False
 
         first_table = self.model_ctrl_table[self.models[0]]
-        return any(
-            DeepDiff(first_table, get_ctrl_table(self.model_ctrl_table, model)) for model in self.models[1:]
-        )
+        return any(first_table != get_ctrl_table(self.model_ctrl_table, model) for model in self.models[1:])
 
     @cached_property
     def models(self) -> list[str]:

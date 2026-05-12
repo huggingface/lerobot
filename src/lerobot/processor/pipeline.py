@@ -39,18 +39,22 @@ from collections.abc import Callable, Iterable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TypedDict, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypedDict, TypeVar, cast
 
-import torch
 from huggingface_hub import hf_hub_download
-from safetensors.torch import load_file, save_file
 
-from lerobot.configs import PipelineFeatureType, PolicyFeature
-from lerobot.types import EnvAction, EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
+from lerobot.types import TransitionKey
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.hub import HubMixin
 
 from .converters import batch_to_transition, create_transition, transition_to_batch
+from .types import RobotAction, RobotObservation
+
+if TYPE_CHECKING:
+    import torch
+
+    from lerobot.configs import PipelineFeatureType, PolicyFeature
+    from lerobot.types import EnvAction, EnvTransition, PolicyAction
 
 # Generic type variables for pipeline input and output.
 TInput = TypeVar("TInput")
@@ -385,6 +389,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                         state_filename = f"{sanitized_name}_step_{step_index}_{registry_name}.safetensors"
                     else:
                         state_filename = f"{sanitized_name}_step_{step_index}.safetensors"
+
+                    from safetensors.torch import save_file
 
                     save_file(cloned_state, os.path.join(str(save_directory), state_filename))
                     step_entry["state_file"] = state_filename
@@ -978,6 +984,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                 repo_type="model",
                 **hub_download_kwargs,
             )
+
+        from safetensors.torch import load_file
 
         step_instance.load_state_dict(load_file(state_path))
 

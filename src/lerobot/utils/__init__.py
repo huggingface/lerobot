@@ -13,53 +13,46 @@
 # limitations under the License.
 
 """
-Public API for lightweight, base-dependency-only utilities.
+Public API for lightweight utilities.
 
-Heavy cross-cutting modules (train_utils, control_utils) have been moved
-to ``lerobot.common``. ``visualization_utils`` remains here but is
-intentionally NOT re-exported to avoid pulling in optional dependencies.
+Exports are resolved lazily so importing a utility submodule does not
+eagerly import torch through ``device_utils``.
 """
 
-from .constants import (
-    ACTION,
-    DEFAULT_FEATURES,
-    DONE,
-    IMAGENET_STATS,
-    OBS_ENV_STATE,
-    OBS_IMAGE,
-    OBS_IMAGES,
-    OBS_STATE,
-    OBS_STR,
-    REWARD,
-)
-from .decorators import check_if_already_connected, check_if_not_connected
-from .device_utils import auto_select_torch_device, get_safe_torch_device, is_torch_device_available
-from .errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from .import_utils import is_package_available, require_package
+_SUBMODULE_ATTRS = {
+    ".constants": [
+        "ACTION",
+        "DEFAULT_FEATURES",
+        "DONE",
+        "IMAGENET_STATS",
+        "OBS_ENV_STATE",
+        "OBS_IMAGE",
+        "OBS_IMAGES",
+        "OBS_STATE",
+        "OBS_STR",
+        "REWARD",
+    ],
+    ".decorators": ["check_if_already_connected", "check_if_not_connected"],
+    ".device_utils": ["auto_select_torch_device", "get_safe_torch_device", "is_torch_device_available"],
+    ".errors": ["DeviceAlreadyConnectedError", "DeviceNotConnectedError"],
+    ".import_utils": ["is_package_available", "require_package"],
+}
 
-__all__ = [
-    # Constants
-    "ACTION",
-    "DEFAULT_FEATURES",
-    "DONE",
-    "IMAGENET_STATS",
-    "OBS_ENV_STATE",
-    "OBS_IMAGE",
-    "OBS_IMAGES",
-    "OBS_STATE",
-    "OBS_STR",
-    "REWARD",
-    # Device utilities
-    "auto_select_torch_device",
-    "get_safe_torch_device",
-    "is_torch_device_available",
-    # Import guards
-    "is_package_available",
-    "require_package",
-    # Decorators
-    "check_if_already_connected",
-    "check_if_not_connected",
-    # Errors
-    "DeviceAlreadyConnectedError",
-    "DeviceNotConnectedError",
-]
+_ATTR_TO_MODULE: dict[str, str] = {}
+for _mod, _attrs in _SUBMODULE_ATTRS.items():
+    for _attr in _attrs:
+        _ATTR_TO_MODULE[_attr] = _mod
+
+
+def __getattr__(name: str):
+    if name in _ATTR_TO_MODULE:
+        import importlib
+
+        mod = importlib.import_module(_ATTR_TO_MODULE[name], __name__)
+        val = getattr(mod, name)
+        globals()[name] = val
+        return val
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+__all__ = list(_ATTR_TO_MODULE.keys())

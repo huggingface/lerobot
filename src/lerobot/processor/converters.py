@@ -18,22 +18,71 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from functools import singledispatch
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import torch
 
-from lerobot.types import EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
+from lerobot.types import TransitionKey
 from lerobot.utils.constants import ACTION, DONE, INFO, OBS_PREFIX, REWARD, TRUNCATED
+
+from .types import RobotAction, RobotObservation
+
+if TYPE_CHECKING:
+    import torch
+
+    from lerobot.types import EnvTransition, PolicyAction
+
+_torch_dispatches_registered = False
+
+
+def _ensure_torch_dispatches() -> None:
+    global _torch_dispatches_registered
+    if _torch_dispatches_registered:
+        return
+    _torch_dispatches_registered = True
+
+    import torch
+
+    @to_tensor.register(torch.Tensor)
+    def _tensor(value: torch.Tensor, *, dtype=torch.float32, device=None, **kwargs) -> torch.Tensor:
+        if dtype is not None:
+            value = value.to(dtype=dtype)
+        if device is not None:
+            value = value.to(device=device)
+        return value
+
+    @to_tensor.register(np.ndarray)
+    def _ndarray(value: np.ndarray, *, dtype=torch.float32, device=None, **kwargs) -> torch.Tensor:
+        if value.ndim == 0:
+            scalar_value = value.item()
+            return torch.tensor(scalar_value, dtype=dtype, device=device)
+        tensor = torch.from_numpy(value)
+        if dtype is not None:
+            tensor = tensor.to(dtype=dtype)
+        if device is not None:
+            tensor = tensor.to(device=device)
+        return tensor
+
+    @to_tensor.register(int)
+    @to_tensor.register(float)
+    @to_tensor.register(np.integer)
+    @to_tensor.register(np.floating)
+    def _scalar(value, *, dtype=torch.float32, device=None, **kwargs) -> torch.Tensor:
+        return torch.tensor(value, dtype=dtype, device=device)
+
+    @to_tensor.register(list)
+    @to_tensor.register(tuple)
+    def _seq(value: Sequence, *, dtype=torch.float32, device=None, **kwargs) -> torch.Tensor:
+        return torch.tensor(value, dtype=dtype, device=device)
 
 
 @singledispatch
 def to_tensor(
     value: Any,
     *,
-    dtype: torch.dtype | None = torch.float32,
-    device: torch.device | str | None = None,
-) -> torch.Tensor:
+    dtype=None,
+    device=None,
+):
     """
     Convert various data types to PyTorch tensors with configurable options.
 
@@ -51,65 +100,17 @@ def to_tensor(
     Raises:
         TypeError: If the input type is not supported.
     """
-    raise TypeError(f"Unsupported type for tensor conversion: {type(value)}")
-
-
-@to_tensor.register(torch.Tensor)
-def _(value: torch.Tensor, *, dtype=torch.float32, device=None, **kwargs) -> torch.Tensor:
-    """Handle conversion for existing PyTorch tensors."""
-    if dtype is not None:
-        value = value.to(dtype=dtype)
-    if device is not None:
-        value = value.to(device=device)
-    return value
-
-
-@to_tensor.register(np.ndarray)
-def _(
-    value: np.ndarray,
-    *,
-    dtype=torch.float32,
-    device=None,
-    **kwargs,
-) -> torch.Tensor:
-    """Handle conversion for numpy arrays."""
-    # Check for numpy scalars (0-dimensional arrays) and treat them as scalars.
-    if value.ndim == 0:
-        # Numpy scalars should be converted to 0-dimensional tensors.
-        scalar_value = value.item()
-        return torch.tensor(scalar_value, dtype=dtype, device=device)
-
-    # Create tensor from numpy array.
-    tensor = torch.from_numpy(value)
-
-    # Apply dtype and device conversion if specified.
-    if dtype is not None:
-        tensor = tensor.to(dtype=dtype)
-    if device is not None:
-        tensor = tensor.to(device=device)
-
-    return tensor
-
-
-@to_tensor.register(int)
-@to_tensor.register(float)
-@to_tensor.register(np.integer)
-@to_tensor.register(np.floating)
-def _(value, *, dtype=torch.float32, device=None, **kwargs) -> torch.Tensor:
-    """Handle conversion for scalar values including numpy scalars."""
-    return torch.tensor(value, dtype=dtype, device=device)
-
-
-@to_tensor.register(list)
-@to_tensor.register(tuple)
-def _(value: Sequence, *, dtype=torch.float32, device=None, **kwargs) -> torch.Tensor:
-    """Handle conversion for sequences (lists, tuples)."""
-    return torch.tensor(value, dtype=dtype, device=device)
+    _ensure_torch_dispatches()
+    handler = to_tensor.dispatch(type(value))
+    if handler is to_tensor:
+        raise TypeError(f"Unsupported type for tensor conversion: {type(value)}")
+    return handler(value, dtype=dtype, device=device)
 
 
 @to_tensor.register(dict)
 def _(value: dict, *, device=None, **kwargs) -> dict:
     """Handle conversion for dictionaries by recursively converting their values to tensors."""
+    _ensure_torch_dispatches()
     if not value:
         return {}
 

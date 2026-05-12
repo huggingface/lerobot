@@ -20,7 +20,8 @@ from enum import Enum
 from typing import Any, TypedDict
 
 import numpy as np
-import torch
+
+from lerobot.processor.types import RobotAction, RobotObservation  # noqa: F401
 
 
 class TransitionKey(str, Enum):
@@ -36,21 +37,31 @@ class TransitionKey(str, Enum):
     COMPLEMENTARY_DATA = "complementary_data"
 
 
-PolicyAction = torch.Tensor
-RobotAction = dict[str, Any]
 EnvAction = np.ndarray
-RobotObservation = dict[str, Any]
 
 
-EnvTransition = TypedDict(
-    "EnvTransition",
-    {
-        TransitionKey.OBSERVATION.value: RobotObservation | None,
-        TransitionKey.ACTION.value: PolicyAction | RobotAction | EnvAction | None,
-        TransitionKey.REWARD.value: float | torch.Tensor | None,
-        TransitionKey.DONE.value: bool | torch.Tensor | None,
-        TransitionKey.TRUNCATED.value: bool | torch.Tensor | None,
-        TransitionKey.INFO.value: dict[str, Any] | None,
-        TransitionKey.COMPLEMENTARY_DATA.value: dict[str, Any] | None,
-    },
-)
+def __getattr__(name: str):
+    if name == "PolicyAction":
+        import torch
+
+        policy_action = torch.Tensor
+        globals()["PolicyAction"] = policy_action
+        return policy_action
+    if name == "EnvTransition":
+        import torch
+
+        EnvTransition = TypedDict(
+            "EnvTransition",
+            {
+                TransitionKey.OBSERVATION.value: RobotObservation | None,
+                TransitionKey.ACTION.value: torch.Tensor | RobotAction | EnvAction | None,
+                TransitionKey.REWARD.value: float | torch.Tensor | None,
+                TransitionKey.DONE.value: bool | torch.Tensor | None,
+                TransitionKey.TRUNCATED.value: bool | torch.Tensor | None,
+                TransitionKey.INFO.value: dict[str, Any] | None,
+                TransitionKey.COMPLEMENTARY_DATA.value: dict[str, Any] | None,
+            },
+        )
+        globals()["EnvTransition"] = EnvTransition
+        return EnvTransition
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

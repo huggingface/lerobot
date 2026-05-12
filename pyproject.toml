@@ -67,7 +67,7 @@ dependencies = [
     "einops>=0.8.0,<0.9.0",
 
     # Config & Hub
-    "draccus==0.10.0", # TODO: Relax version constraint
+    "draccus==0.11.5", # TODO: Relax version constraint
     "huggingface-hub>=1.0.0,<2.0.0",
     "requests>=2.32.0,<3.0.0",
 

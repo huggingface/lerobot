@@ -15,35 +15,39 @@
 """
 Public API for lerobot configuration types and base config classes.
 
-NOTE: TrainPipelineConfig, EvalPipelineConfig, and TrainRLServerPipelineConfig
-are intentionally NOT re-exported here to avoid circular dependencies
-(they import lerobot.envs and lerobot.policies at module level).
-Import them directly: ``from lerobot.configs.train import TrainPipelineConfig``
+The exports are resolved lazily so lightweight scripts can import
+``lerobot.configs.parser`` without also importing training transforms,
+optimizers, diffusers, torch, and torchvision.
 """
 
-from .dataset import DatasetRecordConfig
-from .default import DatasetConfig, EvalConfig, PeftConfig, WandBConfig
-from .policies import PreTrainedConfig
-from .types import (
-    FeatureType,
-    NormalizationMode,
-    PipelineFeatureType,
-    PolicyFeature,
-    RTCAttentionSchedule,
-)
+_SUBMODULE_ATTRS = {
+    ".dataset": ["DatasetRecordConfig"],
+    ".default": ["DatasetConfig", "EvalConfig", "PeftConfig", "WandBConfig"],
+    ".policies": ["PreTrainedConfig"],
+    ".types": [
+        "FeatureType",
+        "NormalizationMode",
+        "PipelineFeatureType",
+        "PolicyFeature",
+        "RTCAttentionSchedule",
+    ],
+}
 
-__all__ = [
-    # Types
-    "FeatureType",
-    "NormalizationMode",
-    "PipelineFeatureType",
-    "PolicyFeature",
-    "RTCAttentionSchedule",
-    # Config classes
-    "DatasetRecordConfig",
-    "DatasetConfig",
-    "EvalConfig",
-    "PeftConfig",
-    "PreTrainedConfig",
-    "WandBConfig",
-]
+_ATTR_TO_MODULE: dict[str, str] = {}
+for _mod, _attrs in _SUBMODULE_ATTRS.items():
+    for _attr in _attrs:
+        _ATTR_TO_MODULE[_attr] = _mod
+
+
+def __getattr__(name: str):
+    if name in _ATTR_TO_MODULE:
+        import importlib
+
+        mod = importlib.import_module(_ATTR_TO_MODULE[name], __name__)
+        val = getattr(mod, name)
+        globals()[name] = val
+        return val
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+__all__ = list(_ATTR_TO_MODULE.keys())

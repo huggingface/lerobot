@@ -57,17 +57,13 @@ import logging
 import time
 from dataclasses import asdict, dataclass
 from pprint import pformat
+from typing import TYPE_CHECKING
 
-from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
-from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
-from lerobot.cameras.zmq import ZMQCameraConfig  # noqa: F401
+from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
+from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.cameras.zmq.configuration_zmq import ZMQCameraConfig  # noqa: F401
 from lerobot.configs import parser
-from lerobot.processor import (
-    RobotAction,
-    RobotObservation,
-    RobotProcessorPipeline,
-    make_default_processors,
-)
+from lerobot.processor import RobotAction, RobotObservation
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -103,8 +99,9 @@ from lerobot.teleoperators import (  # noqa: F401
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import init_logging, move_cursor_up
-from lerobot.utils.visualization_utils import init_rerun, log_rerun_data, shutdown_rerun
 
+if TYPE_CHECKING:
+    from lerobot.processor import RobotProcessorPipeline
 
 @dataclass
 class TeleoperateConfig:
@@ -128,9 +125,9 @@ def teleop_loop(
     teleop: Teleoperator,
     robot: Robot,
     fps: int,
-    teleop_action_processor: RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction],
-    robot_action_processor: RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction],
-    robot_observation_processor: RobotProcessorPipeline[RobotObservation, RobotObservation],
+    teleop_action_processor: "RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction]",
+    robot_action_processor: "RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction]",
+    robot_observation_processor: "RobotProcessorPipeline[RobotObservation, RobotObservation]",
     display_data: bool = False,
     duration: float | None = None,
     display_compressed_images: bool = False,
@@ -179,6 +176,8 @@ def teleop_loop(
         _ = robot.send_action(robot_action_to_send)
 
         if display_data:
+            from lerobot.utils.visualization_utils import log_rerun_data
+
             # Process robot observation through pipeline
             obs_transition = robot_observation_processor(obs)
 
@@ -210,6 +209,8 @@ def teleoperate(cfg: TeleoperateConfig):
     init_logging()
     logging.info(pformat(asdict(cfg)))
     if cfg.display_data:
+        from lerobot.utils.visualization_utils import init_rerun
+
         init_rerun(session_name="teleoperation", ip=cfg.display_ip, port=cfg.display_port)
     display_compressed_images = (
         True
@@ -219,6 +220,8 @@ def teleoperate(cfg: TeleoperateConfig):
 
     teleop = make_teleoperator_from_config(cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
+    from lerobot.processor import make_default_processors
+
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
 
     teleop.connect()
@@ -240,6 +243,8 @@ def teleoperate(cfg: TeleoperateConfig):
         pass
     finally:
         if cfg.display_data:
+            from lerobot.utils.visualization_utils import shutdown_rerun
+
             shutdown_rerun()
         teleop.disconnect()
         robot.disconnect()
