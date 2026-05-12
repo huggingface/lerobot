@@ -738,7 +738,28 @@ def _run_autonomous(
     )
     thread.start()
 
-    redraw = _make_state_panel_renderer(runtime, mode_label="autonomous")
+    # Capture log lines flushed by the runtime each tick into a
+    # bounded scrollback that the panel renderer prints inside the
+    # rule block. Without this, ``runtime._flush_logs`` just calls
+    # ``print(...)`` which the 2 Hz panel redraw clears immediately —
+    # so failure messages from generation (e.g. ``[warn] subtask gen
+    # failed: ...``) flash for ≤ 0.5 s and disappear, leaving the
+    # operator with no idea why ``last_raw`` stays empty.
+    _scrollback: list[str] = []
+    _scrollback_max = 12
+
+    def _flush_into_scrollback() -> None:
+        for line in runtime.state.get("log_lines") or []:
+            _scrollback.append(line)
+        # Trim to the cap so the panel doesn't grow unbounded.
+        if len(_scrollback) > _scrollback_max:
+            del _scrollback[: len(_scrollback) - _scrollback_max]
+
+    runtime._flush_logs = _flush_into_scrollback  # type: ignore[method-assign]
+
+    redraw = _make_state_panel_renderer(
+        runtime, mode_label="autonomous", scrollback=_scrollback
+    )
     redraw()
     print(
         "  [autonomous] type interjections / '?' questions on stdin, "
@@ -843,6 +864,7 @@ def _make_state_panel_renderer(
     runtime: Any,
     *,
     mode_label: str,
+    scrollback: list[str] | None = None,
 ) -> Callable[[list[str] | None], None]:
     """Return a closure that prints the task/subtask/plan/memory panel.
 
@@ -899,12 +921,18 @@ def _make_state_panel_renderer(
         raw_subtask = st.get("last_subtask_raw")
         sub_rep = int(st.get("subtask_repeat_count") or 0)
         sub_gib = int(st.get("subtask_gibberish_count") or 0)
-        if raw_subtask is not None or sub_rep or sub_gib:
+        sub_empty = int(st.get("subtask_empty_count") or 0)
+        if raw_subtask is not None or sub_rep or sub_gib or sub_empty:
             raw_display = (raw_subtask or "(empty)")[:80]
-            color = "yellow" if (sub_rep >= 3 or sub_gib >= 3) else "dim"
+            color = (
+                "yellow"
+                if (sub_rep >= 3 or sub_gib >= 3 or sub_empty >= 3)
+                else "dim"
+            )
             console.print(
                 f"  [{color}]subtask diag    repeat:{sub_rep}  "
-                f"gibberish:{sub_gib}  last_raw: {raw_display!r}[/]"
+                f"gibberish:{sub_gib}  empty:{sub_empty}  "
+                f"last_raw: {raw_display!r}[/]"
             )
 
         # Same diagnostics for memory and plan when available.
@@ -915,6 +943,13 @@ def _make_state_panel_renderer(
                 f"  [dim]gen rejects     memory:{mem_gib}  plan:{plan_gib}[/]"
             )
         console.rule(style="cyan")
+        # Runtime scrollback — log lines pushed from generation steps
+        # (warnings, gibberish rejections, plan/say speech, vqa
+        # answers). Last N lines, oldest first.
+        if scrollback:
+            for line in scrollback:
+                console.print(f"  [magenta]{line.rstrip()}[/]")
+            console.rule(style="cyan")
         if robot_lines:
             for line in robot_lines:
                 console.print(f"  [magenta]{line.strip()}[/]")

@@ -374,6 +374,21 @@ class HighLevelSubtaskFwd(InferenceStep):
         # subtask N times in a row" or "gibberish_count rising while
         # current_subtask is stuck". The state panel renders these.
         state["last_subtask_raw"] = msg or ""
+        # Persistent empty completion is its own failure mode (model
+        # immediately EOS-es from the chat-template generation
+        # prompt) — surface it once every N occurrences so the
+        # operator can distinguish "generation failing silently"
+        # from "generating fine but filter rejecting".
+        if not msg:
+            empties = state.get("subtask_empty_count", 0) + 1
+            state["subtask_empty_count"] = empties
+            if empties == 1 or empties % 10 == 0:
+                push_log(
+                    state,
+                    f"  [info] subtask gen returned empty (×{empties}) — "
+                    "model EOS-ing immediately or generation raised "
+                    "(check stderr / -v for traceback).",
+                )
         if msg and _looks_like_gibberish(msg):
             # Bump a counter so the operator can see the model is
             # struggling without spamming the log every tick. A first
