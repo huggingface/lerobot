@@ -491,10 +491,11 @@ def test_configure_motors_skips_phase_for_non_sts3215(mock_motors):
 
 
 def test_record_ranges_of_motion(mock_motors, dummy_motors):
+    # Consecutive deltas stay below max_res / 2 so they're not mistaken for a wrap.
     positions = {
         1: [351, 42, 1337],
-        2: [28, 3600, 2444],
-        3: [4002, 2999, 146],
+        2: [28, 1800, 3600],
+        3: [146, 2000, 4002],
     }
     expected_mins = {
         "dummy_1": 42,
@@ -518,3 +519,24 @@ def test_record_ranges_of_motion(mock_motors, dummy_motors):
     assert mock_motors.stubs[stub].calls == 3
     assert mins == expected_mins
     assert maxes == expected_maxes
+
+
+def test_record_ranges_of_motion_raises_on_wrap(mock_motors, dummy_motors):
+    # dummy_2 sweeps across the 0/4095 seam (4080 -> 10), which naive min()/max() on a
+    # modular Present_Position cannot represent. The other motors stay clear of the wrap.
+    positions = {
+        1: [100, 200, 300],
+        2: [4080, 10, 50],
+        3: [1000, 1100, 1200],
+    }
+    mock_motors.build_sequential_sync_read_stub(*STS_SMS_SERIES_CONTROL_TABLE["Present_Position"], positions)
+    with patch("lerobot.motors.motors_bus.enter_pressed", side_effect=[False, True]):
+        bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
+        bus.connect(handshake=False)
+
+        with pytest.raises(ValueError, match=re.escape("Present_Position wrapped")) as exc_info:
+            bus.record_ranges_of_motion(display_values=False)
+
+    assert "dummy_2" in str(exc_info.value)
+    assert "dummy_1" not in str(exc_info.value)
+    assert "dummy_3" not in str(exc_info.value)

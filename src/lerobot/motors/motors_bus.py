@@ -815,18 +815,36 @@ class SerialMotorsBus(MotorsBusBase):
         Returns:
             tuple[dict[str, Value], dict[str, Value]]: Two dictionaries *mins* and *maxes* with the
                 extreme values observed for each motor.
+
+        Raises:
+            ValueError: A motor's `Present_Position` crossed the 0/max encoder seam during recording,
+                meaning the chosen homing offset places the wrap inside the joint's mechanical travel.
+                The recorded `(min, max)` cannot represent such a range, so the caller is asked to
+                re-run calibration from a pose that moves the wrap outside the joint's travel.
         """
         motor_names = self._get_motors_list(motors)
+        resolutions = {
+            motor: self.model_resolution_table[self._get_motor_model(motor)] for motor in motor_names
+        }
 
         start_positions = self.sync_read("Present_Position", motor_names, normalize=False)
         mins = start_positions.copy()
         maxes = start_positions.copy()
+        prev_positions = start_positions.copy()
+        wrap_detected: dict[str, bool] = dict.fromkeys(motor_names, False)
 
         user_pressed_enter = False
         while not user_pressed_enter:
             positions = self.sync_read("Present_Position", motor_names, normalize=False)
+            for motor in motor_names:
+                # A jump larger than half the encoder resolution between two consecutive samples
+                # means Present_Position wrapped at the 0/max seam. Naive min()/max() on the
+                # modular value can't represent a range that spans the wrap, so flag it.
+                if abs(positions[motor] - prev_positions[motor]) > resolutions[motor] / 2:
+                    wrap_detected[motor] = True
             mins = {motor: min(positions[motor], min_) for motor, min_ in mins.items()}
             maxes = {motor: max(positions[motor], max_) for motor, max_ in maxes.items()}
+            prev_positions = positions
 
             if display_values:
                 print("\n-------------------------------------------")
@@ -840,6 +858,16 @@ class SerialMotorsBus(MotorsBusBase):
             if display_values and not user_pressed_enter:
                 # Move cursor up to overwrite the previous output
                 move_cursor_up(len(motor_names) + 3)
+
+        wrapped = [motor for motor, did_wrap in wrap_detected.items() if did_wrap]
+        if wrapped:
+            raise ValueError(
+                "Present_Position wrapped at the 0/max encoder seam during recording for motor(s):\n"
+                f"{pformat(wrapped)}\n"
+                "The pose chosen for `set_half_turn_homings` places the wrap inside these joints' "
+                "mechanical travel, so the recorded range cannot represent it. Re-run calibration "
+                "from a pose that places the wrap outside each joint's travel."
+            )
 
         same_min_max = [motor for motor in motor_names if mins[motor] == maxes[motor]]
         if same_min_max:
