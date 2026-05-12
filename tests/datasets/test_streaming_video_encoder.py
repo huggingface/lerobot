@@ -26,10 +26,10 @@ pytest.importorskip("av", reason="av is required (install lerobot[dataset])")
 
 import av  # noqa: E402
 
+from lerobot.configs import VideoEncoderConfig
 from lerobot.datasets.pyav_utils import get_codec
 from lerobot.datasets.video_utils import (
     StreamingVideoEncoder,
-    VideoEncoderConfig,
     _CameraEncoderThread,
 )
 from lerobot.utils.constants import OBS_IMAGES

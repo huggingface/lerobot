@@ -25,10 +25,10 @@ from PIL import Image
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+from lerobot.configs import VideoEncoderConfig
 from lerobot.datasets.dataset_writer import _encode_video_worker
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_IMAGE_PATH
-from lerobot.datasets.video_utils import VideoEncoderConfig
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_REPO_ID
 
 SIMPLE_FEATURES = {

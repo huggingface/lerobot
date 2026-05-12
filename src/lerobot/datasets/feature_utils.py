@@ -140,7 +140,6 @@ def features_equal_for_merge(features_a: dict[str, dict], features_b: dict[str, 
             continue
 
         if _without_encoder_info_keys(fa_key) != _without_encoder_info_keys(fb_key):
-            raise ValueError(f"Features {fa_key} and {fb_key} are not equal")
             return False
     return True
 

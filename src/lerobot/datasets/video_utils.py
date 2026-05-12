@@ -36,7 +36,7 @@ import torch
 from datasets.features.features import register_feature
 from PIL import Image
 
-from lerobot.configs.video import (
+from lerobot.configs import (
     VideoEncoderConfig,
     camera_encoder_defaults,
 )
@@ -905,7 +905,7 @@ def get_audio_info(video_path: Path | str) -> dict:
 
 def get_video_info(
     video_path: Path | str,
-    camera_encoder_config: "VideoEncoderConfig | None" = None,
+    camera_encoder_config: VideoEncoderConfig | None = None,
 ) -> dict:
     """Build the ``video.*`` / ``audio.*`` info dict persisted in ``info.json``.
 

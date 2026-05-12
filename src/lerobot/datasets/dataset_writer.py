@@ -31,6 +31,8 @@ import PIL.Image
 import pyarrow.parquet as pq
 import torch
 
+from lerobot.configs import VideoEncoderConfig, camera_encoder_defaults
+
 from .compute_stats import compute_episode_stats
 from .dataset_metadata import LeRobotDatasetMetadata
 from .feature_utils import (
@@ -52,8 +54,6 @@ from .utils import (
 )
 from .video_utils import (
     StreamingVideoEncoder,
-    VideoEncoderConfig,
-    camera_encoder_defaults,
     concatenate_video_files,
     encode_video_frames,
     get_video_duration_in_s,
@@ -109,7 +109,7 @@ class DatasetWriter:
                 settings, and episode persistence).
             root: Local dataset root directory.
             camera_encoder_config: Video encoder settings applied to all cameras.
-                ``None`` uses :func:`~lerobot.datasets.video_utils.camera_encoder_defaults`.
+                ``None`` uses :func:`~lerobot.configs.camera_encoder_defaults`.
             encoder_threads: Number of encoder threads (global). ``None``
                 lets the codec decide.
             batch_encoding_size: Number of episodes to accumulate before

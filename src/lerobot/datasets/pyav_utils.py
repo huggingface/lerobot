@@ -27,7 +27,7 @@ from typing import Any
 
 import av
 
-from lerobot.configs.video import VideoEncoderConfig
+from lerobot.configs import VideoEncoderConfig
 
 logger = logging.getLogger(__name__)
 

@@ -29,9 +29,9 @@ from PIL import Image
 from safetensors.torch import load_file
 from torchvision.transforms import v2
 
+from lerobot.configs import VALID_VIDEO_CODECS, VideoEncoderConfig
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.configs.video import VALID_VIDEO_CODECS, VideoEncoderConfig
 from lerobot.datasets import make_dataset
 from lerobot.datasets.feature_utils import get_hf_features_from_features
 from lerobot.datasets.image_writer import image_array_to_pil_image
