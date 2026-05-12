@@ -19,7 +19,7 @@ accelerate==1.13.0
     #   peft
 aiohappyeyeballs==2.6.1
     # via aiohttp
-aiohttp==3.13.3
+aiohttp==3.13.5
     # via fsspec
 aiosignal==1.4.0
     # via aiohttp
@@ -119,7 +119,7 @@ debugpy==1.8.20
     # via lerobot
 decorator==5.2.1
     # via ipython
-deepdiff==8.6.1
+deepdiff==8.6.2
     # via lerobot
 diffusers==0.35.2
     # via lerobot
@@ -185,7 +185,7 @@ fsspec[http]==2026.2.0
     #   torch
 gitdb==4.0.12
     # via gitpython
-gitpython==3.1.46
+gitpython==3.1.50
     # via wandb
 glfw==2.10.0
     # via
@@ -284,7 +284,7 @@ lazy-loader==0.5
     # via scikit-image
 librt==0.8.1
     # via mypy
-lxml==6.0.2
+lxml==6.1.0
     # via dm-control
 markdown-it-py==4.0.0
     # via rich
@@ -401,7 +401,7 @@ peft==0.18.1
     # via lerobot
 pexpect==4.9.0
     # via ipython
-pillow==12.1.1
+pillow==12.2.0
     # via
     #   diffusers
     #   imageio
@@ -466,7 +466,7 @@ pygame==2.6.1
     #   gym-hil
     #   gym-pusht
     #   lerobot
-pygments==2.19.2
+pygments==2.20.0
     # via
     #   ipython
     #   ipython-pygments-lexers
@@ -643,7 +643,7 @@ torchdiffeq==0.2.5
     # via lerobot
 torchvision==0.25.0
     # via lerobot
-tornado==6.5.4
+tornado==6.5.5
     # via meshcat
 tqdm==4.67.3
     # via
@@ -694,7 +694,7 @@ tzdata==2025.3
     # via pandas
 u-msgpack-python==2.8.0
     # via meshcat
-urllib3==2.6.3
+urllib3==2.7.0
     # via
     #   requests
     #   sentry-sdk
