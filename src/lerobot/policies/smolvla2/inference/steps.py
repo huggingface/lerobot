@@ -368,6 +368,12 @@ class HighLevelSubtaskFwd(InferenceStep):
         msg = _generate_with_policy(
             self.policy, ctx, observation=observation, state=state, label="subtask gen"
         )
+        # Diagnostics: surface what the model is *actually* producing
+        # at chunk boundaries, even when the output gets rejected or
+        # repeats. Memorisation collapse looks like "same accepted
+        # subtask N times in a row" or "gibberish_count rising while
+        # current_subtask is stuck". The state panel renders these.
+        state["last_subtask_raw"] = msg or ""
         if msg and _looks_like_gibberish(msg):
             # Bump a counter so the operator can see the model is
             # struggling without spamming the log every tick. A first
@@ -385,6 +391,17 @@ class HighLevelSubtaskFwd(InferenceStep):
             if changed:
                 # Subtask change is a downstream trigger.
                 state.setdefault("events_this_tick", []).append("subtask_change")
+                state["subtask_repeat_count"] = 0
+            else:
+                # Same accepted string regenerated — memorisation tell.
+                # Once this counter climbs past a few, you're seeing
+                # the model unable to move past the current subtask
+                # despite the chunk having drained (visual scene may
+                # have changed but the LM is replaying training
+                # tokens).
+                state["subtask_repeat_count"] = (
+                    state.get("subtask_repeat_count", 0) + 1
+                )
         # Silently skip empty completions — common when the model
         # warms up or generates only EOS; logging it every tick at
         # ctrl_hz is just noise.
@@ -417,8 +434,14 @@ class MemoryUpdateFwd(InferenceStep):
         new_memory = _generate_with_policy(
             self.policy, ctx, observation=observation, state=state, label="memory gen"
         )
+        state["last_memory_raw"] = new_memory or ""
         if new_memory and _looks_like_gibberish(new_memory):
-            push_log(state, f"  [info] memory gen rejected (gibberish): {new_memory[:60]!r}")
+            count = state.get("memory_gibberish_count", 0) + 1
+            state["memory_gibberish_count"] = count
+            push_log(
+                state,
+                f"  [info] memory gen rejected (gibberish ×{count}): {new_memory[:60]!r}",
+            )
             return None
         if new_memory:
             set_if_changed(state, "current_memory", new_memory, label="memory")
@@ -456,7 +479,12 @@ class UserInterjectionFwd(InferenceStep):
             # re-trigger by typing again.
             return None
         if _looks_like_gibberish(out):
-            push_log(state, f"  [info] plan/say gen rejected (gibberish): {out[:60]!r}")
+            count = state.get("plan_gibberish_count", 0) + 1
+            state["plan_gibberish_count"] = count
+            push_log(
+                state,
+                f"  [info] plan/say gen rejected (gibberish ×{count}): {out[:60]!r}",
+            )
             return None
         # Heuristic split: model is trained to emit one assistant turn
         # carrying both plan text AND a `say` tool call. Look for a

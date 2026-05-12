@@ -883,6 +883,37 @@ def _make_state_panel_renderer(
             f"dispatched: {dispatched}    "
             f"pending tool calls: {pending}[/]"
         )
+
+        # Overfit / memorisation diagnostics. The high-level steps
+        # surface the raw generation each time they fire (even when
+        # rejected as gibberish or unchanged), plus repeat/rejection
+        # counters. Rule of thumb:
+        #
+        #   * subtask repeat ≥ ~5 and queue_len cycles fully → model
+        #     can't move past current subtask (memorised one phase
+        #     of the task — classic overfit signature)
+        #   * subtask gibberish climbing → LM head collapsed to
+        #     chat-template fragments / one-token salads
+        #   * last raw differs from accepted → at least the LM is
+        #     varying, the gibberish filter is doing its job
+        raw_subtask = st.get("last_subtask_raw")
+        sub_rep = int(st.get("subtask_repeat_count") or 0)
+        sub_gib = int(st.get("subtask_gibberish_count") or 0)
+        if raw_subtask is not None or sub_rep or sub_gib:
+            raw_display = (raw_subtask or "(empty)")[:80]
+            color = "yellow" if (sub_rep >= 3 or sub_gib >= 3) else "dim"
+            console.print(
+                f"  [{color}]subtask diag    repeat:{sub_rep}  "
+                f"gibberish:{sub_gib}  last_raw: {raw_display!r}[/]"
+            )
+
+        # Same diagnostics for memory and plan when available.
+        mem_gib = int(st.get("memory_gibberish_count") or 0)
+        plan_gib = int(st.get("plan_gibberish_count") or 0)
+        if mem_gib or plan_gib:
+            console.print(
+                f"  [dim]gen rejects     memory:{mem_gib}  plan:{plan_gib}[/]"
+            )
         console.rule(style="cyan")
         if robot_lines:
             for line in robot_lines:
@@ -938,6 +969,16 @@ def _silence_noisy_loggers() -> None:
         "filelock",
     ):
         logging.getLogger(name).setLevel(logging.WARNING)
+
+    # The robot's relative-goal-position clamp warning fires *every*
+    # dispatch tick on a memorised model — the LM is trying to jump
+    # the wrist far past where max_relative_target allows, so the
+    # warning floods the panel at ~30 Hz. Promote it from WARNING to
+    # DEBUG: the dispatch counter on the panel already tells the
+    # operator the loop is running, and the panel itself shows
+    # whether motion is happening. If anyone needs the per-action
+    # clamp detail, ``-v`` puts it back via DEBUG.
+    logging.getLogger("lerobot.robots.utils").setLevel(logging.ERROR)
 
 
 def main(argv: list[str] | None = None) -> int:
