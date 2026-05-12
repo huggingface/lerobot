@@ -1,6 +1,6 @@
 # Video encoding parameters
 
-When **video storage** is on, LeRobot stores each camera stream as an **MP4** file rather than saving **every timestep as its own image file**. **Video encoding compress across time**, which usually cuts **dataset size and I/O** compared to heaps of PNGs, and MP4 stays a **familiar format** for players and loaders. Incoding frames into a MP4 file is a full FFmpeg pipeline: choice of encoder, pixel format, GOP/keyframes, quality vs speed, and
+When **video storage** is on, LeRobot stores each camera stream as an **MP4** file rather than saving **one image file at every timestep**. **Video encoding compress across time**, which usually cuts **dataset size and I/O** compared to heaps of PNG, and MP4 stays a **familiar format** for players and loaders. Incoding frames into a MP4 file is a full FFmpeg pipeline: choice of encoder, pixel format, GOP/keyframes, quality vs speed, and
 optional extra encoder flags. **Many of those knobs are user-tunable** and are exposed on the dataset config as
 **`dataset.camera_encoder_config`** — a nested **`VideoEncoderConfig`** (`lerobot.datasets.video_utils.
 VideoEncoderConfig`) passed through **PyAV**.
