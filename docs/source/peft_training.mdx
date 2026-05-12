@@ -28,7 +28,8 @@ lerobot-train \
  --steps=100000 \
  --batch_size=32 \
  --peft.method_type=LORA \
- --peft.r=64
+ --peft.r=64 \
+ --peft.lora_alpha=64
 ```
 
 Note the `--peft.method_type` parameter that let's you select which PEFT method to use. Here we use
