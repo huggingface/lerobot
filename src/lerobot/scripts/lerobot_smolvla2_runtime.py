@@ -180,14 +180,19 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     p.add_argument(
-        "--max_action_norm",
-        dest="max_action_norm",
-        type=float,
+        "--robot.max_relative_target",
+        dest="robot_max_relative_target",
+        type=str,
         default=None,
         help=(
-            "Safety clip: reject any individual action whose L2 norm "
-            "exceeds this value. Default ``None`` = no clipping. Useful "
-            "as a kill-switch when bringing up a new robot/task pair."
+            "Safety clip on per-motor relative motion, passed through to "
+            "``RobotConfig.max_relative_target``. Accepts either a float "
+            "(applied to every motor — e.g. ``5.0`` degrees) or a JSON "
+            "object mapping motor names to caps "
+            "(e.g. ``'{\"shoulder_pan\": 5, \"gripper\": 30}'``). The "
+            "robot driver clips each commanded position relative to the "
+            "current measured position before sending — same kill-switch "
+            "``lerobot-record`` uses. Default ``None`` = no clipping."
         ),
     )
     p.add_argument(
@@ -213,7 +218,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Pocket-tts voice name (or path to a .wav for cloning).",
     )
     p.add_argument(
-        "--chunk_hz", type=float, default=4.0, help="Action-chunk generation rate."
+        "--chunk_hz",
+        type=float,
+        default=1.0,
+        help=(
+            "Action-chunk generation rate (Hz). Default ``1.0`` — one "
+            "new chunk per second. Lower = less inference cost / "
+            "smoother behaviour but longer reaction time to changes. "
+            "Higher = fresher actions / more inference cost; cap at "
+            "~1/(forward-pass latency)."
+        ),
     )
     p.add_argument(
         "--ctrl_hz", type=float, default=50.0, help="Action dispatch rate."
@@ -427,12 +441,16 @@ def _build_robot(
     robot_port: str | None,
     robot_id: str | None,
     robot_cameras_json: str | None,
+    robot_max_relative_target: str | None,
 ):
     """Build and connect a robot from CLI args.
 
     Mirrors how ``lerobot-record`` builds a robot but takes the args
     flat from argparse instead of through draccus, so the runtime
-    keeps its plain ``--key=value`` CLI surface.
+    keeps its plain ``--key=value`` CLI surface. ``max_relative_target``
+    is passed through to the RobotConfig — the driver itself clips each
+    commanded joint position relative to the current measured one
+    before issuing it on the bus.
     """
     import json  # noqa: PLC0415
 
@@ -453,6 +471,21 @@ def _build_robot(
         except json.JSONDecodeError as exc:
             raise ValueError(
                 f"--robot.cameras must be a JSON object, got {robot_cameras_json!r}: {exc}"
+            ) from exc
+    if robot_max_relative_target:
+        # Accept either a bare float (uniform cap) or a JSON object
+        # (per-motor cap). Matches ``RobotConfig.max_relative_target``'s
+        # ``float | dict[str, float] | None`` shape.
+        s = robot_max_relative_target.strip()
+        try:
+            if s.startswith("{"):
+                kwargs["max_relative_target"] = json.loads(s)
+            else:
+                kwargs["max_relative_target"] = float(s)
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise ValueError(
+                f"--robot.max_relative_target must be a float or JSON dict, "
+                f"got {robot_max_relative_target!r}: {exc}"
             ) from exc
     cfg = cls(**kwargs)
     robot = make_robot_from_config(cfg)
@@ -518,15 +551,15 @@ def _build_robot_action_executor(
     robot,
     postprocessor: Any,
     ds_meta: Any,
-    max_action_norm: float | None,
 ) -> Callable[[Any], None]:
     """Closure that postprocesses an action and dispatches to the robot.
 
     Mirrors ``lerobot-record``'s ``predict_action`` tail: postprocess
     (denormalise) → ``make_robot_action`` (tensor → ``{joint: value}``
-    dict) → ``robot.send_action(...)``. Optional safety clip on the
-    action's L2 norm acts as a kill switch when bringing up a new
-    robot/task pair.
+    dict) → ``robot.send_action(...)``. Safety clipping happens *inside*
+    ``robot.send_action`` via the driver's ``max_relative_target``
+    cap (passed in at ``RobotConfig`` construction time) — same place
+    ``lerobot-record`` enforces it.
     """
     import torch  # noqa: PLC0415
 
@@ -537,15 +570,6 @@ def _build_robot_action_executor(
             if postprocessor is not None:
                 action = postprocessor(action)
             if isinstance(action, torch.Tensor):
-                if max_action_norm is not None:
-                    norm = float(action.float().norm().item())
-                    if norm > max_action_norm:
-                        logger.warning(
-                            "action norm %.3f > max_action_norm=%.3f — "
-                            "rejecting tick",
-                            norm, max_action_norm,
-                        )
-                        return
                 if action.ndim > 1 and action.shape[0] == 1:
                     action = action.squeeze(0)
                 action_dict = make_robot_action(action, ds_meta.features)
@@ -745,6 +769,7 @@ def main(argv: list[str] | None = None) -> int:
             robot_port=args.robot_port,
             robot_id=args.robot_id,
             robot_cameras_json=args.robot_cameras,
+            robot_max_relative_target=args.robot_max_relative_target,
         )
         observation_provider = _build_robot_observation_provider(
             robot=robot,
@@ -756,7 +781,6 @@ def main(argv: list[str] | None = None) -> int:
             robot=robot,
             postprocessor=postprocessor,
             ds_meta=ds_meta,
-            max_action_norm=args.max_action_norm,
         )
     elif args.dataset_repo_id is not None:
         print(
