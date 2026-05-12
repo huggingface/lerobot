@@ -607,6 +607,7 @@ def _build_robot_observation_provider(
     # tightly on visual features, goes out of distribution and the
     # head's distribution at position 0 collapses to its dominant
     # mode (a memorised ``\n``-only run in this checkpoint).
+    _resize_logged = {"done": False}
     target_image_shapes: dict[str, tuple[int, int]] = {}
     if ds_features:
         for fkey, fmeta in ds_features.items():
@@ -658,11 +659,18 @@ def _build_robot_observation_provider(
                     if img.ndim != 3:
                         continue
                     cur_h, cur_w = img.shape[:2]
+                    if not _resize_logged["done"]:
+                        logger.warning(
+                            "camera %s: live=%dx%d, training=%dx%d (resize=%s)",
+                            cam_key, cur_h, cur_w, target_h, target_w,
+                            "yes" if (cur_h, cur_w) != (target_h, target_w) else "no — already matched",
+                        )
                     if (cur_h, cur_w) == (target_h, target_w):
                         continue
                     raw[cam_key] = _cv2.resize(
                         img, (target_w, target_h), interpolation=_cv2.INTER_AREA
                     )
+                _resize_logged["done"] = True
             except Exception as exc:  # noqa: BLE001
                 logger.warning("camera resize to dataset shape failed: %s", exc)
 
