@@ -170,18 +170,20 @@ def _build_text_batch(policy: Any, prompt_messages: list[dict[str, Any]]) -> dic
     if tokenizer.pad_token_id is None and tokenizer.eos_token_id is not None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    text_messages = [_strip_recipe_keys(m) for m in prompt_messages]
-    # SmolVLM's chat template iterates ``message['content']`` expecting
-    # a list of typed blocks (``[{type: 'text', text: ...}, ...]``).
-    # When ``content`` is a plain ``str`` it silently iterates characters,
-    # no branch matches, and *no content tokens are emitted* — the model
-    # receives only role markers and starts hallucinating ``Assistant:``
-    # fragments. Coerce string content to the list-of-blocks form the
-    # template expects.
-    for _m in text_messages:
-        _c = _m.get("content")
-        if isinstance(_c, str):
-            _m["content"] = [{"type": "text", "text": _c}]
+    # Reuse the *exact* normaliser that the training-time chat
+    # tokenizer step uses (``_strip_lerobot_blocks``). It handles all
+    # the cases the SmolVLM chat template expects:
+    #   * ``content: list[block]`` → keep text blocks, drop images
+    #   * ``content: None`` → ``[{type: text, text: ""}]``
+    #   * ``content: str`` / anything else → ``[{type: text, text: str(content)}]``
+    # Doing it any other way creates a training/inference mismatch in
+    # exactly the prompt shape the model was supervised on. Also
+    # strips ``stream`` / ``target`` recipe metadata.
+    from lerobot.policies.smolvla2.chat_processor_smolvla2 import (  # noqa: PLC0415
+        _strip_lerobot_blocks,
+    )
+
+    text_messages = [_strip_lerobot_blocks(m) for m in prompt_messages]
     encoded = tokenizer.apply_chat_template(
         text_messages,
         add_generation_prompt=True,
