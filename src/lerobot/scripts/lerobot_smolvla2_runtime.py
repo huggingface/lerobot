@@ -842,8 +842,11 @@ def _make_state_panel_renderer(
             else 0
         )
         pending = len(st.get("tool_calls_pending") or [])
+        dispatched = int(st.get("actions_dispatched") or 0)
         console.print(
-            f"  [dim]queued actions: {queue_len}    pending tool calls: {pending}[/]"
+            f"  [dim]queued actions: {queue_len}    "
+            f"dispatched: {dispatched}    "
+            f"pending tool calls: {pending}[/]"
         )
         console.rule(style="cyan")
         if robot_lines:

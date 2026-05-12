@@ -147,6 +147,11 @@ class DispatchAction(InferenceStep):
         action = queue.popleft() if hasattr(queue, "popleft") else queue.pop(0)
         if self.robot_executor is not None:
             self.robot_executor(action)
+        # Track lifetime dispatch count so the REPL panel can show
+        # whether the action loop is actually doing useful work, even
+        # while the text head produces gibberish (the typical real-
+        # robot failure mode for a memorised model).
+        state["actions_dispatched"] = state.get("actions_dispatched", 0) + 1
         return None
 
 
@@ -285,15 +290,25 @@ class HighLevelSubtaskFwd(InferenceStep):
             self.policy, ctx, observation=observation, state=state, label="subtask gen"
         )
         if msg and _looks_like_gibberish(msg):
-            push_log(state, f"  [info] subtask gen rejected (gibberish): {msg[:60]!r}")
+            # Bump a counter so the operator can see the model is
+            # struggling without spamming the log every tick. A first
+            # rejection still logs once so the failure is visible.
+            count = state.get("subtask_gibberish_count", 0) + 1
+            state["subtask_gibberish_count"] = count
+            if count == 1 or count % 30 == 0:
+                push_log(
+                    state,
+                    f"  [info] subtask gen rejected (gibberish ×{count}): {msg[:60]!r}",
+                )
             return None
         if msg:
             changed = set_if_changed(state, "current_subtask", msg, label="subtask")
             if changed:
                 # Subtask change is a downstream trigger.
                 state.setdefault("events_this_tick", []).append("subtask_change")
-        else:
-            push_log(state, "  [info] subtask gen produced no text this tick")
+        # Silently skip empty completions — common when the model
+        # warms up or generates only EOS; logging it every tick at
+        # ctrl_hz is just noise.
         return None
 
 
@@ -357,7 +372,9 @@ class UserInterjectionFwd(InferenceStep):
             self.policy, ctx, observation=observation, state=state, label="plan/say gen"
         )
         if not out:
-            push_log(state, "  [info] plan/say gen produced no text this tick")
+            # Don't log every empty completion — happens repeatedly on
+            # MPS during warm-up and floods the panel. The user can
+            # re-trigger by typing again.
             return None
         if _looks_like_gibberish(out):
             push_log(state, f"  [info] plan/say gen rejected (gibberish): {out[:60]!r}")
@@ -462,20 +479,22 @@ class DispatchToolCalls(InferenceStep):
 def _looks_like_gibberish(text: str) -> bool:
     """Heuristically detect generation that's clearly off the rails.
 
-    Memorised models can collapse to dominant-mode outputs (often the
-    JSON-token salad ``":":":":...`` from VQA training) when the prompt
-    drifts even slightly from training distribution. If we accept those
-    as new state, they pollute the next tick's prompt and cascade into
-    worse outputs. Reject anything that looks pathological:
+    Memorised models can collapse to dominant-mode outputs when the
+    prompt drifts even slightly from training distribution. Reject:
 
     * empty / whitespace-only
-    * mostly punctuation (``"``, ``:``, ``,``)
+    * too few alphabetic characters (mostly punctuation)
     * a single character repeated past the threshold
     * starts with ``":"`` and contains no letters
+    * too few unique tokens — e.g. ``"the"``, ``"the the the"``,
+      ``"Ass\\n::\\nthe"`` (the collapse seen on real-robot frames
+      where the model emits one or two memorised tokens repeatedly)
+    * chat-template fragment leakage (``Assistant:``, ``User:``,
+      ``Ass\\n``)
 
-    The thresholds are intentionally lenient — a real subtask like
-    ``"close the gripper"`` has ~70%+ alpha characters, while gibberish
-    like ``":":":"`` has ~0%.
+    Real subtasks look like ``"close the gripper to grasp the blue
+    cube"`` — multiple unique alphabetic tokens, no role-marker
+    fragments. Anything materially shorter than that is rejected.
     """
     if not text or not text.strip():
         return True
@@ -485,8 +504,21 @@ def _looks_like_gibberish(text: str) -> bool:
         return True
     if stripped.startswith('":') and stripped.count('"') > stripped.count(" "):
         return True
-    # Single repeating char: e.g. ``""""""``
+    # Single repeating char: e.g. ``""""""``.
     if len(set(stripped)) <= 2 and len(stripped) > 4:
+        return True
+    # Chat-template fragment leakage — the model emits ``Ass``,
+    # ``Assistant:``, ``User:``, often with extra newlines/colons.
+    # Reject if the cleaned text is mostly role-marker shards.
+    cleaned = stripped.replace("\n", " ").replace(":", " ")
+    for marker in ("Assistant", "User", "Ass "):
+        if marker in cleaned and len(cleaned.split()) < 4:
+            return True
+    # Too few unique alphabetic tokens — model stuck on ``the`` or
+    # similar memorised single-token continuations.
+    tokens = [t for t in cleaned.split() if any(c.isalpha() for c in t)]
+    unique_alpha = {t.lower() for t in tokens}
+    if len(unique_alpha) < 3 and len(stripped) < 80:
         return True
     return False
 
