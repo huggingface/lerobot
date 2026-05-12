@@ -494,11 +494,52 @@ def _build_robot(
         kwargs["id"] = robot_id
     if robot_cameras_json:
         try:
-            kwargs["cameras"] = json.loads(robot_cameras_json)
+            cameras_raw = json.loads(robot_cameras_json)
         except json.JSONDecodeError as exc:
             raise ValueError(
                 f"--robot.cameras must be a JSON object, got {robot_cameras_json!r}: {exc}"
             ) from exc
+        # ``RobotConfig`` expects ``cameras: dict[str, CameraConfig]`` —
+        # each inner value must be an actual ``CameraConfig`` subclass
+        # instance, not a raw dict. Look up the matching subclass via
+        # ``CameraConfig.get_choice_class(<type>)`` (registered by
+        # ``@CameraConfig.register_subclass`` decorators on each camera
+        # backend's config) and instantiate it. Mirror the lazy-import
+        # pattern from above so the registry is populated.
+        import lerobot.cameras as _cameras_pkg  # noqa: PLC0415
+        from lerobot.cameras import CameraConfig  # noqa: PLC0415
+
+        for _modinfo in pkgutil.iter_modules(_cameras_pkg.__path__):
+            if _modinfo.name.startswith("_"):
+                continue
+            try:
+                importlib.import_module(f"lerobot.cameras.{_modinfo.name}")
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("could not import lerobot.cameras.%s: %s", _modinfo.name, exc)
+
+        cameras: dict[str, Any] = {}
+        for cam_name, cam_dict in cameras_raw.items():
+            if not isinstance(cam_dict, dict):
+                raise ValueError(
+                    f"camera {cam_name!r} value must be a dict, got {cam_dict!r}"
+                )
+            cam_dict = dict(cam_dict)  # don't mutate caller's parsed JSON
+            cam_type = cam_dict.pop("type", None)
+            if cam_type is None:
+                raise ValueError(
+                    f"camera {cam_name!r} is missing a 'type' field "
+                    f"(e.g. 'opencv', 'intelrealsense')"
+                )
+            try:
+                cam_cls = CameraConfig.get_choice_class(cam_type)
+            except KeyError as exc:
+                available = sorted(CameraConfig._choice_registry.keys())
+                raise ValueError(
+                    f"camera {cam_name!r}: unknown type {cam_type!r}. "
+                    f"Available choices: {available}"
+                ) from exc
+            cameras[cam_name] = cam_cls(**cam_dict)
+        kwargs["cameras"] = cameras
     if robot_max_relative_target:
         # Accept either a bare float (uniform cap) or a JSON object
         # (per-motor cap). Matches ``RobotConfig.max_relative_target``'s
