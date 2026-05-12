@@ -28,7 +28,7 @@ import copy
 import json
 import logging
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -79,6 +79,7 @@ class PlannerConfig:
     max_steps: int | None
     render_videos: int
     log_every_steps: int
+    dump_search_images: bool
 
 
 @dataclass
@@ -108,6 +109,7 @@ class SimRollout:
     terminated: bool
     truncated: bool
     action_count: int
+    agent_positions: list[np.ndarray]
 
 
 @dataclass
@@ -117,6 +119,7 @@ class SearchNode:
     depth: int
     env_step: int
     root_actions: np.ndarray | None
+    root_candidate_index: int | None
     score: float
     success: bool
 
@@ -130,6 +133,15 @@ class EpisodeResult:
     success: bool
     steps: int
     video_path: str | None
+
+
+@dataclass
+class SearchChunkTrace:
+    candidate_index: int
+    points: list[np.ndarray]
+    score: float
+    is_original: bool
+    is_selected: bool = False
 
 
 def annotate_frame(frame: np.ndarray, lines: Sequence[str]) -> np.ndarray:
@@ -158,6 +170,82 @@ def annotate_frame(frame: np.ndarray, lines: Sequence[str]) -> np.ndarray:
             cv2.LINE_AA,
         )
     return annotated
+
+
+def save_search_debug_image(
+    *,
+    path: Path,
+    frame: np.ndarray,
+    traces: Sequence[SearchChunkTrace],
+    episode_index: int,
+    env_step: int,
+) -> None:
+    if not traces:
+        return
+
+    image = np.ascontiguousarray(frame.copy())
+    if image.dtype != np.uint8:
+        image = np.clip(image, 0, 255).astype(np.uint8)
+
+    height, width = image.shape[:2]
+    other_color = (170, 170, 170)
+    original_color = (20, 120, 255)
+    selected_color = (30, 220, 30)
+
+    def to_pixel(point: np.ndarray) -> tuple[int, int]:
+        x = int(np.clip(float(point[0]) / 512.0 * width, 0, width - 1))
+        y = int(np.clip(float(point[1]) / 512.0 * height, 0, height - 1))
+        return x, y
+
+    for trace in traces:
+        color = original_color if trace.is_original else other_color
+        draw_trace_dots(image, trace.points, color=color, radius=4, thickness=-1, to_pixel=to_pixel)
+
+    for trace in traces:
+        if trace.is_selected:
+            draw_trace_dots(
+                image,
+                trace.points,
+                color=selected_color,
+                radius=7,
+                thickness=2,
+                to_pixel=to_pixel,
+            )
+
+    selected = next((trace for trace in traces if trace.is_selected), None)
+    selected_label = "none" if selected is None else str(selected.candidate_index)
+    image = annotate_frame(
+        image,
+        [
+            f"episode={episode_index} step={env_step}",
+            f"chosen={selected_label} original=0 candidates={len(traces)}",
+            "green=chosen outline blue=original gray=other",
+        ],
+    )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not cv2.imwrite(str(path), cv2.cvtColor(image, cv2.COLOR_RGB2BGR)):
+        raise RuntimeError(f"Failed to write search debug image: {path}")
+
+
+def draw_trace_dots(
+    image: np.ndarray,
+    points: Sequence[np.ndarray],
+    *,
+    color: tuple[int, int, int],
+    radius: int,
+    thickness: int,
+    to_pixel: Callable[[np.ndarray], tuple[int, int]],
+) -> None:
+    if not points:
+        return
+    pixels = [to_pixel(point) for point in points]
+    for start, end in zip(pixels, pixels[1:], strict=False):
+        cv2.line(image, start, end, color=color, thickness=2, lineType=cv2.LINE_AA)
+    for point_ix, point in enumerate(pixels):
+        cv2.circle(image, point, radius, color, thickness=thickness, lineType=cv2.LINE_AA)
+        if point_ix == len(pixels) - 1:
+            cv2.circle(image, point, radius + 2, color, thickness=2, lineType=cv2.LINE_AA)
 
 
 class PushTStateAdapter:
@@ -331,17 +419,20 @@ class BeamTreePlanner:
         self.candidates = candidates
         self.scorer = scorer
         self.cfg = cfg
+        self.last_root_traces: list[SearchChunkTrace] = []
 
     def choose(
         self, observation: Mapping[str, Any], *, env_step: int, max_steps: int
     ) -> tuple[np.ndarray, dict[str, Any]]:
         root_state = self.adapter.snapshot()
+        self.last_root_traces = []
         root = SearchNode(
             state=root_state,
             observation=observation,
             depth=0,
             env_step=env_step,
             root_actions=None,
+            root_candidate_index=None,
             score=0.0,
             success=False,
         )
@@ -372,10 +463,14 @@ class BeamTreePlanner:
             fallback = self.policy.predict_chunk(observation, horizon=self.cfg.chunk_size)
             return fallback, {"reason": "fallback_policy_chunk", "expanded_nodes": expanded}
 
+        for trace in self.last_root_traces:
+            trace.is_selected = trace.candidate_index == best.root_candidate_index
+
         return best.root_actions, {
             "reason": "beam_search",
             "best_score": best.score,
             "best_depth": best.depth,
+            "selected_candidate_index": best.root_candidate_index,
             "expanded_nodes": expanded,
             "selected_chunk_len": int(best.root_actions.shape[0]),
         }
@@ -386,7 +481,7 @@ class BeamTreePlanner:
         action_candidates = self.candidates.make(policy_chunk)
 
         children: list[SearchNode] = []
-        for actions in action_candidates:
+        for candidate_index, actions in enumerate(action_candidates):
             self.adapter.restore(node.state)
             rollout = rollout_actions(
                 adapter=self.adapter,
@@ -395,6 +490,15 @@ class BeamTreePlanner:
                 max_steps=max_steps,
             )
             score = self.scorer.score(rollout)
+            if node.root_actions is None:
+                self.last_root_traces.append(
+                    SearchChunkTrace(
+                        candidate_index=candidate_index,
+                        points=rollout.agent_positions,
+                        score=score,
+                        is_original=candidate_index == 0,
+                    )
+                )
             children.append(
                 SearchNode(
                     state=rollout.state,
@@ -402,6 +506,9 @@ class BeamTreePlanner:
                     depth=node.depth + 1,
                     env_step=node.env_step + rollout.action_count,
                     root_actions=actions if node.root_actions is None else node.root_actions,
+                    root_candidate_index=(
+                        candidate_index if node.root_candidate_index is None else node.root_candidate_index
+                    ),
                     score=score,
                     success=rollout.success,
                 )
@@ -424,11 +531,14 @@ def rollout_actions(
     terminated = False
     truncated = False
     success = False
+    agent_positions: list[np.ndarray] = []
     max_actions = min(len(actions), max(0, max_steps - start_step))
 
     for action in actions[:max_actions]:
         observation, reward, terminated, truncated, info = adapter.step(action)
         rewards.append(float(reward))
+        pos_agent = info.get("pos_agent", np.asarray(adapter.unwrapped.agent.position))
+        agent_positions.append(np.asarray(pos_agent, dtype=np.float32).copy())
         success = success or bool(info.get("is_success", False))
         if terminated or truncated:
             break
@@ -448,6 +558,7 @@ def rollout_actions(
         terminated=terminated,
         truncated=truncated,
         action_count=len(rewards),
+        agent_positions=agent_positions,
     )
 
 
@@ -505,6 +616,14 @@ def parse_args() -> PlannerConfig:
         type=int,
         default=10,
         help="Print episode progress every N committed environment steps. Use 1 for detailed progress.",
+    )
+    parser.add_argument(
+        "--dump-search-images",
+        "--dump_search_images",
+        dest="dump_search_images",
+        type=str_to_bool,
+        default=False,
+        help="Write one PNG per planning call with root action-chunk dot trajectories.",
     )
 
     args = parser.parse_args()
@@ -575,6 +694,7 @@ def run_episode(
     cfg: PlannerConfig,
     rng: np.random.Generator,
     video_dir: Path,
+    search_image_dir: Path,
 ) -> EpisodeResult:
     adapter = PushTStateAdapter(base_env)
     scorer = RolloutScorer(cfg.score_mode)
@@ -625,18 +745,31 @@ def run_episode(
 
     while env_step < max_steps and not (terminated or truncated or success):
         root_state = adapter.snapshot()
+        search_frame = adapter.render() if cfg.dump_search_images else None
         action_chunk, plan_info = planner.choose(observation, env_step=env_step, max_steps=max_steps)
         adapter.restore(root_state)
+        if cfg.dump_search_images and search_frame is not None:
+            search_image_path = (
+                search_image_dir / f"episode_{episode_index:03d}" / f"step_{env_step:05d}.png"
+            )
+            save_search_debug_image(
+                path=search_image_path,
+                frame=search_frame,
+                traces=planner.last_root_traces,
+                episode_index=episode_index,
+                env_step=env_step,
+            )
 
         commit_count = min(cfg.execute_steps, len(action_chunk), max_steps - env_step)
         if env_step == 0 or env_step % cfg.log_every_steps == 0:
             LOGGER.info(
-                "episode=%s step=%s/%s planning_done reason=%s best_score=%s expanded_nodes=%s",
+                "episode=%s step=%s/%s planning_done reason=%s best_score=%s selected=%s expanded_nodes=%s",
                 episode_index,
                 env_step,
                 max_steps,
                 plan_info.get("reason"),
                 plan_info.get("best_score"),
+                plan_info.get("selected_candidate_index"),
                 plan_info.get("expanded_nodes"),
             )
         for action_ix, action in enumerate(action_chunk[:commit_count]):
@@ -728,6 +861,7 @@ def main() -> None:
                 cfg=cfg,
                 rng=rng,
                 video_dir=cfg.output_dir / "videos",
+                search_image_dir=cfg.output_dir / "search_images",
             )
             results.append(result)
             LOGGER.info(

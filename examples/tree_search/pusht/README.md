@@ -26,6 +26,11 @@ Useful knobs:
 - `--depth`: number of chunk levels to search.
 - `--beam-width`: number of nodes kept after each level.
 - `--execute-steps`: number of actions from the selected root chunk to commit before replanning.
+- `--dump-search-images=true`: save one PNG per planning call under
+  `OUTPUT_DIR/search_images/episode_XXX/step_YYYYY.png`. Each image overlays
+  candidate action chunks as dots at the agent position after each hypothetical
+  action. Blue is the original policy chunk, gray is noisy candidates, and the
+  chosen root chunk has a green outline.
 
 This is intended for PushT simulation only. Real robots cannot be cloned and
 restored without a separate learned or analytic forward model.
