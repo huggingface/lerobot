@@ -28,13 +28,14 @@ import copy
 import json
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 import gymnasium as gym
+import cv2
 import numpy as np
 import torch
 
@@ -129,6 +130,34 @@ class EpisodeResult:
     success: bool
     steps: int
     video_path: str | None
+
+
+def annotate_frame(frame: np.ndarray, lines: Sequence[str]) -> np.ndarray:
+    annotated = np.ascontiguousarray(frame.copy())
+    if annotated.dtype != np.uint8:
+        annotated = np.clip(annotated, 0, 255).astype(np.uint8)
+
+    pad = 8
+    line_height = 22
+    box_height = pad * 2 + line_height * len(lines)
+    box_width = min(annotated.shape[1], 360)
+    overlay = annotated.copy()
+    cv2.rectangle(overlay, (0, 0), (box_width, box_height), (0, 0, 0), thickness=-1)
+    cv2.addWeighted(overlay, 0.55, annotated, 0.45, 0, annotated)
+
+    for line_ix, line in enumerate(lines):
+        y = pad + 16 + line_ix * line_height
+        cv2.putText(
+            annotated,
+            line,
+            (pad, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.52,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
+    return annotated
 
 
 class PushTStateAdapter:
@@ -577,7 +606,16 @@ def run_episode(
     frames: list[np.ndarray] = []
     should_render = episode_index < cfg.render_videos
     if should_render:
-        frames.append(adapter.render())
+        frames.append(
+            annotate_frame(
+                adapter.render(),
+                [
+                    "Search: On",
+                    f"episode={episode_index} step=0/{max_steps}",
+                    "reset",
+                ],
+            )
+        )
 
     rewards: list[float] = []
     success = False
@@ -601,13 +639,22 @@ def run_episode(
                 plan_info.get("best_score"),
                 plan_info.get("expanded_nodes"),
             )
-        for action in action_chunk[:commit_count]:
+        for action_ix, action in enumerate(action_chunk[:commit_count]):
             observation, reward, terminated, truncated, info = adapter.step(action)
             rewards.append(float(reward))
             success = success or bool(info.get("is_success", False))
             env_step += 1
             if should_render:
-                frames.append(adapter.render())
+                frames.append(
+                    annotate_frame(
+                        adapter.render(),
+                        [
+                            f"Search: {'On' if action_ix == 0 else 'Off'}",
+                            f"episode={episode_index} step={env_step}/{max_steps}",
+                            f"reward={reward:.3f} coverage={float(info.get('coverage', 0.0)):.3f}",
+                        ],
+                    )
+                )
             if env_step >= max_steps or terminated or truncated or success:
                 break
         if env_step == 0 or env_step % cfg.log_every_steps == 0 or terminated or truncated or success:
