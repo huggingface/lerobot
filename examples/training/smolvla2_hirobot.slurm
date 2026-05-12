@@ -48,7 +48,7 @@ echo "  GPUs:         $NUM_PROCESSES"
 echo "  batch:        $BATCH_SIZE / GPU (global=$((NUM_PROCESSES * BATCH_SIZE)))"
 echo "  steps:        $STEPS"
 echo "  output:       $OUTPUT_DIR"
-echo "  augmentation: image_transforms ON, prompt dropout {plan:0.15 memory:0.15 subtask:0.20}"
+echo "  augmentation: image_transforms ON, prompt dropout {plan:0.50 memory:0.50 subtask:0.20}"
 
 accelerate launch --multi_gpu --num_processes="$NUM_PROCESSES" \
     -m lerobot.scripts.lerobot_train \
@@ -75,6 +75,6 @@ accelerate launch --multi_gpu --num_processes="$NUM_PROCESSES" \
     --dataset.image_transforms.enable=true \
     --dataset.image_transforms.max_num_transforms=3 \
     --dataset.image_transforms.random_order=true \
-    --policy.plan_dropout_prob=0.15 \
-    --policy.memory_dropout_prob=0.15 \
+    --policy.plan_dropout_prob=0.50 \
+    --policy.memory_dropout_prob=0.50 \
     --policy.subtask_dropout_prob=0.20
