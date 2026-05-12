@@ -717,20 +717,26 @@ def _control_context_messages(
 
 
 def _msgs_for_subtask(state: dict[str, Any]) -> list[dict[str, Any]]:
-    """``high_level_subtask`` recipe layout."""
+    """``high_level_subtask`` recipe layout (v2 — predict current subtask).
+
+    The training-time recipe was changed to supervise the model on the
+    *current* active subtask span at every frame, not the next-span text
+    only at transitions. So the inference-time prompt no longer feeds a
+    "Current subtask: X" user message — that would be circular (we'd be
+    telling the model the answer). The model now decides the subtask
+    purely from the task + plan + memory context plus the visual prefix.
+
+    Transition detection moves into the runtime: when the predicted
+    subtask differs from ``state['current_subtask']``, fire the
+    ``subtask_change`` event so memory updates. Same downstream signal
+    as before, just produced by an always-non-empty supervision target.
+    """
     head_parts = [state.get("task") or ""]
     if state.get("current_plan"):
         head_parts.append(f"Plan: {state['current_plan']}")
     if state.get("current_memory"):
         head_parts.append(f"Memory: {state['current_memory']}")
-    msgs: list[dict[str, Any]] = [
-        {"role": "user", "content": "\n".join(head_parts)}
-    ]
-    if state.get("current_subtask"):
-        msgs.append(
-            {"role": "user", "content": f"Current subtask: {state['current_subtask']}"}
-        )
-    return msgs
+    return [{"role": "user", "content": "\n".join(head_parts)}]
 
 
 def _msgs_for_memory(state: dict[str, Any]) -> list[dict[str, Any]]:

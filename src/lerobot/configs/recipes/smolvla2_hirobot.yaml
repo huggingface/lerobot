@@ -41,14 +41,33 @@ blend:
       - {role: user, content: "${interjection}", stream: high_level, if_present: interjection}
       - {role: assistant, content: "${current_plan}", stream: high_level, target: true, if_present: current_plan, tool_calls_from: speech}
 
+  # PR3 Hi-Robot v2: supervise the high-level head with the *current*
+  # active subtask, not the *next*. Pi 0.5 / Pi 0.7 both do this: at every
+  # frame the assistant target is "what is the robot doing right now"
+  # grounded in the current image + state + context, so the supervision
+  # target is always a non-empty span string.
+  #
+  # The original target was ``nth_next(style=subtask, offset=1)`` — at
+  # most frames within a single span this resolves to the next-span
+  # string (fine), but on the LAST span of an episode it resolves to
+  # empty/None. The recipe had no ``if_present`` guard on the target,
+  # so the renderer emitted an empty assistant turn and cross-entropy
+  # ended up supervising the chat-template's structural newlines.
+  # Across a dataset annotated this way, the LM head's argmax at
+  # position 0 collapses to ``\n`` whenever no transition is happening
+  # (which is most of the time). At inference: head silently emits
+  # newlines every chunk boundary while the action expert keeps working.
+  #
+  # With ``${subtask}`` (binds to ``active_at(t, style=subtask)``) the
+  # target is the current span's text — always non-empty, scene-
+  # grounded. The runtime detects subtask transitions by comparing the
+  # predicted subtask string to the last known one, the same way Pi 0.5
+  # does. No information loss.
   high_level_subtask:
     weight: 0.15
-    bindings:
-      next_subtask: "nth_next(style=subtask, offset=1)"
     messages:
       - {role: user, content: "${task}\nPlan: ${plan}\nMemory: ${memory}", stream: high_level}
-      - {role: user, content: "Current subtask: ${subtask}", stream: high_level, if_present: subtask}
-      - {role: assistant, content: "${next_subtask}", stream: high_level, target: true}
+      - {role: assistant, content: "${subtask}", stream: high_level, target: true, if_present: subtask}
 
   low_level_execution:
     weight: 0.35
