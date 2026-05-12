@@ -776,8 +776,28 @@ def _run_autonomous(
             lower = line.lower()
             if lower in {"stop", "quit", "exit"}:
                 break
+            # ``task: <text>`` always overrides the active task — both
+            # at first set and to switch tasks mid-run. Without the
+            # prefix and with a task already set, an utterance becomes
+            # either a VQA query (ends in ``?``) or an interjection
+            # (the user_interjection_response recipe — generates a
+            # fresh plan + ``<say>`` paired with the new instruction).
+            # Typing a rephrasing of the current task as an
+            # interjection is the trained way to redirect without
+            # resetting the high-level plan from scratch.
+            if lower.startswith("task:"):
+                new_task = line[5:].strip()
+                if new_task:
+                    runtime.set_task(new_task)
+                    # Clear stale plan/memory/subtask so the next
+                    # high-level pass regenerates from the new task
+                    # rather than carrying over context from the old.
+                    runtime.state["current_plan"] = None
+                    runtime.state["current_memory"] = None
+                    runtime.state["current_subtask"] = None
+                continue
             if not runtime.state.get("task"):
-                runtime.set_task(line[5:].strip() if lower.startswith("task:") else line)
+                runtime.set_task(line)
                 continue
             if lower.endswith("?"):
                 runtime.state["recent_vqa_query"] = line
@@ -1083,9 +1103,15 @@ def _run_repl(runtime: Any, *, initial_task: str | None, max_ticks: int | None) 
 
             # Inject the user input as the right kind of event,
             # then run a single pipeline tick to consume it.
-            if not runtime.state.get("task"):
-                task = line[5:].strip() if lower.startswith("task:") else line
-                runtime.set_task(task)
+            if lower.startswith("task:"):
+                new_task = line[5:].strip()
+                if new_task:
+                    runtime.set_task(new_task)
+                    runtime.state["current_plan"] = None
+                    runtime.state["current_memory"] = None
+                    runtime.state["current_subtask"] = None
+            elif not runtime.state.get("task"):
+                runtime.set_task(line)
             elif lower.endswith("?"):
                 runtime.state["recent_vqa_query"] = line
                 runtime.state.setdefault("events_this_tick", []).append(
