@@ -8,7 +8,7 @@
   - local: il_robots
     title: Imitation Learning for Robots
   - local: bring_your_own_policies
-    title: Bring Your Own Policies
+    title: Adding a Policy
   - local: integrate_hardware
     title: Bring Your Own Hardware
   - local: hilserl
@@ -24,6 +24,12 @@
   - local: rename_map
     title: Using Rename Map and Empty Cameras
   title: "Tutorials"
+- sections:
+  - local: hardware_guide
+    title: Compute Hardware Guide
+  - local: torch_accelerators
+    title: PyTorch accelerators
+  title: "Compute & Hardware"
 - sections:
   - local: lerobot-dataset-v3
     title: Using LeRobotDataset
@@ -47,6 +53,8 @@
     title: π₀-FAST (Pi0Fast)
   - local: pi05
     title: π₀.₅ (Pi05)
+  - local: eo1
+    title: EO-1
   - local: groot
     title: NVIDIA GR00T N1.5
   - local: xvla
@@ -61,6 +69,8 @@
     title: SARM
   title: "Reward Models"
 - sections:
+  - local: inference
+    title: Policy Deployment (lerobot-rollout)
   - local: async
     title: Use Async Inference
   - local: rtc
@@ -77,10 +87,22 @@
     title: Adding a New Benchmark
   - local: libero
     title: LIBERO
+  - local: libero_plus
+    title: LIBERO-plus
   - local: metaworld
     title: Meta-World
+  - local: robotwin
+    title: RoboTwin 2.0
+  - local: robocasa
+    title: RoboCasa365
+  - local: robocerebra
+    title: RoboCerebra
+  - local: robomme
+    title: RoboMME
   - local: envhub_isaaclab_arena
     title: NVIDIA IsaacLab Arena Environments
+  - local: vlabench
+    title: VLABench
   title: "Benchmarks"
 - sections:
   - local: introduction_processors
@@ -126,10 +148,6 @@
   - local: cameras
     title: Cameras
   title: "Sensors"
-- sections:
-  - local: torch_accelerators
-    title: PyTorch accelerators
-  title: "Supported Hardware"
 - sections:
   - local: notebooks
     title: Notebooks

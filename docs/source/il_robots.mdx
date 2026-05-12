@@ -509,121 +509,42 @@ hf upload ${HF_USER}/act_so101_test${CKPT} \
 
 ## Run inference and evaluate your policy
 
-You can use the `record` script from [`lerobot-record`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/scripts/lerobot_record.py) with a policy checkpoint as input, to run inference and evaluate your policy. For instance, run this command or API example to run inference and record 10 evaluation episodes:
+Use `lerobot-rollout` to deploy a trained policy on your robot. You can choose different strategies depending on your needs:
 
 <hfoptions id="eval">
-<hfoption id="Command">
+<hfoption id="Base mode (no recording)">
 ```bash
-lerobot-record  \
+lerobot-rollout \
+  --strategy.type=base \
+  --policy.path=${HF_USER}/my_policy \
   --robot.type=so100_follower \
   --robot.port=/dev/ttyACM1 \
   --robot.cameras="{ up: {type: opencv, index_or_path: /dev/video10, width: 640, height: 480, fps: 30}, side: {type: intelrealsense, serial_number_or_name: 233522074606, width: 640, height: 480, fps: 30}}" \
-  --robot.id=my_awesome_follower_arm \
-  --display_data=false \
-  --dataset.repo_id=${HF_USER}/eval_so100 \
-  --dataset.single_task="Put lego brick into the transparent box" \
-  --dataset.streaming_encoding=true \
-  --dataset.encoder_threads=2 \
-  # --dataset.vcodec=auto \
-  # <- Teleop optional if you want to teleoperate in between episodes \
-  # --teleop.type=so100_leader \
-  # --teleop.port=/dev/ttyACM0 \
-  # --teleop.id=my_awesome_leader_arm \
-  --policy.path=${HF_USER}/my_policy
+  --task="Put lego brick into the transparent box" \
+  --duration=60
 ```
 </hfoption>
-<hfoption id="API example">
-
-<!-- prettier-ignore-start -->
-```python
-from lerobot.cameras.opencv import OpenCVCameraConfig
-from lerobot.datasets import LeRobotDataset
-from lerobot.utils.feature_utils import hw_to_dataset_features
-from lerobot.policies.act import ACTPolicy
-from lerobot.policies import make_pre_post_processors
-from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
-from lerobot.scripts.lerobot_record import record_loop
-from lerobot.common.control_utils import init_keyboard_listener
-from lerobot.utils.utils import log_say
-from lerobot.utils.visualization_utils import init_rerun
-
-
-NUM_EPISODES = 5
-FPS = 30
-EPISODE_TIME_SEC = 60
-TASK_DESCRIPTION = "My task description"
-HF_MODEL_ID = "<hf_username>/<model_repo_id>"
-HF_DATASET_ID = "<hf_username>/<eval_dataset_repo_id>"
-
-# Create the robot configuration
-camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
-robot_config = SO100FollowerConfig(
-    port="/dev/tty.usbmodem58760434471", id="my_awesome_follower_arm", cameras=camera_config
-)
-
-# Initialize the robot
-robot = SO100Follower(robot_config)
-
-# Initialize the policy
-policy = ACTPolicy.from_pretrained(HF_MODEL_ID)
-
-# Configure the dataset features
-action_features = hw_to_dataset_features(robot.action_features, "action")
-obs_features = hw_to_dataset_features(robot.observation_features, "observation")
-dataset_features = {**action_features, **obs_features}
-
-# Create the dataset
-dataset = LeRobotDataset.create(
-    repo_id=HF_DATASET_ID,
-    fps=FPS,
-    features=dataset_features,
-    robot_type=robot.name,
-    use_videos=True,
-    image_writer_threads=4,
-)
-
-# Initialize the keyboard listener and rerun visualization
-_, events = init_keyboard_listener()
-init_rerun(session_name="recording")
-
-# Connect the robot
-robot.connect()
-
-preprocessor, postprocessor = make_pre_post_processors(
-    policy_cfg=policy,
-    pretrained_path=HF_MODEL_ID,
-    dataset_stats=dataset.meta.stats,
-)
-
-for episode_idx in range(NUM_EPISODES):
-    log_say(f"Running inference, recording eval episode {episode_idx + 1} of {NUM_EPISODES}")
-
-    # Run the policy inference loop
-    record_loop(
-        robot=robot,
-        events=events,
-        fps=FPS,
-        policy=policy,
-        preprocessor=preprocessor,
-        postprocessor=postprocessor,
-        dataset=dataset,
-        control_time_s=EPISODE_TIME_SEC,
-        single_task=TASK_DESCRIPTION,
-        display_data=True,
-    )
-
-    dataset.save_episode()
-
-# Clean up
-robot.disconnect()
-dataset.push_to_hub()
+<hfoption id="Sentry mode (with recording)">
+```bash
+lerobot-rollout \
+  --strategy.type=sentry \
+  --strategy.upload_every_n_episodes=5 \
+  --policy.path=${HF_USER}/my_policy \
+  --robot.type=so100_follower \
+  --robot.port=/dev/ttyACM1 \
+  --robot.cameras="{ up: {type: opencv, index_or_path: /dev/video10, width: 640, height: 480, fps: 30}, side: {type: intelrealsense, serial_number_or_name: 233522074606, width: 640, height: 480, fps: 30}}" \
+  --dataset.repo_id=${HF_USER}/eval_so100 \
+  --dataset.single_task="Put lego brick into the transparent box" \
+  --duration=600
 ```
-<!-- prettier-ignore-end -->
-
 </hfoption>
 </hfoptions>
 
-As you can see, it's almost the same command as previously used to record your training dataset. Two things changed:
+The `--strategy.type` flag selects the execution mode:
 
-1. There is an additional `--control.policy.path` argument which indicates the path to your policy checkpoint with (e.g. `outputs/train/eval_act_so101_test/checkpoints/last/pretrained_model`). You can also use the model repository if you uploaded a model checkpoint to the hub (e.g. `${HF_USER}/act_so101_test`).
-2. The name of dataset begins by `eval` to reflect that you are running inference (e.g. `${HF_USER}/eval_act_so101_test`).
+- `base`: Autonomous rollout with no data recording (useful for quick evaluation)
+- `sentry`: Continuous recording with auto-upload (useful for large-scale evaluation)
+- `highlight`: Ring buffer recording with keystroke save (useful for capturing interesting events)
+- `dagger`: Human-in-the-loop data collection (see [HIL Data Collection](./hil_data_collection))
+
+All strategies support `--inference.type=rtc` for smooth execution with slow VLA models (Pi0, Pi0.5, SmolVLA).

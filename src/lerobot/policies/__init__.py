@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from lerobot.utils.action_interpolator import ActionInterpolator as ActionInterpolator
+
 from .act.configuration_act import ACTConfig as ACTConfig
 from .diffusion.configuration_diffusion import DiffusionConfig as DiffusionConfig
+from .eo1.configuration_eo1 import EO1Config as EO1Config
 from .factory import get_policy_class, make_policy, make_policy_config, make_pre_post_processors
 from .groot.configuration_groot import GrootConfig as GrootConfig
 from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig as MultiTaskDiTConfig
@@ -21,10 +24,7 @@ from .pi0.configuration_pi0 import PI0Config as PI0Config
 from .pi0_fast.configuration_pi0_fast import PI0FastConfig as PI0FastConfig
 from .pi05.configuration_pi05 import PI05Config as PI05Config
 from .pretrained import PreTrainedPolicy as PreTrainedPolicy
-from .rtc import ActionInterpolator as ActionInterpolator
 from .sac.configuration_sac import SACConfig as SACConfig
-from .sac.reward_model.configuration_classifier import RewardClassifierConfig as RewardClassifierConfig
-from .sarm.configuration_sarm import SARMConfig as SARMConfig
 from .smolvla.configuration_smolvla import SmolVLAConfig as SmolVLAConfig
 from .tdmpc.configuration_tdmpc import TDMPCConfig as TDMPCConfig
 from .utils import make_robot_action, prepare_observation_for_inference
@@ -42,12 +42,11 @@ __all__ = [
     "DiffusionConfig",
     "GrootConfig",
     "MultiTaskDiTConfig",
+    "EO1Config",
     "PI0Config",
     "PI0FastConfig",
     "PI05Config",
-    "RewardClassifierConfig",
     "SACConfig",
-    "SARMConfig",
     "SmolVLAConfig",
     "TDMPCConfig",
     "VQBeTConfig",
