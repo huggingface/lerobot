@@ -1318,15 +1318,21 @@ def main(argv: list[str] | None = None) -> int:
             initial_task=args.task,
             max_ticks=args.max_ticks,
         )
-    # Fire the observation provider once at startup so the
-    # ``_log_obs_tensors_once`` diagnostic prints before the REPL
-    # blocks on stdin. The REPL otherwise only ticks on user input —
-    # useful for the train/inference tensor-comparison workflow.
+    # Fire one full pipeline tick at startup so the obs diagnostic
+    # *and* the subtask generation actually run before the REPL
+    # blocks on stdin. The REPL otherwise only ticks on user input,
+    # which made the dry-run bisection test (does the LM head produce
+    # text at start_frame=0?) require typing something. Doing
+    # ``step_once`` here means the diag row populates without any
+    # manual interaction.
     if observation_provider is not None:
         try:
-            _ = observation_provider()
+            startup_logs = runtime.step_once()
         except Exception as exc:  # noqa: BLE001
-            logger.warning("startup obs probe failed: %s", exc)
+            logger.warning("startup tick failed: %s", exc)
+            startup_logs = []
+        for line in startup_logs or []:
+            print(f"[smolvla2] {line}", flush=True)
     return _run_repl(runtime, initial_task=args.task, max_ticks=args.max_ticks)
 
 
