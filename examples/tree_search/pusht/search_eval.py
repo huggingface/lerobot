@@ -77,6 +77,7 @@ class PlannerConfig:
     score_mode: str
     max_steps: int | None
     render_videos: int
+    log_every_steps: int
 
 
 @dataclass
@@ -468,6 +469,14 @@ def parse_args() -> PlannerConfig:
     )
     parser.add_argument("--max-steps", "--max_steps", dest="max_steps", type=int, default=None)
     parser.add_argument("--render-videos", "--render_videos", dest="render_videos", type=int, default=1)
+    parser.add_argument(
+        "--log-every-steps",
+        "--log_every_steps",
+        dest="log_every_steps",
+        type=int,
+        default=10,
+        help="Print episode progress every N committed environment steps. Use 1 for detailed progress.",
+    )
 
     args = parser.parse_args()
     if args.episodes <= 0:
@@ -482,6 +491,8 @@ def parse_args() -> PlannerConfig:
         parser.error("--beam-width must be positive.")
     if args.num_candidates <= 0:
         parser.error("--num-candidates must be positive.")
+    if args.log_every_steps <= 0:
+        parser.error("--log-every-steps must be positive.")
 
     return PlannerConfig(**vars(args))
 
@@ -556,6 +567,12 @@ def run_episode(
     action_source.reset()
     observation, _ = base_env.reset(seed=episode_seed)
     max_steps = cfg.max_steps or int(base_env._max_episode_steps)
+    LOGGER.info(
+        "episode=%s seed=%s started max_steps=%s",
+        episode_index,
+        episode_seed,
+        max_steps,
+    )
 
     frames: list[np.ndarray] = []
     should_render = episode_index < cfg.render_videos
@@ -574,7 +591,16 @@ def run_episode(
         adapter.restore(root_state)
 
         commit_count = min(cfg.execute_steps, len(action_chunk), max_steps - env_step)
-        LOGGER.debug("episode=%s step=%s plan=%s", episode_index, env_step, plan_info)
+        if env_step == 0 or env_step % cfg.log_every_steps == 0:
+            LOGGER.info(
+                "episode=%s step=%s/%s planning_done reason=%s best_score=%s expanded_nodes=%s",
+                episode_index,
+                env_step,
+                max_steps,
+                plan_info.get("reason"),
+                plan_info.get("best_score"),
+                plan_info.get("expanded_nodes"),
+            )
         for action in action_chunk[:commit_count]:
             observation, reward, terminated, truncated, info = adapter.step(action)
             rewards.append(float(reward))
@@ -584,6 +610,17 @@ def run_episode(
                 frames.append(adapter.render())
             if env_step >= max_steps or terminated or truncated or success:
                 break
+        if env_step == 0 or env_step % cfg.log_every_steps == 0 or terminated or truncated or success:
+            LOGGER.info(
+                "episode=%s step=%s/%s reward=%.4f max_reward=%.4f coverage=%.4f success=%s",
+                episode_index,
+                env_step,
+                max_steps,
+                rewards[-1] if rewards else 0.0,
+                max(rewards) if rewards else 0.0,
+                float(info.get("coverage", 0.0)) if "info" in locals() else 0.0,
+                success,
+            )
 
     video_path = None
     if should_render and frames:
@@ -603,13 +640,26 @@ def run_episode(
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s", force=True)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
     cfg = parse_args()
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
     set_seed(cfg.seed)
     register_third_party_plugins()
 
     env_cfg = PushtEnv()
+    per_decision_rollouts = sum(cfg.beam_width**level for level in range(cfg.depth))
+    approximate_sim_steps = per_decision_rollouts * cfg.num_candidates * cfg.chunk_size
+    LOGGER.info(
+        "Loading policy and PushT env. Search cost is roughly %s simulated env steps per real decision "
+        "(depth=%s beam_width=%s num_candidates=%s chunk_size=%s).",
+        approximate_sim_steps,
+        cfg.depth,
+        cfg.beam_width,
+        cfg.num_candidates,
+        cfg.chunk_size,
+    )
     action_source, envs = load_policy_stack(cfg, env_cfg)
     vector_env = envs["pusht"][0]
     if not isinstance(vector_env, gym.vector.SyncVectorEnv) or vector_env.num_envs != 1:
