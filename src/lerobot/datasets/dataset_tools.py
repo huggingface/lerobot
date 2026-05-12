@@ -632,7 +632,8 @@ def _keep_episodes_from_video_with_av(
 
     # Convert fps to Fraction for PyAV compatibility.
     fps_fraction = Fraction(fps).limit_denominator(1000)
-    v_out = out.add_stream(camera_encoder_config.vcodec, rate=fps_fraction)
+    codec_options = camera_encoder_config.get_codec_options(as_strings=True)
+    v_out = out.add_stream(camera_encoder_config.vcodec, rate=fps_fraction, options=codec_options)
 
     # PyAV type stubs don't distinguish video streams from audio/subtitle streams.
     v_out.width = v_in.codec_context.width
