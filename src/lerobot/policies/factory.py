@@ -31,6 +31,8 @@ from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
+)
+from lerobot.processor.converters import (
     batch_to_transition,
     policy_action_to_transition,
     transition_to_batch,
@@ -55,6 +57,7 @@ from .pretrained import PreTrainedPolicy
 from .sac.configuration_sac import SACConfig
 from .smolvla.configuration_smolvla import SmolVLAConfig
 from .tdmpc.configuration_tdmpc import TDMPCConfig
+from .flow_matching.configuration_flow_matching import FlowMatchingConfig
 from .utils import validate_visual_features_consistency
 from .vqbet.configuration_vqbet import VQBeTConfig
 from .wall_x.configuration_wall_x import WallXConfig
@@ -179,6 +182,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
     """
     if policy_type == "tdmpc":
         return TDMPCConfig(**kwargs)
+    elif policy_type == "flow_matching":
+        return FlowMatchingConfig(**kwargs)
     elif policy_type == "diffusion":
         return DiffusionConfig(**kwargs)
     elif policy_type == "act":
@@ -311,6 +316,14 @@ def make_pre_post_processors(
         from .tdmpc.processor_tdmpc import make_tdmpc_pre_post_processors
 
         processors = make_tdmpc_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, FlowMatchingConfig):
+        from lerobot.policies.flow_matching.processor_flow_matching import make_flow_matching_pre_post_processors
+
+        processors = make_flow_matching_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
