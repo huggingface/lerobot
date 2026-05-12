@@ -171,6 +171,17 @@ def _build_text_batch(policy: Any, prompt_messages: list[dict[str, Any]]) -> dic
         tokenizer.pad_token = tokenizer.eos_token
 
     text_messages = [_strip_recipe_keys(m) for m in prompt_messages]
+    # SmolVLM's chat template iterates ``message['content']`` expecting
+    # a list of typed blocks (``[{type: 'text', text: ...}, ...]``).
+    # When ``content`` is a plain ``str`` it silently iterates characters,
+    # no branch matches, and *no content tokens are emitted* — the model
+    # receives only role markers and starts hallucinating ``Assistant:``
+    # fragments. Coerce string content to the list-of-blocks form the
+    # template expects.
+    for _m in text_messages:
+        _c = _m.get("content")
+        if isinstance(_c, str):
+            _m["content"] = [{"type": "text", "text": _c}]
     encoded = tokenizer.apply_chat_template(
         text_messages,
         add_generation_prompt=True,
