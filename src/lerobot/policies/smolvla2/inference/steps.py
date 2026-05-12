@@ -95,17 +95,16 @@ class LowLevelForward(InferenceStep):
             return None
 
         # SmolVLA produces *action chunks* (typically 50 steps via
-        # flow-matching). The expensive part is the chunk forward;
-        # popping one action per dispatch tick is essentially free.
-        # Only regenerate when the queue is low so we don't burn one
-        # full chunk forward per chunk_hz tick when most of the
-        # previous chunk is still buffered.
+        # flow-matching). Every step gets dispatched to the robot;
+        # popping one per dispatch tick is essentially free. Only
+        # generate a new chunk once the previous one has fully
+        # drained — this is the canonical "sense → think → act"
+        # loop. Refreshing while a chunk is still queued causes the
+        # new chunk to "telescope" past the old one (planned from an
+        # observation that's already 25+ steps stale by the time it
+        # starts dispatching).
         queue = state.setdefault("action_queue", [])
-        chunk_size = getattr(self.policy.config, "chunk_size", None) or getattr(
-            self.policy.config, "n_action_steps", 50
-        )
-        # Refresh threshold: keep at least half a chunk buffered.
-        if len(queue) > max(1, chunk_size // 2):
+        if len(queue) > 0:
             return None
 
         observation = self.observation_provider()
