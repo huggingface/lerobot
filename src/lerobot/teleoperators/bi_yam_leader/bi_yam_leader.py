@@ -84,6 +84,30 @@ class YamLeaderClient:
             raise RuntimeError("Client not connected")
         return self._client.get_observations().result()
 
+    def command_joint_pos(self, joint_pos: np.ndarray) -> None:
+        """Command joint positions to the leader arm.
+
+        Args:
+            joint_pos: Joint positions (6 joints, gripper is ignored)
+        """
+        if self._client is None:
+            raise RuntimeError("Client not connected")
+        # Strip gripper if included (leader arm only has 6 joints)
+        if len(joint_pos) > 6:
+            joint_pos = joint_pos[:6]
+        self._client.command_joint_pos(joint_pos)
+
+    def update_kp_kd(self, kp: np.ndarray, kd: np.ndarray) -> None:
+        """Update PD gains for the leader arm.
+
+        Args:
+            kp: Position gains (6 values)
+            kd: Derivative gains (6 values)
+        """
+        if self._client is None:
+            raise RuntimeError("Client not connected")
+        self._client.update_kp_kd(kp, kd)
+
     def get_gripper_from_encoder(self) -> float:
         """
         Try to get gripper state from teaching handle encoder button.
@@ -111,11 +135,16 @@ class BiYamLeader(Teleoperator):
     Bimanual Yam Arms leader (teleoperator) using the i2rt library.
 
     This teleoperator reads joint positions from two Yam leader arms (with teaching handles)
-    and provides them as actions for the follower robot.
+    and provides them as actions. It supports bilateral control where the leader arms can
+    receive position commands to mirror another robot's movements.
+
+    Bilateral control works by adjusting PD gains:
+    - Zero gains (kp=0, kd=0): Leader arms move freely with only gravity compensation
+    - Non-zero gains (kp>0): Leader arms track commanded positions with force proportional to kp
 
     Expected setup:
     - Two Yam leader arms connected via CAN interfaces with teaching handles
-    - Server processes running for each leader arm in read-only mode
+    - Server processes running for each leader arm exposing update_kp_kd method
     - Left leader arm server on port 5002 (default)
     - Right leader arm server on port 5001 (default)
 
@@ -139,6 +168,10 @@ class BiYamLeader(Teleoperator):
         # Store number of DOFs (will be set after connection)
         self._left_dofs = None
         self._right_dofs = None
+
+        # Store original kp values and bilateral control multiplier
+        self._original_kp = None
+        self.bilateral_kp = config.bilateral_kp
 
     @cached_property
     def action_features(self) -> dict[str, type]:
@@ -172,8 +205,9 @@ class BiYamLeader(Teleoperator):
 
     @cached_property
     def feedback_features(self) -> dict[str, type]:
-        """Yam leader arms don't support feedback."""
-        return {}
+        """Define feedback features - same as action features for position mirroring."""
+        # Feedback features match action features to allow leader to mirror robot position
+        return self.action_features
 
     @property
     def is_connected(self) -> bool:
@@ -209,6 +243,10 @@ class BiYamLeader(Teleoperator):
             del self.__dict__["action_features"]
 
         logger.info(f"Left leader arm DOFs: {self._left_dofs}, Right leader arm DOFs: {self._right_dofs}")
+
+        # Store a default kp value for bilateral control
+        self._original_kp = np.ones(6) * 10.0
+
         logger.info("Successfully connected to bimanual Yam leader arms")
 
     @property
@@ -250,8 +288,12 @@ class BiYamLeader(Teleoperator):
         if left_has_gripper:
             left_joint_pos = np.concatenate([left_joint_pos, left_obs["gripper_pos"]])
         else:
-            # Teaching handle: try to get gripper from encoder button
-            left_gripper = self.left_arm.get_gripper_from_encoder()
+            # Teaching handle: use io_inputs from already-fetched observations
+            # (avoids redundant RPC call via get_gripper_from_encoder)
+            if "io_inputs" in left_obs:
+                left_gripper = 0.0 if left_obs["io_inputs"][0] > 0.5 else 1.0
+            else:
+                left_gripper = 1.0  # Default to open
             left_joint_pos = np.concatenate([left_joint_pos, [left_gripper]])
             left_has_gripper = True
 
@@ -272,8 +314,11 @@ class BiYamLeader(Teleoperator):
         if right_has_gripper:
             right_joint_pos = np.concatenate([right_joint_pos, right_obs["gripper_pos"]])
         else:
-            # Teaching handle: try to get gripper from encoder button
-            right_gripper = self.right_arm.get_gripper_from_encoder()
+            # Teaching handle: use io_inputs from already-fetched observations
+            if "io_inputs" in right_obs:
+                right_gripper = 0.0 if right_obs["io_inputs"][0] > 0.5 else 1.0
+            else:
+                right_gripper = 1.0  # Default to open
             right_joint_pos = np.concatenate([right_joint_pos, [right_gripper]])
             right_has_gripper = True
 
@@ -289,13 +334,91 @@ class BiYamLeader(Teleoperator):
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
         """
-        Send feedback to leader arms (not supported for Yam teaching handles).
+        Command the leader arms to move to specified joint positions.
+
+        The tracking behavior depends on current PD gains:
+        - If gains are zero (kp=0): Commands have no effect, arms move freely
+        - If gains are non-zero (kp>0): Arms actively track commanded positions
 
         Args:
-            feedback: Dictionary with feedback values (ignored)
+            feedback: Dictionary with joint positions (matching feedback_features)
+                     Keys are "left_joint_X.pos", "right_joint_X.pos", etc.
         """
-        # Yam teaching handles are passive devices and don't support feedback
-        pass
+        if not feedback:
+            return
+
+        # Extract left arm positions
+        left_positions = []
+        for i in range(6):  # 6 joints per arm (excluding gripper)
+            key = f"left_joint_{i}.pos"
+            if key in feedback:
+                left_positions.append(feedback[key])
+
+        # Extract right arm positions
+        right_positions = []
+        for i in range(6):  # 6 joints per arm
+            key = f"right_joint_{i}.pos"
+            if key in feedback:
+                right_positions.append(feedback[key])
+
+        # Debug: Log first time to verify data format
+        if len(left_positions) == 6 and len(right_positions) == 6:
+            logger.debug(
+                f"Feedback received - Left: {left_positions[:2]}..., Right: {right_positions[:2]}..."
+            )
+        elif len(left_positions) == 0 and len(right_positions) == 0:
+            logger.warning(
+                f"No matching keys found in feedback. Available keys: {list(feedback.keys())[:5]}..."
+            )
+            return
+
+        # Send positions to leader arms to make them mirror the robot
+        if len(left_positions) == 6:
+            self.left_arm.command_joint_pos(np.array(left_positions))
+        if len(right_positions) == 6:
+            self.right_arm.command_joint_pos(np.array(right_positions))
+
+    def enable_torque(self) -> None:
+        """Put the leader into position-tracking mode (follows ``send_feedback`` goals).
+
+        Sets non-zero PD gains scaled by ``self.bilateral_kp`` so the leader arms
+        actively track commanded positions.
+        """
+        if self._original_kp is None:
+            logger.warning("Original kp not set, using default")
+            self._original_kp = np.ones(6) * 10.0
+
+        kp = self._original_kp * self.bilateral_kp
+        zero_gains = np.zeros(6)
+        try:
+            self.left_arm.update_kp_kd(kp, zero_gains)
+            self.right_arm.update_kp_kd(kp, zero_gains)
+
+            logger.info(f"Bilateral control enabled: kp={self.bilateral_kp}*original={kp[0]:.1f}")
+        except Exception as e:
+            logger.warning(f"Failed to enable bilateral control: {e}")
+
+    def disable_torque(self) -> None:
+        """Put the leader into free-movement mode (gravity compensation only).
+
+        Sets PD gains to zero and commands the current position as the reference so
+        the arms remain freely movable under gravity compensation.
+        """
+        zero_gains = np.zeros(6)
+        try:
+            # Update gains first (command_joint_pos copies gains into commands)
+            self.left_arm.update_kp_kd(zero_gains, zero_gains)
+            self.right_arm.update_kp_kd(zero_gains, zero_gains)
+
+            # Command current position as reference for gravity compensation
+            left_obs = self.left_arm.get_observations()
+            right_obs = self.right_arm.get_observations()
+            self.left_arm.command_joint_pos(left_obs["joint_pos"])
+            self.right_arm.command_joint_pos(right_obs["joint_pos"])
+
+            logger.info("Bilateral control disabled: arms free to move (kp=0, kd=0)")
+        except Exception as e:
+            logger.warning(f"Failed to disable bilateral control: {e}")
 
     def disconnect(self) -> None:
         """Disconnect from both leader arms."""
