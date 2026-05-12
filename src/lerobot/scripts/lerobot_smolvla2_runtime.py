@@ -629,21 +629,28 @@ def _build_robot_observation_provider(
             return None
 
         if preprocessor is not None:
-            transition: dict[str, Any] = {
-                TransitionKey.OBSERVATION.value: obs_tensors,
-                TransitionKey.ACTION.value: None,
-                TransitionKey.REWARD.value: None,
-                TransitionKey.DONE.value: None,
-                TransitionKey.TRUNCATED.value: None,
-                TransitionKey.INFO.value: None,
-                TransitionKey.COMPLEMENTARY_DATA.value: {},
+            # ``EnvTransition``'s TypedDict is declared with
+            # ``TransitionKey.OBSERVATION.value`` as keys, but every
+            # ProcessorStep in the pipeline does
+            # ``transition.get(TransitionKey.OBSERVATION)`` / indexes
+            # with the *enum member* — not the string ``.value``. Build
+            # the dict with enum keys so the steps actually find the
+            # observation.
+            transition: dict[Any, Any] = {
+                TransitionKey.OBSERVATION: obs_tensors,
+                TransitionKey.ACTION: None,
+                TransitionKey.REWARD: None,
+                TransitionKey.DONE: None,
+                TransitionKey.TRUNCATED: None,
+                TransitionKey.INFO: None,
+                TransitionKey.COMPLEMENTARY_DATA: {},
             }
             try:
                 transition = preprocessor(transition)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("preprocessor failed on robot observation: %s", exc)
                 return None
-            obs_tensors = transition.get(TransitionKey.OBSERVATION.value) or {}
+            obs_tensors = transition.get(TransitionKey.OBSERVATION) or {}
 
         observation = {
             k: v
