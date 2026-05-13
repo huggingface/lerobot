@@ -69,6 +69,7 @@ class LeRobotDatasetMetadata:
         revision: str | None = None,
         force_cache_sync: bool = False,
         metadata_buffer_size: int = 10,
+        token: str | bool | None = None,
     ):
         """Load or download metadata for an existing LeRobot dataset.
 
@@ -90,6 +91,9 @@ class LeRobotDatasetMetadata:
                 even when local files exist.
             metadata_buffer_size: Number of episode metadata records to buffer
                 in memory before flushing to parquet.
+            token: Hugging Face authentication token. Pass ``True`` to use the
+                stored token, a string for an explicit token, or ``None`` to let
+                the hub library resolve it automatically.
         """
         self.repo_id = repo_id
         self.revision = revision if revision else CODEBASE_VERSION
@@ -100,6 +104,7 @@ class LeRobotDatasetMetadata:
         self._metadata_buffer: list[dict] = []
         self._metadata_buffer_size = metadata_buffer_size
         self._finalized = False
+        self._token = token
 
         try:
             if force_cache_sync or (
@@ -109,7 +114,7 @@ class LeRobotDatasetMetadata:
             self._load_metadata()
         except (FileNotFoundError, NotADirectoryError):
             if is_valid_version(self.revision):
-                self.revision = get_safe_version(self.repo_id, self.revision)
+                self.revision = get_safe_version(self.repo_id, self.revision, token=self._token)
 
             self._pull_from_repo(allow_patterns="meta/")
             self._load_metadata()
@@ -227,6 +232,7 @@ class LeRobotDatasetMetadata:
                     cache_dir=HF_LEROBOT_HUB_CACHE,
                     allow_patterns=allow_patterns,
                     ignore_patterns=ignore_patterns,
+                    token=self._token,
                 )
             )
             return
@@ -239,6 +245,7 @@ class LeRobotDatasetMetadata:
             local_dir=self._requested_root,
             allow_patterns=allow_patterns,
             ignore_patterns=ignore_patterns,
+            token=self._token,
         )
         self.root = self._requested_root
 

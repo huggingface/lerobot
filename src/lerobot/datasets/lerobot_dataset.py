@@ -63,6 +63,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         streaming_encoding: bool = False,
         encoder_queue_maxsize: int = 30,
         encoder_threads: int | None = None,
+        token: str | bool | None = None,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -212,13 +213,18 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._batch_encoding_size = batch_encoding_size
         self._vcodec = resolve_vcodec(vcodec)
         self._encoder_threads = encoder_threads
+        self._token = token
 
         if self._requested_root is not None:
             self._requested_root.mkdir(exist_ok=True, parents=True)
 
         # Load metadata (sets self.root once from the resolved metadata root)
         self.meta = LeRobotDatasetMetadata(
-            self.repo_id, self._requested_root, self.revision, force_cache_sync=force_cache_sync
+            self.repo_id,
+            self._requested_root,
+            self.revision,
+            force_cache_sync=force_cache_sync,
+            token=self._token,
         )
         self.root = self.meta.root
         self.revision = self.meta.revision
@@ -255,7 +261,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Load actual data
         if force_cache_sync or not self.reader.try_load():
             if is_valid_version(self.revision):
-                self.revision = get_safe_version(self.repo_id, self.revision)
+                self.revision = get_safe_version(self.repo_id, self.revision, token=self._token)
             self._download(download_videos)
             self.reader.load_and_activate()
 
@@ -613,6 +619,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                     cache_dir=HF_LEROBOT_HUB_CACHE,
                     allow_patterns=files,
                     ignore_patterns=ignore_patterns,
+                    token=self._token,
                 )
             )
         else:
@@ -624,6 +631,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 local_dir=self._requested_root,
                 allow_patterns=files,
                 ignore_patterns=ignore_patterns,
+                token=self._token,
             )
             self.meta.root = self._requested_root
 

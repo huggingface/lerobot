@@ -285,11 +285,22 @@ def main():
         help="If set, display compressed images in Rerun instead of uncompressed ones.",
     )
 
+    parser.add_argument(
+        "--token",
+        type=str,
+        default=None,
+        help=(
+            "Hugging Face authentication token for accessing private or gated datasets. "
+            "Uses the stored token from `huggingface-cli login` when not provided."
+        ),
+    )
+
     args = parser.parse_args()
     kwargs = vars(args)
     repo_id = kwargs.pop("repo_id")
     root = kwargs.pop("root")
     tolerance_s = kwargs.pop("tolerance_s")
+    token = kwargs.pop("token")
 
     if kwargs["ws_port"] is not None:
         logging.warning(
@@ -300,7 +311,9 @@ def main():
 
     init_logging()
     logging.info("Loading dataset")
-    dataset = LeRobotDataset(repo_id, episodes=[args.episode_index], root=root, tolerance_s=tolerance_s)
+    dataset = LeRobotDataset(
+        repo_id, episodes=[args.episode_index], root=root, tolerance_s=tolerance_s, token=token
+    )
 
     visualize_dataset(dataset, **vars(args))
 
