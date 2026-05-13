@@ -1,28 +1,44 @@
-# SmolVLA2 Hi-Robot blend — three flavors:
+# SmolVLA2 Hi-Robot blend — π0.5-style split:
 #
-#   1. action_execution  — fused (task + plan + memory) prompt;
-#      supervises the current subtask (low_level: flow + text CE)
-#      and, at memory-boundary frames, the new memory too.
-#   2. plan_generation   — task → plan (text only). Trains the
-#      model to produce a plan from a bare task description so
-#      the runtime can call it at episode start / replanning.
-#   3. ask_vqa_{top,wrist} — text-only VQA on a camera image,
-#      gated by ``if_present`` so they only fire on annotated frames.
+#   The action expert is conditioned on (images, state, subtask)
+#   only — NOT on task / plan / memory. We achieve this by splitting
+#   the work across two main sub-recipes:
+#
+#   1. high_level_subtask  — text-only. Trains the LM head to predict
+#      the current subtask from (task + plan + memory). At a memory
+#      boundary, also predicts the new memory in the same forward.
+#   2. low_level_execution — action. Renders just the subtask as the
+#      language conditioning so the action expert's prefix is
+#      [images, subtask, state]. Flow loss + (redundant) text CE on
+#      the subtask itself.
+#   3. plan_generation     — text only. task → plan.
+#   4. ask_vqa_{top,wrist} — text only. camera-grounded VQA.
 
 blend:
 
-  action_execution:
-    weight: 0.75
+  high_level_subtask:
+    weight: 0.50
     bindings:
       new_memory: "emitted_at(t, style=memory)"
     messages:
       - role: user
         stream: high_level
         content: "${task}\nPlan: ${plan}\nMemory: ${memory}"
-      - {role: assistant, content: "${subtask}", stream: low_level, target: true, if_present: subtask}
-      # Boundary-frame tail: at a subtask transition, predict the
-      # new memory as a second assistant turn (same forward pass).
+      - {role: assistant, content: "${subtask}", stream: high_level, target: true, if_present: subtask}
+      # Boundary-frame tail: at a subtask transition, also predict
+      # the new memory in the same forward pass.
       - {role: assistant, content: "${new_memory}", stream: high_level, target: true, if_present: new_memory}
+
+  low_level_execution:
+    weight: 0.30
+    messages:
+      # Just the subtask in the prompt — π0.5 style. The action
+      # expert sees only [images, this subtask, state]. Marking the
+      # assistant target as ``stream: low_level`` triggers
+      # ``predict_actions=True`` so the flow loss fires; text CE on
+      # the subtask is a (small) redundant extra signal.
+      - {role: user, content: "${subtask}", stream: low_level, if_present: subtask}
+      - {role: assistant, content: "${subtask}", stream: low_level, target: true, if_present: subtask}
 
   plan_generation:
     weight: 0.10
@@ -33,7 +49,7 @@ blend:
       - {role: assistant, content: "${current_plan}", stream: high_level, target: true, if_present: current_plan}
 
   ask_vqa_top:
-    weight: 0.075
+    weight: 0.05
     bindings:
       vqa_query: "emitted_at(t, style=vqa, role=user, camera=observation.images.front)"
       vqa: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.front)"
@@ -47,7 +63,7 @@ blend:
       - {role: assistant, content: "${vqa}", stream: high_level, target: true, if_present: vqa}
 
   ask_vqa_wrist:
-    weight: 0.075
+    weight: 0.05
     bindings:
       vqa_query: "emitted_at(t, style=vqa, role=user, camera=observation.images.wrist)"
       vqa: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.wrist)"

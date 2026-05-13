@@ -8,18 +8,23 @@
 
 blend:
 
-  action_execution:
-    weight: 0.75
+  high_level_subtask:
+    weight: 0.50
     bindings:
       new_memory: "emitted_at(t, style=memory)"
     messages:
       - role: user
         stream: high_level
         content: "${task}\nPlan: ${plan}\nMemory: ${memory}"
-      - {role: assistant, content: "${subtask}", stream: low_level, target: true, if_present: subtask}
-      # Boundary-frame tail: at a subtask transition, predict the
-      # new memory as a second assistant turn (same forward pass).
+      - {role: assistant, content: "${subtask}", stream: high_level, target: true, if_present: subtask}
       - {role: assistant, content: "${new_memory}", stream: high_level, target: true, if_present: new_memory}
+
+  low_level_execution:
+    weight: 0.30
+    messages:
+      # Action expert prefix = [images, subtask, state] only — π0.5 style.
+      - {role: user, content: "${subtask}", stream: low_level, if_present: subtask}
+      - {role: assistant, content: "${subtask}", stream: low_level, target: true, if_present: subtask}
 
   plan_generation:
     weight: 0.10
@@ -30,7 +35,7 @@ blend:
       - {role: assistant, content: "${current_plan}", stream: high_level, target: true, if_present: current_plan}
 
   ask_vqa_top:
-    weight: 0.075
+    weight: 0.05
     bindings:
       vqa_query: "emitted_at(t, style=vqa, role=user, camera=observation.images.front)"
       vqa: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.front)"
@@ -44,7 +49,7 @@ blend:
       - {role: assistant, content: "${vqa}", stream: high_level, target: true, if_present: vqa}
 
   ask_vqa_wrist:
-    weight: 0.075
+    weight: 0.05
     bindings:
       vqa_query: "emitted_at(t, style=vqa, role=user, camera=observation.images.wrist)"
       vqa: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.wrist)"
