@@ -49,6 +49,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         repo_id: str,
         root: str | Path | None = None,
         episodes: list[int] | None = None,
+        episode_filter: Callable[[dict], bool] | None = None,
         image_transforms: Callable | None = None,
         delta_timestamps: dict[str, list[float]] | None = None,
         tolerance_s: float = 1e-4,
@@ -153,6 +154,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 ``$HF_LEROBOT_HOME/hub``.
             episodes (list[int] | None, optional): If specified, this will only load episodes specified by
                 their episode_index in this list. Defaults to None.
+            episode_filter (Callable[[dict], bool] | None, optional): Predicate over per-episode
+                metadata rows used to select episodes. Evaluated against ``meta/`` without ``stats`` keys
+                (e.g.``task_index``, ``episode_index``, ``length``, ``from_timestamp``, ``to_timestamp``).
+                Intersected with ``episodes`` when both are set. Example: ``lambda ep: ep["length"] >= 100``.
+                Defaults to None.
             image_transforms (Callable | None, optional):
                 Transform applied to visual modalities inside `__getitem__` after image decoding / tensor
                 conversion. This works for both image-backed and video-backed observations and can later be
@@ -199,7 +205,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.reader = None
         self.set_image_transforms(image_transforms)
         self.delta_timestamps = delta_timestamps
-        self.episodes = episodes
         self.tolerance_s = tolerance_s
         self.revision = revision if revision else CODEBASE_VERSION
         self._video_backend = video_backend if video_backend else get_safe_default_codec()
@@ -217,6 +222,23 @@ class LeRobotDataset(torch.utils.data.Dataset):
         )
         self.root = self.meta.root
         self.revision = self.meta.revision
+
+        if episodes is not None and any(
+            episode >= self.meta.total_episodes or episode < 0 for episode in episodes
+        ):
+            logger.warning(
+                f"Some episodes in the provided episodes list are out of range for this dataset ({self.meta.total_episodes})."
+            )
+
+        if episode_filter is not None:
+            resolved = self.meta.filter_episodes(episode_filter, candidates=episodes)
+            if not resolved:
+                raise ValueError(
+                    "The episode filter did not match any episode. Make sure the filter and episodes list are valid and compatible."
+                )
+            logger.info(f"The episode filter matched {len(resolved)} episode(s).")
+            episodes = resolved
+        self.episodes = episodes
 
         # Create reader (hf_dataset loaded below)
         self.reader = DatasetReader(

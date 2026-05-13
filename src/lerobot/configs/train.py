@@ -256,7 +256,9 @@ class TrainPipelineConfig(HubMixin):
                 ) from e
 
         cli_args = kwargs.pop("cli_args", [])
-        if config_file is not None:
+        # Legacy RA-BC migration only applies to framework-saved checkpoints (always JSON).
+        # Hand-written YAML/TOML configs are expected to use the current sample_weighting schema.
+        if config_file is not None and config_file.endswith(".json"):
             with open(config_file) as f:
                 config = json.load(f)
             migrated_config = _migrate_legacy_rabc_fields(config)
@@ -267,10 +269,3 @@ class TrainPipelineConfig(HubMixin):
 
         with draccus.config_type("json"):
             return draccus.parse(cls, config_file, args=cli_args)
-
-
-@dataclass(kw_only=True)
-class TrainRLServerPipelineConfig(TrainPipelineConfig):
-    # NOTE: In RL, we don't need an offline dataset
-    # TODO: Make `TrainPipelineConfig.dataset` optional
-    dataset: DatasetConfig | None = None  # type: ignore[assignment] # because the parent class has made it's type non-optional
