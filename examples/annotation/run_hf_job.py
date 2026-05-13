@@ -23,18 +23,6 @@ token = os.environ.get("HF_TOKEN") or get_token()
 if not token:
     raise RuntimeError("No HF token. Run `huggingface-cli login` or `export HF_TOKEN=hf_...`")
 
-# --- Diversity knobs (Pi0.7-style prompt expansion) -----------------------
-# Bumped roughly 3x across the board to fight memorization on small datasets.
-# A single dataset trained for many epochs with deterministic atom wording
-# converges to perfect recall on training prompts but produces JSON-token
-# garbage at inference for any wording that drifts slightly. More atom
-# variants per episode + higher sampling temperature widens the training
-# distribution so the model has to actually use its language head, not
-# just memorize.
-#
-# Pushes to a *new* hub repo (``_tool3``) so the previous annotation pass
-# (``_tool2``) stays intact — re-train from scratch on the new dataset and
-# compare loss-curve shapes to verify the diversity bump is doing something.
 CMD = (
     "apt-get update -qq && apt-get install -y -qq git ffmpeg && "
     "pip install --no-deps "

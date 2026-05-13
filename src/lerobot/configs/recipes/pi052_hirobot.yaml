@@ -1,51 +1,13 @@
-# π0.5 v2 (pi052) — Hi-Robot / MEM / ECoT blend.
+# π0.5 v2 (pi052) Hi-Robot blend.
 #
-# Architecturally mirrors ``smolvla2_hirobot.yaml`` — same two
-# flavors, same sub-recipes — but the rendered messages are fed
-# to PaliGemma (PaliGemma is not chat-pretrained, so the
-# ``PI052TextTokenizerStep`` concatenates them as ``Role: content``
-# plain text rather than calling ``apply_chat_template``).
-#
-# Two flavors
-# -----------
-#
-#   Flavor 1 — ``action_execution`` (~60% weight)
-#     The main always-on recipe. Fuses all available context
-#     (task + plan + memory) into a unified user prompt, and
-#     uses the current subtask as the assistant target. This
-#     single recipe supervises *both*:
-#       * subtask prediction (text CE on the assistant span,
-#         lm_head), and
-#       * action chunks (flow MSE on the action expert via
-#         ``stream: low_level, target: true``, plus the FAST
-#         CE on the action tokens when enabled).
-#     Pi 0.7 §V.A — subtask in the prompt + flow on actions.
-#
-#   Flavor 2 — event-driven text-only recipes
-#     ``ask_vqa_*``. Each handles a specific high-level event
-#     with a TEXT output. ``if_present`` guards keep them from
-#     firing on frames without the relevant annotation.
-#
-# Memory updates are folded INTO ``action_execution`` as a
-# conditional second target gated on boundary frames — see
-# ``smolvla2_hirobot.yaml`` for the rationale. The
-# ``user_interjection_response`` recipe was dropped — the
-# current datasets don't include interjection / say() annotations.
+# Same shape as ``smolvla2_hirobot.yaml`` — see that file for the
+# flavor breakdown. The only difference here is the backbone:
+# PaliGemma isn't chat-pretrained, so ``PI052TextTokenizerStep``
+# concatenates messages as ``Role: content`` plain text instead
+# of calling ``apply_chat_template``.
 
 blend:
 
-  # ----------------------------------------------------------
-  # FLAVOR 1: action_execution (main path)
-  #
-  # Bundles memory updates inline. On most frames the binding
-  # ``new_memory: emitted_at(t, style=memory)`` returns None and
-  # only the subtask is supervised. On *boundary* frames (the
-  # exact timestamp a new memory was annotated — i.e. when a
-  # subtask just completed) the binding fires and the recipe
-  # supervises the new memory as a follow-up assistant turn,
-  # with a "Completed subtask: …" user message in between to
-  # separate the two outputs in the rendered prefix.
-  # ----------------------------------------------------------
   action_execution:
     weight: 0.85
     bindings:
@@ -55,16 +17,9 @@ blend:
         stream: high_level
         content: "${task}\nPlan: ${plan}\nMemory: ${memory}"
       - {role: assistant, content: "${subtask}", stream: low_level, target: true, if_present: subtask}
-      # Memory-update tail — only renders at boundary frames where
-      # ``new_memory`` fires. The new memory is appended as a second
-      # assistant turn right after the subtask, with no intervening
-      # user filler: at a subtask boundary the model emits the new
-      # subtask AND the updated memory in one forward pass.
+      # Boundary-frame tail: at a subtask transition, predict the
+      # new memory as a second assistant turn (same forward pass).
       - {role: assistant, content: "${new_memory}", stream: high_level, target: true, if_present: new_memory}
-
-  # ----------------------------------------------------------
-  # FLAVOR 2: event-driven text-only paths
-  # ----------------------------------------------------------
 
   ask_vqa_top:
     weight: 0.075
