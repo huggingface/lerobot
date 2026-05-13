@@ -107,12 +107,12 @@ class PI052Config(PI05Config):
     # ActionTokenizerProcessorStep is wired into the preprocessor
     # pipeline when this flag is set; the loss is computed in
     # PI052Policy.forward.
-    enable_fast_action_loss: bool = False
+    enable_fast_action_loss: bool = True
     """If True, tokenise actions with the FAST tokenizer and add a
-    cross-entropy loss on the LM head. Off by default because most
-    fine-tuning runs only need the flow head + text supervision; the
-    FAST CE term is most useful when training from a base PaliGemma
-    rather than an existing π0.5 checkpoint."""
+    cross-entropy loss on the LM head. On by default to match the
+    π0.5 paper's three-loss objective (text CE + FAST CE + flow MSE,
+    §III.B-C Eq. 1). Set to False if you only want the
+    post-training-style flow + text recipe."""
 
     action_tokenizer_name: str = "physical-intelligence/fast"
     """HF identifier for the FAST action tokenizer."""
@@ -127,15 +127,21 @@ class PI052Config(PI05Config):
     fast_action_loss_weight: float = 1.0
     """Weight on the FAST-action-token CE loss. Paper §III.C uses 1.0."""
 
-    auto_fit_fast_tokenizer: bool = True
-    """If True (default), the processor factory checks
-    ``fast_tokenizer_cache_dir`` for a previously-fitted tokenizer keyed
-    on ``(dataset_repo_id, base_tokenizer_name, fit_samples)``. On cache
-    miss, it loads ``action_tokenizer_name`` as a base, samples
+    auto_fit_fast_tokenizer: bool = False
+    """If True, the processor factory checks ``fast_tokenizer_cache_dir``
+    for a previously-fitted tokenizer keyed on ``(dataset_repo_id,
+    base_tokenizer_name, fit_samples)``. On cache miss, it loads
+    ``action_tokenizer_name`` as a base, samples
     ``fast_tokenizer_fit_samples`` action chunks from the dataset, runs
     ``.fit()``, saves the result, and uses *that* fitted path as the
     actual tokenizer. Pertsch et al. 2025 (FAST paper [64], π0.5 §III.C)
-    explicitly recommend per-dataset fitting for best compression."""
+    explicitly recommend per-dataset fitting for best compression.
+
+    Off by default because the fit requires a separate pre-training
+    pass over the dataset (~1-2 min on a medium dataset) and depends
+    on the FAST tokenizer snapshot having a ``.fit()`` method. Opt in
+    when you want paper-faithful compression; leave off to fall back
+    on the universal ``physical-intelligence/fast`` codebook."""
 
     fast_tokenizer_cache_dir: str = "~/.cache/lerobot/fast_tokenizers"
     """Where fitted FAST tokenizers are stored. ``~`` expands."""
