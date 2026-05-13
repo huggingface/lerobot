@@ -232,9 +232,7 @@ def split_dataset(
 
         video_metadata = None
         if dataset.meta.video_keys:
-            video_metadata = _copy_and_reindex_videos(
-                dataset, new_meta, episode_mapping, camera_encoder
-            )
+            video_metadata = _copy_and_reindex_videos(dataset, new_meta, episode_mapping, camera_encoder)
 
         data_metadata = _copy_and_reindex_data(dataset, new_meta, episode_mapping)
 

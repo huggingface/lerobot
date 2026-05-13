@@ -573,8 +573,7 @@ def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
         dataset=dataset,
         output_dir=output_dir,
         repo_id=output_repo_id,
-        camera_encoder=getattr(cfg.operation, "camera_encoder", None)
-        or camera_encoder_defaults(),
+        camera_encoder=getattr(cfg.operation, "camera_encoder", None) or camera_encoder_defaults(),
         episode_indices=getattr(cfg.operation, "episode_indices", None),
         num_workers=getattr(cfg.operation, "num_workers", 4),
         max_episodes_per_batch=getattr(cfg.operation, "max_episodes_per_batch", None),

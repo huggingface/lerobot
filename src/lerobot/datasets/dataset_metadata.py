@@ -536,9 +536,7 @@ class LeRobotDatasetMetadata:
         for key in video_keys:
             if not self.features[key].get("info", None):
                 video_path = self.root / self.video_path.format(video_key=key, chunk_index=0, file_index=0)
-                self.info.features[key]["info"] = get_video_info(
-                    video_path, camera_encoder=camera_encoder
-                )
+                self.info.features[key]["info"] = get_video_info(video_path, camera_encoder=camera_encoder)
 
     def update_chunk_settings(
         self,

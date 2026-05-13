@@ -687,9 +687,7 @@ class StreamingVideoEncoder:
             video_path = temp_video_dir / f"{video_key.replace('/', '_')}_streaming.mp4"
 
             vcodec = self._camera_encoder.vcodec
-            codec_options = self._camera_encoder.get_codec_options(
-                self._encoder_threads, as_strings=True
-            )
+            codec_options = self._camera_encoder.get_codec_options(self._encoder_threads, as_strings=True)
             encoder_thread = _CameraEncoderThread(
                 video_path=video_path,
                 fps=self.fps,
