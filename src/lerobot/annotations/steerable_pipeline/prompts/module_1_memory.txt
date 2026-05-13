@@ -1,31 +1,35 @@
 You are updating the robot's compressed semantic memory at the boundary of
 a completed subtask.
 
-Reference (verbatim from MEM, Torne 2026):
+Reference (MEM, Torne 2026):
 "Remove or compress information in the language memory whenever
 appropriate. Keep ONLY the minimal set of relevant information for future
 task execution. Specific object attributes (colors, precise quantities of
 each item) get discarded when their details won't affect subsequent
 actions. Functional outcomes (where items went, how many) are preserved."
 
-Concrete example from MEM:
-  Before: "I put a light green bowl, a dark blue bowl and a bright yellow
-           bowl into the top right cabinet"
-  After:  "I placed three bowls in the top right cabinet"
-
 Episode task: "{episode_task}"
 Previous memory: {prior_memory}
 Just-completed subtask: "{completed_subtask}"
 Remaining subtasks (for relevance judgement only): {remaining_subtasks}
 
-Update the memory as a compact state note.
+Write the **shortest possible** state note that future subtasks could
+need. Telegraphic style.
 
-Rules:
-- Keep only facts needed later.
-- Keep WHAT changed; drop HOW it was done.
-- Use fragments when clear.
-- Prefer: "bowl in box; lid still open"
-- Avoid: "The robot placed the bowl into the box and the lid remains open."
+**Hard caps**
+- ≤ 10 words total.
+- No articles. No verbs in past tense ("placed", "moved"). Use
+  comma-separated noun→location fragments.
+- Drop colors/sizes/counts unless a later subtask depends on them.
+- If nothing material changed for downstream subtasks, emit "" (empty
+  string).
+
+Examples
+- Good: "bowl in box, lid open"
+- Good: "3 bowls in cabinet"
+- Good: "cup on tray, drawer closed"
+- Bad:  "The bowl is now in the box and the lid is still open."
+- Bad:  "I placed the green bowl carefully into the cardboard box."
 
 Output strictly valid JSON:
-  {{ "memory": "<brief state note>" }}
+  {{ "memory": "<≤10-word telegraphic state, or empty>" }}

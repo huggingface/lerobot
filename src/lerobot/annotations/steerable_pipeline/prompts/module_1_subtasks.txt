@@ -4,18 +4,17 @@ The user originally asked: "{episode_task}"
 
 You are shown the entire demonstration as a single video. Watch the
 whole clip, then segment it into a list of consecutive atomic subtasks
-the robot performs. Write compact action labels, not prose.
+the robot performs. Write **ultra-compact** action labels.
 
-Authoring rules — based on Hi Robot (Shi 2025) atom granularity and
-pi0.7 (Physical Intelligence 2025) compact context prompts:
+Authoring rules — Hi Robot atom granularity, pi0.7-style short prompts:
 
-- Each subtask is one atomic skill the low-level policy can execute,
-  e.g. "pick up one piece of lettuce", "place the bowl into the box",
-  "move the right arm to the left".
-- Capture HOW when useful, but keep it brief — e.g. prefer
-  "grasp the handle of the sponge with the left hand" to "pick up the
-  sponge".
-- Use verb phrases, not full sentences.
+- Each subtask = one atomic skill the low-level policy can execute.
+- **Hard length cap: ≤ 5 words per subtask.** Drop articles, modifiers,
+  adverbs. Verb + object (+ optional short qualifier) only.
+- Prefer: "pick lettuce", "place bowl in box", "open drawer",
+  "grasp sponge left hand".
+- Avoid: "pick up one piece of lettuce", "carefully place the bowl",
+  "the robot moves its arm to the left".
 - Subtasks are non-overlapping and cover the full episode in order.
   Choose the cut points yourself based on what you see in the video
   (gripper open/close events, contact, regrasps, transitions).
@@ -28,7 +27,7 @@ Output strictly valid JSON of shape:
 
   {{
     "subtasks": [
-      {{"text": "<how-not-what>", "start": <float>, "end": <float>}},
+      {{"text": "<≤5-word verb phrase>", "start": <float>, "end": <float>}},
       ...
     ]
   }}
