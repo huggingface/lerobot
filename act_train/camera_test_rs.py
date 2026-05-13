@@ -3,14 +3,13 @@ import cv2
 import numpy as np
 import pyrealsense2 as rs
 
-UVC_INDEX = 12
 WIDTH, HEIGHT, FPS = 640, 480, 30
 TILE = 320
 
 ctx = rs.context()
 rs_devices = list(ctx.query_devices())
-if len(rs_devices) < 2:
-    print(f"Warning: expected 2 RealSense devices, found {len(rs_devices)}")
+if len(rs_devices) < 3:
+    print(f"Warning: expected 3 RealSense devices, found {len(rs_devices)}")
 
 print("Resetting RealSense devices...")
 serials = [d.get_info(rs.camera_info.serial_number) for d in rs_devices]
@@ -33,18 +32,11 @@ for dev in rs_devices:
     pipelines.append((serial, pipe))
     print(f"Started RealSense {serial}")
 
-uvc = cv2.VideoCapture(UVC_INDEX, cv2.CAP_V4L2)
-uvc.set(cv2.CAP_PROP_FRAME_WIDTH, WIDTH)
-uvc.set(cv2.CAP_PROP_FRAME_HEIGHT, HEIGHT)
-if not uvc.isOpened():
-    print(f"Warning: could not open UVC camera at /dev/video{UVC_INDEX}")
-
 print("Press 'q' to exit.")
 
 try:
     while True:
         frames = []
-
         for serial, pipe in pipelines:
             ok, fs = pipe.try_wait_for_frames(timeout_ms=200)
             color = fs.get_color_frame() if ok else None
@@ -53,15 +45,13 @@ try:
             else:
                 frames.append(np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8))
 
-        ret, uvc_frame = uvc.read()
-        if not ret:
-            uvc_frame = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
-        frames.append(uvc_frame)
+        # Pad to 4 tiles if fewer cameras are connected.
+        while len(frames) < 4:
+            frames.append(np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8))
 
-        tiles = [cv2.resize(f, (TILE, TILE)) for f in frames]
-        placeholder = np.zeros_like(tiles[0])
+        tiles = [cv2.resize(f, (TILE, TILE)) for f in frames[:4]]
         top = np.hstack((tiles[0], tiles[1]))
-        bottom = np.hstack((tiles[2], placeholder))
+        bottom = np.hstack((tiles[2], tiles[3]))
         grid = np.vstack((top, bottom))
 
         cv2.imshow("Multi-Camera Live Feed", grid)
@@ -70,5 +60,4 @@ try:
 finally:
     for _, pipe in pipelines:
         pipe.stop()
-    uvc.release()
     cv2.destroyAllWindows()

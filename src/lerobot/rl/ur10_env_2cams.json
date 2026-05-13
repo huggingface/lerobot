@@ -14,7 +14,7 @@
             "gripper_baudrate": 115200,
             "cameras": {
                 "front": {"type": "intelrealsense", "serial_number_or_name": "409122272284", "width": 640, "height": 480, "fps": 30},
-                "wrist": {"type": "opencv", "index_or_path": "/dev/v4l/by-id/usb-Vimicro_Corp._UVC_USB_2.0_pc-amcap-video-index0", "width": 640, "height": 480, "fps": 30}
+                "wrist": {"type": "intelrealsense", "serial_number_or_name": "323622272232", "width": 640, "height": 480, "fps": 30}
             }
         },
         "teleop": {

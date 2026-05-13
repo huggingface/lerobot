@@ -1,7 +1,7 @@
 {
     "env": {
         "name": "ur10",
-        "task": "usb_insertion4",
+        "task": "usb_insertiontest",
         "fps": 10,
         "robot": {
             "type": "ur10",
@@ -15,7 +15,7 @@
             "cameras": {
                 "front": {"type": "intelrealsense", "serial_number_or_name": "409122272284", "width": 640, "height": 480, "fps": 30},
                 "side":  {"type": "intelrealsense", "serial_number_or_name": "409122273078", "width": 640, "height": 480, "fps": 30},
-                "wrist": {"type": "opencv", "index_or_path": "/dev/v4l/by-id/usb-Vimicro_Corp._UVC_USB_2.0_pc-amcap-video-index0", "width": 640, "height": 480, "fps": 30}
+                "wrist": {"type": "intelrealsense", "serial_number_or_name": "323622272232", "width": 640, "height": 480, "fps": 30}
             }
         },
         "teleop": {
@@ -32,7 +32,7 @@
                 "gripper_penalty": -0.02
             },
             "reset": {
-                "fixed_reset_joint_positions": [-0.2001, -0.4956, 0.1487, 3.14159, 0.0, 0.0],
+                "fixed_reset_joint_positions": [-0.2001, -0.4956, 0.1587, 3.14159, 0.0, 0.0],
                 "reset_time_s": 5.0,
                 "control_time_s": 25.0,
                 "terminate_on_success": true,
@@ -43,17 +43,17 @@
             },
             "image_preprocessing": {
                 "crop_params_dict": {
-                    "observation.images.front": [140, 147, 288, 353],
+                    "observation.images.front": [182, 176, 290, 342],
                     "observation.images.side":  [3, 47, 324, 426],
-                    "observation.images.wrist": [113, 55, 365, 479]
+                    "observation.images.wrist": [117, 131, 351, 405]
                 },
                 "resize_size": [128, 128]
             },
             "inverse_kinematics": {
                 "end_effector_step_sizes": {"x": 0.001, "y": 0.001, "z": 0.001},
                 "end_effector_bounds": {
-                    "min": [-0.2166, -0.5254, 0.1377],
-                    "max": [-0.1863, -0.4851, 0.1487]
+                    "min": [-0.2166, -0.5254, 0.1477],
+                    "max": [-0.1863, -0.4851, 0.1587]
                 }
             }
         }
@@ -61,8 +61,8 @@
 
 
     "dataset": {
-        "repo_id": "local/ur10_usb_insertion4",
-        "task": "usb_insertion4",
+        "repo_id": "local/ur10_usb_insertiontest",
+        "task": "usb_insertiontest",
         "num_episodes_to_record": 20,
         "push_to_hub": false
     },
