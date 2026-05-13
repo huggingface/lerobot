@@ -1,0 +1,92 @@
+# π0.5 v2 — Hi-Robot / MEM / ECoT blend, reproducing the paper's
+# hierarchical inference recipe on lerobot.
+#
+# Architecturally identical blend to ``smolvla2_hirobot.yaml`` — same
+# five sub-recipes (memory_update, user_interjection_response,
+# high_level_subtask, low_level_execution, ask_vqa_*) with the same
+# message layouts. The only difference is which backbone the renderer's
+# output is fed into:
+#
+#   * SmolVLA2 calls SmolVLM's chat-template tokenizer
+#     (``apply_chat_template`` with chat-pretrained role markers).
+#   * π0.5 v2 concatenates the rendered messages as ``Role: content``
+#     plain text, since PaliGemma is not chat-pretrained. See
+#     ``PI052TextTokenizerStep`` in ``policies/pi052/text_processor_pi052.py``.
+#
+# Same supervision target convention as ``smolvla2_hirobot.yaml``: the
+# ``high_level_subtask`` recipe targets ``${subtask}`` (the *current*
+# active span at every frame) rather than ``${next_subtask}`` (which
+# is empty on stable phases and used to train the model to emit
+# newlines).
+
+blend:
+
+  memory_update:
+    weight: 0.10
+    bindings:
+      prior_memory: "nth_prev(style=memory, offset=1)"
+      current_memory: "emitted_at(t, style=memory)"
+      completed_subtask: "nth_prev(style=subtask, offset=1)"
+    messages:
+      - {role: user, content: "${task}", stream: high_level}
+      - {role: assistant, content: "Previous memory: ${prior_memory}", stream: high_level, if_present: prior_memory}
+      - {role: user, content: "Completed subtask: ${completed_subtask}", stream: high_level, if_present: completed_subtask}
+      - {role: assistant, content: "${current_memory}", stream: high_level, target: true, if_present: current_memory}
+
+  user_interjection_response:
+    weight: 0.16
+    bindings:
+      prior_plan: "nth_prev(style=plan, offset=1)"
+      current_plan: "emitted_at(t, style=plan)"
+      interjection: "emitted_at(t, style=interjection)"
+      speech: "emitted_at(t, role=assistant, tool_name=say)"
+    messages:
+      - {role: user, content: "${task}", stream: high_level}
+      - {role: assistant, content: "Previous plan:\n${prior_plan}", stream: high_level, if_present: prior_plan}
+      - {role: user, content: "${interjection}", stream: high_level, if_present: interjection}
+      - {role: assistant, content: "${current_plan}", stream: high_level, target: true, if_present: current_plan, tool_calls_from: speech}
+
+  # Pi 0.5 / Pi 0.7 supervision: predict the *current* active subtask
+  # at every frame from task + plan + memory + visual prefix.
+  # ``if_present: subtask`` skips frames with no active span instead of
+  # supervising an empty target (the failure mode that produces newline
+  # collapse).
+  high_level_subtask:
+    weight: 0.15
+    messages:
+      - {role: user, content: "${task}\nPlan: ${plan}\nMemory: ${memory}", stream: high_level}
+      - {role: assistant, content: "${subtask}", stream: high_level, target: true, if_present: subtask}
+
+  low_level_execution:
+    weight: 0.35
+    messages:
+      - {role: user, content: "${task}\nPlan: ${plan}\nMemory: ${memory}", stream: high_level}
+      - {role: assistant, content: "${subtask}", stream: low_level, target: true}
+
+  ask_vqa_top:
+    weight: 0.10
+    bindings:
+      vqa_query: "emitted_at(t, style=vqa, role=user, camera=observation.images.front)"
+      vqa: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.front)"
+    messages:
+      - role: user
+        stream: high_level
+        if_present: vqa_query
+        content:
+          - {type: image, feature: observation.images.front}
+          - {type: text, text: "${vqa_query}"}
+      - {role: assistant, content: "${vqa}", stream: high_level, target: true, if_present: vqa}
+
+  ask_vqa_wrist:
+    weight: 0.10
+    bindings:
+      vqa_query: "emitted_at(t, style=vqa, role=user, camera=observation.images.wrist)"
+      vqa: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.wrist)"
+    messages:
+      - role: user
+        stream: high_level
+        if_present: vqa_query
+        content:
+          - {type: image, feature: observation.images.wrist}
+          - {type: text, text: "${vqa_query}"}
+      - {role: assistant, content: "${vqa}", stream: high_level, target: true, if_present: vqa}

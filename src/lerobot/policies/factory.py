@@ -128,6 +128,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from .pi05.modeling_pi05 import PI05Policy
 
         return PI05Policy
+    elif name == "pi052":
+        from .pi052.modeling_pi052 import PI052Policy
+
+        return PI052Policy
     elif name == "sac":
         from .sac.modeling_sac import SACPolicy
 
@@ -200,6 +204,10 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return PI0Config(**kwargs)
     elif policy_type == "pi05":
         return PI05Config(**kwargs)
+    elif policy_type == "pi052":
+        from .pi052.configuration_pi052 import PI052Config
+
+        return PI052Config(**kwargs)
     elif policy_type == "sac":
         return SACConfig(**kwargs)
     elif policy_type == "smolvla":
@@ -366,6 +374,17 @@ def make_pre_post_processors(
         from .pi0.processor_pi0 import make_pi0_pre_post_processors
 
         processors = make_pi0_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif policy_cfg.type == "pi052":
+        # NOTE: PI052Config subclasses PI05Config, so this branch MUST
+        # come before the PI05Config isinstance check below (otherwise
+        # pi052 would silently pick up π0.5's processor).
+        from .pi052.processor_pi052 import make_pi052_pre_post_processors
+
+        processors = make_pi052_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
