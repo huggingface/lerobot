@@ -339,7 +339,18 @@ class PI052Policy(PI05Policy):
         # ACTION_TOKENS / ACTION_TOKEN_MASK into the batch — we
         # forward them through the PaliGemma backbone alongside the
         # language prefix and compute CE on the action positions.
-        if getattr(self.config, "enable_fast_action_loss", False):
+        #
+        # Gated on ``predict_actions`` (same routing the flow loss
+        # uses): for text-only recipes the action_tokens are still
+        # present in the batch but shouldn't be supervised. Skip the
+        # entire FAST forward when no sample in the batch wants action
+        # supervision.
+        run_fast = (
+            getattr(self.config, "enable_fast_action_loss", False)
+            and self.config.fast_action_loss_weight > 0
+            and (predict_actions_t is None or bool(predict_actions_t.any().item()))
+        )
+        if run_fast:
             from lerobot.utils.constants import ACTION_TOKEN_MASK, ACTION_TOKENS  # noqa: PLC0415
 
             action_tokens = batch.get(ACTION_TOKENS)
@@ -399,14 +410,19 @@ class PI052Policy(PI05Policy):
         fast_emb = self.model.paligemma_with_expert.embed_language_tokens(action_tokens)
         fast_emb = fast_emb * math.sqrt(emb_dim)
 
-        # Concat onto the prefix. Pad masks: language uses
-        # ``lang_masks``; FAST uses ``action_mask`` (True at valid
-        # token positions). Attention masks add ``True`` (causal)
-        # for FAST so they can attend to the bidirectional prefix
-        # but only causally among themselves.
-        bsize, fast_len = action_tokens.shape
+        # Concat onto the prefix.
+        #   pad masks: language uses ``lang_masks``; FAST uses
+        #              ``action_mask`` (True at valid token positions).
+        #   att masks: prefix is 0 (bidirectional block); FAST is 1
+        #              (each token starts its own causal block). Per
+        #              ``make_att_2d_masks``'s mask_ar convention this
+        #              yields prefix-LM attention: FAST tokens attend
+        #              bidirectionally to images+language and causally
+        #              among themselves, while prefix tokens *cannot*
+        #              see FAST tokens. Matches pi05_full §III.C.
+        fast_len = action_tokens.shape[1]
         device = prefix_embs.device
-        ones_att = torch.ones((bsize, fast_len), dtype=torch.bool, device=device)
+        ones_att = torch.ones((action_tokens.shape[0], fast_len), dtype=torch.bool, device=device)
         full_embs = torch.cat([prefix_embs, fast_emb], dim=1)
         full_pad = torch.cat([prefix_pad, action_mask.to(prefix_pad.dtype)], dim=1)
         full_att = torch.cat([prefix_att, ones_att], dim=1)
@@ -430,17 +446,23 @@ class PI052Policy(PI05Policy):
         lm_head = self.model.paligemma_with_expert.paligemma.lm_head
         fast_logits = lm_head(fast_hidden.to(lm_head.weight.dtype))
 
-        # Shift for next-token prediction.
+        # Shift for next-token prediction. Replace targets at padded
+        # positions with -100 so ``ignore_index`` in cross_entropy
+        # cleanly drops them rather than relying on a post-hoc
+        # multiply-by-mask (which still computes the CE numerator at
+        # invalid positions and could crash if a padded target id
+        # falls outside the vocab).
         shift_logits = fast_logits[:, :-1, :].contiguous()
-        shift_targets = action_tokens[:, 1:].contiguous()
-        shift_mask = action_mask[:, 1:].contiguous().float()
+        shift_targets = action_tokens[:, 1:].contiguous().long()
+        shift_valid = action_mask[:, 1:].contiguous().bool()
+        shift_targets = shift_targets.masked_fill(~shift_valid, -100)
 
-        per_tok = F.cross_entropy(
-            shift_logits.view(-1, shift_logits.size(-1)),
-            shift_targets.view(-1),
-            reduction="none",
-        ).view(shift_targets.shape)
-        loss = (per_tok * shift_mask).sum() / shift_mask.sum().clamp_min(1.0)
+        # Mean over valid positions via ``ignore_index``.
+        loss = F.cross_entropy(
+            shift_logits.reshape(-1, shift_logits.shape[-1]),
+            shift_targets.reshape(-1),
+            ignore_index=-100,
+        )
         return loss
 
     def _compute_text_loss(self, batch: dict[str, Tensor], text_labels: Tensor) -> Tensor:
