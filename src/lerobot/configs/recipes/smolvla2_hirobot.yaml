@@ -69,11 +69,28 @@ blend:
       - {role: user, content: "${task}\nPlan: ${plan}\nMemory: ${memory}", stream: high_level}
       - {role: assistant, content: "${subtask}", stream: high_level, target: true, if_present: subtask}
 
+  # PR3 fix: same ``if_present: subtask`` guard as high_level_subtask
+  # above. Without it, frames where ``active_at(t, style=subtask)``
+  # returns None render the assistant turn with empty content, which
+  # the chat tokenizer still includes in target_message_indices →
+  # text-CE supervises predicting ``\n`` (the chat template's
+  # structural newline) and the LM head collapses to that prior.
+  # The same bug we fixed for high_level_subtask, just on a
+  # different sub-recipe.
+  #
+  # Trade-off of adding the guard: frames without an active subtask
+  # span no longer contribute to the flow loss either (because
+  # ``predict_actions = bool(targets_by_stream.get("low_level"))``
+  # and the only low_level target message is now skipped). For a
+  # well-annotated dataset where subtask spans tile the whole
+  # episode this is a no-op. For datasets with gaps, those gap
+  # frames lose flow supervision — which is strictly better than
+  # the degenerate alternative.
   low_level_execution:
     weight: 0.35
     messages:
       - {role: user, content: "${task}\nPlan: ${plan}\nMemory: ${memory}", stream: high_level}
-      - {role: assistant, content: "${subtask}", stream: low_level, target: true}
+      - {role: assistant, content: "${subtask}", stream: low_level, target: true, if_present: subtask}
 
   # Per-camera VQA sub-recipes (PR 1's view-dependent style routing).
   # Adjust the camera keys (and add more sub-recipes) to match the

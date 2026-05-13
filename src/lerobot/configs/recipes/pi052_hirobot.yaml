@@ -57,11 +57,15 @@ blend:
       - {role: user, content: "${task}\nPlan: ${plan}\nMemory: ${memory}", stream: high_level}
       - {role: assistant, content: "${subtask}", stream: high_level, target: true, if_present: subtask}
 
+  # Same ``if_present: subtask`` guard as high_level_subtask above —
+  # see smolvla2_hirobot.yaml for the full rationale. Skips the
+  # action-loss supervision on frames without an active subtask span
+  # rather than emitting a degenerate empty target.
   low_level_execution:
     weight: 0.35
     messages:
       - {role: user, content: "${task}\nPlan: ${plan}\nMemory: ${memory}", stream: high_level}
-      - {role: assistant, content: "${subtask}", stream: low_level, target: true}
+      - {role: assistant, content: "${subtask}", stream: low_level, target: true, if_present: subtask}
 
   ask_vqa_top:
     weight: 0.10
