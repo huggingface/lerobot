@@ -9,7 +9,7 @@
 blend:
 
   action_execution:
-    weight: 0.85
+    weight: 0.75
     bindings:
       new_memory: "emitted_at(t, style=memory)"
     messages:
@@ -20,6 +20,14 @@ blend:
       # Boundary-frame tail: at a subtask transition, predict the
       # new memory as a second assistant turn (same forward pass).
       - {role: assistant, content: "${new_memory}", stream: high_level, target: true, if_present: new_memory}
+
+  plan_generation:
+    weight: 0.10
+    bindings:
+      current_plan: "active_at(t, style=plan)"
+    messages:
+      - {role: user, content: "${task}", stream: high_level}
+      - {role: assistant, content: "${current_plan}", stream: high_level, target: true, if_present: current_plan}
 
   ask_vqa_top:
     weight: 0.075

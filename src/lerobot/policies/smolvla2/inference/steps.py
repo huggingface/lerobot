@@ -780,6 +780,16 @@ def _msgs_for_interjection(state: dict[str, Any]) -> list[dict[str, Any]]:
     return msgs
 
 
+def _msgs_for_plan(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """``plan_generation`` recipe layout — bare task → plan.
+
+    The assistant turn is the generation target, so we only render
+    the user turn at inference; the runtime appends the predicted
+    plan after sampling.
+    """
+    return [{"role": "user", "content": state.get("task") or ""}]
+
+
 def _msgs_for_vqa(question: str) -> list[dict[str, Any]]:
     """``ask_vqa_*`` recipe layout (text-only at inference)."""
     return [{"role": "user", "content": question}]

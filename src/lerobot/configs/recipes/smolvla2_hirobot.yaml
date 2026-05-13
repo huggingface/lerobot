@@ -1,15 +1,18 @@
-# SmolVLA2 Hi-Robot blend — two flavors:
+# SmolVLA2 Hi-Robot blend — three flavors:
 #
 #   1. action_execution  — fused (task + plan + memory) prompt;
 #      supervises the current subtask (low_level: flow + text CE)
 #      and, at memory-boundary frames, the new memory too.
-#   2. ask_vqa_{top,wrist} — text-only VQA on a camera image,
+#   2. plan_generation   — task → plan (text only). Trains the
+#      model to produce a plan from a bare task description so
+#      the runtime can call it at episode start / replanning.
+#   3. ask_vqa_{top,wrist} — text-only VQA on a camera image,
 #      gated by ``if_present`` so they only fire on annotated frames.
 
 blend:
 
   action_execution:
-    weight: 0.85
+    weight: 0.75
     bindings:
       new_memory: "emitted_at(t, style=memory)"
     messages:
@@ -20,6 +23,14 @@ blend:
       # Boundary-frame tail: at a subtask transition, predict the
       # new memory as a second assistant turn (same forward pass).
       - {role: assistant, content: "${new_memory}", stream: high_level, target: true, if_present: new_memory}
+
+  plan_generation:
+    weight: 0.10
+    bindings:
+      current_plan: "active_at(t, style=plan)"
+    messages:
+      - {role: user, content: "${task}", stream: high_level}
+      - {role: assistant, content: "${current_plan}", stream: high_level, target: true, if_present: current_plan}
 
   ask_vqa_top:
     weight: 0.075
