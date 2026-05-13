@@ -66,6 +66,7 @@ from .text_processor_pi052 import PI052TextTokenizerStep
 def make_pi052_pre_post_processors(
     config: PI052Config,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    dataset_repo_id: str | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
@@ -110,9 +111,39 @@ def make_pi052_pre_post_processors(
     # writes ACTION_TOKENS / ACTION_TOKEN_MASK into
     # ``COMPLEMENTARY_DATA`` and the modeling forward picks them up.
     if getattr(config, "enable_fast_action_loss", False):
+        # Per Pertsch et al. 2025 (FAST [64], π0.5 §III.C): fit the
+        # tokenizer on this dataset's action distribution rather than
+        # using the universal codebook off the shelf. We do this once
+        # and cache to disk, keyed on (dataset, base, n_samples).
+        action_tokenizer_path = config.action_tokenizer_name
+        if (
+            getattr(config, "auto_fit_fast_tokenizer", False)
+            and dataset_repo_id is not None
+        ):
+            from .fit_fast_tokenizer import fit_fast_tokenizer  # noqa: PLC0415
+
+            cache_dir = Path(config.fast_tokenizer_cache_dir).expanduser()
+            try:
+                action_tokenizer_path = fit_fast_tokenizer(
+                    dataset_repo_id=dataset_repo_id,
+                    cache_dir=cache_dir,
+                    base_tokenizer_name=config.action_tokenizer_name,
+                    n_samples=config.fast_tokenizer_fit_samples,
+                    chunk_size=config.chunk_size,
+                )
+            except Exception as exc:  # noqa: BLE001
+                import logging  # noqa: PLC0415
+
+                logging.getLogger(__name__).warning(
+                    "FAST tokenizer fit failed (%s) — falling back to "
+                    "the universal base tokenizer %r. Train will still "
+                    "work but compression will be suboptimal.",
+                    exc, config.action_tokenizer_name,
+                )
+
         input_steps.append(
             ActionTokenizerProcessorStep(
-                action_tokenizer_name=config.action_tokenizer_name,
+                action_tokenizer_name=action_tokenizer_path,
                 max_action_tokens=config.max_action_tokens,
                 fast_skip_tokens=config.fast_skip_tokens,
                 paligemma_tokenizer_name="google/paligemma-3b-pt-224",

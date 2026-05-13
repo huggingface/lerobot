@@ -127,6 +127,23 @@ class PI052Config(PI05Config):
     fast_action_loss_weight: float = 1.0
     """Weight on the FAST-action-token CE loss. Paper §III.C uses 1.0."""
 
+    auto_fit_fast_tokenizer: bool = True
+    """If True (default), the processor factory checks
+    ``fast_tokenizer_cache_dir`` for a previously-fitted tokenizer keyed
+    on ``(dataset_repo_id, base_tokenizer_name, fit_samples)``. On cache
+    miss, it loads ``action_tokenizer_name`` as a base, samples
+    ``fast_tokenizer_fit_samples`` action chunks from the dataset, runs
+    ``.fit()``, saves the result, and uses *that* fitted path as the
+    actual tokenizer. Pertsch et al. 2025 (FAST paper [64], π0.5 §III.C)
+    explicitly recommend per-dataset fitting for best compression."""
+
+    fast_tokenizer_cache_dir: str = "~/.cache/lerobot/fast_tokenizers"
+    """Where fitted FAST tokenizers are stored. ``~`` expands."""
+
+    fast_tokenizer_fit_samples: int = 1024
+    """Number of action chunks to sample for the fit. The FAST paper uses
+    a few thousand; 1024 is a reasonable default for medium datasets."""
+
     # Knowledge insulation — paper §III.B --------------------------------
     # When enabled, gradients from the action expert's flow loss are
     # *blocked* from flowing back into the VLM's K/V projections. This

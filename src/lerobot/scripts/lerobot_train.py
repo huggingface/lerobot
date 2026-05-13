@@ -286,6 +286,14 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     if cfg.policy.type == "sarm":
         processor_kwargs["dataset_meta"] = dataset.meta
 
+    # For pi052 (and any future policy that auto-fits part of its
+    # preprocessing per-dataset), pass the dataset repo id so the
+    # processor factory can locate/refresh dataset-specific artifacts
+    # (e.g. fitted FAST tokenizers per Pertsch et al. 2025 [64],
+    # π0.5 §III.C).
+    if cfg.policy.type == "pi052":
+        processor_kwargs["dataset_repo_id"] = cfg.dataset.repo_id
+
     if processor_pretrained_path is not None:
         processor_kwargs["preprocessor_overrides"] = {
             "device_processor": {"device": device.type},

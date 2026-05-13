@@ -252,6 +252,12 @@ class ProcessorConfigKwargs(TypedDict, total=False):
     preprocessor_overrides: dict[str, Any] | None
     postprocessor_overrides: dict[str, Any] | None
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None
+    # Optional: HF Hub repo id of the dataset the policy is being
+    # trained on. Used by policies that auto-fit pieces of their
+    # preprocessing (e.g. pi052's FAST action tokenizer per
+    # Pertsch et al. 2025 [64], π0.5 §III.C). When omitted, those
+    # policies fall back to their universal pre-fitted tokenizers.
+    dataset_repo_id: str | None
 
 
 def make_pre_post_processors(
@@ -387,6 +393,11 @@ def make_pre_post_processors(
         processors = make_pi052_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
+            # ``dataset_repo_id`` flows in via kwargs when FAST CE is
+            # enabled — the train loop sets it from ``--dataset.repo_id``.
+            # When ``None``, ``make_pi052_pre_post_processors`` skips
+            # the auto-fit and uses the universal tokenizer.
+            dataset_repo_id=kwargs.get("dataset_repo_id"),
         )
 
     elif isinstance(policy_cfg, PI05Config):
