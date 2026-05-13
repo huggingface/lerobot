@@ -704,13 +704,12 @@ def _control_context_messages(
     Mirrors what ``hirobot.yaml`` renders into ``${task}\nPlan:
     ${plan}\nMemory: ${memory}`` for the high-level branches.
     """
-    parts: list[str] = []
+    # Always emit ``Plan: `` / ``Memory: `` labels — even with empty
+    # values — to mirror the training-time recipe substitution.
     task = state.get("task") or ""
-    parts.append(task)
-    if state.get("current_plan"):
-        parts.append(f"Plan: {state['current_plan']}")
-    if state.get("current_memory"):
-        parts.append(f"Memory: {state['current_memory']}")
+    plan = state.get("current_plan") or ""
+    memory = state.get("current_memory") or ""
+    parts = [task, f"Plan: {plan}", f"Memory: {memory}"]
     if include_completed and state.get("current_subtask"):
         parts.append(f"Completed subtask: {state['current_subtask']}")
     head = "\n".join(parts)
@@ -729,51 +728,45 @@ def _control_context_messages(
 # ---------------------------------------------------------------------------
 
 
-def _msgs_for_subtask(state: dict[str, Any]) -> list[dict[str, Any]]:
-    """``high_level_subtask`` recipe layout (v2 — predict current subtask).
+def _hirobot_user_head(state: dict[str, Any]) -> str:
+    """Build the ``task\\nPlan: …\\nMemory: …`` user content string.
 
-    The training-time recipe was changed to supervise the model on the
-    *current* active subtask span at every frame, not the next-span text
-    only at transitions. So the inference-time prompt no longer feeds a
-    "Current subtask: X" user message — that would be circular (we'd be
-    telling the model the answer). The model now decides the subtask
-    purely from the task + plan + memory context plus the visual prefix.
-
-    Transition detection moves into the runtime: when the predicted
-    subtask differs from ``state['current_subtask']``, fire the
-    ``subtask_change`` event so memory updates. Same downstream signal
-    as before, just produced by an always-non-empty supervision target.
+    Mirrors what the recipe renders at training time, where
+    ``language_render._substitute`` substitutes empty strings for
+    missing ``${plan}`` / ``${memory}`` bindings — i.e. the
+    ``Plan: `` / ``Memory: `` prefix labels are *always* in the
+    user turn, even when their values aren't set yet. Skipping them
+    here (the previous behaviour) produced a different prompt shape
+    on early frames before plan / memory are populated and on
+    samples where the dataset has no plan / memory annotation.
     """
-    head_parts = [state.get("task") or ""]
-    if state.get("current_plan"):
-        head_parts.append(f"Plan: {state['current_plan']}")
-    if state.get("current_memory"):
-        head_parts.append(f"Memory: {state['current_memory']}")
-    return [{"role": "user", "content": "\n".join(head_parts)}]
+    task = state.get("task") or ""
+    plan = state.get("current_plan") or ""
+    memory = state.get("current_memory") or ""
+    return f"{task}\nPlan: {plan}\nMemory: {memory}"
+
+
+def _msgs_for_subtask(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """``high_level_subtask`` recipe layout — predict the current subtask
+    from (task + plan + memory). Even when plan / memory aren't set yet
+    the labels render as bare ``Plan: `` / ``Memory: `` to match training.
+    """
+    return [{"role": "user", "content": _hirobot_user_head(state)}]
 
 
 def _msgs_for_memory(state: dict[str, Any]) -> list[dict[str, Any]]:
-    """Memory-update prompt — matches the boundary-frame tail of
-    ``action_execution`` in the v2 recipes.
+    """Memory-update prompt — boundary-frame tail of ``high_level_subtask``.
 
     Recipe layout on a boundary frame:
         user:      "${task}\\nPlan: ${plan}\\nMemory: ${memory}"
         assistant: "${subtask}"
         assistant: → predicts new memory
 
-    At inference we fire this when the runtime detects a subtask
-    transition; the freshly-predicted subtask lives in
-    ``state['current_subtask']``. No "Completed subtask: X" user
-    filler — the second assistant turn is generated immediately
-    after the subtask turn.
+    Fired when the runtime detects a subtask transition; the
+    just-predicted subtask lives in ``state['current_subtask']``.
     """
-    head_parts = [state.get("task") or ""]
-    if state.get("current_plan"):
-        head_parts.append(f"Plan: {state['current_plan']}")
-    if state.get("current_memory"):
-        head_parts.append(f"Memory: {state['current_memory']}")
     msgs: list[dict[str, Any]] = [
-        {"role": "user", "content": "\n".join(head_parts)},
+        {"role": "user", "content": _hirobot_user_head(state)},
     ]
     if state.get("current_subtask"):
         msgs.append({"role": "assistant", "content": state["current_subtask"]})
