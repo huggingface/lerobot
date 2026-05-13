@@ -133,18 +133,29 @@ class SmolVLA2Policy(SmolVLAPolicy):
         device = batch[OBS_STATE].device
         total = torch.zeros((), device=device, dtype=torch.float32)
 
-        # ------------------------------------------------------------
-        # Flow loss path — only when at least one sample wants actions.
-        # ------------------------------------------------------------
-        run_flow = self.config.flow_loss_weight > 0 and (
-            not has_per_sample_routing or bool(predict_actions_t.any().item())
+        run_flow = (
+            self.config.flow_loss_weight > 0
+            and ACTION in batch
+            and (not has_per_sample_routing or bool(predict_actions_t.any().item()))
         )
-        if run_flow and ACTION in batch:
+
+        # ------------------------------------------------------------
+        # Fused path — one backbone forward for flow + text together.
+        # ------------------------------------------------------------
+        if run_flow and has_text_data:
+            flow_loss, text_loss, flow_diag = self._compute_fused_loss(
+                batch, text_labels, predict_actions_t, noise=noise, time=time
+            )
+            total = total + self.config.flow_loss_weight * flow_loss
+            total = total + self.config.text_loss_weight * text_loss
+            loss_dict["flow_loss"] = float(flow_loss.detach().item())
+            loss_dict["text_loss"] = float(text_loss.detach().item())
+            for k, v in flow_diag.items():
+                loss_dict[f"flow_{k}"] = v
+        elif run_flow:
             per_sample_flow, flow_diag = super().forward(
                 batch, noise=noise, time=time, reduction="none"
             )
-            # ``per_sample_flow`` has shape (B,) from the SmolVLA
-            # reduction="none" branch.
             if has_per_sample_routing:
                 mask = predict_actions_t.to(per_sample_flow.dtype)
                 masked = per_sample_flow * mask
@@ -156,11 +167,7 @@ class SmolVLA2Policy(SmolVLAPolicy):
             loss_dict["flow_loss"] = float(flow_loss.detach().item())
             for k, v in flow_diag.items():
                 loss_dict[f"flow_{k}"] = v
-
-        # ------------------------------------------------------------
-        # Text loss path — prefix-only forward → lm_head → CE.
-        # ------------------------------------------------------------
-        if has_text_data:
+        elif has_text_data:
             text_loss = self._compute_text_loss(batch, text_labels)
             total = total + self.config.text_loss_weight * text_loss
             loss_dict["text_loss"] = float(text_loss.detach().item())
@@ -252,6 +259,143 @@ class SmolVLA2Policy(SmolVLAPolicy):
             reduction="sum",
         )
         return loss / valid_labels.sum().clamp(min=1)
+
+    # ------------------------------------------------------------------
+    # Fused flow + text loss (single backbone forward)
+    # ------------------------------------------------------------------
+
+    def _compute_fused_loss(
+        self,
+        batch: dict[str, Tensor],
+        text_labels: Tensor,
+        predict_actions_t: Tensor | None,
+        noise: Tensor | None = None,
+        time: Tensor | None = None,
+    ) -> tuple[Tensor, Tensor, dict[str, Any]]:
+        """One backbone forward → both flow MSE and text CE.
+
+        Mirrors ``SmolVLAModel.forward`` (prefix + suffix concat, one
+        ``vlm_with_expert`` call) but captures **both** outputs:
+
+        * ``prefix_out[:, lang_start:lang_end]`` → ``lm_head`` → CE on
+          ``text_labels`` (same slicing as ``_compute_text_loss``).
+        * ``suffix_out[:, -chunk_size:]`` → ``action_out_proj`` → flow
+          MSE against ``noise - actions`` (same as the parent forward).
+
+        Saves one backbone pass per training step vs. running the flow
+        and text paths separately — same trick PI052Policy uses in
+        ``_compute_all_losses_fused``.
+        """
+        from ..smolvla.modeling_smolvla import resize_with_pad  # noqa: F401  (kept for parity)
+
+        cfg = self.config
+        if cfg.adapt_to_pi_aloha:
+            batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
+            batch[ACTION] = self._pi_aloha_encode_actions_inv(batch[ACTION])
+
+        images, img_masks = self.prepare_images(batch)
+        state = self.prepare_state(batch)
+        lang_tokens = batch[OBS_LANGUAGE_TOKENS]
+        lang_masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
+        actions = self.prepare_action(batch)
+
+        inner = self.model
+        if noise is None:
+            noise = inner.sample_noise(actions.shape, actions.device)
+        if time is None:
+            time = inner.sample_time(actions.shape[0], actions.device)
+
+        time_expanded = time[:, None, None]
+        x_t = time_expanded * noise + (1 - time_expanded) * actions
+        u_t = noise - actions
+
+        prefix_embs, prefix_pad_masks, prefix_att_masks = inner.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks, state=state
+        )
+        suffix_embs, suffix_pad_masks, suffix_att_masks = inner.embed_suffix(x_t, time)
+
+        pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
+        att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
+        att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
+        position_ids = torch.cumsum(pad_masks, dim=1) - 1
+
+        out_pair, _ = inner.vlm_with_expert.forward(
+            attention_mask=att_2d_masks,
+            position_ids=position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, suffix_embs],
+            use_cache=False,
+            fill_kv_cache=False,
+        )
+        prefix_out, suffix_out = out_pair[0], out_pair[1]
+        if prefix_out is None or suffix_out is None:
+            raise RuntimeError(
+                "SmolVLA2: fused forward expected both prefix and suffix "
+                "hidden states from vlm_with_expert."
+            )
+
+        # ---------------- flow loss (per-sample maskable) ----------------
+        chunk = cfg.chunk_size
+        suffix_chunk = suffix_out[:, -chunk:].to(torch.float32)
+        v_t = inner.action_out_proj(suffix_chunk)
+        losses = F.mse_loss(u_t, v_t, reduction="none")
+
+        original_action_dim = cfg.action_feature.shape[0]
+        losses = losses[:, :, :original_action_dim]
+        flow_diag = {"losses_after_forward": float(losses.detach().mean().item())}
+
+        actions_is_pad = batch.get("action_is_pad")
+        if actions_is_pad is not None:
+            in_episode = ~actions_is_pad
+            losses = losses * in_episode.unsqueeze(-1)
+            flow_diag["losses_after_in_ep_bound"] = float(losses.detach().mean().item())
+
+        losses = losses[:, :, : cfg.max_action_dim]
+        flow_diag["losses_after_rm_padding"] = float(losses.detach().mean().item())
+
+        per_sample_flow = losses.mean(dim=(1, 2))
+        if predict_actions_t is not None:
+            mask = predict_actions_t.to(per_sample_flow.dtype)
+            flow_loss = (per_sample_flow * mask).sum() / mask.sum().clamp(min=1.0)
+        else:
+            flow_loss = per_sample_flow.mean()
+
+        # ---------------- text loss (lang slice of prefix) ---------------
+        num_lang = lang_tokens.shape[1]
+        state_for_dim = state if state.ndim >= 2 else state[:, None]
+        num_state = state_for_dim.shape[1] if state_for_dim.ndim >= 2 else 1
+        if num_state < 1:
+            num_state = 1
+        prefix_len = prefix_out.shape[1]
+        lang_end = prefix_len - num_state
+        lang_start = lang_end - num_lang
+        if lang_start < 0 or lang_end > prefix_len:
+            raise RuntimeError(
+                f"SmolVLA2: fused forward could not locate lang range "
+                f"(prefix_len={prefix_len}, num_lang={num_lang}, "
+                f"num_state={num_state})."
+            )
+        vlm = inner.vlm_with_expert.vlm
+        lang_hidden = prefix_out[:, lang_start:lang_end].to(vlm.lm_head.weight.dtype)
+        logits = vlm.lm_head(lang_hidden)
+
+        if text_labels.shape[1] != num_lang:
+            common = min(text_labels.shape[1], num_lang)
+            logits = logits[:, :common]
+            text_labels = text_labels[:, :common]
+
+        shift_logits = logits[:, :-1, :].contiguous()
+        shift_labels = text_labels[:, 1:].contiguous().long()
+        valid_labels = shift_labels != -100
+        ce = F.cross_entropy(
+            shift_logits.reshape(-1, shift_logits.shape[-1]),
+            shift_labels.reshape(-1),
+            ignore_index=-100,
+            reduction="sum",
+        )
+        text_loss = ce / valid_labels.sum().clamp(min=1)
+
+        return flow_loss, text_loss, flow_diag
 
     # ------------------------------------------------------------------
     # Inference: text generation

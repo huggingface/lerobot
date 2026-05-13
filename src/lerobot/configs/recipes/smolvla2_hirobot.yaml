@@ -28,15 +28,16 @@
 #     Each handles a specific high-level event with a TEXT
 #     output (no action supervision). They fire when the
 #     binding for the event resolves to non-None:
-#       * ``memory_update``: at subtask boundary, predict new
-#         memory from task + prior memory + completed subtask.
-#       * ``user_interjection_response``: on user input, predict
-#         new plan + paired ``say()`` tool call.
 #       * ``ask_vqa_top`` / ``ask_vqa_wrist``: answer a
 #         camera-grounded visual question.
 #     All use ``stream: high_level`` (no flow loss) and rely on
 #     ``if_present`` guards so they only fire on frames where
 #     the relevant event annotation is present.
+#
+#     ``memory_update`` is folded into Flavor 1 (gated on the
+#     ``new_memory`` binding at boundary frames).
+#     ``user_interjection_response`` was dropped — the current
+#     datasets don't include interjection / say() annotations.
 #
 # How the chat tokenizer interprets the flavor split
 # ---------------------------------------------------
@@ -50,43 +51,37 @@ blend:
 
   # ----------------------------------------------------------
   # FLAVOR 1: action_execution (main path)
+  #
+  # Bundles memory updates inline. On most frames the binding
+  # ``new_memory: emitted_at(t, style=memory)`` returns None and
+  # only the subtask is supervised. On *boundary* frames (the
+  # exact timestamp a new memory was annotated — i.e. when a
+  # subtask just completed) the binding fires and the recipe
+  # supervises the new memory as a follow-up assistant turn,
+  # with a "Completed subtask: …" user message in between to
+  # separate the two outputs in the chat sequence. Mirrors the
+  # behaviour of the old standalone ``memory_update`` recipe
+  # but keeps everything inside the unified action_execution.
   # ----------------------------------------------------------
   action_execution:
-    weight: 0.60
+    weight: 0.85
+    bindings:
+      new_memory: "emitted_at(t, style=memory)"
     messages:
       - role: user
         stream: high_level
         content: "${task}\nPlan: ${plan}\nMemory: ${memory}"
       - {role: assistant, content: "${subtask}", stream: low_level, target: true, if_present: subtask}
+      # Memory-update tail — only renders at boundary frames where
+      # ``new_memory`` fires. The new memory is appended as a second
+      # assistant turn right after the subtask, with no intervening
+      # user filler: at a subtask boundary the model emits the new
+      # subtask AND the updated memory in one forward pass.
+      - {role: assistant, content: "${new_memory}", stream: high_level, target: true, if_present: new_memory}
 
   # ----------------------------------------------------------
   # FLAVOR 2: event-driven text-only paths
   # ----------------------------------------------------------
-
-  memory_update:
-    weight: 0.10
-    bindings:
-      prior_memory: "nth_prev(style=memory, offset=1)"
-      current_memory: "emitted_at(t, style=memory)"
-      completed_subtask: "nth_prev(style=subtask, offset=1)"
-    messages:
-      - {role: user, content: "${task}", stream: high_level}
-      - {role: assistant, content: "Previous memory: ${prior_memory}", stream: high_level, if_present: prior_memory}
-      - {role: user, content: "Completed subtask: ${completed_subtask}", stream: high_level, if_present: completed_subtask}
-      - {role: assistant, content: "${current_memory}", stream: high_level, target: true, if_present: current_memory}
-
-  user_interjection_response:
-    weight: 0.15
-    bindings:
-      prior_plan: "nth_prev(style=plan, offset=1)"
-      current_plan: "emitted_at(t, style=plan)"
-      interjection: "emitted_at(t, style=interjection)"
-      speech: "emitted_at(t, role=assistant, tool_name=say)"
-    messages:
-      - {role: user, content: "${task}", stream: high_level}
-      - {role: assistant, content: "Previous plan:\n${prior_plan}", stream: high_level, if_present: prior_plan}
-      - {role: user, content: "${interjection}", stream: high_level, if_present: interjection}
-      - {role: assistant, content: "${current_plan}", stream: high_level, target: true, if_present: current_plan, tool_calls_from: speech}
 
   ask_vqa_top:
     weight: 0.075

@@ -738,24 +738,30 @@ def _msgs_for_subtask(state: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _msgs_for_memory(state: dict[str, Any]) -> list[dict[str, Any]]:
-    """``memory_update`` recipe layout."""
-    msgs: list[dict[str, Any]] = [
-        {"role": "user", "content": state.get("task") or ""}
-    ]
+    """Memory-update prompt — matches the boundary-frame tail of
+    ``action_execution`` in the v2 recipes.
+
+    Recipe layout on a boundary frame:
+        user:      "${task}\\nPlan: ${plan}\\nMemory: ${memory}"
+        assistant: "${subtask}"
+        assistant: → predicts new memory
+
+    At inference we fire this when the runtime detects a subtask
+    transition; the freshly-predicted subtask lives in
+    ``state['current_subtask']``. No "Completed subtask: X" user
+    filler — the second assistant turn is generated immediately
+    after the subtask turn.
+    """
+    head_parts = [state.get("task") or ""]
+    if state.get("current_plan"):
+        head_parts.append(f"Plan: {state['current_plan']}")
     if state.get("current_memory"):
-        msgs.append(
-            {
-                "role": "assistant",
-                "content": f"Previous memory: {state['current_memory']}",
-            }
-        )
+        head_parts.append(f"Memory: {state['current_memory']}")
+    msgs: list[dict[str, Any]] = [
+        {"role": "user", "content": "\n".join(head_parts)},
+    ]
     if state.get("current_subtask"):
-        msgs.append(
-            {
-                "role": "user",
-                "content": f"Completed subtask: {state['current_subtask']}",
-            }
-        )
+        msgs.append({"role": "assistant", "content": state["current_subtask"]})
     return msgs
 
 
