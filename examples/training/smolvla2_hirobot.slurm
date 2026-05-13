@@ -39,7 +39,7 @@ POLICY_REPO_ID="${POLICY_REPO_ID:-pepijn223/smolvla2_hirobot_super_poulain_tool6
 JOB_NAME="${JOB_NAME:-smolvla2-hirobot-super-poulain-tool6}"
 NUM_PROCESSES="${NUM_PROCESSES:-8}"
 BATCH_SIZE="${BATCH_SIZE:-32}"
-STEPS="${STEPS:-2000}"
+STEPS="${STEPS:-15000}"
 RUN_ID="${SLURM_JOB_ID:-$(date +%Y%m%d_%H%M%S)}"
 OUTPUT_DIR="${OUTPUT_DIR:-/fsx/pepijn/outputs/train/smolvla2_hirobot_super_poulain_tool3_${STEPS}_${RUN_ID}}"
 
@@ -48,7 +48,7 @@ echo "  GPUs:         $NUM_PROCESSES"
 echo "  batch:        $BATCH_SIZE / GPU (global=$((NUM_PROCESSES * BATCH_SIZE)))"
 echo "  steps:        $STEPS"
 echo "  output:       $OUTPUT_DIR"
-echo "  augmentation: image_transforms ON, prompt dropout {plan:0.50 memory:0.50 subtask:0.20}"
+echo "  augmentation: image_transforms ON, prompt dropout {plan:0.30 memory:0.30 subtask:0.20}"
 
 accelerate launch --multi_gpu --num_processes="$NUM_PROCESSES" \
     -m lerobot.scripts.lerobot_train \
@@ -75,6 +75,6 @@ accelerate launch --multi_gpu --num_processes="$NUM_PROCESSES" \
     --dataset.image_transforms.enable=true \
     --dataset.image_transforms.max_num_transforms=3 \
     --dataset.image_transforms.random_order=true \
-    --policy.plan_dropout_prob=0.50 \
-    --policy.memory_dropout_prob=0.50 \
+    --policy.plan_dropout_prob=0.30 \
+    --policy.memory_dropout_prob=0.30 \
     --policy.subtask_dropout_prob=0.20
