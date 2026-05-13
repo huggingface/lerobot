@@ -81,7 +81,7 @@ def merge_video_feature_info_for_aggregate(all_metadata: list[LeRobotDatasetMeta
         if fallback_keys:
             logging.warning(
                 f"Merging heterogeneous or incomplete video encoder metadata for feature {vk}. "
-                f"Setting these keys to null (video.extra_options -> {fallback_keys}).",
+                f"Setting these keys to null: {fallback_keys}.",
             )
 
         merged_info[vk]["info"] = {**base_video_info, **merged_encoder_info}

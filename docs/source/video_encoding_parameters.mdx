@@ -43,6 +43,13 @@ lerobot-record \
 
 ## Tuning parameters
 
+<Tip warning={true}>
+The defaults are tuned to balance **compression ratio**, **visual quality**, and **decoding/seek speed** for typical robotics datasets. Changing them can affect both recording (CPU load, frame drops) and training (decoding throughput, image quality).
+
+Only override these parameters if you have a specific reason to, and measure the impact on your pipeline before relying on the new settings.
+
+</Tip>
+
 All flags below are prefixed with `--dataset.camera_encoder.` on the CLI.
 
 | Parameter       | Type           | Default       | Description                                                                                                                                                                            |
