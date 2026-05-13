@@ -53,7 +53,7 @@ class VLAJEPAConfig(PreTrainedConfig):
     action_noise_s: float = 0.999
 
     # total video frames loaded per sample
-    num_video_frames: int = 4
+    num_video_frames: int = 16
     predictor_depth: int = 6
     predictor_num_heads: int = 8
     predictor_mlp_ratio: float = 4.0
