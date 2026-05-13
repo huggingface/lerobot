@@ -86,6 +86,9 @@ class VLAJEPAConfig(PreTrainedConfig):
             raise ValueError("VLAJEPA requires at least one visual input feature.")
         if self.action_feature is None:
             raise ValueError("VLAJEPA requires an action output feature.")
+        self.action_dim = self.action_feature.shape[0]
+        if self.robot_state_feature is not None:
+            self.state_dim = self.robot_state_feature.shape[0]
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(
