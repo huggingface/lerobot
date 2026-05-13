@@ -45,7 +45,6 @@ from typing import Any
 import torch
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
-from lerobot.datasets.language import DEFAULT_TOOLS
 from lerobot.processor.pipeline import ProcessorStep, ProcessorStepRegistry
 from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
@@ -283,7 +282,7 @@ class SmolVLA2ChatTokenizerStep(ProcessorStep):
         """Probabilistically drop non-target context messages.
 
         Heuristic content sniffing — matches the prefix strings that
-        ``smolvla2_hirobot.yaml``'s recipes use when injecting plan /
+        ``hirobot.yaml``'s recipes use when injecting plan /
         memory / subtask / interjection content. Anything else is
         kept unchanged. Target messages are never dropped (we still
         need their tokens for supervision).

@@ -252,8 +252,14 @@ class PI052TextTokenizerStep(ProcessorStep):
 
         seed = self.dropout_seed
         if seed is None:
-            seed_src = complementary.get("dataset_index") or complementary.get("frame_index") or 0
+            # Canonical row-index key set by ``BatchProcessor`` /
+            # ``render_messages_processor``. Falling back to other
+            # keys silently gave every sample seed=0 → identical
+            # dropout pattern across the whole epoch.
+            seed_src = complementary.get("index", 0)
             try:
+                if hasattr(seed_src, "item"):
+                    seed_src = seed_src.item()
                 seed = int(seed_src)
             except (TypeError, ValueError):
                 seed = 0

@@ -246,6 +246,21 @@ class SmolVLA2Policy(SmolVLAPolicy):
             text_loss = self._compute_text_loss(batch, text_labels)
             total = total + self.config.text_loss_weight * text_loss
             loss_dict["text_loss"] = float(text_loss.detach().item())
+        else:
+            # No path fired — happens when both loss weights are 0 or
+            # the batch has neither action samples nor supervised text.
+            # Fail loud rather than train silently on a zero loss.
+            raise RuntimeError(
+                "SmolVLA2Policy.forward: nothing to train — "
+                "flow_loss_weight=%s, text_loss_weight=%s, "
+                "predict_actions.any()=%s, has_text_data=%s"
+                % (
+                    self.config.flow_loss_weight,
+                    self.config.text_loss_weight,
+                    bool(predict_actions_t.any().item()) if has_per_sample_routing else None,
+                    has_text_data,
+                )
+            )
 
         loss_dict["loss"] = float(total.detach().item())
 

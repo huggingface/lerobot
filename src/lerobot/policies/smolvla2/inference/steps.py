@@ -17,7 +17,7 @@ Each step is a tiny class with a ``trigger`` and an ``__call__(state)``;
 the runtime applies them in order each tick. When a step's trigger
 doesn't fire, the step is a no-op and the runtime moves on.
 
-Stream-to-step mapping mirrors the ``smolvla2_hirobot.yaml`` recipe:
+Stream-to-step mapping mirrors the ``hirobot.yaml`` recipe:
 
 * ``LowLevelForward``        — calls ``policy.select_action`` for the
                                 action chunk; trained by
@@ -120,7 +120,13 @@ class LowLevelForward(InferenceStep):
         # high-level recipe).
         subtask = state.get("current_subtask") or state.get("task") or ""
         ctx = [{"role": "user", "content": subtask}]
-        text_batch = _build_text_batch(self.policy, ctx)
+        # ``add_generation_prompt=False`` to match the training-time
+        # prefix shape: at training the action expert sees the rendered
+        # user turn ending at ``<|im_end|>`` (no trailing
+        # ``<|im_start|>assistant\n``). Passing True here would append
+        # extra role-marker tokens the action expert never saw during
+        # training.
+        text_batch = _build_text_batch(self.policy, ctx, add_generation_prompt=False)
         from lerobot.utils.constants import (  # noqa: PLC0415
             OBS_LANGUAGE_ATTENTION_MASK,
             OBS_LANGUAGE_TOKENS,
@@ -232,7 +238,12 @@ class DispatchAction(InferenceStep):
 # ---------------------------------------------------------------------------
 
 
-def _build_text_batch(policy: Any, prompt_messages: list[dict[str, Any]]) -> dict[str, Any]:
+def _build_text_batch(
+    policy: Any,
+    prompt_messages: list[dict[str, Any]],
+    *,
+    add_generation_prompt: bool = True,
+) -> dict[str, Any]:
     """Tokenize a list of chat messages into the batch shape
     ``select_message`` expects.
 
@@ -263,7 +274,7 @@ def _build_text_batch(policy: Any, prompt_messages: list[dict[str, Any]]) -> dic
     text_messages = [_strip_lerobot_blocks(m) for m in prompt_messages]
     encoded = tokenizer.apply_chat_template(
         text_messages,
-        add_generation_prompt=True,
+        add_generation_prompt=add_generation_prompt,
         tokenize=True,
         return_tensors="pt",
     )
@@ -690,7 +701,7 @@ def _control_context_messages(
 ) -> list[dict[str, Any]]:
     """Build a chat-template-ready prompt from current runtime state.
 
-    Mirrors what ``smolvla2_hirobot.yaml`` renders into ``${task}\nPlan:
+    Mirrors what ``hirobot.yaml`` renders into ``${task}\nPlan:
     ${plan}\nMemory: ${memory}`` for the high-level branches.
     """
     parts: list[str] = []
@@ -711,7 +722,7 @@ def _control_context_messages(
 
 # ---------------------------------------------------------------------------
 # Per-recipe prompt builders. Each one mirrors a single sub-recipe's
-# message layout in ``smolvla2_hirobot.yaml`` so the chat-templated
+# message layout in ``hirobot.yaml`` so the chat-templated
 # prompt at inference matches what the model saw during training.
 # Generic ``_control_context_messages`` is kept around as a fallback
 # for ad-hoc callers but the four high-level steps now use these.

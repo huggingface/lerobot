@@ -57,7 +57,7 @@ class PI052Config(PI05Config):
     """
 
     # Recipe / language stack ---------------------------------------------
-    recipe_path: str | None = "recipes/pi052_hirobot.yaml"
+    recipe_path: str | None = "recipes/hirobot.yaml"
     """Path (absolute or relative to ``src/lerobot/configs/``) to a
     ``TrainingRecipe`` YAML. Defaults to the canonical Hi-Robot blend
     shipped alongside this policy. Set to ``None`` to disable recipe

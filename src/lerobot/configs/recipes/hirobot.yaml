@@ -1,10 +1,19 @@
-# π0.5 v2 (pi052) Hi-Robot blend.
+# Hi-Robot blend — shared between SmolVLA2 (SmolVLM2 backbone) and
+# PI052 (PaliGemma backbone). π0.5-style split:
 #
-# Same shape as ``smolvla2_hirobot.yaml`` — see that file for the
-# flavor breakdown. The only difference here is the backbone:
-# PaliGemma isn't chat-pretrained, so ``PI052TextTokenizerStep``
-# concatenates messages as ``Role: content`` plain text instead
-# of calling ``apply_chat_template``.
+#   The action expert is conditioned on (images, state, subtask) only.
+#   Hierarchical context (task + plan + memory) only flows into the
+#   high-level text head.
+#
+#     high_level_subtask  — predict subtask from (task+plan+memory),
+#                           and the new memory at boundary frames.
+#     low_level_execution — flow loss with [images, subtask, state].
+#     plan_generation     — task → plan.
+#     ask_vqa_{top,wrist} — camera-grounded VQA.
+#
+# Each backbone's text tokenizer renders these messages differently
+# (SmolVLA2 uses the chat template; PI052 concatenates as plain
+# ``Role: content`` text), but the recipe spec is identical.
 
 blend:
 
@@ -17,15 +26,18 @@ blend:
         stream: high_level
         content: "${task}\nPlan: ${plan}\nMemory: ${memory}"
       - {role: assistant, content: "${subtask}", stream: high_level, target: true, if_present: subtask}
+      # Boundary-frame tail: at a subtask transition, also predict
+      # the new memory in the same forward pass.
       - {role: assistant, content: "${new_memory}", stream: high_level, target: true, if_present: new_memory}
 
   low_level_execution:
     weight: 0.30
     messages:
-      # Action expert prefix = [images, subtask, state] only — π0.5 style.
-      # No text-CE target: ``high_level_subtask`` already supervises
-      # subtask prediction from real context. ``stream: low_level``
-      # flips ``predict_actions=True`` so the flow loss fires.
+      # π0.5-style action conditioning. The action expert sees only
+      # [images, this user turn (= bare subtask), state]. No text-CE
+      # target — subtask prediction is owned by ``high_level_subtask``.
+      # ``stream: low_level`` flips ``predict_actions=True`` so the
+      # flow loss fires.
       - {role: user, content: "${subtask}", stream: low_level, if_present: subtask}
 
   plan_generation:
