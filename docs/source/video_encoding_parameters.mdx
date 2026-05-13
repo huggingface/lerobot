@@ -79,14 +79,14 @@ All flags below are prefixed with `--dataset.camera_encoder.` on the CLI.
 
 How each field is forwarded to FFmpeg after `vcodec` resolution, via `get_codec_options()`. Only fields on `camera_encoder` are listed here (no global thread / queue flags).
 
-| Resolved `vcodec`                        | Quality from `crf`          | `preset` | `fast_decode`                              |
-| ---------------------------------------- | --------------------------- | -------- | ------------------------------------------ |
-| `libsvtav1`                              | `crf`                       | `preset` | `svtav1-params` includes `fast-decode=0…2` |
-| `h264`, `hevc` (software)                | `crf`                       | `preset` | `tune=fastdecode` if `fast_decode > 0`     |
-| `h264_videotoolbox`, `hevc_videotoolbox` | `q:v` (derived from `crf`)  | —        | —                                          |
-| `h264_nvenc`, `hevc_nvenc`               | `rc=constqp` + `qp` ← `crf` | `preset` | —                                          |
-| `h264_vaapi`                             | `qp` ← `crf`                | —        | —                                          |
-| `h264_qsv`                               | `global_quality` ← `crf`    | `preset` | —                                          |
+| Resolved `vcodec`                        | Quality from `crf`         | `preset` | `fast_decode`                              |
+| ---------------------------------------- | -------------------------- | -------- | ------------------------------------------ |
+| `libsvtav1`                              | `crf`                      | `preset` | `svtav1-params` includes `fast-decode=0…2` |
+| `h264`, `hevc` (software)                | `crf`                      | `preset` | `tune=fastdecode` if `fast_decode > 0`     |
+| `h264_videotoolbox`, `hevc_videotoolbox` | `q:v` (derived from `crf`) | —        | —                                          |
+| `h264_nvenc`, `hevc_nvenc`               | `rc` = `0`, `qp` ← `crf`   | `preset` | —                                          |
+| `h264_vaapi`                             | `qp` ← `crf`               | —        | —                                          |
+| `h264_qsv`                               | `global_quality` ← `crf`   | `preset` | —                                          |
 
 ---
 

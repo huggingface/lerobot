@@ -90,10 +90,10 @@ class TestCodecOptions:
     def test_nvenc_options(self):
         cfg = VideoEncoderConfig(vcodec="h264_nvenc", g=2, crf=25, preset=None)
         opts = cfg.get_codec_options()
-        assert opts["rc"] == "constqp"
+        assert opts["rc"] == 0
         assert opts["qp"] == 25
         assert "crf" not in opts
-        assert "g" not in opts
+        assert opts["g"] == 2
 
     @_require_encoder("h264_vaapi")
     def test_vaapi_options(self):
