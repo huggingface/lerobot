@@ -80,10 +80,9 @@ class Qwen3VLInterface(torch.nn.Module):
         batch_inputs = self.processor.apply_chat_template(
             messages,
             tokenize=True,
-            padding=True,
             add_generation_prompt=True,
             return_dict=True,
-            return_tensors="pt",
+            processor_kwargs={"padding": True, "return_tensors": "pt"},
         )
         return batch_inputs.to(self.model.device)
 
