@@ -16,6 +16,8 @@
 
 """Video encoder configurations."""
 
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -35,6 +37,9 @@ HW_VIDEO_CODECS = [
     "h264_qsv",  # Intel Quick Sync
 ]
 VALID_VIDEO_CODECS: frozenset[str] = frozenset({"h264", "hevc", "libsvtav1", "auto", *HW_VIDEO_CODECS})
+# Aliases for legacy video codec names.
+VIDEO_CODECS_ALIASES: dict[str, str] = {"av1": "libsvtav1"}
+
 
 LIBSVTAV1_DEFAULT_PRESET: int = 12
 
@@ -88,6 +93,30 @@ class VideoEncoderConfig:
             self.preset = LIBSVTAV1_DEFAULT_PRESET
         self.validate()
 
+    @classmethod
+    def from_video_info(cls, video_info: dict | None) -> VideoEncoderConfig:
+        """Reconstruct a :class:`VideoEncoderConfig` from a video feature's ``info`` block.
+        Missing or ``None`` values fall back to the class defaults.
+        """
+        video_info = video_info or {}
+        kwargs: dict[str, Any] = {}
+
+        for src_key, dst_field in (("video.codec", "vcodec"), ("video.pix_fmt", "pix_fmt")):
+            value = video_info.get(src_key)
+            if value is not None:
+                kwargs[dst_field] = value
+
+        for field_name in VIDEO_ENCODER_INFO_FIELD_NAMES:
+            value = video_info.get(f"video.{field_name}")
+            if value is None:
+                continue
+            # Persisted as ``{}`` after merges with disagreeing sources — treat as default.
+            if field_name == "extra_options" and not value:
+                continue
+            kwargs[field_name] = value
+
+        return cls(**kwargs)
+
     def detect_available_encoders(self, encoders: list[str] | str) -> list[str]:
         """Return the subset of available encoders based on the specified video backend.
 
@@ -116,7 +145,11 @@ class VideoEncoderConfig:
 
         For ``"auto"``, the first hardware encoder in the preference list that is available is chosen; if none are available, ``libsvtav1`` is used. If the
         resolved codec (explicit or after auto-selection) is not available, raises ``ValueError``.
+
+        Stream-derived canonical codec names listed in :data:`VIDEO_CODEC_ALIASES` are
+        rewritten to their corresponding encoder name (e.g. ``"av1"`` → ``"libsvtav1"``).
         """
+        self.vcodec = VIDEO_CODECS_ALIASES.get(self.vcodec, self.vcodec)
         if self.vcodec not in VALID_VIDEO_CODECS:
             raise ValueError(f"Invalid vcodec '{self.vcodec}'. Must be one of: {sorted(VALID_VIDEO_CODECS)}")
         if self.vcodec == "auto":

@@ -96,17 +96,19 @@ def delete_episodes(
     episode_indices: list[int],
     output_dir: str | Path | None = None,
     repo_id: str | None = None,
-    camera_encoder: VideoEncoderConfig | None = None,
 ) -> LeRobotDataset:
     """Delete episodes from a LeRobotDataset and create a new dataset.
+
+    Video segments that need re-encoding (because the source file mixes kept and
+    deleted episodes) are re-encoded with the source dataset's existing encoder
+    settings — read back from ``meta/info.json`` — so the output dataset stays
+    consistent with its own metadata.
 
     Args:
         dataset: The source LeRobotDataset.
         episode_indices: List of episode indices to delete.
         output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
         repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
-        camera_encoder: Video encoder settings used when re-encoding video segments
-            (``None`` uses :func:`~lerobot.configs.camera_encoder_defaults`).
     """
     if not episode_indices:
         raise ValueError("No episodes to delete")
@@ -139,7 +141,7 @@ def delete_episodes(
 
     video_metadata = None
     if dataset.meta.video_keys:
-        video_metadata = _copy_and_reindex_videos(dataset, new_meta, episode_mapping, camera_encoder)
+        video_metadata = _copy_and_reindex_videos(dataset, new_meta, episode_mapping)
 
     data_metadata = _copy_and_reindex_data(dataset, new_meta, episode_mapping)
 
@@ -161,17 +163,19 @@ def split_dataset(
     dataset: LeRobotDataset,
     splits: dict[str, float | list[int]],
     output_dir: str | Path | None = None,
-    camera_encoder: VideoEncoderConfig | None = None,
 ) -> dict[str, LeRobotDataset]:
     """Split a LeRobotDataset into multiple smaller datasets.
+
+    Video segments that need re-encoding (because the source file mixes episodes
+    that fall into different splits) are re-encoded with the source dataset's
+    existing encoder settings — read back from ``meta/info.json`` — so each
+    output split stays consistent with its own metadata.
 
     Args:
         dataset: The source LeRobotDataset to split.
         splits: Either a dict mapping split names to episode indices, or a dict mapping
                 split names to fractions (must sum to <= 1.0).
         output_dir: Root directory where the split datasets will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id.
-        camera_encoder: Video encoder settings used when re-encoding video segments
-            (``None`` uses :func:`~lerobot.configs.camera_encoder_defaults`).
 
     Examples:
       Split by specific episodes
@@ -232,7 +236,7 @@ def split_dataset(
 
         video_metadata = None
         if dataset.meta.video_keys:
-            video_metadata = _copy_and_reindex_videos(dataset, new_meta, episode_mapping, camera_encoder)
+            video_metadata = _copy_and_reindex_videos(dataset, new_meta, episode_mapping)
 
         data_metadata = _copy_and_reindex_data(dataset, new_meta, episode_mapping)
 
@@ -588,7 +592,7 @@ def _keep_episodes_from_video_with_av(
     output_path: Path,
     episodes_to_keep: list[tuple[int, int]],
     fps: float,
-    camera_encoder: VideoEncoderConfig | None = None,
+    camera_encoder: VideoEncoderConfig,
 ) -> None:
     """Keep only specified episodes from a video file using PyAV.
 
@@ -602,11 +606,8 @@ def _keep_episodes_from_video_with_av(
             Ranges are half-open intervals: [start_frame, end_frame), where start_frame
             is inclusive and end_frame is exclusive.
         fps: Frame rate of the video.
-        camera_encoder: Video encoder settings
-            (``None`` uses :func:`~lerobot.configs.camera_encoder_defaults`).
+        camera_encoder: Video encoder settings used to re-encode the kept frames.
     """
-    if camera_encoder is None:
-        camera_encoder = camera_encoder_defaults()
     from fractions import Fraction
 
     import av
@@ -699,26 +700,23 @@ def _copy_and_reindex_videos(
     src_dataset: LeRobotDataset,
     dst_meta: LeRobotDatasetMetadata,
     episode_mapping: dict[int, int],
-    camera_encoder: VideoEncoderConfig | None = None,
 ) -> dict[int, dict]:
     """Copy and filter video files, only re-encoding files with deleted episodes.
 
     For video files that only contain kept episodes, we copy them directly.
     For files with mixed kept/deleted episodes, we use PyAV filters to efficiently
-    re-encode only the desired segments.
+    re-encode only the desired segments. The encoder used for re-encoding is
+    derived per video key from the source dataset's ``meta/info.json`` so the
+    destination metadata keeps describing the videos accurately.
 
     Args:
         src_dataset: Source dataset to copy from
         dst_meta: Destination metadata object
         episode_mapping: Mapping from old episode indices to new indices
-        camera_encoder: Video encoder settings used when re-encoding segments
-            (``None`` uses :func:`~lerobot.configs.camera_encoder_defaults`).
 
     Returns:
         dict mapping episode index to its video metadata (chunk_index, file_index, timestamps)
     """
-    if camera_encoder is None:
-        camera_encoder = camera_encoder_defaults()
     if src_dataset.meta.episodes is None:
         src_dataset.meta.episodes = load_episodes(src_dataset.meta.root)
 
@@ -726,6 +724,9 @@ def _copy_and_reindex_videos(
 
     for video_key in src_dataset.meta.video_keys:
         logging.info(f"Processing videos for {video_key}")
+        camera_encoder = VideoEncoderConfig.from_video_info(
+            src_dataset.meta.info.features.get(video_key, {}).get("info")
+        )
 
         if dst_meta.video_path is None:
             raise ValueError("Destination metadata has no video_path defined")

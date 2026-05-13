@@ -36,6 +36,7 @@ from lerobot.datasets.video_utils import (
     encode_video_frames,
     get_video_info,
 )
+from tests.fixtures.constants import DUMMY_VIDEO_INFO
 
 
 # Per-codec skip markers — validation tests only fire when the codec is available
@@ -570,3 +571,25 @@ class TestEncoderConfigPersistence:
         dataset.finalize()
 
         assert _read_feature_info(dataset) == first_info
+
+
+class TestFromVideoInfo:
+    """``VideoEncoderConfig.from_video_info`` reconstructs an encoder config
+    from the ``video.*`` keys persisted in a dataset's ``info.json``.
+    """
+
+    @require_libsvtav1
+    def test_reconstructs_from_dummy_video_info(self):
+        cfg = VideoEncoderConfig.from_video_info(DUMMY_VIDEO_INFO)
+
+        # Canonical stream codec ``"av1"`` is aliased to the encoder name.
+        assert cfg.vcodec == "libsvtav1"
+        assert cfg.pix_fmt == DUMMY_VIDEO_INFO["video.pix_fmt"]
+        assert cfg.g == DUMMY_VIDEO_INFO["video.g"]
+        assert cfg.crf == DUMMY_VIDEO_INFO["video.crf"]
+        assert cfg.preset == DUMMY_VIDEO_INFO["video.preset"]
+        assert cfg.fast_decode == DUMMY_VIDEO_INFO["video.fast_decode"]
+        assert cfg.video_backend == DUMMY_VIDEO_INFO["video.video_backend"]
+        # ``{}`` placeholder (typical after a merge with disagreeing sources)
+        # must not leak into the reconstructed config.
+        assert cfg.extra_options == VideoEncoderConfig().extra_options

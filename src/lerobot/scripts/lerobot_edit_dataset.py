@@ -49,14 +49,6 @@ Delete episodes and save to a new dataset at a specific path and with a new repo
         --operation.type delete_episodes \
         --operation.episode_indices "[0, 2, 5]"
 
-Delete episodes and re-encode video segments with h264:
-    lerobot-edit-dataset \
-        --repo_id lerobot/pusht \
-        --operation.type delete_episodes \
-        --operation.episode_indices "[0, 2, 5]" \
-        --operation.camera_encoder.vcodec h264 \
-        --operation.camera_encoder.crf 23
-
 Split dataset by fractions (pusht_train, pusht_val):
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \
@@ -81,14 +73,6 @@ Split into more than two splits:
         --repo_id lerobot/pusht \
         --operation.type split \
         --operation.splits '{"train": 0.6, "val": 0.2, "test": 0.2}'
-
-Split dataset and re-encode video segments with h264:
-    lerobot-edit-dataset \
-        --repo_id lerobot/pusht \
-        --operation.type split \
-        --operation.splits '{"train": 0.8, "val": 0.2}' \
-        --operation.camera_encoder.vcodec h264 \
-        --operation.camera_encoder.crf 23
 
 Merge multiple datasets:
     lerobot-edit-dataset \
@@ -234,14 +218,12 @@ class OperationConfig(draccus.ChoiceRegistry, abc.ABC):
 @dataclass
 class DeleteEpisodesConfig(OperationConfig):
     episode_indices: list[int] | None = None
-    camera_encoder: VideoEncoderConfig = field(default_factory=camera_encoder_defaults)
 
 
 @OperationConfig.register_subclass("split")
 @dataclass
 class SplitConfig(OperationConfig):
     splits: dict[str, float | list[int]] | None = None
-    camera_encoder: VideoEncoderConfig = field(default_factory=camera_encoder_defaults)
 
 
 @OperationConfig.register_subclass("merge")
@@ -370,7 +352,6 @@ def handle_delete_episodes(cfg: EditDatasetConfig) -> None:
         episode_indices=cfg.operation.episode_indices,
         output_dir=output_dir,
         repo_id=output_repo_id,
-        camera_encoder=cfg.operation.camera_encoder,
     )
 
     logging.info(f"Dataset saved to {output_dir}")
@@ -402,7 +383,6 @@ def handle_split(cfg: EditDatasetConfig) -> None:
         dataset,
         splits=cfg.operation.splits,
         output_dir=cfg.new_root,
-        camera_encoder=cfg.operation.camera_encoder,
     )
 
     for split_name, split_ds in split_datasets.items():
