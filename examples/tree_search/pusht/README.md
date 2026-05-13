@@ -31,6 +31,10 @@ Useful knobs:
   candidate action chunks as dots at the agent position after each hypothetical
   action. Blue is the original policy chunk, gray is noisy candidates, and the
   chosen root chunk has a green outline.
+- `--one_step_further`: before running beam search, simulate the raw policy
+  chunk once. If its final PushT coverage does not drop by more than `0.05`,
+  skip search and execute the policy chunk directly. If coverage drops by more
+  than `0.05`, run search as usual.
 
 This is intended for PushT simulation only. Real robots cannot be cloned and
 restored without a separate learned or analytic forward model.

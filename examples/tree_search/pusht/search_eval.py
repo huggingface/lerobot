@@ -58,6 +58,7 @@ from lerobot.utils.random_utils import set_seed
 
 
 LOGGER = logging.getLogger("pusht_tree_search")
+ONE_STEP_FURTHER_COVERAGE_DROP = 0.05
 
 
 @dataclass(frozen=True)
@@ -80,6 +81,7 @@ class PlannerConfig:
     render_videos: int
     log_every_steps: int
     dump_search_images: bool
+    one_step_further: bool
 
 
 @dataclass
@@ -562,6 +564,10 @@ def rollout_actions(
     )
 
 
+def current_coverage(adapter: PushTStateAdapter) -> float:
+    return float(adapter.unwrapped._get_coverage())
+
+
 def str_to_bool(value: str | bool) -> bool:
     if isinstance(value, bool):
         return value
@@ -624,6 +630,16 @@ def parse_args() -> PlannerConfig:
         type=str_to_bool,
         default=False,
         help="Write one PNG per planning call with root action-chunk dot trajectories.",
+    )
+    parser.add_argument(
+        "--one-step-further",
+        "--one_step_further",
+        dest="one_step_further",
+        action="store_true",
+        help=(
+            "Before running search, simulate the raw policy chunk. Only search if final coverage drops "
+            f"by more than {ONE_STEP_FURTHER_COVERAGE_DROP:.2f}."
+        ),
     )
 
     args = parser.parse_args()
@@ -730,7 +746,7 @@ def run_episode(
             annotate_frame(
                 adapter.render(),
                 [
-                    "Search: On",
+                    "Search: Off",
                     f"episode={episode_index} step=0/{max_steps}",
                     "reset",
                 ],
@@ -745,10 +761,52 @@ def run_episode(
 
     while env_step < max_steps and not (terminated or truncated or success):
         root_state = adapter.snapshot()
-        search_frame = adapter.render() if cfg.dump_search_images else None
-        action_chunk, plan_info = planner.choose(observation, env_step=env_step, max_steps=max_steps)
+        search_frame: np.ndarray | None = None
+        should_search = True
+        policy_rollout: SimRollout | None = None
+        coverage_before = current_coverage(adapter)
+
+        if cfg.one_step_further:
+            policy_chunk = action_source.predict_chunk(observation, horizon=cfg.chunk_size)
+            policy_rollout = rollout_actions(
+                adapter=adapter,
+                actions=policy_chunk,
+                start_step=env_step,
+                max_steps=max_steps,
+            )
+            coverage_drop = coverage_before - policy_rollout.coverage
+            should_search = coverage_drop > ONE_STEP_FURTHER_COVERAGE_DROP
+            adapter.restore(root_state)
+
+            if not should_search:
+                action_chunk = policy_chunk
+                plan_info = {
+                    "reason": "one_step_further_policy",
+                    "best_score": scorer.score(policy_rollout),
+                    "selected_candidate_index": 0,
+                    "expanded_nodes": 0,
+                    "coverage_before": coverage_before,
+                    "policy_coverage_after": policy_rollout.coverage,
+                    "coverage_drop": coverage_drop,
+                }
+            else:
+                search_frame = adapter.render() if cfg.dump_search_images else None
+                action_chunk, plan_info = planner.choose(
+                    observation, env_step=env_step, max_steps=max_steps
+                )
+                plan_info.update(
+                    {
+                        "coverage_before": coverage_before,
+                        "policy_coverage_after": policy_rollout.coverage,
+                        "coverage_drop": coverage_drop,
+                    }
+                )
+        else:
+            search_frame = adapter.render() if cfg.dump_search_images else None
+            action_chunk, plan_info = planner.choose(observation, env_step=env_step, max_steps=max_steps)
+
         adapter.restore(root_state)
-        if cfg.dump_search_images and search_frame is not None:
+        if should_search and cfg.dump_search_images and search_frame is not None:
             search_image_path = (
                 search_image_dir / f"episode_{episode_index:03d}" / f"step_{env_step:05d}.png"
             )
@@ -763,7 +821,8 @@ def run_episode(
         commit_count = min(cfg.execute_steps, len(action_chunk), max_steps - env_step)
         if env_step == 0 or env_step % cfg.log_every_steps == 0:
             LOGGER.info(
-                "episode=%s step=%s/%s planning_done reason=%s best_score=%s selected=%s expanded_nodes=%s",
+                "episode=%s step=%s/%s planning_done reason=%s best_score=%s selected=%s "
+                "expanded_nodes=%s coverage_drop=%s",
                 episode_index,
                 env_step,
                 max_steps,
@@ -771,6 +830,7 @@ def run_episode(
                 plan_info.get("best_score"),
                 plan_info.get("selected_candidate_index"),
                 plan_info.get("expanded_nodes"),
+                plan_info.get("coverage_drop"),
             )
         for action_ix, action in enumerate(action_chunk[:commit_count]):
             observation, reward, terminated, truncated, info = adapter.step(action)
@@ -782,7 +842,7 @@ def run_episode(
                     annotate_frame(
                         adapter.render(),
                         [
-                            f"Search: {'On' if action_ix == 0 else 'Off'}",
+                            f"Search: {'On' if should_search and action_ix == 0 else 'Off'}",
                             f"episode={episode_index} step={env_step}/{max_steps}",
                             f"reward={reward:.3f} coverage={float(info.get('coverage', 0.0)):.3f}",
                         ],
