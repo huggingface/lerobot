@@ -146,7 +146,7 @@ class VideoEncoderConfig:
         For ``"auto"``, the first hardware encoder in the preference list that is available is chosen; if none are available, ``libsvtav1`` is used. If the
         resolved codec (explicit or after auto-selection) is not available, raises ``ValueError``.
 
-        Stream-derived canonical codec names listed in :data:`VIDEO_CODEC_ALIASES` are
+        Stream-derived canonical codec names listed in :data:`VIDEO_CODECS_ALIASES` are
         rewritten to their corresponding encoder name (e.g. ``"av1"`` → ``"libsvtav1"``).
         """
         self.vcodec = VIDEO_CODECS_ALIASES.get(self.vcodec, self.vcodec)
