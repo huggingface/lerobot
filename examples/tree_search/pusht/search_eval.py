@@ -134,6 +134,9 @@ class EpisodeResult:
     max_reward: float
     success: bool
     steps: int
+    alternative_selection_count: int
+    selection_count: int
+    asr: float
     video_path: str | None
 
 
@@ -758,6 +761,8 @@ def run_episode(
     terminated = False
     truncated = False
     env_step = 0
+    alternative_selection_count = 0
+    selection_count = 0
 
     while env_step < max_steps and not (terminated or truncated or success):
         root_state = adapter.snapshot()
@@ -819,10 +824,14 @@ def run_episode(
             )
 
         commit_count = min(cfg.execute_steps, len(action_chunk), max_steps - env_step)
+        selection_count += 1
+        selected_candidate = plan_info.get("selected_candidate_index")
+        if selected_candidate is not None and int(selected_candidate) != 0:
+            alternative_selection_count += 1
         if env_step == 0 or env_step % cfg.log_every_steps == 0:
             LOGGER.info(
                 "episode=%s step=%s/%s planning_done reason=%s best_score=%s selected=%s "
-                "expanded_nodes=%s coverage_drop=%s",
+                "expanded_nodes=%s coverage_drop=%s asr=%.2f",
                 episode_index,
                 env_step,
                 max_steps,
@@ -831,6 +840,7 @@ def run_episode(
                 plan_info.get("selected_candidate_index"),
                 plan_info.get("expanded_nodes"),
                 plan_info.get("coverage_drop"),
+                alternative_selection_count / selection_count * 100.0,
             )
         for action_ix, action in enumerate(action_chunk[:commit_count]):
             observation, reward, terminated, truncated, info = adapter.step(action)
@@ -875,6 +885,9 @@ def run_episode(
         max_reward=float(max(rewards) if rewards else 0.0),
         success=success,
         steps=env_step,
+        alternative_selection_count=alternative_selection_count,
+        selection_count=selection_count,
+        asr=(alternative_selection_count / selection_count * 100.0) if selection_count else 0.0,
         video_path=video_path,
     )
 
@@ -937,6 +950,8 @@ def main() -> None:
         close_envs(envs)
 
     elapsed_s = time.time() - started_at
+    total_alternative_selections = sum(result.alternative_selection_count for result in results)
+    total_selections = sum(result.selection_count for result in results)
     payload = {
         "config": {**asdict(cfg), "output_dir": str(cfg.output_dir)},
         "per_episode": [asdict(result) for result in results],
@@ -944,6 +959,13 @@ def main() -> None:
             "avg_sum_reward": float(np.mean([result.sum_reward for result in results])) if results else 0.0,
             "avg_max_reward": float(np.mean([result.max_reward for result in results])) if results else 0.0,
             "pc_success": float(np.mean([result.success for result in results]) * 100.0) if results else 0.0,
+            "asr": (
+                float(total_alternative_selections / total_selections * 100.0)
+                if total_selections
+                else 0.0
+            ),
+            "alternative_selection_count": total_alternative_selections,
+            "selection_count": total_selections,
             "n_episodes": len(results),
             "eval_s": elapsed_s,
             "eval_ep_s": elapsed_s / len(results) if results else 0.0,

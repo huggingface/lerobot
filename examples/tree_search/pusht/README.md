@@ -18,6 +18,26 @@ uv run python examples/tree_search/pusht/search_eval.py \
   --chunk-size=8
 ```
 
+Run distinct episodes in parallel without changing the core evaluator:
+
+```bash
+uv run python examples/tree_search/pusht/parallel_search_eval.py \
+  --policy.path=aadarshram/act_pusht \
+  --policy.device=cuda \
+  --policy.use_amp=false \
+  --episodes=10 \
+  --episode-workers=2 \
+  --seed=0 \
+  --depth=3 \
+  --num-candidates=40 \
+  --chunk-size=3 \
+  --execute-steps=10
+```
+
+The wrapper launches `search_eval.py` once per episode, stores each subprocess
+under `OUTPUT_DIR/episodes/episode_XXX/`, and writes collated metrics to
+`OUTPUT_DIR/eval_info.json`.
+
 Useful knobs:
 
 - `--score-mode=coverage`: use PushT goal coverage as the planner score.
@@ -35,6 +55,11 @@ Useful knobs:
   chunk once. If its final PushT coverage does not drop by more than `0.05`,
   skip search and execute the policy chunk directly. If coverage drops by more
   than `0.05`, run search as usual.
+
+The evaluator reports `asr` (Alternative Selection Ratio) in the aggregate
+metrics. ASR is the percentage of decision points where the selected root chunk
+was a noisy alternative (`selected_candidate_index != 0`) instead of the
+original policy chunk.
 
 This is intended for PushT simulation only. Real robots cannot be cloned and
 restored without a separate learned or analytic forward model.
