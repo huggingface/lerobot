@@ -1247,7 +1247,7 @@ def test_convert_image_to_video_dataset(tmp_path):
             dataset=source_dataset,
             output_dir=output_dir,
             repo_id="lerobot/pusht_video",
-            camera_encoder_config=VideoEncoderConfig(
+            camera_encoder=VideoEncoderConfig(
                 vcodec="libsvtav1",
                 pix_fmt="yuv420p",
                 g=2,

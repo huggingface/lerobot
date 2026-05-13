@@ -337,7 +337,7 @@ def _encode_video(
 ) -> Path:
     imgs_dir = path.parent / f"imgs_{path.stem}"
     _write_frames(imgs_dir, num_frames=num_frames)
-    encode_video_frames(imgs_dir, path, fps=fps, camera_encoder_config=cfg, overwrite=True)
+    encode_video_frames(imgs_dir, path, fps=fps, camera_encoder=cfg, overwrite=True)
     return path
 
 
@@ -377,7 +377,7 @@ class TestGetVideoInfo:
     def test_merges_encoder_config_as_video_prefixed_entries(self):
         cfg = VideoEncoderConfig(vcodec="libsvtav1", g=2, crf=30, preset=12)
 
-        info = get_video_info(TEST_ARTIFACTS_DIR / "clip_4frames.mp4", camera_encoder_config=cfg)
+        info = get_video_info(TEST_ARTIFACTS_DIR / "clip_4frames.mp4", camera_encoder=cfg)
 
         assert info["video.g"] == 2
         assert info["video.crf"] == 30
@@ -390,7 +390,7 @@ class TestGetVideoInfo:
     def test_stream_derived_keys_take_precedence_over_config(self):
         cfg = VideoEncoderConfig(vcodec="libsvtav1", pix_fmt="yuv420p")
 
-        info = get_video_info(TEST_ARTIFACTS_DIR / "clip_4frames.mp4", camera_encoder_config=cfg)
+        info = get_video_info(TEST_ARTIFACTS_DIR / "clip_4frames.mp4", camera_encoder=cfg)
 
         assert info["video.codec"]  # populated from stream, not from config's vcodec
         assert info["video.pix_fmt"] == "yuv420p"
@@ -453,7 +453,7 @@ class TestEncodeVideoFrames:
         cfg = VideoEncoderConfig(vcodec="libsvtav1", g=4, crf=25, preset=10)
         video_path = _encode_video(tmp_path / "out.mp4", num_frames=4, fps=30, cfg=cfg)
 
-        info = get_video_info(video_path, camera_encoder_config=cfg)
+        info = get_video_info(video_path, camera_encoder=cfg)
 
         # Stream-derived
         assert info["video.height"] == 64
@@ -535,7 +535,7 @@ class TestEncoderConfigPersistence:
     def test_first_episode_save_persists_encoder_config(self, tmp_path, empty_lerobot_dataset_factory):
         cfg = VideoEncoderConfig(vcodec="libsvtav1", g=2, crf=30, preset=12)
         dataset = empty_lerobot_dataset_factory(
-            root=tmp_path / "ds", features=VIDEO_FEATURES, use_videos=True, camera_encoder_config=cfg
+            root=tmp_path / "ds", features=VIDEO_FEATURES, use_videos=True, camera_encoder=cfg
         )
 
         _add_frames(dataset, num_frames=4)
@@ -558,7 +558,7 @@ class TestEncoderConfigPersistence:
     def test_second_episode_does_not_overwrite_encoder_fields(self, tmp_path, empty_lerobot_dataset_factory):
         cfg = VideoEncoderConfig(vcodec="libsvtav1", g=2, crf=30, preset=12)
         dataset = empty_lerobot_dataset_factory(
-            root=tmp_path / "ds", features=VIDEO_FEATURES, use_videos=True, camera_encoder_config=cfg
+            root=tmp_path / "ds", features=VIDEO_FEATURES, use_videos=True, camera_encoder=cfg
         )
 
         _add_frames(dataset, num_frames=4)

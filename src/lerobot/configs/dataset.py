@@ -58,8 +58,8 @@ class DatasetRecordConfig:
     # Set to 1 for immediate encoding (default behavior), or higher for batched encoding
     video_encoding_batch_size: int = 1
     # Video encoder settings for camera MP4s (codec, quality, GOP, etc.). Tuned via CLI nested keys,
-    # e.g. ``--dataset.camera_encoder_config.vcodec=h264`` (see ``VideoEncoderConfig``).
-    camera_encoder_config: VideoEncoderConfig = field(default_factory=camera_encoder_defaults)
+    # e.g. ``--dataset.camera_encoder.vcodec=h264`` (see ``VideoEncoderConfig``).
+    camera_encoder: VideoEncoderConfig = field(default_factory=camera_encoder_defaults)
     # Enable streaming video encoding: encode frames in real-time during capture instead
     # of writing PNG images first. Makes save_episode() near-instant. More info in the documentation: https://huggingface.co/docs/lerobot/streaming_video_encoding
     streaming_encoding: bool = False

@@ -67,7 +67,7 @@ def _encode_video_worker(
     episode_index: int,
     root: Path,
     fps: int,
-    camera_encoder_config: VideoEncoderConfig | None = None,
+    camera_encoder: VideoEncoderConfig | None = None,
     encoder_threads: int | None = None,
 ) -> Path:
     temp_path = Path(tempfile.mkdtemp(dir=root)) / f"{video_key}_{episode_index:03d}.mp4"
@@ -77,7 +77,7 @@ def _encode_video_worker(
         img_dir,
         temp_path,
         fps,
-        camera_encoder_config=camera_encoder_config,
+        camera_encoder=camera_encoder,
         encoder_threads=encoder_threads,
         overwrite=True,
     )
@@ -96,7 +96,7 @@ class DatasetWriter:
         self,
         meta: LeRobotDatasetMetadata,
         root: Path,
-        camera_encoder_config: VideoEncoderConfig | None,
+        camera_encoder: VideoEncoderConfig | None,
         encoder_threads: int | None,
         batch_encoding_size: int,
         streaming_encoder: StreamingVideoEncoder | None = None,
@@ -108,7 +108,7 @@ class DatasetWriter:
             meta: Dataset metadata instance (used for feature schema, chunk
                 settings, and episode persistence).
             root: Local dataset root directory.
-            camera_encoder_config: Video encoder settings applied to all cameras.
+            camera_encoder: Video encoder settings applied to all cameras.
                 ``None`` uses :func:`~lerobot.configs.camera_encoder_defaults`.
             encoder_threads: Number of encoder threads (global). ``None``
                 lets the codec decide.
@@ -120,7 +120,7 @@ class DatasetWriter:
         """
         self._meta = meta
         self._root = root
-        self._camera_encoder_config = camera_encoder_config or camera_encoder_defaults()
+        self._camera_encoder = camera_encoder or camera_encoder_defaults()
         self._encoder_threads = encoder_threads
         self._batch_encoding_size = batch_encoding_size
         self._streaming_encoder = streaming_encoder
@@ -293,7 +293,7 @@ class DatasetWriter:
                             episode_index,
                             self._root,
                             self._meta.fps,
-                            self._camera_encoder_config,
+                            self._camera_encoder,
                             self._encoder_threads,
                         ): video_key
                         for video_key in self._meta.video_keys
@@ -504,7 +504,7 @@ class DatasetWriter:
 
         # Update video info (only needed when first episode is encoded)
         if episode_index == 0:
-            self._meta.update_video_info(video_key, camera_encoder_config=self._camera_encoder_config)
+            self._meta.update_video_info(video_key, camera_encoder=self._camera_encoder)
             write_info(self._meta.info, self._meta.root)
 
         metadata = {
@@ -577,7 +577,7 @@ class DatasetWriter:
             episode_index,
             self._root,
             self._meta.fps,
-            self._camera_encoder_config,
+            self._camera_encoder,
             self._encoder_threads,
         )
 

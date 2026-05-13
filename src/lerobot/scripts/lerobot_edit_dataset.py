@@ -54,8 +54,8 @@ Delete episodes and re-encode video segments with h264:
         --repo_id lerobot/pusht \
         --operation.type delete_episodes \
         --operation.episode_indices "[0, 2, 5]" \
-        --operation.camera_encoder_config.vcodec h264 \
-        --operation.camera_encoder_config.crf 23
+        --operation.camera_encoder.vcodec h264 \
+        --operation.camera_encoder.crf 23
 
 Split dataset by fractions (pusht_train, pusht_val):
     lerobot-edit-dataset \
@@ -87,8 +87,8 @@ Split dataset and re-encode video segments with h264:
         --repo_id lerobot/pusht \
         --operation.type split \
         --operation.splits '{"train": 0.8, "val": 0.2}' \
-        --operation.camera_encoder_config.vcodec h264 \
-        --operation.camera_encoder_config.crf 23
+        --operation.camera_encoder.vcodec h264 \
+        --operation.camera_encoder.crf 23
 
 Merge multiple datasets:
     lerobot-edit-dataset \
@@ -208,8 +208,7 @@ from pathlib import Path
 
 import draccus
 
-from lerobot.configs import parser
-from lerobot.configs.video import VideoEncoderConfig, camera_encoder_defaults
+from lerobot.configs import VideoEncoderConfig, camera_encoder_defaults, parser
 from lerobot.datasets import (
     LeRobotDataset,
     convert_image_to_video_dataset,
@@ -235,14 +234,14 @@ class OperationConfig(draccus.ChoiceRegistry, abc.ABC):
 @dataclass
 class DeleteEpisodesConfig(OperationConfig):
     episode_indices: list[int] | None = None
-    camera_encoder_config: VideoEncoderConfig = field(default_factory=camera_encoder_defaults)
+    camera_encoder: VideoEncoderConfig = field(default_factory=camera_encoder_defaults)
 
 
 @OperationConfig.register_subclass("split")
 @dataclass
 class SplitConfig(OperationConfig):
     splits: dict[str, float | list[int]] | None = None
-    camera_encoder_config: VideoEncoderConfig = field(default_factory=camera_encoder_defaults)
+    camera_encoder: VideoEncoderConfig = field(default_factory=camera_encoder_defaults)
 
 
 @OperationConfig.register_subclass("merge")
@@ -269,7 +268,7 @@ class ModifyTasksConfig(OperationConfig):
 @dataclass
 class ConvertImageToVideoConfig(OperationConfig):
     output_dir: str | None = None
-    camera_encoder_config: VideoEncoderConfig = field(default_factory=camera_encoder_defaults)
+    camera_encoder: VideoEncoderConfig = field(default_factory=camera_encoder_defaults)
     episode_indices: list[int] | None = None
     num_workers: int = 4
     max_episodes_per_batch: int | None = None
@@ -371,7 +370,7 @@ def handle_delete_episodes(cfg: EditDatasetConfig) -> None:
         episode_indices=cfg.operation.episode_indices,
         output_dir=output_dir,
         repo_id=output_repo_id,
-        camera_encoder_config=cfg.operation.camera_encoder_config,
+        camera_encoder=cfg.operation.camera_encoder,
     )
 
     logging.info(f"Dataset saved to {output_dir}")
@@ -403,7 +402,7 @@ def handle_split(cfg: EditDatasetConfig) -> None:
         dataset,
         splits=cfg.operation.splits,
         output_dir=cfg.new_root,
-        camera_encoder_config=cfg.operation.camera_encoder_config,
+        camera_encoder=cfg.operation.camera_encoder,
     )
 
     for split_name, split_ds in split_datasets.items():
@@ -574,7 +573,7 @@ def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
         dataset=dataset,
         output_dir=output_dir,
         repo_id=output_repo_id,
-        camera_encoder_config=getattr(cfg.operation, "camera_encoder_config", None)
+        camera_encoder=getattr(cfg.operation, "camera_encoder", None)
         or camera_encoder_defaults(),
         episode_indices=getattr(cfg.operation, "episode_indices", None),
         num_workers=getattr(cfg.operation, "num_workers", 4),

@@ -335,17 +335,17 @@ def encode_video_frames(
     imgs_dir: Path | str,
     video_path: Path | str,
     fps: int,
-    camera_encoder_config: VideoEncoderConfig | None = None,
+    camera_encoder: VideoEncoderConfig | None = None,
     encoder_threads: int | None = None,
     *,
     log_level: int | None = av.logging.WARNING,
     overwrite: bool = False,
 ) -> None:
     """More info on ffmpeg arguments tuning on `benchmark/video/README.md`"""
-    if camera_encoder_config is None:
-        camera_encoder_config = camera_encoder_defaults()
-    vcodec = camera_encoder_config.vcodec
-    pix_fmt = camera_encoder_config.pix_fmt
+    if camera_encoder is None:
+        camera_encoder = camera_encoder_defaults()
+    vcodec = camera_encoder.vcodec
+    pix_fmt = camera_encoder.pix_fmt
 
     video_path = Path(video_path)
     imgs_dir = Path(imgs_dir)
@@ -367,7 +367,7 @@ def encode_video_frames(
     with Image.open(input_list[0]) as dummy_image:
         width, height = dummy_image.size
 
-    video_options = camera_encoder_config.get_codec_options(encoder_threads, as_strings=True)
+    video_options = camera_encoder.get_codec_options(encoder_threads, as_strings=True)
 
     # Set logging level
     if log_level is not None:
@@ -638,14 +638,14 @@ class StreamingVideoEncoder:
     def __init__(
         self,
         fps: int,
-        camera_encoder_config: VideoEncoderConfig | None = None,
+        camera_encoder: VideoEncoderConfig | None = None,
         queue_maxsize: int = 30,
         encoder_threads: int | None = None,
     ):
         """
         Args:
             fps: Frames per second for the output videos.
-            camera_encoder_config: Video encoder settings applied to all cameras.
+            camera_encoder: Video encoder settings applied to all cameras.
                 When ``None``, :func:`camera_encoder_defaults` is used.
             encoder_threads: Number of encoder threads (global setting).
                 ``None`` lets the codec decide.
@@ -653,7 +653,7 @@ class StreamingVideoEncoder:
                 back-pressure drops frames.
         """
         self.fps = fps
-        self._camera_encoder_config = camera_encoder_config or camera_encoder_defaults()
+        self._camera_encoder = camera_encoder or camera_encoder_defaults()
         self._encoder_threads = encoder_threads
         self.queue_maxsize = queue_maxsize
 
@@ -686,15 +686,15 @@ class StreamingVideoEncoder:
             temp_video_dir = Path(tempfile.mkdtemp(dir=temp_dir))
             video_path = temp_video_dir / f"{video_key.replace('/', '_')}_streaming.mp4"
 
-            vcodec = self._camera_encoder_config.vcodec
-            codec_options = self._camera_encoder_config.get_codec_options(
+            vcodec = self._camera_encoder.vcodec
+            codec_options = self._camera_encoder.get_codec_options(
                 self._encoder_threads, as_strings=True
             )
             encoder_thread = _CameraEncoderThread(
                 video_path=video_path,
                 fps=self.fps,
                 vcodec=vcodec,
-                pix_fmt=self._camera_encoder_config.pix_fmt,
+                pix_fmt=self._camera_encoder.pix_fmt,
                 codec_options=codec_options,
                 frame_queue=frame_queue,
                 result_queue=result_queue,
@@ -905,13 +905,13 @@ def get_audio_info(video_path: Path | str) -> dict:
 
 def get_video_info(
     video_path: Path | str,
-    camera_encoder_config: VideoEncoderConfig | None = None,
+    camera_encoder: VideoEncoderConfig | None = None,
 ) -> dict:
     """Build the ``video.*`` / ``audio.*`` info dict persisted in ``info.json``.
 
     Args:
         video_path: Path to the encoded video file to probe.
-        camera_encoder_config: If provided, record the exact encoder settings used to encode this
+        camera_encoder: If provided, record the exact encoder settings used to encode this
             video. Stream-derived values take precedence — encoder fields are only written for keys
             not already populated from the video file itself.
     """
@@ -946,8 +946,8 @@ def get_video_info(
     video_info.update(**get_audio_info(video_path))
 
     # Add additional encoder configuration if provided
-    if camera_encoder_config is not None:
-        for field_name, field_value in asdict(camera_encoder_config).items():
+    if camera_encoder is not None:
+        for field_name, field_value in asdict(camera_encoder).items():
             # vcodec is already populated from the video stream
             if field_name == "vcodec":
                 continue

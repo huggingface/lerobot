@@ -179,7 +179,7 @@ class TestStreamingVideoEncoder:
         video_keys = [f"{OBS_IMAGES}.laptop"]
         encoder = StreamingVideoEncoder(
             fps=30,
-            camera_encoder_config=self._make_encoder_config(
+            camera_encoder=self._make_encoder_config(
                 vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13
             ),
         )
@@ -211,7 +211,7 @@ class TestStreamingVideoEncoder:
         video_keys = [f"{OBS_IMAGES}.laptop", f"{OBS_IMAGES}.phone"]
         encoder = StreamingVideoEncoder(
             fps=30,
-            camera_encoder_config=self._make_encoder_config(
+            camera_encoder=self._make_encoder_config(
                 vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30
             ),
         )
@@ -239,7 +239,7 @@ class TestStreamingVideoEncoder:
         video_keys = [f"{OBS_IMAGES}.cam"]
         encoder = StreamingVideoEncoder(
             fps=30,
-            camera_encoder_config=self._make_encoder_config(
+            camera_encoder=self._make_encoder_config(
                 vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30
             ),
         )
@@ -267,7 +267,7 @@ class TestStreamingVideoEncoder:
         video_keys = [f"{OBS_IMAGES}.cam"]
         encoder = StreamingVideoEncoder(
             fps=30,
-            camera_encoder_config=self._make_encoder_config(
+            camera_encoder=self._make_encoder_config(
                 vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30
             ),
         )
@@ -315,7 +315,7 @@ class TestStreamingVideoEncoder:
         video_keys = [f"{OBS_IMAGES}.cam"]
         encoder = StreamingVideoEncoder(
             fps=30,
-            camera_encoder_config=self._make_encoder_config(
+            camera_encoder=self._make_encoder_config(
                 vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13
             ),
         )
@@ -352,7 +352,7 @@ class TestStreamingVideoEncoder:
         video_keys = [f"{OBS_IMAGES}.cam1", f"{OBS_IMAGES}.cam2"]
         encoder = StreamingVideoEncoder(
             fps=30,
-            camera_encoder_config=self._make_encoder_config(
+            camera_encoder=self._make_encoder_config(
                 vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30
             ),
         )
@@ -391,7 +391,7 @@ class TestStreamingVideoEncoder:
         )
         encoder = StreamingVideoEncoder(
             fps=30,
-            camera_encoder_config=cfg,
+            camera_encoder=cfg,
             encoder_threads=2,
         )
         assert encoder._encoder_threads == 2
@@ -430,7 +430,7 @@ class TestStreamingVideoEncoder:
         video_keys = [f"{OBS_IMAGES}.cam"]
         encoder = StreamingVideoEncoder(
             fps=30,
-            camera_encoder_config=self._make_encoder_config(
+            camera_encoder=self._make_encoder_config(
                 vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13
             ),
             queue_maxsize=1,

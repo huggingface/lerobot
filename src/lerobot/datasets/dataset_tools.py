@@ -96,7 +96,7 @@ def delete_episodes(
     episode_indices: list[int],
     output_dir: str | Path | None = None,
     repo_id: str | None = None,
-    camera_encoder_config: VideoEncoderConfig | None = None,
+    camera_encoder: VideoEncoderConfig | None = None,
 ) -> LeRobotDataset:
     """Delete episodes from a LeRobotDataset and create a new dataset.
 
@@ -105,7 +105,7 @@ def delete_episodes(
         episode_indices: List of episode indices to delete.
         output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
         repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
-        camera_encoder_config: Video encoder settings used when re-encoding video segments
+        camera_encoder: Video encoder settings used when re-encoding video segments
             (``None`` uses :func:`~lerobot.configs.camera_encoder_defaults`).
     """
     if not episode_indices:
@@ -139,7 +139,7 @@ def delete_episodes(
 
     video_metadata = None
     if dataset.meta.video_keys:
-        video_metadata = _copy_and_reindex_videos(dataset, new_meta, episode_mapping, camera_encoder_config)
+        video_metadata = _copy_and_reindex_videos(dataset, new_meta, episode_mapping, camera_encoder)
 
     data_metadata = _copy_and_reindex_data(dataset, new_meta, episode_mapping)
 
@@ -161,7 +161,7 @@ def split_dataset(
     dataset: LeRobotDataset,
     splits: dict[str, float | list[int]],
     output_dir: str | Path | None = None,
-    camera_encoder_config: VideoEncoderConfig | None = None,
+    camera_encoder: VideoEncoderConfig | None = None,
 ) -> dict[str, LeRobotDataset]:
     """Split a LeRobotDataset into multiple smaller datasets.
 
@@ -170,7 +170,7 @@ def split_dataset(
         splits: Either a dict mapping split names to episode indices, or a dict mapping
                 split names to fractions (must sum to <= 1.0).
         output_dir: Root directory where the split datasets will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id.
-        camera_encoder_config: Video encoder settings used when re-encoding video segments
+        camera_encoder: Video encoder settings used when re-encoding video segments
             (``None`` uses :func:`~lerobot.configs.camera_encoder_defaults`).
 
     Examples:
@@ -233,7 +233,7 @@ def split_dataset(
         video_metadata = None
         if dataset.meta.video_keys:
             video_metadata = _copy_and_reindex_videos(
-                dataset, new_meta, episode_mapping, camera_encoder_config
+                dataset, new_meta, episode_mapping, camera_encoder
             )
 
         data_metadata = _copy_and_reindex_data(dataset, new_meta, episode_mapping)
@@ -590,7 +590,7 @@ def _keep_episodes_from_video_with_av(
     output_path: Path,
     episodes_to_keep: list[tuple[int, int]],
     fps: float,
-    camera_encoder_config: VideoEncoderConfig | None = None,
+    camera_encoder: VideoEncoderConfig | None = None,
 ) -> None:
     """Keep only specified episodes from a video file using PyAV.
 
@@ -604,11 +604,11 @@ def _keep_episodes_from_video_with_av(
             Ranges are half-open intervals: [start_frame, end_frame), where start_frame
             is inclusive and end_frame is exclusive.
         fps: Frame rate of the video.
-        camera_encoder_config: Video encoder settings
+        camera_encoder: Video encoder settings
             (``None`` uses :func:`~lerobot.configs.camera_encoder_defaults`).
     """
-    if camera_encoder_config is None:
-        camera_encoder_config = camera_encoder_defaults()
+    if camera_encoder is None:
+        camera_encoder = camera_encoder_defaults()
     from fractions import Fraction
 
     import av
@@ -632,13 +632,13 @@ def _keep_episodes_from_video_with_av(
 
     # Convert fps to Fraction for PyAV compatibility.
     fps_fraction = Fraction(fps).limit_denominator(1000)
-    codec_options = camera_encoder_config.get_codec_options(as_strings=True)
-    v_out = out.add_stream(camera_encoder_config.vcodec, rate=fps_fraction, options=codec_options)
+    codec_options = camera_encoder.get_codec_options(as_strings=True)
+    v_out = out.add_stream(camera_encoder.vcodec, rate=fps_fraction, options=codec_options)
 
     # PyAV type stubs don't distinguish video streams from audio/subtitle streams.
     v_out.width = v_in.codec_context.width
     v_out.height = v_in.codec_context.height
-    v_out.pix_fmt = camera_encoder_config.pix_fmt
+    v_out.pix_fmt = camera_encoder.pix_fmt
 
     # Set time_base to match the frame rate for proper timestamp handling.
     v_out.time_base = Fraction(1, int(fps))
@@ -701,7 +701,7 @@ def _copy_and_reindex_videos(
     src_dataset: LeRobotDataset,
     dst_meta: LeRobotDatasetMetadata,
     episode_mapping: dict[int, int],
-    camera_encoder_config: VideoEncoderConfig | None = None,
+    camera_encoder: VideoEncoderConfig | None = None,
 ) -> dict[int, dict]:
     """Copy and filter video files, only re-encoding files with deleted episodes.
 
@@ -713,14 +713,14 @@ def _copy_and_reindex_videos(
         src_dataset: Source dataset to copy from
         dst_meta: Destination metadata object
         episode_mapping: Mapping from old episode indices to new indices
-        camera_encoder_config: Video encoder settings used when re-encoding segments
+        camera_encoder: Video encoder settings used when re-encoding segments
             (``None`` uses :func:`~lerobot.configs.camera_encoder_defaults`).
 
     Returns:
         dict mapping episode index to its video metadata (chunk_index, file_index, timestamps)
     """
-    if camera_encoder_config is None:
-        camera_encoder_config = camera_encoder_defaults()
+    if camera_encoder is None:
+        camera_encoder = camera_encoder_defaults()
     if src_dataset.meta.episodes is None:
         src_dataset.meta.episodes = load_episodes(src_dataset.meta.root)
 
@@ -809,7 +809,7 @@ def _copy_and_reindex_videos(
                     dst_video_path,
                     episodes_to_keep_ranges,
                     src_dataset.meta.fps,
-                    camera_encoder_config,
+                    camera_encoder,
                 )
 
                 cumulative_ts = 0.0
@@ -1280,7 +1280,7 @@ def _estimate_frame_size_via_calibration(
     episode_indices: list[int],
     temp_dir: Path,
     fps: int,
-    camera_encoder_config: VideoEncoderConfig,
+    camera_encoder: VideoEncoderConfig,
     num_calibration_frames: int = 30,
 ) -> float:
     """Estimate MB per frame by encoding a small calibration sample.
@@ -1294,7 +1294,7 @@ def _estimate_frame_size_via_calibration(
         episode_indices: List of episode indices being processed.
         temp_dir: Temporary directory for calibration files.
         fps: Frames per second for video encoding.
-        camera_encoder_config: Video encoder settings used for calibration encoding.
+        camera_encoder: Video encoder settings used for calibration encoding.
         num_calibration_frames: Number of frames to use for calibration (default: 30).
 
     Returns:
@@ -1330,7 +1330,7 @@ def _estimate_frame_size_via_calibration(
             imgs_dir=calibration_dir,
             video_path=calibration_video_path,
             fps=fps,
-            camera_encoder_config=camera_encoder_config,
+            camera_encoder=camera_encoder,
             overwrite=True,
         )
 
@@ -1648,7 +1648,7 @@ def convert_image_to_video_dataset(
     dataset: LeRobotDataset,
     output_dir: Path | None = None,
     repo_id: str | None = None,
-    camera_encoder_config: VideoEncoderConfig | None = None,
+    camera_encoder: VideoEncoderConfig | None = None,
     episode_indices: list[int] | None = None,
     num_workers: int = 4,
     max_episodes_per_batch: int | None = None,
@@ -1663,7 +1663,7 @@ def convert_image_to_video_dataset(
         dataset: The source LeRobot dataset with images
         output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
         repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
-        camera_encoder_config: Video encoder settings
+        camera_encoder: Video encoder settings
             (``None`` uses :func:`~lerobot.configs.camera_encoder_defaults`).
         episode_indices: List of episode indices to convert (None = all episodes)
         num_workers: Number of threads for parallel processing (default: 4)
@@ -1673,8 +1673,8 @@ def convert_image_to_video_dataset(
     Returns:
         New LeRobotDataset with images encoded as videos
     """
-    if camera_encoder_config is None:
-        camera_encoder_config = camera_encoder_defaults()
+    if camera_encoder is None:
+        camera_encoder = camera_encoder_defaults()
 
     # Check that it's an image dataset
     if len(dataset.meta.video_keys) > 0:
@@ -1700,8 +1700,8 @@ def convert_image_to_video_dataset(
         f"Converting {len(episode_indices)} episodes with {len(img_keys)} cameras from {dataset.repo_id}"
     )
     logging.info(
-        f"Video codec: {camera_encoder_config.vcodec}, pixel format: {camera_encoder_config.pix_fmt}, "
-        f"GOP: {camera_encoder_config.g}, CRF: {camera_encoder_config.crf}"
+        f"Video codec: {camera_encoder.vcodec}, pixel format: {camera_encoder.pix_fmt}, "
+        f"GOP: {camera_encoder.g}, CRF: {camera_encoder.crf}"
     )
 
     # Create new features dict, converting image features to video features
@@ -1772,7 +1772,7 @@ def convert_image_to_video_dataset(
                 episode_indices=episode_indices,
                 temp_dir=temp_dir,
                 fps=fps,
-                camera_encoder_config=camera_encoder_config,
+                camera_encoder=camera_encoder,
             )
 
             logging.info(f"Processing camera: {img_key}")
@@ -1814,7 +1814,7 @@ def convert_image_to_video_dataset(
                     imgs_dir=imgs_dir,
                     video_path=video_path,
                     fps=fps,
-                    camera_encoder_config=camera_encoder_config,
+                    camera_encoder=camera_encoder,
                     overwrite=True,
                 )
 
@@ -1861,7 +1861,7 @@ def convert_image_to_video_dataset(
                     video_key=img_key, chunk_index=0, file_index=0
                 )
                 new_meta.info.features[img_key]["info"] = get_video_info(
-                    video_path, camera_encoder_config=camera_encoder_config
+                    video_path, camera_encoder=camera_encoder
                 )
 
         write_info(new_meta.info, new_meta.root)

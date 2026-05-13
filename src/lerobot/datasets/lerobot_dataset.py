@@ -58,7 +58,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         video_backend: str | None = None,
         return_uint8: bool = False,
         batch_encoding_size: int = 1,
-        camera_encoder_config: VideoEncoderConfig | None = None,
+        camera_encoder: VideoEncoderConfig | None = None,
         encoder_threads: int | None = None,
         streaming_encoding: bool = False,
         encoder_queue_maxsize: int = 30,
@@ -177,7 +177,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 You can also use the 'pyav' decoder used by Torchvision, which used to be the default option, or 'video_reader' which is another decoder of Torchvision.
             batch_encoding_size (int, optional): Number of episodes to accumulate before batch encoding videos.
                 Set to 1 for immediate encoding (default), or higher for batched encoding. Defaults to 1.
-            camera_encoder_config (VideoEncoderConfig | None, optional): Video encoder settings for cameras
+            camera_encoder (VideoEncoderConfig | None, optional): Video encoder settings for cameras
                 (codec, quality, etc.). When ``None``, :func:`~lerobot.configs.video.camera_encoder_defaults`
                 is used by the writer.
             encoder_threads (int | None, optional): Number of encoder threads (global). ``None`` lets the
@@ -250,14 +250,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if streaming_encoding and len(self.meta.video_keys) > 0:
                 streaming_enc = self._build_streaming_encoder(
                     self.meta.fps,
-                    camera_encoder_config,
+                    camera_encoder,
                     encoder_queue_maxsize,
                     encoder_threads,
                 )
             self.writer = DatasetWriter(
                 meta=self.meta,
                 root=self.root,
-                camera_encoder_config=camera_encoder_config,
+                camera_encoder=camera_encoder,
                 encoder_threads=encoder_threads,
                 batch_encoding_size=batch_encoding_size,
                 streaming_encoder=streaming_enc,
@@ -299,13 +299,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
     @staticmethod
     def _build_streaming_encoder(
         fps: int,
-        camera_encoder_config: VideoEncoderConfig | None,
+        camera_encoder: VideoEncoderConfig | None,
         encoder_queue_maxsize: int,
         encoder_threads: int | None,
     ) -> StreamingVideoEncoder:
         return StreamingVideoEncoder(
             fps=fps,
-            camera_encoder_config=camera_encoder_config,
+            camera_encoder=camera_encoder,
             queue_maxsize=encoder_queue_maxsize,
             encoder_threads=encoder_threads,
         )
@@ -622,7 +622,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         image_writer_threads: int = 0,
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
-        camera_encoder_config: VideoEncoderConfig | None = None,
+        camera_encoder: VideoEncoderConfig | None = None,
         metadata_buffer_size: int = 10,
         streaming_encoding: bool = False,
         encoder_queue_maxsize: int = 30,
@@ -653,7 +653,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             video_backend: Video decoding backend (used when reading back).
             batch_encoding_size: Number of episodes to accumulate before
                 batch-encoding videos. ``1`` means encode immediately.
-            camera_encoder_config: Video encoder settings for cameras (codec, quality, etc.).
+            camera_encoder: Video encoder settings for cameras (codec, quality, etc.).
                 When ``None``, :func:`~lerobot.configs.video.camera_encoder_defaults` is used.
             encoder_threads: Number of encoder threads (global). ``None``
                 lets the codec decide.
@@ -698,12 +698,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
         streaming_enc = None
         if streaming_encoding and len(obj.meta.video_keys) > 0:
             streaming_enc = cls._build_streaming_encoder(
-                fps, camera_encoder_config, encoder_queue_maxsize, encoder_threads
+                fps, camera_encoder, encoder_queue_maxsize, encoder_threads
             )
         obj.writer = DatasetWriter(
             meta=obj.meta,
             root=obj.root,
-            camera_encoder_config=camera_encoder_config,
+            camera_encoder=camera_encoder,
             encoder_threads=encoder_threads,
             batch_encoding_size=batch_encoding_size,
             streaming_encoder=streaming_enc,
@@ -726,7 +726,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         force_cache_sync: bool = False,
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
-        camera_encoder_config: VideoEncoderConfig | None = None,
+        camera_encoder: VideoEncoderConfig | None = None,
         encoder_threads: int | None = None,
         image_writer_processes: int = 0,
         image_writer_threads: int = 0,
@@ -754,7 +754,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             video_backend: Video decoding backend for reading back data.
             batch_encoding_size: Number of episodes to accumulate before
                 batch-encoding videos.
-            camera_encoder_config: Video encoder settings for cameras (codec, quality, etc.).
+            camera_encoder: Video encoder settings for cameras (codec, quality, etc.).
                 When ``None``, :func:`~lerobot.configs.video.camera_encoder_defaults` is used.
             encoder_threads: Number of encoder threads (global). ``None``
                 lets the codec decide.
@@ -802,12 +802,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
         streaming_enc = None
         if streaming_encoding and len(obj.meta.video_keys) > 0:
             streaming_enc = cls._build_streaming_encoder(
-                obj.meta.fps, camera_encoder_config, encoder_queue_maxsize, encoder_threads
+                obj.meta.fps, camera_encoder, encoder_queue_maxsize, encoder_threads
             )
         obj.writer = DatasetWriter(
             meta=obj.meta,
             root=obj.root,
-            camera_encoder_config=camera_encoder_config,
+            camera_encoder=camera_encoder,
             encoder_threads=encoder_threads,
             batch_encoding_size=batch_encoding_size,
             streaming_encoder=streaming_enc,

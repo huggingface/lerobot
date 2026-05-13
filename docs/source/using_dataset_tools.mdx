@@ -117,10 +117,10 @@ lerobot-edit-dataset \
     --repo_id lerobot/pusht_image \
     --operation.type convert_image_to_video \
     --operation.output_dir outputs/pusht_video \
-    --operation.camera_encoder_config.vcodec libsvtav1 \
-    --operation.camera_encoder_config.pix_fmt yuv420p \
-    --operation.camera_encoder_config.g 2 \
-    --operation.camera_encoder_config.crf 30
+    --operation.camera_encoder.vcodec libsvtav1 \
+    --operation.camera_encoder.pix_fmt yuv420p \
+    --operation.camera_encoder.g 2 \
+    --operation.camera_encoder.crf 30
 
 # Convert only specific episodes
 lerobot-edit-dataset \
@@ -147,7 +147,7 @@ lerobot-edit-dataset \
 **Parameters:**
 
 - `output_dir`: Custom output directory (optional - by default uses `new_repo_id` or `{repo_id}_video`)
-- `camera_encoder_config`: Video encoder settings — all sub-fields accessible via `--operation.camera_encoder_config.<field>. See [Video Encoding Parameters](./video_encoding_parameters) for more details.
+- `camera_encoder`: Video encoder settings — all sub-fields accessible via `--operation.camera_encoder.<field>. See [Video Encoding Parameters](./video_encoding_parameters) for more details.
 - `episode_indices`: List of specific episodes to convert (default: all episodes)
 - `num_workers`: Number of parallel workers for processing (default: 4)
 
