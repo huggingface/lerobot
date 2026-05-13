@@ -52,6 +52,7 @@ class VLAJEPAConfig(PreTrainedConfig):
     action_noise_beta_beta: float = 1.0
     action_noise_s: float = 0.999
 
+    # total video frames loaded per sample
     num_video_frames: int = 4
     predictor_depth: int = 6
     predictor_num_heads: int = 8
@@ -59,6 +60,8 @@ class VLAJEPAConfig(PreTrainedConfig):
     predictor_dropout: float = 0.0
     world_model_loss_weight: float = 0.1
     enable_world_model: bool = True
+    jepa_tubelet_size: int = 2  # must match the encoder (e.g. 2 for vjepa2-vitl-fpc64-256)
+    repeated_diffusion_steps: int = 4  # independent noise draws per batch item (CogACT-style)
 
     resize_images_to: tuple[int, int] | None = None
     torch_dtype: str = "bfloat16"
@@ -78,8 +81,11 @@ class VLAJEPAConfig(PreTrainedConfig):
             raise ValueError("`n_action_steps` must be <= `chunk_size`.")
         if self.future_action_window_size + 1 > self.chunk_size:
             raise ValueError("`chunk_size` must cover the predicted action horizon.")
-        if self.num_video_frames < 2:
-            raise ValueError("`num_video_frames` must be >= 2 for JEPA prediction.")
+        if self.num_video_frames < 2 * self.jepa_tubelet_size:
+            raise ValueError(
+                f"`video_horizon` ({self.num_video_frames}) must be >= 2 * `jepa_tubelet_size` "
+                f"({self.jepa_tubelet_size}) to have at least one context and one GT temporal position."
+            )
 
     def validate_features(self) -> None:
         if not self.image_features:
@@ -109,7 +115,9 @@ class VLAJEPAConfig(PreTrainedConfig):
 
     @property
     def observation_delta_indices(self) -> list[int]:
-        return [0]
+        # load video_horizon frames starting from current timestep: [t, t+1, ..., t+video_horizon-1]
+        # matches original repo's observation_indices=list(range(video_horizon))
+        return list(range(self.num_video_frames))
 
     @property
     def action_delta_indices(self) -> list[int]:
