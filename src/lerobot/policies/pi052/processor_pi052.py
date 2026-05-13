@@ -43,6 +43,7 @@ import torch
 from lerobot.configs.recipe import TrainingRecipe
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
+    ActionTokenizerProcessorStep,
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessorStep,
@@ -101,8 +102,24 @@ def make_pi052_pre_post_processors(
             memory_dropout_prob=getattr(config, "memory_dropout_prob", 0.0),
             subtask_dropout_prob=getattr(config, "subtask_dropout_prob", 0.0),
         ),
-        DeviceProcessorStep(device=config.device),
     ]
+
+    # FAST tokenizer for discrete-action CE supervision (paper §III.C).
+    # Only inserted when explicitly enabled — keeps the post-training-
+    # style recipe (flow + text) as the default. When on, the step
+    # writes ACTION_TOKENS / ACTION_TOKEN_MASK into
+    # ``COMPLEMENTARY_DATA`` and the modeling forward picks them up.
+    if getattr(config, "enable_fast_action_loss", False):
+        input_steps.append(
+            ActionTokenizerProcessorStep(
+                action_tokenizer_name=config.action_tokenizer_name,
+                max_action_tokens=config.max_action_tokens,
+                fast_skip_tokens=config.fast_skip_tokens,
+                paligemma_tokenizer_name="google/paligemma-3b-pt-224",
+            )
+        )
+
+    input_steps.append(DeviceProcessorStep(device=config.device))
 
     output_steps = [
         UnnormalizerProcessorStep(

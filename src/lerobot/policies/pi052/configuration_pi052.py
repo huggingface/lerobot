@@ -99,6 +99,50 @@ class PI052Config(PI05Config):
     memory_dropout_prob: float = 0.0
     subtask_dropout_prob: float = 0.0
 
+    # FAST discrete-action supervision — paper §III.B-C ------------------
+    # When enabled, actions are *also* tokenised via the FAST tokenizer
+    # ("physical-intelligence/fast") and supervised with cross-entropy
+    # on the PaliGemma LM head — exactly as in the paper's pre-training
+    # objective (Eq. 1 mixes FAST CE + flow MSE + subtask CE). The
+    # ActionTokenizerProcessorStep is wired into the preprocessor
+    # pipeline when this flag is set; the loss is computed in
+    # PI052Policy.forward.
+    enable_fast_action_loss: bool = False
+    """If True, tokenise actions with the FAST tokenizer and add a
+    cross-entropy loss on the LM head. Off by default because most
+    fine-tuning runs only need the flow head + text supervision; the
+    FAST CE term is most useful when training from a base PaliGemma
+    rather than an existing π0.5 checkpoint."""
+
+    action_tokenizer_name: str = "physical-intelligence/fast"
+    """HF identifier for the FAST action tokenizer."""
+
+    max_action_tokens: int = 256
+    """Maximum number of FAST tokens per action chunk."""
+
+    fast_skip_tokens: int = 128
+    """Number of low-vocab tokens the FAST tokenizer skips to avoid
+    collisions with PaliGemma's text vocabulary."""
+
+    fast_action_loss_weight: float = 1.0
+    """Weight on the FAST-action-token CE loss. Paper §III.C uses 1.0."""
+
+    # Knowledge insulation — paper §III.B --------------------------------
+    # When enabled, gradients from the action expert's flow loss are
+    # *blocked* from flowing back into the VLM's K/V projections. This
+    # prevents the action loss from over-fitting the language backbone
+    # to robot-specific features. Implementation requires a custom
+    # per-layer attention forward that uses ``.detach()`` on VLM K/V
+    # when computing attention for action queries — see
+    # ``pi05_full/modeling_pi05.py::compute_layer_complete_knowledge_insulation``
+    # on branch ``feat/add-pi05`` for the reference implementation.
+    knowledge_insulation: bool = False
+    """If True, route every transformer layer through the KI
+    attention path (blocks action→VLM gradient flow on K/V).
+    Currently a no-op stub in this branch — PR follow-up required to
+    port the full custom layer from pi05_full. The flag is exposed
+    here so SLURM commands can be written against the final shape."""
+
     def __post_init__(self) -> None:
         super().__post_init__()
         # Backbone needs gradients flowing through the text head when
