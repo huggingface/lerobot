@@ -116,18 +116,29 @@ class PlanSubtasksMemoryModule:
                     "tool_calls": None,
                 }
             )
-        # plan row at t=0
-        plan_text = self._generate_plan(record, subtask_spans, task=effective_task)
-        if plan_text is not None:
-            rows.append(
-                {
-                    "role": "assistant",
-                    "content": plan_text,
-                    "style": "plan",
-                    "timestamp": float(t0),
-                    "tool_calls": None,
-                }
+        # Plan rows at every subtask boundary — including t=0 (start of
+        # the first subtask). Because the plan is just a numbered list
+        # of *still-todo* subtasks, re-emitting at each boundary makes
+        # the active plan shrink as work progresses: at frame t the
+        # rendered ``${plan}`` is the most recent emission, which
+        # contains exactly the subtasks that started at or after the
+        # current span. Saves the runtime from having to derive
+        # "what's still left" at inference time.
+        for span in subtask_spans:
+            boundary_t = _snap_to_frame(span["start"], record.frame_timestamps)
+            plan_text = self._generate_plan(
+                record, subtask_spans, refresh_t=boundary_t, task=effective_task
             )
+            if plan_text is not None:
+                rows.append(
+                    {
+                        "role": "assistant",
+                        "content": plan_text,
+                        "style": "plan",
+                        "timestamp": float(boundary_t),
+                        "tool_calls": None,
+                    }
+                )
         # memory rows at every subtask boundary except the very first start
         prior_memory = ""
         for i, span in enumerate(subtask_spans[1:], start=1):
