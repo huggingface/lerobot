@@ -1,25 +1,48 @@
-# π0.5 v2 — Hi-Robot / MEM / ECoT blend, reproducing the paper's
-# hierarchical inference recipe on lerobot.
+# π0.5 v2 (pi052) — Hi-Robot / MEM / ECoT blend.
 #
-# Architecturally identical blend to ``smolvla2_hirobot.yaml`` — same
-# five sub-recipes (memory_update, user_interjection_response,
-# high_level_subtask, low_level_execution, ask_vqa_*) with the same
-# message layouts. The only difference is which backbone the renderer's
-# output is fed into:
+# Architecturally mirrors ``smolvla2_hirobot.yaml`` — same two
+# flavors, same sub-recipes — but the rendered messages are fed
+# to PaliGemma (PaliGemma is not chat-pretrained, so the
+# ``PI052TextTokenizerStep`` concatenates them as ``Role: content``
+# plain text rather than calling ``apply_chat_template``).
 #
-#   * SmolVLA2 calls SmolVLM's chat-template tokenizer
-#     (``apply_chat_template`` with chat-pretrained role markers).
-#   * π0.5 v2 concatenates the rendered messages as ``Role: content``
-#     plain text, since PaliGemma is not chat-pretrained. See
-#     ``PI052TextTokenizerStep`` in ``policies/pi052/text_processor_pi052.py``.
+# Two flavors
+# -----------
 #
-# Same supervision target convention as ``smolvla2_hirobot.yaml``: the
-# ``high_level_subtask`` recipe targets ``${subtask}`` (the *current*
-# active span at every frame) rather than ``${next_subtask}`` (which
-# is empty on stable phases and used to train the model to emit
-# newlines).
+#   Flavor 1 — ``action_execution`` (~60% weight)
+#     The main always-on recipe. Fuses all available context
+#     (task + plan + memory) into a unified user prompt, and
+#     uses the current subtask as the assistant target. This
+#     single recipe supervises *both*:
+#       * subtask prediction (text CE on the assistant span,
+#         lm_head), and
+#       * action chunks (flow MSE on the action expert via
+#         ``stream: low_level, target: true``, plus the FAST
+#         CE on the action tokens when enabled).
+#     Pi 0.7 §V.A — subtask in the prompt + flow on actions.
+#
+#   Flavor 2 — event-driven text-only recipes
+#     ``memory_update``, ``user_interjection_response``,
+#     ``ask_vqa_*``. Each handles a specific high-level event
+#     with a TEXT output. ``if_present`` guards keep them from
+#     firing on frames without the relevant annotation.
 
 blend:
+
+  # ----------------------------------------------------------
+  # FLAVOR 1: action_execution (main path)
+  # ----------------------------------------------------------
+  action_execution:
+    weight: 0.60
+    messages:
+      - role: user
+        stream: high_level
+        content: "${task}\nPlan: ${plan}\nMemory: ${memory}"
+      - {role: assistant, content: "${subtask}", stream: low_level, target: true, if_present: subtask}
+
+  # ----------------------------------------------------------
+  # FLAVOR 2: event-driven text-only paths
+  # ----------------------------------------------------------
 
   memory_update:
     weight: 0.10
@@ -34,7 +57,7 @@ blend:
       - {role: assistant, content: "${current_memory}", stream: high_level, target: true, if_present: current_memory}
 
   user_interjection_response:
-    weight: 0.16
+    weight: 0.15
     bindings:
       prior_plan: "nth_prev(style=plan, offset=1)"
       current_plan: "emitted_at(t, style=plan)"
@@ -46,29 +69,8 @@ blend:
       - {role: user, content: "${interjection}", stream: high_level, if_present: interjection}
       - {role: assistant, content: "${current_plan}", stream: high_level, target: true, if_present: current_plan, tool_calls_from: speech}
 
-  # Pi 0.5 / Pi 0.7 supervision: predict the *current* active subtask
-  # at every frame from task + plan + memory + visual prefix.
-  # ``if_present: subtask`` skips frames with no active span instead of
-  # supervising an empty target (the failure mode that produces newline
-  # collapse).
-  high_level_subtask:
-    weight: 0.15
-    messages:
-      - {role: user, content: "${task}\nPlan: ${plan}\nMemory: ${memory}", stream: high_level}
-      - {role: assistant, content: "${subtask}", stream: high_level, target: true, if_present: subtask}
-
-  # Same ``if_present: subtask`` guard as high_level_subtask above —
-  # see smolvla2_hirobot.yaml for the full rationale. Skips the
-  # action-loss supervision on frames without an active subtask span
-  # rather than emitting a degenerate empty target.
-  low_level_execution:
-    weight: 0.35
-    messages:
-      - {role: user, content: "${task}\nPlan: ${plan}\nMemory: ${memory}", stream: high_level}
-      - {role: assistant, content: "${subtask}", stream: low_level, target: true, if_present: subtask}
-
   ask_vqa_top:
-    weight: 0.10
+    weight: 0.075
     bindings:
       vqa_query: "emitted_at(t, style=vqa, role=user, camera=observation.images.front)"
       vqa: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.front)"
@@ -82,7 +84,7 @@ blend:
       - {role: assistant, content: "${vqa}", stream: high_level, target: true, if_present: vqa}
 
   ask_vqa_wrist:
-    weight: 0.10
+    weight: 0.075
     bindings:
       vqa_query: "emitted_at(t, style=vqa, role=user, camera=observation.images.wrist)"
       vqa: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.wrist)"

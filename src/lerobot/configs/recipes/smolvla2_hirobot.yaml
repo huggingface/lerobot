@@ -1,20 +1,67 @@
 # SmolVLA2 canonical training recipe — Hi Robot / MEM / ECoT blend.
 #
-# Same blend shape as pi05_hirobot.yaml. SmolVLA2 differs from Pi0.5 in
-# how the renderer's output is consumed:
+# Inspired by Pi 0.7 §V (Diversifying the Prompt) and Pi 0.5's
+# hierarchical subtask training. The blend has **two flavors**:
 #
-#   - SmolVLA2 calls SmolVLM's tokenizer.apply_chat_template(messages,
-#     tools=DEFAULT_TOOLS) on the rendered messages, since SmolVLM is a
-#     chat-pretrained backbone.
-#   - The processor builds a `text_labels` tensor that masks every token
-#     except those belonging to messages whose index is in
-#     `target_message_indices`. Cross-entropy on those positions trains
-#     the LM head.
-#   - `predict_actions = bool(targets_by_stream.get("low_level"))` —
-#     same convention as Pi0.5. ``low_level_execution`` is the only
-#     branch that runs the action expert / flow head.
+#   Flavor 1 — ``action_execution`` (~60% weight)
+#     The main always-on recipe. Fuses all available context
+#     (task + plan + memory) into a unified user prompt, and
+#     uses the current subtask as the assistant target. This
+#     single recipe supervises *both*:
+#       * subtask prediction (text CE on the assistant span,
+#         lm_head), and
+#       * action chunks (flow MSE on the action expert via
+#         ``stream: low_level, target: true``, plus the FAST
+#         CE on the action tokens when enabled).
+#     At inference, the same prompt structure is used:
+#       * the high-level loop calls ``select_message`` with the
+#         user prompt only → generates the next subtask.
+#       * the low-level loop calls ``predict_action_chunk`` with
+#         the user prompt + the generated subtask as the
+#         assistant turn → generates the action chunk.
+#     Replaces what used to be three separate recipes
+#     (``high_level_subtask`` + ``low_level_execution`` + the
+#     implicit subtask-in-prompt context) in earlier drafts.
+#     Pi 0.7's §V.A "Subtask instructions" pattern.
+#
+#   Flavor 2 — event-driven text-only recipes
+#     Each handles a specific high-level event with a TEXT
+#     output (no action supervision). They fire when the
+#     binding for the event resolves to non-None:
+#       * ``memory_update``: at subtask boundary, predict new
+#         memory from task + prior memory + completed subtask.
+#       * ``user_interjection_response``: on user input, predict
+#         new plan + paired ``say()`` tool call.
+#       * ``ask_vqa_top`` / ``ask_vqa_wrist``: answer a
+#         camera-grounded visual question.
+#     All use ``stream: high_level`` (no flow loss) and rely on
+#     ``if_present`` guards so they only fire on frames where
+#     the relevant event annotation is present.
+#
+# How the chat tokenizer interprets the flavor split
+# ---------------------------------------------------
+#   * predict_actions = bool(targets_by_stream.get("low_level"))
+#     → True only for Flavor 1 (action_execution).
+#   * text_labels supervises whatever assistant turns are marked
+#     target=true. For action_execution, this is the subtask
+#     string. For Flavor 2, it's the corresponding text output.
 
 blend:
+
+  # ----------------------------------------------------------
+  # FLAVOR 1: action_execution (main path)
+  # ----------------------------------------------------------
+  action_execution:
+    weight: 0.60
+    messages:
+      - role: user
+        stream: high_level
+        content: "${task}\nPlan: ${plan}\nMemory: ${memory}"
+      - {role: assistant, content: "${subtask}", stream: low_level, target: true, if_present: subtask}
+
+  # ----------------------------------------------------------
+  # FLAVOR 2: event-driven text-only paths
+  # ----------------------------------------------------------
 
   memory_update:
     weight: 0.10
@@ -29,7 +76,7 @@ blend:
       - {role: assistant, content: "${current_memory}", stream: high_level, target: true, if_present: current_memory}
 
   user_interjection_response:
-    weight: 0.16
+    weight: 0.15
     bindings:
       prior_plan: "nth_prev(style=plan, offset=1)"
       current_plan: "emitted_at(t, style=plan)"
@@ -41,62 +88,8 @@ blend:
       - {role: user, content: "${interjection}", stream: high_level, if_present: interjection}
       - {role: assistant, content: "${current_plan}", stream: high_level, target: true, if_present: current_plan, tool_calls_from: speech}
 
-  # PR3 Hi-Robot v2: supervise the high-level head with the *current*
-  # active subtask, not the *next*. Pi 0.5 / Pi 0.7 both do this: at every
-  # frame the assistant target is "what is the robot doing right now"
-  # grounded in the current image + state + context, so the supervision
-  # target is always a non-empty span string.
-  #
-  # The original target was ``nth_next(style=subtask, offset=1)`` — at
-  # most frames within a single span this resolves to the next-span
-  # string (fine), but on the LAST span of an episode it resolves to
-  # empty/None. The recipe had no ``if_present`` guard on the target,
-  # so the renderer emitted an empty assistant turn and cross-entropy
-  # ended up supervising the chat-template's structural newlines.
-  # Across a dataset annotated this way, the LM head's argmax at
-  # position 0 collapses to ``\n`` whenever no transition is happening
-  # (which is most of the time). At inference: head silently emits
-  # newlines every chunk boundary while the action expert keeps working.
-  #
-  # With ``${subtask}`` (binds to ``active_at(t, style=subtask)``) the
-  # target is the current span's text — always non-empty, scene-
-  # grounded. The runtime detects subtask transitions by comparing the
-  # predicted subtask string to the last known one, the same way Pi 0.5
-  # does. No information loss.
-  high_level_subtask:
-    weight: 0.15
-    messages:
-      - {role: user, content: "${task}\nPlan: ${plan}\nMemory: ${memory}", stream: high_level}
-      - {role: assistant, content: "${subtask}", stream: high_level, target: true, if_present: subtask}
-
-  # PR3 fix: same ``if_present: subtask`` guard as high_level_subtask
-  # above. Without it, frames where ``active_at(t, style=subtask)``
-  # returns None render the assistant turn with empty content, which
-  # the chat tokenizer still includes in target_message_indices →
-  # text-CE supervises predicting ``\n`` (the chat template's
-  # structural newline) and the LM head collapses to that prior.
-  # The same bug we fixed for high_level_subtask, just on a
-  # different sub-recipe.
-  #
-  # Trade-off of adding the guard: frames without an active subtask
-  # span no longer contribute to the flow loss either (because
-  # ``predict_actions = bool(targets_by_stream.get("low_level"))``
-  # and the only low_level target message is now skipped). For a
-  # well-annotated dataset where subtask spans tile the whole
-  # episode this is a no-op. For datasets with gaps, those gap
-  # frames lose flow supervision — which is strictly better than
-  # the degenerate alternative.
-  low_level_execution:
-    weight: 0.35
-    messages:
-      - {role: user, content: "${task}\nPlan: ${plan}\nMemory: ${memory}", stream: high_level}
-      - {role: assistant, content: "${subtask}", stream: low_level, target: true, if_present: subtask}
-
-  # Per-camera VQA sub-recipes (PR 1's view-dependent style routing).
-  # Adjust the camera keys (and add more sub-recipes) to match the
-  # cameras present on your dataset.
   ask_vqa_top:
-    weight: 0.10
+    weight: 0.075
     bindings:
       vqa_query: "emitted_at(t, style=vqa, role=user, camera=observation.images.front)"
       vqa: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.front)"
@@ -110,7 +103,7 @@ blend:
       - {role: assistant, content: "${vqa}", stream: high_level, target: true, if_present: vqa}
 
   ask_vqa_wrist:
-    weight: 0.10
+    weight: 0.075
     bindings:
       vqa_query: "emitted_at(t, style=vqa, role=user, camera=observation.images.wrist)"
       vqa: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.wrist)"
