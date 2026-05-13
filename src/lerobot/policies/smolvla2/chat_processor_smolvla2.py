@@ -239,10 +239,35 @@ class SmolVLA2ChatTokenizerStep(ProcessorStep):
         # model actually sees. No-op unless ``LEROBOT_DUMP_RECIPE_SAMPLES``
         # is set; stops globally after the budget is exhausted.
         if _DUMP_BUDGET > 0:
-            msgs_iter = messages if _is_batched_messages(messages) else [messages]
-            for msg, (ids, labels, predict_action) in zip(msgs_iter, encoded, strict=False):
+            # Stream / target metadata live in parallel arrays in
+            # COMPLEMENTARY_DATA, not on the message dicts themselves
+            # (the recipe renderer keeps them separate so the chat
+            # template doesn't choke on unknown keys). Zip them back
+            # together for the dumper so each printed message shows
+            # its actual stream + target flag.
+            if _is_batched_messages(messages):
+                msgs_iter = messages
+                streams_iter = comp.get("message_streams") or [[] for _ in messages]
+                targets_iter = comp.get("target_message_indices") or [[] for _ in messages]
+            else:
+                msgs_iter = [messages]
+                streams_iter = [list(comp.get("message_streams") or [])]
+                targets_iter = [list(comp.get("target_message_indices") or [])]
+            for msg, streams, targets, (ids, labels, predict_action) in zip(
+                msgs_iter, streams_iter, targets_iter, encoded, strict=False
+            ):
+                target_set = {int(i) for i in targets}
+                annotated_msgs = []
+                for i, m in enumerate(msg):
+                    annotated_msgs.append(
+                        {
+                            **m,
+                            "stream": streams[i] if i < len(streams) else None,
+                            "target": True if i in target_set else None,
+                        }
+                    )
                 _dump_recipe_sample(
-                    messages=msg,
+                    messages=annotated_msgs,
                     token_ids=ids,
                     labels=labels,
                     predict_actions=predict_action,

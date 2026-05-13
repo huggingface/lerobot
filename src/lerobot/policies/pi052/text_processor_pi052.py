@@ -297,8 +297,19 @@ class PI052TextTokenizerStep(ProcessorStep):
         )
 
         if _DUMP_BUDGET > 0:
+            # Stream / target metadata live in parallel arrays; zip them
+            # back into the dicts so the dump shows them per message.
+            target_set = {int(i) for i in target_indices}
+            annotated_msgs = [
+                {
+                    **m,
+                    "stream": message_streams[i] if i < len(message_streams) else None,
+                    "target": True if i in target_set else None,
+                }
+                for i, m in enumerate(messages)
+            ]
             _dump_recipe_sample(
-                messages=messages,
+                messages=annotated_msgs,
                 prompt_text=prompt,
                 token_ids=input_ids.tolist(),
                 labels=labels.tolist(),
