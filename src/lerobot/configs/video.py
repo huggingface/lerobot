@@ -73,7 +73,7 @@ class VideoEncoderConfig:
     vcodec: str = "libsvtav1"  # TODO(CarolinePascal): rename to codec ?
     pix_fmt: str = "yuv420p"
     g: int | None = 2
-    crf: int | None = 30
+    crf: int | float | None = 30
     preset: int | str | None = None
     fast_decode: int = 0
     # TODO(CarolinePascal): add torchcodec support + find a way to unify the

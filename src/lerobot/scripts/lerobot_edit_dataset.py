@@ -209,10 +209,9 @@ from pathlib import Path
 import draccus
 
 from lerobot.configs import parser
+from lerobot.configs.video import VideoEncoderConfig, camera_encoder_defaults
 from lerobot.datasets import (
     LeRobotDataset,
-    VideoEncoderConfig,
-    camera_encoder_defaults,
     convert_image_to_video_dataset,
     delete_episodes,
     merge_datasets,

@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for ``lerobot.datasets.video_utils`` encoding functions and ``VideoEncoderConfig`` config class."""
+"""Unit tests for ``lerobot.datasets.video_utils`` encoding functions and ``lerobot.configs.video.VideoEncoderConfig`` config class."""
 
 import json
 from pathlib import Path

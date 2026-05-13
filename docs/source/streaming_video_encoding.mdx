@@ -19,7 +19,7 @@ This makes `save_episode()` near-instant (the video is already encoded by the ti
 | `streaming_encoding`    | `--dataset.streaming_encoding`           | `bool`        | `True`        | Enable real-time encoding during capture                          |
 | `vcodec`                | `--dataset.camera_encoder_config.vcodec` | `str`         | `"libsvtav1"` | Video codec. `"auto"` detects best HW encoder                     |
 | `encoder_threads`       | `--dataset.encoder_threads`              | `int \| None` | `None` (auto) | Threads per encoder instance. `None` will leave the vcoded decide |
-| `encoder_queue_maxsize` | `--dataset.encoder_queue_maxsize`        | `int`         | `30`          | Max buffered frames per camera (~2s at 30fps). Consumes RAM       |
+| `encoder_queue_maxsize` | `--dataset.encoder_queue_maxsize`        | `int`         | `30`          | Max buffered frames per camera (~1s at 30fps). Consumes RAM       |
 
 ## 3. Performance Considerations
 
