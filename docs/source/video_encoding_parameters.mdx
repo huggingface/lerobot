@@ -78,11 +78,53 @@ How each field is forwarded to FFmpeg after `vcodec` resolution, via `get_codec_
 | `h264_vaapi`                             | `qp` ← `crf`                | —        | —                                          |
 | `h264_qsv`                               | `global_quality` ← `crf`    | `preset` | —                                          |
 
+
 ---
 
-## Extra codec options
+## Persistence in dataset metadata
 
-The `extra_options` dictionary:
+After the first episode of a video stream is encoded, the encoder configuration is **persisted into the dataset metadata** (`meta/info.json`) under each video feature, alongside the values probed from the file itself. For a video feature `observation.images.<camera>`, the layout in `info.json` is:
 
-- Is merged **after** the structured options. Keys already set by `g`, `crf`, `preset`, etc. are **not** replaced by `extra_options`.
-- Accepts strings or numbers, as expected by FFmpeg. Numeric values are validated when the codec exposes option metadata.
+```json
+{
+  "features": {
+    "observation.images.laptop": {
+      "dtype": "video",
+      "shape": [480, 640, 3],
+      "info": {
+        "video.height": 480,
+        "video.width": 640,
+        "video.codec": "h264",
+        "video.pix_fmt": "yuv420p",
+        "video.fps": 30,
+        "video.channels": 3,
+        "video.is_depth_map": false,
+        "video.g": 2,
+        "video.crf": 30,
+        "video.preset": "fast",
+        "video.fast_decode": 0,
+        "video.video_backend": "pyav",
+        "video.extra_options": {"tune": "film", "profile:v": "high", "bf": 2}
+      }
+    }
+  }
+}
+```
+
+Two sources contribute to the `info` block:
+
+- **Stream-derived** (read back from the encoded MP4 with PyAV): `video.height`, `video.width`, `video.codec`, `video.pix_fmt`, `video.fps`, `video.channels`, `video.is_depth_map`, plus `audio.*` if an audio stream is present.
+- **Encoder-derived** (taken from `VideoEncoderConfig`): `video.g`, `video.crf`, `video.preset`, `video.fast_decode`, `video.video_backend`, `video.extra_options`.
+
+<Tip>
+This block is populated **once**, from the **first** episode. It assumes every episode in the dataset was encoded with the same `camera_encoder`. Changing encoder settings partway through a recording is not supported — the `info.json` will only reflect the parameters used for the first episode.
+</Tip>
+
+---
+
+## Merging datasets
+
+When aggregating datasets with `merge_datasets`, video files are concatenated as-is (no re-encoding), and encoder fields in `info.json` are merged per-key:
+
+- **Stream-derived fields must match** across sources: `video.codec`, `video.pix_fmt`, `video.height`, `video.width`, `video.fps`. Otherwise FFmpeg's concat demuxer fails.
+- **Encoder-tuning fields are merged loosely**: `video.g`, `video.crf`, `video.preset`, `video.fast_decode`, `video.extra_options`. If every source agrees, the value is kept; if not, it's set to `null` (or `{}` for `video.extra_options`) and a warning is logged.
