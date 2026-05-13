@@ -1,60 +1,16 @@
 # Video encoding parameters
 
-When **video storage** is on, LeRobot stores each camera stream as an **MP4** file rather than saving **one image file at every timestep**. **Video encoding compress across time**, which usually cuts **dataset size and I/O** compared to heaps of PNG, and MP4 stays a **familiar format** for players and loaders. Encoding frames into a MP4 file is a full FFmpeg pipeline: choice of encoder, pixel format, GOP/keyframes, quality vs speed, and
-optional extra encoder flags. **Many of those knobs are user-tunable** and are exposed on the dataset config as
-**`dataset.camera_encoder_config`** — a nested **`VideoEncoderConfig`** (`lerobot.datasets.video_utils.
-VideoEncoderConfig`) passed through **PyAV**.
+When video storage is enabled, LeRobot stores each camera stream as an **MP4** file instead of saving one image file per timestep. Video encoding compresses across time, which usually cuts dataset size and I/O compared to a pile of PNGs, while keeping MP4 — a format every player and loader understands.
 
-You can set these parameters from the CLI with **`--dataset.camera_encoder_config.<field>`** (e.g. `lerobot-record`, `lerobot-rollout`). The same block applies to **every** camera video stream in that run. **Video storage must be on** — **`use_videos=True`** in Python APIs or **`--dataset.video=true`** (recording default); with video off, inputs stay as images and **`camera_encoder_config` is ignored.**
+Encoding frames into an MP4 is a full FFmpeg pipeline: choice of encoder, pixel format, GOP/keyframes, quality vs. speed, and optional extra encoder flags. Most of these knobs are user-tunable through `camera_encoder`, a nested `VideoEncoderConfig` (`lerobot.configs.video.VideoEncoderConfig`) passed through PyAV.
 
-For **when** frames are written vs encoded (streaming vs post-episode), queues, and other top-level **`--dataset.*`** switches, see [Streaming Video Encoding](./streaming_video_encoding). For codec/size/speed experiments, see the [video-benchmark Space](https://huggingface.co/spaces/lerobot/video-benchmark).
+You can set these parameters from the CLI with `--dataset.camera_encoder.<field>` (e.g. with `lerobot-record` or `lerobot-rollout`). The same block applies to every camera video stream in that run.
 
----
+<Tip>
+Video storage must be on for `camera_encoder` to have any effect — `use_videos=True` in Python APIs, or `--dataset.video=true` on the CLI (the recording default). With video off, inputs stay as images and `camera_encoder` is ignored.
+</Tip>
 
-## Tuning Parameters
-
-| Parameter       | CLI flag                                        | Type                 | Default       | Description                                                                                                                                             |
-| --------------- | ----------------------------------------------- | -------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `vcodec`        | `--dataset.camera_encoder_config.vcodec`        | `str`                | `"libsvtav1"` | Video codec name. `"auto"` picks the first available hardware encoder from a fixed preference list, else `libsvtav1`.                                   |
-| `pix_fmt`       | `--dataset.camera_encoder_config.pix_fmt`       | `str`                | `"yuv420p"`   | Output pixel format; must be supported by the specified codec in your FFmpeg build.                                                                     |
-| `g`             | `--dataset.camera_encoder_config.g`             | `int \| None`        | `2`           | GOP size (keyframes every `g` frames). Emitted as FFmpeg option `g`.                                                                                    |
-| `crf`           | `--dataset.camera_encoder_config.crf`           | `int \| None`        | `30`          | Abstract **quality**; mapped per codec in the table below (CRF, QP, `q:v`, etc.). Lower → higher quality / larger output where the mapping is monotone. |
-| `preset`        | `--dataset.camera_encoder_config.preset`        | `int \| str \| None` | `12`\*        | Video encoding speed preset; meaning depends on the specified codec. \*Unset + `libsvtav1` → LeRobot sets `12`.                                         |
-| `fast_decode`   | `--dataset.camera_encoder_config.fast_decode`   | `int`                | `0`           | `libsvtav1`: `0–2` passed in `svtav1-params`; `h264` / `hevc` (software): if `>0`, sets `tune=fastdecode`; other codecs: often unused.                  |
-| `video_backend` | `--dataset.camera_encoder_config.video_backend` | `str`                | `"pyav"`      | Only `"pyav"` is implemented for video encoding today.                                                                                                  |
-| `extra_options` | (nested config / non-scalar)                    | `dict`               | `{}`          | Extra FFmpeg options merged after the built-in mapping; **cannot** override keys already set from structured fields above.                              |
-
----
-
-## Validation
-
-| What                 | Behavior                                                                                                                                                                                        |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Video codec presence | `vcodec` must exist as a video encoder in the local FFmpeg build (after resolving `"auto"`).                                                                                                    |
-| Pixel format         | `pix_fmt` is checked against the encoder’s reported pixel formats when available.                                                                                                               |
-| Options              | `get_codec_options()` output (including values originating from `extra_options`) is checked against PyAV/FFmpeg option metadata (ranges, integer constraints, string choices) where applicable. |
-
----
-
-## Mapping: `VideoEncoderConfig` → FFmpeg options
-
-From **`get_codec_options()`** after `vcodec` resolution. Only fields on `camera_encoder_config` are listed here (no global thread / queue flags).
-
-| Resolved `vcodec`                        | `g` | Quality from `crf`          | `preset` | `fast_decode`                              |
-| ---------------------------------------- | --- | --------------------------- | -------- | ------------------------------------------ |
-| `libsvtav1`                              | `g` | `crf`                       | `preset` | `svtav1-params` includes `fast-decode=0…2` |
-| `h264`, `hevc` (software)                | `g` | `crf`                       | `preset` | `tune=fastdecode` if `fast_decode > 0`     |
-| `h264_videotoolbox`, `hevc_videotoolbox` | `g` | `q:v` (derived from `crf`)  | —        | —                                          |
-| `h264_nvenc`, `hevc_nvenc`               | `g` | `rc=constqp` + `qp` ← `crf` | `preset` | —                                          |
-| `h264_vaapi`                             | `g` | `qp` ← `crf`                | —        | —                                          |
-| `h264_qsv`                               | `g` | `global_quality` ← `crf`    | `preset` | —                                          |
-
----
-
-## `extra_options`
-
-- Merged **after** structured options; keys **already** set by `g`, `crf`, `preset`, etc. are **not** replaced by `extra_options`.
-- Values are strings or numbers as FFmpeg expects; numeric values are validated when the codec exposes option metadata.
+For details on **when** frames are written vs. encoded (streaming vs. post-episode), queues, and other top-level `--dataset.*` switches, see [Streaming Video Encoding](./streaming_video_encoding). For an encoding-parameter comparison and experiments, see the [video-benchmark Space](https://huggingface.co/spaces/lerobot/video-benchmark).
 
 ---
 
@@ -74,8 +30,59 @@ lerobot-record \
     --dataset.single_task="Grab the cube" \
     --dataset.streaming_encoding=true \
     --dataset.encoder_threads=2 \
-    --dataset.camera_encoder_config.vcodec=h264 \
-    --dataset.camera_encoder_config.preset=fast \
-    --dataset.camera_encoder_config.extra_options={"tune": "film", "profile:v": "high", "bf": 2} \
+    --dataset.camera_encoder.vcodec=h264 \
+    --dataset.camera_encoder.preset=fast \
+    --dataset.camera_encoder.extra_options={"tune": "film", "profile:v": "high", "bf": 2} \
     --display_data=true
 ```
+
+---
+
+## Tuning parameters
+
+All flags below are prefixed with `--dataset.camera_encoder.` on the CLI.
+
+| Parameter       | Type           | Default       | Description                                                                                                                                                              |
+| --------------- | -------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `vcodec`        | `str`          | `"libsvtav1"` | Video codec name. `"auto"` picks the first available hardware encoder from a fixed preference list, falling back to `libsvtav1`.                                         |
+| `pix_fmt`       | `str`          | `"yuv420p"`   | Output pixel format. Must be supported by the chosen codec in your FFmpeg build.                                                                                         |
+| `g`             | `int`          | `2`           | GOP size — a keyframe every `g` frames. Emitted as FFmpeg option `g`.                                                                                                    |
+| `crf`           | `int`          | `30`          | Abstract quality value, mapped per codec (see the [mapping](#mapping-videoencoderconfig--ffmpeg-options) below). Lower → higher quality / larger output where the mapping is monotone. |
+| `preset`        | `int` or `str` | `12` \*       | Encoder speed preset; meaning depends on the codec. <br/>\* When unset and `vcodec=libsvtav1`, LeRobot defaults to `12`.                                                  |
+| `fast_decode`   | `int`          | `0`           | `libsvtav1`: `0–2`, passed via `svtav1-params`. <br/>`h264` / `hevc` (software): if `>0`, sets `tune=fastdecode`. <br/>Other codecs: usually unused.                       |
+| `video_backend` | `str`          | `"pyav"`      | Only `"pyav"` is currently implemented for video encoding.                                                                                                               |
+| `extra_options` | `dict`         | `{}`          | Extra FFmpeg options merged after the structured fields above. Cannot override keys already set by those fields.                                                         |
+
+---
+
+## Validation
+
+| Check                | Behavior                                                                                                                                                                  |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Video codec presence | `vcodec` must exist as a video encoder in the local FFmpeg build (after resolving `"auto"`).                                                                              |
+| Pixel format         | `pix_fmt` is checked against the encoder's reported pixel formats when available.                                                                                         |
+| Options              | The output of `get_codec_options()` (including values from `extra_options`) is checked against PyAV/FFmpeg option metadata — ranges, integer constraints, string choices — where applicable. |
+
+---
+
+## Mapping: `VideoEncoderConfig` → FFmpeg options
+
+How each field is forwarded to FFmpeg after `vcodec` resolution, via `get_codec_options()`. Only fields on `camera_encoder` are listed here (no global thread / queue flags).
+
+| Resolved `vcodec`                        | Quality from `crf`          | `preset` | `fast_decode`                              |
+| ---------------------------------------- | --------------------------- | -------- | ------------------------------------------ |
+| `libsvtav1`                              | `crf`                       | `preset` | `svtav1-params` includes `fast-decode=0…2` |
+| `h264`, `hevc` (software)                | `crf`                       | `preset` | `tune=fastdecode` if `fast_decode > 0`     |
+| `h264_videotoolbox`, `hevc_videotoolbox` | `q:v` (derived from `crf`)  | —        | —                                          |
+| `h264_nvenc`, `hevc_nvenc`               | `rc=constqp` + `qp` ← `crf` | `preset` | —                                          |
+| `h264_vaapi`                             | `qp` ← `crf`                | —        | —                                          |
+| `h264_qsv`                               | `global_quality` ← `crf`    | `preset` | —                                          |
+
+---
+
+## Extra codec options
+
+The `extra_options` dictionary:
+
+- Is merged **after** the structured options. Keys already set by `g`, `crf`, `preset`, etc. are **not** replaced by `extra_options`.
+- Accepts strings or numbers, as expected by FFmpeg. Numeric values are validated when the codec exposes option metadata.
