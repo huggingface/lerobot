@@ -276,6 +276,28 @@ def hf_transform_to_torch(items_dict: dict[str, list[Any]]) -> dict[str, list[to
     return items_dict
 
 
+def read_lerobot_data_frame(path: Path, features: datasets.Features) -> pandas.DataFrame:
+    """Read a LeRobot data parquet file using its authoritative HF feature schema."""
+    dataset = datasets.Dataset.from_parquet(str(path), features=features)
+    return pd.DataFrame(dataset.with_format(None)[:])
+
+
+def write_lerobot_data_frame(df: pandas.DataFrame, path: Path, features: datasets.Features) -> None:
+    """Write a LeRobot data dataframe with the provided HF feature schema."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    dataset = datasets.Dataset.from_dict(df.to_dict(orient="list"), features=features, split="train")
+
+    if any(isinstance(feature, datasets.Image) for feature in features.values()):
+        dataset = embed_images(dataset)
+
+    table = dataset.with_format("arrow")[:]
+    writer = pq.ParquetWriter(path, schema=table.schema, compression="snappy", use_dictionary=True)
+    try:
+        writer.write_table(table)
+    finally:
+        writer.close()
+
+
 def to_parquet_with_hf_images(
     df: pandas.DataFrame, path: Path, features: datasets.Features | None = None
 ) -> None:
