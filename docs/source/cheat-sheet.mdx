@@ -1,7 +1,8 @@
 # Cheat sheet
 All of the LeRobot commands in one place. If you forgot how to use a specific command or want to learn about a new one you can do it here.
 
-❗ For all of the commands listed below remember to change the ports/names/ids to your own values!
+> [!WARNING]
+>For all of the commands listed below remember to change the ports/names/ids to your own values!
 
 > [!TIP]
 > Another grate way to look at all the comands and get them configured for your specific setup is to use this [Jupyter Notebook](https://github.com/huggingface/lerobot/blob/main/examples/notebooks/quickstart.ipynb).
@@ -10,18 +11,26 @@ All of the LeRobot commands in one place. If you forgot how to use a specific co
 
 ### Useful tools
 ###### Find port
+You will need to idetify the ports that your robots are connected to. To do so run the following function and follow the instructions in your terminal. You will need to unplug the USB cable and press enter, the serial port of that robot will be printed on the terminal.
 
 ```bash
 lerobot-find-port
 ```
 
 ###### Find cameras
+In a similar way you can easily find the cameras connected to your computer. The information on the cameras will be printed to the terminal but also images from each camera will be saved into the folder```lerobot/outputs/captured_images```
 ```bash
 lerobot-find-cameras
 ```
 
 ### Calibration
-
+In most cases you will need to perform callibration just once for each robot and teleoperation device.
+```bash
+lerobot-calibrate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=my_follower_arm
+```
 ### Teleoperation
 
 ### Recording a dataset
