@@ -47,12 +47,17 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-def _dataset_signature(dataset_repo_id: str, base_tokenizer_name: str, n_samples: int) -> str:
+def _dataset_signature(
+    dataset_repo_id: str,
+    base_tokenizer_name: str,
+    n_samples: int,
+    chunk_size: int,
+) -> str:
     """Deterministic short hash for naming the cache directory.
 
-    Keys on (dataset, base tokenizer, sample count) so re-fitting on a
-    new dataset or a different base doesn't clobber the prior cache,
-    and so changing n_samples re-runs the fit.
+    Keys on (dataset, base tokenizer, sample count, chunk size) so any
+    of those changing re-runs the fit. ``chunk_size`` matters because
+    the tokenizer is fit on chunks of that length.
     """
     h = hashlib.sha256()
     h.update(dataset_repo_id.encode("utf-8"))
@@ -60,6 +65,8 @@ def _dataset_signature(dataset_repo_id: str, base_tokenizer_name: str, n_samples
     h.update(base_tokenizer_name.encode("utf-8"))
     h.update(b"\0")
     h.update(str(n_samples).encode("utf-8"))
+    h.update(b"\0")
+    h.update(str(chunk_size).encode("utf-8"))
     return h.hexdigest()[:16]
 
 
@@ -102,7 +109,7 @@ def fit_fast_tokenizer(
         FileNotFoundError: If the dataset can't be loaded.
     """
     cache_dir = Path(cache_dir)
-    sig = _dataset_signature(dataset_repo_id, base_tokenizer_name, n_samples)
+    sig = _dataset_signature(dataset_repo_id, base_tokenizer_name, n_samples, chunk_size)
     out_dir = cache_dir / sig
 
     if out_dir.exists() and (out_dir / "preprocessor_config.json").exists():

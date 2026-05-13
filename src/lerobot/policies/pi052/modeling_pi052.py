@@ -56,6 +56,65 @@ logger = logging.getLogger(__name__)
 
 
 # ----------------------------------------------------------------------
+# Loss helpers (shared between fused and prefix-only paths)
+# ----------------------------------------------------------------------
+
+
+def _mask_per_sample(per_sample: Tensor, predict_actions_t: Tensor | None) -> Tensor:
+    """Mean over samples where ``predict_actions_t`` is True, else over all."""
+    if predict_actions_t is None:
+        return per_sample.mean()
+    mask = predict_actions_t.to(per_sample.dtype)
+    return (per_sample * mask).sum() / mask.sum().clamp(min=1.0)
+
+
+def _shifted_ce(logits: Tensor, labels: Tensor) -> Tensor:
+    """Next-token CE: hidden at t predicts label at t+1, ignore_index=-100.
+
+    Mean over non-ignored positions across the batch. Returns 0 cleanly
+    when no positions are supervised (clamp(min=1) on the denominator).
+    """
+    shift_logits = logits[:, :-1, :].contiguous()
+    shift_labels = labels[:, 1:].contiguous().long()
+    valid = shift_labels != -100
+    loss = F.cross_entropy(
+        shift_logits.reshape(-1, shift_logits.shape[-1]),
+        shift_labels.reshape(-1),
+        ignore_index=-100,
+        reduction="sum",
+    )
+    return loss / valid.sum().clamp(min=1)
+
+
+def _fast_ce(
+    fast_logits: Tensor,
+    action_tokens: Tensor,
+    action_mask: Tensor,
+    predict_actions_t: Tensor | None,
+) -> Tensor:
+    """FAST-CE with both token-pad masking and per-sample action gating.
+
+    ``action_mask`` is the FAST tokenizer's padding mask; samples whose
+    recipe sets ``predict_actions=False`` (e.g. plan_generation,
+    ask_vqa_*) get *all* their FAST positions masked out via the
+    per-sample gate.
+    """
+    shift_logits = fast_logits[:, :-1, :].contiguous()
+    shift_targets = action_tokens[:, 1:].contiguous().long()
+    shift_valid = action_mask[:, 1:].contiguous().bool()
+    if predict_actions_t is not None:
+        sample_mask = predict_actions_t[:, None].expand_as(shift_valid)
+        shift_valid = shift_valid & sample_mask
+    shift_targets = shift_targets.masked_fill(~shift_valid, -100)
+    return F.cross_entropy(
+        shift_logits.reshape(-1, shift_logits.shape[-1]),
+        shift_targets.reshape(-1),
+        ignore_index=-100,
+        reduction="sum",
+    ) / shift_valid.sum().clamp(min=1)
+
+
+# ----------------------------------------------------------------------
 # Knowledge insulation — ported from pi05_full (branch ``feat/add-pi05``)
 # ----------------------------------------------------------------------
 #
@@ -307,6 +366,16 @@ class PI052Policy(PI05Policy):
         text_labels = batch.get("text_labels")
         predict_actions_t = batch.get("predict_actions")
 
+        # Unannotated datasets: no recipe applied → no text_labels and
+        # no FAST / predict_actions routing. Defer to PI05Policy so the
+        # plain flow-only training surface keeps working unchanged.
+        if (
+            text_labels is None
+            and predict_actions_t is None
+            and not getattr(self.config, "enable_fast_action_loss", False)
+        ):
+            return super().forward(batch, reduction=reduction)
+
         run_flow = (
             self.config.flow_loss_weight > 0
             and (predict_actions_t is None or bool(predict_actions_t.any().item()))
@@ -350,6 +419,7 @@ class PI052Policy(PI05Policy):
                 text_labels=text_labels if run_text else None,
                 action_tokens=action_tokens if run_fast else None,
                 action_mask=action_mask if run_fast else None,
+                predict_actions_t=predict_actions_t,
             )
             loss_dict["flow_loss"] = float(flow_loss.detach().item())
             total = self.config.flow_loss_weight * flow_loss
@@ -365,6 +435,7 @@ class PI052Policy(PI05Policy):
                 text_labels=text_labels if run_text else None,
                 action_tokens=action_tokens if run_fast else None,
                 action_mask=action_mask if run_fast else None,
+                predict_actions_t=predict_actions_t,
             )
             if text_loss is not None:
                 loss_dict["text_loss"] = float(text_loss.detach().item())
@@ -399,6 +470,7 @@ class PI052Policy(PI05Policy):
         text_labels: Tensor | None,
         action_tokens: Tensor | None,
         action_mask: Tensor | None,
+        predict_actions_t: Tensor | None = None,
     ) -> tuple[Tensor, Tensor | None, Tensor | None]:
         """Full fusion: flow + text + FAST in ONE backbone forward.
 
@@ -510,7 +582,8 @@ class PI052Policy(PI05Policy):
         # internally to max_action_dim).
         original_action_dim = self.config.output_features[ACTION].shape[0]
         flow_per_dim = flow_per_dim[:, :, :original_action_dim]
-        flow_loss = flow_per_dim.mean()
+        per_sample_flow = flow_per_dim.mean(dim=(1, 2))
+        flow_loss = _mask_per_sample(per_sample_flow, predict_actions_t)
 
         # ---- text + FAST CE from prefix_out ------------------------
         lm_head = self.model.paligemma_with_expert.paligemma.lm_head
@@ -523,27 +596,13 @@ class PI052Policy(PI05Policy):
             else:
                 text_hidden = prefix_out[:, -lang_len:, :]
             text_logits = lm_head(text_hidden.to(lm_head.weight.dtype))
-            shift_logits = text_logits[:, :-1, :].contiguous()
-            shift_labels = text_labels[:, 1:].contiguous().long()
-            text_loss = F.cross_entropy(
-                shift_logits.reshape(-1, shift_logits.shape[-1]),
-                shift_labels.reshape(-1),
-                ignore_index=-100,
-            )
+            text_loss = _shifted_ce(text_logits, text_labels)
 
         fast_loss: Tensor | None = None
         if fast_len > 0 and prefix_out is not None:
             fast_hidden = prefix_out[:, -fast_len:, :]
             fast_logits = lm_head(fast_hidden.to(lm_head.weight.dtype))
-            shift_logits = fast_logits[:, :-1, :].contiguous()
-            shift_targets = action_tokens[:, 1:].contiguous().long()
-            shift_valid = action_mask[:, 1:].contiguous().bool()
-            shift_targets = shift_targets.masked_fill(~shift_valid, -100)
-            fast_loss = F.cross_entropy(
-                shift_logits.reshape(-1, shift_logits.shape[-1]),
-                shift_targets.reshape(-1),
-                ignore_index=-100,
-            )
+            fast_loss = _fast_ce(fast_logits, action_tokens, action_mask, predict_actions_t)
 
         return flow_loss, text_loss, fast_loss
 
@@ -553,6 +612,7 @@ class PI052Policy(PI05Policy):
         text_labels: Tensor | None,
         action_tokens: Tensor | None,
         action_mask: Tensor | None,
+        predict_actions_t: Tensor | None = None,
     ) -> tuple[Tensor | None, Tensor | None]:
         """Single prefix forward → text CE + FAST CE.
 
@@ -619,179 +679,20 @@ class PI052Policy(PI05Policy):
             lang_len = text_labels.shape[1]
             # embed_prefix lays out as [images, language]; with FAST
             # appended the full sequence is [images, language, FAST].
-            # Language hidden states are at positions
-            # ``[-(fast_len + lang_len) : -fast_len]`` when FAST is
-            # present, or ``[-lang_len:]`` otherwise.
             if fast_len > 0:
                 text_hidden = vlm_out[:, -(fast_len + lang_len):-fast_len, :]
             else:
                 text_hidden = vlm_out[:, -lang_len:, :]
             text_logits = lm_head(text_hidden.to(lm_head.weight.dtype))
-            shift_logits = text_logits[:, :-1, :].contiguous()
-            shift_labels = text_labels[:, 1:].contiguous().long()
-            text_loss = F.cross_entropy(
-                shift_logits.reshape(-1, shift_logits.shape[-1]),
-                shift_labels.reshape(-1),
-                ignore_index=-100,
-            )
+            text_loss = _shifted_ce(text_logits, text_labels)
 
         fast_loss: Tensor | None = None
         if action_tokens is not None and action_mask is not None and fast_len > 0:
             fast_hidden = vlm_out[:, -fast_len:, :]
             fast_logits = lm_head(fast_hidden.to(lm_head.weight.dtype))
-            shift_logits = fast_logits[:, :-1, :].contiguous()
-            shift_targets = action_tokens[:, 1:].contiguous().long()
-            shift_valid = action_mask[:, 1:].contiguous().bool()
-            shift_targets = shift_targets.masked_fill(~shift_valid, -100)
-            fast_loss = F.cross_entropy(
-                shift_logits.reshape(-1, shift_logits.shape[-1]),
-                shift_targets.reshape(-1),
-                ignore_index=-100,
-            )
+            fast_loss = _fast_ce(fast_logits, action_tokens, action_mask, predict_actions_t)
 
         return text_loss, fast_loss
-
-    def _compute_fast_action_loss(
-        self,
-        batch: dict[str, Tensor],
-        action_tokens: Tensor,
-        action_mask: Tensor,
-    ) -> Tensor:
-        """Cross-entropy on FAST-tokenised actions via PaliGemma's LM head.
-
-        Mirrors the paper's §III.C action-token loss: append the FAST
-        tokens to the language prefix, forward through the backbone,
-        slice the per-token logits at the action positions, and
-        compute CE against the FAST targets (shifted for next-token
-        prediction). Token-mask gates the loss to valid positions.
-        """
-        from ..pi05.modeling_pi05 import make_att_2d_masks  # noqa: PLC0415
-
-        images, img_masks = self.model._preprocess_images(batch)
-        lang_tokens = batch[OBS_LANGUAGE_TOKENS]
-        lang_masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
-
-        # Re-embed prefix to get [images, language] embeddings, then
-        # append the FAST action token embeddings as additional
-        # prefix tokens. PaliGemma's embed_language_tokens is shared
-        # between text and FAST tokens so we can re-use it directly.
-        prefix_embs, prefix_pad, prefix_att = self.model.embed_prefix(
-            images, img_masks, lang_tokens, lang_masks
-        )
-        emb_dim = prefix_embs.shape[-1]
-        fast_emb = self.model.paligemma_with_expert.embed_language_tokens(action_tokens)
-        fast_emb = fast_emb * math.sqrt(emb_dim)
-
-        # Concat onto the prefix.
-        #   pad masks: language uses ``lang_masks``; FAST uses
-        #              ``action_mask`` (True at valid token positions).
-        #   att masks: prefix is 0 (bidirectional block); FAST is 1
-        #              (each token starts its own causal block). Per
-        #              ``make_att_2d_masks``'s mask_ar convention this
-        #              yields prefix-LM attention: FAST tokens attend
-        #              bidirectionally to images+language and causally
-        #              among themselves, while prefix tokens *cannot*
-        #              see FAST tokens. Matches pi05_full §III.C.
-        fast_len = action_tokens.shape[1]
-        device = prefix_embs.device
-        ones_att = torch.ones((action_tokens.shape[0], fast_len), dtype=torch.bool, device=device)
-        full_embs = torch.cat([prefix_embs, fast_emb], dim=1)
-        full_pad = torch.cat([prefix_pad, action_mask.to(prefix_pad.dtype)], dim=1)
-        full_att = torch.cat([prefix_att, ones_att], dim=1)
-
-        att_2d = make_att_2d_masks(full_pad, full_att)
-        position_ids = torch.cumsum(full_pad, dim=1) - 1
-
-        (vlm_out, _), _ = self.model.paligemma_with_expert.forward(
-            attention_mask=att_2d,
-            position_ids=position_ids,
-            past_key_values=None,
-            inputs_embeds=[full_embs, None],
-            use_cache=False,
-        )
-        if vlm_out is None:
-            raise RuntimeError("PI052 FAST loss: VLM forward returned no hidden states.")
-
-        # Slice the last ``fast_len`` positions — those correspond to
-        # the FAST tokens we just appended.
-        fast_hidden = vlm_out[:, -fast_len:, :]
-        lm_head = self.model.paligemma_with_expert.paligemma.lm_head
-        fast_logits = lm_head(fast_hidden.to(lm_head.weight.dtype))
-
-        # Shift for next-token prediction. Replace targets at padded
-        # positions with -100 so ``ignore_index`` in cross_entropy
-        # cleanly drops them rather than relying on a post-hoc
-        # multiply-by-mask (which still computes the CE numerator at
-        # invalid positions and could crash if a padded target id
-        # falls outside the vocab).
-        shift_logits = fast_logits[:, :-1, :].contiguous()
-        shift_targets = action_tokens[:, 1:].contiguous().long()
-        shift_valid = action_mask[:, 1:].contiguous().bool()
-        shift_targets = shift_targets.masked_fill(~shift_valid, -100)
-
-        # Mean over valid positions via ``ignore_index``.
-        loss = F.cross_entropy(
-            shift_logits.reshape(-1, shift_logits.shape[-1]),
-            shift_targets.reshape(-1),
-            ignore_index=-100,
-        )
-        return loss
-
-    def _compute_text_loss(self, batch: dict[str, Tensor], text_labels: Tensor) -> Tensor:
-        """Cross-entropy on PaliGemma's LM head over the supervised span.
-
-        Embeds images + language, runs the VLM-only forward (the
-        action expert is skipped via ``inputs_embeds=[..., None]``),
-        slices the hidden states to the *language* portion so they
-        align with ``text_labels`` (which covers only the language
-        tokens, not the image patch tokens), then computes shifted
-        next-token CE with ``-100`` ignoring padding/non-target
-        positions.
-        """
-        from ..pi05.modeling_pi05 import make_att_2d_masks  # noqa: PLC0415
-
-        images, img_masks = self.model._preprocess_images(batch)
-        tokens = batch[OBS_LANGUAGE_TOKENS]
-        masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
-
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.model.embed_prefix(
-            images, img_masks, tokens, masks
-        )
-        att_2d = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
-        position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
-
-        (vlm_out, _), _ = self.model.paligemma_with_expert.forward(
-            attention_mask=att_2d,
-            position_ids=position_ids,
-            past_key_values=None,
-            inputs_embeds=[prefix_embs, None],
-            use_cache=False,
-        )
-        if vlm_out is None:
-            raise RuntimeError("PI052 text loss: VLM forward returned no hidden states.")
-
-        # Slice the hidden states to the language portion. embed_prefix
-        # concatenates [images, language] in that order, so the trailing
-        # ``text_labels.shape[1]`` positions are the language tokens.
-        # Without this slice, applying lm_head to the full vlm_out and
-        # shifting against text_labels[..., 1:] produces a shape
-        # mismatch in cross_entropy.
-        lang_len = text_labels.shape[1]
-        text_hidden = vlm_out[:, -lang_len:, :]
-
-        lm_head = self.model.paligemma_with_expert.paligemma.lm_head
-        logits = lm_head(text_hidden.to(lm_head.weight.dtype))
-
-        # Shift for next-token prediction: predict token[i+1] from
-        # hidden[i] within the language span.
-        shift_logits = logits[..., :-1, :].contiguous()
-        shift_labels = text_labels[..., 1:].contiguous()
-        loss = F.cross_entropy(
-            shift_logits.view(-1, shift_logits.size(-1)),
-            shift_labels.view(-1),
-            ignore_index=-100,
-        )
-        return loss
 
     # ------------------------------------------------------------------
     # select_message — AR text generation at inference

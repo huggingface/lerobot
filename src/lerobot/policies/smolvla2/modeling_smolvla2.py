@@ -54,6 +54,56 @@ from ..smolvla.modeling_smolvla import SmolVLAPolicy, make_att_2d_masks
 from .configuration_smolvla2 import SmolVLA2Config
 
 
+def _locate_lang_range(prefix_att_masks: Tensor, num_lang: int) -> tuple[int, int]:
+    """Find ``[lang_start, lang_end)`` inside the SmolVLA prefix.
+
+    ``embed_prefix`` lays out the prefix as
+    ``[image_blocks..., lang, state, padding]`` with the att-mask
+    convention ``[0]*image, [0]*lang, [1]*state, [0]*padding`` (see
+    ``modeling_smolvla.SmolVLAModel.embed_prefix``). State is exactly
+    one token, and it's the *only* position with ``att_mask == 1``,
+    so we use the first ``1`` to anchor lang_end. Computing it this
+    way is robust to (a) state being projected to one embedding token
+    regardless of its raw feature dim, and (b) the trailing padding
+    added when ``seq_len < prefix_length``.
+    """
+    row = prefix_att_masks[0]
+    ones = row.nonzero(as_tuple=False)
+    if ones.numel() == 0:
+        raise RuntimeError(
+            "SmolVLA2: state token not found in prefix att_masks — "
+            "can't locate language range."
+        )
+    state_start = int(ones[0, 0].item())
+    lang_end = state_start
+    lang_start = lang_end - num_lang
+    if lang_start < 0:
+        raise RuntimeError(
+            f"SmolVLA2: lang range underflows prefix "
+            f"(state_start={state_start}, num_lang={num_lang})."
+        )
+    return lang_start, lang_end
+
+
+def _shifted_ce(logits: Tensor, text_labels: Tensor) -> Tensor:
+    """Next-token CE: hidden at t predicts label at t+1, ignore_index=-100."""
+    num_lang = logits.shape[1]
+    if text_labels.shape[1] != num_lang:
+        common = min(text_labels.shape[1], num_lang)
+        logits = logits[:, :common]
+        text_labels = text_labels[:, :common]
+    shift_logits = logits[:, :-1, :].contiguous()
+    shift_labels = text_labels[:, 1:].contiguous().long()
+    valid = shift_labels != -100
+    loss = F.cross_entropy(
+        shift_logits.reshape(-1, shift_logits.shape[-1]),
+        shift_labels.reshape(-1),
+        ignore_index=-100,
+        reduction="sum",
+    )
+    return loss / valid.sum().clamp(min=1)
+
+
 class SmolVLA2Policy(SmolVLAPolicy):
     """SmolVLA + re-enabled SmolVLM language head."""
 
@@ -78,8 +128,15 @@ class SmolVLA2Policy(SmolVLAPolicy):
     # ------------------------------------------------------------------
 
     def _unfreeze_lm_head(self) -> None:
-        """Re-enable gradients on the SmolVLM ``lm_head`` (and the bits
-        of the text path SmolVLA freezes) so the text-loss can flow back.
+        """Re-enable gradients on the text-output path so the LM head
+        loss can flow back.
+
+        SmolVLA's ``set_requires_grad`` freezes three things when
+        ``train_expert_only=False``: ``lm_head``,
+        ``text_model.model.norm.weight``, and the last 1-2 text-model
+        transformer layers (see ``smolvlm_with_expert.py:167-176``).
+        We must unfreeze *all three* — otherwise gradients still die
+        in the frozen final block and the lm_head learns nothing.
         """
         vlm_with_expert = getattr(self.model, "vlm_with_expert", None)
         if vlm_with_expert is None:
@@ -87,8 +144,26 @@ class SmolVLA2Policy(SmolVLAPolicy):
         vlm = getattr(vlm_with_expert, "vlm", None)
         if vlm is None:
             return
+
+        # Mirror the freeze targets from ``smolvlm_with_expert.set_requires_grad``.
+        num_vlm = getattr(vlm_with_expert, "num_vlm_layers", None)
+        num_expert = getattr(vlm_with_expert, "num_expert_layers", None)
+        last_layers = []
+        if num_vlm is not None:
+            last_layers.append(num_vlm - 1)
+            if (
+                num_expert is not None
+                and num_vlm != num_expert
+                and num_vlm % num_expert == 0
+            ):
+                last_layers.append(num_vlm - 2)
+        unfreeze_prefixes = [
+            "lm_head",
+            "text_model.model.norm.weight",
+            *[f"text_model.model.layers.{layer}." for layer in last_layers],
+        ]
         for name, param in vlm.named_parameters():
-            if "lm_head" in name or "text_model.model.norm.weight" in name:
+            if any(k in name for k in unfreeze_prefixes):
                 param.requires_grad = True
 
     # ------------------------------------------------------------------
@@ -216,49 +291,12 @@ class SmolVLA2Policy(SmolVLAPolicy):
                 "states — text-loss path needs them."
             )
 
-        # Lang token positions inside the prefix. ``embed_prefix`` lays
-        # out the prefix as ``[image_blocks..., lang, state]`` so the
-        # lang range is identifiable from the trailing state size and
-        # the known lang length.
-        num_lang = lang_tokens.shape[1]
-        state_for_dim = state if state.ndim >= 2 else state[:, None]
-        num_state = state_for_dim.shape[1] if state_for_dim.ndim >= 2 else 1
-        if num_state < 1:
-            num_state = 1
-        prefix_len = prefix_out.shape[1]
-        lang_end = prefix_len - num_state
-        lang_start = lang_end - num_lang
-        if lang_start < 0 or lang_end > prefix_len:
-            raise RuntimeError(
-                f"SmolVLA2: could not locate lang token range in prefix "
-                f"(prefix_len={prefix_len}, num_lang={num_lang}, "
-                f"num_state={num_state})."
-            )
-
+        lang_start, lang_end = _locate_lang_range(prefix_att_masks, lang_tokens.shape[1])
         vlm = self.model.vlm_with_expert.vlm
         lang_hidden = prefix_out[:, lang_start:lang_end].to(vlm.lm_head.weight.dtype)
         logits = vlm.lm_head(lang_hidden)  # (B, num_lang, vocab)
 
-        if text_labels.shape[1] != num_lang:
-            common = min(text_labels.shape[1], num_lang)
-            logits = logits[:, :common]
-            text_labels = text_labels[:, :common]
-
-        # Standard next-token CE: hidden state at position t predicts
-        # token at position t+1. Shift logits left, labels right by 1.
-        # Without this, the loss is identity-mapped and the LM head
-        # learns nothing useful — see HuggingFace ``LlamaForCausalLM``
-        # for the same convention.
-        shift_logits = logits[:, :-1, :].contiguous()
-        shift_labels = text_labels[:, 1:].contiguous().long()
-        valid_labels = shift_labels != -100
-        loss = F.cross_entropy(
-            shift_logits.reshape(-1, shift_logits.shape[-1]),
-            shift_labels.reshape(-1),
-            ignore_index=-100,
-            reduction="sum",
-        )
-        return loss / valid_labels.sum().clamp(min=1)
+        return _shifted_ce(logits, text_labels)
 
     # ------------------------------------------------------------------
     # Fused flow + text loss (single backbone forward)
@@ -286,8 +324,6 @@ class SmolVLA2Policy(SmolVLAPolicy):
         and text paths separately — same trick PI052Policy uses in
         ``_compute_all_losses_fused``.
         """
-        from ..smolvla.modeling_smolvla import resize_with_pad  # noqa: F401  (kept for parity)
-
         cfg = self.config
         if cfg.adapt_to_pi_aloha:
             batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
@@ -361,39 +397,11 @@ class SmolVLA2Policy(SmolVLAPolicy):
             flow_loss = per_sample_flow.mean()
 
         # ---------------- text loss (lang slice of prefix) ---------------
-        num_lang = lang_tokens.shape[1]
-        state_for_dim = state if state.ndim >= 2 else state[:, None]
-        num_state = state_for_dim.shape[1] if state_for_dim.ndim >= 2 else 1
-        if num_state < 1:
-            num_state = 1
-        prefix_len = prefix_out.shape[1]
-        lang_end = prefix_len - num_state
-        lang_start = lang_end - num_lang
-        if lang_start < 0 or lang_end > prefix_len:
-            raise RuntimeError(
-                f"SmolVLA2: fused forward could not locate lang range "
-                f"(prefix_len={prefix_len}, num_lang={num_lang}, "
-                f"num_state={num_state})."
-            )
+        lang_start, lang_end = _locate_lang_range(prefix_att_masks, lang_tokens.shape[1])
         vlm = inner.vlm_with_expert.vlm
         lang_hidden = prefix_out[:, lang_start:lang_end].to(vlm.lm_head.weight.dtype)
         logits = vlm.lm_head(lang_hidden)
-
-        if text_labels.shape[1] != num_lang:
-            common = min(text_labels.shape[1], num_lang)
-            logits = logits[:, :common]
-            text_labels = text_labels[:, :common]
-
-        shift_logits = logits[:, :-1, :].contiguous()
-        shift_labels = text_labels[:, 1:].contiguous().long()
-        valid_labels = shift_labels != -100
-        ce = F.cross_entropy(
-            shift_logits.reshape(-1, shift_logits.shape[-1]),
-            shift_labels.reshape(-1),
-            ignore_index=-100,
-            reduction="sum",
-        )
-        text_loss = ce / valid_labels.sum().clamp(min=1)
+        text_loss = _shifted_ce(logits, text_labels)
 
         return flow_loss, text_loss, flow_diag
 

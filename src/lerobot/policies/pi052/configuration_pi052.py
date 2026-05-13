@@ -152,19 +152,15 @@ class PI052Config(PI05Config):
 
     # Knowledge insulation — paper §III.B --------------------------------
     # When enabled, gradients from the action expert's flow loss are
-    # *blocked* from flowing back into the VLM's K/V projections. This
+    # blocked from flowing back into the VLM's K/V projections. This
     # prevents the action loss from over-fitting the language backbone
-    # to robot-specific features. Implementation requires a custom
-    # per-layer attention forward that uses ``.detach()`` on VLM K/V
-    # when computing attention for action queries — see
-    # ``pi05_full/modeling_pi05.py::compute_layer_complete_knowledge_insulation``
-    # on branch ``feat/add-pi05`` for the reference implementation.
+    # to robot-specific features. Implemented in ``modeling_pi052`` as
+    # a per-instance monkey-patch on ``paligemma_with_expert.forward``
+    # that splits queries into VLM and action halves and ``.detach()``-s
+    # the VLM K/V tensors used in the action-half's attention.
     knowledge_insulation: bool = False
     """If True, route every transformer layer through the KI
-    attention path (blocks action→VLM gradient flow on K/V).
-    Currently a no-op stub in this branch — PR follow-up required to
-    port the full custom layer from pi05_full. The flag is exposed
-    here so SLURM commands can be written against the final shape."""
+    attention path that blocks action→VLM gradient flow on K/V."""
 
     def __post_init__(self) -> None:
         super().__post_init__()
