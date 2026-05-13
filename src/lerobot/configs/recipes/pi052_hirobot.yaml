@@ -23,8 +23,10 @@ blend:
     weight: 0.30
     messages:
       # Action expert prefix = [images, subtask, state] only — π0.5 style.
+      # No text-CE target: ``high_level_subtask`` already supervises
+      # subtask prediction from real context. ``stream: low_level``
+      # flips ``predict_actions=True`` so the flow loss fires.
       - {role: user, content: "${subtask}", stream: low_level, if_present: subtask}
-      - {role: assistant, content: "${subtask}", stream: low_level, target: true, if_present: subtask}
 
   plan_generation:
     weight: 0.10

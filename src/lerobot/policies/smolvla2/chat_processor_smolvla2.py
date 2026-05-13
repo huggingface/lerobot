@@ -92,10 +92,16 @@ class SmolVLA2ChatTokenizerStep(ProcessorStep):
         # installed still pass.
         self._tokenizer: Any = None
         if self.tools is None:
-            # Default: ship the canonical ``say`` schema. Users who set
-            # ``meta.tools`` differently can override via
+            # Default: no tools rendered into the system prompt. The
+            # ``say()`` tool was only used by the now-removed
+            # ``user_interjection_response`` recipe; including its
+            # schema on every sample adds a long system message to
+            # the action expert's prefix and creates a train/inference
+            # mismatch (the inference low-level loop doesn't pass
+            # tools=, so the chat template doesn't render them).
+            # Users who actually need tools can set them via
             # ``with_tools(meta.tools)``.
-            self.tools = list(DEFAULT_TOOLS)
+            self.tools = []
 
     # ------------------------------------------------------------------
     # Public API
@@ -258,10 +264,14 @@ class SmolVLA2ChatTokenizerStep(ProcessorStep):
             for pos in range(start, end):
                 labels[pos] = int(full_ids[pos])
 
-        predict_actions = any(
-            i < len(message_streams) and message_streams[i] == "low_level"
-            for i in target_indices
-        )
+        # ``predict_actions`` is True iff this sample's recipe declares
+        # at least one ``low_level`` message — regardless of whether
+        # it's a target. The ``low_level_execution`` recipe in v2 uses
+        # ``stream: low_level`` on both user and assistant turns but
+        # only renders the *user* subtask (no text-CE target on the
+        # assistant) to avoid trivial "copy previous turn" supervision.
+        # Scanning targets alone would miss this sample's action loss.
+        predict_actions = any(s == "low_level" for s in message_streams)
         return [int(i) for i in full_ids], labels, predict_actions
 
     def _apply_prompt_dropout(

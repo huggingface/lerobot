@@ -115,12 +115,11 @@ class LowLevelForward(InferenceStep):
         # subtask (+ images + state). No task / plan / memory in the
         # low-level prompt — those are only used by the high-level
         # loop to *generate* the subtask. Matches the training-time
-        # ``low_level_execution`` recipe shape.
+        # ``low_level_execution`` recipe shape (single user turn,
+        # no assistant target since text-CE is owned by the
+        # high-level recipe).
         subtask = state.get("current_subtask") or state.get("task") or ""
-        ctx = [
-            {"role": "user", "content": subtask},
-            {"role": "assistant", "content": subtask},
-        ]
+        ctx = [{"role": "user", "content": subtask}]
         text_batch = _build_text_batch(self.policy, ctx)
         from lerobot.utils.constants import (  # noqa: PLC0415
             OBS_LANGUAGE_ATTENTION_MASK,

@@ -211,8 +211,13 @@ class PI052TextTokenizerStep(ProcessorStep):
                     continue
                 labels[token_pos] = input_ids[token_pos]
 
+        # Scan ALL message streams (not just targets) — see
+        # ``chat_processor_smolvla2.py`` for rationale: the v2
+        # ``low_level_execution`` recipe drops ``target: true`` on
+        # the assistant to avoid trivial copy-from-user text-CE; the
+        # flow loss still needs to fire, gated by ``stream: low_level``.
         predict_actions = torch.tensor(
-            bool(any(message_streams[i] == "low_level" for i in target_indices if i < len(message_streams))),
+            bool(any(s == "low_level" for s in message_streams)),
             dtype=torch.bool,
         )
 

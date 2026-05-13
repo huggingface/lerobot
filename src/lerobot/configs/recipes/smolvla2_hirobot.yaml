@@ -32,13 +32,14 @@ blend:
   low_level_execution:
     weight: 0.30
     messages:
-      # Just the subtask in the prompt — π0.5 style. The action
-      # expert sees only [images, this subtask, state]. Marking the
-      # assistant target as ``stream: low_level`` triggers
-      # ``predict_actions=True`` so the flow loss fires; text CE on
-      # the subtask is a (small) redundant extra signal.
+      # π0.5-style action conditioning: the action expert sees just
+      # the subtask (plus images + state). No text-CE target here —
+      # ``high_level_subtask`` (w=0.50) already trains subtask
+      # prediction from real context; supervising it again as a
+      # copy-from-user turn would dilute the LM head. ``stream:
+      # low_level`` on either turn is enough to flip
+      # ``predict_actions=True`` so the flow loss fires.
       - {role: user, content: "${subtask}", stream: low_level, if_present: subtask}
-      - {role: assistant, content: "${subtask}", stream: low_level, target: true, if_present: subtask}
 
   plan_generation:
     weight: 0.10

@@ -366,14 +366,26 @@ class PI052Policy(PI05Policy):
         text_labels = batch.get("text_labels")
         predict_actions_t = batch.get("predict_actions")
 
-        # Unannotated datasets: no recipe applied → no text_labels and
-        # no FAST / predict_actions routing. Defer to PI05Policy so the
-        # plain flow-only training surface keeps working unchanged.
+        # Unannotated datasets / batches with nothing to train: fall
+        # through to PI05Policy so the plain flow-only training surface
+        # keeps working. Triggers when:
+        #   * the recipe wasn't applied (no text_labels, no
+        #     predict_actions), OR
+        #   * every sample's recipe is text-only AND text is disabled
+        #     (would otherwise hit the "nothing to train" raise below).
+        text_disabled = (
+            self.config.text_loss_weight <= 0 or text_labels is None
+        )
+        fast_disabled = not getattr(self.config, "enable_fast_action_loss", False)
+        no_flow_samples = (
+            predict_actions_t is not None
+            and not bool(predict_actions_t.any().item())
+        )
         if (
             text_labels is None
             and predict_actions_t is None
-            and not getattr(self.config, "enable_fast_action_loss", False)
-        ):
+            and fast_disabled
+        ) or (text_disabled and no_flow_samples and fast_disabled):
             return super().forward(batch, reduction=reduction)
 
         run_flow = (
