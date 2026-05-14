@@ -91,12 +91,13 @@ Control the data recording flow using keyboard shortcuts:
 
 ### Training
 
-Depending on your hardware training the policy might take a few hours.
+Depending on your hardware training the policy might take a few hours. For VLA models provide the path to the pretrained model. For `ACT` you don't need a path, just change the type.
 
 ```
 lerobot-train \
     --dataset.repo_id=${HF_USER}/so101_dataset_test \
-    --policy.type=act \
+    --policy.path=username/the_policy_to_finetune
+    --policy.type=smolvla \
     --output_dir=outputs/train/act_so101_test \
     --job_name=act_so101_test \
     --policy.device=cuda \
