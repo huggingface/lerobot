@@ -120,6 +120,7 @@ class YamLeaderClient:
             raise RuntimeError("Client not connected")
         return self._client.get_natural_kp().result()
 
+
 class BiYamLeader(Teleoperator):
     """
     Bimanual Yam Arms leader (teleoperator) using the i2rt library.
@@ -234,17 +235,18 @@ class BiYamLeader(Teleoperator):
 
         logger.info(f"Left leader arm DOFs: {self._left_dofs}, Right leader arm DOFs: {self._right_dofs}")
 
-        # Fetch the leader's natural kp from the server so bilateral feedback
-        # runs at the i2rt-configured stiffness for whichever arm variant is
-        # connected (YAM / YAM_PRO / YAM_ULTRA / BIG_YAM ship different
-        # per-joint defaults). Assumes left/right are the same variant; if they
-        # diverge in the future, fetch and store per-arm.
-        self._original_kp = self.left_arm.get_natural_kp()
-        logger.info(f"Leader natural kp from i2rt config: {self._original_kp}")
-
-        # Apply the configured bilateral_kp so send_feedback is honored from the
-        # start. With bilateral_kp == 0.0 this is a no-op (free movement).
+        # Apply the configured bilateral_kp so send_feedback is honored from
+        # the start. With bilateral_kp == 0.0 we skip the natural-kp fetch
+        # entirely so the client stays compatible with older server builds
+        # that don't expose the get_natural_kp RPC.
         if self.bilateral_kp > 0.0:
+            # Fetch the leader's natural kp so bilateral feedback runs at the
+            # i2rt-configured stiffness for whichever arm variant is connected
+            # (YAM / YAM_PRO / YAM_ULTRA / BIG_YAM ship different per-joint
+            # defaults). Assumes left/right are the same variant; if they
+            # diverge in the future, fetch and store per-arm.
+            self._original_kp = self.left_arm.get_natural_kp()
+            logger.info(f"Leader natural kp from i2rt config: {self._original_kp}")
             self.enable_torque()
 
         logger.info("Successfully connected to bimanual Yam leader arms")
@@ -288,8 +290,8 @@ class BiYamLeader(Teleoperator):
         if left_has_gripper:
             left_joint_pos = np.concatenate([left_joint_pos, left_obs["gripper_pos"]])
         else:
-            # Teaching handle: use io_inputs from already-fetched observations
-            # (avoids redundant RPC call via get_gripper_from_encoder)
+            # Teaching handle: use io_inputs from the observations we already fetched
+            # above, instead of issuing a second get_observations RPC round-trip.
             if "io_inputs" in left_obs:
                 left_gripper = 0.0 if left_obs["io_inputs"][0] > 0.5 else 1.0
             else:

@@ -22,10 +22,9 @@ from ..config import TeleoperatorConfig
 @TeleoperatorConfig.register_subclass("bi_yam_leader")
 @dataclass
 class BiYamLeaderConfig(TeleoperatorConfig):
-    # Server ports for left and right arm leaders
-    # These should be different from the follower ports
-    # Note: You'll need to run separate server processes for the leader arms
-    # that expose their state for reading (see i2rt minimum_gello.py)
+    # Server ports for left and right arm leaders. Must differ from the
+    # follower ports. Launch the leader RPC servers via
+    # src/lerobot/robots/bi_yam_follower/run_bimanual_yam_server.py.
     left_arm_port: int = 5002
     right_arm_port: int = 5001
 
