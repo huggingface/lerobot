@@ -64,6 +64,7 @@ from lerobot.transport import (
 )
 from lerobot.transport.utils import grpc_channel_options, send_bytes_in_chunks
 from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.visualization_utils import init_rerun, log_rerun_data, shutdown_rerun
 
 from .configs import RobotClientConfig
 from .helpers import (
@@ -381,6 +382,9 @@ class RobotClient:
         _performed_action = self.robot.send_action(
             self._action_tensor_to_action_dict(timed_action.get_action())
         )
+        if self.config.display_data:
+            log_rerun_data(action=_performed_action)
+
         with self.latest_action_lock:
             self.latest_action = timed_action.get_timestep()
 
@@ -412,6 +416,11 @@ class RobotClient:
 
             raw_observation: RawObservation = self.robot.get_observation()
             raw_observation["task"] = task
+            if self.config.display_data:
+                log_rerun_data(
+                    observation=raw_observation,
+                    compress_images=self.config.display_compressed_images,
+                )
 
             with self.latest_action_lock:
                 latest_action = self.latest_action
@@ -484,6 +493,8 @@ class RobotClient:
 @draccus.wrap()
 def async_client(cfg: RobotClientConfig):
     logging.info(pformat(asdict(cfg)))
+    if cfg.display_data:
+        init_rerun(session_name="async_inference", ip=cfg.display_ip, port=cfg.display_port)
 
     # TODO: Assert if checking robot support is still needed with the plugin system
     # if cfg.robot.type not in SUPPORTED_ROBOTS:
@@ -507,6 +518,8 @@ def async_client(cfg: RobotClientConfig):
         finally:
             client.stop()
             action_receiver_thread.join()
+            if cfg.display_data:
+                shutdown_rerun()
             if cfg.debug_visualize_queue_size:
                 visualize_action_queue_size(client.action_queue_size)
             client.logger.info("Client stopped")

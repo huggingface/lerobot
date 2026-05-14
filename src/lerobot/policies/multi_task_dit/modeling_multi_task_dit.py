@@ -151,11 +151,20 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
             self._queues[OBS_IMAGES] = deque(maxlen=self.config.n_obs_steps)
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Tensor], update_queues: bool = True) -> Tensor:
         """Predict a chunk of actions given environment observations"""
         self.eval()
 
-        for k in batch:
+        if ACTION in batch:
+            batch = dict(batch)  # shallow copy to avoid modifying original
+            batch.pop(ACTION)
+
+        batch = self._prepare_batch(batch)
+
+        if update_queues:
+            self._queues = populate_queues(self._queues, batch)
+
+        for k in list(batch):
             if k in self._queues:
                 batch[k] = torch.stack(list(self._queues[k]), dim=1)
 
@@ -182,7 +191,7 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
         self._queues = populate_queues(self._queues, batch)
 
         if len(self._queues[ACTION]) == 0:
-            actions = self.predict_action_chunk(batch)
+            actions = self.predict_action_chunk(batch, update_queues=False)
             self._queues[ACTION].extend(actions.transpose(0, 1))
 
         action = self._queues[ACTION].popleft()

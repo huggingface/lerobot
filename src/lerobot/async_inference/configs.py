@@ -147,6 +147,12 @@ class RobotClientConfig:
     debug_visualize_queue_size: bool = field(
         default=False, metadata={"help": "Visualize the action queue size"}
     )
+    display_data: bool = field(default=False, metadata={"help": "Display robot data in Rerun"})
+    display_ip: str | None = field(default=None, metadata={"help": "IP of the remote Rerun server"})
+    display_port: int | None = field(default=None, metadata={"help": "Port of the remote Rerun server"})
+    display_compressed_images: bool = field(
+        default=False, metadata={"help": "Display compressed images in Rerun"}
+    )
 
     @property
     def environment_dt(self) -> float:
@@ -200,4 +206,8 @@ class RobotClientConfig:
             "task": self.task,
             "debug_visualize_queue_size": self.debug_visualize_queue_size,
             "aggregate_fn_name": self.aggregate_fn_name,
+            "display_data": self.display_data,
+            "display_ip": self.display_ip,
+            "display_port": self.display_port,
+            "display_compressed_images": self.display_compressed_images,
         }
