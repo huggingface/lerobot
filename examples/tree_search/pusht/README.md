@@ -57,6 +57,11 @@ Useful knobs:
 - `--dump-frames=true`: save the annotated rendered rollout frames as PNGs under
   `OUTPUT_DIR/frames/episode_XXX/frame_YYYYY.png`, next to `videos/`. This uses
   the same `--render-videos` episode limit as MP4 generation.
+- `--plot_policy_trace`: with `--dump-frames=true` and `--one_step_further`,
+  save `policy_trace_step_YYYYY.png/json` under `OUTPUT_DIR/frames/episode_XXX/`
+  whenever the policy chunk is accepted without running search. The plot shows
+  raw policy action targets and the simulated agent trace for that accepted
+  chunk.
 - `--one_step_further`: before running beam search, simulate the raw policy
   chunk once. If its final PushT coverage does not drop by more than `0.05`,
   skip search and execute the policy chunk directly. If coverage drops by more

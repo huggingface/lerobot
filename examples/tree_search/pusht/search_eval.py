@@ -81,6 +81,7 @@ class PlannerConfig:
     render_videos: int
     log_every_steps: int
     dump_frames: bool
+    plot_policy_trace: bool
     dump_search_images: bool
     one_step_further: bool
 
@@ -283,6 +284,116 @@ def save_search_trace_json(
             }
             for trace in traces
         ],
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w") as f:
+        json.dump(payload, f, indent=2)
+
+
+def save_policy_trace_debug(
+    *,
+    path: Path,
+    frame: np.ndarray,
+    actions: np.ndarray,
+    rollout: SimRollout,
+    episode_index: int,
+    env_step: int,
+    coverage_before: float,
+    coverage_drop: float,
+) -> None:
+    image = np.ascontiguousarray(frame.copy())
+    if image.dtype != np.uint8:
+        image = np.clip(image, 0, 255).astype(np.uint8)
+
+    height, width = image.shape[:2]
+
+    def to_pixel(point: np.ndarray) -> tuple[int, int]:
+        x = int(np.clip(float(point[0]) / 512.0 * width, 0, width - 1))
+        y = int(np.clip(float(point[1]) / 512.0 * height, 0, height - 1))
+        return x, y
+
+    action_points = [np.asarray(action, dtype=np.float32).copy() for action in actions[: rollout.action_count]]
+    agent_points = rollout.agent_positions
+
+    draw_trace_dots(
+        image,
+        action_points,
+        color=(255, 80, 220),
+        radius=5,
+        thickness=-1,
+        to_pixel=to_pixel,
+    )
+    draw_trace_dots(
+        image,
+        agent_points,
+        color=(20, 220, 255),
+        radius=5,
+        thickness=2,
+        to_pixel=to_pixel,
+    )
+
+    image = annotate_frame(
+        image,
+        [
+            f"policy trace episode={episode_index} step={env_step}",
+            f"coverage {coverage_before:.3f}->{rollout.coverage:.3f} drop={coverage_drop:.3f}",
+            "magenta=policy actions cyan=sim agent",
+        ],
+    )
+
+    write_frame_png(path, image)
+    save_policy_trace_json(
+        path=path.with_suffix(".json"),
+        actions=action_points,
+        agent_points=agent_points,
+        rollout=rollout,
+        episode_index=episode_index,
+        env_step=env_step,
+        width=width,
+        height=height,
+        coverage_before=coverage_before,
+        coverage_drop=coverage_drop,
+        to_pixel=to_pixel,
+    )
+
+
+def save_policy_trace_json(
+    *,
+    path: Path,
+    actions: Sequence[np.ndarray],
+    agent_points: Sequence[np.ndarray],
+    rollout: SimRollout,
+    episode_index: int,
+    env_step: int,
+    width: int,
+    height: int,
+    coverage_before: float,
+    coverage_drop: float,
+    to_pixel: Callable[[np.ndarray], tuple[int, int]],
+) -> None:
+    payload = {
+        "episode_index": episode_index,
+        "env_step": env_step,
+        "image_width": width,
+        "image_height": height,
+        "coordinate_frame": "image_pixels_xy_from_top_left",
+        "world_coordinate_frame": "pusht_world_xy_0_512",
+        "coverage_before": coverage_before,
+        "coverage_after": rollout.coverage,
+        "coverage_drop": coverage_drop,
+        "score": rollout.coverage,
+        "reward_sum": rollout.sum_reward,
+        "max_reward": rollout.max_reward,
+        "success": rollout.success,
+        "action_count": rollout.action_count,
+        "action_trace": {
+            "pixel_points": [[int(x), int(y)] for x, y in [to_pixel(point) for point in actions]],
+            "world_points": [[float(point[0]), float(point[1])] for point in actions],
+        },
+        "simulated_agent_trace": {
+            "pixel_points": [[int(x), int(y)] for x, y in [to_pixel(point) for point in agent_points]],
+            "world_points": [[float(point[0]), float(point[1])] for point in agent_points],
+        },
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w") as f:
@@ -691,6 +802,16 @@ def parse_args() -> PlannerConfig:
         help="Write annotated rendered frames as PNGs under OUTPUT_DIR/frames/episode_XXX/.",
     )
     parser.add_argument(
+        "--plot-policy-trace",
+        "--plot_policy_trace",
+        dest="plot_policy_trace",
+        action="store_true",
+        help=(
+            "When --dump-frames and --one_step_further are enabled, save PNG/JSON traces for policy "
+            "chunks that are accepted without search."
+        ),
+    )
+    parser.add_argument(
         "--dump-search-images",
         "--dump_search_images",
         dest="dump_search_images",
@@ -862,6 +983,22 @@ def run_episode(
                     "policy_coverage_after": policy_rollout.coverage,
                     "coverage_drop": coverage_drop,
                 }
+                if cfg.dump_frames and cfg.plot_policy_trace:
+                    adapter.restore(root_state)
+                    save_policy_trace_debug(
+                        path=(
+                            frame_dir
+                            / f"episode_{episode_index:03d}"
+                            / f"policy_trace_step_{env_step:05d}.png"
+                        ),
+                        frame=adapter.render(),
+                        actions=policy_chunk,
+                        rollout=policy_rollout,
+                        episode_index=episode_index,
+                        env_step=env_step,
+                        coverage_before=coverage_before,
+                        coverage_drop=coverage_drop,
+                    )
             else:
                 search_frame = adapter.render() if cfg.dump_search_images else None
                 action_chunk, plan_info = planner.choose(
