@@ -136,9 +136,9 @@ class VideoEncoderConfig:
         """Validate the video encoder configuration."""
         if self.video_backend == "pyav":
             require_package("av", extra="dataset")
-            from lerobot.datasets import check_video_encoder_config_pyav
+            from lerobot.datasets import check_video_encoder_parameters_pyav
 
-            check_video_encoder_config_pyav(self)
+            check_video_encoder_parameters_pyav(self.vcodec, self.pix_fmt, self.get_codec_options())
 
     def resolve_vcodec(self) -> None:
         """Check ``vcodec`` and, when it is ``"auto"``, pick a concrete encoder.

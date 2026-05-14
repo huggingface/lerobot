@@ -243,7 +243,7 @@ class TestExtraOptions:
 
     @require_libsvtav1
     def test_numeric_out_of_range_raises(self):
-        with pytest.raises(ValueError, match=r"extra_options\['qp'\].*out of range"):
+        with pytest.raises(ValueError, match=r"qp=.*out of range"):
             VideoEncoderConfig(extra_options={"qp": 999})
 
     @require_libsvtav1
@@ -254,18 +254,18 @@ class TestExtraOptions:
 
     @require_libsvtav1
     def test_numeric_string_out_of_range_raises(self):
-        with pytest.raises(ValueError, match=r"extra_options\['qp'\].*out of range"):
+        with pytest.raises(ValueError, match=r"qp=.*out of range"):
             VideoEncoderConfig(extra_options={"qp": "999"})
 
     @require_libsvtav1
     def test_non_numeric_string_on_numeric_option_raises(self):
-        with pytest.raises(ValueError, match=r"extra_options\['qp'\].*not numeric"):
+        with pytest.raises(ValueError, match=r"qp=.*not numeric"):
             VideoEncoderConfig(extra_options={"qp": "medium"})
 
     @require_libsvtav1
     def test_bool_on_numeric_option_raises(self):
         """``bool`` is explicitly rejected for numeric options."""
-        with pytest.raises(ValueError, match=r"extra_options\['qp'\].*not numeric"):
+        with pytest.raises(ValueError, match=r"qp=.*not numeric"):
             VideoEncoderConfig(extra_options={"qp": True})
 
     @require_h264

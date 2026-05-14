@@ -19,15 +19,11 @@ Centralises all :mod:`av` introspection of the bundled FFmpeg build.
 Checks degrade to a no-op when the target codec isn't available locally.
 """
 
-from __future__ import annotations
-
 import functools
 import logging
 from typing import Any
 
 import av
-
-from lerobot.configs import VideoEncoderConfig
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +142,7 @@ def _check_pixel_format(vcodec: str, pix_fmt: str) -> None:
         )
 
 
-def _check_codec_options(vcodec: str, codec_options: dict[str, Any], config: VideoEncoderConfig) -> None:
+def _check_codec_options(vcodec: str, codec_options: dict[str, Any]) -> None:
     """Validate merged encoder options (typed) against the codec's published AVOptions."""
     supported_options = _get_codec_options_by_name(vcodec)
     for key, value in codec_options.items():
@@ -157,12 +153,10 @@ def _check_codec_options(vcodec: str, codec_options: dict[str, Any], config: Vid
             continue
         if key not in supported_options:
             continue
-        opt = supported_options[key]
-        label = f"extra_options[{key!r}]" if key in config.extra_options else key
-        _check_option_value(vcodec, label, value, opt)
+        _check_option_value(vcodec, key, value, supported_options[key])
 
 
-def check_video_encoder_config_pyav(config: VideoEncoderConfig) -> None:
+def check_video_encoder_parameters_pyav(vcodec: str, pix_fmt: str, codec_options: dict[str, Any]) -> None:
     """Verify *config* is compatible with the bundled FFmpeg build.
 
     Checks pixel format, abstract tuning-field compatibility, and each merged
@@ -173,9 +167,8 @@ def check_video_encoder_config_pyav(config: VideoEncoderConfig) -> None:
     Raises:
         ValueError: on the first incompatibility encountered.
     """
-    vcodec = config.vcodec
     options = _get_codec_options_by_name(vcodec)
     if not options:
         raise ValueError(f"Codec {vcodec!r} is not available in the bundled FFmpeg build")
-    _check_pixel_format(config.vcodec, config.pix_fmt)
-    _check_codec_options(config.vcodec, config.get_codec_options(), config)
+    _check_pixel_format(vcodec, pix_fmt)
+    _check_codec_options(vcodec, codec_options)
