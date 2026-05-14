@@ -15,7 +15,7 @@
 # limitations under the License.
 """Tests for dataset tools utilities."""
 
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
@@ -61,6 +61,7 @@ def sample_dataset(tmp_path, empty_lerobot_dataset_factory):
         dataset.save_episode()
 
     dataset.finalize()
+
     return dataset
 
 
@@ -369,6 +370,95 @@ def test_add_features_with_callable(sample_dataset, tmp_path):
     first_frame = first_episode_items[0]
     assert first_frame["frame_index"] == 0
     assert float(first_frame["reward"]) == 0.0
+
+
+def test_add_features_with_video(sample_dataset, tmp_path):
+    """Test adding a video feature."""
+    # Mock video file path
+    video_path = tmp_path / "test_video.mp4"
+    video_path.touch()  # Create empty file for path validation
+
+    # Mock video info and duration
+    video_info = {
+        "video.height": 480,
+        "video.width": 640,
+        "video.channels": 3,
+        "video.codec": "h264",
+    }
+
+    feature_info = {
+        "dtype": "video",
+        "shape": (480, 640, 3),
+        "names": ["height", "width", "channels"],
+        "video_info": {**video_info, "video.fps": sample_dataset.fps},
+    }
+
+    features = {
+        "observation.camera": (str(video_path), feature_info),
+    }
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_tools.get_video_duration_in_s") as mock_get_duration,
+        patch("lerobot.datasets.dataset_tools.get_video_info") as mock_get_video_info,
+        patch("lerobot.datasets.dataset_tools.compute_mp4_video_stats") as mock_compute_stats,
+        patch("lerobot.datasets.dataset_tools._copy_videos_with_feature_changes") as mock_copy_videos,
+        patch("lerobot.datasets.dataset_tools.LeRobotDataset") as mock_dataset_class,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(tmp_path / "with_video")
+        mock_get_duration.return_value = 10.0  # 50 frames at 5 fps = 10 seconds
+        mock_get_video_info.return_value = video_info
+        mock_compute_stats.return_value = {"mean": 0.5, "std": 0.2}
+        mock_copy_videos.return_value = None  # Mock the entire video copying process
+
+        # Create a mock dataset with video columns in episodes
+        mock_new_dataset = Mock()
+        mock_new_dataset.meta.features = {
+            "action": {"dtype": "float32", "shape": (6,), "names": None},
+            "observation.state": {"dtype": "float32", "shape": (4,), "names": None},
+            "observation.images.top": {"dtype": "image", "shape": (224, 224, 3), "names": None},
+            "observation.camera": feature_info,
+        }
+        mock_new_dataset.meta.total_episodes = 5
+        mock_new_dataset.meta.total_frames = 50
+
+        # Mock episodes DataFrame with video columns
+        mock_episodes = Mock()
+        mock_episodes.column_names = [
+            "episode_index",
+            "videos/observation.camera/chunk_index",
+            "videos/observation.camera/file_index",
+            "videos/observation.camera/from_timestamp",
+            "videos/observation.camera/to_timestamp",
+        ]
+        mock_new_dataset.meta.episodes = mock_episodes
+
+        mock_dataset_class.return_value = mock_new_dataset
+
+        # Load episodes metadata if not already loaded
+        if sample_dataset.meta.episodes is None:
+            from lerobot.datasets.io_utils import load_episodes
+
+            sample_dataset.meta.episodes = load_episodes(sample_dataset.meta.root)
+
+        new_dataset = add_features(
+            dataset=sample_dataset,
+            features=features,
+            output_dir=tmp_path / "with_video",
+        )
+
+    assert "observation.camera" in new_dataset.meta.features
+    assert new_dataset.meta.features["observation.camera"]["dtype"] == "video"
+    assert new_dataset.meta.features["observation.camera"]["shape"] == (480, 640, 3)
+
+    # Check that video columns were added to episodes
+    episodes_df = new_dataset.meta.episodes
+    assert "videos/observation.camera/chunk_index" in episodes_df.column_names
+    assert "videos/observation.camera/file_index" in episodes_df.column_names
+    assert "videos/observation.camera/from_timestamp" in episodes_df.column_names
+    assert "videos/observation.camera/to_timestamp" in episodes_df.column_names
 
 
 def test_add_existing_feature(sample_dataset, tmp_path):
@@ -887,6 +977,50 @@ def test_add_features_preserves_existing_stats(sample_dataset, tmp_path):
         assert "std" in new_dataset.meta.stats[feature]
 
 
+def test_add_feature_update_stats(sample_dataset, tmp_path):
+    """Test that adding a feature computes and adds its statistics."""
+    num_frames = sample_dataset.meta.total_frames
+    # Create predictable reward values for testing
+    reward_values = np.array([[i % 10] for i in range(num_frames)], dtype=np.float32)
+
+    feature_info = {
+        "dtype": "float32",
+        "shape": (1,),
+        "names": None,
+    }
+    features = {
+        "reward": (reward_values, feature_info),
+    }
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(tmp_path / "with_reward")
+
+        new_dataset = add_features(
+            dataset=sample_dataset,
+            features=features,
+            output_dir=tmp_path / "with_reward",
+        )
+
+    # Check that the new feature has statistics computed
+    assert new_dataset.meta.stats is not None
+    assert "reward" in new_dataset.meta.stats
+    assert "mean" in new_dataset.meta.stats["reward"]
+    assert "std" in new_dataset.meta.stats["reward"]
+
+    # Verify the computed statistics are reasonable
+    reward_stats = new_dataset.meta.stats["reward"]
+    expected_mean = np.mean(reward_values)
+    expected_std = np.std(reward_values)
+
+    # Allow for small numerical differences
+    assert abs(reward_stats["mean"] - expected_mean) < 1e-6
+    assert abs(reward_stats["std"] - expected_std) < 1e-6
+
+
 def test_remove_feature_updates_stats(sample_dataset, tmp_path):
     """Test that removing a feature removes it from stats."""
     feature_info = {"dtype": "float32", "shape": (1,), "names": None}
@@ -1323,3 +1457,239 @@ def test_convert_image_to_video_dataset_subset_episodes(tmp_path):
 
         if output_dir.exists():
             shutil.rmtree(output_dir)
+
+
+def test_add_feature_with_named_dimensions(sample_dataset, tmp_path):
+    """Test adding feature with named dimensions from inference."""
+    num_frames = sample_dataset.meta.total_frames
+    action_extension = np.random.randn(num_frames, 6).astype(np.float32)
+
+    feature_info = {
+        "dtype": "float32",
+        "shape": (6,),
+        "names": ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "gripper"],
+    }
+    features = {
+        "action_extended": (action_extension, feature_info),
+    }
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(tmp_path / "with_named_action")
+
+        new_dataset = add_features(
+            dataset=sample_dataset,
+            features=features,
+            output_dir=tmp_path / "with_named_action",
+        )
+
+    assert "action_extended" in new_dataset.meta.features
+    assert new_dataset.meta.features["action_extended"]["names"] == feature_info["names"]
+
+
+def test_add_multiple_features_with_types(sample_dataset, tmp_path):
+    """Test adding multiple features with different types."""
+    num_frames = sample_dataset.meta.total_frames
+
+    reward_data = np.random.randn(num_frames, 1).astype(np.float32)
+    success_data = np.random.randn(num_frames, 1).astype(np.float32)
+
+    features = {
+        "reward": (
+            reward_data,
+            {
+                "dtype": "float32",
+                "shape": (1,),
+                "names": None,
+            },
+        ),
+        "success": (
+            success_data,
+            {
+                "dtype": "float32",
+                "shape": (1,),
+                "names": None,
+            },
+        ),
+    }
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(tmp_path / "with_multi_features")
+
+        new_dataset = add_features(
+            dataset=sample_dataset,
+            features=features,
+            output_dir=tmp_path / "with_multi_features",
+        )
+
+    assert "reward" in new_dataset.meta.features
+    assert "success" in new_dataset.meta.features
+    assert len(new_dataset) == num_frames
+
+
+def test_add_feature_different_dtypes(sample_dataset, tmp_path):
+    """Test adding features with different data types."""
+    num_frames = sample_dataset.meta.total_frames
+
+    # Test int32
+    int_data = np.random.randint(0, 100, (num_frames, 1), dtype=np.int32)
+
+    features = {
+        "count": (
+            int_data,
+            {
+                "dtype": "int32",
+                "shape": (1,),
+                "names": None,
+            },
+        ),
+    }
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(tmp_path / "with_int_feature")
+
+        new_dataset = add_features(
+            dataset=sample_dataset,
+            features=features,
+            output_dir=tmp_path / "with_int_feature",
+        )
+
+    assert "count" in new_dataset.meta.features
+    assert new_dataset.meta.features["count"]["dtype"] == "int32"
+    sample_item = new_dataset[0]
+    assert "count" in sample_item
+
+
+def test_add_feature_multidimensional_shapes(sample_dataset, tmp_path):
+    """Test adding features with different dimensional shapes."""
+    num_frames = sample_dataset.meta.total_frames
+
+    # 2D feature
+    feature_2d = np.random.randn(num_frames, 3, 3).astype(np.float32)
+
+    # 3D feature
+    feature_3d = np.random.randn(num_frames, 2, 3, 4).astype(np.float32)
+
+    features = {
+        "matrix": (
+            feature_2d,
+            {
+                "dtype": "float32",
+                "shape": (3, 3),
+                "names": None,
+            },
+        ),
+        "tensor": (
+            feature_3d,
+            {
+                "dtype": "float32",
+                "shape": (2, 3, 4),
+                "names": None,
+            },
+        ),
+    }
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(tmp_path / "with_shapes")
+
+        new_dataset = add_features(
+            dataset=sample_dataset,
+            features=features,
+            output_dir=tmp_path / "with_shapes",
+        )
+
+    assert "matrix" in new_dataset.meta.features
+    assert "tensor" in new_dataset.meta.features
+    assert new_dataset.meta.features["matrix"]["shape"] == (3, 3)
+    assert new_dataset.meta.features["tensor"]["shape"] == (2, 3, 4)
+
+
+def test_add_feature_preserves_episode_structure(sample_dataset, tmp_path):
+    """Test that adding features preserves episode boundaries."""
+    num_frames = sample_dataset.meta.total_frames
+    reward_data = np.random.randn(num_frames, 1).astype(np.float32)
+
+    features = {
+        "reward": (
+            reward_data,
+            {
+                "dtype": "float32",
+                "shape": (1,),
+                "names": None,
+            },
+        ),
+    }
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(tmp_path / "with_reward_preserved")
+
+        new_dataset = add_features(
+            dataset=sample_dataset,
+            features=features,
+            output_dir=tmp_path / "with_reward_preserved",
+        )
+
+    # Check episode structure is preserved
+    assert new_dataset.meta.total_episodes == sample_dataset.meta.total_episodes
+
+    # Check that all episodes are still present
+    original_episodes = {int(idx.item()) for idx in sample_dataset.hf_dataset["episode_index"]}
+    new_episodes = {int(idx.item()) for idx in new_dataset.hf_dataset["episode_index"]}
+    assert original_episodes == new_episodes
+
+
+def test_add_feature_with_named_dimensions_inference(sample_dataset, tmp_path):
+    """Test automatic dimension name inference from existing features."""
+    num_frames = sample_dataset.meta.total_frames
+
+    # Action feature already exists with dimension names
+    # We add a similar feature and check if dimension names are inferred
+    new_action = np.random.randn(num_frames, 6).astype(np.float32)
+
+    features = {
+        "action_copy": (
+            new_action,
+            {
+                "dtype": "float32",
+                "shape": (6,),
+                "names": None,  # Should be inferred from existing 'action' feature
+            },
+        ),
+    }
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(tmp_path / "with_inferred_names")
+
+        new_dataset = add_features(
+            dataset=sample_dataset,
+            features=features,
+            output_dir=tmp_path / "with_inferred_names",
+        )
+
+    assert "action_copy" in new_dataset.meta.features
+    # Dimension names should be inferred from the existing 'action' feature
+    if new_dataset.meta.features["action_copy"]["names"] is not None:
+        assert len(new_dataset.meta.features["action_copy"]["names"]) == 6
