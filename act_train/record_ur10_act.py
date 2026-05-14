@@ -8,9 +8,13 @@ each episode to a ``LeRobotDataset``. Re-uses the existing UR10 env layer
   - the 16-D relative-tcp_xyz observation,
   - the streaming-thread control + reset-recovery path.
 
-The recorded action is the 4-D teleop output [dx, dy, dz, gripper] -- exactly
-what HIL-SERL uses -- so the policy ACT learns is directly executable in this
-env at inference time.
+The recorded action is the 4-D vector ``[dx, dy, dz, gripper_state]``. The
+Cartesian deltas come straight from the teleop, but the gripper component is
+recorded as the integrated STATE (``0.0=closed, 1.0=open``, read from
+``observation.state[-1]`` after each env.step) -- NOT the raw teleop COMMAND
+encoding (``{0=CLOSE, 1=STAY, 2=OPEN}``). State encoding matches RC10's ACT
+dataset convention and avoids the 96%-STAY collapse that pure regression on
+the command labels suffers from.
 
 Usage:
     python act_train/record_ur10_act.py
@@ -191,6 +195,20 @@ def main() -> None:
                 action_to_record = torch.tensor(action_to_record, dtype=torch.float32)
             if action_to_record.ndim > 1:
                 action_to_record = action_to_record.squeeze(0)
+
+            # Rewrite the gripper component from COMMAND encoding ({0, 1, 2}, where ~96%
+            # of frames are STAY=1) to STATE encoding ({0.0=closed, 1.0=open}, naturally
+            # balanced across an episode). Source of truth is `observation.state[-1]` on
+            # the post-step transition: ur10_robot.py:472 reads `float(self.gripper.is_open)`
+            # fresh on every get_observation, and env.step() has just called send_gripper(),
+            # so the flag reflects this step's resulting gripper state. Matches RC10's
+            # action-encoding convention and the schema train/eval expect downstream.
+            if action_to_record.numel() >= 4:
+                obs_state = transition[TransitionKey.OBSERVATION][OBS_STATE]
+                if isinstance(obs_state, torch.Tensor):
+                    obs_state = obs_state.detach().cpu().float()
+                gripper_state = float(np.asarray(obs_state).reshape(-1)[-1])
+                action_to_record[3] = gripper_state
 
             # Pull observation tensors (drop batch dim — dataset expects (C, H, W) / (D,)).
             frame: dict = {ACTION: action_to_record, "task": TASK_DESCRIPTION}
