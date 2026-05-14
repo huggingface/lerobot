@@ -15,27 +15,21 @@
 # limitations under the License.
 
 """
-Server script for Yam arms using i2rt and portal.
+Server script for a single YAM follower arm or a MuJoCo visualizer.
 
-This script starts a server process for a single Yam arm (follower or leader).
-For bimanual setup, you need to run this script 4 times with different configurations.
+For the standard bimanual teleoperation/recording workflow, use
+``run_bimanual_yam_server.py`` instead — it starts all four arms (2 followers +
+2 leaders) in one process and binds the RPC endpoints required by
+``bi_yam_follower`` / ``bi_yam_leader``.
 
 Example usage:
-    # Right follower arm
+    # Single follower arm
     python src/lerobot/robots/bi_yam_follower/run_yam_server.py \
         --can_channel can_follower_r --gripper v3 --mode follower --server_port 1234
 
-    # Left follower arm
+    # MuJoCo visualizer (local)
     python src/lerobot/robots/bi_yam_follower/run_yam_server.py \
-        --can_channel can_follower_l --gripper v3 --mode follower --server_port 1235
-
-    # Right leader arm
-    python src/lerobot/robots/bi_yam_follower/run_yam_server.py \
-        --can_channel can_leader_r --gripper v3 --mode leader --server_port 5001
-
-    # Left leader arm
-    python src/lerobot/robots/bi_yam_follower/run_yam_server.py \
-        --can_channel can_leader_l --gripper v3 --mode leader --server_port 5002
+        --can_channel can_follower_r --gripper v3 --mode visualizer_local
 """
 
 import time
@@ -46,7 +40,6 @@ import numpy as np
 import portal
 import tyro
 from i2rt.robots.get_robot import get_yam_robot
-from i2rt.robots.motor_chain_robot import MotorChainRobot
 from i2rt.robots.robot import Robot
 
 DEFAULT_ROBOT_PORT = 11333
@@ -118,114 +111,6 @@ class ClientRobot(Robot):
         return self._client.get_observations().result()
 
 
-class YAMLeaderRobot:
-    """Wrapper for YAM leader arm with teaching handle support."""
-
-    def __init__(self, robot: MotorChainRobot):
-        self._robot = robot
-        self._motor_chain = robot.motor_chain
-
-    def num_dofs(self) -> int:
-        """Get number of DOFs (6 joints + 1 gripper)."""
-        return 7
-
-    def get_joint_pos(self) -> np.ndarray:
-        """Get leader arm state including gripper encoder.
-
-        Returns:
-            np.ndarray: Joint positions with gripper (7 values)
-        """
-        qpos = self._robot.get_observations()["joint_pos"]
-        try:
-            encoder_obs = self._motor_chain.get_same_bus_device_states()
-            time.sleep(0.01)
-            # Encoder position mapped to gripper (0=closed, 1=open)
-            gripper_pos = 1 - encoder_obs[0].position
-        except Exception as e:
-            print(f"Warning: Could not read encoder state: {e}")
-            # Fallback to default open position
-            gripper_pos = 1.0
-        qpos_with_gripper = np.concatenate([qpos, [gripper_pos]])
-        return qpos_with_gripper
-
-    def command_joint_pos(self, joint_pos: np.ndarray) -> None:
-        """Command the leader arm joint positions (6 joints, excluding gripper).
-
-        Args:
-            joint_pos: Joint positions (6 or 7 values, gripper will be stripped if included).
-        """
-        # For teaching handles, ignore gripper command if included
-        if len(joint_pos) > self._robot.num_dofs():
-            joint_pos = joint_pos[: self._robot.num_dofs()]
-        self._robot.command_joint_pos(joint_pos)
-
-    def command_joint_state(self, joint_state: dict[str, np.ndarray]) -> None:
-        """Command the robot to a given state.
-
-        Args:
-            joint_state: The joint state to command.
-        """
-        self._robot.command_joint_state(joint_state)
-
-    def get_observations(self) -> dict[str, np.ndarray]:
-        """Get observations from leader arm.
-
-        Returns:
-            Dict[str, np.ndarray]: Dictionary containing:
-                - joint_pos: 6 joint positions
-                - gripper_pos: Encoder position mapped to gripper (0=closed, 1=open)
-                - io_inputs: Button states from encoder
-        """
-        qpos = self._robot.get_observations()["joint_pos"]
-        try:
-            encoder_obs = self._motor_chain.get_same_bus_device_states()
-            time.sleep(0.01)
-            # Encoder position mapped to gripper (0=closed, 1=open)
-            gripper_pos = 1 - encoder_obs[0].position
-            io_inputs = encoder_obs[0].io_inputs
-        except Exception as e:
-            print(f"Warning: Could not read encoder state: {e}")
-            # Provide defaults
-            gripper_pos = 1.0
-            io_inputs = np.array([0.0])
-
-        return {
-            "joint_pos": qpos,
-            "gripper_pos": np.array([gripper_pos]),
-            "io_inputs": io_inputs,
-        }
-
-    def get_info(self) -> tuple[np.ndarray, np.ndarray]:
-        """Get leader arm state including gripper encoder and button inputs.
-
-        Returns:
-            tuple: (joint positions with gripper, button states)
-        """
-        qpos = self._robot.get_observations()["joint_pos"]
-        try:
-            encoder_obs = self._motor_chain.get_same_bus_device_states()
-            time.sleep(0.01)
-            # Encoder position mapped to gripper (0=closed, 1=open)
-            gripper_pos = 1 - encoder_obs[0].position
-            io_inputs = encoder_obs[0].io_inputs
-        except Exception as e:
-            print(f"Warning: Could not read encoder state: {e}")
-            # Provide defaults
-            gripper_pos = 1.0
-            io_inputs = np.array([0.0])
-        qpos_with_gripper = np.concatenate([qpos, [gripper_pos]])
-        return qpos_with_gripper, io_inputs
-
-    def update_kp_kd(self, kp: np.ndarray, kd: np.ndarray) -> None:
-        """Update the PD controller gains.
-
-        Args:
-            kp: Proportional gains.
-            kd: Derivative gains.
-        """
-        self._robot.update_kp_kd(kp, kd)
-
-
 @dataclass
 class Args:
     """Command line arguments for the Yam arm server."""
@@ -235,20 +120,17 @@ class Args:
     ] = "yam_teaching_handle"
     """Type of gripper attached to the arm."""
 
-    mode: Literal["follower", "leader", "visualizer_local", "visualizer_remote"] = "follower"
-    """Operating mode: follower (execution), leader (teaching), or visualizer."""
+    mode: Literal["follower", "visualizer_local", "visualizer_remote"] = "follower"
+    """Operating mode: follower (execution) or visualizer."""
 
     server_host: str = "localhost"
-    """Hostname for the server (used in leader mode to connect to follower)."""
+    """Hostname for the server (used by visualizer_remote to connect to a follower)."""
 
     server_port: int = DEFAULT_ROBOT_PORT
     """Port number for the server."""
 
     can_channel: str = "can0"
-    """CAN interface name (e.g., can0, can_follower_r, can_leader_l)."""
-
-    bilateral_kp: float = 0.0
-    """Bilateral force feedback gain (used in leader mode)."""
+    """CAN interface name (e.g., can0, can_follower_r)."""
 
 
 def main(args: Args) -> None:
@@ -272,64 +154,6 @@ def main(args: Args) -> None:
         print(f"Starting follower server on port {args.server_port}...")
         print("Press Ctrl+C to stop.")
         server_robot.serve()
-
-    elif args.mode == "leader":
-        # Run as leader: read teaching handle state and mirror to follower
-        robot = YAMLeaderRobot(robot)
-        robot_current_kp = robot._robot._kp
-        client_robot = ClientRobot(args.server_port, host=args.server_host)
-
-        # Sync the robot state
-        current_joint_pos, current_button = robot.get_info()
-        current_follower_joint_pos = client_robot.get_joint_pos()
-        print(f"Current leader joint pos: {current_joint_pos}")
-        print(f"Current follower joint pos: {current_follower_joint_pos}")
-
-        def slow_move(joint_pos: np.ndarray, duration: float = 1.0) -> None:
-            """Smoothly move follower to match leader position."""
-            for i in range(100):
-                current_joint_pos_local = joint_pos
-                follower_command_joint_pos = (
-                    current_joint_pos_local * i / 100 + current_follower_joint_pos * (1 - i / 100)
-                )
-                client_robot.command_joint_pos(follower_command_joint_pos)
-                time.sleep(0.03)
-
-        synchronized = False
-        print("\nLeader mode started. Press the teaching handle button to toggle synchronization.")
-        print("Press Ctrl+C to stop.")
-
-        while True:
-            current_joint_pos, current_button = robot.get_info()
-
-            # Button press toggles synchronization
-            if current_button[0] > 0.5:
-                if not synchronized:
-                    print("Synchronizing: Follower will now mirror leader.")
-                    robot.update_kp_kd(kp=robot_current_kp * args.bilateral_kp, kd=np.ones(6) * 0.0)
-                    robot.command_joint_pos(current_joint_pos[:6])
-                    slow_move(current_joint_pos)
-                else:
-                    print("Desynchronizing: Clearing bilateral PD.")
-                    robot.update_kp_kd(kp=np.ones(6) * 0.0, kd=np.ones(6) * 0.0)
-                    robot.command_joint_pos(current_follower_joint_pos[:6])
-
-                synchronized = not synchronized
-
-                # Wait for button release
-                while current_button[0] > 0.5:
-                    time.sleep(0.03)
-                    current_joint_pos, current_button = robot.get_info()
-
-            current_follower_joint_pos = client_robot.get_joint_pos()
-
-            if synchronized:
-                # Mirror leader to follower
-                client_robot.command_joint_pos(current_joint_pos)
-                # Set bilateral force proportional to bilateral_kp
-                robot.command_joint_pos(current_follower_joint_pos[:6])
-
-            time.sleep(0.01)
 
     elif "visualizer" in args.mode:
         # Run visualizer using MuJoCo

@@ -138,10 +138,7 @@ Each server:
 
 ### Start the YAM Servers
 
-<hfoptions id="server">
-<hfoption id="Unified server (recommended)">
-
-The unified launcher starts all four arm servers (2 followers + 2 leaders) in a single process:
+The unified launcher starts all four arm servers (2 followers + 2 leaders) in a single process and exposes the RPC endpoints that `bi_yam_follower` / `bi_yam_leader` connect to:
 
 ```bash
 python src/lerobot/robots/bi_yam_follower/run_bimanual_yam_server.py
@@ -171,33 +168,11 @@ python src/lerobot/robots/bi_yam_follower/run_bimanual_yam_server.py \
   --mode follower_only
 ```
 
-</hfoption>
-<hfoption id="Individual servers">
-
-For debugging or custom setups, run each arm in its own terminal:
-
-```bash
-# Right follower
-python src/lerobot/robots/bi_yam_follower/run_yam_server.py \
-  --can_channel can_follower_r --gripper v3 --mode follower --server_port 1234
-
-# Left follower
-python src/lerobot/robots/bi_yam_follower/run_yam_server.py \
-  --can_channel can_follower_l --gripper v3 --mode follower --server_port 1235
-
-# Right leader
-python src/lerobot/robots/bi_yam_follower/run_yam_server.py \
-  --can_channel can_leader_r --gripper yam_teaching_handle --mode leader --server_port 5001
-
-# Left leader
-python src/lerobot/robots/bi_yam_follower/run_yam_server.py \
-  --can_channel can_leader_l --gripper yam_teaching_handle --mode leader --server_port 5002
-```
-
-</hfoption>
-</hfoptions>
-
 Leave the server terminal running while teleoperating or recording.
+
+<Tip>
+`run_yam_server.py` ships alongside the unified launcher for single-arm follower debugging (`--mode follower`) and MuJoCo visualization (`--mode visualizer_local` / `--mode visualizer_remote`). For LeRobot teleoperation/recording workflows, always use the unified launcher above.
+</Tip>
 
 ### Test the Teleoperator
 
