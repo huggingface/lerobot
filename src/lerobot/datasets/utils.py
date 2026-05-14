@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import datasets
+import httpx
 import numpy as np
 import packaging.version
 import torch
@@ -360,6 +361,10 @@ def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> 
     hub_versions = get_repo_versions(repo_id)
 
     if not hub_versions:
+        response = httpx.Response(
+            status_code=404,
+            request=httpx.Request("GET", f"https://huggingface.co/datasets/{repo_id}/revision/{version}"),
+        )
         raise RevisionNotFoundError(
             f"""Your dataset must be tagged with a codebase version.
             Assuming _version_ is the codebase_version value in the info.json, you can run this:
@@ -369,7 +374,8 @@ def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> 
             hub_api = HfApi()
             hub_api.create_tag("{repo_id}", tag="_version_", repo_type="dataset")
             ```
-            """
+            """,
+            response=response,
         )
 
     if target_version in hub_versions:
