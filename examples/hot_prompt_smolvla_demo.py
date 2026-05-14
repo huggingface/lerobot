@@ -192,6 +192,10 @@ def main() -> None:
 
     shutdown_event = Event()
     broker = PromptBroker(initial_task=args.task)
+    # Flush the policy's precomputed action queue whenever the task changes so
+    # the VLM re-runs immediately with the new instruction instead of finishing
+    # the current chunk_size=50 precomputed actions first.
+    broker.register_on_change(policy.flush_action_queue)
     StdinPromptListener().start(broker, shutdown_event)
 
     # ------------------------------------------------------------------

@@ -254,6 +254,15 @@ class SmolVLAPolicy(PreTrainedPolicy):
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
 
+    def flush_action_queue(self):
+        """Discard precomputed actions so the next select_action call re-runs the VLM.
+
+        Call this when the task prompt changes and you want the policy to
+        immediately react to the new instruction rather than finishing the
+        current precomputed chunk.
+        """
+        self._queues[ACTION].clear()
+
     def init_rtc_processor(self):
         """Initialize RTC processor if RTC is enabled in config."""
         self.rtc_processor = None
@@ -289,6 +298,12 @@ class SmolVLAPolicy(PreTrainedPolicy):
         state = self.prepare_state(batch)
         lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
         lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
+
+        # DEBUG: decode tokens back to string to confirm the task the policy sees
+        decoded = self.model.vlm_with_expert.processor.tokenizer.batch_decode(
+            lang_tokens, skip_special_tokens=True
+        )
+        print(f"[SmolVLA._get_action_chunk] task received by policy: {decoded}")
 
         actions = self.model.sample_actions(
             images, img_masks, lang_tokens, lang_masks, state, noise=noise, **kwargs

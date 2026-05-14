@@ -38,6 +38,7 @@ import abc
 import logging
 import select
 import sys
+from collections.abc import Callable
 from threading import Event, Lock, Thread
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,16 @@ class PromptBroker:
     def __init__(self, initial_task: str = "") -> None:
         self._lock = Lock()
         self._task = initial_task
+        self._on_change_callbacks: list[Callable[[], None]] = []
         logger.info("PromptBroker initialised (task='%s')", initial_task)
+
+    def register_on_change(self, callback: Callable[[], None]) -> None:
+        """Register a zero-argument callable invoked whenever the task changes.
+
+        Callbacks are called inside the listener thread immediately after the
+        task is updated, still holding no lock.  Keep them fast and non-blocking.
+        """
+        self._on_change_callbacks.append(callback)
 
     def get_task(self) -> str:
         """Return the current task string (thread-safe)."""
@@ -68,6 +78,8 @@ class PromptBroker:
             self._task = task
         if old != task:
             logger.info("Task switched: '%s' → '%s'", old, task)
+            for cb in self._on_change_callbacks:
+                cb()
 
 
 class PromptListenerBase(abc.ABC):
