@@ -22,12 +22,14 @@ import pytest
 import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+pytest.importorskip("grpc")
 
 from torch.multiprocessing import Event, Queue
 
-from lerobot.configs.train import TrainRLServerPipelineConfig
-from lerobot.policies.sac.configuration_sac import SACConfig
-from lerobot.utils.constants import OBS_STR
+from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.policies.gaussian_actor.configuration_gaussian_actor import GaussianActorConfig
+from lerobot.rl.train_rl import TrainRLServerPipelineConfig
+from lerobot.utils.constants import ACTION, OBS_STATE, OBS_STR
 from lerobot.utils.transition import Transition
 from tests.utils import skip_if_package_missing
 
@@ -79,7 +81,7 @@ def cfg():
 
     port = find_free_port()
 
-    policy_cfg = SACConfig()
+    policy_cfg = GaussianActorConfig()
     policy_cfg.actor_learner_config.learner_host = "127.0.0.1"
     policy_cfg.actor_learner_config.learner_port = port
     policy_cfg.concurrency.actor = "threads"
@@ -299,3 +301,164 @@ def test_end_to_end_parameters_flow(cfg, data_size):
     assert received_params.keys() == input_params.keys()
     for key in input_params:
         assert torch.allclose(received_params[key], input_params[key])
+
+
+def test_learner_algorithm_wiring():
+    """Verify that make_algorithm constructs an SACAlgorithm from config,
+    make_optimizers_and_scheduler() creates the right optimizers, update() works, and
+    get_weights() output is serializable."""
+    from lerobot.policies.gaussian_actor.modeling_gaussian_actor import GaussianActorPolicy
+    from lerobot.rl.algorithms.factory import make_algorithm
+    from lerobot.rl.algorithms.sac import SACAlgorithm, SACAlgorithmConfig
+    from lerobot.transport.utils import state_to_bytes
+
+    state_dim = 10
+    action_dim = 6
+
+    sac_cfg = GaussianActorConfig(
+        input_features={OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(state_dim,))},
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(action_dim,))},
+        dataset_stats={
+            OBS_STATE: {"min": [0.0] * state_dim, "max": [1.0] * state_dim},
+            ACTION: {"min": [0.0] * action_dim, "max": [1.0] * action_dim},
+        },
+    )
+    sac_cfg.validate_features()
+
+    policy = GaussianActorPolicy(config=sac_cfg)
+    policy.train()
+
+    algorithm = make_algorithm(cfg=SACAlgorithmConfig.from_policy_config(sac_cfg), policy=policy)
+    assert isinstance(algorithm, SACAlgorithm)
+
+    optimizers = algorithm.make_optimizers_and_scheduler()
+    assert "actor" in optimizers
+    assert "critic" in optimizers
+    assert "temperature" in optimizers
+
+    batch_size = 4
+
+    def batch_iterator():
+        while True:
+            yield {
+                ACTION: torch.randn(batch_size, action_dim),
+                "reward": torch.randn(batch_size),
+                "state": {OBS_STATE: torch.randn(batch_size, state_dim)},
+                "next_state": {OBS_STATE: torch.randn(batch_size, state_dim)},
+                "done": torch.zeros(batch_size),
+                "complementary_info": {},
+            }
+
+    stats = algorithm.update(batch_iterator())
+    assert "loss_critic" in stats.losses
+
+    # get_weights -> state_to_bytes round-trip
+    weights = algorithm.get_weights()
+    assert len(weights) > 0
+    serialized = state_to_bytes(weights)
+    assert isinstance(serialized, bytes)
+    assert len(serialized) > 0
+
+    # RLTrainer with DataMixer
+    from lerobot.rl.buffer import ReplayBuffer
+    from lerobot.rl.data_sources import OnlineOfflineMixer
+    from lerobot.rl.trainer import RLTrainer
+
+    replay_buffer = ReplayBuffer(
+        capacity=50,
+        device="cpu",
+        state_keys=[OBS_STATE],
+        storage_device="cpu",
+        use_drq=False,
+    )
+    for _ in range(50):
+        replay_buffer.add(
+            state={OBS_STATE: torch.randn(state_dim)},
+            action=torch.randn(action_dim),
+            reward=1.0,
+            next_state={OBS_STATE: torch.randn(state_dim)},
+            done=False,
+            truncated=False,
+        )
+    data_mixer = OnlineOfflineMixer(online_buffer=replay_buffer, offline_buffer=None)
+    trainer = RLTrainer(
+        algorithm=algorithm,
+        data_mixer=data_mixer,
+        batch_size=batch_size,
+    )
+    trainer_stats = trainer.training_step()
+    assert "loss_critic" in trainer_stats.losses
+
+
+def test_initial_and_periodic_weight_push_consistency():
+    """Both initial and periodic weight pushes should use algorithm.get_weights()
+    and produce identical structures."""
+    from lerobot.policies.gaussian_actor.modeling_gaussian_actor import GaussianActorPolicy
+    from lerobot.rl.algorithms.factory import make_algorithm
+    from lerobot.rl.algorithms.sac import SACAlgorithmConfig
+    from lerobot.transport.utils import bytes_to_state_dict, state_to_bytes
+
+    state_dim = 10
+    action_dim = 6
+    sac_cfg = GaussianActorConfig(
+        input_features={OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(state_dim,))},
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(action_dim,))},
+        dataset_stats={
+            OBS_STATE: {"min": [0.0] * state_dim, "max": [1.0] * state_dim},
+            ACTION: {"min": [0.0] * action_dim, "max": [1.0] * action_dim},
+        },
+    )
+    sac_cfg.validate_features()
+
+    policy = GaussianActorPolicy(config=sac_cfg)
+    policy.train()
+    algorithm = make_algorithm(cfg=SACAlgorithmConfig.from_policy_config(sac_cfg), policy=policy)
+    algorithm.make_optimizers_and_scheduler()
+
+    # Simulate initial push (same code path the learner now uses)
+    initial_weights = algorithm.get_weights()
+    initial_bytes = state_to_bytes(initial_weights)
+
+    # Simulate periodic push
+    periodic_weights = algorithm.get_weights()
+    periodic_bytes = state_to_bytes(periodic_weights)
+
+    initial_decoded = bytes_to_state_dict(initial_bytes)
+    periodic_decoded = bytes_to_state_dict(periodic_bytes)
+
+    assert initial_decoded.keys() == periodic_decoded.keys()
+
+
+def test_actor_side_algorithm_select_action_and_load_weights():
+    """Simulate actor: create algorithm without optimizers, select_action, load_weights."""
+    from lerobot.policies.gaussian_actor.modeling_gaussian_actor import GaussianActorPolicy
+    from lerobot.rl.algorithms.factory import make_algorithm
+    from lerobot.rl.algorithms.sac import SACAlgorithm, SACAlgorithmConfig
+
+    state_dim = 10
+    action_dim = 6
+    sac_cfg = GaussianActorConfig(
+        input_features={OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(state_dim,))},
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(action_dim,))},
+        dataset_stats={
+            OBS_STATE: {"min": [0.0] * state_dim, "max": [1.0] * state_dim},
+            ACTION: {"min": [0.0] * action_dim, "max": [1.0] * action_dim},
+        },
+    )
+    sac_cfg.validate_features()
+
+    # Actor side: no optimizers
+    policy = GaussianActorPolicy(config=sac_cfg)
+    policy.eval()
+    algorithm = make_algorithm(cfg=SACAlgorithmConfig.from_policy_config(sac_cfg), policy=policy)
+    assert isinstance(algorithm, SACAlgorithm)
+    assert algorithm.optimizers == {}
+
+    # select_action should work
+    obs = {OBS_STATE: torch.randn(state_dim)}
+    action = policy.select_action(obs)
+    assert action.shape == (action_dim,)
+
+    # Simulate receiving weights from learner
+    fake_weights = algorithm.get_weights()
+    algorithm.load_weights(fake_weights, device="cpu")

@@ -117,3 +117,9 @@ class PeftConfig:
     # the rank used for the adapter. In general a higher rank means more trainable parameters and closer to full
     # fine-tuning.
     r: int = 16
+
+    # Alpha parameter for LoRA scaling (scaling = lora_alpha / r).
+    # In general, a higher alpha means stronger adaptation signal.
+    # If None, the PEFT library defaults to alpha=8, which may dampen high-rank adapters.
+    # Common values are r (alpha == rank) or 2*r.
+    lora_alpha: int | None = None
