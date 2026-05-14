@@ -213,9 +213,9 @@ class Args:
     left_leader_port: int = 5002
     """Server port for left leader arm."""
 
-    leader_gripper: Literal["crank_4310", "linear_3507", "linear_4310", "yam_teaching_handle", "v3"] = (
-        "yam_teaching_handle"
-    )
+    leader_gripper: Literal[
+        "crank_4310", "linear_3507", "linear_4310", "yam_teaching_handle", "no_gripper", "v3"
+    ] = "yam_teaching_handle"
     """Type of gripper/teaching handle on leader arms."""
 
 

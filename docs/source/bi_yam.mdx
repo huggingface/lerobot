@@ -57,6 +57,22 @@ The teaching handles don't have physical grippers; they use an **encoder button*
 - The follower gripper mirrors the open/close command in real time.
 - Only binary control is supported (no intermediate continuous positions).
 
+### Using YAM Without a Gripper
+
+If your YAM arms have no end-effector (for example, to mount a dexterous hand like Dextua), pass `no_gripper` for the corresponding arms when launching the unified server:
+
+```bash
+python src/lerobot/robots/bi_yam_follower/run_bimanual_yam_server.py \
+  --follower_gripper no_gripper \
+  --leader_gripper no_gripper
+```
+
+The follower client (`bi_yam_follower`) detects the DOF count at connect time and drops the `left_gripper.pos` / `right_gripper.pos` keys from the observation and action dictionaries — only the six arm joints per side are exposed.
+
+<Tip>
+  Composing a separate teleoperator for a dexterous hand on top of the gripperless YAM follower is out of scope for `bi_yam_follower` / `bi_yam_leader`; you'll need a custom robot/teleop wrapper that combines the YAM joints with the hand's action keys.
+</Tip>
+
 ## Install LeRobot 🤗
 
 Follow our [Installation Guide](./installation), then install the YAM extras (Intel RealSense support recommended):
