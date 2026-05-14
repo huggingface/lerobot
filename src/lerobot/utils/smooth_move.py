@@ -28,14 +28,29 @@ if TYPE_CHECKING:
     from lerobot.teleoperators import Teleoperator
 
 
-class _SupportsSendAction(Protocol):
-    """Structural type for any robot exposing a ``send_action`` method.
+class SupportsSendAction(Protocol):
+    """
+    Minimal protocol for objects that accept robot actions.
 
-    Satisfied by :class:`lerobot.robots.Robot` and by the rollout-only
-    :class:`lerobot.rollout.robot_wrapper.ThreadSafeRobot` wrapper.
+    This protocol defines the `send_action()` method, allowing smooth-move
+    helpers to drive any robot-like object (the base :class:`lerobot.robots.Robot`
+    or the rollout-only :class:`lerobot.rollout.robot_wrapper.ThreadSafeRobot`
+    wrapper) without forcing ``lerobot.utils`` to depend on ``lerobot.rollout``.
     """
 
-    def send_action(self, action: dict[str, Any]) -> Any: ...
+    def send_action(self, action: dict[str, Any]) -> Any:
+        """
+        Send an action command to the robot.
+
+        Args:
+            action: Dictionary representing the desired action. Its structure should match
+                :pymeth:`action_features`.
+
+        Returns:
+            The action actually sent to the motors, potentially clipped or modified, e.g. by
+            safety limits on velocity.
+        """
+        ...
 
 
 def teleop_supports_feedback(teleop: Teleoperator) -> bool:
@@ -92,7 +107,7 @@ def teleop_smooth_move_to(
 
 
 def follower_smooth_move_to(
-    robot: _SupportsSendAction, current: dict, target: dict, duration_s: float = 1.0, fps: int = 30
+    robot: SupportsSendAction, current: dict, target: dict, duration_s: float = 1.0, fps: int = 30
 ) -> None:
     """Smoothly move the follower robot from ``current`` to ``target`` action.
 
