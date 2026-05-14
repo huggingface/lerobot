@@ -57,8 +57,9 @@ Useful knobs:
 - `--dump-frames=true`: save rollout frames as PNGs under
   `OUTPUT_DIR/frames/episode_XXX/frame_YYYYY.png`, next to `videos/`. This is
   independent of `--render-videos`; MP4 generation still uses `--render-videos`.
-- `--video_overlay=false`: disable the Search On/Off, step, reward, and coverage
-  text overlay in rollout MP4s and dumped rollout frames.
+- `--video_overlay=false`: disable text overlays in rollout MP4s, dumped rollout
+  frames, policy trace images, and search images. Dots/paths are still drawn in
+  policy/search debug images.
 - `--plot_policy_trace`: save raw policy action-trace PNG/JSON pairs under
   `OUTPUT_DIR/policy_frames/episode_XXX/policy_trace_step_YYYYY.png/json` at
   each decision point, even if search later chooses a different chunk. The plot

@@ -202,6 +202,7 @@ def save_search_debug_image(
     traces: Sequence[SearchChunkTrace],
     episode_index: int,
     env_step: int,
+    overlay: bool,
 ) -> None:
     if not traces:
         return
@@ -238,14 +239,15 @@ def save_search_debug_image(
 
     selected = next((trace for trace in sorted_traces if trace.is_selected), None)
     selected_label = "none" if selected is None else str(selected.candidate_index)
-    image = annotate_frame(
-        image,
-        [
-            f"episode={episode_index} step={env_step}",
-            f"chosen={selected_label} original=0 candidates={len(traces)}",
-            "green=chosen outline blue=original gray=other",
-        ],
-    )
+    if overlay:
+        image = annotate_frame(
+            image,
+            [
+                f"episode={episode_index} step={env_step}",
+                f"chosen={selected_label} original=0 candidates={len(traces)}",
+                "green=chosen outline blue=original gray=other",
+            ],
+        )
 
     path.parent.mkdir(parents=True, exist_ok=True)
     if not cv2.imwrite(str(path), cv2.cvtColor(image, cv2.COLOR_RGB2BGR)):
@@ -307,6 +309,7 @@ def save_policy_trace_debug(
     env_step: int,
     coverage_before: float,
     coverage_drop: float,
+    overlay: bool,
 ) -> None:
     image = np.ascontiguousarray(frame.copy())
     if image.dtype != np.uint8:
@@ -339,14 +342,15 @@ def save_policy_trace_debug(
         to_pixel=to_pixel,
     )
 
-    image = annotate_frame(
-        image,
-        [
-            f"policy trace episode={episode_index} step={env_step}",
-            f"coverage {coverage_before:.3f}->{rollout.coverage:.3f} drop={coverage_drop:.3f}",
-            "magenta=policy actions cyan=sim agent",
-        ],
-    )
+    if overlay:
+        image = annotate_frame(
+            image,
+            [
+                f"policy trace episode={episode_index} step={env_step}",
+                f"coverage {coverage_before:.3f}->{rollout.coverage:.3f} drop={coverage_drop:.3f}",
+                "magenta=policy actions cyan=sim agent",
+            ],
+        )
 
     write_frame_png(path, image)
     save_policy_trace_json(
@@ -1004,6 +1008,7 @@ def run_episode(
                     env_step=env_step,
                     coverage_before=coverage_before,
                     coverage_drop=coverage_drop,
+                    overlay=cfg.video_overlay,
                 )
 
         if cfg.one_step_further:
@@ -1050,6 +1055,7 @@ def run_episode(
                 traces=planner.last_root_traces,
                 episode_index=episode_index,
                 env_step=env_step,
+                overlay=cfg.video_overlay,
             )
 
         commit_count = min(cfg.execute_steps, len(action_chunk), max_steps - env_step)
