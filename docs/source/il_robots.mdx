@@ -202,10 +202,11 @@ lerobot-record \
 <!-- prettier-ignore-start -->
 ```python
 from lerobot.cameras.opencv import OpenCVCameraConfig
-from lerobot.datasets import LeRobotDataset
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.utils.feature_utils import hw_to_dataset_features
 from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
-from lerobot.teleoperators.so_leader import SO100Leader, SO100LeaderConfig
+from lerobot.teleoperators.so_leader.config_so_leader import SO100LeaderConfig
+from lerobot.teleoperators.so_leader.so_leader import SO100Leader
 from lerobot.common.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
@@ -306,6 +307,9 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
     dataset.save_episode()
     episode_idx += 1
 
+# finalize dataset
+log_say("Finalizing dataset...")
+dataset.finalize()
 # Clean up
 log_say("Stop recording")
 robot.disconnect()
