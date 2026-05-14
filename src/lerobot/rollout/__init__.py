@@ -38,6 +38,7 @@ from .context import (
     RuntimeContext,
     build_rollout_context,
 )
+from .prompt_broker import PromptBroker, StdinPromptListener
 from .inference import (
     InferenceEngine,
     InferenceEngineConfig,
@@ -74,6 +75,7 @@ __all__ = [
     "InferenceEngineConfig",
     "PolicyContext",
     "ProcessorContext",
+    "PromptBroker",
     "RTCInferenceConfig",
     "RTCInferenceEngine",
     "RolloutConfig",
@@ -83,6 +85,7 @@ __all__ = [
     "RuntimeContext",
     "SentryStrategy",
     "SentryStrategyConfig",
+    "StdinPromptListener",
     "SyncInferenceConfig",
     "SyncInferenceEngine",
     "build_rollout_context",

@@ -105,7 +105,6 @@ class HighlightStrategy(RolloutStrategy):
         play_sounds = cfg.play_sounds
 
         start_time = time.perf_counter()
-        task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
         logger.info("Highlight strategy recording started (press '%s' to save)", self.config.save_key)
 
         with VideoEncodingManager(dataset):
@@ -129,6 +128,7 @@ class HighlightStrategy(RolloutStrategy):
                         self._log_telemetry(obs_processed, action_dict, ctx.runtime)
                         obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
                         action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
+                        task_str = ctx.runtime.prompt_broker.get_task() if ctx.runtime.prompt_broker else (cfg.dataset.single_task if cfg.dataset else cfg.task)
                         frame = {**obs_frame, **action_frame, "task": task_str}
 
                         # NOTE: ``is_set()`` then ``clear()`` is not atomic

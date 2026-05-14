@@ -55,6 +55,7 @@ from .inference import (
     SyncInferenceConfig,
     create_inference_engine,
 )
+from .prompt_broker import PromptBroker, StdinPromptListener
 from .robot_wrapper import ThreadSafeRobot
 
 logger = logging.getLogger(__name__)
@@ -91,6 +92,7 @@ class RuntimeContext:
 
     cfg: RolloutConfig
     shutdown_event: Event
+    prompt_broker: PromptBroker | None = field(default=None)
 
 
 @dataclass
@@ -414,6 +416,16 @@ def build_rollout_context(
         cfg.inference.type if hasattr(cfg.inference, "type") else "sync",
     )
     task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
+    prompt_broker: PromptBroker | None = None
+    if cfg.hot_prompt:
+        prompt_broker = PromptBroker(initial_task=task_str)
+        if cfg.hot_prompt_source == "stdin":
+            StdinPromptListener().start(prompt_broker, shutdown_event)
+        else:
+            logger.warning(
+                "Unknown hot_prompt_source '%s'; hot-switching disabled", cfg.hot_prompt_source
+            )
+            prompt_broker = None
     inference_strategy = create_inference_engine(
         cfg.inference,
         policy=policy,
@@ -429,12 +441,13 @@ def build_rollout_context(
         use_torch_compile=cfg.use_torch_compile,
         compile_warmup_inferences=cfg.compile_warmup_inferences,
         shutdown_event=shutdown_event,
+        prompt_broker=prompt_broker,
     )
 
     # --- 8. Assemble ---------------------------------------------------
     logger.info("Rollout context assembled successfully")
     return RolloutContext(
-        runtime=RuntimeContext(cfg=cfg, shutdown_event=shutdown_event),
+        runtime=RuntimeContext(cfg=cfg, shutdown_event=shutdown_event, prompt_broker=prompt_broker),
         hardware=HardwareContext(
             robot_wrapper=robot_wrapper, teleop=teleop, initial_position=initial_position
         ),

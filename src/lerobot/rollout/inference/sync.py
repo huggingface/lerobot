@@ -26,6 +26,7 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import make_robot_action, prepare_observation_for_inference
 from lerobot.processor import PolicyProcessorPipeline
 
+from ..prompt_broker import PromptBroker
 from .base import InferenceEngine
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,7 @@ class SyncInferenceEngine(InferenceEngine):
         task: str,
         device: str | None,
         robot_type: str,
+        prompt_broker: PromptBroker | None = None,
     ) -> None:
         self._policy = policy
         self._preprocessor = preprocessor
@@ -71,6 +73,7 @@ class SyncInferenceEngine(InferenceEngine):
         self._dataset_features = dataset_features
         self._ordered_action_keys = ordered_action_keys
         self._task = task
+        self._prompt_broker = prompt_broker
         self._device = torch.device(device or "cpu")
         self._robot_type = robot_type
         logger.info(
@@ -108,8 +111,9 @@ class SyncInferenceEngine(InferenceEngine):
             else nullcontext()
         )
         with torch.inference_mode(), autocast_ctx:
+            _task = self._prompt_broker.get_task() if self._prompt_broker else self._task
             observation = prepare_observation_for_inference(
-                observation, self._device, self._task, self._robot_type
+                observation, self._device, _task, self._robot_type
             )
             observation = self._preprocessor(observation)
             action = self._policy.select_action(observation)

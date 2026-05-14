@@ -225,6 +225,13 @@ class RolloutConfig:
     interpolation_multiplier: int = 1
     device: str | None = None
     task: str = ""
+    # Hot-prompt switching: enable runtime task updates from an external source.
+    # When True, a background listener reads new task strings and pushes them to
+    # all inference engines and recording strategies without restarting the script.
+    hot_prompt: bool = False
+    # Source for incoming prompts. Currently supported: "stdin".
+    # Future sources: "http" (FastAPI POST /task), "zmq".
+    hot_prompt_source: str = "stdin"
     display_data: bool = False
     # Visualization backend used when display_data is True: "rerun" or "foxglove".
     display_mode: str = "rerun"
