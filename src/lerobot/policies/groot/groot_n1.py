@@ -14,12 +14,13 @@
 # limitations under the License.
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
 import torch.nn as nn
 from huggingface_hub import snapshot_download
+from huggingface_hub.dataclasses import strict
 from huggingface_hub.errors import HFValidationError, RepositoryNotFoundError
 
 from lerobot.utils.import_utils import _transformers_available
@@ -173,19 +174,20 @@ N_COLOR_CHANNELS = 3
 
 
 # config
+@strict
 class GR00TN15Config(PretrainedConfig):
     model_type = "gr00t_n1_5"
 
-    backbone_cfg: dict
-    action_head_cfg: dict
-    action_horizon: int
-    action_dim: int
+    backbone_cfg: dict[str, Any] | None = None
+    action_head_cfg: dict[str, Any] | None = None
+    action_horizon: int = 0
+    action_dim: int = 0
     compute_dtype: str = "float32"
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+    def __post_init__(self, **kwargs):
+        self.backbone_cfg = {} if self.backbone_cfg is None else self.backbone_cfg
+        self.action_head_cfg = {} if self.action_head_cfg is None else self.action_head_cfg
+        super().__post_init__(**kwargs)
 
 
 # real model
