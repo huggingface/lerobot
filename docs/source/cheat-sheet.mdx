@@ -76,44 +76,44 @@ lerobot-record \
 While collecting the dataset you can control the process with your keyboard:
 Control the data recording flow using keyboard shortcuts:
 
-- Press **Right Arrow (```→```)**: Early stop the current episode or reset time and move to the next.
-- Press **Left Arrow (```←```)**: Cancel the current episode and re-record it.
-- Press **Escape (```ESC```)**: Immediately stop the session, encode videos, and upload the dataset.
+- Press **Right Arrow (```→```)**: Save episode and move to the next.
+- Press **Left Arrow (```←```)**: Delete current episode and retry.
+- Press **Escape (```ESC```)**: Stop, encode videos, and upload.
 
 ### Training
 Depending on your hardware training the policy might take a few hours. 
 ```
 lerobot-train \
-  --dataset.repo_id=${HF_USER}/so101_dataset_test \
-  --policy.type=act \
-  --output_dir=outputs/train/act_so101_test \
-  --job_name=act_so101_test \
-  --policy.device=cuda \
-  --wandb.enable=true \
-  --policy.repo_id=${HF_USER}/policy_test \
-  --steps=20000
-  ```
+    --dataset.repo_id=${HF_USER}/so101_dataset_test \
+    --policy.type=act \
+    --output_dir=outputs/train/act_so101_test \
+    --job_name=act_so101_test \
+    --policy.device=cuda \
+    --wandb.enable=true \
+    --policy.repo_id=${HF_USER}/policy_test \
+    --steps=20000
+```
 
-  What you can change:
-  - polic.type: act, smolvla, pi05
-  - policy.device: cuda, mps, cpu
-  - number of steps: how long will the model train
+- Policy Types: ```act```, ```diffusion```, ```smolvla```, ```pi05```
+- Devices: ```cuda``` (NVIDIA), ```mps``` (Apple Silicon), ```cpu```
+
+
 
 ### Inference
 
-Inference means running the trained policy/model on a robot. For that we use ```lerobot-rollout```. You will need to provide a path to your policy. It can be a local path or a path to Hugging Face for example "lerobot/folding_latest". Your cameras configuration need to match what was used when collecting the dataset. Duration is in seconds if unspecified it will run forever.
+Inference means running the trained policy/model on a robot. For that we use ```lerobot-rollout```. You will need to provide a path to your policy. It can be a local path or a path to Hugging Face for example "lerobot/folding_latest". Your cameras configuration needs to match what was used when collecting the dataset. Duration is in seconds if unspecified, it will run forever.
 
 > [!TIP]
-> If you are using the previous release V0.5.1 instead of ```lerobot-rollout``` you need to use ```lerobot-record```
+> If you are using the previous release V0.5.1 instead of ```lerobot-rollout``` you need to use ```lerobot-record```. More information [here](https://huggingface.co/docs/lerobot/v0.5.1/en/il_robots#run-inference-and-evaluate-your-policy).
 
 ``` bash
 lerobot-rollout \
-  --strategy.type=base \
-  --policy.path=${HF_USER}/my_policy \
-  --robot.type=so101_follower \
-  --robot.port=/dev/ttyACM1 \
-  --robot.cameras="{ up: {type: opencv, index_or_path: /dev/video1, width: 640, height: 480, fps: 30}, side: {type: opencv, index_or_path: /dev/video5, width: 640, height: 480, fps: 30}}" \
-  --task="Put lego brick into the transparent box" \
-  --duration=60
+    --strategy.type=base \
+    --policy.path=${HF_USER}/my_policy \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM1 \
+    --robot.cameras="{ up: {type: opencv, index_or_path: /dev/video1, width: 640, height: 480, fps: 30}, side: {type: opencv, index_or_path: /dev/video5, width: 640, height: 480, fps: 30}}" \
+    --task="Put lego brick into the transparent box" \
+    --duration=60
 ```
 
