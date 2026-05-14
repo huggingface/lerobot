@@ -5,41 +5,103 @@ All of the LeRobot commands in one place. If you forgot how to use a specific co
 >For all of the commands listed below remember to change the ports/names/ids to your own values!
 
 > [!TIP]
-> Another grate way to look at all the comands and get them configured for your specific setup is to use this [Jupyter Notebook](https://github.com/huggingface/lerobot/blob/main/examples/notebooks/quickstart.ipynb).
+> Another great way to look at all the commands and get them configured for your specific setup is to use this [Jupyter Notebook](https://github.com/huggingface/lerobot/blob/main/examples/notebooks/quickstart.ipynb).
 
-### Install
+### Setup and installation
+
+For installation please look at [LeRobot Installation](https://huggingface.co/docs/lerobot/main/en/installation).
 
 ### Useful tools
 ###### Find port
-You will need to idetify the ports that your robots are connected to. To do so run the following function and follow the instructions in your terminal. You will need to unplug the USB cable and press enter, the serial port of that robot will be printed on the terminal.
+Use this to identify which serial ports your robots are connected to. Follow the instructions in your terminal: you will be asked to unplug the USB cable and press Enter. The script will then detect and print the correct serial port for that robot.
 
 ```bash
 lerobot-find-port
 ```
 
 ###### Find cameras
-In a similar way you can easily find the cameras connected to your computer. The information on the cameras will be printed to the terminal but also images from each camera will be saved into the folder```lerobot/outputs/captured_images```
+Quickly find camera indices and verify their output. This command prints camera information to the terminal and saves test frames from each detected camera to ```lerobot/outputs/captured_images```
 ```bash
 lerobot-find-cameras
 ```
 
 ### Calibration
-In most cases you will need to perform callibration just once for each robot and teleoperation device.
+In most cases you will need to perform calibration just once for each robot and teleoperation device. Before performing the calibration make sure that all the joints are roughly in the middle position.
 ```bash
 lerobot-calibrate \
     --robot.type=so101_follower \
     --robot.port=/dev/ttyACM0 \
     --robot.id=my_follower_arm
 ```
+
+Make sure that you use the same IDs used during calibration later for the other scripts. That's how LeRobot finds the calibration files.
 ### Teleoperation
 
+Teleoperating with two cameras and displaying the data with Rerun.
+
+```bash
+lerobot-teleoperate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=my_follower_arm \
+    --robot.cameras="{ top: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30} }" \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/ttyACM1 \
+    --teleop.id=my_leader_arm \
+    --display_data=true
+```
+
 ### Recording a dataset
+The dataset is automatically uploaded to the server and saved under repo_id, make sure you are logged in to your HF account with CLI:
+```hf auth login```
+
+You can get the token from: [https://huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
+
+```bash
+lerobot-record \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=my_follower_arm \
+    --robot.cameras="{ top: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30} }" \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/ttyACM1 \
+    --teleop.id=my_leader_arm \
+    --dataset.repo_id=${HF_USER}/so101_dataset_test \
+    --dataset.num_episodes=30 \
+    --dataset.single_task="put the red brick in a bowl" \
+    --dataset.streaming_encoding=true \
+    --display_data=true
+```
+
+While collecting the dataset you can control the process with your keyboard:
+Control the data recording flow using keyboard shortcuts:
+
+- Press **Right Arrow (```→```)**: Early stop the current episode or reset time and move to the next.
+- Press **Left Arrow (```←```)**: Cancel the current episode and re-record it.
+- Press **Escape (```ESC```)**: Immediately stop the session, encode videos, and upload the dataset.
 
 ### Training
+Depending on your hardware training the policy might take a few hours. 
+```
+lerobot-train \
+  --dataset.repo_id=${HF_USER}/so101_dataset_test \
+  --policy.type=act \
+  --output_dir=outputs/train/act_so101_test \
+  --job_name=act_so101_test \
+  --policy.device=cuda \
+  --wandb.enable=true \
+  --policy.repo_id=${HF_USER}/policy_test \
+  --steps=20000
+  ```
+
+  What you can change:
+  - polic.type: act, smolvla, pi05
+  - policy.device: cuda, mps, cpu
+  - number of steps: how long will the model train
 
 ### Inference
 
-Inference means running the trained policy/model on a robot. For that we use ```lerobot-rollout```. You will need to provide a path to your policy. It can be a local path or a path to Hugging Face for example "lerobot/folding_latest". You cameras configuration need to match what was used when collecting the dataset. Duration is in seconds if unspecified it will run forever.
+Inference means running the trained policy/model on a robot. For that we use ```lerobot-rollout```. You will need to provide a path to your policy. It can be a local path or a path to Hugging Face for example "lerobot/folding_latest". Your cameras configuration need to match what was used when collecting the dataset. Duration is in seconds if unspecified it will run forever.
 
 > [!TIP]
 > If you are using the previous release V0.5.1 instead of ```lerobot-rollout``` you need to use ```lerobot-record```
