@@ -90,6 +90,22 @@ or tune the range with `--dot-start-alpha` and `--dot-end-alpha`. Use
 `N` rendered points. Use `--render-mode=line` to draw only the connected path,
 `--render-mode=dots` for dots only, or `--render-mode=both` for both.
 
+To render the same trace style as an MP4:
+
+```bash
+uv run python examples/tree_search/pusht/video_search_trace.py \
+  harezmi-extend-dump/pusht/5_eps_viz/n40_c3_d3_e10 \
+  --episode=0 \
+  --fps=10 \
+  --render-mode=line \
+  --max-dots=10
+```
+
+The video writer scans sorted `search_images/episode_XXX/step_YYYYY.json` files
+and writes `RUN_DIR/plot_videos/search_trace.mp4` by default. It accepts the
+same plotting controls as `plot_search_trace.py`, plus video filters such as
+`--episode`, `--start-step`, `--end-step`, `--max-frames`, and `--output-path`.
+
 The evaluator reports `asr` (Alternative Selection Ratio) in the aggregate
 metrics. ASR is the percentage of decision points where the selected root chunk
 was a noisy alternative (`selected_candidate_index != 0`) instead of the
