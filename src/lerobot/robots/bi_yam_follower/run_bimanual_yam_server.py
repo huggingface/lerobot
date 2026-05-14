@@ -110,7 +110,6 @@ class YAMLeaderRobot:
         qpos = self._robot.get_observations()["joint_pos"]
         try:
             encoder_obs = self._motor_chain.get_same_bus_device_states()
-            time.sleep(0.01)
             # Encoder position mapped to gripper (0=closed, 1=open)
             gripper_pos = 1 - encoder_obs[0].position
         except Exception as e:
@@ -151,7 +150,6 @@ class YAMLeaderRobot:
         qpos = self._robot.get_observations()["joint_pos"]
         try:
             encoder_obs = self._motor_chain.get_same_bus_device_states()
-            time.sleep(0.01)
             # Encoder position mapped to gripper (0=closed, 1=open)
             gripper_pos = 1 - encoder_obs[0].position
             io_inputs = encoder_obs[0].io_inputs
