@@ -91,13 +91,12 @@ Control the data recording flow using keyboard shortcuts:
 
 ### Training
 
-Depending on your hardware training the policy might take a few hours. For VLA models provide the path to the pretrained model. For `ACT` you don't need a path, just change the type.
+Depending on your hardware training the policy might take a few hours. That's how you train simple ```ACT``` policy:
 
-```
+```bash
 lerobot-train \
     --dataset.repo_id=${HF_USER}/so101_dataset_test \
-    --policy.path=username/the_policy_to_finetune
-    --policy.type=smolvla \
+    --policy.type=act \
     --output_dir=outputs/train/act_so101_test \
     --job_name=act_so101_test \
     --policy.device=cuda \
@@ -109,6 +108,16 @@ lerobot-train \
 - Policy Types: `act`, `diffusion`, `smolvla`, `pi05`
 - Devices: `cuda` (NVIDIA), `mps` (Apple Silicon), `cpu`
 
+If you want to fine-tune a specific model you can provide the path to the model. In this case path is enough and type can be skipped.
+```bash
+lerobot-train \
+    --dataset.repo_id=${HF_USER}/so101_dataset_test \
+    --policy.path=username/the_policy_to_finetune \
+    --policy.device=cuda \
+    --policy.repo_id=${HF_USER}/policy_test \
+    --output_dir=outputs/train/act_so101_test \
+    --steps=20000
+```
 ### Inference
 
 Inference means running the trained policy/model on a robot. For that we use `lerobot-rollout`. You will need to provide a path to your policy. It can be a local path or a path to Hugging Face for example "lerobot/folding_latest". Your cameras configuration needs to match what was used when collecting the dataset. Duration is in seconds if unspecified, it will run forever.
