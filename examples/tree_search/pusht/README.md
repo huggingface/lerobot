@@ -50,7 +50,13 @@ Useful knobs:
   `OUTPUT_DIR/search_images/episode_XXX/step_YYYYY.png`. Each image overlays
   candidate action chunks as dots at the agent position after each hypothetical
   action. Blue is the original policy chunk, gray is noisy candidates, and the
-  chosen root chunk has a green outline.
+  chosen root chunk has a green outline. A matching
+  `OUTPUT_DIR/search_images/episode_XXX/step_YYYYY.json` file is also written
+  with sorted candidate traces, pixel coordinates, world coordinates, scores,
+  and original/selected flags.
+- `--dump-frames=true`: save the annotated rendered rollout frames as PNGs under
+  `OUTPUT_DIR/frames/episode_XXX/frame_YYYYY.png`, next to `videos/`. This uses
+  the same `--render-videos` episode limit as MP4 generation.
 - `--one_step_further`: before running beam search, simulate the raw policy
   chunk once. If its final PushT coverage does not drop by more than `0.05`,
   skip search and execute the policy chunk directly. If coverage drops by more

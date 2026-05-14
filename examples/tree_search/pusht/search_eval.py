@@ -80,6 +80,7 @@ class PlannerConfig:
     max_steps: int | None
     render_videos: int
     log_every_steps: int
+    dump_frames: bool
     dump_search_images: bool
     one_step_further: bool
 
@@ -177,6 +178,15 @@ def annotate_frame(frame: np.ndarray, lines: Sequence[str]) -> np.ndarray:
     return annotated
 
 
+def write_frame_png(path: Path, frame: np.ndarray) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image = np.ascontiguousarray(frame)
+    if image.dtype != np.uint8:
+        image = np.clip(image, 0, 255).astype(np.uint8)
+    if not cv2.imwrite(str(path), cv2.cvtColor(image, cv2.COLOR_RGB2BGR)):
+        raise RuntimeError(f"Failed to write frame image: {path}")
+
+
 def save_search_debug_image(
     *,
     path: Path,
@@ -202,11 +212,12 @@ def save_search_debug_image(
         y = int(np.clip(float(point[1]) / 512.0 * height, 0, height - 1))
         return x, y
 
-    for trace in traces:
+    sorted_traces = sorted(traces, key=lambda trace: trace.candidate_index)
+    for trace in sorted_traces:
         color = original_color if trace.is_original else other_color
         draw_trace_dots(image, trace.points, color=color, radius=4, thickness=-1, to_pixel=to_pixel)
 
-    for trace in traces:
+    for trace in sorted_traces:
         if trace.is_selected:
             draw_trace_dots(
                 image,
@@ -217,7 +228,7 @@ def save_search_debug_image(
                 to_pixel=to_pixel,
             )
 
-    selected = next((trace for trace in traces if trace.is_selected), None)
+    selected = next((trace for trace in sorted_traces if trace.is_selected), None)
     selected_label = "none" if selected is None else str(selected.candidate_index)
     image = annotate_frame(
         image,
@@ -231,6 +242,51 @@ def save_search_debug_image(
     path.parent.mkdir(parents=True, exist_ok=True)
     if not cv2.imwrite(str(path), cv2.cvtColor(image, cv2.COLOR_RGB2BGR)):
         raise RuntimeError(f"Failed to write search debug image: {path}")
+    save_search_trace_json(
+        path=path.with_suffix(".json"),
+        traces=sorted_traces,
+        episode_index=episode_index,
+        env_step=env_step,
+        width=width,
+        height=height,
+        to_pixel=to_pixel,
+    )
+
+
+def save_search_trace_json(
+    *,
+    path: Path,
+    traces: Sequence[SearchChunkTrace],
+    episode_index: int,
+    env_step: int,
+    width: int,
+    height: int,
+    to_pixel: Callable[[np.ndarray], tuple[int, int]],
+) -> None:
+    payload = {
+        "episode_index": episode_index,
+        "env_step": env_step,
+        "image_width": width,
+        "image_height": height,
+        "coordinate_frame": "image_pixels_xy_from_top_left",
+        "world_coordinate_frame": "pusht_world_xy_0_512",
+        "traces": [
+            {
+                "candidate_index": trace.candidate_index,
+                "score": trace.score,
+                "is_original": trace.is_original,
+                "is_selected": trace.is_selected,
+                "pixel_points": [[int(x), int(y)] for x, y in [to_pixel(point) for point in trace.points]],
+                "world_points": [
+                    [float(point[0]), float(point[1])] for point in trace.points
+                ],
+            }
+            for trace in traces
+        ],
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w") as f:
+        json.dump(payload, f, indent=2)
 
 
 def draw_trace_dots(
@@ -627,6 +683,14 @@ def parse_args() -> PlannerConfig:
         help="Print episode progress every N committed environment steps. Use 1 for detailed progress.",
     )
     parser.add_argument(
+        "--dump-frames",
+        "--dump_frames",
+        dest="dump_frames",
+        type=str_to_bool,
+        default=False,
+        help="Write annotated rendered frames as PNGs under OUTPUT_DIR/frames/episode_XXX/.",
+    )
+    parser.add_argument(
         "--dump-search-images",
         "--dump_search_images",
         dest="dump_search_images",
@@ -713,6 +777,7 @@ def run_episode(
     cfg: PlannerConfig,
     rng: np.random.Generator,
     video_dir: Path,
+    frame_dir: Path,
     search_image_dir: Path,
 ) -> EpisodeResult:
     adapter = PushTStateAdapter(base_env)
@@ -744,17 +809,20 @@ def run_episode(
 
     frames: list[np.ndarray] = []
     should_render = episode_index < cfg.render_videos
+    frame_index = 0
     if should_render:
-        frames.append(
-            annotate_frame(
-                adapter.render(),
-                [
-                    "Search: Off",
-                    f"episode={episode_index} step=0/{max_steps}",
-                    "reset",
-                ],
-            )
+        frame = annotate_frame(
+            adapter.render(),
+            [
+                "Search: Off",
+                f"episode={episode_index} step=0/{max_steps}",
+                "reset",
+            ],
         )
+        frames.append(frame)
+        if cfg.dump_frames:
+            write_frame_png(frame_dir / f"episode_{episode_index:03d}" / f"frame_{frame_index:05d}.png", frame)
+        frame_index += 1
 
     rewards: list[float] = []
     success = False
@@ -848,16 +916,21 @@ def run_episode(
             success = success or bool(info.get("is_success", False))
             env_step += 1
             if should_render:
-                frames.append(
-                    annotate_frame(
-                        adapter.render(),
-                        [
-                            f"Search: {'On' if should_search and action_ix == 0 else 'Off'}",
-                            f"episode={episode_index} step={env_step}/{max_steps}",
-                            f"reward={reward:.3f} coverage={float(info.get('coverage', 0.0)):.3f}",
-                        ],
-                    )
+                frame = annotate_frame(
+                    adapter.render(),
+                    [
+                        f"Search: {'On' if should_search and action_ix == 0 else 'Off'}",
+                        f"episode={episode_index} step={env_step}/{max_steps}",
+                        f"reward={reward:.3f} coverage={float(info.get('coverage', 0.0)):.3f}",
+                    ],
                 )
+                frames.append(frame)
+                if cfg.dump_frames:
+                    write_frame_png(
+                        frame_dir / f"episode_{episode_index:03d}" / f"frame_{frame_index:05d}.png",
+                        frame,
+                    )
+                frame_index += 1
             if env_step >= max_steps or terminated or truncated or success:
                 break
         if env_step == 0 or env_step % cfg.log_every_steps == 0 or terminated or truncated or success:
@@ -934,6 +1007,7 @@ def main() -> None:
                 cfg=cfg,
                 rng=rng,
                 video_dir=cfg.output_dir / "videos",
+                frame_dir=cfg.output_dir / "frames",
                 search_image_dir=cfg.output_dir / "search_images",
             )
             results.append(result)
