@@ -1,0 +1,480 @@
+    1  exit
+    2  nvidia-smi
+    3  ls -al
+    4  pwd
+    5  conda
+    6  mkdir /raid/scratch/wcheng3
+    7  cd /raid/scratch/wcheng3
+    8  cd /raid
+    9  ls
+   10  cd scratch/
+   11  ls -alrt
+   12  id 
+   13  exit
+   14  cd /raid/cache
+   15  ls -alrt
+   16  cd /raid/cache/wcheng3
+   17  cd ..
+   18  ls
+   19  cd /raid
+   20  ls
+   21  ls -alrt
+   22  chmod o+x scratch
+   23  exit
+   24  cd /raid/cache/wcheng3
+   25  cd /mnt/raid/cache
+   26  ls
+   27  cd /raid/scratch/wcheng3/
+   28  pwd
+   29  ls -alrt
+   30  cd /raid/
+   31  ls
+   32  ls -alrt
+   33  cd scratch/
+   34  ls
+   35  id 
+   36  ls -alrt
+   37  cd wcheng3/
+   38  ls
+   39  touch test.txt
+   40  rm test.txt
+   41  exit
+   42  ls -al
+   43  pip -V
+   44  curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+   45  ls -al
+   46  bash ~/Miniconda3-latest-Linux-x86_64.sh
+   47  source ~/.bashrc
+   48  conda deactivate
+   49  conda create --name lerobot-training
+   50  conda activate lerobot-training
+   51  conda install ffmpeg -c conda-forge
+   52  pip install 'lerobot[all]'
+   53  lerobot-train --dataset.repo_id=Ac31415/vrrz1p140tbx0p152tbym0p291tbyaw0p333csfp_sc_cable_48348ed816 --policy.type=pi05 --output_dir='./lerobot-trained-models/trained_models_pi05_base' --job_name=pi05_base_4_nic_FAU_CAAI_server --policy.device=mps --wandb.enable=true --policy.repo_id=Ac31415/FAU_CAAI_policy_pi05_base_4_vrrz1p140tbx0p152tbym0p291tbyaw0p333csfp_sc_cable_48348ed816 --policy.pretrained_path=lerobot/pi05_base --policy.compile_model=true --policy.gradient_checkpointing=true --policy.dtype=bfloat16 --policy.freeze_vision_encoder=true --policy.train_expert_only=true --steps=3000
+   54  pip show lerobot
+   55  lerobot
+   56  nano ~/.bashrc
+   57  sudo nano ~/.bashrc
+   58  nano ~/.bashrc
+   59  source ~/.bashrc
+   60  conda activate lerobot-training
+   61  lerobot-train --dataset.repo_id=Ac31415/vrrz1p140tbx0p152tbym0p291tbyaw0p333csfp_sc_cable_48348ed816 --policy.type=pi05 --output_dir='./lerobot-trained-models/trained_models_pi05_base' --job_name=pi05_base_4_nic_FAU_CAAI_server --policy.device=mps --wandb.enable=true --policy.repo_id=Ac31415/FAU_CAAI_policy_pi05_base_4_vrrz1p140tbx0p152tbym0p291tbyaw0p333csfp_sc_cable_48348ed816 --policy.pretrained_path=lerobot/pi05_base --policy.compile_model=true --policy.gradient_checkpointing=true --policy.dtype=bfloat16 --policy.freeze_vision_encoder=true --policy.train_expert_only=true --steps=3000
+   62  lerobot-train --dataset.repo_id=Ac31415/vrrz1p140tbx0p152tbym0p291tbyaw0p333csfp_sc_cable_48348ed816 --policy.type=pi05 --output_dir='./lerobot-trained-models/trained_models_pi05_base' --job_name=pi05_base_4_nic_FAU_CAAI_server --policy.device=cuda --wandb.enable=true --policy.repo_id=Ac31415/FAU_CAAI_policy_pi05_base_4_vrrz1p140tbx0p152tbym0p291tbyaw0p333csfp_sc_cable_48348ed816 --policy.pretrained_path=lerobot/pi05_base --policy.compile_model=true --policy.gradient_checkpointing=true --policy.dtype=bfloat16 --policy.freeze_vision_encoder=true --policy.train_expert_only=true --steps=3000
+   63  conda install python=3.11
+   64  conda install python=3.12
+   65  python -V
+   66  lerobot-train --dataset.repo_id=Ac31415/vrrz1p140tbx0p152tbym0p291tbyaw0p333csfp_sc_cable_48348ed816 --policy.type=pi05 --output_dir='./lerobot-trained-models/trained_models_pi05_base' --job_name=pi05_base_4_nic_FAU_CAAI_server --policy.device=cuda --wandb.enable=true --policy.repo_id=Ac31415/FAU_CAAI_policy_pi05_base_4_vrrz1p140tbx0p152tbym0p291tbyaw0p333csfp_sc_cable_48348ed816 --policy.pretrained_path=lerobot/pi05_base --policy.compile_model=true --policy.gradient_checkpointing=true --policy.dtype=bfloat16 --policy.freeze_vision_encoder=true --policy.train_expert_only=true --steps=3000
+   67  pip uninstall 'lerobot[all]'
+   68  pip install 'lerobot[all]'
+   69  lerobot-train --dataset.repo_id=Ac31415/vrrz1p140tbx0p152tbym0p291tbyaw0p333csfp_sc_cable_48348ed816 --policy.type=pi05 --output_dir='./lerobot-trained-models/trained_models_pi05_base' --job_name=pi05_base_4_nic_FAU_CAAI_server --policy.device=cuda --wandb.enable=true --policy.repo_id=Ac31415/FAU_CAAI_policy_pi05_base_4_vrrz1p140tbx0p152tbym0p291tbyaw0p333csfp_sc_cable_48348ed816 --policy.pretrained_path=lerobot/pi05_base --policy.compile_model=true --policy.gradient_checkpointing=true --policy.dtype=bfloat16 --policy.freeze_vision_encoder=true --policy.train_expert_only=true --steps=3000
+   70  nano ~/.bashrc
+   71  pip3.10 uninstall 'lerobot[all]'
+   72  pip install 'lerobot[all]'
+   73  lerobot-train --dataset.repo_id=Ac31415/vrrz1p140tbx0p152tbym0p291tbyaw0p333csfp_sc_cable_48348ed816 --policy.type=pi05 --output_dir='./lerobot-trained-models/trained_models_pi05_base' --job_name=pi05_base_4_nic_FAU_CAAI_server --policy.device=cuda --wandb.enable=true --policy.repo_id=Ac31415/FAU_CAAI_policy_pi05_base_4_vrrz1p140tbx0p152tbym0p291tbyaw0p333csfp_sc_cable_48348ed816 --policy.pretrained_path=lerobot/pi05_base --policy.compile_model=true --policy.gradient_checkpointing=true --policy.dtype=bfloat16 --policy.freeze_vision_encoder=true --policy.train_expert_only=true --steps=3000
+   74  nano ~/.bashrc
+   75  source ~/.bashrc
+   76  conda deactivate
+   77  conda activate lerobot-training
+   78  lerobot-train --dataset.repo_id=Ac31415/vrrz1p140tbx0p152tbym0p291tbyaw0p333csfp_sc_cable_48348ed816 --policy.type=pi05 --output_dir='./lerobot-trained-models/trained_models_pi05_base' --job_name=pi05_base_4_nic_FAU_CAAI_server --policy.device=cuda --wandb.enable=true --policy.repo_id=Ac31415/FAU_CAAI_policy_pi05_base_4_vrrz1p140tbx0p152tbym0p291tbyaw0p333csfp_sc_cable_48348ed816 --policy.pretrained_path=lerobot/pi05_base --policy.compile_model=true --policy.gradient_checkpointing=true --policy.dtype=bfloat16 --policy.freeze_vision_encoder=true --policy.train_expert_only=true --steps=3000
+   79  wandb login
+   80  lerobot-train --dataset.repo_id=Ac31415/vrrz1p140tbx0p152tbym0p291tbyaw0p333csfp_sc_cable_48348ed816 --policy.type=pi05 --output_dir='./lerobot-trained-models/trained_models_pi05_base' --job_name=pi05_base_4_nic_FAU_CAAI_server --policy.device=cuda --wandb.enable=true --policy.repo_id=Ac31415/FAU_CAAI_policy_pi05_base_4_vrrz1p140tbx0p152tbym0p291tbyaw0p333csfp_sc_cable_48348ed816 --policy.pretrained_path=lerobot/pi05_base --policy.compile_model=true --policy.gradient_checkpointing=true --policy.dtype=bfloat16 --policy.freeze_vision_encoder=true --policy.train_expert_only=true --steps=3000
+   81  hf auth
+   82  hf auth login
+   83  lerobot-train --dataset.repo_id=Ac31415/vrrz1p140tbx0p152tbym0p291tbyaw0p333csfp_sc_cable_48348ed816 --policy.type=pi05 --output_dir='./lerobot-trained-models/trained_models_pi05_base' --job_name=pi05_base_4_nic_FAU_CAAI_server --policy.device=cuda --wandb.enable=true --policy.repo_id=Ac31415/FAU_CAAI_policy_pi05_base_4_vrrz1p140tbx0p152tbym0p291tbyaw0p333csfp_sc_cable_48348ed816 --policy.pretrained_path=lerobot/pi05_base --policy.compile_model=true --policy.gradient_checkpointing=true --policy.dtype=bfloat16 --policy.freeze_vision_encoder=true --policy.train_expert_only=true --steps=3000
+   84  ls -al
+   85  rm -rf lerobot-trained-models
+   86  lerobot-train --dataset.repo_id=Ac31415/vrrz1p140tbx0p152tbym0p291tbyaw0p333csfp_sc_cable_48348ed816 --policy.type=pi05 --output_dir='./lerobot-trained-models/trained_models_pi05_base' --job_name=pi05_base_4_nic_FAU_CAAI_server --policy.device=cuda --wandb.enable=true --policy.repo_id=Ac31415/FAU_CAAI_policy_pi05_base_4_vrrz1p140tbx0p152tbym0p291tbyaw0p333csfp_sc_cable_48348ed816 --policy.pretrained_path=lerobot/pi05_base --policy.compile_model=true --policy.gradient_checkpointing=true --policy.dtype=bfloat16 --policy.freeze_vision_encoder=true --policy.train_expert_only=true --steps=3000
+   87  conda deactivate
+   88  exit
+   89  conda deactivate
+   90  nvidia-smi
+   91  nvidia-smi -l
+   92  exit
+   93  cd /raid/
+   94  ls -al
+   95  cd /raid/scratch/
+   96  ls -al
+   97  cd wcheng3/
+   98  ls -al
+   99  conda deactivate
+  100  ls -al
+  101  mkdir aic-official
+  102  ls -al
+  103  conda deactivate
+  104  docker
+  105  nvidia-ctk --version
+  106  distrobox
+  107  sudo apt install distrobox
+  108  lsb_release -a
+  109  ls -al
+  110  exit
+  111  conda deactivate
+  112  curl -fsSL https://pixi.sh/install.sh | sh
+  113  conda deactivate
+  114  cd /raid/scratch/wcheng3/aic-official/aic
+  115  cd ..
+  116  mkdir -p ~/ws_aic/src
+  117  apt install distrobox
+  118  sudo apt install distrobox
+  119  mv aic/ /raid/scratch/wcheng3/aic-official/ws_aic/src
+  120  cd /raid/scratch/wcheng3/aic-official/ws_aic/src/aic
+  121  pixi install
+  122  conda deactivate
+  123  nvidia-smi -l
+  124  conda deactivate
+  125  ls -al
+  126  ls -al lerobot-trained-models/
+  127  bash '/mnt/beegfs/home/wcheng3/Miniconda3-latest-Linux-x86_64.sh'
+  128  nano ~/.bashrc
+  129  conda
+  130  conda activate ssfsfdfs
+  131  conda info --envs
+  132  df -h /mnt/beegfs/home/wcheng3
+  133  du -sh /mnt/beegfs/home/wcheng3
+  134  df -h /mnt/beegfs/home/wcheng3/.cache/huggingface
+  135  du -sh /mnt/beegfs/home/wcheng3/.cache/huggingface
+  136  conda deactivate
+  137  conda activate dsdss
+  138  conda info --envs
+  139  conda activate lerobot-training
+  140  lerobot-train --dataset.repo_id=Ac31415/sfp_to_sfp_port_0_of_nic_card_mount_0 --policy.type=pi05 --output_dir='./lerobot-trained-models/trained_models_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0' --job_name=pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_FAU_CAAI_server --policy.device=cuda --wandb.enable=true --policy.repo_id=Ac31415/FAU_CAAI_policy_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0 --policy.pretrained_path=lerobot/pi05_base --policy.compile_model=true --policy.gradient_checkpointing=true --policy.dtype=bfloat16 --policy.freeze_vision_encoder=true --policy.train_expert_only=true --steps=3000 --policy.private=true
+  141  lerobot-train --config_path='/raid/scratch/wcheng3/aic-official/lerobot-trained-models/trained_models_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0/checkpoints/last/pretrained_model/train_config.json' --resume=true --policy.private=true
+  142  lerobot-train --dataset.repo_id=Ac31415/sc_to_sc_port_base_of_sc_port_0 --policy.type=pi05 --output_dir='./lerobot-trained-models/trained_models_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0' --job_name=pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0_FAU_CAAI_server --policy.device=cuda --wandb.enable=true --policy.repo_id=Ac31415/FAU_CAAI_policy_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0 --policy.pretrained_path=Ac31415/FAU_CAAI_policy_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0 --policy.compile_model=true --policy.gradient_checkpointing=true --policy.dtype=bfloat16 --policy.freeze_vision_encoder=true --policy.train_expert_only=true --steps=3000 --policy.private=true
+  143  lerobot-train --dataset.repo_id=Ac31415/sc_to_sc_port_base_of_sc_port_0 --policy.type=pi05 --output_dir='./lerobot-trained-models/trained_models_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0' --job_name=pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0_FAU_CAAI_server --policy.device=cuda --wandb.enable=true --policy.repo_id=Ac31415/FAU_CAAI_policy_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0 --policy.pretrained_path=Ac31415/FAU_CAAI_policy_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0 --policy.compile_model=true --policy.gradient_checkpointing=true --policy.dtype=bfloat16 --policy.freeze_vision_encoder=true --policy.train_expert_only=true --steps=3000 --policy.private=true --tolerance_s=0.0002
+  144  lerobot-train --config_path='/raid/scratch/wcheng3/aic-official/lerobot-trained-models/trained_models_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0/checkpoints/last/pretrained_model/train_config.json' --resume=true --policy.private=true
+  145  history 1 > lerobot-training-history.txt
+  146  history > lerobot-training-history.txt
+  147  conda deactivate
+  148  conda env export --name lerobot-training > lerobot-training.yaml
+  149  conda info --base
+  150  ls -al /opt/
+  151  ~/miniconda3/uninstall.sh
+  152  df -h
+  153  du -sh /mnt/beegfs/home/wcheng3
+  154  df -sh /mnt/beegfs/home/wcheng3
+  155  df -h /mnt/beegfs/home/wcheng3
+  156  du -sh /mnt/beegfs/home/wcheng3/miniconda3
+  157  du -h --max-depth=1 /mnt/beegfs/home/wcheng3/miniconda3
+  158  conda clean --all
+  159  du -sh /mnt/beegfs/home/wcheng3/miniconda3
+  160  df -h /mnt/beegfs/home/wcheng3
+  161  conda activate lerobot-training
+  162  lerobot-train --config_path='/raid/scratch/wcheng3/aic-official/lerobot-trained-models/trained_models_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0/checkpoints/last/pretrained_model/train_config.json' --resume=true --policy.private=true
+  163  history > disk-usages-commands.txt
+  164  conda deactivate
+  165  conda activate lerobot-training
+  166  lerobot-train --dataset.repo_id=Ac31415/sfp_to_sfp_port_0_of_nic_card_mount_1_short --policy.type=pi05 --output_dir='./lerobot-trained-models/trained_models_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0_sfp_to_sfp_port_0_of_nic_card_mount_1_short' --job_name=pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0_sfp_to_sfp_port_0_of_nic_card_mount_1_short_FAU_CAAI_server --policy.device=cuda --wandb.enable=true --policy.repo_id=Ac31415/FAU_CAAI_policy_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0_sfp_to_sfp_port_0_of_nic_card_mount_1_short --policy.pretrained_path=Ac31415/FAU_CAAI_policy_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0 --policy.compile_model=true --policy.gradient_checkpointing=true --policy.dtype=bfloat16 --policy.freeze_vision_encoder=true --policy.train_expert_only=true --steps=3000 --policy.private=true --tolerance_s=0.0002
+  167  hf upload Ac31415/trained_models_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0_dataset_1 /raid/scratch/wcheng3/aic-official/lerobot-trained-models/trained_models_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0_dataset_1/checkpoints/last/pretrained_model
+  168  hf upload Ac31415/trained_models_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0_1 /raid/scratch/wcheng3/aic-official/lerobot-trained-models/trained_models_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0_1/checkpoints/last/pretrained_model
+  169  lerobot-train --dataset.repo_id=Ac31415/sfp_to_sfp_port_1_of_nic_card_mount_1_short --policy.type=pi05 --output_dir='./lerobot-trained-models/trained_models_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0_2' --job_name=trained_models_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0_2_FAU_CAAI_server --policy.device=cuda --wandb.enable=true --policy.repo_id=Ac31415/trained_models_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0_2 --policy.pretrained_path=Ac31415/trained_models_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0_1 --policy.compile_model=true --policy.gradient_checkpointing=true --policy.dtype=bfloat16 --policy.freeze_vision_encoder=true --policy.train_expert_only=true --steps=3000 --policy.private=true --tolerance_s=0.0002
+  170  lerobot-train --dataset.repo_id=Ac31415/sfp_to_sfp_port_1_of_nic_card_mount_0_short --policy.type=pi05 --output_dir='./lerobot-trained-models/trained_models_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0_3' --job_name=trained_models_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0_3_FAU_CAAI_server --policy.device=cuda --wandb.enable=true --policy.repo_id=Ac31415/trained_models_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0_3 --policy.pretrained_path=Ac31415/trained_models_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0_2 --policy.compile_model=true --policy.gradient_checkpointing=true --policy.dtype=bfloat16 --policy.freeze_vision_encoder=true --policy.train_expert_only=true --steps=3000 --policy.private=true --tolerance_s=0.0002
+  171  lerobot-train --dataset.repo_id=Ac31415/sfp_to_sfp_port_0_of_nic_card_mount_2_short --policy.type=pi05 --output_dir='./lerobot-trained-models/trained_models_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0_4' --job_name=trained_models_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0_4_FAU_CAAI_server --policy.device=cuda --wandb.enable=true --policy.repo_id=Ac31415/trained_models_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0_4 --policy.pretrained_path=Ac31415/trained_models_pi05_base_sfp_to_sfp_port_0_of_nic_card_mount_0_sc_to_sc_port_base_of_sc_port_0_3 --policy.compile_model=true --policy.gradient_checkpointing=true --policy.dtype=bfloat16 --policy.freeze_vision_encoder=true --policy.train_expert_only=true --steps=3000 --policy.private=true --tolerance_s=0.0002
+  172  conda deactivate
+  173  conda activate sdfsls
+  174  conda info --envs
+  175  conda activate /mnt/beegfs/home/wcheng3/miniconda3/envs/lerobot-training
+  176  lerobot-train --dataset.repo_id=Ac31415/sfp_to_sfp_port_0_of_nic_card_mount_0 --policy.type=act --output_dir='./lerobot-trained-models/trained_
+  177  models_act_sfp_to_sfp_port_0_of_nic_card_mount_0' --job_name=act_sfp_to_sfp_port_0_of_nic_card_mount_0_FAU_CAAI_server --policy.device=cuda --wandb.enable=true --policy.repo_id=Ac31415/FAU_CAA
+  178  lerobot-train --dataset.repo_id=Ac31415/sfp_to_sfp_port_0_of_nic_card_mount_0 --policy.type=act --output_dir='./lerobot-trained-models/trained_models_act_sfp_to_sfp_port_0_of_nic_card_mount_0' --job_name=act_sfp_to_sfp_port_0_of_nic_card_mount_0_FAU_CAAI_server --policy.device=cuda --wandb.enable=true --policy.repo_id=Ac31415/FAU_CAAI_policy_act_sfp_to_sfp_port_0_of_nic_card_mount_0 --policy.private=true
+  179  lerobot-train --dataset.repo_id=caai-aic/sfp_to_sfp_port_0_of_nic_card_mount_0 --policy.type=act --output_dir='./lerobot-trained-models/trained_models_act_sfp_to_sfp_port_0_of_nic_card_mount_0' --job_name=act_sfp_to_sfp_port_0_of_nic_card_mount_0_FAU_CAAI_server --policy.device=cuda --wandb.enable=true --policy.repo_id=caai-aic/FAU_CAAI_policy_act_sfp_to_sfp_port_0_of_nic_card_mount_0 --policy.private=true
+  180  hf auth whoami
+  181  hf auth logout
+  182  hf auth login
+  183  lerobot-train --dataset.repo_id=caai-aic/sfp_to_sfp_port_0_of_nic_card_mount_0 --policy.type=act --output_dir='./lerobot-trained-models/trained_models_act_sfp_to_sfp_port_0_of_nic_card_mount_0' --job_name=act_sfp_to_sfp_port_0_of_nic_card_mount_0_FAU_CAAI_server --policy.device=cuda --wandb.enable=true --policy.repo_id=caai-aic/FAU_CAAI_policy_act_sfp_to_sfp_port_0_of_nic_card_mount_0 --policy.private=true
+  184  hf auth whoami
+  185  hf auth login
+  186  lerobot-train --dataset.repo_id=caai-aic/sfp_to_sfp_port_0_of_nic_card_mount_0 --policy.type=act --output_dir='./lerobot-trained-models/trained_models_act_sfp_to_sfp_port_0_of_nic_card_mount_0' --job_name=act_sfp_to_sfp_port_0_of_nic_card_mount_0_FAU_CAAI_server --policy.device=cuda --wandb.enable=true --policy.repo_id=caai-aic/FAU_CAAI_policy_act_sfp_to_sfp_port_0_of_nic_card_mount_0 --policy.private=true
+  187  lerobot-train --dataset.repo_id=caai-aic/sfp_to_sfp_port_0_of_nic_card_mount_0 --policy.type=act --output_dir='./lerobot-trained-models/trained_models_act_sfp_to_sfp_port_0_of_nic_card_mount_0' --job_name=act_sfp_to_sfp_port_0_of_nic_card_mount_0_FAU_CAAI_server --policy.device=cuda --wandb.enable=true --policy.repo_id=caai-aic/FAU_CAAI_policy_act_sfp_to_sfp_port_0_of_nic_card_mount_0 --policy.private=true --tolerance_s=0.0002
+  188  conda deactivate
+  189  conda activate /mnt/beegfs/home/wcheng3/miniconda3/envs/lerobot-training
+  190  hf auth whoami
+  191  lerobot-train --config_path=/raid/scratch/wcheng3/aic-official/lerobot-trained-models/trained_models_act_sfp_to_sfp_port_0_of_nic_card_mount_0/checkpoints/last/pretrained_model/train_config.json --resume=true
+  192  lerobot-train --dataset.repo_id=caai-aic/sfp_to_sfp_port_1_of_nic_card_mount_0_short --policy.type=act --output_dir='./lerobot-trained-models/trained_models_act_sfp_to_sfp_port_0_of_nic_card_mount_0_1' --job_name=act_sfp_to_sfp_port_0_of_nic_card_mount_0_FAU_CAAI_server_1 --policy.device=cuda --wandb.enable=true --policy.repo_id=caai-aic/FAU_CAAI_policy_act_sfp_to_sfp_port_0_of_nic_card_mount_0_1 --policy.pretrained_path=caai-aic/FAU_CAAI_policy_act_sfp_to_sfp_port_0_of_nic_card_mount_0 --policy.private=true --tolerance_s=0.0002 --batch_size=32
+  193  lerobot-train --dataset.repo_id=caai-aic/sfp_to_sfp_port_1_of_nic_card_mount_0_short --policy.type=act --output_dir='./lerobot-trained-models/trained_models_act_sfp_to_sfp_port_0_of_nic_card_mount_0_1' --job_name=act_sfp_to_sfp_port_0_of_nic_card_mount_0_FAU_CAAI_server_1 --policy.device=cuda --wandb.enable=true --policy.repo_id=caai-aic/FAU_CAAI_policy_act_sfp_to_sfp_port_0_of_nic_card_mount_0_1 --policy.pretrained_path=caai-aic/FAU_CAAI_policy_act_sfp_to_sfp_port_0_of_nic_card_mount_0 --policy.private=true --tolerance_s=0.0002
+  194  lerobot-train --dataset.repo_id=caai-aic/sfp_to_sfp_port_0_of_nic_card_mount_1_short --policy.type=act --output_dir='./lerobot-trained-models/trained_models_act_sfp_to_sfp_port_0_of_nic_card_mount_0_2' --job_name=act_sfp_to_sfp_port_0_of_nic_card_mount_0_FAU_CAAI_server_2 --policy.device=cuda --wandb.enable=true --policy.repo_id=caai-aic/FAU_CAAI_policy_act_sfp_to_sfp_port_0_of_nic_card_mount_0_2 --policy.pretrained_path=caai-aic/FAU_CAAI_policy_act_sfp_to_sfp_port_0_of_nic_card_mount_0_1 --policy.private=true --tolerance_s=0.0002
+  195  lerobot-train --dataset.repo_id=caai-aic/sfp_to_sfp_port_1_of_nic_card_mount_1_short --policy.type=act --output_dir='./lerobot-trained-models/trained_models_act_sfp_to_sfp_port_0_of_nic_card_mount_0_3' --job_name=act_sfp_to_sfp_port_0_of_nic_card_mount_0_FAU_CAAI_server_3 --policy.device=cuda --wandb.enable=true --policy.repo_id=caai-aic/FAU_CAAI_policy_act_sfp_to_sfp_port_0_of_nic_card_mount_0_3 --policy.pretrained_path=caai-aic/FAU_CAAI_policy_act_sfp_to_sfp_port_0_of_nic_card_mount_0_2 --policy.private=true --tolerance_s=0.0002
+  196  conda deactivate
+  197  nvidia-smi -l
+  198  conda deactivate
+  199  ls -al
+  200  cd ws_aic/src/aic/
+  201  export DBX_CONTAINER_MANAGER=docker
+  202  docker pull ghcr.io/intrinsic-dev/aic/aic_eval:latest
+  203  docker run --rm -it   --gpus all   --network host   --ipc=host   -e DISPLAY=$DISPLAY   -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
+  204  docker run --rm -it --gpus all --network host --ipc=host -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix:rw ghcr.io/intrinsic-dev/aic/aic_eval:latest
+  205  echo $XAUTHORITY
+  206  export XAUTHORITY=$HOME/.Xauthority
+  207  ls -l $XAUTHORITY
+  208  docker run --rm -it --gpus all --network host --ipc=host -e DISPLAY=$DISPLAY -e XAUTHORITY=$XAUTHORITY -e QT_X11_NO_MITSHM=1 -v /tmp/.X11-unix:/tmp/.X11-unix:rw -v $XAUTHORITY:$XAUTHORITY:ro ghcr.io/intrinsic-dev/aic/aic_eval:latest
+  209  docker run --rm -it --gpus all --network host --ipc=host -e DISPLAY=$DISPLAY -e XAUTHORITY=$XAUTHORITY -e QT_X11_NO_MITSHM=1 -e LIBGL_ALWAYS_INDIRECT=1 -e QT_X11_NO_MITSHM=1 -v /tmp/.X11-unix:/tmp/.X11-unix:rw -v $XAUTHORITY:$XAUTHORITY:ro ghcr.io/intrinsic-dev/aic/aic_eval:latest
+  210  docker run --rm -it --gpus all --network host --ipc=host -e DISPLAY=$DISPLAY -e XAUTHORITY=$XAUTHORITY -e QT_X11_NO_MITSHM=1 -e LIBGL_ALWAYS_SOFTWARE=1 -e GALLIUM_DRIVER=llvmpipe -v /tmp/.X11-unix:/tmp/.X11-unix:rw -v $XAUTHORITY:$XAUTHORITY:ro ghcr.io/intrinsic-dev/aic/aic_eval:latest
+  211  docker run --rm -it --gpus all --network host --ipc=host -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix:rw ghcr.io/intrinsic-dev/aic/aic_eval:latest
+  212  docker run --rm -it --gpus all --network host --ipc=host -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix:rw  --entrypoint /bin/bash ghcr.io/intrinsic-dev/aic/aic_eval:latest
+  213  docker ps
+  214  docker run -it --gpus all --network host --ipc=host -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix:rw  --entrypoint /bin/bash ghcr.io/intrinsic-dev/aic/aic_eval:latest
+  215  docker ps
+  216  docker run -it --gpus all --network host --ipc=host -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix:rw  --entrypoint /bin/bash ghcr.io/intrinsic-dev/aic/aic_eval:latest
+  217  docker ps -a
+  218  docker run -it --gpus all --network host --ipc=host -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix:rw  --entrypoint /bin/bash ghcr.io/intrinsic-dev/aic/aic_eval:latest
+  219  docker ps -a
+  220  docker run -it --name aic_eval --gpus all --network host --ipc=host -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix:rw  --entrypoint /bin/bash ghcr.io/intrinsic-dev/aic/aic_eval:latest
+  221  docker ps -a
+  222  docker rm aic_eval
+  223  docker run -it --name aic_eval --gpus all --network host --ipc=host -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix:rw  --entrypoint /bin/bash ghcr.io/intrinsic-dev/aic/aic_eval:latest
+  224  docker ps -a
+  225  docker rm intelligent_cori
+  226  docker rm relaxed_swanson
+  227  docker ps -a
+  228  docker rm stoic_nash
+  229  docker ps -a
+  230  docker start -ai aic_eval
+  231  docker start -ai aic_eval -v '/raid/scratch/wcheng3/aic-official/exported scenes':/aic_out
+  232  docker rm aic_eval
+  233  docker run -it --name aic_eval --gpus all --network host --ipc=host -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix:rw -v '/raid/scratch/wcheng3/aic-official/exported scenes':/aic_out  --entrypoint /bin/bash ghcr.io/intrinsic-dev/aic/aic_eval:latest
+  234  docker start -ai aic_eval
+  235  conda deactivate
+  236  docker start -ai aic_eval
+  237  conda deactivate
+  238  cd /raid/scratch/wcheng3/aic-official/ws_aic/src/aic
+  239  docker start -ai aic_eval
+  240  docker exec -it aic_eval /bin/bash
+  241  conda deactivate
+  242  conda activate shit
+  243  conda info --envs
+  244  conda activate /mnt/beegfs/home/wcheng3/miniconda3/envs/lerobot-training
+  245  lerobot-edit-dataset --repo_id caai-aic/short-all-aic-dataset --operation.type merge --operation.repo_ids "['caai-aic/corrected_sfp_to_sfp_port_0_of_nic_card_mount_0', 'caai-aic/corrected_sfp_to_sfp_port_1_of_nic_card_mount_0', 'caai-aic/corrected_sfp_to_sfp_port_0_of_nic_card_mount_1', 'caai-aic/corrected_sfp_to_sfp_port_1_of_nic_card_mount_1', 'caai-aic/corrected_sfp_to_sfp_port_0_of_nic_card_mount_2', 'caai-aic/corrected_sfp_to_sfp_port_1_of_nic_card_mount_2', 'caai-aic/corrected_sfp_to_sfp_port_0_of_nic_card_mount_3', 'caai-aic/corrected_sfp_to_sfp_port_1_of_nic_card_mount_3', 'caai-aic/corrected_sfp_to_sfp_port_0_of_nic_card_mount_4', 'caai-aic/corrected_sfp_to_sfp_port_1_of_nic_card_mount_4', 'caai-aic/corrected_sc_to_sc_port_base_of_sc_port_0', 'caai-aic/corrected_sc_to_sc_port_base_of_sc_port_1']"
+  246  lerobot-edit-dataset --new_repo_id caai-aic/short-all-aic-dataset --operation.type merge --operation.repo_ids "['caai-aic/corrected_sfp_to_sfp_port_0_of_nic_card_mount_0', 'caai-aic/corrected_sfp_to_sfp_port_1_of_nic_card_mount_0', 'caai-aic/corrected_sfp_to_sfp_port_0_of_nic_card_mount_1', 'caai-aic/corrected_sfp_to_sfp_port_1_of_nic_card_mount_1', 'caai-aic/corrected_sfp_to_sfp_port_0_of_nic_card_mount_2', 'caai-aic/corrected_sfp_to_sfp_port_1_of_nic_card_mount_2', 'caai-aic/corrected_sfp_to_sfp_port_0_of_nic_card_mount_3', 'caai-aic/corrected_sfp_to_sfp_port_1_of_nic_card_mount_3', 'caai-aic/corrected_sfp_to_sfp_port_0_of_nic_card_mount_4', 'caai-aic/corrected_sfp_to_sfp_port_1_of_nic_card_mount_4', 'caai-aic/corrected_sc_to_sc_port_base_of_sc_port_0', 'caai-aic/corrected_sc_to_sc_port_base_of_sc_port_1']"
+  247  hf upload caai-aic/short-all-aic-dataset /mnt/beegfs/home/wcheng3/.cache/huggingface/lerobot/caai-aic/short-all-aic-dataset
+  248  lerobot-edit-dataset --new_repo_id caai-aic/short-all-aic-dataset --operation.type merge --operation.repo_ids "['caai-aic/corrected_sfp_to_sfp_port_0_of_nic_card_mount_0', 'caai-aic/corrected_sfp_to_sfp_port_1_of_nic_card_mount_0', 'caai-aic/corrected_sfp_to_sfp_port_0_of_nic_card_mount_1', 'caai-aic/corrected_sfp_to_sfp_port_1_of_nic_card_mount_1', 'caai-aic/corrected_sfp_to_sfp_port_0_of_nic_card_mount_2', 'caai-aic/corrected_sfp_to_sfp_port_1_of_nic_card_mount_2', 'caai-aic/corrected_sfp_to_sfp_port_0_of_nic_card_mount_3', 'caai-aic/corrected_sfp_to_sfp_port_1_of_nic_card_mount_3', 'caai-aic/corrected_sfp_to_sfp_port_0_of_nic_card_mount_4', 'caai-aic/corrected_sfp_to_sfp_port_1_of_nic_card_mount_4', 'caai-aic/corrected_sc_to_sc_port_base_of_sc_port_0', 'caai-aic/corrected_sc_to_sc_port_base_of_sc_port_1']" --push_to_hub=true --private=true
+  249  lerobot-edit-dataset --new_repo_id caai-aic/short-all-aic-dataset --operation.type merge --operation.repo_ids "['caai-aic/corrected_sfp_to_sfp_port_0_of_nic_card_mount_0', 'caai-aic/corrected_sfp_to_sfp_port_1_of_nic_card_mount_0', 'caai-aic/corrected_sfp_to_sfp_port_0_of_nic_card_mount_1', 'caai-aic/corrected_sfp_to_sfp_port_1_of_nic_card_mount_1', 'caai-aic/corrected_sfp_to_sfp_port_0_of_nic_card_mount_2', 'caai-aic/corrected_sfp_to_sfp_port_1_of_nic_card_mount_2', 'caai-aic/corrected_sfp_to_sfp_port_0_of_nic_card_mount_3', 'caai-aic/corrected_sfp_to_sfp_port_1_of_nic_card_mount_3', 'caai-aic/corrected_sfp_to_sfp_port_0_of_nic_card_mount_4', 'caai-aic/corrected_sfp_to_sfp_port_1_of_nic_card_mount_4', 'caai-aic/corrected_sc_to_sc_port_base_of_sc_port_0', 'caai-aic/corrected_sc_to_sc_port_base_of_sc_port_1']" --push_to_hub=true
+  250  lerobot-train --dataset.repo_id=caai-aic/short-all-aic-dataset --policy.type=act --output_dir=/raid/scratch/wcheng3/aic-official/lerobot-trained-models/trained_model_act_short_all_aic_dataset --job_name=trained_model_act_short_all_aic_dataset --policy.device=cuda --wandb.enable=true --policy.repo_id=caai-aic/act_short_all_aic_dataset_policy --policy.private=true
+  251  lerobot-train --dataset.repo_id=caai-aic/short-all-aic-dataset --policy.type=act --output_dir=/raid/scratch/wcheng3/aic-official/lerobot-trained-models/trained_model_act_short_all_aic_dataset --job_name=trained_model_act_short_all_aic_dataset --policy.device=cuda --wandb.enable=true --policy.repo_id=caai-aic/act_short_all_aic_dataset_policy --policy.private=true --tolerance_s=0.0002
+  252  cond deactivate
+  253  conda deactivate
+  254  nvidia-smi -l
+  255  docker exec aic_eval_test nvidia-smi
+  256  docker inspect aic_eval_test --format='{{.Config.Env}}'
+  257  docker inspect <container_id> --format='{{json .HostConfig.DeviceRequests}}'
+  258  docker inspect aic_eval_test --format='{{json .HostConfig.DeviceRequests}}'
+  259  docker exec aic_eval_test_1 nvidia-smi
+  260  docker inspect aic_eval_test_1 --format='{{.Config.Env}}'
+  261  docker inspect aic_eval_test_1 --format='{{json .HostConfig.DeviceRequests}}'
+  262  conda deactivate
+  263  nvidia-smi -l
+  264  git config --global user.email "wcheng3@fau.edu"
+  265  git config --global user.name "Ac31415"
+  266  nvidia-smi -l
+  267  docker exec aic_eval nvidia-smi
+  268  docker exec aic_eval nvidia-smi -l
+  269  docker inspect aic_eval --format='{{.Config.Env}}'
+  270  docker inspect <container_id> --format='{{json .HostConfig.DeviceRequests}}'
+  271  docker inspect aic_eval --format='{{json .HostConfig.DeviceRequests}}'
+  272  nvidia-ctk runtime configure --runtime=docker
+  273  sudo nvidia-ctk runtime configure --runtime=docker
+  274  docker run --rm --gpus all nvidia/cuda:12.0-base-ubuntu22.04 nvidia-smi
+  275  docker run --rm -it --name aic_eval_test --gpus all --network host --ipc=host -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix:rw -v '/raid/scratch/wcheng3/aic-official/exported scenes':/aic_out  --entrypoint /bin/bash ghcr.io/intrinsic-dev/aic/aic_eval:latest nvidia-smi
+  276  docker run --rm -it --name aic_eval_test --gpus all --runtime=nvidia  --network host --ipc=host -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix:rw -v '/raid/scratch/wcheng3/aic-official/exported scenes':/aic_out  --entrypoint /bin/bash ghcr.io/intrinsic-dev/aic/aic_eval:latest
+  277  docker run --rm -it --name aic_eval_test_1 --gpus all -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all --network host --ipc=host -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix:rw -v '/raid/scratch/wcheng3/aic-official/exported scenes':/aic_out  --entrypoint /bin/bash ghcr.io/intrinsic-dev/aic/aic_eval:latest
+  278  conda deactivate
+  279  docker exec -it aic_eval /bin/bash
+  280  conda deactivate
+  281  ls -al /var/lib/docker/
+  282  ls -al /var/lib/
+  283  ls -al /var/lib/docker/
+  284  docker exec -it aic_eval /bin/bash
+  285  conda deactivate
+  286  docker ps -a
+  287  docker start -ai aic_eval
+  288  groups
+  289  conda deactivate
+  290  docker run --rm --runtime=nvidia --gpus all ubuntu nvidia-smi
+  291  nvidia-smi
+  292  ros2 pkg list
+  293  conda deactivate
+  294  ros2 pkg create act_short_mujocco_dataset_policy_node --build-type ament_python
+  295  exit
+  296  ros2 pkg create act_short_mujocco_dataset_policy_node --build-type ament_python
+  297  huggingface-cli
+  298  docker compose -f docker/docker-compose.yaml build model
+  299  docker --version
+  300  docker compose version
+  301  docker-compose version
+  302  docker compose -f docker/docker-compose.yaml build model
+  303  pixi install
+  304  exit
+  305  sleep 20
+  306  docker logs $(docker ps -q --filter "name=aic-model") 2>&1 | tail -150
+  307  sleep 25
+  308  docker logs $(docker ps -q --filter "name=aic-model") 2>&1 | tail -200
+  309  docker logs $(docker ps -q --filter "name=aic-model") 2>&1 | tail -200
+  310  docker compose -f docker/docker-compose.yaml up
+  311  sleep 25
+  312  docker logs $(docker ps -q --filter "name=aic-model") 2>&1 | tail -200
+  313  docker logs $(docker ps -q --filter "name=aic-model") 2>&1 | tail -200
+  314  sleep 30
+  315  docker logs $(docker ps -q --filter "name=aic-model") 2>&1 | tail -250
+  316  conda deactivate
+  317  docker run --rm --runtime=nvidia --gpus all ubuntu nvidia-smi
+  318  docker run --rm --runtime=nvidia --gpus all ubuntu
+  319  docker run --rm --runtime=nvidia --gpus all ubuntu cd /raid/scratch/wcheng3/aic-official/ws_aic/src/aic
+  320  cd /raid/scratch/wcheng3/aic-official/ws_aic/src/aic
+  321  docker run --rm --runtime=nvidia --gpus all ubuntu ./aws/install
+  322  docker run --rm --runtime=nvidia --gpus all ubuntu sudo ./aws/install
+  323  ls -al
+  324  docker run --rm --runtime=nvidia --gpus all ubuntu sudo ./aws/install
+  325  docker pull docker:dind
+  326  docker run --privileged --name caai-aic-challenge-img-push-container --runtime=nvidia --gpus all -d docker:dind
+  327  docker exec -it caai-aic-challenge-img-push-container sh
+  328  docker run --privileged --name caai-aic-challenge-img-push-container --runtime=nvidia --gpus all -d cruizba/ubuntu-dind
+  329  docker exec -it caai-aic-challenge-img-push-container bash
+  330  docker run --privileged --name caai-aic-challenge-img-push-container --runtime=nvidia --gpus all -d cruizba/ubuntu-dind
+  331  docker exec -it caai-aic-challenge-img-push-container bash
+  332  docker run -it --privileged --name caai-aic-challenge-img-push-container --runtime=nvidia --gpus all -d cruizba/ubuntu-dind
+  333  docker exec -it caai-aic-challenge-img-push-container bash
+  334  docker run -it --privileged --name caai-aic-challenge-img-push-container --runtime=nvidia --gpus all -d cruizba/ubuntu-dind
+  335  docker exec -it caai-aic-challenge-img-push-container bash
+  336  docker run -it --privileged --name caai-aic-challenge-img-push-container --runtime=nvidia --gpus all -v '/raid/scratch/wcheng3/aic-official/dind-transfer':/dind-transfer -d cruizba/ubuntu-dind
+  337  docker exec -it caai-aic-challenge-img-push-container bash
+  338  conda deactivate
+  339  docker ps -a
+  340  docker exec -it fau-caai:v2 /bin/bash
+  341  docker exec -it 2843730fb74e /bin/bash
+  342  docker exec -it fau-caai:v2 /bin/bash
+  343  docker ps -a
+  344  docker exec -it 26e4bfc02c22 /bin/bash
+  345  docker ps -a
+  346  docker exec -it 29e926024c4b /bin/bash
+  347  docker ps -a
+  348  docker exec -it ee734459e615 /bin/bash
+  349  docker ps -a
+  350  docker rm -f caai-aic-challenge-img-push-container
+  351  docker ps -a
+  352  docker rm -f caai-aic-challenge-img-push-container
+  353  docker start  caai-aic-challenge-img-push-container
+  354  docker start caai-aic-challenge-img-push-container
+  355  docker ps -a
+  356  docker logs caai-aic-challenge-img-push-container
+  357  docker rm -f caai-aic-challenge-img-push-container
+  358  docker ps -a
+  359  docker rm -f caai-aic-challenge-img-push-container
+  360  huggingface-cli
+  361  hf auth whoami
+  362  hf download caai-aic/act_short_all_aic_dataset_policy
+  363  du -sh /raid/scratch/wcheng3/aic-official/ws_aic/src/aic/act_short_mujocco_dataset_policy_node/act_short_mujocco_dataset_policy_node/trained model
+  364  du -sh '/raid/scratch/wcheng3/aic-official/ws_aic/src/aic/act_short_mujocco_dataset_policy_node/act_short_mujocco_dataset_policy_node/trained model'
+  365  du -sh '/mnt/beegfs/home/wcheng3/.cache/huggingface/hub/models--caai-aic--act_short_all_aic_dataset_policy/snapshots/085356836a725f4e2c2e4075b5dbc9653799614c'
+  366  conda deactivate
+  367  cd /raid/scratch/wcheng3/aic-official/ws_aic/src/aic
+  368  pixi shell
+  369  pixi install
+  370  docker compose -f docker/docker-compose.yaml build model
+  371  docker compose -f docker/docker-compose.yaml up
+  372  huggingface-cli download <REPO_ID> --local-dir <YOUR_TARGET_FOLDER> --local-dir-use-symlinks False
+  373  huggingface-cli download caai-aic/act_short_all_aic_dataset_policy --local-dir '/raid/scratch/wcheng3/aic-official/ws_aic/src/aic/act_short_mujocco_dataset_policy_node/act_short_mujocco_dataset_policy_node/trained model' --local-dir-use-symlinks False
+  374  hf download caai-aic/act_short_all_aic_dataset_policy --local-dir '/raid/scratch/wcheng3/aic-official/ws_aic/src/aic/act_short_mujocco_dataset_policy_node/act_short_mujocco_dataset_policy_node/trained model' --local-dir-use-symlinks False
+  375  huggingface-cli download caai-aic/act_short_all_aic_dataset_policy --local-dir '/raid/scratch/wcheng3/aic-official/ws_aic/src/aic/act_short_mujocco_dataset_policy_node/act_short_mujocco_dataset_policy_node/trained model' --local-dir-use-symlinks False
+  376  ls -al /raid/scratch/wcheng3/aic-official/ws_aic/src/aic/act_short_mujocco_dataset_policy_node/act_short_mujocco_dataset_policy_node/trained model
+  377  ls -al '/raid/scratch/wcheng3/aic-official/ws_aic/src/aic/act_short_mujocco_dataset_policy_node/act_short_mujocco_dataset_policy_node/trained model'
+  378  docker compose -f docker/docker-compose.yaml build model
+  379  docker compose -f docker/docker-compose.yaml up
+  380  pixi install
+  381  docker compose -f docker/docker-compose.yaml build model
+  382  docker compose -f docker/docker-compose.yaml up
+  383  pixi install
+  384  docker compose -f docker/docker-compose.yaml build model
+  385  docker compose -f docker/docker-compose.yaml up
+  386  pixi install
+  387  pixi reinstall ros-kilted-act-short-mujocco-dataset-policy-node
+  388  docker compose -f docker/docker-compose.yaml build model
+  389  docker compose -f docker/docker-compose.yaml up
+  390  pixi reinstall ros-kilted-act-short-mujocco-dataset-policy-node
+  391  docker compose -f docker/docker-compose.yaml up
+  392  pixi reinstall ros-kilted-act-short-mujocco-dataset-policy-node
+  393  docker compose -f docker/docker-compose.yaml build model
+  394  docker compose -f docker/docker-compose.yaml up
+  395  pixi reinstall ros-kilted-act-short-mujocco-dataset-policy-node
+  396  docker compose -f docker/docker-compose.yaml build model
+  397  docker compose -f docker/docker-compose.yaml up
+  398  pixi reinstall ros-kilted-act-short-mujocco-dataset-policy-node
+  399  docker compose -f docker/docker-compose.yaml build model
+  400  docker compose -f docker/docker-compose.yaml up
+  401  pixi reinstall ros-kilted-act-short-mujocco-dataset-policy-node
+  402  docker compose -f docker/docker-compose.yaml build model
+  403  docker compose -f docker/docker-compose.yaml up
+  404  pixi reinstall ros-kilted-act-short-mujocco-dataset-policy-node
+  405  docker compose -f docker/docker-compose.yaml build model
+  406  docker compose -f docker/docker-compose.yaml up
+  407  pixi reinstall ros-kilted-act-short-mujocco-dataset-policy-node
+  408  docker compose -f docker/docker-compose.yaml build --no-cache model
+  409  docker compose -f docker/docker-compose.yaml up --force-recreate --remove-orphans model
+  410  docker compose -f docker/docker-compose.yaml up
+  411  docker compose -f docker/docker-compose.yaml up --runtime=nvidia --gpus all
+  412  docker compose -f --runtime=nvidia --gpus all docker/docker-compose.yaml up
+  413  docker compose -f --runtime=nvidia docker/docker-compose.yaml up
+  414  docker compose -f docker/docker-compose.yaml up --gpus all
+  415  docker compose -f docker/docker-compose.yaml build --no-cache model
+  416  docker compose -f docker/docker-compose.yaml up
+  417  pixi reinstall ros-kilted-act-short-mujocco-dataset-policy-node
+  418  docker compose -f docker/docker-compose.yaml build --no-cache model
+  419  docker compose -f docker/docker-compose.yaml up
+  420  pixi reinstall ros-kilted-act-short-mujocco-dataset-policy-node
+  421  docker compose -f docker/docker-compose.yaml build --no-cache model
+  422  docker compose -f docker/docker-compose.yaml up
+  423  pixi reinstall ros-kilted-act-short-mujocco-dataset-policy-node
+  424  docker compose -f docker/docker-compose.yaml build --no-cache model
+  425  docker compose -f docker/docker-compose.yaml up
+  426  pixi reinstall ros-kilted-act-short-mujocco-dataset-policy-node
+  427  docker compose -f docker/docker-compose.yaml build --no-cache model
+  428  docker compose -f docker/docker-compose.yaml up
+  429  aws
+  430  curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+  431  unzip awscliv2.zip
+  432  ./aws/install
+  433  sudo ./aws/install
+  434  aws
+  435  snap install aws-cli
+  436  conda deactivate
+  437  cd ..
+  438  ls -al
+  439  history > dataset-edit-docker-histories.txt
+
+
+
+
+
+lerobot-edit-dataset --new_repo_id caai-aic/short-all-aic-mujoco-dataset --operation.type merge --operation.repo_ids "['caai-aic/corrected_sfp_to_sfp_port_0_of_nic_card_mount_0', 'caai-aic/corrected_sfp_to_sfp_port_1_of_nic_card_mount_0', 'caai-aic/corrected_sfp_to_sfp_port_0_of_nic_card_mount_1', 'caai-aic/corrected_sfp_to_sfp_port_1_of_nic_card_mount_1', 'caai-aic/corrected_sfp_to_sfp_port_0_of_nic_card_mount_2', 'caai-aic/corrected_sfp_to_sfp_port_1_of_nic_card_mount_2', 'caai-aic/corrected_sfp_to_sfp_port_0_of_nic_card_mount_3', 'caai-aic/corrected_sfp_to_sfp_port_1_of_nic_card_mount_3', 'caai-aic/corrected_sfp_to_sfp_port_0_of_nic_card_mount_4', 'caai-aic/corrected_sfp_to_sfp_port_1_of_nic_card_mount_4', 'caai-aic/corrected_sc_to_sc_port_base_of_sc_port_0', 'caai-aic/corrected_sc_to_sc_port_base_of_sc_port_1']" --push_to_hub=true
+
+lerobot-edit-dataset --new_repo_id caai-aic/short-all-aic-gazebo-dataset --operation.type merge --operation.repo_ids "['caai-aic/corrected_lab_collected_sfp_to_sfp_port_1_of_nic_card_mount_4', 'caai-aic/corrected_lab_collected_sfp_to_sfp_port_1_of_nic_card_mount_3', 'caai-aic/corrected_lab_collected_sfp_to_sfp_port_1_of_nic_card_mount_2', 'caai-aic/corrected_lab_collected_sfp_to_sfp_port_1_of_nic_card_mount_1', 'caai-aic/corrected_lab_collected_sfp_to_sfp_port_1_of_nic_card_mount_0', 'caai-aic/corrected_lab_collected_sfp_to_sfp_port_0_of_nic_card_mount_4', 'caai-aic/corrected_lab_collected_sfp_to_sfp_port_0_of_nic_card_mount_3', 'caai-aic/corrected_lab_collected_sfp_to_sfp_port_0_of_nic_card_mount_2', 'caai-aic/corrected_lab_collected_sfp_to_sfp_port_0_of_nic_card_mount_1', 'caai-aic/corrected_lab_collected_sfp_to_sfp_port_0_of_nic_card_mount_0', 'caai-aic/corrected_lab_collected_sc_to_sc_port_base_of_sc_port_1', 'caai-aic/corrected_lab_collected_sc_to_sc_port_base_of_sc_port_0']" --push_to_hub=true
+
+lerobot-edit-dataset --new_repo_id caai-aic/short-all-aic-gazebo-dataset-test --operation.type merge --operation.repo_ids "['caai-aic/corrected_lab_collected_sfp_to_sfp_port_0_of_nic_card_mount_1', 'caai-aic/corrected_lab_collected_sfp_to_sfp_port_0_of_nic_card_mount_0']" --push_to_hub=true
+
+lerobot-train --dataset.repo_id=caai-aic/short-all-aic-mujoco-dataset --policy.type=act --output_dir=/raid/scratch/wcheng3/aic-official/lerobot-trained-models/trained_model_act_short_all_aic_mujoco_dataset --job_name=trained_model_act_short_all_aic_mujoco_dataset --policy.device=cuda --wandb.enable=true --policy.repo_id=caai-aic/act_short_all_aic_mujoco_dataset_policy --policy.private=true --tolerance_s=0.0002
+
+lerobot-train --dataset.repo_id=caai-aic/short-all-aic-gazebo-dataset --policy.type=act --output_dir=/raid/sc
+ratch/wcheng3/aic-official/lerobot-trained-models/trained_model_act_short_all_aic_gazebo_dataset --job_name=trained_model_act_short_all_aic_gazebo_dataset --policy.device=c
+uda --wandb.enable=true --policy.repo_id=caai-aic/act_short_all_aic_gazebo_dataset_policy --policy.private=true --tolerance_s=0.0002
+
+lerobot-train --dataset.repo_id=caai-aic/short-all-aic-mujoco-dataset --policy.type=multi_task_dit --output_dir=/raid/scratch/wcheng3/aic-official/lerobot-trained-models/trained_model_multi_task_dit_diffusion_DDIM_clip_vit_short_all_aic_mujoco_dataset --job_name=trained_model_multi_task_dit_diffusion_DDIM_clip_vit_short_all_aic_mujoco_dataset --policy.device=cuda --wandb.enable=true --policy.repo_id=caai-aic/multi_task_dit_diffusion_DDIM_clip_vit_short_all_aic_mujoco_dataset_policy --policy.private=true --tolerance_s=0.0002 --batch_size=320 --steps=30000 --policy.horizon=32 --policy.n_action_steps=24 --policy.objective=diffusion --policy.noise_scheduler_type=DDIM --policy.num_train_timesteps=100 --policy.num_inference_steps=10 --policy.beta_schedule=squaredcos_cap_v2 --policy.prediction_type=epsilon --policy.clip_sample=true --policy.clip_sample_range=1.0 --policy.num_layers=6 --policy.hidden_dim=512 --policy.num_heads=8 --policy.use_rope=true --policy.rope_base=10000.0 --policy.dropout=0.1 --policy.timestep_embed_dim=256 --policy.vision_encoder_name=openai/clip-vit-large-patch14 --policy.text_encoder_name=openai/clip-vit-large-patch14 --policy.optimizer_lr=2e-5 --policy.vision_encoder_lr_multiplier=0.1
+
+lerobot-train --dataset.repo_id=caai-aic/short-all-aic-mujoco-dataset --policy.type=multi_task_dit --output_dir=/raid/scratch/wcheng3/aic-official/lerobot-trained-models/trained_model_multi_task_dit_diffusion_DDIM_clip_vit_short_all_aic_mujoco_dataset --job_name=trained_model_multi_task_dit_diffusion_DDIM_clip_vit_short_all_aic_mujoco_dataset --policy.device=cuda --wandb.enable=true --policy.repo_id=caai-aic/multi_task_dit_diffusion_DDIM_clip_vit_short_all_aic_mujoco_dataset_policy --policy.private=true --tolerance_s=0.0002 --steps=30000 --policy.horizon=32 --policy.n_action_steps=24 --policy.objective=diffusion --policy.noise_scheduler_type=DDIM --policy.num_train_timesteps=100 --policy.num_inference_steps=10 --policy.beta_schedule=squaredcos_cap_v2 --policy.prediction_type=epsilon --policy.clip_sample=true --policy.clip_sample_range=1.0 --policy.num_layers=6 --policy.hidden_dim=512 --policy.num_heads=8 --policy.use_rope=true --policy.rope_base=10000.0 --policy.dropout=0.1 --policy.timestep_embed_dim=256 --policy.vision_encoder_name=openai/clip-vit-large-patch14 --policy.text_encoder_name=openai/clip-vit-large-patch14 --policy.optimizer_lr=2e-5 --policy.vision_encoder_lr_multiplier=0.1
+
+accelerate launch --multi_gpu --num_processes=2 $(which lerobot-train) --dataset.repo_id=caai-aic/short-all-aic-mujoco-dataset --policy.type=multi_task_dit --output_dir=/raid/scratch/wcheng3/aic-official/lerobot-trained-models/trained_model_multi_task_dit_diffusion_DDIM_clip_vit_short_all_aic_mujoco_dataset --job_name=trained_model_multi_task_dit_diffusion_DDIM_clip_vit_short_all_aic_mujoco_dataset --policy.device=cuda --wandb.enable=true --policy.repo_id=caai-aic/multi_task_dit_diffusion_DDIM_clip_vit_short_all_aic_mujoco_dataset_policy --policy.private=true --tolerance_s=0.0002 --batch_size=320 --steps=30000 --policy.horizon=32 --policy.n_action_steps=24 --policy.objective=diffusion --policy.noise_scheduler_type=DDIM --policy.num_train_timesteps=100 --policy.num_inference_steps=10 --policy.beta_schedule=squaredcos_cap_v2 --policy.prediction_type=epsilon --policy.clip_sample=true --policy.clip_sample_range=1.0 --policy.num_layers=6 --policy.hidden_dim=512 --policy.num_heads=8 --policy.use_rope=true --policy.rope_base=10000.0 --policy.dropout=0.1 --policy.timestep_embed_dim=256 --policy.vision_encoder_name=openai/clip-vit-large-patch14 --policy.text_encoder_name=openai/clip-vit-large-patch14 --policy.optimizer_lr=2e-5 --policy.vision_encoder_lr_multiplier=0.1
+
+accelerate launch --multi_gpu --num_processes=2 $(which lerobot-train) --dataset.repo_id=caai-aic/short-all-aic-mujoco-dataset --policy.type=multi_task_dit --output_dir=/raid/scratch/wcheng3/aic-official/lerobot-trained-models/trained_model_multi_task_dit_diffusion_DDIM_clip_vit_short_all_aic_mujoco_dataset --job_name=trained_model_multi_task_dit_diffusion_DDIM_clip_vit_short_all_aic_mujoco_dataset --policy.device=cuda --wandb.enable=true --policy.repo_id=caai-aic/multi_task_dit_diffusion_DDIM_clip_vit_short_all_aic_mujoco_dataset_policy --policy.private=true --tolerance_s=0.0002 --steps=30000 --policy.horizon=32 --policy.n_action_steps=24 --policy.objective=diffusion --policy.noise_scheduler_type=DDIM --policy.num_train_timesteps=100 --policy.num_inference_steps=10 --policy.beta_schedule=squaredcos_cap_v2 --policy.prediction_type=epsilon --policy.clip_sample=true --policy.clip_sample_range=1.0 --policy.num_layers=6 --policy.hidden_dim=512 --policy.num_heads=8 --policy.use_rope=true --policy.rope_base=10000.0 --policy.dropout=0.1 --policy.timestep_embed_dim=256 --policy.vision_encoder_name=openai/clip-vit-large-patch14 --policy.text_encoder_name=openai/clip-vit-large-patch14 --policy.optimizer_lr=2e-5 --policy.vision_encoder_lr_multiplier=0.1
+
+
+
+
+
+
+
+
+
+
+accelerate launch --multi_gpu --num_processes=2 $(which lerobot-train) --dataset.repo_id=caai-aic/short-all-aic-mujoco-dataset --policy.type=multi_task_dit --output_dir=/raid/scratch/wcheng3/aic-official/lerobot-trained-models/trained_model_multi_task_dit_flow_matching_DDIM_clip_vit_short_all_aic_mujoco_dataset --job_name=trained_model_multi_task_dit_flow_matching_DDIM_clip_vit_short_all_aic_mujoco_dataset --policy.device=cuda --wandb.enable=true --policy.repo_id=caai-aic/multi_task_dit_flow_matching_DDIM_clip_vit_short_all_aic_mujoco_dataset_policy --policy.private=true --tolerance_s=0.0002 --steps=30000 --policy.horizon=32 --policy.n_action_steps=24 --policy.objective=flow_matching --policy.timestep_sampling_strategy=beta --policy.timestep_sampling_alpha=1.5 --policy.timestep_sampling_beta=1.0 --policy.timestep_sampling_s=0.999 --policy.num_integration_steps=100 --policy.integration_method=euler --policy.sigma_min=0.0 --policy.num_layers=6 --policy.hidden_dim=512 --policy.num_heads=8 --policy.use_rope=true --policy.rope_base=10000.0 --policy.dropout=0.1 --policy.timestep_embed_dim=256 --policy.vision_encoder_name=openai/clip-vit-large-patch14 --policy.text_encoder_name=openai/clip-vit-large-patch14 --policy.optimizer_lr=2e-5 --policy.vision_encoder_lr_multiplier=0.1
+
+
+
+
+
+lerobot-train --dataset.repo_id=caai-aic/short-all-aic-mujoco-dataset --policy.type=wall_x --output_dir=/raid/scratch/wcheng3/aic-official/lerobot-trained-models/trained_model_wall_x_fast_eager_short_all_aic_mujoco_dataset --job_name=trained_model_wall_x_fast_eager_short_all_aic_mujoco_dataset --policy.device=cuda --wandb.enable=true --policy.repo_id=caai-aic/wall_x_fast_eager_short_all_aic_mujoco_dataset_policy --policy.private=true --tolerance_s=0.0002 --policy.pretrained_name_or_path=x-square-robot/wall-oss-flow --policy.prediction_mode=fast --policy.attn_implementation=eager --steps=3000 --batch_size=32 --policy.max_state_dim=26 --policy.max_action_dim=26
