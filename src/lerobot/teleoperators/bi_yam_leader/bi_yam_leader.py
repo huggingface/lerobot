@@ -108,28 +108,6 @@ class YamLeaderClient:
             raise RuntimeError("Client not connected")
         self._client.update_kp_kd(kp, kd)
 
-    def get_gripper_from_encoder(self) -> float:
-        """
-        Try to get gripper state from teaching handle encoder button.
-        Returns a value between 0 (closed) and 1 (open).
-        Falls back to 1.0 (open) if not available.
-        """
-        if self._client is None:
-            raise RuntimeError("Client not connected")
-        try:
-            # Try to get encoder state if the server exposes it
-            # This requires custom method in the i2rt server
-            obs = self._client.get_observations().result()
-            # Check if encoder button data is available in observations
-            # The encoder button state might be in io_inputs or similar field
-            if "io_inputs" in obs:
-                # Button pressed = closed gripper (0), not pressed = open (1)
-                return 0.0 if obs["io_inputs"][0] > 0.5 else 1.0
-            return 1.0  # Default to open if no encoder data
-        except Exception:
-            return 1.0  # Default to open on any error
-
-
 class BiYamLeader(Teleoperator):
     """
     Bimanual Yam Arms leader (teleoperator) using the i2rt library.
@@ -148,10 +126,10 @@ class BiYamLeader(Teleoperator):
     - Left leader arm server on port 5002 (default)
     - Right leader arm server on port 5001 (default)
 
-    Note: You'll need to run separate server processes for the leader arms.
-    You can modify the i2rt minimum_gello.py script to create read-only
-    servers that just expose the leader arm state without trying to control
-    a follower.
+    Note: Launch the leader RPC servers via
+    ``src/lerobot/robots/bi_yam_follower/run_bimanual_yam_server.py``, which
+    starts both leader arms (and both followers) in one process with the
+    update_kp_kd endpoint bound.
     """
 
     config_class = BiYamLeaderConfig
@@ -246,6 +224,11 @@ class BiYamLeader(Teleoperator):
 
         # Store a default kp value for bilateral control
         self._original_kp = np.ones(6) * 10.0
+
+        # Apply the configured bilateral_kp so send_feedback is honored from the
+        # start. With bilateral_kp == 0.0 this is a no-op (free movement).
+        if self.bilateral_kp > 0.0:
+            self.enable_torque()
 
         logger.info("Successfully connected to bimanual Yam leader arms")
 
@@ -423,6 +406,11 @@ class BiYamLeader(Teleoperator):
     def disconnect(self) -> None:
         """Disconnect from both leader arms."""
         logger.info("Disconnecting from bimanual Yam leader arms")
+
+        # Release bilateral PD so the arms don't continue holding their last
+        # commanded pose against the operator after the client goes away.
+        if self.bilateral_kp > 0.0:
+            self.disable_torque()
 
         self.left_arm.disconnect()
         self.right_arm.disconnect()
