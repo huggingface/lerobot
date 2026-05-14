@@ -54,15 +54,15 @@ Useful knobs:
   `OUTPUT_DIR/search_images/episode_XXX/step_YYYYY.json` file is also written
   with sorted candidate traces, pixel coordinates, world coordinates, scores,
   and original/selected flags.
-- `--dump-frames=true`: save the annotated rendered rollout frames as PNGs under
-  `OUTPUT_DIR/frames/episode_XXX/frame_YYYYY.png`, next to `videos/`. This uses
-  the same `--render-videos` episode limit as MP4 generation.
+- `--dump-frames=true`: save rollout frames as PNGs under
+  `OUTPUT_DIR/frames/episode_XXX/frame_YYYYY.png`, next to `videos/`. This is
+  independent of `--render-videos`; MP4 generation still uses `--render-videos`.
 - `--video_overlay=false`: disable the Search On/Off, step, reward, and coverage
   text overlay in rollout MP4s and dumped rollout frames.
-- `--plot_policy_trace`: with `--dump-frames=true` and `--one_step_further`,
-  save `policy_trace_step_YYYYY.png/json` under `OUTPUT_DIR/frames/episode_XXX/`
-  whenever the policy chunk is accepted without running search. The plot shows
-  raw policy action targets and the simulated agent trace for that accepted
+- `--plot_policy_trace`: save raw policy action-trace PNG/JSON pairs under
+  `OUTPUT_DIR/policy_frames/episode_XXX/policy_trace_step_YYYYY.png/json` at
+  each decision point, even if search later chooses a different chunk. The plot
+  shows raw policy action targets and the simulated agent trace for that policy
   chunk.
 - `--one_step_further`: before running beam search, simulate the raw policy
   chunk once. If its final PushT coverage does not drop by more than `0.05`,

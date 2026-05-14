@@ -223,7 +223,7 @@ def save_search_debug_image(
     sorted_traces = sorted(traces, key=lambda trace: trace.candidate_index)
     for trace in sorted_traces:
         color = original_color if trace.is_original else other_color
-        draw_trace_dots(image, trace.points, color=color, radius=4, thickness=-1, to_pixel=to_pixel)
+        draw_trace_dots(image, trace.points, color=color, radius=2, thickness=-1, to_pixel=to_pixel)
 
     for trace in sorted_traces:
         if trace.is_selected:
@@ -231,7 +231,7 @@ def save_search_debug_image(
                 image,
                 trace.points,
                 color=selected_color,
-                radius=7,
+                radius=2,
                 thickness=2,
                 to_pixel=to_pixel,
             )
@@ -814,7 +814,7 @@ def parse_args() -> PlannerConfig:
         dest="dump_frames",
         type=str_to_bool,
         default=False,
-        help="Write annotated rendered frames as PNGs under OUTPUT_DIR/frames/episode_XXX/.",
+        help="Write rollout frames as PNGs under OUTPUT_DIR/frames/episode_XXX/.",
     )
     parser.add_argument(
         "--plot-policy-trace",
@@ -822,8 +822,8 @@ def parse_args() -> PlannerConfig:
         dest="plot_policy_trace",
         action="store_true",
         help=(
-            "When --dump-frames and --one_step_further are enabled, save PNG/JSON traces for policy "
-            "chunks that are accepted without search."
+            "Save PNG/JSON traces for the raw policy chunk at each decision point under "
+            "OUTPUT_DIR/policy_frames/episode_XXX/."
         ),
     )
     parser.add_argument(
@@ -914,6 +914,7 @@ def run_episode(
     rng: np.random.Generator,
     video_dir: Path,
     frame_dir: Path,
+    policy_frame_dir: Path,
     search_image_dir: Path,
 ) -> EpisodeResult:
     adapter = PushTStateAdapter(base_env)
@@ -944,9 +945,10 @@ def run_episode(
     )
 
     frames: list[np.ndarray] = []
-    should_render = episode_index < cfg.render_videos
+    should_render_video = episode_index < cfg.render_videos
+    should_capture_rollout_frame = should_render_video or cfg.dump_frames
     frame_index = 0
-    if should_render:
+    if should_capture_rollout_frame:
         frame = maybe_annotate_frame(
             adapter.render(),
             [
@@ -956,7 +958,8 @@ def run_episode(
             ],
             enabled=cfg.video_overlay,
         )
-        frames.append(frame)
+        if should_render_video:
+            frames.append(frame)
         if cfg.dump_frames:
             write_frame_png(frame_dir / f"episode_{episode_index:03d}" / f"frame_{frame_index:05d}.png", frame)
         frame_index += 1
@@ -974,9 +977,10 @@ def run_episode(
         search_frame: np.ndarray | None = None
         should_search = True
         policy_rollout: SimRollout | None = None
+        policy_chunk: np.ndarray | None = None
         coverage_before = current_coverage(adapter)
 
-        if cfg.one_step_further:
+        if cfg.one_step_further or cfg.plot_policy_trace:
             policy_chunk = action_source.predict_chunk(observation, horizon=cfg.chunk_size)
             policy_rollout = rollout_actions(
                 adapter=adapter,
@@ -984,9 +988,29 @@ def run_episode(
                 start_step=env_step,
                 max_steps=max_steps,
             )
+            adapter.restore(root_state)
+            coverage_drop = coverage_before - policy_rollout.coverage
+            if cfg.plot_policy_trace:
+                save_policy_trace_debug(
+                    path=(
+                        policy_frame_dir
+                        / f"episode_{episode_index:03d}"
+                        / f"policy_trace_step_{env_step:05d}.png"
+                    ),
+                    frame=adapter.render(),
+                    actions=policy_chunk,
+                    rollout=policy_rollout,
+                    episode_index=episode_index,
+                    env_step=env_step,
+                    coverage_before=coverage_before,
+                    coverage_drop=coverage_drop,
+                )
+
+        if cfg.one_step_further:
+            assert policy_chunk is not None
+            assert policy_rollout is not None
             coverage_drop = coverage_before - policy_rollout.coverage
             should_search = coverage_drop > ONE_STEP_FURTHER_COVERAGE_DROP
-            adapter.restore(root_state)
 
             if not should_search:
                 action_chunk = policy_chunk
@@ -999,22 +1023,6 @@ def run_episode(
                     "policy_coverage_after": policy_rollout.coverage,
                     "coverage_drop": coverage_drop,
                 }
-                if cfg.dump_frames and cfg.plot_policy_trace:
-                    adapter.restore(root_state)
-                    save_policy_trace_debug(
-                        path=(
-                            frame_dir
-                            / f"episode_{episode_index:03d}"
-                            / f"policy_trace_step_{env_step:05d}.png"
-                        ),
-                        frame=adapter.render(),
-                        actions=policy_chunk,
-                        rollout=policy_rollout,
-                        episode_index=episode_index,
-                        env_step=env_step,
-                        coverage_before=coverage_before,
-                        coverage_drop=coverage_drop,
-                    )
             else:
                 search_frame = adapter.render() if cfg.dump_search_images else None
                 action_chunk, plan_info = planner.choose(
@@ -1068,7 +1076,7 @@ def run_episode(
             rewards.append(float(reward))
             success = success or bool(info.get("is_success", False))
             env_step += 1
-            if should_render:
+            if should_capture_rollout_frame:
                 frame = maybe_annotate_frame(
                     adapter.render(),
                     [
@@ -1078,7 +1086,8 @@ def run_episode(
                     ],
                     enabled=cfg.video_overlay,
                 )
-                frames.append(frame)
+                if should_render_video:
+                    frames.append(frame)
                 if cfg.dump_frames:
                     write_frame_png(
                         frame_dir / f"episode_{episode_index:03d}" / f"frame_{frame_index:05d}.png",
@@ -1100,7 +1109,7 @@ def run_episode(
             )
 
     video_path = None
-    if should_render and frames:
+    if should_render_video and frames:
         video_dir.mkdir(parents=True, exist_ok=True)
         video_path = str(video_dir / f"episode_{episode_index:03d}.mp4")
         write_video(video_path, np.asarray(frames), fps=int(base_env.unwrapped.metadata["render_fps"]))
@@ -1162,6 +1171,7 @@ def main() -> None:
                 rng=rng,
                 video_dir=cfg.output_dir / "videos",
                 frame_dir=cfg.output_dir / "frames",
+                policy_frame_dir=cfg.output_dir / "policy_frames",
                 search_image_dir=cfg.output_dir / "search_images",
             )
             results.append(result)
