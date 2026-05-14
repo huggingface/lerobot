@@ -1,0 +1,207 @@
+# VITA Reward Model
+
+VITA is a reward modeling method based on test-time adaptation over vision-language embeddings. In LeRobot, VITA is integrated as a **reward model** (not a policy) and can be trained with `lerobot-train` through the `reward_model` configuration path.
+
+**Paper**: [VITA: Test-Time Adaptation for Vision-Language Reward Modeling](https://arxiv.org/abs/2506.10085)
+
+## Why Reward Models?
+
+Behavior cloning treats all demonstration frames similarly, but datasets often contain pauses, corrections, and imperfect segments. Reward models estimate task progress from observations and language so you can:
+
+1. score trajectories frame-by-frame,
+2. compare successful vs failed behavior,
+3. build downstream training signals.
+
+VITA does this with online adaptation of a lightweight module while keeping the backbone frozen.
+
+## Overview
+
+The current integration covers the paper-aligned core:
+
+- Frozen multimodal backbone interface (`clip` and `openclip`)
+- Multimodal latent `z_t = [image_t ; text_t]`
+- Learned projections `P_K`, `P_V`, `P_Q`
+- Residual adaptation module `f_adapt` with per-episode fast weights
+- Adaptation loss `MSE(f_adapt(P_K z_t), P_V z_t)`
+- Sequential adaptation updates at inference
+- Reward prediction on adapted queries
+- Meta-learning outer loop in `forward`
+- Dissimilarity-based sub-trajectory sampling
+- Temporal-progress targets `y_t=t/T` by default
+
+## What "Zero-Shot" Means in VITA
+
+In VITA, **zero-shot does not mean "no training at all"**. It means:
+
+1. train a general reward/value model once on source demonstrations (paper-scale pretraining),
+2. then transfer to new tasks without target-task reward annotations,
+3. while using test-time adaptation to specialize to the current trajectory.
+
+For this reason, the quality of transfer depends on domain overlap (visual scene, robot embodiment, instruction style).
+
+## Paper Protocol vs This Integration
+
+The paper evaluates VITA with a broader pretraining/evaluation protocol (for example large expert sets such as BridgeData V2 subsets, plus downstream experiments).  
+This LeRobot integration focuses on the model core and training/inference APIs.
+
+- Included: architecture, adaptation dynamics, dissimilarity sampling, temporal-progress supervision.
+- Not included as a turnkey package: full paper benchmark reproduction pipeline and assets.
+
+If you train VITA directly on one small task dataset, you get a task-specific reward model.  
+To approach paper-style generalization, pretrain on diverse source demonstrations before transfer.
+
+## Inputs and Targets (What the code expects)
+
+At minimum, each training sample should provide:
+
+- `task` (string): natural language task description
+- image tensor at `reward_model.raw_image_key` (for example `observation.images.top`)
+
+By default, VITA uses temporal progress supervision (`t/T`) during training (`force_temporal_progress_targets=True`), so an explicit reward column is not required unless you disable this option.
+
+## Paper-to-code mapping
+
+| Paper component | LeRobot implementation |
+| --- | --- |
+| Frozen backbone encoder | `VitaBackbone`, `ClipVitaBackbone`, `OpenClipVitaBackbone` in `src/lerobot/rewards/vita/modeling_vita.py` |
+| Multimodal latent `z_t` | Concatenation of image/text embeddings in `VitaRewardModel.compute_reward` |
+| `P_K`, `P_V`, `P_Q` | `key_projection`, `value_projection`, `query_projection` |
+| Adaptation module `f_adapt` | `VitaAdaptationModule` in `src/lerobot/rewards/vita/adaptation.py` |
+| Adaptation loss | MSE in `VitaAdaptationModule.adaptation_step` |
+| Fast weights | `VitaAdaptationState.fast_weights` |
+| Reward head | `reward_head` in `VitaRewardModel` |
+| Outer-loop objective | `VitaRewardModel.forward` |
+| Dissimilarity sampling | `VitaRewardModel._sample_dissimilar_windows` |
+
+## Set Up Your Environment
+
+1. Install LeRobot following the [Installation Guide](./installation).
+2. Install VITA/OpenCLIP dependency:
+
+```bash
+pip install open_clip_torch
+```
+
+## Step 1: Inspect Dataset Keys
+
+Before training, confirm camera keys and feature names:
+
+```python
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+ds = LeRobotDataset("<YOUR_DATASET>", download_videos=False)
+print("camera keys:", ds.meta.camera_keys)
+print("feature keys:", list(ds.features.keys()))
+```
+
+## Step 2: Train VITA
+
+Train VITA as a reward model:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=<YOUR_DATASET> \
+  --reward_model.type=vita \
+  --reward_model.backbone_type=openclip \
+  --reward_model.openclip_model_name=ViT-B-32 \
+  --reward_model.openclip_pretrained=openai \
+  --reward_model.raw_image_key=<CAMERA_KEY> \
+  --reward_model.raw_text_key=task \
+  --reward_model.adaptation_dim=64 \
+  --reward_model.adaptation_lr=0.1 \
+  --reward_model.support_len=2 \
+  --reward_model.query_len=1 \
+  --reward_model.inner_steps=1 \
+  --reward_model.inner_lr=0.1 \
+  --reward_model.self_supervised_loss_weight=0.5 \
+  --reward_model.sampling_strategy=dissimilarity \
+  --reward_model.sampling_window_size=8 \
+  --reward_model.sampling_num_windows=8 \
+  --reward_model.sampling_stride=1 \
+  --reward_model.outer_loss_weight=1.0 \
+  --reward_model.device=cuda \
+  --output_dir=outputs/train/vita \
+  --batch_size=8 \
+  --steps=5000
+```
+
+### Multi-GPU training
+
+```bash
+accelerate launch --multi_gpu --num_processes=4 \
+  -m lerobot.scripts.lerobot_train \
+  --dataset.repo_id=<YOUR_DATASET> \
+  --reward_model.type=vita \
+  --reward_model.raw_image_key=<CAMERA_KEY> \
+  --reward_model.raw_text_key=task
+```
+
+### Training arguments (core)
+
+| Argument | Description | Default |
+| --- | --- | --- |
+| `--reward_model.raw_image_key` | Camera/image feature key from dataset | `observation.images.top` |
+| `--reward_model.raw_text_key` | Text key used for task conditioning | `task` |
+| `--reward_model.backbone_type` | `openclip`, `clip`, or `identity` | `openclip` |
+| `--reward_model.adaptation_dim` | Fast adaptation hidden dimension | `64` |
+| `--reward_model.adaptation_lr` | Test-time adaptation step size | `0.1` |
+| `--reward_model.inner_steps` | Number of outer-loop adaptation passes | `1` |
+| `--reward_model.inner_lr` | Outer-loop adaptation step size | `0.1` |
+| `--reward_model.sampling_strategy` | `contiguous` or `dissimilarity` | `dissimilarity` |
+| `--reward_model.force_temporal_progress_targets` | Use `t/T` targets when true | `true` |
+
+## Step 3: Resume or Fine-Tune
+
+Resume an interrupted run from the saved train config:
+
+```bash
+lerobot-train \
+  --config_path=outputs/train/vita/checkpoints/last/pretrained_model/train_config.json \
+  --resume=true
+```
+
+Fine-tune from an existing VITA checkpoint on a (possibly new) dataset:
+
+```bash
+lerobot-train \
+  --reward_model.path=outputs/train/vita/checkpoints/last/pretrained_model \
+  --dataset.repo_id=<YOUR_DATASET> \
+  --output_dir=outputs/train/vita_finetune \
+  --steps=2000
+```
+
+## Step 4: Score Trajectories
+
+Use the reward model directly for inference:
+
+```python
+import torch
+
+from lerobot.rewards.factory import make_reward_model
+from lerobot.rewards.vita.configuration_vita import VitaConfig
+
+cfg = VitaConfig(
+    backbone_type="openclip",
+    openclip_model_name="ViT-B-32",
+    openclip_pretrained="openai",
+    raw_image_key="observation.images.top",
+    raw_text_key="task",
+    adaptation_dim=64,
+)
+model = make_reward_model(cfg)
+
+batch = {
+    "observation.images.top": torch.rand(4, 1, 3, 224, 224),
+    "task": ["pick cube"] * 4,
+    "episode_start": torch.tensor([True, False, False, True]),
+}
+reward = model.compute_reward(batch)
+model.reset()
+```
+
+
+## Citation
+
+If VITA helps your project, please cite the original paper:
+
+- [VITA: Test-Time Adaptation for Vision-Language Reward Modeling](https://arxiv.org/abs/2506.10085)
