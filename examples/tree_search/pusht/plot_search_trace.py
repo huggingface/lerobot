@@ -72,10 +72,18 @@ def parse_args() -> argparse.Namespace:
         "--max-dots",
         type=int,
         default=10,
-        help="Maximum number of dots to draw per candidate trace. Use 0 to draw all points.",
+        help="Maximum number of leading dots to draw per candidate trace. Use 0 to draw all points.",
     )
     parser.add_argument("--line-thickness", type=int, default=2, help="Connecting line thickness.")
     parser.add_argument("--line-alpha", type=float, default=0.35, help="Alpha for connecting lines.")
+    parser.add_argument(
+        "--fade-dots",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Fade later dots and line segments along each trace. Enabled by default.",
+    )
+    parser.add_argument("--dot-start-alpha", type=float, default=1.0, help="Opacity of the first dot.")
+    parser.add_argument("--dot-end-alpha", type=float, default=0.0, help="Opacity of the last dot.")
     return parser.parse_args()
 
 
@@ -122,6 +130,39 @@ def draw_alpha_line(
     cv2.addWeighted(overlay, alpha, image, 1.0 - alpha, 0.0, image)
 
 
+def draw_alpha_circle(
+    image: np.ndarray,
+    center: tuple[int, int],
+    radius: int,
+    color: tuple[int, int, int],
+    *,
+    alpha: float,
+) -> None:
+    if radius <= 0 or alpha <= 0:
+        return
+    overlay = image.copy()
+    cv2.circle(overlay, center, radius, color, thickness=-1, lineType=cv2.LINE_AA)
+    cv2.addWeighted(overlay, alpha, image, 1.0 - alpha, 0.0, image)
+
+
+def trace_alpha(
+    *,
+    index: int,
+    count: int,
+    start_alpha: float,
+    end_alpha: float,
+    enabled: bool,
+) -> float:
+    if not enabled:
+        return start_alpha
+    start = float(np.clip(start_alpha, 0.0, 1.0))
+    end = float(np.clip(end_alpha, 0.0, 1.0))
+    if count <= 1:
+        return start
+    progress = index / (count - 1)
+    return start + (end - start) * progress
+
+
 def draw_trace(
     image: np.ndarray,
     points: list[tuple[int, int]],
@@ -130,32 +171,47 @@ def draw_trace(
     dot_radius: int,
     line_thickness: int,
     line_alpha: float,
+    fade_dots: bool,
+    dot_start_alpha: float,
+    dot_end_alpha: float,
 ) -> None:
     if not points:
         return
 
     for point_ix in range(1, len(points)):
         color = gradient_color(colors, point_ix, len(points))
+        segment_alpha = line_alpha * trace_alpha(
+            index=point_ix,
+            count=len(points),
+            start_alpha=dot_start_alpha,
+            end_alpha=dot_end_alpha,
+            enabled=fade_dots,
+        )
         draw_alpha_line(
             image,
             points[point_ix - 1],
             points[point_ix],
             color,
             thickness=line_thickness,
-            alpha=line_alpha,
+            alpha=segment_alpha,
         )
 
     for point_ix, point in enumerate(points):
         color = gradient_color(colors, point_ix, len(points))
-        # cv2.circle(image, point, dot_radius + 1, (255, 255, 255), thickness=-1, lineType=cv2.LINE_AA)
-        cv2.circle(image, point, dot_radius, color, thickness=-1, lineType=cv2.LINE_AA)
+        dot_alpha = trace_alpha(
+            index=point_ix,
+            count=len(points),
+            start_alpha=dot_start_alpha,
+            end_alpha=dot_end_alpha,
+            enabled=fade_dots,
+        )
+        draw_alpha_circle(image, point, dot_radius, color, alpha=dot_alpha)
 
 
 def limit_points(points: list[tuple[int, int]], max_dots: int) -> list[tuple[int, int]]:
     if max_dots <= 0 or len(points) <= max_dots:
         return points
-    indices = np.linspace(0, len(points) - 1, num=max_dots, dtype=np.int64)
-    return [points[int(index)] for index in indices]
+    return points[:max_dots]
 
 
 def json_matches(path: Path, *, episode: int | None, step: int | None) -> bool:
@@ -205,6 +261,9 @@ def render_trace_preview(
     max_dots: int,
     line_thickness: int,
     line_alpha: float,
+    fade_dots: bool,
+    dot_start_alpha: float,
+    dot_end_alpha: float,
 ) -> np.ndarray:
     rendered = np.ascontiguousarray(image.copy())
     traces = sorted(payload["traces"], key=lambda item: int(item["candidate_index"]))
@@ -220,6 +279,9 @@ def render_trace_preview(
             dot_radius=dot_radius,
             line_thickness=line_thickness,
             line_alpha=line_alpha,
+            fade_dots=fade_dots,
+            dot_start_alpha=dot_start_alpha,
+            dot_end_alpha=dot_end_alpha,
         )
 
     original = next((trace for trace in traces if trace["is_original"]), None)
@@ -231,6 +293,9 @@ def render_trace_preview(
             dot_radius=dot_radius,
             line_thickness=line_thickness,
             line_alpha=line_alpha,
+            fade_dots=fade_dots,
+            dot_start_alpha=dot_start_alpha,
+            dot_end_alpha=dot_end_alpha,
         )
 
     selected = next((trace for trace in traces if trace["is_selected"]), None)
@@ -242,6 +307,9 @@ def render_trace_preview(
             dot_radius=dot_radius + 1,
             line_thickness=line_thickness + 1,
             line_alpha=min(1.0, line_alpha + 0.15),
+            fade_dots=fade_dots,
+            dot_start_alpha=dot_start_alpha,
+            dot_end_alpha=dot_end_alpha,
         )
 
     return rendered
@@ -262,6 +330,9 @@ def main() -> None:
         max_dots=args.max_dots,
         line_thickness=args.line_thickness,
         line_alpha=args.line_alpha,
+        fade_dots=args.fade_dots,
+        dot_start_alpha=args.dot_start_alpha,
+        dot_end_alpha=args.dot_end_alpha,
     )
 
     episode_index = int(choice.payload["episode_index"])

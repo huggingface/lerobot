@@ -82,8 +82,10 @@ The plotter chooses a random `search_images/episode_XXX/step_YYYYY.json`, uses
 the matching rollout frame from `frames/` when present, and writes a styled PNG
 under `RUN_DIR/plot_previews/`. Noisy alternatives use a grayscale gradient, the
 original policy chunk uses a blue gradient, and the selected chunk uses the
-yellow-to-purple gradient. By default, each candidate trace is subsampled to at
-most 10 dots for readability; use `--max-dots=0` to draw every stored point.
+yellow-to-purple gradient. By default, each candidate trace shows only the first
+10 dots for readability; use `--max-dots=0` to draw every stored point.
+Later dots fade out by default; use `--no-fade-dots` to keep constant opacity,
+or tune the range with `--dot-start-alpha` and `--dot-end-alpha`.
 
 The evaluator reports `asr` (Alternative Selection Ratio) in the aggregate
 metrics. ASR is the percentage of decision points where the selected root chunk
