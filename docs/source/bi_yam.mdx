@@ -1,0 +1,367 @@
+# Bimanual YAM
+
+[YAM](https://github.com/i2rt-robotics/i2rt) (Yet Another Manipulator) is an open-source robotic arm from i2rt-robotics designed for research-grade teleoperation and imitation learning. This guide covers the bimanual setup: two follower arms paired with two leader arms (teaching handles) for data collection and policy rollout.
+
+## What's Unique?
+
+- **Server-process architecture**: arms are controlled through `portal` RPC servers (one per arm), decoupling LeRobot from the i2rt hardware loop and enabling gravity compensation inside the server.
+- **Teaching-handle leaders**: leader arms have an encoder button instead of a physical gripper, mapped to a binary open/close command on the follower side.
+- **Bilateral control**: a configurable `bilateral_kp` stiffness multiplier lets the followers mirror the leaders with adjustable firmness.
+- **Built on i2rt**: hardware control, CAN drivers, and the underlying server scaffolding come from the upstream [i2rt-robotics/i2rt](https://github.com/i2rt-robotics/i2rt) library.
+
+## Platform Requirements
+
+<Tip warning={true}>
+  **Linux only.** Bimanual YAM relies on SocketCAN (`can_*` interfaces) and the
+  `portal` RPC framework, neither of which is supported on macOS or Windows.
+</Tip>
+
+## Hardware Setup
+
+### Required CAN Interfaces
+
+You need four CAN interfaces. The example names used throughout this guide are:
+
+| Interface        | Purpose                                 |
+| ---------------- | --------------------------------------- |
+| `can_follower_r` | Right follower arm                      |
+| `can_follower_l` | Left follower arm                       |
+| `can_leader_r`   | Right leader arm (with teaching handle) |
+| `can_leader_l`   | Left leader arm (with teaching handle)  |
+
+Any names work — these are conventions you define via udev rules. For persistent naming on multi-arm setups, follow the official [i2rt hardware setup guide](https://github.com/i2rt-robotics/i2rt/blob/main/docs/getting-started/hardware-setup.md).
+
+Check that all four interfaces are present:
+
+```bash
+ip link show can_follower_r
+ip link show can_follower_l
+ip link show can_leader_r
+ip link show can_leader_l
+```
+
+### Initialize CAN Interfaces
+
+Before starting the YAM servers, bring every CAN interface up at 1 Mbit/s. A helper script auto-detects and resets every `can*` interface on the system:
+
+```bash
+python src/lerobot/robots/bi_yam_follower/reset_can_interfaces.py
+```
+
+### Gripper Control with Teaching Handles
+
+The teaching handles don't have physical grippers; they use an **encoder button** to command the follower gripper:
+
+- **Press the encoder button**: toggles the gripper between fully closed (`0.0`) and fully open (`1.0`).
+- The leader-side server reads the button and exposes it as a binary gripper state.
+- The follower gripper mirrors the open/close command in real time.
+- Only binary control is supported (no intermediate continuous positions).
+
+## Install LeRobot 🤗
+
+Follow our [Installation Guide](./installation), then install the YAM extras (Intel RealSense support recommended):
+
+```bash
+pip install -e ".[yam,intelrealsense]"
+```
+
+For OpenCV cameras only:
+
+```bash
+pip install -e ".[yam]"
+```
+
+This installs:
+
+- `portal` — RPC framework (Linux only)
+- `i2rt` — upstream robotics library ([i2rt-robotics/i2rt](https://github.com/i2rt-robotics/i2rt))
+- `pyrealsense2` — Intel RealSense support (with the `intelrealsense` extra)
+
+Verify:
+
+```bash
+python -c "import i2rt, portal; print('Dependencies OK')"
+```
+
+## Architecture
+
+```
+┌─────────────────┐         ┌─────────────────┐
+│  Leader Arms    │         │  Follower Arms  │
+│  (Teaching      │         │  (Execution)    │
+│   Handles)      │         │                 │
+└────────┬────────┘         └────────▲────────┘
+         │                           │
+         │ Read State                │ Send Actions
+         │                           │
+    ┌────▼────┐              ┌───────┴─────┐
+    │ Leader  │              │  Follower   │
+    │ Servers │              │  Servers    │
+    │ (5001,  │              │  (1234,     │
+    │  5002)  │              │   1235)     │
+    └────┬────┘              └───────▲─────┘
+         │                           │
+         │                           │
+    ┌────▼───────────────────────────┴──────┐
+    │         LeRobot Recording             │
+    │  - bi_yam_leader (teleoperator)       │
+    │  - bi_yam_follower (robot)            │
+    │  - Cameras                            │
+    │  - Dataset writer                     │
+    └───────────────────────────────────────┘
+```
+
+Each server:
+
+1. Connects to one YAM arm via CAN.
+2. Provides gravity compensation.
+3. Exposes state over a `portal` RPC endpoint.
+4. Accepts position commands (followers) or only streams state (leaders).
+
+## Usage
+
+### Start the YAM Servers
+
+<hfoptions id="server">
+<hfoption id="Unified server (recommended)">
+
+The unified launcher starts all four arm servers (2 followers + 2 leaders) in a single process:
+
+```bash
+python src/lerobot/robots/bi_yam_follower/run_bimanual_yam_server.py
+```
+
+Defaults:
+
+- Right follower: port 1234 (CAN: `can_follower_r`)
+- Left follower: port 1235 (CAN: `can_follower_l`)
+- Right leader: port 5001 (CAN: `can_leader_r`)
+- Left leader: port 5002 (CAN: `can_leader_l`)
+
+Customize CAN names:
+
+```bash
+python src/lerobot/robots/bi_yam_follower/run_bimanual_yam_server.py \
+  --right_follower_can can0 \
+  --left_follower_can can1 \
+  --right_leader_can can2 \
+  --left_leader_can can3
+```
+
+Follower-only mode (no leaders):
+
+```bash
+python src/lerobot/robots/bi_yam_follower/run_bimanual_yam_server.py \
+  --mode follower_only
+```
+
+</hfoption>
+<hfoption id="Individual servers">
+
+For debugging or custom setups, run each arm in its own terminal:
+
+```bash
+# Right follower
+python src/lerobot/robots/bi_yam_follower/run_yam_server.py \
+  --can_channel can_follower_r --gripper v3 --mode follower --server_port 1234
+
+# Left follower
+python src/lerobot/robots/bi_yam_follower/run_yam_server.py \
+  --can_channel can_follower_l --gripper v3 --mode follower --server_port 1235
+
+# Right leader
+python src/lerobot/robots/bi_yam_follower/run_yam_server.py \
+  --can_channel can_leader_r --gripper yam_teaching_handle --mode leader --server_port 5001
+
+# Left leader
+python src/lerobot/robots/bi_yam_follower/run_yam_server.py \
+  --can_channel can_leader_l --gripper yam_teaching_handle --mode leader --server_port 5002
+```
+
+</hfoption>
+</hfoptions>
+
+Leave the server terminal running while teleoperating or recording.
+
+### Test the Teleoperator
+
+In a second terminal, verify the LeRobot client can reach the servers:
+
+```bash
+lerobot-teleoperate \
+  --robot.type=bi_yam_follower \
+  --robot.left_arm_port=1235 \
+  --robot.right_arm_port=1234 \
+  --teleop.type=bi_yam_leader \
+  --teleop.left_arm_port=5002 \
+  --teleop.right_arm_port=5001 \
+  --display_data=true
+```
+
+### Find Cameras
+
+```bash
+lerobot-find-cameras realsense  # Intel RealSense
+lerobot-find-cameras opencv     # OpenCV-compatible cameras
+```
+
+Use the printed serial numbers / indices in the camera configs below.
+
+### Test Cameras with Teleoperation
+
+<hfoptions id="cameras">
+<hfoption id="Intel RealSense">
+
+```bash
+lerobot-teleoperate \
+  --robot.type=bi_yam_follower \
+  --robot.left_arm_port=1235 \
+  --robot.right_arm_port=1234 \
+  --teleop.type=bi_yam_leader \
+  --teleop.left_arm_port=5002 \
+  --teleop.right_arm_port=5001 \
+  --display_data=true \
+  --robot.cameras='{
+    left: {"type": "intelrealsense", "serial_number_or_name": "335122271633", "width": 640, "height": 480, "fps": 30},
+    right: {"type": "intelrealsense", "serial_number_or_name": "323622271837", "width": 640, "height": 480, "fps": 30},
+    top: {"type": "intelrealsense", "serial_number_or_name": "141722076304", "width": 640, "height": 480, "fps": 30}
+  }'
+```
+
+</hfoption>
+<hfoption id="OpenCV">
+
+```bash
+lerobot-teleoperate \
+  --robot.type=bi_yam_follower \
+  --robot.left_arm_port=1235 \
+  --robot.right_arm_port=1234 \
+  --teleop.type=bi_yam_leader \
+  --teleop.left_arm_port=5002 \
+  --teleop.right_arm_port=5001 \
+  --display_data=true \
+  --robot.cameras='{
+    left: {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 30},
+    right: {"type": "opencv", "index_or_path": 10, "width": 640, "height": 480, "fps": 30},
+    top: {"type": "opencv", "index_or_path": 4, "width": 640, "height": 480, "fps": 30}
+  }'
+```
+
+</hfoption>
+</hfoptions>
+
+### Log in to Hugging Face
+
+```bash
+uvx hf auth login
+```
+
+### Record a Dataset
+
+```bash
+lerobot-record \
+  --robot.type=bi_yam_follower \
+  --robot.left_arm_port=1235 \
+  --robot.right_arm_port=1234 \
+  --robot.cameras='{
+    left: {"type": "intelrealsense", "serial_number_or_name": "335122271633", "width": 640, "height": 480, "fps": 30},
+    right: {"type": "intelrealsense", "serial_number_or_name": "323622271837", "width": 640, "height": 480, "fps": 30},
+    top: {"type": "intelrealsense", "serial_number_or_name": "141722076304", "width": 640, "height": 480, "fps": 30}
+  }' \
+  --teleop.type=bi_yam_leader \
+  --teleop.left_arm_port=5002 \
+  --teleop.right_arm_port=5001 \
+  --dataset.repo_id=${HF_USER}/bimanual-yam-demo \
+  --dataset.num_episodes=10 \
+  --dataset.single_task="Pick and place the object" \
+  --display_data=true
+```
+
+### Run a Trained Policy
+
+Drop the teleop block and pass `--policy.path`:
+
+```bash
+lerobot-record \
+  --robot.type=bi_yam_follower \
+  --robot.left_arm_port=1235 \
+  --robot.right_arm_port=1234 \
+  --robot.cameras='{
+    left: {"type": "intelrealsense", "serial_number_or_name": "335122271633", "width": 640, "height": 480, "fps": 30},
+    right: {"type": "intelrealsense", "serial_number_or_name": "323622271837", "width": 640, "height": 480, "fps": 30},
+    top: {"type": "intelrealsense", "serial_number_or_name": "141722076304", "width": 640, "height": 480, "fps": 30}
+  }' \
+  --policy.path=path/to/trained/policy \
+  --dataset.repo_id=${HF_USER}/bimanual-yam-eval \
+  --dataset.num_episodes=5
+```
+
+### Visualize Arm State (MuJoCo)
+
+Visualize arm state with MuJoCo:
+
+```bash
+# Local visualization (directly connected to hardware)
+python src/lerobot/robots/bi_yam_follower/run_yam_server.py \
+  --can_channel can_follower_r --gripper v3 --mode visualizer_local
+
+# Remote visualization (connect to a running server)
+python src/lerobot/robots/bi_yam_follower/run_yam_server.py \
+  --server_host localhost --server_port 1234 --mode visualizer_remote
+```
+
+## Configuration Options
+
+### Follower (`bi_yam_follower`)
+
+| Parameter                       | Default     | Description                                       |
+| ------------------------------- | ----------- | ------------------------------------------------- |
+| `left_arm_port`                 | `1235`      | RPC port for the left follower server             |
+| `right_arm_port`                | `1234`      | RPC port for the right follower server            |
+| `server_host`                   | `localhost` | Server hostname                                   |
+| `left_arm_max_relative_target`  | `None`      | Optional per-step safety limit for the left arm   |
+| `right_arm_max_relative_target` | `None`      | Optional per-step safety limit for the right arm  |
+| `cameras`                       | `{}`        | Camera configurations (shared between both arms)  |
+
+### Leader (`bi_yam_leader`)
+
+| Parameter        | Default     | Description                                                                                                |
+| ---------------- | ----------- | ---------------------------------------------------------------------------------------------------------- |
+| `left_arm_port`  | `5002`      | RPC port for the left leader server                                                                        |
+| `right_arm_port` | `5001`      | RPC port for the right leader server                                                                       |
+| `server_host`    | `localhost` | Server hostname                                                                                            |
+| `bilateral_kp`   | `1.0`       | Stiffness multiplier (final kp = `bilateral_kp` × robot's natural kp). Typical: 0.5 (gentle) to 2.0 (firm). |
+
+## Troubleshooting
+
+### CAN interface issues
+
+```bash
+ip link show | grep can             # list interfaces
+sudo ip link set can_follower_r up  # bring one up
+```
+
+### Port already in use
+
+```bash
+lsof -ti:1234 | xargs kill -9
+lsof -ti:1235 | xargs kill -9
+lsof -ti:5001 | xargs kill -9
+lsof -ti:5002 | xargs kill -9
+```
+
+### Connection timeouts
+
+1. Make sure all four i2rt server processes are running.
+2. Check that each server started without errors.
+3. Verify the port numbers match between server and client config.
+
+### Slow control loop
+
+Warnings about slow control frequency usually mean the host is overloaded. Try reducing camera resolution / FPS, or closing unrelated processes.
+
+## Resources
+
+- [i2rt-robotics/i2rt](https://github.com/i2rt-robotics/i2rt) — upstream YAM hardware library
+- [i2rt hardware setup guide](https://github.com/i2rt-robotics/i2rt/blob/main/docs/getting-started/hardware-setup.md) — persistent CAN naming, multi-arm udev rules
+- `portal` — RPC framework (installed with the `yam` extra)
