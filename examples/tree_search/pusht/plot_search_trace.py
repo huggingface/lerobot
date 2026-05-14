@@ -90,6 +90,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--dot-start-alpha", type=float, default=1.0, help="Opacity of the first dot.")
     parser.add_argument("--dot-end-alpha", type=float, default=0.0, help="Opacity of the last dot.")
+    parser.add_argument(
+        "--fade-last-n",
+        type=int,
+        default=0,
+        help=(
+            "Only fade the last N rendered points. Use 0 to fade across the full trace, "
+            "which preserves the previous behavior."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -158,6 +167,7 @@ def trace_alpha(
     start_alpha: float,
     end_alpha: float,
     enabled: bool,
+    fade_last_n: int,
 ) -> float:
     if not enabled:
         return start_alpha
@@ -165,7 +175,16 @@ def trace_alpha(
     end = float(np.clip(end_alpha, 0.0, 1.0))
     if count <= 1:
         return start
-    progress = index / (count - 1)
+
+    if fade_last_n > 0:
+        fade_count = min(fade_last_n, count)
+        fade_start = count - fade_count
+        if index < fade_start:
+            return start
+        progress = (index - fade_start) / max(1, fade_count - 1)
+    else:
+        progress = index / (count - 1)
+
     return start + (end - start) * progress
 
 
@@ -180,6 +199,7 @@ def draw_trace(
     fade_dots: bool,
     dot_start_alpha: float,
     dot_end_alpha: float,
+    fade_last_n: int,
     render_mode: str,
 ) -> None:
     if not points:
@@ -194,6 +214,7 @@ def draw_trace(
                 start_alpha=dot_start_alpha,
                 end_alpha=dot_end_alpha,
                 enabled=fade_dots,
+                fade_last_n=fade_last_n,
             )
             draw_alpha_line(
                 image,
@@ -213,6 +234,7 @@ def draw_trace(
                 start_alpha=dot_start_alpha,
                 end_alpha=dot_end_alpha,
                 enabled=fade_dots,
+                fade_last_n=fade_last_n,
             )
             draw_alpha_circle(image, point, dot_radius, color, alpha=dot_alpha)
 
@@ -273,6 +295,7 @@ def render_trace_preview(
     fade_dots: bool,
     dot_start_alpha: float,
     dot_end_alpha: float,
+    fade_last_n: int,
     render_mode: str,
 ) -> np.ndarray:
     rendered = np.ascontiguousarray(image.copy())
@@ -292,6 +315,7 @@ def render_trace_preview(
             fade_dots=fade_dots,
             dot_start_alpha=dot_start_alpha,
             dot_end_alpha=dot_end_alpha,
+            fade_last_n=fade_last_n,
             render_mode=render_mode,
         )
 
@@ -307,6 +331,7 @@ def render_trace_preview(
             fade_dots=fade_dots,
             dot_start_alpha=dot_start_alpha,
             dot_end_alpha=dot_end_alpha,
+            fade_last_n=fade_last_n,
             render_mode=render_mode,
         )
 
@@ -322,6 +347,7 @@ def render_trace_preview(
             fade_dots=fade_dots,
             dot_start_alpha=dot_start_alpha,
             dot_end_alpha=dot_end_alpha,
+            fade_last_n=fade_last_n,
             render_mode=render_mode,
         )
 
@@ -346,6 +372,7 @@ def main() -> None:
         fade_dots=args.fade_dots,
         dot_start_alpha=args.dot_start_alpha,
         dot_end_alpha=args.dot_end_alpha,
+        fade_last_n=args.fade_last_n,
         render_mode=args.render_mode,
     )
 
