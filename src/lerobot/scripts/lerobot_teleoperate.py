@@ -102,6 +102,7 @@ from lerobot.teleoperators import (  # noqa: F401
 )
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.robot_utils import precise_sleep
+from lerobot.utils.smooth_move import follower_smooth_move_to, teleop_supports_joint_pose
 from lerobot.utils.utils import init_logging, move_cursor_up
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data, shutdown_rerun
 
@@ -224,6 +225,18 @@ def teleoperate(cfg: TeleoperateConfig):
     teleop.connect()
     robot.connect()
 
+    initial_action = {
+        k: v for k, v in robot.get_observation().items() if k in robot.action_features and k.endswith(".pos")
+    }
+
+    if teleop_supports_joint_pose(teleop):
+        obs = robot.get_observation()
+        teleop_action = teleop.get_action()
+        processed = teleop_action_processor((teleop_action, obs))
+        target = {k: v for k, v in robot_action_processor((processed, obs)).items() if k.endswith(".pos")}
+        logging.info("Smooth handover: sliding follower to leader pose")
+        follower_smooth_move_to(robot, initial_action, target)
+
     try:
         teleop_loop(
             teleop=teleop,
@@ -239,6 +252,17 @@ def teleoperate(cfg: TeleoperateConfig):
     except KeyboardInterrupt:
         pass
     finally:
+        try:
+            logging.info("Returning follower to initial pose")
+            current = {
+                k: v
+                for k, v in robot.get_observation().items()
+                if k in robot.action_features and k.endswith(".pos")
+            }
+            follower_smooth_move_to(robot, current, initial_action)
+        except Exception:
+            logging.exception("Could not return robot to initial pose")
+
         if cfg.display_data:
             shutdown_rerun()
         teleop.disconnect()
