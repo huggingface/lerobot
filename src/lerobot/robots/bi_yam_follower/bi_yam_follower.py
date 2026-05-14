@@ -370,10 +370,12 @@ class BiYamFollower(Robot):
             if key in action:
                 right_action.append(action[key])
 
-        # Apply max_relative_target if configured using shared utility
+        # Apply max_relative_target if configured using shared utility.
+        # Preserve DOF order (joints 0..N-1, then gripper) by iterating the dict
+        # in insertion order rather than sorting keys lexicographically — sorting
+        # would place "*gripper.pos" before "*joint_*.pos" and misorder commands.
         if self.config.left_arm_max_relative_target is not None and len(left_action) > 0:
             left_current = self.left_arm.get_joint_pos()
-            # Build dict of {key: (goal, present)} for ensure_safe_goal_position
             left_goal_present = {}
             for i, goal_val in enumerate(left_action):
                 key = (
@@ -383,12 +385,10 @@ class BiYamFollower(Robot):
                 )
                 left_goal_present[key] = (goal_val, float(left_current[i]))
             safe_left = ensure_safe_goal_position(left_goal_present, self.config.left_arm_max_relative_target)
-            # Extract back to array in order
-            left_action = [safe_left[k] for k in sorted(safe_left.keys())]
+            left_action = [safe_left[k] for k in left_goal_present]
 
         if self.config.right_arm_max_relative_target is not None and len(right_action) > 0:
             right_current = self.right_arm.get_joint_pos()
-            # Build dict of {key: (goal, present)} for ensure_safe_goal_position
             right_goal_present = {}
             for i, goal_val in enumerate(right_action):
                 key = (
@@ -400,8 +400,7 @@ class BiYamFollower(Robot):
             safe_right = ensure_safe_goal_position(
                 right_goal_present, self.config.right_arm_max_relative_target
             )
-            # Extract back to array in order
-            right_action = [safe_right[k] for k in sorted(safe_right.keys())]
+            right_action = [safe_right[k] for k in right_goal_present]
 
         # Send commands to arms
         if len(left_action) > 0:
