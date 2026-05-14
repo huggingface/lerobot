@@ -68,6 +68,12 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--dot-radius", type=int, default=6, help="Dot radius in pixels.")
+    parser.add_argument(
+        "--max-dots",
+        type=int,
+        default=10,
+        help="Maximum number of dots to draw per candidate trace. Use 0 to draw all points.",
+    )
     parser.add_argument("--line-thickness", type=int, default=2, help="Connecting line thickness.")
     parser.add_argument("--line-alpha", type=float, default=0.35, help="Alpha for connecting lines.")
     return parser.parse_args()
@@ -141,8 +147,15 @@ def draw_trace(
 
     for point_ix, point in enumerate(points):
         color = gradient_color(colors, point_ix, len(points))
-        cv2.circle(image, point, dot_radius + 1, (255, 255, 255), thickness=-1, lineType=cv2.LINE_AA)
+        # cv2.circle(image, point, dot_radius + 1, (255, 255, 255), thickness=-1, lineType=cv2.LINE_AA)
         cv2.circle(image, point, dot_radius, color, thickness=-1, lineType=cv2.LINE_AA)
+
+
+def limit_points(points: list[tuple[int, int]], max_dots: int) -> list[tuple[int, int]]:
+    if max_dots <= 0 or len(points) <= max_dots:
+        return points
+    indices = np.linspace(0, len(points) - 1, num=max_dots, dtype=np.int64)
+    return [points[int(index)] for index in indices]
 
 
 def json_matches(path: Path, *, episode: int | None, step: int | None) -> bool:
@@ -189,6 +202,7 @@ def render_trace_preview(
     image: np.ndarray,
     payload: dict[str, Any],
     dot_radius: int,
+    max_dots: int,
     line_thickness: int,
     line_alpha: float,
 ) -> np.ndarray:
@@ -198,7 +212,7 @@ def render_trace_preview(
     for trace in traces:
         if trace["is_selected"] or trace["is_original"]:
             continue
-        points = [tuple(map(int, point)) for point in trace["pixel_points"]]
+        points = limit_points([tuple(map(int, point)) for point in trace["pixel_points"]], max_dots)
         draw_trace(
             rendered,
             points,
@@ -212,7 +226,7 @@ def render_trace_preview(
     if original is not None:
         draw_trace(
             rendered,
-            [tuple(map(int, point)) for point in original["pixel_points"]],
+            limit_points([tuple(map(int, point)) for point in original["pixel_points"]], max_dots),
             ORIGINAL_GRADIENT,
             dot_radius=dot_radius,
             line_thickness=line_thickness,
@@ -223,7 +237,7 @@ def render_trace_preview(
     if selected is not None:
         draw_trace(
             rendered,
-            [tuple(map(int, point)) for point in selected["pixel_points"]],
+            limit_points([tuple(map(int, point)) for point in selected["pixel_points"]], max_dots),
             CHOSEN_GRADIENT,
             dot_radius=dot_radius + 1,
             line_thickness=line_thickness + 1,
@@ -245,6 +259,7 @@ def main() -> None:
         image=base_image,
         payload=choice.payload,
         dot_radius=args.dot_radius,
+        max_dots=args.max_dots,
         line_thickness=args.line_thickness,
         line_alpha=args.line_alpha,
     )
