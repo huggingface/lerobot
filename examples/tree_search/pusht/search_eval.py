@@ -79,6 +79,7 @@ class PlannerConfig:
     score_mode: str
     max_steps: int | None
     render_videos: int
+    video_overlay: bool
     log_every_steps: int
     dump_frames: bool
     plot_policy_trace: bool
@@ -186,6 +187,12 @@ def write_frame_png(path: Path, frame: np.ndarray) -> None:
         image = np.clip(image, 0, 255).astype(np.uint8)
     if not cv2.imwrite(str(path), cv2.cvtColor(image, cv2.COLOR_RGB2BGR)):
         raise RuntimeError(f"Failed to write frame image: {path}")
+
+
+def maybe_annotate_frame(frame: np.ndarray, lines: Sequence[str], *, enabled: bool) -> np.ndarray:
+    if not enabled:
+        return np.ascontiguousarray(frame.copy())
+    return annotate_frame(frame, lines)
 
 
 def save_search_debug_image(
@@ -786,6 +793,14 @@ def parse_args() -> PlannerConfig:
     parser.add_argument("--max-steps", "--max_steps", dest="max_steps", type=int, default=None)
     parser.add_argument("--render-videos", "--render_videos", dest="render_videos", type=int, default=1)
     parser.add_argument(
+        "--video-overlay",
+        "--video_overlay",
+        dest="video_overlay",
+        type=str_to_bool,
+        default=True,
+        help="Overlay Search On/Off, step, reward, and coverage text on rollout videos and dumped frames.",
+    )
+    parser.add_argument(
         "--log-every-steps",
         "--log_every_steps",
         dest="log_every_steps",
@@ -932,13 +947,14 @@ def run_episode(
     should_render = episode_index < cfg.render_videos
     frame_index = 0
     if should_render:
-        frame = annotate_frame(
+        frame = maybe_annotate_frame(
             adapter.render(),
             [
                 "Search: Off",
                 f"episode={episode_index} step=0/{max_steps}",
                 "reset",
             ],
+            enabled=cfg.video_overlay,
         )
         frames.append(frame)
         if cfg.dump_frames:
@@ -1053,13 +1069,14 @@ def run_episode(
             success = success or bool(info.get("is_success", False))
             env_step += 1
             if should_render:
-                frame = annotate_frame(
+                frame = maybe_annotate_frame(
                     adapter.render(),
                     [
                         f"Search: {'On' if should_search and action_ix == 0 else 'Off'}",
                         f"episode={episode_index} step={env_step}/{max_steps}",
                         f"reward={reward:.3f} coverage={float(info.get('coverage', 0.0)):.3f}",
                     ],
+                    enabled=cfg.video_overlay,
                 )
                 frames.append(frame)
                 if cfg.dump_frames:

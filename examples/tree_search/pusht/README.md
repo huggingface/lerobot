@@ -57,6 +57,8 @@ Useful knobs:
 - `--dump-frames=true`: save the annotated rendered rollout frames as PNGs under
   `OUTPUT_DIR/frames/episode_XXX/frame_YYYYY.png`, next to `videos/`. This uses
   the same `--render-videos` episode limit as MP4 generation.
+- `--video_overlay=false`: disable the Search On/Off, step, reward, and coverage
+  text overlay in rollout MP4s and dumped rollout frames.
 - `--plot_policy_trace`: with `--dump-frames=true` and `--one_step_further`,
   save `policy_trace_step_YYYYY.png/json` under `OUTPUT_DIR/frames/episode_XXX/`
   whenever the policy chunk is accepted without running search. The plot shows
