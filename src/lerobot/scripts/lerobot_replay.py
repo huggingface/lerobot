@@ -70,6 +70,7 @@ from lerobot.robots import (  # noqa: F401
 from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.robot_utils import precise_sleep
+from lerobot.utils.smooth_move import follower_smooth_move_to
 from lerobot.utils.utils import (
     init_logging,
     log_say,
@@ -110,7 +111,21 @@ def replay(cfg: ReplayConfig):
 
     robot.connect()
 
+    initial_action = {
+        k: v for k, v in robot.get_observation().items() if k in robot.action_features and k.endswith(".pos")
+    }
+
+    first_action_array = actions[0][ACTION]
+    first_action = {
+        name: first_action_array[i]
+        for i, name in enumerate(dataset.features[ACTION]["names"])
+        if name.endswith(".pos") and name in robot.action_features
+    }
+
     try:
+        log_say("Moving robot to start pose", cfg.play_sounds, blocking=True)
+        follower_smooth_move_to(robot, initial_action, first_action, duration_s=2.0)
+
         log_say("Replaying episode", cfg.play_sounds, blocking=True)
         for idx in range(dataset.num_frames):
             start_episode_t = time.perf_counter()
@@ -129,6 +144,16 @@ def replay(cfg: ReplayConfig):
             dt_s = time.perf_counter() - start_episode_t
             precise_sleep(max(1 / dataset.fps - dt_s, 0.0))
     finally:
+        try:
+            log_say("Returning robot to initial pose", cfg.play_sounds, blocking=True)
+            current = {
+                k: v
+                for k, v in robot.get_observation().items()
+                if k in robot.action_features and k.endswith(".pos")
+            }
+            follower_smooth_move_to(robot, current, initial_action, duration_s=2.0)
+        except Exception:
+            logging.exception("Could not return robot to initial pose")
         robot.disconnect()
 
 
