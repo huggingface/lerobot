@@ -424,7 +424,7 @@ def record(
             if k in robot.action_features and k.endswith(".pos")
         }
 
-        if isinstance(teleop, Teleoperator) and teleop_supports_joint_pose(teleop):
+        if teleop is not None and teleop_supports_joint_pose(teleop):
             obs = robot.get_observation()
             teleop_action = teleop.get_action()
             processed = teleop_action_processor((teleop_action, obs))
