@@ -154,13 +154,15 @@ def visualize_dataset(
                 rr.log(key, entity=img_entity)
 
             # display each dimension of action space (e.g. actuators command)
+            # atleast_1d so 1D features (single motor / single-dim action) don't blow up
+            # on `iteration over a 0-d tensor` after indexing the batch.
             if ACTION in batch:
-                for dim_idx, val in enumerate(batch[ACTION][i]):
+                for dim_idx, val in enumerate(torch.atleast_1d(batch[ACTION][i])):
                     rr.log(f"{ACTION}/{dim_idx}", rr.Scalars(val.item()))
 
             # display each dimension of observed state space (e.g. agent position in joint space)
             if OBS_STATE in batch:
-                for dim_idx, val in enumerate(batch[OBS_STATE][i]):
+                for dim_idx, val in enumerate(torch.atleast_1d(batch[OBS_STATE][i])):
                     rr.log(f"state/{dim_idx}", rr.Scalars(val.item()))
 
             if DONE in batch:
