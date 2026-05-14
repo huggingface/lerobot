@@ -49,6 +49,16 @@ def teleop_supports_feedback(teleop: Teleoperator) -> bool:
     )
 
 
+def teleop_supports_joint_pose(teleop: Teleoperator) -> bool:
+    """Return True when ``teleop.get_action()`` produces joint-pose values.
+
+    Detected by inspecting ``teleop.action_features`` for any key ending in
+    ``.pos``. Excludes input-device teleops like keyboard/gamepad whose
+    actions are key states or end-effector deltas, not joint positions.
+    """
+    return any(isinstance(k, str) and k.endswith(".pos") for k in teleop.action_features)
+
+
 def teleop_smooth_move_to(
     teleop: Teleoperator, target_pos: dict, duration_s: float = 2.0, fps: int = 30
 ) -> None:
