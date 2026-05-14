@@ -67,6 +67,9 @@ class ServerRobot:
         self._server.bind("command_joint_state", self._robot.command_joint_state)
         self._server.bind("get_observations", self._robot.get_observations)
         self._server.bind("update_kp_kd", self._robot.update_kp_kd)
+        # Leader-only RPC for bilateral-feedback baseline; followers don't expose it.
+        if hasattr(self._robot, "get_natural_kp"):
+            self._server.bind("get_natural_kp", self._robot.get_natural_kp)
 
     def serve_background(self) -> threading.Thread:
         """Start serving the robot in a background thread."""
@@ -96,6 +99,16 @@ class YAMLeaderRobot:
         self._robot = robot
         self._motor_chain = robot.motor_chain
         self._name = name
+        # Snapshot the i2rt-configured per-joint PD gains BEFORE any client
+        # update_kp_kd() can overwrite them. ``get_natural_kp`` returns this
+        # snapshot so clients can drive bilateral feedback at the arm's
+        # configured stiffness regardless of variant (YAM / YAM_PRO /
+        # YAM_ULTRA / BIG_YAM all ship different yaml configs).
+        self._natural_kp = self._robot._kp.copy()
+
+    def get_natural_kp(self) -> np.ndarray:
+        """Return the per-joint kp the leader was configured with at startup."""
+        return self._natural_kp
 
     def num_dofs(self) -> int:
         """Get number of DOFs (6 joints + 1 gripper)."""

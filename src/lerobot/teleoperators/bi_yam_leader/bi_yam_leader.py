@@ -108,6 +108,18 @@ class YamLeaderClient:
             raise RuntimeError("Client not connected")
         self._client.update_kp_kd(kp, kd)
 
+    def get_natural_kp(self) -> np.ndarray:
+        """Return the leader arm's per-joint kp as configured by i2rt at server startup.
+
+        The unified server snapshots ``robot._kp`` in YAMLeaderRobot.__init__ before
+        any update_kp_kd call can overwrite it, so this is the arm-variant-correct
+        baseline for bilateral feedback (YAM / YAM_PRO / YAM_ULTRA / BIG_YAM each
+        ship distinct configs).
+        """
+        if self._client is None:
+            raise RuntimeError("Client not connected")
+        return self._client.get_natural_kp().result()
+
 class BiYamLeader(Teleoperator):
     """
     Bimanual Yam Arms leader (teleoperator) using the i2rt library.
@@ -222,8 +234,13 @@ class BiYamLeader(Teleoperator):
 
         logger.info(f"Left leader arm DOFs: {self._left_dofs}, Right leader arm DOFs: {self._right_dofs}")
 
-        # Store a default kp value for bilateral control
-        self._original_kp = np.ones(6) * 10.0
+        # Fetch the leader's natural kp from the server so bilateral feedback
+        # runs at the i2rt-configured stiffness for whichever arm variant is
+        # connected (YAM / YAM_PRO / YAM_ULTRA / BIG_YAM ship different
+        # per-joint defaults). Assumes left/right are the same variant; if they
+        # diverge in the future, fetch and store per-arm.
+        self._original_kp = self.left_arm.get_natural_kp()
+        logger.info(f"Leader natural kp from i2rt config: {self._original_kp}")
 
         # Apply the configured bilateral_kp so send_feedback is honored from the
         # start. With bilateral_kp == 0.0 this is a no-op (free movement).
@@ -365,11 +382,13 @@ class BiYamLeader(Teleoperator):
         """Put the leader into position-tracking mode (follows ``send_feedback`` goals).
 
         Sets non-zero PD gains scaled by ``self.bilateral_kp`` so the leader arms
-        actively track commanded positions.
+        actively track commanded positions. The kp baseline is the per-joint
+        natural kp fetched from the server in ``connect()``.
         """
         if self._original_kp is None:
-            logger.warning("Original kp not set, using default")
-            self._original_kp = np.ones(6) * 10.0
+            raise RuntimeError(
+                "Natural kp not initialized; call connect() before enable_torque()."
+            )
 
         kp = self._original_kp * self.bilateral_kp
         zero_gains = np.zeros(6)
