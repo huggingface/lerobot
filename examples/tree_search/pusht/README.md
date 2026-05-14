@@ -70,6 +70,20 @@ Useful knobs:
   skip search and execute the policy chunk directly. If coverage drops by more
   than `0.05`, run search as usual.
 
+Offline trace styling preview:
+
+```bash
+uv run python examples/tree_search/pusht/plot_search_trace.py \
+  harezmi-extend-dump/pusht/5_eps_viz/n40_c3_d3_e10 \
+  --seed=0
+```
+
+The plotter chooses a random `search_images/episode_XXX/step_YYYYY.json`, uses
+the matching rollout frame from `frames/` when present, and writes a styled PNG
+under `RUN_DIR/plot_previews/`. Noisy alternatives use a grayscale gradient, the
+original policy chunk uses a blue gradient, and the selected chunk uses the
+yellow-to-purple gradient.
+
 The evaluator reports `asr` (Alternative Selection Ratio) in the aggregate
 metrics. ASR is the percentage of decision points where the selected root chunk
 was a noisy alternative (`selected_candidate_index != 0`) instead of the
