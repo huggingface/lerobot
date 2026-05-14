@@ -101,10 +101,12 @@ uv run python examples/tree_search/pusht/video_search_trace.py \
   --max-dots=10
 ```
 
-The video writer scans sorted `search_images/episode_XXX/step_YYYYY.json` files
-and writes `RUN_DIR/plot_videos/search_trace.mp4` by default. It accepts the
-same plotting controls as `plot_search_trace.py`, plus video filters such as
-`--episode`, `--start-step`, `--end-step`, `--max-frames`, and `--output-path`.
+The video writer scans sorted `search_images/episode_XXX/step_YYYYY.json` files.
+With `--episode=N`, it writes `RUN_DIR/plot_videos/eps_N.mp4` by default;
+without an episode filter, it writes `RUN_DIR/plot_videos/search_trace.mp4`. It
+accepts the same plotting controls as `plot_search_trace.py`, plus video filters
+such as `--episode`, `--start-step`, `--end-step`, `--max-frames`, and
+`--output-path`.
 
 The evaluator reports `asr` (Alternative Selection Ratio) in the aggregate
 metrics. ASR is the percentage of decision points where the selected root chunk

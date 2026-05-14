@@ -32,7 +32,10 @@ def parse_args() -> argparse.Namespace:
         "--output-path",
         type=Path,
         default=None,
-        help="Output MP4 path. Defaults to RUN_DIR/plot_videos/search_trace.mp4.",
+        help=(
+            "Output MP4 path. Defaults to RUN_DIR/plot_videos/eps_N.mp4 when "
+            "--episode=N is set, otherwise RUN_DIR/plot_videos/search_trace.mp4."
+        ),
     )
     parser.add_argument("--episode", type=int, default=None, help="Render only one episode index.")
     parser.add_argument("--step", type=int, default=None, help="Render only one environment step.")
@@ -186,6 +189,11 @@ def write_video(run_dir: Path, choices: list[TraceChoice], args: argparse.Namesp
         writer.release()
 
 
+def default_output_path(run_dir: Path, *, episode: int | None) -> Path:
+    filename = f"eps_{episode}.mp4" if episode is not None else "search_trace.mp4"
+    return run_dir / "plot_videos" / filename
+
+
 def main() -> None:
     args = parse_args()
     if args.fps <= 0:
@@ -195,7 +203,7 @@ def main() -> None:
     output_path = (
         args.output_path.expanduser().resolve()
         if args.output_path
-        else run_dir / "plot_videos" / "search_trace.mp4"
+        else default_output_path(run_dir, episode=args.episode)
     )
     choices = collect_trace_choices(
         run_dir,
