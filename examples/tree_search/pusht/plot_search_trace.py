@@ -69,6 +69,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--dot-radius", type=int, default=6, help="Dot radius in pixels.")
     parser.add_argument(
+        "--render-mode",
+        choices=("dots", "line", "both"),
+        default="both",
+        help="Draw traces as dots only, lines only, or both.",
+    )
+    parser.add_argument(
         "--max-dots",
         type=int,
         default=10,
@@ -174,38 +180,41 @@ def draw_trace(
     fade_dots: bool,
     dot_start_alpha: float,
     dot_end_alpha: float,
+    render_mode: str,
 ) -> None:
     if not points:
         return
 
-    for point_ix in range(1, len(points)):
-        color = gradient_color(colors, point_ix, len(points))
-        segment_alpha = line_alpha * trace_alpha(
-            index=point_ix,
-            count=len(points),
-            start_alpha=dot_start_alpha,
-            end_alpha=dot_end_alpha,
-            enabled=fade_dots,
-        )
-        draw_alpha_line(
-            image,
-            points[point_ix - 1],
-            points[point_ix],
-            color,
-            thickness=line_thickness,
-            alpha=segment_alpha,
-        )
+    if render_mode in {"line", "both"}:
+        for point_ix in range(1, len(points)):
+            color = gradient_color(colors, point_ix, len(points))
+            segment_alpha = line_alpha * trace_alpha(
+                index=point_ix,
+                count=len(points),
+                start_alpha=dot_start_alpha,
+                end_alpha=dot_end_alpha,
+                enabled=fade_dots,
+            )
+            draw_alpha_line(
+                image,
+                points[point_ix - 1],
+                points[point_ix],
+                color,
+                thickness=line_thickness,
+                alpha=segment_alpha,
+            )
 
-    for point_ix, point in enumerate(points):
-        color = gradient_color(colors, point_ix, len(points))
-        dot_alpha = trace_alpha(
-            index=point_ix,
-            count=len(points),
-            start_alpha=dot_start_alpha,
-            end_alpha=dot_end_alpha,
-            enabled=fade_dots,
-        )
-        draw_alpha_circle(image, point, dot_radius, color, alpha=dot_alpha)
+    if render_mode in {"dots", "both"}:
+        for point_ix, point in enumerate(points):
+            color = gradient_color(colors, point_ix, len(points))
+            dot_alpha = trace_alpha(
+                index=point_ix,
+                count=len(points),
+                start_alpha=dot_start_alpha,
+                end_alpha=dot_end_alpha,
+                enabled=fade_dots,
+            )
+            draw_alpha_circle(image, point, dot_radius, color, alpha=dot_alpha)
 
 
 def limit_points(points: list[tuple[int, int]], max_dots: int) -> list[tuple[int, int]]:
@@ -264,6 +273,7 @@ def render_trace_preview(
     fade_dots: bool,
     dot_start_alpha: float,
     dot_end_alpha: float,
+    render_mode: str,
 ) -> np.ndarray:
     rendered = np.ascontiguousarray(image.copy())
     traces = sorted(payload["traces"], key=lambda item: int(item["candidate_index"]))
@@ -282,6 +292,7 @@ def render_trace_preview(
             fade_dots=fade_dots,
             dot_start_alpha=dot_start_alpha,
             dot_end_alpha=dot_end_alpha,
+            render_mode=render_mode,
         )
 
     original = next((trace for trace in traces if trace["is_original"]), None)
@@ -296,6 +307,7 @@ def render_trace_preview(
             fade_dots=fade_dots,
             dot_start_alpha=dot_start_alpha,
             dot_end_alpha=dot_end_alpha,
+            render_mode=render_mode,
         )
 
     selected = next((trace for trace in traces if trace["is_selected"]), None)
@@ -310,6 +322,7 @@ def render_trace_preview(
             fade_dots=fade_dots,
             dot_start_alpha=dot_start_alpha,
             dot_end_alpha=dot_end_alpha,
+            render_mode=render_mode,
         )
 
     return rendered
@@ -333,6 +346,7 @@ def main() -> None:
         fade_dots=args.fade_dots,
         dot_start_alpha=args.dot_start_alpha,
         dot_end_alpha=args.dot_end_alpha,
+        render_mode=args.render_mode,
     )
 
     episode_index = int(choice.payload["episode_index"])

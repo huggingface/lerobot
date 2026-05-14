@@ -85,7 +85,9 @@ original policy chunk uses a blue gradient, and the selected chunk uses the
 yellow-to-purple gradient. By default, each candidate trace shows only the first
 10 dots for readability; use `--max-dots=0` to draw every stored point.
 Later dots fade out by default; use `--no-fade-dots` to keep constant opacity,
-or tune the range with `--dot-start-alpha` and `--dot-end-alpha`.
+or tune the range with `--dot-start-alpha` and `--dot-end-alpha`. Use
+`--render-mode=line` to draw only the connected path, `--render-mode=dots` for
+dots only, or `--render-mode=both` for both.
 
 The evaluator reports `asr` (Alternative Selection Ratio) in the aggregate
 metrics. ASR is the percentage of decision points where the selected root chunk
