@@ -127,7 +127,7 @@ class VideoEncoderConfig:
         """
         if self.video_backend == "pyav":
             require_package("av", extra="dataset")
-            from lerobot.datasets.pyav_utils import detect_available_encoders_pyav
+            from lerobot.datasets import detect_available_encoders_pyav
 
             return detect_available_encoders_pyav(encoders)
         return []
@@ -136,7 +136,7 @@ class VideoEncoderConfig:
         """Validate the video encoder configuration."""
         if self.video_backend == "pyav":
             require_package("av", extra="dataset")
-            from lerobot.datasets.pyav_utils import check_video_encoder_config_pyav
+            from lerobot.datasets import check_video_encoder_config_pyav
 
             check_video_encoder_config_pyav(self)
 
