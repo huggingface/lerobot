@@ -30,11 +30,8 @@ from .steps import (
     AskVQAFwd,
     DispatchAction,
     DispatchToolCalls,
-    HighLevelSubtaskFwd,
     InferenceStep,
     LowLevelForward,
-    MemoryUpdateFwd,
-    UserInterjectionFwd,
 )
 from .triggers import HzTrigger, TickClock
 
@@ -69,31 +66,24 @@ class SmolVLA2Runtime:
     _stop: bool = field(default=False, init=False)
 
     def __post_init__(self) -> None:
-        # Pipeline order matters. Both ``HighLevelSubtaskFwd`` and
-        # ``LowLevelForward`` are gated on "action queue is empty" so
-        # the slow LLM call (select_message) doesn't starve dispatch.
-        # If LowLevelForward runs first, it refills the queue and the
-        # high-level step never sees ``queue == 0`` afterwards.
+        # VQA-only configuration (current scope). The training recipe
+        # supervises only subtasks + VQA — plan and memory are out for
+        # now — so the runtime drops the high-level subtask /
+        # memory-update / interjection steps. The remaining loop is:
         #
-        # Order is therefore: high-level steps that read state (subtask,
-        # memory, interjection, vqa) → low-level chunk refresh → action
-        # dispatch → tool dispatch. So on an empty-queue tick the
-        # subtask refreshes first, the new subtask string flows into
-        # the next chunk's prompt, and DispatchAction drains.
+        #   AskVQAFwd      → answer camera-grounded questions on stdin
+        #   LowLevelForward → action chunk (conditioned on the task
+        #                     string directly, since no subtask is
+        #                     being generated — see LowLevelForward's
+        #                     ``current_subtask or task`` fallback)
+        #   DispatchAction  → drain the chunk to the robot
+        #   DispatchToolCalls → fire any pending tool calls
+        #
+        # ``HighLevelSubtaskFwd`` / ``MemoryUpdateFwd`` /
+        # ``UserInterjectionFwd`` are still importable from
+        # ``inference.steps`` — re-add them here once plan / memory /
+        # subtask generation is back in scope.
         self.pipeline = [
-            HighLevelSubtaskFwd(
-                trigger=HzTrigger(self.high_level_hz),
-                policy=self.policy,
-                observation_provider=self.observation_provider,
-            ),
-            MemoryUpdateFwd(
-                policy=self.policy,
-                observation_provider=self.observation_provider,
-            ),
-            UserInterjectionFwd(
-                policy=self.policy,
-                observation_provider=self.observation_provider,
-            ),
             AskVQAFwd(
                 policy=self.policy,
                 observation_provider=self.observation_provider,

@@ -1,14 +1,13 @@
 # Hi-Robot blend — shared between SmolVLA2 (SmolVLM2 backbone) and
-# PI052 (PaliGemma backbone). π0.5-style split:
+# PI052 (PaliGemma backbone).
 #
-#   The action expert is conditioned on (images, state, subtask) only.
-#   Hierarchical context (task + plan + memory) only flows into the
-#   high-level text head.
+#   Trains two things only: subtasks and VQA. Plan and memory are
+#   intentionally left out for now — keeps the prompt short and the
+#   training surface small while the core subtask + action loop is
+#   validated.
 #
-#     high_level_subtask  — predict subtask from (task+plan+memory),
-#                           and the new memory at boundary frames.
+#     high_level_subtask  — predict the subtask from the task.
 #     low_level_execution — flow loss with [images, subtask, state].
-#     plan_generation     — task → plan.
 #     ask_vqa_{top,wrist} — camera-grounded VQA.
 #
 # Each backbone's text tokenizer renders these messages differently
@@ -18,20 +17,13 @@
 blend:
 
   high_level_subtask:
-    weight: 0.50
-    bindings:
-      new_memory: "emitted_at(t, style=memory)"
+    weight: 0.40
     messages:
-      - role: user
-        stream: high_level
-        content: "${task}\nPlan: ${plan}\nMemory: ${memory}"
+      - {role: user, content: "${task}", stream: high_level}
       - {role: assistant, content: "${subtask}", stream: high_level, target: true, if_present: subtask}
-      # Boundary-frame tail: at a subtask transition, also predict
-      # the new memory in the same forward pass.
-      - {role: assistant, content: "${new_memory}", stream: high_level, target: true, if_present: new_memory}
 
   low_level_execution:
-    weight: 0.30
+    weight: 0.40
     messages:
       # π0.5-style action conditioning. The action expert sees only
       # [images, this user turn (= bare subtask), state]. No text-CE
@@ -40,16 +32,8 @@ blend:
       # flow loss fires.
       - {role: user, content: "${subtask}", stream: low_level, if_present: subtask}
 
-  plan_generation:
-    weight: 0.10
-    bindings:
-      current_plan: "active_at(t, style=plan)"
-    messages:
-      - {role: user, content: "${task}", stream: high_level}
-      - {role: assistant, content: "${current_plan}", stream: high_level, target: true, if_present: current_plan}
-
   ask_vqa_top:
-    weight: 0.05
+    weight: 0.10
     bindings:
       vqa_query: "emitted_at(t, style=vqa, role=user, camera=observation.images.front)"
       vqa: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.front)"
@@ -63,7 +47,7 @@ blend:
       - {role: assistant, content: "${vqa}", stream: high_level, target: true, if_present: vqa}
 
   ask_vqa_wrist:
-    weight: 0.05
+    weight: 0.10
     bindings:
       vqa_query: "emitted_at(t, style=vqa, role=user, camera=observation.images.wrist)"
       vqa: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.wrist)"
