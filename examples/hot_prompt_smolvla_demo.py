@@ -141,6 +141,16 @@ def main() -> None:
     parser.add_argument("--fps", type=float, default=1.0, help="Control loop frequency (Hz)")
     parser.add_argument("--duration", type=float, default=0.0, help="Run N seconds (0 = infinite)")
     parser.add_argument("--device", default="cuda", help="Torch device: cuda or cpu")
+    parser.add_argument(
+        "--flush_on_switch",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Flush the precomputed action chunk when the task changes so the policy "
+            "re-runs the VLM immediately (default: on). "
+            "Use --no-flush_on_switch to let the current chunk drain first."
+        ),
+    )
     args = parser.parse_args()
 
     device = _resolve_device(args.device)
@@ -192,10 +202,14 @@ def main() -> None:
 
     shutdown_event = Event()
     broker = PromptBroker(initial_task=args.task)
-    # Flush the policy's precomputed action queue whenever the task changes so
-    # the VLM re-runs immediately with the new instruction instead of finishing
-    # the current chunk_size=50 precomputed actions first.
-    broker.register_on_change(policy.flush_action_queue)
+    if args.flush_on_switch:
+        # Flush the precomputed action chunk immediately so the VLM re-runs with
+        # the new task on the very next tick (chunk_size=50 actions discarded).
+        broker.register_on_change(policy.flush_action_queue)
+    else:
+        # Let the current chunk drain naturally; the new task takes effect once
+        # the action queue empties and the VLM is called again.
+        logger.info("flush_on_switch=off — new task will take effect after current chunk drains")
     StdinPromptListener().start(broker, shutdown_event)
 
     # ------------------------------------------------------------------
@@ -239,6 +253,7 @@ def main() -> None:
     logger.info("  Initial task : '%s'", args.task)
     logger.info("  FPS          : %.1f", args.fps)
     logger.info("  Device       : %s", device)
+    logger.info("  Flush on switch : %s", "yes (immediate VLM re-run)" if args.flush_on_switch else "no (drain current chunk first)")
     logger.info(
         "  Duration     : %s",
         f"{args.duration}s" if args.duration > 0 else "infinite (Ctrl-C to stop)",

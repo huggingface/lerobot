@@ -232,6 +232,12 @@ class RolloutConfig:
     # Source for incoming prompts. Currently supported: "stdin".
     # Future sources: "http" (FastAPI POST /task), "zmq".
     hot_prompt_source: str = "stdin"
+    # When True (default), flush the policy's precomputed action queue immediately
+    # on a task switch so the VLM/model re-runs with the new instruction on the
+    # very next tick.  Set to False to let the current chunk drain first (smoother
+    # motion continuity, but the new task takes effect up to chunk_size ticks later).
+    # Has no effect when hot_prompt=False.
+    hot_prompt_flush: bool = True
     display_data: bool = False
     # Visualization backend used when display_data is True: "rerun" or "foxglove".
     display_mode: str = "rerun"

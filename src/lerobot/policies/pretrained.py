@@ -241,6 +241,28 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         """
         raise NotImplementedError
 
+    def flush_action_queue(self) -> None:
+        """Discard any precomputed actions so the next select_action call recomputes from scratch.
+
+        The default implementation covers the two naming conventions used across LeRobot policies:
+
+        * ``self._queues`` (dict) — policies like SmolVLA, TDMPC, VQBeT, WallX, MultiTaskDiT.
+          The ``ACTION`` key is cleared; observation history queues are left intact.
+        * ``self._action_queue`` (deque) — policies like Pi0, EO1, Groot.
+
+        Policies that use neither convention are unaffected (no-op).
+
+        Typical use: call this whenever the task prompt or goal changes at runtime so the policy
+        reacts to the new instruction on the very next control tick instead of draining stale
+        precomputed actions.
+        """
+        from lerobot.utils.constants import ACTION
+
+        if hasattr(self, "_queues") and isinstance(self._queues, dict) and ACTION in self._queues:
+            self._queues[ACTION].clear()
+        if hasattr(self, "_action_queue"):
+            self._action_queue.clear()
+
     # TODO(aliberts, rcadene): split into 'forward' and 'compute_loss'?
     @abc.abstractmethod
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict | None]:

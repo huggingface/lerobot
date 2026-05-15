@@ -254,15 +254,6 @@ class SmolVLAPolicy(PreTrainedPolicy):
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
 
-    def flush_action_queue(self):
-        """Discard precomputed actions so the next select_action call re-runs the VLM.
-
-        Call this when the task prompt changes and you want the policy to
-        immediately react to the new instruction rather than finishing the
-        current precomputed chunk.
-        """
-        self._queues[ACTION].clear()
-
     def init_rtc_processor(self):
         """Initialize RTC processor if RTC is enabled in config."""
         self.rtc_processor = None

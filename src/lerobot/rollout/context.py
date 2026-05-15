@@ -426,6 +426,16 @@ def build_rollout_context(
                 "Unknown hot_prompt_source '%s'; hot-switching disabled", cfg.hot_prompt_source
             )
             prompt_broker = None
+        if prompt_broker is not None:
+            if cfg.hot_prompt_flush:
+                prompt_broker.register_on_change(policy.flush_action_queue)
+                logger.info(
+                    "hot_prompt_flush=on — action queue will be cleared immediately on task switch"
+                )
+            else:
+                logger.info(
+                    "hot_prompt_flush=off — new task takes effect after current action chunk drains"
+                )
     inference_strategy = create_inference_engine(
         cfg.inference,
         policy=policy,
