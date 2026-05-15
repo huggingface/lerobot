@@ -1335,15 +1335,13 @@ def main(argv: list[str] | None = None) -> int:
     runtime.state["text_gen_top_p"] = float(getattr(args, "text_top_p", 1.0) or 1.0)
     if args.task:
         runtime.set_task(args.task)
-    # Seed plan/memory/subtask so the first prompt the runtime builds
-    # mirrors what training rendered (task + active plan + active
-    # memory + optional current subtask). Without this the runtime
-    # starts empty, which only matched the very-early frames during
-    # training and is an out-of-distribution prompt for the rest.
-    if bootstrap_state.get("plan"):
-        runtime.state["current_plan"] = bootstrap_state["plan"]
-    if bootstrap_state.get("memory"):
-        runtime.state["current_memory"] = bootstrap_state["memory"]
+    # Seed the current subtask from the dataset so the first chunk —
+    # before ``HighLevelSubtaskFwd`` has run — has a real subtask to
+    # condition the action expert on instead of falling back to the
+    # bare task. Plan and memory are NOT seeded: the current recipe
+    # trains neither, no inference step consumes them, and seeding
+    # them only put a stale plan in the status panel that does
+    # nothing.
     if bootstrap_state.get("subtask"):
         runtime.state["current_subtask"] = bootstrap_state["subtask"]
 
