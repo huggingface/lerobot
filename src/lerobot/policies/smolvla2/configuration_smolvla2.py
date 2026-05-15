@@ -95,6 +95,25 @@ class SmolVLA2Config(SmolVLAConfig):
     effectively reduces SmolVLA2 back to SmolVLA's flow-only training,
     which is occasionally useful for ablations."""
 
+    load_vlm_weights: bool = True
+    """Load the pretrained SmolVLM2 backbone weights (vision tower +
+    language model + ``lm_head``) instead of random-initialising them.
+
+    ``SmolVLAConfig`` defaults this to ``False`` because the original
+    SmolVLA pre-training run trained the VLM body itself. For SmolVLA2
+    that default is a footgun: the text head **is** the SmolVLM2
+    ``lm_head``, and the high-level subtask supervision is hopeless if
+    it starts from a random language model — it can only memorise.
+    SmolVLA2 therefore defaults this to ``True`` so every run fine-tunes
+    from the pretrained ``vlm_model_name`` checkpoint
+    (``HuggingFaceTB/SmolVLM2-500M-Video-Instruct``).
+
+    Note this loads the *VLM backbone* pretrained; the action expert
+    still trains from scratch on the robot data (standard SmolVLA
+    fine-tuning). To also start the action expert from pretrained
+    weights, fine-tune from a full ``lerobot/smolvla_base`` checkpoint
+    via ``--policy.path``."""
+
     # Per-component prompt dropout (Pi0.7 §V.E) ---------------------------
     # At training, randomly drop non-target context messages whose
     # content was substituted from the named recipe binding. Forces
