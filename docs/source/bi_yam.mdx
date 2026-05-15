@@ -70,7 +70,10 @@ python src/lerobot/robots/bi_yam_follower/run_bimanual_yam_server.py \
 The follower client (`bi_yam_follower`) detects the DOF count at connect time and drops the `left_gripper.pos` / `right_gripper.pos` keys from the observation and action dictionaries — only the six arm joints per side are exposed.
 
 <Tip>
-  Composing a separate teleoperator for a dexterous hand on top of the gripperless YAM follower is out of scope for `bi_yam_follower` / `bi_yam_leader`; you'll need a custom robot/teleop wrapper that combines the YAM joints with the hand's action keys.
+  Composing a separate teleoperator for a dexterous hand on top of the
+  gripperless YAM follower is out of scope for `bi_yam_follower` /
+  `bi_yam_leader`; you'll need a custom robot/teleop wrapper that combines the
+  YAM joints with the hand's action keys.
 </Tip>
 
 ## Install LeRobot 🤗
@@ -171,7 +174,10 @@ python src/lerobot/robots/bi_yam_follower/run_bimanual_yam_server.py \
 Leave the server terminal running while teleoperating or recording.
 
 <Tip>
-`run_yam_server.py` ships alongside the unified launcher for single-arm follower debugging (`--mode follower`) and MuJoCo visualization (`--mode visualizer_local` / `--mode visualizer_remote`). For LeRobot teleoperation/recording workflows, always use the unified launcher above.
+  `run_yam_server.py` ships alongside the unified launcher for single-arm
+  follower debugging (`--mode follower`) and MuJoCo visualization (`--mode
+  visualizer_local` / `--mode visualizer_remote`). For LeRobot
+  teleoperation/recording workflows, always use the unified launcher above.
 </Tip>
 
 ### Test the Teleoperator
@@ -305,22 +311,22 @@ python src/lerobot/robots/bi_yam_follower/run_yam_server.py \
 
 ### Follower (`bi_yam_follower`)
 
-| Parameter                       | Default     | Description                                       |
-| ------------------------------- | ----------- | ------------------------------------------------- |
-| `left_arm_port`                 | `1235`      | RPC port for the left follower server             |
-| `right_arm_port`                | `1234`      | RPC port for the right follower server            |
-| `server_host`                   | `localhost` | Server hostname                                   |
-| `left_arm_max_relative_target`  | `None`      | Optional per-step safety limit for the left arm   |
-| `right_arm_max_relative_target` | `None`      | Optional per-step safety limit for the right arm  |
-| `cameras`                       | `{}`        | Camera configurations (shared between both arms)  |
+| Parameter                       | Default     | Description                                      |
+| ------------------------------- | ----------- | ------------------------------------------------ |
+| `left_arm_port`                 | `1235`      | RPC port for the left follower server            |
+| `right_arm_port`                | `1234`      | RPC port for the right follower server           |
+| `server_host`                   | `localhost` | Server hostname                                  |
+| `left_arm_max_relative_target`  | `None`      | Optional per-step safety limit for the left arm  |
+| `right_arm_max_relative_target` | `None`      | Optional per-step safety limit for the right arm |
+| `cameras`                       | `{}`        | Camera configurations (shared between both arms) |
 
 ### Leader (`bi_yam_leader`)
 
-| Parameter        | Default     | Description                                                                                                |
-| ---------------- | ----------- | ---------------------------------------------------------------------------------------------------------- |
-| `left_arm_port`  | `5002`      | RPC port for the left leader server                                                                        |
-| `right_arm_port` | `5001`      | RPC port for the right leader server                                                                       |
-| `server_host`    | `localhost` | Server hostname                                                                                            |
+| Parameter        | Default     | Description                                                                                                 |
+| ---------------- | ----------- | ----------------------------------------------------------------------------------------------------------- |
+| `left_arm_port`  | `5002`      | RPC port for the left leader server                                                                         |
+| `right_arm_port` | `5001`      | RPC port for the right leader server                                                                        |
+| `server_host`    | `localhost` | Server hostname                                                                                             |
 | `bilateral_kp`   | `1.0`       | Stiffness multiplier (final kp = `bilateral_kp` × robot's natural kp). Typical: 0.5 (gentle) to 2.0 (firm). |
 
 ## Troubleshooting

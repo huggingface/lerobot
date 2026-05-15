@@ -388,9 +388,7 @@ class BiYamLeader(Teleoperator):
         natural kp fetched from the server in ``connect()``.
         """
         if self._original_kp is None:
-            raise RuntimeError(
-                "Natural kp not initialized; call connect() before enable_torque()."
-            )
+            raise RuntimeError("Natural kp not initialized; call connect() before enable_torque().")
 
         kp = self._original_kp * self.bilateral_kp
         zero_gains = np.zeros(6)
