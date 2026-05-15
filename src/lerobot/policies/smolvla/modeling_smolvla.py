@@ -290,12 +290,6 @@ class SmolVLAPolicy(PreTrainedPolicy):
         lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
         lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
 
-        # DEBUG: decode tokens back to string to confirm the task the policy sees
-        decoded = self.model.vlm_with_expert.processor.tokenizer.batch_decode(
-            lang_tokens, skip_special_tokens=True
-        )
-        print(f"[SmolVLA._get_action_chunk] task received by policy: {decoded}")
-
         actions = self.model.sample_actions(
             images, img_masks, lang_tokens, lang_masks, state, noise=noise, **kwargs
         )

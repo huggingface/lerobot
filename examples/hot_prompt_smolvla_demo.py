@@ -17,11 +17,13 @@ Usage
         --device cuda \\
         --fps 1
 
-    # pipe tasks in from another terminal via a FIFO:
-    mkfifo /tmp/robot_task
+    # pipe tasks in from another terminal using a file + tail -f:
+    > /tmp/robot_task   # create empty file
     conda run -n lerobot_rollout python examples/hot_prompt_smolvla_demo.py \\
-        --checkpoint /path/to/pretrained_model --fps 1 < /tmp/robot_task &
-    echo "grab the cup" > /tmp/robot_task
+        --checkpoint /path/to/pretrained_model --fps 1 \\
+        < <(tail -f /tmp/robot_task) &
+    echo "grab the cup" >> /tmp/robot_task
+    echo "place it in the bin" >> /tmp/robot_task
 
 Press Ctrl-C to stop.
 """

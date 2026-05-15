@@ -268,23 +268,28 @@ whisper_stt_tool --model=base | \
 The STT process owns `stdout`; `lerobot-rollout` reads it on `stdin`.  
 Any tool that writes one task string per line works — Whisper, Vosk, Google STT, etc.
 
-### Method 3 — Named pipe (FIFO)
+### Method 3 — File + `tail -f`
 
-Use a FIFO to decouple the STT process from the rollout process, or to send commands from a separate terminal:
+Write tasks to a plain file from any terminal; `tail -f` streams new lines to the rollout's stdin as they arrive.
+This avoids the blocking-open problem of FIFOs and works across conda environments.
 
 ```bash
-mkfifo /tmp/robot_task
+# Terminal 1: create the file and start the rollout
+> /tmp/robot_task   # create (or truncate) the file
 
-# Terminal 1: start rollout reading from the FIFO
 lerobot-rollout \
     --hot_prompt=true \
     --hot_prompt_source=stdin \
-    --task="initial task" ... < /tmp/robot_task
+    --task="initial task" \
+    ... < <(tail -f /tmp/robot_task)
 
-# Terminal 2: send commands at any time
-echo "pick up the blue block" > /tmp/robot_task
-echo "drop it in the bin"    > /tmp/robot_task
+# Terminal 2: send commands at any time (append, not overwrite)
+echo "pick up the blue block" >> /tmp/robot_task
+echo "drop it in the bin"    >> /tmp/robot_task
+echo "initial task"          >> /tmp/robot_task
 ```
+
+> **Note:** use `>>` (append) in Terminal 2, not `>`.  A single `>` would truncate the file and `tail -f` would lose its position.
 
 ### Method 4 — Script / programmatic (future: HTTP)
 
@@ -305,15 +310,23 @@ curl -X POST http://localhost:8765/task -d '{"task": "fold the towel"}'
 `examples/hot_prompt_smolvla_demo.py` loads a real SmolVLA checkpoint and feeds it synthetic (zero) camera frames and robot state, so you can test hot-prompt switching without any hardware.
 
 ```bash
+# Terminal 1 — start the demo
 conda activate lerobot_rollout
+> /tmp/robot_task   # create the file
 python examples/hot_prompt_smolvla_demo.py \
     --checkpoint /path/to/pretrained_model \
     --task "pick up the bottle" \
     --fps 0.5 \
-    --device cuda
+    --device cuda \
+    < <(tail -f /tmp/robot_task)
+
+# Terminal 2 — send new tasks at any time
+echo "grab the red cup"    >> /tmp/robot_task
+echo "place it in the bin" >> /tmp/robot_task
+echo "pick up the bottle"  >> /tmp/robot_task
 ```
 
-Type a new task and press Enter — the log shows `[SmolVLA._get_action_chunk] task received by policy: ['new task\n']` on the very next VLM call, confirming the policy received it.
+The log confirms the switch: `[SmolVLA._get_action_chunk] task received by policy: ['grab the red cup\n']`.
 
 ### Key arguments
 
