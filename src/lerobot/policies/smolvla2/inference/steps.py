@@ -111,15 +111,12 @@ class LowLevelForward(InferenceStep):
         if observation is None:
             return None
 
-        # π0.5-style: the action expert is conditioned on just the
-        # subtask (+ images + state). No task / plan / memory in the
-        # low-level prompt — those are only used by the high-level
-        # loop to *generate* the subtask. Matches the training-time
-        # ``low_level_execution`` recipe shape (single user turn,
-        # no assistant target since text-CE is owned by the
-        # high-level recipe).
-        subtask = state.get("current_subtask") or state.get("task") or ""
-        ctx = [{"role": "user", "content": subtask}]
+        # The action expert is conditioned on the TASK string — the
+        # ``low_level_execution`` recipe renders ``user(${task})``.
+        # The task is stable for the whole episode and always present,
+        # so there is no train/inference mismatch and no dependency on
+        # a (currently unreliable) high-level subtask generator.
+        ctx = [{"role": "user", "content": state.get("task") or ""}]
         # ``add_generation_prompt=False`` to match the training-time
         # prefix shape: at training the action expert sees the rendered
         # user turn ending at ``<|im_end|>`` (no trailing
