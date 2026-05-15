@@ -23,7 +23,7 @@ class VLAJEPAConfig(PreTrainedConfig):
         }
     )
 
-    qwen_model_name: str = "Qwen/Qwen3-VL-4B-Instruct"
+    qwen_model_name: str = "Qwen/Qwen3-VL-2B-Instruct"
     jepa_encoder_name: str = "facebook/vjepa2-vitl-fpc64-256"
 
     tokenizer_padding_side: str = "left"
@@ -44,13 +44,13 @@ class VLAJEPAConfig(PreTrainedConfig):
     action_hidden_size: int = 1024
     action_model_type: str = "DiT-B"
     action_num_layers: int = 12
-    action_num_heads: int = 16
-    action_attention_head_dim: int = 64
     action_dropout: float = 0.1
     action_num_timestep_buckets: int = 1000
     action_noise_beta_alpha: float = 1.5
     action_noise_beta_beta: float = 1.0
     action_noise_s: float = 0.999
+    num_target_vision_tokens: int = 32
+    action_max_seq_len: int = 1024
 
     # total video frames loaded per sample
     num_video_frames: int = 16
