@@ -108,6 +108,23 @@ accepts the same plotting controls as `plot_search_trace.py`, plus video filters
 such as `--episode`, `--start-step`, `--end-step`, `--max-frames`, and
 `--output-path`.
 
+To animate the search procedure progressively instead of rendering one static
+frame per decision point:
+
+```bash
+uv run python examples/tree_search/pusht/animate_search_trace.py \
+  harezmi-extend-dump/pusht/5_eps_viz/n40_c3_d3_e10 \
+  --episode=0 \
+  --fps=20 \
+  --render-mode=both \
+  --max-dots=10
+```
+
+The animation draws the ACT policy chunk first, then noisy candidate chunks,
+then highlights the selected chunk. It writes
+`RUN_DIR/plot_videos/eps_N_animated.mp4` when `--episode=N` is set, otherwise
+`RUN_DIR/plot_videos/search_trace_animated.mp4`.
+
 The evaluator reports `asr` (Alternative Selection Ratio) in the aggregate
 metrics. ASR is the percentage of decision points where the selected root chunk
 was a noisy alternative (`selected_candidate_index != 0`) instead of the
