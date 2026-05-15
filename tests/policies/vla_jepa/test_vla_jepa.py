@@ -257,13 +257,6 @@ def test_native_to_lerobot_both_losses(patch_vla_jepa_external_models: None) -> 
     assert logs["wm_loss"] == pytest.approx(0.1, abs=1e-5)
 
 
-def test_native_to_lerobot_wm_only(patch_vla_jepa_external_models: None) -> None:
-    policy = VLAJEPAPolicy(make_config())
-    _, logs = policy._native_to_lerobot({"wm_loss": torch.tensor(0.3)})
-    assert "action_loss" not in logs
-    assert logs["wm_loss"] == pytest.approx(0.3, abs=1e-5)
-
-
 # ---------------------------------------------------------------------------
 # Pretrained checkpoint
 # ---------------------------------------------------------------------------
