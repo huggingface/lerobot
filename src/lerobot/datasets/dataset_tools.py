@@ -26,7 +26,7 @@ This module provides utilities for:
 import logging
 import shutil
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, ProcessPoolExecutor
 from pathlib import Path
 
 import datasets
@@ -61,11 +61,13 @@ from .utils import (
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
     DEFAULT_EPISODES_PATH,
+    VIDEO_DIR,
     update_chunk_file_indices,
 )
 from .video_utils import (
     encode_video_frames,
     get_video_info,
+    reencode_video,
 )
 
 
@@ -1884,3 +1886,77 @@ def convert_image_to_video_dataset(
 
     # Return new dataset
     return LeRobotDataset(repo_id=repo_id, root=output_dir)
+
+
+def _reencode_video_worker(args: tuple) -> Path:
+    """Picklable worker for :func:`reencode_dataset`'s process pool."""
+    video_path, camera_encoder, encoder_threads = args
+    reencode_video(
+        input_video_path=video_path,
+        output_video_path=video_path,
+        camera_encoder=camera_encoder,
+        encoder_threads=encoder_threads,
+        overwrite=True,
+    )
+    return video_path
+
+
+def reencode_dataset(
+    dataset: LeRobotDataset,
+    camera_encoder: VideoEncoderConfig,
+    encoder_threads: int | None = None,
+    num_workers: int | None = None,
+) -> LeRobotDataset:
+    """Re-encode every video in a dataset with a new set of encoding parameters.
+
+    Videos are re-encoded in-place and the video information in ``info.json`` is refreshed.
+
+    Args:
+        dataset: An existing :class:`LeRobotDataset` whose videos will be
+            re-encoded.
+        camera_encoder: Target encoder configuration applied to every video
+            file.
+        encoder_threads: Per-encoder thread count forwarded to
+            :func:`reencode_video`. ``None`` lets the codec decide.
+        num_workers: Number of parallel processes. ``None`` or ``0`` means
+            sequential (no multiprocessing); ``1+`` spawns a
+            :class:`~multiprocessing.pool.Pool`.
+
+    Returns:
+        The same :class:`LeRobotDataset` instance with its metadata updated
+        on disk.
+    """
+    meta = dataset.meta
+    video_paths_list = sorted((meta.root / VIDEO_DIR).rglob("*.mp4"))
+    if len(video_paths_list) == 0:
+        logging.warning("Dataset has no videos to re-encode.")
+        return dataset
+    logging.info(f"Re-encoding {len(video_paths_list)} video file(s) with {camera_encoder}")
+
+    worker_args = [
+        (vp, camera_encoder, encoder_threads) for vp in video_paths_list
+    ]
+    if num_workers and num_workers >= 1:
+        with ProcessPoolExecutor(max_workers=num_workers) as pool:
+            futures = [pool.submit(_reencode_video_worker, args) for args in worker_args]
+            for future in tqdm(
+                as_completed(futures),
+                total=len(futures),
+                desc="Re-encoding videos",
+            ):
+                future.result()
+    else:
+        for args in tqdm(worker_args, desc="Re-encoding videos"):
+            _reencode_video_worker(args)
+
+    # Refresh video info in metadata for every video key.
+    for vid_key in meta.video_keys:
+        video_path = meta.root / meta.get_video_file_path(0, vid_key)
+        meta.info.features[vid_key]["info"] = get_video_info(
+            video_path, camera_encoder=camera_encoder
+        )
+
+    write_info(meta.info, meta.root)
+    logging.info("Dataset metadata updated.")
+
+    return dataset

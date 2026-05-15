@@ -178,6 +178,23 @@ Recompute stats for relative actions and push to hub:
         --operation.num_workers 4 \
         --push_to_hub true
 
+Re-encode all videos in a dataset in-place with a new codec:
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht \
+        --operation.type reencode_videos \
+        --operation.camera_encoder.vcodec h264 \
+        --operation.camera_encoder.pix_fmt yuv420p \
+        --operation.camera_encoder.crf 23
+
+Re-encode videos into a new dataset using 4 parallel processes:
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht \
+        --new_repo_id lerobot/pusht_h264 \
+        --operation.type reencode_videos \
+        --operation.camera_encoder.vcodec h264 \
+        --operation.camera_encoder.crf 23 \
+        --operation.num_workers 4
+
 Using JSON config file:
     lerobot-edit-dataset \
         --config_path path/to/edit_config.json
@@ -195,11 +212,13 @@ import draccus
 from lerobot.configs import VideoEncoderConfig, camera_encoder_defaults, parser
 from lerobot.datasets import (
     LeRobotDataset,
+    LeRobotDatasetMetadata,
     convert_image_to_video_dataset,
     delete_episodes,
     merge_datasets,
     modify_tasks,
     recompute_stats,
+    reencode_dataset,
     remove_feature,
     split_dataset,
 )
@@ -266,6 +285,14 @@ class RecomputeStatsConfig(OperationConfig):
     chunk_size: int = 50
     num_workers: int = 0
     overwrite: bool = False
+
+
+@OperationConfig.register_subclass("reencode_videos")
+@dataclass
+class ReencodeVideosConfig(OperationConfig):
+    camera_encoder: VideoEncoderConfig = field(default_factory=camera_encoder_defaults)
+    num_workers: int = 0
+    encoder_threads: int | None = None
 
 
 @OperationConfig.register_subclass("info")
@@ -634,6 +661,59 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
         dataset.push_to_hub()
 
 
+def handle_reencode_videos(cfg: EditDatasetConfig) -> None:
+    if not isinstance(cfg.operation, ReencodeVideosConfig):
+        raise ValueError("Operation config must be ReencodeVideosConfig")
+
+    meta = LeRobotDatasetMetadata(cfg.repo_id, root=cfg.root)
+
+    first_video_key = meta.video_keys[0] if meta.video_keys else None
+    if first_video_key is not None:
+        current_info = meta.features[first_video_key].get("info", {})
+        current_encoder = VideoEncoderConfig.from_video_info(current_info)
+        if current_encoder == cfg.operation.camera_encoder:
+            logging.info(
+                f"Videos in {cfg.repo_id} are already encoded with {current_encoder}. "
+                "Nothing to do."
+            )
+            return
+    else:
+        raise ValueError("Dataset has no video features — nothing to re-encode.")
+
+    output_repo_id, input_path, output_path = _resolve_io_paths(
+        cfg.repo_id, cfg.new_repo_id, cfg.root, cfg.new_root
+    )
+
+    if output_path == input_path:
+        backup_path = input_path.with_name(input_path.name + "_old")
+        logging.info(f"In-place re-encode — backing up dataset to {backup_path}")
+        if backup_path.exists():
+            shutil.rmtree(backup_path)
+        shutil.copytree(input_path, backup_path)
+    else:
+        logging.info(f"Copying dataset from {input_path} to {output_path}")
+        if output_path.exists():
+            shutil.rmtree(output_path)
+        shutil.copytree(input_path, output_path)
+
+    logging.info(f"Re-encoding videos in {output_repo_id} with {cfg.operation.camera_encoder}")
+
+    dataset = LeRobotDataset(output_repo_id, root=output_path)
+
+    reencode_dataset(
+        dataset,
+        camera_encoder=cfg.operation.camera_encoder,
+        encoder_threads=cfg.operation.encoder_threads,
+        num_workers=cfg.operation.num_workers,
+    )
+
+    logging.info(f"All videos re-encoded at {dataset.root}")
+
+    if cfg.push_to_hub:
+        logging.info(f"Pushing to hub as {output_repo_id}...")
+        dataset.push_to_hub()
+
+
 def _get_dataset_size(repo_path):
     import os
 
@@ -707,6 +787,8 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
         handle_convert_image_to_video(cfg)
     elif operation_type == "recompute_stats":
         handle_recompute_stats(cfg)
+    elif operation_type == "reencode_videos":
+        handle_reencode_videos(cfg)
     elif operation_type == "info":
         handle_info(cfg)
     else:
