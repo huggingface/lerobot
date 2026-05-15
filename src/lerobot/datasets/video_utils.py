@@ -403,6 +403,88 @@ def encode_video_frames(
         raise OSError(f"Video encoding did not work. File not found: {video_path}.")
 
 
+def reencode_video(
+    input_video_path: Path | str,
+    output_video_path: Path | str,
+    camera_encoder: VideoEncoderConfig | None = None,
+    encoder_threads: int | None = None,
+    log_level: int | None = av.logging.WARNING,
+    overwrite: bool = False,
+) -> None:
+    """Re-encode a video file using the given encoder configuration.
+
+    Args:
+        input_video_path: Existing video file to read.
+        output_video_path: Path for the re-encoded file.
+        camera_encoder: Encoder configuration. Defaults to :func:`camera_encoder_defaults`.
+        encoder_threads: Optional thread count forwarded to :meth:`VideoEncoderConfig.get_codec_options`.
+        log_level: libav log level while encoding, or ``None`` to leave logging unchanged. Defaults to WARNING.
+        overwrite: When ``False`` and ``output_video_path`` already exists, skip and log a warning.
+    """
+
+    camera_encoder = camera_encoder or camera_encoder_defaults()
+
+    output_video_path = Path(output_video_path)
+
+    if output_video_path.exists() and not overwrite:
+        logger.warning(f"Video file already exists: {output_video_path}. Skipping re-encode.")
+        return
+
+    output_video_path.parent.mkdir(parents=True, exist_ok=True)
+
+    video_options = camera_encoder.get_codec_options(encoder_threads, as_strings=True)
+    vcodec = camera_encoder.vcodec
+    pix_fmt = camera_encoder.pix_fmt
+
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_named_file:
+        tmp_output_video_path = tmp_named_file.name
+
+    if log_level is not None:
+        logging.getLogger("libav").setLevel(log_level)
+
+    try:
+        with av.open(input_video_path, mode="r") as src:
+            try:
+                in_stream = src.streams.video[0]
+            except IndexError as e:
+                raise ValueError(f"No video stream in {input_video_path}") from e
+
+            fps = int(in_stream.base_rate)
+            width = int(in_stream.width)
+            height = int(in_stream.height)
+
+            with av.open(
+                tmp_output_video_path,
+                mode="w",
+                options={"movflags": "faststart"},  # faststart is to move the metadata to the beginning of the file to speed up loading
+            ) as dst:
+                out_stream = dst.add_stream(vcodec, fps, options=video_options)
+                out_stream.pix_fmt = pix_fmt
+                out_stream.width = width
+                out_stream.height = height
+
+                for frame in src.decode(in_stream):
+                    frame = frame.reformat(width=width, height=height, format=pix_fmt)
+                    packet = out_stream.encode(frame)
+                    if packet:
+                        dst.mux(packet)
+
+                packet = out_stream.encode()
+                if packet:
+                    dst.mux(packet)
+    except Exception:
+        Path(tmp_output_video_path).unlink(missing_ok=True)
+        raise
+    finally:
+        if log_level is not None:
+            av.logging.restore_default_callback()
+
+    shutil.move(tmp_output_video_path, output_video_path)
+
+    if not output_video_path.exists():
+        raise OSError(f"Video re-encoding did not work. File not found: {output_video_path}.")
+
+
 def concatenate_video_files(
     input_video_paths: list[Path | str],
     output_video_path: Path,

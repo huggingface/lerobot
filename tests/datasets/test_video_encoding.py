@@ -17,6 +17,7 @@
 """Unit tests for ``lerobot.datasets.video_utils`` encoding functions and ``lerobot.configs.video.VideoEncoderConfig`` config class."""
 
 import json
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -35,6 +36,7 @@ from lerobot.datasets.video_utils import (
     concatenate_video_files,
     encode_video_frames,
     get_video_info,
+    reencode_video,
 )
 from tests.fixtures.constants import DUMMY_VIDEO_INFO
 
@@ -473,6 +475,29 @@ class TestEncodeVideoFrames:
         assert info["video.video_backend"] == "pyav"
         assert info["video.extra_options"] == {}
 
+
+class TestReencodeVideo:
+    @require_libsvtav1
+    @require_h264
+    def test_reencode_video(self, tmp_path):
+        src = TEST_ARTIFACTS_DIR / "clip_4frames.mp4"
+        out = tmp_path / "reencoded.mp4"
+        cfg = VideoEncoderConfig(vcodec="h264", g=6, crf=23, pix_fmt="yuv444p")
+        reencode_video(src, out, camera_encoder=cfg, overwrite=True)
+
+        assert out.exists()
+        with av.open(str(out)) as container:
+            n_frames = sum(1 for _ in container.decode(video=0))
+        assert n_frames == 4
+
+        info = get_video_info(out, camera_encoder=cfg)
+        assert info["video.codec"] == "h264"
+        assert info["video.pix_fmt"] == "yuv444p"
+        assert info["video.height"] == 64
+        assert info["video.width"] == 96
+        assert info["video.fps"] == 30
+        assert info["video.g"] == 6
+        assert info["video.crf"] == 23
 
 class TestConcatenateVideoFiles:
     def test_two_clips_frame_count(self, tmp_path):
