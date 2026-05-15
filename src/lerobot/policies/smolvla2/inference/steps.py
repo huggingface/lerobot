@@ -683,11 +683,18 @@ def _looks_like_gibberish(text: str) -> bool:
     for marker in ("Assistant", "User", "Ass "):
         if marker in cleaned and len(cleaned.split()) < 4:
             return True
-    # Too few unique alphabetic tokens — model stuck on ``the`` or
-    # similar memorised single-token continuations.
     tokens = [t for t in cleaned.split() if any(c.isalpha() for c in t)]
     unique_alpha = {t.lower() for t in tokens}
+    # Short degenerate output — model stuck on ``the`` or a couple of
+    # memorised single-token continuations.
     if len(unique_alpha) < 3 and len(stripped) < 80:
+        return True
+    # Long repetition collapse — the LM head loops an n-gram for the
+    # whole generation budget ("the arm the arm … the the the the").
+    # Length-independent: many tokens but a tiny unique ratio. The
+    # earlier ``< 80`` check missed these because the looped string
+    # blows well past 80 chars.
+    if len(tokens) >= 8 and len(unique_alpha) <= max(3, len(tokens) // 10):
         return True
     return False
 
