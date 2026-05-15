@@ -102,6 +102,10 @@ class TrainPipelineConfig(HubMixin):
     steps: int = 100_000
     eval_freq: int = 20_000
     log_freq: int = 200
+    # Validation split: fraction of episodes held out for validation loss.
+    # Set to 0.0 to disable. When > 0, val loss is computed every val_freq steps.
+    val_split: float = 0.0
+    val_freq: int = 0  # 0 means use eval_freq
     tolerance_s: float = 1e-4
     save_checkpoint: bool = True
     # Checkpoint is saved every `save_freq` training iterations and after the last training step.

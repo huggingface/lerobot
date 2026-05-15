@@ -48,6 +48,7 @@ from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.rewards import make_reward_pre_post_processors
+from lerobot.transforms import ImageTransformsConfig
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
@@ -60,6 +61,38 @@ from lerobot.utils.utils import (
 )
 
 from .lerobot_eval import eval_policy_all
+
+
+@torch.no_grad()
+def compute_val_loss(
+    policy: PreTrainedPolicy,
+    val_dataloader: torch.utils.data.DataLoader,
+    preprocessor,
+    accelerator: "Accelerator",
+    n_batches: int = 50,
+) -> dict:
+    """Compute average validation loss over n_batches from the validation set."""
+    policy.eval()
+    total_loss = 0.0
+    count = 0
+    val_iter = iter(val_dataloader)
+    for _ in range(n_batches):
+        try:
+            batch = next(val_iter)
+        except StopIteration:
+            break
+        for key in list(batch.keys()):
+            if batch[key].dtype == torch.uint8:
+                batch[key] = batch[key].to(dtype=torch.float32) / 255.0
+        batch = preprocessor(batch)
+        with accelerator.autocast():
+            loss, _ = policy.forward(batch)
+        total_loss += loss.item()
+        count += 1
+    policy.train()
+    if count == 0:
+        return {"val/loss": float("nan")}
+    return {"val/loss": total_loss / count}
 
 
 def update_policy(
@@ -242,6 +275,38 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     if not is_main_process:
         dataset = make_dataset(cfg)
 
+    # Validation split: hold out a fraction of episodes for validation loss
+    val_dataset = None
+    if cfg.val_split > 0:
+        all_episodes = list(range(dataset.meta.total_episodes))
+        if cfg.dataset.episodes is not None:
+            all_episodes = list(cfg.dataset.episodes)
+
+        n_val = max(1, int(len(all_episodes) * cfg.val_split))
+        rng = torch.Generator().manual_seed(cfg.seed or 1000)
+        perm = torch.randperm(len(all_episodes), generator=rng).tolist()
+        val_episodes = sorted([all_episodes[i] for i in perm[:n_val]])
+        train_episodes = sorted([all_episodes[i] for i in perm[n_val:]])
+
+        logging.info(
+            f"Validation split: {len(train_episodes)} train episodes, {len(val_episodes)} val episodes"
+        )
+
+        # Recreate train dataset with only train episodes
+        cfg_train_dataset = dataclasses.replace(cfg.dataset, episodes=train_episodes)
+        original_episodes = cfg.dataset.episodes
+        cfg.dataset = cfg_train_dataset
+        dataset = make_dataset(cfg)
+        cfg.dataset = dataclasses.replace(cfg_train_dataset, episodes=original_episodes)
+
+        # Create validation dataset (no image transforms for clean eval)
+        val_cfg = dataclasses.replace(cfg.dataset, episodes=val_episodes)
+        val_cfg = dataclasses.replace(val_cfg, image_transforms=ImageTransformsConfig())
+        orig_dataset_cfg = cfg.dataset
+        cfg.dataset = val_cfg
+        val_dataset = make_dataset(cfg)
+        cfg.dataset = orig_dataset_cfg
+
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
     # using the eval.py instead, with gym_dora environment and dora-rs.
@@ -413,6 +478,18 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         persistent_workers=cfg.persistent_workers and cfg.num_workers > 0,
     )
 
+    # Create validation dataloader if val split is enabled
+    val_dataloader = None
+    if val_dataset is not None:
+        val_dataloader = torch.utils.data.DataLoader(
+            val_dataset,
+            num_workers=max(1, cfg.num_workers // 2),
+            batch_size=cfg.batch_size,
+            shuffle=False,
+            pin_memory=device.type == "cuda",
+            drop_last=False,
+        )
+
     # Prepare everything with accelerator
     accelerator.wait_for_everyone()
     policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
@@ -483,6 +560,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0 and is_main_process
         is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
         is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
+        val_freq = cfg.val_freq if cfg.val_freq > 0 else cfg.eval_freq
+        is_val_step = val_dataloader is not None and val_freq > 0 and step % val_freq == 0
 
         if is_log_step:
             logging.info(train_tracker)
@@ -516,6 +595,18 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     wandb_logger.log_policy(checkpoint_dir)
 
             accelerator.wait_for_everyone()
+
+        if is_val_step and is_main_process:
+            logging.info(f"Computing validation loss at step {step}")
+            val_metrics = compute_val_loss(
+                policy=accelerator.unwrap_model(policy),
+                val_dataloader=val_dataloader,
+                preprocessor=preprocessor,
+                accelerator=accelerator,
+            )
+            logging.info(f"  val/loss: {val_metrics['val/loss']:.4f}")
+            if wandb_logger:
+                wandb_logger.log_dict(val_metrics, step)
 
         if cfg.env and is_eval_step:
             if is_main_process:
