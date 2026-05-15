@@ -26,7 +26,7 @@ This module provides utilities for:
 import logging
 import shutil
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed, ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import datasets
@@ -1933,9 +1933,7 @@ def reencode_dataset(
         return dataset
     logging.info(f"Re-encoding {len(video_paths_list)} video file(s) with {camera_encoder}")
 
-    worker_args = [
-        (vp, camera_encoder, encoder_threads) for vp in video_paths_list
-    ]
+    worker_args = [(vp, camera_encoder, encoder_threads) for vp in video_paths_list]
     if num_workers and num_workers >= 1:
         with ProcessPoolExecutor(max_workers=num_workers) as pool:
             futures = [pool.submit(_reencode_video_worker, args) for args in worker_args]
@@ -1952,9 +1950,7 @@ def reencode_dataset(
     # Refresh video info in metadata for every video key.
     for vid_key in meta.video_keys:
         video_path = meta.root / meta.get_video_file_path(0, vid_key)
-        meta.info.features[vid_key]["info"] = get_video_info(
-            video_path, camera_encoder=camera_encoder
-        )
+        meta.info.features[vid_key]["info"] = get_video_info(video_path, camera_encoder=camera_encoder)
 
     write_info(meta.info, meta.root)
     logging.info("Dataset metadata updated.")

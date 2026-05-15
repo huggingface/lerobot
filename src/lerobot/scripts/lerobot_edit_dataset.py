@@ -673,8 +673,7 @@ def handle_reencode_videos(cfg: EditDatasetConfig) -> None:
         current_encoder = VideoEncoderConfig.from_video_info(current_info)
         if current_encoder == cfg.operation.camera_encoder:
             logging.info(
-                f"Videos in {cfg.repo_id} are already encoded with {current_encoder}. "
-                "Nothing to do."
+                f"Videos in {cfg.repo_id} are already encoded with {current_encoder}. Nothing to do."
             )
             return
     else:

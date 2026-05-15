@@ -17,7 +17,6 @@
 """Unit tests for ``lerobot.datasets.video_utils`` encoding functions and ``lerobot.configs.video.VideoEncoderConfig`` config class."""
 
 import json
-import shutil
 from pathlib import Path
 
 import numpy as np
@@ -498,6 +497,7 @@ class TestReencodeVideo:
         assert info["video.fps"] == 30
         assert info["video.g"] == 6
         assert info["video.crf"] == 23
+
 
 class TestConcatenateVideoFiles:
     def test_two_clips_frame_count(self, tmp_path):

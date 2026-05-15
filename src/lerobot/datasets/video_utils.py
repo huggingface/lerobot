@@ -456,7 +456,9 @@ def reencode_video(
             with av.open(
                 tmp_output_video_path,
                 mode="w",
-                options={"movflags": "faststart"},  # faststart is to move the metadata to the beginning of the file to speed up loading
+                options={
+                    "movflags": "faststart"
+                },  # faststart is to move the metadata to the beginning of the file to speed up loading
             ) as dst:
                 out_stream = dst.add_stream(vcodec, fps, options=video_options)
                 out_stream.pix_fmt = pix_fmt
