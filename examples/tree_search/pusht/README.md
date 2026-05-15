@@ -120,8 +120,9 @@ uv run python examples/tree_search/pusht/animate_search_trace.py \
   --max-dots=10
 ```
 
-The animation draws the ACT policy chunk first, then noisy candidate chunks,
-then highlights the selected chunk. It writes
+The animation starts from the clean rollout frame, reveals all candidate chunks
+at the same time, highlights the selected chunk, then plays the clean
+non-search rollout frames until the next search decision. It writes
 `RUN_DIR/plot_videos/eps_N_animated.mp4` when `--episode=N` is set, otherwise
 `RUN_DIR/plot_videos/search_trace_animated.mp4`.
 

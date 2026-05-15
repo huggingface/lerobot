@@ -68,8 +68,34 @@ def parse_args() -> argparse.Namespace:
         help="Number of new trace points revealed per animation frame.",
     )
     parser.add_argument("--intro-frames", type=int, default=4, help="Base-image frames before drawing starts.")
-    parser.add_argument("--candidate-hold-frames", type=int, default=2, help="Hold frames after each candidate.")
+    parser.add_argument(
+        "--candidate-hold-frames",
+        type=int,
+        default=4,
+        help="Hold frames after all candidates are drawn.",
+    )
     parser.add_argument("--selected-hold-frames", type=int, default=8, help="Hold frames after selected highlight.")
+    parser.add_argument(
+        "--between-frames",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Play clean rollout frames between search decisions from "
+            "RUN_DIR/frames/episode_XXX/frame_YYYYY.png. Enabled by default."
+        ),
+    )
+    parser.add_argument(
+        "--between-frame-stride",
+        type=int,
+        default=1,
+        help="Stride for clean rollout frames between search decisions.",
+    )
+    parser.add_argument(
+        "--max-between-frames",
+        type=int,
+        default=0,
+        help="Maximum clean rollout frames to play between two search decisions. Use 0 for all.",
+    )
     parser.add_argument("--dot-radius", type=int, default=6, help="Dot radius in pixels.")
     parser.add_argument(
         "--render-mode",
@@ -223,6 +249,12 @@ def trace_label(trace: dict[str, Any]) -> str:
     return f"candidate {index}"
 
 
+def payload_for_step(payload: dict[str, Any], env_step: int) -> dict[str, Any]:
+    step_payload = dict(payload)
+    step_payload["env_step"] = int(env_step)
+    return step_payload
+
+
 def annotate(image: np.ndarray, payload: dict[str, Any], phase: str, *, enabled: bool) -> np.ndarray:
     if not enabled:
         return image
@@ -296,6 +328,34 @@ def candidate_order(payload: dict[str, Any], *, max_candidates: int) -> list[dic
     return original + others
 
 
+def animate_all_candidates(
+    *,
+    writer: cv2.VideoWriter,
+    base_image: np.ndarray,
+    traces: list[dict[str, Any]],
+    payload: dict[str, Any],
+    args: argparse.Namespace,
+    size: tuple[int, int],
+) -> None:
+    traces_with_points = [(trace, trace_points(trace, args.max_dots)) for trace in traces]
+    max_points = max((len(points) for _, points in traces_with_points), default=0)
+    if max_points <= 0:
+        return
+    stride = max(1, int(args.points_per_frame))
+
+    for end in range(stride, max_points + stride, stride):
+        frame = np.ascontiguousarray(base_image.copy())
+        for trace, points in traces_with_points:
+            draw_one_trace(
+                frame,
+                trace,
+                trace_colors(trace),
+                args,
+                points=points[: min(end, len(points))],
+            )
+        write_frame(writer, annotate(frame, payload, "generate candidates", enabled=args.overlay), size=size)
+
+
 def animate_trace(
     *,
     writer: cv2.VideoWriter,
@@ -352,7 +412,8 @@ def animate_choice(
     base_path = resolve_base_image(run_dir, choice, args.base_source)
     base_image = load_rgb_image(base_path)
     payload = choice.payload
-    completed: list[tuple[dict[str, Any], tuple[tuple[int, int, int], ...], bool]] = []
+    traces = candidate_order(payload, max_candidates=args.max_candidates)
+    completed = [(trace, trace_colors(trace), False) for trace in traces]
 
     hold_frame(
         writer=writer,
@@ -364,27 +425,24 @@ def animate_choice(
         size=size,
     )
 
-    for trace in candidate_order(payload, max_candidates=args.max_candidates):
-        animate_trace(
-            writer=writer,
-            base_image=base_image,
-            completed=completed,
-            trace=trace,
-            payload=payload,
-            args=args,
-            size=size,
-        )
-        completed.append((trace, trace_colors(trace), False))
-        frame = render_completed(base_image, completed, args)
-        hold_frame(
-            writer=writer,
-            frame=frame,
-            payload=payload,
-            phase=f"hold {trace_label(trace)}",
-            count=args.candidate_hold_frames,
-            args=args,
-            size=size,
-        )
+    animate_all_candidates(
+        writer=writer,
+        base_image=base_image,
+        traces=traces,
+        payload=payload,
+        args=args,
+        size=size,
+    )
+    all_candidates_frame = render_completed(base_image, completed, args)
+    hold_frame(
+        writer=writer,
+        frame=all_candidates_frame,
+        payload=payload,
+        phase="all candidates",
+        count=args.candidate_hold_frames,
+        args=args,
+        size=size,
+    )
 
     selected = next((trace for trace in payload["traces"] if trace.get("is_selected")), None)
     if selected is not None:
@@ -412,14 +470,63 @@ def animate_choice(
     )
 
 
+def rollout_frame_path(run_dir: Path, *, episode_index: int, env_step: int) -> Path:
+    return run_dir / "frames" / f"episode_{episode_index:03d}" / f"frame_{env_step:05d}.png"
+
+
+def play_between_search_frames(
+    *,
+    writer: cv2.VideoWriter,
+    run_dir: Path,
+    current: TraceChoice,
+    next_choice: TraceChoice,
+    args: argparse.Namespace,
+    size: tuple[int, int],
+) -> None:
+    if not args.between_frames:
+        return
+
+    current_episode = int(current.payload["episode_index"])
+    next_episode = int(next_choice.payload["episode_index"])
+    if current_episode != next_episode:
+        return
+
+    current_step = int(current.payload["env_step"])
+    next_step = int(next_choice.payload["env_step"])
+    if next_step <= current_step + 1:
+        return
+
+    stride = max(1, int(args.between_frame_stride))
+    written = 0
+    for env_step in range(current_step + 1, next_step, stride):
+        if args.max_between_frames > 0 and written >= args.max_between_frames:
+            break
+        frame_path = rollout_frame_path(run_dir, episode_index=current_episode, env_step=env_step)
+        if not frame_path.exists():
+            continue
+        frame = load_rgb_image(frame_path)
+        step_payload = payload_for_step(current.payload, env_step)
+        write_frame(writer, annotate(frame, step_payload, "execute chunk", enabled=args.overlay), size=size)
+        written += 1
+
+
 def write_video(run_dir: Path, choices: list[TraceChoice], args: argparse.Namespace, output_path: Path) -> None:
     first_base_path = resolve_base_image(run_dir, choices[0], args.base_source)
     first_frame = load_rgb_image(first_base_path)
     height, width = first_frame.shape[:2]
     writer = open_video_writer(output_path, width=width, height=height, fps=args.fps)
     try:
-        for choice in choices:
+        for choice_ix, choice in enumerate(choices):
             animate_choice(writer=writer, run_dir=run_dir, choice=choice, args=args, size=(width, height))
+            if choice_ix + 1 < len(choices):
+                play_between_search_frames(
+                    writer=writer,
+                    run_dir=run_dir,
+                    current=choice,
+                    next_choice=choices[choice_ix + 1],
+                    args=args,
+                    size=(width, height),
+                )
     finally:
         writer.release()
 
@@ -432,6 +539,10 @@ def main() -> None:
         raise ValueError("--points-per-frame must be positive.")
     if args.max_candidates < 0:
         raise ValueError("--max-candidates must be non-negative.")
+    if args.between_frame_stride <= 0:
+        raise ValueError("--between-frame-stride must be positive.")
+    if args.max_between_frames < 0:
+        raise ValueError("--max-between-frames must be non-negative.")
 
     run_dir = args.run_dir.expanduser().resolve()
     output_path = (
