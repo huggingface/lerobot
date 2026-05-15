@@ -15,6 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import logging
 import shutil
 from pathlib import Path
@@ -23,9 +24,11 @@ import datasets
 import pandas as pd
 import tqdm
 
+from lerobot.configs import VIDEO_ENCODER_INFO_KEYS
+
 from .compute_stats import aggregate_stats
 from .dataset_metadata import LeRobotDatasetMetadata
-from .feature_utils import get_hf_features_from_features
+from .feature_utils import features_equal_for_merge, get_hf_features_from_features
 from .io_utils import (
     get_file_size_in_mb,
     get_parquet_file_size_in_mb,
@@ -46,11 +49,54 @@ from .utils import (
 from .video_utils import concatenate_video_files, get_video_duration_in_s
 
 
+def merge_video_feature_info_for_aggregate(all_metadata: list[LeRobotDatasetMetadata]) -> dict[str, dict]:
+    """Create a merged video feature info dictionary for aggregation. The video encoder info is merged field-by-field: each key is kept only when every source agrees; otherwise that key is set to ``null`` (or ``{}`` for ``video.extra_options``) and a warning is logged.
+
+    Args:
+        all_metadata: List of LeRobotDatasetMetadata objects to merge.
+
+    Returns:
+        dict: A dictionary of merged video feature info.
+    """
+    merged_info = copy.deepcopy(all_metadata[0].features)
+    video_keys = [k for k in merged_info if merged_info[k].get("dtype") == "video"]
+
+    for vk in video_keys:
+        video_infos = [m.features.get(vk, {}).get("info") or {} for m in all_metadata]
+        base_video_info = video_infos[0]
+
+        merged_encoder_info: dict = {}
+        fallback_keys: list[str] = []
+        for info_key in VIDEO_ENCODER_INFO_KEYS:
+            values = [info.get(info_key, None) for info in video_infos]
+            first_value = values[0]
+            all_match = all(v == first_value for v in values[1:])
+
+            if all_match:
+                merged_encoder_info[info_key] = first_value
+            else:
+                fallback_keys.append(info_key)
+                merged_encoder_info[info_key] = {} if info_key == "video.extra_options" else None
+
+        if fallback_keys:
+            logging.warning(
+                f"Merging heterogeneous or incomplete video encoder metadata for feature {vk}. "
+                f"Setting these keys to null: {fallback_keys}.",
+            )
+
+        merged_info[vk]["info"] = {**base_video_info, **merged_encoder_info}
+        # TODO(CarolinePascal): make this variable once we have support for other video backends.
+        merged_info[vk]["info"]["video.video_backend"] = "pyav"
+
+    return merged_info
+
+
 def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata]):
     """Validates that all dataset metadata have consistent properties.
 
     Ensures all datasets have the same fps, robot_type, and features to guarantee
     compatibility when aggregating them into a single dataset.
+    Video encoder info is not considered for validation but is merged during aggregation in ``merge_video_feature_info_for_aggregate``.
 
     Args:
         all_metadata: List of LeRobotDatasetMetadata objects to validate.
@@ -74,7 +120,7 @@ def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata]):
             raise ValueError(
                 f"Same robot_type is expected, but got robot_type={meta.robot_type} instead of {robot_type}."
             )
-        if features != meta.features:
+        if not features_equal_for_merge(features, meta.features):
             raise ValueError(
                 f"Same features is expected, but got features={meta.features} instead of {features}."
             )
@@ -274,7 +320,8 @@ def aggregate_datasets(
             LeRobotDatasetMetadata(repo_id, root=root) for repo_id, root in zip(repo_ids, roots, strict=False)
         ]
     )
-    fps, robot_type, features = validate_all_metadata(all_metadata)
+    fps, robot_type, _ = validate_all_metadata(all_metadata)
+    features = merge_video_feature_info_for_aggregate(all_metadata)
     video_keys = [key for key in features if features[key]["dtype"] == "video"]
 
     dst_meta = LeRobotDatasetMetadata.create(
@@ -332,7 +379,6 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
         videos_idx: Dictionary tracking video chunk and file indices.
         video_files_size_in_mb: Maximum size for video files in MB (defaults to DEFAULT_VIDEO_FILE_SIZE_IN_MB)
         chunk_size: Maximum number of files per chunk (defaults to DEFAULT_CHUNK_SIZE)
-
     Returns:
         dict: Updated videos_idx with current chunk and file indices.
     """
@@ -414,9 +460,11 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
                 current_dst_duration = dst_file_durations.get(dst_key, 0)
                 videos_idx[key]["src_to_offset"][(src_chunk_idx, src_file_idx)] = current_dst_duration
                 videos_idx[key]["src_to_dst"][(src_chunk_idx, src_file_idx)] = dst_key
+                # TODO(CarolinePascal): Move the check before the loop to avoid failing in the middle + add possibility to re-encode the video if the check fails
                 concatenate_video_files(
                     [dst_path, src_path],
                     dst_path,
+                    compatibility_check=True,
                 )
                 # Update duration of this destination file
                 dst_file_durations[dst_key] = current_dst_duration + src_duration

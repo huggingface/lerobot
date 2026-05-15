@@ -17,19 +17,19 @@
 import pytest
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.policies.sac.configuration_sac import (
+from lerobot.policies.gaussian_actor.configuration_gaussian_actor import (
     ActorLearnerConfig,
     ActorNetworkConfig,
     ConcurrencyConfig,
     CriticNetworkConfig,
+    GaussianActorConfig,
     PolicyConfig,
-    SACConfig,
 )
 from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_STATE
 
 
-def test_sac_config_default_initialization():
-    config = SACConfig()
+def test_gaussian_actor_config_default_initialization():
+    config = GaussianActorConfig()
 
     assert config.normalization_mapping == {
         "VISUAL": NormalizationMode.MEAN_STD,
@@ -55,9 +55,6 @@ def test_sac_config_default_initialization():
     # Basic parameters
     assert config.device == "cpu"
     assert config.storage_device == "cpu"
-    assert config.discount == 0.99
-    assert config.temperature_init == 1.0
-    assert config.num_critics == 2
 
     # Architecture specifics
     assert config.vision_encoder_name is None
@@ -66,6 +63,8 @@ def test_sac_config_default_initialization():
     assert config.shared_encoder is True
     assert config.num_discrete_actions is None
     assert config.image_embedding_pooling_dim == 8
+    assert config.state_encoder_hidden_dim == 256
+    assert config.latent_dim == 256
 
     # Training parameters
     assert config.online_steps == 1000000
@@ -73,20 +72,6 @@ def test_sac_config_default_initialization():
     assert config.offline_buffer_capacity == 100000
     assert config.async_prefetch is False
     assert config.online_step_before_learning == 100
-    assert config.policy_update_freq == 1
-
-    # SAC algorithm parameters
-    assert config.num_subsample_critics is None
-    assert config.critic_lr == 3e-4
-    assert config.actor_lr == 3e-4
-    assert config.temperature_lr == 3e-4
-    assert config.critic_target_update_weight == 0.005
-    assert config.utd_ratio == 1
-    assert config.state_encoder_hidden_dim == 256
-    assert config.latent_dim == 256
-    assert config.target_entropy is None
-    assert config.use_backup_entropy is True
-    assert config.grad_clip_norm == 40.0
 
     # Dataset stats defaults
     expected_dataset_stats = {
@@ -104,11 +89,6 @@ def test_sac_config_default_initialization():
         },
     }
     assert config.dataset_stats == expected_dataset_stats
-
-    # Critic network configuration
-    assert config.critic_network_kwargs.hidden_dims == [256, 256]
-    assert config.critic_network_kwargs.activate_final is True
-    assert config.critic_network_kwargs.final_activation is None
 
     # Actor network configuration
     assert config.actor_network_kwargs.hidden_dims == [256, 256]
@@ -135,7 +115,6 @@ def test_sac_config_default_initialization():
     assert config.concurrency.learner == "threads"
 
     assert isinstance(config.actor_network_kwargs, ActorNetworkConfig)
-    assert isinstance(config.critic_network_kwargs, CriticNetworkConfig)
     assert isinstance(config.policy_kwargs, PolicyConfig)
     assert isinstance(config.actor_learner_config, ActorLearnerConfig)
     assert isinstance(config.concurrency, ConcurrencyConfig)
@@ -175,22 +154,22 @@ def test_concurrency_config():
     assert config.learner == "threads"
 
 
-def test_sac_config_custom_initialization():
-    config = SACConfig(
+def test_gaussian_actor_config_custom_initialization():
+    config = GaussianActorConfig(
         device="cpu",
-        discount=0.95,
-        temperature_init=0.5,
-        num_critics=3,
+        latent_dim=128,
+        state_encoder_hidden_dim=128,
+        num_discrete_actions=3,
     )
 
     assert config.device == "cpu"
-    assert config.discount == 0.95
-    assert config.temperature_init == 0.5
-    assert config.num_critics == 3
+    assert config.latent_dim == 128
+    assert config.state_encoder_hidden_dim == 128
+    assert config.num_discrete_actions == 3
 
 
 def test_validate_features():
-    config = SACConfig(
+    config = GaussianActorConfig(
         input_features={OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(10,))},
         output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(3,))},
     )
@@ -198,7 +177,7 @@ def test_validate_features():
 
 
 def test_validate_features_missing_observation():
-    config = SACConfig(
+    config = GaussianActorConfig(
         input_features={"wrong_key": PolicyFeature(type=FeatureType.STATE, shape=(10,))},
         output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(3,))},
     )
@@ -209,7 +188,7 @@ def test_validate_features_missing_observation():
 
 
 def test_validate_features_missing_action():
-    config = SACConfig(
+    config = GaussianActorConfig(
         input_features={OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(10,))},
         output_features={"wrong_key": PolicyFeature(type=FeatureType.ACTION, shape=(3,))},
     )

@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import contextlib
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -23,6 +24,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from huggingface_hub import snapshot_download
 
+from lerobot.configs import VideoEncoderConfig
 from lerobot.utils.constants import DEFAULT_FEATURES, HF_LEROBOT_HOME, HF_LEROBOT_HUB_CACHE
 from lerobot.utils.feature_utils import _validate_feature_names
 from lerobot.utils.utils import flatten_dict
@@ -188,6 +190,29 @@ class LeRobotDatasetMetadata:
         """
         if self.episodes is None:
             self._load_metadata()
+
+    def filter_episodes(
+        self,
+        predicate: Callable[[dict], bool],
+        candidates: list[int] | None = None,
+    ) -> list[int]:
+        """Filter episodes whose metadata satisfies a given predicate.
+
+        Args:
+            predicate: Predicate over per-episode metadata rows used to select episodes.
+            candidates: Optional list of episode indices to restrict evaluation to.
+
+        Returns:
+            List of sorted episode indices that satisfy the predicate.
+        """
+        self.ensure_readable()
+        if candidates is not None:
+            candidate_set = set(candidates)
+            combined = lambda ep: ep["episode_index"] in candidate_set and predicate(ep)  # noqa: E731
+        else:
+            combined = predicate
+        filtered = self.episodes.filter(combined, keep_in_memory=True, load_from_cache_file=False)
+        return sorted(int(idx) for idx in filtered["episode_index"])
 
     def _pull_from_repo(
         self,
@@ -510,10 +535,23 @@ class LeRobotDatasetMetadata:
         self.stats = aggregate_stats([self.stats, episode_stats]) if self.stats is not None else episode_stats
         write_stats(self.stats, self.root)
 
-    def update_video_info(self, video_key: str | None = None) -> None:
-        """
+    def update_video_info(
+        self,
+        video_key: str | None = None,
+        camera_encoder: VideoEncoderConfig | None = None,
+    ) -> None:
+        """Populate per-feature video info in ``info.json``.
+
         Warning: this function writes info from first episode videos, implicitly assuming that all videos have
         been encoded the same way. Also, this means it assumes the first episode exists.
+
+        Args:
+            video_key: If provided, only update this video key. Otherwise update
+                all video keys in the dataset.
+            camera_encoder: Encoder configuration used to produce the
+                videos. When provided, its fields are recorded as
+                ``video.<field>`` entries alongside the stream-derived
+                ``video.*`` entries (see :func:`get_video_info`).
         """
         if video_key is not None and video_key not in self.video_keys:
             raise ValueError(f"Video key {video_key} not found in dataset")
@@ -522,7 +560,7 @@ class LeRobotDatasetMetadata:
         for key in video_keys:
             if not self.features[key].get("info", None):
                 video_path = self.root / self.video_path.format(video_key=key, chunk_index=0, file_index=0)
-                self.info.features[key]["info"] = get_video_info(video_path)
+                self.info.features[key]["info"] = get_video_info(video_path, camera_encoder=camera_encoder)
 
     def update_chunk_settings(
         self,

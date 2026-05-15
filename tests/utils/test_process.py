@@ -22,7 +22,7 @@ from unittest.mock import patch
 
 import pytest
 
-pytest.importorskip("grpc")
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.utils.process import ProcessSignalHandler  # noqa: E402
 

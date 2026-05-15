@@ -17,9 +17,10 @@ import logging
 import torch
 from torch import Tensor, nn
 
-from lerobot.rewards.classifier.configuration_classifier import RewardClassifierConfig
-from lerobot.rewards.pretrained import PreTrainedRewardModel
 from lerobot.utils.constants import OBS_IMAGE, REWARD
+
+from ..pretrained import PreTrainedRewardModel
+from .configuration_classifier import RewardClassifierConfig
 
 
 class ClassifierOutput:
@@ -105,6 +106,7 @@ class Classifier(PreTrainedRewardModel):
     def __init__(
         self,
         config: RewardClassifierConfig,
+        **kwargs,
     ):
         from transformers import AutoModel
 

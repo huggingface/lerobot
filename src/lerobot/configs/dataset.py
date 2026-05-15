@@ -14,9 +14,11 @@
 
 """Shared dataset recording configuration used by both ``lerobot-record`` and ``lerobot-rollout``."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+
+from .video import VideoEncoderConfig, camera_encoder_defaults
 
 
 @dataclass
@@ -55,10 +57,9 @@ class DatasetRecordConfig:
     # Number of episodes to record before batch encoding videos
     # Set to 1 for immediate encoding (default behavior), or higher for batched encoding
     video_encoding_batch_size: int = 1
-    # Video codec for encoding videos. Options: 'h264', 'hevc', 'libsvtav1', 'auto',
-    # or hardware-specific: 'h264_videotoolbox', 'h264_nvenc', 'h264_vaapi', 'h264_qsv'.
-    # Use 'auto' to auto-detect the best available hardware encoder.
-    vcodec: str = "libsvtav1"
+    # Video encoder settings for camera MP4s (codec, quality, GOP, etc.). Tuned via CLI nested keys,
+    # e.g. ``--dataset.camera_encoder.vcodec=h264`` (see ``VideoEncoderConfig``).
+    camera_encoder: VideoEncoderConfig = field(default_factory=camera_encoder_defaults)
     # Enable streaming video encoding: encode frames in real-time during capture instead
     # of writing PNG images first. Makes save_episode() near-instant. More info in the documentation: https://huggingface.co/docs/lerobot/streaming_video_encoding
     streaming_encoding: bool = False

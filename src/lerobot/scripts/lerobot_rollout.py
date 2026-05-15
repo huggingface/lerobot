@@ -120,6 +120,18 @@ Usage examples
         --dataset.repo_id=user/rollout_sentry_data \\
         --dataset.single_task="patrol" \\
         --resume=true
+
+    # Rollout with custom video encoding parameters
+    lerobot-rollout \\
+        --strategy.type=base \\
+        --policy.path=lerobot/act_koch_real \\
+        --robot.type=koch_follower \\
+        --robot.port=/dev/ttyACM0 \\
+        --task="pick up cube" --duration=60 \\
+        --display_data=true \\
+        --dataset.camera_encoder.vcodec=h264 \\
+        --dataset.camera_encoder.preset=fast \\
+        --dataset.camera_encoder.extra_options={"tune": "film", "profile:v": "high", "bf": 2}
 """
 
 import logging
