@@ -3,11 +3,11 @@
 #
 #   Trains two things only: subtasks and VQA. Plan and memory are
 #   intentionally left out for now — keeps the prompt short and the
-#   training surface small while the core action loop is validated.
+#   training surface small while the core subtask + action loop is
+#   validated.
 #
-#     high_level_subtask  — predict the subtask from the task (text
-#                           head only; not on the inference path yet).
-#     low_level_execution — flow loss with [images, task, state].
+#     high_level_subtask  — predict the subtask from the task.
+#     low_level_execution — flow loss with [images, subtask, state].
 #     ask_vqa_{top,wrist} — camera-grounded VQA.
 #
 # Each backbone's text tokenizer renders these messages differently
@@ -25,15 +25,14 @@ blend:
   low_level_execution:
     weight: 0.40
     messages:
-      # The action expert is conditioned on the TASK (not the subtask).
-      # The task is always available at inference with no high-level
-      # generation loop, so this removes the train/inference mismatch
-      # that a subtask-conditioned action head would have while there
-      # is no reliable runtime subtask source. ``high_level_subtask``
-      # still trains the text head to predict subtasks for later use.
-      # ``stream: low_level`` flips ``predict_actions=True`` so the
-      # flow loss fires; no text-CE target here.
-      - {role: user, content: "${task}", stream: low_level}
+      # The action expert is conditioned on the SUBTASK — at inference
+      # the high-level loop (``HighLevelSubtaskFwd``) generates the
+      # subtask via the LM head and feeds it here. The action expert's
+      # prefix is [images, subtask, state]. ``stream: low_level`` flips
+      # ``predict_actions=True`` so the flow loss fires; no text-CE
+      # target here (subtask prediction is owned by
+      # ``high_level_subtask``).
+      - {role: user, content: "${subtask}", stream: low_level, if_present: subtask}
 
   ask_vqa_top:
     weight: 0.10

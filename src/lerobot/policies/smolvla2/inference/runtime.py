@@ -30,6 +30,7 @@ from .steps import (
     AskVQAFwd,
     DispatchAction,
     DispatchToolCalls,
+    HighLevelSubtaskFwd,
     InferenceStep,
     LowLevelForward,
 )
@@ -66,24 +67,29 @@ class SmolVLA2Runtime:
     _stop: bool = field(default=False, init=False)
 
     def __post_init__(self) -> None:
-        # VQA-only configuration (current scope). The training recipe
-        # supervises only subtasks + VQA — plan and memory are out for
-        # now — so the runtime drops the high-level subtask /
-        # memory-update / interjection steps. The remaining loop is:
+        # Subtask + VQA configuration (current scope — plan and memory
+        # are not trained yet). Pipeline:
         #
-        #   AskVQAFwd      → answer camera-grounded questions on stdin
-        #   LowLevelForward → action chunk (conditioned on the task
-        #                     string directly, since no subtask is
-        #                     being generated — see LowLevelForward's
-        #                     ``current_subtask or task`` fallback)
-        #   DispatchAction  → drain the chunk to the robot
-        #   DispatchToolCalls → fire any pending tool calls
+        #   HighLevelSubtaskFwd → generate the next subtask via the LM
+        #                         head at ~``high_level_hz``; writes
+        #                         ``current_subtask``
+        #   AskVQAFwd           → answer camera-grounded stdin questions
+        #   LowLevelForward     → action chunk conditioned on the
+        #                         generated ``current_subtask``
+        #   DispatchAction      → drain the chunk to the robot
+        #   DispatchToolCalls   → fire any pending tool calls
         #
-        # ``HighLevelSubtaskFwd`` / ``MemoryUpdateFwd`` /
-        # ``UserInterjectionFwd`` are still importable from
-        # ``inference.steps`` — re-add them here once plan / memory /
-        # subtask generation is back in scope.
+        # Order matters: ``HighLevelSubtaskFwd`` and ``LowLevelForward``
+        # are both gated on "action queue empty", so the subtask must
+        # refresh *before* the chunk that consumes it. ``MemoryUpdateFwd``
+        # / ``UserInterjectionFwd`` are still importable from
+        # ``inference.steps`` — re-add once plan / memory are in scope.
         self.pipeline = [
+            HighLevelSubtaskFwd(
+                trigger=HzTrigger(self.high_level_hz),
+                policy=self.policy,
+                observation_provider=self.observation_provider,
+            ),
             AskVQAFwd(
                 policy=self.policy,
                 observation_provider=self.observation_provider,
