@@ -189,7 +189,7 @@ def collect_trace_choices(
     if not choices:
         raise FileNotFoundError(
             f"No matching search trace JSON files found under {search_dir}. "
-            "Run with --dump_search_images=true first."
+            "Run with --dump_search_images=true first, or choose an episode that has search traces."
         )
     return choices
 
@@ -236,7 +236,7 @@ def draw_one_trace(
 
 
 def selected_index(payload: dict[str, Any]) -> int | None:
-    selected = next((trace for trace in payload["traces"] if trace.get("is_selected")), None)
+    selected = next((trace for trace in payload.get("traces", []) if trace.get("is_selected")), None)
     return None if selected is None else int(selected["candidate_index"])
 
 
@@ -253,6 +253,10 @@ def payload_for_step(payload: dict[str, Any], env_step: int) -> dict[str, Any]:
     step_payload = dict(payload)
     step_payload["env_step"] = int(env_step)
     return step_payload
+
+
+def clean_payload(*, episode_index: int, env_step: int) -> dict[str, Any]:
+    return {"episode_index": int(episode_index), "env_step": int(env_step), "traces": []}
 
 
 def annotate(image: np.ndarray, payload: dict[str, Any], phase: str, *, enabled: bool) -> np.ndarray:
@@ -474,56 +478,113 @@ def rollout_frame_path(run_dir: Path, *, episode_index: int, env_step: int) -> P
     return run_dir / "frames" / f"episode_{episode_index:03d}" / f"frame_{env_step:05d}.png"
 
 
-def play_between_search_frames(
+def parse_frame_step(path: Path) -> int | None:
+    if not path.stem.startswith("frame_"):
+        return None
+    try:
+        return int(path.stem.removeprefix("frame_"))
+    except ValueError:
+        return None
+
+
+def episode_frame_steps(run_dir: Path, *, episode_index: int) -> list[int]:
+    frame_dir = run_dir / "frames" / f"episode_{episode_index:03d}"
+    steps = [step for path in frame_dir.glob("frame_*.png") if (step := parse_frame_step(path)) is not None]
+    return sorted(steps)
+
+
+def play_clean_frame_range(
     *,
     writer: cv2.VideoWriter,
     run_dir: Path,
-    current: TraceChoice,
-    next_choice: TraceChoice,
+    episode_index: int,
+    start_step: int,
+    stop_step: int,
     args: argparse.Namespace,
     size: tuple[int, int],
 ) -> None:
     if not args.between_frames:
         return
-
-    current_episode = int(current.payload["episode_index"])
-    next_episode = int(next_choice.payload["episode_index"])
-    if current_episode != next_episode:
+    if stop_step <= start_step:
         return
 
-    current_step = int(current.payload["env_step"])
-    next_step = int(next_choice.payload["env_step"])
-    if next_step <= current_step + 1:
-        return
-
-    stride = max(1, int(args.between_frame_stride))
+    stride = int(args.between_frame_stride)
     written = 0
-    for env_step in range(current_step + 1, next_step, stride):
+    for env_step in range(start_step, stop_step, stride):
         if args.max_between_frames > 0 and written >= args.max_between_frames:
             break
-        frame_path = rollout_frame_path(run_dir, episode_index=current_episode, env_step=env_step)
+        frame_path = rollout_frame_path(run_dir, episode_index=episode_index, env_step=env_step)
         if not frame_path.exists():
             continue
         frame = load_rgb_image(frame_path)
-        step_payload = payload_for_step(current.payload, env_step)
-        write_frame(writer, annotate(frame, step_payload, "execute chunk", enabled=args.overlay), size=size)
+        write_frame(
+            writer,
+            annotate(
+                frame,
+                clean_payload(episode_index=episode_index, env_step=env_step),
+                "rollout",
+                enabled=args.overlay,
+            ),
+            size=size,
+        )
         written += 1
 
 
+def group_choices_by_episode(choices: list[TraceChoice]) -> dict[int, list[TraceChoice]]:
+    grouped: dict[int, list[TraceChoice]] = {}
+    for choice in choices:
+        grouped.setdefault(int(choice.payload["episode_index"]), []).append(choice)
+    for episode_choices in grouped.values():
+        episode_choices.sort(key=lambda choice: int(choice.payload["env_step"]))
+    return grouped
+
+
+def first_video_frame(run_dir: Path, choices: list[TraceChoice], args: argparse.Namespace) -> np.ndarray:
+    first_choice = choices[0]
+    episode_index = int(first_choice.payload["episode_index"])
+    frame_steps = episode_frame_steps(run_dir, episode_index=episode_index)
+    if frame_steps:
+        start_step = args.start_step if args.start_step is not None else frame_steps[0]
+        frame_path = rollout_frame_path(run_dir, episode_index=episode_index, env_step=start_step)
+        if frame_path.exists():
+            return load_rgb_image(frame_path)
+        return load_rgb_image(rollout_frame_path(run_dir, episode_index=episode_index, env_step=frame_steps[0]))
+
+    return load_rgb_image(resolve_base_image(run_dir, first_choice, args.base_source))
+
+
 def write_video(run_dir: Path, choices: list[TraceChoice], args: argparse.Namespace, output_path: Path) -> None:
-    first_base_path = resolve_base_image(run_dir, choices[0], args.base_source)
-    first_frame = load_rgb_image(first_base_path)
+    first_frame = first_video_frame(run_dir, choices, args)
     height, width = first_frame.shape[:2]
     writer = open_video_writer(output_path, width=width, height=height, fps=args.fps)
+    grouped_choices = group_choices_by_episode(choices)
     try:
-        for choice_ix, choice in enumerate(choices):
-            animate_choice(writer=writer, run_dir=run_dir, choice=choice, args=args, size=(width, height))
-            if choice_ix + 1 < len(choices):
-                play_between_search_frames(
+        for episode_index, episode_choices in sorted(grouped_choices.items()):
+            frame_steps = episode_frame_steps(run_dir, episode_index=episode_index)
+            timeline_step = args.start_step if args.start_step is not None else (frame_steps[0] if frame_steps else 0)
+
+            for choice in episode_choices:
+                search_step = int(choice.payload["env_step"])
+                play_clean_frame_range(
                     writer=writer,
                     run_dir=run_dir,
-                    current=choice,
-                    next_choice=choices[choice_ix + 1],
+                    episode_index=episode_index,
+                    start_step=timeline_step,
+                    stop_step=search_step,
+                    args=args,
+                    size=(width, height),
+                )
+                animate_choice(writer=writer, run_dir=run_dir, choice=choice, args=args, size=(width, height))
+                timeline_step = search_step + 1
+
+            if frame_steps:
+                final_step = args.end_step if args.end_step is not None else frame_steps[-1]
+                play_clean_frame_range(
+                    writer=writer,
+                    run_dir=run_dir,
+                    episode_index=episode_index,
+                    start_step=timeline_step,
+                    stop_step=final_step + 1,
                     args=args,
                     size=(width, height),
                 )

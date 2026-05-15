@@ -120,9 +120,10 @@ uv run python examples/tree_search/pusht/animate_search_trace.py \
   --max-dots=10
 ```
 
-The animation starts from the clean rollout frame, reveals all candidate chunks
-at the same time, highlights the selected chunk, then plays the clean
-non-search rollout frames until the next search decision. It writes
+The animation starts from the first available clean rollout frame for the
+episode, plays non-search frames normally, reveals all candidate chunks at the
+same time when a search decision exists, highlights the selected chunk, then
+continues with clean rollout frames until the next search decision. It writes
 `RUN_DIR/plot_videos/eps_N_animated.mp4` when `--episode=N` is set, otherwise
 `RUN_DIR/plot_videos/search_trace_animated.mp4`.
 
