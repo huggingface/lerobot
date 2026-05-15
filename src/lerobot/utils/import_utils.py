@@ -69,7 +69,7 @@ def is_package_available(
         return package_exists
 
 
-def get_safe_default_codec():
+def get_safe_default_video_backend():
     logger = logging.getLogger(__name__)
     if importlib.util.find_spec("torchcodec"):
         return "torchcodec"
@@ -127,6 +127,9 @@ _hidapi_available = is_package_available("hidapi", import_name="hid")
 # Data / serialization
 _pandas_available = is_package_available("pandas")
 _faker_available = is_package_available("faker")
+
+# Video encoding / decoding
+_av_available = is_package_available("av")
 
 # Misc
 _pynput_available = is_package_available("pynput")

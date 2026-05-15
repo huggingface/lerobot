@@ -18,8 +18,8 @@ from logging import getLogger
 from pathlib import Path
 
 from lerobot import envs, policies  # noqa: F401
-from lerobot.configs import parser
 
+from . import parser
 from .default import EvalConfig
 from .policies import PreTrainedConfig
 

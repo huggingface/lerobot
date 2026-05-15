@@ -19,6 +19,7 @@ import datasets
 import numpy as np
 from PIL import Image as PILImage
 
+from lerobot.configs import VIDEO_ENCODER_INFO_KEYS
 from lerobot.utils.constants import DEFAULT_FEATURES
 from lerobot.utils.utils import is_valid_numpy_dtype_string
 
@@ -106,6 +107,41 @@ def create_empty_dataset_info(
         data_path=DEFAULT_DATA_PATH,
         video_path=DEFAULT_VIDEO_PATH if use_videos else None,
     )
+
+
+def features_equal_for_merge(features_a: dict[str, dict], features_b: dict[str, dict]) -> bool:
+    """Return whether two LeRobotDatasetMetadata ``features`` dicts are compatible for aggregation.
+
+    For video features, keys under ``info`` related to video encoding parameters are ignored during
+    comparison as they do not prevent aggregation.
+    """
+
+    def _without_encoder_info_keys(feature: dict) -> dict:
+        filtered = dict(feature)
+        filtered_info = filtered.get("info")
+        if isinstance(filtered_info, dict):
+            filtered["info"] = {
+                info_key: info_value
+                for info_key, info_value in filtered_info.items()
+                if info_key not in VIDEO_ENCODER_INFO_KEYS
+            }
+        return filtered
+
+    if set(features_a) != set(features_b):
+        return False
+    for key in features_a:
+        fa_key = features_a[key]
+        fb_key = features_b[key]
+        if fa_key.get("dtype") != fb_key.get("dtype"):
+            return False
+        if fa_key.get("dtype") != "video":
+            if fa_key != fb_key:
+                return False
+            continue
+
+        if _without_encoder_info_keys(fa_key) != _without_encoder_info_keys(fb_key):
+            return False
+    return True
 
 
 def check_delta_timestamps(
