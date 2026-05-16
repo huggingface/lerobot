@@ -520,6 +520,22 @@ class SmolVLA2Policy(SmolVLAPolicy):
             images, img_masks, lang_tokens, lang_masks, state=state
         )
 
+        # ``embed_prefix`` lays the prefix out as ``[images, lang, state]``
+        # — the state token is LAST. Training supervises the text head on
+        # the *language* positions (see ``_compute_text_loss`` /
+        # ``_compute_fused_loss``: lm_head over ``prefix_out[lang_start:
+        # lang_end]``). So AR text generation must continue from the last
+        # language token (right after the ``Assistant:`` generation
+        # prompt) — NOT from the state token, whose hidden state exists
+        # for the action expert to read and which the lm_head was never
+        # trained to decode subtask text from. Truncating the state token
+        # here makes ``prefix_out[:, -1:]`` in the loop below the last
+        # language position, matching the training distribution.
+        _, lang_end = _locate_lang_range(prefix_att_masks, lang_tokens.shape[1])
+        prefix_embs = prefix_embs[:, :lang_end]
+        prefix_pad_masks = prefix_pad_masks[:, :lang_end]
+        prefix_att_masks = prefix_att_masks[:, :lang_end]
+
         device = prefix_embs.device
         bsize = prefix_embs.shape[0]
         vlm = self.model.vlm_with_expert.vlm
