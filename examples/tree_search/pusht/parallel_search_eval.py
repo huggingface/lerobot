@@ -19,7 +19,12 @@ uv run python examples/tree_search/pusht/parallel_search_eval.py \
   --depth=3 \
   --num-candidates=40 \
   --chunk-size=3 \
-  --execute-steps=10
+  --execute-steps=10 \
+  --render-videos=30 \
+  --dump_frames=true \
+  --plot_policy_trace \
+  --dump_search_images=true \
+  --video_overlay=false
 ```
 """
 
@@ -38,7 +43,6 @@ from typing import Any
 
 import numpy as np
 
-
 LOGGER = logging.getLogger("pusht_parallel_search")
 
 
@@ -49,6 +53,10 @@ class ParallelConfig:
     seed: int | None
     output_dir: Path
     render_videos: int
+    dump_frames: bool
+    plot_policy_trace: bool
+    dump_search_images: bool
+    video_overlay: bool
     script: Path
 
 
@@ -69,6 +77,17 @@ class EpisodeRun:
     stdout_path: str
     stderr_path: str
     metrics: dict[str, Any] | None
+
+
+def str_to_bool(value: str | bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    normalized = value.lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(f"Expected boolean value, got {value!r}.")
 
 
 def parse_args() -> tuple[ParallelConfig, list[str]]:
@@ -93,6 +112,37 @@ def parse_args() -> tuple[ParallelConfig, list[str]]:
         type=int,
         default=1,
         help="Total number of episode videos to render across all workers.",
+    )
+    parser.add_argument(
+        "--dump-frames",
+        "--dump_frames",
+        dest="dump_frames",
+        type=str_to_bool,
+        default=False,
+        help="Forward --dump-frames to each child evaluator.",
+    )
+    parser.add_argument(
+        "--plot-policy-trace",
+        "--plot_policy_trace",
+        dest="plot_policy_trace",
+        action="store_true",
+        help="Forward --plot-policy-trace to each child evaluator.",
+    )
+    parser.add_argument(
+        "--dump-search-images",
+        "--dump_search_images",
+        dest="dump_search_images",
+        type=str_to_bool,
+        default=False,
+        help="Forward --dump-search-images to each child evaluator.",
+    )
+    parser.add_argument(
+        "--video-overlay",
+        "--video_overlay",
+        dest="video_overlay",
+        type=str_to_bool,
+        default=True,
+        help="Forward --video-overlay to each child evaluator.",
     )
     parser.add_argument(
         "--script",
@@ -133,7 +183,12 @@ def run_episode_subprocess(
         "--episodes=1",
         f"--output-dir={job.output_dir}",
         f"--render-videos={job.render_videos}",
+        f"--dump-frames={str(cfg.dump_frames).lower()}",
+        f"--dump-search-images={str(cfg.dump_search_images).lower()}",
+        f"--video-overlay={str(cfg.video_overlay).lower()}",
     ]
+    if cfg.plot_policy_trace:
+        cmd.append("--plot-policy-trace")
     if job.seed is not None:
         cmd.append(f"--seed={job.seed}")
 
@@ -186,10 +241,7 @@ def collate_runs(cfg: ParallelConfig, runs: list[EpisodeRun], elapsed_s: float) 
     for run in sorted(successful, key=lambda item: item.episode_index):
         assert run.metrics is not None
         child_per_episode = run.metrics.get("per_episode", [])
-        if child_per_episode:
-            item = dict(child_per_episode[0])
-        else:
-            item = {}
+        item = dict(child_per_episode[0]) if child_per_episode else {}
         item["episode_index"] = run.episode_index
         item["seed"] = run.seed
         item["output_dir"] = run.output_dir
