@@ -1,0 +1,255 @@
+# Brewie
+
+The Brewie robot is a humanoid robot based on the Hiwonder-manufactured AiNex model, redesigned to use ROS 1 - noetic (Robot Operating System) for communication and control.
+
+## Hardware Overview
+
+The Brewie robot is a humanoid robot based on the Hiwonder-manufactured AiNex model. This modification features:
+
+- **Humanoid Design**: Bipedal walking robot with human-like proportions
+- **Dual Manipulators**: Equipped with two articulated arms for manipulation tasks
+- **Locomotion**: Capable of walking and navigating in its environment
+- **Vision System**: Features a movable camera for visual perception
+- **Control Unit**: Powered by a Raspberry Pi 5 as the main computing platform
+- **Network Connectivity**: Can be controlled via local network connection, eliminating the need for direct physical connections
+
+## Prerequisites
+
+- ROS environment running on the robot
+- Network connectivity between control computer and robot
+
+## Install LeRobot
+
+Follow the [installation instructions](./installation) to install LeRobot.
+
+Install LeRobot with Brewie dependencies:
+
+```bash
+pip install -e ".[brewie]"
+```
+
+## ROS Configuration
+
+The Brewie robot uses ROS for communication instead of direct motor control. Ensure your ROS environment is properly configured:
+
+### ROS Master Setup
+
+The robot runs a ROS master that needs to be accessible from your control computer:
+
+```bash
+# On the robot (Raspberry Pi)
+roscore
+
+# Or with custom IP/port
+export ROS_MASTER_URI=http://192.168.1.100:11311
+roscore
+```
+
+### Network Configuration
+
+Ensure both devices are on the same network and can communicate:
+
+```bash
+# Test connectivity from control computer
+ping <robot_ip_address>
+```
+
+## Robot Configuration
+
+### Connection Parameters
+
+Configure the robot connection in your code:
+
+```python
+from lerobot.robots.brewie.config_Brewie import BrewieConfig
+
+config = BrewieConfig(
+    master_ip="192.168.1.100",  # Robot's IP address
+    master_port=9090,           # ROS bridge port
+    servo_duration=0.1,         # Movement duration
+    max_relative_target=50.0    # Safety limit
+)
+```
+
+### Servo Mapping
+
+The robot uses the following servo ID mapping:
+
+| ID | Joint Name |
+|----|------------|
+| 13 | left_shoulder_pan |
+| 14 | right_shoulder_pan |
+| 15 | left_shoulder_lift |
+| 16 | right_shoulder_lift |
+| 17 | left_forearm_roll |
+| 18 | right_forearm_roll |
+| 19 | left_forearm_pitch |
+| 20 | right_forearm_pitch |
+| 21 | left_gripper |
+| 22 | right_gripper |
+
+## ROS Interface
+
+### Services
+
+#### Get Servo Positions
+- **Name:** `/ros_robot_controller/bus_servo/get_position`
+- **Type:** `ros_robot_controller/GetBusServosPosition`
+- **Request:** `{'id': [13, 14, 15, 16, 17, 18, 19, 20, 21, 22]}`
+- **Response:** `{'success': True, 'position': [{'id': 13, 'position': 872}, ...]}`
+
+### Topics
+
+#### Set Servo Positions
+- **Name:** `/ros_robot_controller/bus_servo/set_position`
+- **Type:** `ros_robot_controller/SetBusServosPosition`
+- **Message:** `{'duration': 0.1, 'position': [{'id': 13, 'position': 500}, ...]}`
+
+#### Camera Image
+- **Name:** `/camera/image_raw/compressed`
+- **Type:** `sensor_msgs/CompressedImage`
+
+## Basic Usage
+
+### Initialize Robot
+
+```python
+from lerobot.robots.brewie.Brewie_base import BrewieBase
+from lerobot.robots.brewie.config_Brewie import BrewieConfig
+
+config = BrewieConfig(
+    master_ip="192.168.1.100",
+    master_port=9090
+)
+
+robot = BrewieBase(config)
+robot.connect()
+
+# Get current observation
+observation = robot.get_observation()
+
+# Send action command
+action = {
+    'left_shoulder_pan': 500,
+    'right_shoulder_pan': 500,
+    # ... other joints
+}
+robot.send_action(action)
+
+robot.disconnect()
+```
+
+## Dataset Recording
+
+### Using Configuration-Based Recording
+
+The recommended way to record datasets with Brewie is using the configuration-based approach:
+
+#### 1. Setup HuggingFace Token
+
+```bash
+export HUGGINGFACE_TOKEN=your_token_here
+```
+
+#### 2. Configure Recording Settings
+
+Edit `examples/brewie/record_config.py`:
+
+```python
+config = RecordingConfig(
+    hf_username="your_username",  # Replace with your username
+    dataset_name="brewie_manipulation",
+    ros_master_ip="192.168.1.100",  # Robot's IP address
+    ros_master_port=9090,
+    num_episodes=5,
+    episode_time_sec=30,
+    task_description="Brewie robot manipulation task",
+    task_category="manipulation",
+    difficulty_level="beginner"
+)
+```
+
+#### 3. Run Recording
+
+```bash
+python examples/brewie/record_with_config.py
+```
+
+### Configuration Options
+
+The `record_config.py` file provides several predefined configurations:
+
+- **Quick Demo**: `RecordingConfig.quick_demo()` - 2 short episodes for testing
+- **Full Dataset**: `RecordingConfig.full_dataset()` - 20 episodes for training
+- **Pick & Place**: `RecordingConfig.pick_place_task()` - Specialized for grasping tasks
+- **Assembly**: `RecordingConfig.assembly_task()` - Complex manipulation tasks
+
+### Advanced Recording Features
+
+- **Resume Recording**: Continue adding episodes to existing datasets
+- **Automatic Hub Upload**: Push datasets to HuggingFace Hub automatically
+- **Multi-threaded Image Recording**: Optimized for video capture
+- **Interactive Mode Selection**: Choose between creating new or continuing existing datasets
+
+### Recording Controls
+
+During recording:
+- **ENTER**: Start/continue episode recording
+- **ESC**: Stop recording
+- **R**: Rewrite current episode
+
+## Compatibility
+
+The Brewie implementation is fully compatible with LeRobot standards:
+
+- Maintains `Robot` class interface
+- Supports dataset collection and training
+- Compatible with all LeRobot policies
+- Preserves observation and action formats
+
+## Troubleshooting
+
+### Connection Issues
+
+1. **Check ROS Master**: Ensure ROS master is running on the robot
+2. **Network Connectivity**: Verify both devices are on the same network
+3. **Firewall**: Check if firewall is blocking ROS bridge port (9090)
+4. **ROS Environment**: Ensure `ROS_MASTER_URI` is set correctly
+
+### Recording Issues
+
+1. **Token Authentication**: Verify HuggingFace token is valid and has write permissions
+2. **Dataset Permissions**: Check if you have access to create datasets on Hub
+3. **Memory Issues**: Reduce FPS or episode duration if running out of memory
+4. **Video Sync**: Lower FPS if experiencing video synchronization issues
+
+### Performance Optimization
+
+For better performance:
+- Reduce FPS to 15-20 for stability
+- Use fewer image writer threads (2-4)
+- Ensure sufficient disk space for video recording
+- Close unnecessary applications during recording
+
+## Examples
+
+See files in `examples/brewie/`:
+- `record_config.py` - Configuration file for recording
+- `record_with_config.py` - Main recording script with configuration support
+- `README.md` - Additional usage examples and documentation
+
+## Testing
+
+Tests are available in `tests/robots/test_brewie_ros.py` to verify:
+- Robot initialization and connection
+- ROS service and topic communication
+- Observation retrieval and action sending
+- Proper disconnection and cleanup
+
+## Requirements
+
+- Python 3.8+
+- ROS (Robot Operating System)
+- `roslibpy` library for Python-ROS communication
+- OpenCV for image processing
+- HuggingFace Hub for dataset management
