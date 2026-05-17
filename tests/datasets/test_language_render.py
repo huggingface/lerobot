@@ -370,6 +370,38 @@ def test_resolve_task_explicit_override_beats_rephrasings():
     assert rendered["messages"][0]["content"] == "explicit override wins"
 
 
+def test_flow_only_low_level_recipe_renders_without_target():
+    """Regression: a flow-only ``low_level`` recipe has no ``target`` turn —
+    its supervision is the action-expert flow loss, not text-CE. It must
+    still render (not ``None``), otherwise every blend draw of it is dropped
+    and the action expert never receives a flow loss."""
+    recipe = TrainingRecipe(
+        messages=[
+            MessageTurn(
+                role="user",
+                content="${subtask}",
+                stream="low_level",
+                if_present="subtask",
+            ),
+        ],
+        bindings={"subtask": "active_at(t, style=subtask)"},
+    )
+
+    rendered = render_sample(
+        recipe=recipe,
+        persistent=PERSISTENT,
+        events=[],
+        t=0.5,
+        sample_idx=0,
+        task="clean kitchen",
+    )
+
+    assert rendered is not None
+    assert rendered["messages"] == [{"role": "user", "content": "subtask 0"}]
+    assert rendered["message_streams"] == ["low_level"]
+    assert rendered["target_message_indices"] == []
+
+
 def test_canonical_recipe_can_render_low_level_branch():
     recipe = TrainingRecipe.from_yaml(Path("src/lerobot/configs/recipes/pi05_hirobot.yaml"))
     low_level = TrainingRecipe(blend={"low": recipe.blend["low_level_execution"]})

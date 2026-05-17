@@ -376,7 +376,15 @@ def _render_message_recipe(
         if turn.target:
             target_indices.append(message_idx)
 
-    if not target_indices:
+    # A render is meaningful if it supervises *something*: either a
+    # text-CE target turn, or a ``low_level`` stream turn (flow / action
+    # supervision — e.g. the flow-only ``low_level_execution`` recipe,
+    # ``user(${subtask})`` with ``stream: low_level`` and no target).
+    # Without this, a flow-only recipe renders to ``None`` every time
+    # the blend draws it → ``predict_actions`` is never True → the
+    # action expert never receives a flow loss.
+    has_low_level = any(stream == "low_level" for stream in streams)
+    if not target_indices and not has_low_level:
         return None
 
     rendered = {
@@ -433,8 +441,13 @@ def _validate_rendered(rendered: RenderedMessages) -> None:
 
     if len(streams) != len(messages):
         raise ValueError("message_streams must be aligned with messages.")
-    if not target_indices:
-        raise ValueError("Rendered samples must contain at least one target message.")
+    # Valid iff it supervises something: a text-CE target turn OR a
+    # ``low_level`` stream turn (flow / action supervision).
+    if not target_indices and not any(s == "low_level" for s in streams):
+        raise ValueError(
+            "Rendered samples must contain a target message or a "
+            "low_level-stream message."
+        )
     for idx in target_indices:
         if idx < 0 or idx >= len(messages):
             raise ValueError(f"Target message index {idx} is out of bounds.")
