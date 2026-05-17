@@ -4,7 +4,7 @@
 
 ## 설치
 
-`accelerate`는 `training` extra에 포함되어 있습니다. 다음 명령으로 설치하세요:
+`accelerate`는 `training` extra에 포함되어 있습니다. 다음 명령으로 설치해주세요:
 
 ```bash
 pip install 'lerobot[training]'
@@ -70,24 +70,24 @@ accelerate launch $(which lerobot-train) \
 accelerate로 훈련을 실행하면:
 
 1. **자동 감지**: LeRobot이 accelerate 환경에서 실행 중인지 자동으로 감지합니다.
-2. **데이터 분산**: 배치가 GPU들에 자동으로 분할됩니다.
+2. **데이터 분산**: 배치가 각 GPU로 자동으로 분할됩니다.
 3. **그래디언트 동기화**: 역전파 동안 GPU 간 그래디언트가 동기화됩니다.
 4. **단일 프로세스 로깅**: 메인 프로세스만 wandb 로깅과 체크포인트 저장을 수행합니다.
 
-## Learning Rate와 훈련 스텝 스케일링
+## 학습률과 훈련 스텝 스케일링
 
-**중요:** LeRobot은 GPU 개수에 따라 learning rate나 훈련 스텝을 자동으로 스케일링하지 **않습니다**. 따라서 하이퍼파라미터를 직접 완전히 제어할 수 있습니다.
+**중요:** LeRobot은 GPU 개수에 따라 학습률 혹은 훈련 스텝을 자동으로 스케일링하지 **않습니다**. 따라서 하이퍼파라미터를 직접 완전히 제어할 수 있습니다.
 
 ### 왜 자동 스케일링을 하지 않나요?
 
-많은 분산 훈련 프레임워크는 GPU 수에 비례해 learning rate를 자동으로 스케일링합니다(예: `lr = base_lr × num_gpus`).
-하지만 LeRobot은 사용자가 지정한 learning rate를 그대로 유지합니다.
+많은 분산 훈련 프레임워크는 GPU 수에 비례해 학습률을 자동으로 스케일링합니다(예: `lr = base_lr × num_gpus`).
+하지만 LeRobot은 사용자가 지정한 학습률을 그대로 유지합니다.
 
 ### 언제, 어떻게 스케일링하나요?
 
 여러 GPU를 사용할 때 하이퍼파라미터를 스케일링하고 싶다면 직접 적용해야 합니다:
 
-**Learning Rate 스케일링:**
+**학습률 스케일링:**
 
 ```bash
 # 예시: 2개 GPU에서 선형 LR 스케일링
@@ -118,7 +118,7 @@ accelerate launch --num_processes=2 $(which lerobot-train) \
 - `lerobot-train`의 `--policy.use_amp` 플래그는 accelerate 없이 실행할 때만 사용됩니다. accelerate 사용 시 mixed precision은 accelerate 설정에서 제어됩니다.
 - 충돌을 방지하기 위해 훈련 로그, 체크포인트, 허브 업로드는 메인 프로세스에서만 수행됩니다. 중복 출력을 막기 위해 비-메인 프로세스의 콘솔 로깅은 비활성화됩니다.
 - 유효 배치 크기는 `batch_size × num_gpus`입니다. 예를 들어 4개 GPU에서 `--batch_size=8`이면 유효 배치 크기는 32입니다.
-- learning rate scheduler는 다중 프로세스에서 올바르게 동작합니다. LeRobot은 프로세스 수에 따라 scheduler step이 바뀌지 않도록 `step_scheduler_with_optimizer=False`를 설정합니다.
+- 학습률 scheduler는 다중 프로세스에서 올바르게 동작합니다. LeRobot은 프로세스 수에 따라 scheduler step이 바뀌지 않도록 `step_scheduler_with_optimizer=False`를 설정합니다.
 - 모델 저장 또는 허브 업로드 시, LeRobot은 호환성을 위해 accelerate의 분산 래퍼를 자동으로 해제(unwrap)합니다.
 - WandB 연동은 메인 프로세스에서만 자동 초기화되어 run이 여러 개 생성되는 것을 방지합니다.
 
