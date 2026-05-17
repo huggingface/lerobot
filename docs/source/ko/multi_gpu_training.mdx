@@ -116,10 +116,10 @@ accelerate launch --num_processes=2 $(which lerobot-train) \
 ## 참고 사항
 
 - `lerobot-train`의 `--policy.use_amp` 플래그는 accelerate 없이 실행할 때만 사용됩니다. accelerate 사용 시 mixed precision은 accelerate 설정에서 제어됩니다.
-- 충돌을 방지하기 위해 훈련 로그, 체크포인트, 허브 업로드는 메인 프로세스에서만 수행됩니다. 중복 출력을 막기 위해 비-메인 프로세스의 콘솔 로깅은 비활성화됩니다.
+- 충돌을 방지하기 위해 훈련 로그, 체크포인트, 허브 업로드는 메인 프로세스에서만 수행됩니다. 중복 출력을 막기 위해 메인이 아닌 프로세스의 콘솔 로깅은 비활성화됩니다.
 - 유효 배치 크기는 `batch_size × num_gpus`입니다. 예를 들어 4개 GPU에서 `--batch_size=8`이면 유효 배치 크기는 32입니다.
-- 학습률 scheduler는 다중 프로세스에서 올바르게 동작합니다. LeRobot은 프로세스 수에 따라 scheduler step이 바뀌지 않도록 `step_scheduler_with_optimizer=False`를 설정합니다.
-- 모델 저장 또는 허브 업로드 시, LeRobot은 호환성을 위해 accelerate의 분산 래퍼를 자동으로 해제(unwrap)합니다.
+- 학습률 스케줄링은 여러 프로세스 환경에서도 올바르게 처리됩니다. LeRobot은 accelerate가 프로세스 수에 따라 스케줄러 스텝을 조정하지 못하도록 step_scheduler_with_optimizer=False를 설정합니다.
+- 모델 저장 또는 허브 업로드 시, LeRobot은 호환성을 위해 accelerate의 분산 래퍼를 자동으로 추출(unwrap)합니다.
 - WandB 연동은 메인 프로세스에서만 자동 초기화되어 run이 여러 개 생성되는 것을 방지합니다.
 
 고급 구성이나 문제 해결은 [Accelerate 문서](https://huggingface.co/docs/accelerate)를 참고하세요. 많은 GPU에서 훈련하는 방법을 더 깊게 알고 싶다면 [Ultrascale Playbook](https://huggingface.co/spaces/nanotron/ultrascale-playbook)도 추천합니다.
