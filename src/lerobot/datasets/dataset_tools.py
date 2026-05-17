@@ -1920,21 +1920,31 @@ def reencode_dataset(
             :func:`reencode_video`. ``None`` lets the codec decide.
         num_workers: Number of parallel processes. ``None`` or ``0`` means
             sequential (no multiprocessing); ``1+`` spawns a
-            :class:`~multiprocessing.pool.Pool`.
+            :class:`~concurrent.futures.ProcessPoolExecutor`.
 
     Returns:
         The same :class:`LeRobotDataset` instance with its metadata updated
         on disk.
     """
     meta = dataset.meta
-    video_paths_list = sorted((meta.root / VIDEO_DIR).rglob("*.mp4"))
+    video_paths_list = []
+
+    # Only re-encode if the videos are not already encoded with the given video encoding parameters
+    for video_key in meta.video_keys:
+        current_info = meta.info.features[video_key].get("info", {})
+        current_encoder = VideoEncoderConfig.from_video_info(current_info)
+        if current_encoder != camera_encoder:
+            video_paths_list.extend((meta.root / VIDEO_DIR / video_key).rglob("*.mp4"))
+        else:
+            logging.info(f"{video_key} videos are already encoded with {camera_encoder}. Nothing to do.")
+
     if len(video_paths_list) == 0:
         logging.warning("Dataset has no videos to re-encode.")
         return dataset
     logging.info(f"Re-encoding {len(video_paths_list)} video file(s) with {camera_encoder}")
 
     worker_args = [(vp, camera_encoder, encoder_threads) for vp in video_paths_list]
-    if num_workers and num_workers >= 1:
+    if num_workers and num_workers > 1:
         with ProcessPoolExecutor(max_workers=num_workers) as pool:
             futures = [pool.submit(_reencode_video_worker, args) for args in worker_args]
             for future in tqdm(

@@ -178,7 +178,7 @@ Recompute stats for relative actions and push to hub:
         --operation.num_workers 4 \
         --push_to_hub true
 
-Re-encode all videos in a dataset in-place with a new codec:
+Re-encode all videos in a dataset (saves to lerobot/pusht_reencoded by default):
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --operation.type reencode_videos \
@@ -194,6 +194,14 @@ Re-encode videos into a new dataset using 4 parallel processes:
         --operation.camera_encoder.vcodec h264 \
         --operation.camera_encoder.crf 23 \
         --operation.num_workers 4
+
+Re-encode videos in-place (overwrites original dataset):
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht \
+        --new_repo_id lerobot/pusht \
+        --operation.type reencode_videos \
+        --operation.camera_encoder.vcodec h264 \
+        --operation.overwrite true
 
 Using JSON config file:
     lerobot-edit-dataset \
@@ -212,7 +220,6 @@ import draccus
 from lerobot.configs import VideoEncoderConfig, camera_encoder_defaults, parser
 from lerobot.datasets import (
     LeRobotDataset,
-    LeRobotDatasetMetadata,
     convert_image_to_video_dataset,
     delete_episodes,
     merge_datasets,
@@ -293,6 +300,7 @@ class ReencodeVideosConfig(OperationConfig):
     camera_encoder: VideoEncoderConfig = field(default_factory=camera_encoder_defaults)
     num_workers: int = 0
     encoder_threads: int | None = None
+    overwrite: bool = False
 
 
 @OperationConfig.register_subclass("info")
@@ -665,40 +673,40 @@ def handle_reencode_videos(cfg: EditDatasetConfig) -> None:
     if not isinstance(cfg.operation, ReencodeVideosConfig):
         raise ValueError("Operation config must be ReencodeVideosConfig")
 
-    meta = LeRobotDatasetMetadata(cfg.repo_id, root=cfg.root)
-
-    first_video_key = meta.video_keys[0] if meta.video_keys else None
-    if first_video_key is not None:
-        current_info = meta.features[first_video_key].get("info", {})
-        current_encoder = VideoEncoderConfig.from_video_info(current_info)
-        if current_encoder == cfg.operation.camera_encoder:
-            logging.info(
-                f"Videos in {cfg.repo_id} are already encoded with {current_encoder}. Nothing to do."
-            )
-            return
-    else:
-        raise ValueError("Dataset has no video features — nothing to re-encode.")
-
-    output_repo_id, input_path, output_path = _resolve_io_paths(
-        cfg.repo_id, cfg.new_repo_id, cfg.root, cfg.new_root
+    output_repo_id, input_root, output_root = _resolve_io_paths(
+        cfg.repo_id,
+        cfg.new_repo_id,
+        cfg.root,
+        cfg.new_root,
+        default_new_repo_id=f"{cfg.repo_id}_reencoded",
     )
+    in_place = output_root == input_root
 
-    if output_path == input_path:
-        backup_path = input_path.with_name(input_path.name + "_old")
-        logging.info(f"In-place re-encode — backing up dataset to {backup_path}")
-        if backup_path.exists():
-            shutil.rmtree(backup_path)
-        shutil.copytree(input_path, backup_path)
+    if in_place and not cfg.operation.overwrite:
+        raise ValueError(
+            f"reencode_videos would overwrite the dataset in-place at {input_root}. "
+            "Pass --operation.overwrite true to allow in-place modification, "
+            "or use --new_repo_id / --new_root to write to a different location. "
+            f"Default output repo_id when neither is set: '{cfg.repo_id}_reencoded'."
+        )
+
+    if in_place:
+        logging.warning(
+            f"Overwriting dataset videos in-place at {input_root}. The original videos will be lost."
+        )
+        dataset = LeRobotDataset(cfg.repo_id, root=input_root)
     else:
-        logging.info(f"Copying dataset from {input_path} to {output_path}")
-        if output_path.exists():
-            shutil.rmtree(output_path)
-        shutil.copytree(input_path, output_path)
+        logging.info(f"Copying dataset from {input_root} to {output_root}")
+        if output_root.exists():
+            backup_path = output_root.with_name(output_root.name + "_old")
+            logging.warning(f"Output directory {output_root} already exists. Moving to {backup_path}")
+            if backup_path.exists():
+                shutil.rmtree(backup_path)
+            shutil.move(output_root, backup_path)
+        shutil.copytree(input_root, output_root)
+        dataset = LeRobotDataset(output_repo_id, root=output_root)
 
     logging.info(f"Re-encoding videos in {output_repo_id} with {cfg.operation.camera_encoder}")
-
-    dataset = LeRobotDataset(output_repo_id, root=output_path)
-
     reencode_dataset(
         dataset,
         camera_encoder=cfg.operation.camera_encoder,

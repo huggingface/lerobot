@@ -449,7 +449,9 @@ def reencode_video(
             except IndexError as e:
                 raise ValueError(f"No video stream in {input_video_path}") from e
 
-            fps = int(in_stream.base_rate)
+            fps = (
+                in_stream.base_rate
+            )  # We allow fractional fps though LeRobotDataset only supports integer fps
             width = int(in_stream.width)
             height = int(in_stream.height)
 
@@ -474,14 +476,14 @@ def reencode_video(
                 packet = out_stream.encode()
                 if packet:
                     dst.mux(packet)
+
+        shutil.move(tmp_output_video_path, output_video_path)
     except Exception:
         Path(tmp_output_video_path).unlink(missing_ok=True)
         raise
     finally:
         if log_level is not None:
             av.logging.restore_default_callback()
-
-    shutil.move(tmp_output_video_path, output_video_path)
 
     if not output_video_path.exists():
         raise OSError(f"Video re-encoding did not work. File not found: {output_video_path}.")
