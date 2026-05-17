@@ -20,11 +20,13 @@ from .factory import (
     make_reward_pre_post_processors as make_reward_pre_post_processors,
 )
 from .pretrained import PreTrainedRewardModel as PreTrainedRewardModel
+from .robometer.configuration_robometer import RobometerConfig as RobometerConfig
 from .sarm.configuration_sarm import SARMConfig as SARMConfig
 
 __all__ = [
     # Configuration classes
     "RewardClassifierConfig",
+    "RobometerConfig",
     "SARMConfig",
     # Base class
     "PreTrainedRewardModel",

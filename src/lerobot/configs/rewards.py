@@ -89,9 +89,16 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     def reward_delta_indices(self) -> list | None:  # type: ignore[type-arg]
         return None
 
-    @abc.abstractmethod
-    def get_optimizer_preset(self) -> OptimizerConfig:
-        raise NotImplementedError
+    def get_optimizer_preset(self) -> OptimizerConfig | None:
+        """Default optimizer for this reward model, or ``None`` for zero-shot models.
+
+        Trainable reward models (e.g. SARM, Classifier) must override this with a
+        concrete optimizer config. Zero-shot reward models (e.g. Robometer) leave
+        the default ``None`` — they error out earlier via the
+        :attr:`~lerobot.rewards.pretrained.PreTrainedRewardModel.is_trainable`
+        check in ``lerobot-train``.
+        """
+        return None
 
     def get_scheduler_preset(self) -> LRSchedulerConfig | None:
         return None

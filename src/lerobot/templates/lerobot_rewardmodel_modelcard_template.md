@@ -13,6 +13,8 @@
 A reward classifier is a lightweight neural network that scores observations or trajectories for task success, providing a learned reward signal or offline evaluation when explicit rewards are unavailable.
 {% elif model_name == "sarm" %}
 A Success-Aware Reward Model (SARM) predicts a dense reward signal from observations, typically used downstream for reinforcement learning or human-in-the-loop fine-tuning when task success is not directly observable.
+{% elif model_name == "robometer" %}
+Robometer is a zero-shot general-purpose robotic reward model built on a fine-tuned Qwen3-VL backbone with progress, preference, and success heads. Given a video and a task description it outputs a per-frame progress signal in [0, 1] and a per-frame success probability — suitable for offline reward labelling and for low-frequency reward signals during RL fine-tuning of robot policies.
 {% else %}
 _Reward model type not recognized — please update this template._
 {% endif %}
