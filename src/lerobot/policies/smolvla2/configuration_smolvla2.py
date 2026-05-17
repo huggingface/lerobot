@@ -75,17 +75,21 @@ class SmolVLA2Config(SmolVLAConfig):
     # head should dominate the gradient signal; text is supervised as
     # an auxiliary task and its CE scale (~0.5-2.0 in nats) tends to
     # be larger than the flow MSE scale (~0.1-1.0), so without
-    # up-weighting the action head gets starved. We mirror the paper's
-    # split here: text_loss_weight=1, flow_loss_weight=10.
+    # up-weighting the action head gets starved. We use a milder
+    # split (5:1) than the paper's α=10: ~40% of the blend is the
+    # flow-only ``low_level`` recipe, so the flow term already fires
+    # often, and α=10 starved the text head into degenerate decoding.
     text_loss_weight: float = 1.0
     """Weight on the LM-head cross-entropy term. Set to ``0`` to disable
     text training entirely (reverts to flow-only / SmolVLA behaviour)."""
 
-    flow_loss_weight: float = 10.0
-    """Weight on the action-expert flow-matching term. Default 10.0
-    matches Pi 0.5 paper's α (§IV.D). Set lower if the text head is
-    underfitting relative to the action expert; set higher if the
-    action expert is degrading because text loss dominates."""
+    flow_loss_weight: float = 5.0
+    """Weight on the action-expert flow-matching term. Default 5.0 — a
+    milder split than the Pi 0.5 paper's α=10 (§IV.D), since the
+    flow-only ``low_level`` recipe already gives the action expert
+    frequent gradient. Set lower if the text head is underfitting
+    relative to the action expert; set higher if the action expert is
+    degrading because text loss dominates."""
 
     # Backbone training ---------------------------------------------------
     unfreeze_lm_head: bool = True
