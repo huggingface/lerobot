@@ -1,9 +1,6 @@
-# Look Ahead: Search-Driven Reasoning in Embodied AI
+# Beam Search For PushT
 
-Project page: [https://azeer.co/research/lookahead/](https://azeer.co/research/lookahead/)
-
-This repository contains the PushT tree-search experiments and visualizations for
-Look Ahead. It is intended to be used with a compatible LeRobot checkout or fork.
+This repository contains the PushT tree-search experiments and visualizations using Beam Search. It is intended to be used with a compatible LeRobot checkout or fork.
 The plotting and animation scripts can inspect saved outputs independently, but
 the evaluators rely on LeRobot policy loading, preprocessing, environment
 construction, and PushT simulation utilities.
@@ -19,24 +16,120 @@ construction, and PushT simulation utilities.
   </tr>
 </table>
 
-## Abstract
-
-Search lets an embodied policy look ahead before committing to an action. We
-study this idea in PushT by augmenting a pretrained Action Chunk Transformer with
-Beam Search over perturbed action chunks.
-
-Candidate futures are evaluated in cloned simulator states and scored with
-coverage-based reward. This turns single-pass ACT inference into
-receding-horizon action selection while keeping the learned policy as the
-proposal mechanism.
-
-We also introduce One Step Ahead, a lightweight gate that first simulates the
-nominal policy chunk and invokes full search only when the predicted coverage
-change suggests that additional computation is necessary.
-
 <p align="center">
   <img src="docs/assets/pusht-frames.png" alt="PushT rollout comparison" width="90%">
 </p>
+
+<div class="table-container">
+  <table class="table is-bordered is-striped is-hoverable is-fullwidth results-table">
+    <caption>
+      PushT search performance across Beam Search tree configurations.
+    </caption>
+    <thead>
+      <tr>
+        <th>Method</th>
+        <th>D</th>
+        <th>C</th>
+        <th>BW</th>
+        <th>Avg. Sum Reward</th>
+        <th>Avg. Max Reward</th>
+        <th>Success (%)</th>
+        <th>ASR (%)</th>
+        <th>Runtime (s)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Beam Search</td>
+        <td>2</td>
+        <td>4</td>
+        <td>2</td>
+        <td>90.9</td>
+        <td>0.77</td>
+        <td>18</td>
+        <td>56.4</td>
+        <td>14</td>
+      </tr>
+      <tr>
+        <td>Beam Search</td>
+        <td>4</td>
+        <td>2</td>
+        <td>2</td>
+        <td>90.8</td>
+        <td>0.78</td>
+        <td>16</td>
+        <td>37.5</td>
+        <td>10</td>
+      </tr>
+      <tr>
+        <td>Beam Search</td>
+        <td>4</td>
+        <td>4</td>
+        <td>2</td>
+        <td>90.9</td>
+        <td>0.77</td>
+        <td>18</td>
+        <td>58.23</td>
+        <td>10</td>
+      </tr>
+      <tr>
+        <td>Beam Search</td>
+        <td>4</td>
+        <td>8</td>
+        <td>2</td>
+        <td>94.7</td>
+        <td>0.77</td>
+        <td>18</td>
+        <td>75.6</td>
+        <td>33</td>
+      </tr>
+      <tr>
+        <td>Beam Search</td>
+        <td>4</td>
+        <td>8</td>
+        <td>4</td>
+        <td>103.2</td>
+        <td>0.81</td>
+        <td>18</td>
+        <td>75</td>
+        <td>47</td>
+      </tr>
+      <tr>
+        <td>Beam Search</td>
+        <td>4</td>
+        <td>8</td>
+        <td>8</td>
+        <td>92.2</td>
+        <td>0.80</td>
+        <td>10</td>
+        <td>78.5</td>
+        <td>87</td>
+      </tr>
+      <tr>
+        <td>Beam Search</td>
+        <td>8</td>
+        <td>4</td>
+        <td>2</td>
+        <td>90.9</td>
+        <td>0.77</td>
+        <td>18</td>
+        <td>58.23</td>
+        <td>16</td>
+      </tr>
+      <tr>
+        <td>ACT (Baseline)</td>
+        <td>-</td>
+        <td>-</td>
+        <td>-</td>
+        <td>39.44</td>
+        <td>0.36</td>
+        <td>0.0</td>
+        <td>-</td>
+        <td>2</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
 
 ## Reproduction
 
