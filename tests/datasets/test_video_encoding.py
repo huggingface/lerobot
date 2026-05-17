@@ -348,16 +348,22 @@ def _read_feature_info(dataset: LeRobotDataset) -> dict:
     return info["features"][VIDEO_KEY]["info"]
 
 
-def _add_frames(dataset: LeRobotDataset, num_frames: int) -> None:
-    shape = dataset.meta.features[VIDEO_KEY]["shape"]
+def _add_frames(dataset: LeRobotDataset, num_frames: int, video_keys: list[str] | None = None) -> None:
+    from lerobot.utils.constants import DEFAULT_FEATURES
+
+    if video_keys is None:
+        video_keys = dataset.meta.video_keys
     for _ in range(num_frames):
-        dataset.add_frame(
-            {
-                VIDEO_KEY: np.random.randint(0, 256, shape, dtype=np.uint8),
-                "action": np.zeros(2, dtype=np.float32),
-                "task": "test",
-            }
-        )
+        frame: dict = {"task": "test"}
+        for key, ft in dataset.meta.features.items():
+            if key in DEFAULT_FEATURES:
+                continue
+            shape = ft["shape"]
+            if key in video_keys:
+                frame[key] = np.random.randint(0, 256, shape, dtype=np.uint8)
+            else:
+                frame[key] = np.zeros(shape, dtype=np.float32)
+        dataset.add_frame(frame)
 
 
 class TestGetVideoInfo:
