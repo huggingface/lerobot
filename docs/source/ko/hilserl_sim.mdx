@@ -1,8 +1,8 @@
 # 시뮬레이션에서 RL 훈련
 
-이 가이드는 LeRobot 프레임워크와 함께 Human-In-the-Loop (HIL) 강화학습 작업을 할 때 실제 로봇의 대안으로 `gym_hil` 시뮬레이션 환경을 사용하는 방법을 설명합니다.
+이 가이드는 LeRobot 프레임워크와 함께 Human-In-the-Loop (HIL) 강화 학습 작업을 할 때 실제 로봇의 대안으로 `gym_hil` 시뮬레이션 환경을 사용하는 방법을 설명합니다.
 
-`gym_hil`은 Human-In-the-Loop 강화학습을 위해 특별히 설계된 Gymnasium 호환 시뮬레이션 환경을 제공하는 패키지입니다. 이러한 환경을 통해 다음을 수행할 수 있습니다:
+`gym_hil`은 Human-In-the-Loop 강화 학습을 위해 특별히 설계된 Gymnasium 호환 시뮬레이션 환경을 제공하는 패키지입니다. 이러한 환경을 통해 다음을 수행할 수 있습니다:
 
 - 실제 로봇에서 훈련하기 전에 RL 스택을 테스트하기 위해 시뮬레이션에서 정책 훈련
 - 게임패드나 키보드와 같은 외부 디바이스를 사용하여 시뮬레이션에서 시연 수집
@@ -80,7 +80,7 @@ LeRobot과 함께 `gym_hil`을 사용하려면 구성 파일을 생성해야 합
 
 - `gripper.gripper_penalty`: 과도한 그리퍼 움직임에 대한 페널티
 - `gripper.use_gripper`: 그리퍼 제어 활성화 여부
-- `inverse_kinematics.end_effector_step_sizes`: 엔드-이펙터의 x,y,z 축 단계 크기
+- `inverse_kinematics.end_effector_step_sizes`: 엔드 이펙터의 x,y,z 축 단계 크기
 - `control_mode`: 게임패드 컨트롤러를 사용하려면 `"gamepad"`로 설정
 
 ## LeRobot의 HIL RL과 함께 실행
@@ -134,7 +134,7 @@ python -m lerobot.rl.actor --config_path path/to/train_gym_hil_env.json
 python -m lerobot.rl.learner --config_path path/to/train_gym_hil_env.json
 ```
 
-시뮬레이션 환경은 실제 로봇에 배포하기 전에 Human-In-the-Loop 강화학습 구성 요소를 개발하고 테스트하는 안전하고 반복 가능한 방법을 제공합니다.
+시뮬레이션 환경은 실제 로봇에 배포하기 전에 Human-In-the-Loop 강화 학습 구성 요소를 개발하고 테스트하는 안전하고 반복 가능한 방법을 제공합니다.
 
 축하합니다 🎉, 이 튜토리얼을 완료했습니다!
 
