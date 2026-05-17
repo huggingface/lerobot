@@ -15,9 +15,11 @@
 # limitations under the License.
 """Tests for dataset tools utilities."""
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
+import pandas as pd
 import pytest
 import torch
 
@@ -34,6 +36,7 @@ from lerobot.datasets.dataset_tools import (
     remove_feature,
     split_dataset,
 )
+from lerobot.datasets.utils import DEFAULT_EPISODES_PATH
 
 
 @pytest.fixture
@@ -239,6 +242,68 @@ def test_split_invalid_fractions(sample_dataset, tmp_path):
 
     with pytest.raises(ValueError, match="Split fractions must sum to <= 1.0"):
         split_dataset(sample_dataset, splits=splits, output_dir=tmp_path)
+
+
+def test_copy_and_reindex_episodes_metadata_reads_parquet_once_per_unique_file(tmp_path):
+    from lerobot.datasets import dataset_tools as dataset_tools_module
+
+    shared_chunk_idx = 0
+    shared_file_idx = 0
+    shared_path = tmp_path / DEFAULT_EPISODES_PATH.format(
+        chunk_index=shared_chunk_idx, file_index=shared_file_idx
+    )
+
+    episodes = [
+        {
+            "meta/episodes/chunk_index": shared_chunk_idx,
+            "meta/episodes/file_index": shared_file_idx,
+            "tasks": ["task_a"],
+            "length": 1,
+        }
+        for _ in range(3)
+    ]
+
+    src_dataset = SimpleNamespace(
+        root=tmp_path,
+        meta=SimpleNamespace(episodes=episodes, features={}),
+    )
+
+    class DummyMeta:
+        def __init__(self, root):
+            self.root = root
+            self.features = {}
+            self.tasks = []
+            self.info = SimpleNamespace()
+            self.saved_episodes = []
+
+        def _save_episode_metadata(self, episode_dict):
+            self.saved_episodes.append(episode_dict)
+
+        def finalize(self):
+            return None
+
+    dst_meta = DummyMeta(tmp_path / "dst")
+
+    episode_mapping = {0: 0, 1: 1, 2: 2}
+    data_metadata = {
+        0: {"data/chunk_index": 0, "data/file_index": 0, "dataset_from_index": 0, "dataset_to_index": 1},
+        1: {"data/chunk_index": 0, "data/file_index": 0, "dataset_from_index": 1, "dataset_to_index": 2},
+        2: {"data/chunk_index": 0, "data/file_index": 0, "dataset_from_index": 2, "dataset_to_index": 3},
+    }
+
+    parquet_df = pd.DataFrame({"episode_index": np.array([0, 1, 2])})
+
+    with (
+        patch.object(dataset_tools_module.pd, "read_parquet", return_value=parquet_df) as mock_read_parquet,
+        patch.object(dataset_tools_module, "write_info"),
+        patch.object(dataset_tools_module, "write_stats"),
+    ):
+        dataset_tools_module._copy_and_reindex_episodes_metadata(
+            src_dataset, dst_meta, episode_mapping, data_metadata, video_metadata=None
+        )
+
+    assert mock_read_parquet.call_count == 1
+    assert mock_read_parquet.call_args.args[0] == shared_path
 
 
 def test_split_empty(sample_dataset, tmp_path):

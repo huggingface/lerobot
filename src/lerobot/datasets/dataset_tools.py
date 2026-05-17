@@ -69,7 +69,9 @@ from .video_utils import (
 )
 
 
-def _load_episode_with_stats(src_dataset: LeRobotDataset, episode_idx: int) -> dict:
+def _load_episode_with_stats(
+    src_dataset: LeRobotDataset, episode_idx: int, parquet_cache: dict[str, pd.DataFrame] | None = None
+) -> dict:
     """Load a single episode's metadata including stats from parquet file.
 
     Args:
@@ -84,7 +86,11 @@ def _load_episode_with_stats(src_dataset: LeRobotDataset, episode_idx: int) -> d
     file_idx = ep_meta["meta/episodes/file_index"]
 
     parquet_path = src_dataset.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
-    df = pd.read_parquet(parquet_path)
+    parquet_path_str = str(parquet_path)
+    if parquet_cache is not None and parquet_path_str in parquet_cache:
+        df = parquet_cache[parquet_path_str]
+    else:
+        df = pd.read_parquet(parquet_path)
 
     episode_row = df[df["episode_index"] == episode_idx].iloc[0]
 
@@ -851,11 +857,23 @@ def _copy_and_reindex_episodes_metadata(
 
     all_stats = []
     total_frames = 0
+    parquet_cache: dict[str, pd.DataFrame] = {}
+
+    for old_idx in episode_mapping:
+        src_episode = src_dataset.meta.episodes[old_idx]
+        chunk_idx = src_episode["meta/episodes/chunk_index"]
+        file_idx = src_episode["meta/episodes/file_index"]
+        parquet_path = src_dataset.root / DEFAULT_EPISODES_PATH.format(
+            chunk_index=chunk_idx, file_index=file_idx
+        )
+        parquet_path_str = str(parquet_path)
+        if parquet_path_str not in parquet_cache:
+            parquet_cache[parquet_path_str] = pd.read_parquet(parquet_path)
 
     for old_idx, new_idx in tqdm(
         sorted(episode_mapping.items(), key=lambda x: x[1]), desc="Processing episodes metadata"
     ):
-        src_episode_full = _load_episode_with_stats(src_dataset, old_idx)
+        src_episode_full = _load_episode_with_stats(src_dataset, old_idx, parquet_cache=parquet_cache)
 
         src_episode = src_dataset.meta.episodes[old_idx]
 
