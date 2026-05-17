@@ -1,136 +1,85 @@
-# PushT Tree Search
+# Look Ahead: Search-Driven Reasoning in Embodied AI
 
-This directory contains a PushT-specific receding-horizon tree-search evaluator.
-It loads policies through the normal LeRobot factories, snapshots the current
-PushT simulator state, rolls out hypothetical action chunks, scores the leaves,
-restores the real state, and commits the best root action.
+Project page: [https://azeer.co/research/lookahead/](https://azeer.co/research/lookahead/)
 
-Run:
+This repository contains the PushT tree-search experiments and visualizations for
+Look Ahead. It is intended to be used with a compatible LeRobot checkout or fork.
+The plotting and animation scripts can inspect saved outputs independently, but
+the evaluators rely on LeRobot policy loading, preprocessing, environment
+construction, and PushT simulation utilities.
+
+<table>
+  <tr>
+    <th>Algorithm</th>
+    <th>Demo</th>
+  </tr>
+  <tr>
+    <td><img src="docs/assets/search-animation.gif" alt="Search algorithm animation" width="100%"></td>
+    <td><img src="docs/assets/search-example-1.gif" alt="PushT search demo" width="100%"></td>
+  </tr>
+</table>
+
+## Abstract
+
+Search lets an embodied policy look ahead before committing to an action. We
+study this idea in PushT by augmenting a pretrained Action Chunk Transformer with
+Beam Search over perturbed action chunks.
+
+Candidate futures are evaluated in cloned simulator states and scored with
+coverage-based reward. This turns single-pass ACT inference into
+receding-horizon action selection while keeping the learned policy as the
+proposal mechanism.
+
+We also introduce One Step Ahead, a lightweight gate that first simulates the
+nominal policy chunk and invokes full search only when the predicted coverage
+change suggests that additional computation is necessary.
+
+<p align="center">
+  <img src="docs/assets/pusht-frames.png" alt="PushT rollout comparison" width="90%">
+</p>
+
+## Reproduction
+
+Run PushT tree search in parallel:
 
 ```bash
-uv run python examples/tree_search/pusht/search_eval.py \
+python examples/tree_search/pusht/parallel_search_eval.py \
   --policy.path=aadarshram/act_pusht \
   --policy.device=cuda \
   --policy.use_amp=false \
-  --episodes=10 \
-  --num-candidates=8 \
-  --depth=2 \
-  --chunk-size=8
-```
-
-Run distinct episodes in parallel without changing the core evaluator:
-
-```bash
-uv run python examples/tree_search/pusht/parallel_search_eval.py \
-  --policy.path=aadarshram/act_pusht \
-  --policy.device=cuda \
-  --policy.use_amp=false \
-  --episodes=10 \
-  --episode-workers=2 \
-  --seed=0 \
+  --episodes=50 \
+  --episode-workers=10 \
+  --noise-std=40 \
   --depth=3 \
-  --num-candidates=40 \
-  --chunk-size=3 \
-  --execute-steps=10
+  --num-candidates=3 \
+  --beam-width=2 \
+  --chunk-size=100 \
+  --seed=0 \
+  --max_steps=300 \
+  --execute-steps=10 \
+  --log-every-steps=10 \
+  \
+  --render-videos=30 \
+  --dump_frames=true \
+  --plot_policy_trace \
+  --dump_search_images=true \
+  --video_overlay=false \
+  \
+  --output_dir="out/50_eps_parallel_viz/n40_d3_c3_b2_e10"
 ```
 
-The wrapper launches `search_eval.py` once per episode, stores each subprocess
-under `OUTPUT_DIR/episodes/episode_XXX/`, and writes collated metrics to
-`OUTPUT_DIR/eval_info.json`.
-
-Useful knobs:
-
-- `--score-mode=coverage`: use PushT goal coverage as the planner score.
-- `--num-candidates`: number of action chunks per expanded node.
-- `--noise-std`: candidate noise in PushT action coordinates, where actions are target `(x, y)` positions in `[0, 512]`.
-- `--depth`: number of chunk levels to search.
-- `--beam-width`: number of nodes kept after each level.
-- `--execute-steps`: number of actions from the selected root chunk to commit before replanning.
-- `--dump-search-images=true`: save one PNG per planning call under
-  `OUTPUT_DIR/search_images/episode_XXX/step_YYYYY.png`. Each image overlays
-  candidate action chunks as dots at the agent position after each hypothetical
-  action. Blue is the original policy chunk, gray is noisy candidates, and the
-  chosen root chunk has a green outline. A matching
-  `OUTPUT_DIR/search_images/episode_XXX/step_YYYYY.json` file is also written
-  with sorted candidate traces, pixel coordinates, world coordinates, scores,
-  and original/selected flags.
-- `--dump-frames=true`: save rollout frames as PNGs under
-  `OUTPUT_DIR/frames/episode_XXX/frame_YYYYY.png`, next to `videos/`. This is
-  independent of `--render-videos`; MP4 generation still uses `--render-videos`.
-- `--video_overlay=false`: disable text overlays in rollout MP4s, dumped rollout
-  frames, policy trace images, and search images. Dots/paths are still drawn in
-  policy/search debug images.
-- `--plot_policy_trace`: save raw policy action-trace PNG/JSON pairs under
-  `OUTPUT_DIR/policy_frames/episode_XXX/policy_trace_step_YYYYY.png/json` at
-  each decision point, even if search later chooses a different chunk. The plot
-  shows raw policy action targets and the simulated agent trace for that policy
-  chunk.
-- `--one_step_further`: before running beam search, simulate the raw policy
-  chunk once. If its final PushT coverage does not drop by more than `0.05`,
-  skip search and execute the policy chunk directly. If coverage drops by more
-  than `0.05`, run search as usual.
-
-Offline trace styling preview:
+Run the ACT PushT baseline with LeRobot:
 
 ```bash
-uv run python examples/tree_search/pusht/plot_search_trace.py \
-  harezmi-extend-dump/pusht/5_eps_viz/n40_c3_d3_e10 \
-  --seed=0
+lerobot-eval \
+  --policy.path=aadarshram/act_pusht \
+  --env.type=pusht \
+  --eval.batch_size=1 \
+  --eval.n_episodes=50 \
+  --seed=0 \
+  --policy.use_amp=false \
+  --policy.device=cuda
 ```
 
-The plotter chooses a random `search_images/episode_XXX/step_YYYYY.json`, uses
-the matching rollout frame from `frames/` when present, and writes a styled PNG
-under `RUN_DIR/plot_previews/`. Noisy alternatives use a grayscale gradient, the
-original policy chunk uses a blue gradient, and the selected chunk uses the
-yellow-to-purple gradient. By default, each candidate trace shows only the first
-10 dots for readability; use `--max-dots=0` to draw every stored point.
-Later dots fade out by default; use `--no-fade-dots` to keep constant opacity,
-or tune the range with `--dot-start-alpha` and `--dot-end-alpha`. Use
-`--fade-last-n=N` to keep earlier points fully visible and fade only the last
-`N` rendered points. Use `--render-mode=line` to draw only the connected path,
-`--render-mode=dots` for dots only, or `--render-mode=both` for both.
-
-To render the same trace style as an MP4:
-
-```bash
-uv run python examples/tree_search/pusht/video_search_trace.py \
-  harezmi-extend-dump/pusht/5_eps_viz/n40_c3_d3_e10 \
-  --episode=0 \
-  --fps=10 \
-  --render-mode=line \
-  --max-dots=10
-```
-
-The video writer scans sorted `search_images/episode_XXX/step_YYYYY.json` files.
-With `--episode=N`, it writes `RUN_DIR/plot_videos/eps_N.mp4` by default;
-without an episode filter, it writes `RUN_DIR/plot_videos/search_trace.mp4`. It
-accepts the same plotting controls as `plot_search_trace.py`, plus video filters
-such as `--episode`, `--start-step`, `--end-step`, `--max-frames`, and
-`--output-path`.
-
-To animate the search procedure progressively instead of rendering one static
-frame per decision point:
-
-```bash
-uv run python examples/tree_search/pusht/animate_search_trace.py \
-  harezmi-extend-dump/pusht/5_eps_viz/n40_c3_d3_e10 \
-  --episode=0 \
-  --fps=20 \
-  --render-mode=both \
-  --max-dots=10
-```
-
-The animation starts from the first available clean rollout frame for the
-episode, plays non-search frames normally, reveals all candidate chunks at the
-same time when a search decision exists, highlights the selected chunk, then
-continues with clean rollout frames until the next search decision. It writes
-`RUN_DIR/plot_videos/eps_N_animated.mp4` when `--episode=N` is set, otherwise
-`RUN_DIR/plot_videos/search_trace_animated.mp4`.
-
-The evaluator reports `asr` (Alternative Selection Ratio) in the aggregate
-metrics. ASR is the percentage of decision points where the selected root chunk
-was a noisy alternative (`selected_candidate_index != 0`) instead of the
-original policy chunk.
-
-This is intended for PushT simulation only. Real robots cannot be cloned and
-restored without a separate learned or analytic forward model.
+Detailed script options, visualization tools, and output layouts are documented
+in [pusht/README.md](pusht/README.md).
