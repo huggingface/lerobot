@@ -18,7 +18,9 @@ def test_message_recipe_validates_unknown_binding():
 
 
 def test_canonical_recipe_loads():
-    recipe = TrainingRecipe.from_yaml(Path("src/lerobot/configs/recipes/pi05_hirobot.yaml"))
+    recipe = TrainingRecipe.from_yaml(
+        Path("src/lerobot/configs/recipes/subtask_mem_vqa_speech.yaml")
+    )
 
     assert recipe.blend is not None
     assert set(recipe.blend) == {
@@ -29,4 +31,4 @@ def test_canonical_recipe_loads():
         "ask_vqa_top",
         "ask_vqa_wrist",
     }
-    assert sum(component.weight for component in recipe.blend.values()) == pytest.approx(0.96)
+    assert sum(component.weight for component in recipe.blend.values()) == pytest.approx(1.0)

@@ -41,7 +41,12 @@ from lerobot.datasets.language_render import render_sample
 from ._helpers import make_canned_responder
 
 _RECIPE_PATH = (
-    Path(__file__).resolve().parents[2] / "src" / "lerobot" / "configs" / "recipes" / "pi05_hirobot.yaml"
+    Path(__file__).resolve().parents[2]
+    / "src"
+    / "lerobot"
+    / "configs"
+    / "recipes"
+    / "subtask_mem_vqa_speech.yaml"
 )
 
 
@@ -105,22 +110,29 @@ def test_pr1_canonical_recipe_renders_nonempty_from_pipeline_output(
         recipe = TrainingRecipe(**loaded)
 
     rendered_any = False
-    for ts, persistent, events in zip(timestamps, persistent_lists, events_lists, strict=True):
+    for sample_idx, (ts, persistent, events) in enumerate(
+        zip(timestamps, persistent_lists, events_lists, strict=True)
+    ):
         result = render_sample(
             recipe=recipe,
             persistent=persistent,
             events=events,
             t=float(ts),
-            sample_idx=0,
+            sample_idx=sample_idx,
             dataset_ctx={"task": "Pour water from the bottle into the cup."},
         )
         if result is None:
             continue
         if result["messages"]:
             rendered_any = True
-            assert result["target_message_indices"]
+            # A valid render supervises something: a text-CE target turn
+            # OR a flow-only ``low_level``-stream turn (action loss).
+            assert (
+                result["target_message_indices"]
+                or "low_level" in result["message_streams"]
+            )
             break
-    assert rendered_any, "PR 1 recipe rendered no messages from pipeline output"
+    assert rendered_any, "recipe rendered no messages from pipeline output"
 
     # Sanity: speech atom appears in events column intact
     flat_events = [r for ev in events_lists for r in ev]

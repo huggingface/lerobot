@@ -405,7 +405,7 @@ class SmolVLA2ChatTokenizerStep(ProcessorStep):
         """Probabilistically drop non-target context messages.
 
         Heuristic content sniffing — matches the prefix strings that
-        ``hirobot.yaml``'s recipes use when injecting plan /
+        ``subtask_mem_vqa_speech.yaml``'s recipes use when injecting plan /
         memory / subtask / interjection content. Anything else is
         kept unchanged. Target messages are never dropped (we still
         need their tokens for supervision).

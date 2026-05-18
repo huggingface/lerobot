@@ -56,7 +56,7 @@ class SmolVLA2Config(SmolVLAConfig):
     """
 
     # Recipe / language stack ---------------------------------------------
-    recipe_path: str | None = "recipes/hirobot.yaml"
+    recipe_path: str | None = "recipes/subtasks_vqa.yaml"
     """Path (absolute or relative to ``src/lerobot/configs/``) to a
     ``TrainingRecipe`` YAML. The default points at the canonical Hi Robot
     blend shipped alongside SmolVLA2. Set to ``None`` to disable recipe

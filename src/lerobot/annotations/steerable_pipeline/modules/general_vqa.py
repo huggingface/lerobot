@@ -21,7 +21,7 @@ one ``(vqa, user)`` + ``(vqa, assistant)`` pair *per camera*: each pair is
 generated against that camera's frame and stamped with the matching
 ``camera`` field on the emitted rows. The resolver disambiguates via
 ``camera=...``; recipes that consume VQA do so through one sub-recipe
-per camera (see ``recipes/pi05_hirobot.yaml``).
+per camera (see ``recipes/subtasks_vqa.yaml``).
 
 Within a single (frame, camera) we still emit at most one ``(vqa, user)``
 and one ``(vqa, assistant)`` row, so the resolver contract stays scalar.

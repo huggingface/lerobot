@@ -121,7 +121,7 @@ def _load_recipe(path_str: str) -> TrainingRecipe:
 
     Accepts an absolute path or a path relative to
     ``src/lerobot/configs/`` so recipe authors can write
-    ``--policy.recipe_path=recipes/hirobot.yaml``.
+    ``--policy.recipe_path=recipes/subtasks_vqa.yaml``.
     """
     p = Path(path_str)
     if not p.is_absolute() and not p.exists():

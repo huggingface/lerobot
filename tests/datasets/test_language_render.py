@@ -449,7 +449,10 @@ def test_vqa_frame_is_consumed_over_the_weighted_blend():
 
 
 def test_canonical_recipe_can_render_low_level_branch():
-    recipe = TrainingRecipe.from_yaml(Path("src/lerobot/configs/recipes/pi05_hirobot.yaml"))
+    """The shipped ``subtasks_vqa.yaml`` recipe's ``low_level_execution``
+    branch renders — a flow-only ``user(${subtask})`` turn (no text-CE
+    target; its supervision is the action-expert flow loss)."""
+    recipe = TrainingRecipe.from_yaml(Path("src/lerobot/configs/recipes/subtasks_vqa.yaml"))
     low_level = TrainingRecipe(blend={"low": recipe.blend["low_level_execution"]})
 
     rendered = render_sample(
@@ -461,6 +464,6 @@ def test_canonical_recipe_can_render_low_level_branch():
         task="clean kitchen",
     )
 
-    assert rendered["messages"][-1] == {"role": "assistant", "content": "subtask 0"}
+    assert rendered["messages"][-1] == {"role": "user", "content": "subtask 0"}
     assert rendered["message_streams"][-1] == "low_level"
-    assert rendered["target_message_indices"] == [1]
+    assert rendered["target_message_indices"] == []

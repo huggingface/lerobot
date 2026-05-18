@@ -17,7 +17,7 @@ Each step is a tiny class with a ``trigger`` and an ``__call__(state)``;
 the runtime applies them in order each tick. When a step's trigger
 doesn't fire, the step is a no-op and the runtime moves on.
 
-Stream-to-step mapping mirrors the ``hirobot.yaml`` recipe:
+Stream-to-step mapping mirrors the ``subtasks_vqa.yaml`` recipe:
 
 * ``LowLevelForward``        — calls ``policy.select_action`` for the
                                 action chunk; trained by
@@ -721,7 +721,7 @@ def _control_context_messages(
 ) -> list[dict[str, Any]]:
     """Build a chat-template-ready prompt from current runtime state.
 
-    Mirrors what ``hirobot.yaml`` renders into ``${task}\nPlan:
+    Mirrors what ``subtasks_vqa.yaml`` renders into ``${task}\nPlan:
     ${plan}\nMemory: ${memory}`` for the high-level branches.
     """
     # Always emit ``Plan: `` / ``Memory: `` labels — even with empty
@@ -741,7 +741,7 @@ def _control_context_messages(
 
 # ---------------------------------------------------------------------------
 # Per-recipe prompt builders. Each one mirrors a single sub-recipe's
-# message layout in ``hirobot.yaml`` so the chat-templated
+# message layout in ``subtasks_vqa.yaml`` so the chat-templated
 # prompt at inference matches what the model saw during training.
 # Generic ``_control_context_messages`` is kept around as a fallback
 # for ad-hoc callers but the four high-level steps now use these.

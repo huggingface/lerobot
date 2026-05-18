@@ -1,10 +1,10 @@
-# Hi-Robot blend — shared between SmolVLA2 (SmolVLM2 backbone) and
-# PI052 (PaliGemma backbone).
+# subtasks_vqa — Hi-Robot blend, shared between SmolVLA2 (SmolVLM2
+# backbone) and PI052 (PaliGemma backbone).
 #
 #   Trains two things only: subtasks and VQA. Plan and memory are
-#   intentionally left out for now — keeps the prompt short and the
-#   training surface small while the core subtask + action loop is
-#   validated.
+#   intentionally left out — keeps the prompt short and the training
+#   surface small. The fuller blend with memory + spoken replies is
+#   ``subtask_mem_vqa_speech.yaml``.
 #
 #     high_level_subtask  — predict the subtask from the task.
 #     low_level_execution — flow loss with [images, subtask, state].
