@@ -37,7 +37,7 @@ import torch
 pytest.importorskip("transformers")
 
 from lerobot.policies.pi05.modeling_pi05 import make_att_2d_masks  # noqa: E402
-from lerobot.policies.pi052.modeling_pi052 import _mark_target_span_causal  # noqa: E402
+from lerobot.policies.pi052.modeling_pi052 import _mark_target_span_causal, _shifted_ce  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # A synthetic PI052 prefix layout: [images, prompt-lang, target-lang]
@@ -136,3 +136,14 @@ def test_unmarked_mask_is_bidirectional_the_bug():
         "raw embed_prefix mask is bidirectional over language — the first "
         "target token can see the last, which is the collapse bug"
     )
+
+
+def test_shifted_ce_returns_zero_when_no_text_positions_are_supervised():
+    logits = torch.randn(2, 4, 8, requires_grad=True)
+    labels = torch.full((2, 4), -100, dtype=torch.long)
+
+    loss = _shifted_ce(logits, labels)
+
+    assert loss.item() == 0
+    loss.backward()
+    assert logits.grad is not None

@@ -77,13 +77,13 @@ def _shifted_ce(logits: Tensor, labels: Tensor) -> Tensor:
     shift_logits = logits[:, :-1, :].contiguous()
     shift_labels = labels[:, 1:].contiguous().long()
     valid = shift_labels != -100
-    loss = F.cross_entropy(
-        shift_logits.reshape(-1, shift_logits.shape[-1]),
-        shift_labels.reshape(-1),
-        ignore_index=-100,
-        reduction="sum",
+    if not bool(valid.any().item()):
+        return shift_logits.sum() * 0.0
+    return F.cross_entropy(
+        shift_logits[valid],
+        shift_labels[valid],
+        reduction="mean",
     )
-    return loss / valid.sum().clamp(min=1)
 
 
 def _mark_target_span_causal(
@@ -140,13 +140,13 @@ def _fast_ce(
     if predict_actions_t is not None:
         sample_mask = predict_actions_t[:, None].expand_as(shift_valid)
         shift_valid = shift_valid & sample_mask
-    shift_targets = shift_targets.masked_fill(~shift_valid, -100)
+    if not bool(shift_valid.any().item()):
+        return shift_logits.sum() * 0.0
     return F.cross_entropy(
-        shift_logits.reshape(-1, shift_logits.shape[-1]),
-        shift_targets.reshape(-1),
-        ignore_index=-100,
-        reduction="sum",
-    ) / shift_valid.sum().clamp(min=1)
+        shift_logits[shift_valid],
+        shift_targets[shift_valid],
+        reduction="mean",
+    )
 
 
 # ----------------------------------------------------------------------

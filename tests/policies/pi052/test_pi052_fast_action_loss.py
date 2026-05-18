@@ -73,3 +73,15 @@ def test_fast_ce_masks_non_action_samples():
     )
 
     assert torch.allclose(loss, expected)
+
+
+def test_fast_ce_returns_zero_when_no_action_code_positions_are_valid():
+    logits = torch.randn(2, 4, 8, requires_grad=True)
+    action_tokens = torch.tensor([[1, 2, 3, 4], [1, 2, 5, 6]])
+    action_code_mask = torch.zeros_like(action_tokens, dtype=torch.bool)
+
+    loss = _fast_ce(logits, action_tokens, action_code_mask, predict_actions_t=None)
+
+    assert loss.item() == 0
+    loss.backward()
+    assert logits.grad is not None
