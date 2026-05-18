@@ -918,33 +918,38 @@ def _dataset_task_strings(ds_meta: Any) -> list[str]:
 def _select_task_interactively(ds_meta: Any, current_task: str | None) -> str | None:
     """Prompt the operator to pick a task from the dataset or type one.
 
-    Called at startup when no ``--task`` was given. Non-TTY / scripted
-    runs return ``current_task`` unchanged so the existing
-    "first stdin line becomes the task" behaviour is preserved.
+    Called at startup. ``current_task`` is whatever was already resolved
+    (``--task`` or the dataset's canonical task); it becomes the default
+    that an empty ``Enter`` selects, and is marked ``(current)`` in the
+    menu. Non-TTY / scripted runs return ``current_task`` unchanged so
+    the existing "first stdin line becomes the task" behaviour is kept.
     """
-    if current_task:
-        return current_task
     if not sys.stdin.isatty():
         return current_task
 
     tasks = _dataset_task_strings(ds_meta)
     if not tasks:
+        prompt = "[smolvla2] Enter the task"
+        if current_task:
+            prompt += f" [Enter = {current_task!r}]"
         try:
-            typed = input("[smolvla2] Enter the task: ").strip()
+            typed = input(prompt + ": ").strip()
         except (EOFError, KeyboardInterrupt):
             return current_task
         return typed or current_task
 
     print("[smolvla2] Select a task:", flush=True)
     for i, task in enumerate(tasks, 1):
-        print(f"  [{i}] {task}", flush=True)
+        marker = "  (current)" if task == current_task else ""
+        print(f"  [{i}] {task}{marker}", flush=True)
     print("  [c] type a custom task", flush=True)
+    hint = " (Enter = current)" if current_task else ""
     try:
-        raw = input("task> ").strip()
+        raw = input(f"task>{hint} ").strip()
     except (EOFError, KeyboardInterrupt):
         return current_task
     if not raw:
-        return tasks[0]
+        return current_task or tasks[0]
     if raw.lower() in {"c", "custom"}:
         try:
             return input("[smolvla2] Enter the task: ").strip() or current_task
@@ -954,8 +959,8 @@ def _select_task_interactively(ds_meta: Any, current_task: str | None) -> str | 
         idx = int(raw) - 1
         if 0 <= idx < len(tasks):
             return tasks[idx]
-        print("[smolvla2] invalid choice — using the first task", flush=True)
-        return tasks[0]
+        print("[smolvla2] invalid choice — keeping the current task", flush=True)
+        return current_task or tasks[0]
     # Treat anything else as a custom task string typed directly.
     return raw
 
@@ -1398,11 +1403,11 @@ def main(argv: list[str] | None = None) -> int:
                 flush=True,
             )
 
-    # No task yet (no --task, no canonical dataset task) — let the
-    # operator pick one from the dataset's task list or type a custom
-    # one. Non-TTY runs keep the "first stdin line is the task" path.
-    if not args.task:
-        args.task = _select_task_interactively(ds_meta, args.task)
+    # Always offer the startup task picker on an interactive terminal:
+    # list the dataset's tasks (the canonical / --task one shown as the
+    # default) so the operator can pick another or type a custom task.
+    # Non-TTY runs keep the "first stdin line is the task" path.
+    args.task = _select_task_interactively(ds_meta, args.task)
 
     observation_provider: Callable[[], dict | None] | None = None
     robot_executor: Callable[[Any], None] | None = None
