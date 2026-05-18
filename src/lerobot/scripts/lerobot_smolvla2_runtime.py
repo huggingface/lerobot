@@ -1096,17 +1096,26 @@ def _run_autonomous(
 
     # Background panel-redraw thread so state changes from the runtime
     # loop (subtask refresh, plan update, etc.) are visible without the
-    # user typing anything. 2 Hz is plenty — generation runs at most
-    # ~1 Hz on MPS.
+    # user typing anything.
+    #
+    # In ``/vlm`` mode the action loop is paused — nothing changes in the
+    # background — so the timer redraw is suspended entirely. That keeps
+    # the screen stable while the operator types a VQA question and the
+    # interactive camera prompt, instead of the panel clearing the
+    # prompt every tick.
     _panel_stop = threading.Event()
 
     def _panel_loop() -> None:
         while not _panel_stop.is_set():
-            try:
-                redraw()
-            except Exception:  # noqa: BLE001
-                pass
-            _panel_stop.wait(0.5)
+            if runtime.state.get("mode", "action") == "action":
+                try:
+                    redraw()
+                    # Re-print the prompt the redraw just cleared so the
+                    # operator always has a visible ``> `` to type at.
+                    print("> ", end="", flush=True)
+                except Exception:  # noqa: BLE001
+                    pass
+            _panel_stop.wait(0.7)
 
     panel_thread = threading.Thread(
         target=_panel_loop, name="smolvla2-panel-redraw", daemon=True
@@ -1126,6 +1135,19 @@ def _run_autonomous(
                 break
             # Slash commands (/action, /vlm, /help) flip the run mode.
             if _handle_slash_command(runtime, line):
+                # Redraw once so the panel reflects the new mode. In
+                # ``/vlm`` the timer redraw is now suspended, so this is
+                # the last clear — the VQA prompt below stays stable.
+                try:
+                    redraw()
+                except Exception:  # noqa: BLE001
+                    pass
+                if runtime.state.get("mode") == "vlm":
+                    print(
+                        "  [vlm] type a VQA question and press Enter; "
+                        "/action to resume the robot.",
+                        flush=True,
+                    )
                 continue
             # ``task: <text>`` always overrides the active task — both
             # at first set and to switch tasks mid-run. Without the
@@ -1225,6 +1247,19 @@ def _make_state_panel_renderer(
         console.rule(
             f"[bold]SmolVLA2[/] · {mode_label} · {mode_tag}", style="cyan"
         )
+        # Always-visible command hint so the operator never has to
+        # remember the slash commands (the one-shot startup line scrolls
+        # away under the timer redraw).
+        if run_mode == "action":
+            console.print(
+                "  [dim]commands:[/] [bold]/vlm[/] ask a VQA question  ·  "
+                "[bold]/help[/] all commands  ·  [bold]stop[/] quit"
+            )
+        else:
+            console.print(
+                "  [yellow]VQA mode[/] — type a question + Enter; "
+                "[bold]/action[/] resumes the robot."
+            )
         for key, label in (
             ("task", "task"),
             ("current_subtask", "subtask"),
