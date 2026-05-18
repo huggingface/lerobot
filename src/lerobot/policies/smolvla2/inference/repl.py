@@ -16,7 +16,7 @@
 Reads non-blocking stdin lines, classifies each one heuristically:
 
   "stop" / "quit" / "exit"               → state["stop"] = True
-  "/action" / "/vlm"                      → set state["mode"]
+  "/action" / "/question"                 → set state["mode"]
   ends with "?"                           → user_vqa_query event
   starts with "task:" or first line       → set runtime task
   anything else                           → user_interjection event
@@ -75,14 +75,14 @@ class StdinReader:
             state["stop"] = True
             return
 
-        # Slash commands flip the run mode. ``/vlm`` pauses the action
-        # loop (the action steps gate on ``state["mode"]``); ``/action``
-        # resumes it.
+        # Slash commands flip the run mode. ``/question`` pauses the
+        # action loop (the action steps gate on ``state["mode"]``);
+        # ``/action`` resumes it. ``/vlm`` / ``/vqa`` are kept as aliases.
         if lower in {"/action", "/act"}:
             state["mode"] = "action"
             return
-        if lower in {"/vlm", "/vqa"}:
-            state["mode"] = "vlm"
+        if lower in {"/question", "/q", "/vlm", "/vqa"}:
+            state["mode"] = "question"
             queue = state.get("action_queue")
             if hasattr(queue, "clear"):
                 queue.clear()

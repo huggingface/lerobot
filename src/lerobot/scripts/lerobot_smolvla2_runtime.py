@@ -965,12 +965,33 @@ def _select_task_interactively(ds_meta: Any, current_task: str | None) -> str | 
     return raw
 
 
+def _select_mode_interactively() -> str:
+    """Ask which mode to start in: ``action`` (run the robot) or
+    ``question`` (VQA only, robot paused).
+
+    Shown at startup, before the task picker. Non-TTY / scripted runs
+    default to ``action`` so existing pipelines are unaffected.
+    """
+    if not sys.stdin.isatty():
+        return "action"
+    print("[smolvla2] Start in which mode?", flush=True)
+    print("  [1] action   — run the robot autonomously (default)", flush=True)
+    print("  [2] question — ask the VLM questions (VQA); robot stays paused", flush=True)
+    try:
+        raw = input("mode> (Enter = action) ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return "action"
+    if raw in {"2", "question", "q", "/question", "/q", "vlm", "vqa", "/vlm", "/vqa"}:
+        return "question"
+    return "action"
+
+
 def _print_runtime_help() -> None:
     """Print the slash-command reference."""
     print(
         "[smolvla2] commands:\n"
         "  /action            run the robot (default mode)\n"
-        "  /vlm               pause the action loop; typed lines become VQA questions\n"
+        "  /question          pause the action loop; typed lines become VQA questions\n"
         "  /help              show this help\n"
         "  task: <text>       switch task (clears plan / memory / subtask)\n"
         "  rephrase: <text>   reword the task in place\n"
@@ -980,24 +1001,25 @@ def _print_runtime_help() -> None:
 
 
 def _handle_slash_command(runtime: Any, line: str) -> bool:
-    """Handle ``/action`` / ``/vlm`` / ``/help``.
+    """Handle ``/action`` / ``/question`` / ``/help``.
 
-    Returns ``True`` when ``line`` was a recognised command (and was
-    consumed), ``False`` otherwise.
+    ``/vlm`` and ``/vqa`` are kept as aliases for ``/question``. Returns
+    ``True`` when ``line`` was a recognised command (and was consumed),
+    ``False`` otherwise.
     """
     cmd = line.strip().lower()
     if cmd in {"/action", "/act"}:
         runtime.state["mode"] = "action"
         print("[smolvla2] mode: action — robot running", flush=True)
         return True
-    if cmd in {"/vlm", "/vqa"}:
-        runtime.state["mode"] = "vlm"
+    if cmd in {"/question", "/q", "/vlm", "/vqa"}:
+        runtime.state["mode"] = "question"
         # Drop any queued chunk so no stale action fires while paused.
         queue = runtime.state.get("action_queue")
         if hasattr(queue, "clear"):
             queue.clear()
         print(
-            "[smolvla2] mode: vlm — action loop paused; type VQA questions",
+            "[smolvla2] mode: question — action loop paused; type VQA questions",
             flush=True,
         )
         return True
@@ -1010,8 +1032,8 @@ def _handle_slash_command(runtime: Any, line: str) -> bool:
 def _run_vqa_query(runtime: Any, question: str) -> None:
     """Run one interactive VQA question against the runtime's policy.
 
-    Used by both loops when in ``/vlm`` mode — the action loop is paused
-    so the policy is free for a synchronous VQA call.
+    Used by both loops when in ``/question`` mode — the action loop is
+    paused so the policy is free for a synchronous VQA call.
     """
     from lerobot.policies.smolvla2.inference.vqa import handle_vqa_query  # noqa: PLC0415
 
@@ -1089,7 +1111,7 @@ def _run_autonomous(
     redraw()
     print(
         "  [autonomous] type interjections / '?' questions on stdin; "
-        "/vlm for VQA mode, /action to resume, /help for commands, "
+        "/question for VQA mode, /action to resume, /help for commands, "
         "'stop' or Ctrl+C to quit",
         flush=True,
     )
@@ -1133,18 +1155,18 @@ def _run_autonomous(
             lower = line.lower()
             if lower in {"stop", "quit", "exit"}:
                 break
-            # Slash commands (/action, /vlm, /help) flip the run mode.
+            # Slash commands (/action, /question, /help) flip the run mode.
             if _handle_slash_command(runtime, line):
                 # Redraw once so the panel reflects the new mode. In
-                # ``/vlm`` the timer redraw is now suspended, so this is
-                # the last clear — the VQA prompt below stays stable.
+                # ``/question`` the timer redraw is now suspended, so
+                # this is the last clear — the VQA prompt stays stable.
                 try:
                     redraw()
                 except Exception:  # noqa: BLE001
                     pass
-                if runtime.state.get("mode") == "vlm":
+                if runtime.state.get("mode") == "question":
                     print(
-                        "  [vlm] type a VQA question and press Enter; "
+                        "  [question] type a VQA question and press Enter; "
                         "/action to resume the robot.",
                         flush=True,
                     )
@@ -1187,10 +1209,10 @@ def _run_autonomous(
             if not runtime.state.get("task"):
                 runtime.set_task(line)
                 continue
-            # ``/vlm`` mode: the whole line is a VQA question, handled
-            # synchronously (the action loop is paused so the policy is
-            # not in concurrent use by the background runtime thread).
-            if runtime.state.get("mode", "action") == "vlm":
+            # ``/question`` mode: the whole line is a VQA question,
+            # handled synchronously (the action loop is paused so the
+            # policy is not in concurrent use by the background thread).
+            if runtime.state.get("mode", "action") == "question":
                 _run_vqa_query(runtime, line)
                 continue
             if lower.endswith("?"):
@@ -1242,7 +1264,7 @@ def _make_state_panel_renderer(
         mode_tag = (
             "[green]mode: action[/]"
             if run_mode == "action"
-            else "[yellow]mode: vlm (action loop paused)[/]"
+            else "[yellow]mode: question (action loop paused)[/]"
         )
         console.rule(
             f"[bold]SmolVLA2[/] · {mode_label} · {mode_tag}", style="cyan"
@@ -1252,7 +1274,7 @@ def _make_state_panel_renderer(
         # away under the timer redraw).
         if run_mode == "action":
             console.print(
-                "  [dim]commands:[/] [bold]/vlm[/] ask a VQA question  ·  "
+                "  [dim]commands:[/] [bold]/question[/] ask a VQA question  ·  "
                 "[bold]/help[/] all commands  ·  [bold]stop[/] quit"
             )
         else:
@@ -1335,7 +1357,7 @@ def _make_state_panel_renderer(
             console.print()
         if not st.get("task"):
             console.print(
-                "  [dim]Type the task to begin. /vlm switches to VQA mode, "
+                "  [dim]Type the task to begin. /question switches to VQA mode, "
                 "/action resumes the robot, /help lists commands. "
                 "Type 'stop' to exit.[/]"
             )
@@ -1438,6 +1460,11 @@ def main(argv: list[str] | None = None) -> int:
                 flush=True,
             )
 
+    # Startup mode prompt — choose action (run the robot) vs question
+    # (VQA only) *before* the task picker, so the operator sets intent
+    # up front. It can still be flipped any time with /action /question.
+    startup_mode = _select_mode_interactively()
+
     # Always offer the startup task picker on an interactive terminal:
     # list the dataset's tasks (the canonical / --task one shown as the
     # default) so the operator can pick another or type a custom task.
@@ -1518,6 +1545,8 @@ def main(argv: list[str] | None = None) -> int:
     runtime.state["text_gen_min_new_tokens"] = int(getattr(args, "text_min_new_tokens", 0) or 0)
     runtime.state["text_gen_temperature"] = float(getattr(args, "text_temperature", 0.0) or 0.0)
     runtime.state["text_gen_top_p"] = float(getattr(args, "text_top_p", 1.0) or 1.0)
+    # Apply the startup mode chosen above the task picker.
+    runtime.state["mode"] = startup_mode
     if args.task:
         runtime.set_task(args.task)
     # Seed the current subtask from the dataset so the first chunk —
@@ -1600,17 +1629,17 @@ def _run_repl(runtime: Any, *, initial_task: str | None, max_ticks: int | None) 
             if lower in {"stop", "quit", "exit"}:
                 break
 
-            # Slash commands (/action, /vlm, /help) flip the run mode.
+            # Slash commands (/action, /question, /help) flip the run mode.
             if _handle_slash_command(runtime, line):
                 _redraw(last_logs)
                 continue
 
-            # ``/vlm`` mode: a typed line (that isn't a task command) is
-            # a VQA question — run it synchronously and skip the action
-            # pipeline tick entirely.
+            # ``/question`` mode: a typed line (that isn't a task
+            # command) is a VQA question — run it synchronously and skip
+            # the action pipeline tick entirely.
             if (
                 runtime.state.get("task")
-                and runtime.state.get("mode", "action") == "vlm"
+                and runtime.state.get("mode", "action") == "question"
                 and not lower.startswith(("task:", "rephrase:"))
             ):
                 runtime.state["log_lines"] = []

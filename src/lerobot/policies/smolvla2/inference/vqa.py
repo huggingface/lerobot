@@ -272,14 +272,24 @@ def handle_vqa_query(
     """Run one interactive VQA question end to end.
 
     Called synchronously from the input layer while the runtime is in
-    ``/vlm`` mode (the action loop is gated off, so the policy is not in
-    concurrent use). All progress is reported via :func:`push_log` so it
-    shows up in the state panel's scrollback.
+    ``/question`` mode (the action loop is gated off, so the policy is
+    not in concurrent use). Progress is reported via both
+    :func:`push_log` (REPL panel scrollback) and ``print_fn`` (direct
+    stdout) — in autonomous question mode the panel redraw is suspended,
+    so the direct print is what the operator actually sees.
     """
     from .steps import _generate_with_policy, _msgs_for_vqa  # noqa: PLC0415
 
+    def report(line: str) -> None:
+        """Surface a line both to the panel scrollback and to stdout."""
+        push_log(state, line)
+        try:
+            print_fn(line)
+        except Exception:  # noqa: BLE001
+            pass
+
     if policy is None or not hasattr(policy, "select_message"):
-        push_log(state, "  [warn] vqa: policy has no select_message — skipping")
+        report("  [warn] vqa: policy has no select_message — skipping")
         return
 
     observation: dict | None = None
@@ -294,11 +304,11 @@ def handle_vqa_query(
     if cameras:
         chosen = prompt_camera_choice(cameras, input_fn=input_fn, print_fn=print_fn)
         if chosen is None:
-            push_log(state, "  [info] vqa cancelled — no camera selected")
+            report("  [info] vqa cancelled — no camera selected")
             return
-        push_log(state, f"  vqa camera: {camera_short_name(chosen)}")
+        report(f"  vqa camera: {camera_short_name(chosen)}")
     else:
-        push_log(state, "  [info] vqa: no camera available — answering text-only")
+        report("  [info] vqa: no camera available — answering text-only")
 
     # Ground the question on the chosen camera only — filter the
     # observation to that one image (+ proprio state) so the VLM
@@ -317,23 +327,23 @@ def handle_vqa_query(
         label="vqa gen",
     )
     if not answer:
-        push_log(state, "  [info] vqa gen returned empty")
+        report("  [info] vqa gen returned empty")
         return
-    push_log(state, f"  vqa: {answer}")
+    report(f"  vqa: {answer}")
 
     parsed = parse_vqa_answer(answer)
     if not answer_has_overlay(parsed):
         if parsed is None:
-            push_log(state, "  [info] vqa answer is not JSON — no overlay")
+            report("  [info] vqa answer is not JSON — no overlay")
         return
     if observation is None or chosen is None:
-        push_log(state, "  [info] no camera image — cannot draw overlay")
+        report("  [info] no camera image — cannot draw overlay")
         return
     try:
         pil = observation_image_to_pil(observation[chosen])
         overlay = draw_vqa_overlay(pil, parsed)
         path = save_and_open_overlay(overlay)
-        push_log(state, f"  vqa overlay saved: {path}")
+        report(f"  vqa overlay saved: {path}")
     except Exception as exc:  # noqa: BLE001
         logger.warning("vqa overlay failed: %s", exc, exc_info=logger.isEnabledFor(logging.DEBUG))
-        push_log(state, f"  [warn] vqa overlay failed: {type(exc).__name__}: {exc}")
+        report(f"  [warn] vqa overlay failed: {type(exc).__name__}: {exc}")
