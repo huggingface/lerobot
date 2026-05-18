@@ -33,6 +33,9 @@ Stable keys (read by multiple steps):
   events_this_tick list[str]    triggers consumed this tick
   _tick         Tick            current tick (set by the loop)
 
+  mode          str             "action" (run the robot) | "vlm" (VQA only,
+                                 action loop paused)
+
   log_lines     list[str]       human-readable status lines printed each tick
 """
 
@@ -54,6 +57,7 @@ def initial_runtime_state(task: str | None = None) -> dict[str, Any]:
         "tool_calls_pending": [],
         "events_this_tick": [],
         "log_lines": [],
+        "mode": "action",
         "stop": False,
     }
 

@@ -91,6 +91,10 @@ class LowLevelForward(InferenceStep):
     def run(self, state: dict[str, Any]) -> dict[str, Any] | None:
         if self.policy is None or self.observation_provider is None:
             return None
+        # ``/vlm`` mode pauses the whole action loop so the robot holds
+        # position while the operator probes the VLM with VQA.
+        if state.get("mode", "action") != "action":
+            return None
         if not state.get("task"):
             return None
 
@@ -196,6 +200,12 @@ class DispatchAction(InferenceStep):
 
     def run(self, state: dict[str, Any]) -> dict[str, Any] | None:
         import time as _time  # noqa: PLC0415
+
+        # ``/vlm`` mode pauses dispatch — the robot holds its last
+        # commanded position while the operator runs VQA.
+        if state.get("mode", "action") != "action":
+            self._last_dispatch_t = None
+            return None
 
         queue = state.get("action_queue")
         if not queue:
@@ -365,6 +375,10 @@ class HighLevelSubtaskFwd(InferenceStep):
 
     def run(self, state: dict[str, Any]) -> dict[str, Any] | None:
         if self.policy is None or not state.get("task"):
+            return None
+        # ``/vlm`` mode pauses subtask generation along with the rest of
+        # the action loop.
+        if state.get("mode", "action") != "action":
             return None
         # Gate to chunk boundaries: only generate a fresh subtask when
         # the action queue is empty (i.e. right before LowLevelForward

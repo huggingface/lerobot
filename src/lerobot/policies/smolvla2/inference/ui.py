@@ -91,7 +91,15 @@ def make_state_panel(state: dict[str, Any]) -> Any:
         (str(len(pending)), "bold magenta"),
     )
     table.add_row("", footer)
-    return Panel(table, title="[bold]SmolVLA2 state[/]", border_style="cyan")
+    run_mode = state.get("mode", "action")
+    mode_tag = (
+        "[green]action[/]" if run_mode == "action" else "[yellow]vlm (paused)[/]"
+    )
+    return Panel(
+        table,
+        title=f"[bold]SmolVLA2 state[/] · mode: {mode_tag}",
+        border_style="cyan",
+    )
 
 
 def print_user_line(console: Any, line: str) -> None:

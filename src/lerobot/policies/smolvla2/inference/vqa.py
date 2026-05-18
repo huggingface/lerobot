@@ -1,0 +1,339 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""Interactive VQA for the SmolVLA2 runtime.
+
+In ``/vlm`` mode a typed line is treated as a VQA question. This module
+runs the full interactive flow:
+
+  1. pull the current observation and list available cameras,
+  2. ask the operator which camera to ground the question on,
+  3. generate the answer with the VLM conditioned on that one camera,
+  4. parse the JSON answer; if it carries a bounding box (``bbox``) or a
+     point (``keypoint``), draw the overlay on the camera frame, save a
+     PNG to ``./vqa_overlays/`` and auto-open it.
+
+VQA answer schemas mirror the annotation pipeline's ``VQA_ANSWER_SHAPES``
+(see ``lerobot.annotations.steerable_pipeline.validator``):
+
+  * ``bbox``     — ``{"detections": [{"label", "bbox_format": "xyxy",
+                    "bbox": [x1, y1, x2, y2]}, ...]}``
+  * ``keypoint`` — ``{"label", "point_format": "xy", "point": [x, y]}``
+  * ``count`` / ``attribute`` / ``spatial`` — text-only, no overlay.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import subprocess
+import sys
+import time
+import webbrowser
+from pathlib import Path
+from typing import Any
+
+from .runtime_state import push_log
+
+logger = logging.getLogger(__name__)
+
+_IMAGE_PREFIX = "observation.images."
+
+# Iteration order for shape matching — most specific keys first so an
+# answer is classified deterministically.
+_SHAPE_ORDER = ("bbox", "keypoint", "count", "attribute", "spatial")
+
+_BBOX_COLOR = (255, 64, 64)
+_POINT_COLOR = (64, 220, 64)
+
+
+# ---------------------------------------------------------------------------
+# Camera selection
+# ---------------------------------------------------------------------------
+
+
+def available_cameras(observation: dict | None) -> list[str]:
+    """Return the sorted ``observation.images.*`` keys present in ``observation``."""
+    if not observation:
+        return []
+    return sorted(k for k in observation if isinstance(k, str) and k.startswith(_IMAGE_PREFIX))
+
+
+def camera_short_name(camera_key: str) -> str:
+    """Strip the ``observation.images.`` prefix for display."""
+    return camera_key[len(_IMAGE_PREFIX) :] if camera_key.startswith(_IMAGE_PREFIX) else camera_key
+
+
+def prompt_camera_choice(
+    cameras: list[str],
+    *,
+    input_fn: Any = input,
+    print_fn: Any = print,
+) -> str | None:
+    """Ask the operator which camera to ground a VQA question on.
+
+    Accepts either the menu number or the (short or full) camera name.
+    A single-camera setup auto-selects without prompting. Returns the
+    chosen ``observation.images.*`` key, or ``None`` if the operator
+    cancels / gives an invalid answer.
+    """
+    if not cameras:
+        return None
+    if len(cameras) == 1:
+        return cameras[0]
+    print_fn("Which camera should I look at?")
+    for i, cam in enumerate(cameras, 1):
+        print_fn(f"  [{i}] {camera_short_name(cam)}")
+    try:
+        raw = str(input_fn("camera> ")).strip()
+    except (EOFError, KeyboardInterrupt):
+        return None
+    if not raw:
+        return cameras[0]
+    if raw.isdigit():
+        idx = int(raw) - 1
+        return cameras[idx] if 0 <= idx < len(cameras) else None
+    for cam in cameras:
+        if raw == cam or raw == camera_short_name(cam):
+            return cam
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Answer parsing
+# ---------------------------------------------------------------------------
+
+
+def parse_vqa_answer(answer: str) -> dict | None:
+    """Parse a VQA answer string into ``{"kind", "payload"}``.
+
+    ``kind`` is one of the ``VQA_ANSWER_SHAPES`` names (``bbox``,
+    ``keypoint``, ``count``, ``attribute``, ``spatial``) or ``"unknown"``
+    when the JSON doesn't match any known shape. Returns ``None`` when
+    the answer is not parseable JSON / not a JSON object.
+    """
+    if not answer or not answer.strip():
+        return None
+    try:
+        payload = json.loads(answer)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    try:
+        from lerobot.annotations.steerable_pipeline.validator import (  # noqa: PLC0415
+            VQA_ANSWER_SHAPES,
+        )
+
+        shapes = VQA_ANSWER_SHAPES
+    except ImportError:  # pragma: no cover - annotation extra not installed
+        shapes = {
+            "bbox": {"detections"},
+            "keypoint": {"label", "point_format", "point"},
+            "count": {"label", "count"},
+            "attribute": {"label", "attribute", "value"},
+            "spatial": {"subject", "relation", "object"},
+        }
+
+    keys = set(payload)
+    for kind in _SHAPE_ORDER:
+        required = shapes.get(kind)
+        if required and required <= keys:
+            return {"kind": kind, "payload": payload}
+    return {"kind": "unknown", "payload": payload}
+
+
+def answer_has_overlay(parsed: dict | None) -> bool:
+    """True iff ``parsed`` carries drawable spatial coordinates."""
+    return bool(parsed) and parsed.get("kind") in ("bbox", "keypoint")
+
+
+# ---------------------------------------------------------------------------
+# Overlay drawing
+# ---------------------------------------------------------------------------
+
+
+def observation_image_to_pil(image_tensor: Any) -> Any:
+    """Convert an ``observation.images.*`` tensor to a PIL RGB image.
+
+    The runtime observation stores images as ``(1, C, H, W)`` (or
+    ``(C, H, W)``) float tensors in ``[0, 1]``. Reuses
+    ``image_array_to_pil_image`` which handles the CHW→HWC transpose and
+    the float→uint8 scaling.
+    """
+    from lerobot.datasets.image_writer import image_array_to_pil_image  # noqa: PLC0415
+
+    arr = image_tensor
+    if hasattr(arr, "detach"):
+        arr = arr.detach().cpu()
+    if hasattr(arr, "numpy"):
+        arr = arr.numpy()
+    while arr.ndim > 3:  # drop leading batch dim(s)
+        arr = arr[0]
+    return image_array_to_pil_image(arr).convert("RGB")
+
+
+def draw_vqa_overlay(image: Any, parsed: dict) -> Any:
+    """Draw ``bbox`` / ``keypoint`` answers onto a copy of ``image``.
+
+    Non-spatial answers (``count`` / ``attribute`` / ``spatial`` /
+    ``unknown``) are returned as an unmodified copy.
+    """
+    from PIL import ImageDraw  # noqa: PLC0415
+
+    img = image.convert("RGB").copy()
+    kind = parsed.get("kind")
+    payload = parsed.get("payload") or {}
+    draw = ImageDraw.Draw(img)
+
+    if kind == "bbox":
+        for det in payload.get("detections") or []:
+            if not isinstance(det, dict):
+                continue
+            box = det.get("bbox")
+            if not (isinstance(box, list | tuple) and len(box) == 4):
+                continue
+            try:
+                x1, y1, x2, y2 = (float(v) for v in box)
+            except (TypeError, ValueError):
+                continue
+            draw.rectangle([x1, y1, x2, y2], outline=_BBOX_COLOR, width=3)
+            label = str(det.get("label", "")).strip()
+            if label:
+                draw.text((x1 + 3, max(0.0, y1 - 12)), label, fill=_BBOX_COLOR)
+    elif kind == "keypoint":
+        point = payload.get("point")
+        if isinstance(point, list | tuple) and len(point) == 2:
+            try:
+                x, y = float(point[0]), float(point[1])
+            except (TypeError, ValueError):
+                return img
+            r = 6
+            draw.ellipse([x - r, y - r, x + r, y + r], outline=_POINT_COLOR, width=3)
+            draw.line([x - 2 * r, y, x + 2 * r, y], fill=_POINT_COLOR, width=2)
+            draw.line([x, y - 2 * r, x, y + 2 * r], fill=_POINT_COLOR, width=2)
+            label = str(payload.get("label", "")).strip()
+            if label:
+                draw.text((x + r + 3, y - r), label, fill=_POINT_COLOR)
+    return img
+
+
+def _open_file(path: Path) -> None:
+    """Best-effort open ``path`` in the OS default viewer."""
+    try:
+        if sys.platform == "darwin":
+            subprocess.run(["open", str(path)], check=False)
+        elif sys.platform.startswith("linux"):
+            subprocess.run(["xdg-open", str(path)], check=False)
+        elif os.name == "nt":
+            os.startfile(str(path))  # type: ignore[attr-defined]  # noqa: S606
+        else:  # pragma: no cover - exotic platform
+            webbrowser.open(path.resolve().as_uri())
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("could not auto-open %s: %s", path, exc)
+
+
+def save_and_open_overlay(image: Any, out_dir: str | Path = "./vqa_overlays") -> Path:
+    """Save ``image`` as a timestamped PNG under ``out_dir`` and auto-open it."""
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / f"vqa_{int(time.time() * 1000)}.png"
+    image.save(path)
+    _open_file(path)
+    return path
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator
+# ---------------------------------------------------------------------------
+
+
+def handle_vqa_query(
+    *,
+    policy: Any,
+    observation_provider: Any,
+    question: str,
+    state: dict[str, Any],
+    input_fn: Any = input,
+    print_fn: Any = print,
+) -> None:
+    """Run one interactive VQA question end to end.
+
+    Called synchronously from the input layer while the runtime is in
+    ``/vlm`` mode (the action loop is gated off, so the policy is not in
+    concurrent use). All progress is reported via :func:`push_log` so it
+    shows up in the state panel's scrollback.
+    """
+    from .steps import _generate_with_policy, _msgs_for_vqa  # noqa: PLC0415
+
+    if policy is None or not hasattr(policy, "select_message"):
+        push_log(state, "  [warn] vqa: policy has no select_message — skipping")
+        return
+
+    observation: dict | None = None
+    if observation_provider is not None:
+        try:
+            observation = observation_provider()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("observation_provider raised %s", exc)
+
+    cameras = available_cameras(observation)
+    chosen: str | None = None
+    if cameras:
+        chosen = prompt_camera_choice(cameras, input_fn=input_fn, print_fn=print_fn)
+        if chosen is None:
+            push_log(state, "  [info] vqa cancelled — no camera selected")
+            return
+        push_log(state, f"  vqa camera: {camera_short_name(chosen)}")
+    else:
+        push_log(state, "  [info] vqa: no camera available — answering text-only")
+
+    # Ground the question on the chosen camera only — filter the
+    # observation to that one image (+ proprio state) so the VLM
+    # prefix matches the single-image ``ask_vqa_*`` training recipe.
+    vqa_obs: dict | None = None
+    if observation is not None and chosen is not None:
+        vqa_obs = {chosen: observation[chosen]}
+        if "observation.state" in observation:
+            vqa_obs["observation.state"] = observation["observation.state"]
+
+    answer = _generate_with_policy(
+        policy,
+        _msgs_for_vqa(question),
+        observation=vqa_obs,
+        state=state,
+        label="vqa gen",
+    )
+    if not answer:
+        push_log(state, "  [info] vqa gen returned empty")
+        return
+    push_log(state, f"  vqa: {answer}")
+
+    parsed = parse_vqa_answer(answer)
+    if not answer_has_overlay(parsed):
+        if parsed is None:
+            push_log(state, "  [info] vqa answer is not JSON — no overlay")
+        return
+    if observation is None or chosen is None:
+        push_log(state, "  [info] no camera image — cannot draw overlay")
+        return
+    try:
+        pil = observation_image_to_pil(observation[chosen])
+        overlay = draw_vqa_overlay(pil, parsed)
+        path = save_and_open_overlay(overlay)
+        push_log(state, f"  vqa overlay saved: {path}")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("vqa overlay failed: %s", exc, exc_info=logger.isEnabledFor(logging.DEBUG))
+        push_log(state, f"  [warn] vqa overlay failed: {type(exc).__name__}: {exc}")

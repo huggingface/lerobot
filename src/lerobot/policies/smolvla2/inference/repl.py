@@ -16,11 +16,16 @@
 Reads non-blocking stdin lines, classifies each one heuristically:
 
   "stop" / "quit" / "exit"               → state["stop"] = True
+  "/action" / "/vlm"                      → set state["mode"]
   ends with "?"                           → user_vqa_query event
   starts with "task:" or first line       → set runtime task
   anything else                           → user_interjection event
 
 Plugged into the runtime via ``event_collector=StdinReader().poll``.
+
+Note: the shipped CLI (``lerobot-smolvla2-runtime``) drives stdin
+directly in its REPL / autonomous loops and does *not* wire this
+collector; it's kept as the documented embedding hook and for tests.
 """
 
 from __future__ import annotations
@@ -68,6 +73,19 @@ class StdinReader:
         lower = line.lower()
         if lower in {"stop", "quit", "exit"}:
             state["stop"] = True
+            return
+
+        # Slash commands flip the run mode. ``/vlm`` pauses the action
+        # loop (the action steps gate on ``state["mode"]``); ``/action``
+        # resumes it.
+        if lower in {"/action", "/act"}:
+            state["mode"] = "action"
+            return
+        if lower in {"/vlm", "/vqa"}:
+            state["mode"] = "vlm"
+            queue = state.get("action_queue")
+            if hasattr(queue, "clear"):
+                queue.clear()
             return
 
         # First non-control line sets the task if no task is active.
