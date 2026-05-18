@@ -156,10 +156,20 @@ lerobot-teleoperate \
 <Tip>
   The leader and follower share the same joint names
   (`shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_yaw, wrist_roll, gripper`),
-  so leader actions map directly onto the follower. If the motion of a joint is
-  reversed, flip its sign in `joint_directions` — e.g.
-  `--teleop.joint_directions='{"shoulder_pan":-1,"shoulder_lift":-1,"elbow_flex":1,"wrist_flex":1,"wrist_yaw":1,"wrist_roll":-1,"gripper":-6}'`.
+  so leader actions map directly onto the follower.
 </Tip>
+
+If the motion of a joint is reversed, flip its sign in the leader's `joint_directions` (the gripper also carries a scale to widen its range to the follower):
+
+```bash
+lerobot-teleoperate \
+    --robot.type=rebot_b601_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.can_adapter=damiao \
+    --teleop.type=rebot_102_leader \
+    --teleop.port=/dev/ttyUSB0 \
+    --teleop.joint_directions='{"shoulder_pan":-1,"shoulder_lift":-1,"elbow_flex":1,"wrist_flex":1,"wrist_yaw":1,"wrist_roll":-1,"gripper":-6}'
+```
 
 ## Recording datasets
 
