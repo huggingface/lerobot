@@ -154,7 +154,13 @@ class PolicyRunner:
     predict(obs_dict) → action_dict  {joint_key: float}
     """
 
-    def __init__(self, policy_path: str, dataset_repo_id: str, device: str = "cpu"):
+    def __init__(
+        self,
+        policy_path: str,
+        dataset_repo_id: str,
+        device: str = "cpu",
+        actions_per_chunk: int | None = None,
+    ):
         if not LEROBOT_AVAILABLE:
             raise RuntimeError("lerobot is not installed")
         if not TORCH_AVAILABLE:
@@ -175,6 +181,16 @@ class PolicyRunner:
         cfg = PreTrainedConfig.from_pretrained(policy_path)
         cfg.pretrained_path = policy_path
         cfg.device = device
+        if actions_per_chunk is not None:
+            if actions_per_chunk <= 0:
+                raise ValueError(f"actions_per_chunk must be positive, got {actions_per_chunk}")
+            if hasattr(cfg, "chunk_size") and actions_per_chunk > cfg.chunk_size:
+                raise ValueError(
+                    f"actions_per_chunk ({actions_per_chunk}) cannot exceed policy chunk_size ({cfg.chunk_size})"
+                )
+            if not hasattr(cfg, "n_action_steps"):
+                raise ValueError(f"Policy config {type(cfg).__name__} does not support n_action_steps")
+            cfg.n_action_steps = actions_per_chunk
 
         print(f"  Loading dataset metadata from '{dataset_repo_id}' …")
         ds_meta = LeRobotDatasetMetadata(dataset_repo_id)
@@ -549,6 +565,8 @@ def main():
                         help="Torch device: cpu, cuda, mps (default: cpu)")
     parser.add_argument("--fps",         type=int, default=30,
                         help="Control frequency in Hz (default: 30)")
+    parser.add_argument("--actions-per-chunk", "--actions_per_chunk", type=int, default=None,
+                        help="Override policy n_action_steps; 1 runs policy inference every control step")
     parser.add_argument("--dry-run",     action="store_true",
                         help="Print actions without sending them to the robot")
     parser.add_argument("--show-images", action="store_true",
@@ -561,7 +579,12 @@ def main():
                         help="Maximum manual motor command rate in Hz (default: 30)")
     args = parser.parse_args()
 
-    policy = PolicyRunner(args.policy_path, dataset_repo_id=args.dataset_repo_id, device=args.device)
+    policy = PolicyRunner(
+        args.policy_path,
+        dataset_repo_id=args.dataset_repo_id,
+        device=args.device,
+        actions_per_chunk=args.actions_per_chunk,
+    )
 
     print("\n" + "=" * 45)
     print("  LEROBOT INFERENCE CLIENT")
