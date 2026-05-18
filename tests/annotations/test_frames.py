@@ -15,13 +15,12 @@
 # limitations under the License.
 """Unit tests for :class:`VideoFrameProvider` method bindings.
 
-These were prompted by a real regression: ``video_for_episode`` was
-indented one level too deep so it ended up nested *inside* the
-``_decode_pyav_direct`` helper (after that function's ``return``
-statement) — silently dead code that meant production runs with
-``use_video_url=False`` would ``AttributeError`` on
-``self.frame_provider.video_for_episode(...)``. The existing module
-tests didn't catch it because they exercise stub providers.
+These were prompted by a real regression: ``video_for_episode`` was once
+indented one level too deep so it ended up nested *inside* a module-level
+helper (after that function's ``return`` statement) — silently dead code
+that meant production runs with ``use_video_url=False`` would
+``AttributeError`` on ``self.frame_provider.video_for_episode(...)``. The
+existing module tests didn't catch it because they exercise stub providers.
 
 The tests below assert on the class itself (not on an instance), so a
 future reindent regression flips them to red without needing a real
@@ -51,8 +50,8 @@ def test_episode_clip_path_is_a_method_of_videoframeprovider():
 
 
 def test_videoframeprovider_has_a_lock_for_concurrent_use():
-    """A ``ThreadPoolExecutor`` runs Module 1/2/3 phases concurrently;
-    the cache + warn-flag accesses must be guarded.
+    """A ``ThreadPoolExecutor`` runs the plan / interjections / vqa phases
+    concurrently; the cache + warn-flag accesses must be guarded.
     """
     import threading
 
