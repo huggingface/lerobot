@@ -393,28 +393,62 @@ class CameraBuffer:
     """Non-blocking camera snapshot helper.
 
     OpenCVCamera already owns a background capture thread. This wrapper peeks at
-    that latest frame and refuses stale frames instead of silently resending the
-    last good image forever.
+    the latest frame. If a camera drops out, the last good frame is reused while
+    the wrapper tries to reconnect the camera in the background.
     """
     def __init__(self, cameras: dict, max_age_ms: int = 1000, verbose: bool = False):
         self._cameras = cameras
         self._max_age_ms = max_age_ms
         self._verbose = verbose
         self._last_warn_t = {n: 0.0 for n in cameras}
+        self._last_reconnect_t = {n: 0.0 for n in cameras}
+        self._last_frames = {n: self._blank_frame(cam) for n, cam in cameras.items()}
 
     def start(self):
         return None
+
+    @staticmethod
+    def _blank_frame(cam) -> np.ndarray:
+        height = getattr(cam, "height", None) or getattr(cam, "capture_height", None) or 480
+        width = getattr(cam, "width", None) or getattr(cam, "capture_width", None) or 640
+        return np.zeros((int(height), int(width), 3), dtype=np.uint8)
+
+    def _reconnect(self, name: str, cam) -> None:
+        now = time.perf_counter()
+        if now - self._last_reconnect_t[name] < 2.0:
+            return
+        self._last_reconnect_t[name] = now
+
+        if self._verbose:
+            print(f"[server] reconnecting camera '{name}'")
+
+        try:
+            cam.disconnect()
+        except Exception:
+            pass
+
+        try:
+            cam.connect(warmup=False)
+        except Exception as e:
+            if self._verbose:
+                print(f"[server] camera '{name}' reconnect failed: {e}")
 
     def get_latest(self) -> dict:
         frames = {}
         for name, cam in self._cameras.items():
             try:
-                frames[name] = cam.read_latest(max_age_ms=self._max_age_ms)
+                frame = cam.read_latest(max_age_ms=self._max_age_ms)
+                self._last_frames[name] = frame
+                frames[name] = frame
             except Exception as e:
                 now = time.perf_counter()
                 if self._verbose and now - self._last_warn_t[name] > 2.0:
                     print(f"[server] camera '{name}' has no fresh frame: {e}")
                     self._last_warn_t[name] = now
+                if self._last_frames[name] is not None:
+                    frames[name] = self._last_frames[name]
+                if cam.thread is None or not cam.thread.is_alive():
+                    self._reconnect(name, cam)
         return frames
 
     def stop(self):

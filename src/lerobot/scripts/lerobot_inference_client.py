@@ -466,6 +466,10 @@ def run_inference(
                 elif not image_keys:
                     logging.warning("step=%d: server returned no fresh images — reusing cached obs", step)
                 else:
+                    if obs is not None:
+                        for key, value in obs.items():
+                            if key.startswith("observation.images.") and key not in new_obs:
+                                new_obs[key] = value
                     obs = new_obs
                     stats.record_obs(elapsed)
                     if show_imgs:
