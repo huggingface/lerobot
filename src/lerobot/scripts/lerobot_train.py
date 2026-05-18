@@ -43,7 +43,7 @@ from lerobot.common.train_utils import (
 from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.datasets import EpisodeAwareSampler, make_dataset
+from lerobot.datasets import EpisodeAwareSampler, WeightedEpisodeAwareSampler, make_dataset
 from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
@@ -154,6 +154,61 @@ def update_policy(
     train_metrics.lr = optimizer.param_groups[0]["lr"]
     train_metrics.update_s = time.perf_counter() - start_time
     return train_metrics, output_dict
+
+
+def _build_vqa_oversample_weights(dataset: Any, target_fraction: float) -> "torch.Tensor | None":
+    """Build per-frame sampling weights that oversample VQA-annotated frames.
+
+    Scans the dataset's ``language_events`` column for frames carrying a
+    ``vqa``-style annotation and returns a weight tensor (length == total
+    dataset frames) such that, under multinomial sampling, VQA frames make up
+    roughly ``target_fraction`` of the training stream.
+
+    Returns ``None`` (⇒ fall back to uniform episode-aware sampling) when VQA
+    frames cannot be detected or there are none.
+    """
+    if not 0.0 < target_fraction < 1.0:
+        logging.warning(
+            "vqa_target_fraction must be in (0, 1); got %s — VQA oversampling disabled.",
+            target_fraction,
+        )
+        return None
+    hf = getattr(dataset, "hf_dataset", None)
+    if hf is None or "language_events" not in getattr(hf, "column_names", []):
+        logging.warning(
+            "Dataset has no `language_events` column — VQA oversampling disabled."
+        )
+        return None
+
+    events_col = hf["language_events"]
+    n_frames = len(events_col)
+    is_vqa = torch.zeros(n_frames, dtype=torch.bool)
+    for i, rows in enumerate(events_col):
+        if rows and any((row or {}).get("style") == "vqa" for row in rows):
+            is_vqa[i] = True
+
+    n_vqa = int(is_vqa.sum())
+    if n_vqa == 0:
+        logging.warning("No `vqa` annotations found in the dataset — VQA oversampling disabled.")
+        return None
+    n_other = n_frames - n_vqa
+
+    # Solve target = (n_vqa·w) / (n_vqa·w + n_other) for the VQA weight w.
+    # Clamp to ≥ 1 so VQA frames are never *down*-weighted below uniform.
+    weight = (target_fraction * n_other) / ((1.0 - target_fraction) * max(n_vqa, 1))
+    weight = max(weight, 1.0)
+    weights = torch.ones(n_frames, dtype=torch.double)
+    weights[is_vqa] = weight
+    logging.info(
+        "VQA oversampling: %d/%d frames carry a `vqa` annotation (%.2f%%); "
+        "weighting them x%.2f to target ~%.0f%% of the training stream.",
+        n_vqa,
+        n_frames,
+        100.0 * n_vqa / n_frames,
+        weight,
+        100.0 * target_fraction,
+    )
+    return weights
 
 
 @parser.wrap()
@@ -376,13 +431,29 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     # create dataloader for offline training
     if hasattr(cfg.policy, "drop_n_last_frames"):
         shuffle = False
-        sampler = EpisodeAwareSampler(
-            dataset.meta.episodes["dataset_from_index"],
-            dataset.meta.episodes["dataset_to_index"],
-            episode_indices_to_use=dataset.episodes,
-            drop_n_last_frames=cfg.policy.drop_n_last_frames,
-            shuffle=True,
-        )
+        from_indices = dataset.meta.episodes["dataset_from_index"]
+        to_indices = dataset.meta.episodes["dataset_to_index"]
+        # When `vqa_target_fraction` is set, oversample VQA-annotated
+        # frames via a weighted sampler; otherwise plain episode-aware.
+        vqa_weights = None
+        if cfg.vqa_target_fraction is not None and not cfg.dataset.streaming:
+            vqa_weights = _build_vqa_oversample_weights(dataset, cfg.vqa_target_fraction)
+        if vqa_weights is not None:
+            sampler = WeightedEpisodeAwareSampler(
+                from_indices,
+                to_indices,
+                vqa_weights,
+                episode_indices_to_use=dataset.episodes,
+                drop_n_last_frames=cfg.policy.drop_n_last_frames,
+            )
+        else:
+            sampler = EpisodeAwareSampler(
+                from_indices,
+                to_indices,
+                episode_indices_to_use=dataset.episodes,
+                drop_n_last_frames=cfg.policy.drop_n_last_frames,
+                shuffle=True,
+            )
     else:
         shuffle = True
         sampler = None

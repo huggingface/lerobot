@@ -72,6 +72,14 @@ class TrainPipelineConfig(HubMixin):
     wandb: WandBConfig = field(default_factory=WandBConfig)
     peft: PeftConfig | None = None
 
+    # VQA oversampling. When set (a fraction in (0, 1)), the training
+    # dataloader uses a WeightedEpisodeAwareSampler that draws frames
+    # carrying a `vqa` language annotation often enough that they make
+    # up roughly this fraction of the training stream. VQA annotations
+    # are typically sparse, so without this they are underrepresented.
+    # `None` (default) keeps uniform episode-aware sampling.
+    vqa_target_fraction: float | None = None
+
     # RA-BC (Reward-Aligned Behavior Cloning) parameters
     use_rabc: bool = False  # Enable reward-weighted training
     rabc_progress_path: str | None = None  # Path to precomputed SARM progress parquet file

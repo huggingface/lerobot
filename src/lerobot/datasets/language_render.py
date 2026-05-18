@@ -56,13 +56,9 @@ def active_at(
     uniformity but is not consulted: only persistent styles are valid here.
     """
     _validate_persistent_resolver("active_at", style)
-    matches = _matching_rows(
-        persistent, style=style, role=role, tool_name=tool_name, camera=camera
-    )
+    matches = _matching_rows(persistent, style=style, role=role, tool_name=tool_name, camera=camera)
     matches = [row for row in matches if _timestamp(row) <= t]
-    return _select_latest(
-        matches, style=style, role=role, tool_name=tool_name, camera=camera
-    )
+    return _select_latest(matches, style=style, role=role, tool_name=tool_name, camera=camera)
 
 
 def emitted_at(
@@ -88,9 +84,7 @@ def emitted_at(
     if column == LANGUAGE_PERSISTENT:
         matches = [
             row
-            for row in _matching_rows(
-                persistent, style=style, role=role, tool_name=tool_name, camera=camera
-            )
+            for row in _matching_rows(persistent, style=style, role=role, tool_name=tool_name, camera=camera)
             if _timestamp(row) == t
         ]
         return _select_one(
@@ -101,9 +95,7 @@ def emitted_at(
             camera=camera,
             sort_key=_persistent_sort_key,
         )
-    matches = _matching_rows(
-        events, style=style, role=role, tool_name=tool_name, camera=camera
-    )
+    matches = _matching_rows(events, style=style, role=role, tool_name=tool_name, camera=camera)
     return _select_one(
         matches,
         style=style,
@@ -192,6 +184,29 @@ def render_sample(
     """
     persistent_rows = _normalize_rows(persistent or [])
     event_rows = _normalize_rows(events or [])
+
+    # VQA-priority routing. A ``vqa`` annotation is sparse and
+    # view-dependent; the plain weighted blend would (a) waste a draw
+    # whenever it picks an ``ask_vqa*`` sub-recipe for a frame that has
+    # no VQA, and (b) silently drop a VQA-annotated frame whenever it
+    # picks a non-VQA sub-recipe. So: if the blend has ``ask_vqa*``
+    # sub-recipes and *this* frame carries one of their VQA bindings,
+    # render VQA here regardless of the weighted draw. That makes VQA's
+    # recipe-side training share equal the VQA-annotation density (the
+    # maximum reachable without a dataset-level oversampling sampler).
+    if recipe.blend is not None:
+        vqa_rendered = _render_vqa_if_present(
+            recipe,
+            persistent=persistent_rows,
+            events=event_rows,
+            t=t,
+            sample_idx=sample_idx,
+            task=task,
+            dataset_ctx=dataset_ctx,
+        )
+        if vqa_rendered is not None:
+            return vqa_rendered
+
     selected_recipe = _select_recipe(recipe, sample_idx)
     bindings = _resolve_bindings(
         selected_recipe,
@@ -203,6 +218,59 @@ def render_sample(
         dataset_ctx=dataset_ctx,
     )
     return _render_message_recipe(selected_recipe, bindings)
+
+
+def _render_vqa_if_present(
+    recipe: TrainingRecipe,
+    *,
+    persistent: Sequence[LanguageRow],
+    events: Sequence[LanguageRow],
+    t: float,
+    sample_idx: int,
+    task: str | None,
+    dataset_ctx: Any | None,
+) -> RenderedMessages | None:
+    """Render an ``ask_vqa*`` sub-recipe iff this frame carries a VQA
+    annotation; otherwise return ``None`` so the caller falls back to the
+    normal weighted blend.
+
+    When several VQA sub-recipes resolve (e.g. a frame annotated for more
+    than one camera), one is chosen deterministically by relative weight.
+    """
+    assert recipe.blend is not None
+    renderable: list[tuple[float, RenderedMessages]] = []
+    for name, component in recipe.blend.items():
+        if not name.startswith("ask_vqa"):
+            continue
+        bindings = _resolve_bindings(
+            component,
+            persistent=persistent,
+            events=events,
+            t=t,
+            sample_idx=sample_idx,
+            task=task,
+            dataset_ctx=dataset_ctx,
+        )
+        rendered = _render_message_recipe(component, bindings)
+        if rendered is not None:
+            renderable.append((float(component.weight or 0.0), rendered))
+
+    if not renderable:
+        return None
+    if len(renderable) == 1:
+        return renderable[0][1]
+
+    # Multiple cameras have a VQA for this frame — deterministic pick by
+    # relative weight (fall back to a uniform draw if all weights are 0).
+    total = sum(w for w, _ in renderable) or float(len(renderable))
+    digest = hashlib.blake2b(f"vqa:{sample_idx}".encode(), digest_size=8).digest()
+    draw = int.from_bytes(digest, "big") / 2**64 * total
+    cumulative = 0.0
+    for w, rendered in renderable:
+        cumulative += w or (total / len(renderable))
+        if draw < cumulative:
+            return rendered
+    return renderable[-1][1]
 
 
 def _select_recipe(recipe: TrainingRecipe, sample_idx: int) -> TrainingRecipe:
@@ -239,9 +307,7 @@ def _resolve_bindings(
 ) -> dict[str, LanguageRow | str | None]:
     """Resolve every binding in ``recipe`` (plus ``task``) at time ``t``."""
     bindings: dict[str, LanguageRow | str | None] = {
-        "task": _resolve_task(
-            task, dataset_ctx, persistent=persistent, sample_idx=sample_idx
-        ),
+        "task": _resolve_task(task, dataset_ctx, persistent=persistent, sample_idx=sample_idx),
     }
     specs = {**DEFAULT_BINDINGS, **(recipe.bindings or {})}
     for name, spec in specs.items():
@@ -275,18 +341,12 @@ def _resolve_task(
     if task is not None:
         return task
 
-    aug_rows = [
-        r
-        for r in persistent
-        if r.get("style") == "task_aug" and r.get("role") == "user"
-    ]
+    aug_rows = [r for r in persistent if r.get("style") == "task_aug" and r.get("role") == "user"]
     if aug_rows:
         # Deterministic, blake2b-based pick keyed on sample_idx so the
         # rotation is reproducible across runs (Python's built-in ``hash``
         # is process-randomized).
-        digest = hashlib.blake2b(
-            f"task_aug:{sample_idx}".encode(), digest_size=8
-        ).digest()
+        digest = hashlib.blake2b(f"task_aug:{sample_idx}".encode(), digest_size=8).digest()
         idx = int.from_bytes(digest, "big") % len(aug_rows)
         chosen = aug_rows[idx].get("content")
         if chosen:
@@ -444,10 +504,7 @@ def _validate_rendered(rendered: RenderedMessages) -> None:
     # Valid iff it supervises something: a text-CE target turn OR a
     # ``low_level`` stream turn (flow / action supervision).
     if not target_indices and not any(s == "low_level" for s in streams):
-        raise ValueError(
-            "Rendered samples must contain a target message or a "
-            "low_level-stream message."
-        )
+        raise ValueError("Rendered samples must contain a target message or a low_level-stream message.")
     for idx in target_indices:
         if idx < 0 or idx >= len(messages):
             raise ValueError(f"Target message index {idx} is out of bounds.")
