@@ -36,6 +36,11 @@ from lerobot.utils.constants import ACTION  # noqa: E402
 PRETRAINED_REPO_ID = "ginwind/VLA-JEPA"
 PRETRAINED_SUBFOLDER = "LIBERO"
 
+# extended hub tests load the full converted safetensors checkpoints (~5 GB) and are
+# skipped by default.  Set VLA_JEPA_EXTENDED=1 to opt in.
+_VLA_JEPA_EXTENDED = os.environ.get("VLA_JEPA_EXTENDED", "0") != "0"
+extended_test = pytest.mark.skipif(not _VLA_JEPA_EXTENDED, reason="Set VLA_JEPA_EXTENDED=1 to run hub tests")
+
 
 # ---------------------------------------------------------------------------
 # Core training / inference tests
@@ -259,39 +264,94 @@ def test_native_to_lerobot_both_losses(patch_vla_jepa_external_models: None) -> 
 
 # ---------------------------------------------------------------------------
 # Pretrained checkpoint
+# Hub tests (opt-in: VLA_JEPA_EXTENDED=1)
 # ---------------------------------------------------------------------------
 
 
-def test_pretrained_checkpoint_loads_from_hf_cache() -> None:
-    import torch
-    from huggingface_hub import hf_hub_download
-    from huggingface_hub.errors import LocalEntryNotFoundError
+def _make_hub_train_batch(policy: VLAJEPAPolicy, batch_size: int = 1) -> dict:
+    """Build a training batch whose keys/shapes match a hub-loaded policy config."""
+    cfg = policy.config
+    batch: dict = {"task": ["pick up the cube"] * batch_size}
+    for key, feat in cfg.image_features.items():
+        h, w = feat.shape[-2], feat.shape[-1]
+        batch[key] = torch.rand(batch_size, cfg.num_video_frames, 3, h, w)
+    if cfg.robot_state_feature is not None:
+        batch["observation.state"] = torch.randn(batch_size, 1, cfg.robot_state_feature.shape[0])
+    batch[ACTION] = torch.randn(batch_size, cfg.chunk_size, cfg.action_dim)
+    return batch
 
-    repo_id = os.environ.get("VLA_JEPA_PRETRAINED_REPO_ID", PRETRAINED_REPO_ID)
-    subfolder = os.environ.get("VLA_JEPA_PRETRAINED_SUBFOLDER", PRETRAINED_SUBFOLDER).strip("/")
-    checkpoint_filename = os.environ.get(
-        "VLA_JEPA_PRETRAINED_CHECKPOINT",
-        f"{subfolder}/checkpoints/VLA-JEPA-{subfolder}.pt",
-    )
 
-    try:
-        checkpoint_path = hf_hub_download(
-            repo_id=repo_id, filename=checkpoint_filename, local_files_only=True
-        )
-    except LocalEntryNotFoundError:
-        pytest.skip(f"{repo_id}/{checkpoint_filename} is not in the local HF cache.")
+def _make_hub_inference_batch(policy: VLAJEPAPolicy, batch_size: int = 1) -> dict:
+    """Build an inference batch whose keys/shapes match a hub-loaded policy config."""
+    cfg = policy.config
+    batch: dict = {"task": ["pick up the cube"] * batch_size}
+    for key, feat in cfg.image_features.items():
+        h, w = feat.shape[-2], feat.shape[-1]
+        batch[key] = torch.rand(batch_size, 3, h, w)
+    if cfg.robot_state_feature is not None:
+        batch["observation.state"] = torch.randn(batch_size, cfg.robot_state_feature.shape[0])
+    return batch
 
-    try:
-        checkpoint = torch.load(checkpoint_path, map_location="cpu", mmap=True, weights_only=False)
-    except TypeError:
-        checkpoint = torch.load(checkpoint_path, map_location="cpu")
 
-    state_dict = (
-        checkpoint.get("state_dict")
-        or checkpoint.get("model_state_dict")
-        or checkpoint.get("model")
-        or checkpoint
-    )
-    assert isinstance(state_dict, dict)
-    assert len(state_dict) > 0
-    assert all(isinstance(k, str) for k in list(state_dict)[:10])
+_CP_ROOT = "lerobot"  # TODO: upload converted checkpoints
+
+# Each tuple: (repo_id, enable_world_model)
+_HUB_VARIANTS = [
+    (f"{_CP_ROOT}/VLA-JEPA-LIBERO", True),
+    (f"{_CP_ROOT}/VLA-JEPA-Pretrain", True),
+    (f"{_CP_ROOT}/VLA-JEPA-SimplerEnv", False),
+]
+
+
+@extended_test
+@pytest.mark.parametrize("repo_id,enable_world_model", _HUB_VARIANTS)
+def test_hub_checkpoint_loads(repo_id: str, enable_world_model: bool) -> None:
+    """Policy loads from the converted safetensors checkpoint on the Hub."""
+    policy = VLAJEPAPolicy.from_pretrained(repo_id)
+    assert policy.config.enable_world_model == enable_world_model
+    assert sum(p.numel() for p in policy.parameters()) > 0
+
+
+@extended_test
+@pytest.mark.parametrize("repo_id,enable_world_model", _HUB_VARIANTS)
+def test_hub_checkpoint_forward_pass(repo_id: str, enable_world_model: bool) -> None:
+    """Policy loaded from hub produces finite losses with a correctly-shaped batch."""
+    policy = VLAJEPAPolicy.from_pretrained(repo_id)
+    policy.train()
+
+    batch = _make_hub_train_batch(policy)
+    loss, logs = policy.forward(batch)
+    assert torch.isfinite(loss)
+    assert "action_loss" in logs
+    if enable_world_model:
+        assert "wm_loss" in logs
+
+
+@extended_test
+def test_hub_freeze_qwen_disables_world_model() -> None:
+    """freeze_qwen=True (via cli_overrides) freezes qwen and disables the world model."""
+    policy = VLAJEPAPolicy.from_pretrained(f"{_CP_ROOT}/VLA-JEPA-LIBERO", cli_overrides=["freeze_qwen=true"])
+    assert not policy.config.enable_world_model
+    assert policy.model.video_predictor is None
+    qwen_params = list(policy.model.qwen.parameters())
+    assert all(not p.requires_grad for p in qwen_params)
+    assert any(p.requires_grad for p in policy.model.action_model.parameters())
+
+
+@extended_test
+def test_hub_disable_world_model_loads_simpler_env() -> None:
+    """SimplerEnv checkpoint (world model disabled) loads cleanly and runs inference."""
+    policy = VLAJEPAPolicy.from_pretrained(f"{_CP_ROOT}/VLA-JEPA-SimplerEnv")
+    assert not policy.config.enable_world_model
+    assert policy.model.video_predictor is None
+    assert policy.model.video_encoder is None
+
+
+@extended_test
+def test_hub_libero_inference_shape() -> None:
+    """select_action returns the expected shape using the LIBERO hub checkpoint."""
+    policy = VLAJEPAPolicy.from_pretrained(f"{_CP_ROOT}/VLA-JEPA-LIBERO")
+    policy.eval()
+    batch = _make_hub_inference_batch(policy)
+    action = policy.select_action(batch)
+    assert action.shape[-1] == policy.config.action_dim

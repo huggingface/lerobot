@@ -86,6 +86,9 @@ class VLAJEPAModel(nn.Module):
             self.video_processor = None
             self.video_predictor = None
 
+        if config.freeze_qwen:
+            self.qwen.requires_grad_(False)
+
         # Build prompt placeholders.
         # Original uses num_frames // tubelet_size - 1 action token groups for the world model predictor.
         # This matches the number of context temporal positions after tubelet compression.

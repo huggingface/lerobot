@@ -12,8 +12,8 @@ from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 @dataclass
 class VLAJEPAConfig(PreTrainedConfig):
     n_obs_steps: int = 1
-    chunk_size: int = 16
-    n_action_steps: int = 16
+    chunk_size: int = 7
+    n_action_steps: int = 7
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -25,26 +25,26 @@ class VLAJEPAConfig(PreTrainedConfig):
 
     qwen_model_name: str = "Qwen/Qwen3-VL-2B-Instruct"
     jepa_encoder_name: str = "facebook/vjepa2-vitl-fpc64-256"
+    freeze_qwen: bool = False
+    enable_world_model: bool = True
 
     tokenizer_padding_side: str = "left"
-    prompt_template: str = (
-        "{instruction}\n\nPredict {actions} and condition future prediction with {e_actions}."
-    )
+    prompt_template: str = "Your task is {instruction}. Infer the temporal dynamics from frames {actions} and produce the corresponding policy actions {e_actions}."
     special_action_token: str = "<|action_{}|>"
     embodied_action_token: str = "<|embodied_action|>"
 
     action_dim: int = 7
     state_dim: int = 8
-    future_action_window_size: int = 15
+    future_action_window_size: int = 6
     past_action_window_size: int = 0
-    num_action_tokens_per_timestep: int = 4
-    num_embodied_action_tokens_per_instruction: int = 8
-    num_inference_timesteps: int = 10
+    num_action_tokens_per_timestep: int = 8
+    num_embodied_action_tokens_per_instruction: int = 32
+    num_inference_timesteps: int = 4
 
     action_hidden_size: int = 1024
     action_model_type: str = "DiT-B"
-    action_num_layers: int = 12
-    action_dropout: float = 0.1
+    action_num_layers: int = 16
+    action_dropout: float = 0.2
     action_num_timestep_buckets: int = 1000
     action_noise_beta_alpha: float = 1.5
     action_noise_beta_beta: float = 1.0
@@ -53,15 +53,14 @@ class VLAJEPAConfig(PreTrainedConfig):
     action_max_seq_len: int = 1024
 
     # total video frames loaded per sample
-    num_video_frames: int = 16
-    predictor_depth: int = 6
+    num_video_frames: int = 8
+    predictor_depth: int = 12
     predictor_num_heads: int = 8
     predictor_mlp_ratio: float = 4.0
     predictor_dropout: float = 0.0
     world_model_loss_weight: float = 0.1
-    enable_world_model: bool = True
     jepa_tubelet_size: int = 2  # must match the encoder (e.g. 2 for vjepa2-vitl-fpc64-256)
-    repeated_diffusion_steps: int = 4  # independent noise draws per batch item (CogACT-style)
+    repeated_diffusion_steps: int = 8  # independent noise draws per batch item (CogACT-style)
 
     resize_images_to: tuple[int, int] | None = None
     torch_dtype: str = "bfloat16"
@@ -77,6 +76,9 @@ class VLAJEPAConfig(PreTrainedConfig):
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        if self.freeze_qwen and self.enable_world_model:
+            # freezing qwen backbone makes world model training irrelevant since no grad flows
+            self.enable_world_model = False
         if self.n_action_steps > self.chunk_size:
             raise ValueError("`n_action_steps` must be <= `chunk_size`.")
         if self.future_action_window_size + 1 > self.chunk_size:
