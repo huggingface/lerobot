@@ -49,11 +49,9 @@ class PI052Config(PI05Config):
     """π0.5 with the PaliGemma LM head re-enabled for subtask prediction.
 
     See ``SmolVLA2Config`` for the analogous SmolVLM2-backed dual-head
-    config. Same recipe-driven training surface; the only differences
-    are which backbone the policy uses (PaliGemma here vs SmolVLM2
-    there) and the default loss-weight scale (paper §IV.D uses
-    ``α=10`` between the two heads, which we encode as
-    ``flow_loss_weight=10, text_loss_weight=1``).
+    config. Same recipe-driven training surface; the only difference is
+    which backbone the policy uses (PaliGemma here vs SmolVLM2 there).
+    The flow:text loss split is the milder 5:1 (see ``flow_loss_weight``).
     """
 
     # Recipe / language stack ---------------------------------------------
@@ -72,16 +70,20 @@ class PI052Config(PI05Config):
     samples text auto-regressively after the prefix."""
 
     # Loss weights --------------------------------------------------------
-    # Paper §IV.D: total = H(text) + α * MSE(flow), α = 10. We split
-    # the same total into two configurable knobs so individual scaling
-    # is recoverable.
+    # Paper §IV.D uses α=10 between the flow and text terms, assuming
+    # text is a rare auxiliary task. With the recipe stack the flow-only
+    # `low_level` branch fires on a large share of samples, so α=10
+    # swamps the LM head and collapses generation into degenerate
+    # repetition. We use the milder 5:1 split (matches SmolVLA2Config).
     text_loss_weight: float = 1.0
     """Weight on the LM-head cross-entropy term. Set to ``0`` to disable
     text training entirely (reverts to flow-only / π0.5 behaviour)."""
 
-    flow_loss_weight: float = 10.0
-    """Weight on the action-expert flow-matching term. Default ``10.0``
-    matches the paper's α."""
+    flow_loss_weight: float = 5.0
+    """Weight on the action-expert flow-matching term. ``5.0`` — a milder
+    flow:text split than the paper's α=10, since the flow-only
+    ``low_level`` recipe already gives the action expert frequent
+    gradient. Lower it further if the LM head still underfits."""
 
     # Backbone training ---------------------------------------------------
     unfreeze_lm_head: bool = True

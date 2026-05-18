@@ -125,6 +125,62 @@ def _dump_recipe_sample(
     print("==============================================\n", flush=True)
 
 
+def _content_to_text(content: Any) -> str:
+    """Collapse a message's ``content`` (string or multimodal blocks) to text."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = [
+            b["text"]
+            for b in content
+            if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str)
+        ]
+        return "\n".join(parts)
+    return ""
+
+
+def _flatten_say_tool_calls(message: dict[str, Any]) -> dict[str, Any]:
+    """Serialize assistant ``say`` tool calls into a ``<say>...</say>`` marker.
+
+    PaliGemma's flat text prompt has no notion of structured tool calls,
+    and ``_format_messages`` only reads ``role`` / ``content`` — so
+    without this a ``say`` tool call is dropped entirely and never
+    supervised. Rewriting it into the content text as a ``<say>...</say>``
+    marker lets the LM head learn to emit it; the runtime parses it back
+    via ``_split_plan_and_say``. Messages without ``say`` tool calls are
+    returned unchanged (the structured calls, if any, are still dropped).
+    """
+    tool_calls = message.get("tool_calls")
+    if not tool_calls:
+        return message
+    say_texts: list[str] = []
+    for call in tool_calls:
+        if not isinstance(call, dict):
+            continue
+        fn = call.get("function") or {}
+        if fn.get("name") != "say":
+            continue
+        args = fn.get("arguments")
+        if isinstance(args, str):
+            try:
+                import json  # noqa: PLC0415
+
+                args = json.loads(args)
+            except (ValueError, TypeError):
+                args = {}
+        text = args.get("text", "") if isinstance(args, dict) else ""
+        if text:
+            say_texts.append(str(text))
+    new = dict(message)
+    new.pop("tool_calls", None)
+    if not say_texts:
+        return new
+    base = _content_to_text(new.get("content")).strip()
+    marker = "".join(f"<say>{t}</say>" for t in say_texts)
+    new["content"] = f"{base}\n{marker}" if base else marker
+    return new
+
+
 def _strip_blocks(message: dict[str, Any]) -> dict[str, Any]:
     """Normalise a message's content to a plain string.
 
@@ -253,7 +309,10 @@ class PI052TextTokenizerStep(ProcessorStep):
                 complementary,
             )
 
-        messages = [_strip_blocks(m) for m in messages]
+        # Flatten ``say`` tool calls into ``<say>...</say>`` text before
+        # stripping, so the spoken reply is actually tokenized and
+        # supervised (PaliGemma's flat prompt has no structured calls).
+        messages = [_strip_blocks(_flatten_say_tool_calls(m)) for m in messages]
         prompt, spans = _format_messages(messages)
 
         tokenizer = self._ensure_tokenizer()

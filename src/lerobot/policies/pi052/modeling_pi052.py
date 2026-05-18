@@ -86,6 +86,41 @@ def _shifted_ce(logits: Tensor, labels: Tensor) -> Tensor:
     return loss / valid.sum().clamp(min=1)
 
 
+def _mark_target_span_causal(
+    prefix_att_masks: Tensor, text_labels: Tensor, lang_start: int, lang_end: int
+) -> Tensor:
+    """Make the supervised text-target span causally masked.
+
+    ``embed_prefix`` lays the PaliGemma prefix out as ``[images,
+    language]`` with the language block flagged ``att=0`` — which
+    ``make_att_2d_masks`` turns into one fully *bidirectional* block.
+    A supervised target token's hidden state then attends to the very
+    tokens it is trained to predict, so the text cross-entropy
+    degenerates into a copy task (loss → ~0) and the LM head never
+    learns causal next-token prediction. At inference ``select_message``
+    decodes autoregressively (causally) and the head collapses to
+    repeated/garbage tokens.
+
+    Fix: set ``att=1`` on the language positions that are supervised
+    targets (``text_labels != -100``). Under ``make_att_2d_masks``'s
+    cumulative-block rule each target token then attends bidirectionally
+    to images + the user prompt and causally to *earlier* targets only —
+    genuine next-token prediction, matching inference. Non-target
+    language (the user prompt, the flow-only ``low_level`` subtask) stays
+    ``att=0`` / bidirectional. The action expert / FAST tokens are
+    unaffected: they sit at a strictly higher cumsum and still attend to
+    every prefix token.
+    """
+    att = prefix_att_masks.clone()
+    n = min(text_labels.shape[1], lang_end - lang_start)
+    if n <= 0:
+        return att
+    target = text_labels[:, :n] != -100  # (B, n) bool
+    seg = att[:, lang_start : lang_start + n].bool()
+    att[:, lang_start : lang_start + n] = seg | target
+    return att
+
+
 def _fast_ce(
     fast_logits: Tensor,
     action_tokens: Tensor,
@@ -519,6 +554,16 @@ class PI052Policy(PI05Policy):
         )
         non_fast_prefix_len = prefix_embs.shape[1]  # images + language only
 
+        # Causal-mask the supervised text-target span so the text-CE is
+        # genuine next-token prediction, not a bidirectional copy task
+        # (see ``_mark_target_span_causal``).
+        if text_labels is not None:
+            lang_start = non_fast_prefix_len - text_labels.shape[1]
+            if lang_start >= 0:
+                prefix_att = _mark_target_span_causal(
+                    prefix_att, text_labels, lang_start, non_fast_prefix_len
+                )
+
         fast_len = 0
         if action_tokens is not None and action_mask is not None:
             emb_dim = prefix_embs.shape[-1]
@@ -639,6 +684,16 @@ class PI052Policy(PI05Policy):
         prefix_embs, prefix_pad, prefix_att = self.model.embed_prefix(
             images, img_masks, lang_tokens, lang_masks
         )
+
+        # Causal-mask the supervised text-target span (see
+        # ``_mark_target_span_causal``) before the FAST tokens are
+        # appended — same fix as ``_compute_all_losses_fused``.
+        if text_labels is not None:
+            lang_start = prefix_embs.shape[1] - text_labels.shape[1]
+            if lang_start >= 0:
+                prefix_att = _mark_target_span_causal(
+                    prefix_att, text_labels, lang_start, prefix_embs.shape[1]
+                )
 
         fast_len = 0
         if action_tokens is not None and action_mask is not None:
