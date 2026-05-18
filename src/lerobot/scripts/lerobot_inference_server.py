@@ -64,9 +64,18 @@ try:
     from gpiozero import Motor, Device
     from gpiozero.pins.lgpio import LGPIOFactory
     Device.pin_factory = LGPIOFactory()
-    MOTORS_AVAILABLE = True
+    GPIO_MOTORS_AVAILABLE = True
 except Exception:
-    MOTORS_AVAILABLE = False
+    GPIO_MOTORS_AVAILABLE = False
+
+# Serial motor control (ESP32/Arduino USB bridge)
+try:
+    import serial
+    SERIAL_MOTORS_AVAILABLE = True
+except Exception as _serial_err:
+    print(f"serial import failed: {_serial_err} - ESP32 motor control disabled")
+    serial = None
+    SERIAL_MOTORS_AVAILABLE = False
 
 
 # ──────────────────────────────────────────────────────────────
@@ -153,9 +162,9 @@ class ServerStats:
 # ──────────────────────────────────────────────────────────────
 
 class MotorController:
-    def __init__(self, m1_forward=17, m1_backward=18, m1_enable=25,
-                       m2_forward=22, m2_backward=23, m2_enable=24):
-        if not MOTORS_AVAILABLE:
+    def __init__(self, m1_forward=16, m1_backward=1, m1_enable=12,
+                       m2_forward=5, m2_backward=6, m2_enable=13):
+        if not GPIO_MOTORS_AVAILABLE:
             raise RuntimeError("gpiozero/lgpio not available")
         self.motor1 = Motor(forward=m1_forward, backward=m1_backward, enable=m1_enable, pwm=True)
         self.motor2 = Motor(forward=m2_forward, backward=m2_backward, enable=m2_enable, pwm=True)
@@ -175,6 +184,36 @@ class MotorController:
     def stop(self):
         self.motor1.stop()
         self.motor2.stop()
+
+
+class SerialMotorController:
+    """
+    Sends motor speeds to an ESP32/Arduino over USB serial.
+    Protocol: one line per command, "M <m1> <m2>\\n", values in [-1.0, 1.0].
+    """
+
+    def __init__(self, port: str, baud: int = 115200):
+        if not SERIAL_MOTORS_AVAILABLE:
+            raise RuntimeError("pyserial not available")
+        self.ser = serial.Serial(port=port, baudrate=baud, timeout=0.1, write_timeout=0.1)
+        time.sleep(2.0)  # allow ESP32 reset after opening USB serial
+        self.set(0.0, 0.0)
+        print(f"ESP32 motor bridge initialised  port={port} baud={baud}")
+
+    def set(self, m1: float, m2: float) -> None:
+        m1 = max(-1.0, min(1.0, float(m1)))
+        m2 = max(-1.0, min(1.0, float(m2)))
+        self.ser.write(f"M {m1:.3f} {m2:.3f}\n".encode("ascii"))
+
+    def stop(self) -> None:
+        try:
+            self.set(0.0, 0.0)
+        except Exception:
+            pass
+
+    def close(self) -> None:
+        self.stop()
+        self.ser.close()
 
 
 # ──────────────────────────────────────────────────────────────
@@ -483,6 +522,8 @@ def handle_client(
     finally:
         if motors is not None:
             motors.stop()
+            if hasattr(motors, "close"):
+                motors.close()
         stats.print_summary()
         conn.close()
         print("[server] Client connection closed.")
@@ -522,12 +563,16 @@ def main():
                         help="Drop camera frames older than this many ms (default: 1000)")
     # Motors (optional)
     parser.add_argument("--no-motors",  action="store_true")
-    parser.add_argument("--m1-fwd",     type=int, default=17)
-    parser.add_argument("--m1-bwd",     type=int, default=18)
-    parser.add_argument("--m1-en",      type=int, default=25)
-    parser.add_argument("--m2-fwd",     type=int, default=22)
-    parser.add_argument("--m2-bwd",     type=int, default=23)
-    parser.add_argument("--m2-en",      type=int, default=24)
+    parser.add_argument("--motor-backend", choices=["gpio", "serial"], default="gpio",
+                        help="Motor backend: Raspberry Pi GPIO or ESP32/Arduino USB serial bridge (default: gpio)")
+    parser.add_argument("--motor-serial-port", default="/dev/ttyUSB0",
+                        help="Serial port for --motor-backend=serial, e.g. /dev/ttyUSB0 or /dev/ttyACM0")
+    parser.add_argument("--m1-fwd",     type=int, default=16, help="Motor 1 forward GPIO / IN1 (default: 16, physical pin 36)")
+    parser.add_argument("--m1-bwd",     type=int, default=1,  help="Motor 1 backward GPIO / IN2 (default: 1, physical pin 28)")
+    parser.add_argument("--m1-en",      type=int, default=12, help="Motor 1 enable GPIO / ENA (default: 12, physical pin 32)")
+    parser.add_argument("--m2-fwd",     type=int, default=5,  help="Motor 2 forward GPIO / IN3 (default: 5, physical pin 29)")
+    parser.add_argument("--m2-bwd",     type=int, default=6,  help="Motor 2 backward GPIO / IN4 (default: 6, physical pin 31)")
+    parser.add_argument("--m2-en",      type=int, default=13, help="Motor 2 enable GPIO / ENB (default: 13, physical pin 33)")
     args = parser.parse_args()
 
     print("  SO-101 Inference Server")
@@ -558,12 +603,21 @@ def main():
 
     # ── Motors (optional) ─────────────────────────────────────
     motors = None
-    if not args.no_motors and MOTORS_AVAILABLE:
+    if args.no_motors:
+        print("Motors:  DISABLED (--no-motors)")
+    elif args.motor_backend == "gpio" and not GPIO_MOTORS_AVAILABLE:
+        print("Motors:  DISABLED (gpiozero/lgpio not available)")
+    elif args.motor_backend == "serial" and not SERIAL_MOTORS_AVAILABLE:
+        print("Motors:  DISABLED (pyserial not available)")
+    else:
         try:
-            motors = MotorController(
-                m1_forward=args.m1_fwd, m1_backward=args.m1_bwd, m1_enable=args.m1_en,
-                m2_forward=args.m2_fwd, m2_backward=args.m2_bwd, m2_enable=args.m2_en,
-            )
+            if args.motor_backend == "serial":
+                motors = SerialMotorController(args.motor_serial_port)
+            else:
+                motors = MotorController(
+                    m1_forward=args.m1_fwd, m1_backward=args.m1_bwd, m1_enable=args.m1_en,
+                    m2_forward=args.m2_fwd, m2_backward=args.m2_bwd, m2_enable=args.m2_en,
+                )
             print("✓  Motors:  ENABLED")
         except Exception as e:
             print(f"⚠️  Motors:  DISABLED ({e})")
@@ -591,7 +645,10 @@ def main():
     except KeyboardInterrupt:
         print("\n[server] Shutting down.")
     finally:
-        if motors:     motors.stop()
+        if motors:
+            motors.stop()
+            if hasattr(motors, "close"):
+                motors.close()
         server_sock.close()
         if robot_arm:  robot_arm.disconnect()
         if cam_buffer: cam_buffer.stop()

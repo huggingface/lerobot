@@ -31,6 +31,7 @@ import base64
 import collections
 import json
 import logging
+import platform
 import socket
 import struct
 import time
@@ -60,6 +61,13 @@ try:
     CV2_AVAILABLE = True
 except ImportError:
     CV2_AVAILABLE = False
+
+try:
+    import pygame
+    PYGAME_AVAILABLE = True
+except ImportError:
+    pygame = None
+    PYGAME_AVAILABLE = False
 
 
 # ──────────────────────────────────────────────────────────────
@@ -315,6 +323,84 @@ def show_images(obs: dict) -> None:
     cv2.waitKey(1)
 
 
+class ManualMotorController:
+    """Reads an Xbox-style gamepad and sends differential drive motor commands."""
+
+    DEADZONE = 0.12
+
+    def __init__(self, sock: socket.socket, max_speed: float = 1.0, send_hz: float = 30.0):
+        if not PYGAME_AVAILABLE:
+            raise RuntimeError("pygame is not installed")
+
+        pygame.init()
+        pygame.joystick.init()
+        if pygame.joystick.get_count() == 0:
+            raise RuntimeError("no gamepad detected")
+
+        self.sock = sock
+        self.max_speed = max(0.0, min(1.0, float(max_speed)))
+        self.send_dt = 1.0 / send_hz if send_hz > 0 else 0.0
+        self.last_send_t = 0.0
+        self.last_cmd = (None, None)
+        self.joystick = pygame.joystick.Joystick(0)
+        self.joystick.init()
+
+        if platform.system() == "Linux":
+            self.axis_left_x = 0
+            self.axis_lt = 2
+            self.axis_rt = 5
+        else:
+            self.axis_left_x = 0
+            self.axis_lt = 4
+            self.axis_rt = 5
+        print(f"Manual motors enabled: {self.joystick.get_name()}")
+
+    @classmethod
+    def _deadzone(cls, value: float) -> float:
+        return 0.0 if abs(value) < cls.DEADZONE else value
+
+    def _axis(self, index: int, default: float = 0.0) -> float:
+        if index >= self.joystick.get_numaxes():
+            return default
+        return float(self.joystick.get_axis(index))
+
+    def read_command(self) -> tuple[float, float]:
+        pygame.event.pump()
+        lt = (self._axis(self.axis_lt, -1.0) + 1.0) / 2.0
+        rt = (self._axis(self.axis_rt, -1.0) + 1.0) / 2.0
+        throttle = self._deadzone(rt - lt) * self.max_speed
+        turn = self._deadzone(self._axis(self.axis_left_x)) * self.max_speed
+        motor1 = max(-1.0, min(1.0, throttle + turn))
+        motor2 = max(-1.0, min(1.0, throttle - turn))
+        return motor1, motor2
+
+    def maybe_send(self) -> None:
+        now = time.perf_counter()
+        if self.send_dt > 0 and now - self.last_send_t < self.send_dt:
+            return
+
+        motor1, motor2 = self.read_command()
+        rounded = (round(motor1, 3), round(motor2, 3))
+        if rounded == self.last_cmd:
+            return
+
+        send_msg(self.sock, {"type": "motor", "motor1": motor1, "motor2": motor2})
+        self.last_cmd = rounded
+        self.last_send_t = now
+
+    def stop(self) -> None:
+        try:
+            send_msg(self.sock, {"type": "motor", "motor1": 0.0, "motor2": 0.0})
+        except Exception:
+            pass
+
+    def close(self) -> None:
+        self.stop()
+        if PYGAME_AVAILABLE:
+            pygame.joystick.quit()
+            pygame.quit()
+
+
 def run_inference(
     sock:      socket.socket,
     policy:    "PolicyRunner",
@@ -322,6 +408,7 @@ def run_inference(
     dry_run:   bool,
     show_imgs: bool = False,
     image_refresh_hz: float = 10.0,
+    manual_motors: "ManualMotorController | None" = None,
 ):
     """
     Inference loop — ACT's internal queue handles chunking transparently.
@@ -359,6 +446,9 @@ def run_inference(
 
     try:
         while True:
+            if manual_motors is not None and not dry_run:
+                manual_motors.maybe_send()
+
             # ── 1. Observe ────────────────────────────────────────────
             # Fetch obs only when the NN will run (every n_action_steps).
             # Queue-pop steps don't use obs at all — reuse the cached one.
@@ -418,6 +508,9 @@ def run_inference(
                 send_msg(sock, {"type": "action", "action": action_dict})
                 stats.record_send(time.perf_counter() - t0)
 
+            if manual_motors is not None and not dry_run:
+                manual_motors.maybe_send()
+
             step += 1
             stats.maybe_print(step)
 
@@ -425,6 +518,8 @@ def run_inference(
         print("\n\nStopped by user.")
     finally:
         stats.print_summary()
+        if manual_motors is not None:
+            manual_motors.stop()
         try:
             send_msg(sock, {"type": "disconnect"})
         except Exception:
@@ -455,6 +550,10 @@ def main():
                         help="Display camera frames in cv2 windows during inference")
     parser.add_argument("--image-refresh-hz", type=float, default=10.0,
                         help="Preview refresh rate for --show-images (default: 10)")
+    parser.add_argument("--motor-max-speed", type=float, default=1.0,
+                        help="Scale manual motor commands in [0, 1] (default: 1.0)")
+    parser.add_argument("--motor-send-hz", type=float, default=30.0,
+                        help="Maximum manual motor command rate in Hz (default: 30)")
     args = parser.parse_args()
 
     policy = PolicyRunner(args.policy_path, dataset_repo_id=args.dataset_repo_id, device=args.device)
@@ -466,14 +565,27 @@ def main():
         print("  ⚠️  DRY-RUN — actions will NOT be sent")
     print(f"  FPS:    {args.fps}")
     print(f"  Device: {args.device}")
+    print("  Motors: manual gamepad control if available")
     print()
 
     sock = connect_to_server(args.host, args.tcp_port)
+    manual_motors = None
     try:
+        try:
+            manual_motors = ManualMotorController(
+                sock,
+                max_speed=args.motor_max_speed,
+                send_hz=args.motor_send_hz,
+            )
+        except RuntimeError as e:
+            print(f"  Motors: manual control unavailable ({e})")
         run_inference(sock, policy, fps=args.fps, dry_run=dry_run,
                       show_imgs=args.show_images,
-                      image_refresh_hz=args.image_refresh_hz)
+                      image_refresh_hz=args.image_refresh_hz,
+                      manual_motors=manual_motors)
     finally:
+        if manual_motors is not None:
+            manual_motors.close()
         sock.close()
         print("✓ Socket closed.")
 
