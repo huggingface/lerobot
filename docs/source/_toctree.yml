@@ -3,6 +3,8 @@
     title: LeRobot
   - local: installation
     title: Installation
+  - local: cheat-sheet
+    title: Cheat sheet
   title: Get started
 - sections:
   - local: il_robots
@@ -39,6 +41,8 @@
     title: Using the Dataset Tools
   - local: dataset_subtask
     title: Using Subtasks in the Dataset
+  - local: video_encoding_parameters
+    title: Video encoding parameters
   - local: streaming_video_encoding
     title: Streaming Video Encoding
   title: "Datasets"

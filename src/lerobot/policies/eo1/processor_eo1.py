@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING, Any
 import torch
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.policies.eo1.configuration_eo1 import EO1Config
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     ComplementaryDataProcessorStep,
@@ -43,6 +42,8 @@ from lerobot.utils.constants import (
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
 from lerobot.utils.import_utils import _transformers_available, require_package
+
+from .configuration_eo1 import EO1Config
 
 if TYPE_CHECKING or _transformers_available:
     from transformers.models.qwen2_5_vl import Qwen2_5_VLProcessor
