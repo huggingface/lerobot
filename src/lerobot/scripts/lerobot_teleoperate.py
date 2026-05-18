@@ -225,19 +225,19 @@ def teleoperate(cfg: TeleoperateConfig):
     teleop.connect()
     robot.connect()
 
-    initial_action = {
-        k: v for k, v in robot.get_observation().items() if k in robot.action_features and k.endswith(".pos")
-    }
-
-    if teleop_supports_joint_pose(teleop):
-        obs = robot.get_observation()
-        teleop_action = teleop.get_action()
-        processed = teleop_action_processor((teleop_action, obs))
-        target = {k: v for k, v in robot_action_processor((processed, obs)).items() if k.endswith(".pos")}
-        logging.info("Smooth handover: sliding follower to leader pose")
-        follower_smooth_move_to(robot, initial_action, target)
-
     try:
+        initial_action = {
+            k: v for k, v in robot.get_observation().items() if k in robot.action_features and k.endswith(".pos")
+        }
+    
+        if teleop_supports_joint_pose(teleop):
+            obs = robot.get_observation()
+            teleop_action = teleop.get_action()
+            processed = teleop_action_processor((teleop_action, obs))
+            target = {k: v for k, v in robot_action_processor((processed, obs)).items() if k.endswith(".pos")}
+            logging.info("Smooth handover: sliding follower to leader pose")
+            follower_smooth_move_to(robot, initial_action, target)
+
         teleop_loop(
             teleop=teleop,
             robot=robot,
