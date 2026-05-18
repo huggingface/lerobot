@@ -68,13 +68,13 @@ from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
 
 robot_config = SO101FollowerConfig(
-    port="/dev/tty.usbmodem58760431541",
-    id="my_red_robot_arm",
+    port="/dev/tty.usbmodem5AB90687491",
+    id="my_follower_arm",
 )
 
 teleop_config = SO101LeaderConfig(
-    port="/dev/tty.usbmodem58760431551",
-    id="my_blue_leader_arm",
+    port="/dev/tty.usbmodem5AB90689011",
+    id="my_leader_arm",
 )
 
 robot = SO101Follower(robot_config)
