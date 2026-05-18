@@ -23,8 +23,10 @@ import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+from lerobot.configs import VideoEncoderConfig
 from lerobot.datasets.dataset_tools import (
     add_features,
+    convert_image_to_video_dataset,
     delete_episodes,
     merge_datasets,
     modify_features,
@@ -32,7 +34,6 @@ from lerobot.datasets.dataset_tools import (
     remove_feature,
     split_dataset,
 )
-from lerobot.scripts.lerobot_edit_dataset import convert_image_to_video_dataset
 
 
 @pytest.fixture
@@ -1246,10 +1247,12 @@ def test_convert_image_to_video_dataset(tmp_path):
             dataset=source_dataset,
             output_dir=output_dir,
             repo_id="lerobot/pusht_video",
-            vcodec="libsvtav1",
-            pix_fmt="yuv420p",
-            g=2,
-            crf=30,
+            camera_encoder=VideoEncoderConfig(
+                vcodec="libsvtav1",
+                pix_fmt="yuv420p",
+                g=2,
+                crf=30,
+            ),
             episode_indices=[0, 1],
             num_workers=2,
         )
