@@ -39,6 +39,7 @@ from .io_utils import (
     write_stats,
     write_tasks,
 )
+from .language import DEFAULT_TOOLS, LANGUAGE_COLUMNS
 from .utils import (
     DEFAULT_EPISODES_PATH,
     check_version_compatibility,
@@ -323,8 +324,6 @@ class LeRobotDatasetMetadata:
         Used to gate language-aware code paths (collate, render step) so
         unannotated datasets keep PyTorch's default collate behavior.
         """
-        from .language import LANGUAGE_COLUMNS  # noqa: PLC0415  (avoid circular import)
-
         return any(col in self.features for col in LANGUAGE_COLUMNS)
 
     @property
@@ -342,12 +341,24 @@ class LeRobotDatasetMetadata:
         Implementations live under :mod:`lerobot.tools` (one file per
         tool); see ``docs/source/tools.mdx`` for the authoring guide.
         """
-        from .language import DEFAULT_TOOLS  # noqa: PLC0415  (avoid circular import)
-
         declared = self.info.tools
         if declared:
             return [dict(t) for t in declared]
         return [dict(t) for t in DEFAULT_TOOLS]
+
+    @tools.setter
+    def tools(self, value: list[dict] | None) -> None:
+        """Persist a tool catalog to ``meta/info.json`` and reload metadata.
+
+        Writes ``value`` into the on-disk ``info.json`` (or clears the
+        ``tools`` key when ``value`` is ``None`` or empty), then reloads
+        ``self.info`` so the in-memory metadata matches what's on disk.
+        Saves callers from hand-editing ``info.json`` and re-instantiating
+        the metadata object.
+        """
+        self.info.tools = [dict(t) for t in value] if value else None
+        write_info(self.info, self.root)
+        self.info = load_info(self.root)
 
     @property
     def names(self) -> dict[str, list | dict]:

@@ -23,6 +23,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from lerobot.configs.recipe import DEFAULT_BINDINGS, PLACEHOLDER_RE, TrainingRecipe
+from lerobot.utils.utils import unwrap_scalar
 
 from .language import LANGUAGE_PERSISTENT, column_for_style
 
@@ -67,12 +68,16 @@ def active_at(
 
 EMITTED_AT_TOLERANCE_S = 0.1
 """Half-window for matching persistent rows to a frame timestamp in
-``emitted_at``. Persistent timestamps come from parquet (float64) and ``t``
-is also a float64 from parquet, so in the ideal hot path an exact match
+``emitted_at``. Persistent timestamps come from parquet (float32) and ``t``
+is also a float32 from parquet, so in the ideal hot path an exact match
 would suffice — but any caller that derives ``t`` arithmetically (e.g.
 ``frame_idx / fps``) breaks bit-equality. A 0.1 s tolerance covers
 common arithmetic drift without admitting frames that are visibly far
-apart at typical control rates (30–100 Hz)."""
+apart at typical control rates (30–100 Hz). This does mean two persistent
+rows of the same selector emitted within 0.1 s of each other cannot be
+told apart by ``emitted_at`` — acceptable because persistent annotations
+(subtask / plan / memory transitions) change on a human-action timescale,
+not at the camera frame rate."""
 
 
 def emitted_at(
@@ -506,16 +511,13 @@ def _row_sort_key(row: LanguageRow) -> tuple[float, str, str]:
     bucket and are tiebroken by ``(style, role)``.
     """
     timestamp = row.get("timestamp")
-    ts = (
-        float(timestamp.item() if hasattr(timestamp, "item") else timestamp) if timestamp is not None else 0.0
-    )
+    ts = float(unwrap_scalar(timestamp)) if timestamp is not None else 0.0
     return (ts, row.get("style") or "", row.get("role") or "")
 
 
 def _timestamp(row: LanguageRow) -> float:
     """Extract a row's ``timestamp`` as a Python float (unwrapping numpy scalars)."""
-    value = row["timestamp"]
-    return float(value.item() if hasattr(value, "item") else value)
+    return float(unwrap_scalar(row["timestamp"]))
 
 
 def _row_has_tool_name(row: LanguageRow, tool_name: str) -> bool:

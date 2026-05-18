@@ -79,13 +79,15 @@ def language_persistent_row_arrow_type() -> pa.StructType:
 
     Persistent rows carry their own ``timestamp`` because they represent a state
     that became active at a specific moment and remains active until superseded.
+    ``timestamp`` is ``float32`` to match the timestamp dtype LeRobotDataset
+    uses for frame data.
     """
     return pa.struct(
         [
             pa.field("role", pa.string(), nullable=False),
             pa.field("content", pa.string(), nullable=True),
             pa.field("style", pa.string(), nullable=True),
-            pa.field("timestamp", pa.float64(), nullable=False),
+            pa.field("timestamp", pa.float32(), nullable=False),
             pa.field("camera", pa.string(), nullable=True),
             pa.field("tool_calls", pa.list_(_json_arrow_type()), nullable=True),
         ]
@@ -125,7 +127,7 @@ def language_persistent_row_feature() -> dict[str, object]:
         "role": datasets.Value("string"),
         "content": datasets.Value("string"),
         "style": datasets.Value("string"),
-        "timestamp": datasets.Value("float64"),
+        "timestamp": datasets.Value("float32"),
         "camera": datasets.Value("string"),
         "tool_calls": datasets.List(_json_feature()),
     }

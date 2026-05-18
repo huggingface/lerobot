@@ -45,6 +45,23 @@ def test_language_arrow_schema_has_expected_fields():
     assert isinstance(event_row_type, pa.StructType)
     assert event_row_type.names == ["role", "content", "style", "camera", "tool_calls"]
 
+    # Persistent-row timestamps use float32, matching LeRobotDataset frame timestamps.
+    assert persistent_row_type.field("timestamp").type == pa.float32()
+
+
+def test_validate_feature_language_warns_only_on_non_empty_value(caplog):
+    from lerobot.datasets.feature_utils import validate_feature_language
+
+    # None (the expected record-time value) is silent and non-fatal.
+    with caplog.at_level("WARNING"):
+        assert validate_feature_language("language_persistent", None) == ""
+    assert caplog.records == []
+
+    # A stray non-empty value is dropped later, so we warn rather than fail.
+    with caplog.at_level("WARNING"):
+        assert validate_feature_language("language_persistent", [{"role": "user"}]) == ""
+    assert any("language_persistent" in r.message for r in caplog.records)
+
 
 def test_style_registry_routes_columns():
     assert {"subtask", "plan", "memory", "motion", "task_aug"} == PERSISTENT_STYLES
