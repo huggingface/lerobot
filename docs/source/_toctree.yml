@@ -71,6 +71,8 @@
 - sections:
   - local: sarm
     title: SARM
+  - local: robometer
+    title: ROBOMETER
   title: "Reward Models"
 - sections:
   - local: inference
