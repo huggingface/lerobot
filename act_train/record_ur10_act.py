@@ -58,11 +58,11 @@ logger = logging.getLogger(__name__)
 
 
 # -- user-tunable ---------------------------------------------------------------
-CONFIG_PATH = "src/lerobot/rl/ur10_env_3cams.json"
-REPO_ID = "local/ur10_act_usb_insertion2"
-TASK_DESCRIPTION = "usb_insertion"
-NUM_EPISODES = 100
-EPISODE_TIME_S = 15      # truncates the episode if the user doesn't end it
+CONFIG_PATH = "src/lerobot/rl/ur10_env_2cams.json"
+REPO_ID = "local/usb_insertion_act_2cams"
+TASK_DESCRIPTION = "usb_insertion_act_2cams"
+NUM_EPISODES = 70
+EPISODE_TIME_S = 20      # truncates the episode if the user doesn't end it
 RESET_TIME_S = 7         # total between-episode budget (motion + hold-at-home)
 RESET_SPEED_MPS = 0.1    # auto-reset linear velocity, m/s (matches env.reset's moveL)
 FPS = 10                 # must equal cfg.env.fps

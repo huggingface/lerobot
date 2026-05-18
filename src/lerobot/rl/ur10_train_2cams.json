@@ -1,10 +1,10 @@
 {
     "output_dir": null,
-    "job_name": "ur10_sac",
+    "job_name": "usb_insertion_hilserl_2cams",
     "resume": false,
     "seed": 1000,
     "num_workers": 4,
-    "batch_size": 64,
+    "batch_size": 128,
     "steps": 100000,
     "eval_freq": 20000,
     "log_freq": 1,
@@ -19,13 +19,13 @@
         "disable_artifact": true
     },
     "dataset": {
-        "repo_id": "local/ur10_pick_place_cube_demos_2cams_cropped_resized",
+        "repo_id": "local/usb_insertion_hilserl_2cams",
         "use_imagenet_stats": false
     },
     "env": {
         "type": "gym_manipulator",
         "name": "ur10",
-        "task": "pick_place_cube",
+        "task": "usb_insertion_hilserl_2cams",
         "fps": 10,
         "robot": {
             "type": "ur10",
@@ -55,23 +55,27 @@
                 "gripper_penalty": -0.02
             },
             "reset": {
-                "fixed_reset_joint_positions": [0.5, 0.0, 0.4, 3.14159, 0.0, 0.0],
+                "fixed_reset_joint_positions": [-0.2001, -0.4956, 0.1587, 3.14159, 0.0, 0.0],
                 "reset_time_s": 5.0,
-                "control_time_s": 15.0,
+                "control_time_s": 20.0,
                 "terminate_on_success": true,
                 "randomization_xy": 0.02
             },
             "observation": {
-                "display_cameras": false
+                "display_cameras": true
             },
             "image_preprocessing": {
+                "crop_params_dict": {
+                    "observation.images.front": [77, 166, 317, 368],
+                    "observation.images.wrist": [124, 143, 356, 397]
+                },
                 "resize_size": [128, 128]
             },
             "inverse_kinematics": {
                 "end_effector_step_sizes": {"x": 0.001, "y": 0.001, "z": 0.001},
                 "end_effector_bounds": {
-                    "min": [-0.5, -0.5, 0.05],
-                    "max": [0.5, 0.5, 0.7]
+                    "min": [-0.2166, -0.5254, 0.1477],
+                    "max": [-0.1863, -0.4851, 0.1587]
                 }
             }
         },
@@ -130,7 +134,7 @@
             }
         },
         "device": "cuda",
-        "use_amp": true,
+        "use_amp": false,
         "dataset_stats": {
             "observation.images.front": {
                 "mean": [0.485, 0.456, 0.406],
@@ -141,15 +145,15 @@
                 "std": [0.229, 0.224, 0.225]
             },
             "observation.state": {
-                "min": [-3.1416, -3.1416, -3.1416, -3.1416, -3.1416, -3.1416, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -0.5, -0.5, 0.05, 0.0],
-                "max": [3.1416, 3.1416, 3.1416, 3.1416, 3.1416, 3.1416, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.5, 0.5, 0.7, 1.0]
+                "min": [0.8373, -1.3503, 2.4156, 3.5673, 4.7123, 2.4082, -0.0174, -0.0157, -0.0178, -0.0262, -0.0001, -0.0178, -0.1, -0.1, -0.1, 0.0],
+                "max": [0.8904, -1.3003, 2.4856, 3.5975, 4.7125, 2.4612, 0.018, 0.023, 0.0215, 0.0181, 0.0001, 0.0176, 0.1, 0.1, 0.1, 1.0]
             },
             "action": {
                 "min": [-1.0, -1.0, -1.0],
                 "max": [1.0, 1.0, 1.0]
             }
         },
-        "repo_id": "local/ur10_pick_cube",
+        "repo_id": "local/usb_insertion_hilserl_2cams",
         "storage_device": "cpu",
         "vision_encoder_name": "helper2424/resnet10",
         "freeze_vision_encoder": true,
@@ -160,7 +164,7 @@
         "offline_buffer_capacity": 100000,
         "online_step_before_learning": 100,
         "policy_update_freq": 1,
-        "discount": 0.97,
+        "discount": 0.98,
         "temperature_init": 0.01,
         "num_critics": 2,
         "num_subsample_critics": null,
@@ -169,8 +173,8 @@
         "temperature_lr": 0.0003,
         "critic_target_update_weight": 0.005,
         "utd_ratio": 2,
-        "state_encoder_hidden_dim": 256,
-        "latent_dim": 64,
+        "state_encoder_hidden_dim": 64,
+        "latent_dim": 256,
         "target_entropy": null,
         "use_backup_entropy": true,
         "grad_clip_norm": 10.0,
@@ -196,8 +200,8 @@
             "policy_parameters_push_frequency": 4
         },
         "concurrency": {
-            "actor": "processes",
-            "learner": "processes"
+            "actor": "threads",
+            "learner": "threads"
         }
     }
 }

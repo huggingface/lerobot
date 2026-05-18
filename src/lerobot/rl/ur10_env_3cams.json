@@ -36,7 +36,7 @@
                 "reset_time_s": 5.0,
                 "control_time_s": 25.0,
                 "terminate_on_success": true,
-                "randomization_xy": 0.0
+                "randomization_xy": 0.015
             },
             "observation": {
                 "display_cameras": true

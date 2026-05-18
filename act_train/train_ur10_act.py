@@ -33,14 +33,37 @@ def _log(msg: str) -> None:
 
 
 # -- user-tunable ---------------------------------------------------------------
-DATASET_REPO_ID = "local/ur10_act_usb_insertion_state"
-OUTPUT_DIR = Path("outputs/act/ur10/usb_insertion_state")
-TRAINING_STEPS = 50_000
+# DATASET_REPO_ID = "local/ur10_act_usb_insertion_dagger_v1"
+# OUTPUT_DIR = Path("outputs/act/ur10/usb_insertion_v2_corr_only")
+# TRAINING_STEPS = 8_000
+# BATCH_SIZE = 32
+
+# # HG-DAgger fine-tuning: when set, load weights from this path before training
+# # (instead of random init). ACT's default optimizer_lr is already 1e-5 — a
+# # standard fine-tuning rate — so no lr override is needed. For iteration 1,
+# # point this at the original state-encoded model and DATASET_REPO_ID at the
+# # combined (originals + dagger corrections) dataset.
+# PRETRAINED_PATH = "outputs/act/ur10/usb_insertion_act_2cams/last"
+
+
+
+DATASET_REPO_ID = "local/usb_insertion_act_2cams"
+OUTPUT_DIR = Path("outputs/act/ur10/usb_insertion_act_2cams")
+TRAINING_STEPS = 60_000
 BATCH_SIZE = 32
+
+# HG-DAgger fine-tuning: when set, load weights from this path before training
+# (instead of random init). ACT's default optimizer_lr is already 1e-5 — a
+# standard fine-tuning rate — so no lr override is needed. For iteration 1,
+# point this at the original state-encoded model and DATASET_REPO_ID at the
+# combined (originals + dagger corrections) dataset.
+PRETRAINED_PATH: str | None = None
+
+
 
 # Chunk size = policy's prediction horizon in steps. See "Tuning CHUNK_SIZE" at
 # the bottom of this file for a step-by-step procedure to pick the right value.
-CHUNK_SIZE = 30          # 3 s @ 10 Hz; see procedure for tuning
+CHUNK_SIZE = 5          # 3 s @ 10 Hz; see procedure for tuning
 
 # Temporal ensembling: at inference, query the policy every step and average each
 # step's prediction with the still-relevant predictions from earlier (overlapping)
@@ -52,10 +75,10 @@ CHUNK_SIZE = 30          # 3 s @ 10 Hz; see procedure for tuning
 #
 # Hard constraint enforced by ACTConfig.__post_init__:
 #   if TEMPORAL_ENSEMBLE_COEFF is not None: n_action_steps must be 1.
-TEMPORAL_ENSEMBLE_COEFF: float | None = 0.01
+TEMPORAL_ENSEMBLE_COEFF: float | None = 0.05
 
 LOG_FREQ = 100
-SAVE_FREQ = 5_000
+SAVE_FREQ = 10_000
 DEVICE = "cuda"
 NUM_WORKERS = 4
 # -------------------------------------------------------------------------------
@@ -110,9 +133,16 @@ def main() -> None:
     )
     _log(f"[train] ACT cfg: chunk_size={CHUNK_SIZE}, n_action_steps={n_action_steps}, temporal_ensemble_coeff={TEMPORAL_ENSEMBLE_COEFF}")
 
-    _log("[train] Building ACT policy (may download resnet18 weights on first run)...")
-    policy = ACTPolicy(cfg)
-    preprocessor, postprocessor = make_pre_post_processors(cfg, dataset_stats=metadata.stats)
+    if PRETRAINED_PATH is not None:
+        _log(f"[train] Loading pretrained weights from {PRETRAINED_PATH} (fine-tuning mode)")
+        policy = ACTPolicy.from_pretrained(PRETRAINED_PATH)
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy.config, pretrained_path=PRETRAINED_PATH, dataset_stats=metadata.stats,
+        )
+    else:
+        _log("[train] Building ACT policy from scratch (may download resnet18 weights on first run)...")
+        policy = ACTPolicy(cfg)
+        preprocessor, postprocessor = make_pre_post_processors(cfg, dataset_stats=metadata.stats)
     policy.train()
     policy.to(device)
     n_params = sum(p.numel() for p in policy.parameters()) / 1e6

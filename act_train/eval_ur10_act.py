@@ -24,7 +24,7 @@ import draccus
 import numpy as np
 import torch
 
-from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
+from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.processor import TransitionKey
@@ -37,25 +37,51 @@ from lerobot.rl.gym_manipulator import (
     make_robot_env,
     step_env_and_process_transition,
 )
-from lerobot.utils.constants import OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.teleoperators.utils import TeleopEvents
 
 from _ur10_reset import auto_reset_to_home  # sibling module in act_train/
+from record_ur10_act import _build_features  # sibling module in act_train/
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 # -- user-tunable ---------------------------------------------------------------
-MODEL_DIR = "outputs/act/ur10/usb_insertion_state/last"
-DATASET_REPO_ID = "local/ur10_act_usb_insertion_state"   # for dataset stats
-CONFIG_PATH = "src/lerobot/rl/ur10_env_3cams.json"
-NUM_EPISODES = 20
-EPISODE_TIME_S = 25      # safety upper bound; user ends earlier via gamepad
+MODEL_DIR = "outputs/act/ur10/usb_insertion_act_2cams/last"
+DATASET_REPO_ID = "local/usb_insertion_act_2cams"   # for dataset stats
+CONFIG_PATH = "src/lerobot/rl/ur10_env_2cams.json"
+NUM_EPISODES = 30
+EPISODE_TIME_S = 20      # safety upper bound; user ends earlier via gamepad
 RESET_TIME_S = 7         # total between-episode budget (motion + hold-at-home)
 RESET_SPEED_MPS = 0.1    # auto-reset linear velocity, m/s (matches env.reset's moveL)
 FPS = 10
+
+# HG-DAgger: collect human-corrected eval frames into a new dataset so we can
+# fine-tune ACT against its own failure modes. The recorded action is the
+# post-intervention action (= human's command when intervening, ACT's command
+# otherwise), gripper already in STATE encoding (read from observation.state[-1]
+# in the per-step block below) so the dataset is directly trainable.
+RECORD_DAGGER_DATASET = False
+DAGGER_REPO_ID = "local/ur10_act_usb_insertion_dagger_v1"
+DAGGER_TASK = "usb_insertion"
+
+# Override the trained model's temporal_ensemble_coeff at inference. Larger
+# values weight recent predictions more (sharper, more reactive); the trained
+# default is 0.01 (heavy smoothing). Set to None to leave the trained value
+# untouched. Only takes effect if the model was trained with ensembling on
+# (i.e. cfg.temporal_ensemble_coeff is not None and n_action_steps == 1).
+EVAL_TEMPORAL_ENSEMBLE_COEFF: float | None = 0.05
+
+# Inference-time action gain on the Cartesian dx/dy/dz components (gripper
+# left untouched). ACT replays demonstration step sizes; if the demos showed
+# slow careful alignment (e.g. via gamepad micro-corrections), the policy
+# inherits sub-mm per-step deltas that stall progress near the target. A
+# multiplicative gain of 1.5-3× amplifies these without retraining. Clipped
+# to ±1 (env's normalized action range) so peak-speed approach motions don't
+# overshoot. Set to 1.0 to disable.
+EVAL_ACTION_GAIN: float = 1.0
 # -------------------------------------------------------------------------------
 
 
@@ -79,6 +105,26 @@ def main() -> None:
     )
     logger.info("Policy loaded from %s on %s", MODEL_DIR, device)
 
+    # Optional inference-time override of temporal_ensemble_coeff. The ensembler
+    # holds the precomputed `ensemble_weights = exp(-coeff * arange(chunk_size))`
+    # tensor — changing only `policy.config.temporal_ensemble_coeff` would have no
+    # effect, so we rebuild the ensembler. Skipped silently if the model was
+    # trained without ensembling (config field is None).
+    if (
+        EVAL_TEMPORAL_ENSEMBLE_COEFF is not None
+        and policy.config.temporal_ensemble_coeff is not None
+    ):
+        from lerobot.policies.act.modeling_act import ACTTemporalEnsembler
+        old_coeff = policy.config.temporal_ensemble_coeff
+        policy.config.temporal_ensemble_coeff = EVAL_TEMPORAL_ENSEMBLE_COEFF
+        policy.temporal_ensembler = ACTTemporalEnsembler(
+            EVAL_TEMPORAL_ENSEMBLE_COEFF, policy.config.chunk_size
+        )
+        logger.info(
+            "Override temporal_ensemble_coeff: %g → %g (sharper / more recency-biased)",
+            old_coeff, EVAL_TEMPORAL_ENSEMBLE_COEFF,
+        )
+
     env, teleop_device = make_robot_env(cfg.env)
     env_processor, action_processor = make_processors(
         env, teleop_device, cfg.env, str(device)
@@ -88,6 +134,28 @@ def main() -> None:
     env_processor.reset()
     action_processor.reset()
     transition = env_processor(create_transition(observation=obs, info=info))
+
+    # HG-DAgger dataset: create against the SAME feature schema record_ur10_act.py
+    # uses, sized from the live transition so shapes are guaranteed to match what
+    # add_frame() will receive. Disabled by default — toggle RECORD_DAGGER_DATASET.
+    dagger_dataset: LeRobotDataset | None = None
+    dagger_features: dict = {}
+    if RECORD_DAGGER_DATASET:
+        # use_gripper is True for the UR10 env config we ship.
+        dagger_features = _build_features(transition[TransitionKey.OBSERVATION], use_gripper=True)
+        dagger_dataset = LeRobotDataset.create(
+            repo_id=DAGGER_REPO_ID,
+            fps=FPS,
+            features=dagger_features,
+            robot_type="ur10",
+            use_videos=True,
+            image_writer_threads=4,
+            image_writer_processes=0,
+        )
+        logger.info(
+            "DAgger recording ON → %s (%d episodes @ %d Hz)",
+            DAGGER_REPO_ID, NUM_EPISODES, FPS,
+        )
 
     episode_idx = 0
     episode_step = 0
@@ -119,6 +187,13 @@ def main() -> None:
             action = postprocess(action)
             if action.ndim > 1:
                 action = action.squeeze(0)
+
+            # Inference-time action gain on dx/dy/dz only (gripper component left
+            # untouched — it's a state prediction that gets discretized below).
+            # Clamp to env's normalized action range [-1, 1] so peak-speed approach
+            # motions are bounded at full speed instead of overshooting.
+            if EVAL_ACTION_GAIN != 1.0 and action.numel() >= 4:
+                action[:3] = (action[:3] * EVAL_ACTION_GAIN).clamp(-1.0, 1.0)
 
             # Translate policy's gripper STATE prediction → env.step's COMMAND encoding.
             # Dataset action[3] is in {0.0=closed, 1.0=open} (state encoding from the
@@ -162,6 +237,37 @@ def main() -> None:
                 action_processor=action_processor,
             )
 
+            # HG-DAgger per-step recording. Mirrors record_ur10_act.py: pull the
+            # post-intervention action from complementary_data — that's the action
+            # that actually drove the robot (human's command when intervening,
+            # ACT's translated command otherwise). Gripper is written in STATE
+            # encoding ({0.0=closed, 1.0=open}, read from observation.state[-1])
+            # so the dataset is directly trainable without a post-step translation.
+            if dagger_dataset is not None:
+                comp = transition[TransitionKey.COMPLEMENTARY_DATA]
+                action_to_record = comp.get("teleop_action", transition[TransitionKey.ACTION])
+                if isinstance(action_to_record, torch.Tensor):
+                    action_to_record = action_to_record.detach().cpu().float()
+                else:
+                    action_to_record = torch.tensor(action_to_record, dtype=torch.float32)
+                if action_to_record.ndim > 1:
+                    action_to_record = action_to_record.squeeze(0)
+
+                # Overwrite gripper command with the post-step gripper STATE — same
+                # source of truth as record_ur10_act.py. See ur10_robot.py:472.
+                if action_to_record.numel() >= 4:
+                    obs_state_raw = transition[TransitionKey.OBSERVATION][OBS_STATE]
+                    if isinstance(obs_state_raw, torch.Tensor):
+                        obs_state_raw = obs_state_raw.detach().cpu().float()
+                    gripper_state = float(np.asarray(obs_state_raw).reshape(-1)[-1])
+                    action_to_record[3] = gripper_state
+
+                dagger_frame: dict = {ACTION: action_to_record, "task": DAGGER_TASK}
+                for k, v in transition[TransitionKey.OBSERVATION].items():
+                    if isinstance(v, torch.Tensor) and k in dagger_features:
+                        dagger_frame[k] = v.squeeze(0).detach().cpu()
+                dagger_dataset.add_frame(dagger_frame)
+
             reward = float(transition.get(TransitionKey.REWARD, 0.0))
             done = bool(transition.get(TransitionKey.DONE, False))
             truncated = bool(transition.get(TransitionKey.TRUNCATED, False))
@@ -185,6 +291,9 @@ def main() -> None:
                     episode_idx + 1, status, episode_reward, episode_step,
                     ep_time, done, truncated,
                 )
+                if dagger_dataset is not None:
+                    dagger_dataset.save_episode()
+                    logger.info("  dagger: saved episode %d", episode_idx + 1)
                 episode_idx += 1
                 if episode_idx >= NUM_EPISODES:
                     break
@@ -214,6 +323,12 @@ def main() -> None:
         logger.exception("Inference failed")
     finally:
         logger.info("Completed %d episodes", episode_idx)
+        if dagger_dataset is not None:
+            try:
+                dagger_dataset.finalize()
+                logger.info("DAgger dataset finalized → %s", DAGGER_REPO_ID)
+            except Exception:
+                logger.exception("dagger_dataset.finalize failed")
         try:
             env.close()
         except Exception:
