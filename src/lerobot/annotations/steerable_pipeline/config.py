@@ -114,7 +114,14 @@ class Module3Config:
 
     enabled: bool = True
     vqa_emission_hz: float = 1.0
-    K: int = 3
+    K: int = 1
+    """How many *consecutive* frames each emission tick anchors a VQA pair
+    to. The VLM grounds its answer (bbox / keypoint coordinates, count, …)
+    against the *first* anchored frame's image, so anchoring K>1 frames
+    copies that same answer onto later frames where the scene has already
+    moved — stale labels. Default ``1``: a VQA pair lands on exactly its
+    emission frame, no temporal smear. Raise it only to trade label
+    precision for more (noisier) VQA frames."""
     question_types: tuple[str, ...] = ("bbox", "keypoint", "count", "attribute", "spatial")
 
 
