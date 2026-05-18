@@ -67,13 +67,6 @@ def test_action_features_match_joints():
     assert teleop.feedback_features == {}
 
 
-def test_invalid_config_rejected():
-    with patch(f"{_MODULE}.require_package", lambda *a, **kw: None):
-        bad = RebotArm102LeaderTeleopConfig(port="/dev/null", joint_directions={"shoulder_pan": 1})
-        with pytest.raises(ValueError, match="joint_directions"):
-            RebotArm102Leader(bad)
-
-
 def test_connect_disconnect(leader):
     assert leader.is_connected
     leader.disconnect()

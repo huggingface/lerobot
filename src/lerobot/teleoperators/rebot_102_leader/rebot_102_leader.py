@@ -55,22 +55,6 @@ class RebotArm102Leader(Teleoperator):
         self.bus: FashionStarServo | None = None
         self.motor_names = list(config.joint_ids.keys())
         self._last_raw_positions: dict[str, float] = {}
-        self._validate_config()
-
-    def _validate_config(self) -> None:
-        required_keys = set(self.config.joint_ids)
-        for field_name in ("joint_directions", "joint_ranges"):
-            keys = set(getattr(self.config, field_name))
-            if keys != required_keys:
-                raise ValueError(
-                    f"{field_name} keys must match joint_ids keys. "
-                    f"Expected {sorted(required_keys)}, got {sorted(keys)}."
-                )
-        for motor_name, joint_range in self.config.joint_ranges.items():
-            if len(joint_range) != 2:
-                raise ValueError(f"joint_ranges[{motor_name!r}] must contain exactly [min, max].")
-            if joint_range[0] > joint_range[1]:
-                raise ValueError(f"joint_ranges[{motor_name!r}] must satisfy min <= max.")
 
     @property
     def action_features(self) -> dict[str, type]:
@@ -135,12 +119,13 @@ class RebotArm102Leader(Teleoperator):
             self.bus.unlock(motor_id)
             time.sleep(_SETTLE_SEC)
             self.bus.set_origin_point(motor_id)
+            range_min, range_max = self.config.joint_ranges[motor_name]
             self.calibration[motor_name] = MotorCalibration(
                 id=motor_id,
                 drive_mode=0,
                 homing_offset=0,
-                range_min=-90,
-                range_max=90,
+                range_min=int(range_min),
+                range_max=int(range_max),
             )
 
         self._save_calibration()
@@ -166,30 +151,17 @@ class RebotArm102Leader(Teleoperator):
         return raw_positions
 
     @staticmethod
-    def _clamp(value: float, min_value: float, max_value: float) -> float:
-        return max(min_value, min(max_value, value))
-
-    @staticmethod
     def _round_to_valid_range(value: float, min_value: float, max_value: float) -> tuple[float, int]:
         """Unwrap a multi-turn angle into the ±180° window centred on (min+max)/2.
 
         The servo may report an angle that has accumulated extra full rotations
-        (value = true_angle + N*360). The sign of N is unknown, so a bidirectional
-        search tries value±k*360 for increasing k until a candidate lands inside
-        [center-180, center+180].
+        (value = true_angle + N*360). Subtract the nearest whole number of turns
+        to bring it back into [center-180, center+180]. Returns the unwrapped
+        angle and the number of turns removed.
         """
         center = (min_value + max_value) / 2.0
-        low = center - 180.0
-        high = center + 180.0
-        for k in range(4096):
-            candidate_plus = value + k * 360.0
-            if low <= candidate_plus <= high:
-                return candidate_plus, k
-            candidate_minus = value - k * 360.0
-            if low <= candidate_minus <= high:
-                return candidate_minus, k
-        # Fallback: direct modular arithmetic (should never be reached).
-        return value - round((value - center) / 360.0) * 360.0, 4096
+        turns = round((value - center) / 360.0)
+        return value - turns * 360.0, abs(turns)
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:
@@ -219,7 +191,7 @@ class RebotArm102Leader(Teleoperator):
                     f"Servo {motor_name} (id={self.config.joint_ids[motor_name]}) wrapped {k} * 360°. "
                     f"Unwrapped pos: {unwrapped:.1f}° (raw: {raw_positions[motor_name]:.1f}°)"
                 )
-            action_dict[f"{motor_name}.pos"] = self._clamp(position, float(range_min), float(range_max))
+            action_dict[f"{motor_name}.pos"] = max(float(range_min), min(float(range_max), position))
 
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")

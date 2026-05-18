@@ -29,12 +29,6 @@ pip install -e ".[rebot]"
 
 This pulls in `motorbridge` (CAN motor control for the B601-DM follower) and `motorbridge-smart-servo` (FashionStar UART servos for the reBot Arm 102 leader).
 
-<Tip warning={true}>
-  On Linux, remove `brltty` (`sudo apt remove brltty`) so it does not hold the
-  leader's USB serial port. You may also need to grant access to the serial
-  devices: `sudo chmod 666 /dev/ttyACM* /dev/ttyUSB*`.
-</Tip>
-
 ## Registered device types
 
 | Type                     | Kind                                         |
@@ -47,6 +41,20 @@ This pulls in `motorbridge` (CAN motor control for the B601-DM follower) and `mo
 The bimanual types compose two single-arm instances and namespace each arm's
 observation/action keys with a `left_` / `right_` prefix. Per-arm settings are
 passed through nested `left_arm_config.*` / `right_arm_config.*` arguments.
+
+## Find the USB ports
+
+For each device, find the USB port associated with its motor bus using:
+
+```bash
+lerobot-find-port
+```
+
+<Tip warning={true}>
+  On Linux, remove `brltty` (`sudo apt remove brltty`) so it does not hold the
+  leader's USB serial port. You may also need to grant access to the serial
+  devices: `sudo chmod 666 /dev/ttyACM* /dev/ttyUSB*`.
+</Tip>
 
 ## Calibration
 
@@ -113,7 +121,7 @@ lerobot-calibrate \
 
 ## Teleoperation
 
-Once both arms are calibrated, drive the follower with the leader. The follower talks to its CAN bus through a Damiao serial bridge (`can_adapter=damiao`, the default) or a SocketCAN adapter (`can_adapter=socketcan`).
+Once both arms are calibrated, drive the follower with the leader. The follower talks to its CAN bus through a Damiao serial bridge (`can_adapter=damiao`, the default) or a SocketCAN adapter (`can_adapter=socketcan`). See the [OpenArm page](./openarm) for more details on the SocketCAN adapter configuration.
 
 <hfoptions id="teleoperate">
 <hfoption id="Single arm">

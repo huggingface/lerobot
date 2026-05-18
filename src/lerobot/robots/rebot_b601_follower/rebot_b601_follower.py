@@ -156,12 +156,13 @@ class RebotB601Follower(Robot):
 
         self.calibration = {}
         for motor_name, (send_id, _recv_id) in self.config.motor_can_ids.items():
+            range_min, range_max = self.config.joint_limits[motor_name]
             self.calibration[motor_name] = MotorCalibration(
                 id=send_id,
                 drive_mode=0,
                 homing_offset=0,
-                range_min=-90,
-                range_max=90,
+                range_min=int(range_min),
+                range_max=int(range_max),
             )
 
         self._save_calibration()
