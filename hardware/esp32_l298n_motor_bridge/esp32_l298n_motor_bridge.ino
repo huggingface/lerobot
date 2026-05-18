@@ -17,9 +17,6 @@ const int PWM_FREQ_HZ = 1000;
 const int PWM_RESOLUTION_BITS = 8;
 const int PWM_MAX = (1 << PWM_RESOLUTION_BITS) - 1;
 const float DEAD_ZONE = 0.03;
-const unsigned long COMMAND_TIMEOUT_MS = 300;
-
-unsigned long lastCommandMs = 0;
 
 void setup() {
   Serial.begin(115200);
@@ -36,7 +33,6 @@ void setup() {
   ledcAttach(M2_IN2, PWM_FREQ_HZ, PWM_RESOLUTION_BITS);
 
   stopAll();
-  lastCommandMs = millis();
 }
 
 void driveMotor(int forwardPin, int backwardPin, float speed) {
@@ -65,10 +61,6 @@ void stopAll() {
 }
 
 void loop() {
-  if (millis() - lastCommandMs > COMMAND_TIMEOUT_MS) {
-    stopAll();
-  }
-
   if (!Serial.available()) {
     return;
   }
@@ -81,7 +73,6 @@ void loop() {
 
   if (line == "STOP") {
     stopAll();
-    lastCommandMs = millis();
     Serial.println("OK");
     return;
   }
@@ -91,7 +82,6 @@ void loop() {
   if (sscanf(line.c_str(), "M %f %f", &m1, &m2) == 2) {
     driveMotor(M1_IN1, M1_IN2, -m1);
     driveMotor(M2_IN1, M2_IN2, -m2);
-    lastCommandMs = millis();
     Serial.println("OK");
   } else {
     Serial.println("ERR");

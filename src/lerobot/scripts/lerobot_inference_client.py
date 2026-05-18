@@ -370,8 +370,8 @@ class ManualMotorController:
         rt = (self._axis(self.axis_rt, -1.0) + 1.0) / 2.0
         throttle = self._deadzone(rt - lt) * self.max_speed
         turn = self._deadzone(self._axis(self.axis_left_x)) * self.max_speed
-        motor1 = max(-1.0, min(1.0, throttle + turn))
-        motor2 = max(-1.0, min(1.0, throttle - turn))
+        motor1 = max(-1.0, min(1.0, throttle - turn))
+        motor2 = max(-1.0, min(1.0, throttle + turn))
         return motor1, motor2
 
     def maybe_send(self) -> None:
@@ -381,7 +381,8 @@ class ManualMotorController:
 
         motor1, motor2 = self.read_command()
         rounded = (round(motor1, 3), round(motor2, 3))
-        if rounded == self.last_cmd:
+        if rounded == self.last_cmd and rounded == (0.0, 0.0):
+            self.last_send_t = now
             return
 
         send_msg(self.sock, {"type": "motor", "motor1": motor1, "motor2": motor2})
