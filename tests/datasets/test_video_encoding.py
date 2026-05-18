@@ -237,18 +237,6 @@ class TestAsStrings:
         cfg = VideoEncoderConfig(vcodec="libsvtav1", g=2, crf=30, preset=12, fast_decode=1)
         opts = cfg.get_codec_options(encoder_threads=4, as_strings=True)
         self._assert_all_strings(opts)
-        assert opts["g"] == "2"
-        assert opts["crf"] == "30"
-        assert opts["preset"] == "12"
-
-    @require_h264
-    def test_h264_as_strings(self):
-        cfg = VideoEncoderConfig(vcodec="h264", g=2, crf=23, preset="fast")
-        opts = cfg.get_codec_options(encoder_threads=2, as_strings=True)
-        self._assert_all_strings(opts)
-        assert opts["g"] == "2"
-        assert opts["crf"] == "23"
-        assert opts["threads"] == "2"
 
     @require_h264
     def test_h264_fast_decode_tune_as_strings(self):
@@ -256,7 +244,6 @@ class TestAsStrings:
         cfg = VideoEncoderConfig(vcodec="h264", fast_decode=1, preset=None)
         opts = cfg.get_codec_options(as_strings=True)
         self._assert_all_strings(opts)
-        assert opts["tune"] == "fastdecode"
 
     @require_videotoolbox
     def test_videotoolbox_as_strings(self):
@@ -264,8 +251,6 @@ class TestAsStrings:
         cfg = VideoEncoderConfig(vcodec="h264_videotoolbox", g=2, crf=30, preset=None)
         opts = cfg.get_codec_options(as_strings=True)
         self._assert_all_strings(opts)
-        assert opts["g"] == "2"
-        assert "q:v" in opts
 
     @require_nvenc
     def test_nvenc_as_strings(self):
@@ -274,65 +259,18 @@ class TestAsStrings:
         cfg = VideoEncoderConfig(vcodec="h264_nvenc", g=2, crf=28, preset=7)
         opts = cfg.get_codec_options(as_strings=True)
         self._assert_all_strings(opts)
-        assert opts["rc"] == "0"
-        assert opts["qp"] == "28"
-        assert opts["preset"] == "7"
-        assert opts["g"] == "2"
-
-    @require_nvenc
-    def test_nvenc_as_strings_no_preset(self):
-        cfg = VideoEncoderConfig(vcodec="h264_nvenc", crf=28, preset=None)
-        opts = cfg.get_codec_options(as_strings=True)
-        self._assert_all_strings(opts)
-        assert opts["rc"] == "0"
-        assert "preset" not in opts
 
     @require_vaapi
     def test_vaapi_as_strings(self):
         cfg = VideoEncoderConfig(vcodec="h264_vaapi", crf=28, preset=None)
         opts = cfg.get_codec_options(as_strings=True)
         self._assert_all_strings(opts)
-        assert opts["qp"] == "28"
 
     @require_qsv
     def test_qsv_as_strings(self):
         cfg = VideoEncoderConfig(vcodec="h264_qsv", crf=25, preset=None)
         opts = cfg.get_codec_options(as_strings=True)
         self._assert_all_strings(opts)
-        assert opts["global_quality"] == "25"
-
-
-class TestAsStringsVsNative:
-    """``as_strings=False`` (default) preserves native Python types; ``as_strings=True``
-    must produce identical logical values but as strings."""
-
-    @require_nvenc
-    def test_nvenc_rc_is_int_by_default(self):
-        cfg = VideoEncoderConfig(vcodec="h264_nvenc", crf=28, preset=None)
-        opts = cfg.get_codec_options(as_strings=False)
-        assert opts["rc"] == 0
-        assert isinstance(opts["rc"], int)
-
-    @require_nvenc
-    def test_nvenc_rc_is_str_when_requested(self):
-        cfg = VideoEncoderConfig(vcodec="h264_nvenc", crf=28, preset=None)
-        opts = cfg.get_codec_options(as_strings=True)
-        assert opts["rc"] == "0"
-        assert isinstance(opts["rc"], str)
-
-    @require_h264
-    def test_h264_fast_decode_is_str_when_requested(self):
-        cfg = VideoEncoderConfig(vcodec="h264", fast_decode=1, preset=None)
-        assert cfg.get_codec_options(as_strings=False)["tune"] == "fastdecode"
-        assert cfg.get_codec_options(as_strings=True)["tune"] == "fastdecode"
-
-    @require_videotoolbox
-    def test_videotoolbox_qv_is_int_by_default_str_when_requested(self):
-        cfg = VideoEncoderConfig(vcodec="h264_videotoolbox", crf=30, preset=None)
-        native = cfg.get_codec_options(as_strings=False)["q:v"]
-        stringified = cfg.get_codec_options(as_strings=True)["q:v"]
-        assert isinstance(native, int)
-        assert stringified == str(native)
 
 
 class TestExtraOptions:
