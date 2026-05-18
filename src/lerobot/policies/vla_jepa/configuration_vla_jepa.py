@@ -27,6 +27,7 @@ class VLAJEPAConfig(PreTrainedConfig):
     jepa_encoder_name: str = "facebook/vjepa2-vitl-fpc64-256"
     freeze_qwen: bool = False
     enable_world_model: bool = True
+    reinit_action_head: bool = False
 
     tokenizer_padding_side: str = "left"
     prompt_template: str = "Your task is {instruction}. Infer the temporal dynamics from frames {actions} and produce the corresponding policy actions {e_actions}."
