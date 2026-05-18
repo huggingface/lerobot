@@ -10,6 +10,7 @@ This docs will guide you to:
 - Stream datasets without downloading using `StreamingLeRobotDataset`
 - Apply image transforms for data augmentation during training
 - Migrate existing `v2.1` datasets to `v3.0`
+- Experiment with other `LeRobotDataset` formats and implementations like Lance
 
 ## What’s new in `v3`
 
@@ -315,3 +316,39 @@ Dataset v3.0 uses incremental parquet writing with buffered metadata for efficie
 - Ensures the dataset is valid for loading
 
 Without calling `finalize()`, your parquet files will be incomplete and the dataset won't load properly.
+
+## Other formats and implementations
+
+### Lance
+
+Lance is a useful format for multimodal AI datasets, especially for large-scale training requiring high performance IO and random access.
+
+The `lerobot-lancedb` package implements `LeRobotLanceDataset` (for JPEG images) and `LeRobotLanceVideoDataset` (for mp4 videos).
+Those two storage layouts both subclass LeRobotDataset and can provide data loading speed ups.
+
+`LeRobotLanceDataset` is a drop-in replacement for `LeRobotDataset`:
+
+```python
+from lerobot.datasets import LeRobotDatasetMetadata
+from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
+from lerobot_lancedb import LeRobotLanceDataset, LeRobotLanceVideoDataset
+
+cfg = DiffusionConfig(...)
+meta = LeRobotDatasetMetadata(root=local_dataset_path)  # or use repo_id=... to load metadata from the Hub
+delta_timestamps = {...}
+
+# Use LeRobotLanceDataset for image datasets
+dataset = LeRobotLanceDataset(
+    root=local_dataset_path,                            # or use repo_id=... to stream from the Hub
+    delta_timestamps=delta_timestamps,
+    return_uint8=True,
+)
+# Or use LeRobotLanceVideoDataset for video datasets:
+dataset = LeRobotLanceVideoDataset(
+    root=local_dataset_path,                            # or use repo_id=... to stream from the Hub
+    delta_timestamps=delta_timestamps,
+    return_uint8=True,
+)
+```
+
+Join the discussion on [Github](https://github.com/huggingface/lerobot/issues/3608) and explore the `lerobot-lancedb` documentation [here](https://lancedb.github.io/lerobot-lancedb/).
