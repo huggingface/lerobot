@@ -238,7 +238,10 @@ class RebotB601Follower(Robot):
                     logger.debug(f"Clipped {motor_name} from {goal_pos[motor_name]:.2f} to {clipped:.2f}")
                 goal_pos[motor_name] = clipped
 
-        # Tolerate 6-DOF leaders without a wrist_yaw joint by holding it at zero.
+        # Tolerate 6-DOF leaders that have no wrist_yaw joint by holding it at zero.
+        # This is intentional: it lets a 6-DOF leader such as the SO-100 / SO-101
+        # (so100_leader / so101_leader) teleoperate this 7-DOF follower — the missing
+        # wrist_yaw command is simply treated as 0.0 instead of raising.
         if "wrist_yaw" not in goal_pos:
             goal_pos["wrist_yaw"] = 0.0
 
