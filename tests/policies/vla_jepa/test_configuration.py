@@ -18,12 +18,7 @@ def test_delta_indices() -> None:
 
 def test_n_action_steps_exceeds_chunk_size_raises() -> None:
     with pytest.raises(ValueError, match="n_action_steps"):
-        VLAJEPAConfig(chunk_size=4, n_action_steps=8, future_action_window_size=3)
-
-
-def test_future_window_exceeds_chunk_size_raises() -> None:
-    with pytest.raises(ValueError, match="predicted action horizon"):
-        VLAJEPAConfig(chunk_size=4, n_action_steps=4, future_action_window_size=4)
+        VLAJEPAConfig(chunk_size=4, n_action_steps=8)
 
 
 def test_too_few_video_frames_raises() -> None:
@@ -31,7 +26,6 @@ def test_too_few_video_frames_raises() -> None:
         VLAJEPAConfig(
             chunk_size=16,
             n_action_steps=16,
-            future_action_window_size=15,
             num_video_frames=2,
             jepa_tubelet_size=2,  # needs >= 4 frames (2 for current, 2 for future) to have a window of size > 0
         )

@@ -62,7 +62,6 @@ def make_config(
         device="cpu",
         chunk_size=action_horizon,
         n_action_steps=min(N_ACTION_STEPS, action_horizon),
-        future_action_window_size=action_horizon - 1,
         action_dim=action_dim,
         state_dim=state_dim,
         num_video_frames=num_video_frames,

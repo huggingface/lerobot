@@ -36,8 +36,7 @@ class VLAJEPAConfig(PreTrainedConfig):
 
     action_dim: int = 7
     state_dim: int = 8
-    future_action_window_size: int = 6
-    past_action_window_size: int = 0
+
     num_action_tokens_per_timestep: int = 8
     num_embodied_action_tokens_per_instruction: int = 32
     num_inference_timesteps: int = 4
@@ -82,8 +81,6 @@ class VLAJEPAConfig(PreTrainedConfig):
             self.enable_world_model = False
         if self.n_action_steps > self.chunk_size:
             raise ValueError("`n_action_steps` must be <= `chunk_size`.")
-        if self.future_action_window_size + 1 > self.chunk_size:
-            raise ValueError("`chunk_size` must cover the predicted action horizon.")
         if self.num_video_frames < 2 * self.jepa_tubelet_size:
             raise ValueError(
                 f"`video_horizon` ({self.num_video_frames}) must be >= 2 * `jepa_tubelet_size` "

@@ -210,7 +210,7 @@ class VLAJEPAActionHead(nn.Module):
         inner_dim = num_heads * head_dim  # e.g. DiT-B: 12 × 64 = 768
 
         self.input_embedding_dim = inner_dim
-        self.action_horizon = config.future_action_window_size + 1
+        self.action_horizon = config.chunk_size
         self.num_inference_timesteps = config.num_inference_timesteps
 
         self.model = DiT(

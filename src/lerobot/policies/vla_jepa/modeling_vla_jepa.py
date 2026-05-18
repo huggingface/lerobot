@@ -236,7 +236,7 @@ class VLAJEPAModel(nn.Module):
             actions_tensor = torch.tensor(
                 np.array(actions), device=last_hidden.device, dtype=torch.float32
             )  # [B, T_full, action_dim]
-            action_horizon = self.config.future_action_window_size + 1
+            action_horizon = self.config.chunk_size
             actions_target = actions_tensor[:, -action_horizon:, :]
 
             state_tensor = None

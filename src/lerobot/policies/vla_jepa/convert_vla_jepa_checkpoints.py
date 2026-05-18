@@ -62,7 +62,6 @@ _ARCH = {
     "qwen_model_name": "Qwen/Qwen3-VL-2B-Instruct",  # 2B, NOT the default 4B
     "chunk_size": 7,
     "n_action_steps": 7,
-    "future_action_window_size": 6,
     "num_video_frames": 8,
     "jepa_tubelet_size": 2,
     "num_action_tokens_per_timestep": 8,
