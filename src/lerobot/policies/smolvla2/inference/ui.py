@@ -93,7 +93,7 @@ def make_state_panel(state: dict[str, Any]) -> Any:
     table.add_row("", footer)
     run_mode = state.get("mode", "action")
     mode_tag = (
-        "[green]action[/]" if run_mode == "action" else "[yellow]question (paused)[/]"
+        "[green]action[/]" if run_mode == "action" else "[yellow]paused[/]"
     )
     return Panel(
         table,

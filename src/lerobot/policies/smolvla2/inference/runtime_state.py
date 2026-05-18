@@ -33,8 +33,8 @@ Stable keys (read by multiple steps):
   events_this_tick list[str]    triggers consumed this tick
   _tick         Tick            current tick (set by the loop)
 
-  mode          str             "action" (run the robot) | "question" (VQA
-                                 only, action loop paused)
+  mode          str             "action" (run the robot) | "paused"
+                                 (action loop stopped — robot holds)
 
   log_lines     list[str]       human-readable status lines printed each tick
 """
