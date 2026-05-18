@@ -20,10 +20,13 @@ Spawns one ``h200x2`` job that:
   1. installs this branch of ``lerobot`` plus the annotation extras,
   2. boots two vllm servers (one per GPU) with Qwen3.6-35B-A3B-FP8,
   3. runs the plan / interjections / vqa modules across the dataset,
-  4. uploads the annotated dataset back to ``--repo_id``.
+  4. uploads the annotated dataset back to ``--repo_id`` (or to
+     ``--dest_repo_id`` when set).
 
-``--repo_id`` is both the download source and, with ``--push_to_hub=true``,
-the upload destination — the job annotates the dataset in place.
+``--repo_id`` is the download source and, with ``--push_to_hub=true``, also
+the default upload destination — the job annotates the dataset in place.
+Pass ``--dest_repo_id`` to push the result to a separate repo instead and
+leave the source untouched.
 
 Usage:
 
@@ -53,9 +56,11 @@ CMD = (
     "export VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 && "
     "export VLLM_VIDEO_BACKEND=pyav && "
     "lerobot-annotate "
-    # The dataset to annotate; also the push destination (annotate in place).
+    # The dataset to annotate. By default it is also the push destination
+    # (annotate in place); pass --dest_repo_id to push to a separate repo.
     "--repo_id=<your-org>/<your-dataset> "
     "--push_to_hub=true "
+    # "--dest_repo_id=<your-org>/<your-annotated-dataset> "
     "--vlm.backend=openai "
     "--vlm.model_id=Qwen/Qwen3.6-35B-A3B-FP8 "
     "--vlm.parallel_servers=2 "

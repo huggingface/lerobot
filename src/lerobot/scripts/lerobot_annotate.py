@@ -113,16 +113,21 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
             logger.warning(w)
 
     if cfg.push_to_hub:
-        if cfg.repo_id is None:
-            raise ValueError("--push_to_hub requires --repo_id (the dataset repo to push to).")
+        if cfg.repo_id is None and cfg.dest_repo_id is None:
+            raise ValueError(
+                "--push_to_hub requires --repo_id or --dest_repo_id (the dataset repo to push to)."
+            )
         _push_to_hub(root, cfg)
 
 
 def _push_to_hub(root: Path, cfg: AnnotationPipelineConfig) -> None:
-    """Upload the annotated dataset directory back to ``cfg.repo_id`` on the Hub."""
+    """Upload the annotated dataset directory to the Hub.
+
+    Pushes to ``cfg.dest_repo_id`` when set, otherwise back to ``cfg.repo_id``.
+    """
     from huggingface_hub import HfApi  # noqa: PLC0415
 
-    repo_id = cfg.repo_id
+    repo_id = cfg.dest_repo_id or cfg.repo_id
     commit_message = cfg.push_commit_message or "Add steerable annotations (lerobot-annotate)"
     api = HfApi()
     print(f"[lerobot-annotate] creating/locating dataset repo {repo_id}...", flush=True)

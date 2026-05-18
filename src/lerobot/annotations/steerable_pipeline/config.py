@@ -163,8 +163,15 @@ class AnnotationPipelineConfig:
     """
 
     # Hub dataset id. Used as the download source when ``root`` is unset,
-    # and as the destination repo when ``push_to_hub`` is enabled.
+    # and as the destination repo when ``push_to_hub`` is enabled and
+    # ``dest_repo_id`` is unset.
     repo_id: str | None = None
+
+    # Optional separate Hub dataset id to push the annotated result to. When
+    # unset, ``push_to_hub`` uploads back to ``repo_id`` (annotate in place);
+    # when set, the source ``repo_id`` is left untouched.
+    dest_repo_id: str | None = None
+
     root: Path | None = None
 
     # Defaults to ``<root>/.annotate_staging/`` when unset.
@@ -182,8 +189,9 @@ class AnnotationPipelineConfig:
     skip_validation: bool = False
     only_episodes: tuple[int, ...] | None = None
 
-    # When True, upload the annotated dataset back to ``repo_id`` on the
-    # Hugging Face Hub. ``repo_id`` must be set for this to take effect.
+    # When True, upload the annotated dataset to the Hugging Face Hub:
+    # to ``dest_repo_id`` if set, otherwise back to ``repo_id``. One of
+    # the two must be set for this to take effect.
     push_to_hub: bool = False
     push_private: bool = False
     push_commit_message: str | None = None
