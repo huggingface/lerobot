@@ -18,7 +18,7 @@
 # docker build -f docker/Dockerfile.internal -t lerobot-internal .
 
 # Configure the base image for CI with GPU access
-ARG CUDA_VERSION=12.6.3
+ARG CUDA_VERSION=12.8.1
 ARG OS_VERSION=24.04
 FROM nvidia/cuda:${CUDA_VERSION}-base-ubuntu${OS_VERSION}
 

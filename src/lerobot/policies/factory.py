@@ -47,12 +47,12 @@ from lerobot.utils.feature_utils import dataset_to_policy_features
 from .act.configuration_act import ACTConfig
 from .diffusion.configuration_diffusion import DiffusionConfig
 from .eo1.configuration_eo1 import EO1Config
+from .gaussian_actor.configuration_gaussian_actor import GaussianActorConfig
 from .groot.configuration_groot import GrootConfig
 from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
 from .pi0.configuration_pi0 import PI0Config
 from .pi05.configuration_pi05 import PI05Config
 from .pretrained import PreTrainedPolicy
-from .sac.configuration_sac import SACConfig
 from .smolvla.configuration_smolvla import SmolVLAConfig
 from .tdmpc.configuration_tdmpc import TDMPCConfig
 from .utils import validate_visual_features_consistency
@@ -88,7 +88,7 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
 
     Args:
         name: The name of the policy. Supported names are "tdmpc", "diffusion", "act",
-            "multi_task_dit", "vqbet", "pi0", "pi05", "sac", "smolvla", "wall_x".
+            "multi_task_dit", "vqbet", "pi0", "pi05", "gaussian_actor", "smolvla", "wall_x".
     Returns:
         The policy class corresponding to the given name.
 
@@ -127,10 +127,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from .pi05.modeling_pi05 import PI05Policy
 
         return PI05Policy
-    elif name == "sac":
-        from .sac.modeling_sac import SACPolicy
+    elif name == "gaussian_actor":
+        from .gaussian_actor.modeling_gaussian_actor import GaussianActorPolicy
 
-        return SACPolicy
+        return GaussianActorPolicy
     elif name == "smolvla":
         from .smolvla.modeling_smolvla import SmolVLAPolicy
 
@@ -167,7 +167,7 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
 
     Args:
         policy_type: The type of the policy. Supported types include "tdmpc",
-                     "multi_task_dit", "diffusion", "act", "vqbet", "pi0", "pi05", "sac",
+                     "multi_task_dit", "diffusion", "act", "vqbet", "pi0", "pi05", "gaussian_actor",
                      "smolvla", "wall_x".
         **kwargs: Keyword arguments to be passed to the configuration class constructor.
 
@@ -191,8 +191,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return PI0Config(**kwargs)
     elif policy_type == "pi05":
         return PI05Config(**kwargs)
-    elif policy_type == "sac":
-        return SACConfig(**kwargs)
+    elif policy_type == "gaussian_actor":
+        return GaussianActorConfig(**kwargs)
     elif policy_type == "smolvla":
         return SmolVLAConfig(**kwargs)
     elif policy_type == "groot":
@@ -365,10 +365,10 @@ def make_pre_post_processors(
             dataset_stats=kwargs.get("dataset_stats"),
         )
 
-    elif isinstance(policy_cfg, SACConfig):
-        from .sac.processor_sac import make_sac_pre_post_processors
+    elif isinstance(policy_cfg, GaussianActorConfig):
+        from .gaussian_actor.processor_gaussian_actor import make_gaussian_actor_pre_post_processors
 
-        processors = make_sac_pre_post_processors(
+        processors = make_gaussian_actor_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
