@@ -41,8 +41,6 @@ For more details, see the [Physical Intelligence π₀ blog post](https://www.ph
 For more details, see the [Physical Intelligence π₀.₅ blog post](https://www.physicalintelligence.company/blog/pi05).
 {% elif model_name == "gaussian_actor" %}
 This is a Gaussian Actor policy (Gaussian policy with a tanh squash) — the policy-side component used by [Soft Actor-Critic (SAC)](https://huggingface.co/papers/1801.01290) and related maximum-entropy continuous-control algorithms.
-{% elif model_name == "reward_classifier" %}
-A reward classifier is a lightweight neural network that scores observations or trajectories for task success, providing a learned reward signal or offline evaluation when explicit rewards are unavailable.
 {% else %}
 _Model type not recognized — please update this template._
 {% endif %}
