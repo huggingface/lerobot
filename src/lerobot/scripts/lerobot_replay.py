@@ -111,18 +111,18 @@ def replay(cfg: ReplayConfig):
 
     robot.connect()
 
-    initial_action = {
-        k: v for k, v in robot.get_observation().items() if k in robot.action_features and k.endswith(".pos")
-    }
-
-    first_action_array = actions[0][ACTION]
-    first_action = {
-        name: first_action_array[i]
-        for i, name in enumerate(dataset.features[ACTION]["names"])
-        if name.endswith(".pos") and name in robot.action_features
-    }
-
     try:
+        initial_action = {
+            k: v for k, v in robot.get_observation().items() if k in robot.action_features and k.endswith(".pos")
+        }
+    
+        first_action_array = actions[0][ACTION]
+        first_action = {
+            name: first_action_array[i]
+            for i, name in enumerate(dataset.features[ACTION]["names"])
+            if name.endswith(".pos") and name in robot.action_features
+        }
+  
         log_say("Moving robot to start pose", cfg.play_sounds, blocking=True)
         follower_smooth_move_to(robot, initial_action, first_action, duration_s=2.0)
 
