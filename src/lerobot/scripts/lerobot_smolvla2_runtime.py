@@ -906,14 +906,18 @@ def _build_robot_action_executor(
 def _print_runtime_help() -> None:
     """Print the slash-command reference."""
     print(
-        "[smolvla2] commands:\n"
-        '  /action "task"     run the robot; an argument switches to that task\n'
+        "[smolvla2] commands (arguments need no quotes):\n"
+        "  /action <task>     run the robot; an argument switches to that task\n"
         "  /action            resume the robot on the current task\n"
         "  /action <seconds>  run the robot for N seconds, then auto-pause\n"
         "  /pause             pause the action loop — robot holds position\n"
-        '  /question "..."    pause and answer one VQA question\n'
+        "  /question <text>   pause and answer one VQA question\n"
         "  /help              show this help\n"
-        "  stop | quit | exit end the session",
+        "  stop | quit | exit end the session\n"
+        "\n"
+        "  VQA examples:\n"
+        "    /question point to the yellow cube     -> point overlay\n"
+        "    /question detect the blue cube         -> bounding-box overlay",
         flush=True,
     )
 
@@ -989,7 +993,7 @@ def _handle_slash_command(runtime: Any, line: str) -> bool:
             else:
                 runtime.state["mode"] = "paused"
                 print(
-                    '[smolvla2] no task set — use /action "your task"',
+                    "[smolvla2] no task set — use /action <your task>",
                     flush=True,
                 )
         return True
@@ -1008,7 +1012,11 @@ def _handle_slash_command(runtime: Any, line: str) -> bool:
         runtime.state["action_deadline"] = None
         _clear_action_queue(runtime)
         if not rest:
-            print('[smolvla2] usage: /question "your question"', flush=True)
+            print(
+                "[smolvla2] usage: /question <your question>  "
+                "(e.g. /question point to the yellow cube)",
+                flush=True,
+            )
             return True
         _run_vqa_query(runtime, rest)
         return True
@@ -1101,8 +1109,8 @@ def _run_autonomous(
     redraw = _make_state_panel_renderer(runtime, mode_label="autonomous", scrollback=_scrollback)
     redraw()
     print(
-        '  [autonomous] /action "task" to run  ·  /pause to stop  ·  '
-        '/question "..." to ask  ·  /help  ·  stop',
+        "  [autonomous] /action <task> to run  ·  /pause to stop  ·  "
+        "/question <text> to ask  ·  /help  ·  stop",
         flush=True,
     )
 
@@ -1177,7 +1185,7 @@ def _run_autonomous(
                 runtime.state.setdefault("events_this_tick", []).append("user_interjection")
             else:
                 print(
-                    '[smolvla2] no task yet — use /action "your task" to start',
+                    "[smolvla2] no task yet — use /action <your task> to start",
                     flush=True,
                 )
     except KeyboardInterrupt:
@@ -1227,15 +1235,19 @@ def _make_state_panel_renderer(
         if run_mode == "action":
             console.print(
                 "  [dim]commands:[/] [bold]/pause[/] stop  ·  "
-                '[bold]/question "..."[/bold] ask  ·  [bold]/help[/]  ·  '
-                "[bold]stop[/]"
+                "[bold]/question[/] <text> ask  ·  [bold]/help[/]  ·  [bold]stop[/]"
             )
         else:
             console.print(
-                '  [dim]commands:[/] [bold]/action "task"[/bold] run  ·  '
-                '[bold]/question "..."[/bold] ask  ·  [bold]/help[/]  ·  '
-                "[bold]stop[/]"
+                "  [dim]commands:[/] [bold]/action[/] <task> run  ·  "
+                "[bold]/question[/] <text> ask  ·  [bold]/help[/]  ·  [bold]stop[/]"
             )
+        # Reference VQA prompts — the two answer shapes that draw an
+        # overlay (point + bounding box). No quotes needed.
+        console.print(
+            "  [dim]vqa examples:[/] /question point to the yellow cube  ·  "
+            "/question detect the blue cube"
+        )
         for key, label in (
             ("task", "task"),
             ("current_subtask", "subtask"),
@@ -1304,8 +1316,8 @@ def _make_state_panel_renderer(
             console.print()
         if not st.get("task"):
             console.print(
-                '  [dim]Type [bold]/action "your task"[/bold] to begin. '
-                '[bold]/question "..."[/bold] to ask, /help for commands, '
+                "  [dim]Type [bold]/action <your task>[/bold] to begin, "
+                "[bold]/question <text>[/bold] to ask, /help for commands, "
                 "stop to exit.[/]"
             )
 
@@ -1583,7 +1595,7 @@ def _run_repl(runtime: Any, *, initial_task: str | None, max_ticks: int | None) 
             # task to be meaningful.
             if not runtime.state.get("task"):
                 print(
-                    '[smolvla2] no task yet — use /action "your task"',
+                    "[smolvla2] no task yet — use /action <your task>",
                     flush=True,
                 )
                 _redraw(last_logs)
