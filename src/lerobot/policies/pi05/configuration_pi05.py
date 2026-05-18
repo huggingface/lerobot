@@ -93,6 +93,7 @@ class PI05Config(PreTrainedConfig):
     optimizer_eps: float = 1e-8
     optimizer_weight_decay: float = 0.01
     optimizer_grad_clip_norm: float = 1.0
+    optimizer_foreach: bool | None = False
 
     # Scheduler settings: see openpi `CosineDecaySchedule`
     # Note: These will auto-scale if --steps < scheduler_decay_steps
@@ -152,6 +153,7 @@ class PI05Config(PreTrainedConfig):
             eps=self.optimizer_eps,
             weight_decay=self.optimizer_weight_decay,
             grad_clip_norm=self.optimizer_grad_clip_norm,
+            foreach=self.optimizer_foreach,
         )
 
     def get_scheduler_preset(self):
