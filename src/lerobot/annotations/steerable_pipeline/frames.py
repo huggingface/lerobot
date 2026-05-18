@@ -34,6 +34,7 @@ import PIL.Image
 import torch
 
 from lerobot.datasets.video_utils import decode_video_frames
+from lerobot.utils.import_utils import get_safe_default_codec
 
 from .reader import EpisodeRecord
 
@@ -134,6 +135,12 @@ class VideoFrameProvider:
     camera_key: str | None = None
     tolerance_s: float = 1e-2
     cache_size: int = 256
+    # Video decode backend forwarded to ``decode_video_frames``. When ``None``,
+    # decoding tries the platform default (torchcodec when installed) and
+    # falls back to ``pyav`` if it raises — some containers ship a torchcodec
+    # that cannot push packets to the decoder ("Operation not permitted").
+    # Set explicitly (e.g. ``"pyav"``) to skip that probe.
+    video_backend: str | None = None
     _meta: Any = field(default=None, init=False, repr=False)
     _cache: dict = field(default_factory=dict, init=False, repr=False)
     _camera_keys: list[str] = field(default_factory=list, init=False, repr=False)
@@ -296,35 +303,55 @@ class VideoFrameProvider:
         shifted = [from_timestamp + ts for ts in timestamps]
         video_path = self.root / self._meta.get_video_file_path(episode_index, camera_key)
 
-        try:
-            # Stacked ``(N, C, H, W)`` uint8 tensor; one row per timestamp.
-            decoded = decode_video_frames(video_path, shifted, self.tolerance_s, return_uint8=True)
-            return list(decoded)
-        except Exception as exc:
-            # Log loudly the first time decoding fails so a silent
-            # vqa-module no-op (every prompt skipped because frames_at
-            # returned []) is debuggable from the job log instead of
-            # post-hoc parquet inspection. Subsequent failures stay quiet.
-            with self._lock:
-                already_warned = getattr(self, "_warned_decode_fail", False)
-                if not already_warned:
-                    self._warned_decode_fail = True
-            if not already_warned:
-                logger.warning(
-                    "VideoFrameProvider._decode failed for episode=%s camera=%s video_path=%s: %s",
-                    episode_index,
-                    camera_key,
-                    video_path,
-                    exc,
-                    exc_info=True,
+        # When no backend is pinned, try the platform default first and fall
+        # back to ``pyav`` if it raises — torchcodec is broken in some
+        # containers (e.g. vllm-openai), where pyav decodes the same file fine.
+        if self.video_backend:
+            backends: list[str | None] = [self.video_backend]
+        else:
+            backends = [None]
+            if get_safe_default_codec() != "pyav":
+                backends.append("pyav")
+
+        exc: Exception | None = None
+        for backend in backends:
+            try:
+                # Stacked ``(N, C, H, W)`` uint8 tensor; one row per timestamp.
+                decoded = decode_video_frames(
+                    video_path, shifted, self.tolerance_s, backend=backend, return_uint8=True
                 )
-            return []
+                return list(decoded)
+            except Exception as e:  # noqa: PERF203
+                exc = e
+
+        # Every backend raised. Log loudly the first time so a silent
+        # vqa-module no-op (every prompt skipped because frames_at returned
+        # []) is debuggable from the job log instead of post-hoc parquet
+        # inspection. Subsequent failures stay quiet.
+        with self._lock:
+            already_warned = getattr(self, "_warned_decode_fail", False)
+            if not already_warned:
+                self._warned_decode_fail = True
+        if not already_warned:
+            logger.warning(
+                "VideoFrameProvider._decode failed for episode=%s camera=%s "
+                "video_path=%s backends=%s: %s",
+                episode_index,
+                camera_key,
+                video_path,
+                backends,
+                exc,
+                exc_info=exc,
+            )
+        return []
 
 
-def make_frame_provider(root: Path, camera_key: str | None = None) -> FrameProvider:
+def make_frame_provider(
+    root: Path, camera_key: str | None = None, video_backend: str | None = None
+) -> FrameProvider:
     """Build a :class:`VideoFrameProvider` if videos are present, else null."""
     try:
-        provider = VideoFrameProvider(root=root, camera_key=camera_key)
+        provider = VideoFrameProvider(root=root, camera_key=camera_key, video_backend=video_backend)
     except Exception:
         return null_provider()
     if provider.camera_key is None:

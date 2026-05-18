@@ -64,7 +64,9 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
     logger.info("annotate: root=%s", root)
 
     vlm = make_vlm_client(cfg.vlm)
-    frame_provider = make_frame_provider(root, camera_key=cfg.vlm.camera_key)
+    frame_provider = make_frame_provider(
+        root, camera_key=cfg.vlm.camera_key, video_backend=cfg.video_backend
+    )
     # Surface the resolved cameras up front so a silent vqa-module no-op
     # is obvious in job output rather than discovered post-hoc by counting
     # parquet rows.
