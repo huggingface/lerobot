@@ -41,6 +41,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 from lerobot.annotations.steerable_pipeline.frames import (  # noqa: E402
     VideoFrameProvider,
     _decode_frames_av,
+    _decode_frames_ffmpeg,
 )
 
 
@@ -120,3 +121,26 @@ def test_decode_frames_av_raises_on_missing_file(tmp_path: Path) -> None:
     """A missing video surfaces as an exception the caller can fall back on."""
     with pytest.raises(Exception):  # noqa: B017, PT011
         _decode_frames_av(tmp_path / "does_not_exist.mp4", [0.0])
+
+
+def test_decode_frames_ffmpeg_returns_one_uint8_frame_per_timestamp(sample_video: Path) -> None:
+    """``_decode_frames_ffmpeg`` shells out to the ffmpeg CLI — the always-
+    available fallback that decodes AV1 and isolates crashes to a child
+    process.
+    """
+    timestamps = [0.0, 1.0, 2.5]
+    frames = _decode_frames_ffmpeg(sample_video, timestamps)
+
+    assert len(frames) == len(timestamps)
+    for frame in frames:
+        assert isinstance(frame, torch.Tensor)
+        assert frame.dtype == torch.uint8
+        assert frame.shape == (3, 120, 160)
+
+
+def test_decode_frames_ffmpeg_raises_on_missing_file(tmp_path: Path) -> None:
+    """A missing video raises (non-zero ffmpeg exit), never crashes the job."""
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg not available")
+    with pytest.raises(Exception):  # noqa: B017, PT011
+        _decode_frames_ffmpeg(tmp_path / "does_not_exist.mp4", [0.0])

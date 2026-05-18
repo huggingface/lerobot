@@ -189,11 +189,11 @@ class AnnotationPipelineConfig:
     skip_validation: bool = False
     only_episodes: tuple[int, ...] | None = None
 
-    # Video decode backend for keyframe extraction. When unset, decoding tries
-    # the platform default (torchcodec when installed) and falls back to
-    # ``pyav`` on failure. Set to ``"pyav"`` to skip torchcodec entirely —
-    # useful in containers where torchcodec cannot decode ("Operation not
-    # permitted").
+    # Keyframe decode backend. When unset, decoding tries the platform default
+    # (torchcodec when installed) then falls back to the ffmpeg CLI, which
+    # decodes AV1 and isolates crashes to a child process. Set to one of
+    # ``"torchcodec"``, ``"ffmpeg"``, or ``"pyav"`` to pin a single backend —
+    # e.g. ``"ffmpeg"`` in containers where torchcodec cannot decode.
     video_backend: str | None = None
 
     # When True, upload the annotated dataset to the Hugging Face Hub:
