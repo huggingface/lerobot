@@ -42,6 +42,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import torch
+from torch import Tensor
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.processor.pipeline import ProcessorStep, ProcessorStepRegistry
@@ -214,6 +215,25 @@ def _strip_blocks(message: dict[str, Any]) -> dict[str, Any]:
     return new
 
 
+def _is_batched_messages(messages: Any) -> bool:
+    return isinstance(messages, list) and bool(messages) and isinstance(messages[0], list)
+
+
+def _sample_indices(value: Any, batch_size: int) -> list[int | None]:
+    if value is None:
+        return [None] * batch_size
+    if isinstance(value, torch.Tensor):
+        if value.numel() == 1:
+            return [int(value.item())] * batch_size
+        values = value.reshape(-1).tolist()
+        return [int(v) for v in values[:batch_size]]
+    if isinstance(value, (list, tuple)):
+        if len(value) == 1:
+            return _sample_indices(value[0], batch_size)
+        return [int(v.item() if hasattr(v, "item") else v) for v in value[:batch_size]]
+    return [int(value)] * batch_size
+
+
 def _format_messages(messages: list[dict[str, Any]]) -> tuple[str, list[tuple[int, int]]]:
     """Concatenate messages into the π0.5-style flat prompt.
 
@@ -285,8 +305,6 @@ class PI052TextTokenizerStep(ProcessorStep):
         transition = transition.copy()
         complementary = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}) or {}
         messages = complementary.get("messages") or []
-        target_indices = list(complementary.get("target_message_indices") or [])
-        message_streams = list(complementary.get("message_streams") or [])
 
         if not messages:
             # No recipe was rendered — caller will fall back to the
@@ -294,6 +312,90 @@ class PI052TextTokenizerStep(ProcessorStep):
             # unmodified.
             return transition
 
+        tokenizer = self._ensure_tokenizer()
+        if _is_batched_messages(messages):
+            indices_iter = _sample_indices(complementary.get("index"), len(messages))
+            encoded = [
+                self._encode_messages(
+                    tokenizer,
+                    msg,
+                    list(streams),
+                    list(tgt_indices),
+                    complementary,
+                    sample_idx=int(s_idx) if s_idx is not None else None,
+                )
+                for msg, streams, tgt_indices, s_idx in zip(
+                    messages,
+                    complementary.get("message_streams") or [[] for _ in messages],
+                    complementary.get("target_message_indices") or [[] for _ in messages],
+                    indices_iter,
+                    strict=False,
+                )
+            ]
+        else:
+            sample_idx = _sample_indices(complementary.get("index"), 1)[0]
+            encoded = [
+                self._encode_messages(
+                    tokenizer,
+                    messages,
+                    list(complementary.get("message_streams") or []),
+                    list(complementary.get("target_message_indices") or []),
+                    complementary,
+                    sample_idx=sample_idx,
+                )
+            ]
+
+        if _DUMP_BUDGET > 0:
+            if _is_batched_messages(messages):
+                msgs_iter = messages
+                streams_iter = complementary.get("message_streams") or [[] for _ in messages]
+                targets_iter = complementary.get("target_message_indices") or [[] for _ in messages]
+            else:
+                msgs_iter = [messages]
+                streams_iter = [list(complementary.get("message_streams") or [])]
+                targets_iter = [list(complementary.get("target_message_indices") or [])]
+            for msg, streams, targets, (ids, attn, labels, predict_action, prompt) in zip(
+                msgs_iter, streams_iter, targets_iter, encoded, strict=False
+            ):
+                target_set = {int(i) for i in targets}
+                annotated_msgs = [
+                    {
+                        **m,
+                        "stream": streams[i] if i < len(streams) else None,
+                        "target": True if i in target_set else None,
+                    }
+                    for i, m in enumerate(msg)
+                ]
+                _dump_recipe_sample(
+                    messages=annotated_msgs,
+                    prompt_text=prompt,
+                    token_ids=ids.tolist(),
+                    labels=labels.tolist(),
+                    predict_actions=bool(predict_action.item()),
+                    tokenizer=tokenizer,
+                )
+
+        obs = dict(transition.get(TransitionKey.OBSERVATION) or {})
+        obs[OBS_LANGUAGE_TOKENS] = torch.stack([ids for ids, _, _, _, _ in encoded])
+        obs[OBS_LANGUAGE_ATTENTION_MASK] = torch.stack([attn for _, attn, _, _, _ in encoded])
+        transition[TransitionKey.OBSERVATION] = obs
+
+        transition[TransitionKey.COMPLEMENTARY_DATA] = {
+            **complementary,
+            "text_labels": torch.stack([labels for _, _, labels, _, _ in encoded]),
+            "predict_actions": torch.stack([pred for _, _, _, pred, _ in encoded]),
+        }
+        return transition
+
+    def _encode_messages(
+        self,
+        tokenizer: Any,
+        messages: list[dict[str, Any]],
+        message_streams: list[str | None],
+        target_indices: list[int],
+        complementary: dict[str, Any],
+        sample_idx: int | None = None,
+    ) -> tuple[Tensor, Tensor, Tensor, Tensor, str]:
         # Optional: drop non-target messages per the dropout config.
         # Keeps the supervised-target indices stable by re-mapping
         # after removal.
@@ -307,6 +409,7 @@ class PI052TextTokenizerStep(ProcessorStep):
                 messages,
                 target_indices,
                 complementary,
+                sample_idx=sample_idx,
             )
 
         # Flatten ``say`` tool calls into ``<say>...</say>`` text before
@@ -315,7 +418,6 @@ class PI052TextTokenizerStep(ProcessorStep):
         messages = [_strip_blocks(_flatten_say_tool_calls(m)) for m in messages]
         prompt, spans = _format_messages(messages)
 
-        tokenizer = self._ensure_tokenizer()
         encoded = tokenizer(
             prompt,
             max_length=self.max_length,
@@ -354,39 +456,7 @@ class PI052TextTokenizerStep(ProcessorStep):
             bool(any(s == "low_level" for s in message_streams)),
             dtype=torch.bool,
         )
-
-        if _DUMP_BUDGET > 0:
-            # Stream / target metadata live in parallel arrays; zip them
-            # back into the dicts so the dump shows them per message.
-            target_set = {int(i) for i in target_indices}
-            annotated_msgs = [
-                {
-                    **m,
-                    "stream": message_streams[i] if i < len(message_streams) else None,
-                    "target": True if i in target_set else None,
-                }
-                for i, m in enumerate(messages)
-            ]
-            _dump_recipe_sample(
-                messages=annotated_msgs,
-                prompt_text=prompt,
-                token_ids=input_ids.tolist(),
-                labels=labels.tolist(),
-                predict_actions=bool(predict_actions.item()),
-                tokenizer=tokenizer,
-            )
-
-        obs = dict(transition.get(TransitionKey.OBSERVATION) or {})
-        obs[OBS_LANGUAGE_TOKENS] = input_ids.unsqueeze(0)
-        obs[OBS_LANGUAGE_ATTENTION_MASK] = attention_mask.unsqueeze(0)
-        transition[TransitionKey.OBSERVATION] = obs
-
-        transition[TransitionKey.COMPLEMENTARY_DATA] = {
-            **complementary,
-            "text_labels": labels.unsqueeze(0),
-            "predict_actions": predict_actions.unsqueeze(0),
-        }
-        return transition
+        return input_ids, attention_mask, labels, predict_actions, prompt
 
     # ------------------------------------------------------------------
     # Per-component prompt dropout (Pi0.7 §V.E)
@@ -397,6 +467,7 @@ class PI052TextTokenizerStep(ProcessorStep):
         messages: list[dict[str, Any]],
         target_indices: list[int],
         complementary: dict[str, Any],
+        sample_idx: int | None = None,
     ) -> tuple[list[dict[str, Any]], list[int]]:
         """Drop messages classified as plan/memory/subtask context.
 
@@ -411,7 +482,7 @@ class PI052TextTokenizerStep(ProcessorStep):
             # ``render_messages_processor``. Falling back to other
             # keys silently gave every sample seed=0 → identical
             # dropout pattern across the whole epoch.
-            seed_src = complementary.get("index", 0)
+            seed_src = sample_idx if sample_idx is not None else complementary.get("index", 0)
             try:
                 if hasattr(seed_src, "item"):
                     seed_src = seed_src.item()
