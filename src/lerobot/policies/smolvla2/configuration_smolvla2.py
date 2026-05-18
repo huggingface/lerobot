@@ -91,6 +91,20 @@ class SmolVLA2Config(SmolVLAConfig):
     relative to the action expert; set higher if the action expert is
     degrading because text loss dominates."""
 
+    # Optimizer -----------------------------------------------------------
+    optimizer_lr: float = 2.5e-5
+    """Peak learning rate. Overrides ``SmolVLAConfig``'s ``1e-4``.
+
+    SmolVLA can afford ``1e-4`` because it *freezes* the language head —
+    only the from-scratch action expert sees that LR. SmolVLA2 unfreezes
+    ``lm_head`` + the last text layer and fine-tunes the **pretrained**
+    SmolVLM2 language weights, and ``1e-4`` is too aggressive for a
+    pretrained LM: it destabilises the language representations and
+    collapses generation into degenerate repetition. ``2.5e-5`` matches
+    pi05's peak LR (openpi ``CosineDecaySchedule``), the comparable
+    text-co-trained policy. The action expert trains slightly slower at
+    this LR, so budget more steps."""
+
     # Backbone training ---------------------------------------------------
     unfreeze_lm_head: bool = True
     """Whether to unfreeze the SmolVLM ``lm_head`` (and the immediately
