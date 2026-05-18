@@ -185,8 +185,7 @@ class OpenCVCamera(Camera):
 
         This method attempts to set the camera properties via OpenCV. It checks if
         the camera successfully applied the settings and raises an error if not.
-        The camera properties are set in the same order used by direct OpenCV capture tests:
-        width, height, FPS, then FOURCC.
+        FOURCC is set first (if specified) as it can affect the available FPS and resolution options.
 
         Args:
             fourcc: The desired FOURCC code (e.g., "MJPG", "YUYV"). If None, auto-detect.
@@ -202,6 +201,10 @@ class OpenCVCamera(Camera):
 
         if self.videocapture is None:
             raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
+
+        set_fourcc_after_size_and_fps = platform.system() == "Windows"
+        if self.config.fourcc is not None and not set_fourcc_after_size_and_fps:
+            self._validate_fourcc()
 
         default_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
         default_height = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
@@ -220,7 +223,7 @@ class OpenCVCamera(Camera):
         else:
             self._validate_fps()
 
-        if self.config.fourcc is not None:
+        if self.config.fourcc is not None and set_fourcc_after_size_and_fps:
             self._validate_fourcc()
 
     def _validate_fps(self) -> None:
