@@ -310,19 +310,20 @@ def handle_vqa_query(
     else:
         report("  [info] vqa: no camera available — answering text-only")
 
-    # Ground the question on the chosen camera only — filter the
-    # observation to that one image (+ proprio state) so the VLM
-    # prefix matches the single-image ``ask_vqa_*`` training recipe.
-    vqa_obs: dict | None = None
-    if observation is not None and chosen is not None:
-        vqa_obs = {chosen: observation[chosen]}
-        if "observation.state" in observation:
-            vqa_obs["observation.state"] = observation["observation.state"]
-
+    # Feed the FULL observation (every camera + state) to the VLM. The
+    # ``ask_vqa_*`` recipes look single-camera, but the image *block* is
+    # stripped before tokenization — the actual frames reach the model
+    # via SmolVLA's ``OBS_IMAGES_*`` channels, and ``embed_prefix``
+    # consumes *all* ``config.image_features`` regardless of which
+    # camera the sub-recipe was tagged for. So training always sees
+    # every camera; filtering to one here would change the image-token
+    # count in the prefix (the dropped camera gets zero-padded with
+    # mask=0) — a prefix shape the model never saw. The chosen camera
+    # is used only to pick which frame the overlay is drawn on.
     answer = _generate_with_policy(
         policy,
         _msgs_for_vqa(question),
-        observation=vqa_obs,
+        observation=observation,
         state=state,
         label="vqa gen",
     )
