@@ -205,7 +205,7 @@ peft = ["lerobot[transformers-dep]", "lerobot[peft-dep]"]
 # on Linux, with a transformers fallback elsewhere; openai is the default
 # backend and talks to any OpenAI-compatible server (``vllm serve`` /
 # ``transformers serve`` / hosted endpoints). Distributed execution is
-# delegated to Hugging Face Jobs (see examples/annotation/run_hf_job.py).
+# delegated to Hugging Face Jobs (see examples/annotations/run_hf_job.py).
 annotations = [
     "lerobot[dataset]",
     "lerobot[transformers-dep]",

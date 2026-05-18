@@ -32,10 +32,20 @@ The client speaks one method, :meth:`VlmClient.generate_json`, which:
 
 from __future__ import annotations
 
+import atexit
+import base64
+import io
 import json
 import os
+import shlex
+import signal
+import subprocess
+import sys
 import threading
+import time
+import urllib.request
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -212,10 +222,8 @@ def _make_vllm_client(config: VlmConfig) -> VlmClient:
     # as CUDNN_STATUS_NOT_INITIALIZED in Qwen-VL vision-tower patch
     # embedders. Setting LEROBOT_DISABLE_CUDNN=1 forces native PyTorch
     # convolution kernels — slower but functional.
-    import os as _os  # noqa: PLC0415
-
-    if _os.environ.get("LEROBOT_DISABLE_CUDNN", "").lower() in {"1", "true", "yes"}:
-        import torch as _torch  # noqa: PLC0415
+    if os.environ.get("LEROBOT_DISABLE_CUDNN", "").lower() in {"1", "true", "yes"}:
+        import torch as _torch  # noqa: PLC0415  - optional GPU dep, deferred
 
         _torch.backends.cudnn.enabled = False
     llm_kwargs: dict[str, Any] = {
@@ -259,9 +267,7 @@ def _make_transformers_client(config: VlmConfig) -> VlmClient:
             "for VL models."
         )
     processor = AutoProcessor.from_pretrained(config.model_id, trust_remote_code=config.trust_remote_code)
-    import os as _os  # noqa: PLC0415
-
-    use_accelerate = _os.environ.get("LEROBOT_TRANSFORMERS_DEVICE_MAP", "manual") != "manual"
+    use_accelerate = os.environ.get("LEROBOT_TRANSFORMERS_DEVICE_MAP", "manual") != "manual"
     # ``device_map='auto'`` triggers a known std::bad_alloc on the Qwen3-VL
     # post-load dispatch path (the alloc fails in accelerate's hook setup
     # even with TBs of host RAM). Default to manual: load on CPU with
@@ -276,7 +282,7 @@ def _make_transformers_client(config: VlmConfig) -> VlmClient:
             trust_remote_code=config.trust_remote_code,
         )
     else:
-        import torch as _torch  # noqa: PLC0415
+        import torch as _torch  # noqa: PLC0415  - optional GPU dep, deferred
 
         model = auto_cls.from_pretrained(
             config.model_id,
@@ -390,8 +396,6 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
         if len(batch) <= 1 or config.client_concurrency <= 1:
             return [_one_call(messages, max_tok, temp) for messages in batch]
         # Parallel fan-out — vllm batches these on the server side.
-        from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
-
         max_workers = min(config.client_concurrency, len(batch))
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = [pool.submit(_one_call, messages, max_tok, temp) for messages in batch]
@@ -411,15 +415,6 @@ def _spawn_parallel_inference_servers(config: VlmConfig) -> list[str]:
     Returns the list of ``api_base`` URLs the client should round-robin
     across.
     """
-    import atexit  # noqa: PLC0415
-    import os as _os  # noqa: PLC0415
-    import shlex  # noqa: PLC0415
-    import signal  # noqa: PLC0415
-    import subprocess  # noqa: PLC0415
-    import sys  # noqa: PLC0415
-    import threading  # noqa: PLC0415
-    import time  # noqa: PLC0415
-
     n = config.parallel_servers
     api_bases: list[str] = []
     procs: list[subprocess.Popen] = []
@@ -449,7 +444,7 @@ def _spawn_parallel_inference_servers(config: VlmConfig) -> list[str]:
     for i in range(n):
         port = config.serve_port + i
         gpu = i % num_gpus
-        env = _os.environ.copy()
+        env = os.environ.copy()
         env["CUDA_VISIBLE_DEVICES"] = str(gpu)
         cmd = base_cmd.replace("{port}", str(port)) if "{port}" in base_cmd else f"{base_cmd} --port {port}"
         api_base = f"http://localhost:{port}/v1"
@@ -522,8 +517,6 @@ def _spawn_parallel_inference_servers(config: VlmConfig) -> list[str]:
 
 def _server_is_up(api_base: str) -> bool:
     """Return True if ``api_base/models`` answers 200 within 2 seconds."""
-    import urllib.request  # noqa: PLC0415
-
     url = api_base.rstrip("/") + "/models"
     # ``api_base`` is the user-configured local-server URL we just spawned
     # or the user passed in via ``--vlm.api_base``; the bandit B310 warning
@@ -546,14 +539,6 @@ def _spawn_inference_server(config: VlmConfig) -> str:
 
     Returns the full ``api_base`` URL the OpenAI client should use.
     """
-    import atexit  # noqa: PLC0415
-    import shlex  # noqa: PLC0415
-    import signal  # noqa: PLC0415
-    import subprocess  # noqa: PLC0415
-    import sys  # noqa: PLC0415
-    import threading  # noqa: PLC0415
-    import time  # noqa: PLC0415
-
     cmd = config.serve_command
     if not cmd:
         cmd = (
@@ -695,8 +680,6 @@ def _to_openai_messages(
 
 def _file_to_data_url(path: str) -> str:
     """Read a local video file and return a base64 ``data:video/mp4`` URL."""
-    import base64  # noqa: PLC0415
-
     with open(path, "rb") as f:
         b64 = base64.b64encode(f.read()).decode("ascii")
     return f"data:video/mp4;base64,{b64}"
@@ -704,9 +687,6 @@ def _file_to_data_url(path: str) -> str:
 
 def _pil_to_data_url(image: Any) -> str:
     """Encode a PIL.Image as a base64 data URL."""
-    import base64  # noqa: PLC0415
-    import io  # noqa: PLC0415
-
     buf = io.BytesIO()
     image.save(buf, format="PNG")
     b64 = base64.b64encode(buf.getvalue()).decode("ascii")

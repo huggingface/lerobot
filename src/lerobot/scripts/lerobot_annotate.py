@@ -24,7 +24,7 @@ Example:
       --root=/path/to/dataset \\
       --vlm.model_id=Qwen/Qwen2.5-VL-7B-Instruct
 
-For distributed runs, see ``examples/annotation/run_hf_job.py``.
+For distributed runs, see ``examples/annotations/run_hf_job.py``.
 """
 
 import logging
@@ -65,27 +65,27 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
 
     vlm = make_vlm_client(cfg.vlm)
     frame_provider = make_frame_provider(root, camera_key=cfg.vlm.camera_key)
-    # Surface the resolved cameras up front so silent Module-3-no-op
-    # regressions are obvious in job output rather than discovered post-hoc
-    # by counting parquet rows.
+    # Surface the resolved cameras up front so a silent vqa-module no-op
+    # is obvious in job output rather than discovered post-hoc by counting
+    # parquet rows.
     cam_keys = list(getattr(frame_provider, "camera_keys", []) or [])
     logger.info(
         "annotate: frame_provider default camera=%r, all cameras=%s",
         getattr(frame_provider, "camera_key", None),
         cam_keys,
     )
-    if cfg.module_3.enabled and not cam_keys:
+    if cfg.vqa.enabled and not cam_keys:
         logger.warning(
-            "annotate: Module 3 (VQA) is enabled but no cameras were "
-            "resolved — Module 3 will produce zero VQA rows. Check "
+            "annotate: the vqa module is enabled but no cameras were "
+            "resolved — it will produce zero VQA rows. Check "
             "meta/info.json for observation.images.* features, or pass "
             "--vlm.camera_key=<key> to seed the cameras list."
         )
-    module_1 = PlanSubtasksMemoryModule(vlm=vlm, config=cfg.module_1, frame_provider=frame_provider)
-    module_2 = InterjectionsAndSpeechModule(
-        vlm=vlm, config=cfg.module_2, seed=cfg.seed, frame_provider=frame_provider
+    plan = PlanSubtasksMemoryModule(vlm=vlm, config=cfg.plan, frame_provider=frame_provider)
+    interjections = InterjectionsAndSpeechModule(
+        vlm=vlm, config=cfg.interjections, seed=cfg.seed, frame_provider=frame_provider
     )
-    module_3 = GeneralVqaModule(vlm=vlm, config=cfg.module_3, seed=cfg.seed, frame_provider=frame_provider)
+    vqa = GeneralVqaModule(vlm=vlm, config=cfg.vqa, seed=cfg.seed, frame_provider=frame_provider)
     writer = LanguageColumnsWriter()
     validator = StagingValidator(
         dataset_camera_keys=tuple(getattr(frame_provider, "camera_keys", []) or []) or None,
@@ -93,9 +93,9 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
 
     executor = Executor(
         config=cfg,
-        module_1=module_1,
-        module_2=module_2,
-        module_3=module_3,
+        plan=plan,
+        interjections=interjections,
+        vqa=vqa,
         writer=writer,
         validator=validator,
     )
@@ -113,14 +113,16 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
             logger.warning(w)
 
     if cfg.push_to_hub:
+        if cfg.repo_id is None:
+            raise ValueError("--push_to_hub requires --repo_id (the dataset repo to push to).")
         _push_to_hub(root, cfg)
 
 
 def _push_to_hub(root: Path, cfg: AnnotationPipelineConfig) -> None:
-    """Upload the annotated dataset directory to the Hugging Face Hub."""
+    """Upload the annotated dataset directory back to ``cfg.repo_id`` on the Hub."""
     from huggingface_hub import HfApi  # noqa: PLC0415
 
-    repo_id = cfg.push_to_hub
+    repo_id = cfg.repo_id
     commit_message = cfg.push_commit_message or "Add steerable annotations (lerobot-annotate)"
     api = HfApi()
     print(f"[lerobot-annotate] creating/locating dataset repo {repo_id}...", flush=True)

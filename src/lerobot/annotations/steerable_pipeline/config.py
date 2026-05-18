@@ -22,12 +22,12 @@ from typing import Any
 
 
 @dataclass
-class Module1Config:
-    """Module 1: plan + subtasks + memory + task augmentation.
+class PlanConfig:
+    """``plan`` module: plan + subtasks + memory + task augmentation.
 
-    Module 1 attaches the whole episode as one Qwen-VL video block;
-    ``max_video_frames`` only caps the frames packed in (a model-capacity
-    bound, not an annotation-logic knob).
+    The ``plan`` module attaches the whole episode as one Qwen-VL video
+    block; ``max_video_frames`` only caps the frames packed in (a
+    model-capacity bound, not an annotation-logic knob).
     """
 
     enabled: bool = True
@@ -39,8 +39,8 @@ class Module1Config:
     # When to derive the task from the video instead of using
     # ``record.episode_task``: ``off``, ``if_short`` (short / placeholder /
     # missing canonical task), or ``always``. The derived task replaces the
-    # canonical one for every Module-1 prompt; ``meta/tasks.parquet`` is
-    # never modified.
+    # canonical one for every ``plan``-module prompt; ``meta/tasks.parquet``
+    # is never modified.
     derive_task_from_video: str = "if_short"
     derive_task_min_words: int = 3
 
@@ -51,21 +51,22 @@ class Module1Config:
     min_subtask_seconds: float = 1.5
     plan_max_steps: int = 8
 
-    # When True (and backend supports it, e.g. ``openai``), Module 1 sends a
-    # ``video_url`` block pointing at a per-episode mp4 subclip and lets the
-    # server sample frames at ``use_video_url_fps``.
+    # When True (and backend supports it, e.g. ``openai``), the ``plan``
+    # module sends a ``video_url`` block pointing at a per-episode mp4
+    # subclip and lets the server sample frames at ``use_video_url_fps``.
     use_video_url: bool = False
     use_video_url_fps: float = 1.0
 
 
 @dataclass
-class Module2Config:
-    """Module 2: interjections + paired speech."""
+class InterjectionsConfig:
+    """``interjections`` module: interjections + paired speech."""
 
     enabled: bool = True
 
     # Each interjection emits a paired ``(interjection, speech)`` event row
-    # and triggers a ``plan`` refresh at the same timestamp via Module 1.
+    # and triggers a ``plan`` refresh at the same timestamp via the
+    # ``plan`` module.
     max_interjections_per_episode: int = 3
     interjection_min_t: float = 2.0
 
@@ -77,8 +78,8 @@ class Module2Config:
 
 
 @dataclass
-class Module3Config:
-    """Module 3: general VQA."""
+class VqaConfig:
+    """``vqa`` module: general VQA."""
 
     enabled: bool = True
     vqa_emission_hz: float = 1.0
@@ -161,6 +162,8 @@ class AnnotationPipelineConfig:
     revisions of the same dataset live in separate copies.
     """
 
+    # Hub dataset id. Used as the download source when ``root`` is unset,
+    # and as the destination repo when ``push_to_hub`` is enabled.
     repo_id: str | None = None
     root: Path | None = None
 
@@ -169,9 +172,9 @@ class AnnotationPipelineConfig:
 
     seed: int = 1729
 
-    module_1: Module1Config = field(default_factory=Module1Config)
-    module_2: Module2Config = field(default_factory=Module2Config)
-    module_3: Module3Config = field(default_factory=Module3Config)
+    plan: PlanConfig = field(default_factory=PlanConfig)
+    interjections: InterjectionsConfig = field(default_factory=InterjectionsConfig)
+    vqa: VqaConfig = field(default_factory=VqaConfig)
 
     vlm: VlmConfig = field(default_factory=VlmConfig)
     executor: ExecutorConfig = field(default_factory=ExecutorConfig)
@@ -179,8 +182,9 @@ class AnnotationPipelineConfig:
     skip_validation: bool = False
     only_episodes: tuple[int, ...] | None = None
 
-    # Upload the annotated dataset to the Hugging Face Hub when set.
-    push_to_hub: str | None = None
+    # When True, upload the annotated dataset back to ``repo_id`` on the
+    # Hugging Face Hub. ``repo_id`` must be set for this to take effect.
+    push_to_hub: bool = False
     push_private: bool = False
     push_commit_message: str | None = None
 

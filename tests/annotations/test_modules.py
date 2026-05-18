@@ -23,9 +23,9 @@ from pathlib import Path
 from typing import Any
 
 from lerobot.annotations.steerable_pipeline.config import (
-    Module1Config,
-    Module2Config,
-    Module3Config,
+    InterjectionsConfig,
+    PlanConfig,
+    VqaConfig,
 )
 from lerobot.annotations.steerable_pipeline.modules import (
     GeneralVqaModule,
@@ -84,11 +84,11 @@ def test_module1_plan_memory_subtask_smoke(fixture_dataset_root: Path, tmp_path:
             "Update the memory": {"memory": "wiped the counter once"},
         },
     )
-    module = PlanSubtasksMemoryModule(vlm=vlm, config=Module1Config())
+    module = PlanSubtasksMemoryModule(vlm=vlm, config=PlanConfig())
     record = next(iter_episodes(fixture_dataset_root))
     staging = EpisodeStaging(tmp_path / "stage", record.episode_index)
     module.run_episode(record, staging)
-    rows = staging.read("module_1")
+    rows = staging.read("plan")
 
     styles = {r["style"] for r in rows}
     assert {"subtask", "plan", "memory"}.issubset(styles)
@@ -108,12 +108,12 @@ def test_module2_at_t0_emits_speech_only_no_interjection(fixture_dataset_root: P
     )
     module = InterjectionsAndSpeechModule(
         vlm=vlm,
-        config=Module2Config(max_interjections_per_episode=0),
+        config=InterjectionsConfig(max_interjections_per_episode=0),
     )
     record = next(iter_episodes(fixture_dataset_root))
     staging = EpisodeStaging(tmp_path / "stage", record.episode_index)
     module.run_episode(record, staging)
-    rows = staging.read("module_2")
+    rows = staging.read("interjections")
     assert len(rows) == 1
     only = rows[0]
     assert only["role"] == "assistant"
@@ -151,7 +151,7 @@ def test_module2_mid_episode_emits_paired_interjection_and_speech(
     )
     module = InterjectionsAndSpeechModule(
         vlm=vlm,
-        config=Module2Config(max_interjections_per_episode=1, interjection_min_t=0.2),
+        config=InterjectionsConfig(max_interjections_per_episode=1, interjection_min_t=0.2),
         seed=7,
     )
     record = next(iter_episodes(fixture_dataset_root))
@@ -161,7 +161,7 @@ def test_module2_mid_episode_emits_paired_interjection_and_speech(
     # production executor guarantees Module 1 ran first).
     boundary_ts = float(record.frame_timestamps[len(record.frame_timestamps) // 2])
     staging.write(
-        "module_1",
+        "plan",
         [
             {
                 "role": "assistant",
@@ -180,7 +180,7 @@ def test_module2_mid_episode_emits_paired_interjection_and_speech(
         ],
     )
     module.run_episode(record, staging)
-    rows = staging.read("module_2")
+    rows = staging.read("interjections")
 
     interjections = [r for r in rows if r["style"] == "interjection"]
     speeches = [r for r in rows if r["style"] is None and r["role"] == "assistant"]
@@ -198,14 +198,14 @@ def test_module3_vqa_unique_per_frame_and_camera(single_episode_root: Path, tmp_
     vlm = make_canned_responder({"frame-grounded visual question": payload})
     module = GeneralVqaModule(
         vlm=vlm,
-        config=Module3Config(vqa_emission_hz=1.0, K=3),
+        config=VqaConfig(vqa_emission_hz=1.0, K=3),
         seed=1,
         frame_provider=_StubFrameProvider(cameras=("observation.images.top", "observation.images.wrist")),
     )
     record = next(iter_episodes(single_episode_root))
     staging = EpisodeStaging(tmp_path / "stage", record.episode_index)
     module.run_episode(record, staging)
-    rows = staging.read("module_3")
+    rows = staging.read("vqa")
     # every vqa row must carry a camera tag and one of the configured cameras
     for r in rows:
         assert r["style"] == "vqa"
@@ -257,7 +257,7 @@ def test_module1_attaches_video_block_to_subtask_prompt(fixture_dataset_root: Pa
         # call is the subtask one — keeps the assertions below focused on
         # ``_generate_subtasks`` rather than fighting the order of unrelated
         # text-only Module-1 sub-prompts.
-        config=Module1Config(max_video_frames=5, frames_per_second=10.0, n_task_rephrasings=0),
+        config=PlanConfig(max_video_frames=5, frames_per_second=10.0, n_task_rephrasings=0),
         frame_provider=provider,
     )
     record = next(iter_episodes(fixture_dataset_root))
@@ -304,7 +304,7 @@ def test_module3_attaches_frame_image_block_to_prompt(single_episode_root: Path,
     provider = _StubFrameProvider()
     module = GeneralVqaModule(
         vlm=_spy_responder(captured, payload),
-        config=Module3Config(vqa_emission_hz=1.0, K=1),
+        config=VqaConfig(vqa_emission_hz=1.0, K=1),
         seed=0,
         frame_provider=provider,
     )
@@ -336,14 +336,14 @@ def test_module3_assistant_content_is_valid_json(single_episode_root: Path, tmp_
     vlm = make_canned_responder({"frame-grounded visual question": payload})
     module = GeneralVqaModule(
         vlm=vlm,
-        config=Module3Config(vqa_emission_hz=1.0, K=2),
+        config=VqaConfig(vqa_emission_hz=1.0, K=2),
         seed=2,
         frame_provider=_StubFrameProvider(),
     )
     record = next(iter_episodes(single_episode_root))
     staging = EpisodeStaging(tmp_path / "stage", record.episode_index)
     module.run_episode(record, staging)
-    rows = staging.read("module_3")
+    rows = staging.read("vqa")
     for row in rows:
         if row["role"] == "assistant" and row["style"] == "vqa":
             decoded = json.loads(row["content"])

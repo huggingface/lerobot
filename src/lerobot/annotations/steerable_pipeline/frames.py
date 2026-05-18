@@ -49,7 +49,7 @@ class FrameProvider(Protocol):
 
         Empty list if the camera is unavailable. ``camera_key=None`` falls back
         to the provider's default camera so existing single-camera callers
-        (Module 1, Module 2) keep working unchanged.
+        (the ``plan`` and ``interjections`` modules) keep working unchanged.
         """
 
     def video_for_episode(
@@ -100,10 +100,11 @@ def null_provider() -> FrameProvider:
 class VideoFrameProvider:
     """Decodes frames from the dataset's ``observation.images.*`` streams.
 
-    By default the *first* camera key is used for Module 1 (subtask
-    decomposition) and Module 2 (interjection scenarios) — those prompts care
-    about *what is happening*, not which angle. Module 3 (VQA) instead
-    iterates over every camera in :attr:`camera_keys` so each frame's
+    By default the *first* camera key is used for the ``plan`` module
+    (subtask decomposition) and the ``interjections`` module (interjection
+    scenarios) — those prompts care about *what is happening*, not which
+    angle. The ``vqa`` module instead iterates over every camera in
+    :attr:`camera_keys` so each frame's
     grounded answer (bbox/keypoint/...) is tagged with the camera it was
     grounded against.
 
@@ -112,7 +113,7 @@ class VideoFrameProvider:
     ``video_for_episode`` to read a non-default stream.
 
     Caches up to ``cache_size`` decoded frames per process to keep
-    co-timestamped Module 2 + Module 1 plan-update calls cheap.
+    co-timestamped ``interjections`` + ``plan`` plan-update calls cheap.
     """
 
     root: Path
@@ -122,7 +123,7 @@ class VideoFrameProvider:
     _meta: Any = field(default=None, init=False, repr=False)
     _cache: dict = field(default_factory=dict, init=False, repr=False)
     _camera_keys: list[str] = field(default_factory=list, init=False, repr=False)
-    # Pipeline runs Module 1/2/3 phases under a ThreadPoolExecutor (see
+    # Pipeline runs the three module phases under a ThreadPoolExecutor (see
     # ``ExecutorConfig.episode_parallelism``); guard the dict cache and the
     # one-shot warn flag against concurrent updates from worker threads.
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
@@ -131,11 +132,10 @@ class VideoFrameProvider:
         from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata  # noqa: PLC0415
 
         self._meta = LeRobotDatasetMetadata(repo_id="local", root=self.root)
-        # ``camera_keys`` covers both image- and video-stored cameras
-        # (``video_keys`` is video-only). Some datasets declare cameras with
-        # ``dtype=image``, which would otherwise look empty here and silently
-        # disable Module 3 even though the videos are there.
-        keys = list(getattr(self._meta, "camera_keys", None) or self._meta.video_keys or [])
+        # ``camera_keys`` covers both image- and video-stored cameras and is
+        # always defined on the metadata (``[]`` in the worst case), so it is
+        # the single source we need here.
+        keys = list(self._meta.camera_keys)
         # Last-resort fallback: if metadata didn't surface anything but the
         # caller explicitly named a camera (``--vlm.camera_key=...``), trust
         # them — the key is by definition known to exist on the dataset.
@@ -275,10 +275,10 @@ class VideoFrameProvider:
         try:
             return _decode_pyav_direct(video_path, shifted, self.tolerance_s)
         except Exception as exc:
-            # Log loudly the first time decoding fails so silent
-            # Module-3-no-op (every prompt skipped because frames_at returned
-            # []) is debuggable from the job log instead of post-hoc parquet
-            # inspection. Subsequent failures stay quiet.
+            # Log loudly the first time decoding fails so a silent
+            # vqa-module no-op (every prompt skipped because frames_at
+            # returned []) is debuggable from the job log instead of
+            # post-hoc parquet inspection. Subsequent failures stay quiet.
             with self._lock:
                 already_warned = getattr(self, "_warned_decode_fail", False)
                 if not already_warned:

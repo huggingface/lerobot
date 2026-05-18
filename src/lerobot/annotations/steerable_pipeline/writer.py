@@ -29,7 +29,7 @@ For every episode the writer:
 
 The writer does NOT add a dataset-level ``tools`` column. Tool *calls* are
 emitted per-row via the existing ``tool_calls`` field on the v3.1 row
-struct (PR 1) for every speech atom. The tool *schema* (the description
+struct for every speech atom. The tool *schema* (the description
 of the ``say`` function and its parameters) is a fixed code constant —
 ``SAY_TOOL_SCHEMA`` below — and downstream chat-template consumers import
 it directly rather than reading a redundant per-row column.
@@ -69,7 +69,7 @@ from .staging import EpisodeStaging
 logger = logging.getLogger(__name__)
 
 
-# Tool schema constants moved to lerobot.datasets.language in PR 1 — single
+# Tool schema constants live in lerobot.datasets.language — single
 # source of truth. Re-exported here so existing imports
 # (``from lerobot.annotations.steerable_pipeline.writer import SAY_TOOL_SCHEMA``)
 # keep working.
@@ -309,8 +309,8 @@ class LanguageColumnsWriter:
         # uses `pa.json_()` for the `tool_calls` element type, which
         # `pa.array(..., type=...)` cannot materialize from Python lists on
         # current pyarrow versions. The inferred schema round-trips through
-        # parquet and `LeRobotDataset` correctly — see PR 1's
-        # `tests/datasets/test_language.py` which exercises the same flow.
+        # parquet and `LeRobotDataset` correctly — `tests/datasets/test_language.py`
+        # exercises the same flow.
         persistent_arr = pa.array(persistent)
         events_arr = pa.array(events)
 

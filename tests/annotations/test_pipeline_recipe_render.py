@@ -23,9 +23,9 @@ import pyarrow.parquet as pq
 
 from lerobot.annotations.steerable_pipeline.config import (
     AnnotationPipelineConfig,
-    Module1Config,
-    Module2Config,
-    Module3Config,
+    InterjectionsConfig,
+    PlanConfig,
+    VqaConfig,
 )
 from lerobot.annotations.steerable_pipeline.executor import Executor
 from lerobot.annotations.steerable_pipeline.modules import (
@@ -115,15 +115,15 @@ def _build_executor() -> Executor:
         },
     )
     config = AnnotationPipelineConfig(
-        module_1=Module1Config(),
-        module_2=Module2Config(max_interjections_per_episode=1, interjection_min_t=0.5),
-        module_3=Module3Config(vqa_emission_hz=1.0, K=2),
+        plan=PlanConfig(),
+        interjections=InterjectionsConfig(max_interjections_per_episode=1, interjection_min_t=0.5),
+        vqa=VqaConfig(vqa_emission_hz=1.0, K=2),
     )
     return Executor(
         config=config,
-        module_1=PlanSubtasksMemoryModule(vlm=vlm, config=config.module_1),
-        module_2=InterjectionsAndSpeechModule(vlm=vlm, config=config.module_2, seed=config.seed),
-        module_3=GeneralVqaModule(vlm=vlm, config=config.module_3, seed=config.seed),
+        plan=PlanSubtasksMemoryModule(vlm=vlm, config=config.plan),
+        interjections=InterjectionsAndSpeechModule(vlm=vlm, config=config.interjections, seed=config.seed),
+        vqa=GeneralVqaModule(vlm=vlm, config=config.vqa, seed=config.seed),
         writer=LanguageColumnsWriter(),
         validator=StagingValidator(),
     )

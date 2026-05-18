@@ -17,19 +17,20 @@
 
 The executor plans **six phases** in the dependency order from the plan:
 
-    phase 1: Module 1 (plan + subtasks + memory)
-    phase 2: Module 2 (interjections + speech)
-    phase 3: Module 1 plan-update pass — re-runs plan emission at every
+    phase 1: ``plan`` module (plan + subtasks + memory)
+    phase 2: ``interjections`` module (interjections + speech)
+    phase 3: ``plan`` plan-update pass — re-runs plan emission at every
              interjection timestamp produced by phase 2
-    phase 4: Module 3 (VQA)
+    phase 4: ``vqa`` module (VQA)
     phase 5: validator
     phase 6: writer
 
-Phase 3 is why Module 1 must be re-entered after Module 2 — to refresh
-``plan`` rows at interjection timestamps.
+Phase 3 is why the ``plan`` module must be re-entered after the
+``interjections`` module — to refresh ``plan`` rows at interjection
+timestamps.
 
 Distributed execution is provided by Hugging Face Jobs (see
-``examples/annotation/run_hf_job.py``); the runner inside the job
+``examples/annotations/run_hf_job.py``); the runner inside the job
 invokes ``lerobot-annotate`` which uses this in-process executor.
 Episode-level concurrency is controlled by
 ``ExecutorConfig.episode_parallelism``.
@@ -38,6 +39,8 @@ Episode-level concurrency is controlled by
 from __future__ import annotations
 
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -71,7 +74,7 @@ class PipelineRunSummary:
 
 @dataclass
 class Executor:
-    """Run all four phases over a dataset root in-process.
+    """Run all six phases over a dataset root in-process.
 
     Episode-level concurrency comes from ``ExecutorConfig.episode_parallelism``
     (a thread pool); cluster-level concurrency comes from running this
@@ -80,9 +83,9 @@ class Executor:
     """
 
     config: AnnotationPipelineConfig
-    module_1: Any  # PlanSubtasksMemoryModule
-    module_2: Any  # InterjectionsAndSpeechModule
-    module_3: Any  # GeneralVqaModule
+    plan: Any  # PlanSubtasksMemoryModule
+    interjections: Any  # InterjectionsAndSpeechModule
+    vqa: Any  # GeneralVqaModule
     writer: LanguageColumnsWriter
     validator: StagingValidator
 
@@ -99,16 +102,16 @@ class Executor:
 
         phases: list[PhaseResult] = []
 
-        # Phase 1: Module 1 (plan + subtasks + memory)
-        phases.append(self._run_module_phase("module_1", records, staging_dir, self.module_1))
-        # Phase 2: Module 2 (interjections + speech). Module 2 reads
-        # Module 1's subtask rows from the same staging tree to ground
-        # the interjection prompt in the correct local subtask.
-        phases.append(self._run_module_phase("module_2", records, staging_dir, self.module_2))
-        # Phase 3: Module 1 plan-update pass at interjection timestamps.
+        # Phase 1: ``plan`` module (plan + subtasks + memory)
+        phases.append(self._run_module_phase("plan", records, staging_dir, self.plan))
+        # Phase 2: ``interjections`` module (interjections + speech). It
+        # reads the ``plan`` module's subtask rows from the same staging
+        # tree to ground the interjection prompt in the correct local subtask.
+        phases.append(self._run_module_phase("interjections", records, staging_dir, self.interjections))
+        # Phase 3: ``plan`` plan-update pass at interjection timestamps.
         phases.append(self._run_plan_update_phase(records, staging_dir))
-        # Phase 4: Module 3 (VQA)
-        phases.append(self._run_module_phase("module_3", records, staging_dir, self.module_3))
+        # Phase 4: ``vqa`` module (VQA)
+        phases.append(self._run_module_phase("vqa", records, staging_dir, self.vqa))
 
         print("[annotate] running validator...", flush=True)
         report = self.validator.validate(records, staging_dir)
@@ -135,50 +138,37 @@ class Executor:
         those columns too, otherwise non-streaming ``LeRobotDataset`` loads
         cast against the old schema and fail on the extra parquet columns.
         """
-        import json  # noqa: PLC0415
-
+        from lerobot.datasets.io_utils import load_info, write_info  # noqa: PLC0415
         from lerobot.datasets.language import SAY_TOOL_SCHEMA, language_feature_info  # noqa: PLC0415
 
         info_path = root / "meta" / "info.json"
         if not info_path.exists():
             return
         try:
-            info = json.loads(info_path.read_text())
+            info = load_info(root)
         except Exception as exc:  # noqa: BLE001
             print(f"[annotate] could not read {info_path}: {exc}", flush=True)
             return
 
         changed = False
 
-        features = info.get("features")
-        if not isinstance(features, dict):
-            features = {}
-        merged_features = {**features, **language_feature_info()}
-        if merged_features != features:
-            info["features"] = merged_features
+        merged_features = {**info.features, **language_feature_info()}
+        if merged_features != info.features:
+            info.features = merged_features
             changed = True
 
-        existing = info.get("tools")
-        if not isinstance(existing, list):
-            existing = []
+        existing = info.tools or []
         names = {(t.get("function") or {}).get("name") for t in existing if isinstance(t, dict)}
-        merged = list(existing)
         if SAY_TOOL_SCHEMA["function"]["name"] not in names:
-            merged.append(SAY_TOOL_SCHEMA)
-        if merged != existing:
-            info["tools"] = merged
+            info.tools = [*existing, SAY_TOOL_SCHEMA]
             changed = True
 
         if changed:
-            # Atomic replace — info.json is load-bearing for dataset
-            # metadata, so a crash mid-write would brick the dataset.
-            tmp_info = info_path.with_suffix(info_path.suffix + ".tmp")
-            tmp_info.write_text(json.dumps(info, indent=2))
-            tmp_info.replace(info_path)
+            write_info(info, root)
             print(
                 "[annotate] meta/info.json: "
                 f"language_features={list(language_feature_info())}, "
-                f"tools={[t['function']['name'] for t in merged]}",
+                f"tools={[t['function']['name'] for t in (info.tools or [])]}",
                 flush=True,
             )
 
@@ -189,9 +179,6 @@ class Executor:
         staging_dir: Path,
         module: Any,
     ) -> PhaseResult:
-        import time as _time  # noqa: PLC0415
-        from concurrent.futures import ThreadPoolExecutor, as_completed  # noqa: PLC0415
-
         if not module.enabled:
             print(f"[annotate] phase={name} skipped (module disabled)", flush=True)
             return PhaseResult(name=name, episodes_processed=0, episodes_skipped=len(records))
@@ -201,14 +188,14 @@ class Executor:
             f"[annotate] phase={name} starting on {n} episode(s) (parallelism={parallelism})",
             flush=True,
         )
-        t0 = _time.time()
+        t0 = time.time()
 
         def _do(idx_record: tuple[int, EpisodeRecord]) -> tuple[int, int, float]:
             i, record = idx_record
-            ep_start = _time.time()
+            ep_start = time.time()
             staging = EpisodeStaging(staging_dir, record.episode_index)
             module.run_episode(record, staging)
-            return i, record.episode_index, _time.time() - ep_start
+            return i, record.episode_index, time.time() - ep_start
 
         processed = 0
         if parallelism == 1:
@@ -230,38 +217,39 @@ class Executor:
                         f"(idx={ep_idx}, submit_order={i}) done in {elapsed:.1f}s",
                         flush=True,
                     )
-        total = _time.time() - t0
+        total = time.time() - t0
         print(f"[annotate] phase={name} complete: {processed}/{n} in {total:.1f}s", flush=True)
         return PhaseResult(name=name, episodes_processed=processed, episodes_skipped=0)
 
     def _run_plan_update_phase(  # noqa: PLR0915
         self, records: list[EpisodeRecord], staging_dir: Path
     ) -> PhaseResult:
-        """Re-emit ``plan`` rows at each interjection timestamp from Module 2.
+        """Re-emit ``plan`` rows at each timestamp the ``interjections`` module produced.
 
-        Module 1 owns the prompt; Module 2 produced the timestamps. This phase
-        therefore calls back into Module 1 with the interjection timestamps so
-        Module 1's existing prompt path is reused.
+        The ``plan`` module owns the prompt; the ``interjections`` module
+        produced the timestamps. This phase therefore calls back into the
+        ``plan`` module with the interjection timestamps so its existing
+        prompt path is reused.
         """
-        if not self.module_1.enabled or not self.module_2.enabled:
+        if not self.plan.enabled or not self.interjections.enabled:
             return PhaseResult(
-                name="module_1_plan_update", episodes_processed=0, episodes_skipped=len(records)
+                name="plan_update", episodes_processed=0, episodes_skipped=len(records)
             )
         processed = 0
         for record in records:
             staging = EpisodeStaging(staging_dir, record.episode_index)
             interjection_rows = [
-                row for row in staging.read("module_2") if row.get("style") == "interjection"
+                row for row in staging.read("interjections") if row.get("style") == "interjection"
             ]
             interjection_times = [float(row["timestamp"]) for row in interjection_rows]
             interjection_texts = [str(row.get("content") or "") for row in interjection_rows]
             if interjection_times:
-                self.module_1.run_plan_updates(record, staging, interjection_times, interjection_texts)
+                self.plan.run_plan_updates(record, staging, interjection_times, interjection_texts)
                 processed += 1
         # Episodes without any interjections are skipped (no plan refresh
         # needed); count them so the summary's processed+skipped == total.
         return PhaseResult(
-            name="module_1_plan_update",
+            name="plan_update",
             episodes_processed=processed,
             episodes_skipped=len(records) - processed,
         )

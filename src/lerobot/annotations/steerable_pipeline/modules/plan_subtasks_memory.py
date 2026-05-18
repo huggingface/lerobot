@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Module 1: subtask decomposition + plan + memory (PERSISTENT styles)."""
+"""``plan`` module: subtask decomposition + plan + memory (PERSISTENT styles)."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ..config import Module1Config
+from ..config import PlanConfig
 from ..frames import (
     FrameProvider,
     VideoFrameProvider,
@@ -46,13 +46,13 @@ class PlanSubtasksMemoryModule:
       (snapped to an exact frame).
     - ``plan`` rows: emitted at ``t=0``; refreshed at every interjection
       timestamp via :meth:`run_plan_updates` (called by the executor after
-      Module 2 completes).
+      the ``interjections`` module completes).
     - ``memory`` rows: emitted at each subtask boundary (= subtask start
       timestamp from the second subtask onward).
     """
 
     vlm: VlmClient
-    config: Module1Config
+    config: PlanConfig
     frame_provider: FrameProvider = field(default_factory=null_provider)
 
     @property
@@ -61,14 +61,14 @@ class PlanSubtasksMemoryModule:
 
     def run_episode(self, record: EpisodeRecord, staging: EpisodeStaging) -> None:
         rows: list[dict[str, Any]] = []
-        # Resolve the task that drives every other Module-1 prompt. May be
-        # the canonical ``record.episode_task`` (default), or a fresh
+        # Resolve the task that drives every other ``plan``-module prompt.
+        # May be the canonical ``record.episode_task`` (default), or a fresh
         # description derived from the video when the canonical task is
-        # empty / placeholder / forced-off (see Module1Config.derive_task_*).
+        # empty / placeholder / forced-off (see PlanConfig.derive_task_*).
         effective_task = self._resolve_effective_task(record)
         # ``task_aug`` rows at t=0 (role=user), one per rephrasing — the
-        # PR 1 renderer rotates ``${task}`` deterministically through them
-        # so the policy sees diverse phrasings during training.
+        # message renderer rotates ``${task}`` deterministically through
+        # them so the policy sees diverse phrasings during training.
         t0 = float(record.frame_timestamps[0]) if record.frame_timestamps else 0.0
         if self.config.n_task_rephrasings > 0 and effective_task:
             rephrasings = self._generate_task_rephrasings(effective_task, n=self.config.n_task_rephrasings)
@@ -134,7 +134,7 @@ class PlanSubtasksMemoryModule:
                     }
                 )
                 prior_memory = mem_text
-        staging.write("module_1", rows)
+        staging.write("plan", rows)
 
     # ------------------------------------------------------------------
     # Task derivation + rephrasings
@@ -156,7 +156,7 @@ class PlanSubtasksMemoryModule:
     )
 
     def _resolve_effective_task(self, record: EpisodeRecord) -> str:
-        """Decide which task string drives Module 1 for this episode.
+        """Decide which task string drives the ``plan`` module for this episode.
 
         Returns the user-supplied ``record.episode_task`` unless
         ``derive_task_from_video`` says otherwise (see config docstring).
@@ -182,7 +182,7 @@ class PlanSubtasksMemoryModule:
         return task.lower() in self._PLACEHOLDER_TASKS
 
     # ------------------------------------------------------------------
-    # VLM call helpers (factored out: every Module-1 prompt below follows
+    # VLM call helpers (factored out: every ``plan``-module prompt below follows
     # the same "build messages → single VLM call → pull a named field"
     # shape, only differing in field name + post-processing).
     # ------------------------------------------------------------------
@@ -258,7 +258,7 @@ class PlanSubtasksMemoryModule:
         (the previous version told the model "an interjection happened"
         without telling it what the user said).
         """
-        existing = staging.read("module_1")
+        existing = staging.read("plan")
         # Pass the episode's last frame timestamp so the final subtask
         # span is closed (otherwise its ``end`` equals its ``start``,
         # zero duration, and the "current subtask at refresh_t" lookup
@@ -289,7 +289,7 @@ class PlanSubtasksMemoryModule:
                         "tool_calls": None,
                     }
                 )
-        staging.write("module_1", new_rows)
+        staging.write("plan", new_rows)
 
     def _generate_subtasks(self, record: EpisodeRecord, *, task: str | None = None) -> list[dict[str, Any]]:
         if record.row_count == 0 or not record.frame_timestamps:

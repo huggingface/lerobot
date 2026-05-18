@@ -34,7 +34,7 @@ def _validate(root: Path, staging_dir: Path):
 def test_validator_catches_misaligned_timestamps(fixture_dataset_root: Path, tmp_path: Path) -> None:
     staging_dir = tmp_path / "stage"
     EpisodeStaging(staging_dir, 0).write(
-        "module_3",
+        "vqa",
         [
             {
                 "role": "assistant",
@@ -53,7 +53,7 @@ def test_validator_catches_misaligned_timestamps(fixture_dataset_root: Path, tmp
 def test_validator_catches_orphan_speech(fixture_dataset_root: Path, tmp_path: Path) -> None:
     staging_dir = tmp_path / "stage"
     EpisodeStaging(staging_dir, 0).write(
-        "module_2",
+        "interjections",
         [
             speech_atom(0.0, "Got it."),
             # interjection at 0.3s with NO paired speech
@@ -74,7 +74,7 @@ def test_validator_catches_orphan_speech(fixture_dataset_root: Path, tmp_path: P
 def test_validator_catches_inconsistent_plan_memory(fixture_dataset_root: Path, tmp_path: Path) -> None:
     staging_dir = tmp_path / "stage"
     EpisodeStaging(staging_dir, 0).write(
-        "module_1",
+        "plan",
         [
             {
                 "role": "assistant",
@@ -93,7 +93,7 @@ def test_validator_catches_inconsistent_plan_memory(fixture_dataset_root: Path, 
         ],
     )
     EpisodeStaging(staging_dir, 0).write(
-        "module_2",
+        "interjections",
         [
             speech_atom(0.0, "Got it."),
             speech_atom(0.4, "Replanning."),
@@ -115,11 +115,11 @@ def test_validator_catches_inconsistent_plan_memory(fixture_dataset_root: Path, 
 def test_validator_catches_wrong_column(fixture_dataset_root: Path, tmp_path: Path) -> None:
     staging_dir = tmp_path / "stage"
     EpisodeStaging(staging_dir, 0).write(
-        "module_1",
+        "plan",
         [
             {"role": "user", "content": "where?", "style": "vqa", "timestamp": 0.0, "tool_calls": None},
         ],
     )
     report = _validate(fixture_dataset_root, staging_dir)
     assert not report.ok
-    assert any("module_1 emitted style 'vqa'" in e or "must be persistent" in e for e in report.errors)
+    assert any("plan emitted style 'vqa'" in e or "must be persistent" in e for e in report.errors)

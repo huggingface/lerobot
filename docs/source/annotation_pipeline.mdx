@@ -10,15 +10,15 @@
 Three modules write into a per-episode staging tree, then a single writer
 rewrites the data shards in place:
 
-| Style / atom                                | Column                | Module   |
-| ------------------------------------------- | --------------------- | -------- |
-| `subtask` (Pi0.7-style "how, not what")     | `language_persistent` | Module 1 |
-| `plan` (initial + refresh on interjection)  | `language_persistent` | Module 1 |
-| `memory` (MEM-style compression)            | `language_persistent` | Module 1 |
-| `task_aug` (rephrasings of canonical task)  | `language_persistent` | Module 1 |
-| `interjection`                              | `language_events`     | Module 2 |
-| speech tool-call atom (`style=null`, `say`) | `language_events`     | Module 2 |
-| `vqa` (user / assistant pair)               | `language_events`     | Module 3 |
+| Style / atom                                | Column                | Module         |
+| ------------------------------------------- | --------------------- | -------------- |
+| `subtask` (Pi0.7-style "how, not what")     | `language_persistent` | `plan`         |
+| `plan` (initial + refresh on interjection)  | `language_persistent` | `plan`         |
+| `memory` (MEM-style compression)            | `language_persistent` | `plan`         |
+| `task_aug` (rephrasings of canonical task)  | `language_persistent` | `plan`         |
+| `interjection`                              | `language_events`     | `interjections`|
+| speech tool-call atom (`style=null`, `say`) | `language_events`     | `interjections`|
+| `vqa` (user / assistant pair)               | `language_events`     | `vqa`          |
 
 The writer does **not** add a `tools` column to the parquet — the tool
 catalog lives at `meta/info.json["tools"]` instead (see
@@ -45,20 +45,24 @@ uv run lerobot-annotate \
   --vlm.model_id=Qwen/Qwen2.5-VL-7B-Instruct
 ```
 
-The pipeline attaches actual camera footage to every Module 1/2/3 prompt
-by default, decoded from the dataset's first `observation.images.*`
-stream. Override with `--vlm.camera_key=observation.images.<name>` to
-pin a specific viewpoint. Datasets with no video tracks fall back to
-text-only prompts automatically.
+The pipeline attaches actual camera footage to every `plan` /
+`interjections` / `vqa` prompt by default, decoded from the dataset's
+first `observation.images.*` stream. Override with
+`--vlm.camera_key=observation.images.<name>` to pin a specific
+viewpoint. Datasets with no video tracks fall back to text-only prompts
+automatically.
 
-**Module 1 sees the whole episode as one video block.** Subtask
+**The `plan` module sees the whole episode as one video block.** Subtask
 decomposition gets a `{"type":"video", "video":[<frames>]}` block
 covering the entire demonstration; Qwen-VL pools temporally on its own
 and decides where to cut. There is no keyframe stride or count knob —
-`--module_1.max_video_frames` (default 128) only caps the frames packed
-into the video block as a model-capacity bound. Module 2 attaches a
-short window of frames around the interjection timestamp; Module 3
-attaches the exact emission frame to each VQA pair.
+`--plan.max_video_frames` (default 128) only caps the frames packed
+into the video block as a model-capacity bound. The `interjections`
+module attaches a short window of frames straddling the interjection
+timestamp. The `vqa` module grounds each VQA pair on a single frame —
+its `--vqa.K` knob sets how many consecutive frames each emission tick
+anchors, and every anchored frame gets its own VQA pair on that one
+frame (there is no per-pair frame window).
 
 ## Running on Hugging Face Jobs
 
@@ -67,15 +71,16 @@ Distributed annotation is delegated to
 ships a launcher script you copy and edit for your dataset:
 
 ```bash
-HF_TOKEN=hf_... uv run python examples/annotation/run_hf_job.py
+HF_TOKEN=hf_... uv run python examples/annotations/run_hf_job.py
 ```
 
-[`examples/annotation/run_hf_job.py`](https://github.com/huggingface/lerobot/blob/main/examples/annotation/run_hf_job.py)
+[`examples/annotations/run_hf_job.py`](https://github.com/huggingface/lerobot/blob/main/examples/annotations/run_hf_job.py)
 spawns one `h200x2` job that:
 
 1. installs the branch under test plus the annotation extras,
 2. boots two vllm servers (one per GPU) for the chosen model,
-3. runs Modules 1 / 2 / 3 across the dataset via `lerobot-annotate`,
+3. runs the `plan` / `interjections` / `vqa` modules across the dataset
+   via `lerobot-annotate`,
 4. uploads the annotated dataset to `--push_to_hub`.
 
 To target a different dataset, model, or hub repo, edit the `CMD` block
@@ -115,7 +120,8 @@ Each module writes its raw output to
 `<root>/.annotate_staging/episode_{N:06d}/<module>.jsonl`. That makes
 prompt iteration cheap — re-running one module overwrites only its own
 JSONL file before the writer composes the final parquet. Modules can be
-disabled via `--module_1.enabled=false` (and similarly for 2 and 3) to
+disabled via `--plan.enabled=false` (and likewise `--interjections.enabled`
+/ `--vqa.enabled`) to
 test them in isolation.
 
 ## Validation/report checks before final write
@@ -134,18 +140,18 @@ Errors abort the writer (`--skip_validation=true` overrides for debugging).
 
 ## Paper inspirations per module
 
-- **Module 1 — subtasks.** Hi Robot ([Shi 2025](https://arxiv.org/abs/2502.19417))
+- **`plan` module — subtasks.** Hi Robot ([Shi 2025](https://arxiv.org/abs/2502.19417))
   atom granularity ("pick up one piece of lettuce", "place bowl to box");
   Pi0.7 ([Physical Intelligence 2025](https://pi.website/pi07)) "how, not
   what" detail.
-- **Module 1 — memory.** MEM ([Torne 2026](https://arxiv.org/abs/2603.03596))
+- **`plan` module — memory.** MEM ([Torne 2026](https://arxiv.org/abs/2603.03596))
   compression directive: keep only minimal relevant information; functional
   outcomes preserved, specific attributes dropped.
-- **Module 2 — interjections.** Hi Robot scenario taxonomy: negative task,
+- **`interjections` module.** Hi Robot scenario taxonomy: negative task,
   situated correction, specific constraint, preference. Speech is a
   tool-call-only atom (`tool_calls=[{type:function, function:{name:"say",
 arguments:{text:...}}}]`).
-- **Module 3 — VQA.** ECoT ([Zawalski 2024](https://arxiv.org/abs/2407.08693))
+- **`vqa` module.** ECoT ([Zawalski 2024](https://arxiv.org/abs/2407.08693))
   grounded features (bounding boxes in pixel `[x_min, y_min, x_max, y_max]`,
   keypoints) and Steerable VLA Policies ([Zhao 2025](https://arxiv.org/abs/2509.07626))
   multi-abstraction grounding. Pi0.7 also grounds answers across
@@ -157,9 +163,9 @@ references rather than rewriting from scratch.
 
 ## Compute and list-size estimates
 
-Per episode, the pipeline issues O(`max_steps`) Module 1 calls,
-O(`max_interjections_per_episode`) Module 2 calls, and
-O(`vqa_emission_hz × episode_seconds`) Module 3 calls. With defaults
+Per episode, the pipeline issues O(`max_steps`) `plan`-module calls,
+O(`max_interjections_per_episode`) `interjections`-module calls, and
+O(`vqa_emission_hz × episode_seconds`) `vqa`-module calls. With defaults
 (8 subtasks, 1 interjection, 1 Hz × 3 pairs) and 30-second episodes, that
 is ~50 VLM calls per episode. `language_persistent` per episode is ~10s of
 KB at most (parquet dictionary-encodes one entry per episode);

@@ -35,17 +35,17 @@ def _stage_episode(
     staging_dir: Path,
     episode_index: int,
     *,
-    module_1: list[dict] | None = None,
-    module_2: list[dict] | None = None,
-    module_3: list[dict] | None = None,
+    plan: list[dict] | None = None,
+    interjections: list[dict] | None = None,
+    vqa: list[dict] | None = None,
 ) -> None:
     staging = EpisodeStaging(staging_dir, episode_index)
-    if module_1 is not None:
-        staging.write("module_1", module_1)
-    if module_2 is not None:
-        staging.write("module_2", module_2)
-    if module_3 is not None:
-        staging.write("module_3", module_3)
+    if plan is not None:
+        staging.write("plan", plan)
+    if interjections is not None:
+        staging.write("interjections", interjections)
+    if vqa is not None:
+        staging.write("vqa", vqa)
 
 
 def test_writer_persistence_identity(fixture_dataset_root: Path, tmp_path: Path) -> None:
@@ -54,7 +54,7 @@ def test_writer_persistence_identity(fixture_dataset_root: Path, tmp_path: Path)
     _stage_episode(
         staging_dir,
         0,
-        module_1=[
+        plan=[
             {
                 "role": "assistant",
                 "content": "grasp the sponge",
@@ -94,7 +94,7 @@ def test_writer_events_exact_timestamp(fixture_dataset_root: Path, tmp_path: Pat
     _stage_episode(
         staging_dir,
         0,
-        module_2=[
+        interjections=[
             speech_atom(0.0, "Got it."),
             {
                 "role": "user",
@@ -127,7 +127,7 @@ def test_writer_column_routing(fixture_dataset_root: Path, tmp_path: Path) -> No
     _stage_episode(
         staging_dir,
         0,
-        module_1=[
+        plan=[
             {
                 "role": "assistant",
                 "content": "do X",
@@ -150,7 +150,7 @@ def test_writer_column_routing(fixture_dataset_root: Path, tmp_path: Path) -> No
                 "tool_calls": None,
             },
         ],
-        module_2=[
+        interjections=[
             speech_atom(0.0, "OK"),
             {
                 "role": "user",
@@ -161,7 +161,7 @@ def test_writer_column_routing(fixture_dataset_root: Path, tmp_path: Path) -> No
             },
             speech_atom(0.2, "Waiting"),
         ],
-        module_3=[
+        vqa=[
             {
                 "role": "user",
                 "content": "where is the cup?",
@@ -201,7 +201,7 @@ def test_writer_drops_subtask_index_idempotent(fixture_dataset_root: Path, tmp_p
     _stage_episode(
         staging_dir,
         0,
-        module_1=[
+        plan=[
             {
                 "role": "assistant",
                 "content": "do X",
@@ -277,7 +277,7 @@ def test_writer_does_not_add_tools_column(fixture_dataset_root: Path, tmp_path: 
     _stage_episode(
         staging_dir,
         0,
-        module_1=[
+        plan=[
             {"role": "assistant", "content": "x", "style": "subtask", "timestamp": 0.0, "tool_calls": None}
         ],
     )
@@ -316,7 +316,7 @@ def test_annotation_metadata_sync_allows_non_streaming_load(
     _stage_episode(
         staging_dir,
         0,
-        module_1=[
+        plan=[
             {"role": "assistant", "content": "do X", "style": "subtask", "timestamp": 0.0, "tool_calls": None}
         ],
     )

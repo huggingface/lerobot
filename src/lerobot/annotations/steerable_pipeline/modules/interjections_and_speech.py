@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Module 2: interjections + paired speech (EVENT styles + speech atoms).
+"""``interjections`` module: interjections + paired speech (EVENT styles + speech atoms).
 
 Two sub-passes:
 
@@ -26,8 +26,8 @@ Two sub-passes:
        speech atom (role:assistant, style:None, tool_calls=[say(...)])
    Both rows go in ``language_events`` at the same timestamp.
 
-Module 1's :meth:`run_plan_updates` reuses Module 2's interjection
-timestamps to refresh the ``plan`` row at the same instant.
+The ``plan`` module's :meth:`run_plan_updates` reuses this module's
+interjection timestamps to refresh the ``plan`` row at the same instant.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..config import Module2Config
+from ..config import InterjectionsConfig
 from ..frames import FrameProvider, null_provider, to_image_blocks
 from ..prompts import load as load_prompt
 from ..reader import EpisodeRecord, reconstruct_subtask_spans, snap_to_frame
@@ -51,7 +51,7 @@ class InterjectionsAndSpeechModule:
     """Generate task-start speech and mid-episode interjection/speech pairs."""
 
     vlm: VlmClient
-    config: Module2Config
+    config: InterjectionsConfig
     seed: int = 1729
     frame_provider: FrameProvider = field(default_factory=null_provider)
 
@@ -66,13 +66,13 @@ class InterjectionsAndSpeechModule:
             initial = self._initial_speech(record)
             if initial:
                 rows.append(speech_atom(t0, initial))
-        # Pull Module 1's subtask spans for this episode so the
+        # Pull the ``plan`` module's subtask spans for this episode so the
         # interjection prompt can ground itself in the actual current
-        # subtask at each chosen timestamp. Module 1 ran first.
+        # subtask at each chosen timestamp. The ``plan`` module ran first.
         episode_end_t = float(record.frame_timestamps[-1]) if record.frame_timestamps else None
-        subtask_spans = reconstruct_subtask_spans(staging.read("module_1"), episode_end_t=episode_end_t)
+        subtask_spans = reconstruct_subtask_spans(staging.read("plan"), episode_end_t=episode_end_t)
         rows.extend(self._mid_episode_interjections(record, subtask_spans))
-        staging.write("module_2", rows)
+        staging.write("interjections", rows)
 
     @staticmethod
     def _subtask_at(spans: Sequence[dict[str, Any]], t: float) -> str | None:

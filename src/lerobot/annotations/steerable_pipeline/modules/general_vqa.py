@@ -13,10 +13,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Module 3: general VQA at a timed cadence.
+"""``vqa`` module: general VQA at a timed cadence.
 
-Anchors ``K`` (question, answer) pairs to ``K`` consecutive frames per
-emission. For datasets with multiple cameras, every emission tick produces
+Every ``1/hz`` seconds an emission tick fires; each tick anchors ``K``
+consecutive frames, and every anchored frame gets its own VQA pair. Each
+pair is grounded on that single anchor frame — there is no per-pair frame
+window. For datasets with multiple cameras, every anchored frame produces
 one ``(vqa, user)`` + ``(vqa, assistant)`` pair *per camera*: each pair is
 generated against that camera's frame and stamped with the matching
 ``camera`` field on the emitted rows. The resolver disambiguates via
@@ -26,7 +28,7 @@ per camera (see ``recipes/pi05_hirobot.yaml``).
 Within a single (frame, camera) we still emit at most one ``(vqa, user)``
 and one ``(vqa, assistant)`` row, so the resolver contract stays scalar.
 
-Question types covered (per the plan's Module 3 table): bbox, keypoint,
+Question types covered (per the plan's ``vqa`` table): bbox, keypoint,
 count, attribute, spatial. The assistant's ``content`` is a JSON string
 whose schema depends on the question type. Malformed JSON triggers one
 retry inside :meth:`VlmClient.generate_json`.
@@ -35,12 +37,13 @@ retry inside :meth:`VlmClient.generate_json`.
 from __future__ import annotations
 
 import json
+import logging
 import random
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..config import Module3Config
+from ..config import VqaConfig
 from ..frames import FrameProvider, null_provider, to_image_blocks
 from ..prompts import load as load_prompt
 from ..reader import EpisodeRecord
@@ -89,7 +92,7 @@ class GeneralVqaModule:
     """Emit grounded VQA pairs at a timed cadence."""
 
     vlm: VlmClient
-    config: Module3Config
+    config: VqaConfig
     seed: int = 1729
     frame_provider: FrameProvider = field(default_factory=null_provider)
 
@@ -99,7 +102,7 @@ class GeneralVqaModule:
 
     def run_episode(self, record: EpisodeRecord, staging: EpisodeStaging) -> None:
         if not record.frame_timestamps:
-            staging.write("module_3", [])
+            staging.write("vqa", [])
             return
         rng = random.Random(f"{self.seed}:{record.episode_index}:vqa")
         anchor_idx = _emission_anchor_indices(
@@ -111,17 +114,15 @@ class GeneralVqaModule:
             # untagged rows that would fail validation. Surface a loud one-
             # time warning so this is never silently a no-op.
             if not getattr(self, "_warned_no_camera", False):
-                import logging  # noqa: PLC0415
-
                 logging.getLogger(__name__).warning(
-                    "Module 3 (VQA) found no cameras on the frame provider — "
+                    "vqa module found no cameras on the frame provider — "
                     "every episode will emit zero VQA rows. Check that the "
                     "dataset declares observation.images.* features in "
                     "meta/info.json; passing --vlm.camera_key=<key> at the "
                     "CLI now also seeds the cameras list as a fallback."
                 )
                 self._warned_no_camera = True
-            staging.write("module_3", [])
+            staging.write("vqa", [])
             return
 
         # Build all messages first (one per (frame, camera)), then issue them
@@ -140,13 +141,13 @@ class GeneralVqaModule:
                 per_call.append((ts, camera, qtype, messages))
 
         if not per_call:
-            staging.write("module_3", [])
+            staging.write("vqa", [])
             return
 
         results = self.vlm.generate_json([m for _, _, _, m in per_call])
 
         rows: list[dict[str, Any]] = []
-        for (ts, camera, _qtype, _messages), result in zip(per_call, results):
+        for (ts, camera, _qtype, _messages), result in zip(per_call, results, strict=True):
             qa = self._postprocess(result)
             if qa is None:
                 continue
@@ -171,10 +172,10 @@ class GeneralVqaModule:
                     "tool_calls": None,
                 }
             )
-        staging.write("module_3", rows)
+        staging.write("vqa", rows)
 
     def _target_cameras(self) -> list[str]:
-        """Return the cameras Module 3 should iterate per emission tick.
+        """Return the cameras the ``vqa`` module should iterate per anchored frame.
 
         Defaults to every camera the provider exposes. Datasets with no
         cameras (or test/null providers) yield an empty list, which makes
@@ -213,17 +214,6 @@ class GeneralVqaModule:
         if classify_vqa_answer(answer) is None:
             return None
         return question.strip(), answer
-
-    def _generate_one(
-        self,
-        record: EpisodeRecord,
-        question_type: str,
-        frame_timestamp: float,
-        camera_key: str,
-    ) -> tuple[str, dict[str, Any]] | None:
-        messages = self._build_messages(record, question_type, frame_timestamp, camera_key)
-        result = self.vlm.generate_json([messages])[0]
-        return self._postprocess(result)
 
 
 def _has_image_block(messages: list[dict[str, Any]]) -> bool:

@@ -19,9 +19,9 @@
 The pipeline is decomposed into three independently runnable modules whose
 outputs are staged per-episode before a final parquet rewrite:
 
-- :mod:`.modules.plan_subtasks_memory` (Module 1) — persistent styles
-- :mod:`.modules.interjections_and_speech` (Module 2) — event styles + speech
-- :mod:`.modules.general_vqa` (Module 3) — event-style VQA pairs
+- :mod:`.modules.plan_subtasks_memory` (the ``plan`` module) — persistent styles
+- :mod:`.modules.interjections_and_speech` (the ``interjections`` module) — event styles + speech
+- :mod:`.modules.general_vqa` (the ``vqa`` module) — event-style VQA pairs
 """
 
 from .config import AnnotationPipelineConfig

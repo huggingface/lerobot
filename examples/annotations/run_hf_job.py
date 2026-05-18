@@ -1,18 +1,35 @@
 #!/usr/bin/env python
+
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """Launch ``lerobot-annotate`` on a Hugging Face job (vllm + Qwen3.6 MoE).
 
 Spawns one ``h200x2`` job that:
 
   1. installs this branch of ``lerobot`` plus the annotation extras,
   2. boots two vllm servers (one per GPU) with Qwen3.6-35B-A3B-FP8,
-  3. runs Module 1/2/3 across the dataset (per-camera VQA via PR 3471),
-  4. uploads the annotated dataset to ``--push_to_hub``.
+  3. runs the plan / interjections / vqa modules across the dataset,
+  4. uploads the annotated dataset back to ``--repo_id``.
+
+``--repo_id`` is both the download source and, with ``--push_to_hub=true``,
+the upload destination — the job annotates the dataset in place.
 
 Usage:
 
-    HF_TOKEN=hf_... uv run python examples/annotation/run_hf_job.py
+    HF_TOKEN=hf_... uv run python examples/annotations/run_hf_job.py
 
-Adjust ``CMD`` below to point at your own dataset / target hub repo.
+Adjust ``CMD`` below to point at your own dataset.
 """
 
 import os
@@ -36,7 +53,9 @@ CMD = (
     "export VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 && "
     "export VLLM_VIDEO_BACKEND=pyav && "
     "lerobot-annotate "
-    "--repo_id=imstevenpmwork/super_poulain_draft "
+    # The dataset to annotate; also the push destination (annotate in place).
+    "--repo_id=<your-org>/<your-dataset> "
+    "--push_to_hub=true "
     "--vlm.backend=openai "
     "--vlm.model_id=Qwen/Qwen3.6-35B-A3B-FP8 "
     "--vlm.parallel_servers=2 "
@@ -50,11 +69,10 @@ CMD = (
     "--executor.episode_parallelism=32 "
     "--vlm.chat_template_kwargs='{enable_thinking: false}' "
     "--vlm.camera_key=observation.images.wrist "
-    "--module_1.frames_per_second=1.0 "
-    "--module_1.use_video_url=true "
-    "--module_1.use_video_url_fps=1.0 "
-    "--module_3.K=1 --module_3.vqa_emission_hz=0.2 "
-    "--push_to_hub=pepijn223/super_poulain_qwen36moe-3"
+    "--plan.frames_per_second=1.0 "
+    "--plan.use_video_url=true "
+    "--plan.use_video_url_fps=1.0 "
+    "--vqa.K=1 --vqa.vqa_emission_hz=0.2"
 )
 
 job = run_job(

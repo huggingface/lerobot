@@ -36,9 +36,9 @@ from typing import Any
 ModuleName = str
 
 _MODULES: tuple[ModuleName, ...] = (
-    "module_1",
-    "module_2",
-    "module_3",
+    "plan",
+    "interjections",
+    "vqa",
 )
 
 

@@ -38,6 +38,7 @@ from typing import Any
 
 import pyarrow.parquet as pq
 
+from lerobot.datasets.io_utils import load_tasks
 from lerobot.datasets.utils import DEFAULT_TASKS_PATH
 
 
@@ -83,8 +84,9 @@ def reconstruct_subtask_spans(
     which is what downstream consumers (memory, interjection boundary
     selection) expect.
 
-    Used by Module 1 (plan-update pass) and Module 2 (interjection
-    anchoring), which both need the same span shape.
+    Used by the ``plan`` module (plan-update pass) and the
+    ``interjections`` module (interjection anchoring), which both need the
+    same span shape.
     """
     sorted_rows = sorted(
         (r for r in rows if r.get("style") == "subtask"),
@@ -105,8 +107,9 @@ def snap_to_frame(t: float, frame_timestamps: Sequence[float]) -> float:
     """Snap an arbitrary float to the nearest exact source frame timestamp.
 
     Modules use this when emitting event-style rows so the row's
-    timestamp matches a real parquet frame (event rows must land on an
-    exact frame, see PR 1's "exact event matching" rule).
+    timestamp matches a real parquet frame: event rows must land on an
+    exact frame, otherwise the per-frame event lookup the writer does
+    would never match them.
     """
     if not frame_timestamps:
         return float(t)
@@ -115,14 +118,17 @@ def snap_to_frame(t: float, frame_timestamps: Sequence[float]) -> float:
 
 
 def _load_tasks_lookup(root: Path) -> dict[int, str]:
-    tasks_path = root / DEFAULT_TASKS_PATH
-    if not tasks_path.exists():
+    """Map ``task_index -> task`` from ``meta/tasks.parquet``.
+
+    Returns an empty dict when the file is absent — the task description is
+    derived later from the video if needed. Reuses the library-level
+    :func:`lerobot.datasets.io_utils.load_tasks`, which returns the tasks
+    frame indexed by task string with a ``task_index`` column.
+    """
+    if not (root / DEFAULT_TASKS_PATH).exists():
         return {}
-    table = pq.read_table(tasks_path)
-    cols = {name: table.column(name).to_pylist() for name in table.column_names}
-    if "task_index" in cols and "task" in cols:
-        return dict(zip(cols["task_index"], cols["task"], strict=True))
-    raise ValueError(f"meta/tasks.parquet at {tasks_path} missing 'task_index' or 'task'")
+    tasks = load_tasks(root)
+    return {int(idx): str(task) for task, idx in zip(tasks.index, tasks["task_index"], strict=True)}
 
 
 def iter_episodes(root: Path, *, only_episodes: tuple[int, ...] | None = None) -> Iterator[EpisodeRecord]:
