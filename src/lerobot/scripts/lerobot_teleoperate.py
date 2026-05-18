@@ -227,9 +227,11 @@ def teleoperate(cfg: TeleoperateConfig):
 
     try:
         initial_action = {
-            k: v for k, v in robot.get_observation().items() if k in robot.action_features and k.endswith(".pos")
+            k: v
+            for k, v in robot.get_observation().items()
+            if k in robot.action_features and k.endswith(".pos")
         }
-    
+
         if teleop_supports_joint_pose(teleop):
             obs = robot.get_observation()
             teleop_action = teleop.get_action()
