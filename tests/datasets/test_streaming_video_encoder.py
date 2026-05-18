@@ -14,11 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for streaming video encoding and hardware-accelerated encoding."""
+"""Tests for streaming video encoding."""
 
 import queue
 import threading
-from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -27,112 +26,20 @@ pytest.importorskip("av", reason="av is required (install lerobot[dataset])")
 
 import av  # noqa: E402
 
+from lerobot.configs import VideoEncoderConfig
+from lerobot.datasets.pyav_utils import get_codec
 from lerobot.datasets.video_utils import (
-    VALID_VIDEO_CODECS,
     StreamingVideoEncoder,
     _CameraEncoderThread,
-    _get_codec_options,
-    detect_available_hw_encoders,
-    resolve_vcodec,
 )
 from lerobot.utils.constants import OBS_IMAGES
 
-# ─── _get_codec_options tests ───
-
-
-class TestGetCodecOptions:
-    def test_libsvtav1_defaults(self):
-        opts = _get_codec_options("libsvtav1")
-        assert opts["g"] == "2"
-        assert opts["crf"] == "30"
-        assert opts["preset"] == "12"
-
-    def test_libsvtav1_custom_preset(self):
-        opts = _get_codec_options("libsvtav1", preset=8)
-        assert opts["preset"] == "8"
-
-    def test_h264_options(self):
-        opts = _get_codec_options("h264", g=10, crf=23)
-        assert opts["g"] == "10"
-        assert opts["crf"] == "23"
-        assert "preset" not in opts
-
-    def test_videotoolbox_options(self):
-        opts = _get_codec_options("h264_videotoolbox", g=2, crf=30)
-        assert opts["g"] == "2"
-        # CRF 30 maps to quality = max(1, min(100, 100 - 30*2)) = 40
-        assert opts["q:v"] == "40"
-        assert "crf" not in opts
-
-    def test_nvenc_options(self):
-        opts = _get_codec_options("h264_nvenc", g=2, crf=25)
-        assert opts["rc"] == "constqp"
-        assert opts["qp"] == "25"
-        assert "crf" not in opts
-        # NVENC doesn't support g
-        assert "g" not in opts
-
-    def test_vaapi_options(self):
-        opts = _get_codec_options("h264_vaapi", crf=28)
-        assert opts["qp"] == "28"
-
-    def test_qsv_options(self):
-        opts = _get_codec_options("h264_qsv", crf=25)
-        assert opts["global_quality"] == "25"
-
-    def test_no_g_no_crf(self):
-        opts = _get_codec_options("h264", g=None, crf=None)
-        assert "g" not in opts
-        assert "crf" not in opts
-
-
-# ─── HW encoder detection tests ───
-
-
-class TestHWEncoderDetection:
-    def test_detect_available_hw_encoders_returns_list(self):
-        result = detect_available_hw_encoders()
-        assert isinstance(result, list)
-
-    def test_detect_available_hw_encoders_only_valid(self):
-        from lerobot.datasets.video_utils import HW_ENCODERS
-
-        result = detect_available_hw_encoders()
-        for encoder in result:
-            assert encoder in HW_ENCODERS
-
-    def test_resolve_vcodec_passthrough(self):
-        assert resolve_vcodec("libsvtav1") == "libsvtav1"
-        assert resolve_vcodec("h264") == "h264"
-
-    def test_resolve_vcodec_auto_fallback(self):
-        """When no HW encoders are available, auto should fall back to libsvtav1."""
-        with patch("lerobot.datasets.video_utils.detect_available_hw_encoders", return_value=[]):
-            assert resolve_vcodec("auto") == "libsvtav1"
-
-    def test_resolve_vcodec_auto_picks_hw(self):
-        """When a HW encoder is available, auto should pick it."""
-        with patch(
-            "lerobot.datasets.video_utils.detect_available_hw_encoders",
-            return_value=["h264_videotoolbox"],
-        ):
-            assert resolve_vcodec("auto") == "h264_videotoolbox"
-
-    def test_resolve_vcodec_auto_returns_valid(self):
-        """Test that resolve_vcodec('auto') returns a known valid codec."""
-        result = resolve_vcodec("auto")
-        assert result in VALID_VIDEO_CODECS
-
-    def test_hw_encoder_names_accepted_in_validation(self):
-        """Test that HW encoder names pass validation in VALID_VIDEO_CODECS."""
-        assert "auto" in VALID_VIDEO_CODECS
-        assert "h264_videotoolbox" in VALID_VIDEO_CODECS
-        assert "h264_nvenc" in VALID_VIDEO_CODECS
-
-    def test_resolve_vcodec_invalid_raises(self):
-        """Test that resolve_vcodec raises ValueError for invalid codecs."""
-        with pytest.raises(ValueError, match="Invalid vcodec"):
-            resolve_vcodec("not_a_real_codec")
+# Cross-codec validation tests only fire when the target codec is present
+# in the local FFmpeg build; on other platforms validate() is a no-op.
+_has_videotoolbox = get_codec("h264_videotoolbox") is not None
+_videotoolbox_only = pytest.mark.skipif(
+    not _has_videotoolbox, reason="h264_videotoolbox not in local FFmpeg build"
+)
 
 
 # ─── _CameraEncoderThread tests ───
@@ -150,14 +57,13 @@ class TestCameraEncoderThread:
         result_queue: queue.Queue = queue.Queue(maxsize=1)
         stop_event = threading.Event()
 
+        enc_cfg = VideoEncoderConfig(vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13)
         encoder_thread = _CameraEncoderThread(
             video_path=video_path,
             fps=fps,
-            vcodec="libsvtav1",
-            pix_fmt="yuv420p",
-            g=2,
-            crf=30,
-            preset=13,
+            vcodec=enc_cfg.vcodec,
+            pix_fmt=enc_cfg.pix_fmt,
+            codec_options=enc_cfg.get_codec_options(as_strings=True),
             frame_queue=frame_queue,
             result_queue=result_queue,
             stop_event=stop_event,
@@ -202,14 +108,13 @@ class TestCameraEncoderThread:
         result_queue: queue.Queue = queue.Queue(maxsize=1)
         stop_event = threading.Event()
 
+        enc_cfg = VideoEncoderConfig(vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13)
         encoder_thread = _CameraEncoderThread(
             video_path=video_path,
             fps=fps,
-            vcodec="libsvtav1",
-            pix_fmt="yuv420p",
-            g=2,
-            crf=30,
-            preset=13,
+            vcodec=enc_cfg.vcodec,
+            pix_fmt=enc_cfg.pix_fmt,
+            codec_options=enc_cfg.get_codec_options(as_strings=True),
             frame_queue=frame_queue,
             result_queue=result_queue,
             stop_event=stop_event,
@@ -237,14 +142,13 @@ class TestCameraEncoderThread:
         result_queue: queue.Queue = queue.Queue(maxsize=1)
         stop_event = threading.Event()
 
+        enc_cfg = VideoEncoderConfig(vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13)
         encoder_thread = _CameraEncoderThread(
             video_path=video_path,
             fps=fps,
-            vcodec="libsvtav1",
-            pix_fmt="yuv420p",
-            g=2,
-            crf=30,
-            preset=13,
+            vcodec=enc_cfg.vcodec,
+            pix_fmt=enc_cfg.pix_fmt,
+            codec_options=enc_cfg.get_codec_options(as_strings=True),
             frame_queue=frame_queue,
             result_queue=result_queue,
             stop_event=stop_event,
@@ -266,11 +170,20 @@ class TestCameraEncoderThread:
 
 
 class TestStreamingVideoEncoder:
+    def _make_encoder_config(self, **kwargs):
+        """Helper to build a VideoEncoderConfig."""
+        return VideoEncoderConfig(**kwargs)
+
     def test_single_camera_episode(self, tmp_path):
         """Test encoding a single camera episode."""
-        encoder = StreamingVideoEncoder(fps=30, vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13)
-
         video_keys = [f"{OBS_IMAGES}.laptop"]
+        encoder = StreamingVideoEncoder(
+            fps=30,
+            camera_encoder=self._make_encoder_config(
+                vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13
+            ),
+        )
+
         encoder.start_episode(video_keys, tmp_path)
 
         num_frames = 20
@@ -295,9 +208,11 @@ class TestStreamingVideoEncoder:
 
     def test_multi_camera_episode(self, tmp_path):
         """Test encoding multiple cameras simultaneously."""
-        encoder = StreamingVideoEncoder(fps=30, vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30)
-
         video_keys = [f"{OBS_IMAGES}.laptop", f"{OBS_IMAGES}.phone"]
+        encoder = StreamingVideoEncoder(
+            fps=30,
+            camera_encoder=self._make_encoder_config(vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30),
+        )
         encoder.start_episode(video_keys, tmp_path)
 
         num_frames = 15
@@ -319,8 +234,11 @@ class TestStreamingVideoEncoder:
 
     def test_sequential_episodes(self, tmp_path):
         """Test that multiple sequential episodes work correctly."""
-        encoder = StreamingVideoEncoder(fps=30, vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30)
         video_keys = [f"{OBS_IMAGES}.cam"]
+        encoder = StreamingVideoEncoder(
+            fps=30,
+            camera_encoder=self._make_encoder_config(vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30),
+        )
 
         for ep in range(3):
             encoder.start_episode(video_keys, tmp_path)
@@ -342,8 +260,11 @@ class TestStreamingVideoEncoder:
 
     def test_cancel_episode(self, tmp_path):
         """Test that canceling an episode cleans up properly."""
-        encoder = StreamingVideoEncoder(fps=30, vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30)
         video_keys = [f"{OBS_IMAGES}.cam"]
+        encoder = StreamingVideoEncoder(
+            fps=30,
+            camera_encoder=self._make_encoder_config(vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30),
+        )
 
         encoder.start_episode(video_keys, tmp_path)
 
@@ -365,28 +286,33 @@ class TestStreamingVideoEncoder:
 
     def test_feed_without_start_raises(self, tmp_path):
         """Test that feeding frames without starting an episode raises."""
-        encoder = StreamingVideoEncoder(fps=30, vcodec="libsvtav1", pix_fmt="yuv420p")
+        encoder = StreamingVideoEncoder(fps=30)
         with pytest.raises(RuntimeError, match="No active episode"):
             encoder.feed_frame("cam", np.zeros((64, 96, 3), dtype=np.uint8))
         encoder.close()
 
     def test_finish_without_start_raises(self, tmp_path):
         """Test that finishing without starting raises."""
-        encoder = StreamingVideoEncoder(fps=30, vcodec="libsvtav1", pix_fmt="yuv420p")
+        encoder = StreamingVideoEncoder(fps=30)
         with pytest.raises(RuntimeError, match="No active episode"):
             encoder.finish_episode()
         encoder.close()
 
     def test_close_is_idempotent(self, tmp_path):
         """Test that close() can be called multiple times safely."""
-        encoder = StreamingVideoEncoder(fps=30, vcodec="libsvtav1", pix_fmt="yuv420p")
+        encoder = StreamingVideoEncoder(fps=30)
         encoder.close()
         encoder.close()  # Should not raise
 
     def test_video_duration_matches_frame_count(self, tmp_path):
         """Test that encoded video duration matches num_frames / fps."""
-        encoder = StreamingVideoEncoder(fps=30, vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13)
         video_keys = [f"{OBS_IMAGES}.cam"]
+        encoder = StreamingVideoEncoder(
+            fps=30,
+            camera_encoder=self._make_encoder_config(
+                vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13
+            ),
+        )
         encoder.start_episode(video_keys, tmp_path)
 
         num_frames = 90  # 3 seconds at 30fps
@@ -417,9 +343,11 @@ class TestStreamingVideoEncoder:
 
     def test_multi_camera_start_episode_called_once(self, tmp_path):
         """Test that with multiple cameras, no frames are lost due to double start_episode."""
-        encoder = StreamingVideoEncoder(fps=30, vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30)
-
         video_keys = [f"{OBS_IMAGES}.cam1", f"{OBS_IMAGES}.cam2"]
+        encoder = StreamingVideoEncoder(
+            fps=30,
+            camera_encoder=self._make_encoder_config(vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30),
+        )
         encoder.start_episode(video_keys, tmp_path)
 
         num_frames = 30
@@ -446,17 +374,24 @@ class TestStreamingVideoEncoder:
 
     def test_encoder_threads_passed_to_thread(self, tmp_path):
         """Test that encoder_threads is stored and passed through to encoder threads."""
-        encoder = StreamingVideoEncoder(
-            fps=30, vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, encoder_threads=2
-        )
-        assert encoder.encoder_threads == 2
-
         video_keys = [f"{OBS_IMAGES}.cam"]
+        cfg = VideoEncoderConfig(
+            vcodec="libsvtav1",
+            pix_fmt="yuv420p",
+            g=2,
+            crf=30,
+        )
+        encoder = StreamingVideoEncoder(
+            fps=30,
+            camera_encoder=cfg,
+            encoder_threads=2,
+        )
+        assert encoder._encoder_threads == 2
         encoder.start_episode(video_keys, tmp_path)
 
-        # Verify the thread received the encoder_threads value
+        # Verify codec options include thread tuning for libsvtav1 (lp=…)
         thread = encoder._threads[f"{OBS_IMAGES}.cam"]
-        assert thread.encoder_threads == 2
+        assert "svtav1-params" in thread.codec_options or "threads" in thread.codec_options
 
         # Feed some frames and finish to ensure it works end-to-end
         num_frames = 10
@@ -478,16 +413,20 @@ class TestStreamingVideoEncoder:
 
     def test_encoder_threads_none_by_default(self, tmp_path):
         """Test that encoder_threads defaults to None (codec auto-detect)."""
-        encoder = StreamingVideoEncoder(fps=30, vcodec="libsvtav1", pix_fmt="yuv420p")
-        assert encoder.encoder_threads is None
+        encoder = StreamingVideoEncoder(fps=30)
+        assert encoder._encoder_threads is None
         encoder.close()
 
     def test_graceful_frame_dropping(self, tmp_path):
         """Test that full queue drops frames instead of crashing."""
-        encoder = StreamingVideoEncoder(
-            fps=30, vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13, queue_maxsize=1
-        )
         video_keys = [f"{OBS_IMAGES}.cam"]
+        encoder = StreamingVideoEncoder(
+            fps=30,
+            camera_encoder=self._make_encoder_config(
+                vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13
+            ),
+            queue_maxsize=1,
+        )
         encoder.start_episode(video_keys, tmp_path)
 
         # Feed many frames quickly - with queue_maxsize=1, some will be dropped

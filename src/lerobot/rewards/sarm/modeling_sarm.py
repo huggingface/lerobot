@@ -32,13 +32,14 @@ import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 
-from lerobot.rewards.pretrained import PreTrainedRewardModel
-from lerobot.rewards.sarm.configuration_sarm import SARMConfig
-from lerobot.rewards.sarm.sarm_utils import (
+from lerobot.utils.constants import OBS_STR
+
+from ..pretrained import PreTrainedRewardModel
+from .configuration_sarm import SARMConfig
+from .sarm_utils import (
     normalize_stage_tau,
     pad_state_to_max_dim,
 )
-from lerobot.utils.constants import OBS_STR
 
 
 class StageTransformer(nn.Module):

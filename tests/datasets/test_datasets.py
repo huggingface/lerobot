@@ -29,6 +29,7 @@ from PIL import Image
 from safetensors.torch import load_file
 from torchvision.transforms import v2
 
+from lerobot.configs import VALID_VIDEO_CODECS, VideoEncoderConfig
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import make_dataset
@@ -43,7 +44,6 @@ from lerobot.datasets.utils import (
     DEFAULT_VIDEO_FILE_SIZE_IN_MB,
     create_branch,
 )
-from lerobot.datasets.video_utils import VALID_VIDEO_CODECS
 from lerobot.envs.factory import make_env_config
 from lerobot.policies.factory import make_policy_config
 from lerobot.robots import make_robot_from_config
@@ -1470,17 +1470,9 @@ def test_frames_in_current_file_calculation(tmp_path, empty_lerobot_dataset_fact
 
 
 def test_lerobot_dataset_vcodec_validation():
-    """Test that LeRobotDataset validates the vcodec parameter."""
-    # Test that invalid vcodec raises ValueError
+    """Invalid vcodec in encoder config is rejected at construction time."""
     with pytest.raises(ValueError, match="Invalid vcodec"):
-        LeRobotDataset.__new__(LeRobotDataset)  # bypass __init__ to test validation directly
-        # Actually test via create since it's easier
-        LeRobotDataset.create(
-            repo_id="test/invalid_codec",
-            fps=30,
-            features={"observation.state": {"dtype": "float32", "shape": (2,), "names": ["x", "y"]}},
-            vcodec="invalid_codec",
-        )
+        VideoEncoderConfig(vcodec="invalid_codec")
 
 
 def test_valid_video_codecs_constant():

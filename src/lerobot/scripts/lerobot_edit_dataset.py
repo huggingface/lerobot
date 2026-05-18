@@ -187,12 +187,12 @@ import abc
 import logging
 import shutil
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import draccus
 
-from lerobot.configs import parser
+from lerobot.configs import VideoEncoderConfig, camera_encoder_defaults, parser
 from lerobot.datasets import (
     LeRobotDataset,
     convert_image_to_video_dataset,
@@ -250,11 +250,7 @@ class ModifyTasksConfig(OperationConfig):
 @dataclass
 class ConvertImageToVideoConfig(OperationConfig):
     output_dir: str | None = None
-    vcodec: str = "libsvtav1"
-    pix_fmt: str = "yuv420p"
-    g: int = 2
-    crf: int = 30
-    fast_decode: int = 0
+    camera_encoder: VideoEncoderConfig = field(default_factory=camera_encoder_defaults)
     episode_indices: list[int] | None = None
     num_workers: int = 4
     max_episodes_per_batch: int | None = None
@@ -557,11 +553,7 @@ def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
         dataset=dataset,
         output_dir=output_dir,
         repo_id=output_repo_id,
-        vcodec=getattr(cfg.operation, "vcodec", "libsvtav1"),
-        pix_fmt=getattr(cfg.operation, "pix_fmt", "yuv420p"),
-        g=getattr(cfg.operation, "g", 2),
-        crf=getattr(cfg.operation, "crf", 30),
-        fast_decode=getattr(cfg.operation, "fast_decode", 0),
+        camera_encoder=getattr(cfg.operation, "camera_encoder", None) or camera_encoder_defaults(),
         episode_indices=getattr(cfg.operation, "episode_indices", None),
         num_workers=getattr(cfg.operation, "num_workers", 4),
         max_episodes_per_batch=getattr(cfg.operation, "max_episodes_per_batch", None),

@@ -117,10 +117,10 @@ lerobot-edit-dataset \
     --repo_id lerobot/pusht_image \
     --operation.type convert_image_to_video \
     --operation.output_dir outputs/pusht_video \
-    --operation.vcodec libsvtav1 \
-    --operation.pix_fmt yuv420p \
-    --operation.g 2 \
-    --operation.crf 30
+    --operation.camera_encoder.vcodec libsvtav1 \
+    --operation.camera_encoder.pix_fmt yuv420p \
+    --operation.camera_encoder.g 2 \
+    --operation.camera_encoder.crf 30
 
 # Convert only specific episodes
 lerobot-edit-dataset \
@@ -147,11 +147,7 @@ lerobot-edit-dataset \
 **Parameters:**
 
 - `output_dir`: Custom output directory (optional - by default uses `new_repo_id` or `{repo_id}_video`)
-- `vcodec`: Video codec to use - options: `h264`, `hevc`, `libsvtav1` (default: `libsvtav1`)
-- `pix_fmt`: Pixel format - options: `yuv420p`, `yuv444p` (default: `yuv420p`)
-- `g`: Group of pictures (GOP) size - lower values give better quality but larger files (default: 2)
-- `crf`: Constant rate factor - lower values give better quality but larger files, 0 is lossless (default: 30)
-- `fast_decode`: Fast decode tuning option (default: 0)
+- `camera_encoder`: Video encoder settings — all sub-fields accessible via `--operation.camera_encoder.<field>. See [Video Encoding Parameters](./video_encoding_parameters) for more details.
 - `episode_indices`: List of specific episodes to convert (default: all episodes)
 - `num_workers`: Number of parallel workers for processing (default: 4)
 

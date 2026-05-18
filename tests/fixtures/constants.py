@@ -28,17 +28,23 @@ DUMMY_MOTOR_FEATURES = {
         "names": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
     },
 }
-DUMMY_CAMERA_FEATURES = {
-    "laptop": {"shape": (64, 96, 3), "names": ["height", "width", "channels"], "info": None},
-    "phone": {"shape": (64, 96, 3), "names": ["height", "width", "channels"], "info": None},
-}
 DEFAULT_FPS = 30
 DUMMY_VIDEO_INFO = {
     "video.fps": DEFAULT_FPS,
     "video.codec": "av1",
     "video.pix_fmt": "yuv420p",
+    "video.video_backend": "pyav",
+    "video.extra_options": {},
+    "video.g": 2,
+    "video.crf": 30,
+    "video.preset": 12,
+    "video.fast_decode": 0,
     "video.is_depth_map": False,
     "has_audio": False,
+}
+DUMMY_CAMERA_FEATURES = {
+    "laptop": {"shape": (64, 96, 3), "names": ["height", "width", "channels"], "info": DUMMY_VIDEO_INFO},
+    "phone": {"shape": (64, 96, 3), "names": ["height", "width", "channels"], "info": DUMMY_VIDEO_INFO},
 }
 DUMMY_CHW = (3, 96, 128)
 DUMMY_HWC = (96, 128, 3)

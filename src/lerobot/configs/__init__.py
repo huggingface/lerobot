@@ -31,6 +31,12 @@ from .types import (
     PolicyFeature,
     RTCAttentionSchedule,
 )
+from .video import (
+    VALID_VIDEO_CODECS,
+    VIDEO_ENCODER_INFO_KEYS,
+    VideoEncoderConfig,
+    camera_encoder_defaults,
+)
 
 __all__ = [
     # Types
@@ -46,4 +52,10 @@ __all__ = [
     "PeftConfig",
     "PreTrainedConfig",
     "WandBConfig",
+    "VideoEncoderConfig",
+    # Defaults
+    "camera_encoder_defaults",
+    # Constants
+    "VALID_VIDEO_CODECS",
+    "VIDEO_ENCODER_INFO_KEYS",
 ]
