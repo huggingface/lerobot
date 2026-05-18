@@ -34,7 +34,6 @@ import PIL.Image
 import torch
 
 from lerobot.datasets.video_utils import decode_video_frames
-from lerobot.utils.import_utils import get_safe_default_codec
 
 from .reader import EpisodeRecord
 
@@ -135,11 +134,10 @@ class VideoFrameProvider:
     camera_key: str | None = None
     tolerance_s: float = 1e-2
     cache_size: int = 256
-    # Keyframe decode backend. When ``None``, decoding tries the platform
-    # default (torchcodec when installed) then falls back to the ffmpeg CLI.
-    # Set explicitly to one of ``"torchcodec"``, ``"ffmpeg"``, or ``"pyav"``
-    # to pin a single backend — e.g. ``"ffmpeg"`` to skip a torchcodec that
-    # cannot decode the dataset's codec ("Operation not permitted").
+    # Keyframe decode backend. ``None`` uses the ffmpeg CLI — the
+    # concurrency- and crash-safe default for the pipeline's threaded
+    # decode. Set to ``"torchcodec"`` or ``"pyav"`` to pin an in-process
+    # decoder when the build is known thread-safe.
     video_backend: str | None = None
     _meta: Any = field(default=None, init=False, repr=False)
     _cache: dict = field(default_factory=dict, init=False, repr=False)
@@ -303,18 +301,17 @@ class VideoFrameProvider:
         shifted = [from_timestamp + ts for ts in timestamps]
         video_path = self.root / self._meta.get_video_file_path(episode_index, camera_key)
 
-        # Build the decoder chain. In-process decoders are fragile here:
-        # torchcodec raises in some containers (vllm-openai: "Operation not
-        # permitted"), lerobot's ``pyav`` backend routes through
-        # ``torchvision.io.VideoReader`` (removed in torchvision 0.23+), and
-        # PyAV can outright SIGSEGV on the AV1 streams modern LeRobot
-        # datasets use. ``_decode_frames_ffmpeg`` shells out to the ffmpeg
-        # CLI — it decodes AV1 and a crash stays isolated to the child
-        # process — so it is the always-available fallback.
-        if self.video_backend:
-            chain = [self.video_backend]
-        else:
-            chain = (["torchcodec"] if get_safe_default_codec() == "torchcodec" else []) + ["ffmpeg"]
+        # Default to the ffmpeg CLI. The pipeline decodes under a 16-wide
+        # ThreadPoolExecutor and the in-process decoders are unsafe there:
+        # torchcodec is not thread-safe and SIGSEGVs under concurrent decode
+        # (a crash no try/except can catch), PyAV can likewise segfault on
+        # AV1, and lerobot's ``pyav`` backend routes through the removed
+        # ``torchvision.io.VideoReader``. ``_decode_frames_ffmpeg`` shells
+        # out per frame: each decode is an isolated child process, so it is
+        # both crash-safe and concurrency-safe. ``video_backend`` can pin
+        # ``torchcodec`` / ``pyav`` explicitly for callers that know their
+        # build is safe.
+        chain = [self.video_backend] if self.video_backend else ["ffmpeg"]
 
         exc: Exception | None = None
         for backend in chain:
