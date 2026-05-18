@@ -124,19 +124,19 @@ def _mark_target_span_causal(
 def _fast_ce(
     fast_logits: Tensor,
     action_tokens: Tensor,
-    action_mask: Tensor,
+    action_code_mask: Tensor,
     predict_actions_t: Tensor | None,
 ) -> Tensor:
-    """FAST-CE with both token-pad masking and per-sample action gating.
+    """FAST action-code CE with token-span masking and per-sample action gating.
 
-    ``action_mask`` is the FAST tokenizer's padding mask; samples whose
-    recipe sets ``predict_actions=False`` (e.g. plan_generation,
-    ask_vqa_*) get *all* their FAST positions masked out via the
-    per-sample gate.
+    ``action_code_mask`` is true only on the discrete action-code tokens,
+    excluding the BOS / "Action: " / delimiter wrapper. Samples whose
+    recipe sets ``predict_actions=False`` get all code positions masked
+    out via the per-sample gate.
     """
     shift_logits = fast_logits[:, :-1, :].contiguous()
     shift_targets = action_tokens[:, 1:].contiguous().long()
-    shift_valid = action_mask[:, 1:].contiguous().bool()
+    shift_valid = action_code_mask[:, 1:].contiguous().bool()
     if predict_actions_t is not None:
         sample_mask = predict_actions_t[:, None].expand_as(shift_valid)
         shift_valid = shift_valid & sample_mask
@@ -429,13 +429,18 @@ class PI052Policy(PI05Policy):
             and self.config.fast_action_loss_weight > 0
             and (predict_actions_t is None or bool(predict_actions_t.any().item()))
         )
-        action_tokens = action_mask = None
+        action_tokens = action_mask = action_code_mask = None
         if run_fast:
-            from lerobot.utils.constants import ACTION_TOKEN_MASK, ACTION_TOKENS  # noqa: PLC0415
+            from lerobot.utils.constants import (  # noqa: PLC0415
+                ACTION_CODE_TOKEN_MASK,
+                ACTION_TOKEN_MASK,
+                ACTION_TOKENS,
+            )
 
             action_tokens = batch.get(ACTION_TOKENS)
             action_mask = batch.get(ACTION_TOKEN_MASK)
-            if action_tokens is None or action_mask is None:
+            action_code_mask = batch.get(ACTION_CODE_TOKEN_MASK)
+            if action_tokens is None or action_mask is None or action_code_mask is None:
                 run_fast = False
 
         # ------------------------------------------------------------
@@ -457,6 +462,7 @@ class PI052Policy(PI05Policy):
                 text_labels=text_labels if run_text else None,
                 action_tokens=action_tokens if run_fast else None,
                 action_mask=action_mask if run_fast else None,
+                action_code_mask=action_code_mask if run_fast else None,
                 predict_actions_t=predict_actions_t,
             )
             loss_dict["flow_loss"] = float(flow_loss.detach().item())
@@ -473,6 +479,7 @@ class PI052Policy(PI05Policy):
                 text_labels=text_labels if run_text else None,
                 action_tokens=action_tokens if run_fast else None,
                 action_mask=action_mask if run_fast else None,
+                action_code_mask=action_code_mask if run_fast else None,
                 predict_actions_t=predict_actions_t,
             )
             if text_loss is not None:
@@ -508,6 +515,7 @@ class PI052Policy(PI05Policy):
         text_labels: Tensor | None,
         action_tokens: Tensor | None,
         action_mask: Tensor | None,
+        action_code_mask: Tensor | None,
         predict_actions_t: Tensor | None = None,
     ) -> tuple[Tensor, Tensor | None, Tensor | None]:
         """Full fusion: flow + text + FAST in ONE backbone forward.
@@ -647,10 +655,10 @@ class PI052Policy(PI05Policy):
             text_loss = _shifted_ce(text_logits, text_labels)
 
         fast_loss: Tensor | None = None
-        if fast_len > 0 and prefix_out is not None:
+        if fast_len > 0 and prefix_out is not None and action_code_mask is not None:
             fast_hidden = prefix_out[:, -fast_len:, :]
             fast_logits = lm_head(fast_hidden.to(lm_head.weight.dtype))
-            fast_loss = _fast_ce(fast_logits, action_tokens, action_mask, predict_actions_t)
+            fast_loss = _fast_ce(fast_logits, action_tokens, action_code_mask, predict_actions_t)
 
         return flow_loss, text_loss, fast_loss
 
@@ -660,6 +668,7 @@ class PI052Policy(PI05Policy):
         text_labels: Tensor | None,
         action_tokens: Tensor | None,
         action_mask: Tensor | None,
+        action_code_mask: Tensor | None,
         predict_actions_t: Tensor | None = None,
     ) -> tuple[Tensor | None, Tensor | None]:
         """Single prefix forward → text CE + FAST CE.
@@ -745,10 +754,14 @@ class PI052Policy(PI05Policy):
             text_loss = _shifted_ce(text_logits, text_labels)
 
         fast_loss: Tensor | None = None
-        if action_tokens is not None and action_mask is not None and fast_len > 0:
+        if (
+            action_tokens is not None
+            and action_code_mask is not None
+            and fast_len > 0
+        ):
             fast_hidden = vlm_out[:, -fast_len:, :]
             fast_logits = lm_head(fast_hidden.to(lm_head.weight.dtype))
-            fast_loss = _fast_ce(fast_logits, action_tokens, action_mask, predict_actions_t)
+            fast_loss = _fast_ce(fast_logits, action_tokens, action_code_mask, predict_actions_t)
 
         return text_loss, fast_loss
 
