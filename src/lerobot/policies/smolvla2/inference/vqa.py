@@ -81,7 +81,7 @@ def prompt_camera_choice(
     input_fn: Any = input,
     print_fn: Any = print,
 ) -> str | None:
-    """Ask the operator which camera to ground a VQA question on.
+    """Ask the operator which camera frame to draw a VQA overlay on.
 
     Accepts either the menu number or the (short or full) camera name.
     A single-camera setup auto-selects without prompting. Returns the
@@ -92,7 +92,7 @@ def prompt_camera_choice(
         return None
     if len(cameras) == 1:
         return cameras[0]
-    print_fn("Which camera should I look at?")
+    print_fn("Draw the result on which camera?")
     for i, cam in enumerate(cameras, 1):
         print_fn(f"  [{i}] {camera_short_name(cam)}")
     try:
@@ -299,27 +299,13 @@ def handle_vqa_query(
         except Exception as exc:  # noqa: BLE001
             logger.debug("observation_provider raised %s", exc)
 
-    cameras = available_cameras(observation)
-    chosen: str | None = None
-    if cameras:
-        chosen = prompt_camera_choice(cameras, input_fn=input_fn, print_fn=print_fn)
-        if chosen is None:
-            report("  [info] vqa cancelled — no camera selected")
-            return
-        report(f"  vqa camera: {camera_short_name(chosen)}")
-    else:
-        report("  [info] vqa: no camera available — answering text-only")
-
     # Feed the FULL observation (every camera + state) to the VLM. The
     # ``ask_vqa_*`` recipes look single-camera, but the image *block* is
     # stripped before tokenization — the actual frames reach the model
     # via SmolVLA's ``OBS_IMAGES_*`` channels, and ``embed_prefix``
     # consumes *all* ``config.image_features`` regardless of which
-    # camera the sub-recipe was tagged for. So training always sees
-    # every camera; filtering to one here would change the image-token
-    # count in the prefix (the dropped camera gets zero-padded with
-    # mask=0) — a prefix shape the model never saw. The chosen camera
-    # is used only to pick which frame the overlay is drawn on.
+    # camera the sub-recipe was tagged for. So the model always sees
+    # every camera; the operator never has to name one to ask.
     answer = _generate_with_policy(
         policy,
         _msgs_for_vqa(question),
@@ -337,14 +323,24 @@ def handle_vqa_query(
         if parsed is None:
             report("  [info] vqa answer is not JSON — no overlay")
         return
-    if observation is None or chosen is None:
+
+    # The answer carries a bounding box / point. Its pixel coordinates
+    # are camera-specific and the text answer doesn't say which camera,
+    # so ask the operator *now* — only when there is actually something
+    # to draw — which camera frame to render the overlay on.
+    cameras = available_cameras(observation)
+    if observation is None or not cameras:
         report("  [info] no camera image — cannot draw overlay")
+        return
+    chosen = prompt_camera_choice(cameras, input_fn=input_fn, print_fn=print_fn)
+    if chosen is None:
+        report("  [info] overlay skipped — no camera selected")
         return
     try:
         pil = observation_image_to_pil(observation[chosen])
         overlay = draw_vqa_overlay(pil, parsed)
         path = save_and_open_overlay(overlay)
-        report(f"  vqa overlay saved: {path}")
+        report(f"  vqa overlay ({camera_short_name(chosen)}) saved: {path}")
     except Exception as exc:  # noqa: BLE001
         logger.warning("vqa overlay failed: %s", exc, exc_info=logger.isEnabledFor(logging.DEBUG))
         report(f"  [warn] vqa overlay failed: {type(exc).__name__}: {exc}")
