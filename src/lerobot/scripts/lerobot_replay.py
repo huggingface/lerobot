@@ -66,7 +66,6 @@ from lerobot.robots import (  # noqa: F401
     reachy2,
     so_follower,
     unitree_g1,
-    waveshare_so_follower,
 )
 from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import register_third_party_plugins
@@ -105,7 +104,9 @@ def replay(cfg: ReplayConfig):
     robot_action_processor = make_default_robot_action_processor()
 
     robot = make_robot_from_config(cfg.robot)
-    dataset = LeRobotDataset(cfg.dataset.repo_id, root=cfg.dataset.root, episodes=[cfg.dataset.episode])
+    dataset = LeRobotDataset(
+        cfg.dataset.repo_id, root=cfg.dataset.root, episodes=[cfg.dataset.episode]
+    )
 
     actions = dataset.select_columns(ACTION)
 

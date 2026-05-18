@@ -47,7 +47,6 @@ from lerobot.robots import (  # noqa: F401
     omx_follower,
     openarm_follower,
     so_follower,
-    waveshare_so_follower,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,

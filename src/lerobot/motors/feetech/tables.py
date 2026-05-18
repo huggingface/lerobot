@@ -97,7 +97,10 @@ STS_SMS_SERIES_CONTROL_TABLE = {
     "Hts": (83, 1),  # (ns) valid for firmware >= 2.54, other versions keep 0
     "Maximum_Velocity_Limit": (84, 1),
     "Maximum_Acceleration": (85, 1),
-    "Acceleration_Multiplier ": (86, 1),  # Acceleration multiplier in effect when acceleration is 0
+    "Acceleration_Multiplier ": (
+        86,
+        1,
+    ),  # Acceleration multiplier in effect when acceleration is 0
 }
 
 # http://doc.feetech.cn/#/prodinfodownload?srcType=FT-SCSCL-emanual-cbcc8ab2e3384282a01d4bf3
@@ -181,6 +184,7 @@ MODEL_CONTROL_TABLE = {
     "sts3250": STS_SMS_SERIES_CONTROL_TABLE,
     "scs0009": SCS_SERIES_CONTROL_TABLE,
     "sm8512bl": STS_SMS_SERIES_CONTROL_TABLE,
+    "st3215": STS_SMS_SERIES_CONTROL_TABLE,  # Waveshare st3215
 }
 
 MODEL_RESOLUTION = {
@@ -191,6 +195,7 @@ MODEL_RESOLUTION = {
     "sts3250": 4096,
     "sm8512bl": 4096,
     "scs0009": 1024,
+    "st3215": 4096,  # Waveshare st3215
 }
 
 MODEL_BAUDRATE_TABLE = {
@@ -201,6 +206,7 @@ MODEL_BAUDRATE_TABLE = {
     "sts3215": STS_SMS_SERIES_BAUDRATE_TABLE,
     "sts3250": STS_SMS_SERIES_BAUDRATE_TABLE,
     "scs0009": SCS_SERIES_BAUDRATE_TABLE,
+    "st3215": STS_SMS_SERIES_BAUDRATE_TABLE,  # Waveshare st3215
 }
 
 # Sign-Magnitude encoding bits
@@ -223,6 +229,7 @@ MODEL_ENCODING_TABLE = {
     "sts3250": STS_SMS_SERIES_ENCODINGS_TABLE,
     "sm8512bl": STS_SMS_SERIES_ENCODINGS_TABLE,
     "scs0009": {},
+    "st3215": STS_SMS_SERIES_ENCODINGS_TABLE,
 }
 
 SCAN_BAUDRATES = [
@@ -244,6 +251,7 @@ MODEL_NUMBER_TABLE = {
     "sts3250": 2825,
     "sm8512bl": 11272,
     "scs0009": 1284,
+    "st3215": 68,
 }
 
 MODEL_PROTOCOL = {
@@ -254,4 +262,5 @@ MODEL_PROTOCOL = {
     "sts3250": 0,
     "sm8512bl": 0,
     "scs0009": 1,
+    "st3215": 0,
 }

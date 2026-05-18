@@ -51,7 +51,6 @@ from lerobot.robots import (  # noqa: F401
     omx_follower,
     openarm_follower,
     so_follower,
-    waveshare_so_follower,
 )
 from lerobot.teleoperators import (  # noqa: F401
     TeleoperatorConfig,
@@ -132,7 +131,9 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
 
             # 2. Read Observations
             observation = robot.get_observation()
-            joint_positions = np.array([observation[f"{key}.pos"] for key in robot.bus.motors])
+            joint_positions = np.array(
+                [observation[f"{key}.pos"] for key in robot.bus.motors]
+            )
 
             # 3. Calculate Kinematics
             # Forward kinematics to get (x, y, z) translation
@@ -180,7 +181,9 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
                     print("\nTime limit reached.")
                     break
 
-            precise_sleep(max(1.0 / cfg.control_loop_fps - (time.perf_counter() - t0), 0.0))
+            precise_sleep(
+                max(1.0 / cfg.control_loop_fps - (time.perf_counter() - t0), 0.0)
+            )
 
     except KeyboardInterrupt:
         print("\n\nInterrupted by user. Stopping safely...")

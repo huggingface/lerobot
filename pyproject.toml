@@ -157,7 +157,6 @@ feetech = ["feetech-servo-sdk>=1.0.0,<2.0.0", "lerobot[pyserial-dep]", "lerobot[
 dynamixel = ["dynamixel-sdk>=3.7.31,<3.9.0", "lerobot[pyserial-dep]", "lerobot[deepdiff-dep]"]
 damiao = ["lerobot[can-dep]"]
 robstride = ["lerobot[can-dep]"]
-st3215 = ["st3215", "lerobot[pyserial-dep]", "lerobot[deepdiff-dep]"]
 
 # Robots
 openarms = ["lerobot[damiao]"]
@@ -282,7 +281,6 @@ all = [
     "lerobot[metaworld]",
     "lerobot[sarm]",
     "lerobot[peft]",
-    "lerobot[st3215]",
     # "lerobot[unitree_g1]", TODO: Unitree requires specific installation instructions for unitree_sdk2
 ]
 

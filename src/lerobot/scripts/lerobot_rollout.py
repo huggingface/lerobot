@@ -153,7 +153,6 @@ from lerobot.robots import (  # noqa: F401
     reachy2,
     so_follower,
     unitree_g1 as unitree_g1_robot,
-    waveshare_so_follower,
 )
 from lerobot.rollout import RolloutConfig, build_rollout_context, create_strategy
 from lerobot.teleoperators import (  # noqa: F401
@@ -184,7 +183,11 @@ def rollout(cfg: RolloutConfig):
     init_logging()
 
     if cfg.display_data:
-        logger.info("Initializing Rerun visualization (ip=%s, port=%s)", cfg.display_ip, cfg.display_port)
+        logger.info(
+            "Initializing Rerun visualization (ip=%s, port=%s)",
+            cfg.display_ip,
+            cfg.display_port,
+        )
         init_rerun(session_name="rollout", ip=cfg.display_ip, port=cfg.display_port)
 
     signal_handler = ProcessSignalHandler(use_threads=True, display_pid=False)

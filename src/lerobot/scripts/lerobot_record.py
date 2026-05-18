@@ -130,7 +130,6 @@ from lerobot.robots import (  # noqa: F401
     reachy2,
     so_follower,
     unitree_g1 as unitree_g1_robot,
-    waveshare_so_follower,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
@@ -235,11 +234,15 @@ def record_loop(
     display_compressed_images: bool = False,
 ):
     if dataset is not None and dataset.fps != fps:
-        raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
+        raise ValueError(
+            f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps})."
+        )
 
     teleop_arm = teleop_keyboard = None
     if isinstance(teleop, list):
-        teleop_keyboard = next((t for t in teleop if isinstance(t, KeyboardTeleop)), None)
+        teleop_keyboard = next(
+            (t for t in teleop if isinstance(t, KeyboardTeleop)), None
+        )
         teleop_arm = next(
             (
                 t
@@ -257,7 +260,12 @@ def record_loop(
             None,
         )
 
-        if not (teleop_arm and teleop_keyboard and len(teleop) == 2 and robot.name == "lekiwi_client"):
+        if not (
+            teleop_arm
+            and teleop_keyboard
+            and len(teleop) == 2
+            and robot.name == "lekiwi_client"
+        ):
             raise ValueError(
                 "For multi-teleop, the list must contain exactly one KeyboardTeleop and one arm teleoperator. Currently only supported for LeKiwi robot."
             )
@@ -281,7 +289,9 @@ def record_loop(
         obs_processed = robot_observation_processor(obs)
 
         if dataset is not None:
-            observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
+            observation_frame = build_dataset_frame(
+                dataset.features, obs_processed, prefix=OBS_STR
+            )
 
         # Get action from teleop
         if isinstance(teleop, Teleoperator):
@@ -321,13 +331,17 @@ def record_loop(
 
         # Write to dataset
         if dataset is not None:
-            action_frame = build_dataset_frame(dataset.features, action_values, prefix=ACTION)
+            action_frame = build_dataset_frame(
+                dataset.features, action_values, prefix=ACTION
+            )
             frame = {**observation_frame, **action_frame, "task": single_task}
             dataset.add_frame(frame)
 
         if display_data:
             log_rerun_data(
-                observation=obs_processed, action=action_values, compress_images=display_compressed_images
+                observation=obs_processed,
+                action=action_values,
+                compress_images=display_compressed_images,
             )
 
         dt_s = time.perf_counter() - start_loop_t
@@ -356,12 +370,18 @@ def record(
         init_rerun(session_name="recording", ip=cfg.display_ip, port=cfg.display_port)
     display_compressed_images = (
         True
-        if (cfg.display_data and cfg.display_ip is not None and cfg.display_port is not None)
+        if (
+            cfg.display_data
+            and cfg.display_ip is not None
+            and cfg.display_port is not None
+        )
         else cfg.display_compressed_images
     )
 
     robot = make_robot_from_config(cfg.robot)
-    teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
+    teleop = (
+        make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
+    )
 
     # Fall back to identity pipelines when the caller doesn't supply processors.
     if (
@@ -384,7 +404,9 @@ def record(
         ),
         aggregate_pipeline_dataset_features(
             pipeline=robot_observation_processor,
-            initial_features=create_initial_features(observation=robot.observation_features),
+            initial_features=create_initial_features(
+                observation=robot.observation_features
+            ),
             use_videos=cfg.dataset.video,
         ),
     )
@@ -403,12 +425,18 @@ def record(
                 encoder_threads=cfg.dataset.encoder_threads,
                 streaming_encoding=cfg.dataset.streaming_encoding,
                 encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
-                image_writer_processes=cfg.dataset.num_image_writer_processes if num_cameras > 0 else 0,
-                image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * num_cameras
-                if num_cameras > 0
-                else 0,
+                image_writer_processes=(
+                    cfg.dataset.num_image_writer_processes if num_cameras > 0 else 0
+                ),
+                image_writer_threads=(
+                    cfg.dataset.num_image_writer_threads_per_camera * num_cameras
+                    if num_cameras > 0
+                    else 0
+                ),
             )
-            sanity_check_dataset_robot_compatibility(dataset, robot, cfg.dataset.fps, dataset_features)
+            sanity_check_dataset_robot_compatibility(
+                dataset, robot, cfg.dataset.fps, dataset_features
+            )
         else:
             # Reject eval_ prefix — for policy evaluation use lerobot-rollout
             repo_name = cfg.dataset.repo_id.split("/", 1)[-1]
@@ -426,7 +454,8 @@ def record(
                 features=dataset_features,
                 use_videos=cfg.dataset.video,
                 image_writer_processes=cfg.dataset.num_image_writer_processes,
-                image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot.cameras),
+                image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera
+                * len(robot.cameras),
                 batch_encoding_size=cfg.dataset.video_encoding_batch_size,
                 camera_encoder=cfg.dataset.camera_encoder,
                 encoder_threads=cfg.dataset.encoder_threads,
@@ -447,7 +476,10 @@ def record(
 
         with VideoEncodingManager(dataset):
             recorded_episodes = 0
-            while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
+            while (
+                recorded_episodes < cfg.dataset.num_episodes
+                and not events["stop_recording"]
+            ):
                 log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
                 record_loop(
                     robot=robot,
@@ -467,7 +499,8 @@ def record(
                 # Execute a few seconds without recording to give time to manually reset the environment
                 # Skip reset for the last episode to be recorded
                 if not events["stop_recording"] and (
-                    (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
+                    (recorded_episodes < cfg.dataset.num_episodes - 1)
+                    or events["rerecord_episode"]
                 ):
                     log_say("Reset the environment", cfg.play_sounds)
 

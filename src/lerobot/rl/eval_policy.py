@@ -23,7 +23,6 @@ from lerobot.robots import (  # noqa: F401
     RobotConfig,
     make_robot_from_config,
     so_follower,
-    waveshare_so_follower,
 )
 from lerobot.teleoperators import (
     gamepad,  # noqa: F401
