@@ -23,7 +23,7 @@ from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
@@ -52,9 +52,14 @@ from lerobot.utils.constants import (
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
-from lerobot.utils.import_utils import require_package
+from lerobot.utils.import_utils import _transformers_available, require_package
 
 from .configuration_molmoact2 import MolmoAct2Config, infer_molmoact2_max_sequence_length
+
+if TYPE_CHECKING or _transformers_available:
+    from transformers import AutoProcessor
+else:
+    AutoProcessor = None
 
 ACTION_OUTPUT_TOKEN = "<action_output>"  # nosec B105
 ACTION_START_TOKEN = "<action_start>"  # nosec B105
@@ -509,7 +514,6 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
 
     def __post_init__(self) -> None:
         require_package("transformers", extra="molmoact2")
-        from transformers import AutoProcessor
 
         checkpoint_location = _resolve_checkpoint_location(
             self.checkpoint_path,
