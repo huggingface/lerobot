@@ -334,7 +334,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             return False
 
         with self._state_lock:
-            if self._inference_in_progress:
+            if self._inference_in_progress and not obs.must_go:
                 self.logger.debug(
                     f"Skipping observation #{obs.get_timestep()} (must_go={obs.must_go}) - "
                     "Inference already in progress!"
