@@ -39,7 +39,9 @@ HW_VIDEO_CODECS = [
     "h264_vaapi",  # Linux Intel/AMD
     "h264_qsv",  # Intel Quick Sync
 ]
-VALID_VIDEO_CODECS: frozenset[str] = frozenset({"h264", "hevc", "libsvtav1", "auto", *HW_VIDEO_CODECS})
+VALID_VIDEO_CODECS: frozenset[str] = frozenset(
+    {"h264", "hevc", "libsvtav1", "ffv1", "auto", *HW_VIDEO_CODECS}
+)
 # Aliases for legacy video codec names.
 VIDEO_CODECS_ALIASES: dict[str, str] = {"av1": "libsvtav1"}
 
@@ -229,6 +231,10 @@ class VideoEncoderConfig:
         elif self.vcodec == "h264_qsv":
             set_if("global_quality", self.crf)
             set_if("preset", self.preset)
+        elif self.vcodec == "ffv1":
+            # Lossless intra-frame codec. ``crf``/``preset``/``fast_decode``
+            # are not meaningful.
+            set_if("threads", encoder_threads)
         else:
             set_if("crf", self.crf)
             set_if("preset", self.preset)
