@@ -339,7 +339,7 @@ def _encode_video(
 ) -> Path:
     imgs_dir = path.parent / f"imgs_{path.stem}"
     _write_frames(imgs_dir, num_frames=num_frames)
-    encode_video_frames(imgs_dir, path, fps=fps, camera_encoder=cfg, overwrite=True)
+    encode_video_frames(imgs_dir, path, fps=fps, video_encoder=cfg, overwrite=True)
     return path
 
 
