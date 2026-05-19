@@ -17,11 +17,13 @@ import contextlib
 import glob
 import importlib
 import logging
+import os
 import queue
 import shutil
 import tempfile
 import threading
 import warnings
+from collections import OrderedDict
 from dataclasses import asdict, dataclass, field
 from fractions import Fraction
 from pathlib import Path
@@ -191,15 +193,70 @@ def decode_video_frames_pyav(
     return closest_frames
 
 
-class VideoDecoderCache:
-    """Thread-safe cache for video decoders to avoid expensive re-initialization."""
+DEFAULT_DECODER_CACHE_SIZE = 100
+"""Default LRU capacity for :class:`VideoDecoderCache`.
 
-    def __init__(self):
-        self._cache: dict[str, tuple[Any, Any]] = {}
+Sized to comfortably hold a small rolling window of episodes worth of decoders
+(typical recipes: 2-4 cameras per episode × tens of episodes in flight) while
+bounding host RAM. Each cached entry retains a torchcodec ``VideoDecoder`` plus
+an open ``fsspec`` file handle — on the order of a few MB per entry. Override
+via the ``LEROBOT_VIDEO_DECODER_CACHE_SIZE`` env var or by passing ``max_size``
+to the constructor (``None`` restores the legacy unbounded behaviour).
+"""
+
+
+def _default_max_cache_size() -> int | None:
+    raw = os.environ.get("LEROBOT_VIDEO_DECODER_CACHE_SIZE")
+    if raw is None:
+        return DEFAULT_DECODER_CACHE_SIZE
+    raw = raw.strip().lower()
+    if raw in ("", "none", "unbounded", "-1"):
+        return None
+    try:
+        value = int(raw)
+    except ValueError as e:
+        raise ValueError(
+            f"LEROBOT_VIDEO_DECODER_CACHE_SIZE must be an integer, 'none', or '-1'; got {raw!r}"
+        ) from e
+    if value <= 0:
+        raise ValueError(f"LEROBOT_VIDEO_DECODER_CACHE_SIZE must be positive; got {value}")
+    return value
+
+
+class VideoDecoderCache:
+    """Thread-safe LRU cache for torchcodec ``VideoDecoder`` instances.
+
+    Cached entries hold a ``VideoDecoder`` plus the open ``fsspec`` file handle
+    backing it. When the cache is full and a new path is requested, the
+    least-recently-used entry is evicted and its file handle is closed. This
+    bounds host-RAM growth when iterating over datasets with many distinct
+    video files (otherwise each ``DataLoader`` worker pins every decoder it has
+    ever opened until the process exits).
+
+    Args:
+        max_size: Maximum number of decoders to retain. ``None`` disables
+            eviction and restores legacy unbounded behaviour. Defaults to the
+            value of ``LEROBOT_VIDEO_DECODER_CACHE_SIZE`` if set, otherwise
+            :data:`DEFAULT_DECODER_CACHE_SIZE`.
+    """
+
+    _SENTINEL: ClassVar[object] = object()
+
+    def __init__(self, max_size: int | None | object = _SENTINEL):
+        if max_size is VideoDecoderCache._SENTINEL:
+            max_size = _default_max_cache_size()
+        if max_size is not None and max_size <= 0:
+            raise ValueError(f"max_size must be positive or None; got {max_size}")
+        self.max_size: int | None = max_size  # type: ignore[assignment]
+        self._cache: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
         self._lock = Lock()
 
+    def __contains__(self, video_path: object) -> bool:
+        with self._lock:
+            return str(video_path) in self._cache
+
     def get_decoder(self, video_path: str):
-        """Get a cached decoder or create a new one."""
+        """Get a cached decoder or create a new one, evicting LRU if at capacity."""
         if importlib.util.find_spec("torchcodec"):
             from torchcodec.decoders import VideoDecoder
         else:
@@ -211,22 +268,36 @@ class VideoDecoderCache:
         video_path = str(video_path)
 
         with self._lock:
-            if video_path not in self._cache:
-                file_handle = fsspec.open(video_path).__enter__()
-                try:
-                    decoder = VideoDecoder(file_handle, seek_mode="approximate")
-                except Exception:
-                    file_handle.close()
-                    raise
-                self._cache[video_path] = (decoder, file_handle)
+            entry = self._cache.get(video_path)
+            if entry is not None:
+                self._cache.move_to_end(video_path)
+                return entry[0]
 
-            return self._cache[video_path][0]
+            file_handle = fsspec.open(video_path).__enter__()
+            try:
+                decoder = VideoDecoder(file_handle, seek_mode="approximate")
+            except Exception:
+                file_handle.close()
+                raise
+            self._cache[video_path] = (decoder, file_handle)
+
+            # Evict LRU entries until we are back under the cap. We close
+            # evicted file handles immediately; the associated ``VideoDecoder``
+            # is released to the GC when its last reference goes away.
+            if self.max_size is not None:
+                while len(self._cache) > self.max_size:
+                    _evicted_path, (_evicted_decoder, evicted_handle) = self._cache.popitem(last=False)
+                    with contextlib.suppress(Exception):
+                        evicted_handle.close()
+
+            return decoder
 
     def clear(self):
-        """Clear the cache and close file handles."""
+        """Clear the cache and close all file handles."""
         with self._lock:
             for _, file_handle in self._cache.values():
-                file_handle.close()
+                with contextlib.suppress(Exception):
+                    file_handle.close()
             self._cache.clear()
 
     def size(self) -> int:
