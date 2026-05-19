@@ -24,7 +24,7 @@ import torch.utils
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.errors import RevisionNotFoundError
 
-from lerobot.configs import VideoEncoderConfig
+from lerobot.configs import VideoEncoderConfig, DepthEncoderConfig
 from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
 
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
@@ -60,6 +60,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return_uint8: bool = False,
         batch_encoding_size: int = 1,
         camera_encoder: VideoEncoderConfig | None = None,
+        depth_encoder: DepthEncoderConfig | None = None,
         encoder_threads: int | None = None,
         streaming_encoding: bool = False,
         encoder_queue_maxsize: int = 30,
@@ -186,6 +187,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             camera_encoder (VideoEncoderConfig | None, optional): Video encoder settings for cameras
                 (codec, quality, etc.). When ``None``, :func:`~lerobot.configs.video.camera_encoder_defaults`
                 is used by the writer.
+            depth_encoder (DepthEncoderConfig | None, optional): Video encoder settings for depth cameras
+                (codec, quality, etc.). When ``None``, :func:`~lerobot.configs.depth.depth_encoder_defaults`
+                is used by the writer.
             encoder_threads (int | None, optional): Number of encoder threads (global). ``None`` lets the
                 codec decide.
             streaming_encoding (bool, optional): If True, encode video frames in real-time during capture
@@ -272,6 +276,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 streaming_enc = self._build_streaming_encoder(
                     self.meta.fps,
                     camera_encoder,
+                    depth_encoder,
                     encoder_queue_maxsize,
                     encoder_threads,
                 )
@@ -279,6 +284,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 meta=self.meta,
                 root=self.root,
                 camera_encoder=camera_encoder,
+                depth_encoder=depth_encoder,
                 encoder_threads=encoder_threads,
                 batch_encoding_size=batch_encoding_size,
                 streaming_encoder=streaming_enc,
@@ -321,12 +327,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def _build_streaming_encoder(
         fps: int,
         camera_encoder: VideoEncoderConfig | None,
+        depth_encoder: DepthEncoderConfig | None,
         encoder_queue_maxsize: int,
         encoder_threads: int | None,
     ) -> StreamingVideoEncoder:
         return StreamingVideoEncoder(
             fps=fps,
             camera_encoder=camera_encoder,
+            depth_encoder=depth_encoder,
             queue_maxsize=encoder_queue_maxsize,
             encoder_threads=encoder_threads,
         )
@@ -644,6 +652,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
         camera_encoder: VideoEncoderConfig | None = None,
+        depth_encoder: DepthEncoderConfig | None = None,
         metadata_buffer_size: int = 10,
         streaming_encoding: bool = False,
         encoder_queue_maxsize: int = 30,
@@ -676,6 +685,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 batch-encoding videos. ``1`` means encode immediately.
             camera_encoder: Video encoder settings for cameras (codec, quality, etc.).
                 When ``None``, :func:`~lerobot.configs.video.camera_encoder_defaults` is used.
+            depth_encoder: Video encoder settings for depth cameras (codec, quality, etc.).
+                When ``None``, :func:`~lerobot.configs.depth.depth_encoder_defaults` is used.
             encoder_threads: Number of encoder threads (global). ``None``
                 lets the codec decide.
             metadata_buffer_size: Number of episode metadata records to buffer
@@ -719,12 +730,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
         streaming_enc = None
         if streaming_encoding and len(obj.meta.video_keys) > 0:
             streaming_enc = cls._build_streaming_encoder(
-                fps, camera_encoder, encoder_queue_maxsize, encoder_threads
+                fps, camera_encoder, depth_encoder, encoder_queue_maxsize, encoder_threads
             )
         obj.writer = DatasetWriter(
             meta=obj.meta,
             root=obj.root,
             camera_encoder=camera_encoder,
+            depth_encoder=depth_encoder,
             encoder_threads=encoder_threads,
             batch_encoding_size=batch_encoding_size,
             streaming_encoder=streaming_enc,

@@ -40,7 +40,9 @@ from PIL import Image
 
 from lerobot.configs import (
     VideoEncoderConfig,
+    DepthEncoderConfig,
     camera_encoder_defaults,
+    depth_encoder_defaults,
 )
 from lerobot.utils.import_utils import get_safe_default_video_backend
 
@@ -406,17 +408,17 @@ def encode_video_frames(
     imgs_dir: Path | str,
     video_path: Path | str,
     fps: int,
-    camera_encoder: VideoEncoderConfig | None = None,
+    video_encoder: VideoEncoderConfig | None = None,
     encoder_threads: int | None = None,
     *,
     log_level: int | None = av.logging.WARNING,
     overwrite: bool = False,
 ) -> None:
     """More info on ffmpeg arguments tuning on `benchmark/video/README.md`"""
-    if camera_encoder is None:
-        camera_encoder = camera_encoder_defaults()
-    vcodec = camera_encoder.vcodec
-    pix_fmt = camera_encoder.pix_fmt
+    if video_encoder is None:
+        video_encoder = camera_encoder_defaults()
+    vcodec = video_encoder.vcodec
+    pix_fmt = video_encoder.pix_fmt
 
     video_path = Path(video_path)
     imgs_dir = Path(imgs_dir)
@@ -438,7 +440,7 @@ def encode_video_frames(
     with Image.open(input_list[0]) as dummy_image:
         width, height = dummy_image.size
 
-    video_options = camera_encoder.get_codec_options(encoder_threads, as_strings=True)
+    video_options = video_encoder.get_codec_options(encoder_threads, as_strings=True)
 
     # Set logging level
     if log_level is not None:
@@ -816,6 +818,7 @@ class StreamingVideoEncoder:
         self,
         fps: int,
         camera_encoder: VideoEncoderConfig | None = None,
+        depth_encoder: DepthEncoderConfig | None = None,
         queue_maxsize: int = 30,
         encoder_threads: int | None = None,
     ):
@@ -831,6 +834,7 @@ class StreamingVideoEncoder:
         """
         self.fps = fps
         self._camera_encoder = camera_encoder or camera_encoder_defaults()
+        self._depth_encoder = depth_encoder or depth_encoder_defaults()
         self._encoder_threads = encoder_threads
         self.queue_maxsize = queue_maxsize
 
@@ -843,11 +847,12 @@ class StreamingVideoEncoder:
         self._episode_active = False
         self._closed = False
 
-    def start_episode(self, video_keys: list[str], temp_dir: Path) -> None:
+    def start_episode(self, video_keys: list[str], depth_video_keys: list[str], temp_dir: Path) -> None:
         """Start encoder threads for a new episode.
 
         Args:
             video_keys: List of video feature keys (e.g. ["observation.images.laptop"])
+            depth_video_keys: List of video feature keys that carry depth maps (e.g. ["observation.depth.laptop"])
             temp_dir: Base directory for temporary MP4 files
         """
         if self._episode_active:
@@ -855,7 +860,7 @@ class StreamingVideoEncoder:
 
         self._dropped_frames.clear()
 
-        for video_key in video_keys:
+        for video_key in video_keys + depth_video_keys:
             frame_queue: queue.Queue = queue.Queue(maxsize=self.queue_maxsize)
             result_queue: queue.Queue = queue.Queue(maxsize=1)
             stop_event = threading.Event()
@@ -863,13 +868,13 @@ class StreamingVideoEncoder:
             temp_video_dir = Path(tempfile.mkdtemp(dir=temp_dir))
             video_path = temp_video_dir / f"{video_key.replace('/', '_')}_streaming.mp4"
 
-            vcodec = self._camera_encoder.vcodec
-            codec_options = self._camera_encoder.get_codec_options(self._encoder_threads, as_strings=True)
+            encoder = self._depth_encoder if video_key in depth_video_keys else self._camera_encoder
+            codec_options = encoder.get_codec_options(self._encoder_threads, as_strings=True)
             encoder_thread = _CameraEncoderThread(
                 video_path=video_path,
                 fps=self.fps,
-                vcodec=vcodec,
-                pix_fmt=self._camera_encoder.pix_fmt,
+                vcodec=encoder.vcodec,
+                pix_fmt=encoder.pix_fmt,
                 codec_options=codec_options,
                 frame_queue=frame_queue,
                 result_queue=result_queue,
