@@ -224,6 +224,8 @@ class OpenCVCamera(Camera):
             self._validate_fps()
 
         if self.config.fourcc is not None and set_fourcc_after_size_and_fps:
+            # On Windows with DSHOW, changing the resolution can silently override the FOURCC setting.
+            # Set FOURCC last to make sure the requested pixel format is actually enforced.
             self._validate_fourcc()
 
     def _validate_fps(self) -> None:
