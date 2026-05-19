@@ -81,6 +81,132 @@ from .helpers import (
 )
 
 
+class AsyncTimelineVisualizer:
+    """Live plot for async planning/execution overlap.
+
+    Uses wall-clock timestamps so policy-server inference spans, received action
+    chunks, and robot-side execution can be compared on one timeline.
+    """
+
+    def __init__(self, fps: int, window_s: float = 8.0):
+        self.fps = fps
+        self.dt = 1 / fps
+        self.window_s = window_s
+        self.start_time = time.time()
+        self.lock = threading.Lock()
+        self.inference_spans: list[tuple[float, float, int]] = []
+        self.plan_spans: list[tuple[float, float, int, int]] = []
+        self.executed_actions: list[tuple[float, int, int]] = []
+        self.observations: list[tuple[float, int, bool]] = []
+        self.last_draw_t = 0.0
+
+        import matplotlib.pyplot as plt
+
+        self.plt = plt
+        self.plt.ion()
+        self.fig, self.ax = self.plt.subplots(figsize=(13, 5))
+        self.fig.canvas.manager.set_window_title("LeRobot async inference timeline")
+
+    def _rel(self, timestamp: float) -> float:
+        return timestamp - self.start_time
+
+    def record_observation(self, timestamp: float, timestep: int, must_go: bool) -> None:
+        with self.lock:
+            self.observations.append((self._rel(timestamp), timestep, must_go))
+            self._trim_locked()
+
+    def record_action_chunk(
+        self,
+        timed_actions: list[TimedAction],
+        receive_time: float,
+        latest_action: int,
+    ) -> None:
+        if not timed_actions:
+            return
+
+        obs_time = timed_actions[0].get_timestamp()
+        first_step = timed_actions[0].get_timestep()
+        last_step = timed_actions[-1].get_timestep()
+        plan_start = obs_time
+        plan_end = timed_actions[-1].get_timestamp() + self.dt
+
+        with self.lock:
+            self.inference_spans.append((self._rel(obs_time), self._rel(receive_time), first_step))
+            self.plan_spans.append((self._rel(plan_start), self._rel(plan_end), first_step, last_step))
+            self._trim_locked()
+
+        # latest_action is not plotted directly, but keeping it in this method signature
+        # makes call sites explicit about the execution/planning relationship.
+        _ = latest_action
+
+    def record_executed_action(self, timestamp: float, timestep: int, queue_size: int) -> None:
+        with self.lock:
+            self.executed_actions.append((self._rel(timestamp), timestep, queue_size))
+            self._trim_locked()
+
+    def _trim_locked(self) -> None:
+        cutoff = self._rel(time.time()) - self.window_s - 2.0
+        self.inference_spans = [span for span in self.inference_spans if span[1] >= cutoff]
+        self.plan_spans = [span for span in self.plan_spans if span[1] >= cutoff]
+        self.executed_actions = [event for event in self.executed_actions if event[0] >= cutoff]
+        self.observations = [event for event in self.observations if event[0] >= cutoff]
+
+    def maybe_draw(self, min_interval_s: float = 0.2) -> None:
+        now_wall = time.time()
+        if now_wall - self.last_draw_t < min_interval_s:
+            return
+        self.last_draw_t = now_wall
+
+        now = self._rel(now_wall)
+        x_min = max(0.0, now - self.window_s)
+        x_max = max(self.window_s, now + 1.0)
+
+        with self.lock:
+            inference_spans = list(self.inference_spans)
+            plan_spans = list(self.plan_spans)
+            executed_actions = list(self.executed_actions)
+            observations = list(self.observations)
+
+        self.ax.clear()
+        self.ax.set_title("Asynchronous inference: planning and execution overlap")
+        self.ax.set_xlabel("time since client start (s)")
+        self.ax.set_xlim(x_min, x_max)
+        self.ax.set_ylim(-0.6, 3.4)
+        self.ax.set_yticks([0, 1, 2, 3])
+        self.ax.set_yticklabels(["observations", "inference", "planned chunks", "executed actions"])
+        self.ax.grid(axis="x", alpha=0.25)
+
+        for start, end, first_step in inference_spans:
+            width = max(end - start, 0.001)
+            self.ax.broken_barh([(start, width)], (0.75, 0.5), facecolors="#356aff", alpha=0.75)
+            if x_min <= start <= x_max:
+                self.ax.text(start, 1.32, f"inf #{first_step}", fontsize=8, color="#2147b8")
+
+        for start, end, first_step, last_step in plan_spans:
+            width = max(end - start, 0.001)
+            self.ax.broken_barh([(start, width)], (1.75, 0.5), facecolors="#62b44b", alpha=0.7)
+            if x_min <= start <= x_max:
+                self.ax.text(start, 2.32, f"plan {first_step}:{last_step}", fontsize=8, color="#3b7d2e")
+
+        if observations:
+            xs = [event[0] for event in observations]
+            ys = [0] * len(observations)
+            colors = ["#d2691e" if must_go else "#999999" for _, _, must_go in observations]
+            self.ax.scatter(xs, ys, c=colors, s=22, marker="|")
+
+        if executed_actions:
+            xs = [event[0] for event in executed_actions]
+            ys = [3] * len(executed_actions)
+            queue_sizes = [event[2] for event in executed_actions]
+            self.ax.scatter(xs, ys, c=queue_sizes, cmap="viridis", s=18, vmin=0)
+
+        self.ax.axvline(now, color="#d62728", linewidth=1.5, alpha=0.8)
+        self.ax.text(now, 3.18, "now", color="#d62728", fontsize=9, ha="right")
+
+        self.fig.tight_layout()
+        self.plt.pause(0.001)
+
+
 class RobotClient:
     prefix = "robot_client"
     logger = get_logger(prefix)
@@ -130,6 +256,15 @@ class RobotClient:
 
         # FPS measurement
         self.fps_tracker = FPSTracker(target_fps=self.config.fps)
+        self.timeline_visualizer = None
+        if self.config.debug_visualize_timeline:
+            try:
+                self.timeline_visualizer = AsyncTimelineVisualizer(
+                    fps=self.config.fps,
+                    window_s=self.config.timeline_window_s,
+                )
+            except Exception as e:
+                self.logger.error(f"Failed to initialize async timeline visualizer: {e}")
 
         self.logger.info("Robot connected and ready")
 
@@ -303,6 +438,14 @@ class RobotClient:
                     self.logger.debug(f"Actions kept on device: {client_device}")
 
                 self.action_chunk_size = max(self.action_chunk_size, len(timed_actions))
+                if len(timed_actions) > 0 and self.timeline_visualizer is not None:
+                    with self.latest_action_lock:
+                        latest_action_for_plot = self.latest_action
+                    self.timeline_visualizer.record_action_chunk(
+                        timed_actions=timed_actions,
+                        receive_time=receive_time,
+                        latest_action=latest_action_for_plot,
+                    )
 
                 # Calculate network latency if we have matching observations
                 if len(timed_actions) > 0 and verbose:
@@ -377,6 +520,7 @@ class RobotClient:
             self.action_queue_size.append(self.action_queue.qsize())
             # Get action from queue
             timed_action = self.action_queue.get_nowait()
+            queue_size_after_pop = self.action_queue.qsize()
         get_end = time.perf_counter() - get_start
 
         _performed_action = self.robot.send_action(
@@ -387,6 +531,13 @@ class RobotClient:
 
         with self.latest_action_lock:
             self.latest_action = timed_action.get_timestep()
+
+        if self.timeline_visualizer is not None:
+            self.timeline_visualizer.record_executed_action(
+                timestamp=time.time(),
+                timestep=timed_action.get_timestep(),
+                queue_size=queue_size_after_pop,
+            )
 
         if verbose:
             with self.action_queue_lock:
@@ -439,6 +590,12 @@ class RobotClient:
                 current_queue_size = self.action_queue.qsize()
 
             _ = self.send_observation(observation)
+            if self.timeline_visualizer is not None:
+                self.timeline_visualizer.record_observation(
+                    timestamp=observation.get_timestamp(),
+                    timestep=observation.get_timestep(),
+                    must_go=observation.must_go,
+                )
 
             self.logger.debug(f"QUEUE SIZE: {current_queue_size} (Must go: {observation.must_go})")
             if observation.must_go:
@@ -482,6 +639,9 @@ class RobotClient:
             """Control loop: (2) Streaming observations to the remote policy server"""
             if self._ready_to_send_observation():
                 _captured_observation = self.control_loop_observation(task, verbose)
+
+            if self.timeline_visualizer is not None:
+                self.timeline_visualizer.maybe_draw()
 
             self.logger.debug(f"Control loop (ms): {(time.perf_counter() - control_loop_start) * 1000:.2f}")
             # Dynamically adjust sleep time to maintain the desired control frequency

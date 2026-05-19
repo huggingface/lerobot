@@ -147,6 +147,14 @@ class RobotClientConfig:
     debug_visualize_queue_size: bool = field(
         default=False, metadata={"help": "Visualize the action queue size"}
     )
+    debug_visualize_timeline: bool = field(
+        default=False,
+        metadata={"help": "Visualize async inference/action execution overlap in real time"},
+    )
+    timeline_window_s: float = field(
+        default=8.0,
+        metadata={"help": "Sliding time window, in seconds, for async timeline visualization"},
+    )
     display_data: bool = field(default=False, metadata={"help": "Display robot data in Rerun"})
     display_ip: str | None = field(default=None, metadata={"help": "IP of the remote Rerun server"})
     display_port: int | None = field(default=None, metadata={"help": "Port of the remote Rerun server"})
@@ -205,6 +213,8 @@ class RobotClientConfig:
             "actions_per_chunk": self.actions_per_chunk,
             "task": self.task,
             "debug_visualize_queue_size": self.debug_visualize_queue_size,
+            "debug_visualize_timeline": self.debug_visualize_timeline,
+            "timeline_window_s": self.timeline_window_s,
             "aggregate_fn_name": self.aggregate_fn_name,
             "display_data": self.display_data,
             "display_ip": self.display_ip,
