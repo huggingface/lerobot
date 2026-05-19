@@ -294,25 +294,6 @@ def make_pre_post_processors(
             kwargs["preprocessor_overrides"] = preprocessor_overrides
             kwargs["postprocessor_overrides"] = postprocessor_overrides
 
-        if isinstance(policy_cfg, MolmoAct2Config):
-            from .molmoact2 import processor_molmoact2  # noqa: F401
-
-            preprocessor_overrides = dict(kwargs.get("preprocessor_overrides", {}))
-            if "normalizer_processor" in preprocessor_overrides:
-                preprocessor_overrides.setdefault(
-                    "molmoact2_masked_normalizer",
-                    preprocessor_overrides.pop("normalizer_processor"),
-                )
-            kwargs["preprocessor_overrides"] = preprocessor_overrides
-
-            postprocessor_overrides = dict(kwargs.get("postprocessor_overrides", {}))
-            if "unnormalizer_processor" in postprocessor_overrides:
-                postprocessor_overrides.setdefault(
-                    "molmoact2_masked_unnormalizer",
-                    postprocessor_overrides.pop("unnormalizer_processor"),
-                )
-            kwargs["postprocessor_overrides"] = postprocessor_overrides
-
         preprocessor = PolicyProcessorPipeline.from_pretrained(
             pretrained_model_name_or_path=pretrained_path,
             config_filename=kwargs.get(
