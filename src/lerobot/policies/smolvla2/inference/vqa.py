@@ -37,6 +37,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -49,6 +50,14 @@ from .runtime_state import push_log
 logger = logging.getLogger(__name__)
 
 _IMAGE_PREFIX = "observation.images."
+
+# PaliGemma detection / pointing vocabulary. PI052 trains spatial VQA
+# answers in this native ``<locNNNN>`` format (index in [0, 1023],
+# normalized to the image axis) instead of pixel-coordinate JSON, so the
+# answer string the runtime parses can be e.g.
+# ``<loc0512><loc0301> blue cube`` (point) or
+# ``<loc0100><loc0080><loc0400><loc0360> blue cube`` (box).
+_LOC_RE = re.compile(r"<loc(\d{1,4})>")
 
 # Iteration order for shape matching — most specific keys first so an
 # answer is classified deterministically.
@@ -115,16 +124,74 @@ def prompt_camera_choice(
 # ---------------------------------------------------------------------------
 
 
+def _loc_to_norm(idx: int) -> float:
+    """PaliGemma ``<locNNNN>`` index → normalized [0, 1] axis coordinate."""
+    return max(0.0, min(1023.0, float(idx))) / 1023.0
+
+
+def parse_loc_answer(answer: str) -> dict | None:
+    """Parse a PaliGemma ``<loc>``-format spatial VQA answer.
+
+    PI052 trains spatial answers in PaliGemma's native detection
+    vocabulary: a point is ``<locY><locX> label``, a box is
+    ``<locY0><locX0><locY1><locX1> label``, and multiple boxes are joined
+    by `` ; ``. Coordinates come back *normalized* ([0, 1]); the overlay
+    denormalizes them against the chosen camera frame's pixel size.
+
+    Returns ``{"kind", "payload", "normalized": True}`` on success
+    (``payload`` mirrors the JSON shapes so the overlay code is shared),
+    or ``None`` when the answer carries no ``<loc>`` tokens.
+    """
+    if not answer or "<loc" not in answer:
+        return None
+    segments = [seg for seg in answer.split(";") if "<loc" in seg]
+    points: list[tuple[float, float, str]] = []
+    boxes: list[tuple[float, float, float, float, str]] = []
+    for seg in segments:
+        locs = [int(m) for m in _LOC_RE.findall(seg)]
+        label = _LOC_RE.sub("", seg).strip()
+        if len(locs) == 2:
+            y, x = (_loc_to_norm(v) for v in locs[:2])
+            points.append((x, y, label))
+        elif len(locs) >= 4:
+            y1, x1, y2, x2 = (_loc_to_norm(v) for v in locs[:4])
+            boxes.append((x1, y1, x2, y2, label))
+    if boxes:
+        detections = [
+            {"label": lbl, "bbox_format": "xyxy", "bbox": [x1, y1, x2, y2]}
+            for (x1, y1, x2, y2, lbl) in boxes
+        ]
+        return {"kind": "bbox", "payload": {"detections": detections}, "normalized": True}
+    if len(points) == 1:
+        x, y, lbl = points[0]
+        return {
+            "kind": "keypoint",
+            "payload": {"label": lbl, "point_format": "xy", "point": [x, y]},
+            "normalized": True,
+        }
+    if points:  # several bare points → treat as detections-as-points
+        detections = [
+            {"label": lbl, "bbox_format": "xyxy", "bbox": [x, y, x, y]} for (x, y, lbl) in points
+        ]
+        return {"kind": "bbox", "payload": {"detections": detections}, "normalized": True}
+    return None
+
+
 def parse_vqa_answer(answer: str) -> dict | None:
     """Parse a VQA answer string into ``{"kind", "payload"}``.
 
     ``kind`` is one of the ``VQA_ANSWER_SHAPES`` names (``bbox``,
     ``keypoint``, ``count``, ``attribute``, ``spatial``) or ``"unknown"``
-    when the JSON doesn't match any known shape. Returns ``None`` when
-    the answer is not parseable JSON / not a JSON object.
+    when the JSON doesn't match any known shape. PaliGemma ``<loc>``
+    spatial answers are detected first (PI052 trains them in that native
+    format). Returns ``None`` when the answer is neither ``<loc>`` text
+    nor a parseable JSON object.
     """
     if not answer or not answer.strip():
         return None
+    loc_parsed = parse_loc_answer(answer)
+    if loc_parsed is not None:
+        return loc_parsed
     try:
         payload = json.loads(answer)
     except (ValueError, TypeError):
@@ -189,7 +256,9 @@ def draw_vqa_overlay(image: Any, parsed: dict) -> Any:
     """Draw ``bbox`` / ``keypoint`` answers onto a copy of ``image``.
 
     Non-spatial answers (``count`` / ``attribute`` / ``spatial`` /
-    ``unknown``) are returned as an unmodified copy.
+    ``unknown``) are returned as an unmodified copy. When ``parsed`` has
+    ``normalized=True`` (PaliGemma ``<loc>`` answers) the [0, 1]
+    coordinates are scaled to the image's pixel size.
     """
     from PIL import ImageDraw  # noqa: PLC0415
 
@@ -197,6 +266,8 @@ def draw_vqa_overlay(image: Any, parsed: dict) -> Any:
     kind = parsed.get("kind")
     payload = parsed.get("payload") or {}
     draw = ImageDraw.Draw(img)
+    w, h = img.size
+    sx, sy = (w, h) if parsed.get("normalized") else (1, 1)
 
     if kind == "bbox":
         for det in payload.get("detections") or []:
@@ -209,6 +280,8 @@ def draw_vqa_overlay(image: Any, parsed: dict) -> Any:
                 x1, y1, x2, y2 = (float(v) for v in box)
             except (TypeError, ValueError):
                 continue
+            x1, x2 = x1 * sx, x2 * sx
+            y1, y2 = y1 * sy, y2 * sy
             draw.rectangle([x1, y1, x2, y2], outline=_BBOX_COLOR, width=3)
             label = str(det.get("label", "")).strip()
             if label:
@@ -217,7 +290,7 @@ def draw_vqa_overlay(image: Any, parsed: dict) -> Any:
         point = payload.get("point")
         if isinstance(point, list | tuple) and len(point) == 2:
             try:
-                x, y = float(point[0]), float(point[1])
+                x, y = float(point[0]) * sx, float(point[1]) * sy
             except (TypeError, ValueError):
                 return img
             r = 6

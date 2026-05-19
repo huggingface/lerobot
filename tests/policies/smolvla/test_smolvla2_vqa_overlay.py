@@ -177,3 +177,52 @@ def test_observation_image_to_pil_from_batched_float_array():
     pil = observation_image_to_pil(arr)
     assert pil.size == (32, 24)
     assert pil.mode == "RGB"
+
+
+# ---------------------------------------------------------------------------
+# PaliGemma <loc>-format answers (PI052 trains spatial VQA in this vocab)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_loc_keypoint_answer():
+    # <locY><locX> label — y=512/1023≈0.5, x=256/1023≈0.25
+    parsed = parse_vqa_answer("<loc0512><loc0256> blue cube")
+    assert parsed["kind"] == "keypoint"
+    assert parsed["normalized"] is True
+    x, y = parsed["payload"]["point"]
+    assert 0.24 < x < 0.26
+    assert 0.49 < y < 0.51
+    assert parsed["payload"]["label"] == "blue cube"
+    assert answer_has_overlay(parsed)
+
+
+def test_parse_loc_bbox_answer():
+    # <locY0><locX0><locY1><locX1> label
+    parsed = parse_vqa_answer("<loc0100><loc0080><loc0400><loc0360> yellow cube")
+    assert parsed["kind"] == "bbox"
+    assert parsed["normalized"] is True
+    det = parsed["payload"]["detections"][0]
+    x1, y1, x2, y2 = det["bbox"]
+    assert x1 < x2 and y1 < y2
+    assert det["label"] == "yellow cube"
+    assert answer_has_overlay(parsed)
+
+
+def test_parse_loc_multiple_boxes():
+    answer = "<loc0100><loc0080><loc0400><loc0360> cube ; <loc0200><loc0500><loc0600><loc0900> box"
+    parsed = parse_vqa_answer(answer)
+    assert parsed["kind"] == "bbox"
+    assert len(parsed["payload"]["detections"]) == 2
+
+
+def test_parse_loc_takes_precedence_over_json():
+    # An answer with <loc> tokens is parsed as loc even if JSON-ish.
+    assert parse_vqa_answer('{"x": <loc0001><loc0002>}')["normalized"] is True
+
+
+def test_draw_loc_overlay_denormalizes_to_pixels():
+    img = _blank((200, 100))
+    parsed = parse_vqa_answer("<loc0511><loc0511> cube")  # ~centre
+    out = draw_vqa_overlay(img, parsed)
+    assert out.size == img.size
+    assert out.tobytes() != img.tobytes()
