@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+from collections import deque
 from types import SimpleNamespace
 
 import numpy as np
@@ -619,6 +620,34 @@ def test_rtc_processor_initialization_and_select_action_guard():
     assert policy.rtc_processor is not None
     with pytest.raises(AssertionError, match="RTC is not supported for select_action"):
         policy.select_action({})
+
+
+def test_select_action_uses_single_full_batch_queue():
+    policy = object.__new__(MolmoAct2Policy)
+    torch.nn.Module.__init__(policy)
+    policy.config = SimpleNamespace(rtc_config=None, n_action_steps=2)
+    policy._action_queue = deque(maxlen=2)
+    calls = 0
+
+    def predict_action_chunk(batch, **kwargs):
+        nonlocal calls
+        del batch, kwargs
+        calls += 1
+        return torch.tensor(
+            [
+                [[1.0], [2.0]],
+                [[3.0], [4.0]],
+            ]
+        )
+
+    policy.predict_action_chunk = predict_action_chunk
+
+    first = policy.select_action({})
+    second = policy.select_action({})
+
+    assert calls == 1
+    assert torch.equal(first, torch.tensor([[1.0], [3.0]]))
+    assert torch.equal(second, torch.tensor([[2.0], [4.0]]))
 
 
 def test_inference_action_mode_is_explicit_and_has_no_action_mode_alias():

@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import os
 import types
-from collections import defaultdict, deque
+from collections import deque
 from contextlib import nullcontext, suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -652,7 +652,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         self._apply_norm_tag_metadata()
         self.config.validate_features()
         del inputs, kwargs, dataset_stats, dataset_meta
-        self._action_queues: dict[int, deque[Tensor]] = defaultdict(deque)
+        self._action_queue: deque[Tensor] = deque(maxlen=self.config.n_action_steps)
         self._rollout_action_generator: torch.Generator | None = None
         self._rollout_task_key: tuple[Any, ...] | None = None
         self._rollout_index_for_task = -1
@@ -786,7 +786,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         self.train(self.training)
 
     def reset(self) -> None:
-        self._action_queues = defaultdict(deque)
+        self._action_queue = deque(maxlen=self.config.n_action_steps)
         self._rollout_action_generator = None
 
     def _set_inference_cuda_graph_enabled(self, enabled: bool) -> None:
@@ -2048,18 +2048,11 @@ class MolmoAct2Policy(PreTrainedPolicy):
     def select_action(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
         if self._rtc_enabled():
             raise AssertionError("RTC is not supported for select_action, use it with predict_action_chunk")
-        batch_size = int(next(iter(self._model_inputs(batch).values())).shape[0])
-        actions: list[Tensor] = []
-        for batch_idx in range(batch_size):
-            queue = self._action_queues[batch_idx]
-            if not queue:
-                chunk = self.predict_action_chunk(batch, **kwargs)
-                for step in torch.unbind(chunk[batch_idx], dim=0):
-                    queue.append(step)
-            if not queue:
-                raise RuntimeError("MolmoAct2 produced an empty action chunk.")
-            actions.append(queue.popleft())
-        return torch.stack(actions, dim=0)
+        self.eval()
+        if len(self._action_queue) == 0:
+            actions = self.predict_action_chunk(batch, **kwargs)[:, : self.config.n_action_steps]
+            self._action_queue.extend(actions.transpose(0, 1))
+        return self._action_queue.popleft()
 
     def _get_default_peft_targets(self) -> dict[str, Any]:
         target_modules = self._lora_target_modules(prefix=r"model\.model")
