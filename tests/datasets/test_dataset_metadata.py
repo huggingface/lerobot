@@ -53,6 +53,16 @@ IMAGE_FEATURES = {
     },
 }
 
+DEPTH_FEATURES = {
+    **SIMPLE_FEATURES,
+    "observation.depth.laptop": {
+        "dtype": "video",
+        "shape": (64, 96),
+        "names": ["height", "width"],
+        "info": {"video.is_depth_map": True},
+    },
+}
+
 
 def _make_dummy_stats(features: dict) -> dict:
     """Create minimal episode stats matching the given features."""
@@ -140,6 +150,27 @@ def test_create_without_videos_has_no_video_path(tmp_path):
 
     assert meta.video_path is None
     assert meta.video_keys == []
+
+
+def test_depth_keys_property_filters_by_marker(tmp_path):
+    """``depth_keys`` selects only video features carrying ``video.is_depth_map=True``."""
+    features = {
+        **VIDEO_FEATURES,
+        **DEPTH_FEATURES,
+    }
+    meta = LeRobotDatasetMetadata.create(
+        repo_id="test/depth_keys", fps=DEFAULT_FPS, features=features, root=tmp_path / "depth_keys"
+    )
+
+    assert set(meta.video_keys) == {"observation.images.laptop", "observation.depth.laptop"}
+    assert meta.depth_keys == ["observation.depth.laptop"]
+
+
+def test_depth_keys_empty_when_no_marker(tmp_path):
+    meta = LeRobotDatasetMetadata.create(
+        repo_id="test/no_depth", fps=DEFAULT_FPS, features=VIDEO_FEATURES, root=tmp_path / "no_depth"
+    )
+    assert meta.depth_keys == []
 
 
 def test_create_raises_on_existing_directory(tmp_path):
