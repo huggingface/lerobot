@@ -143,6 +143,8 @@
     title: OMX
   - local: openarm
     title: OpenArm
+  - local: rebot_b601
+    title: reBot B601-DM
   title: "Robots"
 - sections:
   - local: phone_teleop
