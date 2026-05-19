@@ -249,3 +249,24 @@ def test_inference_in_progress_prevents_duplicate_enqueue(policy_server):
     obs3 = _make_obs(torch.ones(6) * 7, timestep=3)
     assert policy_server._enqueue_observation(obs3) is True
     assert policy_server._pending_obs is obs3
+
+
+def test_must_go_bypasses_inference_in_progress(policy_server):
+    """must_go=True observations must bypass _inference_in_progress to prevent action-queue starvation.
+
+    Regression test: when inference is in progress and the client action queue
+    empties, the client sends must_go=True. That observation must NOT be dropped
+    even if _inference_in_progress is still True (it gets cleared at the start
+    of the next GetActions call, which may race with SendObservations).
+    """
+    policy_server.last_processed_obs = _make_obs(torch.zeros(6), timestep=0)
+
+    # Simulate inference in progress (e.g. actions are in transit to the client)
+    with policy_server._state_lock:
+        policy_server._inference_in_progress = True
+
+    # A must_go observation MUST be stored regardless of inference state
+    must_go_obs = _make_obs(torch.ones(6) * 5, timestep=1, must_go=True)
+    assert policy_server._enqueue_observation(must_go_obs) is True
+    assert policy_server._pending_obs is must_go_obs
+    assert policy_server._obs_available.is_set()
