@@ -46,7 +46,7 @@ from lerobot.configs import (
 )
 from lerobot.utils.import_utils import get_safe_default_video_backend
 
-from .depth_utils import quantize_depth
+from .depth_utils import DEPTH_PIX_FMT, quantize_depth
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,7 @@ def decode_video_frames(
     tolerance_s: float,
     backend: str | None = None,
     return_uint8: bool = False,
+    is_depth: bool = False,
 ) -> torch.Tensor:
     """
     Decodes video frames using the specified backend.
@@ -76,6 +77,11 @@ def decode_video_frames(
 
     Currently supports torchcodec on cpu and pyav.
     """
+    if backend != "pyav" and is_depth:
+        logger.warning("Decoding depth maps is only supported with the 'pyav' backend.")
+        # We do not actually return uint8 here, but we avoid the 255 normalization step.
+        return decode_video_frames_pyav(video_path, timestamps, tolerance_s, return_uint8=True, is_depth=True)
+
     if backend is None:
         backend = get_safe_default_video_backend()
     if backend == "torchcodec":
@@ -95,6 +101,7 @@ def decode_video_frames_pyav(
     tolerance_s: float,
     log_loaded_timestamps: bool = False,
     return_uint8: bool = False,
+    is_depth: bool = False,
 ) -> torch.Tensor:
     """Loads frames associated to the requested timestamps of a video using PyAV.
 
@@ -144,9 +151,13 @@ def decode_video_frames_pyav(
             current_ts = float(frame.pts * stream.time_base)
             if log_loaded_timestamps:
                 logger.info(f"frame loaded at timestamp={current_ts:.4f}")
-            # Convert to CHW uint8 to match torchcodec's output layout.
-            arr = frame.to_ndarray(format="rgb24")  # H, W, 3
-            loaded_frames.append(torch.from_numpy(arr).permute(2, 0, 1).contiguous())
+            if is_depth:
+                arr = frame.to_ndarray(format=DEPTH_PIX_FMT)  # (H, W) uint16
+                loaded_frames.append(torch.from_numpy(arr).unsqueeze(0).contiguous())
+            else:
+                arr = frame.to_ndarray(format="rgb24")  # (H, W, 3)
+                # Convert to CHW uint8 to match torchcodec's output layout.
+                loaded_frames.append(torch.from_numpy(arr).permute(2, 0, 1).contiguous())
             loaded_ts.append(current_ts)
             if current_ts >= last_ts:
                 break
