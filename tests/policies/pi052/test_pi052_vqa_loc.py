@@ -19,8 +19,13 @@
 PI052 trains spatial VQA answers (``bbox`` / ``keypoint``) in
 PaliGemma's native ``<locNNNN>`` detection vocabulary so the LM head
 reuses the detection prior instead of fighting it (the ``<loc>``-salad
-bug). The dataset stays backbone-agnostic JSON; the conversion lives in
-PI052's tokenizer. These tests pin the JSON → ``<loc>`` rewrite.
+bug). The dataset stores Qwen2.5-VL's grounding output — **0–1000
+normalized** coordinates, *not* pixels. (Verified empirically on the
+published datasets: x and y both span 0..1000 with ~30% of values
+exceeding the camera's pixel dimensions.) The conversion is therefore
+camera-resolution-independent. The dataset stays backbone-agnostic
+JSON; the conversion lives in PI052's tokenizer. These tests pin the
+JSON → ``<loc>`` rewrite.
 """
 
 import pytest
@@ -28,80 +33,49 @@ import pytest
 pytest.importorskip("transformers")
 
 from lerobot.policies.pi052.text_processor_pi052 import (  # noqa: E402
-    _camera_image_shapes,
     _loc_token,
     _messages_vqa_to_loc,
     _vqa_answer_to_loc,
 )
 
 
-class _FakeTensor:
-    def __init__(self, shape):
-        self.shape = shape
-
-
-def test_camera_image_shapes_extracts_hw_from_image_keys():
-    obs = {
-        "observation.images.top": _FakeTensor((1, 3, 240, 320)),
-        "observation.images.wrist": _FakeTensor((3, 480, 640)),
-        "observation.state": _FakeTensor((1, 7)),
-        "task": "x",
-    }
-    assert _camera_image_shapes(obs) == {
-        "observation.images.top": (240, 320),
-        "observation.images.wrist": (480, 640),
-    }
-
-
-def test_camera_image_shapes_handles_empty():
-    assert _camera_image_shapes({}) == {}
-    assert _camera_image_shapes(None) == {}
-
-
 def test_loc_token_normalizes_and_clamps():
-    assert _loc_token(0, 100) == "<loc0000>"
-    assert _loc_token(100, 100) == "<loc1023>"
-    assert _loc_token(50, 100) == f"<loc{round(50 / 100 * 1023):04d}>"
+    # Default scale is the 0–1000 Qwen convention.
+    assert _loc_token(0) == "<loc0000>"
+    assert _loc_token(1000) == "<loc1023>"
+    assert _loc_token(500) == f"<loc{round(500 / 1000 * 1023):04d}>"
     # out-of-range coordinates clamp into [0, 1023]
-    assert _loc_token(999, 100) == "<loc1023>"
-    assert _loc_token(-5, 100) == "<loc0000>"
+    assert _loc_token(9999) == "<loc1023>"
+    assert _loc_token(-5) == "<loc0000>"
 
 
-def test_vqa_answer_to_loc_keypoint():
-    answer = {"label": "blue cube", "point_format": "xy", "point": [160, 120]}
-    # height=240, width=320 → y=120/240=0.5, x=160/320=0.5
-    out = _vqa_answer_to_loc(answer, height=240, width=320)
-    assert out == "<loc0512><loc0512> blue cube"
+def test_vqa_answer_to_loc_keypoint_normalized():
+    # Qwen 0–1000 normalized coordinates → camera-independent <loc>.
+    answer = {"label": "blue cube", "point_format": "xy", "point": [500, 500]}
+    assert _vqa_answer_to_loc(answer) == "<loc0512><loc0512> blue cube"
 
 
-def test_vqa_answer_to_loc_bbox():
+def test_vqa_answer_to_loc_bbox_normalized():
     answer = {
-        "detections": [
-            {"label": "cube", "bbox_format": "xyxy", "bbox": [0, 0, 320, 240]},
-        ]
+        "detections": [{"label": "cube", "bbox_format": "xyxy", "bbox": [0, 0, 1000, 1000]}]
     }
-    out = _vqa_answer_to_loc(answer, height=240, width=320)
-    assert out == "<loc0000><loc0000><loc1023><loc1023> cube"
+    assert _vqa_answer_to_loc(answer) == "<loc0000><loc0000><loc1023><loc1023> cube"
 
 
 def test_vqa_answer_to_loc_returns_none_for_non_spatial():
-    assert _vqa_answer_to_loc({"label": "cubes", "count": 2}, 240, 320) is None
-    assert _vqa_answer_to_loc({"weird": "payload"}, 240, 320) is None
+    assert _vqa_answer_to_loc({"label": "cubes", "count": 2}) is None
+    assert _vqa_answer_to_loc({"weird": "payload"}) is None
 
 
 def test_messages_vqa_to_loc_rewrites_target_turn():
     messages = [
+        {"role": "user", "content": [{"type": "text", "text": "where is the cube?"}]},
         {
-            "role": "user",
-            "content": [
-                {"type": "image", "feature": "observation.images.top"},
-                {"type": "text", "text": "where is the cube?"},
-            ],
+            "role": "assistant",
+            "content": '{"label": "cube", "point_format": "xy", "point": [500, 500]}',
         },
-        {"role": "assistant", "content": '{"label": "cube", "point_format": "xy", "point": [160, 120]}'},
     ]
-    shapes = {"observation.images.top": (240, 320)}
-    out = _messages_vqa_to_loc(messages, target_indices=[1], image_shapes=shapes)
+    out = _messages_vqa_to_loc(messages, target_indices=[1])
     assert out[1]["content"] == "<loc0512><loc0512> cube"
     # input messages are not mutated
     assert messages[1]["content"].startswith("{")
@@ -109,50 +83,51 @@ def test_messages_vqa_to_loc_rewrites_target_turn():
 
 def test_messages_vqa_to_loc_leaves_plain_text_targets_untouched():
     messages = [
-        {"role": "user", "content": [{"type": "image", "feature": "observation.images.top"}]},
+        {"role": "user", "content": "pick the cube"},
         {"role": "assistant", "content": "pick up the cube"},
     ]
-    shapes = {"observation.images.top": (240, 320)}
-    out = _messages_vqa_to_loc(messages, target_indices=[1], image_shapes=shapes)
+    out = _messages_vqa_to_loc(messages, target_indices=[1])
     assert out[1]["content"] == "pick up the cube"
 
 
-def test_messages_vqa_to_loc_noop_without_shapes():
-    messages = [{"role": "assistant", "content": '{"label": "c", "point_format": "xy", "point": [1, 2]}'}]
-    assert _messages_vqa_to_loc(messages, [0], None) is messages
-    assert _messages_vqa_to_loc(messages, [0], {}) is messages
+def test_messages_vqa_to_loc_noop_without_target_indices():
+    messages = [
+        {"role": "assistant", "content": '{"label": "c", "point_format": "xy", "point": [1, 2]}'}
+    ]
+    assert _messages_vqa_to_loc(messages, []) is messages
 
 
 # ---------------------------------------------------------------------------
-# Round-trip: training-side JSON -> <loc> -> runtime-side parse back to pixels
+# Round-trip: training-side JSON -> <loc> -> runtime-side parse back
 #
 # Pins that the conversion preserves coordinate *order* (JSON is x-first,
-# PaliGemma <loc> is y-first) and per-axis normalization. The only loss is
-# quantization to the 1024-bucket <loc> grid, so a pixel survives within
-# half a bucket (~W/2046, H/2046).
+# PaliGemma <loc> is y-first) and the 0–1000 → [0, 1023] scaling. The
+# only loss is quantization to the 1024-bucket <loc> grid, so a coord
+# survives within half a bucket (~1000/2046 ≈ 0.49 on the 0–1000 scale).
 # ---------------------------------------------------------------------------
 
 
-def test_loc_round_trip_keypoint_preserves_pixels():
+def test_loc_round_trip_keypoint_preserves_normalized_coords():
     from lerobot.policies.smolvla2.inference.vqa import parse_vqa_answer
 
-    h, w = 240, 320
-    answer = {"label": "blue cube", "point_format": "xy", "point": [160, 120]}
-    loc = _vqa_answer_to_loc(answer, h, w)
+    answer = {"label": "blue cube", "point_format": "xy", "point": [640, 480]}
+    loc = _vqa_answer_to_loc(answer)
     parsed = parse_vqa_answer(loc)
     nx, ny = parsed["payload"]["point"]
-    assert abs(nx * w - 160) <= w / 2046 + 1e-6
-    assert abs(ny * h - 120) <= h / 2046 + 1e-6
+    # parse_vqa_answer returns [0, 1] normalized; rescale back to 0–1000.
+    assert abs(nx * 1000.0 - 640) <= 1000.0 / 2046 + 1e-6
+    assert abs(ny * 1000.0 - 480) <= 1000.0 / 2046 + 1e-6
     assert parsed["payload"]["label"] == "blue cube"
 
 
-def test_loc_round_trip_bbox_preserves_pixels_and_order():
+def test_loc_round_trip_bbox_preserves_order_and_scale():
     from lerobot.policies.smolvla2.inference.vqa import parse_vqa_answer
 
-    h, w = 240, 320
-    answer = {"detections": [{"label": "cube", "bbox_format": "xyxy", "bbox": [32, 24, 288, 216]}]}
-    loc = _vqa_answer_to_loc(answer, h, w)
+    answer = {
+        "detections": [{"label": "cube", "bbox_format": "xyxy", "bbox": [100, 200, 800, 900]}]
+    }
+    loc = _vqa_answer_to_loc(answer)
     parsed = parse_vqa_answer(loc)
     x1, y1, x2, y2 = parsed["payload"]["detections"][0]["bbox"]
-    for got, want, dim in ((x1, 32, w), (y1, 24, h), (x2, 288, w), (y2, 216, h)):
-        assert abs(got * dim - want) <= dim / 2046 + 1e-6
+    for got, want in ((x1, 100), (y1, 200), (x2, 800), (y2, 900)):
+        assert abs(got * 1000.0 - want) <= 1000.0 / 2046 + 1e-6

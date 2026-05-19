@@ -240,45 +240,35 @@ def _sample_indices(value: Any, batch_size: int) -> list[int | None]:
 #
 # PaliGemma is pre-trained on detection / pointing with a ``<locNNNN>``
 # vocabulary (normalized [0, 1023]). The recipe's bbox / keypoint VQA
-# answers are stored as JSON with *pixel* coordinates. Training those in
-# ``<loc>`` form leverages PaliGemma's prior instead of fighting it (the
-# ``<loc>``-token salad). The conversion lives here — not in the dataset
-# — so the dataset stays backbone-agnostic (SmolVLA2 keeps the JSON).
+# answers are stored as JSON in Qwen2.5-VL's grounding convention:
+# **0–1000 normalized coordinates**, NOT pixels. (Verified empirically
+# on the published datasets: x and y both span 0..1000 with ~30% of
+# values exceeding the camera's pixel dimensions — they're not pixels.)
+# Converting to ``<loc>`` is therefore camera-resolution-independent:
+# ``loc_idx = round(coord / 1000 * 1023)``. We do the conversion here —
+# not in the dataset — so the dataset stays backbone-agnostic (SmolVLA2
+# keeps the JSON).
 # ---------------------------------------------------------------------------
 
-
-def _camera_image_shapes(observation: dict[str, Any]) -> dict[str, tuple[int, int]]:
-    """Map each ``observation.images.*`` key to its native ``(height, width)``.
-
-    VQA pixel coordinates are relative to the camera frame's native
-    resolution. PI052's input pipeline applies no spatial resize before
-    this step, so the observation image tensors are still at that
-    resolution — the correct reference for normalizing to ``<loc>``.
-    """
-    shapes: dict[str, tuple[int, int]] = {}
-    for key, value in (observation or {}).items():
-        if not (isinstance(key, str) and key.startswith("observation.images.")):
-            continue
-        shape = getattr(value, "shape", None)
-        if shape is None or len(shape) < 2:
-            continue
-        shapes[key] = (int(shape[-2]), int(shape[-1]))  # (H, W); handles (B,C,H,W)/(C,H,W)
-    return shapes
+# The 0–1000 scale Qwen2.5-VL emits for grounding coordinates.
+_VQA_COORD_SCALE = 1000.0
 
 
-def _loc_token(coord: float, dim: int) -> str:
-    """PaliGemma ``<locNNNN>`` for pixel ``coord`` on an axis of size ``dim``."""
-    idx = round(float(coord) / dim * 1023) if dim > 0 else 0
+def _loc_token(coord: float, scale: float = _VQA_COORD_SCALE) -> str:
+    """PaliGemma ``<locNNNN>`` for a coord on a ``[0, scale]`` axis."""
+    idx = round(float(coord) / scale * 1023) if scale > 0 else 0
     return f"<loc{max(0, min(1023, idx)):04d}>"
 
 
-def _vqa_answer_to_loc(answer: dict[str, Any], height: int, width: int) -> str | None:
+def _vqa_answer_to_loc(answer: dict[str, Any]) -> str | None:
     """Convert a bbox / keypoint VQA answer dict to PaliGemma ``<loc>`` text.
 
-    PaliGemma convention: a point is ``<locY><locX> label``; a box is
-    ``<locY0><locX0><locY1><locX1> label`` (y before x, each index in
-    [0, 1023]). Returns ``None`` for non-spatial answers (count /
-    attribute / spatial-relation) — those keep their JSON form.
+    Input coordinates are in Qwen2.5-VL's 0–1000 normalized space (see
+    module-level note). PaliGemma convention: a point is
+    ``<locY><locX> label``; a box is ``<locY0><locX0><locY1><locX1> label``
+    (y before x, each index in [0, 1023]). Returns ``None`` for
+    non-spatial answers (count / attribute / spatial-relation) — those
+    keep their JSON form.
     """
     point = answer.get("point")
     if isinstance(point, list | tuple) and len(point) == 2 and "point_format" in answer:
@@ -287,7 +277,7 @@ def _vqa_answer_to_loc(answer: dict[str, Any], height: int, width: int) -> str |
         except (TypeError, ValueError):
             return None
         label = str(answer.get("label", "")).strip()
-        return f"{_loc_token(y, height)}{_loc_token(x, width)} {label}".strip()
+        return f"{_loc_token(y)}{_loc_token(x)} {label}".strip()
 
     detections = answer.get("detections")
     if isinstance(detections, list) and detections:
@@ -304,41 +294,26 @@ def _vqa_answer_to_loc(answer: dict[str, Any], height: int, width: int) -> str |
                 continue
             label = str(det.get("label", "")).strip()
             toks = (
-                f"{_loc_token(y1, height)}{_loc_token(x1, width)}"
-                f"{_loc_token(y2, height)}{_loc_token(x2, width)}"
+                f"{_loc_token(y1)}{_loc_token(x1)}"
+                f"{_loc_token(y2)}{_loc_token(x2)}"
             )
             parts.append(f"{toks} {label}".strip())
         return " ; ".join(parts) if parts else None
     return None
 
 
-def _preceding_image_feature(messages: list[dict[str, Any]], idx: int) -> str | None:
-    """Camera ``feature`` of the nearest image block at or before ``idx``."""
-    for j in range(min(idx, len(messages) - 1), -1, -1):
-        content = messages[j].get("content")
-        if not isinstance(content, list):
-            continue
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "image":
-                feature = block.get("feature")
-                if isinstance(feature, str):
-                    return feature
-    return None
-
-
 def _messages_vqa_to_loc(
     messages: list[dict[str, Any]],
     target_indices: list[int],
-    image_shapes: dict[str, tuple[int, int]] | None,
 ) -> list[dict[str, Any]]:
     """Rewrite bbox / keypoint VQA *target* answers from JSON to ``<loc>`` text.
 
     Each target turn whose content parses as a spatial VQA answer is
-    converted, using the camera frame found from the preceding image
-    block. Non-spatial answers, subtask / memory targets (plain text →
-    not JSON), and turns with no matching image shape are left untouched.
+    converted. Non-spatial answers and subtask / memory targets (plain
+    text → not JSON) are left untouched. Camera-independent: VQA coords
+    are 0–1000 normalized, so no observation lookup is needed.
     """
-    if not image_shapes or not target_indices:
+    if not target_indices:
         return messages
     out = list(messages)
     for idx in target_indices:
@@ -353,11 +328,7 @@ def _messages_vqa_to_loc(
             continue  # subtask / memory targets are plain text — skip
         if not isinstance(answer, dict):
             continue
-        feature = _preceding_image_feature(out, idx)
-        if feature is None or feature not in image_shapes:
-            continue
-        h, w = image_shapes[feature]
-        loc_text = _vqa_answer_to_loc(answer, h, w)
+        loc_text = _vqa_answer_to_loc(answer)
         if loc_text is not None:
             out[idx] = {**out[idx], "content": loc_text}
     return out
@@ -458,9 +429,9 @@ class PI052TextTokenizerStep(ProcessorStep):
             return transition
 
         tokenizer = self._ensure_tokenizer()
-        # Native camera resolutions — the reference frame for converting
-        # VQA pixel coordinates to PaliGemma <loc> tokens.
-        image_shapes = _camera_image_shapes(transition.get(TransitionKey.OBSERVATION) or {})
+        # VQA coords are 0–1000 normalized (Qwen2.5-VL convention) — the
+        # <loc> conversion is camera-resolution-independent and needs no
+        # observation lookup here.
         if _is_batched_messages(messages):
             indices_iter = _sample_indices(complementary.get("index"), len(messages))
             encoded = [
@@ -471,7 +442,6 @@ class PI052TextTokenizerStep(ProcessorStep):
                     list(tgt_indices),
                     complementary,
                     sample_idx=int(s_idx) if s_idx is not None else None,
-                    image_shapes=image_shapes,
                 )
                 for msg, streams, tgt_indices, s_idx in zip(
                     messages,
@@ -491,7 +461,6 @@ class PI052TextTokenizerStep(ProcessorStep):
                     list(complementary.get("target_message_indices") or []),
                     complementary,
                     sample_idx=sample_idx,
-                    image_shapes=image_shapes,
                 )
             ]
 
@@ -545,7 +514,6 @@ class PI052TextTokenizerStep(ProcessorStep):
         target_indices: list[int],
         complementary: dict[str, Any],
         sample_idx: int | None = None,
-        image_shapes: dict[str, tuple[int, int]] | None = None,
     ) -> tuple[Tensor, Tensor, Tensor, Tensor, str]:
         # Optional: drop non-target messages per the dropout config.
         # Keeps the supervised-target indices stable by re-mapping
@@ -564,9 +532,9 @@ class PI052TextTokenizerStep(ProcessorStep):
             )
 
         # Rewrite bbox / keypoint VQA target answers from JSON to
-        # PaliGemma <loc> text — done before stripping so the image
-        # block (camera frame) is still available to normalize against.
-        messages = _messages_vqa_to_loc(messages, target_indices, image_shapes)
+        # PaliGemma <loc> text. Coords are 0–1000 normalized so this is
+        # camera-independent.
+        messages = _messages_vqa_to_loc(messages, target_indices)
 
         # Flatten ``say`` tool calls into ``<say>...</say>`` text before
         # stripping, so the spoken reply is actually tokenized and
