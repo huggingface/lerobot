@@ -30,7 +30,7 @@ import torch
 from huggingface_hub import snapshot_download
 from torch import Tensor
 
-from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
@@ -501,6 +501,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     action_mode: str = "both"
     discrete_action_tokenizer: str = "allenai/MolmoAct2-FAST-Tokenizer"
     image_keys: list[str] = field(default_factory=list)
+    allow_image_key_fallback: bool = False
     setup_type: str = ""
     control_mode: str = ""
     normalize_language: bool = True
@@ -547,6 +548,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             "action_mode": self.action_mode,
             "discrete_action_tokenizer": self.discrete_action_tokenizer,
             "image_keys": list(self.image_keys),
+            "allow_image_key_fallback": self.allow_image_key_fallback,
             "setup_type": self.setup_type,
             "control_mode": self.control_mode,
             "normalize_language": self.normalize_language,
@@ -590,15 +592,23 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 return int(value.shape[0]) if getattr(value, "ndim", 0) == 4 else 1
         return 1
 
+    @staticmethod
+    def _observation_image_keys(observation: dict[str, Any]) -> list[str]:
+        keys = [key for key in observation if str(key).startswith(f"{OBS_IMAGES}.")]
+        if not keys:
+            keys = [key for key in observation if str(key).startswith("observation.image")]
+        return sorted(keys)
+
     def _resolve_image_keys(self, observation: dict[str, Any]) -> list[str]:
         if self.image_keys:
             missing = [key for key in self.image_keys if key not in observation]
             if missing:
+                fallback_keys = self._observation_image_keys(observation)
+                if self.allow_image_key_fallback and fallback_keys:
+                    return fallback_keys
                 raise ValueError(f"MolmoAct2 image_keys missing from observation: {missing}.")
             return list(self.image_keys)
-        keys = [key for key in observation if str(key).startswith(f"{OBS_IMAGES}.")]
-        if not keys:
-            keys = [key for key in observation if str(key).startswith("observation.image")]
+        keys = self._observation_image_keys(observation)
         if not keys:
             raise ValueError("MolmoAct2 requires at least one image observation.")
         return sorted(keys)
@@ -835,8 +845,15 @@ def make_molmoact2_pre_post_processors(
         )
 
     image_keys = list(config.image_keys)
+    visual_feature_keys = [
+        key for key, feature in config.input_features.items() if feature.type == FeatureType.VISUAL
+    ]
     if not image_keys and isinstance(hf_metadata.get("camera_keys"), list):
-        image_keys = [str(key) for key in hf_metadata["camera_keys"]]
+        metadata_image_keys = [str(key) for key in hf_metadata["camera_keys"]]
+        if not visual_feature_keys or all(key in config.input_features for key in metadata_image_keys):
+            image_keys = metadata_image_keys
+    if not image_keys:
+        image_keys = visual_feature_keys
     setup_type = config.setup_type or str(hf_metadata.get("setup_type") or "")
     control_mode = config.control_mode or str(hf_metadata.get("control_mode") or "")
     chunk_size = int(hf_metadata.get("action_horizon") or config.chunk_size)
@@ -865,6 +882,7 @@ def make_molmoact2_pre_post_processors(
             action_mode=config.action_mode,
             discrete_action_tokenizer=config.discrete_action_tokenizer,
             image_keys=image_keys,
+            allow_image_key_fallback=not bool(config.image_keys),
             setup_type=setup_type,
             control_mode=control_mode,
             normalize_language=config.normalize_language,

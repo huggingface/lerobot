@@ -27,7 +27,10 @@ import torch.nn.functional as F  # noqa: N812
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.policies import get_policy_class, make_policy_config
-from lerobot.policies.molmoact2 import modeling_molmoact2 as molmoact2_modeling
+from lerobot.policies.molmoact2 import (
+    modeling_molmoact2 as molmoact2_modeling,
+    processor_molmoact2 as molmoact2_processor,
+)
 from lerobot.policies.molmoact2.configuration_molmoact2 import (
     MolmoAct2Config,
     MolmoAct2CosineDecayWithWarmupSchedulerConfig,
@@ -41,6 +44,7 @@ from lerobot.policies.molmoact2.processor_molmoact2 import (
     _add_gripper_masks_to_stats,
     _build_discrete_state_string,
     _normalize_question_text,
+    make_molmoact2_pre_post_processors,
 )
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.types import TransitionKey
@@ -232,6 +236,61 @@ def test_molmoact2_uses_config_feature_names_without_dataset_meta():
 
     assert masked_stats is not None
     assert masked_stats[ACTION]["mask"] == [True, False]
+
+
+def test_molmoact2_processor_uses_available_visual_features_over_missing_metadata_keys(monkeypatch):
+    monkeypatch.setattr(
+        molmoact2_processor,
+        "_load_hf_norm_stats_for_tag",
+        lambda *args, **kwargs: (
+            {},
+            {"camera_keys": ["observation.images.image", "observation.images.wrist_image"]},
+        ),
+    )
+    monkeypatch.setattr(MolmoAct2PackInputsProcessorStep, "__post_init__", lambda self: None)
+    cfg = MolmoAct2Config(
+        checkpoint_path="/tmp/not-a-real-checkpoint",
+        norm_tag="libero",
+        input_features={
+            "observation.images.image": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)),
+            "observation.images.image2": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)),
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(7,)),
+        },
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(7,))},
+    )
+
+    preprocessor, _ = make_molmoact2_pre_post_processors(cfg)
+    pack_step = next(
+        step for step in preprocessor.steps if isinstance(step, MolmoAct2PackInputsProcessorStep)
+    )
+
+    assert pack_step.image_keys == ["observation.images.image", "observation.images.image2"]
+    assert pack_step.allow_image_key_fallback is True
+
+
+def test_molmoact2_metadata_image_keys_can_fall_back_to_observation_keys():
+    step = object.__new__(MolmoAct2PackInputsProcessorStep)
+    step.image_keys = ["observation.images.image", "observation.images.wrist_image"]
+    step.allow_image_key_fallback = True
+    observation = {
+        "observation.images.image": torch.zeros(3, 4, 4),
+        "observation.images.image2": torch.zeros(3, 4, 4),
+    }
+
+    assert step._resolve_image_keys(observation) == ["observation.images.image", "observation.images.image2"]
+
+
+def test_molmoact2_explicit_image_keys_stay_strict():
+    step = object.__new__(MolmoAct2PackInputsProcessorStep)
+    step.image_keys = ["observation.images.image", "observation.images.wrist_image"]
+    step.allow_image_key_fallback = False
+    observation = {
+        "observation.images.image": torch.zeros(3, 4, 4),
+        "observation.images.image2": torch.zeros(3, 4, 4),
+    }
+
+    with pytest.raises(ValueError, match="wrist_image"):
+        step._resolve_image_keys(observation)
 
 
 def test_enable_lora_vlm_builds_policy_local_peft_config():

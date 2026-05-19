@@ -444,8 +444,6 @@ class MolmoAct2Config(PreTrainedConfig):
             self.setup_type = str(metadata["setup_type"])
         if not self.control_mode and metadata.get("control_mode") is not None:
             self.control_mode = str(metadata["control_mode"])
-        if not self.image_keys and isinstance(metadata.get("camera_keys"), list):
-            self.image_keys = [str(key) for key in metadata["camera_keys"]]
 
     def saved_policy_action_mode(self) -> str | None:
         pretrained_path = getattr(self, "pretrained_path", None)
