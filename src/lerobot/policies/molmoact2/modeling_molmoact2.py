@@ -22,7 +22,7 @@ import types
 from collections import defaultdict, deque
 from contextlib import nullcontext, suppress
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
@@ -34,10 +34,16 @@ from torch.distributions import Beta
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION
-from lerobot.utils.import_utils import require_package
+from lerobot.utils.import_utils import _transformers_available, require_package
 
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_molmoact2 import MolmoAct2Config
+
+if TYPE_CHECKING or _transformers_available:
+    from transformers import AutoModelForImageTextToText, AutoProcessor
+else:
+    AutoModelForImageTextToText = None
+    AutoProcessor = None
 
 _MODEL_INPUT_KEYS = {
     "input_ids",
@@ -714,7 +720,6 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
     def _load_hf_model(self) -> None:
         require_package("transformers", extra="molmoact2")
-        from transformers import AutoModelForImageTextToText
 
         checkpoint_location = _resolve_checkpoint_location(
             self.config.checkpoint_path,
@@ -1040,7 +1045,6 @@ class MolmoAct2Policy(PreTrainedPolicy):
     def _load_discrete_action_tokenizer(self) -> Any:
         if self.action_tokenizer is None:
             require_package("transformers", extra="molmoact2")
-            from transformers import AutoProcessor
 
             self.action_tokenizer = AutoProcessor.from_pretrained(
                 self.config.discrete_action_tokenizer,
