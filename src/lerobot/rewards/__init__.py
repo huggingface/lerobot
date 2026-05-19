@@ -21,11 +21,13 @@ from .factory import (
 )
 from .pretrained import PreTrainedRewardModel as PreTrainedRewardModel
 from .sarm.configuration_sarm import SARMConfig as SARMConfig
+from .topreward.configuration_topreward import TOPRewardConfig as TOPRewardConfig
 
 __all__ = [
     # Configuration classes
     "RewardClassifierConfig",
     "SARMConfig",
+    "TOPRewardConfig",
     # Base class
     "PreTrainedRewardModel",
     # Factory functions
