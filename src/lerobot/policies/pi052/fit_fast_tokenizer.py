@@ -189,11 +189,29 @@ def fit_fast_tokenizer(
             "lengths."
         )
 
-    actions = np.stack(actions_buf, axis=0)  # (N, H, D)
+    actions = np.stack(actions_buf, axis=0).astype(np.float32)  # (N, H, D)
     logger.info(
         "FAST fit: collected %d chunks of shape %s from %d episodes",
         actions.shape[0], actions.shape[1:], eps_visited,
     )
+
+    # Quantile-normalise per dimension before fitting.
+    #
+    # The FAST tokenizer DCT-transforms actions, scales by ``scale`` and
+    # rounds to integer tokens; the integer *range* must fit the
+    # codebook (vocab_size, default 1024). Raw motor units (e.g. encoder
+    # ticks) blow that range up — hence "Vocab size 1024 is too small".
+    # More importantly, at training time ``ActionTokenizerProcessorStep``
+    # runs *after* the QUANTILES ``NormalizerProcessorStep``, so it
+    # encodes normalised actions. Fitting on raw actions would mismatch
+    # that space. We replicate QUANTILES normalisation here (per-dim
+    # [q01, q99] → [-1, 1], clipped) so the fit and the training-time
+    # encode see the same distribution.
+    flat = actions.reshape(-1, actions.shape[-1])
+    q01 = np.quantile(flat, 0.01, axis=0)
+    q99 = np.quantile(flat, 0.99, axis=0)
+    span = np.where((q99 - q01) > 1e-6, q99 - q01, 1.0)
+    actions = np.clip((actions - q01) / span * 2.0 - 1.0, -1.0, 1.0).astype(np.float32)
 
     base = AutoProcessor.from_pretrained(base_tokenizer_name, trust_remote_code=True)
     if not hasattr(base, "fit"):
