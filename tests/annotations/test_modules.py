@@ -80,7 +80,6 @@ def test_module1_plan_memory_subtask_smoke(fixture_dataset_root: Path, tmp_path:
                     {"text": "place the sponge into the sink", "start": 0.8, "end": 1.1},
                 ]
             },
-            "concise hierarchical PLAN": {"plan": "1. grasp\n2. wipe\n3. place"},
             "Update the memory": {"memory": "wiped the counter once"},
         },
     )
@@ -96,10 +95,16 @@ def test_module1_plan_memory_subtask_smoke(fixture_dataset_root: Path, tmp_path:
     frame_set = set(record.frame_timestamps)
     for row in rows:
         assert row["timestamp"] in frame_set
-    # exactly one plan row at t0
-    plan_rows = [r for r in rows if r["style"] == "plan"]
-    assert len(plan_rows) == 1
+    # one plan row per subtask boundary; the first lands at t0 and each
+    # plan is the deterministic numbered list of still-todo subtasks
+    plan_rows = sorted((r for r in rows if r["style"] == "plan"), key=lambda r: r["timestamp"])
+    subtask_rows = [r for r in rows if r["style"] == "subtask"]
+    assert len(plan_rows) == len(subtask_rows)
     assert plan_rows[0]["timestamp"] == record.frame_timestamps[0]
+    # the t0 plan enumerates all subtasks; later plans shrink
+    assert plan_rows[0]["content"].startswith("1. ")
+    assert len(plan_rows[0]["content"].splitlines()) == len(subtask_rows)
+    assert len(plan_rows[-1]["content"].splitlines()) == 1
 
 
 def test_module2_at_t0_emits_speech_only_no_interjection(fixture_dataset_root: Path, tmp_path: Path) -> None:

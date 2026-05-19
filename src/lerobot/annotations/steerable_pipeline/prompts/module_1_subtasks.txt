@@ -4,20 +4,30 @@ The user originally asked: "{episode_task}"
 
 You are shown the entire demonstration as a single video. Watch the
 whole clip, then segment it into a list of consecutive atomic subtasks
-the robot performs.
+the robot performs. Write short, telegraphic action labels.
 
-Authoring rules — based on Hi Robot (Shi 2025) atom granularity:
+Authoring rules — Hi Robot atom granularity, pi0.7-style short prompts:
 
-- Each subtask is one atomic skill the low-level policy can execute,
-  e.g. "pick up the orange", "place the bowl into the box".
-- Write each subtask as an IMPERATIVE COMMAND to the robot, starting
-  with a verb: move, reach, pick up, grasp, place, put, push, pull,
-  open, close, turn, press, lift, insert, pour...
+- Each subtask = one atomic skill the low-level policy can execute.
+- Write each subtask as an IMPERATIVE COMMAND, starting with a verb:
+  move, reach, pick up, grasp, place, put, push, pull, open, close,
+  turn, press, lift, insert, pour...
+- Keep it SHORT — a verb phrase, not a sentence. Drop articles
+  ("the", "a") and adverbs ("carefully", "slowly"). Add a "how"
+  detail (which hand, which grasp point) ONLY when it is needed to
+  disambiguate.
 - NEVER use third person. Never write "the robot", "the arm", "the
-  gripper moves", "it picks up". Command the robot, do not describe it.
-- Keep it SHORT — 3 to 8 words. Add a "how" detail (which hand, which
-  grasp point) ONLY when it is needed to disambiguate.
-- Lower-case, no trailing period.
+  gripper moves", "it picks up" — the robot is implied. Command it,
+  do not describe it.
+- Use the exact object nouns from the task above. If the task says
+  "cube", every subtask says "cube" — never switch to "block". If it
+  says "box", never switch to "bin"/"container". Keep vocabulary
+  consistent across the whole episode.
+- Good: "move to blue cube", "grasp blue cube", "lift blue cube",
+  "place blue cube in box", "open drawer", "release yellow cube".
+- Bad: "the robot arm moves towards the blue cube" (third person,
+  too long), "carefully pick up the cube" (adverb, article),
+  "release the yellow block" ("block" when the task said "cube").
 - Subtasks are non-overlapping and cover the full episode in order.
   Choose the cut points yourself based on what you see in the video
   (gripper open/close events, contact, regrasps, transitions).
@@ -26,22 +36,11 @@ Authoring rules — based on Hi Robot (Shi 2025) atom granularity:
 - Every subtask's [start_time, end_time] must lie within
   [0.0, {episode_duration}] seconds.
 
-Style examples:
-
-  Good                            Bad (do NOT produce these)
-  "pick up the orange"            "the robot arm moves to the orange"
-  "move to the yellow block"      "the gripper approaches the block"
-  "close gripper to grasp         "close the gripper to grasp the
-   the yellow cube"                yellow cube so it can lift it"
-  "open the toaster oven"         "it opens the toaster oven door"
-  "put the bagel on the           "the white plate now has the bagel
-   white plate"                    placed on it by the arm"
-
 Output strictly valid JSON of shape:
 
   {{
     "subtasks": [
-      {{"text": "<short imperative command>", "start": <float>, "end": <float>}},
+      {{"text": "<short imperative verb phrase>", "start": <float>, "end": <float>}},
       ...
     ]
   }}
