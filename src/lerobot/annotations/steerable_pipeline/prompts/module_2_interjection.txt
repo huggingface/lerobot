@@ -14,10 +14,12 @@ subtask boundary in the demonstration:
 - Subtask the robot is about to start: "{next_subtask}"
 - Time into episode: {timestamp:.2f}s
 
-Write ONE compact interjection the user would naturally say at this
-moment to prompt / confirm / encourage the robot to do "{next_subtask}".
-Keep it like a mid-task coaching cue, not a full instruction paragraph.
-Also write the robot's compact verbal acknowledgement.
+Write ONE interjection the user would naturally say at this moment to
+prompt / confirm / encourage the robot to do "{next_subtask}". Phrase it
+like a real human mid-task remark — conversational, varied, sometimes
+just a nudge, sometimes a clarification, sometimes a small constraint
+that the upcoming motion happens to satisfy. Plus the robot's verbal
+acknowledgement.
 
 Hard rules:
 
@@ -27,9 +29,7 @@ Hard rules:
   instead", DO NOT — those would contradict the demonstration.
 - The interjection must reference an object, location, or action that
   is plausible given the visible scene and the next subtask text.
-- One short phrase or sentence each. Conversational, not robotic.
-- Prefer direct cues: "{next_subtask}, please."; "Now {next_subtask}."
-- Keep robot speech very short: "OK.", "On it.", "Doing that."
+- One sentence each. Conversational, not robotic.
 
 Style examples (vary the phrasing — don't reuse these verbatim):
   - "Now go ahead and {next_subtask}."
@@ -41,6 +41,6 @@ Style examples (vary the phrasing — don't reuse these verbatim):
 
 Output strictly valid JSON:
   {{
-    "interjection": "<short cue from the user, asking for the next subtask>",
-    "speech":       "<short robot acknowledgement>"
+    "interjection": "<single sentence the user says, asking for the next subtask>",
+    "speech":       "<single sentence the robot speaks back, confirming and starting>"
   }}

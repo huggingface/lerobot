@@ -141,43 +141,6 @@ def _push_to_hub(root: Path, cfg: AnnotationPipelineConfig) -> None:
     )
     print(f"[lerobot-annotate] uploaded to https://huggingface.co/datasets/{repo_id}", flush=True)
 
-    # Tag the upload with the codebase version. ``LeRobotDatasetMetadata``
-    # resolves the dataset revision via ``get_safe_version`` which scans
-    # for tags like ``v3.0``; without a tag it raises
-    # ``RevisionNotFoundError``. Read the version straight from the
-    # dataset's own ``meta/info.json`` so we tag whatever the writer
-    # actually wrote (no accidental drift if the codebase floor moves).
-    from lerobot.datasets.dataset_metadata import CODEBASE_VERSION  # noqa: PLC0415
-
-    info_path = root / "meta" / "info.json"
-    version_tag = CODEBASE_VERSION
-    if info_path.exists():
-        try:
-            from lerobot.utils.io_utils import load_json  # noqa: PLC0415
-
-            info = load_json(info_path)
-            ds_version = info.get("codebase_version")
-            if isinstance(ds_version, str) and ds_version.startswith("v"):
-                version_tag = ds_version
-        except Exception as exc:  # noqa: BLE001
-            print(f"[lerobot-annotate] could not read codebase_version from info.json ({exc}); falling back to {version_tag}", flush=True)
-    try:
-        api.create_tag(
-            repo_id=repo_id,
-            tag=version_tag,
-            repo_type="dataset",
-            exist_ok=True,
-        )
-        print(f"[lerobot-annotate] tagged {repo_id} as {version_tag}", flush=True)
-    except Exception as exc:  # noqa: BLE001
-        print(
-            f"[lerobot-annotate] WARNING: could not create tag {version_tag!r} on {repo_id}: {exc}. "
-            "Dataset is uploaded but ``LeRobotDataset`` won't be able to load it until it's tagged. "
-            "Run: from huggingface_hub import HfApi; "
-            f"HfApi().create_tag({repo_id!r}, tag={version_tag!r}, repo_type='dataset', exist_ok=True)",
-            flush=True,
-        )
-
 
 def main() -> None:
     annotate()

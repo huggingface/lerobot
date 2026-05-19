@@ -4,24 +4,17 @@ The user originally asked: "{episode_task}"
 
 You are shown the entire demonstration as a single video. Watch the
 whole clip, then segment it into a list of consecutive atomic subtasks
-the robot performs. Write **telegraphic** action labels.
+the robot performs.
 
-Authoring rules — Hi Robot atom granularity, pi0.7-style short prompts:
+Authoring rules — based on Hi Robot (Shi 2025) atom granularity and
+Pi0.7 (Physical Intelligence 2025) "how, not what" detail:
 
-- Each subtask = one atomic skill the low-level policy can execute.
-- **Hard length cap: ≤ 4 words.** Ideally 2-3. Form: VERB + (color) +
-  OBJECT. No articles ("the", "a"), no destinations, no adverbs, no
-  "robot"/"arm"/"gripper" — those are implied.
-- **Use the exact object nouns from the task above.** If the task says
-  "cube", every subtask says "cube" — never switch to "block". If it
-  says "box", never switch to "bin"/"container". Consistent vocabulary
-  across the whole episode.
-- Good: "move to blue cube", "grasp blue cube", "lift blue cube",
-  "place blue cube", "open drawer", "release yellow cube".
-- Bad: "release the yellow block into the green bin" (articles,
-  destination, "block" instead of "cube"), "the robot arm moves
-  towards the blue cube" ("the robot arm", too long), "carefully
-  pick up the cube" (adverb, article).
+- Each subtask is one atomic skill the low-level policy can execute,
+  e.g. "pick up one piece of lettuce", "place the bowl into the box",
+  "move the right arm to the left".
+- Capture HOW the subtask is performed, not only WHAT — e.g. prefer
+  "grasp the handle of the sponge with the left hand" to "pick up the
+  sponge".
 - Subtasks are non-overlapping and cover the full episode in order.
   Choose the cut points yourself based on what you see in the video
   (gripper open/close events, contact, regrasps, transitions).
@@ -34,7 +27,7 @@ Output strictly valid JSON of shape:
 
   {{
     "subtasks": [
-      {{"text": "<≤4-word verb phrase>", "start": <float>, "end": <float>}},
+      {{"text": "<how-not-what>", "start": <float>, "end": <float>}},
       ...
     ]
   }}

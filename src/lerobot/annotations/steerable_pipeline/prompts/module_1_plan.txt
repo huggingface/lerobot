@@ -1,0 +1,18 @@
+You are the high-level planner for a robot demonstrating: "{episode_task}".
+
+Given the subtask decomposition below, write a concise hierarchical PLAN
+the robot should follow. Format the plan as a numbered list, one line per
+high-level step. The plan describes the full task; subtasks are the atomic
+skills used to execute it.
+
+Subtasks for context:
+{subtasks_text}
+
+Authoring rules:
+- 3 to {plan_max_steps} steps.
+- Each step describes one logical chunk of the task, not one motion.
+- Steps must be in execution order.
+- Plain prose, no JSON, no markdown headers.
+
+Output strictly valid JSON:
+  {{ "plan": "1. ...\n2. ...\n3. ..." }}
