@@ -69,7 +69,9 @@ class RenderMessagesStep(ProcessorStep):
             dataset_ctx=self.dataset_ctx,
         )
         if rendered is None:
-            return None
+            rendered = _fallback_low_level_render(complementary_data.get("task"))
+            if rendered is None:
+                return None
 
         new_transition = transition.copy()
         new_complementary_data = dict(new_transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
@@ -107,7 +109,9 @@ class RenderMessagesStep(ProcessorStep):
                 dataset_ctx=self.dataset_ctx,
             )
             if rendered is None:
-                continue
+                rendered = _fallback_low_level_render(_batch_value(complementary_data.get("task"), i))
+                if rendered is None:
+                    continue
             keep_indices.append(i)
             messages.append(rendered["messages"])
             message_streams.append(rendered["message_streams"])
@@ -178,3 +182,16 @@ def _select_value(value: Any, indices: list[int]) -> Any:
     if hasattr(value, "index_select") and hasattr(value, "new_tensor") and getattr(value, "ndim", 0) > 0:
         return value.index_select(0, value.new_tensor(indices).long())
     return value
+
+
+def _fallback_low_level_render(task: Any) -> dict[str, Any] | None:
+    """Keep action-only samples trainable when no recipe branch matches."""
+    if hasattr(task, "item"):
+        task = task.item()
+    if not isinstance(task, str) or not task:
+        return None
+    return {
+        "messages": [{"role": "user", "content": task}],
+        "message_streams": ["low_level"],
+        "target_message_indices": [],
+    }
