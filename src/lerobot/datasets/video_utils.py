@@ -39,12 +39,14 @@ from datasets.features.features import register_feature
 from PIL import Image
 
 from lerobot.configs import (
-    VideoEncoderConfig,
     DepthEncoderConfig,
+    VideoEncoderConfig,
     camera_encoder_defaults,
     depth_encoder_defaults,
 )
 from lerobot.utils.import_utils import get_safe_default_video_backend
+
+from .depth_utils import quantize_depth
 
 logger = logging.getLogger(__name__)
 
@@ -698,9 +700,7 @@ class _CameraEncoderThread(threading.Thread):
         self,
         video_path: Path,
         fps: int,
-        vcodec: str,
-        pix_fmt: str,
-        codec_options: dict[str, str],
+        video_encoder: VideoEncoderConfig,
         frame_queue: queue.Queue,
         result_queue: queue.Queue,
         stop_event: threading.Event,
@@ -708,9 +708,8 @@ class _CameraEncoderThread(threading.Thread):
         super().__init__(daemon=True)
         self.video_path = video_path
         self.fps = fps
-        self.vcodec = vcodec
-        self.pix_fmt = pix_fmt
-        self.codec_options = codec_options
+        self.video_encoder = video_encoder
+        self.is_depth = isinstance(video_encoder, DepthEncoderConfig)
         self.frame_queue = frame_queue
         self.result_queue = result_queue
         self.stop_event = stop_event
@@ -738,12 +737,12 @@ class _CameraEncoderThread(threading.Thread):
                     # Sentinel: flush and close
                     break
 
-                # Ensure HWC uint8 numpy array
+                # Ensure HWC (RGB or depth) uint8 (RGB only) numpy array
                 if isinstance(frame_data, np.ndarray):
                     if frame_data.ndim == 3 and frame_data.shape[0] == 3:
                         # CHW -> HWC
                         frame_data = frame_data.transpose(1, 2, 0)
-                    if frame_data.dtype != np.uint8:
+                    if not self.is_depth and frame_data.dtype != np.uint8:
                         frame_data = (frame_data * 255).astype(np.uint8)
 
                 # Open container on first frame (to get width/height)
@@ -751,15 +750,29 @@ class _CameraEncoderThread(threading.Thread):
                     height, width = frame_data.shape[:2]
                     Path(self.video_path).parent.mkdir(parents=True, exist_ok=True)
                     container = av.open(str(self.video_path), "w")
-                    output_stream = container.add_stream(self.vcodec, self.fps, options=self.codec_options)
-                    output_stream.pix_fmt = self.pix_fmt
+                    output_stream = container.add_stream(
+                        self.video_encoder.vcodec,
+                        self.fps,
+                        options=self.video_encoder.get_codec_options(self.encoder_threads, as_strings=True),
+                    )
+                    output_stream.pix_fmt = self.video_encoder.pix_fmt
                     output_stream.width = width
                     output_stream.height = height
                     output_stream.time_base = Fraction(1, self.fps)
 
                 # Encode frame with explicit timestamps
-                pil_img = Image.fromarray(frame_data)
-                video_frame = av.VideoFrame.from_image(pil_img)
+                if not self.is_depth:
+                    pil_img = Image.fromarray(frame_data)
+                    video_frame = av.VideoFrame.from_image(pil_img)
+                else:
+                    video_frame = quantize_depth(
+                        frame_data,
+                        depth_min=self.video_encoder.depth_min,
+                        depth_max=self.video_encoder.depth_max,
+                        shift=self.video_encoder.shift,
+                        use_log=self.video_encoder.use_log,
+                        video_backend=self.video_encoder.video_backend,
+                    )
                 video_frame.pts = frame_count
                 video_frame.time_base = Fraction(1, self.fps)
                 packet = output_stream.encode(video_frame)
@@ -869,13 +882,10 @@ class StreamingVideoEncoder:
             video_path = temp_video_dir / f"{video_key.replace('/', '_')}_streaming.mp4"
 
             encoder = self._depth_encoder if video_key in depth_video_keys else self._camera_encoder
-            codec_options = encoder.get_codec_options(self._encoder_threads, as_strings=True)
             encoder_thread = _CameraEncoderThread(
                 video_path=video_path,
                 fps=self.fps,
-                vcodec=encoder.vcodec,
-                pix_fmt=encoder.pix_fmt,
-                codec_options=codec_options,
+                video_encoder=encoder,
                 frame_queue=frame_queue,
                 result_queue=result_queue,
                 stop_event=stop_event,
@@ -1085,13 +1095,13 @@ def get_audio_info(video_path: Path | str) -> dict:
 
 def get_video_info(
     video_path: Path | str,
-    camera_encoder: VideoEncoderConfig | None = None,
+    video_encoder: VideoEncoderConfig | None = None,
 ) -> dict:
     """Build the ``video.*`` / ``audio.*`` info dict persisted in ``info.json``.
 
     Args:
         video_path: Path to the encoded video file to probe.
-        camera_encoder: If provided, record the exact encoder settings used to encode this
+        video_encoder: If provided, record the exact encoder settings used to encode this
             video. Stream-derived values take precedence — encoder fields are only written for keys
             not already populated from the video file itself.
     """
@@ -1126,12 +1136,13 @@ def get_video_info(
     video_info.update(**get_audio_info(video_path))
 
     # Add additional encoder configuration if provided
-    if camera_encoder is not None:
-        for field_name, field_value in asdict(camera_encoder).items():
+    if video_encoder is not None:
+        for field_name, field_value in asdict(video_encoder).items():
             # vcodec is already populated from the video stream
             if field_name == "vcodec":
                 continue
             video_info.setdefault(f"video.{field_name}", field_value)
+        video_info["video.is_depth_map"] = isinstance(video_encoder, DepthEncoderConfig)
 
     return video_info
 
