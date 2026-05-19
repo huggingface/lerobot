@@ -24,11 +24,22 @@ import logging
 from typing import Any
 
 import av
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
 FFMPEG_NUMERIC_OPTION_TYPES = ("INT", "INT64", "UINT64", "FLOAT", "DOUBLE")
 FFMPEG_INTEGER_OPTION_TYPES = ("INT", "INT64", "UINT64")
+
+
+def write_u16_plane(plane: av.video.plane.VideoPlane, src: np.ndarray, fill_value: int | None = None) -> None:
+    """Copy ``src`` into a uint16 plane respecting FFmpeg line padding."""
+    height, width = src.shape
+    stride_u16 = plane.line_size // np.dtype(np.uint16).itemsize
+    dst = np.frombuffer(plane, dtype=np.uint16).reshape(height, stride_u16)
+    if fill_value is not None:
+        dst.fill(fill_value)
+    dst[:, :width] = src
 
 
 @functools.cache
