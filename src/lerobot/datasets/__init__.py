@@ -31,6 +31,7 @@ from .dataset_tools import (
     modify_features,
     modify_tasks,
     recompute_stats,
+    reencode_dataset,
     remove_feature,
     split_dataset,
 )
@@ -91,6 +92,7 @@ __all__ = [
     "modify_features",
     "modify_tasks",
     "recompute_stats",
+    "reencode_dataset",
     "remove_feature",
     "resolve_delta_timestamps",
     "safe_stop_image_writer",
