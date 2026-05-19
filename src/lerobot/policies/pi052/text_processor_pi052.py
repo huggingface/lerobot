@@ -234,21 +234,33 @@ def _sample_indices(value: Any, batch_size: int) -> list[int | None]:
     return [int(value)] * batch_size
 
 
-def _format_messages(messages: list[dict[str, Any]]) -> tuple[str, list[tuple[int, int]]]:
+def _format_messages(
+    messages: list[dict[str, Any]],
+    target_indices: list[int] | None = None,
+    eos_token: str | None = None,
+) -> tuple[str, list[tuple[int, int]]]:
     """Concatenate messages into the π0.5-style flat prompt.
+
+    When both ``target_indices`` and ``eos_token`` are given, the EOS
+    string is appended to each supervised target turn's content and the
+    returned span covers it — so the label builder marks the EOS token
+    as a supervised label. That teaches the LM head where the answer
+    *ends*: without an EOS in the target span the model is never given a
+    stop signal and rambles to ``max_length`` at inference. Inference
+    callers omit both args (no EOS baked into the prompt — the model
+    generates it and ``select_message`` stops on it).
 
     Returns:
         prompt:       the full text the tokenizer will consume.
         msg_spans:    list of ``(char_start, char_end)`` covering each
-                      message's content within ``prompt``. The
-                      target-mask builder uses this to find the
-                      character ranges belonging to the supervised
-                      messages.
+                      message's supervised payload (content, plus the
+                      appended EOS for target turns) within ``prompt``.
     """
+    targets = set(target_indices or [])
     parts: list[str] = []
     spans: list[tuple[int, int]] = []
     cursor = 0
-    for m in messages:
+    for i, m in enumerate(messages):
         role = m.get("role", "user")
         content = m.get("content", "") or ""
         # Role tag + newline. The model has to learn to emit the same
@@ -256,11 +268,15 @@ def _format_messages(messages: list[dict[str, Any]]) -> tuple[str, list[tuple[in
         # decoding because the chat template is implicit in the
         # supervised target span.
         header = f"{role.capitalize()}: "
-        # span covers ONLY the content portion (so labels are computed
-        # over the supervised payload, not the role tag).
-        full = header + content + "\n"
+        # A supervised target turn ends with EOS so the model learns to
+        # terminate; the span below covers content + EOS. Non-target
+        # turns (and inference) carry no EOS.
+        body = content + eos_token if (eos_token and i in targets) else content
+        # span covers the content (+ EOS) portion only — never the role
+        # tag — so labels are computed over the supervised payload.
+        full = header + body + "\n"
         start = cursor + len(header)
-        end = start + len(content)
+        end = start + len(body)
         parts.append(full)
         spans.append((start, end))
         cursor += len(full)
@@ -416,7 +432,11 @@ class PI052TextTokenizerStep(ProcessorStep):
         # stripping, so the spoken reply is actually tokenized and
         # supervised (PaliGemma's flat prompt has no structured calls).
         messages = [_strip_blocks(_flatten_say_tool_calls(m)) for m in messages]
-        prompt, spans = _format_messages(messages)
+        # Append EOS to supervised target turns so the LM head learns to
+        # stop (the span covers it → it becomes a supervised label).
+        prompt, spans = _format_messages(
+            messages, target_indices, getattr(tokenizer, "eos_token", None)
+        )
 
         encoded = tokenizer(
             prompt,
