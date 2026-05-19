@@ -653,7 +653,7 @@ def test_select_action_uses_single_full_batch_queue():
 def test_inference_action_mode_is_explicit_and_has_no_action_mode_alias():
     policy = object.__new__(MolmoAct2Policy)
     torch.nn.Module.__init__(policy)
-    policy.config = SimpleNamespace(action_mode="both", inference_action_mode=None)
+    policy.config = MolmoAct2Config(action_mode="both", inference_action_mode=None)
     policy._checkpoint_action_mode = None
 
     with pytest.raises(ValueError, match="inference_action_mode.*explicitly"):
@@ -1067,11 +1067,11 @@ def test_discrete_predict_action_chunk_uses_hf_cached_generation_path():
 
     policy = object.__new__(MolmoAct2Policy)
     torch.nn.Module.__init__(policy)
-    policy.config = SimpleNamespace(
+    policy.config = MolmoAct2Config(
         action_mode="discrete",
         inference_action_mode="discrete",
         model_dtype="float32",
-        output_features={ACTION: SimpleNamespace(shape=(2,))},
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(2,))},
         discrete_generation_max_steps=None,
         discrete_action_tokenizer="unused",
         trust_remote_code=True,
@@ -1079,6 +1079,7 @@ def test_discrete_predict_action_chunk_uses_hf_cached_generation_path():
         n_action_steps=1,
         rtc_config=None,
     )
+    policy._checkpoint_action_mode = None
     policy.model = DummyModel()
     policy.action_tokenizer = _DummyActionTokenizer()
 
@@ -1154,11 +1155,11 @@ def test_discrete_predict_action_chunk_uses_graph_backed_ar_decode_when_enabled(
 
     policy = object.__new__(MolmoAct2Policy)
     torch.nn.Module.__init__(policy)
-    policy.config = SimpleNamespace(
+    policy.config = MolmoAct2Config(
         action_mode="discrete",
         inference_action_mode="discrete",
         model_dtype="float32",
-        output_features={ACTION: SimpleNamespace(shape=(2,))},
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(2,))},
         discrete_generation_max_steps=None,
         discrete_action_tokenizer="unused",
         trust_remote_code=True,
@@ -1167,6 +1168,7 @@ def test_discrete_predict_action_chunk_uses_graph_backed_ar_decode_when_enabled(
         rtc_config=None,
         enable_inference_cuda_graph=True,
     )
+    policy._checkpoint_action_mode = None
     policy.model = DummyModel()
     policy.action_tokenizer = _DummyActionTokenizer()
     torch.nn.Module.train(policy, False)
