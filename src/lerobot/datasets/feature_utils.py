@@ -345,10 +345,20 @@ def validate_feature_image_or_video(
     # Note: The check of pixels range ([0,1] for float and [0,255] for uint8) is done by the image writer threads.
     error_message = ""
     if isinstance(value, np.ndarray):
-        actual_shape = value.shape
-        c, h, w = expected_shape
-        if len(actual_shape) != 3 or (actual_shape != (c, h, w) and actual_shape != (h, w, c)):
-            error_message += f"The feature '{name}' of shape '{actual_shape}' does not have the expected shape '{(c, h, w)}' or '{(h, w, c)}'.\n"
+        actual_shape = tuple(value.shape)
+        expected = tuple(expected_shape)
+        if len(expected) == 2:
+            # Single-channel features (e.g. depth maps) — accept (H,W), (1,H,W), (H,W,1)
+            h, w = expected
+            valid = actual_shape in {(h, w), (1, h, w), (h, w, 1)}
+            if not valid:
+                error_message += f"The feature '{name}' of shape '{actual_shape}' does not have the expected shape '{(h, w)}', '{(1, h, w)}', or '{(h, w, 1)}'.\n"
+        elif len(expected) == 3:
+            c, h, w = expected
+            if len(actual_shape) != 3 or (actual_shape != (c, h, w) and actual_shape != (h, w, c)):
+                error_message += f"The feature '{name}' of shape '{actual_shape}' does not have the expected shape '{(c, h, w)}' or '{(h, w, c)}'.\n"
+        else:
+            error_message += f"The feature '{name}' has an unsupported expected_shape '{expected}'.\n"
     elif isinstance(value, PILImage.Image):
         pass
     else:

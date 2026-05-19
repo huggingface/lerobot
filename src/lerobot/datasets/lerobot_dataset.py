@@ -24,7 +24,7 @@ import torch.utils
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.errors import RevisionNotFoundError
 
-from lerobot.configs import VideoEncoderConfig, DepthEncoderConfig
+from lerobot.configs import DepthEncoderConfig, VideoEncoderConfig
 from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
 
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata

@@ -61,9 +61,7 @@ class TestCameraEncoderThread:
         encoder_thread = _CameraEncoderThread(
             video_path=video_path,
             fps=fps,
-            vcodec=enc_cfg.vcodec,
-            pix_fmt=enc_cfg.pix_fmt,
-            codec_options=enc_cfg.get_codec_options(as_strings=True),
+            video_encoder=enc_cfg,
             frame_queue=frame_queue,
             result_queue=result_queue,
             stop_event=stop_event,
@@ -112,9 +110,7 @@ class TestCameraEncoderThread:
         encoder_thread = _CameraEncoderThread(
             video_path=video_path,
             fps=fps,
-            vcodec=enc_cfg.vcodec,
-            pix_fmt=enc_cfg.pix_fmt,
-            codec_options=enc_cfg.get_codec_options(as_strings=True),
+            video_encoder=enc_cfg,
             frame_queue=frame_queue,
             result_queue=result_queue,
             stop_event=stop_event,
@@ -146,9 +142,7 @@ class TestCameraEncoderThread:
         encoder_thread = _CameraEncoderThread(
             video_path=video_path,
             fps=fps,
-            vcodec=enc_cfg.vcodec,
-            pix_fmt=enc_cfg.pix_fmt,
-            codec_options=enc_cfg.get_codec_options(as_strings=True),
+            video_encoder=enc_cfg,
             frame_queue=frame_queue,
             result_queue=result_queue,
             stop_event=stop_event,

@@ -31,7 +31,12 @@ import PIL.Image
 import pyarrow.parquet as pq
 import torch
 
-from lerobot.configs import VideoEncoderConfig, camera_encoder_defaults, DepthEncoderConfig, depth_encoder_defaults
+from lerobot.configs import (
+    DepthEncoderConfig,
+    VideoEncoderConfig,
+    camera_encoder_defaults,
+    depth_encoder_defaults,
+)
 
 from .compute_stats import compute_episode_stats
 from .dataset_metadata import LeRobotDatasetMetadata
@@ -516,7 +521,12 @@ class DatasetWriter:
 
         # Update video info (only needed when first episode is encoded)
         if episode_index == 0:
-            self._meta.update_video_info(video_key, camera_encoder=self._camera_encoder)
+            self._meta.update_video_info(
+                video_key,
+                video_encoder=self._depth_encoder
+                if video_key in self._meta.depth_keys
+                else self._camera_encoder,
+            )
             write_info(self._meta.info, self._meta.root)
 
         metadata = {
