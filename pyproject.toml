@@ -308,7 +308,12 @@ lerobot-imgtransform-viz="lerobot.scripts.lerobot_imgtransform_viz:main"
 lerobot-edit-dataset="lerobot.scripts.lerobot_edit_dataset:main"
 lerobot-setup-can="lerobot.scripts.lerobot_setup_can:main"
 lerobot-annotate="lerobot.scripts.lerobot_annotate:main"
+# Interactive hierarchical-VLA runtime. The same entry point drives both
+# SmolVLA2 (SmolVLM2 backbone) and PI052 (PaliGemma backbone) — the
+# policy type is read from the checkpoint. ``lerobot-pi052-runtime`` is
+# an alias so the command name isn't misleading for PI052 users.
 lerobot-smolvla2-runtime="lerobot.scripts.lerobot_smolvla2_runtime:main"
+lerobot-pi052-runtime="lerobot.scripts.lerobot_smolvla2_runtime:main"
 
 # ---------------- Tool Configurations ----------------
 [tool.setuptools.package-data]

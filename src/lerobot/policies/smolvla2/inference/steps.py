@@ -253,13 +253,85 @@ def _build_text_batch(
     *,
     add_generation_prompt: bool = True,
 ) -> dict[str, Any]:
-    """Tokenize a list of chat messages into the batch shape
-    ``select_message`` expects.
+    """Tokenize chat messages into the batch ``select_message`` expects.
 
-    Lazy fallback: re-uses the policy's preprocessor by piggy-backing
-    on the chat tokenizer step. Production use should construct the
-    batch from a real observation; here we focus on the *language*
-    path which is independent of camera observations.
+    Dispatches on the policy backbone so one runtime drives both:
+
+    * ``smolvla2`` (SmolVLM2) — chat template via ``apply_chat_template``.
+    * ``pi052`` (PaliGemma) — flat ``Role: content`` text, since
+      PaliGemma is not chat-pretrained (mirrors ``PI052TextTokenizerStep``).
+    """
+    if getattr(getattr(policy, "config", None), "type", "") == "pi052":
+        return _build_text_batch_pi052(
+            policy, prompt_messages, add_generation_prompt=add_generation_prompt
+        )
+    return _build_text_batch_chat(
+        policy, prompt_messages, add_generation_prompt=add_generation_prompt
+    )
+
+
+def _build_text_batch_pi052(
+    policy: Any,
+    prompt_messages: list[dict[str, Any]],
+    *,
+    add_generation_prompt: bool = True,
+) -> dict[str, Any]:
+    """PI052 text batch — flat ``User: … \\nAssistant: …`` prompt.
+
+    PaliGemma ships no chat template, so PI052 trains on the plain
+    role-prefixed concatenation built by ``PI052TextTokenizerStep``.
+    Reuses that exact formatter so the inference prefix matches
+    training. ``add_generation_prompt`` appends the bare ``Assistant: ``
+    header the LM head continues from.
+    """
+    import torch  # noqa: PLC0415
+    from transformers import AutoTokenizer  # noqa: PLC0415
+
+    from lerobot.policies.pi052.text_processor_pi052 import (  # noqa: PLC0415
+        _flatten_say_tool_calls,
+        _format_messages,
+        _strip_blocks,
+    )
+
+    tok_name = (
+        getattr(policy.config, "tokenizer_name", None) or "google/paligemma-3b-pt-224"
+    )
+    tokenizer = AutoTokenizer.from_pretrained(tok_name)
+
+    messages = [_strip_blocks(_flatten_say_tool_calls(m)) for m in prompt_messages]
+    prompt, _spans = _format_messages(messages)
+    if add_generation_prompt:
+        prompt = prompt + "Assistant: "
+
+    encoded = tokenizer(prompt, return_tensors="pt")
+    ids = encoded["input_ids"]
+    attn = encoded.get("attention_mask")
+    if attn is None and tokenizer.pad_token_id is not None:
+        attn = ids != tokenizer.pad_token_id
+    if attn is not None and hasattr(attn, "dtype") and attn.dtype != torch.bool:
+        attn = attn.bool()
+
+    device = getattr(getattr(policy, "config", None), "device", None)
+    if device is not None:
+        try:
+            ids = ids.to(device)
+            if attn is not None and hasattr(attn, "to"):
+                attn = attn.to(device)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("could not move pi052 lang tokens to %s: %s", device, exc)
+    return {"lang_tokens": ids, "lang_masks": attn, "tokenizer": tokenizer}
+
+
+def _build_text_batch_chat(
+    policy: Any,
+    prompt_messages: list[dict[str, Any]],
+    *,
+    add_generation_prompt: bool = True,
+) -> dict[str, Any]:
+    """SmolVLA2 (SmolVLM2) text batch — chat-template tokenization.
+
+    Reuses ``_strip_lerobot_blocks`` so the inference prompt shape
+    matches the training-time chat tokenizer step exactly.
     """
     from transformers import AutoTokenizer  # noqa: PLC0415
 

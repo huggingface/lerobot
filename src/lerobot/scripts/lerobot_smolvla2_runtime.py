@@ -67,8 +67,14 @@ logger = logging.getLogger("lerobot.smolvla2.runtime")
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        prog="lerobot-smolvla2-runtime",
-        description="Interactive REPL runtime for a trained SmolVLA2 checkpoint.",
+        # prog defaults to the invoked command name, so this reads
+        # correctly whether run as lerobot-smolvla2-runtime or
+        # lerobot-pi052-runtime.
+        description=(
+            "Interactive REPL runtime for a trained hierarchical VLA "
+            "checkpoint (SmolVLA2 or PI052 — policy type is read from "
+            "the checkpoint)."
+        ),
     )
     p.add_argument(
         "--policy.path",
