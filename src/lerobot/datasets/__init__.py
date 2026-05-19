@@ -37,6 +37,14 @@ from .dataset_tools import (
 from .factory import make_dataset, resolve_delta_timestamps
 from .image_writer import safe_stop_image_writer
 from .io_utils import load_episodes, write_stats
+from .language import (
+    EVENT_ONLY_STYLES,
+    LANGUAGE_EVENTS,
+    LANGUAGE_PERSISTENT,
+    PERSISTENT_STYLES,
+    STYLE_REGISTRY,
+    column_for_style,
+)
 from .lerobot_dataset import LeRobotDataset
 from .multi_dataset import MultiLeRobotDataset
 from .pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
@@ -54,10 +62,15 @@ __all__ = [
     "CODEBASE_VERSION",
     "DEFAULT_EPISODES_PATH",
     "DEFAULT_QUANTILES",
+    "EVENT_ONLY_STYLES",
     "EpisodeAwareSampler",
+    "LANGUAGE_EVENTS",
+    "LANGUAGE_PERSISTENT",
     "LeRobotDataset",
     "LeRobotDatasetMetadata",
     "MultiLeRobotDataset",
+    "PERSISTENT_STYLES",
+    "STYLE_REGISTRY",
     "StreamingLeRobotDataset",
     "VideoEncodingManager",
     "check_video_encoder_parameters_pyav",
@@ -69,6 +82,7 @@ __all__ = [
     "convert_image_to_video_dataset",
     "create_initial_features",
     "create_lerobot_dataset_card",
+    "column_for_style",
     "delete_episodes",
     "get_feature_stats",
     "load_episodes",

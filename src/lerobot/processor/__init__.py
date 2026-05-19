@@ -95,6 +95,13 @@ from .relative_action_processor import (
 from .rename_processor import RenameObservationsProcessorStep, rename_stats
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
 
+# RenderMessagesStep is intentionally NOT re-exported here: it pulls in
+# `lerobot.datasets.language`, which requires the `[dataset]` extra
+# (`datasets`, `pyarrow`). Importing it from the processor package would
+# break every base-install consumer of `lerobot.processor`. Users that
+# need it import directly:
+#   from lerobot.processor.render_messages_processor import RenderMessagesStep
+
 __all__ = [
     "ActionProcessorStep",
     "AddTeleopActionAsComplimentaryDataStep",
