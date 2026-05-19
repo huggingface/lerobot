@@ -121,3 +121,38 @@ def test_messages_vqa_to_loc_noop_without_shapes():
     messages = [{"role": "assistant", "content": '{"label": "c", "point_format": "xy", "point": [1, 2]}'}]
     assert _messages_vqa_to_loc(messages, [0], None) is messages
     assert _messages_vqa_to_loc(messages, [0], {}) is messages
+
+
+# ---------------------------------------------------------------------------
+# Round-trip: training-side JSON -> <loc> -> runtime-side parse back to pixels
+#
+# Pins that the conversion preserves coordinate *order* (JSON is x-first,
+# PaliGemma <loc> is y-first) and per-axis normalization. The only loss is
+# quantization to the 1024-bucket <loc> grid, so a pixel survives within
+# half a bucket (~W/2046, H/2046).
+# ---------------------------------------------------------------------------
+
+
+def test_loc_round_trip_keypoint_preserves_pixels():
+    from lerobot.policies.smolvla2.inference.vqa import parse_vqa_answer
+
+    h, w = 240, 320
+    answer = {"label": "blue cube", "point_format": "xy", "point": [160, 120]}
+    loc = _vqa_answer_to_loc(answer, h, w)
+    parsed = parse_vqa_answer(loc)
+    nx, ny = parsed["payload"]["point"]
+    assert abs(nx * w - 160) <= w / 2046 + 1e-6
+    assert abs(ny * h - 120) <= h / 2046 + 1e-6
+    assert parsed["payload"]["label"] == "blue cube"
+
+
+def test_loc_round_trip_bbox_preserves_pixels_and_order():
+    from lerobot.policies.smolvla2.inference.vqa import parse_vqa_answer
+
+    h, w = 240, 320
+    answer = {"detections": [{"label": "cube", "bbox_format": "xyxy", "bbox": [32, 24, 288, 216]}]}
+    loc = _vqa_answer_to_loc(answer, h, w)
+    parsed = parse_vqa_answer(loc)
+    x1, y1, x2, y2 = parsed["payload"]["detections"][0]["bbox"]
+    for got, want, dim in ((x1, 32, w), (y1, 24, h), (x2, 288, w), (y2, 216, h)):
+        assert abs(got * dim - want) <= dim / 2046 + 1e-6
