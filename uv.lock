@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "(python_full_version >= '3.15' and platform_machine == 'AMD64' and sys_platform == 'linux') or (python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux')",
@@ -1142,7 +1142,7 @@ name = "decord"
 version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", marker = "(platform_machine != 'arm64' and sys_platform == 'darwin') or (platform_machine == 'AMD64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
+    { name = "numpy", marker = "(platform_machine != 'arm64' and platform_machine != 's390x' and sys_platform == 'darwin') or (platform_machine == 'AMD64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 's390x' and sys_platform != 'darwin' and sys_platform != 'linux')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/11/79/936af42edf90a7bd4e41a6cac89c913d4b47fa48a26b042d5129a9242ee3/decord-0.6.0-py3-none-manylinux2010_x86_64.whl", hash = "sha256:51997f20be8958e23b7c4061ba45d0efcd86bffd5fe81c695d0befee0d442976", size = 13602299, upload-time = "2021-06-14T21:30:55.486Z" },
@@ -2710,6 +2710,8 @@ all = [
     { name = "matplotlib" },
     { name = "metaworld" },
     { name = "mock-serial", marker = "sys_platform != 'win32'" },
+    { name = "motorbridge" },
+    { name = "motorbridge-smart-servo" },
     { name = "mypy" },
     { name = "num2words" },
     { name = "pandas" },
@@ -2913,6 +2915,12 @@ metaworld = [
     { name = "scipy" },
     { name = "torchcodec", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'AMD64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'arm64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
 ]
+motorbridge-dep = [
+    { name = "motorbridge" },
+]
+motorbridge-smart-servo-dep = [
+    { name = "motorbridge-smart-servo" },
+]
 multi-task-dit = [
     { name = "diffusers" },
     { name = "transformers" },
@@ -2971,6 +2979,10 @@ qwen-vl-utils-dep = [
 ]
 reachy2 = [
     { name = "reachy2-sdk" },
+]
+rebot = [
+    { name = "motorbridge" },
+    { name = "motorbridge-smart-servo" },
 ]
 robstride = [
     { name = "python-can" },
@@ -3045,7 +3057,7 @@ requires-dist = [
     { name = "av", marker = "extra == 'av-dep'", specifier = ">=15.0.0,<16.0.0" },
     { name = "cmake", specifier = ">=3.29.0.1,<4.2.0" },
     { name = "contourpy", marker = "extra == 'matplotlib-dep'", specifier = ">=1.3.0,<2.0.0" },
-    { name = "datasets", marker = "extra == 'dataset'", specifier = ">=4.0.0,<5.0.0" },
+    { name = "datasets", marker = "extra == 'dataset'", specifier = ">=4.7.0,<5.0.0" },
     { name = "debugpy", marker = "extra == 'dev'", specifier = ">=1.8.1,<1.9.0" },
     { name = "decord", marker = "(platform_machine == 'AMD64' and extra == 'groot') or (platform_machine == 'x86_64' and extra == 'groot')", specifier = ">=0.6.0,<1.0.0" },
     { name = "deepdiff", marker = "extra == 'deepdiff-dep'", specifier = ">=7.0.1,<9.0.0" },
@@ -3116,6 +3128,8 @@ requires-dist = [
     { name = "lerobot", extras = ["matplotlib-dep"], marker = "extra == 'sarm'" },
     { name = "lerobot", extras = ["matplotlib-dep"], marker = "extra == 'unitree-g1'" },
     { name = "lerobot", extras = ["metaworld"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["motorbridge-dep"], marker = "extra == 'rebot'" },
+    { name = "lerobot", extras = ["motorbridge-smart-servo-dep"], marker = "extra == 'rebot'" },
     { name = "lerobot", extras = ["multi-task-dit"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["notebook"], marker = "extra == 'dev'" },
     { name = "lerobot", extras = ["openarms"], marker = "extra == 'all'" },
@@ -3142,6 +3156,7 @@ requires-dist = [
     { name = "lerobot", extras = ["qwen-vl-utils-dep"], marker = "extra == 'sarm'" },
     { name = "lerobot", extras = ["qwen-vl-utils-dep"], marker = "extra == 'wallx'" },
     { name = "lerobot", extras = ["reachy2"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["rebot"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["robstride"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["sarm"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'aloha'" },
@@ -3174,6 +3189,8 @@ requires-dist = [
     { name = "meshcat", marker = "extra == 'unitree-g1'", specifier = ">=0.3.0,<0.4.0" },
     { name = "metaworld", marker = "extra == 'metaworld'", specifier = "==3.0.0" },
     { name = "mock-serial", marker = "sys_platform != 'win32' and extra == 'test'", specifier = ">=0.0.1,<0.1.0" },
+    { name = "motorbridge", marker = "extra == 'motorbridge-dep'", specifier = ">=0.3.2,<0.4.0" },
+    { name = "motorbridge-smart-servo", marker = "extra == 'motorbridge-smart-servo-dep'", specifier = ">=0.0.4,<0.1.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.19.1" },
     { name = "ninja", marker = "extra == 'groot'", specifier = ">=1.11.1,<2.0.0" },
     { name = "num2words", marker = "extra == 'smolvla'", specifier = ">=0.5.14,<0.6.0" },
@@ -3227,7 +3244,7 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'transformers-dep'", specifier = ">=5.4.0,<5.6.0" },
     { name = "wandb", marker = "extra == 'training'", specifier = ">=0.24.0,<0.25.0" },
 ]
-provides-extras = ["dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "grpcio-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "smolvla", "multi-task-dit", "groot", "sarm", "xvla", "eo1", "hilserl", "async", "peft", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
+provides-extras = ["dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "grpcio-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "smolvla", "multi-task-dit", "groot", "sarm", "xvla", "eo1", "hilserl", "async", "peft", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
 
 [[package]]
 name = "librt"
@@ -3651,6 +3668,35 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/c6/d9/b9ec64510ffb4bccd7491c4583b8f24732ed4af6311c621822c3a9e47b46/mock_serial-0.0.1.tar.gz", hash = "sha256:9c92de7495ac375717bbbeb4993534079d2e634f3298d4c400420c4046add06e", size = 5355, upload-time = "2021-11-23T09:34:52.625Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/98/c2/8c1e6bf77cf62a10203a107179e34e0965fc5369386e0b7034a247ed054d/mock_serial-0.0.1-py3-none-any.whl", hash = "sha256:b6b8cc10c302354bf3ca270a3d4d6bf199c4bbe41478c65046db8f30ea967675", size = 6080, upload-time = "2021-11-23T09:34:51.108Z" },
+]
+
+[[package]]
+name = "motorbridge"
+version = "0.3.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/58/f2/b824ac4d611c71020dccdb72fc50606e543c77c68455ea824b26d9a6de03/motorbridge-0.3.2.tar.gz", hash = "sha256:5cf85dd22c46c7f3c5e6981e90b1034af2deb1bc4e7d74c13074d1d4a7b75ceb", size = 30158, upload-time = "2026-05-18T07:13:17.239Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2c/1a/7d367039a8325c0e2796c14a1503dfc563e7b244c815b26e079114244b4b/motorbridge-0.3.2-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:8ad158928e93fafd2a7814eaffe8e6ecbec4686f64c2df85f80d7979dfc82532", size = 1108065, upload-time = "2026-05-18T07:13:04.669Z" },
+    { url = "https://files.pythonhosted.org/packages/fe/d6/fafa2b8a3635a6fe7f6e8129e140a68d30f4d6438350a86e51b8198b7834/motorbridge-0.3.2-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:2adde5f26ea4e37d05da6b41b03b637efa6c80db4676bc6dbdb91ac6e811e54a", size = 1184657, upload-time = "2026-05-18T07:13:06.081Z" },
+    { url = "https://files.pythonhosted.org/packages/d8/30/aca01e81ec523d37b98a1ce6e41688d31827625eb15ecf0cf0485d91d62c/motorbridge-0.3.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a03b6dc0be80db7b47d3f190f8c6f4fc43b0b4089235283f53763153a6d4e58c", size = 1201394, upload-time = "2026-05-18T07:13:07.476Z" },
+    { url = "https://files.pythonhosted.org/packages/70/eb/97b2f93682a1ce67bad50e9b598af889be4a3156ebcec129ebb41fa44e5b/motorbridge-0.3.2-cp312-cp312-win_amd64.whl", hash = "sha256:b0657d47aa94f8535d0663538be4a86c46e314303fba513122d17612b584c6e6", size = 839087, upload-time = "2026-05-18T07:13:08.664Z" },
+    { url = "https://files.pythonhosted.org/packages/6e/b0/03246c25ae67c2b33bd19b5d11bae668bb8baa7d9cbd75b035a8bef61d62/motorbridge-0.3.2-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:f305a69c7c3c91dca19c43084beb4cd30a93fd85ff35c712cc3fb0ae33a5c7d3", size = 1108065, upload-time = "2026-05-18T07:13:10.032Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/40/b82d86fbfcc6b18946567f15a7d76d1c673d43bc0c8d268b668506811981/motorbridge-0.3.2-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:778fdde2b12df20184fb8c8f4c7665919d969bd582589a267c7956d4c57336ad", size = 1184657, upload-time = "2026-05-18T07:13:11.812Z" },
+    { url = "https://files.pythonhosted.org/packages/f2/3e/90e41d798814db89605d9a021e0c182608aec3d40eef2be211427e2bb863/motorbridge-0.3.2-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:eac3a2d27ca387e8d537ec148bea0c28b9517ff4fb9ea0b12f6e78c1e9a7faa4", size = 1201393, upload-time = "2026-05-18T07:13:13.396Z" },
+    { url = "https://files.pythonhosted.org/packages/34/75/3c9ba7514fd0ec330c1fe0b4d76dedfd221abc1b750fe063b6e3f9a88075/motorbridge-0.3.2-cp313-cp313-win_amd64.whl", hash = "sha256:d7d1eb76ae29e8673a320fd1a86b944fb0869129fd4114f0983e43cd48f67372", size = 839087, upload-time = "2026-05-18T07:13:14.555Z" },
+    { url = "https://files.pythonhosted.org/packages/87/33/6787dd22914291a640c2821f175abc7cbb9a1e0fe6c1143f92d7ac362903/motorbridge-0.3.2-cp314-cp314-win_amd64.whl", hash = "sha256:c5f05e36c6607d2145f38fb6f1f11090bb01dbd1012e8251b0d2ae4d60fa4f50", size = 870167, upload-time = "2026-05-18T07:13:15.898Z" },
+]
+
+[[package]]
+name = "motorbridge-smart-servo"
+version = "0.0.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e6/56/45af87189dc49abbe46157b792b7c71f502a5f819f04e7485de0cfa52d9b/motorbridge_smart_servo-0.0.4.tar.gz", hash = "sha256:fb65f3f6e765e6b1915071c255caaf112fad3796fa1761aeee0132d15b8a0989", size = 20415, upload-time = "2026-05-08T09:24:57.563Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e9/ee/bec4b3acf55cd18e7db83a6d951caccf699533dbd038c1f0b5f2d16d5208/motorbridge_smart_servo-0.0.4-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:8bc1f034fa9f96e23229a834db6e7cfe1368dba7b9a2a6f6dbd316448c4390dc", size = 304384, upload-time = "2026-05-08T09:24:52.619Z" },
+    { url = "https://files.pythonhosted.org/packages/3f/d2/71c87063b826433553ce8869b99df3e4f191b107710dd5c905e637512b10/motorbridge_smart_servo-0.0.4-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:348cef6a647e5c7f9cc8e8ce1f3c806af4522e1087172bac2f8a1a0daa3592b6", size = 345668, upload-time = "2026-05-08T09:24:53.735Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/6b/e65e7227a510236c6334cf054c501d3de2cbd463f4c594e42c6e965d5143/motorbridge_smart_servo-0.0.4-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:8c1982643c496c9f425fa9238f9a92ba601d77f4f2279df68c6868e7b997cbe1", size = 348123, upload-time = "2026-05-08T09:24:55.191Z" },
+    { url = "https://files.pythonhosted.org/packages/2d/fa/539ea123a5660c22c5e5cdad62d7bc5e931c816a0ffd402ae6e4623ab45b/motorbridge_smart_servo-0.0.4-cp39-abi3-win_amd64.whl", hash = "sha256:ea3baa9ba25bcec5541f3d86d73a3406ba2fcffe5dbf900c22e058638fc31ab0", size = 194130, upload-time = "2026-05-08T09:24:56.369Z" },
 ]
 
 [[package]]

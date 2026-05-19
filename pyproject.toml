@@ -95,7 +95,7 @@ dependencies = [
 
 # ── Feature-scoped extras ──────────────────────────────────
 dataset = [
-    "datasets>=4.0.0,<5.0.0",
+    "datasets>=4.7.0,<5.0.0",
     "pandas>=2.0.0,<3.0.0", # NOTE: Transitive dependency of datasets
     "pyarrow>=21.0.0,<30.0.0", # NOTE: Transitive dependency of datasets
     "lerobot[av-dep]",
@@ -151,6 +151,8 @@ pyserial-dep = ["pyserial>=3.5,<4.0"]
 deepdiff-dep = ["deepdiff>=7.0.1,<9.0.0"]
 pynput-dep = ["pynput>=1.7.8,<1.9.0"]
 pyzmq-dep = ["pyzmq>=26.2.1,<28.0.0"]
+motorbridge-dep = ["motorbridge>=0.3.2,<0.4.0"]
+motorbridge-smart-servo-dep = ["motorbridge-smart-servo>=0.0.4,<0.1.0"]
 
 # Motors
 feetech = ["feetech-servo-sdk>=1.0.0,<2.0.0", "lerobot[pyserial-dep]", "lerobot[deepdiff-dep]"]
@@ -174,6 +176,9 @@ unitree_g1 = [
     "lerobot[pygame-dep]",
 ]
 reachy2 = ["reachy2_sdk>=1.0.15,<1.1.0"]
+# Seeed Studio reBot B601-DM follower (motorbridge / CAN) + StarArm102 / reBot Arm 102
+# leader (motorbridge-smart-servo / FashionStar UART servos).
+rebot = ["lerobot[motorbridge-dep]", "lerobot[motorbridge-smart-servo-dep]"]
 kinematics = ["lerobot[placo-dep]"]
 intelrealsense = [
     "pyrealsense2>=2.55.1.6486,<2.57.0 ; sys_platform != 'darwin'",
@@ -260,6 +265,7 @@ all = [
     "lerobot[lekiwi]",
     "lerobot[openarms]",
     "lerobot[reachy2]",
+    "lerobot[rebot]",
     "lerobot[kinematics]",
     "lerobot[intelrealsense]",
     "lerobot[diffusion]",
