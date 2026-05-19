@@ -504,16 +504,19 @@ def handle_client(
                     is_preset: bool   = msg.get("preset", False)
                     recv_t = time.perf_counter()
                     t0     = time.perf_counter()
-                    if is_preset:
-                        send_action_preset(robot_arm, action_dict)
-                    else:
-                        robot_arm.send_action(action_dict)
-                    exec_s = time.perf_counter() - t0
-                    stats.record_action(recv_t, exec_s)
-                    stats.maybe_print()
-                    if stats._total_actions <= 3 or verbose:
-                        vals = [f"{action_dict.get(k, 0):.2f}" for k in JOINT_KEYS]
-                        print(f"[server] action #{stats._total_actions} exec={exec_s*1000:.2f}ms  pos={vals}")
+                    try:
+                        if is_preset:
+                            send_action_preset(robot_arm, action_dict)
+                        else:
+                            robot_arm.send_action(action_dict)
+                        exec_s = time.perf_counter() - t0
+                        stats.record_action(recv_t, exec_s)
+                        stats.maybe_print()
+                        if stats._total_actions <= 3 or verbose:
+                            vals = [f"{action_dict.get(k, 0):.2f}" for k in JOINT_KEYS]
+                            print(f"[server] action #{stats._total_actions} exec={exec_s*1000:.2f}ms  pos={vals}")
+                    except Exception as e:
+                        print(f"[server] action error: {e}")
                 else:
                     if verbose:
                         print("[server] action received but arm not connected — ignoring")
@@ -535,7 +538,10 @@ def handle_client(
             # ── motor ────────────────────────────────────────────────
             elif mtype == "motor":
                 if motors is not None:
-                    motors.set(float(msg.get("motor1", 0.0)), float(msg.get("motor2", 0.0)))
+                    try:
+                        motors.set(float(msg.get("motor1", 0.0)), float(msg.get("motor2", 0.0)))
+                    except Exception as e:
+                        print(f"[server] motor error: {e}")
 
             # ── ping → pong ──────────────────────────────────────────
             elif mtype == "ping":
@@ -553,11 +559,11 @@ def handle_client(
 
     except ConnectionError as e:
         print(f"[server] Connection lost: {e}")
+    except Exception as e:
+        print(f"[server] Client handler error: {e}")
     finally:
         if motors is not None:
             motors.stop()
-            if hasattr(motors, "close"):
-                motors.close()
         stats.print_summary()
         conn.close()
         print("[server] Client connection closed.")
