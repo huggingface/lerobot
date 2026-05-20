@@ -76,13 +76,14 @@ _Writes checkpoints to `outputs/train/<desired_policy_repo_id>/checkpoints/`._
 lerobot-rollout \
   --strategy.type=base \
   --robot.type=so101_follower \
+  --robot.port=/dev/ttyACM0 \
   --robot.cameras="{ up: {type: opencv, index_or_path: /dev/video1, width: 640, height: 480, fps: 30}, side: {type: opencv, index_or_path: /dev/video5, width: 640, height: 480, fps: 30}}" \
   --policy.path=<hf_user>/<desired_policy_repo_id> \
   --task="Put lego brick into the transparent box" \
   --duration=60
 ```
 
-If you want to record a dataset while testing the policy use `--dataset.repo_id=<hf_user>/eval_dataset_name` it is important to use the prefix **eval_**. For the policy path use the policy from the Hugging Face Hub or a local one. Skipping duration will make the policy run indefinitely.
+If you want to record a dataset while testing the policy use `--dataset.repo_id=<hf_user>/eval_dataset_name` it is important to use the prefix **eval\_**. For the policy path use the policy from the Hugging Face Hub or a local one. Skipping duration will make the policy run indefinitely.
 
 ---
 
