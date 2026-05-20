@@ -760,6 +760,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
         camera_encoder: VideoEncoderConfig | None = None,
+        depth_encoder: DepthEncoderConfig | None = None,
         encoder_threads: int | None = None,
         image_writer_processes: int = 0,
         image_writer_threads: int = 0,
@@ -789,6 +790,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 batch-encoding videos.
             camera_encoder: Video encoder settings for cameras (codec, quality, etc.).
                 When ``None``, :func:`~lerobot.configs.video.camera_encoder_defaults` is used.
+            depth_encoder: Video encoder settings for depth cameras (codec, quality, etc.).
+                When ``None``, :func:`~lerobot.configs.depth.depth_encoder_defaults` is used.
             encoder_threads: Number of encoder threads (global). ``None``
                 lets the codec decide.
             image_writer_processes: Subprocesses for async image writing.
@@ -835,12 +838,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
         streaming_enc = None
         if streaming_encoding and len(obj.meta.video_keys) > 0:
             streaming_enc = cls._build_streaming_encoder(
-                obj.meta.fps, camera_encoder, encoder_queue_maxsize, encoder_threads
+                obj.meta.fps, camera_encoder, depth_encoder, encoder_queue_maxsize, encoder_threads
             )
         obj.writer = DatasetWriter(
             meta=obj.meta,
             root=obj.root,
             camera_encoder=camera_encoder,
+            depth_encoder=depth_encoder,
             encoder_threads=encoder_threads,
             batch_encoding_size=batch_encoding_size,
             streaming_encoder=streaming_enc,
