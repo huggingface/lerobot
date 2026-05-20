@@ -53,9 +53,9 @@ from .io_utils import (
     write_info,
 )
 from .utils import (
+    DEFAULT_DEPTH_PATH,
     DEFAULT_EPISODES_PATH,
     DEFAULT_IMAGE_PATH,
-    DEFAULT_DEPTH_PATH,
     update_chunk_file_indices,
 )
 from .video_utils import (

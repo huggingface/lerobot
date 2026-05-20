@@ -56,11 +56,9 @@ def image_array_to_pil_image(image_array: np.ndarray, range_check: bool = True) 
     Other shapes / channel counts raise ``NotImplementedError`` or
     ``ValueError``.
     """
-    #TODO(CarolinePascal): 4 dimensions RGB-D images
+    # TODO(CarolinePascal): 4 dimensions RGB-D images
     if image_array.ndim not in (2, 3):
-        raise ValueError(
-            f"The array has {image_array.ndim} dimensions, but 2 or 3 is expected for an image."
-        )
+        raise ValueError(f"The array has {image_array.ndim} dimensions, but 2 or 3 is expected for an image.")
 
     # Squeeze 3D single-channel inputs to 2D so depth maps work whether the
     # caller emits (H, W), (1, H, W), or (H, W, 1).

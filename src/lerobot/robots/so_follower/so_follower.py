@@ -72,7 +72,7 @@ class SOFollower(Robot):
         for cam in self.cameras:
             features[cam] = (self.cameras[cam].height, self.cameras[cam].width, 3)
             if getattr(self.cameras[cam], "use_depth", False):
-                features[f"{cam}_depth"] = (self.cameras[cam].height, self.cameras[cam].width,1)
+                features[f"{cam}_depth"] = (self.cameras[cam].height, self.cameras[cam].width, 1)
         return features
 
     @cached_property

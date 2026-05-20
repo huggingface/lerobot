@@ -69,7 +69,7 @@ def hw_to_dataset_features(
         for key, ftype in hw_features.items()
         if ftype is float or (isinstance(ftype, PolicyFeature) and ftype.type != FeatureType.VISUAL)
     }
-    #TODO(CarolinePascal): we should not rely on the shape to determine if a feature is a camera !
+    # TODO(CarolinePascal): we should not rely on the shape to determine if a feature is a camera !
     cam_fts = {key: shape for key, shape in hw_features.items() if isinstance(shape, tuple)}
 
     if joint_fts and prefix == ACTION:
