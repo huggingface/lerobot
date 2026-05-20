@@ -107,7 +107,14 @@ def log_rerun_data(
                     for i, vi in enumerate(arr):
                         rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
                 else:
-                    img_entity = rr.Image(arr).compress() if compress_images else rr.Image(arr)
+                    if arr.shape[-1] == 1:
+                        img_entity = (
+                            rr.DepthImage(arr, colormap=rr.components.Colormap.Viridis).compress()
+                            if compress_images
+                            else rr.rr.DepthImage(arr, colormap=rr.components.Colormap.Viridis)
+                        )
+                    else:
+                        img_entity = rr.Image(arr).compress() if compress_images else rr.Image(arr)
                     rr.log(key, entity=img_entity, static=True)
 
     if action:
