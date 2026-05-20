@@ -95,7 +95,7 @@ dependencies = [
 
 # ── Feature-scoped extras ──────────────────────────────────
 dataset = [
-    "datasets>=4.0.0,<5.0.0",
+    "datasets>=4.7.0,<5.0.0",
     "pandas>=2.0.0,<3.0.0", # NOTE: Transitive dependency of datasets
     "pyarrow>=21.0.0,<30.0.0", # NOTE: Transitive dependency of datasets
     "lerobot[av-dep]",

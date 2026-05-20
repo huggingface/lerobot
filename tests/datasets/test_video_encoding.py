@@ -35,6 +35,7 @@ from lerobot.datasets.video_utils import (
     concatenate_video_files,
     encode_video_frames,
     get_video_info,
+    reencode_video,
 )
 from tests.fixtures.constants import DUMMY_VIDEO_INFO
 
@@ -347,16 +348,22 @@ def _read_feature_info(dataset: LeRobotDataset) -> dict:
     return info["features"][VIDEO_KEY]["info"]
 
 
-def _add_frames(dataset: LeRobotDataset, num_frames: int) -> None:
-    shape = dataset.meta.features[VIDEO_KEY]["shape"]
+def _add_frames(dataset: LeRobotDataset, num_frames: int, video_keys: list[str] | None = None) -> None:
+    from lerobot.utils.constants import DEFAULT_FEATURES
+
+    if video_keys is None:
+        video_keys = dataset.meta.video_keys
     for _ in range(num_frames):
-        dataset.add_frame(
-            {
-                VIDEO_KEY: np.random.randint(0, 256, shape, dtype=np.uint8),
-                "action": np.zeros(2, dtype=np.float32),
-                "task": "test",
-            }
-        )
+        frame: dict = {"task": "test"}
+        for key, ft in dataset.meta.features.items():
+            if key in DEFAULT_FEATURES:
+                continue
+            shape = ft["shape"]
+            if key in video_keys:
+                frame[key] = np.random.randint(0, 256, shape, dtype=np.uint8)
+            else:
+                frame[key] = np.zeros(shape, dtype=np.float32)
+        dataset.add_frame(frame)
 
 
 class TestGetVideoInfo:
@@ -472,6 +479,30 @@ class TestEncodeVideoFrames:
         assert info["video.fast_decode"] == 0
         assert info["video.video_backend"] == "pyav"
         assert info["video.extra_options"] == {}
+
+
+class TestReencodeVideo:
+    @require_libsvtav1
+    @require_h264
+    def test_reencode_video(self, tmp_path):
+        src = TEST_ARTIFACTS_DIR / "clip_4frames.mp4"
+        out = tmp_path / "reencoded.mp4"
+        cfg = VideoEncoderConfig(vcodec="h264", g=6, crf=23, pix_fmt="yuv444p")
+        reencode_video(src, out, camera_encoder=cfg, overwrite=True)
+
+        assert out.exists()
+        with av.open(str(out)) as container:
+            n_frames = sum(1 for _ in container.decode(video=0))
+        assert n_frames == 4
+
+        info = get_video_info(out, camera_encoder=cfg)
+        assert info["video.codec"] == "h264"
+        assert info["video.pix_fmt"] == "yuv444p"
+        assert info["video.height"] == 64
+        assert info["video.width"] == 96
+        assert info["video.fps"] == 30
+        assert info["video.g"] == 6
+        assert info["video.crf"] == 23
 
 
 class TestConcatenateVideoFiles:

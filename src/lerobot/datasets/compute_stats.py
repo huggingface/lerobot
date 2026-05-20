@@ -512,7 +512,7 @@ def compute_episode_stats(
 
     ep_stats = {}
     for key, data in episode_data.items():
-        if features[key]["dtype"] == "string":
+        if features[key]["dtype"] in {"string", "language"}:
             continue
 
         if features[key]["dtype"] in ["image", "video"]:
