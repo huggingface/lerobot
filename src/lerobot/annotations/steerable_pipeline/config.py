@@ -102,7 +102,7 @@ class VlmConfig:
     # ``openai`` talks to a local OpenAI-compatible server; the CLI
     # auto-spawns one when ``auto_serve=True``.
     backend: str = "openai"
-    model_id: str = "Qwen/Qwen2.5-VL-7B-Instruct"
+    model_id: str = "Qwen/Qwen3.6-35B-A3B-FP8"
 
     # OpenAI-compatible server endpoint; ``EMPTY`` works for local servers.
     api_base: str = "http://localhost:8000/v1"
