@@ -38,7 +38,8 @@ else:
 
 logger = logging.getLogger(__name__)
 
-# Joint controlled in FORCE_POS mode; every other joint runs in POS_VEL mode.
+# Joint always controlled in FORCE_POS mode; every other joint runs in the mode
+# selected by ``RebotB601FollowerConfig.control_mode`` (POS_VEL or MIT).
 GRIPPER_MOTOR = "gripper"
 # Per-joint Damiao motor models for the B601-DM (passed to motorbridge).
 MOTOR_MODELS = {
@@ -168,12 +169,22 @@ class RebotB601Follower(Robot):
         self._save_calibration()
         print(f"Calibration saved to {self.calibration_fpath}")
 
+    def _arm_mode(self):
+        """MotorBridge mode used for the arm joints (gripper always uses FORCE_POS)."""
+        mode = self.config.control_mode
+        if mode == "pos_vel":
+            return MotorBridgeMode.POS_VEL
+        if mode == "mit":
+            return MotorBridgeMode.MIT
+        raise ValueError(
+            f"Unsupported control_mode '{mode}'. Use 'pos_vel' or 'mit'."
+        )
+
     def configure(self) -> None:
         self.bus.enable_all()
+        arm_mode = self._arm_mode()
         for motor_name, motor in self.motors.items():
-            target_mode = (
-                MotorBridgeMode.FORCE_POS if motor_name == GRIPPER_MOTOR else MotorBridgeMode.POS_VEL
-            )
+            target_mode = MotorBridgeMode.FORCE_POS if motor_name == GRIPPER_MOTOR else arm_mode
             for attempt in range(_ENSURE_MODE_RETRIES + 1):
                 try:
                     motor.ensure_mode(target_mode)
@@ -252,6 +263,7 @@ class RebotB601Follower(Robot):
             goal_present_pos = {key: (g, present_pos.get(key, g)) for key, g in goal_pos.items()}
             goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
+        use_mit = self.config.control_mode == "mit"
         for motor_name, position_deg in goal_pos.items():
             motor = self.motors.get(motor_name)
             if motor is None:
@@ -266,6 +278,10 @@ class RebotB601Follower(Robot):
             vel_rad = math.radians(vel_deg_s)
             if motor_name == GRIPPER_MOTOR:
                 motor.send_force_pos(pos_rad, vel_rad, self.config.gripper_torque_ratio)
+            elif use_mit:
+                kp = self.config.mit_kp[idx] if isinstance(self.config.mit_kp, list) else self.config.mit_kp
+                kd = self.config.mit_kd[idx] if isinstance(self.config.mit_kd, list) else self.config.mit_kd
+                motor.send_mit(pos_rad, vel_rad, kp, kd, 0.0)
             else:
                 motor.send_pos_vel(pos_rad, vel_rad)
 

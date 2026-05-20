@@ -65,9 +65,23 @@ class RebotB601FollowerConfig:
         }
     )
 
-    # Target velocity for joints running in POS_VEL mode, in degrees/s. A scalar is
-    # applied to every joint; a list provides one value per joint (in motor order).
+    # Control mode for the arm joints (the gripper always runs in FORCE_POS):
+    #   "pos_vel" - position control with velocity limit (firmware PID gains)
+    #   "mit"     - full impedance control with caller-supplied kp/kd
+    control_mode: str = "pos_vel"
+
+    # Target velocity for joints in POS_VEL mode, or velocity feedforward for joints
+    # in MIT mode, in degrees/s. Scalar applies to every joint; a list gives one
+    # value per joint (in motor order).
     pos_vel_velocity: float | list[float] = field(default_factory=lambda: [150.0] * 7)
+
+    # MIT-mode position stiffness (Nm/rad). Scalar applies to every arm joint; a
+    # list gives one value per joint (in motor order). Ignored when control_mode
+    # is "pos_vel". The gripper entry is unused (gripper stays in FORCE_POS).
+    mit_kp: float | list[float] = 100.0
+
+    # MIT-mode velocity damping (Nm·s/rad). Same shape conventions as ``mit_kp``.
+    mit_kd: float | list[float] = 3.0
 
     # Torque/current ratio for the gripper's FORCE_POS mode, in range [0, 1].
     gripper_torque_ratio: float = 0.1

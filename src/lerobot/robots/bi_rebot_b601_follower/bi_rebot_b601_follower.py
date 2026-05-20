@@ -51,7 +51,10 @@ class BiRebotB601Follower(Robot):
             max_relative_target=config.left_arm_config.max_relative_target,
             cameras=config.left_arm_config.cameras,
             motor_can_ids=config.left_arm_config.motor_can_ids,
+            control_mode=config.left_arm_config.control_mode,
             pos_vel_velocity=config.left_arm_config.pos_vel_velocity,
+            mit_kp=config.left_arm_config.mit_kp,
+            mit_kd=config.left_arm_config.mit_kd,
             gripper_torque_ratio=config.left_arm_config.gripper_torque_ratio,
             joint_limits=config.left_arm_config.joint_limits,
         )
@@ -66,7 +69,10 @@ class BiRebotB601Follower(Robot):
             max_relative_target=config.right_arm_config.max_relative_target,
             cameras=config.right_arm_config.cameras,
             motor_can_ids=config.right_arm_config.motor_can_ids,
+            control_mode=config.right_arm_config.control_mode,
             pos_vel_velocity=config.right_arm_config.pos_vel_velocity,
+            mit_kp=config.right_arm_config.mit_kp,
+            mit_kd=config.right_arm_config.mit_kd,
             gripper_torque_ratio=config.right_arm_config.gripper_torque_ratio,
             joint_limits=config.right_arm_config.joint_limits,
         )
