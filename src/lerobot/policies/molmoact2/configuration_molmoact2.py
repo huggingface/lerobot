@@ -69,6 +69,7 @@ def _resolve_checkpoint_location(
         repo_type="model",
         revision=revision,
         force_download=force_download,
+        ignore_patterns=["*.py", "*.pyc", "__pycache__/*"],
         token=_hf_token(),
     )
 
@@ -185,7 +186,6 @@ class MolmoAct2Config(PreTrainedConfig):
     checkpoint_path: str = "allenai/MolmoAct2"
     checkpoint_revision: str | None = None
     checkpoint_force_download: bool = False
-    trust_remote_code: bool = True
 
     n_obs_steps: int = 1
     chunk_size: int = 30

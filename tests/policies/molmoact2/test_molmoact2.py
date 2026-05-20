@@ -28,6 +28,7 @@ import torch.nn.functional as F  # noqa: N812
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.policies import get_policy_class, make_policy_config
 from lerobot.policies.molmoact2 import (
+    configuration_molmoact2 as molmoact2_config,
     modeling_molmoact2 as molmoact2_modeling,
     processor_molmoact2 as molmoact2_processor,
 )
@@ -65,6 +66,21 @@ def test_molmoact2_policy_registration():
     assert cfg.get_scheduler_preset().num_decay_steps is None
     assert cfg.action_delta_indices == list(range(cfg.chunk_size))
     assert get_policy_class("molmoact2") is MolmoAct2Policy
+
+
+def test_molmoact2_checkpoint_download_ignores_remote_python(monkeypatch):
+    download_kwargs = {}
+
+    def fake_snapshot_download(**kwargs):
+        download_kwargs.update(kwargs)
+        return "/tmp/downloaded-molmoact2"
+
+    monkeypatch.setattr(molmoact2_config, "snapshot_download", fake_snapshot_download)
+
+    checkpoint_location = molmoact2_config._resolve_checkpoint_location("allenai/MolmoAct2")
+
+    assert checkpoint_location == "/tmp/downloaded-molmoact2"
+    assert download_kwargs["ignore_patterns"] == ["*.py", "*.pyc", "__pycache__/*"]
 
 
 def test_molmoact2_scheduler_decay_steps_auto_match_training_steps():
@@ -550,18 +566,31 @@ def test_load_hf_model_accepts_max_action_horizon_schema(monkeypatch):
         resolved_kwargs.update(kwargs)
         return checkpoint_path
 
+    config_kwargs = {}
+    model_kwargs = {}
+
+    class DummyHFConfig:
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            del args
+            config_kwargs.update(kwargs)
+            return SimpleNamespace()
+
+    class DummyMolmoAct2ForConditionalGeneration:
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            del args
+            model_kwargs.update(kwargs)
+            return loaded_model
+
     monkeypatch.setattr(molmoact2_modeling, "_resolve_checkpoint_location", fake_resolve_checkpoint_location)
-    monkeypatch.setattr(molmoact2_modeling, "_patch_batched_image_attention_bias", lambda backbone: None)
-    monkeypatch.setattr(molmoact2_modeling, "_patch_leaf_safe_input_embedding_update", lambda backbone: None)
-    monkeypatch.setattr(molmoact2_modeling, "_patch_training_kv_collection", lambda backbone: None)
-
-    from transformers import AutoModelForImageTextToText
-
+    monkeypatch.setattr(molmoact2_modeling, "HFMolmoAct2Config", DummyHFConfig)
     monkeypatch.setattr(
-        AutoModelForImageTextToText,
-        "from_pretrained",
-        lambda *args, **kwargs: loaded_model,
+        molmoact2_modeling,
+        "MolmoAct2ForConditionalGeneration",
+        DummyMolmoAct2ForConditionalGeneration,
     )
+    monkeypatch.setattr(molmoact2_modeling, "_strict_load_safetensors_weights", lambda *args: None)
     policy = object.__new__(MolmoAct2Policy)
     torch.nn.Module.__init__(policy)
     policy.config = MolmoAct2Config(
@@ -580,6 +609,8 @@ def test_load_hf_model_accepts_max_action_horizon_schema(monkeypatch):
     assert policy.model.config.max_action_horizon == 10
     assert policy._generation_action_horizon() == 10
     assert resolved_kwargs == {"revision": "main", "force_download": True}
+    assert "trust_remote_code" not in config_kwargs
+    assert "trust_remote_code" not in model_kwargs
 
 
 def test_load_hf_model_chunk_size_overrides_larger_than_checkpoint_horizon(monkeypatch):
@@ -605,17 +636,26 @@ def test_load_hf_model_chunk_size_overrides_larger_than_checkpoint_horizon(monke
         "_resolve_checkpoint_location",
         lambda checkpoint_path, **kwargs: checkpoint_path,
     )
-    monkeypatch.setattr(molmoact2_modeling, "_patch_batched_image_attention_bias", lambda backbone: None)
-    monkeypatch.setattr(molmoact2_modeling, "_patch_leaf_safe_input_embedding_update", lambda backbone: None)
-    monkeypatch.setattr(molmoact2_modeling, "_patch_training_kv_collection", lambda backbone: None)
 
-    from transformers import AutoModelForImageTextToText
+    class DummyHFConfig:
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            del args, kwargs
+            return SimpleNamespace()
 
+    class DummyMolmoAct2ForConditionalGeneration:
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            del args, kwargs
+            return loaded_model
+
+    monkeypatch.setattr(molmoact2_modeling, "HFMolmoAct2Config", DummyHFConfig)
     monkeypatch.setattr(
-        AutoModelForImageTextToText,
-        "from_pretrained",
-        lambda *args, **kwargs: loaded_model,
+        molmoact2_modeling,
+        "MolmoAct2ForConditionalGeneration",
+        DummyMolmoAct2ForConditionalGeneration,
     )
+    monkeypatch.setattr(molmoact2_modeling, "_strict_load_safetensors_weights", lambda *args: None)
     policy = object.__new__(MolmoAct2Policy)
     torch.nn.Module.__init__(policy)
     policy.config = MolmoAct2Config(
@@ -649,13 +689,25 @@ def test_load_hf_model_rejects_legacy_action_horizon_schema(monkeypatch):
         lambda checkpoint_path, **kwargs: checkpoint_path,
     )
 
-    from transformers import AutoModelForImageTextToText
+    class DummyHFConfig:
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            del args, kwargs
+            return SimpleNamespace()
 
+    class DummyMolmoAct2ForConditionalGeneration:
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            del args, kwargs
+            return DummyLoadedModel()
+
+    monkeypatch.setattr(molmoact2_modeling, "HFMolmoAct2Config", DummyHFConfig)
     monkeypatch.setattr(
-        AutoModelForImageTextToText,
-        "from_pretrained",
-        lambda *args, **kwargs: DummyLoadedModel(),
+        molmoact2_modeling,
+        "MolmoAct2ForConditionalGeneration",
+        DummyMolmoAct2ForConditionalGeneration,
     )
+    monkeypatch.setattr(molmoact2_modeling, "_strict_load_safetensors_weights", lambda *args: None)
     policy = object.__new__(MolmoAct2Policy)
     torch.nn.Module.__init__(policy)
     policy.config = MolmoAct2Config(
@@ -1133,7 +1185,6 @@ def test_discrete_predict_action_chunk_uses_hf_cached_generation_path():
         output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(2,))},
         discrete_generation_max_steps=None,
         discrete_action_tokenizer="unused",
-        trust_remote_code=True,
         chunk_size=2,
         n_action_steps=1,
         rtc_config=None,
@@ -1221,7 +1272,6 @@ def test_discrete_predict_action_chunk_uses_graph_backed_ar_decode_when_enabled(
         output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(2,))},
         discrete_generation_max_steps=None,
         discrete_action_tokenizer="unused",
-        trust_remote_code=True,
         chunk_size=2,
         n_action_steps=1,
         rtc_config=None,

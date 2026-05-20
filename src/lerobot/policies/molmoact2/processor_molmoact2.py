@@ -57,9 +57,18 @@ from lerobot.utils.import_utils import _transformers_available, require_package
 from .configuration_molmoact2 import MolmoAct2Config, infer_molmoact2_max_sequence_length
 
 if TYPE_CHECKING or _transformers_available:
-    from transformers import AutoProcessor
+    from transformers import Qwen2Tokenizer
+
+    from .hf_model.action_tokenizer import UniversalActionProcessor
+    from .hf_model.image_processing_molmoact2 import MolmoAct2ImageProcessor
+    from .hf_model.processing_molmoact2 import MolmoAct2Processor
+    from .hf_model.video_processing_molmoact2 import MolmoAct2VideoProcessor
 else:
-    AutoProcessor = None
+    Qwen2Tokenizer = None
+    UniversalActionProcessor = None
+    MolmoAct2ImageProcessor = None
+    MolmoAct2Processor = None
+    MolmoAct2VideoProcessor = None
 
 ACTION_OUTPUT_TOKEN = "<action_output>"  # nosec B105
 ACTION_START_TOKEN = "<action_start>"  # nosec B105
@@ -106,6 +115,7 @@ def _resolve_checkpoint_location(
         repo_type="model",
         revision=revision,
         force_download=force_download,
+        ignore_patterns=["*.py", "*.pyc", "__pycache__/*"],
         token=_hf_token(),
     )
 
@@ -167,6 +177,59 @@ def _load_hf_norm_stats_for_tag(
     if not isinstance(action_stats, dict) or not isinstance(state_stats, dict):
         raise ValueError(f"MolmoAct2 norm_tag={norm_tag!r} must define action_stats and state_stats.")
     return {ACTION: numeric_stats(action_stats), OBS_STATE: numeric_stats(state_stats)}, metadata
+
+
+def _strip_processor_config(config: dict[str, Any], *metadata_keys: str) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in config.items()
+        if key not in {"auto_map", "processor_class", *metadata_keys}
+    }
+
+
+def _load_local_molmoact2_processor(checkpoint_location: str) -> Any:
+    if (
+        Qwen2Tokenizer is None
+        or MolmoAct2ImageProcessor is None
+        or MolmoAct2Processor is None
+        or MolmoAct2VideoProcessor is None
+    ):
+        raise RuntimeError("transformers is required to load MolmoAct2 processor.")
+
+    checkpoint_path = Path(checkpoint_location)
+    processor_config_path = checkpoint_path / "processor_config.json"
+    if not processor_config_path.exists():
+        raise FileNotFoundError(f"MolmoAct2 checkpoint is missing {processor_config_path}.")
+    processor_config = json.loads(processor_config_path.read_text())
+
+    image_config = _strip_processor_config(
+        dict(processor_config.get("image_processor") or {}),
+        "image_processor_type",
+    )
+    video_config = _strip_processor_config(
+        dict(processor_config.get("video_processor") or {}),
+        "video_processor_type",
+    )
+    image_processor = MolmoAct2ImageProcessor(**image_config)
+    video_processor = MolmoAct2VideoProcessor(**video_config)
+    tokenizer = Qwen2Tokenizer.from_pretrained(
+        checkpoint_location,
+        token=_hf_token(),
+    )
+
+    chat_template_path = checkpoint_path / "chat_template.jinja"
+    chat_template = chat_template_path.read_text() if chat_template_path.exists() else None
+    return MolmoAct2Processor(
+        image_processor=image_processor,
+        video_processor=video_processor,
+        tokenizer=tokenizer,
+        chat_template=chat_template,
+        image_use_col_tokens=processor_config.get("image_use_col_tokens", True),
+        use_single_crop_col_tokens=processor_config.get("use_single_crop_col_tokens"),
+        use_single_crop_start_token=processor_config.get("use_single_crop_start_token", True),
+        video_use_col_tokens=processor_config.get("video_use_col_tokens", False),
+        use_frame_special_tokens=processor_config.get("use_frame_special_tokens", True),
+    )
 
 
 def _to_numpy(value: Any) -> np.ndarray:
@@ -497,7 +560,6 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     checkpoint_path: str
     checkpoint_revision: str | None = None
     checkpoint_force_download: bool = False
-    trust_remote_code: bool = True
     action_mode: str = "both"
     discrete_action_tokenizer: str = "allenai/MolmoAct2-FAST-Tokenizer"
     image_keys: list[str] = field(default_factory=list)
@@ -521,18 +583,13 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             revision=self.checkpoint_revision,
             force_download=bool(self.checkpoint_force_download),
         )
-        self.processor = AutoProcessor.from_pretrained(
-            checkpoint_location,
-            trust_remote_code=self.trust_remote_code,
-            use_fast=False,
-            token=_hf_token(),
-        )
+        self.processor = _load_local_molmoact2_processor(checkpoint_location)
         self.action_processor = None
         if self.action_mode in {"discrete", "both"}:
-            self.action_processor = AutoProcessor.from_pretrained(
+            if UniversalActionProcessor is None:
+                raise RuntimeError("transformers is required to load MolmoAct2 action tokenizer.")
+            self.action_processor = UniversalActionProcessor.from_pretrained_local(
                 self.discrete_action_tokenizer,
-                trust_remote_code=self.trust_remote_code,
-                token=_hf_token(),
             )
         self._action_start_id = _single_token_id(self.processor.tokenizer, ACTION_START_TOKEN)
         self._action_end_id = _single_token_id(self.processor.tokenizer, ACTION_END_TOKEN)
@@ -544,7 +601,6 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             "checkpoint_path": self.checkpoint_path,
             "checkpoint_revision": self.checkpoint_revision,
             "checkpoint_force_download": self.checkpoint_force_download,
-            "trust_remote_code": self.trust_remote_code,
             "action_mode": self.action_mode,
             "discrete_action_tokenizer": self.discrete_action_tokenizer,
             "image_keys": list(self.image_keys),
@@ -878,7 +934,6 @@ def make_molmoact2_pre_post_processors(
             checkpoint_path=config.checkpoint_path,
             checkpoint_revision=config.checkpoint_revision,
             checkpoint_force_download=config.checkpoint_force_download,
-            trust_remote_code=config.trust_remote_code,
             action_mode=config.action_mode,
             discrete_action_tokenizer=config.discrete_action_tokenizer,
             image_keys=image_keys,

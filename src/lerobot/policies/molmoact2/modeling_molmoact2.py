@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 import types
 from collections import deque
 from contextlib import nullcontext
@@ -24,9 +26,10 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
-import torch.utils.checkpoint
+from safetensors.torch import load_file as load_safetensors_file
 from torch import Tensor
 from torch.distributions import Beta
+from transformers.utils import SAFE_WEIGHTS_INDEX_NAME, SAFE_WEIGHTS_NAME
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION
@@ -36,10 +39,13 @@ from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_molmoact2 import MolmoAct2Config, _hf_token, _resolve_checkpoint_location
 
 if TYPE_CHECKING or _transformers_available:
-    from transformers import AutoModelForImageTextToText, AutoProcessor
+    from .hf_model.action_tokenizer import UniversalActionProcessor
+    from .hf_model.configuration_molmoact2 import MolmoAct2Config as HFMolmoAct2Config
+    from .hf_model.modeling_molmoact2 import MolmoAct2ForConditionalGeneration
 else:
-    AutoModelForImageTextToText = None
-    AutoProcessor = None
+    UniversalActionProcessor = None
+    HFMolmoAct2Config = None
+    MolmoAct2ForConditionalGeneration = None
 
 _MODEL_INPUT_KEYS = {
     "input_ids",
@@ -56,6 +62,39 @@ _MODEL_INPUT_KEYS = {
     "token_type_ids",
     "inputs_embeds",
 }
+
+
+def _strict_load_safetensors_weights(model: torch.nn.Module, checkpoint_location: str) -> None:
+    index_path = os.path.join(checkpoint_location, SAFE_WEIGHTS_INDEX_NAME)
+    single_file_path = os.path.join(checkpoint_location, SAFE_WEIGHTS_NAME)
+    if os.path.isfile(index_path):
+        with open(index_path, encoding="utf-8") as f:
+            index = json.load(f)
+        weight_map = index["weight_map"]
+        loaded_keys = set(weight_map)
+        model_keys = set(model.state_dict())
+        missing_keys = sorted(model_keys - loaded_keys)
+        unexpected_keys = sorted(loaded_keys - model_keys)
+        if missing_keys or unexpected_keys:
+            message = ["MolmoAct2 safetensors do not match the local model implementation."]
+            if missing_keys:
+                message.append(f"Missing keys: {missing_keys[:8]}")
+            if unexpected_keys:
+                message.append(f"Unexpected keys: {unexpected_keys[:8]}")
+            raise RuntimeError(" ".join(message))
+        for shard_file in sorted(set(weight_map.values())):
+            state_dict = load_safetensors_file(os.path.join(checkpoint_location, shard_file), device="cpu")
+            model.load_state_dict(state_dict, strict=False)
+            del state_dict
+        return
+    if os.path.isfile(single_file_path):
+        state_dict = load_safetensors_file(single_file_path, device="cpu")
+        model.load_state_dict(state_dict, strict=True)
+        return
+    raise FileNotFoundError(
+        f"MolmoAct2 checkpoint at {checkpoint_location} must contain {SAFE_WEIGHTS_NAME} "
+        f"or {SAFE_WEIGHTS_INDEX_NAME}."
+    )
 
 
 def _torch_dtype(dtype: str) -> torch.dtype:
@@ -90,480 +129,6 @@ def _sample_beta_timesteps(
         return torch.full((batch_size,), time_offset, device=device, dtype=samples.dtype)
     return time_offset + scale * samples
 
-
-def _patch_batched_image_attention_bias(backbone: Any) -> None:
-    original = getattr(backbone, "_build_native_attention_bias", None)
-    if original is None:
-        return
-    original_func = getattr(original, "__func__", original)
-    original_globals = getattr(original_func, "__globals__", {})
-    cache_seq_len = original_globals.get("_cache_seq_len_int")
-    cache_max_len = original_globals.get("_cache_max_len_int")
-    if cache_seq_len is None or cache_max_len is None:
-        return
-
-    def _build_native_attention_bias(
-        self,
-        *,
-        inputs_embeds: Tensor,
-        attention_mask: Tensor | None,
-        token_type_ids: Tensor | None,
-        past_key_values: Any,
-    ) -> Tensor:
-        if attention_mask is not None and attention_mask.ndim == 4:
-            return attention_mask.to(device=inputs_embeds.device)
-        batch_size, seq_len = inputs_embeds.shape[:2]
-        past_length = int(cache_seq_len(past_key_values))
-        current_length = past_length + int(seq_len)
-        max_cache_len = int(cache_max_len(past_key_values))
-        attention_mask_len = max_cache_len if max_cache_len > 0 else current_length
-        device = inputs_embeds.device
-
-        if attention_mask is None:
-            positions = torch.arange(attention_mask_len, device=device)
-            valid_mask = positions.unsqueeze(0) < current_length
-            valid_mask = valid_mask.expand(batch_size, -1)
-        elif attention_mask.ndim == 2:
-            valid_mask = torch.zeros((batch_size, attention_mask_len), device=device, dtype=torch.bool)
-            source_mask = attention_mask.to(device=device, dtype=torch.bool)
-            copy_len = min(int(source_mask.shape[-1]), attention_mask_len)
-            if copy_len > 0:
-                valid_mask[:, :copy_len] = source_mask[:, :copy_len]
-            if attention_mask_len > current_length:
-                valid_mask[:, current_length:] = False
-        else:
-            raise ValueError(f"Unsupported attention_mask shape for MolmoAct2: {tuple(attention_mask.shape)}")
-
-        valid_mask = valid_mask[:, None, None, :]
-        causal_mask = torch.tril(
-            torch.ones(attention_mask_len, attention_mask_len, device=device, dtype=torch.bool)
-        )[None, None, past_length:current_length, :attention_mask_len]
-
-        if token_type_ids is not None and past_length == 0:
-            causal_mask = causal_mask.expand(batch_size, -1, -1, -1).clone()
-            image_mask = token_type_ids.to(device=device, dtype=torch.bool)
-            can_attend_back = image_mask[:, :, None] & image_mask[:, None, :]
-            image_len = min(int(token_type_ids.shape[1]), attention_mask_len)
-            causal_mask[:, :, :, :image_len] = (
-                causal_mask[:, :, :, :image_len] | can_attend_back[:, None, :, :image_len]
-            )
-
-        allowed = valid_mask & causal_mask
-        return torch.where(
-            allowed,
-            torch.zeros((), device=device, dtype=inputs_embeds.dtype),
-            torch.full((), torch.finfo(inputs_embeds.dtype).min, device=device, dtype=inputs_embeds.dtype),
-        )
-
-    backbone._build_native_attention_bias = types.MethodType(_build_native_attention_bias, backbone)
-
-
-def _patch_leaf_safe_input_embedding_update(backbone: Any) -> None:
-    if getattr(backbone, "_lerobot_leaf_safe_input_embedding_update_patched", False):
-        return
-    if not callable(getattr(backbone, "build_input_embeddings", None)):
-        return
-
-    def _build_input_embeddings(
-        self,
-        input_ids: Tensor,
-        images: Tensor | None = None,
-        token_pooling: Tensor | None = None,
-    ) -> tuple[Tensor, Tensor | None]:
-        input_ids = input_ids * (input_ids != -1).to(input_ids.dtype)
-        x = self.transformer.wte(input_ids)
-
-        image_features = None
-        if images is not None:
-            image_features = self.vision_backbone(images, token_pooling).to(x.device)
-            is_image_patch = input_ids.reshape(-1) == self.config.image_patch_id
-            if is_image_patch.sum() != len(image_features):
-                raise RuntimeError(
-                    f"Expected {int(is_image_patch.sum())} image patch embeddings, got {len(image_features)}."
-                )
-            flat_x = x.reshape(-1, x.shape[-1]).clone()
-            flat_x[is_image_patch] = flat_x[is_image_patch] + image_features
-            x = flat_x.reshape_as(x)
-
-        x = self.transformer.emb_drop(x)
-        return x, image_features
-
-    backbone.build_input_embeddings = types.MethodType(_build_input_embeddings, backbone)
-    backbone._lerobot_leaf_safe_input_embedding_update_patched = True
-
-
-def _patch_memory_efficient_vision_backbone(backbone: Any, *, gradient_checkpointing: bool) -> None:
-    vision_backbone = getattr(backbone, "vision_backbone", None)
-    if vision_backbone is None or getattr(
-        vision_backbone, "_lerobot_memory_efficient_vision_backbone_patched", False
-    ):
-        return
-
-    image_vit = getattr(vision_backbone, "image_vit", None)
-    transformer = getattr(image_vit, "transformer", None)
-    resblocks = getattr(transformer, "resblocks", None)
-    if image_vit is None or transformer is None or resblocks is None:
-        return
-    if not hasattr(vision_backbone, "vit_layers"):
-        return
-
-    def _encode_image(self, images: Tensor) -> Tensor:
-        batch_size, num_crops, num_patches, patch_dim = images.shape
-        images = images.view(batch_size * num_crops, num_patches, patch_dim)
-
-        x = self.image_vit.patch_embedding(images)
-        x = self.image_vit.add_pos_emb(x, self.image_vit.config.image_num_patch)
-
-        needed_layers = {int(layer) for layer in self.vit_layers}
-        selected_features: dict[int, Tensor] = {}
-        use_checkpoint = bool(
-            self._lerobot_vision_gradient_checkpointing and self.training and torch.is_grad_enabled()
-        )
-        for layer_idx, block in enumerate(self.image_vit.transformer.resblocks):
-            if use_checkpoint:
-                x = torch.utils.checkpoint.checkpoint(block, x, use_reentrant=False)
-            else:
-                x = block(x)
-            if layer_idx in needed_layers:
-                selected_features[layer_idx] = x
-
-        if len(selected_features) != len(needed_layers):
-            missing = sorted(needed_layers - set(selected_features))
-            raise RuntimeError(f"MolmoAct2 vision backbone did not produce requested layers: {missing}.")
-
-        image_features = torch.cat([selected_features[int(layer)] for layer in self.vit_layers], dim=-1)
-        if self.num_prefix_tokens > 0:
-            image_features = image_features[:, 1:]
-        image_features = image_features.view(batch_size, num_crops, num_patches, -1)
-        return image_features
-
-    vision_backbone.encode_image = types.MethodType(_encode_image, vision_backbone)
-    vision_backbone._lerobot_vision_gradient_checkpointing = bool(gradient_checkpointing)
-    vision_backbone._lerobot_memory_efficient_vision_backbone_patched = True
-
-
-def _patch_training_kv_collection(backbone: Any) -> None:
-    """Expose per-layer VLM KV tensors without enabling HF autoregressive cache."""
-    if getattr(backbone, "_lerobot_training_kv_collection_patched", False):
-        return
-
-    transformer = getattr(backbone, "transformer", None)
-    blocks = getattr(transformer, "blocks", None)
-    if transformer is None or blocks is None:
-        raise RuntimeError("MolmoAct2 checkpoint does not expose a patchable text transformer.")
-
-    original_transformer_forward = transformer.forward
-    from transformers.masking_utils import create_causal_mask
-    from transformers.modeling_outputs import BaseModelOutputWithPast
-
-    def _patch_attention(attention: torch.nn.Module) -> None:
-        if getattr(attention, "_lerobot_training_kv_collection_patched", False):
-            return
-
-        original_attention_forward = attention.forward
-        original_attention_func = getattr(original_attention_forward, "__func__", original_attention_forward)
-        attention_globals = getattr(original_attention_func, "__globals__", {})
-        apply_rotary_pos_emb = attention_globals.get("apply_rotary_pos_emb")
-        repeat_kv = attention_globals.get("repeat_kv")
-        eager_attention_forward = attention_globals.get("eager_attention_forward")
-        all_attention_functions = attention_globals.get("ALL_ATTENTION_FUNCTIONS")
-        if (
-            apply_rotary_pos_emb is None
-            or repeat_kv is None
-            or eager_attention_forward is None
-            or all_attention_functions is None
-        ):
-            raise RuntimeError("MolmoAct2 attention internals changed; cannot patch KV collection.")
-
-        def _attention_forward(
-            self,
-            hidden_states: Tensor,
-            position_embeddings: tuple[Tensor, Tensor],
-            attention_mask: Tensor | None,
-            past_key_values: Any | None = None,
-            cache_position: Tensor | None = None,
-            **kwargs,
-        ):
-            collect_layer_kv_states = bool(kwargs.pop("collect_layer_kv_states", False))
-            if not collect_layer_kv_states:
-                return original_attention_forward(
-                    hidden_states=hidden_states,
-                    position_embeddings=position_embeddings,
-                    attention_mask=attention_mask,
-                    past_key_values=past_key_values,
-                    cache_position=cache_position,
-                    **kwargs,
-                )
-
-            input_shape = hidden_states.shape[:-1]
-            hidden_shape = (*input_shape, -1, self.head_dim)
-
-            qkv = self.att_proj(hidden_states)
-            query_states, key_states, value_states = qkv.split(self.fused_dims, dim=-1)
-            value_states = value_states.view(hidden_shape)
-
-            if self.q_norm is not None and self.k_norm is not None and self.qk_norm_type != "qwen3":
-                query_states = self.q_norm(query_states)
-                key_states = self.k_norm(key_states)
-
-            query_states = query_states.view(hidden_shape)
-            key_states = key_states.view(hidden_shape)
-            if self.q_norm is not None and self.k_norm is not None and self.qk_norm_type == "qwen3":
-                query_states = self.q_norm(query_states)
-                key_states = self.k_norm(key_states)
-            query_states = query_states.transpose(1, 2)
-            key_states = key_states.transpose(1, 2)
-            value_states = value_states.transpose(1, 2)
-
-            cos, sin = position_embeddings
-            query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
-
-            if past_key_values is not None:
-                cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
-                key_states, value_states = past_key_values.update(
-                    key_states, value_states, self.layer_idx, cache_kwargs
-                )
-
-            collected_key_states = key_states
-            collected_value_states = value_states
-            dropout_p = 0.0 if not self.training else self.attention_dropout
-            if self.config._attn_implementation == "sdpa" and (
-                attention_mask is None or torch.is_tensor(attention_mask)
-            ):
-                key_states = repeat_kv(key_states, self.num_key_value_groups)
-                value_states = repeat_kv(value_states, self.num_key_value_groups)
-                attn_output = F.scaled_dot_product_attention(
-                    query_states,
-                    key_states,
-                    value_states,
-                    attn_mask=attention_mask,
-                    dropout_p=dropout_p,
-                    is_causal=attention_mask is None,
-                )
-                attn_output = attn_output.transpose(1, 2).contiguous()
-                attn_weights = None
-            else:
-                attention_interface = eager_attention_forward
-                if self.config._attn_implementation != "eager":
-                    attention_interface = all_attention_functions[self.config._attn_implementation]
-
-                attn_output, attn_weights = attention_interface(
-                    self,
-                    query_states,
-                    key_states,
-                    value_states,
-                    attention_mask,
-                    dropout=dropout_p,
-                    scaling=self.scaling,
-                    **kwargs,
-                )
-
-            attn_output = attn_output.reshape(*input_shape, -1).contiguous()
-            attn_output = self.attn_out(attn_output)
-            return attn_output, attn_weights, collected_key_states, collected_value_states
-
-        attention.forward = types.MethodType(_attention_forward, attention)
-        attention._lerobot_training_kv_collection_patched = True
-
-    def _patch_decoder_layer(layer: torch.nn.Module) -> None:
-        if getattr(layer, "_lerobot_training_kv_collection_patched", False):
-            return
-
-        _patch_attention(layer.self_attn)
-        original_layer_forward = layer.forward
-        is_post_norm = "PostNorm" in layer.__class__.__name__
-
-        def _decoder_layer_forward(
-            self,
-            hidden_states: Tensor,
-            position_embeddings: tuple[Tensor, Tensor],
-            attention_mask: Tensor | None = None,
-            position_ids: Tensor | None = None,
-            past_key_values: Any | None = None,
-            output_attentions: bool = False,
-            use_cache: bool = False,
-            cache_position: Tensor | None = None,
-            **kwargs,
-        ):
-            collect_layer_kv_states = bool(kwargs.pop("collect_layer_kv_states", False))
-            if not collect_layer_kv_states:
-                return original_layer_forward(
-                    hidden_states,
-                    position_embeddings=position_embeddings,
-                    attention_mask=attention_mask,
-                    position_ids=position_ids,
-                    past_key_values=past_key_values,
-                    output_attentions=output_attentions,
-                    use_cache=use_cache,
-                    cache_position=cache_position,
-                    **kwargs,
-                )
-
-            residual = hidden_states
-            attn_input = hidden_states if is_post_norm else self.attn_norm(hidden_states)
-            attn_output, self_attn_weights, key_states, value_states = self.self_attn(
-                hidden_states=attn_input,
-                position_embeddings=position_embeddings,
-                attention_mask=attention_mask,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                output_attentions=output_attentions,
-                use_cache=use_cache,
-                cache_position=cache_position,
-                collect_layer_kv_states=True,
-                **kwargs,
-            )
-            if is_post_norm:
-                attn_output = self.attn_norm(attn_output)
-            hidden_states = residual + self.dropout(attn_output)
-
-            residual = hidden_states
-            if is_post_norm:
-                hidden_states = self.mlp(hidden_states)
-                hidden_states = self.ff_norm(hidden_states)
-            else:
-                hidden_states = self.ff_norm(hidden_states)
-                hidden_states = self.mlp(hidden_states)
-            hidden_states = residual + self.dropout(hidden_states)
-
-            outputs = (hidden_states,)
-            if output_attentions:
-                outputs += (self_attn_weights,)
-            return outputs + (key_states, value_states)
-
-        layer.forward = types.MethodType(_decoder_layer_forward, layer)
-        layer._lerobot_training_kv_collection_patched = True
-
-    for block in blocks:
-        _patch_decoder_layer(block)
-
-    def _transformer_forward(
-        self,
-        input_ids: Tensor | None = None,
-        attention_mask: Tensor | None = None,
-        position_ids: Tensor | None = None,
-        past_key_values: Any | None = None,
-        inputs_embeds: Tensor | None = None,
-        use_cache: bool | None = None,
-        output_attentions: bool | None = None,
-        output_hidden_states: bool | None = None,
-        cache_position: Tensor | None = None,
-        **kwargs,
-    ):
-        collect_layer_kv_states = bool(kwargs.pop("collect_layer_kv_states", False))
-        if not collect_layer_kv_states:
-            return original_transformer_forward(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                inputs_embeds=inputs_embeds,
-                use_cache=use_cache,
-                output_attentions=output_attentions,
-                output_hidden_states=output_hidden_states,
-                cache_position=cache_position,
-                **kwargs,
-            )
-        if past_key_values is not None:
-            raise ValueError("collect_layer_kv_states only supports full-sequence training forwards.")
-
-        output_attentions = (
-            output_attentions if output_attentions is not None else self.config.output_attentions
-        )
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
-        use_cache = False
-
-        if (input_ids is None) ^ (inputs_embeds is not None):
-            raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
-
-        if inputs_embeds is None:
-            input_ids = input_ids * (input_ids != -1).to(input_ids.dtype)
-            inputs_embeds = self.wte(input_ids)
-
-        if cache_position is None:
-            cache_position = torch.arange(
-                0,
-                inputs_embeds.shape[1],
-                device=inputs_embeds.device,
-            )
-
-        if position_ids is None:
-            position_ids = cache_position.unsqueeze(0)
-
-        if torch.is_tensor(attention_mask) and attention_mask.ndim == 4:
-            causal_mask_mapping = attention_mask
-        elif not isinstance(causal_mask_mapping := attention_mask, dict):
-            mask_kwargs = {
-                "config": self.config,
-                "input_embeds": inputs_embeds,
-                "attention_mask": attention_mask,
-                "cache_position": cache_position,
-                "past_key_values": None,
-                "position_ids": position_ids,
-            }
-            causal_mask_mapping = create_causal_mask(**mask_kwargs)
-
-        hidden_states = inputs_embeds
-        if self.config.rope_scaling_layers is not None:
-            position_embeddings_mapping = {
-                "default": self.rotary_embs["default"](hidden_states, position_ids),
-                "scaling": self.rotary_embs["scaling"](hidden_states, position_ids),
-            }
-        else:
-            position_embeddings = self.rotary_emb(hidden_states, position_ids)
-
-        all_hidden_states = () if output_hidden_states else None
-        all_self_attns = () if output_attentions else None
-        collected_kv_states = []
-
-        for layer_idx, decoder_block in enumerate(self.blocks[: self.config.num_hidden_layers]):
-            if output_hidden_states:
-                all_hidden_states += (hidden_states,)
-
-            if self.config.rope_scaling_layers is not None:
-                position_embeddings_i = (
-                    position_embeddings_mapping["scaling"]
-                    if layer_idx in self.config.rope_scaling_layers
-                    else position_embeddings_mapping["default"]
-                )
-            else:
-                position_embeddings_i = position_embeddings
-
-            layer_outputs = decoder_block(
-                hidden_states,
-                position_embeddings=position_embeddings_i,
-                attention_mask=causal_mask_mapping,
-                position_ids=position_ids,
-                past_key_values=None,
-                output_attentions=output_attentions,
-                use_cache=use_cache,
-                cache_position=cache_position,
-                collect_layer_kv_states=True,
-                **kwargs,
-            )
-            hidden_states = layer_outputs[0]
-
-            output_idx = 1
-            if output_attentions:
-                all_self_attns += (layer_outputs[output_idx],)
-                output_idx += 1
-            collected_kv_states.append((layer_outputs[output_idx], layer_outputs[output_idx + 1]))
-
-        hidden_states = self.ln_f(hidden_states)
-        if output_hidden_states:
-            all_hidden_states += (hidden_states,)
-
-        return BaseModelOutputWithPast(
-            last_hidden_state=hidden_states,
-            past_key_values=tuple(collected_kv_states),
-            hidden_states=all_hidden_states,
-            attentions=all_self_attns,
-        )
-
-    transformer.forward = types.MethodType(_transformer_forward, transformer)
-    backbone._lerobot_training_kv_collection_patched = True
 
 
 class MolmoAct2Policy(PreTrainedPolicy):
@@ -604,13 +169,22 @@ class MolmoAct2Policy(PreTrainedPolicy):
             force_download=bool(self.config.checkpoint_force_download),
         )
         model_dtype = _torch_dtype(self.config.model_dtype)
-        self.model = AutoModelForImageTextToText.from_pretrained(
+        if HFMolmoAct2Config is None or MolmoAct2ForConditionalGeneration is None:
+            raise RuntimeError("transformers is required to load MolmoAct2 checkpoints.")
+        hf_config = HFMolmoAct2Config.from_pretrained(
             checkpoint_location,
-            trust_remote_code=self.config.trust_remote_code,
+            token=_hf_token(),
+        )
+        self.model = MolmoAct2ForConditionalGeneration.from_pretrained(
+            checkpoint_location,
+            config=hf_config,
             dtype=model_dtype,
             low_cpu_mem_usage=True,
             token=_hf_token(),
         )
+        # Keep Hub loading limited to local code plus safetensors, and verify the
+        # local implementation exactly matches the checkpoint key space.
+        _strict_load_safetensors_weights(self.model, checkpoint_location)
         hf_max_action_dim = int(getattr(self.model.config, "max_action_dim", -1))
         if hf_max_action_dim != int(self.config.expected_max_action_dim):
             raise ValueError(
@@ -642,13 +216,6 @@ class MolmoAct2Policy(PreTrainedPolicy):
             self._freeze_input_embeddings()
         if self.config.train_action_expert_only:
             self._freeze_non_action_expert_parameters()
-        _patch_batched_image_attention_bias(self._backbone())
-        _patch_leaf_safe_input_embedding_update(self._backbone())
-        _patch_memory_efficient_vision_backbone(
-            self._backbone(),
-            gradient_checkpointing=bool(self.config.gradient_checkpointing),
-        )
-        _patch_training_kv_collection(self._backbone())
         if self.config.gradient_checkpointing:
             self._enable_gradient_checkpointing()
         self.train(self.training)
@@ -703,6 +270,9 @@ class MolmoAct2Policy(PreTrainedPolicy):
         transformer = getattr(self._backbone(), "transformer", None)
         if transformer is not None:
             transformer.gradient_checkpointing = True
+        vision_backbone = getattr(self._backbone(), "vision_backbone", None)
+        if vision_backbone is not None:
+            vision_backbone.gradient_checkpointing = True
 
     def _freeze_non_action_expert_parameters(self) -> None:
         trainable_params = 0
@@ -914,10 +484,10 @@ class MolmoAct2Policy(PreTrainedPolicy):
         if self.action_tokenizer is None:
             require_package("transformers", extra="molmoact2")
 
-            self.action_tokenizer = AutoProcessor.from_pretrained(
+            if UniversalActionProcessor is None:
+                raise RuntimeError("transformers is required to load MolmoAct2 action tokenizer.")
+            self.action_tokenizer = UniversalActionProcessor.from_pretrained_local(
                 self.config.discrete_action_tokenizer,
-                trust_remote_code=self.config.trust_remote_code,
-                token=_hf_token(),
             )
         return self.action_tokenizer
 
