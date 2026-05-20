@@ -55,6 +55,7 @@ from .io_utils import (
 from .utils import (
     DEFAULT_EPISODES_PATH,
     DEFAULT_IMAGE_PATH,
+    DEFAULT_DEPTH_PATH,
     update_chunk_file_indices,
 )
 from .video_utils import (
@@ -154,7 +155,8 @@ class DatasetWriter:
         return ep_buffer
 
     def _get_image_file_path(self, episode_index: int, image_key: str, frame_index: int) -> Path:
-        fpath = DEFAULT_IMAGE_PATH.format(
+        path_template = DEFAULT_DEPTH_PATH if self.image_key in self._meta.depth_keys else DEFAULT_IMAGE_PATH
+        fpath = path_template.format(
             image_key=image_key, episode_index=episode_index, frame_index=frame_index
         )
         return self._root / fpath
