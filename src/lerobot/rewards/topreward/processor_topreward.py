@@ -16,11 +16,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
+from PIL import Image
 from torch import Tensor
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
@@ -33,7 +34,11 @@ from lerobot.processor import (
     ProcessorStepRegistry,
     policy_action_to_transition,
 )
-from lerobot.rewards.topreward.configuration_topreward import TOPRewardConfig
+from lerobot.rewards.topreward.configuration_topreward import (
+    DEFAULT_PROMPT_PREFIX,
+    DEFAULT_PROMPT_SUFFIX_TEMPLATE,
+    TOPRewardConfig,
+)
 from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
     OBS_IMAGES,
@@ -41,20 +46,32 @@ from lerobot.utils.constants import (
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
+from lerobot.utils.import_utils import _transformers_available, require_package
 
-# Namespace for TOPReward's pre-encoded observation tensors written by the
-# processor and consumed by the model. Keys: ``frames`` (one ``(T,H,W,C)``
-# uint8 numpy array per sample) and ``task`` (one string per sample).
+if TYPE_CHECKING or _transformers_available:
+    from transformers import AutoProcessor
+else:
+    AutoProcessor = None
+
 TOPREWARD_FEATURE_PREFIX = f"{OBS_PREFIX}topreward."
+
+_TRUE_ANSWER = "True"
+
+TOPREWARD_VLM_INPUT_KEYS = (
+    "input_ids",
+    "attention_mask",
+    "pixel_values",
+    "pixel_values_videos",
+    "image_grid_thw",
+    "video_grid_thw",
+    "second_per_grid_ts",
+)
+TOPREWARD_METADATA_KEYS = ("prompt_length",)
+TOPREWARD_INPUT_KEYS = TOPREWARD_VLM_INPUT_KEYS + TOPREWARD_METADATA_KEYS
 
 
 def _video_to_numpy(video: Tensor, *, max_frames: int | None) -> np.ndarray:
-    """Convert one trajectory tensor to a ``(T, H, W, C) uint8`` numpy array.
-
-    Mirrors the Robometer helper: accepts ``(T, C, H, W)`` or ``(T, H, W, C)``
-    layouts, rescales floats in ``[0, 1]`` to ``[0, 255]``, clips values
-    outside the uint8 range and tail-crops to ``max_frames``.
-    """
+    """Convert one trajectory tensor to a ``(T, H, W, C) uint8`` numpy array."""
     if max_frames is not None:
         video = video[-max_frames:]
     if video.shape[1] in (1, 3):
@@ -66,6 +83,15 @@ def _video_to_numpy(video: Tensor, *, max_frames: int | None) -> np.ndarray:
     if np.issubdtype(array.dtype, np.floating) and array.size > 0 and array.max() <= 1.0:
         array = array * 255.0
     return np.clip(array, 0, 255).astype(np.uint8)
+
+
+def _frames_to_pil(frames: np.ndarray) -> list[Image.Image]:
+    """Convert ``(T, H, W, C)`` uint8 frames to a list of PIL images."""
+    if frames.ndim != 4:
+        raise ValueError(f"Expected (T,H,W,C) frames; got shape {frames.shape}")
+    if frames.dtype != np.uint8:
+        frames = np.clip(frames, 0, 255).astype(np.uint8)
+    return [Image.fromarray(frames[i]) for i in range(frames.shape[0])]
 
 
 def _expand_tasks(task: Any, *, batch_size: int, default: str | None) -> list[str]:
@@ -89,29 +115,41 @@ def _expand_tasks(task: Any, *, batch_size: int, default: str | None) -> list[st
 @dataclass
 @ProcessorStepRegistry.register(name="topreward_encoder")
 class TOPRewardEncoderProcessorStep(ProcessorStep):
-    """Normalise raw frames + task into TOPReward-namespaced observation entries.
+    """Encode raw frames + task into Qwen-VL tensors for the TOPReward model.
+
+    Loads a :class:`~transformers.AutoProcessor` matching ``vlm_name`` and
+    builds the full chat prompt including the instruction suffix. The
+    resulting ``input_ids``, ``attention_mask``, vision tensors, and a
+    per-sample ``prompt_length`` integer are written under the
+    ``observation.topreward.*`` namespace so the model can label-mask and
+    forward without re-tokenising.
 
     At call time the step reads:
 
     - ``observation[image_key]``: ``(B, T, C, H, W)`` or ``(B, C, H, W)`` frames.
     - ``complementary_data[task_key]``: a string or list of strings.
 
-    and writes:
-
-    - ``observation[f"{TOPREWARD_FEATURE_PREFIX}frames"]``: list of
-      ``(T, H, W, C) uint8`` numpy arrays, one per sample.
-    - ``observation[f"{TOPREWARD_FEATURE_PREFIX}task"]``: list of strings,
-      one per sample.
-
-    The actual chat-template / tokenisation happens model-side because
-    TOPReward's reward extraction needs the tokenizer to know the
-    prompt/suffix split (label masking on suffix tokens only).
+    and writes ``observation[f"{TOPREWARD_FEATURE_PREFIX}<name>"]`` for the
+    Qwen-VL tensors plus ``prompt_length``.
     """
 
+    vlm_name: str = "Qwen/Qwen3-VL-8B-Instruct"
     image_key: str = OBS_IMAGES + ".top"
     task_key: str = "task"
     default_task: str | None = None
     max_frames: int | None = 16
+    fps: float = 2.0
+    prompt_prefix: str = DEFAULT_PROMPT_PREFIX
+    prompt_suffix_template: str = DEFAULT_PROMPT_SUFFIX_TEMPLATE
+    add_chat_template: bool = False
+    max_length: int = 32768
+
+    _processor: Any = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        require_package("transformers", extra="topreward")
+        require_package("qwen-vl-utils", extra="topreward", import_name="qwen_vl_utils")
+        self._processor = AutoProcessor.from_pretrained(self.vlm_name, trust_remote_code=True)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         observation = transition.get(TransitionKey.OBSERVATION)
@@ -138,17 +176,124 @@ class TOPRewardEncoderProcessorStep(ProcessorStep):
             default=self.default_task,
         )
 
-        frames_per_sample = [
-            _video_to_numpy(tensor[i], max_frames=self.max_frames) for i in range(batch_size)
-        ]
+        encoded = self._encode_batch(tensor, tasks)
 
         new_observation = dict(observation)
-        new_observation[f"{TOPREWARD_FEATURE_PREFIX}frames"] = frames_per_sample
-        new_observation[f"{TOPREWARD_FEATURE_PREFIX}task"] = list(tasks)
+        for key, value in encoded.items():
+            new_observation[f"{TOPREWARD_FEATURE_PREFIX}{key}"] = value
 
         new_transition = transition.copy()
         new_transition[TransitionKey.OBSERVATION] = new_observation
         return new_transition
+
+    def _encode_batch(self, tensor: Tensor, tasks: list[str]) -> dict[str, Any]:
+        """Tokenise a batch of (frames, task) pairs into Qwen-VL tensors.
+
+        Processes samples one at a time (each may have a different token
+        length due to different numbers of vision patches), then pads /
+        stacks the results.
+        """
+        from qwen_vl_utils import process_vision_info
+
+        batch_size = tensor.shape[0]
+        all_encoded: list[dict[str, Any]] = []
+        all_prompt_lengths: list[int] = []
+
+        for i in range(batch_size):
+            frames_np = _video_to_numpy(tensor[i], max_frames=self.max_frames)
+            pil_frames = _frames_to_pil(frames_np)
+            task = tasks[i]
+
+            instruction_suffix = self.prompt_suffix_template.format(instruction=task)
+            eos_token = self._processor.tokenizer.eos_token
+
+            if self.add_chat_template:
+                suffix_for_template = instruction_suffix.removesuffix(_TRUE_ANSWER).rstrip()
+                templated_messages = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "video", "video": pil_frames, "fps": self.fps},
+                            {"type": "text", "text": f"{self.prompt_prefix}{suffix_for_template}"},
+                        ],
+                    }
+                ]
+                prompt_chat = self._processor.apply_chat_template(
+                    templated_messages, tokenize=False, add_generation_prompt=True
+                )
+                full_text = f"{prompt_chat}{_TRUE_ANSWER}"
+                image_inputs, video_inputs = process_vision_info(templated_messages)
+            else:
+                user_messages = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "video", "video": pil_frames, "fps": self.fps},
+                            {"type": "text", "text": self.prompt_prefix},
+                        ],
+                    }
+                ]
+                prompt_chat = self._processor.apply_chat_template(
+                    user_messages, tokenize=False, add_generation_prompt=False
+                )
+                if eos_token is not None:
+                    prompt_chat = prompt_chat.split(eos_token)[0]
+                full_text = f"{prompt_chat}{instruction_suffix}"
+                image_inputs, video_inputs = process_vision_info(user_messages)
+
+            inputs = self._processor(
+                text=[full_text],
+                images=image_inputs,
+                videos=video_inputs,
+                padding=True,
+                return_tensors="pt",
+            )
+
+            input_len = int(inputs["input_ids"].shape[-1])
+            if input_len > self.max_length:
+                raise ValueError(
+                    f"TOPReward input length {input_len} exceeds max_length "
+                    f"{self.max_length}; lower `max_frames` or raise `max_length`."
+                )
+
+            prompt_length = input_len - 1
+            all_encoded.append(inputs)
+            all_prompt_lengths.append(prompt_length)
+
+        result = dict(all_encoded[0]) if batch_size == 1 else self._pad_and_stack(all_encoded)
+
+        result["prompt_length"] = torch.tensor(all_prompt_lengths, dtype=torch.long)
+        return result
+
+    @staticmethod
+    def _pad_and_stack(encoded_list: list[dict[str, Any]]) -> dict[str, Any]:
+        """Right-pad and stack per-sample encoded dicts into a batch."""
+        keys = [k for k in encoded_list[0] if isinstance(encoded_list[0][k], Tensor)]
+        max_len = max(enc["input_ids"].shape[-1] for enc in encoded_list)
+        result: dict[str, Any] = {}
+
+        for key in keys:
+            tensors = [enc[key] for enc in encoded_list]
+            if key in ("input_ids", "attention_mask"):
+                padded = []
+                pad_value = 0
+                for t in tensors:
+                    pad_size = max_len - t.shape[-1]
+                    if pad_size > 0:
+                        padded.append(torch.nn.functional.pad(t, (0, pad_size), value=pad_value))
+                    else:
+                        padded.append(t)
+                result[key] = torch.cat(padded, dim=0)
+            else:
+                if all(t.shape == tensors[0].shape for t in tensors):
+                    result[key] = torch.cat(tensors, dim=0)
+                else:
+                    result[key] = torch.cat(tensors, dim=0)
+
+        for key in encoded_list[0]:
+            if key not in result:
+                result[key] = encoded_list[0][key]
+        return result
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
@@ -157,10 +302,16 @@ class TOPRewardEncoderProcessorStep(ProcessorStep):
 
     def get_config(self) -> dict[str, Any]:
         return {
+            "vlm_name": self.vlm_name,
             "image_key": self.image_key,
             "task_key": self.task_key,
             "default_task": self.default_task,
             "max_frames": self.max_frames,
+            "fps": self.fps,
+            "prompt_prefix": self.prompt_prefix,
+            "prompt_suffix_template": self.prompt_suffix_template,
+            "add_chat_template": self.add_chat_template,
+            "max_length": self.max_length,
         }
 
 
@@ -171,23 +322,27 @@ def make_topreward_pre_post_processors(
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
-    """Pipeline that normalises frames + task for the TOPReward model.
+    """Pipeline that pre-encodes frames + task into Qwen-VL tensors.
 
     The preprocessor adds a batch dimension if needed, runs TOPReward's
-    encoder, and moves any tensor entries to the configured device. The
-    postprocessor is the identity since TOPReward outputs a single reward
-    tensor.
+    encoder (which tokenises the full prompt and emits ``prompt_length``),
+    and moves everything to the configured device. The postprocessor is
+    the identity since TOPReward outputs a single reward tensor.
     """
-    del dataset_stats  # TOPReward's VLM handles its own normalisation.
-
     preprocessor = PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
         steps=[
             AddBatchDimensionProcessorStep(),
             TOPRewardEncoderProcessorStep(
+                vlm_name=config.vlm_name,
                 image_key=config.image_key,
                 task_key=config.task_key,
                 default_task=config.default_task,
                 max_frames=config.max_frames,
+                fps=config.fps,
+                prompt_prefix=config.prompt_prefix,
+                prompt_suffix_template=config.prompt_suffix_template,
+                add_chat_template=config.add_chat_template,
+                max_length=config.max_input_length,
             ),
             DeviceProcessorStep(device=config.device or "cpu"),
         ],

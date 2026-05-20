@@ -16,51 +16,22 @@
 
 """Compute per-frame TOPReward progress curves for a LeRobot dataset.
 
-This mirrors :mod:`lerobot.rewards.sarm.compute_rabc_weights` (and the
-ROBOMETER equivalent): it walks every episode in a dataset, runs the
-TOPReward zero-shot reward model, and writes a parquet file with one row
-per frame. The output uses the same schema SARM produces so existing
-consumers — :class:`lerobot.rewards.sarm.rabc.RABCWeights` (which reads
-``progress_sparse``) and the SARM-style overlay script in
-``examples/dataset/create_progress_videos.py`` — work without modification.
+For each episode, scores trajectory prefixes of increasing length using
+the TOPReward reward model, min-max normalises the raw log-prob rewards per episode,
+and writes a parquet file with one row per frame.
 
-TOPReward is zero-shot: there is no fine-tuned checkpoint to load. The
-``--reward-model-path`` argument is therefore optional and only used when
-you want to load a TOPReward LeRobot config (e.g. one published on the Hub
-that pins ``vlm_name`` and prompt knobs). Otherwise the default
-:class:`TOPRewardConfig` is used, which points at
-``Qwen/Qwen3-VL-8B-Instruct`` — the VLM is re-downloaded from the HF Hub
-on every run unless cached.
-
-Parquet schema:
-    +--------------------+---------+----------------------------------------+
-    | column             | dtype   | meaning                                |
-    +====================+=========+========================================+
-    | ``index``          | int64   | global frame index                     |
-    | ``episode_index``  | int64   | episode id                             |
-    | ``frame_index``    | int64   | local within-episode index             |
-    | ``progress_sparse``| float32 | per-frame TOPReward progress in [0, 1] |
-    |                    |         | (RA-BC + overlay read this column)     |
-    +--------------------+---------+----------------------------------------+
+The parquet uses the same schema as SARM's :mod:`lerobot.rewards.sarm.compute_rabc_weights`.
 
 Usage:
-    # Full computation (one VLM forward per frame, slowest but most accurate)
-    python -m lerobot.rewards.topreward.compute_rabc_weights \\
-        --dataset-repo-id lerobot/libero_10_image
-
-    # Sparse-dense mode: 15 anchor prefixes per episode, interpolated to
-    # per-frame resolution. Matches upstream TOPReward ``num_samples=15``.
+    # Sparse-dense mode (15 anchors per episode, matches upstream)
     python -m lerobot.rewards.topreward.compute_rabc_weights \\
         --dataset-repo-id lerobot/libero_10_image \\
-        --num-prefixes 15
+        --num-samples 15
 
     # Use a different VLM backbone
     python -m lerobot.rewards.topreward.compute_rabc_weights \\
         --dataset-repo-id lerobot/libero_10_image \\
         --vlm-name Qwen/Qwen3-VL-4B-Instruct
-
-The output is written to the dataset's local cache directory as
-``topreward_progress.parquet`` (or to ``--output-path`` if provided).
 """
 
 from __future__ import annotations
@@ -79,7 +50,8 @@ from tqdm import tqdm
 from lerobot.datasets import LeRobotDataset
 from lerobot.rewards.topreward.configuration_topreward import TOPRewardConfig
 from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
-from lerobot.rewards.topreward.processor_topreward import TOPREWARD_FEATURE_PREFIX
+from lerobot.rewards.topreward.processor_topreward import TOPRewardEncoderProcessorStep
+from lerobot.types import TransitionKey
 
 DEFAULT_OUTPUT_FILENAME = "topreward_progress.parquet"
 
@@ -105,22 +77,65 @@ def _resolve_task(sample: dict[str, Any], default: str) -> str:
     return default
 
 
-def _frames_to_uint8_hwc(video: torch.Tensor) -> np.ndarray:
-    """Convert a ``(T, C, H, W)`` or ``(T, H, W, C)`` tensor to ``(T, H, W, C) uint8``.
+def normalize_rewards(rewards: list[float] | np.ndarray) -> np.ndarray:
+    """Min-max normalise raw log-prob rewards into ``[0, 1]``."""
+    rewards_arr = np.asarray(rewards, dtype=np.float64)
+    if rewards_arr.size == 0:
+        return rewards_arr.astype(np.float32)
+    if rewards_arr.size == 1:
+        return np.array([1.0], dtype=np.float32)
+    r_min, r_max = rewards_arr.min(), rewards_arr.max()
+    if r_max == r_min:
+        return np.ones_like(rewards_arr, dtype=np.float32)
+    return ((rewards_arr - r_min) / (r_max - r_min)).astype(np.float32)
 
-    Inlined here (rather than reusing the processor) so the labeling script
-    can side-step the ``max_frames`` tail-crop and feed full trajectories
-    to :meth:`TOPRewardModel.predict_curves`.
-    """
-    if video.shape[1] in (1, 3):
-        video = video.permute(0, 2, 3, 1)
-    elif video.shape[-1] not in (1, 3):
-        raise ValueError(f"Expected channel dim of size 1 or 3, got shape {tuple(video.shape)}")
 
-    array = video.detach().cpu().numpy()
-    if np.issubdtype(array.dtype, np.floating) and array.size > 0 and array.max() <= 1.0:
-        array = array * 255.0
-    return np.clip(array, 0, 255).astype(np.uint8)
+def compute_instruction_rewards_for_prefixes(
+    model: TOPRewardModel,
+    encoder: TOPRewardEncoderProcessorStep,
+    dataset: LeRobotDataset,
+    ep_start: int,
+    num_frames: int,
+    task: str,
+    image_key: str,
+    num_samples: int | None,
+    device: str,
+) -> np.ndarray:
+    """Score an episode via prefix sweep and return a per-frame normalised curve."""
+    if num_samples is None or num_samples >= num_frames:
+        prefix_lengths = np.arange(1, num_frames + 1, dtype=np.int64)
+    else:
+        prefix_lengths = np.unique(np.linspace(1, num_frames, num_samples).round().astype(np.int64))
+
+    rewards: list[float] = []
+    for length in prefix_lengths:
+        frames = torch.stack([dataset[ep_start + i][image_key] for i in range(int(length))])
+        frames = frames.unsqueeze(0)  # (1, T, C, H, W)
+
+        transition = {
+            TransitionKey.OBSERVATION: {image_key: frames},
+            TransitionKey.COMPLEMENTARY_DATA: {"task": task},
+        }
+        encoded = encoder(transition)
+        obs = encoded[TransitionKey.OBSERVATION]
+        batch = {
+            key: value.to(device) if isinstance(value, torch.Tensor) else value for key, value in obs.items()
+        }
+
+        with torch.no_grad():
+            reward = model.compute_reward(batch)
+        rewards.append(float(reward.item()))
+
+    normalized_rewards = normalize_rewards(rewards)
+
+    if prefix_lengths.shape[0] == num_frames:
+        return normalized_rewards
+
+    return np.interp(
+        np.arange(1, num_frames + 1, dtype=np.float64),
+        prefix_lengths.astype(np.float64),
+        normalized_rewards.astype(np.float64),
+    ).astype(np.float32)
 
 
 def compute_topreward_progress(
@@ -129,41 +144,18 @@ def compute_topreward_progress(
     vlm_name: str | None = None,
     output_path: str | None = None,
     device: str = "cuda",
-    num_prefixes: int | None = None,
+    num_samples: int | None = None,
     fps: float | None = None,
     reduction: str | None = None,
-    use_video_description: bool = False,
+    episodes: list[int] | None = None,
 ) -> Path:
-    """Run TOPReward over a dataset and write per-frame progress.
-
-    Args:
-        dataset_repo_id: Hugging Face dataset repo id or local path.
-        reward_model_path: Optional TOPReward LeRobot config repo / dir to
-            load (a tiny ``config.json``). When ``None`` (default), a
-            fresh :class:`TOPRewardConfig` is constructed from the CLI
-            overrides.
-        vlm_name: Override the VLM backbone (HF Hub id).
-        output_path: Where to write the parquet. Defaults to
-            ``<dataset_root>/topreward_progress.parquet``.
-        device: Device for the VLM.
-        num_prefixes: Number of evenly-spaced anchor prefixes per episode.
-            ``None`` (default) = fully dense (one VLM forward per frame).
-            Set to ``15`` to match upstream TOPReward ``num_samples=15``.
-        fps: Override the config's ``fps``.
-        reduction: Override the config's ``reduction`` (``"mean"`` / ``"sum"``).
-        use_video_description: Override the config's ``use_video_description``.
-
-    Returns:
-        Path to the written parquet file.
-    """
+    """Run TOPReward over a dataset and write per-frame progress."""
     if reward_model_path is not None:
         logging.info(f"Loading TOPReward config from: {reward_model_path}")
         model = TOPRewardModel.from_pretrained(reward_model_path)
         config = model.config
-        # Apply CLI overrides on top of the loaded config.
         if vlm_name is not None and vlm_name != config.vlm_name:
             logging.info(f"Overriding vlm_name from config: {config.vlm_name} -> {vlm_name}")
-            # vlm_name affects the loaded weights; reload from scratch.
             config.vlm_name = vlm_name
             config.device = device
             model = TOPRewardModel(config)
@@ -175,28 +167,40 @@ def compute_topreward_progress(
             config_kwargs["fps"] = fps
         if reduction is not None:
             config_kwargs["reduction"] = reduction
-        if use_video_description:
-            config_kwargs["use_video_description"] = True
         config = TOPRewardConfig(**config_kwargs)
         logging.info(f"Constructing TOPReward with VLM: {config.vlm_name}")
         model = TOPRewardModel(config)
 
     model.to(device).eval()
 
+    encoder = TOPRewardEncoderProcessorStep(
+        vlm_name=config.vlm_name,
+        image_key=config.image_key,
+        task_key=config.task_key,
+        default_task=config.default_task,
+        max_frames=None,  # no tail-crop: we control prefix length explicitly
+        fps=config.fps,
+        prompt_prefix=config.prompt_prefix,
+        prompt_suffix_template=config.prompt_suffix_template,
+        add_chat_template=config.add_chat_template,
+        max_length=config.max_input_length,
+    )
+
     image_key = config.image_key
-    frames_key = f"{TOPREWARD_FEATURE_PREFIX}frames"
-    task_batch_key = f"{TOPREWARD_FEATURE_PREFIX}task"
 
     logging.info(f"Loading dataset: {dataset_repo_id}")
     dataset = LeRobotDataset(dataset_repo_id, download_videos=True)
     logging.info(f"Dataset: {dataset.num_episodes} episodes, {dataset.num_frames} frames")
+
+    episode_indices = list(range(dataset.num_episodes)) if episodes is None else episodes
+    logging.info(f"Processing {len(episode_indices)} episode(s)")
 
     all_index: list[int] = []
     all_episode: list[int] = []
     all_frame: list[int] = []
     all_progress: list[float] = []
 
-    for episode_idx in tqdm(range(dataset.num_episodes), desc="Episodes"):
+    for episode_idx in tqdm(episode_indices, desc="Episodes"):
         ep = dataset.meta.episodes[episode_idx]
         ep_start = int(ep["dataset_from_index"])
         ep_end = int(ep["dataset_to_index"])
@@ -207,16 +211,17 @@ def compute_topreward_progress(
         first_sample = dataset[ep_start]
         task = _resolve_task(first_sample, default=config.default_task or "perform the task")
 
-        # Read the whole episode into one (N, C, H, W) tensor and convert
-        # to (N, H, W, C) uint8 — same format ``TOPREWARD_FEATURE_PREFIX.frames``
-        # expects. We deliberately bypass the encoder step here so its
-        # ``max_frames`` tail-crop doesn't clip the prefix sweep.
-        ep_video = torch.stack([dataset[ep_start + i][image_key] for i in range(num_frames)])
-        ep_frames_uint8 = _frames_to_uint8_hwc(ep_video)
-
-        batch = {frames_key: [ep_frames_uint8], task_batch_key: [task]}
-        out = model.predict_curves(batch, num_prefixes=num_prefixes)
-        per_frame = out["progress"][0, :num_frames].cpu().numpy()
+        per_frame = compute_instruction_rewards_for_prefixes(
+            model=model,
+            encoder=encoder,
+            dataset=dataset,
+            ep_start=ep_start,
+            num_frames=num_frames,
+            task=task,
+            image_key=image_key,
+            num_samples=num_samples,
+            device=device,
+        )
 
         for local in range(num_frames):
             all_index.append(ep_start + local)
@@ -232,13 +237,10 @@ def compute_topreward_progress(
             "index": np.asarray(all_index, dtype=np.int64),
             "episode_index": np.asarray(all_episode, dtype=np.int64),
             "frame_index": np.asarray(all_frame, dtype=np.int64),
-            # Same column name SARM uses so RABCWeights + the overlay
-            # script read TOPReward's output without per-model branching.
             "progress_sparse": np.asarray(all_progress, dtype=np.float32),
         }
     )
 
-    # Persist provenance metadata: the LeRobot path (if any) and the VLM id.
     schema_metadata: dict[bytes, bytes] = {b"vlm_name": config.vlm_name.encode()}
     if reward_model_path is not None:
         schema_metadata[b"reward_model_path"] = reward_model_path.encode()
@@ -266,14 +268,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    # Full RA-BC computation with the default Qwen3-VL-8B-Instruct backbone
-    python -m lerobot.rewards.topreward.compute_rabc_weights \\
-        --dataset-repo-id lerobot/libero_10_image
-
     # Sparse-dense mode (matches upstream TOPReward num_samples=15)
     python -m lerobot.rewards.topreward.compute_rabc_weights \\
         --dataset-repo-id lerobot/libero_10_image \\
-        --num-prefixes 15
+        --num-samples 15
 
     # Use a smaller VLM
     python -m lerobot.rewards.topreward.compute_rabc_weights \\
@@ -282,66 +280,33 @@ Examples:
         """,
     )
     parser.add_argument(
-        "--dataset-repo-id",
-        type=str,
-        required=True,
-        help="HuggingFace dataset repo id or local path.",
+        "--dataset-repo-id", type=str, required=True, help="HuggingFace dataset repo id or local path."
     )
     parser.add_argument(
-        "--reward-model-path",
-        type=str,
-        default=None,
-        help="Optional TOPReward LeRobot config (repo id or local dir). "
-        "Falls back to a fresh TOPRewardConfig if unset.",
+        "--reward-model-path", type=str, default=None, help="Optional TOPReward LeRobot config."
     )
+    parser.add_argument("--vlm-name", type=str, default=None, help="Override the VLM backbone (HF Hub id).")
+    parser.add_argument("--output-path", type=str, default=None, help="Output parquet path.")
+    parser.add_argument("--device", type=str, default="cuda", help="Device to use (default: cuda).")
     parser.add_argument(
-        "--vlm-name",
-        type=str,
-        default=None,
-        help="Override the VLM backbone (HF Hub id).",
-    )
-    parser.add_argument(
-        "--output-path",
-        type=str,
-        default=None,
-        help="Output parquet path. Defaults to <dataset_root>/topreward_progress.parquet.",
-    )
-    parser.add_argument(
-        "--device",
-        type=str,
-        default="cuda",
-        help="Device to use (default: cuda).",
-    )
-    parser.add_argument(
-        "--num-prefixes",
+        "--num-samples",
         type=int,
         default=None,
-        help="Evenly-spaced anchor prefixes per episode. None = fully dense "
-        "(one VLM forward per frame). 15 matches upstream TOPReward.",
+        help="Anchor prefix samples per episode. None = dense. 15 matches upstream.",
     )
     parser.add_argument(
-        "--fps",
-        type=float,
+        "--episodes",
+        type=int,
+        nargs="+",
         default=None,
-        help="Override TOPRewardConfig.fps (frames per second for the Qwen video processor).",
+        help="Process only these episode indices (e.g. --episodes 0 or --episodes 0 5 10).",
+    )
+    parser.add_argument("--fps", type=float, default=None, help="Override TOPRewardConfig.fps.")
+    parser.add_argument(
+        "--reduction", type=str, default=None, choices=["mean", "sum"], help="Override reduction."
     )
     parser.add_argument(
-        "--reduction",
-        type=str,
-        default=None,
-        choices=["mean", "sum"],
-        help="Override TOPRewardConfig.reduction.",
-    )
-    parser.add_argument(
-        "--use-video-description",
-        action="store_true",
-        help="Generate an instruction-agnostic video description and prepend "
-        "it as context before scoring (doubles VLM calls per prefix).",
-    )
-    parser.add_argument(
-        "--push-to-hub",
-        action="store_true",
-        help="Upload the progress file to the dataset repo on HuggingFace Hub.",
+        "--push-to-hub", action="store_true", help="Upload to the dataset repo on HuggingFace Hub."
     )
 
     args = parser.parse_args()
@@ -354,10 +319,10 @@ Examples:
         vlm_name=args.vlm_name,
         output_path=args.output_path,
         device=args.device,
-        num_prefixes=args.num_prefixes,
+        num_samples=args.num_samples,
         fps=args.fps,
         reduction=args.reduction,
-        use_video_description=args.use_video_description,
+        episodes=args.episodes,
     )
 
     print(f"\nTOPReward progress saved to: {output_path}")

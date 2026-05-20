@@ -67,11 +67,6 @@ class TOPRewardConfig(RewardModelConfig):
         add_chat_template: If ``True``, wrap the full prompt with the
             tokenizer's chat template before tokenisation (matches
             upstream ``add_chat_template=True``).
-        use_video_description: If ``True``, make an extra VLM call to
-            produce an instruction-agnostic video description and prepend
-            it as additional context. Doubles inference cost but avoids
-            circular grounding when the instruction names objects shown
-            in frames.
         reduction: Reduction over per-token log-probs of the suffix
             tokens (``"mean"`` or ``"sum"``).
         success_threshold: Optional log-prob threshold. If finite,
@@ -100,7 +95,6 @@ class TOPRewardConfig(RewardModelConfig):
     prompt_prefix: str = DEFAULT_PROMPT_PREFIX
     prompt_suffix_template: str = DEFAULT_PROMPT_SUFFIX_TEMPLATE
     add_chat_template: bool = False
-    use_video_description: bool = False
 
     reduction: str = "mean"
     success_threshold: float = float("-inf")
