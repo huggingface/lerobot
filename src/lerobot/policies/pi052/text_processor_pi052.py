@@ -284,11 +284,23 @@ def _vqa_answer_to_loc(answer: dict[str, Any]) -> str | None:
     """Convert a bbox / keypoint VQA answer dict to PaliGemma ``<loc>`` text.
 
     Input coordinates are in Qwen2.5-VL's 0–1000 normalized space (see
-    module-level note). PaliGemma convention: a point is
-    ``<locY><locX> label``; a box is ``<locY0><locX0><locY1><locX1> label``
-    (y before x, each index in [0, 1023]). Returns ``None`` for
-    non-spatial answers (count / attribute / spatial-relation) — those
-    keep their JSON form.
+    module-level note). y is emitted before x for each coordinate pair
+    (PaliGemma convention), with the integer indices in [0, 1023].
+
+    **Format: label first, locs after.** PaliGemma's pretraining puts
+    locs first (``<loc><loc> label``), but for our small-dataset VQA
+    blend that turns the LM head into a loc-emission attractor at every
+    ``Assistant:`` position — VQA targets share their first supervised
+    token with ~25% of all text samples, and the head collapses to
+    emitting ``<loc>`` regardless of the prompt. Putting the label
+    first (``label <locY><locX>``) means every text sample (subtask,
+    memory, VQA, …) starts the supervised target with a real word,
+    breaking the attractor. The model still learns the loc vocabulary
+    for the *spatial* portion of the answer; it just can't fire it as
+    the first generation step from a clean prompt.
+
+    Returns ``None`` for non-spatial answers (count / attribute /
+    spatial-relation) — those keep their JSON form.
     """
     point = answer.get("point")
     if isinstance(point, list | tuple) and len(point) == 2 and "point_format" in answer:
@@ -297,7 +309,9 @@ def _vqa_answer_to_loc(answer: dict[str, Any]) -> str | None:
         except (TypeError, ValueError):
             return None
         label = str(answer.get("label", "")).strip()
-        return f"{_loc_token(y)}{_loc_token(x)} {label}".strip()
+        if not label:
+            return None
+        return f"{label} {_loc_token(y)}{_loc_token(x)}"
 
     detections = answer.get("detections")
     if isinstance(detections, list) and detections:
@@ -313,11 +327,13 @@ def _vqa_answer_to_loc(answer: dict[str, Any]) -> str | None:
             except (TypeError, ValueError):
                 continue
             label = str(det.get("label", "")).strip()
+            if not label:
+                continue
             toks = (
                 f"{_loc_token(y1)}{_loc_token(x1)}"
                 f"{_loc_token(y2)}{_loc_token(x2)}"
             )
-            parts.append(f"{toks} {label}".strip())
+            parts.append(f"{label} {toks}")
         return " ; ".join(parts) if parts else None
     return None
 

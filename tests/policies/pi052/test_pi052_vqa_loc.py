@@ -89,16 +89,31 @@ def test_loc_token_normalizes_and_clamps():
 
 
 def test_vqa_answer_to_loc_keypoint_normalized():
-    # Qwen 0–1000 normalized coordinates → camera-independent <loc>.
+    # Label-first: avoids the "Assistant: → <loc>" attractor at training.
     answer = {"label": "blue cube", "point_format": "xy", "point": [500, 500]}
-    assert _vqa_answer_to_loc(answer) == "<loc0512><loc0512> blue cube"
+    assert _vqa_answer_to_loc(answer) == "blue cube <loc0512><loc0512>"
 
 
 def test_vqa_answer_to_loc_bbox_normalized():
     answer = {
         "detections": [{"label": "cube", "bbox_format": "xyxy", "bbox": [0, 0, 1000, 1000]}]
     }
-    assert _vqa_answer_to_loc(answer) == "<loc0000><loc0000><loc1023><loc1023> cube"
+    assert _vqa_answer_to_loc(answer) == "cube <loc0000><loc0000><loc1023><loc1023>"
+
+
+def test_vqa_answer_to_loc_multiple_detections_separator():
+    answer = {
+        "detections": [
+            {"label": "blue", "bbox_format": "xyxy", "bbox": [0, 0, 500, 500]},
+            {"label": "yellow", "bbox_format": "xyxy", "bbox": [500, 500, 1000, 1000]},
+        ]
+    }
+    out = _vqa_answer_to_loc(answer)
+    # Each segment is "label <locs>", joined by " ; "
+    assert out == (
+        "blue <loc0000><loc0000><loc0512><loc0512> ; "
+        "yellow <loc0512><loc0512><loc1023><loc1023>"
+    )
 
 
 def test_vqa_answer_to_loc_returns_none_for_non_spatial():
@@ -115,7 +130,7 @@ def test_messages_vqa_to_loc_rewrites_target_turn():
         },
     ]
     out = _messages_vqa_to_loc(messages, target_indices=[1])
-    assert out[1]["content"] == "<loc0512><loc0512> cube"
+    assert out[1]["content"] == "cube <loc0512><loc0512>"
     # input messages are not mutated
     assert messages[1]["content"].startswith("{")
 

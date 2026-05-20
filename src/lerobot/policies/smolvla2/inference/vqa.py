@@ -133,10 +133,14 @@ def parse_loc_answer(answer: str) -> dict | None:
     """Parse a PaliGemma ``<loc>``-format spatial VQA answer.
 
     PI052 trains spatial answers in PaliGemma's native detection
-    vocabulary: a point is ``<locY><locX> label``, a box is
-    ``<locY0><locX0><locY1><locX1> label``, and multiple boxes are joined
-    by `` ; ``. Coordinates come back *normalized* ([0, 1]); the overlay
-    denormalizes them against the chosen camera frame's pixel size.
+    vocabulary, label-first: a point is ``<label> <locY><locX>``, a box
+    is ``<label> <locY0><locX0><locY1><locX1>``, and multiple boxes are
+    joined by `` ; `` (e.g. ``cube <loc..><loc..><loc..><loc..> ; box
+    <loc..><loc..><loc..><loc..>``). Loc-first formats are also accepted
+    — this parser strips loc tokens and treats the remainder as the
+    label, so order is irrelevant. Coordinates come back *normalized*
+    ([0, 1]); the overlay denormalizes them against the chosen camera
+    frame's pixel size.
 
     Returns ``{"kind", "payload", "normalized": True}`` on success
     (``payload`` mirrors the JSON shapes so the overlay code is shared),
