@@ -250,7 +250,14 @@ class DatasetWriter:
         for key, ft in self._meta.features.items():
             if key in ["index", "episode_index", "task_index"] or ft["dtype"] in ["image", "video"]:
                 continue
-            episode_buffer[key] = np.stack(episode_buffer[key])
+            stacked_values = np.stack(episode_buffer[key])
+
+            # `shape=(1,)` numeric features are serialized as `datasets.Value`, which expects scalars.
+            # Normalizing to `(N,)` keeps save semantics stable across dependency versions.
+            if tuple(ft["shape"]) == (1,) and ft["dtype"] != "string":
+                stacked_values = stacked_values.reshape(episode_length)
+
+            episode_buffer[key] = stacked_values
 
         # Wait for image writer to end, so that episode stats over images can be computed
         self._wait_image_writer()
