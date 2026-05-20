@@ -797,7 +797,11 @@ class PI052Policy(PI05Policy):
         if tokenizer is None:
             from transformers import AutoTokenizer  # noqa: PLC0415
 
-            tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
+            from .text_processor_pi052 import register_paligemma_loc_tokens  # noqa: PLC0415
+
+            tokenizer = register_paligemma_loc_tokens(
+                AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
+            )
         if eos_token_id is None:
             eos_token_id = tokenizer.eos_token_id
 

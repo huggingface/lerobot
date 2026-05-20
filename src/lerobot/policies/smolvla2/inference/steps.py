@@ -291,12 +291,15 @@ def _build_text_batch_pi052(
         _flatten_say_tool_calls,
         _format_messages,
         _strip_blocks,
+        register_paligemma_loc_tokens,
     )
 
     tok_name = (
         getattr(policy.config, "tokenizer_name", None) or "google/paligemma-3b-pt-224"
     )
-    tokenizer = AutoTokenizer.from_pretrained(tok_name)
+    # Register PaliGemma's <locDDDD> tokens so inference encoding /
+    # decoding sees them as single vocab ids — must match training.
+    tokenizer = register_paligemma_loc_tokens(AutoTokenizer.from_pretrained(tok_name))
 
     messages = [_strip_blocks(_flatten_say_tool_calls(m)) for m in prompt_messages]
     prompt, _spans = _format_messages(messages)

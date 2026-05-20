@@ -254,6 +254,26 @@ def _sample_indices(value: Any, batch_size: int) -> list[int | None]:
 _VQA_COORD_SCALE = 1000.0
 
 
+def register_paligemma_loc_tokens(tokenizer: Any) -> Any:
+    """Make PaliGemma's ``<locDDDD>`` ids match on raw text — single tokens.
+
+    PaliGemma reserves vocab ids [256000, 257023] for ``<locDDDD>``
+    (detection / pointing) tokens, but the *stock* tokenizer does NOT
+    match them when encoding raw text — it BPE-splits ``<loc0162>`` into
+    7 pieces (``<``, ``loc``, ``0``, ``1``, ``6``, ``2``, ``>``). Training
+    the LM head on a ``<loc>`` target then supervises those 7 generic
+    BPE pieces instead of one detection-vocab id, the LM head learns to
+    emit the *character sequence*, and those pieces' logits dominate
+    other turns (the ``<loc>``-salad on subtasks). Registering the loc
+    tokens once makes them tokenize as their single ids (256000+idx),
+    leveraging PaliGemma's detection prior properly. Idempotent.
+    """
+    if "<loc0000>" in getattr(tokenizer, "added_tokens_encoder", {}):
+        return tokenizer
+    tokenizer.add_tokens([f"<loc{i:04d}>" for i in range(1024)])
+    return tokenizer
+
+
 def _loc_token(coord: float, scale: float = _VQA_COORD_SCALE) -> str:
     """PaliGemma ``<locNNNN>`` for a coord on a ``[0, scale]`` axis."""
     idx = round(float(coord) / scale * 1023) if scale > 0 else 0
@@ -410,7 +430,9 @@ class PI052TextTokenizerStep(ProcessorStep):
             return self._tokenizer
         from transformers import AutoTokenizer  # noqa: PLC0415
 
-        self._tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
+        self._tokenizer = register_paligemma_loc_tokens(
+            AutoTokenizer.from_pretrained(self.tokenizer_name)
+        )
         return self._tokenizer
 
     # ------------------------------------------------------------------

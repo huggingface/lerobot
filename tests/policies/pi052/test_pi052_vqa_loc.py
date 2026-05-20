@@ -36,7 +36,46 @@ from lerobot.policies.pi052.text_processor_pi052 import (  # noqa: E402
     _loc_token,
     _messages_vqa_to_loc,
     _vqa_answer_to_loc,
+    register_paligemma_loc_tokens,
 )
+
+
+class _FakeTokenizer:
+    """Tracks ``add_tokens`` calls; mimics the bits ``register_paligemma_loc_tokens`` reads."""
+
+    def __init__(self, prepopulate: bool = False):
+        self.added_tokens_encoder: dict[str, int] = {}
+        self.calls: list[list[str]] = []
+        if prepopulate:
+            self.added_tokens_encoder["<loc0000>"] = 256000
+
+    def add_tokens(self, tokens: list[str]) -> int:
+        self.calls.append(list(tokens))
+        for t in tokens:
+            self.added_tokens_encoder.setdefault(t, len(self.added_tokens_encoder) + 256000)
+        return len(tokens)
+
+
+def test_register_loc_tokens_adds_full_1024_range():
+    tok = _FakeTokenizer()
+    out = register_paligemma_loc_tokens(tok)
+    assert out is tok  # returns same instance
+    assert len(tok.calls) == 1
+    added = tok.calls[0]
+    assert len(added) == 1024
+    assert added[0] == "<loc0000>"
+    assert added[-1] == "<loc1023>"
+    # Spot check a few in the middle.
+    assert added[162] == "<loc0162>"
+    assert added[759] == "<loc0759>"
+
+
+def test_register_loc_tokens_is_idempotent():
+    """If the loc tokens are already present we skip re-adding them."""
+    tok = _FakeTokenizer(prepopulate=True)
+    register_paligemma_loc_tokens(tok)
+    register_paligemma_loc_tokens(tok)
+    assert tok.calls == []  # never called add_tokens
 
 
 def test_loc_token_normalizes_and_clamps():
