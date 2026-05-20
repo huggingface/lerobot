@@ -73,14 +73,16 @@ _Writes checkpoints to `outputs/train/<desired_policy_repo_id>/checkpoints/`._
 ### Evaluate the policy/run inference
 
 ```bash
-lerobot-record \
-  --robot.type=so100_follower \
-  --dataset.repo_id=<hf_user>/eval_<dataset> \
+lerobot-rollout \
+  --strategy.type=base \
+  --robot.type=so101_follower \
+  --robot.cameras="{ up: {type: opencv, index_or_path: /dev/video1, width: 640, height: 480, fps: 30}, side: {type: opencv, index_or_path: /dev/video5, width: 640, height: 480, fps: 30}}" \
   --policy.path=<hf_user>/<desired_policy_repo_id> \
-  --episodes=10
+  --task="Put lego brick into the transparent box" \
+  --duration=60
 ```
 
-Prefix the dataset repo with **eval\_** and supply `--policy.path` pointing to a local or hub checkpoint.
+If you want to record a dataset while testing the policy use `--dataset.repo_id=<hf_user>/eval_dataset_name` it is important to use the prefix **eval_**. For the policy path use the policy from the Hugging Face Hub or a local one. Skipping duration will make the policy run indefinitely.
 
 ---
 
