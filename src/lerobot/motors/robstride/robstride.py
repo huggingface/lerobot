@@ -585,7 +585,7 @@ class RobstrideMotorsBus(MotorsBusBase):
                 if msg is None:
                     break
                 drained += 1
-        except Exception as e:
+        except (can.CanError, OSError) as e:
             logger.debug(f"Failed to flush CAN RX queue on {self.port}: {e}")
         return drained
 
