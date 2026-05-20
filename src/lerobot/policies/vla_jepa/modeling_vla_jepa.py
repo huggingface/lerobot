@@ -9,6 +9,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
 from PIL import Image
+from safetensors.torch import load_file as load_safetensors_file
 from torch import Tensor, nn
 
 from lerobot.policies.pretrained import PreTrainedPolicy, T
@@ -72,9 +73,18 @@ class VLAJEPAModel(nn.Module):
                 torch_dtype=self.qwen._get_torch_dtype(config.torch_dtype),
             )
             self.video_processor = AutoVideoProcessor.from_pretrained(config.jepa_encoder_name)
-            num_views = max(len(config.image_features), 1)
+            num_views = max(1, len(config.image_features))
+            tubelet_size = self.video_encoder.config.tubelet_size
+            image_size = getattr(self.video_encoder.config, "image_size", None)
+            if image_size is None:
+                first_image_shape = next(iter(config.image_features.values())).shape
+                image_size = first_image_shape[-1]
             self.video_predictor = ActionConditionedVideoPredictor(
-                embed_dim=num_views * self.video_encoder.config.hidden_size,
+                num_frames=config.num_video_frames // tubelet_size,
+                img_size=(image_size, image_size),
+                patch_size=16,
+                tubelet_size=1,
+                embed_dim=self.video_encoder.config.hidden_size * num_views,
                 action_embed_dim=self.qwen.model.config.hidden_size,
                 predictor_embed_dim=self.video_encoder.config.hidden_size,
                 depth=config.predictor_depth,
@@ -91,16 +101,55 @@ class VLAJEPAModel(nn.Module):
             self.qwen.requires_grad_(False)
 
         # Build prompt placeholders.
-        # Original uses num_frames // tubelet_size - 1 action token groups for the world model predictor.
-        # This matches the number of context temporal positions after tubelet compression.
-        n_wm_action_groups = max(1, self.config.num_video_frames // self.config.jepa_tubelet_size - 1)
+        # Use the encoder's actual tubelet_size when available (world model enabled),
+        # otherwise fall back to config.
+        _tubelet_size = (
+            self.video_encoder.config.tubelet_size
+            if config.enable_world_model
+            else self.config.jepa_tubelet_size
+        )
+        num_action_prompt_steps = self.config.num_video_frames // _tubelet_size - 1
         self.replace_prompt = "".join(
             token * self.config.num_action_tokens_per_timestep
-            for token in self.action_tokens[:n_wm_action_groups]
+            for token in self.action_tokens[:num_action_prompt_steps]
         )
         self.embodied_replace_prompt = (
             self.config.embodied_action_token * self.config.num_embodied_action_tokens_per_instruction
         )
+
+    def _qwen_last_decoder_hidden(self, qwen_inputs: dict[str, torch.Tensor]) -> torch.Tensor:
+        """Return Qwen's final decoder-layer output before the final RMSNorm.
+
+        starVLA trained its downstream heads on the legacy transformers-4.57
+        `hidden_states[-1]` value, which is the last decoder layer output before
+        Qwen's final RMSNorm. Newer transformers versions expose `hidden_states[-1]`
+        as the post-norm last hidden state, so capture the layer output directly.
+        """
+        captured: dict[str, torch.Tensor] = {}
+        language_model = self.qwen.model.model.language_model
+
+        def capture_last_layer_output(
+            _module: nn.Module,
+            _inputs: tuple[torch.Tensor, ...],
+            output: torch.Tensor | tuple[torch.Tensor, ...],
+        ) -> None:
+            captured["last_hidden"] = output[0] if isinstance(output, tuple) else output
+            return None
+
+        handle = language_model.layers[-1].register_forward_hook(capture_last_layer_output)
+        try:
+            self.qwen.model.model(
+                **qwen_inputs,
+                output_hidden_states=False,
+                output_attentions=False,
+                return_dict=True,
+            )
+        finally:
+            handle.remove()
+
+        if "last_hidden" not in captured:
+            raise RuntimeError("Failed to capture Qwen last decoder hidden states.")
+        return captured["last_hidden"]
 
     # ---- Native VLA-JEPA forward (follows original VLA_JEPA.py) ----
 
@@ -160,13 +209,7 @@ class VLAJEPAModel(nn.Module):
         device_type = next(self.parameters()).device.type
 
         with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-            qwen_outputs = self.qwen.model(
-                **qwen_inputs,
-                output_hidden_states=True,
-                output_attentions=False,
-                return_dict=True,
-            )
-            last_hidden = qwen_outputs.hidden_states[-1]  # [B, seq_len, H]
+            last_hidden = self._qwen_last_decoder_hidden(qwen_inputs)  # [B, seq_len, H]
             b, _, h = last_hidden.shape
 
             if self.config.enable_world_model:
@@ -211,20 +254,16 @@ class VLAJEPAModel(nn.Module):
 
                 input_states = video_embeddings[:, : tokens_per_frame * t_enc_ctx, :]
                 gt_states = video_embeddings[:, tokens_per_frame:, :]
-                d_emb = input_states.shape[-1]
-
-                input_states_4d = input_states.view(b, t_enc_ctx, tokens_per_frame, d_emb)
 
                 expected_actions = t_enc_ctx * self.config.num_action_tokens_per_timestep
                 if action_tokens.shape[1] < expected_actions:
                     pad = action_tokens[:, -1:].repeat(1, expected_actions - action_tokens.shape[1], 1)
                     action_tokens = torch.cat([action_tokens, pad], dim=1)
-                act_4d = action_tokens[:, :expected_actions].view(
-                    b, t_enc_ctx, self.config.num_action_tokens_per_timestep, -1
-                )
 
-                pred_4d = self.video_predictor(input_states_4d.float(), act_4d.float())
-                predicted_states = pred_4d.reshape(b, -1, d_emb)
+                predicted_states = self.video_predictor(
+                    input_states.float(),
+                    action_tokens[:, :expected_actions].float(),
+                )
 
                 wm_loss = F.l1_loss(predicted_states, gt_states.float(), reduction="mean")
 
@@ -242,15 +281,14 @@ class VLAJEPAModel(nn.Module):
             state_tensor = None
             if state is not None:
                 state_tensor = torch.tensor(
-                    np.array(state), device=last_hidden.device, dtype=torch.float32
+                    np.array(state), device=last_hidden.device, dtype=last_hidden.dtype
                 )  # [B, 1, state_dim]
 
-            # repeated_diffusion_steps: draw R independent noise samples per batch item (CogACT-style).
-            # Effectively multiplies data efficiency of the action head by R with no extra Qwen/JEPA cost.
-            num_repeated = self.config.repeated_diffusion_steps
-            embodied_rep = embodied_action_tokens.float().repeat(num_repeated, 1, 1)
-            actions_rep = actions_target.repeat(num_repeated, 1, 1)
-            state_rep = state_tensor.repeat(num_repeated, 1, 1) if state_tensor is not None else None
+            repeated_diffusion_steps = self.config.repeated_diffusion_steps
+            actions_target = actions_target.repeat(repeated_diffusion_steps, 1, 1)
+            embodied_action_tokens = embodied_action_tokens.repeat(repeated_diffusion_steps, 1, 1)
+            if state_tensor is not None:
+                state_tensor = state_tensor.repeat(repeated_diffusion_steps, 1, 1)
 
             action_is_pad_rep = None
             if action_is_pad is not None:
@@ -263,9 +301,11 @@ class VLAJEPAModel(nn.Module):
                     ]
                 )  # [B, T_full]
                 pad_tensor = pad_tensor[:, -action_horizon:]  # [B, action_horizon]
-                action_is_pad_rep = pad_tensor.repeat(num_repeated, 1)  # [B*R, action_horizon]
+                action_is_pad_rep = pad_tensor.repeat(repeated_diffusion_steps, 1)  # [B*R, action_horizon]
 
-            action_loss = self.action_model(embodied_rep, actions_rep, state_rep, action_is_pad_rep)
+            action_loss = self.action_model(
+                embodied_action_tokens, actions_target, state_tensor, action_is_pad_rep
+            )
 
         return {"action_loss": action_loss, "wm_loss": wm_loss * self.config.world_model_loss_weight}
 
@@ -289,6 +329,14 @@ class VLAJEPAModel(nn.Module):
         Returns:
             np.ndarray [B, action_horizon, action_dim] — predicted actions.
         """
+        if self.config.resize_images_to is not None:
+            height, width = self.config.resize_images_to
+            resampling = getattr(Image, "Resampling", Image).BOX
+            batch_images = [
+                [image.resize((width, height), resample=resampling) for image in sample_images]
+                for sample_images in batch_images
+            ]
+
         qwen_inputs = self.qwen.build_inputs(
             images=batch_images,
             instructions=instructions,
@@ -302,27 +350,19 @@ class VLAJEPAModel(nn.Module):
         device_type = next(self.parameters()).device.type
 
         with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-            qwen_outputs = self.qwen.model(
-                **qwen_inputs,
-                output_hidden_states=True,
-                output_attentions=False,
-                return_dict=True,
-            )
-            last_hidden = qwen_outputs.hidden_states[-1]
+            last_hidden = self._qwen_last_decoder_hidden(qwen_inputs)  # [B, seq_len, H]
             b, _, h = last_hidden.shape
             embodied_action_tokens = last_hidden[embodied_indices[0], embodied_indices[1], :].view(b, -1, h)
 
         state_tensor = None
         if state is not None:
             state_tensor = torch.from_numpy(np.array(state)).to(
-                device=last_hidden.device, dtype=torch.float32
+                device=last_hidden.device, dtype=last_hidden.dtype
             )
 
-        with torch.autocast(device_type=device_type, dtype=torch.float32):
-            # Cast embodied tokens to float32 for action model compatibility
-            pred_actions = self.action_model.predict_action(
-                embodied_action_tokens.float(), state_tensor
-            )  # [B, action_horizon, action_dim]
+        pred_actions = self.action_model.predict_action(
+            embodied_action_tokens.float(), state_tensor.float() if state_tensor is not None else None
+        )  # [B, action_horizon, action_dim]
 
         return pred_actions.detach().cpu().numpy()
 
@@ -546,7 +586,30 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         actions_np = self.model.predict_action(batch_images, instructions, state_np)
 
         # Convert back to tensor on the right device
+        actions_np = self._unnormalize_actions(actions_np)
         return torch.from_numpy(actions_np).to(device=self.config.device, dtype=torch.float32)
+
+    def _unnormalize_actions(self, normalized_actions: np.ndarray) -> np.ndarray:
+        """Match starVLA's LIBERO action post-processing exactly."""
+        stats = self.config.action_unnormalization_stats
+        if not stats:
+            return normalized_actions
+
+        actions = normalized_actions.astype(np.float32, copy=True)
+        if self.config.clip_normalized_actions:
+            actions = np.clip(actions, -1.0, 1.0)
+
+        if self.config.binarize_gripper_action and actions.shape[-1] >= 7:
+            actions[..., 6] = np.where(actions[..., 6] < 0.5, 0.0, 1.0)
+
+        action_min = np.asarray(stats["min"], dtype=np.float32)
+        action_max = np.asarray(stats["max"], dtype=np.float32)
+        mask = np.asarray(stats.get("mask", np.ones_like(action_min, dtype=bool)), dtype=bool)
+        scaled = 0.5 * (actions + 1.0) * (action_max - action_min) + action_min
+        actions = np.where(mask, scaled, actions).astype(np.float32)
+        if self.config.binarize_gripper_action and actions.shape[-1] >= 7:
+            actions[..., 6] = 1.0 - 2.0 * (actions[..., 6] > 0.5)
+        return actions
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:

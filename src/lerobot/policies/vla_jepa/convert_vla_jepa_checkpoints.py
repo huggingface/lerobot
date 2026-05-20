@@ -25,35 +25,74 @@ Image keys  SimplerEnv: OXE Bridge/RT1 are single-camera          ✓ confirmed
 from __future__ import annotations
 
 import logging
+import tempfile
 from pathlib import Path
 
 import torch
 from huggingface_hub import HfApi
+from safetensors.torch import save_file as save_safetensors
+from lerobot.policies.vla_jepa.processor_vla_jepa import make_vla_jepa_pre_post_processors
 
 # ---------------------------------------------------------------------------
 # Top-level settings
 # ---------------------------------------------------------------------------
 SOURCE_REPO_ID = "ginwind/VLA-JEPA"
-TARGET_ORG = "lerobot"
+TARGET_ORG = "maximellerbach"
 COLLECTION_TITLE = "VLA-JEPA"
 COLLECTION_DESCRIPTION = (
     "VLA-JEPA model checkpoints (LIBERO, Pretrain, SimplerEnv) converted from .pt to safetensors via LeRobot."
 )
 
-# Remap state-dict key prefixes before loading into the LeRobot policy.
-# E.g. {"": "model."} prepends "model." to every key.
-# Leave empty if keys already match — the first run's log will tell you.
-KEY_PREFIX_REMAP: dict[str, str] = {
-    # Specific rules must come before the "" catch-all (dict order is preserved).
-    "qwen_vl_interface.": "model.qwen.",
-    "vj_encoder.": "model.video_encoder.",
-    "vj_predictor.": "model.video_predictor.",
-    # Everything else (action_model.*) just needs the "model." wrapper.
-    "": "model.",
-}
-
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Key mapping — mirrors todo_converter.py map_key() so both converters
+# produce identical safetensors layouts that match the LeRobot action_head code.
+# ---------------------------------------------------------------------------
+
+
+def _normalize_source_key(key: str) -> str:
+    return key[len("module."):] if key.startswith("module.") else key
+
+
+def _map_checkpoint_key(raw_key: str) -> str | None:
+    """Map original VLA-JEPA state-dict keys to LeRobot vla_jepa layout."""
+    key = _normalize_source_key(raw_key)
+
+    if key.startswith("qwen_vl_interface."):
+        return "model.qwen." + key[len("qwen_vl_interface."):]
+    if key.startswith("vj_encoder."):
+        return "model.video_encoder." + key[len("vj_encoder."):]
+    if key.startswith("vj_predictor."):
+        return "model.video_predictor." + key[len("vj_predictor."):]
+    if key.startswith("action_model."):
+        # LeRobot code uses the same sub-key names as the source checkpoint,
+        # so only the top-level "model." prefix needs to be added.
+        return "model." + key
+
+    return None
+
+
+def _fetch_action_stats(api: "HfApi", source_repo_id: str, subfolder: str) -> dict | None:
+    """Try to download dataset_statistics.json and return the action stats dict."""
+    import json
+
+    stats_file = f"{subfolder}/dataset_statistics.json"
+    try:
+        local = api.hf_hub_download(source_repo_id, stats_file)
+        data = json.loads(Path(local).read_text())
+        # The original repo nests stats under a robot key, e.g. {"franka": {"action": {...}}}
+        for robot_key in data:
+            if isinstance(data[robot_key], dict) and "action" in data[robot_key]:
+                log.info("  Loaded action stats from %s (robot key: %s)", stats_file, robot_key)
+                return data[robot_key]["action"]
+        log.warning("  %s found but no 'action' key under any robot — skipping action stats.", stats_file)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("  Could not fetch %s: %s — action_unnormalization_stats will be None.", stats_file, exc)
+    return None
+
 
 # ---------------------------------------------------------------------------
 # Architecture — identical across all 4 variants (from config.json)
@@ -69,6 +108,9 @@ _ARCH = {
     "num_inference_timesteps": 4,
     "action_hidden_size": 1024,
     "action_model_type": "DiT-B",
+    # Explicit dims matching DiT-B preset and ginwind checkpoint shape
+    "action_num_heads": 12,
+    "action_attention_head_dim": 64,
     "action_num_layers": 16,
     "action_dropout": 0.2,
     "repeated_diffusion_steps": 8,
@@ -76,9 +118,6 @@ _ARCH = {
     "action_noise_beta_beta": 1.0,
     "action_noise_s": 0.999,
     "action_num_timestep_buckets": 1000,
-    # Action head embedding params (from original config.json)
-    "num_target_vision_tokens": 32,
-    "action_max_seq_len": 1024,
     # World model predictor (12 blocks, confirmed from checkpoint)
     "predictor_depth": 12,
 }
@@ -109,7 +148,12 @@ _OXE_CAMS = [
 # ---------------------------------------------------------------------------
 
 
-def _build_config(camera_keys: list[str], with_state: bool, enable_world_model: bool = True):
+def _build_config(
+    camera_keys: list[str],
+    with_state: bool,
+    enable_world_model: bool = True,
+    action_stats: dict | None = None,
+):
     from lerobot.configs.types import FeatureType, PolicyFeature
     from lerobot.policies.vla_jepa.configuration_vla_jepa import VLAJEPAConfig
 
@@ -123,6 +167,9 @@ def _build_config(camera_keys: list[str], with_state: bool, enable_world_model: 
             "action": PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
         },
         enable_world_model=enable_world_model,
+        action_unnormalization_stats=action_stats,
+        binarize_gripper_action=True,
+        clip_normalized_actions=True,
         **_ARCH,
     )
     cfg.validate_features()
@@ -151,20 +198,6 @@ def extract_state_dict(ckpt: object) -> dict[str, torch.Tensor]:
     else:
         sd = ckpt
     return {k: v for k, v in sd.items() if isinstance(v, torch.Tensor)}
-
-
-def remap_keys(sd: dict[str, torch.Tensor], remap: dict[str, str]) -> dict[str, torch.Tensor]:
-    if not remap:
-        return sd
-    out = {}
-    for k, v in sd.items():
-        new_k = k
-        for old, new in remap.items():
-            if k.startswith(old):
-                new_k = new + k[len(old) :]
-                break
-        out[new_k] = v
-    return out
 
 
 def subfolder_of(pt_path: str) -> str | None:
@@ -229,37 +262,48 @@ def main() -> None:
             ckpt = torch.load(local_pt, map_location="cpu")  # nosec B614
 
         sd = extract_state_dict(ckpt)
-        sd = remap_keys(sd, KEY_PREFIX_REMAP)
-        log.info("  %d tensors extracted", len(sd))
-        log.info("  First 5 keys: %s", list(sd)[:5])
 
-        # 3. Build policy
-        from lerobot.policies.vla_jepa.modeling_vla_jepa import VLAJEPAPolicy
+        # Map source key names → LeRobot layout (handles layer1→w1, transformer_blocks→blocks, etc.)
+        mapped_sd: dict[str, torch.Tensor] = {}
+        skipped_keys: list[str] = []
+        for raw_key, value in sd.items():
+            target_key = _map_checkpoint_key(raw_key)
+            if target_key is None:
+                skipped_keys.append(raw_key)
+            else:
+                mapped_sd[target_key] = value
+        log.info("  %d tensors mapped, %d skipped", len(mapped_sd), len(skipped_keys))
+        if skipped_keys:
+            log.info("  Skipped sample: %s", skipped_keys[:5])
+        log.info("  First 5 mapped keys: %s", list(mapped_sd)[:5])
 
-        config = _build_config(camera_keys, with_state, enable_world_model)
-        policy = VLAJEPAPolicy(config)
+        # Fetch action unnormalization stats from the source repo
+        action_stats = _fetch_action_stats(api, SOURCE_REPO_ID, subfolder)
 
-        # 4. Load weights
-        missing, unexpected = policy.load_state_dict(sd, strict=False)
+        # 3. Build config (no policy instantiation — avoids loading backbone from Hub)
+        config = _build_config(camera_keys, with_state, enable_world_model, action_stats)
 
-        def _prefix_summary(keys: list[str]) -> dict[str, int]:
-            from collections import Counter
-
-            return dict(Counter(".".join(k.split(".")[:3]) for k in keys).most_common())
-
-        if missing:
-            log.warning("  Missing    (%d) by prefix: %s", len(missing), _prefix_summary(missing))
-        if unexpected:
-            log.warning("  Unexpected (%d) by prefix: %s", len(unexpected), _prefix_summary(unexpected))
-        if not missing and not unexpected:
-            log.info("  State dict loaded cleanly.")
-
-        # 5. Push to hub (writes model.safetensors + config.json)
+        # 4. Save everything to a temp dir and upload in one shot
         api.create_repo(target_repo_id, repo_type="model", exist_ok=True)
-        commit_url = policy.push_to_hub(
-            repo_id=target_repo_id,
-            commit_message=f"Convert {Path(pt_filename).name} to safetensors",
-        )
+        with tempfile.TemporaryDirectory() as tmp:
+            save_dir = Path(tmp)
+
+            log.info("  Saving model.safetensors …")
+            save_safetensors(mapped_sd, save_dir / "model.safetensors")
+
+            config._save_pretrained(save_dir)  # writes config.json via draccus
+
+            preprocessor, postprocessor = make_vla_jepa_pre_post_processors(config)
+            preprocessor.save_pretrained(save_dir)   # writes policy_preprocessor.json
+            postprocessor.save_pretrained(save_dir)  # writes policy_postprocessor.json
+
+            log.info("  Uploading …")
+            commit_url = api.upload_folder(
+                folder_path=save_dir,
+                repo_id=target_repo_id,
+                repo_type="model",
+                commit_message=f"Convert {Path(pt_filename).name} to safetensors",
+            )
         log.info("  Uploaded → %s", commit_url)
 
         # 6. Add to collection

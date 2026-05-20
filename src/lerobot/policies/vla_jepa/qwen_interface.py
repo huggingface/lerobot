@@ -39,7 +39,10 @@ class Qwen3VLInterface(torch.nn.Module):
         return torch.bfloat16
 
     def expand_tokenizer(self) -> tuple[list[str], list[int], int]:
-        max_action_tokens = self.config.chunk_size * self.config.num_action_tokens_per_timestep
+        # starVLA/JEVLA checkpoints expand action tokens as action_horizon * 4,
+        # independent of vj2 num_action_tokens_per_timestep. Keeping this count
+        # is required for Qwen embedding/lm_head checkpoint shapes to match.
+        max_action_tokens = self.config.chunk_size * 4
         tokenizer = self.processor.tokenizer
         action_tokens = []
         action_token_ids = []

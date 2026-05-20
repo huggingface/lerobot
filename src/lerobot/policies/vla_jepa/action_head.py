@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -32,17 +33,6 @@ from .configuration_vla_jepa import VLAJEPAConfig
 def swish(x: torch.Tensor) -> torch.Tensor:
     return x * torch.sigmoid(x)
 
-
-class _MLP2(nn.Module):
-    """Two-layer GELU MLP with layer1/layer2 attribute names matching the original checkpoint."""
-
-    def __init__(self, in_dim: int, hidden_dim: int, out_dim: int) -> None:
-        super().__init__()
-        self.layer1 = nn.Linear(in_dim, hidden_dim)
-        self.layer2 = nn.Linear(hidden_dim, out_dim)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.layer2(F.gelu(self.layer1(x)))
 
 
 class SinusoidalPositionalEncoding(nn.Module):
@@ -108,10 +98,11 @@ class BasicTransformerBlock(nn.Module):
         num_attention_heads: int,
         attention_head_dim: int,
         dropout: float,
-        cross_attention_dim: int | None,
+        cross_attention_dim: int,
+        is_cross_attention: bool = True,
     ) -> None:
         super().__init__()
-        self.is_cross_attention = cross_attention_dim is not None
+        self.is_cross_attention = is_cross_attention
         self.norm1 = AdaLayerNorm(dim)
         self.attn1 = Attention(
             query_dim=dim,
@@ -132,7 +123,8 @@ class BasicTransformerBlock(nn.Module):
         temb: torch.Tensor,
     ) -> torch.Tensor:
         attn_input = self.norm1(hidden_states, temb)
-        hidden_states = hidden_states + self.attn1(attn_input, encoder_hidden_states=encoder_hidden_states)
+        attention_context = encoder_hidden_states if self.is_cross_attention else None
+        hidden_states = hidden_states + self.attn1(attn_input, encoder_hidden_states=attention_context)
         hidden_states = hidden_states + self.ff(self.norm2(hidden_states))
         return hidden_states
 
@@ -160,10 +152,10 @@ class DiT(ModelMixin, ConfigMixin):
                     num_attention_heads=num_attention_heads,
                     attention_head_dim=attention_head_dim,
                     dropout=dropout,
-                    # Even blocks attend to context (cross-attention), odd blocks are self-attention.
-                    cross_attention_dim=cross_attention_dim if i % 2 == 0 else None,
+                    cross_attention_dim=cross_attention_dim if layer_idx % 2 == 0 else self.inner_dim,
+                    is_cross_attention=layer_idx % 2 == 0,
                 )
-                for i in range(num_layers)
+                for layer_idx in range(num_layers)
             ]
         )
         self.norm_out = nn.LayerNorm(self.inner_dim, eps=1e-6, elementwise_affine=False)
@@ -179,8 +171,7 @@ class DiT(ModelMixin, ConfigMixin):
         temb = self.timestep_encoder(timestep)
         x = hidden_states
         for block in self.transformer_blocks:
-            es = encoder_hidden_states if block.is_cross_attention else None
-            x = block(x, encoder_hidden_states=es, temb=temb)
+            x = block(x, encoder_hidden_states=encoder_hidden_states, temb=temb)
         shift, scale = self.proj_out_1(F.silu(temb)).chunk(2, dim=-1)
         x = self.norm_out(x) * (1 + scale[:, None]) + shift[:, None]
         return self.proj_out_2(x)
@@ -205,34 +196,49 @@ class VLAJEPAActionHead(nn.Module):
         super().__init__()
         preset = DIT_PRESETS[config.action_model_type]
         self.config = config
-        num_heads = preset.num_attention_heads
-        head_dim = preset.attention_head_dim
+        num_heads = config.action_num_heads or preset.num_attention_heads
+        head_dim = config.action_attention_head_dim or preset.attention_head_dim
         inner_dim = num_heads * head_dim  # e.g. DiT-B: 12 × 64 = 768
 
         self.input_embedding_dim = inner_dim
         self.action_horizon = config.chunk_size
         self.num_inference_timesteps = config.num_inference_timesteps
 
+        hidden_size = config.action_hidden_size
         self.model = DiT(
             num_attention_heads=num_heads,
             attention_head_dim=head_dim,
-            output_dim=config.action_hidden_size,
+            output_dim=hidden_size,
             num_layers=config.action_num_layers,
             dropout=config.action_dropout,
             cross_attention_dim=cross_attention_dim,
         )
-        # action_encoder/decoder and state_encoder use action_hidden_size (DiT output dim).
-        # action_encoder and state_encoder produce inner_dim-sized tokens (DiT input width).
-        # action_decoder takes DiT output (action_hidden_size) and produces action_dim predictions.
         self.action_encoder = ActionEncoder(config.action_dim, inner_dim)
-        self.action_decoder = _MLP2(config.action_hidden_size, config.action_hidden_size, config.action_dim)
-        self.state_encoder = (
-            _MLP2(config.state_dim, config.action_hidden_size, inner_dim) if config.state_dim > 0 else None
+        self.action_decoder = nn.Sequential(
+            OrderedDict([
+                ("layer1", nn.Linear(hidden_size, hidden_size)),
+                ("relu", nn.ReLU()),
+                ("layer2", nn.Linear(hidden_size, config.action_dim)),
+            ])
         )
-        # future_tokens and position_embedding operate at inner_dim (DiT input width),
-        # not at action_hidden_size (DiT output width).
-        self.future_tokens = nn.Embedding(config.num_target_vision_tokens, inner_dim)
-        self.position_embedding = nn.Embedding(config.action_max_seq_len, inner_dim)
+        self.state_encoder = (
+            nn.Sequential(
+                OrderedDict([
+                    ("layer1", nn.Linear(config.state_dim, hidden_size)),
+                    ("relu", nn.ReLU()),
+                    ("layer2", nn.Linear(hidden_size, inner_dim)),
+                ])
+            )
+            if config.state_dim > 0
+            else None
+        )
+        self.future_tokens = nn.Embedding(
+            config.num_embodied_action_tokens_per_instruction, inner_dim
+        )
+        self.position_embedding = nn.Embedding(
+            max(1024, config.chunk_size + config.num_action_tokens_per_timestep + 4),
+            inner_dim,
+        )
         self.beta_dist = Beta(config.action_noise_beta_alpha, config.action_noise_beta_beta)
 
     def sample_time(self, batch_size: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
