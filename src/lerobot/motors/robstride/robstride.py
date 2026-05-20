@@ -548,10 +548,8 @@ class RobstrideMotorsBus(MotorsBusBase):
         for msg in messages:
             if len(msg.data) < 1:
                 logger.debug(
-                    "Dropping short CAN frame on %s (arb=0x%02X, data=%s)",
-                    self.port,
-                    int(msg.arbitration_id),
-                    bytes(msg.data).hex(),
+                    f"Dropping short CAN frame on {self.port} "
+                    f"(arb=0x{int(msg.arbitration_id):02X}, data={bytes(msg.data).hex()})"
                 )
                 continue
 
@@ -559,11 +557,8 @@ class RobstrideMotorsBus(MotorsBusBase):
             motor_name = self._recv_id_to_motor.get(recv_id)
             if motor_name is None:
                 logger.debug(
-                    "Unmapped CAN frame on %s (arb=0x%02X, recv_id=0x%02X, data=%s)",
-                    self.port,
-                    int(msg.arbitration_id),
-                    recv_id,
-                    bytes(msg.data).hex(),
+                    f"Unmapped CAN frame on {self.port} "
+                    f"(arb=0x{int(msg.arbitration_id):02X}, recv_id=0x{recv_id:02X}, data={bytes(msg.data).hex()})"
                 )
                 continue
 
@@ -591,7 +586,7 @@ class RobstrideMotorsBus(MotorsBusBase):
                     break
                 drained += 1
         except Exception as e:
-            logger.debug("Failed to flush CAN RX queue on %s: %s", self.port, e)
+            logger.debug(f"Failed to flush CAN RX queue on {self.port}: {e}")
         return drained
 
     def _speed_control(
@@ -740,7 +735,7 @@ class RobstrideMotorsBus(MotorsBusBase):
 
         for recv_id, motor_name in recv_id_to_motor.items():
             if recv_id not in processed_recv_ids:
-                logger.warning("Packet drop: %s (ID: 0x%02X). Using last known state.", motor_name, recv_id)
+                logger.warning(f"Packet drop: {motor_name} (ID: 0x{recv_id:02X}). Using last known state.")
 
     def _float_to_uint(self, x: float, x_min: float, x_max: float, bits: int) -> int:
         """Convert float to unsigned integer for CAN transmission."""
@@ -804,11 +799,8 @@ class RobstrideMotorsBus(MotorsBusBase):
             self._decode_motor_state(msg.data)
         except Exception as e:
             logger.warning(
-                "Failed to decode response from %s (arb=0x%02X, data=%s): %s",
-                motor,
-                int(msg.arbitration_id),
-                bytes(msg.data).hex(),
-                e,
+                f"Failed to decode response from {motor} "
+                f"(arb=0x{int(msg.arbitration_id):02X}, data={bytes(msg.data).hex()}): {e}"
             )
 
     def _get_cached_value(self, motor: str, data_name: str) -> Value:
@@ -944,6 +936,7 @@ class RobstrideMotorsBus(MotorsBusBase):
             data = [0xFF] * 7 + [CAN_CMD_CLEAR_FAULT]
             msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
             self._bus().send(msg)
+            updated_motors.append(motor)
 
         messages = self._recv_all_messages_until_quiet()
         processed_recv_ids = self._process_feedback_messages(messages)
@@ -951,7 +944,7 @@ class RobstrideMotorsBus(MotorsBusBase):
         for motor in updated_motors:
             recv_id = self._get_motor_recv_id(motor)
             if recv_id not in processed_recv_ids:
-                logger.warning("Packet drop: %s (ID: 0x%02X). Using last known state.", motor, recv_id)
+                logger.warning(f"Packet drop: {motor} (ID: 0x{recv_id:02X}). Using last known state.")
 
     def read_calibration(self) -> dict[str, MotorCalibration]:
         """Read calibration data from motors."""
