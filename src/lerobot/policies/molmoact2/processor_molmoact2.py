@@ -52,23 +52,26 @@ from lerobot.utils.constants import (
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
-from lerobot.utils.import_utils import _transformers_available, require_package
+from lerobot.utils.import_utils import _scipy_available, _transformers_available, require_package
 
 from .configuration_molmoact2 import MolmoAct2Config, infer_molmoact2_max_sequence_length
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import Qwen2Tokenizer
 
-    from .hf_model.action_tokenizer import UniversalActionProcessor
     from .hf_model.image_processing_molmoact2 import MolmoAct2ImageProcessor
     from .hf_model.processing_molmoact2 import MolmoAct2Processor
     from .hf_model.video_processing_molmoact2 import MolmoAct2VideoProcessor
 else:
     Qwen2Tokenizer = None
-    UniversalActionProcessor = None
     MolmoAct2ImageProcessor = None
     MolmoAct2Processor = None
     MolmoAct2VideoProcessor = None
+
+if TYPE_CHECKING or (_transformers_available and _scipy_available):
+    from .hf_model.action_tokenizer import UniversalActionProcessor
+else:
+    UniversalActionProcessor = None
 
 ACTION_OUTPUT_TOKEN = "<action_output>"  # nosec B105
 ACTION_START_TOKEN = "<action_start>"  # nosec B105
@@ -586,8 +589,9 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         self.processor = _load_local_molmoact2_processor(checkpoint_location)
         self.action_processor = None
         if self.action_mode in {"discrete", "both"}:
+            require_package("scipy", extra="molmoact2")
             if UniversalActionProcessor is None:
-                raise RuntimeError("transformers is required to load MolmoAct2 action tokenizer.")
+                raise RuntimeError("transformers and scipy are required to load MolmoAct2 action tokenizer.")
             self.action_processor = UniversalActionProcessor.from_pretrained_local(
                 self.discrete_action_tokenizer,
             )

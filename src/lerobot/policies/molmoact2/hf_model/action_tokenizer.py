@@ -22,8 +22,6 @@ from pathlib import Path
 from typing import ClassVar
 
 import numpy as np
-from scipy.fft import dct
-from scipy.fft import idct
 from tokenizers import ByteLevelBPETokenizer
 from tokenizers.trainers import BpeTrainer
 from huggingface_hub import snapshot_download
@@ -86,6 +84,8 @@ class UniversalActionProcessor(ProcessorMixin):
         self.bpe_tokenizer = self.tokenizer
 
     def __call__(self, action_chunk: np.array) -> np.array:
+        from scipy.fft import dct
+
         assert action_chunk.ndim <= 3, "Only 3 dimensions supported: [batch, timesteps, action_dim]"
         if action_chunk.ndim == 2:
             action_chunk = action_chunk[None, ...]
@@ -109,6 +109,8 @@ class UniversalActionProcessor(ProcessorMixin):
         time_horizon: int | None = None,
         action_dim: int | None = None,
     ) -> np.array:
+        from scipy.fft import idct
+
         self.time_horizon = time_horizon or self.time_horizon or self.called_time_horizon
         self.action_dim = action_dim or self.action_dim or self.called_action_dim
 
@@ -150,6 +152,8 @@ class UniversalActionProcessor(ProcessorMixin):
         time_horizon: int | None = None,
         action_dim: int | None = None,
     ) -> "UniversalActionProcessor":
+        from scipy.fft import dct
+
         # Run DCT over all inputs
         dct_tokens = [dct(a, axis=0, norm="ortho").flatten() for a in action_data]
 

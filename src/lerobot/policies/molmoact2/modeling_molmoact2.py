@@ -29,23 +29,29 @@ import torch.nn.functional as F  # noqa: N812
 from safetensors.torch import load_file as load_safetensors_file
 from torch import Tensor
 from torch.distributions import Beta
-from transformers.utils import SAFE_WEIGHTS_INDEX_NAME, SAFE_WEIGHTS_NAME
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION
-from lerobot.utils.import_utils import _transformers_available, require_package
+from lerobot.utils.import_utils import _scipy_available, _transformers_available, require_package
 
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_molmoact2 import MolmoAct2Config, _hf_token, _resolve_checkpoint_location
 
 if TYPE_CHECKING or _transformers_available:
-    from .hf_model.action_tokenizer import UniversalActionProcessor
+    from transformers.utils import SAFE_WEIGHTS_INDEX_NAME, SAFE_WEIGHTS_NAME
+
     from .hf_model.configuration_molmoact2 import MolmoAct2Config as HFMolmoAct2Config
     from .hf_model.modeling_molmoact2 import MolmoAct2ForConditionalGeneration
 else:
-    UniversalActionProcessor = None
+    SAFE_WEIGHTS_INDEX_NAME = "model.safetensors.index.json"
+    SAFE_WEIGHTS_NAME = "model.safetensors"
     HFMolmoAct2Config = None
     MolmoAct2ForConditionalGeneration = None
+
+if TYPE_CHECKING or (_transformers_available and _scipy_available):
+    from .hf_model.action_tokenizer import UniversalActionProcessor
+else:
+    UniversalActionProcessor = None
 
 _MODEL_INPUT_KEYS = {
     "input_ids",
@@ -483,9 +489,10 @@ class MolmoAct2Policy(PreTrainedPolicy):
     def _load_discrete_action_tokenizer(self) -> Any:
         if self.action_tokenizer is None:
             require_package("transformers", extra="molmoact2")
+            require_package("scipy", extra="molmoact2")
 
             if UniversalActionProcessor is None:
-                raise RuntimeError("transformers is required to load MolmoAct2 action tokenizer.")
+                raise RuntimeError("transformers and scipy are required to load MolmoAct2 action tokenizer.")
             self.action_tokenizer = UniversalActionProcessor.from_pretrained_local(
                 self.config.discrete_action_tokenizer,
             )
