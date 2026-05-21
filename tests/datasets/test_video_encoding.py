@@ -385,7 +385,7 @@ class TestGetVideoInfo:
     def test_merges_encoder_config_as_video_prefixed_entries(self):
         cfg = VideoEncoderConfig(vcodec="libsvtav1", g=2, crf=30, preset=12)
 
-        info = get_video_info(TEST_ARTIFACTS_DIR / "clip_4frames.mp4", camera_encoder=cfg)
+        info = get_video_info(TEST_ARTIFACTS_DIR / "clip_4frames.mp4", video_encoder=cfg)
 
         assert info["video.g"] == 2
         assert info["video.crf"] == 30
@@ -398,7 +398,7 @@ class TestGetVideoInfo:
     def test_stream_derived_keys_take_precedence_over_config(self):
         cfg = VideoEncoderConfig(vcodec="libsvtav1", pix_fmt="yuv420p")
 
-        info = get_video_info(TEST_ARTIFACTS_DIR / "clip_4frames.mp4", camera_encoder=cfg)
+        info = get_video_info(TEST_ARTIFACTS_DIR / "clip_4frames.mp4", video_encoder=cfg)
 
         assert info["video.codec"]  # populated from stream, not from config's vcodec
         assert info["video.pix_fmt"] == "yuv420p"
@@ -461,7 +461,7 @@ class TestEncodeVideoFrames:
         cfg = VideoEncoderConfig(vcodec="libsvtav1", g=4, crf=25, preset=10)
         video_path = _encode_video(tmp_path / "out.mp4", num_frames=4, fps=30, cfg=cfg)
 
-        info = get_video_info(video_path, camera_encoder=cfg)
+        info = get_video_info(video_path, video_encoder=cfg)
 
         # Stream-derived
         assert info["video.height"] == 64
