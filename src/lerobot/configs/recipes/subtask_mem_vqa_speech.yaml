@@ -45,10 +45,22 @@ blend:
       - {role: user, content: "${subtask}", stream: low_level, if_present: subtask}
 
   memory_update:
+    # At inference, `MemoryUpdateFwd` is triggered only on
+    # `subtask_change` events (sparse). Training densely with
+    # `active_at` — i.e. on every frame inside a subtask interval,
+    # not just the boundary frame — supervises the same
+    # (prior_memory, completed_subtask) → current_memory mapping
+    # against varied observations within the interval. The model
+    # learns a stateless transformation; the *when* to emit lives in
+    # the inference trigger, not the model. Annotations only exist
+    # for ~1% of frames as boundary events, so `emitted_at` would
+    # waste 99% of the blend draws (and silently leak them into the
+    # task-conditioned fallback); `active_at` lifts the renderable
+    # rate to ~87% on Hi-Robot-style datasets.
     weight: 0.10
     bindings:
       prior_memory: "nth_prev(style=memory, offset=1)"
-      current_memory: "emitted_at(t, style=memory)"
+      current_memory: "active_at(t, style=memory)"
       completed_subtask: "nth_prev(style=subtask, offset=1)"
     messages:
       - {role: user, content: "${task}", stream: high_level}
