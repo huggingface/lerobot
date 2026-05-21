@@ -9,7 +9,6 @@ import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
 from PIL import Image
-from safetensors.torch import load_file as load_safetensors_file
 from torch import Tensor, nn
 
 from lerobot.policies.pretrained import PreTrainedPolicy, T

@@ -159,12 +159,20 @@ class ACRoPEAttention(nn.Module):
                 action_token = x[:, :, idx : idx + 1, :].flatten(1, 2)
                 qkv = self.qkv(action_token).unflatten(-1, (3, self.num_heads, -1)).permute(2, 0, 3, 1, 4)
                 q, k, v = qkv[0], qkv[1], qkv[2]
-                qd = rotate_queries_or_keys(q[..., : self.d_dim], pos=torch.arange(num_frames, device=x.device))
-                kd = rotate_queries_or_keys(k[..., : self.d_dim], pos=torch.arange(num_frames, device=x.device))
+                qd = rotate_queries_or_keys(
+                    q[..., : self.d_dim], pos=torch.arange(num_frames, device=x.device)
+                )
+                kd = rotate_queries_or_keys(
+                    k[..., : self.d_dim], pos=torch.arange(num_frames, device=x.device)
+                )
                 qr = q[..., self.d_dim :]
                 kr = k[..., self.d_dim :]
-                action_q.append(torch.cat([qd, qr], dim=-1).view(batch_size, self.num_heads, num_frames, 1, -1))
-                action_k.append(torch.cat([kd, kr], dim=-1).view(batch_size, self.num_heads, num_frames, 1, -1))
+                action_q.append(
+                    torch.cat([qd, qr], dim=-1).view(batch_size, self.num_heads, num_frames, 1, -1)
+                )
+                action_k.append(
+                    torch.cat([kd, kr], dim=-1).view(batch_size, self.num_heads, num_frames, 1, -1)
+                )
                 action_v.append(v.view(batch_size, self.num_heads, num_frames, 1, -1))
 
             action_q = torch.cat(action_q, dim=3).flatten(2, 3)

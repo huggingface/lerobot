@@ -43,7 +43,9 @@ def _make_predictor(
     ],
 )
 def test_predictor_output_shape(batch: int, num_steps: int, tokens_per_frame: int, embed_dim: int) -> None:
-    predictor = _make_predictor(embed_dim=embed_dim, action_embed_dim=_ACTION_EMBED_DIM, tokens_per_frame=tokens_per_frame)
+    predictor = _make_predictor(
+        embed_dim=embed_dim, action_embed_dim=_ACTION_EMBED_DIM, tokens_per_frame=tokens_per_frame
+    )
     frame_tokens = torch.randn(batch, num_steps * tokens_per_frame, embed_dim)
     action_tokens = torch.randn(batch, num_steps * 2, _ACTION_EMBED_DIM)
     out = predictor(frame_tokens, action_tokens)

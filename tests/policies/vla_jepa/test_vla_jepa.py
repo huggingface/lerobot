@@ -403,9 +403,9 @@ def test_postprocessor_unnormalizes_actions(patch_vla_jepa_external_models: None
 def test_postprocessor_clip_clamps_before_unnorm(patch_vla_jepa_external_models: None) -> None:
     """ClipActionsProcessorStep clamps to [-1, 1] before unnormalization."""
     from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+    from lerobot.policies.vla_jepa.processor_vla_jepa import ClipActionsProcessorStep
     from lerobot.processor import UnnormalizerProcessorStep
     from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
-    from lerobot.policies.vla_jepa.processor_vla_jepa import ClipActionsProcessorStep
     from lerobot.utils.constants import ACTION
 
     dataset_stats = _make_dataset_stats()
@@ -466,6 +466,7 @@ def test_postprocessor_applied_after_predict_action_chunk(
     # Postprocessor applies unnormalization: 0 → (0+1)/2 * (max-min) + min = 5 + i
     unnormed = postprocessor(chunk)
     from lerobot.utils.constants import ACTION
+
     a_min = dataset_stats[ACTION]["min"].numpy()
     a_max = dataset_stats[ACTION]["max"].numpy()
     expected_first = 0.5 * (0.0 + 1.0) * (a_max[0] - a_min[0]) + a_min[0]

@@ -34,7 +34,6 @@ def swish(x: torch.Tensor) -> torch.Tensor:
     return x * torch.sigmoid(x)
 
 
-
 class SinusoidalPositionalEncoding(nn.Module):
     def __init__(self, embedding_dim: int):
         super().__init__()
@@ -215,26 +214,28 @@ class VLAJEPAActionHead(nn.Module):
         )
         self.action_encoder = ActionEncoder(config.action_dim, inner_dim)
         self.action_decoder = nn.Sequential(
-            OrderedDict([
-                ("layer1", nn.Linear(hidden_size, hidden_size)),
-                ("relu", nn.ReLU()),
-                ("layer2", nn.Linear(hidden_size, config.action_dim)),
-            ])
+            OrderedDict(
+                [
+                    ("layer1", nn.Linear(hidden_size, hidden_size)),
+                    ("relu", nn.ReLU()),
+                    ("layer2", nn.Linear(hidden_size, config.action_dim)),
+                ]
+            )
         )
         self.state_encoder = (
             nn.Sequential(
-                OrderedDict([
-                    ("layer1", nn.Linear(config.state_dim, hidden_size)),
-                    ("relu", nn.ReLU()),
-                    ("layer2", nn.Linear(hidden_size, inner_dim)),
-                ])
+                OrderedDict(
+                    [
+                        ("layer1", nn.Linear(config.state_dim, hidden_size)),
+                        ("relu", nn.ReLU()),
+                        ("layer2", nn.Linear(hidden_size, inner_dim)),
+                    ]
+                )
             )
             if config.state_dim > 0
             else None
         )
-        self.future_tokens = nn.Embedding(
-            config.num_embodied_action_tokens_per_instruction, inner_dim
-        )
+        self.future_tokens = nn.Embedding(config.num_embodied_action_tokens_per_instruction, inner_dim)
         self.position_embedding = nn.Embedding(
             max(1024, config.chunk_size + config.num_action_tokens_per_timestep + 4),
             inner_dim,

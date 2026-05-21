@@ -31,6 +31,7 @@ from pathlib import Path
 import torch
 from huggingface_hub import HfApi
 from safetensors.torch import save_file as save_safetensors
+
 from lerobot.policies.vla_jepa.processor_vla_jepa import make_vla_jepa_pre_post_processors
 
 # ---------------------------------------------------------------------------
@@ -54,7 +55,7 @@ log = logging.getLogger(__name__)
 
 
 def _normalize_source_key(key: str) -> str:
-    return key[len("module."):] if key.startswith("module.") else key
+    return key[len("module.") :] if key.startswith("module.") else key
 
 
 def _map_checkpoint_key(raw_key: str) -> str | None:
@@ -62,11 +63,11 @@ def _map_checkpoint_key(raw_key: str) -> str | None:
     key = _normalize_source_key(raw_key)
 
     if key.startswith("qwen_vl_interface."):
-        return "model.qwen." + key[len("qwen_vl_interface."):]
+        return "model.qwen." + key[len("qwen_vl_interface.") :]
     if key.startswith("vj_encoder."):
-        return "model.video_encoder." + key[len("vj_encoder."):]
+        return "model.video_encoder." + key[len("vj_encoder.") :]
     if key.startswith("vj_predictor."):
-        return "model.video_predictor." + key[len("vj_predictor."):]
+        return "model.video_predictor." + key[len("vj_predictor.") :]
     if key.startswith("action_model."):
         # LeRobot code uses the same sub-key names as the source checkpoint,
         # so only the top-level "model." prefix needs to be added.
@@ -92,7 +93,6 @@ def _fetch_action_stats(api: HfApi, source_repo_id: str, subfolder: str) -> dict
     except Exception as exc:  # noqa: BLE001
         log.warning("  Could not fetch %s: %s — postprocessor will have no unnorm stats.", stats_file, exc)
     return None
-
 
 
 # ---------------------------------------------------------------------------
@@ -295,7 +295,7 @@ def main() -> None:
             config._save_pretrained(save_dir)  # writes config.json via draccus
 
             preprocessor, postprocessor = make_vla_jepa_pre_post_processors(config, dataset_stats)
-            preprocessor.save_pretrained(save_dir)   # writes policy_preprocessor.json
+            preprocessor.save_pretrained(save_dir)  # writes policy_preprocessor.json
             postprocessor.save_pretrained(save_dir)  # writes policy_postprocessor.json
 
             log.info("  Uploading …")
