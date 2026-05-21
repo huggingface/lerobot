@@ -856,11 +856,54 @@ class PI052Policy(PI05Policy):
             lm_head = backbone.paligemma.lm_head
             text_logits = lm_head(text_hidden.to(lm_head.weight.dtype))
             preds = text_logits.argmax(dim=-1)
+
+            # Train/inference parity check — run select_message on the
+            # *same* prompt prefix (the language up to but not including
+            # the supervised span) and capture the auto-regressive
+            # generation. The first generated token MUST match the
+            # training-side argmax at the prompt-end position (both are
+            # ``argmax lm_head(h_last_prompt)`` over identical context);
+            # any divergence is a parity bug (mask, dtype, KI routing
+            # difference). Later tokens can diverge because training
+            # uses teacher forcing while inference free-runs.
+            inference_outputs: list[dict[str, Any]] = []
+            for s in range(n):
+                row_labels = sub_labels[s]
+                sup_pos = (row_labels != -100).nonzero(as_tuple=True)[0]
+                if sup_pos.numel() == 0:
+                    inference_outputs.append({"first_token": None, "decoded": ""})
+                    continue
+                first_sup = int(sup_pos[0].item())
+                # Build a single-sample batch with attention zeroed past
+                # the supervised span — that gives ``embed_prefix`` only
+                # the user-prompt portion to attend over.
+                prompt_mask = sub[OBS_LANGUAGE_ATTENTION_MASK][s : s + 1].clone()
+                prompt_mask[:, first_sup:] = 0
+                inf_batch: dict[str, Any] = {
+                    OBS_LANGUAGE_TOKENS: sub[OBS_LANGUAGE_TOKENS][s : s + 1],
+                    OBS_LANGUAGE_ATTENTION_MASK: prompt_mask,
+                }
+                for k, v in sub.items():
+                    if isinstance(k, str) and k.startswith("observation.images."):
+                        inf_batch[k] = v[s : s + 1]
+                if "observation.state" in batch and torch.is_tensor(batch["observation.state"]):
+                    inf_batch["observation.state"] = batch["observation.state"][s : s + 1]
+                try:
+                    # Tight budget — we just want to see the model's
+                    # opening continuation, not the full sequence.
+                    decoded = self.select_message(
+                        inf_batch, max_new_tokens=24, temperature=0.0, top_p=1.0
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    decoded = f"<inference failed: {type(exc).__name__}: {exc}>"
+                inference_outputs.append({"first_sup_pos": first_sup, "decoded": decoded})
+
             return {
                 "input_ids": lang_tokens.detach().cpu(),
                 "attention_mask": lang_masks.detach().cpu(),
                 "labels": sub_labels.detach().cpu(),
                 "predictions": preds.detach().cpu(),
+                "inference": inference_outputs,
             }
         finally:
             if was_training:

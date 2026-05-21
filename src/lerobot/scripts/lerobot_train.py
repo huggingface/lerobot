@@ -200,6 +200,7 @@ def _print_debug_text_predictions(
     labels = debug["labels"]
     preds = debug["predictions"]
     attn = debug["attention_mask"]
+    inference = debug.get("inference") or []
 
     n = ids.shape[0]
     print(
@@ -215,29 +216,60 @@ def _print_debug_text_predictions(
         prompt = tokenizer.decode(sid[:real], skip_special_tokens=False)
         print(f"\n  --- sample {s + 1}/{n} ---", flush=True)
         print(f"  prompt: {prompt!r}", flush=True)
+
+        # Ground-truth target (the contiguous supervised label span).
+        sup_ids = [int(sid[i]) for i in range(real) if sl[i] != -100]
+        if sup_ids:
+            print(
+                f"  target  (ground truth)        : {tokenizer.decode(sup_ids, skip_special_tokens=False)!r}",
+                flush=True,
+            )
+
+        # Training-side teacher-forced argmax on the same prompt+target.
         n_sup = n_ok = 0
-        rows: list[str] = []
-        # CE shift: pred[t] predicts label[t+1]. Iterate supervised label
-        # positions (i = t+1) and align with prediction at t = i-1.
+        first_sup_pred: int | None = None
+        teacher_chars: list[int] = []
         for i in range(1, real):
             label = sl[i]
             if label == -100:
                 continue
             n_sup += 1
-            pred = sp[i - 1]
-            ok = label == pred
-            n_ok += int(ok)
-            lbl_str = tokenizer.decode([label]) if 0 <= label < tokenizer.vocab_size + 2048 else "<oob>"
-            pred_str = tokenizer.decode([pred]) if 0 <= pred < tokenizer.vocab_size + 2048 else "<oob>"
-            mark = "✓" if ok else "✗"
-            rows.append(
-                f"    pos {i - 1:3d} → {i:3d}: label {label:6d} {lbl_str!r:20s} | "
-                f"pred {pred:6d} {pred_str!r:20s} {mark}"
-            )
-        for r in rows:
-            print(r, flush=True)
+            pred = int(sp[i - 1])
+            if first_sup_pred is None:
+                first_sup_pred = pred
+            teacher_chars.append(pred)
+            if label == pred:
+                n_ok += 1
+        teacher_text = (
+            tokenizer.decode(teacher_chars, skip_special_tokens=False) if teacher_chars else ""
+        )
         acc = n_ok / max(n_sup, 1)
-        print(f"  token accuracy: {n_ok}/{n_sup} = {acc:.1%}", flush=True)
+        print(
+            f"  training argmax (teacher-fed) : {teacher_text!r}   acc={n_ok}/{n_sup}={acc:.1%}",
+            flush=True,
+        )
+
+        # Inference-side autoregressive output from the same prompt prefix.
+        inf_entry = inference[s] if s < len(inference) else None
+        if inf_entry:
+            inf_decoded = inf_entry.get("decoded", "")
+            print(f"  inference (autoregressive)    : {inf_decoded!r}", flush=True)
+            # First-token parity: training-side argmax at the prompt-end
+            # position MUST equal inference's first generated token —
+            # both compute argmax(lm_head(h_last_prompt)) on identical
+            # context. Any divergence signals a training↔inference bug.
+            if first_sup_pred is not None and inf_decoded and not inf_decoded.startswith("<inference"):
+                inf_ids = tokenizer(inf_decoded, add_special_tokens=False)["input_ids"]
+                if inf_ids:
+                    inf_first = int(inf_ids[0])
+                    match = inf_first == first_sup_pred
+                    print(
+                        f"  first-token parity            : "
+                        f"train={first_sup_pred} ({tokenizer.decode([first_sup_pred])!r}) "
+                        f"vs infer={inf_first} ({tokenizer.decode([inf_first])!r})  "
+                        f"{'✓ MATCH' if match else '✗ DIVERGED — training/inference mismatch'}",
+                        flush=True,
+                    )
     print("=" * 60 + "\n", flush=True)
 
 
