@@ -9,7 +9,7 @@ import torch.nn.functional as F  # noqa: N812
 from torch import nn
 from torch.distributions import Beta
 
-from lerobot.utils.import_utils import _diffusers_available
+from lerobot.utils.import_utils import _diffusers_available, require_package
 
 if TYPE_CHECKING or _diffusers_available:
     from diffusers import ConfigMixin, ModelMixin
@@ -70,6 +70,7 @@ class ActionEncoder(nn.Module):
 class TimestepEncoder(nn.Module):
     def __init__(self, embedding_dim: int):
         super().__init__()
+        require_package("diffusers", extra="vla_jepa")
         self.time_proj = Timesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=1)
         self.timestep_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=embedding_dim)
 
