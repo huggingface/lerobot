@@ -17,6 +17,7 @@
 # ruff: noqa
 
 """Image processor class for MolmoAct2"""
+
 from typing import Optional, Union
 import numpy as np
 import einops
@@ -72,7 +73,9 @@ def resize_image(
         )(image)
         resized = torch.clip(resized, 0.0, 1.0).to(dtype)
     else:
-        assert image.dtype == torch.uint8, "SigLIP expects float images or uint8 images, but got {}".format(image.dtype)
+        assert image.dtype == torch.uint8, "SigLIP expects float images or uint8 images, but got {}".format(
+            image.dtype
+        )
         in_min = 0.0
         in_max = 255.0
         resized = torchvision.transforms.Resize(
@@ -97,10 +100,10 @@ def select_tiling(h, w, patch_size, max_num_crops):
     tilings = []
     for i in range(1, max_num_crops + 1):
         for j in range(1, max_num_crops + 1):
-            if i*j <= max_num_crops:
+            if i * j <= max_num_crops:
                 tilings.append((i, j))
     # sort so argmin and argmax favour smaller tilings in the event of a tie
-    tilings.sort(key=lambda x: (x[0]*x[1], x[0]))
+    tilings.sort(key=lambda x: (x[0] * x[1], x[0]))
     candidate_tilings = np.array(tilings, dtype=np.int32)  # [n_resolutions, 2]
     candidate_resolutions = candidate_tilings * patch_size  # [n_resolutions, 2]
 
@@ -110,8 +113,8 @@ def select_tiling(h, w, patch_size, max_num_crops):
     # The original size can be zero in rare cases if the image is smaller than the margin
     # In those cases letting the scale become infinite means the tiling is based on the
     # other side, or falls back to the smallest tiling
-    with np.errstate(divide='ignore'):
-        required_scale_d = candidate_resolutions.astype(np.float32) / original_size,
+    with np.errstate(divide="ignore"):
+        required_scale_d = (candidate_resolutions.astype(np.float32) / original_size,)
     required_scale = np.min(required_scale_d, axis=-1, keepdims=True)  # [n_resolutions, 1]
     if np.all(required_scale < 1):
         # We are forced to downscale, so try to minimize the amount of downscaling
@@ -132,14 +135,16 @@ def build_resized_image(
     image_patch_size: int,
 ) -> tuple[np.ndarray, np.ndarray]:
     resized = resize_image(
-        image, base_image_input_size, resample,
+        image,
+        base_image_input_size,
+        resample,
     )
     resized = normalize_image(resized, image_mean, image_std)
     if len(resized.shape) == 3:
         resized = np.expand_dims(resized, 0)
     crop_patch_w = base_image_input_size[1] // image_patch_size
     crop_patch_h = base_image_input_size[0] // image_patch_size
-    resize_idx = np.arange(crop_patch_w*crop_patch_h).reshape([crop_patch_h, crop_patch_w])
+    resize_idx = np.arange(crop_patch_w * crop_patch_h).reshape([crop_patch_h, crop_patch_w])
     return resized, resize_idx
 
 
@@ -184,7 +189,10 @@ def build_overlapping_crops(
 
     src = resize_image(
         image,
-        [tiling[0]*crop_window_size+total_margin_pixels, tiling[1]*crop_window_size+total_margin_pixels],
+        [
+            tiling[0] * crop_window_size + total_margin_pixels,
+            tiling[1] * crop_window_size + total_margin_pixels,
+        ],
         resample,
     )
     src = normalize_image(src, image_mean, image_std)
@@ -198,11 +206,11 @@ def build_overlapping_crops(
     for i in range(tiling[0]):
         # Slide over `src` by `crop_window_size` steps, but extract crops of size `crops_size`
         # which results in overlapping crop windows
-        y0 = i*crop_window_size
+        y0 = i * crop_window_size
         for j in range(tiling[1]):
-            x0 = j*crop_window_size
-            crop_arr[on_crop] = src[y0:y0+crop_size, x0:x0+crop_size]
-            patch_idx = np.arange(crop_patch_w*crop_patch_h).reshape(crop_patch_h, crop_patch_w)
+            x0 = j * crop_window_size
+            crop_arr[on_crop] = src[y0 : y0 + crop_size, x0 : x0 + crop_size]
+            patch_idx = np.arange(crop_patch_w * crop_patch_h).reshape(crop_patch_h, crop_patch_w)
             patch_idx += on_crop * crop_patch_h * crop_patch_w
 
             # Mask out idx that are in the overlap region
@@ -210,27 +218,24 @@ def build_overlapping_crops(
                 patch_idx[:left_margin, :] = -1
             if j != 0:
                 patch_idx[:, :left_margin] = -1
-            if i != tiling[0]-1:
+            if i != tiling[0] - 1:
                 patch_idx[-right_margin:, :] = -1
-            if j != tiling[1]-1:
+            if j != tiling[1] - 1:
                 patch_idx[:, -right_margin:] = -1
             patch_idx_arr[on_crop] = patch_idx
             on_crop += 1
 
     # `patch_idx_arr` is ordered crop-by-crop, here we transpose `patch_idx_arr`
     # so it is ordered left-to-right order
-    patch_idx_arr = np.reshape(
-        patch_idx_arr,
-        [tiling[0], tiling[1], crop_patch_h, crop_patch_w]
-    )
+    patch_idx_arr = np.reshape(patch_idx_arr, [tiling[0], tiling[1], crop_patch_h, crop_patch_w])
     patch_idx_arr = np.transpose(patch_idx_arr, [0, 2, 1, 3])
     patch_idx_arr = np.reshape(patch_idx_arr, [-1])
 
     # Now get the parts not in the overlap region, so it should map each patch in `src`
     # to the correct patch it should come from in `crop_arr`
     patch_idx_arr = patch_idx_arr[patch_idx_arr >= 0].reshape(
-        src.shape[0]//image_patch_size,
-        src.shape[1]//image_patch_size,
+        src.shape[0] // image_patch_size,
+        src.shape[1] // image_patch_size,
     )
     return crop_arr, patch_idx_arr
 
@@ -239,19 +244,19 @@ def batch_pixels_to_patches(array: np.ndarray, patch_size: int) -> np.ndarray:
     """Reshape images of [n_images, h, w, 3] -> [n_images, n_patches, pixels_per_patch]"""
     if len(array.shape) == 3:
         n_crops, h, w = array.shape
-        h_patches = h//patch_size
-        w_patches = w//patch_size
+        h_patches = h // patch_size
+        w_patches = w // patch_size
         array = np.reshape(array, [n_crops, h_patches, patch_size, w_patches, patch_size])
         array = np.transpose(array, [0, 1, 3, 2, 4])
-        array = np.reshape(array, [n_crops, h_patches*w_patches, patch_size*patch_size])
+        array = np.reshape(array, [n_crops, h_patches * w_patches, patch_size * patch_size])
         return array
     else:
         n_crops, h, w, c = array.shape
-        h_patches = h//patch_size
-        w_patches = w//patch_size
+        h_patches = h // patch_size
+        w_patches = w // patch_size
         array = np.reshape(array, [n_crops, h_patches, patch_size, w_patches, patch_size, c])
         array = np.transpose(array, [0, 1, 3, 2, 4, 5])
-        array = np.reshape(array, [n_crops, h_patches*w_patches, patch_size*patch_size*c])
+        array = np.reshape(array, [n_crops, h_patches * w_patches, patch_size * patch_size * c])
         return array
 
 
@@ -262,10 +267,13 @@ def arange_for_pooling(
 ) -> np.ndarray:
     h_pad = pool_h * ((idx_arr.shape[0] + pool_h - 1) // pool_h) - idx_arr.shape[0]
     w_pad = pool_w * ((idx_arr.shape[1] + pool_w - 1) // pool_w) - idx_arr.shape[1]
-    idx_arr = np.pad(idx_arr, [[h_pad//2, (h_pad+1)//2], [w_pad//2, (w_pad+1)//2]],
-                     mode='constant',constant_values=-1)
-    return einops.rearrange(
-        idx_arr, "(h dh) (w dw) -> h w (dh dw)", dh=pool_h, dw=pool_w)
+    idx_arr = np.pad(
+        idx_arr,
+        [[h_pad // 2, (h_pad + 1) // 2], [w_pad // 2, (w_pad + 1) // 2]],
+        mode="constant",
+        constant_values=-1,
+    )
+    return einops.rearrange(idx_arr, "(h dh) (w dw) -> h w (dh dw)", dh=pool_h, dw=pool_w)
 
 
 def image_to_patches_and_grids(
@@ -330,7 +338,7 @@ def image_to_patches_and_grids(
     )
     pooling_idx = arange_for_pooling(patch_idx_arr, pooling_h, pooling_w)
     h, w = pooling_idx.shape[:2]
-    pooling_idx = pooling_idx.reshape([-1, pooling_h*pooling_w])
+    pooling_idx = pooling_idx.reshape([-1, pooling_h * pooling_w])
 
     # Finally do the same for the global image
     resized, resize_idx = build_resized_image(
@@ -345,22 +353,14 @@ def image_to_patches_and_grids(
 
     resize_idx = arange_for_pooling(resize_idx, pooling_h, pooling_w)
     resized_h, resized_w = resize_idx.shape[:2]
-    resize_idx = resize_idx.reshape([-1, pooling_h*pooling_w])
+    resize_idx = resize_idx.reshape([-1, pooling_h * pooling_w])
 
     # Global image goes first, so the order of patches in previous crops gets increased
-    pooling_idx = np.where(
-        pooling_idx >= 0,
-        pooling_idx + crop_patch_h*crop_patch_w,
-        -1
-    )
+    pooling_idx = np.where(pooling_idx >= 0, pooling_idx + crop_patch_h * crop_patch_w, -1)
     pooling_idx = np.concatenate([resize_idx, pooling_idx])
     image_grid = [np.array([resized_h, resized_w, h, w])]
 
-    return (
-        np.stack(image_grid, 0),
-        batch_pixels_to_patches(crop_arr, image_patch_size),
-        pooling_idx
-    )
+    return (np.stack(image_grid, 0), batch_pixels_to_patches(crop_arr, image_patch_size), pooling_idx)
 
 
 class MolmoAct2ImagesKwargs(ImagesKwargs, total=False):

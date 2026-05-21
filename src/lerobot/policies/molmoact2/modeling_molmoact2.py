@@ -136,7 +136,6 @@ def _sample_beta_timesteps(
     return time_offset + scale * samples
 
 
-
 class MolmoAct2Policy(PreTrainedPolicy):
     config_class = MolmoAct2Config
     name = "molmoact2"

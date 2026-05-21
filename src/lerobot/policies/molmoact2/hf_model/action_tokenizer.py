@@ -118,9 +118,9 @@ class UniversalActionProcessor(ProcessorMixin):
         self.called_time_horizon = self.time_horizon
         self.called_action_dim = self.action_dim
 
-        assert (
-            self.time_horizon is not None and self.action_dim is not None
-        ), "Tokenizer not initialized, call encode() once or pass in time_horizon and action_dim."
+        assert self.time_horizon is not None and self.action_dim is not None, (
+            "Tokenizer not initialized, call encode() once or pass in time_horizon and action_dim."
+        )
 
         decoded_actions = []
         for token in tokens:
@@ -128,13 +128,12 @@ class UniversalActionProcessor(ProcessorMixin):
                 decoded_tokens = self.bpe_tokenizer.decode(token)
                 decoded_dct_coeff = np.array(list(map(ord, decoded_tokens))) + self.min_token
                 decoded_dct_coeff = decoded_dct_coeff.reshape(-1, self.action_dim)
-                assert (
-                    decoded_dct_coeff.shape
-                    == (
-                        self.time_horizon,
-                        self.action_dim,
-                    )
-                ), f"Decoded DCT coefficients have shape {decoded_dct_coeff.shape}, expected ({self.time_horizon}, {self.action_dim})"
+                assert decoded_dct_coeff.shape == (
+                    self.time_horizon,
+                    self.action_dim,
+                ), (
+                    f"Decoded DCT coefficients have shape {decoded_dct_coeff.shape}, expected ({self.time_horizon}, {self.action_dim})"
+                )
             except Exception as e:
                 print(f"Error decoding tokens: {e}")
                 print(f"Tokens: {token}")
@@ -162,9 +161,9 @@ class UniversalActionProcessor(ProcessorMixin):
         min_token = int(np.around(np.concatenate(dct_tokens) * scale).min())
         min_vocab_size = max_token - min_token
 
-        assert (
-            min_vocab_size <= vocab_size
-        ), f"Vocab size {vocab_size} is too small for the range of tokens {min_vocab_size}"
+        assert min_vocab_size <= vocab_size, (
+            f"Vocab size {vocab_size} is too small for the range of tokens {min_vocab_size}"
+        )
         if min_vocab_size + 100 > vocab_size:
             logging.warning(
                 f"Initial alphabet size {min_vocab_size} is almost as large as the vocab"

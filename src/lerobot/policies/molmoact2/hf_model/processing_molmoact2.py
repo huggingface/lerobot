@@ -19,6 +19,7 @@
 """
 Processor class for MolmoAct2.
 """
+
 from typing import Optional, Union
 import dataclasses
 
@@ -50,7 +51,7 @@ IM_START_TOKEN = f"<im_start>"
 LOW_RES_IMAGE_START_TOKEN = f"<low_res_im_start>"
 FRAME_START_TOKEN = f"<frame_start>"
 IM_END_TOKEN = f"<im_end>"
-FRAME_END_TOKEN= f"<frame_end>"
+FRAME_END_TOKEN = f"<frame_end>"
 IM_COL_TOKEN = f"<im_col>"
 IMAGE_PROMPT = "<|image|>"
 VIDEO_PROMPT = "<|video|>"
@@ -69,6 +70,7 @@ IMAGE_TOKENS = [
 
 class MolmoAct2ProcessorKwargs(ProcessingKwargs, total=False):
     """MolmoAct2 processor kwargs"""
+
     images_kwargs: MolmoAct2ImagesKwargs
     videos_kwargs: MolmoAct2VideoProcessorKwargs
     _defaults = {
@@ -106,7 +108,7 @@ class MolmoAct2Processor(ProcessorMixin):
         use_single_crop_start_token: Optional[bool] = True,
         video_use_col_tokens: Optional[bool] = False,
         use_frame_special_tokens: Optional[bool] = True,
-        **kwargs
+        **kwargs,
     ) -> None:
         super().__init__(
             image_processor,
@@ -122,10 +124,7 @@ class MolmoAct2Processor(ProcessorMixin):
 
         self.image_placeholder_token = IMAGE_PROMPT
         self.video_placeholder_token = VIDEO_PROMPT
-        self.image_token_ids = [
-            tokenizer.convert_tokens_to_ids(token)
-            for token in IMAGE_TOKENS
-        ]
+        self.image_token_ids = [tokenizer.convert_tokens_to_ids(token) for token in IMAGE_TOKENS]
 
     def get_image_tokens(self, image_grid: np.ndarray):
         resized_h, resized_w, height, width = image_grid
@@ -158,11 +157,7 @@ class MolmoAct2Processor(ProcessorMixin):
             if self.use_single_crop_col_tokens is None
             else self.use_single_crop_col_tokens
         )
-        image_start_token = (
-            LOW_RES_IMAGE_START_TOKEN
-            if self.use_single_crop_start_token
-            else IM_START_TOKEN
-        )
+        image_start_token = LOW_RES_IMAGE_START_TOKEN if self.use_single_crop_start_token else IM_START_TOKEN
         if use_single_crop_col_tokens:
             per_row = np.concatenate([per_row, [IM_COL_TOKEN]], 0)
         joint = [
@@ -190,7 +185,7 @@ class MolmoAct2Processor(ProcessorMixin):
         for frame_idx, frame_time in enumerate(timestamps):
             # `per-frame-compact` time mode
             prev_space = " " if frame_idx > 0 else ""
-            frame_prefix = prev_space + f"{frame_time:.1f} " # explicit whitespace before/after image tokens
+            frame_prefix = prev_space + f"{frame_time:.1f} "  # explicit whitespace before/after image tokens
 
             video_string += frame_prefix
             per_row = np.full(w, IMAGE_PATCH_TOKEN)
@@ -249,8 +244,8 @@ class MolmoAct2Processor(ProcessorMixin):
                 attention_mask = attention_mask[0]
             return input_ids, attention_mask
         else:
-            new_input_ids = np.full((B, S+1), pad_token_id, dtype=input_ids.dtype)
-            new_attention_mask = np.zeros((B, S+1), dtype=attention_mask.dtype)
+            new_input_ids = np.full((B, S + 1), pad_token_id, dtype=input_ids.dtype)
+            new_attention_mask = np.zeros((B, S + 1), dtype=attention_mask.dtype)
 
             src_idx = np.tile(np.arange(S), (B, 1))  # [B, S]
             valid_mask = src_idx >= first_valid_index[:, None]  # [B, S]
@@ -349,13 +344,13 @@ class MolmoAct2Processor(ProcessorMixin):
         if not isinstance(text, list):
             text = [text]
 
-        text = text.copy() # below lines change text in-place
+        text = text.copy()  # below lines change text in-place
 
         if image_grids is not None:
             index = 0
             for i in range(len(text)):
                 num_images = text[i].count(self.image_placeholder_token)
-                image_grids_i = image_grids[index:index+num_images]
+                image_grids_i = image_grids[index : index + num_images]
                 for image_grid in image_grids_i:
                     image_tokens = self.get_image_tokens(image_grid)
                     image_string = "".join(image_tokens)
@@ -367,8 +362,8 @@ class MolmoAct2Processor(ProcessorMixin):
             for i in range(len(text)):
                 num_videos = text[i].count(self.video_placeholder_token)
                 assert num_videos in {0, 1}, "At most one video is supported for now"
-                video_grids_i = video_grids[index:index+num_videos]
-                metadata_i = video_metadata[index:index+num_videos]
+                video_grids_i = video_grids[index : index + num_videos]
+                metadata_i = video_metadata[index : index + num_videos]
                 for video_grid, metadata in zip(video_grids_i, metadata_i):
                     video_string = self.get_video_string(
                         video_grid,

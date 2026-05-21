@@ -76,10 +76,7 @@ class MolmoAct2VitConfig(PretrainedConfig):
         **kwargs,
     ):
         self.attn_implementation = attn_implementation
-        super().__init__(
-            attn_implementation=attn_implementation,
-            **kwargs
-        )
+        super().__init__(attn_implementation=attn_implementation, **kwargs)
         self.hidden_size = hidden_size
         self.intermediate_size = intermediate_size
         self.num_hidden_layers = num_hidden_layers
@@ -151,10 +148,7 @@ class MolmoAct2AdapterConfig(PretrainedConfig):
         **kwargs,
     ):
         self.attn_implementation = attn_implementation
-        super().__init__(
-            attn_implementation=attn_implementation,
-            **kwargs
-        )
+        super().__init__(attn_implementation=attn_implementation, **kwargs)
         self.vit_layers = vit_layers
         self.pooling_attention_mask = pooling_attention_mask
         self.hidden_size = hidden_size
@@ -220,8 +214,8 @@ class MolmoAct2TextConfig(PretrainedConfig):
         num_hidden_layers: int = 48,
         intermediate_size: int = 18944,
         hidden_act: str = "silu",
-        embedding_dropout: float=0.0,
-        attention_dropout: float=0.0,
+        embedding_dropout: float = 0.0,
+        attention_dropout: float = 0.0,
         residual_dropout: float = 0.0,
         max_position_embeddings: int = 4096,
         rope_theta: float = 1000000.0,
@@ -239,9 +233,7 @@ class MolmoAct2TextConfig(PretrainedConfig):
     ):
         self.attn_implementation = attn_implementation
         super().__init__(
-            tie_word_embeddings=tie_word_embeddings,
-            attn_implementation=attn_implementation,
-            **kwargs
+            tie_word_embeddings=tie_word_embeddings, attn_implementation=attn_implementation, **kwargs
         )
         self.hidden_size = hidden_size
         self.num_attention_heads = num_attention_heads
