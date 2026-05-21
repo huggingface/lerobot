@@ -14,6 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Unit tests for MolmoAct2's LeRobot policy interface."""
+
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 import json
@@ -24,6 +28,9 @@ import numpy as np
 import pytest
 import torch
 import torch.nn.functional as F  # noqa: N812
+
+pytest.importorskip("transformers")
+pytest.importorskip("scipy")
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.policies import get_policy_class, make_policy_config
