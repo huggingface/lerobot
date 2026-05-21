@@ -332,8 +332,8 @@ class RealSenseCamera(Camera):
         from the camera hardware via the RealSense pipeline.
 
         Returns:
-            np.ndarray: The depth map as a NumPy array (height, width)
-                  of type `np.uint16` (raw depth values in millimeters) and rotation.
+            np.ndarray: The depth map as a NumPy array (height, width, 1)
+                  of type `np.uint16` (raw depth values in millimeters).
 
         Raises:
             DeviceNotConnectedError: If the camera is not connected.
@@ -486,6 +486,8 @@ class RealSenseCamera(Camera):
                     depth_frame_raw = frame.get_depth_frame()
                     depth_frame = np.asanyarray(depth_frame_raw.get_data())
                     processed_depth_frame = self._postprocess_image(depth_frame, depth_frame=True)
+                    if processed_depth_frame.ndim == 2: # (H, W) -> (H, W, 1)
+                        processed_depth_frame = processed_depth_frame[..., np.newaxis]
 
                 capture_time = time.perf_counter()
 
@@ -614,7 +616,7 @@ class RealSenseCamera(Camera):
         """Read the latest depth frame asynchronously, in metric meters.
 
         Mirrors :meth:`async_read` but returns the depth stream rather than the
-        color stream. Output is ``np.uint16`` of shape ``(H, W)``.
+        color stream. Output is ``np.uint16`` of shape ``(H, W, 1)``.
 
         Raises:
             DeviceNotConnectedError: If the camera is not connected.
@@ -645,7 +647,7 @@ class RealSenseCamera(Camera):
         """Return the most recent depth frame in metric meters (peeking).
 
         Non-blocking counterpart of :meth:`read_latest` for the depth stream.
-        Output is ``np.float32`` of shape ``(H, W)`` in meters.
+        Output is ``np.uint16`` of shape ``(H, W, 1)`` in millimeters.
 
         Raises:
             DeviceNotConnectedError: If the camera is not connected.
