@@ -750,7 +750,7 @@ class _CameraEncoderThread(threading.Thread):
 
                 # Ensure HWC (RGB or depth) uint8 (RGB only) numpy array
                 if isinstance(frame_data, np.ndarray):
-                    if frame_data.ndim == 3 and frame_data.shape[0] == 3:
+                    if frame_data.ndim == 3 and frame_data.shape[0] in (1, 3):
                         # CHW -> HWC
                         frame_data = frame_data.transpose(1, 2, 0)
                     if not self.is_depth and frame_data.dtype != np.uint8:
@@ -876,7 +876,7 @@ class StreamingVideoEncoder:
 
         Args:
             video_keys: List of video feature keys (e.g. ["observation.images.laptop"])
-            depth_video_keys: List of video feature keys that carry depth maps (e.g. ["observation.depth.laptop"])
+            depth_video_keys: List of video feature keys that carry depth maps (e.g. ["observation.images.laptop_depth"])
             temp_dir: Base directory for temporary MP4 files
         """
         if self._episode_active:

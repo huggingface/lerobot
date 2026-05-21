@@ -113,6 +113,10 @@ def quantize_depth(
     if isinstance(depth, torch.Tensor):
         depth = depth.detach().cpu().numpy()
 
+    # Squeeze single-channel dim: (H, W, 1) or (1, H, W) → (H, W)
+    if depth.ndim == 3 and (depth.shape[-1] == 1 or depth.shape[0] == 1):
+        depth = depth.squeeze()
+
     depth_f, resolved_unit = _depth_input_to_float32_and_unit(depth, input_unit=input_unit)
 
     # Convert depth_min, depth_max, and shift to the resolved input unit.
@@ -192,6 +196,10 @@ def dequantize_depth(
     else:
         depth_m = norm * (depth_max_m - depth_min_m) + depth_min_m
     depth_m = np.clip(depth_m, depth_min_m, depth_max_m).astype(np.float32, copy=False)
+    
+    # Add single-channel dim: (H, W) → (H, W, 1)
+    if depth_m.ndim == 2:
+        depth_m = depth_m[..., np.newaxis]
 
     # Return depth as float32 meters.
     if output_unit == "m":
