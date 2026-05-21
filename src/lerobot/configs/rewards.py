@@ -27,11 +27,12 @@ from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import CONFIG_NAME
 from huggingface_hub.errors import HfHubHTTPError
 
-from lerobot.configs.types import PolicyFeature
 from lerobot.optim.optimizers import OptimizerConfig
 from lerobot.optim.schedulers import LRSchedulerConfig
 from lerobot.utils.device_utils import auto_select_torch_device, is_torch_device_available
 from lerobot.utils.hub import HubMixin
+
+from .types import PolicyFeature
 
 T = TypeVar("T", bound="RewardModelConfig")
 logger = logging.getLogger(__name__)
@@ -89,9 +90,9 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     def reward_delta_indices(self) -> list | None:  # type: ignore[type-arg]
         return None
 
-    @abc.abstractmethod
-    def get_optimizer_preset(self) -> OptimizerConfig:
-        raise NotImplementedError
+    def get_optimizer_preset(self) -> OptimizerConfig | None:
+        """Default optimizer for this reward model, or ``None`` for zero-shot models."""
+        return None
 
     def get_scheduler_preset(self) -> LRSchedulerConfig | None:
         return None

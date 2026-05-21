@@ -28,10 +28,11 @@ import torch.nn.functional as F  # noqa: N812
 import torch.utils.checkpoint
 from torch import Tensor
 
-from lerobot.policies.eo1.configuration_eo1 import EO1Config
-from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
+
+from ..pretrained import PreTrainedPolicy
+from .configuration_eo1 import EO1Config
 
 if TYPE_CHECKING or _transformers_available:
     from transformers.activations import ACT2FN
