@@ -385,7 +385,8 @@ class TestStreamingVideoEncoder:
 
         # Verify codec options include thread tuning for libsvtav1 (lp=…)
         thread = encoder._threads[f"{OBS_IMAGES}.cam"]
-        assert "svtav1-params" in thread.codec_options or "threads" in thread.codec_options
+        codec_opts = thread.video_encoder.get_codec_options(encoder_threads=thread.encoder_threads)
+        assert "svtav1-params" in codec_opts or "threads" in codec_opts
 
         # Feed some frames and finish to ensure it works end-to-end
         num_frames = 10
