@@ -465,8 +465,8 @@ class RealSenseCamera(Camera):
         Internal loop run by the background thread for asynchronous reading.
 
         On each iteration:
-        1. Reads a color frame with 500ms timeout
-        2. Stores result in latest_frame and updates timestamp (thread-safe)
+        1. Reads a color/depth frame (blocking call with 10s timeout)
+        2. Stores result in latest_color_frame/latest_depth_frame and updates timestamp (thread-safe)
         3. Sets new_frame_event to notify listeners
 
         Stops on DeviceNotConnectedError, logs other errors and continues.
@@ -474,8 +474,9 @@ class RealSenseCamera(Camera):
         if self.stop_event is None:
             raise RuntimeError(f"{self}: stop_event is not initialized before starting read loop.")
 
+        stop_event = self.stop_event
         failure_count = 0
-        while not self.stop_event.is_set():
+        while not stop_event.is_set():
             try:
                 frame = self._read_from_hardware()
                 color_frame_raw = frame.get_color_frame()
@@ -486,7 +487,7 @@ class RealSenseCamera(Camera):
                     depth_frame_raw = frame.get_depth_frame()
                     depth_frame = np.asanyarray(depth_frame_raw.get_data())
                     processed_depth_frame = self._postprocess_image(depth_frame, depth_frame=True)
-                    if processed_depth_frame.ndim == 2: # (H, W) -> (H, W, 1)
+                    if processed_depth_frame.ndim == 2:  # (H, W) -> (H, W, 1)
                         processed_depth_frame = processed_depth_frame[..., np.newaxis]
 
                 capture_time = time.perf_counter()
@@ -524,6 +525,8 @@ class RealSenseCamera(Camera):
 
         if self.thread is not None and self.thread.is_alive():
             self.thread.join(timeout=2.0)
+            if self.thread.is_alive():  # pragma: no cover
+                logger.warning(f"{self} read thread did not terminate within timeout.")
 
         self.thread = None
         self.stop_event = None
