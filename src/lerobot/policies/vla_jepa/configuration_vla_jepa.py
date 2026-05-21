@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
@@ -19,8 +18,8 @@ class VLAJEPAConfig(PreTrainedConfig):
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
-            "STATE": NormalizationMode.MEAN_STD,
-            "ACTION": NormalizationMode.MEAN_STD,
+            "STATE": NormalizationMode.IDENTITY,
+            "ACTION": NormalizationMode.MIN_MAX,
         }
     )
 
@@ -66,7 +65,6 @@ class VLAJEPAConfig(PreTrainedConfig):
     repeated_diffusion_steps: int = 8  # independent noise draws per batch item (CogACT-style)
 
     resize_images_to: tuple[int, int] | None = None
-    action_unnormalization_stats: dict[str, Any] | None = None
     binarize_gripper_action: bool = True
     clip_normalized_actions: bool = True
     torch_dtype: str = "bfloat16"

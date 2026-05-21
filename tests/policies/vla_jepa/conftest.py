@@ -111,6 +111,41 @@ def make_inference_batch(
 # ---------------------------------------------------------------------------
 
 
+class _FakeLanguageLayer(nn.Module):
+    """Leaf module whose forward hook is captured by _qwen_last_decoder_hidden."""
+
+    def __init__(self, hidden_size: int) -> None:
+        super().__init__()
+        self._hidden_size = hidden_size
+
+    def forward(self, hidden: Tensor, **_: object) -> tuple[Tensor, ...]:
+        return (hidden,)
+
+
+class _FakeLanguageModel(nn.Module):
+    def __init__(self, hidden_size: int) -> None:
+        super().__init__()
+        self._hidden_size = hidden_size
+        self.layers = nn.ModuleList([_FakeLanguageLayer(hidden_size)])
+
+    def forward(self, input_ids: Tensor, **_: object) -> SimpleNamespace:
+        batch_size, seq_len = input_ids.shape
+        hidden = torch.zeros(batch_size, seq_len, self._hidden_size, device=input_ids.device)
+        self.layers[-1](hidden)
+        return SimpleNamespace()
+
+
+class _FakeQwenInnerModel(nn.Module):
+    """Mimics the `.model.model` level that _qwen_last_decoder_hidden walks into."""
+
+    def __init__(self, hidden_size: int) -> None:
+        super().__init__()
+        self.language_model = _FakeLanguageModel(hidden_size)
+
+    def forward(self, input_ids: Tensor, **kwargs: object) -> SimpleNamespace:
+        return self.language_model(input_ids)
+
+
 class _FakeQwenBackbone(nn.Module):
     def __init__(self, hidden_size: int) -> None:
         super().__init__()
@@ -119,6 +154,7 @@ class _FakeQwenBackbone(nn.Module):
             hidden_size=hidden_size,
             text_config=SimpleNamespace(hidden_size=hidden_size),
         )
+        self.model = _FakeQwenInnerModel(hidden_size)
 
     @property
     def device(self) -> torch.device:
@@ -189,7 +225,9 @@ class _FakeVideoEncoder(nn.Module):
     def __init__(self, hidden_size: int = 8, tubelet_size: int = 1) -> None:
         super().__init__()
         self.weight = nn.Parameter(torch.ones(1))
-        self.config = SimpleNamespace(hidden_size=hidden_size, tubelet_size=tubelet_size)
+        # image_size must be >= patch_size (16) so the predictor grid is non-zero.
+        # Setting image_size=16 gives a 1x1 grid (1 patch per frame).
+        self.config = SimpleNamespace(hidden_size=hidden_size, tubelet_size=tubelet_size, image_size=16)
 
     @property
     def device(self) -> torch.device:

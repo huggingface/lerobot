@@ -405,7 +405,7 @@ class VLAJEPAPolicy(PreTrainedPolicy):
 
     # ---- Format Conversion: LeRobot → Native ----
 
-    def _lerobot_to_native(self, batch: dict[str, Tensor]) -> list[dict]:
+    def _prepare_model_inputs(self, batch: dict[str, Tensor]) -> list[dict]:
         """
         Convert LeRobot batch format to native VLA-JEPA examples format.
 
@@ -524,45 +524,19 @@ class VLAJEPAPolicy(PreTrainedPolicy):
 
         return examples
 
-    # ---- Format Conversion: Native → LeRobot ----
-
-    def _native_to_lerobot(self, native_output: dict[str, Tensor]) -> tuple[Tensor, dict[str, float]]:
-        """
-        Convert native VLA-JEPA output dict to LeRobot (loss, logs) format.
-
-        Native output:
-            {"action_loss": Tensor, "wm_loss": Tensor}
-            or {"wm_loss": Tensor}  (video-only mode)
-
-        LeRobot output:
-            (total_loss: scalar Tensor, {"action_loss": float, "wm_loss": float, "loss": float})
-        """
-        logs: dict[str, float] = {}
-        total_loss = torch.tensor(0.0, device=self.config.device)
-
-        if "action_loss" in native_output:
-            total_loss = total_loss + native_output["action_loss"]
-            logs["action_loss"] = native_output["action_loss"].detach().item()
-
-        if "wm_loss" in native_output:
-            total_loss = total_loss + native_output["wm_loss"]
-            logs["wm_loss"] = native_output["wm_loss"].detach().item()
-
-        logs["loss"] = (
-            total_loss.detach().item()
-            if total_loss.item() != 0
-            else (logs.get("wm_loss", 0.0) + logs.get("action_loss", 0.0))
-        )
-
-        return total_loss, logs
-
     # ---- LeRobot Policy Interface ----
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
-        """LeRobot train forward: convert → native forward → convert back."""
-        examples = self._lerobot_to_native(batch)
+        """LeRobot train forward: convert → native forward → aggregate losses."""
+        examples = self._prepare_model_inputs(batch)
         native_output = self.model.forward(examples)
-        return self._native_to_lerobot(native_output)
+
+        total_loss = native_output.get("action_loss", torch.tensor(0.0)) + native_output.get(
+            "wm_loss", torch.tensor(0.0)
+        )
+        logs = {k: v.detach().item() for k, v in native_output.items()}
+        logs["loss"] = total_loss.detach().item()
+        return total_loss, logs
 
     def get_optim_params(self) -> dict:
         return self.model.parameters()
@@ -573,8 +547,7 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         self.eval()
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
-        # Convert to native format
-        examples = self._lerobot_to_native(batch)
+        examples = self._prepare_model_inputs(batch)
         batch_images = [ex["image"] for ex in examples]
         instructions = [ex["lang"] for ex in examples]
 
@@ -582,34 +555,8 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         if "state" in examples[0] and examples[0]["state"] is not None:
             state_np = np.stack([ex["state"] for ex in examples])
 
-        # Call native predict
         actions_np = self.model.predict_action(batch_images, instructions, state_np)
-
-        # Convert back to tensor on the right device
-        actions_np = self._unnormalize_actions(actions_np)
         return torch.from_numpy(actions_np).to(device=self.config.device, dtype=torch.float32)
-
-    def _unnormalize_actions(self, normalized_actions: np.ndarray) -> np.ndarray:
-        """Match starVLA's LIBERO action post-processing exactly."""
-        stats = self.config.action_unnormalization_stats
-        if not stats:
-            return normalized_actions
-
-        actions = normalized_actions.astype(np.float32, copy=True)
-        if self.config.clip_normalized_actions:
-            actions = np.clip(actions, -1.0, 1.0)
-
-        if self.config.binarize_gripper_action and actions.shape[-1] >= 7:
-            actions[..., 6] = np.where(actions[..., 6] < 0.5, 0.0, 1.0)
-
-        action_min = np.asarray(stats["min"], dtype=np.float32)
-        action_max = np.asarray(stats["max"], dtype=np.float32)
-        mask = np.asarray(stats.get("mask", np.ones_like(action_min, dtype=bool)), dtype=bool)
-        scaled = 0.5 * (actions + 1.0) * (action_max - action_min) + action_min
-        actions = np.where(mask, scaled, actions).astype(np.float32)
-        if self.config.binarize_gripper_action and actions.shape[-1] >= 7:
-            actions[..., 6] = 1.0 - 2.0 * (actions[..., 6] > 0.5)
-        return actions
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:

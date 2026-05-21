@@ -75,23 +75,24 @@ def _map_checkpoint_key(raw_key: str) -> str | None:
     return None
 
 
-def _fetch_action_stats(api: "HfApi", source_repo_id: str, subfolder: str) -> dict | None:
-    """Try to download dataset_statistics.json and return the action stats dict."""
+def _fetch_action_stats(api: HfApi, source_repo_id: str, subfolder: str) -> dict | None:
+    """Download dataset_statistics.json and return the action stats dict."""
     import json
 
     stats_file = f"{subfolder}/dataset_statistics.json"
     try:
         local = api.hf_hub_download(source_repo_id, stats_file)
         data = json.loads(Path(local).read_text())
-        # The original repo nests stats under a robot key, e.g. {"franka": {"action": {...}}}
+        # Original repo nests stats under a robot key, e.g. {"franka": {"action": {...}}}
         for robot_key in data:
             if isinstance(data[robot_key], dict) and "action" in data[robot_key]:
                 log.info("  Loaded action stats from %s (robot key: %s)", stats_file, robot_key)
                 return data[robot_key]["action"]
-        log.warning("  %s found but no 'action' key under any robot — skipping action stats.", stats_file)
+        log.warning("  %s found but no 'action' key under any robot key — skipping action stats.", stats_file)
     except Exception as exc:  # noqa: BLE001
-        log.warning("  Could not fetch %s: %s — action_unnormalization_stats will be None.", stats_file, exc)
+        log.warning("  Could not fetch %s: %s — postprocessor will have no unnorm stats.", stats_file, exc)
     return None
+
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +153,6 @@ def _build_config(
     camera_keys: list[str],
     with_state: bool,
     enable_world_model: bool = True,
-    action_stats: dict | None = None,
 ):
     from lerobot.configs.types import FeatureType, PolicyFeature
     from lerobot.policies.vla_jepa.configuration_vla_jepa import VLAJEPAConfig
@@ -167,7 +167,6 @@ def _build_config(
             "action": PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
         },
         enable_world_model=enable_world_model,
-        action_unnormalization_stats=action_stats,
         binarize_gripper_action=True,
         clip_normalized_actions=True,
         **_ARCH,
@@ -277,13 +276,15 @@ def main() -> None:
             log.info("  Skipped sample: %s", skipped_keys[:5])
         log.info("  First 5 mapped keys: %s", list(mapped_sd)[:5])
 
-        # Fetch action unnormalization stats from the source repo
-        action_stats = _fetch_action_stats(api, SOURCE_REPO_ID, subfolder)
+        # 3. Fetch action stats (min/max per dim) needed by the postprocessor unnormalizer
+        action_stats_raw = _fetch_action_stats(api, SOURCE_REPO_ID, subfolder)
+        # Wrap as {"action": {...}} for UnnormalizerProcessorStep
+        dataset_stats = {"action": action_stats_raw} if action_stats_raw is not None else None
 
-        # 3. Build config (no policy instantiation — avoids loading backbone from Hub)
-        config = _build_config(camera_keys, with_state, enable_world_model, action_stats)
+        # 4. Build config (no policy instantiation — avoids loading backbone from Hub)
+        config = _build_config(camera_keys, with_state, enable_world_model)
 
-        # 4. Save everything to a temp dir and upload in one shot
+        # 5. Save everything to a temp dir and upload in one shot
         api.create_repo(target_repo_id, repo_type="model", exist_ok=True)
         with tempfile.TemporaryDirectory() as tmp:
             save_dir = Path(tmp)
@@ -293,7 +294,7 @@ def main() -> None:
 
             config._save_pretrained(save_dir)  # writes config.json via draccus
 
-            preprocessor, postprocessor = make_vla_jepa_pre_post_processors(config)
+            preprocessor, postprocessor = make_vla_jepa_pre_post_processors(config, dataset_stats)
             preprocessor.save_pretrained(save_dir)   # writes policy_preprocessor.json
             postprocessor.save_pretrained(save_dir)  # writes policy_postprocessor.json
 

@@ -9,14 +9,54 @@ from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     ComplementaryDataProcessorStep,
     DeviceProcessorStep,
+    EnvTransition,
     NormalizerProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
+    ProcessorStep,
     ProcessorStepRegistry,
     RenameObservationsProcessorStep,
+    TransitionKey,
+    UnnormalizerProcessorStep,
 )
 from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
+
+
+@ProcessorStepRegistry.register(name="vla_jepa_clip_actions")
+class ClipActionsProcessorStep(ProcessorStep):
+    """Clips action tensor to [-1, 1] before unnormalization."""
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        action = transition.get(TransitionKey.ACTION)
+        if action is not None:
+            transition = dict(transition)
+            transition[TransitionKey.ACTION] = action.clamp(-1.0, 1.0)
+        return transition
+
+    def transform_features(self, features):
+        return features
+
+
+@ProcessorStepRegistry.register(name="vla_jepa_binarize_gripper")
+class BinarizeGripperProcessorStep(ProcessorStep):
+    """Binarizes gripper dim (index 6) after unnormalization.
+
+    Maps continuous value to {-1, 1}: > 0.5 → -1, <= 0.5 → 1 (matches starVLA convention).
+    Only applied when action has >= 7 dimensions.
+    """
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        action = transition.get(TransitionKey.ACTION)
+        if action is not None and action.shape[-1] >= 7:
+            transition = dict(transition)
+            a = action.clone()
+            a[..., 6] = 1.0 - 2.0 * (a[..., 6] > 0.5).float()
+            transition[TransitionKey.ACTION] = a
+        return transition
+
+    def transform_features(self, features):
+        return features
 
 
 def make_vla_jepa_pre_post_processors(
@@ -37,9 +77,19 @@ def make_vla_jepa_pre_post_processors(
             stats=dataset_stats,
         ),
     ]
-    output_steps = [
-        DeviceProcessorStep(device="cpu"),
-    ]
+    output_steps: list[ProcessorStep] = []
+    if config.clip_normalized_actions:
+        output_steps.append(ClipActionsProcessorStep())
+    output_steps.append(
+        UnnormalizerProcessorStep(
+            features=features,
+            norm_map=config.normalization_mapping,
+            stats=dataset_stats,
+        )
+    )
+    if config.binarize_gripper_action:
+        output_steps.append(BinarizeGripperProcessorStep())
+    output_steps.append(DeviceProcessorStep(device="cpu"))
     return (
         PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
             steps=input_steps,
