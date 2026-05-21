@@ -26,7 +26,7 @@ pytest.importorskip("av", reason="av is required (install lerobot[dataset])")
 
 import av  # noqa: E402
 
-from lerobot.configs import VALID_VIDEO_CODECS, VideoEncoderConfig
+from lerobot.configs import VALID_VIDEO_CODECS, VideoEncoderConfig, DepthEncoderConfig
 from lerobot.datasets.image_writer import write_image
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pyav_utils import get_codec
@@ -402,6 +402,11 @@ class TestGetVideoInfo:
 
         assert info["video.codec"]  # populated from stream, not from config's vcodec
         assert info["video.pix_fmt"] == "yuv420p"
+
+    def test_depth_encoder_config_sets_is_depth_map_true(self):
+        """A ``DepthEncoderConfig`` causes ``get_video_info`` to mark the stream as depth."""
+        info = get_video_info(TEST_ARTIFACTS_DIR / "clip_4frames.mp4", video_encoder=DepthEncoderConfig())
+        assert info["is_depth_map"] is True
 
 
 class TestEncodeVideoFrames:

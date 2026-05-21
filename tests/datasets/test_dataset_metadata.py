@@ -53,17 +53,6 @@ IMAGE_FEATURES = {
     },
 }
 
-DEPTH_FEATURES = {
-    **SIMPLE_FEATURES,
-    "observation.images.laptop_depth": {
-        "dtype": "video",
-        "shape": (64, 96, 1),
-        "names": ["height", "width", "channels"],
-        "info": {"is_depth_map": True},
-    },
-}
-
-
 def _make_dummy_stats(features: dict) -> dict:
     """Create minimal episode stats matching the given features."""
     stats = {}
@@ -154,14 +143,32 @@ def test_create_without_videos_has_no_video_path(tmp_path):
     assert meta.video_keys == []
 
 
-def test_depth_keys_property_filters_by_marker(tmp_path):
-    """``depth_keys`` selects only features carrying ``is_depth_map=True`` in info."""
+@pytest.mark.parametrize(
+    ("marker_field", "marker_key"),
+    [
+        ("info", "is_depth_map"),
+        ("info", "video.is_depth_map"),
+        ("video_info", "video.is_depth_map"),
+    ],
+    ids=["info.is_depth_map", "info.video.is_depth_map_legacy", "video_info.video.is_depth_map_legacy"],
+)
+def test_depth_keys_property_filters_by_marker(tmp_path, marker_field, marker_key):
+    """``depth_keys`` recognises the canonical and the two legacy marker variants."""
+    depth_feature = {
+        "dtype": "video",
+        "shape": (64, 96, 1),
+        "names": ["height", "width", "channels"],
+        marker_field: {marker_key: True},
+    }
     features = {
         **VIDEO_FEATURES,
-        **DEPTH_FEATURES,
+        "observation.images.laptop_depth": depth_feature,
     }
     meta = LeRobotDatasetMetadata.create(
-        repo_id="test/depth_keys", fps=DEFAULT_FPS, features=features, root=tmp_path / "depth_keys"
+        repo_id="test/depth_keys",
+        fps=DEFAULT_FPS,
+        features=features,
+        root=tmp_path / f"depth_keys_{marker_field}_{marker_key.replace('.', '_')}",
     )
 
     assert set(meta.video_keys) == {"observation.images.laptop", "observation.images.laptop_depth"}
