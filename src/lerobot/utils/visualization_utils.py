@@ -111,11 +111,11 @@ def log_rerun_data(
                         img_entity = (
                             rr.DepthImage(arr, colormap=rr.components.Colormap.Viridis).compress()
                             if compress_images
-                            else rr.rr.DepthImage(arr, colormap=rr.components.Colormap.Viridis)
+                            else rr.DepthImage(arr, colormap=rr.components.Colormap.Viridis)
                         )
                     else:
                         img_entity = rr.Image(arr).compress() if compress_images else rr.Image(arr)
-                    rr.log(key, entity=img_entity, static=True)
+                    rr.log(key, entity=img_entity)
 
     if action:
         for k, v in action.items():

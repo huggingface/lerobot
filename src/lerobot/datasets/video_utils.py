@@ -443,7 +443,8 @@ def encode_video_frames(
     video_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Get input frames
-    template = "frame-" + ("[0-9]" * 6) + ".png"
+    suffix = ".png" if not isinstance(video_encoder, DepthEncoderConfig) else ".tiff"
+    template = "frame-" + ("[0-9]" * 6) + suffix
     input_list = sorted(
         glob.glob(str(imgs_dir / template)), key=lambda x: int(x.split("-")[-1].split(".")[0])
     )
@@ -873,20 +874,23 @@ class StreamingVideoEncoder:
         self._episode_active = False
         self._closed = False
 
-    def start_episode(self, video_keys: list[str], depth_video_keys: list[str], temp_dir: Path) -> None:
+    def start_episode(
+        self, video_keys: list[str], temp_dir: Path, depth_video_keys: list[str] | None = []
+    ) -> None:
         """Start encoder threads for a new episode.
 
         Args:
             video_keys: List of video feature keys (e.g. ["observation.images.laptop"])
-            depth_video_keys: List of video feature keys that carry depth maps (e.g. ["observation.images.laptop_depth"])
             temp_dir: Base directory for temporary MP4 files
+            depth_video_keys: List of video feature keys that carry depth maps (e.g.
+                ["observation.images.laptop_depth"]).  Defaults to ``[]`` (no depth keys).
         """
         if self._episode_active:
             self.cancel_episode()
 
         self._dropped_frames.clear()
 
-        for video_key in video_keys + depth_video_keys:
+        for video_key in video_keys:
             frame_queue: queue.Queue = queue.Queue(maxsize=self.queue_maxsize)
             result_queue: queue.Queue = queue.Queue(maxsize=1)
             stop_event = threading.Event()
@@ -1155,7 +1159,8 @@ def get_video_info(
             if field_name == "vcodec":
                 continue
             video_info.setdefault(f"video.{field_name}", field_value)
-        video_info["is_depth_map"] = isinstance(video_encoder, DepthEncoderConfig)
+
+    video_info["is_depth_map"] = isinstance(video_encoder, DepthEncoderConfig)
 
     return video_info
 
