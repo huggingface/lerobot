@@ -326,7 +326,19 @@ def add_actor_information_and_train(
 
     log_training_info(cfg=cfg, policy=policy)
 
-    replay_buffer = initialize_replay_buffer(cfg, device, storage_device)
+    # QC (action-chunking) uses a plugin-local buffer that emits chunk-aware
+    # batches (state, action chunk, reward_chunk, state_at_h, valid_h, mask_h).
+    # SAC path (default) uses the standard step-level ReplayBuffer.
+    if getattr(cfg.policy, "type", None) == "qc_ext":
+        from lerobot_policy_qc.qc_utils import QCReplayBuffer
+
+        replay_buffer = QCReplayBuffer(
+            capacity=cfg.policy.online_buffer_capacity,
+            device=device,
+            storage_device=storage_device,
+        )
+    else:
+        replay_buffer = initialize_replay_buffer(cfg, device, storage_device)
     batch_size = cfg.batch_size
     offline_replay_buffer = None
 
@@ -431,6 +443,134 @@ def add_actor_information_and_train(
         if len(replay_buffer) < online_step_before_learning:
             continue
 
+        # DEBUG: confirm learning actually started + steady-state throughput.
+        # Uses raw print(..., flush=True) so it survives Python stdout buffering
+        # even when running under tee/redirect with threaded gRPC.
+        _warm_n_dbg = int(getattr(cfg.policy, "critic_warmup_steps", 0) or 0)
+        _warm_active_dbg = (
+            getattr(cfg.policy, "residual_mode", False)
+            and _warm_n_dbg > 0
+            and optimization_step < _warm_n_dbg
+        )
+        if not hasattr(add_actor_information_and_train, "_dbg_started"):
+            add_actor_information_and_train._dbg_started = True
+            add_actor_information_and_train._dbg_t0 = time.time()
+            add_actor_information_and_train._dbg_step0 = optimization_step
+            print(
+                f"[LEARNER-DBG] training STARTED: buffer={len(replay_buffer)} "
+                f"threshold={online_step_before_learning} step0={optimization_step} "
+                f"critic_warmup_steps={_warm_n_dbg}"
+                + (" (critic-only on Q^pi_base)" if _warm_active_dbg else ""),
+                flush=True,
+            )
+            add_actor_information_and_train._dbg_warm_end_logged = (not _warm_active_dbg)
+        if getattr(add_actor_information_and_train, "_dbg_started", False) \
+                and not getattr(add_actor_information_and_train, "_dbg_warm_end_logged", True) \
+                and not _warm_active_dbg:
+            print(
+                f"[LEARNER-DBG] critic warmup DONE at opt_step={optimization_step} "
+                "— actor + temperature updates ENABLED",
+                flush=True,
+            )
+            add_actor_information_and_train._dbg_warm_end_logged = True
+        elif (optimization_step - add_actor_information_and_train._dbg_step0) > 0 \
+                and optimization_step % 50 == 0:
+            _dt = time.time() - add_actor_information_and_train._dbg_t0
+            _dn = optimization_step - add_actor_information_and_train._dbg_step0
+            _rate = _dn / max(_dt, 1e-6)
+            print(
+                f"[LEARNER-DBG] opt_step={optimization_step} "
+                f"rate={_rate:.2f} steps/s buffer={len(replay_buffer)}",
+                flush=True,
+            )
+
+        # ----- QC (action-chunking) branch ----------------------------------
+        # Type-gated on cfg.policy.type == "qc_ext". SAC path below is bit-
+        # identical when this branch is skipped. The QC opt step is
+        # self-contained: it samples chunk batches via
+        # QCReplayBuffer.sample_chunk_sequence, calls compute_loss_critic /
+        # compute_loss_actor directly (bypassing the SAC-shaped forward()
+        # dispatcher), and runs its own logging + push + checkpoint
+        # bookkeeping before `continue`-ing past the SAC opt body.
+        if getattr(cfg.policy, "type", None) == "qc_ext":
+            t0_qc = time.time()
+            qc_h = int(cfg.policy.horizon_length)
+            batch_qc = replay_buffer.sample_chunk_sequence(
+                batch_size=batch_size, horizon=qc_h
+            )
+
+            # --- critic update ---
+            loss_critic = policy.compute_loss_critic(batch_qc)
+            optimizers["critic"].zero_grad()
+            loss_critic.backward()
+            critic_grad_norm = torch.nn.utils.clip_grad_norm_(
+                policy.critic_ensemble.parameters(), max_norm=clip_grad_norm_value
+            ).item()
+            optimizers["critic"].step()
+
+            # --- actor update (flow + one_step) ---
+            loss_actor = policy.compute_loss_actor(batch_qc)
+            optimizers["actor"].zero_grad()
+            loss_actor.backward()
+            actor_grad_norm = torch.nn.utils.clip_grad_norm_(
+                list(policy.flow_actor.parameters())
+                + list(policy.one_step_actor.parameters()),
+                max_norm=clip_grad_norm_value,
+            ).item()
+            optimizers["actor"].step()
+
+            # --- target Polyak EMA ---
+            policy.update_target_networks()
+
+            # --- bookkeeping (mirrors the SAC tail of the loop) ---
+            if time.time() - last_time_policy_pushed > policy_parameters_push_frequency:
+                push_actor_policy_to_queue(parameters_queue=parameters_queue, policy=policy)
+                last_time_policy_pushed = time.time()
+
+            training_infos = {
+                "loss_critic": loss_critic.item(),
+                "loss_actor": loss_actor.item(),
+                "critic_grad_norm": critic_grad_norm,
+                "actor_grad_norm": actor_grad_norm,
+                "replay_buffer_size": len(replay_buffer),
+                "Optimization step": optimization_step,
+            }
+            if wandb_logger and optimization_step % log_freq == 0:
+                wandb_logger.log_dict(d=training_infos, mode="train", custom_step_key="Optimization step")
+
+            dt_qc = time.time() - t0_qc
+            hz_qc = 1.0 / max(dt_qc, 1e-9)
+            logging.info(f"[LEARNER] Optimization frequency loop [Hz]: {hz_qc}")
+            if wandb_logger:
+                wandb_logger.log_dict(
+                    {"Optimization frequency loop [Hz]": hz_qc, "Optimization step": optimization_step},
+                    mode="train",
+                    custom_step_key="Optimization step",
+                )
+
+            optimization_step += 1
+            if optimization_step % log_freq == 0:
+                logging.info(f"[LEARNER] Number of optimization step: {optimization_step}")
+
+            if saving_checkpoint and (
+                optimization_step % save_freq == 0 or optimization_step == online_steps
+            ):
+                save_training_checkpoint(
+                    cfg=cfg,
+                    optimization_step=optimization_step,
+                    online_steps=online_steps,
+                    interaction_message=interaction_message,
+                    policy=policy,
+                    optimizers=optimizers,
+                    replay_buffer=replay_buffer,
+                    offline_replay_buffer=offline_replay_buffer,
+                    dataset_repo_id=dataset_repo_id,
+                    fps=fps,
+                )
+
+            continue
+        # ----- /QC branch ---------------------------------------------------
+
         if online_iterator is None:
             online_iterator = replay_buffer.get_iterator(
                 batch_size=batch_size, async_prefetch=async_prefetch, queue_size=2
@@ -474,6 +614,12 @@ def add_actor_information_and_train(
             )
 
             # Create a batch dictionary with all required elements for the forward method
+            _critic_warmup_steps = int(getattr(policy.config, "critic_warmup_steps", 0) or 0)
+            _in_critic_warmup = (
+                getattr(policy.config, "residual_mode", False)
+                and _critic_warmup_steps > 0
+                and optimization_step < _critic_warmup_steps
+            )
             forward_batch = {
                 ACTION: actions,
                 "reward": rewards,
@@ -483,6 +629,7 @@ def add_actor_information_and_train(
                 "observation_feature": observation_features,
                 "next_observation_feature": next_observation_features,
                 "complementary_info": batch["complementary_info"],
+                "critic_warmup": _in_critic_warmup,
             }
 
             # Use the forward method for critic loss
@@ -544,6 +691,12 @@ def add_actor_information_and_train(
             offline_next_image_features=offline_next_img_feat,
         )
 
+        _critic_warmup_steps = int(getattr(policy.config, "critic_warmup_steps", 0) or 0)
+        _in_critic_warmup = (
+            getattr(policy.config, "residual_mode", False)
+            and _critic_warmup_steps > 0
+            and optimization_step < _critic_warmup_steps
+        )
         # Create a batch dictionary with all required elements for the forward method
         forward_batch = {
             ACTION: actions,
@@ -553,6 +706,7 @@ def add_actor_information_and_train(
             "done": done,
             "observation_feature": observation_features,
             "next_observation_feature": next_observation_features,
+            "critic_warmup": _in_critic_warmup,
         }
 
         critic_output = policy.forward(forward_batch, model="critic")
@@ -569,6 +723,7 @@ def add_actor_information_and_train(
         training_infos = {
             "loss_critic": loss_critic.item(),
             "critic_grad_norm": critic_grad_norm,
+            "critic_warmup": int(_in_critic_warmup),
         }
 
         # Build BC inputs from offline batch (demo actions) for actor opt step.
@@ -618,8 +773,10 @@ def add_actor_information_and_train(
             training_infos["loss_discrete_critic"] = loss_discrete_critic.item()
             training_infos["discrete_critic_grad_norm"] = discrete_critic_grad_norm
 
-        # Actor and temperature optimization (at specified frequency)
-        if optimization_step % policy_update_freq == 0:
+        # Actor and temperature optimization (at specified frequency).
+        # Skip during critic warmup so the critic stabilizes on Q^{π_base}
+        # before the actor starts moving residuals.
+        if optimization_step % policy_update_freq == 0 and not _in_critic_warmup:
             for _ in range(policy_update_freq):
                 # Actor optimization
                 actor_output = policy.forward(forward_batch, model="actor")
@@ -893,6 +1050,18 @@ def make_optimizers_and_scheduler(cfg: TrainRLServerPipelineConfig, policy: nn.M
         - `lr_scheduler`: Currently set to `None` but can be extended to support learning rate scheduling.
 
     """
+    # Plugins (e.g. QCPolicy) that have no monolithic `.actor`/`.log_alpha`
+    # surface opt into this path by defining `get_optim_params()` returning
+    # `{"actor": [...params...], "critic": [...params...]}`. No SAC-style
+    # entropy temperature for QC — `flow_actor + one_step_actor` is the
+    # actor group and we keep them under a single Adam. SAC stays on the
+    # untouched code path below.
+    if hasattr(policy, "get_optim_params"):
+        groups = policy.get_optim_params()
+        optimizer_actor = torch.optim.Adam(params=list(groups["actor"]), lr=cfg.policy.actor_lr)
+        optimizer_critic = torch.optim.Adam(params=list(groups["critic"]), lr=cfg.policy.critic_lr)
+        return {"actor": optimizer_actor, "critic": optimizer_critic}, None
+
     optimizer_actor = torch.optim.Adam(
         params=[
             p
@@ -1240,8 +1409,15 @@ def check_nan_in_transition(
 def push_actor_policy_to_queue(parameters_queue: Queue, policy: nn.Module):
     logging.debug("[LEARNER] Pushing actor policy to the queue")
 
-    # Create a dictionary to hold all the state dicts
-    state_dicts = {"policy": move_state_dict_to_device(policy.actor.state_dict(), device="cpu")}
+    # Plugins (e.g. QCPolicy) with no monolithic `.actor` submodule opt into
+    # this path by defining `get_actor_state_dict()` returning a {name:
+    # state_dict} dict already moved to CPU. SAC keeps its untouched
+    # `policy.actor.state_dict()` form below — back-compat preserved.
+    if hasattr(policy, "get_actor_state_dict"):
+        actor_state = policy.get_actor_state_dict()
+    else:
+        actor_state = move_state_dict_to_device(policy.actor.state_dict(), device="cpu")
+    state_dicts = {"policy": actor_state}
 
     # Add discrete critic if it exists
     if hasattr(policy, "discrete_critic") and policy.discrete_critic is not None:

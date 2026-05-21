@@ -262,6 +262,10 @@ def act_with_policy(
     obs, info = online_env.reset()
     env_processor.reset()
     action_processor.reset()
+    # Reset chunk-aware policies (e.g. QC) so any stale action queue from a
+    # prior run is cleared. SAC's reset() is a no-op, so back-compat safe.
+    if hasattr(policy, "reset"):
+        policy.reset()
 
     # Process initial observation
     transition = create_transition(observation=obs, info=info)
@@ -272,15 +276,35 @@ def act_with_policy(
     # buffer. ACT manages its own chunk queue across calls.
     _residual_mode = getattr(cfg.policy, "residual_mode", False)
     _base_policy = getattr(policy, "_base_policy", None) if _residual_mode else None
+    def _base_act(obs):
+        # ACT base needs the saved preprocessor (normalize images + state)
+        # before select_action; otherwise raw uint8 → garbage actions.
+        pre = getattr(_base_policy, "_pre_processor", None)
+        b = pre(obs) if pre is not None else obs
+        return _base_policy.select_action(b)
+
     if _residual_mode and _base_policy is not None:
         _base_policy.reset()
-        _ba = _base_policy.select_action(transition[TransitionKey.OBSERVATION])
+        _ba = _base_act(transition[TransitionKey.OBSERVATION])
         transition[TransitionKey.OBSERVATION]["observation.base_action"] = _ba
 
     # NOTE: For the moment we will solely handle the case of a single environment
     sum_reward_episode = 0
     list_transition_to_send_to_learner = []
     episode_intervention = False
+    # Tracks IS_INTERVENTION across steps for edge detection. Used by chunk-aware
+    # policies (QC) to flush their internal action queue at intervention onset.
+    # SAC ignores this; remains False forever.
+    prev_intervention_flag = False
+    # Tracks whether the episode ended with a Triangle (manual SUCCESS) flag.
+    # Set True on any frame with info[TeleopEvents.SUCCESS]=True. If False at
+    # episode end, transitions are DISCARDED (not pushed to learner).
+    episode_success = False
+    # Counter of how many stage-advance button presses landed this episode.
+    # Each press fires +stage_advance_bonus reward in the SARM step.
+    episode_stage_advances = 0
+    # Discard counter for telemetry.
+    discarded_episodes = 0
     # Add counters for intervention rate calculation
     episode_intervention_steps = 0
     episode_total_steps = 0
@@ -389,7 +413,7 @@ def act_with_policy(
         # *after* env_processor so the obs is in the canonical (CHW float)
         # form expected by the base policy. ACT will pop from its chunk queue.
         if _residual_mode and _base_policy is not None:
-            _ba = _base_policy.select_action(new_transition[TransitionKey.OBSERVATION])
+            _ba = _base_act(new_transition[TransitionKey.OBSERVATION])
             new_transition[TransitionKey.OBSERVATION]["observation.base_action"] = _ba
 
         # Display camera feeds if configured
@@ -451,9 +475,28 @@ def act_with_policy(
 
         # Check for intervention from transition info
         intervention_info = new_transition[TransitionKey.INFO]
-        if intervention_info.get(TeleopEvents.IS_INTERVENTION, False):
+        _is_interv_now = bool(intervention_info.get(TeleopEvents.IS_INTERVENTION, False))
+        # Rising edge (False -> True): flush chunk queue for chunk-aware
+        # policies (e.g. QC) when the user just took control. Gated by cfg
+        # flag so SAC default behavior is unchanged.
+        if (
+            _is_interv_now
+            and not prev_intervention_flag
+            and getattr(cfg.policy, "flush_chunk_on_intervention", False)
+            and hasattr(policy, "reset")
+        ):
+            policy.reset()
+        prev_intervention_flag = _is_interv_now
+        if _is_interv_now:
             episode_intervention = True
             episode_intervention_steps += 1
+        # Latch manual SUCCESS (Triangle). Used to gate the learner push at
+        # episode end: only successful episodes contribute to training.
+        if intervention_info.get(TeleopEvents.SUCCESS, False):
+            episode_success = True
+        # Stage-advance counter (each gamepad stage-button press during the ep).
+        if intervention_info.get(TeleopEvents.STAGE_ADVANCE, False):
+            episode_stage_advances += 1
         # Track SARM progress (set by SARMRewardProcessorStep regardless of reward_mode).
         sp = intervention_info.get("sarm_progress")
         if sp is not None:
@@ -486,7 +529,10 @@ def act_with_policy(
         transition = new_transition
 
         if done or truncated:
-            logging.info(f"[ACTOR] Global step {interaction_step}: Episode reward: {sum_reward_episode}")
+            logging.info(
+                f"[ACTOR] Global step {interaction_step}: Episode reward: {sum_reward_episode} "
+                f"success={episode_success} steps={episode_total_steps}"
+            )
 
             update_policy_parameters(policy=policy, parameters_queue=parameters_queue, device=device)
 
@@ -525,6 +571,9 @@ def act_with_policy(
                         "Episode max SARM progress": max_sarm_progress,
                         "Interaction step": interaction_step,
                         "Episode intervention": int(episode_intervention),
+                        "Episode success": int(episode_success),
+                        "Episode stage advances": episode_stage_advances,
+                        "Episode discarded total": discarded_episodes,
                         "Intervention rate": intervention_rate,
                         **grip_metrics,
                         **stats,
@@ -535,6 +584,8 @@ def act_with_policy(
             # Reset intervention counters and environment
             sum_reward_episode = 0.0
             episode_intervention = False
+            episode_success = False
+            episode_stage_advances = 0
             episode_intervention_steps = 0
             episode_total_steps = 0
             last_sarm_progress = 0.0
@@ -549,6 +600,11 @@ def act_with_policy(
             obs, info = online_env.reset()
             env_processor.reset()
             action_processor.reset()
+            # Reset main policy (chunk-aware policies need to flush their
+            # action queue at episode boundaries). SAC.reset() is no-op.
+            if hasattr(policy, "reset"):
+                policy.reset()
+            prev_intervention_flag = False
 
             # Process initial observation
             transition = create_transition(observation=obs, info=info)
@@ -557,7 +613,7 @@ def act_with_policy(
             # Residual mode: clear ACT's chunk queue and attach fresh base_action.
             if _residual_mode and _base_policy is not None:
                 _base_policy.reset()
-                _ba = _base_policy.select_action(transition[TransitionKey.OBSERVATION])
+                _ba = _base_act(transition[TransitionKey.OBSERVATION])
                 transition[TransitionKey.OBSERVATION]["observation.base_action"] = _ba
 
         if cfg.env.fps is not None:
@@ -831,7 +887,15 @@ def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device)
 
         # Load actor state dict
         actor_state_dict = move_state_dict_to_device(state_dicts["policy"], device=device)
-        policy.actor.load_state_dict(actor_state_dict)
+        # Plugins (e.g. QCPolicy) with no monolithic `.actor` submodule opt
+        # into this path by defining `load_actor_state_dict(payload)`. The
+        # payload shape is plugin-defined (typically a {name: state_dict}
+        # nested dict, mirroring `get_actor_state_dict`). SAC keeps the
+        # untouched `policy.actor.load_state_dict(...)` path below.
+        if hasattr(policy, "load_actor_state_dict"):
+            policy.load_actor_state_dict(actor_state_dict)
+        else:
+            policy.actor.load_state_dict(actor_state_dict)
 
         # Load discrete critic if present
         if hasattr(policy, "discrete_critic") and "discrete_critic" in state_dicts:
