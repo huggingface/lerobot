@@ -78,6 +78,7 @@ ROBOMETER_QWEN_INPUT_KEYS = (
     "image_grid_thw",
     "video_grid_thw",
     "second_per_grid_ts",
+    "mm_token_type_ids",
 )
 ROBOMETER_METADATA_KEYS = (
     "prog_token_id",
