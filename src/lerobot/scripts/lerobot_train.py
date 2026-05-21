@@ -455,6 +455,13 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     accelerator.wait_for_everyone()
 
     processor_pretrained_path = cfg.policy.pretrained_path
+    if cfg.policy.type == "pi052" and processor_pretrained_path is not None and not cfg.resume:
+        logging.warning(
+            "pi052 is loading pretrained weights from %s, but building processors from the current "
+            "pi052 config so recipe text labels and FAST action labels are generated.",
+            processor_pretrained_path,
+        )
+        processor_pretrained_path = None
     if (
         getattr(cfg.policy, "use_relative_actions", False)
         and processor_pretrained_path is not None
