@@ -155,7 +155,7 @@ class DatasetWriter:
         return ep_buffer
 
     def _get_image_file_path(self, episode_index: int, image_key: str, frame_index: int) -> Path:
-        path_template = DEFAULT_DEPTH_PATH if self.image_key in self._meta.depth_keys else DEFAULT_IMAGE_PATH
+        path_template = DEFAULT_DEPTH_PATH if image_key in self._meta.depth_keys else DEFAULT_IMAGE_PATH
         fpath = path_template.format(
             image_key=image_key, episode_index=episode_index, frame_index=frame_index
         )

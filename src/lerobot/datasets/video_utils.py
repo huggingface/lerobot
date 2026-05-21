@@ -1132,7 +1132,6 @@ def get_video_info(
         video_info["video.width"] = video_stream.width
         video_info["video.codec"] = video_stream.codec.canonical_name
         video_info["video.pix_fmt"] = video_stream.pix_fmt
-        video_info["video.is_depth_map"] = False
 
         # Calculate fps from r_frame_rate
         video_info["video.fps"] = int(video_stream.base_rate)
@@ -1153,7 +1152,7 @@ def get_video_info(
             if field_name == "vcodec":
                 continue
             video_info.setdefault(f"video.{field_name}", field_value)
-        video_info["video.is_depth_map"] = isinstance(video_encoder, DepthEncoderConfig)
+        video_info["is_depth_map"] = isinstance(video_encoder, DepthEncoderConfig)
 
     return video_info
 

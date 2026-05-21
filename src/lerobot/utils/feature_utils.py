@@ -88,21 +88,18 @@ def hw_to_dataset_features(
 
     for key, shape in cam_fts.items():
         dtype = "video" if use_video else "image"
-        if len(shape) == 2 or shape[2] == 1:
-            if len(shape) == 2:
-                shape = (shape[0], shape[1], 1)
-            features[f"{prefix}.depth_maps.{key}"] = {
-                "dtype": dtype,
-                "shape": shape,
-                "names": ["height", "width", "channels"],
-                "info": {dtype + ".is_depth_map": True},
-            }
-        else:
+        if len(shape) == 3 and shape[2] in (1, 3):
             features[f"{prefix}.images.{key}"] = {
                 "dtype": dtype,
                 "shape": shape,
                 "names": ["height", "width", "channels"],
+                "info": {"is_depth_map": shape[2] == 1},
             }
+        else:
+            raise ValueError(
+                f"Camera feature '{key}' has shape {shape}. "
+                f"Expected a 3-tuple (H, W, C), e.g. (480, 640, 3) for RGB or (480, 640, 1) for depth."
+            )
 
     _validate_feature_names(features)
     return features
@@ -132,10 +129,7 @@ def build_dataset_frame(
         elif ft["dtype"] == "float32" and len(ft["shape"]) == 1:
             frame[key] = np.array([values[name] for name in ft["names"]], dtype=np.float32)
         elif ft["dtype"] in ["image", "video"]:
-            if ft["info"].get(ft["dtype"] + ".is_depth_map"):
-                frame[key] = values[key.removeprefix(f"{prefix}.depth_maps.")]
-            else:
-                frame[key] = values[key.removeprefix(f"{prefix}.images.")]
+            frame[key] = values[key.removeprefix(f"{prefix}.images.")]
 
     return frame
 
@@ -164,11 +158,11 @@ def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFea
             type = FeatureType.VISUAL
             if len(shape) != 3:
                 raise ValueError(f"Number of dimensions of {key} != 3 (shape={shape})")
-
-            names = ft["names"]
-            # Backward compatibility for "channel" which is an error introduced in LeRobotDataset v2.0 for ported datasets.
-            if names[2] in ["channel", "channels"]:  # (h, w, c) -> (c, h, w)
-                shape = (shape[2], shape[0], shape[1])
+            else:
+                names = ft["names"]
+                # Backward compatibility for "channel" which is an error introduced in LeRobotDataset v2.0 for ported datasets.
+                if names[2] in ["channel", "channels"]:  # (h, w, c) -> (c, h, w)
+                    shape = (shape[2], shape[0], shape[1])
         elif key == OBS_ENV_STATE:
             type = FeatureType.ENV
         elif key.startswith(OBS_STR):

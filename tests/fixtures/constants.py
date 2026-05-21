@@ -39,7 +39,7 @@ DUMMY_VIDEO_INFO = {
     "video.crf": 30,
     "video.preset": 12,
     "video.fast_decode": 0,
-    "video.is_depth_map": False,
+    "is_depth_map": False,
     "has_audio": False,
 }
 DUMMY_CAMERA_FEATURES = {

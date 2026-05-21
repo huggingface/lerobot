@@ -375,7 +375,7 @@ class TestGetVideoInfo:
         assert info["video.pix_fmt"] == "yuv420p"
         assert info["video.fps"] == 30
         assert info["video.channels"] == 3
-        assert info["video.is_depth_map"] is False
+        assert info["is_depth_map"] is False
         assert info["has_audio"] is False
         assert "video.g" not in info
         assert "video.crf" not in info
@@ -470,7 +470,7 @@ class TestEncodeVideoFrames:
         assert info["video.codec"] == "av1"
         assert info["video.pix_fmt"] == "yuv420p"
         assert info["video.fps"] == 30
-        assert info["video.is_depth_map"] is False
+        assert info["is_depth_map"] is False
         assert info["has_audio"] is False
         # Encoder config
         assert info["video.g"] == 4

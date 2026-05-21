@@ -82,7 +82,7 @@ After the first episode of a video stream is encoded, the encoder configuration 
         "video.pix_fmt": "yuv420p",
         "video.fps": 30,
         "video.channels": 3,
-        "video.is_depth_map": false,
+        "is_depth_map": false,
         "video.g": 2,
         "video.crf": 30,
         "video.preset": "fast",
@@ -97,7 +97,7 @@ After the first episode of a video stream is encoded, the encoder configuration 
 
 Two sources contribute to the `info` block:
 
-- **Stream-derived** (read back from the encoded MP4 with PyAV): `video.height`, `video.width`, `video.codec`, `video.pix_fmt`, `video.fps`, `video.channels`, `video.is_depth_map`, plus `audio.*` if an audio stream is present.
+- **Stream-derived** (read back from the encoded MP4 with PyAV): `video.height`, `video.width`, `video.codec`, `video.pix_fmt`, `video.fps`, `video.channels`, `is_depth_map`, plus `audio.*` if an audio stream is present.
 - **Encoder-derived** (taken from `VideoEncoderConfig`): `video.g`, `video.crf`, `video.preset`, `video.fast_decode`, `video.video_backend`, `video.extra_options`.
 
 <Tip>
