@@ -1,0 +1,126 @@
+# Camera Troubleshooting
+
+This page collects recurring OpenCV camera issues seen on Linux, the underlying cause for each, and the configuration most likely to make a USB webcam stream reliably with LeRobot. For general camera usage, see the [Cameras](./cameras) guide.
+
+## Symptoms
+
+Match the message you are seeing to a section below.
+
+| Symptom                                                                                              | Likely cause                                              | Section                                                                            |
+| ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `AttributeError: 'NoneType' object has no attribute 'is_set'` printed during `lerobot-find-cameras`  | Background read thread observes `stop_event` after cleanup | [Background thread crash on disconnect](#background-thread-crash-on-disconnect)    |
+| `VIDIOC_STREAMON: No space left on device` when opening a second USB camera                          | USB bus bandwidth saturated by uncompressed streams        | [VIDIOC_STREAMON: No space left on device](#vidioc_streamon-no-space-left-on-device) |
+| `failed to set fourcc=MJPG (actual=<unset>, success=False). Continuing with default format.`         | `backend=ANY` resolved to a backend that ignores the setting | [fourcc=MJPG silent failure](#fourccmjpg-silent-failure)                          |
+| `RuntimeError: ... failed to set capture_width=...` immediately after a fourcc warning               | Earlier fourcc set was silently dropped                   | [fourcc=MJPG silent failure](#fourccmjpg-silent-failure)                          |
+| `connected ... backend=FFMPEG ... fourcc=<unset>` on `/dev/video*`                                   | Default backend selected FFMPEG instead of V4L2           | [Backend selection: ANY vs V4L2](#backend-selection-any-vs-v4l2)                   |
+| `Timed out waiting for frame from camera ... after 1000 ms`                                          | Capture opened but no frame produced; often a fourcc/backend issue | [Recommended configuration](#recommended-configuration)                     |
+
+## Common failure modes
+
+### Background thread crash on disconnect
+
+Running `lerobot-find-cameras opencv` (or any disconnect path) can print a traceback ending in:
+
+```text
+File ".../lerobot/cameras/opencv/camera_opencv.py", line 443, in _read_loop
+    while not self.stop_event.is_set():
+              ^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'is_set'
+```
+
+This is a race in `OpenCVCamera._stop_read_thread()`: the cleanup path can null out `self.stop_event` while the background read loop is still evaluating `self.stop_event.is_set()`, particularly when `thread.join(timeout=2.0)` returns before the loop has noticed the stop signal. The process keeps running, which makes the traceback look more alarming than it is.
+
+The script itself continues. Frames that were already captured before the disconnect are not affected. If the noise is blocking you, pin to a build that no longer clears `stop_event` during stop (see issue [#3569](https://github.com/huggingface/lerobot/issues/3569) and the corresponding fix in [#3571](https://github.com/huggingface/lerobot/pull/3571)).
+
+### VIDIOC_STREAMON: No space left on device
+
+Opening two USB webcams on the same hub can fail on the second `connect()` with:
+
+```text
+[video4linux2,v4l2 @ ...] ioctl(VIDIOC_STREAMON): No space left on device
+ConnectionError: Failed to open OpenCVCamera(/dev/video4)
+```
+
+Despite the wording, this is not a disk error. The kernel is rejecting the second stream because the USB controller has no bandwidth left for another uncompressed feed. Two uncompressed `640x480@30` YUYV streams already exceed the practical budget of a single USB 2.0 root hub (see the [USB bandwidth math](#usb-bandwidth-math) below).
+
+There are three ways out, ordered from cheapest to most invasive:
+
+1. Switch the camera format to MJPG so each stream is compressed end-to-end on the wire. With both cameras configured `fourcc="MJPG"`, `backend=Cv2Backends.V4L2`, dual `640x480@30` fits comfortably on a shared USB 2.0 controller.
+2. Move one camera to a different USB controller. On a desktop, this often means plugging into a port that is wired to a different root hub. `lsusb -t` will show which devices share a controller.
+3. Reduce the requested resolution or frame rate until the uncompressed total fits.
+
+### fourcc=MJPG silent failure
+
+Setting `fourcc="MJPG"` on the config does not guarantee the camera actually delivers MJPG frames. With the default backend on Linux, the result can be:
+
+```text
+WARNING: OpenCVCamera(/dev/video2) failed to set fourcc=MJPG (actual=<unset>, success=False).
+         Continuing with default format.
+RuntimeError: OpenCVCamera(/dev/video2) failed to set capture_width=640
+              (actual_width=640, width_success=False).
+```
+
+`_validate_fourcc()` warns and continues, so the failure does not abort `connect()`. The next call (typically setting width or height) inherits the broken capture state and raises a less obvious error. The fourcc warning is the real signal; the width error is the consequence.
+
+This is most often a backend problem, not a camera problem. See the next section.
+
+### Backend selection: ANY vs V4L2
+
+`OpenCVCameraConfig.backend` defaults to `Cv2Backends.ANY`. On Linux, OpenCV is free to resolve `ANY` to FFMPEG for `/dev/video*` paths. When it does, requests like `set(CAP_PROP_FOURCC, MJPG)` can return `False` and quietly leave the capture in its default format. The same camera and the same config, with `backend=Cv2Backends.V4L2`, applies the requested fourcc, width, height, and fps as expected.
+
+If the connect log shows `backend=FFMPEG` for a `/dev/video*` device, that is the situation. Set `backend=Cv2Backends.V4L2` explicitly:
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.cameras import Cv2Backends
+from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
+
+config = OpenCVCameraConfig(
+    index_or_path="/dev/video2",
+    width=640,
+    height=480,
+    fps=30,
+    fourcc="MJPG",
+    backend=Cv2Backends.V4L2,
+)
+
+with OpenCVCamera(config) as camera:
+    frame = camera.read()
+```
+<!-- prettier-ignore-end -->
+
+On macOS and Windows, leave the default. `Cv2Backends.V4L2` is Linux-specific. See issue [#3198](https://github.com/huggingface/lerobot/issues/3198) for the full reproduction across `backend=ANY`, `backend=ANY` with `fourcc="MJPG"`, and `backend=V4L2` with `fourcc="MJPG"`.
+
+### USB bandwidth math
+
+USB cameras streaming uncompressed YUYV consume bandwidth proportional to `width * height * 2 bytes per pixel * fps`. A single `640x480@30` YUYV stream is roughly `18 MB/s`, before USB framing overhead. Two such streams approach the practical ceiling of a USB 2.0 root hub, which is why a second camera on the same controller often fails to start.
+
+Switching to MJPG typically reduces per-stream bandwidth by an order of magnitude because the camera does the compression in hardware before sending frames over the wire. The same `640x480@30` stream as MJPG is on the order of `1 to 2 MB/s` depending on scene complexity. This is what makes dual-camera setups on a single USB 2.0 hub viable; the cost is that the host now spends CPU on JPEG decoding.
+
+To see what shares a controller before plugging things in, run `lsusb -t`. Devices listed under the same root hub share its bandwidth budget.
+
+## Recommended configuration
+
+For USB webcams on Linux, the configuration that avoids each of the failure modes above is:
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.cameras import Cv2Backends
+from lerobot.cameras.opencv import OpenCVCameraConfig
+
+config = OpenCVCameraConfig(
+    index_or_path="/dev/video2",
+    width=640,
+    height=480,
+    fps=30,
+    fourcc="MJPG",
+    backend=Cv2Backends.V4L2,
+)
+```
+<!-- prettier-ignore-end -->
+
+- `backend=Cv2Backends.V4L2` ensures fourcc, width, height, and fps requests reach the kernel driver instead of being silently dropped under FFMPEG.
+- `fourcc="MJPG"` keeps each stream compressed on the USB wire, which keeps dual-camera setups within the bandwidth budget of a single USB 2.0 controller.
+- For multi-camera rigs, prefer plugging each camera into a port wired to a separate USB controller. `lsusb -t` shows the topology.
+
+If a stream still fails to open, run `lerobot-find-cameras opencv` and confirm the device is detected at the path you are passing to `index_or_path`. Device paths under `/dev/video*` can change after replugging or rebooting.

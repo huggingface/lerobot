@@ -155,6 +155,8 @@
 - sections:
   - local: cameras
     title: Cameras
+  - local: camera_troubleshooting
+    title: Camera Troubleshooting
   title: "Sensors"
 - sections:
   - local: notebooks
