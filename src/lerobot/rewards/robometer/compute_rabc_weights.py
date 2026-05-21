@@ -33,13 +33,13 @@ Usage:
     # Dense per-frame progress for one episode
     python -m lerobot.rewards.robometer.compute_rabc_weights \\
         --dataset-repo-id lerobot/libero_10_image \\
-        --reward-model-path lilkm/Robometer-4B \\
+        --reward-model-path lerobot/Robometer-4B \\
         --episodes 0
 
     # All episodes with batching
     python -m lerobot.rewards.robometer.compute_rabc_weights \\
         --dataset-repo-id lerobot/libero_10_image \\
-        --reward-model-path lilkm/Robometer-4B \\
+        --reward-model-path lerobot/Robometer-4B \\
         --batch-size 16
 """
 
@@ -218,13 +218,13 @@ Examples:
     # Dense per-frame progress for one episode
     python -m lerobot.rewards.robometer.compute_rabc_weights \\
         --dataset-repo-id lerobot/libero_10_image \\
-        --reward-model-path lilkm/Robometer-4B \\
+        --reward-model-path lerobot/Robometer-4B \\
         --episodes 0
 
     # All episodes, smaller batches for memory-constrained GPUs
     python -m lerobot.rewards.robometer.compute_rabc_weights \\
         --dataset-repo-id lerobot/libero_10_image \\
-        --reward-model-path lilkm/Robometer-4B \\
+        --reward-model-path lerobot/Robometer-4B \\
         --batch-size 16
         """,
     )

@@ -78,7 +78,7 @@ The model predicts per-frame progress and success internally. The LeRobot reward
 from lerobot.rewards.robometer import RobometerConfig, RobometerRewardModel
 
 cfg = RobometerConfig(
-    pretrained_path="lilkm/Robometer-4B",
+    pretrained_path="lerobot/Robometer-4B",
     device="cuda",
     reward_output="progress",
 )
@@ -119,7 +119,7 @@ from lerobot.rewards import make_reward_model, make_reward_model_config, make_re
 
 cfg = make_reward_model_config(
     "robometer",
-    pretrained_path="lilkm/Robometer-4B",
+    pretrained_path="lerobot/Robometer-4B",
     device="cuda",
     image_key="observation.images.top",
 )

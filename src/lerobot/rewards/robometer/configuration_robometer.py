@@ -50,7 +50,7 @@ ROBOMETER_SPECIAL_TOKENS = (
 class RobometerConfig(RewardModelConfig):
     """Configuration for the Robometer reward model."""
 
-    pretrained_path: str | None = "lilkm/Robometer-4B"
+    pretrained_path: str | None = "lerobot/Robometer-4B"
     image_key: str = OBS_IMAGES + ".top"
     task_key: str = "task"
     default_task: str | None = None
