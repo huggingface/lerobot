@@ -272,6 +272,8 @@ class PiGemmaModel(GemmaModel):  # type: ignore[misc]
         # Convert to bfloat16 if the first layer uses bfloat16
         if len(self.layers) > 0 and self.layers[0].self_attn.q_proj.weight.dtype == torch.bfloat16:
             hidden_states = hidden_states.to(torch.bfloat16)
+        if causal_mask is not None and torch.is_floating_point(causal_mask):
+            causal_mask = causal_mask.to(dtype=hidden_states.dtype)
 
         # create position embeddings to be shared across the decoder layers
         position_embeddings = self.rotary_emb(hidden_states, position_ids)

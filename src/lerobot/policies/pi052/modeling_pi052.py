@@ -630,7 +630,9 @@ class PI052Policy(PI05Policy):
             att_2d_masks[:, fast_end:, fast_start:fast_end] = False
 
         position_ids = torch.cumsum(pad_masks, dim=1) - 1
-        att_2d_masks_4d = self.model._prepare_attention_masks_4d(att_2d_masks)
+        att_2d_masks_4d = self.model._prepare_attention_masks_4d(
+            att_2d_masks, dtype=prefix_embs.dtype
+        )
 
         # ---- forward (capture BOTH expert outputs) ------------------
         (prefix_out, suffix_out), _ = self.model.paligemma_with_expert.forward(
@@ -740,7 +742,7 @@ class PI052Policy(PI05Policy):
 
         att_2d = make_att_2d_masks(full_pad, full_att)
         position_ids = torch.cumsum(full_pad, dim=1) - 1
-        att_2d_4d = self.model._prepare_attention_masks_4d(att_2d)
+        att_2d_4d = self.model._prepare_attention_masks_4d(att_2d, dtype=full_embs.dtype)
 
         (vlm_out, _), _ = self.model.paligemma_with_expert.forward(
             attention_mask=att_2d_4d,
@@ -864,9 +866,7 @@ class PI052Policy(PI05Policy):
         for _ in range(max_new_tokens):
             att_2d = make_att_2d_masks(current_pad, current_att)
             position_ids = torch.cumsum(current_pad, dim=1) - 1
-            att_2d_4d = self.model._prepare_attention_masks_4d(att_2d)
-            if att_2d_4d.dtype != backbone_dtype:
-                att_2d_4d = att_2d_4d.to(dtype=backbone_dtype)
+            att_2d_4d = self.model._prepare_attention_masks_4d(att_2d, dtype=backbone_dtype)
             (vlm_out, _), _ = backbone.forward(
                 attention_mask=att_2d_4d,
                 position_ids=position_ids,
