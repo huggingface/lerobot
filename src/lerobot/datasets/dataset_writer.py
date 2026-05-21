@@ -77,7 +77,12 @@ def _encode_video_worker(
     encoder_threads: int | None = None,
 ) -> Path:
     temp_path = Path(tempfile.mkdtemp(dir=root)) / f"{video_key}_{episode_index:03d}.mp4"
-    fpath = DEFAULT_IMAGE_PATH.format(image_key=video_key, episode_index=episode_index, frame_index=0)
+    path_template = (
+        DEFAULT_DEPTH_PATH
+        if video_encoder is not None and isinstance(video_encoder, DepthEncoderConfig)
+        else DEFAULT_IMAGE_PATH
+    )
+    fpath = path_template.format(image_key=video_key, episode_index=episode_index, frame_index=0)
     img_dir = (root / fpath).parent
     encode_video_frames(
         img_dir,
@@ -312,7 +317,9 @@ class DatasetWriter:
                             episode_index,
                             self._root,
                             self._meta.fps,
-                            self._camera_encoder,
+                            self._depth_encoder
+                            if video_key in self._meta.depth_keys
+                            else self._camera_encoder,
                             self._encoder_threads,
                         ): video_key
                         for video_key in self._meta.video_keys
@@ -595,13 +602,14 @@ class DatasetWriter:
             self.image_writer.wait_until_done()
 
     def _encode_temporary_episode_video(self, video_key: str, episode_index: int) -> Path:
-        """Use ffmpeg to convert frames stored as png into mp4 videos."""
+        """Use ffmpeg to convert frames stored as png/tiff into mp4 videos."""
+        is_depth = video_key in self._meta.depth_keys
         return _encode_video_worker(
             video_key,
             episode_index,
             self._root,
             self._meta.fps,
-            self._camera_encoder,
+            self._depth_encoder if is_depth else self._camera_encoder,
             self._encoder_threads,
         )
 
