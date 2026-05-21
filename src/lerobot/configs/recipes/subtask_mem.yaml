@@ -1,0 +1,57 @@
+# subtask_mem_vqa_speech — Hi-Robot blend + memory + spoken responses.
+#
+# Superset of subtasks_vqa.yaml. Keeps the core subtask + action + VQA
+# training, and adds two text-supervised tasks:
+#
+#   high_level_subtask         — predict the subtask from the task.
+#   low_level_execution        — flow loss with [images, subtask, state].
+#   memory_update              — compress progress into a memory note.
+#   user_interjection_response — reply to a user interjection with a
+#                                spoken `say` tool call (no plan, no
+#                                subtask text — just the spoken reply).
+#   ask_vqa_{top,wrist}        — camera-grounded VQA.
+#
+# Plan is intentionally left out — memory is the only persistent
+# high-level state here, keeping the prompt short.
+#
+# Requires the dataset to carry `memory`, `interjection` and `say`-tool
+# annotations (the annotation pipeline's memory + interjection modules)
+# in addition to `subtask` and `vqa`. Sub-recipes whose `if_present`
+# bindings are missing simply don't render for that sample, so a
+# dataset without interjections still trains the rest of the blend.
+#
+# SmolVLA2 note: the `say` tool call on the interjection-response turn
+# is flattened to a `<say>...</say>` text marker by the chat tokenizer
+# (`_flatten_say_tool_calls`) before `apply_chat_template`, so the LM
+# head learns to emit exactly the marker the runtime parses back
+# (`_split_plan_and_say`).
+
+blend:
+
+  high_level_subtask:
+    weight: 0.30
+    messages:
+      - {role: user, content: "${task}", stream: high_level}
+      - {role: assistant, content: "${subtask}", stream: high_level, target: true, if_present: subtask}
+
+  low_level_execution:
+    weight: 0.40
+    messages:
+      # The action expert is conditioned on the SUBTASK — at inference
+      # `HighLevelSubtaskFwd` generates it via the LM head and feeds it
+      # here. `stream: low_level` flips `predict_actions=True` so the
+      # flow loss fires; no text-CE target (subtask prediction is owned
+      # by `high_level_subtask`).
+      - {role: user, content: "${subtask}", stream: low_level, if_present: subtask}
+
+  memory_update:
+    weight: 0.30
+    bindings:
+      prior_memory: "nth_prev(style=memory, offset=1)"
+      current_memory: "emitted_at(t, style=memory)"
+      completed_subtask: "nth_prev(style=subtask, offset=1)"
+    messages:
+      - {role: user, content: "${task}", stream: high_level}
+      - {role: assistant, content: "Previous memory: ${prior_memory}", stream: high_level, if_present: prior_memory}
+      - {role: user, content: "Completed subtask: ${completed_subtask}", stream: high_level, if_present: completed_subtask}
+      - {role: assistant, content: "${current_memory}", stream: high_level, target: true, if_present: current_memory}
