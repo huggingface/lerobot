@@ -196,7 +196,7 @@ def dequantize_depth(
     else:
         depth_m = norm * (depth_max_m - depth_min_m) + depth_min_m
     depth_m = np.clip(depth_m, depth_min_m, depth_max_m).astype(np.float32, copy=False)
-    
+
     # Add single-channel dim: (H, W) → (H, W, 1)
     if depth_m.ndim == 2:
         depth_m = depth_m[..., np.newaxis]

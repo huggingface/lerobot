@@ -695,6 +695,7 @@ class _CameraEncoderThread(threading.Thread):
         frame_queue: queue.Queue,
         result_queue: queue.Queue,
         stop_event: threading.Event,
+        encoder_threads: int | None = None,
     ):
         super().__init__(daemon=True)
         self.video_path = video_path
@@ -704,6 +705,7 @@ class _CameraEncoderThread(threading.Thread):
         self.frame_queue = frame_queue
         self.result_queue = result_queue
         self.stop_event = stop_event
+        self.encoder_threads = encoder_threads
 
     def run(self) -> None:
         from .compute_stats import RunningQuantileStats, auto_downsample_height_width
@@ -880,6 +882,7 @@ class StreamingVideoEncoder:
                 frame_queue=frame_queue,
                 result_queue=result_queue,
                 stop_event=stop_event,
+                encoder_threads=self._encoder_threads,
             )
             encoder_thread.start()
 
