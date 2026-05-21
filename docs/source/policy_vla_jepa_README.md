@@ -84,12 +84,12 @@ Key parameters in `VLAJEPAConfig`:
 
 | Parameter                 | Default | Description                                                    |
 | ------------------------- | ------- | -------------------------------------------------------------- |
-| `chunk_size`              | 16      | Number of actions predicted per inference call                 |
-| `n_action_steps`          | 16      | Steps executed from the predicted chunk before re-planning     |
-| `num_video_frames`        | 16      | Video clip length fed to the world model                       |
+| `chunk_size`              | 7       | Number of actions predicted per inference call                 |
+| `n_action_steps`          | 7       | Steps executed from the predicted chunk before re-planning     |
+| `num_video_frames`        | 8       | Video clip length fed to the world model                       |
 | `enable_world_model`      | `True`  | Whether to load and train the V-JEPA2 predictor                |
 | `world_model_loss_weight` | 0.1     | Weight of the JEPA prediction loss relative to the action loss |
-| `num_inference_timesteps` | 10      | Euler integration steps for action denoising                   |
+| `num_inference_timesteps` | 4       | Euler integration steps for action denoising                   |
 | `freeze_qwen`             | `False` | Freeze the Qwen3-VL backbone and only train the action head    |
 
 ---
