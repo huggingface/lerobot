@@ -46,5 +46,16 @@ DUMMY_CAMERA_FEATURES = {
     "laptop": {"shape": (64, 96, 3), "names": ["height", "width", "channels"], "info": DUMMY_VIDEO_INFO},
     "phone": {"shape": (64, 96, 3), "names": ["height", "width", "channels"], "info": DUMMY_VIDEO_INFO},
 }
+DUMMY_DEPTH_VIDEO_INFO = {
+    **DUMMY_VIDEO_INFO,
+    "is_depth_map": True,
+}
+DUMMY_DEPTH_CAMERA_FEATURES = {
+    "laptop_depth": {
+        "shape": (64, 96, 1),
+        "names": ["height", "width", "channels"],
+        "info": DUMMY_DEPTH_VIDEO_INFO,
+    },
+}
 DUMMY_CHW = (3, 96, 128)
 DUMMY_HWC = (96, 128, 3)
