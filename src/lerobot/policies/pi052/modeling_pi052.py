@@ -783,6 +783,90 @@ class PI052Policy(PI05Policy):
         return text_loss, fast_loss
 
     # ------------------------------------------------------------------
+    # Diagnostic: forward + argmax for supervised text positions
+    # ------------------------------------------------------------------
+
+    @torch.no_grad()
+    def debug_text_predictions(
+        self, batch: dict[str, Tensor], max_samples: int = 5
+    ) -> dict[str, Tensor]:
+        """Run the text-loss forward but return argmax predictions instead of CE.
+
+        Lets a periodic training-loop hook compare what the LM head emits
+        right now against what it *should* emit at every supervised
+        position — the cheapest "is text training actually working"
+        diagnostic. Returns CPU tensors keyed by ``input_ids``,
+        ``attention_mask``, ``labels``, ``predictions``; predictions are
+        aligned with input positions (``predictions[t]`` is the head's
+        argmax after seeing ``input_ids[:t+1]``, so it should match
+        ``input_ids[t+1]`` for next-token prediction). Returns ``{}``
+        when the batch has no supervised text positions.
+        """
+        from ..pi05.modeling_pi05 import make_att_2d_masks  # noqa: PLC0415
+
+        text_labels = batch.get("text_labels")
+        if text_labels is None or not bool((text_labels != -100).any().item()):
+            return {}
+
+        was_training = self.training
+        self.eval()
+        try:
+            n = min(max_samples, int(text_labels.shape[0]))
+            sub: dict[str, Any] = {
+                OBS_LANGUAGE_TOKENS: batch[OBS_LANGUAGE_TOKENS][:n],
+                OBS_LANGUAGE_ATTENTION_MASK: batch[OBS_LANGUAGE_ATTENTION_MASK][:n],
+            }
+            for k, v in batch.items():
+                if isinstance(k, str) and k.startswith("observation.images.") and torch.is_tensor(v):
+                    sub[k] = v[:n]
+
+            sub_labels = text_labels[:n]
+            images, img_masks = self._preprocess_images(sub)
+            lang_tokens = sub[OBS_LANGUAGE_TOKENS]
+            lang_masks = sub[OBS_LANGUAGE_ATTENTION_MASK]
+
+            prefix_embs, prefix_pad, prefix_att = self.model.embed_prefix(
+                images, img_masks, lang_tokens, lang_masks
+            )
+            lang_start = prefix_embs.shape[1] - sub_labels.shape[1]
+            if lang_start >= 0:
+                prefix_att = _mark_target_span_causal(
+                    prefix_att, sub_labels, lang_start, prefix_embs.shape[1]
+                )
+
+            att_2d = make_att_2d_masks(prefix_pad, prefix_att)
+            position_ids = torch.cumsum(prefix_pad, dim=1) - 1
+            att_2d_4d = self.model._prepare_attention_masks_4d(att_2d)
+            backbone = self.model.paligemma_with_expert
+            backbone_dtype = (
+                backbone.paligemma.model.language_model.layers[0]
+                .self_attn.q_proj.weight.dtype
+            )
+            if att_2d_4d.dtype != backbone_dtype:
+                att_2d_4d = att_2d_4d.to(dtype=backbone_dtype)
+
+            (vlm_out, _), _ = backbone.forward(
+                attention_mask=att_2d_4d,
+                position_ids=position_ids,
+                past_key_values=None,
+                inputs_embeds=[prefix_embs, None],
+                use_cache=False,
+            )
+            text_hidden = vlm_out[:, -sub_labels.shape[1]:, :]
+            lm_head = backbone.paligemma.lm_head
+            text_logits = lm_head(text_hidden.to(lm_head.weight.dtype))
+            preds = text_logits.argmax(dim=-1)
+            return {
+                "input_ids": lang_tokens.detach().cpu(),
+                "attention_mask": lang_masks.detach().cpu(),
+                "labels": sub_labels.detach().cpu(),
+                "predictions": preds.detach().cpu(),
+            }
+        finally:
+            if was_training:
+                self.train()
+
+    # ------------------------------------------------------------------
     # select_message — AR text generation at inference
     # ------------------------------------------------------------------
 

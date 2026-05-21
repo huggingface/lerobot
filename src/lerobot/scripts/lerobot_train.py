@@ -20,6 +20,7 @@ Requires: pip install 'lerobot[training]'  (includes dataset + accelerate + wand
 
 import dataclasses
 import logging
+import os
 import time
 from contextlib import nullcontext
 from pprint import pformat
@@ -154,6 +155,90 @@ def update_policy(
     train_metrics.lr = optimizer.param_groups[0]["lr"]
     train_metrics.update_s = time.perf_counter() - start_time
     return train_metrics, output_dict
+
+
+def _print_debug_text_predictions(
+    policy: Any, batch: dict[str, Any], step: int, n_samples: int = 5
+) -> None:
+    """Forward the current batch and print head-argmax vs label per supervised position.
+
+    Opt-in via ``LEROBOT_DEBUG_PREDS_EVERY=<step_interval>``. Only the
+    policy types that expose ``debug_text_predictions`` participate
+    (currently PI052); others are silently skipped. Pretty-prints up to
+    ``n_samples`` samples from the current batch, showing the prompt,
+    every supervised position's (label, prediction, ✓/✗), and a
+    per-sample token-accuracy summary — the cheapest "is text training
+    actually learning anything" signal.
+    """
+    if not hasattr(policy, "debug_text_predictions"):
+        return
+    try:
+        debug = policy.debug_text_predictions(batch, max_samples=n_samples)
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("debug_text_predictions failed: %s", exc)
+        return
+    if not debug:
+        return
+
+    # Build a tokenizer for decoding — match training side exactly.
+    try:
+        from transformers import AutoTokenizer  # noqa: PLC0415
+
+        from lerobot.policies.pi052.text_processor_pi052 import (  # noqa: PLC0415
+            register_paligemma_loc_tokens,
+        )
+
+        tok_name = (
+            getattr(policy.config, "tokenizer_name", None) or "google/paligemma-3b-pt-224"
+        )
+        tokenizer = register_paligemma_loc_tokens(AutoTokenizer.from_pretrained(tok_name))
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("debug preds: tokenizer load failed: %s", exc)
+        return
+
+    ids = debug["input_ids"]
+    labels = debug["labels"]
+    preds = debug["predictions"]
+    attn = debug["attention_mask"]
+
+    n = ids.shape[0]
+    print(
+        f"\n========== STEP {step} DEBUG PREDICTIONS ({n} samples) ==========",
+        flush=True,
+    )
+    for s in range(n):
+        a = attn[s].tolist()
+        real = sum(a)
+        sid = ids[s].tolist()
+        sl = labels[s].tolist()
+        sp = preds[s].tolist()
+        prompt = tokenizer.decode(sid[:real], skip_special_tokens=False)
+        print(f"\n  --- sample {s + 1}/{n} ---", flush=True)
+        print(f"  prompt: {prompt!r}", flush=True)
+        n_sup = n_ok = 0
+        rows: list[str] = []
+        # CE shift: pred[t] predicts label[t+1]. Iterate supervised label
+        # positions (i = t+1) and align with prediction at t = i-1.
+        for i in range(1, real):
+            label = sl[i]
+            if label == -100:
+                continue
+            n_sup += 1
+            pred = sp[i - 1]
+            ok = label == pred
+            n_ok += int(ok)
+            lbl_str = tokenizer.decode([label]) if 0 <= label < tokenizer.vocab_size + 2048 else "<oob>"
+            pred_str = tokenizer.decode([pred]) if 0 <= pred < tokenizer.vocab_size + 2048 else "<oob>"
+            mark = "✓" if ok else "✗"
+            rows.append(
+                f"    pos {i - 1:3d} → {i:3d}: label {label:6d} {lbl_str!r:20s} | "
+                f"pred {pred:6d} {pred_str!r:20s} {mark}"
+            )
+        for r in rows:
+            print(r, flush=True)
+        acc = n_ok / max(n_sup, 1)
+        print(f"  token accuracy: {n_ok}/{n_sup} = {acc:.1%}", flush=True)
+    print("=" * 60 + "\n", flush=True)
 
 
 def _build_vqa_oversample_weights(dataset: Any, target_fraction: float) -> "torch.Tensor | None":
@@ -541,6 +626,27 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0 and is_main_process
         is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
         is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
+
+        # Optional periodic head-prediction dump for the LM head:
+        # ``LEROBOT_DEBUG_PREDS_EVERY=1000`` prints 5 samples + per-token
+        # (label, argmax, ✓/✗) every 1000 steps. Cheap diagnostic to see
+        # whether the text head is actually learning what we expect, vs
+        # collapsing to a fixed token. Refilling the recipe-sample dump
+        # budget at the same cadence also redumps the raw input shapes.
+        _debug_preds_every = int(os.environ.get("LEROBOT_DEBUG_PREDS_EVERY", "0"))
+        if (
+            _debug_preds_every > 0
+            and step % _debug_preds_every == 0
+            and is_main_process
+        ):
+            try:
+                from lerobot.policies.pi052 import text_processor_pi052 as _tp  # noqa: PLC0415
+
+                _tp._DUMPED_SO_FAR = 0
+                _tp._DUMP_BUDGET = max(_tp._DUMP_BUDGET, 5)
+            except Exception:  # noqa: BLE001
+                pass
+            _print_debug_text_predictions(policy, batch, step, n_samples=5)
 
         if is_log_step:
             logging.info(train_tracker)
