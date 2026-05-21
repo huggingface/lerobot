@@ -65,6 +65,7 @@ TOPREWARD_VLM_INPUT_KEYS = (
     "image_grid_thw",
     "video_grid_thw",
     "second_per_grid_ts",
+    "mm_token_type_ids",
 )
 TOPREWARD_METADATA_KEYS = ("prompt_length",)
 TOPREWARD_INPUT_KEYS = TOPREWARD_VLM_INPUT_KEYS + TOPREWARD_METADATA_KEYS
