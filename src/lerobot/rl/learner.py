@@ -509,15 +509,36 @@ def add_actor_information_and_train(
             optimizers["critic"].step()
 
             # --- actor update (flow + one_step) ---
-            loss_actor = policy.compute_loss_actor(batch_qc)
-            optimizers["actor"].zero_grad()
-            loss_actor.backward()
-            actor_grad_norm = torch.nn.utils.clip_grad_norm_(
-                list(policy.flow_actor.parameters())
-                + list(policy.one_step_actor.parameters()),
-                max_norm=clip_grad_norm_value,
-            ).item()
-            optimizers["actor"].step()
+            # critic_warmup_steps: keep actor FROZEN at the pretrained init
+            # for the first N opt-steps so the value head can learn the new
+            # online reward signal before the policy gradient drags the
+            # actor off-manifold. Critical for HIL-SERL fine-tuning from a
+            # pretrained policy — without it, an untrained Q backprops
+            # noise into a warm-started actor and the policy degrades
+            # (CNN succ 55% → 25% in 2k steps, observed 2026-05-22).
+            _qc_warmup_n = int(getattr(cfg.policy, "critic_warmup_steps", 0) or 0)
+            _in_qc_warmup = (_qc_warmup_n > 0) and (optimization_step < _qc_warmup_n)
+            if not _in_qc_warmup:
+                loss_actor = policy.compute_loss_actor(batch_qc)
+                optimizers["actor"].zero_grad()
+                loss_actor.backward()
+                actor_grad_norm = torch.nn.utils.clip_grad_norm_(
+                    list(policy.flow_actor.parameters())
+                    + list(policy.one_step_actor.parameters()),
+                    max_norm=clip_grad_norm_value,
+                ).item()
+                optimizers["actor"].step()
+            else:
+                # Still compute the loss for monitoring (no gradient step).
+                with torch.no_grad():
+                    loss_actor = policy.compute_loss_actor(batch_qc)
+                actor_grad_norm = 0.0
+                if optimization_step == 0 or optimization_step % 200 == 0:
+                    logging.info(
+                        "[LEARNER] critic-warmup active: opt_step=%d / %d — "
+                        "actor frozen, loss_actor=%.4f (monitor only)",
+                        optimization_step, _qc_warmup_n, loss_actor.item(),
+                    )
 
             # --- target Polyak EMA ---
             policy.update_target_networks()
