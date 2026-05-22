@@ -704,6 +704,20 @@ def handle_resume_logic(cfg: TrainRLServerPipelineConfig) -> TrainRLServerPipeli
 
     # Ensure resume flag is set in returned config
     checkpoint_cfg.resume = True
+
+    # The original `cfg` already went through `cfg.validate()`, which sets the
+    # resume-related paths (`policy.pretrained_path`, `reward_model.pretrained_path`,
+    # `checkpoint_path`) from the CLI `config_path`. Those paths are NOT round-tripped
+    # through `train_config.json`, so a fresh `from_pretrained` load drops them.
+    # Preserve them explicitly so callers downstream of `handle_resume_logic` still see
+    # the checkpoint paths they would have seen without resume. See #3584.
+    if cfg.policy is not None and checkpoint_cfg.policy is not None and cfg.policy.pretrained_path is not None:
+        checkpoint_cfg.policy.pretrained_path = cfg.policy.pretrained_path
+    if cfg.reward_model is not None and checkpoint_cfg.reward_model is not None and cfg.reward_model.pretrained_path is not None:
+        checkpoint_cfg.reward_model.pretrained_path = cfg.reward_model.pretrained_path
+    if cfg.checkpoint_path is not None:
+        checkpoint_cfg.checkpoint_path = cfg.checkpoint_path
+
     return checkpoint_cfg
 
 
