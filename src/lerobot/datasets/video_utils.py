@@ -1146,7 +1146,6 @@ def get_video_info(
 
         # Calculate fps from r_frame_rate
         video_info["video.fps"] = int(video_stream.base_rate)
-
         video_info["video.channels"] = get_pix_fmt_channels(video_stream.pix_fmt)
 
     # Reset logging level
