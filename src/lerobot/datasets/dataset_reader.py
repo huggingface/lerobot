@@ -22,6 +22,8 @@ from pathlib import Path
 import datasets
 import torch
 
+from lerobot.configs.video import DepthEncoderConfig
+
 from .dataset_metadata import LeRobotDatasetMetadata
 from .depth_utils import dequantize_depth
 from .feature_utils import (
@@ -87,17 +89,11 @@ class DatasetReader:
             check_delta_timestamps(delta_timestamps, meta.fps, tolerance_s)
             self.delta_indices = get_delta_indices(delta_timestamps, meta.fps)
 
-        if self._meta.depth_keys:
-            # TODO(CarolinePascal): make this decent, this is awful.
-            self._dequantize_depth_configs = {
-                vid_key: {
-                    "depth_min": self._meta.features[vid_key]["info"]["video.depth_min"],
-                    "depth_max": self._meta.features[vid_key]["info"]["video.depth_max"],
-                    "shift": self._meta.features[vid_key]["info"]["video.shift"],
-                    "use_log": self._meta.features[vid_key]["info"]["video.use_log"],
-                }
-                for vid_key in self._meta.depth_keys
-            }
+        ##TODO(CarolinePascal): Should we rather use a more lightweight structure ?
+        self._depth_encoder_configs: dict[str, DepthEncoderConfig] = {
+            vid_key: DepthEncoderConfig.from_video_info(self._meta.features[vid_key].get("info"))
+            for vid_key in self._meta.depth_keys
+        }
 
     def try_load(self) -> bool:
         """Attempt to load from local cache. Returns True if data is sufficient."""
@@ -263,8 +259,14 @@ class DatasetReader:
                 is_depth=vid_key in self._meta.depth_keys,
             )
             if vid_key in self._meta.depth_keys:
+                depth_encoder = self._depth_encoder_configs[vid_key]
                 frames = dequantize_depth(
-                    frames, **self._dequantize_depth_configs[vid_key], output_tensor=True
+                    frames,
+                    depth_min=depth_encoder.depth_min,
+                    depth_max=depth_encoder.depth_max,
+                    shift=depth_encoder.shift,
+                    use_log=depth_encoder.use_log,
+                    output_tensor=True,
                 )
             return vid_key, frames.squeeze(0)
 

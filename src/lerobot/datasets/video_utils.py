@@ -46,7 +46,7 @@ from lerobot.configs import (
 )
 from lerobot.utils.import_utils import get_safe_default_video_backend
 
-from .depth_utils import DEPTH_PIX_FMT, quantize_depth
+from .depth_utils import quantize_depth
 from .pyav_utils import get_pix_fmt_channels
 
 logger = logging.getLogger(__name__)
@@ -153,7 +153,7 @@ def decode_video_frames_pyav(
             if log_loaded_timestamps:
                 logger.info(f"frame loaded at timestamp={current_ts:.4f}")
             if is_depth:
-                arr = frame.to_ndarray(format=DEPTH_PIX_FMT)  # (H, W) uint16
+                arr = frame.to_ndarray(format="gray12le")  # (H, W) uint12
                 loaded_frames.append(torch.from_numpy(arr).unsqueeze(0).contiguous())
             else:
                 arr = frame.to_ndarray(format="rgb24")  # (H, W, 3)
