@@ -47,6 +47,7 @@ from lerobot.configs import (
 from lerobot.utils.import_utils import get_safe_default_video_backend
 
 from .depth_utils import DEPTH_PIX_FMT, quantize_depth
+from .pyav_utils import get_pix_fmt_channels
 
 logger = logging.getLogger(__name__)
 
@@ -1143,8 +1144,7 @@ def get_video_info(
         # Calculate fps from r_frame_rate
         video_info["video.fps"] = int(video_stream.base_rate)
 
-        pixel_channels = get_video_pixel_channels(video_stream.pix_fmt)
-        video_info["video.channels"] = pixel_channels
+        video_info["video.channels"] = get_pix_fmt_channels(video_stream.pix_fmt)
 
     # Reset logging level
     av.logging.restore_default_callback()
@@ -1163,17 +1163,6 @@ def get_video_info(
     video_info["is_depth_map"] = isinstance(video_encoder, DepthEncoderConfig)
 
     return video_info
-
-
-def get_video_pixel_channels(pix_fmt: str) -> int:
-    if "gray" in pix_fmt or "depth" in pix_fmt or "monochrome" in pix_fmt:
-        return 1
-    elif "rgba" in pix_fmt or "yuva" in pix_fmt:
-        return 4
-    elif "rgb" in pix_fmt or "yuv" in pix_fmt:
-        return 3
-    else:
-        raise ValueError("Unknown format")
 
 
 def get_video_duration_in_s(video_path: Path | str) -> float:

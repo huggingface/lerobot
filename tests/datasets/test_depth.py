@@ -25,7 +25,7 @@ from lerobot.datasets.image_writer import (
     save_kwargs_for_path,
     write_image,
 )
-from lerobot.datasets.video_utils import get_video_pixel_channels
+from lerobot.datasets.pyav_utils import get_pix_fmt_channels
 from tests.fixtures.constants import (
     DEFAULT_FPS,
     DUMMY_CAMERA_FEATURES,
@@ -195,9 +195,9 @@ class TestHwToDatasetFeaturesDepth:
 class TestVideoInfoDepthFlag:
     """Misc depth-related constants and helpers in video_utils / configs."""
 
-    def test_get_video_pixel_channels_gray(self):
-        assert get_video_pixel_channels("gray12le") == 1
-        assert get_video_pixel_channels("gray8") == 1
+    def test_get_pix_fmt_channels_gray(self):
+        assert get_pix_fmt_channels("gray12le") == 1
+        assert get_pix_fmt_channels("gray8") == 1
 
     def test_ffv1_in_valid_codecs(self):
         assert "ffv1" in VALID_VIDEO_CODECS
