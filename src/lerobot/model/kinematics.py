@@ -20,6 +20,10 @@ import numpy as np
 
 from lerobot.utils.import_utils import require_package
 
+# Declared unconditionally so it is visible to mypy under TYPE_CHECKING; the
+# runtime ``else`` branch below assigns it when the actual import fails.
+_placo_runtime_error: ImportError | None = None
+
 if TYPE_CHECKING:
     import placo  # type: ignore[import-not-found]
 else:
@@ -37,9 +41,7 @@ else:
         import placo  # type: ignore[import-not-found]
     except ImportError as _placo_import_err:
         placo = None
-        _placo_runtime_error: ImportError | None = _placo_import_err
-    else:
-        _placo_runtime_error = None
+        _placo_runtime_error = _placo_import_err
 
 
 def _raise_if_placo_unusable() -> None:
