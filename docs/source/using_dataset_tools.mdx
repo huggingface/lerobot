@@ -88,6 +88,40 @@ lerobot-edit-dataset \
     --operation.feature_names "['observation.images.top']"
 ```
 
+#### Modify Tasks
+
+Rename the task assigned to an existing dataset, either uniformly across every
+episode or per-episode. This is the simplest way to fix a typo or change the
+task description after recording finished, without re-recording.
+
+```bash
+# Set the same task for every episode (modifies the original dataset in place)
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type modify_tasks \
+    --operation.new_task "Pick up the cube and place it"
+
+# Set different tasks per episode (modifies in place)
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type modify_tasks \
+    --operation.episode_tasks '{"0": "Task A", "1": "Task B", "2": "Task A"}'
+
+# Combine: default task for all episodes plus overrides for specific ones
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type modify_tasks \
+    --operation.new_task "Default task" \
+    --operation.episode_tasks '{"5": "Special task for episode 5"}'
+
+# Write the renamed result to a new dataset instead of modifying in place
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --new_repo_id lerobot/pusht_renamed \
+    --operation.type modify_tasks \
+    --operation.new_task "Pick up the cube and place it"
+```
+
 #### Convert to Video
 
 Convert an image-based dataset to video format, creating a new LeRobotDataset where images are stored as videos. This is useful for reducing storage requirements and improving data loading performance. The new dataset will have the exact same structure as the original, but with images encoded as MP4 videos in the proper LeRobot format.
