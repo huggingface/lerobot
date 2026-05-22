@@ -609,7 +609,7 @@ class LeRobotDatasetMetadata:
         Args:
             video_key: If provided, only update this video key. Otherwise update
                 all video keys in the dataset.
-            camera_encoder: Encoder configuration used to produce the
+            video_encoder: Encoder configuration used to produce the
                 videos. When provided, its fields are recorded as
                 ``video.<field>`` entries alongside the stream-derived
                 ``video.*`` entries (see :func:`get_video_info`).

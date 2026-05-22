@@ -494,7 +494,7 @@ def encode_video_frames(
 def reencode_video(
     input_video_path: Path | str,
     output_video_path: Path | str,
-    camera_encoder: VideoEncoderConfig | None = None,
+    video_encoder: VideoEncoderConfig | None = None,
     encoder_threads: int | None = None,
     log_level: int | None = av.logging.WARNING,
     overwrite: bool = False,
@@ -504,13 +504,13 @@ def reencode_video(
     Args:
         input_video_path: Existing video file to read.
         output_video_path: Path for the re-encoded file.
-        camera_encoder: Encoder configuration. Defaults to :func:`camera_encoder_defaults`.
+        video_encoder: Encoder configuration. Defaults to :func:`camera_encoder_defaults`.
         encoder_threads: Optional thread count forwarded to :meth:`VideoEncoderConfig.get_codec_options`.
         log_level: libav log level while encoding, or ``None`` to leave logging unchanged. Defaults to WARNING.
         overwrite: When ``False`` and ``output_video_path`` already exists, skip and log a warning.
     """
 
-    camera_encoder = camera_encoder or camera_encoder_defaults()
+    video_encoder = video_encoder or camera_encoder_defaults()
 
     output_video_path = Path(output_video_path)
 
@@ -520,9 +520,9 @@ def reencode_video(
 
     output_video_path.parent.mkdir(parents=True, exist_ok=True)
 
-    video_options = camera_encoder.get_codec_options(encoder_threads, as_strings=True)
-    vcodec = camera_encoder.vcodec
-    pix_fmt = camera_encoder.pix_fmt
+    video_options = video_encoder.get_codec_options(encoder_threads, as_strings=True)
+    vcodec = video_encoder.vcodec
+    pix_fmt = video_encoder.pix_fmt
 
     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_named_file:
         tmp_output_video_path = tmp_named_file.name

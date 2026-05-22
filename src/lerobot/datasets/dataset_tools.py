@@ -1331,7 +1331,7 @@ def _estimate_frame_size_via_calibration(
             imgs_dir=calibration_dir,
             video_path=calibration_video_path,
             fps=fps,
-            camera_encoder=camera_encoder,
+            video_encoder=camera_encoder,
             overwrite=True,
         )
 
@@ -1815,7 +1815,7 @@ def convert_image_to_video_dataset(
                     imgs_dir=imgs_dir,
                     video_path=video_path,
                     fps=fps,
-                    camera_encoder=camera_encoder,
+                    video_encoder=camera_encoder,
                     overwrite=True,
                 )
 
@@ -1862,7 +1862,7 @@ def convert_image_to_video_dataset(
                     video_key=img_key, chunk_index=0, file_index=0
                 )
                 new_meta.info.features[img_key]["info"] = get_video_info(
-                    video_path, camera_encoder=camera_encoder
+                    video_path, video_encoder=camera_encoder
                 )
 
         write_info(new_meta.info, new_meta.root)
@@ -1960,7 +1960,7 @@ def reencode_dataset(
     # Refresh video info in metadata for every video key.
     for vid_key in meta.video_keys:
         video_path = meta.root / meta.get_video_file_path(0, vid_key)
-        meta.info.features[vid_key]["info"] = get_video_info(video_path, camera_encoder=camera_encoder)
+        meta.info.features[vid_key]["info"] = get_video_info(video_path, video_encoder=camera_encoder)
 
     write_info(meta.info, meta.root)
     logging.info("Dataset metadata updated.")
