@@ -3172,6 +3172,7 @@ requires-dist = [
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'wallx'" },
     { name = "lerobot", extras = ["smolvla"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["test"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["topreward"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["training"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'eo1'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'groot'" },
