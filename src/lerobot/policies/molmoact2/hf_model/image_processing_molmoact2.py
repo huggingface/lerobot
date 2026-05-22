@@ -364,11 +364,11 @@ def image_to_patches_and_grids(
 
 
 class MolmoAct2ImagesKwargs(ImagesKwargs, total=False):
-    max_crops: Optional[int]
-    overlap_margins: Optional[list[int]]
-    crop_mode: Optional[str]
-    patch_size: Optional[int]
-    pooling_size: Optional[list[int]]
+    max_crops: int | None
+    overlap_margins: list[int] | None
+    crop_mode: str | None
+    patch_size: int | None
+    pooling_size: list[int] | None
 
 
 class MolmoAct2ImageProcessor(BaseImageProcessor):
@@ -400,10 +400,10 @@ class MolmoAct2ImageProcessor(BaseImageProcessor):
 
     def __init__(
         self,
-        size: Optional[dict[str, int]] = None,
+        size: dict[str, int] | None = None,
         resample: PILImageResampling = PILImageResampling.BILINEAR,
-        image_mean: Optional[Union[float, list[float]]] = None,
-        image_std: Optional[Union[float, list[float]]] = None,
+        image_mean: float | list[float] | None = None,
+        image_std: float | list[float] | None = None,
         do_convert_rgb: bool = True,
         max_crops: int = 8,
         overlap_margins: list[int] = [4, 4],
@@ -431,17 +431,17 @@ class MolmoAct2ImageProcessor(BaseImageProcessor):
     def preprocess(
         self,
         images: ImageInput,
-        size: Optional[dict[str, int]] = None,
-        resample: Optional[PILImageResampling] = None,
-        image_mean: Optional[Union[float, list[float]]] = None,
-        image_std: Optional[Union[float, list[float]]] = None,
-        do_convert_rgb: Optional[bool] = None,
-        max_crops: Optional[int] = None,
-        overlap_margins: Optional[list[int]] = None,
-        crop_mode: Optional[str] = None,
-        patch_size: Optional[int] = None,
-        pooling_size: Optional[list[int]] = None,
-        return_tensors: Optional[Union[str, TensorType]] = None,
+        size: dict[str, int] | None = None,
+        resample: PILImageResampling | None = None,
+        image_mean: float | list[float] | None = None,
+        image_std: float | list[float] | None = None,
+        do_convert_rgb: bool | None = None,
+        max_crops: int | None = None,
+        overlap_margins: list[int] | None = None,
+        crop_mode: str | None = None,
+        patch_size: int | None = None,
+        pooling_size: list[int] | None = None,
+        return_tensors: str | TensorType | None = None,
         **kwargs,
     ) -> BatchFeature:
         """

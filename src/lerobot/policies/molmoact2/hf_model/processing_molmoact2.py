@@ -102,12 +102,12 @@ class MolmoAct2Processor(ProcessorMixin):
         image_processor: MolmoAct2ImageProcessor = None,
         video_processor: MolmoAct2VideoProcessor = None,
         tokenizer: AutoTokenizer = None,
-        chat_template: Optional[str] = None,
-        image_use_col_tokens: Optional[bool] = True,
-        use_single_crop_col_tokens: Optional[bool] = None,
-        use_single_crop_start_token: Optional[bool] = True,
-        video_use_col_tokens: Optional[bool] = False,
-        use_frame_special_tokens: Optional[bool] = True,
+        chat_template: str | None = None,
+        image_use_col_tokens: bool | None = True,
+        use_single_crop_col_tokens: bool | None = None,
+        use_single_crop_start_token: bool | None = True,
+        video_use_col_tokens: bool | None = False,
+        use_frame_special_tokens: bool | None = True,
         **kwargs,
     ) -> None:
         super().__init__(
@@ -272,7 +272,7 @@ class MolmoAct2Processor(ProcessorMixin):
 
     def __call__(
         self,
-        text: Union[TextInput, PreTokenizedInput, list[TextInput], list[PreTokenizedInput]] = None,
+        text: TextInput | PreTokenizedInput | list[TextInput] | list[PreTokenizedInput] = None,
         images: ImageInput = None,
         videos: VideoInput = None,
         **kwargs: Unpack[MolmoAct2ProcessorKwargs],

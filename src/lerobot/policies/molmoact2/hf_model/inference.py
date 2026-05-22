@@ -19,7 +19,8 @@
 """Inference utilities for MolmoAct2"""
 
 from dataclasses import dataclass
-from typing import Any, Iterable, Optional, Sequence, Tuple
+from typing import Any, Optional, Tuple
+from collections.abc import Iterable, Sequence
 
 import torch
 from torch.nn import functional as F
@@ -32,12 +33,12 @@ class _ActionFlowInputs:
     trajectory: torch.Tensor
     context: Any
     modulations: Sequence[Any]
-    action_dim_is_pad: Optional[torch.Tensor]
+    action_dim_is_pad: torch.Tensor | None
 
 
 @dataclass
 class _ActionFlowCudaGraph:
-    key: Tuple[Any, ...]
+    key: tuple[Any, ...]
     graph: torch.cuda.CUDAGraph
     static_inputs: _ActionFlowInputs
     output: torch.Tensor
@@ -59,7 +60,7 @@ class _DepthDecodeCudaGraphPostStage:
 
 @dataclass
 class _DepthDecodeCudaGraph:
-    cache_key: Tuple[Any, ...]
+    cache_key: tuple[Any, ...]
     pre_graph: torch.cuda.CUDAGraph
     token_ids: torch.Tensor
     cos: torch.Tensor
@@ -73,13 +74,13 @@ class _DepthDecodeCudaGraph:
 @dataclass
 class _DepthDecodeCudaGraphSpec:
     eligible: bool
-    cache_key_prefix: Tuple[Any, ...]
+    cache_key_prefix: tuple[Any, ...]
     num_hidden_layers: int
     head_dim: int
     num_attention_heads: int
 
 
-def _cache_seq_len_int(past_key_values: Optional[Cache]) -> int:
+def _cache_seq_len_int(past_key_values: Cache | None) -> int:
     if past_key_values is None:
         return 0
     seq_len = past_key_values.get_seq_length()
@@ -88,7 +89,7 @@ def _cache_seq_len_int(past_key_values: Optional[Cache]) -> int:
     return int(seq_len)
 
 
-def _cache_max_len_int(past_key_values: Optional[Cache]) -> int:
+def _cache_max_len_int(past_key_values: Cache | None) -> int:
     if past_key_values is None:
         return -1
     max_len = past_key_values.get_max_cache_shape()
@@ -99,7 +100,7 @@ def _cache_max_len_int(past_key_values: Optional[Cache]) -> int:
 
 def _iter_cache_key_values(
     past_key_values: Cache,
-) -> Iterable[Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]]:
+) -> Iterable[tuple[torch.Tensor | None, torch.Tensor | None]]:
     layers = getattr(past_key_values, "layers", None)
     if layers is not None:
         for layer in layers:
@@ -116,8 +117,8 @@ class _DepthDecodeStaticLayerCache:
     def __init__(self, max_cache_len: int) -> None:
         self.max_cache_len = int(max_cache_len)
         self.cumulative_length = 0
-        self.keys: Optional[torch.Tensor] = None
-        self.values: Optional[torch.Tensor] = None
+        self.keys: torch.Tensor | None = None
+        self.values: torch.Tensor | None = None
 
     def _allocate(self, key_states: torch.Tensor, value_states: torch.Tensor) -> None:
         bsz, n_heads = key_states.shape[:2]
@@ -138,7 +139,7 @@ class _DepthDecodeStaticLayerCache:
         value_states: torch.Tensor,
         *args,
         **kwargs,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         if self.keys is None:
             self._allocate(key_states, value_states)
         start = self.cumulative_length
@@ -185,7 +186,7 @@ class ActionCudaGraphManager:
     def __init__(self, model: Any) -> None:
         self.model = model
         self.enabled = True
-        self.action_flow_graph: Optional[_ActionFlowCudaGraph] = None
+        self.action_flow_graph: _ActionFlowCudaGraph | None = None
 
     def set_enabled(self, enabled: bool) -> None:
         self.enabled = bool(enabled)
@@ -256,8 +257,8 @@ class DepthDecodeCudaGraphManager:
         self.model = model
         self.backbone = model.model
         self.enabled = True
-        self.graph: Optional[_DepthDecodeCudaGraph] = None
-        self.graph_spec: Optional[_DepthDecodeCudaGraphSpec] = None
+        self.graph: _DepthDecodeCudaGraph | None = None
+        self.graph_spec: _DepthDecodeCudaGraphSpec | None = None
 
     def set_enabled(self, enabled: bool) -> None:
         self.enabled = bool(enabled)
@@ -320,7 +321,7 @@ class DepthDecodeCudaGraphManager:
         self,
         next_input_ids: torch.Tensor,
         attention_bias: torch.Tensor,
-    ) -> Tuple[Any, ...]:
+    ) -> tuple[Any, ...]:
         device = next_input_ids.device
         return (
             self._depth_decode_spec().cache_key_prefix,
@@ -341,7 +342,7 @@ class DepthDecodeCudaGraphManager:
         hidden_states: torch.Tensor,
         cos: torch.Tensor,
         sin: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         block = self.backbone.transformer.blocks[layer_idx]
         attention = block.self_attn
         residual = hidden_states
@@ -378,7 +379,7 @@ class DepthDecodeCudaGraphManager:
         token_ids: torch.Tensor,
         cos: torch.Tensor,
         sin: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         inputs_embeds = self.model._embed_base_tokens(token_ids)
         return self._depth_decode_pre_layer(0, inputs_embeds, cos, sin)
 
@@ -408,7 +409,7 @@ class DepthDecodeCudaGraphManager:
         attn_context: torch.Tensor,
         cos: torch.Tensor,
         sin: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         hidden_states = self._depth_decode_post_layer(layer_idx, residual, attn_context)
         return self._depth_decode_pre_layer(layer_idx + 1, hidden_states, cos, sin)
 
@@ -553,7 +554,7 @@ class DepthDecodeCudaGraphManager:
         past_key_values: Cache,
         attention_bias: torch.Tensor,
         past_length: int,
-    ) -> Tuple[torch.Tensor, Cache]:
+    ) -> tuple[torch.Tensor, Cache]:
         end = past_length + 1
         decode_graph = self._get_depth_decode_graph(
             next_input_ids,
@@ -582,8 +583,8 @@ class DepthDecodeCudaGraphManager:
 
 
 def _cuda_graph_tensor_signature(
-    tensor: Optional[torch.Tensor],
-) -> Optional[Tuple[Any, ...]]:
+    tensor: torch.Tensor | None,
+) -> tuple[Any, ...] | None:
     if tensor is None:
         return None
     return (
@@ -594,7 +595,7 @@ def _cuda_graph_tensor_signature(
     )
 
 
-def _cuda_graph_context_signature(context: Any) -> Tuple[Any, ...]:
+def _cuda_graph_context_signature(context: Any) -> tuple[Any, ...]:
     sig = _cuda_graph_tensor_signature
     return (
         tuple((sig(k), sig(v)) for k, v in context.kv_contexts),
@@ -605,7 +606,7 @@ def _cuda_graph_context_signature(context: Any) -> Tuple[Any, ...]:
     )
 
 
-def _cuda_graph_modulation_signature(modulations: Sequence[Any]) -> Tuple[Any, ...]:
+def _cuda_graph_modulation_signature(modulations: Sequence[Any]) -> tuple[Any, ...]:
     sig = _cuda_graph_tensor_signature
     return tuple(
         (
@@ -617,7 +618,7 @@ def _cuda_graph_modulation_signature(modulations: Sequence[Any]) -> Tuple[Any, .
     )
 
 
-def _cuda_graph_key(inputs: _ActionFlowInputs, steps: int) -> Tuple[Any, ...]:
+def _cuda_graph_key(inputs: _ActionFlowInputs, steps: int) -> tuple[Any, ...]:
     sig = _cuda_graph_tensor_signature
     return (
         sig(inputs.trajectory),
@@ -628,7 +629,7 @@ def _cuda_graph_key(inputs: _ActionFlowInputs, steps: int) -> Tuple[Any, ...]:
     )
 
 
-def _clone_static_tensor(tensor: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
+def _clone_static_tensor(tensor: torch.Tensor | None) -> torch.Tensor | None:
     if tensor is None:
         return None
     static = torch.empty_strided(
@@ -711,7 +712,7 @@ def _apply_rotary_pos_emb(
     cos: torch.Tensor,
     sin: torch.Tensor,
     unsqueeze_dim: int = 1,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor]:
     cos = cos.unsqueeze(unsqueeze_dim)
     sin = sin.unsqueeze(unsqueeze_dim)
     q_embed = (q * cos) + (_rotate_half(q) * sin)
@@ -732,7 +733,7 @@ def _capture_cuda_graph(
     device: torch.device,
     *,
     after_warmup=None,
-) -> Tuple[torch.cuda.CUDAGraph, Any]:
+) -> tuple[torch.cuda.CUDAGraph, Any]:
     warmup_stream = torch.cuda.Stream(device=device)
     warmup_stream.wait_stream(torch.cuda.current_stream(device))
     with torch.cuda.stream(warmup_stream):
