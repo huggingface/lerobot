@@ -101,6 +101,7 @@ class Pi0FastPrepareStateAndLanguageTokenizerProcessorStep(ProcessorStep):
 def make_pi0_fast_pre_post_processors(
     config: PI0FastConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    rename_map: dict[str, str] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
@@ -135,16 +136,12 @@ def make_pi0_fast_pre_post_processors(
         action_names=getattr(config, "action_feature_names", None),
     )
 
-    # Pi0Fast order: relative → normalize → tokenize → model → unnormalize → absolute
-    # This matches pi0/pi0.5: RelativeActionsProcessorStep runs first on raw absolute actions,
-    # caching the raw state. NormalizerProcessorStep then normalizes the raw relative actions,
-    # so the normalizer (and action tokenizer) sees delta values — relative stats are required.
-    # NOTE: RelativeActionsProcessorStep only modifies the action in the transition; it reads
-    # state from the observation but does not change it. NormalizerProcessorStep still runs
-    # before Pi0FastPrepareStateAndLanguageTokenizerProcessorStep, so the state tokenizer
-    # continues to receive normalized state in [-1, 1] as expected.
+    # Pi0Fast order: rename → relative → normalize → tokenize → model → unnormalize → absolute
+    # Note: relative_step runs before NormalizerProcessorStep, which is safe because
+    # state features pass through unchanged (only actions are relativized), so the
+    # state tokenizer still sees normalized state in [-1, 1].
     input_steps: list[ProcessorStep] = [
-        RenameObservationsProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
+        RenameObservationsProcessorStep(rename_map=rename_map or {}),
         AddBatchDimensionProcessorStep(),
         relative_step,
         NormalizerProcessorStep(

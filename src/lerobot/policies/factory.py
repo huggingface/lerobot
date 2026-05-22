@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import logging
 from typing import TYPE_CHECKING, Any, TypedDict, Unpack
 
@@ -224,6 +225,9 @@ class ProcessorConfigKwargs(TypedDict, total=False):
         preprocessor_overrides: A dictionary of overrides for the preprocessor configuration.
         postprocessor_overrides: A dictionary of overrides for the postprocessor configuration.
         dataset_stats: Dataset statistics for normalization.
+        rename_map: Optional mapping of dataset or environment feature keys to match expected
+            policy feature names. When provided, stats are renamed accordingly so that
+            NormalizerProcessorStep can locate them after observation keys are remapped.
     """
 
     preprocessor_config_filename: str | None
@@ -231,6 +235,7 @@ class ProcessorConfigKwargs(TypedDict, total=False):
     preprocessor_overrides: dict[str, Any] | None
     postprocessor_overrides: dict[str, Any] | None
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None
+    rename_map: dict[str, str] | None
 
 
 def make_pre_post_processors(
@@ -355,6 +360,7 @@ def make_pre_post_processors(
         processors = make_pi0_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
+            rename_map=kwargs.get("rename_map"),
         )
 
     elif isinstance(policy_cfg, PI05Config):
@@ -363,6 +369,7 @@ def make_pre_post_processors(
         processors = make_pi05_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
+            rename_map=kwargs.get("rename_map"),
         )
 
     elif isinstance(policy_cfg, GaussianActorConfig):
@@ -379,6 +386,7 @@ def make_pre_post_processors(
         processors = make_smolvla_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
+            rename_map=kwargs.get("rename_map"),
         )
 
     elif isinstance(policy_cfg, GrootConfig):
@@ -397,6 +405,7 @@ def make_pre_post_processors(
         processors = make_xvla_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
+            rename_map=kwargs.get("rename_map"),
         )
 
     elif isinstance(policy_cfg, WallXConfig):
@@ -419,6 +428,7 @@ def make_pre_post_processors(
             processors = _make_processors_from_policy_config(
                 config=policy_cfg,
                 dataset_stats=kwargs.get("dataset_stats"),
+                rename_map=kwargs.get("rename_map"),
             )
         except Exception as e:
             raise ValueError(f"Processor for policy type '{policy_cfg.type}' is not implemented.") from e
@@ -598,6 +608,7 @@ def _get_policy_cls_from_policy_name(name: str) -> type[PreTrainedConfig]:
 def _make_processors_from_policy_config(
     config: PreTrainedConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    rename_map: dict[str, str] | None = None,
 ) -> tuple[Any, Any]:
     """Create pre- and post-processors from a policy configuration using dynamic imports.
 
@@ -606,6 +617,8 @@ def _make_processors_from_policy_config(
     Args:
         config: The policy configuration object.
         dataset_stats: Dataset statistics for normalization.
+        rename_map: Optional mapping of dataset or environment feature keys to match expected
+            policy feature names.
     Returns:
         A tuple containing the input (pre-processor) and output (post-processor) pipelines.
     """
@@ -620,4 +633,22 @@ def _make_processors_from_policy_config(
     )
     module = importlib.import_module(module_path)
     function = getattr(module, function_name)
+
+    # Try calling with rename_map first; fall back without it for third-party factories
+    # that only accept (config, dataset_stats=...) and don't have the rename_map parameter.
+    if rename_map is not None:
+        sig = inspect.signature(function)
+        accepts_rename_map = "rename_map" in sig.parameters
+        accepts_var_keyword = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+        if accepts_rename_map or accepts_var_keyword:
+            return function(config, dataset_stats=dataset_stats, rename_map=rename_map)
+        logging.warning(
+            "Policy factory '%s' does not accept `rename_map`; "
+            "observation rename will not be applied. "
+            "Consider updating the factory to accept a `rename_map` parameter.",
+            function_name,
+        )
+
     return function(config, dataset_stats=dataset_stats)

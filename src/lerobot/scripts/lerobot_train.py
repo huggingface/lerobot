@@ -47,6 +47,7 @@ from lerobot.datasets import EpisodeAwareSampler, make_dataset
 from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
+from lerobot.processor.rename_processor import rename_stats
 from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
 from lerobot.utils.import_utils import register_third_party_plugins
@@ -310,6 +311,15 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     if cfg.is_reward_model_training:
         processor_kwargs["dataset_meta"] = dataset.meta
+
+    if not cfg.is_reward_model_training:
+        # Always pass rename_map so it gets applied in the processor even when building
+        # processors from scratch (e.g., when use_relative_actions=True bypasses pretrained_path)
+        processor_kwargs["rename_map"] = cfg.rename_map
+        # Rename stats whenever we'll build processors fresh —
+        # i.e., unless we're resuming from a pretrained checkpoint that already has renamed stats.
+        if cfg.rename_map and not (processor_pretrained_path and cfg.resume):
+            processor_kwargs["dataset_stats"] = rename_stats(dataset.meta.stats, cfg.rename_map)
 
     if not cfg.is_reward_model_training and processor_pretrained_path is not None:
         processor_kwargs["preprocessor_overrides"] = {
