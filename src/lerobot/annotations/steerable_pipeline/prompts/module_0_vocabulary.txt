@@ -8,6 +8,13 @@ conditioned on these strings — duplicate phrasings (e.g. "grasp blue
 cube" vs "pick up the blue cube") would destroy the conditioning, so
 pick one wording per concept and reuse it everywhere.
 
+Decide how many entries each list needs YOURSELF based on what you see —
+the smallest set that still covers every recurring phase in the demos.
+A simple two-object pick-and-place might need ~6 subtask labels and 2
+memory milestones; a long multi-step recipe needs more. Err on the side
+of FEWER — extra entries that don't recur across episodes weaken the
+conditioning.
+
 You output two lists:
 
 1. `subtasks`: imperative, telegraphic commands the robot can execute.
@@ -16,7 +23,8 @@ You output two lists:
      "cube" — never "block" / "object").
    - Atomic — one skill per subtask (gripper-open events, contact, regrasps,
      transitions all become cut points).
-   - Aim for ~{n_subtask_target} labels. Fewer is better than more.
+   - Each label must recur across the demos. If you see a motion only
+     once across all sample clips, it probably isn't a canonical phase.
    - Good: "move to blue cube", "grasp blue cube", "lift blue cube",
      "place blue cube in box", "release blue cube", "retract arm".
    - Bad: "the robot arm moves towards the blue cube" (third person,
@@ -30,7 +38,6 @@ You output two lists:
    should NOT.
    - First person, past tense. Start with "I".
    - One sentence. Functional outcome only — no grasp / motion detail.
-   - Aim for ~{n_memory_target} milestones.
    - Good: "I picked up the blue cube.", "I placed the blue cube in
      the green box.", "I wiped the counter."
    - Bad: "The robot arm grasped the blue cube." (third person),

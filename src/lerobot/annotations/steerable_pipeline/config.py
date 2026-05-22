@@ -26,12 +26,13 @@ class VocabularyConfig:
     """Phase 0 — dataset-level canonical vocabulary discovery.
 
     Watches the first ``sample_episodes`` episode videos and asks the VLM
-    to derive a small canonical vocabulary (~``n_subtask_target`` subtask
-    labels + ~``n_memory_target`` memory milestones) that every episode
-    in the dataset will reuse. The output lands at
-    ``meta/canonical_vocabulary.json`` and feeds phase 1's subtask +
-    memory generation as both a prompt-side constraint and a post-VLM
-    validation gate.
+    to derive a small canonical vocabulary (subtask labels + memory
+    milestones) that every episode in the dataset will reuse. The VLM
+    decides the count itself from what it sees in the clips — short
+    pick-and-place demos get ~6 labels, longer multi-step recipes more.
+    The output lands at ``meta/canonical_vocabulary.json`` and feeds
+    phase 1's subtask + memory generation as both a prompt-side
+    constraint and a post-VLM validation gate.
 
     Why this exists: free-form LLM rephrasing per episode produces near-
     unique subtask strings, which makes the downstream low-level policy's
@@ -48,8 +49,6 @@ class VocabularyConfig:
 
     enabled: bool = True
     sample_episodes: int = 3
-    n_subtask_target: int = 10
-    n_memory_target: int = 6
     max_video_frames_per_episode: int = 32
     # When True (default), an existing meta/canonical_vocabulary.json is
     # loaded as-is and no VLM call is made — lets operators hand-edit the

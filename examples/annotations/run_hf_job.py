@@ -55,12 +55,11 @@ CMD = (
     "--vlm.chat_template_kwargs='{\"enable_thinking\": false}' "
     "--vlm.camera_key=observation.images.wrist "
     # Phase 0 — canonical vocabulary discovery from the first N sample
-    # episodes. The resulting meta/canonical_vocabulary.json constrains
-    # every subtask + memory string to a small repeatable target
-    # distribution; tune the counts for your task complexity.
+    # episodes. The VLM picks the right number of subtask + memory
+    # entries itself from what it sees; the resulting
+    # meta/canonical_vocabulary.json constrains every subtask + memory
+    # string to a small repeatable target distribution.
     "--vocabulary.sample_episodes=3 "
-    "--vocabulary.n_subtask_target=10 "
-    "--vocabulary.n_memory_target=6 "
     # Phase 1 — plan module (subtasks + plan + memory + task_aug).
     "--plan.frames_per_second=1.0 "
     "--plan.use_video_url=true "

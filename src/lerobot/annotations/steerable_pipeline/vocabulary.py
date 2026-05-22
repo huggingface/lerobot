@@ -190,8 +190,6 @@ class VocabularyDiscoveryModule:
         prompt = load_prompt("module_0_vocabulary").format(
             episode_task=task_hint or "(unspecified)",
             n_episodes=len(sample),
-            n_subtask_target=int(self.config.n_subtask_target),
-            n_memory_target=int(self.config.n_memory_target),
         )
         # Pack one video block per sample episode so the VLM sees the
         # variation across episodes (different starting poses, different
