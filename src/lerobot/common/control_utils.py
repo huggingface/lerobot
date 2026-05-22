@@ -18,6 +18,8 @@ from __future__ import annotations
 # Utilities
 ########################################################################################
 import logging
+import signal
+import sys
 import traceback
 from contextlib import nullcontext
 from copy import copy
@@ -172,6 +174,86 @@ def init_keyboard_listener():
     listener.start()
 
     return listener, events
+
+
+def interactive_reset_prompt(events, episode_index=None, play_sounds=False):
+    """
+    Blocking stdin prompt used between episodes when the interactive recording mode is enabled
+    (activated by passing ``--dataset.reset_time_s < 0``).
+
+    Asks the user to confirm whether the just-recorded episode should be kept and a new one
+    started. The user is assumed to have manually reset the scene before answering. Writes into
+    the shared ``events`` dict used by the recording main loop, so the existing save/discard
+    branches handle the outcome without further changes.
+
+    Accepted answers (case-insensitive, leading/trailing whitespace stripped):
+        - "" (just Enter) / "y" / "yes" → keep the episode, start a new one
+        - "n" / "no"                    → set ``events["rerecord_episode"] = True``
+        - "q" / "quit"                  → set ``events["stop_recording"] = True``
+        - anything else                 → reprompt
+
+    Falls back to a no-op (equivalent to "Y") with a warning when stdin is not a TTY, so
+    automated runs don't get stuck on input(). EOFError and KeyboardInterrupt are treated as
+    a graceful stop request.
+    """
+    if not sys.stdin.isatty():
+        logging.warning(
+            "interactive_reset_prompt: stdin is not a TTY, skipping prompt and keeping the scene. "
+            "(reset_time_s < 0 has no interactive effect in this environment)"
+        )
+        return
+
+    episode_label = f"Episode {episode_index}" if episode_index is not None else "Episode"
+    while True:
+        try:
+            answer = (
+                input(f"[INTERACTIVE RESET] {episode_label} recorded. Keep scene and record next? [Y/n/q]: ")
+                .strip()
+                .lower()
+            )
+        except (EOFError, KeyboardInterrupt):
+            print()
+            events["stop_recording"] = True
+            return
+
+        if answer in ("", "y", "yes"):
+            return
+        if answer in ("n", "no"):
+            events["rerecord_episode"] = True
+            return
+        if answer in ("q", "quit"):
+            events["stop_recording"] = True
+            return
+        print(f"[INTERACTIVE RESET] Unrecognized answer '{answer}'. Please type Y, n, or q.")
+
+
+def install_signal_early_exit(events):
+    """
+    Registers a SIGQUIT (Ctrl+\\) handler that flips ``events["exit_early"]`` to True so the
+    recording main loop ends the current episode at the next frame poll (within ~1/fps seconds).
+
+    Used as the stdin/Wayland-friendly equivalent of pynput's right-arrow shortcut, without
+    introducing any additional thread: the handler is dispatched by the Python runtime on the
+    main thread between bytecode instructions.
+
+    Returns the previously installed handler so the caller can restore it on teardown via
+    :func:`restore_signal_early_exit`.
+    """
+    original_handler = signal.getsignal(signal.SIGQUIT)
+
+    def _handler(_signum, _frame):
+        events["exit_early"] = True
+        print("\n[INTERACTIVE] Episode end requested via SIGQUIT", flush=True)
+
+    signal.signal(signal.SIGQUIT, _handler)
+    return original_handler
+
+
+def restore_signal_early_exit(original_handler):
+    """Restores the SIGQUIT handler previously returned by :func:`install_signal_early_exit`."""
+    if original_handler is None:
+        return
+    signal.signal(signal.SIGQUIT, original_handler)
 
 
 def sanity_check_dataset_name(repo_id, policy_cfg):

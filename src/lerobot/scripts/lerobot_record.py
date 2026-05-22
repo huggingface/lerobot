@@ -98,7 +98,10 @@ from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.cameras.zmq import ZMQCameraConfig  # noqa: F401
 from lerobot.common.control_utils import (
     init_keyboard_listener,
+    install_signal_early_exit,
+    interactive_reset_prompt,
     is_headless,
+    restore_signal_early_exit,
     sanity_check_dataset_robot_compatibility,
 )
 from lerobot.configs import parser
@@ -394,6 +397,7 @@ def record(
 
     dataset = None
     listener = None
+    original_sigquit = None
 
     try:
         if cfg.resume:
@@ -443,6 +447,14 @@ def record(
 
         listener, events = init_keyboard_listener()
 
+        if cfg.dataset.reset_time_s < 0:
+            original_sigquit = install_signal_early_exit(events)
+            logging.info(
+                "[INTERACTIVE] reset_time_s < 0: interactive recording mode enabled. "
+                "Between episodes you will be prompted [Y/n/q] on stdin. "
+                "During recording, press Ctrl+\\ (SIGQUIT) to end the current episode early."
+            )
+
         if not cfg.dataset.streaming_encoding:
             logging.info(
                 "Streaming encoding is disabled. If you have capable hardware, consider enabling it for way faster episode saving. --dataset.streaming_encoding=true --dataset.encoder_threads=2 # --dataset.camera_encoder.vcodec=auto. More info in the documentation: https://huggingface.co/docs/lerobot/streaming_video_encoding"
@@ -472,20 +484,26 @@ def record(
                 if not events["stop_recording"] and (
                     (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
                 ):
-                    log_say("Reset the environment", cfg.play_sounds)
-
-                    record_loop(
-                        robot=robot,
-                        events=events,
-                        fps=cfg.dataset.fps,
-                        teleop_action_processor=teleop_action_processor,
-                        robot_action_processor=robot_action_processor,
-                        robot_observation_processor=robot_observation_processor,
-                        teleop=teleop,
-                        control_time_s=cfg.dataset.reset_time_s,
-                        single_task=cfg.dataset.single_task,
-                        display_data=cfg.display_data,
-                    )
+                    if cfg.dataset.reset_time_s < 0:
+                        interactive_reset_prompt(
+                            events,
+                            episode_index=dataset.num_episodes,
+                            play_sounds=cfg.play_sounds,
+                        )
+                    else:
+                        log_say("Reset the environment", cfg.play_sounds)
+                        record_loop(
+                            robot=robot,
+                            events=events,
+                            fps=cfg.dataset.fps,
+                            teleop_action_processor=teleop_action_processor,
+                            robot_action_processor=robot_action_processor,
+                            robot_observation_processor=robot_observation_processor,
+                            teleop=teleop,
+                            control_time_s=cfg.dataset.reset_time_s,
+                            single_task=cfg.dataset.single_task,
+                            display_data=cfg.display_data,
+                        )
 
                 if events["rerecord_episode"]:
                     log_say("Re-record episode", cfg.play_sounds)
@@ -509,6 +527,9 @@ def record(
 
         if not is_headless() and listener:
             listener.stop()
+
+        if original_sigquit is not None:
+            restore_signal_early_exit(original_sigquit)
 
         if cfg.dataset.push_to_hub:
             if dataset and dataset.num_episodes > 0:
