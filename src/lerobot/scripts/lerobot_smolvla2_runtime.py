@@ -772,6 +772,11 @@ def _build_robot_observation_provider(
                 import cv2 as _cv2  # noqa: PLC0415
                 import numpy as _np  # noqa: PLC0415
 
+                # Snapshot the gate state at the start of the call: the
+                # camera info and startup-state warnings are meant to fire
+                # exactly once (operator sanity check), so gate them on
+                # the *previous* value rather than the post-loop value.
+                first_call = not _resize_logged["done"]
                 for cam_key, (target_h, target_w) in target_image_shapes.items():
                     img = raw.get(cam_key)
                     if img is None or not isinstance(img, _np.ndarray):
@@ -779,7 +784,7 @@ def _build_robot_observation_provider(
                     if img.ndim != 3:
                         continue
                     cur_h, cur_w = img.shape[:2]
-                    if not _resize_logged["done"]:
+                    if first_call:
                         logger.warning(
                             "camera %s: live=%dx%d, training=%dx%d (resize=%s)",
                             cam_key,
@@ -793,13 +798,14 @@ def _build_robot_observation_provider(
                         continue
                     raw[cam_key] = _cv2.resize(img, (target_w, target_h), interpolation=_cv2.INTER_AREA)
                 _resize_logged["done"] = True
-                # Also print the state vector once so the operator
-                # can eyeball it against the dataset's stats. State
-                # OOD is a real failure mode for VLAs — the prefix
-                # carries state via the projection layer, and a
-                # neutral home pose can easily sit a couple σ off
-                # the supervised support region.
-                if "observation.state" in (ds_features or {}):
+                # Print the state vector once so the operator can eyeball
+                # it against the dataset's stats. State OOD is a real
+                # failure mode for VLAs — the prefix carries state via
+                # the projection layer, and a neutral home pose can
+                # easily sit a couple σ off the supervised support
+                # region. Gated on ``first_call`` so this doesn't spam
+                # every observation tick.
+                if first_call and "observation.state" in (ds_features or {}):
                     state_names = ds_features["observation.state"].get("names") or []
                     state_vals = [raw.get(n) for n in state_names]
                     logger.warning(

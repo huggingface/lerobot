@@ -463,8 +463,16 @@ class HighLevelSubtaskFwd(InferenceStep):
         # of 30/sec and the robot barely moves. Tying it to the same
         # "queue empty" condition as the chunk refresh produces a
         # clean sense → think → act cycle.
+        #
+        # Rearm the trigger when skipping so a low-hz schedule
+        # (e.g. ``--high_level_hz=0.2`` = once per 5 s) doesn't lose
+        # the slot: the trigger fires once on the timer but the brief
+        # queue-empty window almost never coincides, so without rearm
+        # HL would effectively never run.
         queue = state.get("action_queue") or []
         if len(queue) > 0:
+            if hasattr(self.trigger, "rearm"):
+                self.trigger.rearm()
             return None
         ctx = _msgs_for_subtask(state)
         observation = _maybe_observation(self.observation_provider)

@@ -82,7 +82,15 @@ class Trigger(Protocol):
 
 @dataclass
 class HzTrigger:
-    """Fire at most ``hz`` times per second."""
+    """Fire at most ``hz`` times per second.
+
+    A step that gates further (e.g. ``HighLevelSubtaskFwd`` skipping
+    when the action queue is non-empty) and wants the trigger to
+    retry next tick instead of waiting a full period can call
+    :meth:`rearm` from inside ``run``. Without this, a low-hz trigger
+    (e.g. ``hz=0.2`` = once per 5 s) almost never coincides with the
+    brief queue-empty window and the step never fires at all.
+    """
 
     hz: float
     _last_seconds: float | None = field(default=None, init=False)
@@ -93,6 +101,15 @@ class HzTrigger:
             self._last_seconds = tick.monotonic_seconds
             return True
         return False
+
+    def rearm(self) -> None:
+        """Mark the trigger as not having fired, so the next tick re-evaluates.
+
+        Used by a step that decided to skip after ``should_fire`` already
+        committed the firing — keeps the cadence honest without losing
+        the slot.
+        """
+        self._last_seconds = None
 
 
 @dataclass
