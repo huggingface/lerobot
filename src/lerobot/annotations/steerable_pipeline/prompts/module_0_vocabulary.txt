@@ -1,0 +1,46 @@
+You are inspecting {n_episodes} sample episode video(s) from a teleoperated
+robot dataset. Every episode in the dataset performs the SAME task; the
+user originally asked: "{episode_task}".
+
+Watch all the clips and produce a SHORT canonical vocabulary that every
+episode in this dataset will reuse. The downstream low-level policy is
+conditioned on these strings — duplicate phrasings (e.g. "grasp blue
+cube" vs "pick up the blue cube") would destroy the conditioning, so
+pick one wording per concept and reuse it everywhere.
+
+You output two lists:
+
+1. `subtasks`: imperative, telegraphic commands the robot can execute.
+   - Verb-first. Drop articles, adverbs, qualifiers.
+   - Consistent object nouns (if the task says "cube", every subtask says
+     "cube" — never "block" / "object").
+   - Atomic — one skill per subtask (gripper-open events, contact, regrasps,
+     transitions all become cut points).
+   - Aim for ~{n_subtask_target} labels. Fewer is better than more.
+   - Good: "move to blue cube", "grasp blue cube", "lift blue cube",
+     "place blue cube in box", "release blue cube", "retract arm".
+   - Bad: "the robot arm moves towards the blue cube" (third person,
+     too long), "carefully pick up the cube" (adverb, article),
+     "carrying the yellow cube over the green basket" (gerund — should
+     be imperative "transport yellow cube to green basket").
+
+2. `memory_milestones`: first-person past-tense sentences the running
+   memory composes from. Each subtask phase that produces a lasting
+   change should have a milestone; transient motions (move, retract)
+   should NOT.
+   - First person, past tense. Start with "I".
+   - One sentence. Functional outcome only — no grasp / motion detail.
+   - Aim for ~{n_memory_target} milestones.
+   - Good: "I picked up the blue cube.", "I placed the blue cube in
+     the green box.", "I wiped the counter."
+   - Bad: "The robot arm grasped the blue cube." (third person),
+     "I carefully grasped the blue cube with the parallel gripper."
+     (irrelevant detail), "I moved towards the blue cube." (transient
+     motion — should be omitted, not memorialised).
+
+Output strictly valid JSON of shape:
+
+  {{
+    "subtasks": ["<verb phrase>", ...],
+    "memory_milestones": ["I <past-tense sentence>.", ...]
+  }}

@@ -22,6 +22,42 @@ from typing import Any
 
 
 @dataclass
+class VocabularyConfig:
+    """Phase 0 — dataset-level canonical vocabulary discovery.
+
+    Watches the first ``sample_episodes`` episode videos and asks the VLM
+    to derive a small canonical vocabulary (~``n_subtask_target`` subtask
+    labels + ~``n_memory_target`` memory milestones) that every episode
+    in the dataset will reuse. The output lands at
+    ``meta/canonical_vocabulary.json`` and feeds phase 1's subtask +
+    memory generation as both a prompt-side constraint and a post-VLM
+    validation gate.
+
+    Why this exists: free-form LLM rephrasing per episode produces near-
+    unique subtask strings, which makes the downstream low-level policy's
+    conditioning effectively noise — at inference the policy generates a
+    *new* paraphrase the action expert has never seen and produces tiny
+    cautious actions. Forcing every episode onto the same small set of
+    canonical strings gives the action expert dense supervision per
+    string and a small target distribution to learn against.
+
+    Set ``enabled=False`` to fall back to free-form generation (original
+    behaviour). ``reuse_existing=True`` keeps a hand-edited vocabulary
+    file from being clobbered on re-runs.
+    """
+
+    enabled: bool = True
+    sample_episodes: int = 3
+    n_subtask_target: int = 10
+    n_memory_target: int = 6
+    max_video_frames_per_episode: int = 32
+    # When True (default), an existing meta/canonical_vocabulary.json is
+    # loaded as-is and no VLM call is made — lets operators hand-edit the
+    # file. Set False to always rediscover from the sample episodes.
+    reuse_existing: bool = True
+
+
+@dataclass
 class PlanConfig:
     """``plan`` module: plan + subtasks + memory + task augmentation.
 
@@ -186,6 +222,7 @@ class AnnotationPipelineConfig:
 
     seed: int = 1729
 
+    vocabulary: VocabularyConfig = field(default_factory=VocabularyConfig)
     plan: PlanConfig = field(default_factory=PlanConfig)
     interjections: InterjectionsConfig = field(default_factory=InterjectionsConfig)
     vqa: VqaConfig = field(default_factory=VqaConfig)

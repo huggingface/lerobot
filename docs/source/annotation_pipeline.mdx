@@ -7,7 +7,8 @@
 
 ## What the pipeline produces
 
-Three modules write into a per-episode staging tree, then a single writer
+A vocabulary-discovery phase derives a small canonical wording, then three
+modules write into a per-episode staging tree, then a single writer
 rewrites the data shards in place:
 
 | Style / atom                                | Column                | Module         |
@@ -19,6 +20,20 @@ rewrites the data shards in place:
 | `interjection`                              | `language_events`     | `interjections`|
 | speech tool-call atom (`style=null`, `say`) | `language_events`     | `interjections`|
 | `vqa` (user / assistant pair)               | `language_events`     | `vqa`          |
+
+The `plan` module is constrained to a **canonical vocabulary** discovered
+once per dataset by the `vocabulary` module (phase 0). It watches a few
+sample episode videos (`--vocabulary.sample_episodes`, default `3`) and
+asks the VLM to derive a small set of imperative subtask labels
+(~`--vocabulary.n_subtask_target`, default `10`) and first-person memory
+milestones (~`--vocabulary.n_memory_target`, default `6`) that recur
+across the demos. The result lands at
+`meta/canonical_vocabulary.json` (human-readable / hand-editable) and is
+reused on every subsequent run. The `plan` module then constrains both
+subtask + memory generation to those exact strings — the downstream
+low-level policy sees a small, repeatable target distribution instead of
+thousands of LLM paraphrases. Disable with `--vocabulary.enabled=False`
+to fall back to free-form generation.
 
 The writer does **not** add a `tools` column to the parquet — the tool
 catalog lives at `meta/info.json["tools"]` instead (see

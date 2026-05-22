@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -34,6 +35,9 @@ from ..prompts import load as load_prompt
 from ..reader import EpisodeRecord, reconstruct_subtask_spans, snap_to_frame
 from ..staging import EpisodeStaging
 from ..vlm_client import VlmClient
+from ..vocabulary import Vocabulary
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -54,6 +58,11 @@ class PlanSubtasksMemoryModule:
     vlm: VlmClient
     config: PlanConfig
     frame_provider: FrameProvider = field(default_factory=null_provider)
+    vocabulary: Vocabulary | None = None
+    """When set, the module constrains subtask + memory generation to the
+    canonical strings in ``vocabulary``. Phase 0 (vocabulary discovery)
+    populates this once per dataset; ``None`` falls back to free-form
+    generation (original behaviour)."""
 
     @property
     def enabled(self) -> bool:
@@ -311,6 +320,7 @@ class PlanSubtasksMemoryModule:
             min_subtask_seconds=self.config.min_subtask_seconds,
             max_steps=self.config.plan_max_steps,
             episode_duration=f"{episode_duration:.3f}",
+            vocabulary_block=self._subtask_vocabulary_block(),
         )
         spans = self._vlm_field(self._video_message(record, prompt), "subtasks")
         if not spans:
@@ -332,9 +342,97 @@ class PlanSubtasksMemoryModule:
                 start, end = end, start
             if not text:
                 continue
+            text = self._canonicalize_subtask(text)
+            if not text:
+                continue
             cleaned.append({"text": text, "start": start, "end": end})
         cleaned.sort(key=lambda s: s["start"])
         return cleaned
+
+    # ------------------------------------------------------------------
+    # Canonical-vocabulary helpers
+    # ------------------------------------------------------------------
+
+    def _subtask_vocabulary_block(self) -> str:
+        """Bullet-list of canonical subtasks the VLM must pick from.
+
+        Returns an empty string when no vocabulary is configured —
+        ``module_1_subtasks.txt`` then falls back to its free-form
+        rules (original behaviour).
+        """
+        if self.vocabulary is None or not self.vocabulary.subtasks:
+            return ""
+        bullets = "\n".join(f"- {s}" for s in self.vocabulary.subtasks)
+        return (
+            "You MUST choose each subtask label verbatim from this canonical "
+            "vocabulary — pick the closest match for each phase of the demo, "
+            "and reuse the SAME string every time that phase recurs. The "
+            "low-level policy is conditioned on these exact strings; any "
+            "novel paraphrase you invent will make its conditioning OOD.\n"
+            "Canonical subtask labels:\n"
+            f"{bullets}\n\n"
+        )
+
+    def _memory_vocabulary_block(self) -> str:
+        """Bullet-list of canonical memory milestones the VLM must pick from."""
+        if self.vocabulary is None or not self.vocabulary.memory_milestones:
+            return ""
+        bullets = "\n".join(f"- {m}" for m in self.vocabulary.memory_milestones)
+        return (
+            "Compose the memory by picking ONLY from this canonical milestone "
+            "list — append a milestone (or rewrite the running memory to "
+            "compress past ones) using these exact phrases. Do not invent new "
+            "wording: every paraphrase weakens the downstream conditioning.\n"
+            "Canonical memory milestones:\n"
+            f"{bullets}\n\n"
+        )
+
+    def _canonicalize_subtask(self, text: str) -> str:
+        """Snap ``text`` to the closest canonical subtask string, or drop it.
+
+        Without a vocabulary, the original text passes through. With a
+        vocabulary, an exact case-insensitive match wins; failing that,
+        the best Jaccard overlap on the word set is used as a tolerant
+        fuzzy match (handles articles / minor reorderings). If nothing
+        clears the floor, the subtask is dropped — better to skip a
+        phase than to feed the action expert an off-distribution string.
+        """
+        if self.vocabulary is None or not self.vocabulary.subtasks:
+            return text.strip()
+        candidates = self.vocabulary.subtasks
+        cleaned = text.strip()
+        lowered = cleaned.lower()
+        for candidate in candidates:
+            if candidate.lower() == lowered:
+                return candidate
+        # Jaccard fallback: token-set overlap, drop articles + adverbs.
+        ignore = {"the", "a", "an", "to", "into", "from", "of", "on", "over", "at"}
+        words = {w for w in lowered.replace(",", " ").split() if w and w not in ignore}
+        if not words:
+            return ""
+        best: tuple[float, str] | None = None
+        for candidate in candidates:
+            cand_words = {
+                w for w in candidate.lower().replace(",", " ").split() if w and w not in ignore
+            }
+            if not cand_words:
+                continue
+            inter = len(words & cand_words)
+            union = len(words | cand_words)
+            score = inter / union if union else 0.0
+            if best is None or score > best[0]:
+                best = (score, candidate)
+        # Floor: require at least ~half the tokens to overlap. Below that
+        # the VLM is hallucinating a novel phrase; drop rather than warp
+        # it into something semantically wrong.
+        if best is None or best[0] < 0.5:
+            logger.warning(
+                "subtask %r did not match any canonical label (best=%s) — dropping",
+                cleaned,
+                best,
+            )
+            return ""
+        return best[1]
 
     def _generate_plan(
         self,
@@ -397,6 +495,7 @@ class PlanSubtasksMemoryModule:
             prior_memory=prior_memory or "(none)",
             completed_subtask=completed,
             remaining_subtasks=", ".join(remaining) if remaining else "(none)",
+            vocabulary_block=self._memory_vocabulary_block(),
         )
         memory = self._vlm_field(self._text_message(prompt), "memory")
         return memory.strip() if isinstance(memory, str) else ""
