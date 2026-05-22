@@ -259,6 +259,41 @@ def act_with_policy(
     policy = policy.eval()
     assert isinstance(policy, nn.Module)
 
+    # CRITICAL: load the TOP-level policy's pre/post-processors and apply
+    # them around every `policy.select_action` call. Without this, QC (and
+    # any other plugin policy trained on normalized obs) receives raw
+    # uint8 images / un-normalized state and outputs garbage. See
+    # `feedback_eval_preprocessor_critical.md` — same failure class that
+    # bit residual-SAC, fixed there via `_base_act` (which wraps the
+    # FROZEN BASE policy's processor, NOT the top-level policy's).
+    #
+    # Distinct from `_base_policy._pre_processor` (residual base for ACT):
+    # this is the TOP-level policy's processor, loaded from the same
+    # `pretrained_path` that `make_policy` consumed. SAC training from
+    # scratch (no pretrained_path) still gets fresh processors — no
+    # back-compat break.
+    from lerobot.policies.factory import make_pre_post_processors as _make_pp
+    try:
+        _policy_pre_processor, _policy_post_processor = _make_pp(
+            policy_cfg=cfg.policy,
+            pretrained_path=getattr(cfg.policy, "pretrained_path", None),
+        )
+        logging.info(
+            "[ACTOR] policy pre/post-processor loaded (pretrained_path=%s)",
+            getattr(cfg.policy, "pretrained_path", None),
+        )
+    except Exception as _e:
+        # SAC from-scratch path may not have pretrained processors yet.
+        # Continue without; the existing behavior (no preprocessing in
+        # select_action wrap) is preserved.
+        logging.warning(
+            "[ACTOR] could not build policy pre/post-processors (%s) — "
+            "continuing with un-wrapped select_action; this is OK for SAC-from-scratch "
+            "but WILL produce garbage for any policy trained on normalized obs.", _e,
+        )
+        _policy_pre_processor = None
+        _policy_post_processor = None
+
     obs, info = online_env.reset()
     env_processor.reset()
     action_processor.reset()
@@ -335,8 +370,18 @@ def act_with_policy(
 
         # Time policy inference and check if it meets FPS requirement
         with policy_timer:
-            # Extract observation from transition for policy
-            action = policy.select_action(batch=observation)
+            # Extract observation from transition for policy.
+            # CRITICAL: normalize via the TOP-level policy's preprocessor
+            # before select_action; otherwise QC (or any policy trained
+            # on normalized obs) outputs garbage. See
+            # `feedback_eval_preprocessor_critical.md`.
+            if _policy_pre_processor is not None:
+                _batch = _policy_pre_processor(observation)
+            else:
+                _batch = observation
+            action = policy.select_action(batch=_batch)
+            if _policy_post_processor is not None:
+                action = _policy_post_processor(action)
         policy_fps = policy_timer.fps_last
 
         log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)
