@@ -182,9 +182,7 @@ def _apply_source_config(kwargs: dict, source_config: dict) -> None:
     _set_if_present(kwargs, "action_dropout", diffusion_cfg.get("dropout"))
 
     _set_if_present(kwargs, "num_video_frames", video_cfg.get("num_frames"))
-    _set_if_present(
-        kwargs, "predictor_depth", video_cfg.get("predictor_depth", video_cfg.get("depth"))
-    )
+    _set_if_present(kwargs, "predictor_depth", video_cfg.get("predictor_depth", video_cfg.get("depth")))
     _set_if_present(
         kwargs, "predictor_num_heads", video_cfg.get("predictor_num_heads", video_cfg.get("num_heads"))
     )
