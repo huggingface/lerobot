@@ -28,6 +28,7 @@ from numpy.typing import NDArray
 from lerobot.configs.video import (
     DEFAULT_DEPTH_MAX,
     DEFAULT_DEPTH_MIN,
+    DEFAULT_DEPTH_PIX_FMT,
     DEFAULT_DEPTH_SHIFT,
     DEFAULT_DEPTH_USE_LOG,
     DEPTH_QMAX,
@@ -37,9 +38,6 @@ from .pyav_utils import write_u16_plane
 
 _MM_PER_METRE = 1000.0
 _UINT16_MAX = 65535
-
-# Pixel format supported by the depth encode/decode helpers.
-DEPTH_PIX_FMT: str = "gray12le"
 
 
 def _validate_log_quant_params(depth_min: float, shift: float) -> None:
@@ -68,6 +66,7 @@ def quantize_depth(
     depth_max: float = DEFAULT_DEPTH_MAX,
     shift: float = DEFAULT_DEPTH_SHIFT,
     use_log: bool = DEFAULT_DEPTH_USE_LOG,
+    pix_fmt: str = DEFAULT_DEPTH_PIX_FMT,
     video_backend: str | None = "pyav",
     input_unit: Literal["auto", "m", "mm"] = "auto",
 ) -> NDArray[np.uint16] | av.VideoFrame:
@@ -136,7 +135,7 @@ def quantize_depth(
     quantized = np.rint(norm * DEPTH_QMAX).clip(0, DEPTH_QMAX).astype(np.uint16, copy=False)
 
     if video_backend == "pyav":
-        frame = av.VideoFrame.from_ndarray(quantized, format=DEPTH_PIX_FMT)
+        frame = av.VideoFrame.from_ndarray(quantized, format=pix_fmt)
         write_u16_plane(frame.planes[0], quantized)
         return frame
     else:
@@ -149,6 +148,7 @@ def dequantize_depth(
     depth_max: float = DEFAULT_DEPTH_MAX,
     shift: float = DEFAULT_DEPTH_SHIFT,
     use_log: bool = DEFAULT_DEPTH_USE_LOG,
+    pix_fmt: str = DEFAULT_DEPTH_PIX_FMT,
     output_unit: Literal["m", "mm"] = "mm",
     output_tensor: bool = False,
 ) -> NDArray[np.uint16] | NDArray[np.float32] | torch.Tensor:
@@ -179,7 +179,7 @@ def dequantize_depth(
         raise ValueError(f"output_unit must be 'm' or 'mm', got {output_unit!r}")
 
     if isinstance(quantized, av.VideoFrame):
-        quantized = quantized.to_ndarray(format=DEPTH_PIX_FMT)
+        quantized = quantized.to_ndarray(format=pix_fmt)
 
     norm = np.asarray(quantized, dtype=np.float32, order="K") / DEPTH_QMAX
 

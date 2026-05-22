@@ -19,11 +19,8 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Any
-
-import numpy as np
-import torch
+from dataclasses import dataclass, field, fields
+from typing import Any, ClassVar
 
 from lerobot.utils.import_utils import require_package
 
@@ -45,7 +42,6 @@ VALID_VIDEO_CODECS: frozenset[str] = frozenset(
 # Aliases for legacy video codec names.
 VIDEO_CODECS_ALIASES: dict[str, str] = {"av1": "libsvtav1"}
 
-
 LIBSVTAV1_DEFAULT_PRESET: int = 12
 
 # Keys persisted under ``features[*]["info"]`` as ``video.<name>`` (from :class:`VideoEncoderConfig`).
@@ -57,6 +53,7 @@ VIDEO_ENCODER_INFO_KEYS: frozenset[str] = frozenset(
     f"video.{name}" for name in VIDEO_ENCODER_INFO_FIELD_NAMES
 )
 
+# Default depth quantization and encoding parameters.
 DEPTH_QUANT_BITS: int = 12
 DEPTH_QMAX: int = (1 << DEPTH_QUANT_BITS) - 1  # 4095
 
@@ -64,6 +61,10 @@ DEFAULT_DEPTH_MIN: float = 0.01
 DEFAULT_DEPTH_MAX: float = 10.0
 DEFAULT_DEPTH_SHIFT: float = 3.5
 DEFAULT_DEPTH_USE_LOG: bool = True
+DEFAULT_DEPTH_PIX_FMT: str = "gray12le"
+
+# Depth-specific tuning fields persisted under ``features[*]["info"]`` as ``video.<name>``.
+DEPTH_ENCODER_INFO_FIELD_NAMES: frozenset[str] = frozenset({"depth_min", "depth_max", "shift", "use_log"})
 
 
 @dataclass
@@ -98,6 +99,10 @@ class VideoEncoderConfig:
     # two backends (encoding and decoding).
     video_backend: str = "pyav"
     extra_options: dict[str, Any] = field(default_factory=dict)
+
+    # Source-data channel count this encoder is expected to handle (3 for RGB,
+    # 1 for depth, etc.)
+    _DEFAULT_CHANNELS: ClassVar[int] = 3
 
     def __post_init__(self) -> None:
         self.resolve_vcodec()
@@ -151,7 +156,9 @@ class VideoEncoderConfig:
             require_package("av", extra="dataset")
             from lerobot.datasets import check_video_encoder_parameters_pyav
 
-            check_video_encoder_parameters_pyav(self.vcodec, self.pix_fmt, self.get_codec_options())
+            check_video_encoder_parameters_pyav(
+                self.vcodec, self.pix_fmt, self.get_codec_options(), channels=self._DEFAULT_CHANNELS
+            )
 
     def resolve_vcodec(self) -> None:
         """Check ``vcodec`` and, when it is ``"auto"``, pick a concrete encoder.
@@ -258,19 +265,11 @@ class DepthEncoderConfig(VideoEncoderConfig):
 
     Inherits the full :class:`VideoEncoderConfig` surface (codec, GOP, CRF,
     preset, ``extra_options``…) and adds the four parameters of the depth
-    quantization pipeline (:func:`quantize_depth`). Inheritance — rather
-    than composition — keeps the CLI flat: ``--dataset.depth_encoder_config.<field>``
-    works identically to its RGB counterpart.
+    quantizer.
 
     Defaults flip ``vcodec`` to ``"hevc"`` (Main 12 profile) and ``pix_fmt``
-    to ``"yuv420p12le"``, the most widely available 12-bit pixel format.
-    For archive-grade lossless storage use ``vcodec="ffv1"`` together with
-    ``pix_fmt="gray12le"`` (and clear ``crf``/``preset`` to ``None`` since
-    ``ffv1`` doesn't expose those tuning knobs).
+    to ``"gray12le"``.
 
-    The :attr:`is_depth_map` marker is class-fixed to ``True`` (``init=False``,
-    so it's hidden from CLI and constructor args) and is what the reader
-    side keys on to tell depth datasets from RGB ones.
 
     Attributes:
         depth_min: Minimum depth in physical units (e.g. metres) represented
@@ -282,28 +281,33 @@ class DepthEncoderConfig(VideoEncoderConfig):
     """
 
     vcodec: str = "hevc"
-    pix_fmt: str = "yuv420p12le"
+    pix_fmt: str = "gray12le"
 
     depth_min: float = DEFAULT_DEPTH_MIN
     depth_max: float = DEFAULT_DEPTH_MAX
     shift: float = DEFAULT_DEPTH_SHIFT
     use_log: bool = DEFAULT_DEPTH_USE_LOG
 
-    # Class invariant — kept out of ``__init__`` (and CLI) but persisted
-    # via ``asdict`` into ``info.json`` for the reader to detect depth.
-    is_depth_map: bool = field(default=True, init=False)
+    _DEFAULT_CHANNELS: ClassVar[int] = 1
 
-    def quantize(self, depth: torch.Tensor | np.ndarray) -> torch.Tensor:
-        """Apply :func:`quantize_depth` bound to this config's parameters."""
-        from lerobot.datasets.depth_utils import quantize_depth
+    @classmethod
+    def from_video_info(cls, video_info: dict | None) -> DepthEncoderConfig:
+        """Reconstruct a :class:`DepthEncoderConfig` from a depth feature's ``info`` block.
 
-        return quantize_depth(depth, self.depth_min, self.depth_max, self.shift, self.use_log)
+        Reuses :meth:`VideoEncoderConfig.from_video_info` for the base
+        codec/tuning fields and then layers the depth-specific tuning
+        (``depth_min`` / ``depth_max`` / ``shift`` / ``use_log``) on top.
+        Missing keys fall back to the class defaults.
+        """
+        base = VideoEncoderConfig.from_video_info(video_info)
+        kwargs: dict[str, Any] = {f.name: getattr(base, f.name) for f in fields(base) if f.init}
 
-    def dequantize(self, quantized: torch.Tensor | np.ndarray) -> torch.Tensor:
-        """Apply :func:`dequantize_depth` bound to this config's parameters."""
-        from lerobot.datasets.depth_utils import dequantize_depth
-
-        return dequantize_depth(quantized, self.depth_min, self.depth_max, self.shift, self.use_log)
+        video_info = video_info or {}
+        for name in DEPTH_ENCODER_INFO_FIELD_NAMES:
+            value = video_info.get(f"video.{name}")
+            if value is not None:
+                kwargs[name] = value
+        return cls(**kwargs)
 
 
 def depth_encoder_defaults() -> DepthEncoderConfig:

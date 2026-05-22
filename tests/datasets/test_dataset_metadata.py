@@ -53,6 +53,7 @@ IMAGE_FEATURES = {
     },
 }
 
+
 def _make_dummy_stats(features: dict) -> dict:
     """Create minimal episode stats matching the given features."""
     stats = {}
