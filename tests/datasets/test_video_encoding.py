@@ -493,14 +493,14 @@ class TestReencodeVideo:
         src = TEST_ARTIFACTS_DIR / "clip_4frames.mp4"
         out = tmp_path / "reencoded.mp4"
         cfg = VideoEncoderConfig(vcodec="h264", g=6, crf=23, pix_fmt="yuv444p")
-        reencode_video(src, out, camera_encoder=cfg, overwrite=True)
+        reencode_video(src, out, video_encoder=cfg, overwrite=True)
 
         assert out.exists()
         with av.open(str(out)) as container:
             n_frames = sum(1 for _ in container.decode(video=0))
         assert n_frames == 4
 
-        info = get_video_info(out, camera_encoder=cfg)
+        info = get_video_info(out, video_encoder=cfg)
         assert info["video.codec"] == "h264"
         assert info["video.pix_fmt"] == "yuv444p"
         assert info["video.height"] == 64
