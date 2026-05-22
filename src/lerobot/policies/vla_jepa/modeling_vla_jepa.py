@@ -117,38 +117,21 @@ class VLAJEPAModel(nn.Module):
         )
 
     def _qwen_last_decoder_hidden(self, qwen_inputs: dict[str, torch.Tensor]) -> torch.Tensor:
-        """Return Qwen's final decoder-layer output before the final RMSNorm.
+        """Return Qwen's last decoder hidden state matching training behaviour.
 
-        starVLA trained its downstream heads on the legacy transformers-4.57
-        `hidden_states[-1]` value, which is the last decoder layer output before
-        Qwen's final RMSNorm. Newer transformers versions expose `hidden_states[-1]`
-        as the post-norm last hidden state, so capture the layer output directly.
+        The original starVLA uses `output_hidden_states=True` and takes `hidden_states[-1]`.
+        In transformers 5.x the `@capture_outputs` decorator explicitly replaces
+        `hidden_states[-1]` with `last_hidden_state` (post-RMSNorm), so this call
+        consistently returns the post-norm output regardless of transformers version,
+        matching what the model was trained with.
         """
-        captured: dict[str, torch.Tensor] = {}
-        language_model = self.qwen.model.model.language_model
-
-        def capture_last_layer_output(
-            _module: nn.Module,
-            _inputs: tuple[torch.Tensor, ...],
-            output: torch.Tensor | tuple[torch.Tensor, ...],
-        ) -> None:
-            captured["last_hidden"] = output[0] if isinstance(output, tuple) else output
-            return None
-
-        handle = language_model.layers[-1].register_forward_hook(capture_last_layer_output)
-        try:
-            self.qwen.model.model(
-                **qwen_inputs,
-                output_hidden_states=False,
-                output_attentions=False,
-                return_dict=True,
-            )
-        finally:
-            handle.remove()
-
-        if "last_hidden" not in captured:
-            raise RuntimeError("Failed to capture Qwen last decoder hidden states.")
-        return captured["last_hidden"]
+        outputs = self.qwen.model(
+            **qwen_inputs,
+            output_hidden_states=True,
+            output_attentions=False,
+            return_dict=True,
+        )
+        return outputs.hidden_states[-1]
 
     # ---- Native VLA-JEPA forward (follows original VLA_JEPA.py) ----
 
@@ -469,7 +452,7 @@ class VLAJEPAPolicy(PreTrainedPolicy):
                 # Clamp to [0, 255]
                 if t_np.max() <= 1.0:
                     t_np = t_np * 255.0
-                t_np = t_np.clip(0, 255).astype(np.uint8)
+                t_np = np.rint(t_np.clip(0, 255)).astype(np.uint8)
                 sample_views.append(t_np)
             # Stack views: [V, T, H, W, 3]
             videos_per_sample.append(np.stack(sample_views, axis=0))

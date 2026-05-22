@@ -97,7 +97,7 @@ class Qwen3VLInterface(torch.nn.Module):
         image = image.float()
         if image.max() <= 1.0:
             image = image * 255.0
-        image = image.clamp(0, 255).to(torch.uint8).numpy()
+        image = image.clamp(0, 255).round().to(torch.uint8).numpy()
         if image.shape[-1] == 1:
             image = np.repeat(image, 3, axis=-1)
         return Image.fromarray(image)

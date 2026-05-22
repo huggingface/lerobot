@@ -38,6 +38,30 @@ class ClipActionsProcessorStep(ProcessorStep):
         return features
 
 
+@ProcessorStepRegistry.register(name="vla_jepa_pre_snap_gripper")
+class PreSnapGripperProcessorStep(ProcessorStep):
+    """Snaps gripper dim (index 6) to {0, 1} BEFORE unnormalization.
+
+    Mirrors the original starVLA LIBERO eval:
+      normalized[:, 6] = np.where(normalized[:, 6] < 0.5, 0, 1)
+    This ensures the unnormalizer receives an exact binary value, which is
+    required when the model was trained with gripper in identity (mask=False)
+    space where 0=open and 1=close.
+    """
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        action = transition.get(TransitionKey.ACTION)
+        if action is not None and action.shape[-1] >= 7:
+            transition = dict(transition)
+            a = action.clone()
+            a[..., 6] = (a[..., 6] >= 0.5).float()
+            transition[TransitionKey.ACTION] = a
+        return transition
+
+    def transform_features(self, features):
+        return features
+
+
 @ProcessorStepRegistry.register(name="vla_jepa_binarize_gripper")
 class BinarizeGripperProcessorStep(ProcessorStep):
     """Binarizes gripper dim (index 6) after unnormalization.
@@ -80,6 +104,8 @@ def make_vla_jepa_pre_post_processors(
     output_steps: list[ProcessorStep] = []
     if config.clip_normalized_actions:
         output_steps.append(ClipActionsProcessorStep())
+    if config.pre_snap_gripper_action:
+        output_steps.append(PreSnapGripperProcessorStep())
     output_steps.append(
         UnnormalizerProcessorStep(
             features=features,

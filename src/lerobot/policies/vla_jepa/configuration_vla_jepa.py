@@ -18,7 +18,7 @@ class VLAJEPAConfig(PreTrainedConfig):
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
-            "STATE": NormalizationMode.IDENTITY,
+            "STATE": NormalizationMode.MEAN_STD,
             "ACTION": NormalizationMode.MIN_MAX,
         }
     )
@@ -66,6 +66,7 @@ class VLAJEPAConfig(PreTrainedConfig):
 
     resize_images_to: tuple[int, int] | None = None
     binarize_gripper_action: bool = True
+    pre_snap_gripper_action: bool = True
     clip_normalized_actions: bool = True
     torch_dtype: str = "bfloat16"
 
