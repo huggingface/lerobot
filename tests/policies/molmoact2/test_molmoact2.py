@@ -46,6 +46,7 @@ from lerobot.policies.molmoact2.configuration_molmoact2 import (
 )
 from lerobot.policies.molmoact2.modeling_molmoact2 import MolmoAct2Policy
 from lerobot.policies.molmoact2.processor_molmoact2 import (
+    MolmoAct2ClampNormalizedProcessorStep,
     MolmoAct2MaskedNormalizerProcessorStep,
     MolmoAct2MaskedUnnormalizerProcessorStep,
     MolmoAct2PackInputsProcessorStep,
@@ -185,8 +186,8 @@ def test_molmoact2_gripper_mask_uses_feature_names(tmp_path):
         FeatureType.STATE: NormalizationMode.QUANTILES,
     }
     transition = {
-        TransitionKey.OBSERVATION: {OBS_STATE: torch.tensor([[5.0, 7.0]])},
-        TransitionKey.ACTION: torch.tensor([[5.0, 7.0]]),
+        TransitionKey.OBSERVATION: {OBS_STATE: torch.tensor([[5.0, 0.7]])},
+        TransitionKey.ACTION: torch.tensor([[5.0, -0.7]]),
     }
     normalizer = MolmoAct2MaskedNormalizerProcessorStep(
         features=features,
@@ -195,17 +196,68 @@ def test_molmoact2_gripper_mask_uses_feature_names(tmp_path):
     )
     normalized = normalizer(transition)
 
-    assert torch.equal(normalized[TransitionKey.OBSERVATION][OBS_STATE], torch.tensor([[0.0, 7.0]]))
-    assert torch.equal(normalized[TransitionKey.ACTION], torch.tensor([[0.0, 7.0]]))
+    assert torch.equal(normalized[TransitionKey.OBSERVATION][OBS_STATE], torch.tensor([[0.0, 0.7]]))
+    assert torch.equal(normalized[TransitionKey.ACTION], torch.tensor([[0.0, -0.7]]))
+
+    with pytest.raises(ValueError, match="gripper values are not under \\[-1, 1\\]"):
+        normalizer(
+            {
+                TransitionKey.OBSERVATION: {OBS_STATE: torch.tensor([[5.0, 7.0]])},
+                TransitionKey.ACTION: torch.tensor([[5.0, -0.7]]),
+            }
+        )
 
     unnormalizer = MolmoAct2MaskedUnnormalizerProcessorStep(
         features={ACTION: features[ACTION]},
         norm_map=norm_map,
         stats=masked_stats,
     )
-    unnormalized = unnormalizer({TransitionKey.ACTION: torch.tensor([[0.0, 7.0]])})
+    unnormalized = unnormalizer({TransitionKey.ACTION: torch.tensor([[0.0, -0.7]])})
 
-    assert torch.equal(unnormalized[TransitionKey.ACTION], torch.tensor([[5.0, 7.0]]))
+    assert torch.equal(unnormalized[TransitionKey.ACTION], torch.tensor([[5.0, -0.7]]))
+
+
+def test_molmoact2_gripper_mask_validates_dataset_stats(tmp_path):
+    meta_dir = tmp_path / "meta"
+    meta_dir.mkdir()
+    (meta_dir / "info.json").write_text(
+        json.dumps({"features": {ACTION: {"names": ["x", "gripper"]}}}),
+        encoding="utf-8",
+    )
+    stats = {
+        ACTION: {
+            "min": [-0.5, -2.0],
+            "max": [0.5, 0.5],
+        }
+    }
+
+    with pytest.raises(ValueError, match="gripper values are not under \\[-1, 1\\]"):
+        _add_gripper_masks_to_stats(stats, SimpleNamespace(root=tmp_path), normalize_gripper=False)
+
+    masked_stats = _add_gripper_masks_to_stats(stats, SimpleNamespace(root=tmp_path), normalize_gripper=True)
+    assert masked_stats is not None
+    assert masked_stats[ACTION]["mask"] == [True, True]
+
+
+def test_molmoact2_clamp_normalized_respects_masked_gripper_dims():
+    step = MolmoAct2ClampNormalizedProcessorStep(
+        normalization_masks={
+            ACTION: [True, False],
+            OBS_STATE: [True, False],
+        }
+    )
+    transition = {
+        TransitionKey.OBSERVATION: {OBS_STATE: torch.tensor([[-2.0, 0.8]])},
+        TransitionKey.ACTION: torch.tensor([[2.0, -0.8]]),
+    }
+
+    clamped = step(transition)
+
+    assert torch.equal(clamped[TransitionKey.OBSERVATION][OBS_STATE], torch.tensor([[-1.0, 0.8]]))
+    assert torch.equal(clamped[TransitionKey.ACTION], torch.tensor([[1.0, -0.8]]))
+
+    with pytest.raises(ValueError, match="gripper values are not under \\[-1, 1\\]"):
+        step({TransitionKey.OBSERVATION: {OBS_STATE: torch.tensor([[0.0, 1.2]])}})
 
 
 def test_molmoact2_normalize_gripper_true_keeps_all_dims_normalized(tmp_path):
