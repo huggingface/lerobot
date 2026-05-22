@@ -286,10 +286,9 @@ class TOPRewardEncoderProcessorStep(ProcessorStep):
                         padded.append(t)
                 result[key] = torch.cat(padded, dim=0)
             else:
-                if all(t.shape == tensors[0].shape for t in tensors):
-                    result[key] = torch.cat(tensors, dim=0)
-                else:
-                    result[key] = torch.cat(tensors, dim=0)
+                # Vision tensors (pixel_values_videos, image_grid_thw, etc.) are expected
+                # to have matching shapes since max_frames is applied uniformly per batch
+                result[key] = torch.cat(tensors, dim=0)
 
         for key in encoded_list[0]:
             if key not in result:

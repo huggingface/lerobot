@@ -140,7 +140,7 @@ class TOPRewardModel(PreTrainedRewardModel):
 
         self.eval()
         with torch.no_grad():
-            outputs = self.model(**inputs, labels=labels)
+            outputs = self.model(**inputs)
 
         logits = outputs.logits[:, :-1, :]
         target_labels = labels[:, 1:]
