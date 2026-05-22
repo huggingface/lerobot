@@ -1,38 +1,22 @@
 #!/usr/bin/env python
-
-# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 """Launch ``lerobot-annotate`` on a Hugging Face job (vllm + Qwen3.6 MoE).
 
 Spawns one ``h200x2`` job that:
 
   1. installs this branch of ``lerobot`` plus the annotation extras,
   2. boots two vllm servers (one per GPU) with Qwen3.6-35B-A3B-FP8,
-  3. runs the plan / interjections / vqa modules across the dataset,
-  4. uploads the annotated dataset back to ``--repo_id`` (or to
-     ``--dest_repo_id`` when set).
-
-``--repo_id`` is the download source and, with ``--push_to_hub=true``, also
-the default upload destination — the job annotates the dataset in place.
-Pass ``--dest_repo_id`` to push the result to a separate repo instead and
-leave the source untouched.
+  3. discovers the dataset's canonical subtask + memory vocabulary
+     from the first 3 sample episodes (phase 0),
+  4. runs the plan / interjections / vqa modules across the dataset
+     (subtasks + memory are constrained to the canonical vocabulary),
+  5. uploads the annotated dataset to ``--dest_repo_id`` (when set)
+     or back to ``--repo_id``.
 
 Usage:
 
     HF_TOKEN=hf_... uv run python examples/annotations/run_hf_job.py
 
-Adjust ``CMD`` below to point at your own dataset.
+Adjust ``CMD`` below to point at your own dataset / target hub repo.
 """
 
 import os
@@ -48,19 +32,14 @@ CMD = (
     "pip install --no-deps "
     "'lerobot @ git+https://github.com/huggingface/lerobot.git@feat/language-annotation-pipeline' && "
     "pip install --upgrade-strategy only-if-needed "
-    # Mirror lerobot's [annotations] runtime deps. ``openai`` is required
-    # because ``VlmConfig.backend`` defaults to ``"openai"`` (which talks
-    # to a vllm/transformers/ktransformers OpenAI-compatible server).
-    "datasets pyarrow av jsonlines draccus gymnasium torchcodec mergedeep pyyaml-include "
-    "toml typing-inspect openai && "
+    "datasets pyarrow av jsonlines draccus gymnasium torchcodec mergedeep pyyaml-include toml typing-inspect "
+    "openai && "
     "export VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 && "
     "export VLLM_VIDEO_BACKEND=pyav && "
     "lerobot-annotate "
-    # The dataset to annotate. By default it is also the push destination
-    # (annotate in place); pass --dest_repo_id to push to a separate repo.
-    "--repo_id=<your-org>/<your-dataset> "
+    "--repo_id=imstevenpmwork/super_poulain_draft "
+    "--dest_repo_id=pepijn223/super_poulain_vocab "
     "--push_to_hub=true "
-    # "--dest_repo_id=<your-org>/<your-annotated-dataset> "
     "--vlm.backend=openai "
     "--vlm.model_id=Qwen/Qwen3.6-35B-A3B-FP8 "
     "--vlm.parallel_servers=2 "
@@ -69,15 +48,30 @@ CMD = (
     "--tensor-parallel-size 1 --max-model-len 32768 "
     '--gpu-memory-utilization 0.8 --uvicorn-log-level warning --port {port}" '
     "--vlm.serve_ready_timeout_s=1800 "
-    "--vlm.client_concurrency=256 "
+    "--vlm.client_concurrency=128 "
     "--vlm.max_new_tokens=512 "
-    "--executor.episode_parallelism=32 "
-    "--vlm.chat_template_kwargs='{enable_thinking: false}' "
+    "--vlm.temperature=0.7 "
+    "--executor.episode_parallelism=16 "
+    "--vlm.chat_template_kwargs='{\"enable_thinking\": false}' "
     "--vlm.camera_key=observation.images.wrist "
+    # Phase 0 — canonical vocabulary discovery from the first N sample
+    # episodes. The resulting meta/canonical_vocabulary.json constrains
+    # every subtask + memory string to a small repeatable target
+    # distribution; tune the counts for your task complexity.
+    "--vocabulary.sample_episodes=3 "
+    "--vocabulary.n_subtask_target=10 "
+    "--vocabulary.n_memory_target=6 "
+    # Phase 1 — plan module (subtasks + plan + memory + task_aug).
     "--plan.frames_per_second=1.0 "
     "--plan.use_video_url=true "
     "--plan.use_video_url_fps=1.0 "
-    "--vqa.K=1 --vqa.vqa_emission_hz=0.2"
+    "--plan.derive_task_from_video=always "
+    "--plan.n_task_rephrasings=30 "
+    # Phase 2 — interjections + speech.
+    "--interjections.max_interjections_per_episode=6 "
+    # Phase 4 — general VQA.
+    "--vqa.K=3 "
+    "--vqa.vqa_emission_hz=1.0"
 )
 
 job = run_job(
