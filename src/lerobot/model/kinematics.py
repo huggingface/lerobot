@@ -18,12 +18,38 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from lerobot.utils.import_utils import _placo_available, require_package
+from lerobot.utils.import_utils import require_package
 
-if TYPE_CHECKING or _placo_available:
+if TYPE_CHECKING:
     import placo  # type: ignore[import-not-found]
 else:
-    placo = None
+    # We attempt the actual import rather than relying solely on
+    # ``_placo_available`` (which is ``importlib.util.find_spec``-based).
+    # ``find_spec`` only checks that the Python module exists; it does not
+    # execute the import, so it cannot detect failures from native libraries
+    # the wheel dlopens at import time (e.g. placo 0.9.16 needs
+    # ``liburdfdom_sensor.so.4`` which is not available on Ubuntu 24.04).
+    # Catching the ImportError here keeps unrelated subsystems (RL actor,
+    # gym_manipulator, etc.) importable when placo can't load; the user
+    # gets an actionable error only when they actually instantiate
+    # ``RobotKinematics``, via ``_raise_if_placo_unusable``.
+    try:
+        import placo  # type: ignore[import-not-found]
+    except ImportError as _placo_import_err:
+        placo = None
+        _placo_runtime_error: ImportError | None = _placo_import_err
+    else:
+        _placo_runtime_error = None
+
+
+def _raise_if_placo_unusable() -> None:
+    """Surface a useful error when placo is installed but fails to dlopen."""
+    if placo is None and _placo_runtime_error is not None:
+        raise ImportError(
+            "placo is installed but failed to import — a transitive native "
+            "library is missing. Original error: "
+            f"{_placo_runtime_error!s}"
+        ) from _placo_runtime_error
 
 
 class RobotKinematics:
@@ -44,6 +70,7 @@ class RobotKinematics:
             joint_names (list[str] | None): List of joint names to use for the kinematics solver
         """
         require_package("placo", extra="placo-dep")
+        _raise_if_placo_unusable()
 
         self.robot = placo.RobotWrapper(urdf_path)
         self.solver = placo.KinematicsSolver(self.robot)
