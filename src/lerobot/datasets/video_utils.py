@@ -876,7 +876,7 @@ class StreamingVideoEncoder:
         self._closed = False
 
     def start_episode(
-        self, video_keys: list[str], temp_dir: Path, depth_video_keys: list[str] | None = []
+        self, video_keys: list[str], temp_dir: Path, depth_video_keys: list[str] | None = None
     ) -> None:
         """Start encoder threads for a new episode.
 
@@ -890,6 +890,9 @@ class StreamingVideoEncoder:
             self.cancel_episode()
 
         self._dropped_frames.clear()
+
+        if depth_video_keys is None:
+            depth_video_keys = []
 
         for video_key in video_keys:
             frame_queue: queue.Queue = queue.Queue(maxsize=self.queue_maxsize)
