@@ -252,12 +252,30 @@ def act_with_policy(
     ### Instantiate the policy in both the actor and learner processes
     ### To avoid sending a SACPolicy object through the port, we create a policy instance
     ### on both sides, the learner sends the updated parameters every n steps to update the actor's parameters
-    policy: SACPolicy = make_policy(
+    policy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
     )
     policy = policy.eval()
     assert isinstance(policy, nn.Module)
+    # Diagnostic: the resolved policy class MUST match cfg.policy.type. If
+    # cfg says qc_ext but `policy` ends up SACPolicy, something is wrong
+    # (plugin not loaded → draccus silently fell back, OR cfg.policy.type
+    # was overridden via CLI). This print survives buffering + tee.
+    print(
+        f"[ACTOR-DBG] policy class = {type(policy).__name__} "
+        f"({type(policy).__module__}); cfg.policy.type = {cfg.policy.type!r}; "
+        f"has load_actor_state_dict = {hasattr(policy, 'load_actor_state_dict')}",
+        flush=True,
+    )
+    logging.info(
+        "[ACTOR] policy class=%s module=%s cfg.policy.type=%s "
+        "has_load_actor_state_dict=%s",
+        type(policy).__name__,
+        type(policy).__module__,
+        cfg.policy.type,
+        hasattr(policy, "load_actor_state_dict"),
+    )
 
     # CRITICAL: load the TOP-level policy's pre/post-processors and apply
     # them around every `policy.select_action` call. Without this, QC (and
