@@ -15,10 +15,12 @@
 # limitations under the License.
 
 import draccus
+import numpy as np
 import pytest
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+from lerobot.datasets import LeRobotDataset
 from lerobot.scripts.lerobot_edit_dataset import (
     ConvertImageToVideoConfig,
     DeleteEpisodesConfig,
@@ -30,6 +32,7 @@ from lerobot.scripts.lerobot_edit_dataset import (
     RemoveFeatureConfig,
     SplitConfig,
     _validate_config,
+    handle_modify_tasks,
 )
 
 
@@ -89,3 +92,85 @@ class TestOperationTypeParsing:
         )
         resolved_name = OperationConfig.get_choice_name(type(cfg.operation))
         assert resolved_name == type_name
+
+    def test_modify_tasks_parses_overwrite_flag(self):
+        cfg = parse_cfg(
+            [
+                "--repo_id",
+                "test/repo",
+                "--operation.type",
+                "modify_tasks",
+                "--operation.new_task",
+                "Pick up the cube",
+                "--operation.overwrite",
+                "true",
+            ]
+        )
+
+        assert isinstance(cfg.operation, ModifyTasksConfig)
+        assert cfg.operation.overwrite is True
+
+
+def _create_two_episode_dataset(empty_lerobot_dataset_factory, root, repo_id="test/source"):
+    features = {
+        "action": {"dtype": "float32", "shape": (1,), "names": None},
+        "observation.state": {"dtype": "float32", "shape": (1,), "names": None},
+    }
+    dataset = empty_lerobot_dataset_factory(root=root, repo_id=repo_id, features=features, use_videos=False)
+
+    for task in ["Original task A", "Original task B"]:
+        for _ in range(2):
+            dataset.add_frame(
+                {
+                    "action": np.array([1.0], dtype=np.float32),
+                    "observation.state": np.array([0.0], dtype=np.float32),
+                    "task": task,
+                }
+            )
+        dataset.save_episode()
+
+    dataset.finalize()
+    return dataset
+
+
+def test_handle_modify_tasks_writes_new_dataset_without_changing_source(
+    tmp_path, empty_lerobot_dataset_factory
+):
+    source_root = tmp_path / "source"
+    output_root = tmp_path / "renamed"
+    _create_two_episode_dataset(empty_lerobot_dataset_factory, source_root)
+
+    cfg = EditDatasetConfig(
+        repo_id="test/source",
+        root=str(source_root),
+        new_repo_id="test/renamed",
+        new_root=str(output_root),
+        operation=ModifyTasksConfig(new_task="Renamed task"),
+    )
+
+    handle_modify_tasks(cfg)
+
+    source_dataset = LeRobotDataset("test/source", root=source_root)
+    renamed_dataset = LeRobotDataset("test/renamed", root=output_root)
+
+    assert set(source_dataset.meta.tasks.index) == {"Original task A", "Original task B"}
+    assert set(renamed_dataset.meta.tasks.index) == {"Renamed task"}
+    assert all(renamed_dataset[i]["task"] == "Renamed task" for i in range(len(renamed_dataset)))
+
+
+def test_handle_modify_tasks_overwrite_true_modifies_source_in_place(tmp_path, empty_lerobot_dataset_factory):
+    source_root = tmp_path / "source"
+    _create_two_episode_dataset(empty_lerobot_dataset_factory, source_root)
+
+    cfg = EditDatasetConfig(
+        repo_id="test/source",
+        root=str(source_root),
+        operation=ModifyTasksConfig(new_task="Overwritten task", overwrite=True),
+    )
+
+    handle_modify_tasks(cfg)
+
+    source_dataset = LeRobotDataset("test/source", root=source_root)
+
+    assert set(source_dataset.meta.tasks.index) == {"Overwritten task"}
+    assert all(source_dataset[i]["task"] == "Overwritten task" for i in range(len(source_dataset)))

@@ -100,24 +100,26 @@ Remove camera feature:
         --operation.type remove_feature \
         --operation.feature_names "['observation.image']"
 
-Modify tasks - set a single task for all episodes (WARNING: modifies in-place):
+Modify tasks - set a single task for all episodes and save to a new dataset:
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \
+        --new_repo_id lerobot/pusht_renamed \
         --operation.type modify_tasks \
         --operation.new_task "Pick up the cube and place it"
 
-Modify tasks - set different tasks for specific episodes (WARNING: modifies in-place):
+Modify tasks - set different tasks for specific episodes and save to a new path:
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \
+        --new_root /path/to/pusht_renamed \
         --operation.type modify_tasks \
         --operation.episode_tasks '{"0": "Task A", "1": "Task B", "2": "Task A"}'
 
-Modify tasks - set default task with overrides for specific episodes (WARNING: modifies in-place):
+Modify tasks in-place:
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \
         --operation.type modify_tasks \
-        --operation.new_task "Default task" \
-        --operation.episode_tasks '{"5": "Special task for episode 5"}'
+        --operation.new_task "Pick up the cube and place it" \
+        --operation.overwrite true
 
 Convert image dataset to video format and save locally:
     lerobot-edit-dataset \
@@ -270,6 +272,7 @@ class RemoveFeatureConfig(OperationConfig):
 class ModifyTasksConfig(OperationConfig):
     new_task: str | None = None
     episode_tasks: dict[str, str] | None = None
+    overwrite: bool = False
 
 
 @OperationConfig.register_subclass("convert_image_to_video")
@@ -518,13 +521,40 @@ def handle_modify_tasks(cfg: EditDatasetConfig) -> None:
     if new_task is None and episode_tasks_raw is None:
         raise ValueError("Must specify at least one of new_task or episode_tasks for modify_tasks operation")
 
-    if cfg.new_repo_id is not None or cfg.new_root is not None:
-        logging.warning(
-            "modify_tasks modifies datasets in-place. The --new_repo_id and --new_root parameters are ignored."
+    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+
+    if cfg.operation.overwrite:
+        if cfg.new_repo_id is not None or cfg.new_root is not None:
+            logging.warning(
+                "modify_tasks is running in-place because --operation.overwrite is true. "
+                "The --new_repo_id and --new_root parameters are ignored."
+            )
+        output_repo_id = cfg.repo_id
+        output_dir = dataset.root
+        logging.warning(f"Modifying dataset in-place at {dataset.root}. Original data will be overwritten.")
+    else:
+        output_repo_id, input_path, output_dir = _resolve_io_paths(
+            cfg.repo_id,
+            new_repo_id=cfg.new_repo_id,
+            root=cfg.root,
+            new_root=cfg.new_root,
+            default_new_repo_id=f"{cfg.repo_id}_modified_tasks",
         )
 
-    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
-    logging.warning(f"Modifying dataset in-place at {dataset.root}. Original data will be overwritten.")
+        if output_dir == input_path:
+            raise ValueError(
+                "modify_tasks would overwrite the source dataset. "
+                "Pass --operation.overwrite true to modify tasks in-place."
+            )
+        if output_dir.exists():
+            raise FileExistsError(
+                f"Output path already exists: {output_dir}. "
+                "Choose a different --new_root or remove the existing directory."
+            )
+
+        logging.warning(f"Copying dataset from {dataset.root} to {output_dir} before modifying tasks.")
+        shutil.copytree(dataset.root, output_dir)
+        dataset = LeRobotDataset(output_repo_id, root=output_dir)
 
     # Convert episode_tasks keys from string to int if needed (CLI passes strings)
     episode_tasks: dict[int, str] | None = None
@@ -543,11 +573,11 @@ def handle_modify_tasks(cfg: EditDatasetConfig) -> None:
         episode_tasks=episode_tasks,
     )
 
-    logging.info(f"Dataset modified at {dataset.root}")
+    logging.info(f"Dataset modified at {output_dir}")
     logging.info(f"Tasks: {list(modified_dataset.meta.tasks.index)}")
 
     if cfg.push_to_hub:
-        logging.info(f"Pushing to hub as {cfg.repo_id}")
+        logging.info(f"Pushing to hub as {output_repo_id}")
         modified_dataset.push_to_hub()
 
 
