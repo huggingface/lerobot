@@ -96,6 +96,19 @@ class PI05Config(PreTrainedConfig):
     optimizer_foreach: bool | None = False
     optimizer_fused: bool | None = True
 
+    # LM-head LR multiplier. The PaliGemma `lm_head` projection (and its
+    # tied `embed_tokens`) is the surface the LM head's first-token
+    # distribution depends on. With ``knowledge_insulation`` blocking
+    # action→VLM gradients, the LM head only sees gradients on text-CE
+    # samples — which can be a small fraction of the mix (e.g. ~45% in
+    # ``subtask_mem.yaml``). Under aggressive cosine LR decay the head's
+    # first-token distribution can drift back toward PaliGemma's
+    # pretrained ``<loc>`` detection prior, despite teacher-forced CE
+    # staying near zero. Boosting just the LM-head LR (e.g. 5x) keeps
+    # the head pinned to fine-tuning targets without perturbing the
+    # backbone / vision tower / action expert. Default 1.0 = no change.
+    lm_head_lr_scale: float = 1.0
+
     # Scheduler settings: see openpi `CosineDecaySchedule`
     # Note: These will auto-scale if --steps < scheduler_decay_steps
     # For example, --steps=3000 will scale warmup to 100 and decay to 3000

@@ -1133,8 +1133,62 @@ class PI05Policy(PreTrainedPolicy):
 
         return fixed_state_dict
 
-    def get_optim_params(self) -> dict:
-        return self.parameters()
+    def get_optim_params(self):
+        """Return policy parameters, optionally split into LR-scaled groups.
+
+        When ``config.lm_head_lr_scale != 1.0``, the PaliGemma ``lm_head``
+        and its tied ``embed_tokens`` are placed in their own param
+        group with ``lr = base_lr * lm_head_lr_scale``. The cosine
+        scheduler multiplies both groups by the same lambda each step,
+        so the ratio is preserved across decay. Default ``1.0`` =
+        return ``self.parameters()`` (back-compat with existing checkpoints
+        and configs).
+        """
+        scale = float(getattr(self.config, "lm_head_lr_scale", 1.0))
+        if scale == 1.0:
+            return self.parameters()
+        head_params: list[torch.nn.Parameter] = []
+        other_params: list[torch.nn.Parameter] = []
+        # Both ``lm_head.weight`` and the tied ``embed_tokens.weight`` —
+        # boosting only the projection without the embedding pulls them
+        # apart and breaks the tie that PaliGemma was pre-trained with.
+        head_substrings = (
+            "paligemma_with_expert.paligemma.lm_head.",
+            "paligemma_with_expert.paligemma.model.language_model.embed_tokens.",
+        )
+        for name, p in self.named_parameters():
+            if not p.requires_grad:
+                continue
+            if any(s in name for s in head_substrings):
+                head_params.append(p)
+            else:
+                other_params.append(p)
+        base_lr = float(self.config.optimizer_lr)
+        groups: list[dict[str, object]] = []
+        if other_params:
+            groups.append({"params": other_params, "lr": base_lr, "name": "policy"})
+        if head_params:
+            groups.append(
+                {"params": head_params, "lr": base_lr * scale, "name": "lm_head"}
+            )
+        # Sanity: head_substrings must match at least one parameter, otherwise
+        # the scale silently does nothing — surface that fast.
+        if not head_params:
+            raise RuntimeError(
+                "lm_head_lr_scale != 1.0 but no parameters matched the LM-head "
+                "name patterns: "
+                f"{head_substrings!r}. Did the underlying PaliGemma module rename?"
+            )
+        logging.info(
+            "PI05Policy: LM-head LR scale = %.3g (base=%.3g, head=%.3g) over "
+            "%d head params + %d other params",
+            scale,
+            base_lr,
+            base_lr * scale,
+            len(head_params),
+            len(other_params),
+        )
+        return groups
 
     def reset(self):
         """Reset internal state - called when environment resets."""
