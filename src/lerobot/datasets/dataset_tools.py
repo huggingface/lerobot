@@ -71,12 +71,21 @@ from .video_utils import (
 )
 
 
-def _load_episode_with_stats(src_dataset: LeRobotDataset, episode_idx: int) -> dict:
+def _load_episode_with_stats(
+    src_dataset: LeRobotDataset,
+    episode_idx: int,
+    parquet_cache: dict[str, pd.DataFrame] | None = None,
+) -> dict:
     """Load a single episode's metadata including stats from parquet file.
 
     Args:
         src_dataset: Source dataset
         episode_idx: Episode index to load
+        parquet_cache: Optional dict used to cache parquet DataFrames across
+            calls. Callers iterating over many episodes should pass in a shared
+            dict to avoid reloading the same metadata parquet file for every
+            episode (which can take hours on large datasets where many
+            episodes share a single file).
 
     Returns:
         dict containing episode metadata and stats
@@ -86,7 +95,13 @@ def _load_episode_with_stats(src_dataset: LeRobotDataset, episode_idx: int) -> d
     file_idx = ep_meta["meta/episodes/file_index"]
 
     parquet_path = src_dataset.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
-    df = pd.read_parquet(parquet_path)
+    if parquet_cache is None:
+        df = pd.read_parquet(parquet_path)
+    else:
+        cache_key = str(parquet_path)
+        if cache_key not in parquet_cache:
+            parquet_cache[cache_key] = pd.read_parquet(parquet_path)
+        df = parquet_cache[cache_key]
 
     episode_row = df[df["episode_index"] == episode_idx].iloc[0]
 
@@ -854,10 +869,15 @@ def _copy_and_reindex_episodes_metadata(
     all_stats = []
     total_frames = 0
 
+    # Many episodes share the same metadata parquet file. Reloading the same
+    # file once per episode scales poorly (hours on ~10k-episode datasets), so
+    # we share a parquet cache across the loop. See issue #3596.
+    parquet_cache: dict[str, pd.DataFrame] = {}
+
     for old_idx, new_idx in tqdm(
         sorted(episode_mapping.items(), key=lambda x: x[1]), desc="Processing episodes metadata"
     ):
-        src_episode_full = _load_episode_with_stats(src_dataset, old_idx)
+        src_episode_full = _load_episode_with_stats(src_dataset, old_idx, parquet_cache=parquet_cache)
 
         src_episode = src_dataset.meta.episodes[old_idx]
 

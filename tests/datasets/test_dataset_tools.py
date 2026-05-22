@@ -18,6 +18,7 @@
 from unittest.mock import patch
 
 import numpy as np
+import pandas as pd
 import pytest
 import torch
 
@@ -1368,3 +1369,35 @@ def test_reencode_dataset_multi_key_multiprocessing(
     for vk in dataset.meta.video_keys:
         persisted_encoder = VideoEncoderConfig.from_video_info(persisted_info.features[vk].get("info", {}))
         assert persisted_encoder == target_cfg
+
+
+def test_copy_and_reindex_metadata_caches_parquet_reads(sample_dataset, tmp_path):
+    """Verify that copy/reindex shares a parquet cache across episodes (issue #3596).
+
+    The sample dataset has five episodes whose stats all live in a single metadata
+    parquet file. Without caching, ``_load_episode_with_stats`` reloads that file
+    once per episode, which scales poorly. With caching, each parquet file should
+    be read exactly once even when many episodes are processed.
+    """
+    output_dir = tmp_path / "filtered"
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+        patch("lerobot.datasets.dataset_tools.pd.read_parquet", wraps=pd.read_parquet) as mock_read_parquet,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(output_dir)
+
+        delete_episodes(
+            sample_dataset,
+            episode_indices=[2],
+            output_dir=output_dir,
+        )
+
+    metadata_calls = [
+        call for call in mock_read_parquet.call_args_list if "meta/episodes/" in str(call.args[0])
+    ]
+    unique_paths = {str(call.args[0]) for call in metadata_calls}
+    # One read per unique metadata parquet file, not one per episode.
+    assert len(metadata_calls) == len(unique_paths)
