@@ -930,12 +930,23 @@ class PI052Policy(PI05Policy):
         temperature: float = 0.0,
         top_p: float = 1.0,
         tokenizer: Any = None,
+        suppress_loc_tokens: bool = False,
     ) -> str:
         """Generate text continuation from a multimodal prefix.
 
         Mirrors ``SmolVLA2Policy.select_message`` so the same
         :class:`lerobot.policies.smolvla2.inference.SmolVLA2Runtime`
         can drive π0.5 v2 unchanged.
+
+        ``suppress_loc_tokens`` masks PaliGemma's reserved ``<locDDDD>``
+        ids ([256000, 257024)) to ``-inf`` before sampling. PaliGemma's
+        pretraining puts heavy first-token mass on these ids for any
+        ``Assistant:`` continuation; with a small fine-tuning text-CE
+        budget (or aggressive LR decay) the LM head can drift back
+        toward that prior even when teacher-forced argmax stays at
+        100%. Callsites that legitimately emit ``<loc>`` (VQA spatial
+        answers) must keep this ``False``; subtask / memory / plan
+        generation should pass ``True``.
         """
         self.eval()
 
@@ -1015,6 +1026,8 @@ class PI052Policy(PI05Policy):
             if special_ids and len(generated) < min_new_tokens:
                 for sid in special_ids:
                     logits_step[..., sid] = float("-inf")
+            if suppress_loc_tokens:
+                logits_step[..., 256000:257024] = float("-inf")
             next_ids = self._sample_next_token(logits_step, temperature, top_p)
             tok_id = int(next_ids[0].item())
             generated.append(tok_id)
