@@ -253,7 +253,7 @@
     "actor_num_samples": 32,
     "flow_steps": 10,
     "alpha_bc": 100.0,
-    "discount": 0.95,
+    "discount": 0.97,
     "critic_target_update_weight": 0.005,
     "critic_lr": 0.0003,
     "actor_lr": 0.0001,
@@ -308,6 +308,6 @@
       "learner": "threads"
     },
     "pretrained_path": "outputs/qc_offline_pretrain_v3a_150k/checkpoints/000100000/pretrained_model",
-    "critic_warmup_steps": 2000
+    "critic_warmup_steps": 4000
   }
 }
