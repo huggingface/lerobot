@@ -103,6 +103,11 @@ from .gym_manipulator import (
 
 @parser.wrap()
 def actor_cli(cfg: TrainRLServerPipelineConfig):
+    # Actor never writes to output_dir (only the learner does), but it shares cfg
+    # with the learner under HIL-SERL. Skip the "output_dir already exists" check
+    # so re-launching the actor against an existing run doesn't crash. The learner
+    # still gets the protective check because it doesn't set this env var.
+    os.environ.setdefault("LEROBOT_SKIP_OUTPUT_DIR_CHECK", "1")
     cfg.validate()
     display_pid = False
     if not use_threads(cfg):
