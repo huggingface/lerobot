@@ -309,6 +309,51 @@ def test_plan_module_drops_off_vocab_subtask_after_retry(
     assert subtask_texts == ["grasp blue cube"]
 
 
+def test_plan_module_bumps_collocated_subtasks_to_distinct_frames(
+    fixture_dataset_root: Path, tmp_path: Path
+) -> None:
+    """Two subtasks whose starts snap to the same frame get split onto two frames.
+
+    Without this guard, both spans would emit ``style=subtask`` rows at the
+    identical persistent timestamp; the training-time renderer's
+    ``active_at(t, style=subtask)`` then raises an ambiguity error.
+    """
+    from lerobot.annotations.steerable_pipeline.vlm_client import StubVlmClient
+
+    def responder(_messages):
+        # Two canonical labels with starts within one frame of each other —
+        # both snap to the same source frame, so the dedupe pass must bump
+        # the later one to the next frame.
+        return {
+            "subtasks": [
+                {"text": "grasp blue cube", "start": 0.40, "end": 0.42},
+                {"text": "place blue cube in box", "start": 0.41, "end": 0.50},
+            ]
+        }
+
+    vlm = StubVlmClient(responder=responder)
+    vocab = Vocabulary(subtasks=_CANONICAL_SUBTASKS, memory_milestones=_CANONICAL_MEMORY)
+    module = PlanSubtasksMemoryModule(
+        vlm=vlm,
+        config=PlanConfig(n_task_rephrasings=0),
+        vocabulary=vocab,
+    )
+    record = next(iter_episodes(fixture_dataset_root))
+    staging = EpisodeStaging(tmp_path / "stage", record.episode_index)
+    module.run_episode(record, staging)
+    rows = staging.read("plan")
+    subtask_rows = [r for r in rows if r["style"] == "subtask"]
+    # Both subtasks present, both on distinct timestamps.
+    assert len(subtask_rows) == 2
+    timestamps = [r["timestamp"] for r in subtask_rows]
+    assert len(set(timestamps)) == 2, f"subtask timestamps collide: {timestamps}"
+    # Order preserved: the chronologically earlier span keeps the earlier
+    # frame, the later one was bumped onto the next available frame.
+    assert subtask_rows[0]["content"] == "grasp blue cube"
+    assert subtask_rows[1]["content"] == "place blue cube in box"
+    assert subtask_rows[1]["timestamp"] > subtask_rows[0]["timestamp"]
+
+
 def test_plan_module_empty_when_all_off_vocab_after_retry(
     fixture_dataset_root: Path, tmp_path: Path
 ) -> None:

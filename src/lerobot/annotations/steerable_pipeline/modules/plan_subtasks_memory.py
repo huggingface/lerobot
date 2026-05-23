@@ -366,6 +366,7 @@ class PlanSubtasksMemoryModule:
                 continue
             cleaned.append({"text": text, "start": start, "end": end})
         cleaned.sort(key=lambda s: s["start"])
+        cleaned = self._dedupe_starts_to_distinct_frames(cleaned, record)
         if self.vocabulary is not None and self.vocabulary.subtasks and not cleaned:
             logger.warning(
                 "episode %d: every VLM subtask was off-vocab even after retry — "
@@ -374,6 +375,54 @@ class PlanSubtasksMemoryModule:
                 record.episode_index,
             )
         return cleaned
+
+    @staticmethod
+    def _dedupe_starts_to_distinct_frames(
+        spans: list[dict[str, Any]], record: EpisodeRecord
+    ) -> list[dict[str, Any]]:
+        """Bump same-frame subtask starts onto distinct frames.
+
+        Two consecutive VLM spans whose ``start`` rounds to the same
+        source frame (after :func:`snap_to_frame`) would otherwise emit
+        two ``style=subtask`` rows at the identical persistent
+        timestamp. The training-time renderer's ``active_at(t,
+        style=subtask)`` resolver can't disambiguate that and raises
+        ``Ambiguous resolver for style='subtask'``.
+
+        Walk the (sorted-by-start) spans, snap each to its frame, and
+        if the snapped frame is already taken push the span onto the
+        next unused frame so both subtasks survive on distinct
+        timestamps. If the episode ends before a free frame is found,
+        the trailing span is dropped with a warning — better than
+        poisoning the render.
+        """
+        if not spans:
+            return spans
+        frames = record.frame_timestamps
+        if not frames:
+            return spans
+        used: set[float] = set()
+        out: list[dict[str, Any]] = []
+        for span in spans:
+            ts = snap_to_frame(span["start"], frames)
+            if ts in used:
+                next_ts = next((f for f in frames if f > ts and f not in used), None)
+                if next_ts is None:
+                    logger.warning(
+                        "episode %d: subtask %r snapped to occupied frame "
+                        "%.3f and no free later frame exists — dropping",
+                        record.episode_index,
+                        span.get("text"),
+                        ts,
+                    )
+                    continue
+                ts = next_ts
+            used.add(ts)
+            new_span = {**span, "start": ts}
+            if float(new_span.get("end", ts)) < ts:
+                new_span["end"] = ts
+            out.append(new_span)
+        return out
 
     # ------------------------------------------------------------------
     # Canonical-vocabulary helpers
