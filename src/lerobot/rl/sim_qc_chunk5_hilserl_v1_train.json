@@ -259,7 +259,7 @@
     "actor_lr": 0.0001,
     "grad_clip_norm": 5.0,
     "utd_ratio": 1,
-    "online_steps": 30000,
+    "online_steps": 100000,
     "online_buffer_capacity": 50000,
     "offline_buffer_capacity": 1,
     "online_step_before_learning": 500,
