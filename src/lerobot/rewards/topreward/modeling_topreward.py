@@ -29,15 +29,16 @@ and returns that log-likelihood as the reward signal.
 Inference recipe:
 
 1. The processor builds a chat-style prompt, tokenises it, and emits
-   ``input_ids``, ``attention_mask``, vision tensors, and ``prompt_length``.
-2. The model label-masks everything before ``prompt_length`` with ``-100``.
-3. Forward the full token sequence through the VLM.
-4. Read per-token log-probabilities of the unmasked suffix tokens from the
-   logits and reduce them (mean or sum) into a scalar reward.
+   ``input_ids``, ``attention_mask``, vision tensors, and ``labels``.
+   The processor label-masks everything except the terminal answer token with
+   ``-100``.
+2. Forward the full token sequence through the VLM.
+3. Read the terminal answer token log-probability from the logits as the
+   scalar reward.
 
-With the default ``prompt_suffix_template`` and ``prompt_length = input_len - 1``
-(mirrored from upstream), the only unmasked token is the literal ``"True"``
-at the end — the reward is ``log P("True" | video + prompt + instruction)``.
+With the default ``prompt_suffix_template``, the only unmasked token is the
+literal ``"True"`` at the end — the reward is
+``log P("True" | video + prompt + instruction)``.
 
 This LeRobot port is **inference-only and not trainable** — :meth:`forward`
 is intentionally inherited from :class:`PreTrainedRewardModel` and raises
@@ -66,6 +67,7 @@ from huggingface_hub import HfApi, hf_hub_download
 from huggingface_hub.constants import CONFIG_NAME
 from huggingface_hub.errors import HfHubHTTPError
 from torch import Tensor
+from torch.nn.functional import cross_entropy
 
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.rewards.pretrained import PreTrainedRewardModel
@@ -116,57 +118,29 @@ class TOPRewardModel(PreTrainedRewardModel):
 
     def compute_reward(self, batch: dict[str, Any]) -> Tensor:
         """Return one log-prob reward per sample in the batch."""
-        inputs = {
-            key: batch[f"{TOPREWARD_FEATURE_PREFIX}{key}"]
-            for key in TOPREWARD_INPUT_KEYS
-            if f"{TOPREWARD_FEATURE_PREFIX}{key}" in batch
-        }
-        if "input_ids" not in inputs:
-            raise KeyError(
-                f"TOPReward batch missing pre-encoded inputs (expected "
-                f"`{TOPREWARD_FEATURE_PREFIX}input_ids`). Make sure the "
-                "TOPRewardEncoderProcessorStep ran before `compute_reward`."
-            )
+        inputs: dict[str, Any] = {}
+        for key in TOPREWARD_INPUT_KEYS:
+            batch_key = f"{TOPREWARD_FEATURE_PREFIX}{key}"
+            if batch_key not in batch:
+                raise KeyError(
+                    f"TOPReward batch missing `{batch_key}`. Make sure the "
+                    "TOPRewardEncoderProcessorStep ran before `compute_reward`."
+                )
+            inputs[key] = batch[batch_key]
 
-        prompt_lengths = inputs.pop("prompt_length")
         device = next(self.model.parameters()).device
         inputs = {key: value.to(device) if hasattr(value, "to") else value for key, value in inputs.items()}
-
-        labels = inputs["input_ids"].clone()
-        for i, plen in enumerate(prompt_lengths.tolist()):
-            labels[i, : int(plen)] = -100
-        if "attention_mask" in inputs:
-            labels = labels.masked_fill(inputs["attention_mask"] == 0, -100)
+        labels = inputs.pop("labels")
+        inputs["logits_to_keep"] = 2
 
         self.eval()
         with torch.no_grad():
             outputs = self.model(**inputs)
-
-        logits = outputs.logits[:, :-1, :]
-        target_labels = labels[:, 1:]
-        log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
-        mask = target_labels != -100
-        safe_targets = target_labels.masked_fill(~mask, 0)
-        token_log_probs = log_probs.gather(-1, safe_targets.unsqueeze(-1)).squeeze(-1)
-
-        batch_size = inputs["input_ids"].shape[0]
-        rewards = []
-        for i in range(batch_size):
-            sample_log_probs = token_log_probs[i][mask[i]]
-            if sample_log_probs.numel() == 0:
-                raise RuntimeError(
-                    "TOPReward could not isolate any suffix tokens to score. Check that "
-                    "`prompt_suffix_template` produces at least one tokenised character."
-                )
-            if self.config.reduction == "sum":
-                rewards.append(sample_log_probs.sum().item())
-            else:
-                rewards.append(sample_log_probs.mean().item())
-
-        out = torch.as_tensor(rewards, dtype=torch.float32)
+        logits = outputs.logits
+        rewards = -cross_entropy(logits[:, -2, :].float(), labels[:, -1], reduction="none")
         if np.isfinite(self.config.success_threshold):
-            out = (out > self.config.success_threshold).float()
-        return out.to(self.config.device or "cpu")
+            rewards = (rewards > self.config.success_threshold).float()
+        return rewards.to(self.config.device or "cpu")
 
     def _save_pretrained(self, save_directory: Path) -> None:
         """Save ``config.json`` only."""

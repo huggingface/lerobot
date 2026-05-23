@@ -24,7 +24,7 @@ import torch
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.rewards.factory import get_reward_model_class, make_reward_model_config
 from lerobot.rewards.topreward import TOPRewardConfig
-from lerobot.rewards.topreward.processor_topreward import TOPREWARD_FEATURE_PREFIX
+from lerobot.rewards.topreward.processor_topreward import TOPREWARD_FEATURE_PREFIX, TOPREWARD_INPUT_KEYS
 from tests.utils import skip_if_package_missing
 
 
@@ -45,20 +45,23 @@ class _FakeQwenModel(torch.nn.Module):
     def from_pretrained(cls, *args, **kwargs):  # noqa: ARG003
         return cls()
 
-    def forward(self, input_ids, attention_mask=None, labels=None, **kwargs):  # noqa: ARG002
+    def forward(  # noqa: ARG002
+        self, input_ids, attention_mask=None, labels=None, logits_to_keep=0, **kwargs
+    ):
         batch_size, seq_len = input_ids.shape
         vocab_size = 1000
         logits = torch.zeros(batch_size, seq_len, vocab_size)
         # Place a controlled log-prob at the target token position so the
         # model returns a predictable reward value.
-        # The label-masked suffix is the last token (prompt_length = seq_len - 1).
+        # The label-masked suffix is the last token.
         # After the causal-LM shift (logits[:, :-1], labels[:, 1:]) the scored
         # position is logits[:, -2, :] predicting labels[:, -1].
         # We set logits so that log_softmax at the target token ≈ _reward_value.
-        if labels is not None:
-            for i in range(batch_size):
-                target_idx = int(input_ids[i, -1].item())
-                logits[i, -2, target_idx] = self._reward_value * -10  # high logit -> high log-prob
+        for i in range(batch_size):
+            target_idx = int(input_ids[i, -1].item())
+            logits[i, -2, target_idx] = self._reward_value * -10  # high logit -> high log-prob
+        if logits_to_keep:
+            logits = logits[:, -logits_to_keep:, :]
         return SimpleNamespace(logits=logits)
 
 
@@ -72,15 +75,37 @@ def _patch_build(monkeypatch) -> None:
 def _make_batch(
     input_ids: torch.Tensor,
     attention_mask: torch.Tensor | None = None,
-    prompt_length: torch.Tensor | None = None,
+    labels: torch.Tensor | None = None,
+    *,
+    omit: str | None = None,
 ) -> dict[str, torch.Tensor]:
     """Build a ``compute_reward``-ready batch using TOPReward's namespaced keys."""
-    batch: dict[str, torch.Tensor] = {f"{TOPREWARD_FEATURE_PREFIX}input_ids": input_ids}
-    if attention_mask is not None:
-        batch[f"{TOPREWARD_FEATURE_PREFIX}attention_mask"] = attention_mask
-    if prompt_length is not None:
-        batch[f"{TOPREWARD_FEATURE_PREFIX}prompt_length"] = prompt_length
+    batch_size, seq_len = input_ids.shape
+    if attention_mask is None:
+        attention_mask = torch.ones(batch_size, seq_len, dtype=torch.long)
+    batch: dict[str, torch.Tensor] = {}
+    if labels is not None:
+        batch[f"{TOPREWARD_FEATURE_PREFIX}labels"] = labels
+    batch.update(
+        {
+            f"{TOPREWARD_FEATURE_PREFIX}input_ids": input_ids,
+            f"{TOPREWARD_FEATURE_PREFIX}attention_mask": attention_mask,
+            f"{TOPREWARD_FEATURE_PREFIX}pixel_values_videos": torch.zeros(
+                batch_size, 1536, dtype=torch.float32
+            ),
+            f"{TOPREWARD_FEATURE_PREFIX}video_grid_thw": torch.ones(batch_size, 3, dtype=torch.long),
+            f"{TOPREWARD_FEATURE_PREFIX}mm_token_type_ids": torch.zeros_like(input_ids),
+        }
+    )
+    if omit is not None:
+        batch.pop(f"{TOPREWARD_FEATURE_PREFIX}{omit}", None)
     return batch
+
+
+def _terminal_labels(input_ids: torch.Tensor) -> torch.Tensor:
+    labels = torch.full_like(input_ids, -100)
+    labels[:, -1] = input_ids[:, -1]
+    return labels
 
 
 # ---------------------------------------------------------------------------
@@ -103,11 +128,6 @@ def test_topreward_factory_returns_in_tree_class():
 # ---------------------------------------------------------------------------
 # Config validation
 # ---------------------------------------------------------------------------
-
-
-def test_topreward_config_rejects_bad_reduction():
-    with pytest.raises(ValueError, match="reduction must be"):
-        TOPRewardConfig(device="cpu", reduction="median")
 
 
 def test_topreward_config_rejects_zero_max_frames():
@@ -142,9 +162,9 @@ def test_topreward_compute_reward_returns_one_scalar_per_sample(monkeypatch):
 
     input_ids = torch.randint(0, 100, (2, 10))
     attention_mask = torch.ones(2, 10, dtype=torch.long)
-    prompt_length = torch.tensor([9, 9])  # unmask only the last token
+    labels = _terminal_labels(input_ids)
 
-    batch = _make_batch(input_ids, attention_mask, prompt_length)
+    batch = _make_batch(input_ids, attention_mask, labels)
     rewards = model.compute_reward(batch)
 
     assert rewards.shape == (2,)
@@ -162,9 +182,9 @@ def test_topreward_compute_reward_applies_success_threshold(monkeypatch):
 
     input_ids = torch.randint(0, 100, (2, 10))
     attention_mask = torch.ones(2, 10, dtype=torch.long)
-    prompt_length = torch.tensor([9, 9])
+    labels = _terminal_labels(input_ids)
 
-    batch = _make_batch(input_ids, attention_mask, prompt_length)
+    batch = _make_batch(input_ids, attention_mask, labels)
     rewards = model.compute_reward(batch)
 
     assert rewards.shape == (2,)
@@ -180,7 +200,37 @@ def test_topreward_compute_reward_errors_when_inputs_missing(monkeypatch):
     model = TOPRewardModel(cfg)
 
     with pytest.raises(KeyError, match=r"observation\.topreward\.input_ids"):
-        model.compute_reward({})
+        model.compute_reward(_make_batch(torch.randint(0, 100, (1, 10)), omit="input_ids"))
+
+
+@skip_if_package_missing("transformers")
+def test_topreward_compute_reward_errors_when_labels_missing(monkeypatch):
+    from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
+
+    _patch_build(monkeypatch)
+    cfg = TOPRewardConfig(device="cpu")
+    model = TOPRewardModel(cfg)
+
+    input_ids = torch.randint(0, 100, (1, 10))
+    with pytest.raises(KeyError, match=r"observation\.topreward\.labels"):
+        model.compute_reward(_make_batch(input_ids, labels=None))
+
+
+@skip_if_package_missing("transformers")
+def test_topreward_compute_reward_requires_all_encoder_keys(monkeypatch):
+    from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
+
+    _patch_build(monkeypatch)
+    cfg = TOPRewardConfig(device="cpu")
+    model = TOPRewardModel(cfg)
+
+    input_ids = torch.randint(0, 100, (1, 10))
+    labels = _terminal_labels(input_ids)
+    required_encoder_keys = set(TOPREWARD_INPUT_KEYS) - {"input_ids", "labels"}
+
+    for key in required_encoder_keys:
+        with pytest.raises(KeyError, match=rf"observation\.topreward\.{key}"):
+            model.compute_reward(_make_batch(input_ids, labels=labels, omit=key))
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +248,6 @@ def test_topreward_save_pretrained_writes_only_config_json(monkeypatch, tmp_path
     cfg = TOPRewardConfig(
         device="cpu",
         vlm_name="Qwen/Qwen3-VL-8B-Instruct",
-        reduction="sum",
         fps=4.0,
         image_key="observation.images.front",
     )
@@ -217,7 +266,6 @@ def test_topreward_from_pretrained_local_dir_roundtrips_config(monkeypatch, tmp_
     cfg = TOPRewardConfig(
         device="cpu",
         vlm_name="Qwen/Qwen3-VL-8B-Instruct",
-        reduction="sum",
         fps=4.0,
         image_key="observation.images.front",
         add_chat_template=True,
@@ -229,7 +277,6 @@ def test_topreward_from_pretrained_local_dir_roundtrips_config(monkeypatch, tmp_
 
     assert isinstance(reloaded.config, TOPRewardConfig)
     assert reloaded.config.vlm_name == "Qwen/Qwen3-VL-8B-Instruct"
-    assert reloaded.config.reduction == "sum"
     assert reloaded.config.fps == 4.0
     assert reloaded.config.image_key == "observation.images.front"
     assert reloaded.config.add_chat_template is True

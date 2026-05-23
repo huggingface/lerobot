@@ -3010,7 +3010,6 @@ test = [
     { name = "pytest-timeout" },
 ]
 topreward = [
-    { name = "qwen-vl-utils" },
     { name = "transformers" },
 ]
 training = [
@@ -3158,7 +3157,6 @@ requires-dist = [
     { name = "lerobot", extras = ["pyzmq-dep"], marker = "extra == 'unitree-g1'" },
     { name = "lerobot", extras = ["qwen-vl-utils-dep"], marker = "extra == 'eo1'" },
     { name = "lerobot", extras = ["qwen-vl-utils-dep"], marker = "extra == 'sarm'" },
-    { name = "lerobot", extras = ["qwen-vl-utils-dep"], marker = "extra == 'topreward'" },
     { name = "lerobot", extras = ["qwen-vl-utils-dep"], marker = "extra == 'wallx'" },
     { name = "lerobot", extras = ["reachy2"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["rebot"], marker = "extra == 'all'" },

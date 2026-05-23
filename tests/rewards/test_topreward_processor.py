@@ -16,71 +16,71 @@
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 import torch
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.rewards.topreward.processor_topreward import (
     TOPREWARD_FEATURE_PREFIX,
+    TOPREWARD_INPUT_KEYS,
     _expand_tasks,
-    _video_to_numpy,
+    _prepare_video_batch,
 )
 from lerobot.types import TransitionKey
 from tests.utils import skip_if_package_missing
 
 # ---------------------------------------------------------------------------
-# _video_to_numpy — pure (T, C, H, W) -> (T, H, W, C) uint8 conversion
+# _prepare_video_batch — raw image/video batch -> (B, T, C, H, W) uint8
 # ---------------------------------------------------------------------------
 
 
-def test_video_to_numpy_chw_float_is_converted_to_thwc_uint8():
-    video = torch.rand(4, 3, 8, 8)
-    array = _video_to_numpy(video, max_frames=None)
+def test_prepare_video_batch_batched_chw_float_is_converted_to_uint8():
+    video = torch.rand(2, 4, 3, 8, 8)
+    tensor = _prepare_video_batch(video, max_frames=None)
 
-    assert array.shape == (4, 8, 8, 3)
-    assert array.dtype == np.uint8
-    assert array.min() >= 0 and array.max() <= 255
-
-
-def test_video_to_numpy_already_thwc_uint8_passes_through():
-    video = torch.randint(0, 256, (3, 8, 8, 3), dtype=torch.uint8)
-    array = _video_to_numpy(video, max_frames=None)
-
-    assert array.shape == (3, 8, 8, 3)
-    assert array.dtype == np.uint8
+    assert tensor.shape == (2, 4, 3, 8, 8)
+    assert tensor.dtype == torch.uint8
+    assert tensor.min() >= 0 and tensor.max() <= 255
 
 
-def test_video_to_numpy_max_frames_tail_crops_recent_frames():
-    video = torch.zeros(10, 3, 4, 4)
+def test_prepare_video_batch_batched_thwc_uint8_is_permuted_to_channel_first():
+    video = torch.randint(0, 256, (2, 3, 8, 8, 3), dtype=torch.uint8)
+    tensor = _prepare_video_batch(video, max_frames=None)
+
+    assert tensor.shape == (2, 3, 3, 8, 8)
+    assert tensor.dtype == torch.uint8
+
+
+def test_prepare_video_batch_max_frames_tail_crops_recent_frames():
+    video = torch.zeros(1, 10, 3, 4, 4)
     for t in range(10):
-        video[t] = t / 9.0
+        video[:, t] = t / 9.0
 
-    array = _video_to_numpy(video, max_frames=3)
+    tensor = _prepare_video_batch(video, max_frames=3)
 
-    assert array.shape == (3, 4, 4, 3)
-    assert int(array[0, 0, 0, 0]) == int(round(7 / 9 * 255))
-    assert int(array[-1, 0, 0, 0]) == 255
-
-
-def test_video_to_numpy_rejects_3d_input():
-    with pytest.raises(ValueError, match="Expected channel dim"):
-        _video_to_numpy(torch.zeros(4, 8, 8), max_frames=None)
+    assert tensor.shape == (1, 3, 3, 4, 4)
+    assert int(tensor[0, 0, 0, 0, 0]) == int(7 / 9 * 255)
+    assert int(tensor[0, -1, 0, 0, 0]) == 255
 
 
-def test_video_to_numpy_floats_above_one_pass_through_without_rescaling():
-    video = torch.full((1, 3, 2, 2), 5.0)
-    array = _video_to_numpy(video, max_frames=None)
-
-    assert array.shape == (1, 2, 2, 3)
-    assert int(array.max()) == 5
+def test_prepare_video_batch_rejects_3d_input():
+    with pytest.raises(ValueError, match="Expected TOPReward frames"):
+        _prepare_video_batch(torch.zeros(4, 8, 8), max_frames=None)
 
 
-def test_video_to_numpy_clips_very_large_floats_to_uint8_max():
-    video = torch.full((1, 3, 2, 2), 300.0)
-    array = _video_to_numpy(video, max_frames=None)
+def test_prepare_video_batch_floats_above_one_are_rescaled_and_clipped():
+    video = torch.full((1, 1, 3, 2, 2), 5.0)
+    tensor = _prepare_video_batch(video, max_frames=None)
 
-    assert int(array.max()) == 255
+    assert tensor.shape == (1, 1, 3, 2, 2)
+    assert int(tensor.max()) == 255
+
+
+def test_prepare_video_batch_clips_very_large_floats_to_uint8_max():
+    video = torch.full((1, 1, 3, 2, 2), 300.0)
+    tensor = _prepare_video_batch(video, max_frames=None)
+
+    assert int(tensor.max()) == 255
 
 
 # ---------------------------------------------------------------------------
@@ -124,12 +124,11 @@ def test_expand_tasks_wrong_type_raises():
 
 
 # ---------------------------------------------------------------------------
-# Encoder step — stubbed AutoProcessor + process_vision_info
+# Encoder step — stubbed AutoProcessor
 # ---------------------------------------------------------------------------
 
 
 def _skip_if_topreward_extras_missing(func):
-    func = skip_if_package_missing("qwen-vl-utils", import_name="qwen_vl_utils")(func)
     func = skip_if_package_missing("transformers")(func)
     return func
 
@@ -155,32 +154,20 @@ class _FakeAutoProcessor:
 
     def __call__(self, text=None, images=None, videos=None, **kwargs):  # noqa: ARG002
         seq_len = 10
+        batch_size = len(text) if isinstance(text, list) else 1
         return {
-            "input_ids": torch.randint(0, 100, (1, seq_len)),
-            "attention_mask": torch.ones(1, seq_len, dtype=torch.long),
+            "input_ids": torch.randint(0, 100, (batch_size, seq_len)),
+            "attention_mask": torch.ones(batch_size, seq_len, dtype=torch.long),
+            "pixel_values_videos": torch.zeros(batch_size, 1536, dtype=torch.float32),
+            "video_grid_thw": torch.ones(batch_size, 3, dtype=torch.long),
+            "mm_token_type_ids": torch.zeros(batch_size, seq_len, dtype=torch.long),
         }
 
 
 def _build_step(monkeypatch, **overrides):
-    import importlib
-    import sys
-    import types
-
     from lerobot.rewards.topreward import processor_topreward
-    from lerobot.utils import import_utils
 
     monkeypatch.setattr(processor_topreward, "AutoProcessor", _FakeAutoProcessor)
-
-    # Stub qwen_vl_utils as a real module object (not MagicMock) so
-    # ``require_package`` / ``find_spec`` don't choke on a missing ``__spec__``.
-    fake_qwen_vl = types.ModuleType("qwen_vl_utils")
-    fake_qwen_vl.process_vision_info = lambda messages: (None, None)  # type: ignore[attr-defined]
-    fake_qwen_vl.__spec__ = importlib.machinery.ModuleSpec("qwen_vl_utils", None)
-    monkeypatch.setitem(sys.modules, "qwen_vl_utils", fake_qwen_vl)
-
-    # Clear the require_package cache so the stub is picked up.
-    import_utils._require_package_cache.pop("qwen_vl_utils", None)
-
     return processor_topreward.TOPRewardEncoderProcessorStep(**overrides)
 
 
@@ -192,27 +179,29 @@ def _make_transition(observation: dict, complementary: dict | None = None) -> di
 
 
 @_skip_if_topreward_extras_missing
-def test_encoder_step_emits_input_ids_and_prompt_length(monkeypatch):
+def test_encoder_step_emits_input_ids_and_labels(monkeypatch):
     """The processor must emit Qwen-VL tensors including ``input_ids`` and
-    ``prompt_length`` under the ``observation.topreward.*`` namespace."""
+    ``labels`` under the ``observation.topreward.*`` namespace."""
     step = _build_step(monkeypatch)
 
-    frames_batch = torch.zeros(1, 4, 3, 8, 8)
+    frames_batch = torch.zeros(2, 4, 3, 8, 8)
     out = step(
         _make_transition(
             observation={"observation.images.top": frames_batch},
-            complementary={"task": "pick"},
+            complementary={"task": ["pick", "place"]},
         )
     )
 
     obs_out = out[TransitionKey.OBSERVATION]
-    assert f"{TOPREWARD_FEATURE_PREFIX}input_ids" in obs_out
-    assert f"{TOPREWARD_FEATURE_PREFIX}attention_mask" in obs_out
-    assert f"{TOPREWARD_FEATURE_PREFIX}prompt_length" in obs_out
+    for key in TOPREWARD_INPUT_KEYS:
+        assert f"{TOPREWARD_FEATURE_PREFIX}{key}" in obs_out
 
-    prompt_length = obs_out[f"{TOPREWARD_FEATURE_PREFIX}prompt_length"]
-    assert prompt_length.dtype == torch.long
-    assert prompt_length.shape == (1,)
+    input_ids = obs_out[f"{TOPREWARD_FEATURE_PREFIX}input_ids"]
+    labels = obs_out[f"{TOPREWARD_FEATURE_PREFIX}labels"]
+    assert labels.dtype == torch.long
+    assert labels.shape == (2, 10)
+    assert labels[:, :-1].eq(-100).all()
+    assert labels[:, -1].equal(input_ids[:, -1])
 
 
 @_skip_if_topreward_extras_missing
@@ -255,10 +244,3 @@ def test_encoder_step_rejects_missing_image_key(monkeypatch):
     step = _build_step(monkeypatch, image_key="observation.images.top")
     with pytest.raises(KeyError, match="image key"):
         step(_make_transition(observation={}, complementary={"task": "pick"}))
-
-
-@_skip_if_topreward_extras_missing
-def test_encoder_step_rejects_non_dict_observation(monkeypatch):
-    step = _build_step(monkeypatch)
-    with pytest.raises(ValueError, match="observation dict"):
-        step({TransitionKey.OBSERVATION: torch.zeros(1, 3, 8, 8)})
