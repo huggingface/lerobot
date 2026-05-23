@@ -182,59 +182,17 @@ def test_plan_module_inlines_vocab_into_subtask_prompt(
     assert any("grasp blue cube" in t for t in captured)
 
 
-def test_plan_module_canonicalizes_paraphrased_subtask(
+def test_plan_module_accepts_article_only_difference(
     fixture_dataset_root: Path, tmp_path: Path
 ) -> None:
-    """Off-vocab paraphrase with high token overlap snaps to canonical form."""
+    """Articles like 'the'/'a'/'an' are stripped during validation."""
     from lerobot.annotations.steerable_pipeline.vlm_client import StubVlmClient
 
     def responder(_messages):
         return {
             "subtasks": [
-                # paraphrase of "grasp blue cube" — overlapping tokens
+                # Same canonical phrase modulo "the" — should be accepted.
                 {"text": "grasp the blue cube", "start": 0.0, "end": 0.4},
-                # paraphrase of "place blue cube in box" — high overlap
-                {"text": "place the blue cube into the box", "start": 0.4, "end": 0.9},
-            ]
-        }
-
-    vlm = StubVlmClient(responder=responder)
-    vocab = Vocabulary(subtasks=_CANONICAL_SUBTASKS, memory_milestones=_CANONICAL_MEMORY)
-    module = PlanSubtasksMemoryModule(
-        vlm=vlm,
-        config=PlanConfig(n_task_rephrasings=0),
-        vocabulary=vocab,
-    )
-    record = next(iter_episodes(fixture_dataset_root))
-    staging = EpisodeStaging(tmp_path / "stage", record.episode_index)
-    module.run_episode(record, staging)
-    rows = staging.read("plan")
-    subtask_texts = [r["content"] for r in rows if r["style"] == "subtask"]
-    # Both paraphrases snapped onto canonical strings.
-    assert subtask_texts == ["grasp blue cube", "place blue cube in box"]
-
-
-def test_plan_module_drops_off_vocab_subtask(
-    fixture_dataset_root: Path, tmp_path: Path
-) -> None:
-    """A subtask with low overlap to every canonical label is dropped.
-
-    Drop only kicks in when *at least one* other subtask survives — if
-    every span would be dropped the episode would come out empty, so
-    ``_generate_subtasks`` falls back to snap-without-floor; that path
-    is exercised by ``test_plan_module_snaps_when_all_off_vocab``.
-    """
-    from lerobot.annotations.steerable_pipeline.vlm_client import StubVlmClient
-
-    def responder(_messages):
-        return {
-            "subtasks": [
-                # in-vocab — keeps the episode non-empty so the floor
-                # is allowed to drop the next span.
-                {"text": "grasp blue cube", "start": 0.0, "end": 0.4},
-                # off-vocab hallucination — no token overlap above the
-                # Jaccard floor; should be dropped.
-                {"text": "perform a fancy macarena dance", "start": 0.4, "end": 0.9},
             ]
         }
 
@@ -253,18 +211,114 @@ def test_plan_module_drops_off_vocab_subtask(
     assert subtask_texts == ["grasp blue cube"]
 
 
-def test_plan_module_snaps_when_all_off_vocab(
+def test_plan_module_retries_when_subtask_off_vocab(
     fixture_dataset_root: Path, tmp_path: Path
 ) -> None:
-    """All-off-vocab spans snap to nearest canonical instead of emptying the episode."""
+    """One-shot retry replaces an off-vocab paraphrase with the canonical form."""
+    from lerobot.annotations.steerable_pipeline.vlm_client import StubVlmClient
+
+    call_count = {"n": 0}
+
+    def responder(messages):
+        call_count["n"] += 1
+        # First call: returns an off-vocab paraphrase.
+        if call_count["n"] == 1:
+            return {
+                "subtasks": [
+                    # paraphrase, not in vocab
+                    {"text": "pick up blue cube", "start": 0.0, "end": 0.4},
+                ]
+            }
+        # Second call (the retry): should contain the correction prompt;
+        # respond with the canonical phrase exactly.
+        last_user_text = ""
+        for message in messages:
+            content = message.get("content")
+            if isinstance(content, str):
+                last_user_text = content
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        last_user_text = block.get("text", "")
+        assert "NOT in the canonical vocabulary" in last_user_text
+        return {
+            "subtasks": [
+                {"text": "grasp blue cube", "start": 0.0, "end": 0.4},
+            ]
+        }
+
+    vlm = StubVlmClient(responder=responder)
+    vocab = Vocabulary(subtasks=_CANONICAL_SUBTASKS, memory_milestones=_CANONICAL_MEMORY)
+    module = PlanSubtasksMemoryModule(
+        vlm=vlm,
+        config=PlanConfig(n_task_rephrasings=0),
+        vocabulary=vocab,
+    )
+    record = next(iter_episodes(fixture_dataset_root))
+    staging = EpisodeStaging(tmp_path / "stage", record.episode_index)
+    module.run_episode(record, staging)
+    rows = staging.read("plan")
+    subtask_texts = [r["content"] for r in rows if r["style"] == "subtask"]
+    assert subtask_texts == ["grasp blue cube"]
+    # The retry must have fired exactly once.
+    assert call_count["n"] == 2
+
+
+def test_plan_module_drops_off_vocab_subtask_after_retry(
+    fixture_dataset_root: Path, tmp_path: Path
+) -> None:
+    """If the VLM stays off-vocab even after the retry, the bad span is dropped."""
+    from lerobot.annotations.steerable_pipeline.vlm_client import StubVlmClient
+
+    call_count = {"n": 0}
+
+    def responder(_messages):
+        call_count["n"] += 1
+        # Both calls return the same off-vocab span — the model can't
+        # be corrected. The second call also returns one in-vocab span
+        # so the episode isn't empty; this lets us check that the
+        # off-vocab span is dropped without affecting the in-vocab one.
+        if call_count["n"] == 1:
+            return {
+                "subtasks": [
+                    {"text": "perform a fancy macarena dance", "start": 0.0, "end": 0.4},
+                    {"text": "grasp blue cube", "start": 0.4, "end": 0.9},
+                ]
+            }
+        return {
+            "subtasks": [
+                {"text": "perform a fancy macarena dance", "start": 0.0, "end": 0.4},
+                {"text": "grasp blue cube", "start": 0.4, "end": 0.9},
+            ]
+        }
+
+    vlm = StubVlmClient(responder=responder)
+    vocab = Vocabulary(subtasks=_CANONICAL_SUBTASKS, memory_milestones=_CANONICAL_MEMORY)
+    module = PlanSubtasksMemoryModule(
+        vlm=vlm,
+        config=PlanConfig(n_task_rephrasings=0),
+        vocabulary=vocab,
+    )
+    record = next(iter_episodes(fixture_dataset_root))
+    staging = EpisodeStaging(tmp_path / "stage", record.episode_index)
+    module.run_episode(record, staging)
+    rows = staging.read("plan")
+    subtask_texts = [r["content"] for r in rows if r["style"] == "subtask"]
+    # Retry fired exactly once; bad span dropped, good span kept.
+    assert call_count["n"] == 2
+    assert subtask_texts == ["grasp blue cube"]
+
+
+def test_plan_module_empty_when_all_off_vocab_after_retry(
+    fixture_dataset_root: Path, tmp_path: Path
+) -> None:
+    """All-off-vocab spans → episode comes out empty (no silent fuzzy snap)."""
     from lerobot.annotations.steerable_pipeline.vlm_client import StubVlmClient
 
     def responder(_messages):
+        # Returns the same off-vocab spans on both attempts.
         return {
             "subtasks": [
-                # Both off-vocab — would normally be dropped. The
-                # fallback should snap each to its best canonical match
-                # rather than leave the episode with no subtasks at all.
                 {"text": "make a smoothie", "start": 0.0, "end": 0.4},
                 {"text": "consult the wizard", "start": 0.4, "end": 0.9},
             ]
@@ -282,12 +336,10 @@ def test_plan_module_snaps_when_all_off_vocab(
     module.run_episode(record, staging)
     rows = staging.read("plan")
     subtask_texts = [r["content"] for r in rows if r["style"] == "subtask"]
-    # Two off-vocab spans → two canonical subtasks (snapped to nearest
-    # by Jaccard with no floor). The exact canonical choice doesn't
-    # matter — only that the episode came out with subtasks rather
-    # than empty.
-    assert len(subtask_texts) == 2
-    assert all(s in _CANONICAL_SUBTASKS for s in subtask_texts)
+    # No subtask gets fabricated — better to leave the episode empty
+    # so the operator notices the vocabulary gap than to silently
+    # warp the labels.
+    assert subtask_texts == []
 
 
 def test_plan_module_without_vocab_passes_through(
