@@ -22,9 +22,10 @@ import torch
 
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
-from lerobot.rewards.classifier.configuration_classifier import RewardClassifierConfig
-from lerobot.rewards.pretrained import PreTrainedRewardModel
-from lerobot.rewards.sarm.configuration_sarm import SARMConfig
+
+from .classifier.configuration_classifier import RewardClassifierConfig
+from .pretrained import PreTrainedRewardModel
+from .sarm.configuration_sarm import SARMConfig
 
 
 def get_reward_model_class(name: str) -> type[PreTrainedRewardModel]:

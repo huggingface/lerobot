@@ -99,6 +99,7 @@ def save_checkpoint(
         optimizer (Optimizer | None, optional): The optimizer to save the state from. Defaults to None.
         scheduler (LRScheduler | None, optional): The scheduler to save the state from. Defaults to None.
         preprocessor: The preprocessor/pipeline to save. Defaults to None.
+        postprocessor: The postprocessor/pipeline to save. Defaults to None.
     """
     pretrained_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
     policy.save_pretrained(pretrained_dir)

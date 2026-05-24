@@ -19,8 +19,8 @@ on:
   workflow_dispatch:
 
   # Runs at 02:00
-  schedule:
-    - cron: "0 2 * * *"
+  # schedule:
+  #   - cron: "0 2 * * *"
 
 env:
   CLOSE_ISSUE_MESSAGE: >

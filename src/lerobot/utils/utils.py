@@ -160,6 +160,25 @@ def has_method(cls: object, method_name: str) -> bool:
     return hasattr(cls, method_name) and callable(getattr(cls, method_name))
 
 
+def unwrap_scalar(value: Any) -> Any:
+    """Unwrap a tensor / numpy scalar / single-element list into a Python scalar.
+
+    Tensors and numpy scalars expose ``.item()``; single-element lists are
+    unwrapped recursively. Anything else is returned unchanged. Centralized
+    here so the language renderer and processor steps share one definition.
+
+    Raises:
+        ValueError: If ``value`` is a list with zero or multiple elements.
+    """
+    if hasattr(value, "item"):
+        return value.item()
+    if isinstance(value, list):
+        if len(value) != 1:
+            raise ValueError(f"Expected a scalar, got list of length {len(value)}: {value!r}")
+        return unwrap_scalar(value[0])
+    return value
+
+
 def is_valid_numpy_dtype_string(dtype_str: str) -> bool:
     """
     Return True if a given string can be converted to a numpy dtype.

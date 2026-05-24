@@ -24,12 +24,19 @@ Import them directly: ``from lerobot.configs.train import TrainPipelineConfig``
 from .dataset import DatasetRecordConfig
 from .default import DatasetConfig, EvalConfig, PeftConfig, WandBConfig
 from .policies import PreTrainedConfig
+from .recipe import MessageTurn, TrainingRecipe, load_recipe
 from .types import (
     FeatureType,
     NormalizationMode,
     PipelineFeatureType,
     PolicyFeature,
     RTCAttentionSchedule,
+)
+from .video import (
+    VALID_VIDEO_CODECS,
+    VIDEO_ENCODER_INFO_KEYS,
+    VideoEncoderConfig,
+    camera_encoder_defaults,
 )
 
 __all__ = [
@@ -43,7 +50,16 @@ __all__ = [
     "DatasetRecordConfig",
     "DatasetConfig",
     "EvalConfig",
+    "MessageTurn",
     "PeftConfig",
     "PreTrainedConfig",
+    "TrainingRecipe",
     "WandBConfig",
+    "load_recipe",
+    "VideoEncoderConfig",
+    # Defaults
+    "camera_encoder_defaults",
+    # Constants
+    "VALID_VIDEO_CODECS",
+    "VIDEO_ENCODER_INFO_KEYS",
 ]
