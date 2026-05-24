@@ -289,6 +289,54 @@ def test_aggregate_datasets(tmp_path, lerobot_dataset_factory):
     assert_dataset_iteration_works(aggr_ds)
 
 
+def test_aggregate_datasets_without_video_concatenation(tmp_path, lerobot_dataset_factory):
+    """When ``concatenate_videos=False``, each source mp4 is kept as its own destination mp4."""
+    ds_0 = lerobot_dataset_factory(
+        root=tmp_path / "no_stitch_0",
+        repo_id=f"{DUMMY_REPO_ID}_no_stitch_0",
+        total_episodes=3,
+        total_frames=60,
+    )
+    ds_1 = lerobot_dataset_factory(
+        root=tmp_path / "no_stitch_1",
+        repo_id=f"{DUMMY_REPO_ID}_no_stitch_1",
+        total_episodes=4,
+        total_frames=80,
+    )
+
+    aggr_root = tmp_path / "no_stitch_aggr"
+    aggregate_datasets(
+        repo_ids=[ds_0.repo_id, ds_1.repo_id],
+        roots=[ds_0.root, ds_1.root],
+        aggr_repo_id=f"{DUMMY_REPO_ID}_no_stitch_aggr",
+        aggr_root=aggr_root,
+        concatenate_videos=False,
+    )
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(aggr_root)
+        aggr_ds = LeRobotDataset(f"{DUMMY_REPO_ID}_no_stitch_aggr", root=aggr_root)
+
+    assert_episode_and_frame_counts(aggr_ds, ds_0.num_episodes + ds_1.num_episodes, ds_0.num_frames + ds_1.num_frames)
+    assert_dataset_iteration_works(aggr_ds)
+    assert_video_timestamps_within_bounds(aggr_ds)
+
+    # One destination mp4 per source mp4, for every video camera key.
+    video_keys = [k for k, ft in aggr_ds.meta.features.items() if ft.get("dtype") == "video"]
+    assert video_keys, "Test fixture should produce at least one video feature"
+    expected_src_files_per_key = 2  # two source datasets, each with one mp4 per camera
+    for key in video_keys:
+        dst_files = list((aggr_root / "videos" / key).rglob("*.mp4"))
+        assert len(dst_files) == expected_src_files_per_key, (
+            f"Expected {expected_src_files_per_key} mp4s for {key} with concatenate_videos=False, "
+            f"got {len(dst_files)}: {dst_files}"
+        )
+
+
 @pytest.mark.parametrize("mutation", ["mismatched_value", "missing_key"])
 def test_aggregate_incomplete_video_encoder_info_warns_and_nuls_encoders(
     tmp_path, lerobot_dataset_factory, caplog, mutation

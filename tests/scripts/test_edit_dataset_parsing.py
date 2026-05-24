@@ -66,6 +66,25 @@ class TestOperationTypeParsing:
         with pytest.raises(ValueError, match="--new_repo_id is required for merge"):
             _validate_config(cfg)
 
+    def test_merge_concatenate_videos_defaults_true(self):
+        cfg = parse_cfg(["--new_repo_id", "test/merged", "--operation.type", "merge"])
+        assert isinstance(cfg.operation, MergeConfig)
+        assert cfg.operation.concatenate_videos is True
+
+    def test_merge_concatenate_videos_can_be_disabled(self):
+        cfg = parse_cfg(
+            [
+                "--new_repo_id",
+                "test/merged",
+                "--operation.type",
+                "merge",
+                "--operation.concatenate_videos",
+                "false",
+            ]
+        )
+        assert isinstance(cfg.operation, MergeConfig)
+        assert cfg.operation.concatenate_videos is False
+
     def test_non_merge_requires_repo_id(self):
         cfg = parse_cfg(["--operation.type", "delete_episodes"])
         with pytest.raises(ValueError, match="--repo_id is required for delete_episodes"):
