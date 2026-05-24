@@ -97,22 +97,22 @@ Similarly for when recording an episode, it is recommended that you are logged i
 Once you are logged in, you can run inference in your setup by doing:
 
 ```bash
-lerobot-record \
+lerobot-rollout \
+  --strategy.type=base \
   --robot.type=so101_follower \
   --robot.port=/dev/ttyACM0 \ # <- Use your port
   --robot.id=my_blue_follower_arm \ # <- Use your robot id
   --robot.cameras="{ front: {type: opencv, index_or_path: 8, width: 640, height: 480, fps: 30}}" \ # <- Use your cameras
-  --dataset.single_task="Grasp a lego block and put it in the bin." \ # <- Use the same task description you used in your dataset recording
-  --dataset.repo_id=${HF_USER}/eval_DATASET_NAME_test \  # <- This will be the dataset name on HF Hub
-  --dataset.episode_time_s=50 \
-  --dataset.num_episodes=10 \
-  --dataset.streaming_encoding=true \
-  --dataset.encoder_threads=2 \
-  # --dataset.vcodec=auto \
+  --task="Grasp a lego block and put it in the bin." \ # <- Use the same task description you used in your dataset recording
+  # <- RTC optional, use when running on low power hardware \
+  # --inference.type=rtc \
+  # --inference.rtc.execution_horizon=10 \
+  # --inference.rtc.max_guidance_weight=10.0 \
   # <- Teleop optional if you want to teleoperate in between episodes \
   # --teleop.type=so100_leader \
   # --teleop.port=/dev/ttyACM0 \
   # --teleop.id=my_red_leader_arm \
+  # --display_data=true #optional use if you want to see the camera stream \
   --policy.path=HF_USER/FINETUNE_MODEL_NAME # <- Use your fine-tuned model
 ```
 

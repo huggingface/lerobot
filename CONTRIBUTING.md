@@ -78,6 +78,9 @@ Use the templates for required fields and examples.
 - **Issues:** Follow the [ticket template](https://github.com/huggingface/lerobot/blob/main/.github/ISSUE_TEMPLATE/bug-report.yml).
 - **Pull requests:** Rebase on `upstream/main`, use a descriptive branch (don't work on `main`), run `pre-commit` and tests locally, and follow the [PR template](https://github.com/huggingface/lerobot/blob/main/.github/PULL_REQUEST_TEMPLATE.md).
 
-One member of the LeRobot team will then review your contribution.
+> [!IMPORTANT]
+> Community Review Policy: To help scale our efforts and foster a collaborative environment, we ask contributors to review at least one other person's open PR before their own receives attention. This shared responsibility multiplies our review capacity and helps everyone's code get merged faster!
+
+Once you have submitted your PR and completed a peer review, a member of the LeRobot team will review your contribution.
 
 Thank you for contributing to LeRobot!
