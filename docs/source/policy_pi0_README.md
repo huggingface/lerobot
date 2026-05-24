@@ -60,11 +60,10 @@ When `use_relative_actions=true`, the training script automatically:
 ### Recomputing stats for an existing dataset
 
 If you want to precompute relative action stats offline, use `recompute_stats` from
-`lerobot.datasets.dataset_tools`:
+`lerobot.datasets`:
 
 ```python
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.dataset_tools import recompute_stats
+from lerobot.datasets import LeRobotDataset, recompute_stats
 
 dataset = LeRobotDataset("your_org/your_dataset")
 dataset = recompute_stats(

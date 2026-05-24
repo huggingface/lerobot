@@ -32,6 +32,12 @@ Once you’ve gathered enough trajectories, you’ll train a neural network to i
 
 If you run into any issues at any point, jump into our [Discord community](https://discord.com/invite/s3KuuzsPFb) for support.
 
+<Tip>
+
+Want to quickly get the right commands for your setup? The [quickstart notebook](https://github.com/huggingface/lerobot/blob/main/examples/notebooks/quickstart.ipynb) [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/lerobot/blob/main/examples/notebooks/quickstart.ipynb) lets you configure your robot once and generates all the commands below ready to paste.
+
+</Tip>
+
 ## Set up and Calibrate
 
 If you haven't yet set up and calibrated your robot and teleop device, please do so by following the robot-specific tutorial.
@@ -58,17 +64,17 @@ lerobot-teleoperate \
 
 <!-- prettier-ignore-start -->
 ```python
-from lerobot.teleoperators.so_leader import SO101LeaderConfig, SO101Leader
-from lerobot.robots.so_follower import SO101FollowerConfig, SO101Follower
+from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
+from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
 
 robot_config = SO101FollowerConfig(
-    port="/dev/tty.usbmodem58760431541",
-    id="my_red_robot_arm",
+    port="/dev/tty.usbmodem5AB90687491",
+    id="my_follower_arm",
 )
 
 teleop_config = SO101LeaderConfig(
-    port="/dev/tty.usbmodem58760431551",
-    id="my_blue_leader_arm",
+    port="/dev/tty.usbmodem5AB90689011",
+    id="my_leader_arm",
 )
 
 robot = SO101Follower(robot_config)
@@ -102,13 +108,13 @@ With `rerun`, you can teleoperate again while simultaneously visualizing the cam
 <hfoption id="Command">
 ```bash
 lerobot-teleoperate \
-    --robot.type=koch_follower \
-    --robot.port=/dev/tty.usbmodem58760431541 \
-    --robot.id=my_awesome_follower_arm \
-    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
-    --teleop.type=koch_leader \
-    --teleop.port=/dev/tty.usbmodem58760431551 \
-    --teleop.id=my_awesome_leader_arm \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem5AB90687491 \
+    --robot.id=my_follower_arm \
+    --robot.cameras="{front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/tty.usbmodem5AB90689011 \
+    --teleop.id=my_leader_arm \
     --display_data=true
 ```
 </hfoption>
@@ -116,34 +122,48 @@ lerobot-teleoperate \
 
 <!-- prettier-ignore-start -->
 ```python
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.teleoperators.koch_leader import KochLeaderConfig, KochLeader
-from lerobot.robots.koch_follower import KochFollowerConfig, KochFollower
+import time
+from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
+from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
+from lerobot.cameras.opencv import OpenCVCameraConfig
+from lerobot.utils.visualization_utils import init_rerun, log_rerun_data, shutdown_rerun
 
-camera_config = {
-    "front": OpenCVCameraConfig(index_or_path=0, width=1920, height=1080, fps=30)
-}
-
-robot_config = KochFollowerConfig(
-    port="/dev/tty.usbmodem585A0076841",
-    id="my_red_robot_arm",
-    cameras=camera_config
+robot_config = SO101FollowerConfig(
+    port="/dev/tty.usbmodem5AB90687491",
+    id="my_follower_arm",
+    cameras={
+        "wrist": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=30),
+        "top": OpenCVCameraConfig(index_or_path=1, width=640, height=480, fps=30)
+    }
 )
 
-teleop_config = KochLeaderConfig(
-    port="/dev/tty.usbmodem58760431551",
-    id="my_blue_leader_arm",
+teleop_config = SO101LeaderConfig(
+    port="/dev/tty.usbmodem5AB90689011",
+    id="my_leader_arm",
 )
 
-robot = KochFollower(robot_config)
-teleop_device = KochLeader(teleop_config)
+init_rerun(session_name="teleoperation")
+
+robot = SO101Follower(robot_config)
+teleop_device = SO101Leader(teleop_config)
 robot.connect()
 teleop_device.connect()
 
+TARGET_HZ = 30
+TIME_PER_FRAME = 1.0 / TARGET_HZ
+
 while True:
+    start_time = time.perf_counter()
+
     observation = robot.get_observation()
     action = teleop_device.get_action()
     robot.send_action(action)
+    log_rerun_data(observation=observation, action=action)
+
+    elapsed_time = time.perf_counter() - start_time
+    sleep_time = TIME_PER_FRAME - elapsed_time
+    if sleep_time > 0:
+        time.sleep(sleep_time)
 ```
 <!-- prettier-ignore-end -->
 
@@ -187,7 +207,7 @@ lerobot-record \
     --dataset.num_episodes=5 \
     --dataset.single_task="Grab the black cube" \
     --dataset.streaming_encoding=true \
-    # --dataset.vcodec=auto \
+    # --dataset.camera_encoder.vcodec=auto \
     --dataset.encoder_threads=2
 ```
 </hfoption>
@@ -195,13 +215,13 @@ lerobot-record \
 
 <!-- prettier-ignore-start -->
 ```python
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import hw_to_dataset_features
-from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
-from lerobot.teleoperators.so_leader.config_so100_leader import SO100LeaderConfig
-from lerobot.teleoperators.so_leader.so100_leader import SO100Leader
-from lerobot.utils.control_utils import init_keyboard_listener
+from lerobot.utils.feature_utils import hw_to_dataset_features
+from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
+from lerobot.teleoperators.so_leader.config_so_leader import SO101LeaderConfig
+from lerobot.teleoperators.so_leader.so_leader import SO101Leader
+from lerobot.common.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
 from lerobot.scripts.lerobot_record import record_loop
@@ -213,71 +233,56 @@ EPISODE_TIME_SEC = 60
 RESET_TIME_SEC = 10
 TASK_DESCRIPTION = "My task description"
 
-# Create robot configuration
-robot_config = SO100FollowerConfig(
-    id="my_awesome_follower_arm",
-    cameras={
-        "front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS) # Optional: fourcc="MJPG" for troubleshooting OpenCV async error.
-    },
-    port="/dev/tty.usbmodem58760434471",
-)
-
-teleop_config = SO100LeaderConfig(
-    id="my_awesome_leader_arm",
-    port="/dev/tty.usbmodem585A0077581",
-)
-
-# Initialize the robot and teleoperator
-robot = SO100Follower(robot_config)
-teleop = SO100Leader(teleop_config)
-
-# Configure the dataset features
-action_features = hw_to_dataset_features(robot.action_features, "action")
-obs_features = hw_to_dataset_features(robot.observation_features, "observation")
-dataset_features = {**action_features, **obs_features}
-
-# Create the dataset
-dataset = LeRobotDataset.create(
-    repo_id="<hf_username>/<dataset_repo_id>",
-    fps=FPS,
-    features=dataset_features,
-    robot_type=robot.name,
-    use_videos=True,
-    image_writer_threads=4,
-)
-
-# Initialize the keyboard listener and rerun visualization
-_, events = init_keyboard_listener()
-init_rerun(session_name="recording")
-
-# Connect the robot and teleoperator
-robot.connect()
-teleop.connect()
-
-# Create the required processors
-teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
-
-episode_idx = 0
-while episode_idx < NUM_EPISODES and not events["stop_recording"]:
-    log_say(f"Recording episode {episode_idx + 1} of {NUM_EPISODES}")
-
-    record_loop(
-        robot=robot,
-        events=events,
-        fps=FPS,
-        teleop_action_processor=teleop_action_processor,
-        robot_action_processor=robot_action_processor,
-        robot_observation_processor=robot_observation_processor,
-        teleop=teleop,
-        dataset=dataset,
-        control_time_s=EPISODE_TIME_SEC,
-        single_task=TASK_DESCRIPTION,
-        display_data=True,
+def main():
+    # Create robot configuration
+    robot_config = SO101FollowerConfig(
+        port="/dev/tty.usbmodem5AB90687491",
+        id="my_follower_arm",
+        cameras={
+            "wrist": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=30),
+            "top": OpenCVCameraConfig(index_or_path=1, width=640, height=480, fps=30)
+        }
     )
 
-    # Reset the environment if not stopping or re-recording
-    if not events["stop_recording"] and (episode_idx < NUM_EPISODES - 1 or events["rerecord_episode"]):
-        log_say("Reset the environment")
+    teleop_config = SO101LeaderConfig(
+        port="/dev/tty.usbmodem5AB90689011",
+        id="my_leader_arm",
+    )
+
+    # Initialize the robot and teleoperator
+    robot = SO101Follower(robot_config)
+    teleop = SO101Leader(teleop_config)
+
+    # Configure the dataset features
+    action_features = hw_to_dataset_features(robot.action_features, "action")
+    obs_features = hw_to_dataset_features(robot.observation_features, "observation")
+    dataset_features = {**action_features, **obs_features}
+
+    # Create the dataset
+    dataset = LeRobotDataset.create(
+        repo_id="<hf_username>/<dataset_repo_id>",
+        fps=FPS,
+        features=dataset_features,
+        robot_type=robot.name,
+        use_videos=True,
+        image_writer_threads=4,
+    )
+
+    # Initialize the keyboard listener and rerun visualization
+    _, events = init_keyboard_listener()
+    init_rerun(session_name="recording")
+
+    # Connect the robot and teleoperator
+    robot.connect()
+    teleop.connect()
+
+    # Create the required processors
+    teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
+
+    episode_idx = 0
+    while episode_idx < NUM_EPISODES and not events["stop_recording"]:
+        log_say(f"Recording episode {episode_idx + 1} of {NUM_EPISODES}")
+
         record_loop(
             robot=robot,
             events=events,
@@ -286,26 +291,50 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
             robot_action_processor=robot_action_processor,
             robot_observation_processor=robot_observation_processor,
             teleop=teleop,
-            control_time_s=RESET_TIME_SEC,
+            dataset=dataset,
+            control_time_s=EPISODE_TIME_SEC,
             single_task=TASK_DESCRIPTION,
             display_data=True,
         )
 
-    if events["rerecord_episode"]:
-        log_say("Re-recording episode")
-        events["rerecord_episode"] = False
-        events["exit_early"] = False
-        dataset.clear_episode_buffer()
-        continue
+        # Reset the environment if not stopping or re-recording
+        if not events["stop_recording"] and (episode_idx < NUM_EPISODES - 1 or events["rerecord_episode"]):
+            log_say("Reset the environment")
+            record_loop(
+                robot=robot,
+                events=events,
+                fps=FPS,
+                teleop_action_processor=teleop_action_processor,
+                robot_action_processor=robot_action_processor,
+                robot_observation_processor=robot_observation_processor,
+                teleop=teleop,
+                control_time_s=RESET_TIME_SEC,
+                single_task=TASK_DESCRIPTION,
+                display_data=True,
+            )
 
-    dataset.save_episode()
-    episode_idx += 1
+        if events["rerecord_episode"]:
+            log_say("Re-recording episode")
+            events["rerecord_episode"] = False
+            events["exit_early"] = False
+            dataset.clear_episode_buffer()
+            continue
 
-# Clean up
-log_say("Stop recording")
-robot.disconnect()
-teleop.disconnect()
-dataset.push_to_hub()
+        dataset.save_episode()
+        episode_idx += 1
+
+    # finalize dataset
+    log_say("Finalizing dataset...")
+    dataset.finalize()
+    # Clean up
+    log_say("Stop recording")
+    robot.disconnect()
+    teleop.disconnect()
+    dataset.push_to_hub()
+
+
+if __name__ == "__main__":
+    main()
 ```
 <!-- prettier-ignore-end -->
 
@@ -343,7 +372,7 @@ The `record` function provides a suite of tools for capturing and managing data 
 ##### 2. Checkpointing and Resuming
 
 - Checkpoints are automatically created during recording.
-- If an issue occurs, you can resume by re-running the same command with `--resume=true`. When resuming a recording, `--dataset.num_episodes` must be set to the **number of additional episodes to be recorded**, and not to the targeted total number of episodes in the dataset !
+- If an issue occurs or you want to record additional episodes in the same dataset, you can resume by re-running the same command with `--resume=true`. When resuming a recording, `--dataset.num_episodes` must be set to the **number of additional episodes to be recorded**, and not to the targeted total number of episodes in the dataset! Make sure that you also set `--dataset.root="local_path"`, it's a local path to save the new part of the dataset and is required to resume.
 - To start recording from scratch, **manually delete** the dataset directory.
 
 ##### 3. Recording Parameters
@@ -410,15 +439,14 @@ lerobot-replay \
 ```python
 import time
 
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.robots.so_follower.config_so100_follower import SO100FollowerConfig
-from lerobot.robots.so_follower.so100_follower import SO100Follower
+from lerobot.datasets import LeRobotDataset
+from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
 
 episode_idx = 0
 
-robot_config = SO100FollowerConfig(port="/dev/tty.usbmodem58760434471", id="my_awesome_follower_arm")
+robot_config = SO100FollowerConfig(port="/dev/tty.usbmodem5AB90687491", id="my_follower_arm")
 
 robot = SO100Follower(robot_config)
 robot.connect()
@@ -486,6 +514,83 @@ Additionally you can provide extra `tags` or specify a `license` for your model 
 
 If your local computer doesn't have a powerful GPU you could utilize Google Colab to train your model by following the [ACT training notebook](./notebooks#training-act).
 
+#### Train using Hugging Face Jobs
+
+Hugging Face jobs let's you easily select hardware and run the training in the cloud. So if you don't have a powerful GPU or you need more VRAM or just want to train a model much faster use HF Jobs! It's pay as you go and you simply pay for each second of use, you can see the pricing and additional information [here](https://huggingface.co/docs/hub/jobs).
+
+To run the training use this command:
+
+<hfoptions id="train_with_hf_jobs">
+<hfoption id="Command">
+```bash
+hf jobs run \
+  --flavor a10g-small \
+  --timeout 4h \
+  --secrets HF_TOKEN \
+  huggingface/lerobot-gpu:latest \
+  -- \
+  python -m lerobot.scripts.lerobot_train \
+    --dataset.repo_id=username/dataset \
+    --policy.type=act \
+    --steps=5000 \
+    --batch_size=16 \
+    --policy.device=cuda \
+    --policy.repo_id=username/your_policy \
+    --log_freq=100
+```
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from huggingface_hub import run_job, get_token
+
+run_name = "act_so101_hf_jobs"
+dataset_id = "username/dataset"
+user_hub_id = "username"
+
+command_args = [
+    "python", "-m", "lerobot.scripts.lerobot_train",
+    "--dataset.repo_id", dataset_id,
+    "--policy.type", "act",
+    "--steps", "5000",
+    "--batch_size", "16",
+    "--num_workers", "4",
+    "--policy.device", "cuda",
+    "--log_freq", "100",
+    "--save_freq", "1000",
+    "--save_checkpoint", "true",
+    "--wandb.enable", "false",
+    "--policy.repo_id", f"{user_hub_id}/{run_name}"
+]
+
+print(f"Submitting job '{run_name}' to Hugging Face Infrastructure...")
+
+job_info = run_job(
+    image="huggingface/lerobot-gpu:latest",
+    command=command_args,
+    flavor="a10g-small",
+    timeout="4h",
+    secrets={"HF_TOKEN": get_token()}
+)
+
+print("\n🚀 Job successfully launched!")
+print(f"🔹 Job ID: {job_info.id}")
+print(f"🔗 Live UI Dashboard & Logs: {job_info.url}")
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+You can modify the `--flavor` to use different hardware, for example: `t4-small`, `a100-large`, `h200`. Use `hf jobs hardware` to see the full list with pricing.
+Depending on the model you want to train and the hardware you selected you can also modify the `--batch_size` and `--number_of_workers`.
+For longer training sessions increase the timeout.
+
+Once the training is started you can go to [Jobs](https://huggingface.co/settings/jobs) and see if your jobs is running as well as all the outputs. Sometimes it takes a few minutes to schedule your job so be patient.
+
+After training the model will be pushed to hub and you can use it as any other model with LeRobot.
+
 #### Upload policy checkpoints
 
 Once training is done, upload the latest checkpoint with:
@@ -505,122 +610,42 @@ hf upload ${HF_USER}/act_so101_test${CKPT} \
 
 ## Run inference and evaluate your policy
 
-You can use the `record` script from [`lerobot-record`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/scripts/lerobot_record.py) with a policy checkpoint as input, to run inference and evaluate your policy. For instance, run this command or API example to run inference and record 10 evaluation episodes:
+Use `lerobot-rollout` to deploy a trained policy on your robot. You can choose different strategies depending on your needs:
 
 <hfoptions id="eval">
-<hfoption id="Command">
+<hfoption id="Base mode (no recording)">
 ```bash
-lerobot-record  \
+lerobot-rollout \
+  --strategy.type=base \
+  --policy.path=${HF_USER}/my_policy \
   --robot.type=so100_follower \
   --robot.port=/dev/ttyACM1 \
   --robot.cameras="{ up: {type: opencv, index_or_path: /dev/video10, width: 640, height: 480, fps: 30}, side: {type: intelrealsense, serial_number_or_name: 233522074606, width: 640, height: 480, fps: 30}}" \
-  --robot.id=my_awesome_follower_arm \
-  --display_data=false \
-  --dataset.repo_id=${HF_USER}/eval_so100 \
-  --dataset.single_task="Put lego brick into the transparent box" \
-  --dataset.streaming_encoding=true \
-  --dataset.encoder_threads=2 \
-  # --dataset.vcodec=auto \
-  # <- Teleop optional if you want to teleoperate in between episodes \
-  # --teleop.type=so100_leader \
-  # --teleop.port=/dev/ttyACM0 \
-  # --teleop.id=my_awesome_leader_arm \
-  --policy.path=${HF_USER}/my_policy
+  --task="Put lego brick into the transparent box" \
+  --duration=60
 ```
 </hfoption>
-<hfoption id="API example">
-
-<!-- prettier-ignore-start -->
-```python
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import hw_to_dataset_features
-from lerobot.policies.act.modeling_act import ACTPolicy
-from lerobot.policies.factory import make_pre_post_processors
-from lerobot.robots.so_follower.config_so100_follower import SO100FollowerConfig
-from lerobot.robots.so_follower.so100_follower import SO100Follower
-from lerobot.scripts.lerobot_record import record_loop
-from lerobot.utils.control_utils import init_keyboard_listener
-from lerobot.utils.utils import log_say
-from lerobot.utils.visualization_utils import init_rerun
-
-
-NUM_EPISODES = 5
-FPS = 30
-EPISODE_TIME_SEC = 60
-TASK_DESCRIPTION = "My task description"
-HF_MODEL_ID = "<hf_username>/<model_repo_id>"
-HF_DATASET_ID = "<hf_username>/<eval_dataset_repo_id>"
-
-# Create the robot configuration
-camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
-robot_config = SO100FollowerConfig(
-    port="/dev/tty.usbmodem58760434471", id="my_awesome_follower_arm", cameras=camera_config
-)
-
-# Initialize the robot
-robot = SO100Follower(robot_config)
-
-# Initialize the policy
-policy = ACTPolicy.from_pretrained(HF_MODEL_ID)
-
-# Configure the dataset features
-action_features = hw_to_dataset_features(robot.action_features, "action")
-obs_features = hw_to_dataset_features(robot.observation_features, "observation")
-dataset_features = {**action_features, **obs_features}
-
-# Create the dataset
-dataset = LeRobotDataset.create(
-    repo_id=HF_DATASET_ID,
-    fps=FPS,
-    features=dataset_features,
-    robot_type=robot.name,
-    use_videos=True,
-    image_writer_threads=4,
-)
-
-# Initialize the keyboard listener and rerun visualization
-_, events = init_keyboard_listener()
-init_rerun(session_name="recording")
-
-# Connect the robot
-robot.connect()
-
-preprocessor, postprocessor = make_pre_post_processors(
-    policy_cfg=policy,
-    pretrained_path=HF_MODEL_ID,
-    dataset_stats=dataset.meta.stats,
-)
-
-for episode_idx in range(NUM_EPISODES):
-    log_say(f"Running inference, recording eval episode {episode_idx + 1} of {NUM_EPISODES}")
-
-    # Run the policy inference loop
-    record_loop(
-        robot=robot,
-        events=events,
-        fps=FPS,
-        policy=policy,
-        preprocessor=preprocessor,
-        postprocessor=postprocessor,
-        dataset=dataset,
-        control_time_s=EPISODE_TIME_SEC,
-        single_task=TASK_DESCRIPTION,
-        display_data=True,
-    )
-
-    dataset.save_episode()
-
-# Clean up
-robot.disconnect()
-dataset.push_to_hub()
+<hfoption id="Sentry mode (with recording)">
+```bash
+lerobot-rollout \
+  --strategy.type=sentry \
+  --strategy.upload_every_n_episodes=5 \
+  --policy.path=${HF_USER}/my_policy \
+  --robot.type=so100_follower \
+  --robot.port=/dev/ttyACM1 \
+  --robot.cameras="{ up: {type: opencv, index_or_path: /dev/video10, width: 640, height: 480, fps: 30}, side: {type: intelrealsense, serial_number_or_name: 233522074606, width: 640, height: 480, fps: 30}}" \
+  --dataset.repo_id=${HF_USER}/eval_so100 \
+  --dataset.single_task="Put lego brick into the transparent box" \
+  --duration=600
 ```
-<!-- prettier-ignore-end -->
-
 </hfoption>
 </hfoptions>
 
-As you can see, it's almost the same command as previously used to record your training dataset. Two things changed:
+The `--strategy.type` flag selects the execution mode:
 
-1. There is an additional `--control.policy.path` argument which indicates the path to your policy checkpoint with (e.g. `outputs/train/eval_act_so101_test/checkpoints/last/pretrained_model`). You can also use the model repository if you uploaded a model checkpoint to the hub (e.g. `${HF_USER}/act_so101_test`).
-2. The name of dataset begins by `eval` to reflect that you are running inference (e.g. `${HF_USER}/eval_act_so101_test`).
+- `base`: Autonomous rollout with no data recording (useful for quick evaluation)
+- `sentry`: Continuous recording with auto-upload (useful for large-scale evaluation)
+- `highlight`: Ring buffer recording with keystroke save (useful for capturing interesting events)
+- `dagger`: Human-in-the-loop data collection (see [HIL Data Collection](./hil_data_collection))
+
+All strategies support `--inference.type=rtc` for smooth execution with slow VLA models (Pi0, Pi0.5, SmolVLA).

@@ -14,21 +14,37 @@
 # limitations under the License.
 
 
+from typing import TYPE_CHECKING
+
 import torch
 import torch.nn.functional as F  # noqa: N812
-from diffusers import ConfigMixin, ModelMixin
-from diffusers.configuration_utils import register_to_config
-from diffusers.models.attention import Attention, FeedForward
-from diffusers.models.embeddings import (
-    SinusoidalPositionalEmbedding,
-    TimestepEmbedding,
-    Timesteps,
-)
 from torch import nn
+
+from lerobot.utils.import_utils import _diffusers_available, require_package
+
+if TYPE_CHECKING or _diffusers_available:
+    from diffusers import ConfigMixin, ModelMixin
+    from diffusers.configuration_utils import register_to_config
+    from diffusers.models.attention import Attention, FeedForward
+    from diffusers.models.embeddings import (
+        SinusoidalPositionalEmbedding,
+        TimestepEmbedding,
+        Timesteps,
+    )
+else:
+    ConfigMixin = object
+    ModelMixin = nn.Module
+    register_to_config = lambda fn: fn  # noqa: E731
+    Attention = None
+    FeedForward = None
+    SinusoidalPositionalEmbedding = None
+    TimestepEmbedding = None
+    Timesteps = None
 
 
 class TimestepEncoder(nn.Module):
     def __init__(self, embedding_dim, compute_dtype=torch.float32):
+        require_package("diffusers", extra="groot")
         super().__init__()
         self.time_proj = Timesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=1)
         self.timestep_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=embedding_dim)
@@ -88,6 +104,7 @@ class BasicTransformerBlock(nn.Module):
         ff_bias: bool = True,
         attention_out_bias: bool = True,
     ):
+        require_package("diffusers", extra="groot")
         super().__init__()
         self.dim = dim
         self.num_attention_heads = num_attention_heads
