@@ -515,6 +515,9 @@ def compute_episode_stats(
         if features[key]["dtype"] in {"string", "language"}:
             continue
 
+        if any(d == 0 for d in features[key].get("shape", ())):
+            continue
+
         if features[key]["dtype"] in ["image", "video"]:
             ep_ft_array = sample_images(data)
             axes_to_reduce = (0, 2, 3)

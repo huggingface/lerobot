@@ -643,6 +643,29 @@ def test_compute_episode_stats_string_features_skipped():
     assert "q01" in stats["action"]
 
 
+def test_compute_episode_stats_zero_width_features_skipped():
+    """Test that features with a zero-width dim (e.g. shape=(0,)) are skipped."""
+    episode_data = {
+        "empty": np.zeros((100, 0), dtype=np.float32),  # Zero-width feature
+        "action": np.random.normal(0, 1, (100, 5)),
+    }
+    features = {
+        "empty": {"dtype": "float32", "shape": (0,)},
+        "action": {"dtype": "float32", "shape": (5,)},
+    }
+
+    stats = compute_episode_stats(
+        episode_data,
+        features,
+    )
+
+    # Zero-width features should be skipped
+    assert "empty" not in stats
+    assert "action" in stats
+    assert "q01" in stats["action"]
+    assert stats["action"]["mean"].shape == (5,)
+
+
 def test_aggregate_feature_stats_with_quantiles():
     """Test aggregating feature stats that include quantiles."""
     stats_ft_list = [
