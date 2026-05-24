@@ -16,6 +16,11 @@ from dataclasses import dataclass
 
 from ..configs import CameraConfig, ColorMode, Cv2Rotation
 
+# Supported RealSense color stream pixel formats.
+# Most cameras (D435, D455, etc.) use rgb8 from a dedicated RGB sensor.
+# The D405 delivers color from its stereo module and requires bgr8.
+VALID_COLOR_FORMATS = {"rgb8", "bgr8"}
+
 
 @CameraConfig.register_subclass("intelrealsense")
 @dataclass
@@ -31,6 +36,9 @@ class RealSenseCameraConfig(CameraConfig):
     RealSenseCameraConfig("0123456789", 30, 1280, 720)  # 1280x720 @ 30FPS
     RealSenseCameraConfig("0123456789", 60, 640, 480)  # 640x480 @ 60FPS
 
+    # D405 requires bgr8 because its color stream comes from the stereo module
+    RealSenseCameraConfig("0123456789", 30, 1280, 720, color_format="bgr8")
+
     # Advanced configurations
     RealSenseCameraConfig("0123456789", 30, 640, 480, use_depth=True)  # With depth sensing
     RealSenseCameraConfig("0123456789", 30, 640, 480, rotation=Cv2Rotation.ROTATE_90)  # With 90° rotation
@@ -42,6 +50,9 @@ class RealSenseCameraConfig(CameraConfig):
         height: Requested frame height in pixels for the color stream.
         serial_number_or_name: Unique serial number or human-readable name to identify the camera.
         color_mode: Color mode for image output (RGB or BGR). Defaults to RGB.
+        color_format: Pixel format requested from the RealSense SDK for the color stream.
+            Most cameras use "rgb8" (default). The D405 requires "bgr8" because its color
+            stream is produced by the stereo depth module rather than a dedicated RGB sensor.
         use_depth: Whether to enable depth stream. Defaults to False.
         rotation: Image rotation setting (0°, 90°, 180°, or 270°). Defaults to no rotation.
         warmup_s: Time reading frames before returning from connect (in seconds)
@@ -55,6 +66,7 @@ class RealSenseCameraConfig(CameraConfig):
 
     serial_number_or_name: str
     color_mode: ColorMode = ColorMode.RGB
+    color_format: str = "rgb8"
     use_depth: bool = False
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     warmup_s: int = 1
@@ -62,6 +74,11 @@ class RealSenseCameraConfig(CameraConfig):
     def __post_init__(self) -> None:
         self.color_mode = ColorMode(self.color_mode)
         self.rotation = Cv2Rotation(self.rotation)
+
+        if self.color_format not in VALID_COLOR_FORMATS:
+            raise ValueError(
+                f"`color_format` must be one of {VALID_COLOR_FORMATS}, got '{self.color_format}'."
+            )
 
         values = (self.fps, self.width, self.height)
         if any(v is not None for v in values) and any(v is None for v in values):

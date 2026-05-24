@@ -61,6 +61,21 @@ def test_abc_implementation():
     _ = RealSenseCamera(config)
 
 
+def test_color_format_default():
+    config = RealSenseCameraConfig(serial_number_or_name="042")
+    assert config.color_format == "rgb8"
+
+
+def test_color_format_bgr8():
+    config = RealSenseCameraConfig(serial_number_or_name="042", color_format="bgr8")
+    assert config.color_format == "bgr8"
+
+
+def test_color_format_invalid():
+    with pytest.raises(ValueError, match="color_format"):
+        RealSenseCameraConfig(serial_number_or_name="042", color_format="yuv422")
+
+
 def test_connect():
     config = RealSenseCameraConfig(serial_number_or_name="042", warmup_s=0)
 
