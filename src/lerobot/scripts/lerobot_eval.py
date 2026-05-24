@@ -304,6 +304,12 @@ def eval_policy(
             raise exc from None
 
     start = time.time()
+    # Record the policy's mode so we can restore it on the way out. Without this
+    # the caller (notably the training loop in lerobot_train.py) sees the policy
+    # stuck in eval mode for every subsequent step — silently disabling Dropout
+    # and freezing BatchNorm running stats. Under DDP only is_main_process runs
+    # this, leaving ranks in inconsistent modes and corrupting all-reduced grads.
+    was_training = policy.training
     policy.eval()
 
     # Determine how many batched rollouts we need to get n_episodes. Note that if n_episodes is not evenly
@@ -468,6 +474,16 @@ def eval_policy(
 
     if max_episodes_rendered > 0:
         info["video_paths"] = video_paths
+
+    # Restore training mode if we were in it on entry. Without this, every caller
+    # (including lerobot_train.py's training loop) sees the policy stuck in eval
+    # mode for all subsequent steps. See
+    # tests/scripts/test_eval.py::test_missing_mode_restoration_hurts_generalisation
+    # for a deterministic demonstration of the generalisation impact.
+    # NOTE: only restores on normal return; exception paths leave the policy in
+    # eval mode. Wrap in try/finally if defending against eval-time crashes too.
+    if was_training:
+        policy.train()
 
     return info
 
