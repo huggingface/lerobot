@@ -62,19 +62,19 @@ def mock_snapshot_download_factory(
         if info is None:
             info = info_factory(data_files_size_in_mb=data_files_size_in_mb, chunks_size=chunks_size)
         if stats is None:
-            stats = stats_factory(features=info["features"])
+            stats = stats_factory(features=info.features)
         if tasks is None:
-            tasks = tasks_factory(total_tasks=info["total_tasks"])
+            tasks = tasks_factory(total_tasks=info.total_tasks)
         if episodes is None:
             episodes = episodes_factory(
-                features=info["features"],
-                fps=info["fps"],
-                total_episodes=info["total_episodes"],
-                total_frames=info["total_frames"],
+                features=info.features,
+                fps=info.fps,
+                total_episodes=info.total_episodes,
+                total_frames=info.total_frames,
                 tasks=tasks,
             )
         if hf_dataset is None:
-            hf_dataset = hf_dataset_factory(tasks=tasks, episodes=episodes, fps=info["fps"])
+            hf_dataset = hf_dataset_factory(tasks=tasks, episodes=episodes, fps=info.fps)
 
         def _mock_snapshot_download(
             repo_id: str,  # TODO(rcadene): repo_id should be used no?
@@ -97,7 +97,7 @@ def mock_snapshot_download_factory(
                 DEFAULT_DATA_PATH.format(chunk_index=0, file_index=0),
             ]
 
-            video_keys = [key for key, feats in info["features"].items() if feats["dtype"] == "video"]
+            video_keys = [key for key, feats in info.features.items() if feats["dtype"] == "video"]
             for key in video_keys:
                 all_files.append(DEFAULT_VIDEO_PATH.format(video_key=key, chunk_index=0, file_index=0))
 

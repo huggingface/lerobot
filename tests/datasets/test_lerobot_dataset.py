@@ -25,6 +25,8 @@ from unittest.mock import Mock
 import pytest
 import torch
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 import lerobot.datasets.dataset_metadata as dataset_metadata_module
 import lerobot.datasets.lerobot_dataset as lerobot_dataset_module
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
@@ -78,18 +80,18 @@ def _write_dataset_tree(
     )
     tasks = tasks_factory(total_tasks=1)
     episodes = episodes_factory(
-        features=info["features"],
-        fps=info["fps"],
+        features=info.features,
+        fps=info.fps,
         total_episodes=1,
         total_frames=3,
         tasks=tasks,
     )
-    stats = stats_factory(features=info["features"])
+    stats = stats_factory(features=info.features)
     hf_dataset = hf_dataset_factory(
-        features=info["features"],
+        features=info.features,
         tasks=tasks,
         episodes=episodes,
-        fps=info["fps"],
+        fps=info.fps,
     )
 
     create_info(root, info)
@@ -414,6 +416,18 @@ def test_create_initial_counts_zero(tmp_path):
     assert dataset.num_frames == 0
 
 
+def test_create_propagates_video_files_size_in_mb(tmp_path):
+    """video_files_size_in_mb passed to create() is reflected in the dataset metadata."""
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID,
+        fps=DEFAULT_FPS,
+        features=SIMPLE_FEATURES,
+        root=tmp_path / "ds",
+        video_files_size_in_mb=42.0,
+    )
+    assert dataset.meta.video_files_size_in_mb == 42.0
+
+
 def test_add_frame_works_in_write_mode(tmp_path):
     """add_frame() succeeds on a dataset created via create()."""
     dataset = LeRobotDataset.create(
@@ -533,6 +547,31 @@ def test_getitem_works_after_finalize(tmp_path):
     item = dataset[0]
     assert "state" in item
     assert "task" in item
+
+
+def test_getitem_after_finalize_with_delta_timestamps(tmp_path):
+    """After finalize(), dataset[0] works when delta_timestamps require episode metadata.
+
+    Regression test for https://github.com/huggingface/lerobot/pull/3305.
+    The create -> write -> finalize -> read path left meta.episodes as None
+    because the write path flushes episodes to disk without updating them
+    in memory.  Features that access meta.episodes (video decoding,
+    delta_timestamps) would crash with a TypeError.
+    """
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, features=SIMPLE_FEATURES, root=tmp_path / "ds"
+    )
+    for _ in range(5):
+        dataset.add_frame(_make_frame())
+    dataset.save_episode()
+    dataset.finalize()
+
+    # Set delta_timestamps so get_item() accesses meta.episodes via _get_query_indices
+    dataset.delta_timestamps = {"state": [0.0]}
+
+    item = dataset[0]
+    assert "state" in item
+    assert "state_is_pad" in item
 
 
 # ── Property delegation ──────────────────────────────────────────────

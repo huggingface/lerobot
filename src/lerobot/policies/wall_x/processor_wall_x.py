@@ -18,8 +18,7 @@ from typing import Any
 
 import torch
 
-from lerobot.configs.types import PipelineFeatureType, PolicyFeature
-from lerobot.policies.wall_x.configuration_wall_x import WallXConfig
+from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     ComplementaryDataProcessorStep,
@@ -30,9 +29,12 @@ from lerobot.processor import (
     ProcessorStepRegistry,
     RenameObservationsProcessorStep,
     UnnormalizerProcessorStep,
+    policy_action_to_transition,
+    transition_to_policy_action,
 )
-from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
+
+from .configuration_wall_x import WallXConfig
 
 
 def make_wall_x_pre_post_processors(

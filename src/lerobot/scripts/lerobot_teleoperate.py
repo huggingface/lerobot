@@ -15,6 +15,8 @@
 """
 Simple script to control a robot from teleoperation.
 
+Requires: pip install 'lerobot[hardware]'
+
 Example:
 
 ```shell
@@ -56,11 +58,9 @@ import time
 from dataclasses import asdict, dataclass
 from pprint import pformat
 
-import rerun as rr
-
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
-from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
-from lerobot.cameras.zmq.configuration_zmq import ZMQCameraConfig  # noqa: F401
+from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
+from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.cameras.zmq import ZMQCameraConfig  # noqa: F401
 from lerobot.configs import parser
 from lerobot.processor import (
     RobotAction,
@@ -72,6 +72,7 @@ from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
     bi_openarm_follower,
+    bi_rebot_b601_follower,
     bi_so_follower,
     earthrover_mini_plus,
     hope_jr,
@@ -80,6 +81,7 @@ from lerobot.robots import (  # noqa: F401
     omx_follower,
     openarm_follower,
     reachy2,
+    rebot_b601_follower,
     so_follower,
     unitree_g1 as unitree_g1_robot,
 )
@@ -87,6 +89,7 @@ from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
     bi_openarm_leader,
+    bi_rebot_102_leader,
     bi_so_leader,
     gamepad,
     homunculus,
@@ -97,13 +100,14 @@ from lerobot.teleoperators import (  # noqa: F401
     openarm_leader,
     openarm_mini,
     reachy2_teleoperator,
+    rebot_102_leader,
     so_leader,
     unitree_g1,
 )
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import init_logging, move_cursor_up
-from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
+from lerobot.utils.visualization_utils import init_rerun, log_rerun_data, shutdown_rerun
 
 
 @dataclass
@@ -240,7 +244,7 @@ def teleoperate(cfg: TeleoperateConfig):
         pass
     finally:
         if cfg.display_data:
-            rr.rerun_shutdown()
+            shutdown_rerun()
         teleop.disconnect()
         robot.disconnect()
 

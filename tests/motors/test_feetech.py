@@ -429,6 +429,67 @@ def test_set_half_turn_homings(mock_motors, dummy_motors):
     assert all(mock_motors.stubs[stub].wait_called() for stub in write_homing_stubs)
 
 
+@pytest.mark.parametrize(
+    "initial_phase, expected_phase",
+    [
+        (0b00010000, 0b00000000),  # bit 4 set - cleared
+        (0b11111111, 0b11101111),  # all bits set - bit 4 cleared, others preserved
+        (0b00000000, 0b00000000),  # bit 4 already 0 - unchanged
+    ],
+    ids=["bit4_set", "all_bits_set", "bit4_already_cleared"],
+)
+def test_configure_motors_clears_sts3215_phase_bit4(initial_phase, expected_phase, mock_motors, dummy_motors):
+    """Phase register bit 4 (angle feedback mode) must be cleared for sts3215, other bits preserved."""
+    phase_read_stubs = []
+    phase_write_stubs = []
+    for motor in dummy_motors.values():
+        mock_motors.build_write_stub(*STS_SMS_SERIES_CONTROL_TABLE["Return_Delay_Time"], motor.id, 0)
+        mock_motors.build_write_stub(*STS_SMS_SERIES_CONTROL_TABLE["Maximum_Acceleration"], motor.id, 254)
+        mock_motors.build_write_stub(*STS_SMS_SERIES_CONTROL_TABLE["Acceleration"], motor.id, 254)
+        phase_read_stubs.append(
+            mock_motors.build_read_stub(*STS_SMS_SERIES_CONTROL_TABLE["Phase"], motor.id, initial_phase)
+        )
+        if initial_phase != expected_phase:
+            phase_write_stubs.append(
+                mock_motors.build_write_stub(*STS_SMS_SERIES_CONTROL_TABLE["Phase"], motor.id, expected_phase)
+            )
+
+    bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
+    bus.connect(handshake=False)
+
+    with patch.object(bus, "write", wraps=bus.write) as mock_write:
+        bus.configure_motors()
+
+    assert all(mock_motors.stubs[stub].called for stub in phase_read_stubs)
+    if initial_phase != expected_phase:  # ensure that phase is written only if it needs to be changed
+        assert all(mock_motors.stubs[stub].wait_called() for stub in phase_write_stubs)
+    else:  # If no write should be made, ensure that Phase is not written for any motor
+        write_data_names = [call.args[0] for call in mock_write.call_args_list]
+        assert "Phase" not in write_data_names
+
+
+def test_configure_motors_skips_phase_for_non_sts3215(mock_motors):
+    """Phase register must not be touched for motors other than sts3215."""
+    motors = {
+        "dummy_1": Motor(1, "sts3250", MotorNormMode.RANGE_M100_100),
+        "dummy_2": Motor(2, "sts3250", MotorNormMode.RANGE_M100_100),
+        "dummy_3": Motor(3, "sts3250", MotorNormMode.RANGE_M100_100),
+    }
+    for motor in motors.values():
+        mock_motors.build_write_stub(*STS_SMS_SERIES_CONTROL_TABLE["Return_Delay_Time"], motor.id, 0)
+        mock_motors.build_write_stub(*STS_SMS_SERIES_CONTROL_TABLE["Maximum_Acceleration"], motor.id, 254)
+        mock_motors.build_write_stub(*STS_SMS_SERIES_CONTROL_TABLE["Acceleration"], motor.id, 254)
+
+    bus = FeetechMotorsBus(port=mock_motors.port, motors=motors)
+    bus.connect(handshake=False)
+
+    with patch.object(bus, "read", wraps=bus.read) as mock_read:
+        bus.configure_motors()
+        read_data_names = [call.args[0] for call in mock_read.call_args_list]
+
+    assert "Phase" not in read_data_names
+
+
 def test_record_ranges_of_motion(mock_motors, dummy_motors):
     positions = {
         1: [351, 42, 1337],

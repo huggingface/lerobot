@@ -14,8 +14,8 @@
 
 from dataclasses import dataclass, field
 
-from lerobot.cameras.configs import CameraConfig, Cv2Rotation
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.cameras import CameraConfig, Cv2Rotation
+from lerobot.cameras.opencv import OpenCVCameraConfig
 
 from ..config import RobotConfig
 
@@ -46,7 +46,7 @@ class LeKiwiConfig(RobotConfig):
     cameras: dict[str, CameraConfig] = field(default_factory=lekiwi_cameras_config)
 
     # Set to `True` for backward compatibility with previous policies/dataset
-    use_degrees: bool = False
+    use_degrees: bool = True
 
 
 @dataclass

@@ -13,90 +13,46 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import importlib
+from __future__ import annotations
+
 from typing import Any
 
 import gymnasium as gym
-from gymnasium.envs.registration import registry as gym_registry
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.envs.configs import AlohaEnv, EnvConfig, HubEnvConfig, IsaaclabArenaEnv, LiberoEnv, PushtEnv
-from lerobot.envs.utils import _call_make_env, _download_hub_file, _import_hub_module, _normalize_hub_result
-from lerobot.policies.xvla.configuration_xvla import XVLAConfig
-from lerobot.processor import ProcessorStep
-from lerobot.processor.env_processor import IsaaclabArenaProcessorStep, LiberoProcessorStep
-from lerobot.processor.pipeline import PolicyProcessorPipeline
+from .configs import EnvConfig, HubEnvConfig
+from .utils import _call_make_env, _download_hub_file, _import_hub_module, _normalize_hub_result
 
 
 def make_env_config(env_type: str, **kwargs) -> EnvConfig:
-    if env_type == "aloha":
-        return AlohaEnv(**kwargs)
-    elif env_type == "pusht":
-        return PushtEnv(**kwargs)
-    elif env_type == "libero":
-        return LiberoEnv(**kwargs)
-    else:
-        raise ValueError(f"Policy type '{env_type}' is not available.")
+    try:
+        cls = EnvConfig.get_choice_class(env_type)
+    except KeyError as err:
+        raise ValueError(
+            f"Environment type '{env_type}' is not registered. "
+            f"Available: {list(EnvConfig.get_known_choices().keys())}"
+        ) from err
+    return cls(**kwargs)
 
 
 def make_env_pre_post_processors(
     env_cfg: EnvConfig,
-    policy_cfg: PreTrainedConfig,
-) -> tuple[
-    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-]:
+    policy_cfg: Any,
+) -> tuple[Any, Any]:
     """
     Create preprocessor and postprocessor pipelines for environment observations.
 
-    This function creates processor pipelines that transform raw environment
-    observations and actions. By default, it returns identity processors that do nothing.
-    For specific environments like LIBERO, it adds environment-specific processing steps.
-
-    Args:
-        env_cfg: The configuration of the environment.
-
-    Returns:
-        A tuple containing:
-            - preprocessor: Pipeline that processes environment observations
-            - postprocessor: Pipeline that processes environment outputs (currently identity)
+    Returns a tuple of (preprocessor, postprocessor). By default, delegates to
+    ``env_cfg.get_env_processors()``.  The XVLAConfig policy-specific override
+    stays here because it depends on the *policy* config, not the env config.
     """
-    # Preprocessor and Postprocessor steps are Identity for most environments
-    preprocessor_steps: list[ProcessorStep] = []
-    postprocessor_steps: list[ProcessorStep] = []
+    from lerobot.policies.xvla.configuration_xvla import XVLAConfig
+
     if isinstance(policy_cfg, XVLAConfig):
         from lerobot.policies.xvla.processor_xvla import make_xvla_libero_pre_post_processors
 
         return make_xvla_libero_pre_post_processors()
 
-    # For LIBERO environments, add the LiberoProcessorStep to preprocessor
-    if isinstance(env_cfg, LiberoEnv) or "libero" in env_cfg.type:
-        preprocessor_steps.append(LiberoProcessorStep())
-
-    # For Isaaclab Arena environments, add the IsaaclabArenaProcessorStep
-    if isinstance(env_cfg, IsaaclabArenaEnv) or "isaaclab_arena" in env_cfg.type:
-        # Parse comma-separated keys (handle None for state-based policies)
-        if env_cfg.state_keys:
-            state_keys = tuple(k.strip() for k in env_cfg.state_keys.split(",") if k.strip())
-        else:
-            state_keys = ()
-        if env_cfg.camera_keys:
-            camera_keys = tuple(k.strip() for k in env_cfg.camera_keys.split(",") if k.strip())
-        else:
-            camera_keys = ()
-        if not state_keys and not camera_keys:
-            raise ValueError("At least one of state_keys or camera_keys must be specified.")
-        preprocessor_steps.append(
-            IsaaclabArenaProcessorStep(
-                state_keys=state_keys,
-                camera_keys=camera_keys,
-            )
-        )
-
-    preprocessor = PolicyProcessorPipeline(steps=preprocessor_steps)
-    postprocessor = PolicyProcessorPipeline(steps=postprocessor_steps)
-
-    return preprocessor, postprocessor
+    return env_cfg.get_env_processors()
 
 
 def make_env(
@@ -163,57 +119,4 @@ def make_env(
     if n_envs < 1:
         raise ValueError("`n_envs` must be at least 1")
 
-    env_cls = gym.vector.AsyncVectorEnv if use_async_envs else gym.vector.SyncVectorEnv
-
-    if "libero" in cfg.type:
-        from lerobot.envs.libero import create_libero_envs
-
-        if cfg.task is None:
-            raise ValueError("LiberoEnv requires a task to be specified")
-
-        return create_libero_envs(
-            task=cfg.task,
-            n_envs=n_envs,
-            camera_name=cfg.camera_name,
-            init_states=cfg.init_states,
-            gym_kwargs=cfg.gym_kwargs,
-            env_cls=env_cls,
-            control_mode=cfg.control_mode,
-            episode_length=cfg.episode_length,
-        )
-    elif "metaworld" in cfg.type:
-        from lerobot.envs.metaworld import create_metaworld_envs
-
-        if cfg.task is None:
-            raise ValueError("MetaWorld requires a task to be specified")
-
-        return create_metaworld_envs(
-            task=cfg.task,
-            n_envs=n_envs,
-            gym_kwargs=cfg.gym_kwargs,
-            env_cls=env_cls,
-        )
-
-    if cfg.gym_id not in gym_registry:
-        print(f"gym id '{cfg.gym_id}' not found, attempting to import '{cfg.package_name}'...")
-        try:
-            importlib.import_module(cfg.package_name)
-        except ModuleNotFoundError as e:
-            raise ModuleNotFoundError(
-                f"Package '{cfg.package_name}' required for env '{cfg.type}' not found. "
-                f"Please install it or check PYTHONPATH."
-            ) from e
-
-        if cfg.gym_id not in gym_registry:
-            raise gym.error.NameNotFound(
-                f"Environment '{cfg.gym_id}' not registered even after importing '{cfg.package_name}'."
-            )
-
-    def _make_one():
-        return gym.make(cfg.gym_id, disable_env_checker=cfg.disable_env_checker, **(cfg.gym_kwargs or {}))
-
-    vec = env_cls([_make_one for _ in range(n_envs)], autoreset_mode=gym.vector.AutoresetMode.SAME_STEP)
-
-    # normalize to {suite: {task_id: vec_env}} for consistency
-    suite_name = cfg.type  # e.g., "pusht", "aloha"
-    return {suite_name: {0: vec}}
+    return cfg.create_envs(n_envs=n_envs, use_async_envs=use_async_envs)

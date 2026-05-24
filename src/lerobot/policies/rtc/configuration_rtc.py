@@ -23,7 +23,7 @@ Based on:
 
 from dataclasses import dataclass
 
-from lerobot.configs.types import RTCAttentionSchedule
+from lerobot.configs import RTCAttentionSchedule
 
 
 @dataclass
@@ -35,7 +35,7 @@ class RTCConfig:
     """
 
     # Infrastructure
-    enabled: bool = False
+    enabled: bool = True
 
     # Core RTC settings
     # Todo change to exp
