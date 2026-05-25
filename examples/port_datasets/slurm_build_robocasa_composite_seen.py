@@ -14,13 +14,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Rebuild the 16 RoboCasa composite_seen tarballs into one unified LeRobot v3 dataset.
+"""Rebuild RoboCasa tarballs into one unified LeRobot v3 dataset.
 
-Filter-only wrapper around the canonical RoboCasa port script — restricts the
-discovered task set to the 16 ``composite_seen`` tasks (the multi-step subset
-of the official RoboCasa365 target benchmark) so a single command produces the
-exact dataset slice needed for an apples-to-apples pi05 vs pi052 comparison
-on multi-step kitchen manipulation.
+Discovers tasks from RoboCasa's ``box_links_ds.json`` for a given ``--split``
+(``target`` or ``pretrain``) and ``--source`` (``human`` / ``mimicgen``), then
+filters to a chosen ``--task-set`` (``composite_seen``, ``composite_unseen``,
+``composite_all``, ``atomic``, ``composite_atomic``, ``all``) or an explicit
+``--tasks`` list. Same code path produces the 16-task ``composite_seen`` slice,
+the full 50-task target benchmark, the 300-task ``Human300`` pretraining
+slice, or any 2-task smoke set.
 
 Per-rank, each datatrove worker:
 
@@ -83,8 +85,7 @@ DEFAULT_SPLIT = "target"
 DEFAULT_SOURCE = "human"
 DEFAULT_ROBOT_TYPE = "robocasa"
 
-# The 16 composite_seen tasks (RoboCasa365 target benchmark, multi-step subset).
-# Order matches the official RoboCasa documentation.
+# RoboCasa365 target benchmark task groupings. Order matches the official docs.
 COMPOSITE_SEEN_TASKS: list[str] = [
     "DeliverStraw",
     "GetToastedBread",
@@ -104,9 +105,52 @@ COMPOSITE_SEEN_TASKS: list[str] = [
     "WashLettuce",
 ]
 
-# Other groupings, exposed via ``--task-set`` for symmetry — populated lazily.
+COMPOSITE_UNSEEN_TASKS: list[str] = [
+    "ArrangeBreadBasket",
+    "ArrangeTea",
+    "BreadSelection",
+    "CategorizeCondiments",
+    "CuttingToolSelection",
+    "GarnishPancake",
+    "GatherTableware",
+    "HeatKebabSandwich",
+    "MakeIceLemonade",
+    "PanTransfer",
+    "PortionHotDogs",
+    "RecycleBottlesByType",
+    "SeparateFreezerRack",
+    "WaffleReheat",
+    "WashFruitColander",
+    "WeighIngredients",
+]
+
+ATOMIC_TASKS: list[str] = [
+    "CloseBlenderLid",
+    "CloseFridge",
+    "CloseToasterOvenDoor",
+    "CoffeeSetupMug",
+    "NavigateKitchen",
+    "OpenCabinet",
+    "OpenDrawer",
+    "OpenStandMixerHead",
+    "PickPlaceCounterToCabinet",
+    "PickPlaceCounterToStove",
+    "PickPlaceDrawerToCounter",
+    "PickPlaceSinkToCounter",
+    "PickPlaceToasterToCounter",
+    "SlideDishwasherRack",
+    "TurnOffStove",
+    "TurnOnElectricKettle",
+    "TurnOnMicrowave",
+    "TurnOnSinkFaucet",
+]
+
 TASK_SETS: dict[str, list[str]] = {
     "composite_seen": COMPOSITE_SEEN_TASKS,
+    "composite_unseen": COMPOSITE_UNSEEN_TASKS,
+    "composite_all": COMPOSITE_SEEN_TASKS + COMPOSITE_UNSEEN_TASKS,
+    "atomic": ATOMIC_TASKS,
+    "composite_atomic": COMPOSITE_SEEN_TASKS + COMPOSITE_UNSEEN_TASKS + ATOMIC_TASKS,
     "all": [],  # sentinel — no filter
 }
 
@@ -658,6 +702,7 @@ class AggregateRoboCasaUnifiedShards(PipelineStep):
         output_root: str,
         push: bool = True,
         overwrite: bool = False,
+        hub_tags: list[str] | None = None,
     ):
         super().__init__()
         self.output_repo_id = output_repo_id
@@ -665,6 +710,7 @@ class AggregateRoboCasaUnifiedShards(PipelineStep):
         self.output_root = Path(output_root)
         self.push = push
         self.overwrite = overwrite
+        self.hub_tags = hub_tags or ["lerobot", "robocasa", "unified"]
 
     def run(self, data=None, rank: int = 0, world_size: int = 1):
         import json
@@ -724,7 +770,7 @@ class AggregateRoboCasaUnifiedShards(PipelineStep):
         if self.push:
             dataset = LeRobotDataset(repo_id=self.output_repo_id, root=self.output_root)
             dataset.push_to_hub(
-                tags=["lerobot", "robocasa", "composite_seen", "unified"],
+                tags=self.hub_tags,
                 private=False,
             )
             logging.info("Pushed to https://huggingface.co/datasets/%s", self.output_repo_id)
@@ -799,6 +845,7 @@ def make_aggregate_executor(
     mem_per_cpu: str,
     time_limit: str,
     slurm: bool,
+    hub_tags: list[str] | None = None,
     depends: SlurmPipelineExecutor | None = None,
 ):
     kwargs = {
@@ -809,6 +856,7 @@ def make_aggregate_executor(
                 output_root=str(output_root),
                 push=push,
                 overwrite=overwrite,
+                hub_tags=hub_tags,
             )
         ],
         "logging_dir": str(logs_dir / job_name),
@@ -969,6 +1017,9 @@ def main():
             prepare_executor.run()
 
     if args.mode in {"all", "aggregate"}:
+        hub_tags = ["lerobot", "robocasa", "unified", args.split, args.source]
+        if not args.tasks and args.task_set != "all":
+            hub_tags.append(args.task_set)
         aggregate_executor = make_aggregate_executor(
             output_repo_id=output_repo_id,
             shard_roots=shard_roots,
@@ -982,6 +1033,7 @@ def main():
             mem_per_cpu=args.mem_per_cpu,
             time_limit=args.time,
             slurm=args.slurm == 1,
+            hub_tags=hub_tags,
             depends=prepare_executor if args.mode == "all" and args.slurm == 1 else None,
         )
         if args.mode == "all" and args.slurm == 1:
