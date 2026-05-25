@@ -360,6 +360,28 @@ def _log_obs_tensors_once(label: str, obs: Any, flag: dict) -> None:
             logger.warning("obs[%s] %-30s type=%s value=%r", label, k, type(v).__name__, v)
 
 
+# Columns the runtime supplies itself via its own message stream — strip
+# them so ``RenderMessagesStep`` / ``PI052TextTokenizerStep`` are no-ops.
+_RUNTIME_OWNED_LANGUAGE_COLS = ("language_persistent", "language_events")
+
+
+def _strip_runtime_owned_language_cols(sample: dict) -> None:
+    """In-place drop of language columns the runtime owns at inference."""
+    for k in _RUNTIME_OWNED_LANGUAGE_COLS:
+        sample.pop(k, None)
+
+
+def _select_observation_to_device(sample: dict, device: Any) -> dict:
+    """Filter to ``observation.*`` keys and move tensors to ``device``."""
+    import torch  # noqa: PLC0415
+
+    return {
+        k: v.to(device) if isinstance(v, torch.Tensor) else v
+        for k, v in sample.items()
+        if isinstance(k, str) and k.startswith("observation.")
+    }
+
+
 def _load_policy_and_preprocessor(
     policy_path: str,
     dataset_repo_id: str | None,
@@ -471,35 +493,30 @@ def _build_observation_provider(
             state["cursor"] = (idx + advance_per_tick) % len(ds)
 
         sample = ds[idx]
-        # Strip the language columns so the preprocessor's render step
-        # is a no-op — the runtime drives messages itself.
-        for k in ("language_persistent", "language_events"):
-            sample.pop(k, None)
+        _strip_runtime_owned_language_cols(sample)
 
         if preprocessor is not None:
             sample = preprocessor(sample)
 
         _log_obs_tensors_once("dry-run", sample, _logged)
 
-        # Keep only observation keys; the runtime's text path will
-        # merge these with its own lang_tokens / lang_masks.
-        observation = {k: v for k, v in sample.items() if isinstance(k, str) and k.startswith("observation.")}
+        observation = _select_observation_to_device(sample, device)
         # Defensive: if something further upstream forgot the batch
         # dim, add it now so downstream Tensor ops don't crash.
+        # ``add_batch_dim`` already ran inside the preprocessor; an
+        # unbatched tensor at this point means a step somewhere
+        # produced an unbatched output. Best-effort fix. (Robot path
+        # gets a batch dim from ``build_inference_frame`` / the
+        # generic fallback, so it doesn't need this.)
         for k, v in list(observation.items()):
-            if isinstance(v, torch.Tensor) and v.ndim > 0 and v.shape[0] != 1:
-                # ``add_batch_dim`` already ran inside the preprocessor;
-                # an unbatched tensor at this point means a step
-                # somewhere produced an unbatched output. Best-effort
-                # fix.
-                if v.shape[0] != 1 and v.ndim < 4 and "image" not in k:
-                    observation[k] = v.unsqueeze(0)
-        # Move to device (the preprocessor's DeviceProcessorStep should
-        # already have done this when ``preprocessor is not None``;
-        # this is a belt-and-braces no-op in the common case).
-        for k, v in list(observation.items()):
-            if isinstance(v, torch.Tensor):
-                observation[k] = v.to(device)
+            if (
+                isinstance(v, torch.Tensor)
+                and v.ndim > 0
+                and v.shape[0] != 1
+                and v.ndim < 4
+                and "image" not in k
+            ):
+                observation[k] = v.unsqueeze(0)
         return observation
 
     return _provider
@@ -851,10 +868,9 @@ def _build_robot_observation_provider(
             logger.warning("robot.get_observation failed: %s", exc)
             return None
 
-        # Strip language-column leakage just in case (the runtime
-        # supplies messages itself).
-        for k in ("language_persistent", "language_events"):
-            raw.pop(k, None)
+        # The runtime supplies messages itself; strip any language
+        # columns the robot stream may carry through.
+        _strip_runtime_owned_language_cols(raw)
 
         # Force-match the training-time visual distribution:
         # every camera frame the model trained on came from the
@@ -960,13 +976,7 @@ def _build_robot_observation_provider(
 
         _log_obs_tensors_once("robot", obs_tensors, _obs_logged)
 
-        observation = {
-            k: v for k, v in obs_tensors.items() if isinstance(k, str) and k.startswith("observation.")
-        }
-        for k, v in list(observation.items()):
-            if isinstance(v, torch.Tensor):
-                observation[k] = v.to(torch_device)
-        return observation
+        return _select_observation_to_device(obs_tensors, torch_device)
 
     return _provider
 
