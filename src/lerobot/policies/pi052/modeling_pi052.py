@@ -55,6 +55,44 @@ from .configuration_pi052 import PI052Config
 logger = logging.getLogger(__name__)
 
 
+_HF_KERNELS_ENABLED = False
+
+
+def _enable_hf_kernels() -> None:
+    """Patch PaliGemma / Gemma / Siglip layers with Liger fused kernels.
+
+    Must run BEFORE ``PaliGemmaWithExpertModel`` is built — the patch
+    replaces classes in ``transformers.models.{gemma,paligemma,siglip}``,
+    so any model constructed after this picks up the fused forwards.
+    Idempotent (process-global). ``cross_entropy`` / ``fused_linear_*``
+    are deliberately skipped — pi052 uses ``F.cross_entropy`` directly
+    and never traverses ``PaliGemmaForConditionalGeneration.forward``,
+    so those Liger paths wouldn't fire without model-code changes.
+    See bench job 22161421 in ``examples/benchmark/`` for the numbers.
+    """
+    global _HF_KERNELS_ENABLED
+    if _HF_KERNELS_ENABLED:
+        return
+    try:
+        from liger_kernel.transformers import apply_liger_kernel_to_paligemma  # noqa: PLC0415
+    except ImportError:
+        logger.warning(
+            "PI052: use_hf_kernels=True but liger-kernel is not installed; "
+            "skipping. Install with `pip install liger-kernel`."
+        )
+        return
+    apply_liger_kernel_to_paligemma(
+        rope=True,
+        geglu=True,
+        layer_norm=True,
+        rms_norm=False,
+        cross_entropy=False,
+        fused_linear_cross_entropy=False,
+    )
+    _HF_KERNELS_ENABLED = True
+    logger.info("PI052: HF kernels (Liger) enabled — rope, geglu, layer_norm fused.")
+
+
 # ----------------------------------------------------------------------
 # Loss helpers (shared between fused and prefix-only paths)
 # ----------------------------------------------------------------------
@@ -358,6 +396,12 @@ class PI052Policy(PI05Policy):
     name = "pi052"
 
     def __init__(self, config: PI052Config, **kwargs: Any) -> None:
+        # Patch ops BEFORE the backbone is built (super().__init__ below
+        # constructs PaliGemmaWithExpertModel which instantiates the
+        # Gemma/Siglip layers we want to swap).
+        if getattr(config, "use_hf_kernels", False):
+            _enable_hf_kernels()
+
         super().__init__(config, **kwargs)
         # ``PI05Policy.__init__`` zeroes the PaliGemma ``lm_head`` and
         # freezes a few terminal layers when ``train_expert_only`` is

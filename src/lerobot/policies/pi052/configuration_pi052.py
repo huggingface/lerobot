@@ -190,6 +190,27 @@ class PI052Config(PI05Config):
     # commonly cited weight; set 0 to disable entirely.
     text_ce_z_loss_weight: float = 1e-4
 
+    # Fused kernels (Liger via HF kernels lib) ---------------------------
+    # Patches PaliGemma / Gemma / Siglip ops with Liger Triton kernels
+    # before the model is built. Measured on H100 80GB at BS=16 / L=512
+    # with KI+GC on (bench job 22161421, see
+    # ``examples/benchmark/bench_pi052_kernels.slurm``):
+    #
+    #   rope only        →  −2.5% step time
+    #   geglu only       →  −2.2% step time
+    #   layer_norm only  →  −1.1% step time
+    #   all three        →  −4.5% step time, peak_mem unchanged
+    #
+    # ``cross_entropy`` / ``fused_linear_cross_entropy`` are NOT enabled
+    # — pi052 calls ``F.cross_entropy`` directly and bypasses
+    # ``PaliGemmaForConditionalGeneration.forward``, so neither Liger
+    # patch fires without invasive model-code changes. Reserved for a
+    # follow-up.
+    use_hf_kernels: bool = False
+    """If True, monkey-patch PaliGemma/Gemma/Siglip layers with Liger's
+    fused Triton kernels (rope + geglu + layer_norm). Off by default;
+    requires ``pip install liger-kernel``."""
+
     def __post_init__(self) -> None:
         super().__post_init__()
         # Backbone needs gradients flowing through the text head when
