@@ -750,6 +750,28 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                 wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
 
+        # Periodic training-example dump to wandb (camera images + text
+        # fields + action endpoints). Opt-in via ``--wandb.log_examples_freq``;
+        # independent of ``--log_freq`` so you can keep scalar logs frequent
+        # and the heavier visual dump rare (e.g. every 5000 steps).
+        if (
+            wandb_logger is not None
+            and cfg.wandb.log_examples_freq > 0
+            and step % cfg.wandb.log_examples_freq == 0
+            and is_main_process
+        ):
+            try:
+                wandb_logger.log_training_examples(
+                    batch=batch,
+                    step=step,
+                    camera_keys=list(dataset.meta.camera_keys),
+                    n_samples=cfg.wandb.log_examples_n,
+                    policy=accelerator.unwrap_model(policy),
+                    predict_actions=cfg.wandb.log_examples_predict_actions,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logging.warning("wandb log_training_examples failed: %s", exc)
+
         if cfg.save_checkpoint and is_saving_step:
             if is_main_process:
                 logging.info(f"Checkpoint policy after step {step}")
