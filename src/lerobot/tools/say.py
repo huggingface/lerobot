@@ -13,10 +13,9 @@
 # limitations under the License.
 """``SayTool`` — text-to-speech tool wrapping Kyutai's pocket-tts.
 
-The first concrete tool implementation. SmolVLA2 (PR 3) and downstream
-runtime dispatchers consume this when the model emits an assistant
-message with ``tool_calls=[{function: {name: "say", arguments:
-{text: ...}}}]``.
+The first concrete tool implementation. PI052 and downstream runtime
+dispatchers consume this when the model emits an assistant message
+with ``tool_calls=[{function: {name: "say", arguments: {text: ...}}}]``.
 
 Why pocket-tts:
 

@@ -29,10 +29,10 @@ A thin subclass of :class:`PI05Policy` that:
 
   with α controllable via ``config.flow_loss_weight``.
 
-The same multi-rate runtime that drives ``SmolVLA2Runtime`` (see
-``lerobot.policies.smolvla2.inference``) can drive this policy too —
-both expose ``predict_action_chunk`` for the action expert and
-``select_message`` for the LM head.
+The multi-rate inference runtime in ``lerobot.policies.pi052.inference``
+(driven by the ``lerobot-pi052-runtime`` CLI) sits on top of this:
+``predict_action_chunk`` for the action expert and ``select_message``
+for the LM head.
 """
 
 from __future__ import annotations
@@ -380,9 +380,9 @@ class PI052Policy(PI05Policy):
             for p in backbone.lm_head.parameters():
                 p.requires_grad_(True)
         # The text model's final norm and last transformer block —
-        # mirror SmolVLA2's logic, which finds these dynamically by
-        # the trainable=False parameters that point at the head's
-        # neighbourhood.
+        # find them dynamically by walking up from the LM head so we
+        # don't hard-code module names that may drift across transformers
+        # versions.
         text_model = getattr(backbone, "model", None)
         text_model = getattr(text_model, "language_model", text_model)
         if text_model is None:
@@ -934,9 +934,8 @@ class PI052Policy(PI05Policy):
     ) -> str:
         """Generate text continuation from a multimodal prefix.
 
-        Mirrors ``SmolVLA2Policy.select_message`` so the same
-        :class:`lerobot.policies.smolvla2.inference.SmolVLA2Runtime`
-        can drive π0.5 v2 unchanged.
+        Consumed by :class:`lerobot.policies.pi052.inference.PI052Runtime`
+        for the high-level / VQA / memory-update text streams.
 
         ``suppress_loc_tokens`` masks PaliGemma's reserved ``<locDDDD>``
         ids ([256000, 257024)) to ``-inf`` before sampling. PaliGemma's

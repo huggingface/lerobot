@@ -32,8 +32,8 @@ This is the dual-head co-training pattern from the paper:
 
 with α = 10.0 per § IV.D of arxiv:2504.16054. The π0.5 model splits
 inference into a text-prediction step followed by an action-prediction
-step, which mirrors what ``SmolVLA2Runtime`` already does on a
-SmolVLM2 backbone.
+step, which the multi-rate ``PI052Runtime`` (in
+``lerobot.policies.pi052.inference``) drives at separate rates.
 """
 
 from dataclasses import dataclass
@@ -48,10 +48,9 @@ from ..pi05.configuration_pi05 import PI05Config
 class PI052Config(PI05Config):
     """π0.5 with the PaliGemma LM head re-enabled for subtask prediction.
 
-    See ``SmolVLA2Config`` for the analogous SmolVLM2-backed dual-head
-    config. Same recipe-driven training surface; the only difference is
-    which backbone the policy uses (PaliGemma here vs SmolVLM2 there).
-    The flow:text loss split is the milder 5:1 (see ``flow_loss_weight``).
+    Recipe-driven dual-head training: the flow head supervises actions,
+    the LM head supervises subtask / plan / memory / VQA text. The
+    flow:text loss split is the milder 5:1 (see ``flow_loss_weight``).
     """
 
     # Recipe / language stack ---------------------------------------------
@@ -64,17 +63,17 @@ class PI052Config(PI05Config):
 
     apply_chat_template: bool = False
     """PaliGemma is *not* chat-pretrained — its tokenizer doesn't ship a
-    chat template. So unlike SmolVLA2 we don't apply one. The recipe
-    renderer's output is concatenated as a plain prefix + assistant
-    suffix instead, mirroring how the π0.5 paper's high-level inference
-    samples text auto-regressively after the prefix."""
+    chat template, so we don't apply one. The recipe renderer's output
+    is concatenated as a plain prefix + assistant suffix instead,
+    mirroring how the π0.5 paper's high-level inference samples text
+    auto-regressively after the prefix."""
 
     # Loss weights --------------------------------------------------------
     # Paper §IV.D uses α=10 between the flow and text terms, assuming
     # text is a rare auxiliary task. With the recipe stack the flow-only
     # `low_level` branch fires on a large share of samples, so α=10
     # swamps the LM head and collapses generation into degenerate
-    # repetition. We use the milder 5:1 split (matches SmolVLA2Config).
+    # repetition. We use the milder 5:1 split here.
     text_loss_weight: float = 1.0
     """Weight on the LM-head cross-entropy term. Set to ``0`` to disable
     text training entirely (reverts to flow-only / π0.5 behaviour)."""
@@ -93,8 +92,8 @@ class PI052Config(PI05Config):
     hierarchical inference."""
 
     # Per-component prompt dropout (Pi0.7 §V.E) ---------------------------
-    # Same regulariser surface as SmolVLA2: randomly drop non-target
-    # context messages so the LM head learns to handle missing /
+    # Randomly drop non-target context messages so the LM head learns
+    # to handle missing /
     # stale plan / memory at inference. Defaults to 0.0 so behaviour
     # is identical until explicitly enabled.
     plan_dropout_prob: float = 0.0

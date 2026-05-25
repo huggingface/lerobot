@@ -144,10 +144,6 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from .smolvla.modeling_smolvla import SmolVLAPolicy
 
         return SmolVLAPolicy
-    elif name == "smolvla2":
-        from .smolvla2.modeling_smolvla2 import SmolVLA2Policy
-
-        return SmolVLA2Policy
     elif name == "sarm":
         from .sarm.modeling_sarm import SARMRewardModel
 
@@ -180,8 +176,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
 
     Args:
         policy_type: The type of the policy. Supported types include "tdmpc",
-                     "multi_task_dit", "diffusion", "act", "vqbet", "pi0", "pi05", "sac",
-                     "smolvla", "reward_classifier", "wall_x".
+                     "multi_task_dit", "diffusion", "act", "vqbet", "pi0", "pi05",
+                     "pi052", "sac", "smolvla", "reward_classifier", "wall_x".
         **kwargs: Keyword arguments to be passed to the configuration class constructor.
 
     Returns:
@@ -212,10 +208,6 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return SACConfig(**kwargs)
     elif policy_type == "smolvla":
         return SmolVLAConfig(**kwargs)
-    elif policy_type == "smolvla2":
-        from .smolvla2.configuration_smolvla2 import SmolVLA2Config
-
-        return SmolVLA2Config(**kwargs)
     elif policy_type == "reward_classifier":
         return RewardClassifierConfig(**kwargs)
     elif policy_type == "groot":
@@ -420,17 +412,6 @@ def make_pre_post_processors(
         from .sac.reward_model.processor_classifier import make_classifier_processor
 
         processors = make_classifier_processor(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-        )
-
-    elif policy_cfg.type == "smolvla2":
-        # NOTE: SmolVLA2Config subclasses SmolVLAConfig, so this branch
-        # MUST come before the SmolVLAConfig isinstance check below
-        # (otherwise SmolVLA2 would silently pick up SmolVLA's processor).
-        from .smolvla2.processor_smolvla2 import make_smolvla2_pre_post_processors
-
-        processors = make_smolvla2_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )

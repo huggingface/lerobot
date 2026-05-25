@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Stdin REPL event collector for the SmolVLA2 runtime.
+"""Stdin REPL event collector for the PI052 runtime.
 
 Reads non-blocking stdin lines, classifies each one heuristically:
 
@@ -23,7 +23,7 @@ Reads non-blocking stdin lines, classifies each one heuristically:
 
 Plugged into the runtime via ``event_collector=StdinReader().poll``.
 
-Note: the shipped CLI (``lerobot-smolvla2-runtime``) drives stdin
+Note: the shipped CLI (``lerobot-pi052-runtime``) drives stdin
 directly in its REPL / autonomous loops and does *not* wire this
 collector; it's kept as the documented embedding hook and for tests.
 """
@@ -92,7 +92,7 @@ class StdinReader:
         if not state.get("task"):
             task = line[5:].strip() if lower.startswith("task:") else line
             state["task"] = task
-            print(f"[smolvla2] Task: {task}", flush=True)
+            print(f"[pi052] Task: {task}", flush=True)
             self._seen_first_line = True
             return
 

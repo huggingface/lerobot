@@ -1,5 +1,4 @@
-# subtasks_vqa — Hi-Robot blend, shared between SmolVLA2 (SmolVLM2
-# backbone) and PI052 (PaliGemma backbone).
+# subtasks_vqa — Hi-Robot blend for PI052 (PaliGemma backbone).
 #
 #   Trains two things only: subtasks and VQA. Plan and memory are
 #   intentionally left out — keeps the prompt short and the training
@@ -10,9 +9,8 @@
 #     low_level_execution — flow loss with [images, subtask, state].
 #     ask_vqa_{top,wrist} — camera-grounded VQA.
 #
-# Each backbone's text tokenizer renders these messages differently
-# (SmolVLA2 uses the chat template; PI052 concatenates as plain
-# ``Role: content`` text), but the recipe spec is identical.
+# PI052's text tokenizer renders these messages as plain
+# ``Role: content`` text (PaliGemma is not chat-pretrained).
 
 blend:
 

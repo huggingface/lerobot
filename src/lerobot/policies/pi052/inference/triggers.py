@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Trigger primitives for SmolVLA2's multi-rate inference runtime.
+"""Trigger primitives for PI052's multi-rate inference runtime.
 
 Mirrors the plan's Section "Runtime orchestration": each
 ``InferenceStep`` is gated by a :class:`Trigger` that decides per tick

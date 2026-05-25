@@ -27,7 +27,6 @@ from .sac.configuration_sac import SACConfig as SACConfig
 from .sac.reward_model.configuration_classifier import RewardClassifierConfig as RewardClassifierConfig
 from .sarm.configuration_sarm import SARMConfig as SARMConfig
 from .smolvla.configuration_smolvla import SmolVLAConfig as SmolVLAConfig
-from .smolvla2.configuration_smolvla2 import SmolVLA2Config as SmolVLA2Config
 from .tdmpc.configuration_tdmpc import TDMPCConfig as TDMPCConfig
 from .utils import make_robot_action, prepare_observation_for_inference
 from .vqbet.configuration_vqbet import VQBeTConfig as VQBeTConfig
@@ -52,7 +51,6 @@ __all__ = [
     "SACConfig",
     "SARMConfig",
     "SmolVLAConfig",
-    "SmolVLA2Config",
     "TDMPCConfig",
     "VQBeTConfig",
     "WallXConfig",

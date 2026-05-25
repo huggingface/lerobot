@@ -162,7 +162,7 @@ def test_messages_vqa_to_loc_noop_without_target_indices():
 
 
 def test_loc_round_trip_keypoint_preserves_normalized_coords():
-    from lerobot.policies.smolvla2.inference.vqa import parse_vqa_answer
+    from lerobot.policies.pi052.inference.vqa import parse_vqa_answer
 
     answer = {"label": "blue cube", "point_format": "xy", "point": [640, 480]}
     loc = _vqa_answer_to_loc(answer)
@@ -175,7 +175,7 @@ def test_loc_round_trip_keypoint_preserves_normalized_coords():
 
 
 def test_loc_round_trip_bbox_preserves_order_and_scale():
-    from lerobot.policies.smolvla2.inference.vqa import parse_vqa_answer
+    from lerobot.policies.pi052.inference.vqa import parse_vqa_answer
 
     answer = {
         "detections": [{"label": "cube", "bbox_format": "xyxy", "bbox": [100, 200, 800, 900]}]

@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Interactive VQA for the SmolVLA2 runtime.
+"""Interactive VQA for the PI052 runtime.
 
 In ``/vlm`` mode a typed line is treated as a VQA question. This module
 runs the full interactive flow:
@@ -379,7 +379,7 @@ def handle_vqa_query(
     # Feed the FULL observation (every camera + state) to the VLM. The
     # ``ask_vqa_*`` recipes look single-camera, but the image *block* is
     # stripped before tokenization — the actual frames reach the model
-    # via SmolVLA's ``OBS_IMAGES_*`` channels, and ``embed_prefix``
+    # via PI052's ``OBS_IMAGES_*`` channels, and ``embed_prefix``
     # consumes *all* ``config.image_features`` regardless of which
     # camera the sub-recipe was tagged for. So the model always sees
     # every camera; the operator never has to name one to ask.

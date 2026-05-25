@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""SmolVLA2 inference / runtime orchestration.
+"""PI052 inference / runtime orchestration.
 
 Multi-rate runtime that mirrors the recipe-time training shape:
 
@@ -22,12 +22,12 @@ Multi-rate runtime that mirrors the recipe-time training shape:
   ask_vqa_*                  → AskVQAFwd (event: stdin question)
   speech tool calls          → DispatchToolCalls (event: tool_call_pending)
 
-The CLI ``lerobot-smolvla2-runtime`` builds an ``SmolVLA2Runtime`` and
-calls ``run()``.
+The CLI ``lerobot-pi052-runtime`` builds a ``PI052Runtime`` and calls
+``run()``.
 """
 
 from .repl import StdinReader
-from .runtime import SmolVLA2Runtime
+from .runtime import PI052Runtime
 from .runtime_state import initial_runtime_state, push_log, set_if_changed, take_event
 from .steps import (
     AskVQAFwd,
@@ -44,7 +44,7 @@ from .ui import make_state_panel, print_robot_lines, print_user_line
 
 __all__ = [
     # runtime
-    "SmolVLA2Runtime",
+    "PI052Runtime",
     "StdinReader",
     # state helpers
     "initial_runtime_state",

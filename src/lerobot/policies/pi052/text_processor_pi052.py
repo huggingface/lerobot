@@ -14,7 +14,7 @@
 
 """π0.5 v2 text-tokenisation step.
 
-PaliGemma is *not* chat-pretrained, so unlike SmolVLA2 we can't lean on
+PaliGemma is *not* chat-pretrained, so we can't lean on
 ``tokenizer.apply_chat_template``. Instead we concatenate the rendered
 messages as plain text with simple ``User: ... Assistant: ...`` role
 delimiters — matching the prompt format π0.5 uses in the paper
@@ -30,8 +30,7 @@ Outputs:
   ``target_message_indices``. ``modeling_pi052`` runs cross-entropy on
   those positions via the PaliGemma ``lm_head``.
 * ``predict_actions`` — bool tensor, ``True`` iff any of the rendered
-  target messages has ``message_streams[i] == "low_level"``. Same
-  semantics as the SmolVLA2 step.
+  target messages has ``message_streams[i] == "low_level"``.
 """
 
 from __future__ import annotations
@@ -54,11 +53,9 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Debug helper — see ``chat_processor_smolvla2._dump_recipe_sample`` for the
-# matching SmolVLA2 implementation. Behaviour: when
-# ``LEROBOT_DUMP_RECIPE_SAMPLES=N`` is set, the next N samples processed (on
-# rank 0) are pretty-printed with ``[TGT]...[/TGT]`` markers over the spans
-# the LM head will be supervised on.
+# Debug helper — when ``LEROBOT_DUMP_RECIPE_SAMPLES=N`` is set, the next N
+# samples processed (on rank 0) are pretty-printed with ``[TGT]...[/TGT]``
+# markers over the spans the LM head will be supervised on.
 # ---------------------------------------------------------------------------
 
 _DUMP_BUDGET = int(os.environ.get("LEROBOT_DUMP_RECIPE_SAMPLES", "0"))
@@ -246,8 +243,8 @@ def _sample_indices(value: Any, batch_size: int) -> list[int | None]:
 # values exceeding the camera's pixel dimensions — they're not pixels.)
 # Converting to ``<loc>`` is therefore camera-resolution-independent:
 # ``loc_idx = round(coord / 1000 * 1023)``. We do the conversion here —
-# not in the dataset — so the dataset stays backbone-agnostic (SmolVLA2
-# keeps the JSON).
+# not in the dataset — so the dataset keeps the raw JSON and stays
+# backbone-agnostic.
 # ---------------------------------------------------------------------------
 
 # The 0–1000 scale Qwen2.5-VL emits for grounding coordinates.
@@ -424,8 +421,8 @@ def _format_messages(
 class PI052TextTokenizerStep(ProcessorStep):
     """Render messages → token ids + label mask + predict_actions flag.
 
-    π0.5 analogue of ``SmolVLA2ChatTokenizerStep``. No chat template;
-    concatenates messages as ``User: ... \\nAssistant: ...`` text.
+    No chat template; concatenates messages as
+    ``User: ... \\nAssistant: ...`` text.
     """
 
     tokenizer_name: str = "google/paligemma-3b-pt-224"
@@ -613,8 +610,7 @@ class PI052TextTokenizerStep(ProcessorStep):
                     continue
                 labels[token_pos] = input_ids[token_pos]
 
-        # Scan ALL message streams (not just targets) — see
-        # ``chat_processor_smolvla2.py`` for rationale: the v2
+        # Scan ALL message streams (not just targets): the
         # ``low_level_execution`` recipe drops ``target: true`` on
         # the assistant to avoid trivial copy-from-user text-CE; the
         # flow loss still needs to fire, gated by ``stream: low_level``.
@@ -686,7 +682,7 @@ class PI052TextTokenizerStep(ProcessorStep):
 
 
 def _classify_for_dropout(message: dict[str, Any]) -> str | None:
-    """Heuristic content-prefix classifier — mirrors SmolVLA2's."""
+    """Heuristic content-prefix classifier (plan / memory / subtask)."""
     content = message.get("content")
     if isinstance(content, list):
         text_parts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]

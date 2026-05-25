@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Inference steps for the SmolVLA2 multi-rate runtime.
+"""Inference steps for the PI052 multi-rate runtime.
 
 Each step is a tiny class with a ``trigger`` and an ``__call__(state)``;
 the runtime applies them in order each tick. When a step's trigger
@@ -98,7 +98,7 @@ class LowLevelForward(InferenceStep):
         if not state.get("task"):
             return None
 
-        # SmolVLA produces *action chunks* (typically 50 steps via
+        # PI052 produces *action chunks* (typically 50 steps via
         # flow-matching). Every step gets dispatched to the robot;
         # popping one per dispatch tick is essentially free. Only
         # generate a new chunk once the previous one has fully
@@ -256,34 +256,11 @@ def _build_text_batch(
 ) -> dict[str, Any]:
     """Tokenize chat messages into the batch ``select_message`` expects.
 
-    Dispatches on the policy backbone so one runtime drives both:
-
-    * ``smolvla2`` (SmolVLM2) — chat template via ``apply_chat_template``.
-    * ``pi052`` (PaliGemma) — flat ``Role: content`` text, since
-      PaliGemma is not chat-pretrained (mirrors ``PI052TextTokenizerStep``).
-    """
-    if getattr(getattr(policy, "config", None), "type", "") == "pi052":
-        return _build_text_batch_pi052(
-            policy, prompt_messages, add_generation_prompt=add_generation_prompt
-        )
-    return _build_text_batch_chat(
-        policy, prompt_messages, add_generation_prompt=add_generation_prompt
-    )
-
-
-def _build_text_batch_pi052(
-    policy: Any,
-    prompt_messages: list[dict[str, Any]],
-    *,
-    add_generation_prompt: bool = True,
-) -> dict[str, Any]:
-    """PI052 text batch — flat ``User: … \\nAssistant: …`` prompt.
-
-    PaliGemma ships no chat template, so PI052 trains on the plain
-    role-prefixed concatenation built by ``PI052TextTokenizerStep``.
-    Reuses that exact formatter so the inference prefix matches
-    training. ``add_generation_prompt`` appends the bare ``Assistant: ``
-    header the LM head continues from.
+    PI052's backbone (PaliGemma) ships no chat template, so we train on
+    a plain role-prefixed concatenation built by
+    ``PI052TextTokenizerStep``. We reuse that exact formatter so the
+    inference prefix matches training; ``add_generation_prompt`` appends
+    the bare ``Assistant: `` header the LM head continues from.
     """
     import torch  # noqa: PLC0415
     from transformers import AutoTokenizer  # noqa: PLC0415
@@ -315,99 +292,6 @@ def _build_text_batch_pi052(
     if attn is not None and hasattr(attn, "dtype") and attn.dtype != torch.bool:
         attn = attn.bool()
 
-    device = getattr(getattr(policy, "config", None), "device", None)
-    if device is not None:
-        try:
-            ids = ids.to(device)
-            if attn is not None and hasattr(attn, "to"):
-                attn = attn.to(device)
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("could not move pi052 lang tokens to %s: %s", device, exc)
-    return {"lang_tokens": ids, "lang_masks": attn, "tokenizer": tokenizer}
-
-
-def _build_text_batch_chat(
-    policy: Any,
-    prompt_messages: list[dict[str, Any]],
-    *,
-    add_generation_prompt: bool = True,
-) -> dict[str, Any]:
-    """SmolVLA2 (SmolVLM2) text batch — chat-template tokenization.
-
-    Reuses ``_strip_lerobot_blocks`` so the inference prompt shape
-    matches the training-time chat tokenizer step exactly.
-    """
-    from transformers import AutoTokenizer  # noqa: PLC0415
-
-    tokenizer = AutoTokenizer.from_pretrained(policy.config.vlm_model_name)
-    if tokenizer.pad_token_id is None and tokenizer.eos_token_id is not None:
-        tokenizer.pad_token = tokenizer.eos_token
-
-    # Reuse the *exact* normaliser that the training-time chat
-    # tokenizer step uses (``_strip_lerobot_blocks``). It handles all
-    # the cases the SmolVLM chat template expects:
-    #   * ``content: list[block]`` → keep text blocks, drop images
-    #   * ``content: None`` → ``[{type: text, text: ""}]``
-    #   * ``content: str`` / anything else → ``[{type: text, text: str(content)}]``
-    # Doing it any other way creates a training/inference mismatch in
-    # exactly the prompt shape the model was supervised on. Also
-    # strips ``stream`` / ``target`` recipe metadata.
-    from lerobot.policies.smolvla2.chat_processor_smolvla2 import (  # noqa: PLC0415
-        _strip_lerobot_blocks,
-    )
-
-    text_messages = [_strip_lerobot_blocks(m) for m in prompt_messages]
-    encoded = tokenizer.apply_chat_template(
-        text_messages,
-        add_generation_prompt=add_generation_prompt,
-        tokenize=True,
-        return_tensors="pt",
-    )
-    # ``apply_chat_template`` can return any of:
-    #   - a Tensor of shape ``(seq,)`` or ``(1, seq)`` (older transformers),
-    #   - a list[int] / list[list[int]] (when ``return_tensors`` is ignored),
-    #   - a ``BatchEncoding`` dict-like with ``input_ids`` / ``attention_mask``
-    #     (newer transformers, especially via processor.apply_chat_template
-    #     forwarding through here).
-    # Normalise to ``ids: Tensor[1, seq]`` and grab the encoder's
-    # attention mask when available so we don't have to re-derive it
-    # from ``pad_token_id`` (which can be ``None`` for SmolVLM).
-    attn: Any = None
-    if hasattr(encoded, "input_ids"):
-        ids = encoded.input_ids
-        attn = getattr(encoded, "attention_mask", None)
-    elif isinstance(encoded, dict) and "input_ids" in encoded:
-        ids = encoded["input_ids"]
-        attn = encoded.get("attention_mask")
-    else:
-        ids = encoded
-    if isinstance(ids, list):
-        if ids and isinstance(ids[0], list):
-            ids = ids[0]
-        import torch  # noqa: PLC0415
-
-        ids = torch.tensor(ids, dtype=torch.long)
-    if hasattr(ids, "ndim") and ids.ndim == 1:
-        ids = ids.unsqueeze(0)
-    if attn is None and tokenizer.pad_token_id is not None:
-        attn = ids != tokenizer.pad_token_id
-    elif isinstance(attn, list):
-        import torch  # noqa: PLC0415
-
-        attn = torch.tensor(attn, dtype=torch.long)
-        if attn.ndim == 1:
-            attn = attn.unsqueeze(0)
-    # SmolVLA's ``eager_attention_forward`` does
-    # ``torch.where(attention_mask[..., None, :, :], ...)`` which
-    # requires a *bool* condition tensor; ``BatchEncoding``'s
-    # attention_mask is typically Long (0/1). Cast so the prefix
-    # forward doesn't blow up with ``where expected condition to be a
-    # boolean tensor, but got a tensor with dtype Long``.
-    if attn is not None and hasattr(attn, "dtype"):
-        import torch as _torch  # noqa: PLC0415
-
-        if attn.dtype != _torch.bool:
-            attn = attn.bool()
     # Move tokens onto the policy's device — otherwise prefix embedding
     # raises a device-mismatch on every forward (CPU tensor vs MPS / CUDA
     # model), which the caller's broad except would swallow silently.
@@ -418,7 +302,7 @@ def _build_text_batch_chat(
             if attn is not None and hasattr(attn, "to"):
                 attn = attn.to(device)
         except Exception as exc:  # noqa: BLE001
-            logger.debug("could not move lang tokens to %s: %s", device, exc)
+            logger.debug("could not move pi052 lang tokens to %s: %s", device, exc)
     return {"lang_tokens": ids, "lang_masks": attn, "tokenizer": tokenizer}
 
 
@@ -1022,13 +906,7 @@ def _generate_with_policy(
             "temperature": temperature,
             "top_p": top_p,
         }
-        # Only pass ``suppress_loc_tokens`` to backbones that accept it
-        # (pi052). SmolVLA2's ``select_message`` does not, so we omit
-        # the kwarg there to avoid breaking the shared runtime.
-        import inspect  # noqa: PLC0415
-
-        if "suppress_loc_tokens" in inspect.signature(policy.select_message).parameters:
-            kwargs["suppress_loc_tokens"] = suppress_loc_tokens
+        kwargs["suppress_loc_tokens"] = suppress_loc_tokens
         return policy.select_message(batch, **kwargs)
     except Exception as exc:  # noqa: BLE001
         logger.warning("%s failed: %s", label, exc, exc_info=logger.isEnabledFor(logging.DEBUG))

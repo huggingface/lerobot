@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""SmolVLA2 runtime loop.
+"""PI052 runtime loop.
 
 Threads the multi-rate inference pipeline together with a stdin REPL
 event collector, drives ticks through :class:`TickClock`, and prints
@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class SmolVLA2Runtime:
+class PI052Runtime:
     """Compose the inference pipeline and drive it tick-by-tick."""
 
     policy: Any
@@ -195,11 +195,11 @@ class SmolVLA2Runtime:
 
     def _flush_logs(self) -> None:
         for line in self.state.get("log_lines") or []:
-            print(f"[smolvla2] {line}", flush=True)
+            print(f"[pi052] {line}", flush=True)
 
     def _on_shutdown(self) -> None:
         # Drain any queued action chunks safely.
         queue = self.state.get("action_queue")
         if isinstance(queue, deque):
             queue.clear()
-        print("[smolvla2] runtime stopped", flush=True)
+        print("[pi052] runtime stopped", flush=True)

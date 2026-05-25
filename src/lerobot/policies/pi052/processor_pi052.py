@@ -182,8 +182,7 @@ def _load_recipe(path_str: str) -> TrainingRecipe:
     """Resolve ``path_str`` to a ``TrainingRecipe``.
 
     Accepts an absolute path or a path relative to
-    ``src/lerobot/configs/`` (same lookup rules as
-    ``make_smolvla2_pre_post_processors``).
+    ``src/lerobot/configs/``.
     """
     p = Path(path_str)
     if not p.is_absolute() and not p.exists():

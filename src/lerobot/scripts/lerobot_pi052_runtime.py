@@ -12,10 +12,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""``lerobot-smolvla2-runtime`` — interactive REPL for trained SmolVLA2.
+"""``lerobot-pi052-runtime`` — interactive REPL for trained PI052.
 
 Drives the multi-rate runtime defined in
-:mod:`lerobot.policies.smolvla2.inference`. Stdin becomes the user
+:mod:`lerobot.policies.pi052.inference`. Stdin becomes the user
 channel: type a task, then natural-language interjections / questions.
 The runtime prints state changes (plan / subtask / memory / vqa /
 speech) as they happen.
@@ -26,16 +26,16 @@ Examples
 Dry run on a Hub checkpoint, no robot connected — useful for sanity-
 checking text generation::
 
-    uv run lerobot-smolvla2-runtime \\
-        --policy.path=pepijn223/smolvla2_hirobot_super_poulain_tool2 \\
+    uv run lerobot-pi052-runtime \\
+        --policy.path=pepijn223/pi052_hirobot_super_poulain_tool2 \\
         --no_robot \\
         --task="please clean the kitchen"
 
 Same, but feed real frames from an annotated dataset so plan / subtask
 / memory / VQA generation runs against actual video + state::
 
-    uv run lerobot-smolvla2-runtime \\
-        --policy.path=pepijn223/smolvla2_hirobot_super_poulain_tool2 \\
+    uv run lerobot-pi052-runtime \\
+        --policy.path=pepijn223/pi052_hirobot_super_poulain_tool2 \\
         --dataset.repo_id=pepijn223/super_poulain_annotated \\
         --dataset.episode=0 \\
         --no_robot \\
@@ -43,7 +43,7 @@ Same, but feed real frames from an annotated dataset so plan / subtask
 
 With a real robot::
 
-    uv run lerobot-smolvla2-runtime \\
+    uv run lerobot-pi052-runtime \\
         --policy.path=... \\
         --robot.type=so101 --robot.port=/dev/tty.usbmodem... \\
         --tts.voice=alba
@@ -62,18 +62,14 @@ import logging
 import sys
 from typing import Any, Callable
 
-logger = logging.getLogger("lerobot.smolvla2.runtime")
+logger = logging.getLogger("lerobot.pi052.runtime")
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        # prog defaults to the invoked command name, so this reads
-        # correctly whether run as lerobot-smolvla2-runtime or
-        # lerobot-pi052-runtime.
         description=(
-            "Interactive REPL runtime for a trained hierarchical VLA "
-            "checkpoint (SmolVLA2 or PI052 — policy type is read from "
-            "the checkpoint)."
+            "Interactive REPL runtime for a trained PI052 hierarchical "
+            "VLA checkpoint."
         ),
     )
     p.add_argument(
@@ -82,7 +78,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=str,
         required=True,
         help=(
-            "Local directory or Hugging Face Hub repo id pointing at a trained SmolVLA2 ``pretrained_model``."
+            "Local directory or Hugging Face Hub repo id pointing at a trained PI052 ``pretrained_model``."
         ),
     )
     p.add_argument(
@@ -368,7 +364,7 @@ def _load_policy_and_preprocessor(
     policy_path: str,
     dataset_repo_id: str | None,
 ) -> tuple[Any, Any, Any, Any]:
-    """Load a SmolVLA2 checkpoint (local path or Hub repo id).
+    """Load a PI052 checkpoint (local path or Hub repo id).
 
     Returns ``(policy, preprocessor, postprocessor, ds_meta)``.
     ``preprocessor`` / ``postprocessor`` / ``ds_meta`` are ``None``
@@ -430,7 +426,7 @@ def _build_observation_provider(
 
     The dataset's ``language_persistent`` / ``language_events``
     columns are stripped before the sample reaches the preprocessor,
-    so ``RenderMessagesStep`` and ``SmolVLA2ChatTokenizerStep`` are
+    so ``RenderMessagesStep`` and ``PI052TextTokenizerStep`` are
     no-ops; the runtime supplies its own messages from current state.
     """
     import torch  # noqa: PLC0415
@@ -613,7 +609,7 @@ def _select_task_interactively(
         # bootstrap default (may be None — REPL handles that).
         return bootstrap_task
 
-    print("\n[smolvla2] Select startup task:", flush=True)
+    print("\n[pi052] Select startup task:", flush=True)
     if options:
         for i, opt in enumerate(options, 1):
             marker = "  (dataset default)" if opt == bootstrap_task else ""
@@ -816,7 +812,7 @@ def _build_robot_observation_provider(
     # ``ds_features``. The training distribution sees frames at the
     # recorded resolution (e.g. 480×640); a live Mac/USB camera will
     # almost always hand us a different native size (720p / 1080p).
-    # SmolVLA's internal ``resize_with_pad(512, 512)`` does pad the
+    # PI052's internal ``resize_with_pad(512, 512)`` does pad the
     # input to a fixed canvas, but the *geometry* of that pad differs
     # by input aspect ratio — top/left padding varies, so the visual
     # tokens at each tile carry different content than what the model
@@ -1017,7 +1013,7 @@ def _build_robot_action_executor(
 def _print_runtime_help() -> None:
     """Print the slash-command reference."""
     print(
-        "[smolvla2] commands (arguments need no quotes):\n"
+        "[pi052] commands (arguments need no quotes):\n"
         "  /action <task>     run the robot; an argument switches to that task\n"
         "  /action            resume the robot on the current task\n"
         "  /action <seconds>  run the robot for N seconds, then auto-pause\n"
@@ -1085,7 +1081,7 @@ def _handle_slash_command(runtime: Any, line: str) -> bool:
             secs = float(rest)
             runtime.state["action_deadline"] = _time.monotonic() + secs
             print(
-                f"[smolvla2] action — running {secs:g}s, then auto-pause",
+                f"[pi052] action — running {secs:g}s, then auto-pause",
                 flush=True,
             )
         else:
@@ -1095,16 +1091,16 @@ def _handle_slash_command(runtime: Any, line: str) -> bool:
                 # New task → drop the stale subtask so the high-level
                 # loop regenerates one for the new goal.
                 runtime.state["current_subtask"] = None
-                print(f"[smolvla2] action — task: {rest!r}", flush=True)
+                print(f"[pi052] action — task: {rest!r}", flush=True)
             elif runtime.state.get("task"):
                 print(
-                    f"[smolvla2] action — resuming: {runtime.state['task']!r}",
+                    f"[pi052] action — resuming: {runtime.state['task']!r}",
                     flush=True,
                 )
             else:
                 runtime.state["mode"] = "paused"
                 print(
-                    "[smolvla2] no task set — use /action <your task>",
+                    "[pi052] no task set — use /action <your task>",
                     flush=True,
                 )
         return True
@@ -1113,7 +1109,7 @@ def _handle_slash_command(runtime: Any, line: str) -> bool:
         runtime.state["mode"] = "paused"
         runtime.state["action_deadline"] = None
         _clear_action_queue(runtime)
-        print("[smolvla2] paused — robot holding position", flush=True)
+        print("[pi052] paused — robot holding position", flush=True)
         return True
 
     if cmd in {"/question", "/q", "/ask", "/vqa", "/vlm"}:
@@ -1124,7 +1120,7 @@ def _handle_slash_command(runtime: Any, line: str) -> bool:
         _clear_action_queue(runtime)
         if not rest:
             print(
-                "[smolvla2] usage: /question <your question>  "
+                "[pi052] usage: /question <your question>  "
                 "(e.g. /question point to the yellow cube)",
                 flush=True,
             )
@@ -1144,7 +1140,7 @@ def _run_vqa_query(runtime: Any, question: str) -> None:
     Invoked by ``/question`` — the action loop is paused first so the
     policy is free for a synchronous VQA call.
     """
-    from lerobot.policies.smolvla2.inference.vqa import handle_vqa_query  # noqa: PLC0415
+    from lerobot.policies.pi052.inference.vqa import handle_vqa_query  # noqa: PLC0415
 
     handle_vqa_query(
         policy=runtime.policy,
@@ -1180,11 +1176,11 @@ def _run_autonomous(
     if not auto_start and runtime.state.get("mode", "paused") == "action":
         try:
             input(
-                "[smolvla2] Robot connected — starting in ACTION mode. "
+                "[pi052] Robot connected — starting in ACTION mode. "
                 "Press ENTER to begin, Ctrl+C to abort. "
             )
         except (EOFError, KeyboardInterrupt):
-            print("\n[smolvla2] aborted before start", flush=True)
+            print("\n[pi052] aborted before start", flush=True)
             return 130
 
     if initial_task:
@@ -1193,7 +1189,7 @@ def _run_autonomous(
     thread = threading.Thread(
         target=runtime.run,
         kwargs={"max_ticks": max_ticks},
-        name="smolvla2-runtime-loop",
+        name="pi052-runtime-loop",
         daemon=True,
     )
     thread.start()
@@ -1251,7 +1247,7 @@ def _run_autonomous(
                     if hasattr(queue, "clear"):
                         queue.clear()
                     print(
-                        "\n[smolvla2] timed action elapsed — paused",
+                        "\n[pi052] timed action elapsed — paused",
                         flush=True,
                     )
                 else:
@@ -1264,7 +1260,7 @@ def _run_autonomous(
                         pass
             _panel_stop.wait(0.7)
 
-    panel_thread = threading.Thread(target=_panel_loop, name="smolvla2-panel-redraw", daemon=True)
+    panel_thread = threading.Thread(target=_panel_loop, name="pi052-panel-redraw", daemon=True)
     panel_thread.start()
 
     try:
@@ -1296,11 +1292,11 @@ def _run_autonomous(
                 runtime.state.setdefault("events_this_tick", []).append("user_interjection")
             else:
                 print(
-                    "[smolvla2] no task yet — use /action <your task> to start",
+                    "[pi052] no task yet — use /action <your task> to start",
                     flush=True,
                 )
     except KeyboardInterrupt:
-        print("\n[smolvla2] interrupt — stopping", flush=True)
+        print("\n[pi052] interrupt — stopping", flush=True)
     finally:
         _panel_stop.set()
         runtime.stop()
@@ -1311,9 +1307,9 @@ def _run_autonomous(
             time.sleep(0.1)
         try:
             robot.disconnect()
-            print("[smolvla2] robot disconnected", flush=True)
+            print("[pi052] robot disconnected", flush=True)
         except Exception as exc:  # noqa: BLE001
-            print(f"[smolvla2] WARNING: robot.disconnect raised {exc}", flush=True)
+            print(f"[pi052] WARNING: robot.disconnect raised {exc}", flush=True)
 
     return 0
 
@@ -1340,7 +1336,7 @@ def _make_state_panel_renderer(
         st = runtime.state
         run_mode = st.get("mode", "action")
         mode_tag = "[green]mode: action[/]" if run_mode == "action" else "[yellow]mode: paused[/]"
-        console.rule(f"[bold]SmolVLA2[/] · {mode_label} · {mode_tag}", style="cyan")
+        console.rule(f"[bold]PI052[/] · {mode_label} · {mode_tag}", style="cyan")
         # Always-visible command hint so the operator never has to
         # remember the slash commands.
         if run_mode == "action":
@@ -1499,14 +1495,14 @@ def main(argv: list[str] | None = None) -> int:
     autonomous_mode = bool(args.robot_type) and not args.no_robot
     if autonomous_mode and not args.dataset_repo_id:
         print(
-            "[smolvla2] ERROR: autonomous robot mode requires --dataset.repo_id "
+            "[pi052] ERROR: autonomous robot mode requires --dataset.repo_id "
             "for action-denormalisation stats and feature shapes. Pass the "
             "same dataset the policy was trained on.",
             file=sys.stderr,
         )
         return 2
 
-    print(f"[smolvla2] loading policy from {args.policy_path}", flush=True)
+    print(f"[pi052] loading policy from {args.policy_path}", flush=True)
     policy, preprocessor, postprocessor, ds_meta = _load_policy_and_preprocessor(
         args.policy_path, args.dataset_repo_id
     )
@@ -1537,7 +1533,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         if chosen:
             args.task = chosen
-            print(f"[smolvla2] task: {args.task!r}", flush=True)
+            print(f"[pi052] task: {args.task!r}", flush=True)
 
     # No startup prompts — the runtime is command-driven. It comes up at
     # the command line in ``paused`` mode (robot idle) unless ``--mode``
@@ -1551,7 +1547,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if autonomous_mode:
         print(
-            f"[smolvla2] connecting to robot.type={args.robot_type} port={args.robot_port}",
+            f"[pi052] connecting to robot.type={args.robot_type} port={args.robot_port}",
             flush=True,
         )
         robot = _build_robot(
@@ -1575,7 +1571,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     elif args.dataset_repo_id is not None:
         print(
-            f"[smolvla2] streaming observations from {args.dataset_repo_id} "
+            f"[pi052] streaming observations from {args.dataset_repo_id} "
             f"episode={args.dataset_episode} "
             f"start_frame={args.dataset_start_frame}",
             flush=True,
@@ -1592,11 +1588,11 @@ def main(argv: list[str] | None = None) -> int:
 
     tools = _build_tools(args.no_tts, args.tts_voice)
     if tools:
-        print(f"[smolvla2] tools loaded: {list(tools)}", flush=True)
+        print(f"[pi052] tools loaded: {list(tools)}", flush=True)
 
-    from lerobot.policies.smolvla2.inference import SmolVLA2Runtime  # noqa: PLC0415
+    from lerobot.policies.pi052.inference import PI052Runtime  # noqa: PLC0415
 
-    runtime = SmolVLA2Runtime(
+    runtime = PI052Runtime(
         policy=policy,
         tools=tools,
         observation_provider=observation_provider,
@@ -1662,7 +1658,7 @@ def main(argv: list[str] | None = None) -> int:
             logger.warning("startup tick failed: %s", exc)
             startup_logs = []
         for line in startup_logs or []:
-            print(f"[smolvla2] {line}", flush=True)
+            print(f"[pi052] {line}", flush=True)
     return _run_repl(runtime, initial_task=args.task, max_ticks=args.max_ticks)
 
 
@@ -1680,7 +1676,7 @@ def _run_repl(runtime: Any, *, initial_task: str | None, max_ticks: int | None) 
         from rich.console import Console  # noqa: PLC0415
     except ImportError:
         print(
-            "[smolvla2] rich is required for the interactive REPL. `pip install rich` and re-run.",
+            "[pi052] rich is required for the interactive REPL. `pip install rich` and re-run.",
             file=sys.stderr,
         )
         return 2
@@ -1724,7 +1720,7 @@ def _run_repl(runtime: Any, *, initial_task: str | None, max_ticks: int | None) 
             # task to be meaningful.
             if not runtime.state.get("task"):
                 print(
-                    "[smolvla2] no task yet — use /action <your task>",
+                    "[pi052] no task yet — use /action <your task>",
                     flush=True,
                 )
                 _redraw(last_logs)

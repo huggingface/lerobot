@@ -129,8 +129,8 @@ class Executor:
         written = self.writer.write_all(records, staging_dir, root)
         print(f"[annotate] wrote {len(written)} shard(s); pipeline complete", flush=True)
 
-        # Persist the tool catalog to meta/info.json so chat-template
-        # consumers (PR 3 SmolVLA2 / Pi0.5 / dataset visualizer) can read
+        # Persist the tool catalog to meta/info.json so downstream
+        # consumers (PI052 / Pi0.5 / dataset visualizer) can read
         # it via ``LeRobotDatasetMetadata.tools`` (PR 1). Idempotent and
         # additive: anything the user pre-populated is preserved; we only
         # ensure the canonical ``say`` schema is present.

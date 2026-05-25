@@ -20,11 +20,10 @@
 # bindings are missing simply don't render for that sample, so a
 # dataset without interjections still trains the rest of the blend.
 #
-# SmolVLA2 note: the `say` tool call on the interjection-response turn
-# is flattened to a `<say>...</say>` text marker by the chat tokenizer
-# (`_flatten_say_tool_calls`) before `apply_chat_template`, so the LM
-# head learns to emit exactly the marker the runtime parses back
-# (`_split_plan_and_say`).
+# Tool-call note: the `say` tool call on the interjection-response turn
+# is flattened to a `<say>...</say>` text marker by the tokenizer step
+# (`_flatten_say_tool_calls`) so the LM head learns to emit exactly the
+# marker the runtime parses back (`_split_plan_and_say`).
 
 blend:
 

@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Rich-based REPL layout for the SmolVLA2 runtime.
+"""Rich-based REPL layout for the PI052 runtime.
 
 Two-zone terminal layout:
 
@@ -97,7 +97,7 @@ def make_state_panel(state: dict[str, Any]) -> Any:
     )
     return Panel(
         table,
-        title=f"[bold]SmolVLA2 state[/] · mode: {mode_tag}",
+        title=f"[bold]PI052 state[/] · mode: {mode_tag}",
         border_style="cyan",
     )
 
