@@ -51,6 +51,7 @@ class DatasetReader:
         delta_timestamps: dict[str, list[float]] | None,
         image_transforms: Callable | None,
         return_uint8: bool = False,
+        skip_video_decode: bool = False,
     ):
         """Initialize the reader with metadata, filtering, and transform config.
 
@@ -68,6 +69,7 @@ class DatasetReader:
                 relative timestamp offsets for temporal context windows.
             image_transforms: Optional torchvision v2 transform applied to
                 visual features.
+            skip_video_decode: if True, skip video decoding and return a placeholder tensor
         """
         self._meta = meta
         self.root = root
@@ -76,6 +78,7 @@ class DatasetReader:
         self._video_backend = video_backend
         self._image_transforms = image_transforms
         self._return_uint8 = return_uint8
+        self._skip_video_decode = skip_video_decode
 
         self.hf_dataset: datasets.Dataset | None = None
         self._absolute_to_relative_idx: dict[int, int] | None = None
@@ -235,6 +238,13 @@ class DatasetReader:
         in the main process (e.g. by using a second Dataloader with num_workers=0). It will result in a
         Segmentation Fault.
         """
+        if self._skip_video_decode:
+            # Downstream consumers may want to skip video decoding (.e.g SARM with precomputed
+            # CLIP features). In this case, return a placeholder.
+            return {
+                vid_key: torch.zeros(len(query_ts), 1, 1, 1)
+                for vid_key, query_ts in query_timestamps.items()
+            }
         ep = self._meta.episodes[ep_idx]
 
         def _decode_single(vid_key: str, query_ts: list[float]) -> tuple[str, torch.Tensor]:

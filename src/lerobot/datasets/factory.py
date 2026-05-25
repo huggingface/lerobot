@@ -86,6 +86,13 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision
         )
         delta_timestamps = resolve_delta_timestamps(cfg.trainable_config, ds_meta)
+        skip_video_decode = bool(
+            getattr(cfg.trainable_config, "precomputed_image_features_path", None)
+        )
+        if skip_video_decode and cfg.dataset.streaming:
+            raise NotImplementedError(
+                "precomputed_image_features_path with streaming datasets is not yet supported"
+            )
         if not cfg.dataset.streaming:
             dataset = LeRobotDataset(
                 cfg.dataset.repo_id,
@@ -96,6 +103,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 revision=cfg.dataset.revision,
                 video_backend=cfg.dataset.video_backend,
                 return_uint8=True,
+                skip_video_decode=skip_video_decode,
                 tolerance_s=cfg.tolerance_s,
             )
         else:
