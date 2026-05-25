@@ -87,35 +87,44 @@ class EMAConfig:
 
     Diffusion / flow-matching policies (Diffusion Policy, π0/π0.5,
     pi052) benefit substantially from averaging late-training
-    parameter oscillations — see Chi et al. 2023 §V.D. EMA adds a
-    fp32 shadow of the policy (~13 GB for pi052's 3.3B params) and one
-    elementwise update per training step (~1% step time).
+    parameter oscillations — see Chi et al. 2023 §V.D. The official
+    JAX openpi trainer ships EMA with ``ema_decay=0.99`` (default) and
+    ``0.999`` for its pi05_libero config; the openpi PyTorch port
+    explicitly lists EMA as unsupported, and LeRobot main inherited
+    that gap. Enabling this flag plugs ema-pytorch
+    (https://github.com/lucidrains/ema-pytorch) into the LeRobot
+    training loop with a shadow ``nn.Module`` clone of the policy.
 
-    Off by default (back-compat for existing runs). Recommended for
-    long pi052 training runs where you want closed-loop eval to use
-    the smoothed weights — typically ~1–3% absolute success-rate
-    improvement on closed-loop tasks per the diffusion-policy lit.
+    Cost: 1× model params in fp32 shadow (~13 GB for pi052's 3.3B
+    params) + one elementwise update per training step (~1% step time).
+
+    Off by default (back-compat). Recommended for long pi052 training
+    runs — typically ~1–3% absolute success-rate improvement on
+    closed-loop tasks per the diffusion-policy literature.
     """
 
     enable: bool = False
-    # Target EMA decay β in θ_ema ← β·θ_ema + (1-β)·θ_live.
-    #   0.999  ≈ last 1000 steps (standard; pi05-class default)
-    #   0.75   ≈ very fast EMA (Diffusion Policy original setting)
-    #   0.9999 ≈ very slow EMA (long classification runs)
+    # Target EMA decay β in θ_ema ← β·θ_ema + (1-β)·θ_live (passed to
+    # ema-pytorch as ``beta``).
+    #   0.999  — last ~1000 steps; pi05_libero default in openpi
+    #   0.99   — last ~100 steps; openpi top-level default
+    #   0.75   — very fast EMA (Diffusion Policy original setting)
+    #   0.9999 — very slow EMA (long classification runs)
     decay: float = 0.999
-    # If > 0, ramp effective decay up to ``decay`` over the first N
-    # updates as min(decay, (1+n)/(10+n)). Lets the EMA track rapid
-    # early-training changes before settling. ``0`` = use ``decay``
-    # from step 1.
+    # Skip the first N calls to ``ema.update()``; during this window
+    # the shadow is just a hard copy of the live weights (no averaging).
+    # Lets early-training rapid changes settle before averaging begins.
+    # Maps to ema-pytorch's ``update_after_step`` (NOT a smooth decay
+    # ramp like older lerobot EMA implementations).
     warmup_steps: int = 0
-    # When True, the periodic eval block uses EMA weights (via a
-    # context-managed swap that restores the live weights on exit).
-    # Standard practice for diffusion-style policies — eval scores
-    # are usually 1–3% higher than the live policy at the same step.
+    # When True, the periodic eval block uses the EMA shadow model
+    # directly (``ema.ema_model``) instead of the live policy. Standard
+    # practice for diffusion-style policies — eval scores are usually
+    # 1–3% higher than the live policy at the same step.
     use_for_eval: bool = True
-    # When True, the periodic wandb training-example dump uses EMA
-    # weights for the optional predicted-action columns (so what you
-    # see in W&B matches eval behavior).
+    # When True, the periodic wandb training-example dump uses the EMA
+    # shadow for the optional predicted-action columns (so what you see
+    # in W&B matches eval behavior).
     use_for_wandb_examples: bool = True
 
 

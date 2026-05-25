@@ -85,6 +85,11 @@ dependencies = [
     "termcolor>=2.4.0,<4.0.0",
     "tqdm>=4.66.0,<5.0.0",
 
+    # Training utilities
+    # EMA of policy parameters (Diffusion Policy / pi05 style). Tiny
+    # pure-python dependency — preferred over a hand-rolled implementation.
+    "ema-pytorch>=0.7.7,<1.0.0",
+
     # Build tools (required by opencv-python-headless on some platforms)
     "cmake>=3.29.0.1,<4.2.0",
     "setuptools>=71.0.0,<81.0.0",
