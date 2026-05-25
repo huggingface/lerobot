@@ -291,11 +291,13 @@ def _compute_layer_ki(
     if mask_for_action.dtype != Q_action.dtype:
         mask_for_action = mask_for_action.to(dtype=Q_action.dtype)
 
-    att_vlm, _ = modeling_gemma.eager_attention_forward(
+    from ..pi05.modeling_pi05 import sdpa_attention_forward  # noqa: PLC0415
+
+    att_vlm, _ = sdpa_attention_forward(
         paligemma.model.language_model.layers[layer_idx].self_attn,
         Q_vlm, K_for_vlm, V_for_vlm, mask_for_vlm, scaling,
     )
-    att_action, _ = modeling_gemma.eager_attention_forward(
+    att_action, _ = sdpa_attention_forward(
         paligemma.model.language_model.layers[layer_idx].self_attn,
         Q_action, K_for_action, V_for_action, mask_for_action, scaling,
     )
