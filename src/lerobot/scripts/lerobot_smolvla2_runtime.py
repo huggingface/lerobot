@@ -273,6 +273,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="High-level subtask generation rate.",
     )
     p.add_argument(
+        "--subtask_chunks_per_gen",
+        type=int,
+        default=1,
+        help=(
+            "Throttle subtask gen to once every N action-chunk boundaries. "
+            "Default 1 = regenerate the subtask on every chunk refresh. "
+            "Set to 5 to run ~5 flow-matching action chunks per LM-head "
+            "subtask gen — saves compute and avoids re-planning trajectories "
+            "mid-grasp when a subtask is still valid across multiple chunks."
+        ),
+    )
+    p.add_argument(
         "--max_ticks",
         type=int,
         default=None,
@@ -1514,6 +1526,14 @@ def main(argv: list[str] | None = None) -> int:
     # robot actually receive" in one log line.
     runtime.state["_postprocessor"] = postprocessor
     runtime.state["text_gen_top_p"] = float(getattr(args, "text_top_p", 1.0) or 1.0)
+    # Subtask throttle: HighLevelSubtaskFwd fires only once every N
+    # action-chunk boundaries. Lets you run N action chunks per LM-head
+    # subtask gen (e.g. ``--subtask_chunks_per_gen=5`` ≈ 5 flow-matching
+    # chunks per subtask refresh) so the subtask doesn't churn while
+    # the previous one is still being executed.
+    runtime.state["subtask_chunks_per_gen"] = max(
+        1, int(getattr(args, "subtask_chunks_per_gen", 1) or 1)
+    )
     # Apply the startup mode chosen above the task picker.
     runtime.state["mode"] = startup_mode
     if args.task:

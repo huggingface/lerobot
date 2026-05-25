@@ -515,6 +515,25 @@ class HighLevelSubtaskFwd(InferenceStep):
             if hasattr(self.trigger, "rearm"):
                 self.trigger.rearm()
             return None
+        # Per-chunk-boundary throttle: at each "queue empty" moment we
+        # increment a counter; subtask gen only fires once the counter
+        # reaches ``subtask_chunks_per_gen``. Lets the operator run e.g.
+        # 5 action chunks per subtask-gen so the LM head doesn't churn
+        # every 1.7 s (a fresh subtask while the previous one is still
+        # being executed is wasted compute *and* causes the action
+        # expert's flow trajectory to be re-planned mid-grasp).
+        chunks_per_gen = max(1, int(state.get("subtask_chunks_per_gen", 1) or 1))
+        # Initialise so the first chunk boundary fires immediately
+        # (counter starts at chunks_per_gen, decrements per skip,
+        # generates and resets when it hits 0).
+        if "_hl_chunks_until_gen" not in state:
+            state["_hl_chunks_until_gen"] = 0
+        if state["_hl_chunks_until_gen"] > 0:
+            state["_hl_chunks_until_gen"] -= 1
+            if hasattr(self.trigger, "rearm"):
+                self.trigger.rearm()
+            return None
+        state["_hl_chunks_until_gen"] = chunks_per_gen - 1
         ctx = _msgs_for_subtask(state)
         observation = _maybe_observation(self.observation_provider)
         # Default: greedy argmax, no min_new_tokens, no special-token
