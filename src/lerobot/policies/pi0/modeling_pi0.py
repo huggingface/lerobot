@@ -1126,11 +1126,6 @@ class PI0Policy(PreTrainedPolicy):
             elif key.startswith("time_mlp_out."):
                 new_key = key.replace("time_mlp_out.", "action_time_mlp_out.")
 
-            # Handle vision tower embedding layer potential differences
-            if "patch_embedding" in key:
-                # Some checkpoints might have this, but current model expects different structure
-                logging.warning(f"Vision embedding key might need handling: {key}")
-
             if (
                 key == "model.paligemma_with_expert.paligemma.lm_head.weight"
                 or key == "paligemma_with_expert.paligemma.lm_head.weight"
