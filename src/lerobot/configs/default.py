@@ -67,16 +67,18 @@ class WandBConfig:
     # with one row per sampled batch element containing each camera view
     # (rendered as ``wandb.Image``), any text fields present in the batch
     # (``task`` / ``subtask`` / ``memory`` / ``instruction``), and the
-    # ground-truth action chunk's first + last frames. 0 disables — recommended
-    # starting value is 5000 for long runs.
-    log_examples_freq: int = 0
+    # ground-truth action chunk's first + last frames. Defaults to 5000 — set
+    # to 0 to disable. Only fires when ``enable=True``, so runs without wandb
+    # are unaffected.
+    log_examples_freq: int = 5000
     # Number of batch elements to include in each example dump.
     log_examples_n: int = 4
-    # If True, also run ``policy.predict_action_chunk`` on the logged samples
-    # (in eval mode, no_grad) and add predicted vs ground-truth action columns
-    # to the table. Costs one extra forward pass per dump — negligible at
-    # 5k-step cadence.
-    log_examples_predict_actions: bool = False
+    # If True (default), also run ``policy.predict_action_chunk`` on the logged
+    # samples (in eval mode, no_grad) and add predicted vs ground-truth action
+    # columns to the table. Costs one extra forward pass per dump — negligible
+    # at the 5k-step default cadence. Set to ``False`` if your policy doesn't
+    # implement ``predict_action_chunk`` or you want to skip the extra forward.
+    log_examples_predict_actions: bool = True
 
 
 @dataclass
