@@ -180,6 +180,16 @@ class PI052Config(PI05Config):
     # the same cosine lambda, so the 5x ratio is preserved across decay.
     lm_head_lr_scale: float = 5.0
 
+    # PaLM-style z-loss on text CE. Penalises the log-partition function
+    # ``z = log Σ exp(logits)`` drifting away from zero — without it, large-
+    # vocab models (PaliGemma is 257k) can let ``logsumexp`` grow unbounded
+    # while CE stays low, because a uniform additive logit bias cancels in
+    # softmax. PaLM appendix B / Chinchilla report z-loss is essential for
+    # stable large-vocab CE; it especially helps under ``lm_head_lr_scale=
+    # 5.0`` which amplifies drift risk on the LM head. ``1e-4`` is the
+    # commonly cited weight; set 0 to disable entirely.
+    text_ce_z_loss_weight: float = 1e-4
+
     def __post_init__(self) -> None:
         super().__post_init__()
         # Backbone needs gradients flowing through the text head when
