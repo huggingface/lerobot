@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -50,78 +49,6 @@ from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Debug helper — when ``LEROBOT_DUMP_RECIPE_SAMPLES=N`` is set, the next N
-# samples processed (on rank 0) are pretty-printed with ``[TGT]...[/TGT]``
-# markers over the spans the LM head will be supervised on.
-# ---------------------------------------------------------------------------
-
-_DUMP_BUDGET = int(os.environ.get("LEROBOT_DUMP_RECIPE_SAMPLES", "0"))
-_DUMPED_SO_FAR = 0
-
-
-def _is_dump_rank() -> bool:
-    rank = os.environ.get("RANK") or os.environ.get("LOCAL_RANK") or "0"
-    try:
-        return int(rank) == 0
-    except ValueError:
-        return True
-
-
-def _dump_recipe_sample(
-    *,
-    messages: list[dict[str, Any]],
-    prompt_text: str,
-    token_ids: list[int],
-    labels: list[int],
-    predict_actions: bool,
-    tokenizer: Any,
-) -> None:
-    """Pretty-print one rendered sample. Stops once the global budget is hit."""
-    global _DUMPED_SO_FAR
-    if _DUMPED_SO_FAR >= _DUMP_BUDGET or not _is_dump_rank():
-        return
-    _DUMPED_SO_FAR += 1
-
-    parts: list[str] = []
-    i = 0
-    while i < len(labels):
-        if labels[i] == -100:
-            j = i
-            while j < len(labels) and labels[j] == -100:
-                j += 1
-            parts.append(tokenizer.decode(token_ids[i:j], skip_special_tokens=False))
-            i = j
-        else:
-            j = i
-            while j < len(labels) and labels[j] != -100:
-                j += 1
-            tgt_text = tokenizer.decode(token_ids[i:j], skip_special_tokens=False)
-            parts.append(f"[TGT]{tgt_text}[/TGT]")
-            i = j
-    annotated = "".join(parts)
-
-    n_tgt = sum(1 for l in labels if l != -100)
-    print(
-        "\n========== RECIPE SAMPLE DUMP "
-        f"({_DUMPED_SO_FAR}/{_DUMP_BUDGET}) ==========",
-        flush=True,
-    )
-    print(f"  predict_actions: {predict_actions}", flush=True)
-    print(f"  rendered messages ({len(messages)}):", flush=True)
-    for m in messages:
-        stream = m.get("stream")
-        target = m.get("target")
-        role = m.get("role")
-        content = m.get("content")
-        print(f"    - role={role} stream={stream} target={target}", flush=True)
-        print(f"      content: {content!r}", flush=True)
-    print(f"  rendered prompt:\n    {prompt_text!r}", flush=True)
-    print(f"  token count: {len(token_ids)} (target tokens: {n_tgt})", flush=True)
-    print(f"  decoded (with target markers):\n    {annotated}", flush=True)
-    print("==============================================\n", flush=True)
 
 
 def _content_to_text(content: Any) -> str:
@@ -498,36 +425,6 @@ class PI052TextTokenizerStep(ProcessorStep):
                     sample_idx=sample_idx,
                 )
             ]
-
-        if _DUMP_BUDGET > 0:
-            if _is_batched_messages(messages):
-                msgs_iter = messages
-                streams_iter = complementary.get("message_streams") or [[] for _ in messages]
-                targets_iter = complementary.get("target_message_indices") or [[] for _ in messages]
-            else:
-                msgs_iter = [messages]
-                streams_iter = [list(complementary.get("message_streams") or [])]
-                targets_iter = [list(complementary.get("target_message_indices") or [])]
-            for msg, streams, targets, (ids, attn, labels, predict_action, prompt) in zip(
-                msgs_iter, streams_iter, targets_iter, encoded, strict=False
-            ):
-                target_set = {int(i) for i in targets}
-                annotated_msgs = [
-                    {
-                        **m,
-                        "stream": streams[i] if i < len(streams) else None,
-                        "target": True if i in target_set else None,
-                    }
-                    for i, m in enumerate(msg)
-                ]
-                _dump_recipe_sample(
-                    messages=annotated_msgs,
-                    prompt_text=prompt,
-                    token_ids=ids.tolist(),
-                    labels=labels.tolist(),
-                    predict_actions=bool(predict_action.item()),
-                    tokenizer=tokenizer,
-                )
 
         obs = dict(transition.get(TransitionKey.OBSERVATION) or {})
         obs[OBS_LANGUAGE_TOKENS] = torch.stack([ids for ids, _, _, _, _ in encoded])
