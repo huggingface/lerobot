@@ -142,6 +142,16 @@ repo_id = "yaak-ai/L2D-v3"
 dataset = StreamingLeRobotDataset(repo_id)  # streams directly from the Hub
 ```
 
+You can also stream a LeRobot v3 dataset from any fsspec-compatible storage root, such as S3 or GCS:
+
+```python
+dataset = StreamingLeRobotDataset(
+    repo_id="my-org/my-dataset",
+    root="s3://my-bucket/path/to/my-dataset",
+    storage_options={"anon": False},  # optional; depends on the filesystem backend
+)
+```
+
 <div style="display:flex; justify-content:center; gap:12px; flex-wrap:wrap;">
   <figure style="margin:0; text-align:center;">
     <img

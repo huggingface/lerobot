@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import fsspec
 import numpy as np
 import pytest
 import torch
@@ -23,6 +24,17 @@ from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from lerobot.datasets.utils import safe_shard
 from lerobot.utils.constants import ACTION
 from tests.fixtures.constants import DUMMY_REPO_ID
+
+
+def copy_tree_to_fsspec(local_root, remote_root: str, storage_options: dict | None = None) -> None:
+    fs, remote_path = fsspec.core.url_to_fs(remote_root, **(storage_options or {}))
+    for local_file in local_root.rglob("*"):
+        if not local_file.is_file():
+            continue
+        remote_file = f"{remote_path.rstrip('/')}/{local_file.relative_to(local_root).as_posix()}"
+        fs.makedirs(remote_file.rsplit("/", 1)[0], exist_ok=True)
+        with local_file.open("rb") as src, fs.open(remote_file, "wb") as dst:
+            dst.write(src.read())
 
 
 def get_frames_expected_order(streaming_ds: StreamingLeRobotDataset) -> list[int]:
@@ -113,6 +125,96 @@ def test_single_frame_consistency(tmp_path, lerobot_dataset_factory):
         assert all(t[1] for t in key_checks), (
             f"Checking {list(filter(lambda t: not t[1], key_checks))[0][0]} left and right were found different (frame_idx: {frame_idx})"
         )
+
+
+def test_streaming_dataset_reads_from_fsspec_root(tmp_path, lerobot_dataset_factory):
+    local_path = tmp_path / "test"
+    repo_id = f"{DUMMY_REPO_ID}-fsspec"
+    remote_root = f"memory://{repo_id}"
+
+    local_ds = lerobot_dataset_factory(
+        root=local_path,
+        repo_id=repo_id,
+        total_episodes=2,
+        total_frames=8,
+        use_videos=False,
+    )
+    copy_tree_to_fsspec(local_path, remote_root)
+
+    streaming_ds = iter(
+        StreamingLeRobotDataset(
+            repo_id=repo_id,
+            root=remote_root,
+            buffer_size=4,
+            shuffle=False,
+        )
+    )
+
+    streaming_frame = next(streaming_ds)
+    target_frame = local_ds[streaming_frame["index"]]
+
+    for key, left in streaming_frame.items():
+        right = target_frame[key]
+        if isinstance(left, str):
+            assert left == right
+        elif isinstance(left, torch.Tensor):
+            assert torch.allclose(left, right)
+            assert left.shape == right.shape
+        elif isinstance(left, float):
+            assert left == right.item()
+
+
+def test_streaming_dataset_passes_storage_options_to_remote_video_decoder(
+    tmp_path, lerobot_dataset_factory, monkeypatch
+):
+    local_path = tmp_path / "test"
+    repo_id = f"{DUMMY_REPO_ID}-fsspec-video"
+    remote_root = f"memory://{repo_id}"
+    storage_options = {"auto_mkdir": True}
+    decoder_calls = []
+
+    lerobot_dataset_factory(
+        root=local_path,
+        repo_id=repo_id,
+        total_episodes=1,
+        total_frames=2,
+        use_videos=True,
+    )
+    copy_tree_to_fsspec(local_path, remote_root, storage_options=storage_options)
+
+    def fake_decode_video_frames_torchcodec(
+        video_path,
+        timestamps,
+        tolerance_s,
+        *,
+        decoder_cache=None,
+        return_uint8=False,
+        storage_options=None,
+    ):
+        decoder_calls.append((video_path, storage_options))
+        return torch.zeros((len(timestamps), 3, 4, 4), dtype=torch.uint8 if return_uint8 else torch.float32)
+
+    monkeypatch.setattr(
+        "lerobot.datasets.streaming_dataset.decode_video_frames_torchcodec",
+        fake_decode_video_frames_torchcodec,
+    )
+
+    streaming_ds = iter(
+        StreamingLeRobotDataset(
+            repo_id=repo_id,
+            root=remote_root,
+            buffer_size=1,
+            shuffle=False,
+            storage_options=storage_options,
+        )
+    )
+
+    next(streaming_ds)
+
+    assert decoder_calls
+    for video_path, passed_storage_options in decoder_calls:
+        assert video_path.startswith(remote_root)
+        assert passed_storage_options == storage_options
 
 
 @pytest.mark.parametrize(

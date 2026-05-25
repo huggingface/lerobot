@@ -24,7 +24,7 @@ from datasets import load_dataset
 
 from lerobot.utils.constants import HF_LEROBOT_HOME, LOOKAHEAD_BACKTRACKTABLE, LOOKBACK_BACKTRACKTABLE
 
-from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
+from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata, is_fsspec_uri
 from .feature_utils import get_delta_indices
 from .io_utils import item_to_torch
 from .utils import (
@@ -252,13 +252,15 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         rng: np.random.Generator | None = None,
         shuffle: bool = True,
         return_uint8: bool = False,
+        storage_options: dict | None = None,
     ):
         """Initialize a StreamingLeRobotDataset.
 
         Args:
             repo_id (str): This is the repo id that will be used to fetch the dataset.
-            root (Path | None, optional): Local directory to use for local datasets. When omitted, Hub
-                metadata is resolved through a revision-safe snapshot cache under
+            root (str | Path | None, optional): Local directory to use for local datasets or an
+                fsspec-compatible URI such as ``s3://bucket/dataset`` or ``gs://bucket/dataset``.
+                When omitted, Hub metadata is resolved through a revision-safe snapshot cache under
                 ``$HF_LEROBOT_HOME/hub``.
             episodes (list[int] | None, optional): If specified, this will only load episodes specified by
                 their episode_index in this list.
@@ -272,12 +274,16 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             seed (int, optional): Reproducibility random seed.
             rng (np.random.Generator | None, optional): Random number generator.
             shuffle (bool, optional): Whether to shuffle the dataset across exhaustions. Defaults to True.
+            storage_options (dict | None, optional): Extra options passed to fsspec/Hugging Face Datasets
+                when ``root`` is a remote URI.
         """
         super().__init__()
         self.repo_id = repo_id
-        self._requested_root = Path(root) if root else None
+        self.storage_options = dict(storage_options or {})
+        self.streaming_from_remote = is_fsspec_uri(root)
+        self._requested_root = root if self.streaming_from_remote else Path(root) if root else None
         self.root = self._requested_root if self._requested_root is not None else HF_LEROBOT_HOME / repo_id
-        self.streaming_from_local = root is not None
+        self.streaming_from_local = root is not None and not self.streaming_from_remote
 
         self.image_transforms = image_transforms
         self.episodes = episodes
@@ -294,12 +300,16 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         # We cache the video decoders to avoid re-initializing them at each frame (avoiding a ~10x slowdown)
         self.video_decoder_cache = None
 
-        if self._requested_root is not None:
+        if self._requested_root is not None and not self.streaming_from_remote:
             self.root.mkdir(exist_ok=True, parents=True)
 
         # Load metadata
         self.meta = LeRobotDatasetMetadata(
-            self.repo_id, self._requested_root, self.revision, force_cache_sync=force_cache_sync
+            self.repo_id,
+            self._requested_root,
+            self.revision,
+            force_cache_sync=force_cache_sync,
+            storage_options=self.storage_options,
         )
         self.root = self.meta.root
         self.revision = self.meta.revision
@@ -314,13 +324,22 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             self.delta_timestamps = delta_timestamps
             self.delta_indices = get_delta_indices(self.delta_timestamps, self.fps)
 
-        self.hf_dataset: datasets.IterableDataset = load_dataset(
-            self.repo_id if not self.streaming_from_local else str(self.root),
-            split="train",
-            streaming=self.streaming,
-            data_files="data/*/*.parquet",
-            revision=self.revision,
-        )
+        if self.streaming_from_remote:
+            self.hf_dataset: datasets.IterableDataset = load_dataset(
+                "parquet",
+                split="train",
+                streaming=self.streaming,
+                data_files=f"{str(self.root).rstrip('/')}/data/*/*.parquet",
+                storage_options=dict(self.storage_options),
+            )
+        else:
+            self.hf_dataset: datasets.IterableDataset = load_dataset(
+                self.repo_id if not self.streaming_from_local else str(self.root),
+                split="train",
+                streaming=self.streaming,
+                data_files="data/*/*.parquet",
+                revision=self.revision,
+            )
 
         self.num_shards = min(self.hf_dataset.num_shards, max_num_shards)
 
@@ -552,7 +571,10 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         item = {}
         for video_key, query_ts in query_timestamps.items():
-            root = self.meta.url_root if self.streaming and not self.streaming_from_local else self.root
+            if self.streaming_from_remote:
+                root = self.root
+            else:
+                root = self.meta.url_root if self.streaming and not self.streaming_from_local else self.root
             video_path = f"{root}/{self.meta.get_video_file_path(ep_idx, video_key)}"
             frames = decode_video_frames_torchcodec(
                 video_path,
@@ -560,6 +582,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 self.tolerance_s,
                 decoder_cache=self.video_decoder_cache,
                 return_uint8=self._return_uint8,
+                storage_options=self.storage_options if self.streaming_from_remote else None,
             )
 
             item[video_key] = frames.squeeze(0) if len(query_ts) == 1 else frames
