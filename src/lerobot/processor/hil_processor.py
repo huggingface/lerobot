@@ -448,11 +448,15 @@ class InterventionActionProcessorStep(ProcessorStep):
 
     Attributes:
         use_gripper: Whether to include the gripper in the teleoperated action.
+        use_yaw: Whether the teleop action includes a `delta_yaw` dim (inserted between
+                 the xyz deltas and the optional gripper command, mirroring the env's
+                 [dx, dy, dz, (dyaw,) (gripper,)] action layout).
         terminate_on_success: If True, automatically sets the `done` flag when a
                               `success` event is received.
     """
 
     use_gripper: bool = False
+    use_yaw: bool = False
     terminate_on_success: bool = True
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
@@ -484,12 +488,17 @@ class InterventionActionProcessorStep(ProcessorStep):
         # Override action if intervention is active
         if is_intervention and teleop_action is not None:
             if isinstance(teleop_action, dict):
-                # Convert teleop_action dict to tensor format
+                # Convert teleop_action dict to tensor format. Order MUST match the env's
+                # action layout: [dx, dy, dz, (dyaw if use_yaw,) (gripper if use_gripper,)].
+                # Gripper stays at the last index so downstream `action[-1]` indexing
+                # (SAC's discrete critic, UR10GripperPenaltyProcessorStep) stays valid.
                 action_list = [
                     teleop_action.get("delta_x", 0.0),
                     teleop_action.get("delta_y", 0.0),
                     teleop_action.get("delta_z", 0.0),
                 ]
+                if self.use_yaw:
+                    action_list.append(teleop_action.get("delta_yaw", 0.0))
                 if self.use_gripper:
                     action_list.append(teleop_action.get(GRIPPER_KEY, 1.0))
             elif isinstance(teleop_action, np.ndarray):
@@ -529,6 +538,7 @@ class InterventionActionProcessorStep(ProcessorStep):
         """
         return {
             "use_gripper": self.use_gripper,
+            "use_yaw": self.use_yaw,
             "terminate_on_success": self.terminate_on_success,
         }
 

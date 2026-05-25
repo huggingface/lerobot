@@ -5,7 +5,7 @@ each episode to a ``LeRobotDataset``. Re-uses the existing UR10 env layer
 (`make_robot_env`, `make_processors` from `gym_manipulator`) so we inherit:
   - the 3-camera RealSense hardware-reset preflight,
   - cropped + resized 128x128 images,
-  - the 16-D relative-tcp_xyz observation,
+  - the 16-D (or 17-D with `use_yaw=True`) relative-tcp_xyz observation,
   - the streaming-thread control + reset-recovery path.
 
 The recorded action is the 4-D vector ``[dx, dy, dz, gripper_state]``. The
@@ -58,12 +58,12 @@ logger = logging.getLogger(__name__)
 
 
 # -- user-tunable ---------------------------------------------------------------
-CONFIG_PATH = "src/lerobot/rl/ur10_env_2cams.json"
-REPO_ID = "local/usb_insertion_act_2cams"
-TASK_DESCRIPTION = "usb_insertion_act_2cams"
-NUM_EPISODES = 70
-EPISODE_TIME_S = 20      # truncates the episode if the user doesn't end it
-RESET_TIME_S = 7         # total between-episode budget (motion + hold-at-home)
+CONFIG_PATH = "src/lerobot/rl/ur10_env_3cams_yaw.json"
+REPO_ID = "local/pcb_act_3cams_yaw"
+TASK_DESCRIPTION = "pcb_act_3cams_yaw"
+NUM_EPISODES = 100
+EPISODE_TIME_S = 30      # truncates the episode if the user doesn't end it
+RESET_TIME_S = 10        # total between-episode budget (motion + hold-at-home)
 RESET_SPEED_MPS = 0.1    # auto-reset linear velocity, m/s (matches env.reset's moveL)
 FPS = 10                 # must equal cfg.env.fps
 DEVICE = "cpu"           # env-processor lives on CPU; only the policy needs GPU
@@ -75,22 +75,28 @@ RERUN_EVERY_N_STEPS = 1  # set >1 to throttle viewer updates if bandwidth is tig
 # -------------------------------------------------------------------------------
 
 
-def _build_features(transition_obs: dict, use_gripper: bool) -> dict:
+def _build_features(transition_obs: dict, use_gripper: bool, use_yaw: bool = False) -> dict:
     """Build the LeRobotDataset feature dict from an actual processed observation.
 
     Shapes are read from the live transition so they match exactly what ACT will
     see at inference time (after crop/resize + AddBatchDim + DeviceMove).
+
+    Action layout mirrors UR10RobotEnv.action_space (see ur10_robot.py docstring):
+    xyz deltas + optional delta_yaw + optional gripper. Gripper stays last across
+    all modes (preserves SAC's `DISCRETE_DIMENSION_INDEX = -1` and the gripper
+    penalty processor's `action[-1]` indexing).
     """
-    action_dim = 4 if use_gripper else 3
+    action_dim = 3 + int(use_yaw) + int(use_gripper)
+    names = ["delta_x", "delta_y", "delta_z"]
+    if use_yaw:
+        names.append("delta_yaw")
+    if use_gripper:
+        names.append("gripper")
     features: dict[str, dict] = {
         ACTION: {
             "dtype": "float32",
             "shape": (action_dim,),
-            "names": (
-                ["delta_x", "delta_y", "delta_z", "gripper"]
-                if use_gripper
-                else ["delta_x", "delta_y", "delta_z"]
-            ),
+            "names": names,
         },
     }
     for key, val in transition_obs.items():
@@ -128,10 +134,14 @@ def main() -> None:
         if cfg.env.processor.gripper is not None
         else True
     )
-    action_dim = 4 if use_gripper else 3
+    # `getattr` so an existing JSON without the `use_yaw` key parses cleanly.
+    ik_cfg = cfg.env.processor.inverse_kinematics
+    use_yaw = bool(getattr(ik_cfg, "use_yaw", False)) if ik_cfg else False
+    action_dim = 3 + int(use_yaw) + int(use_gripper)
     neutral_action = torch.zeros(action_dim, dtype=torch.float32)
     if use_gripper:
-        neutral_action[3] = 1.0  # "stay"
+        # Gripper is always the last index — independent of yaw mode.
+        neutral_action[-1] = 1.0  # "stay"
 
     # First reset and one processed observation so we can size the dataset features.
     obs, info = env.reset()
@@ -139,7 +149,7 @@ def main() -> None:
     action_processor.reset()
     transition = env_processor(create_transition(observation=obs, info=info))
 
-    features = _build_features(transition[TransitionKey.OBSERVATION], use_gripper)
+    features = _build_features(transition[TransitionKey.OBSERVATION], use_gripper, use_yaw=use_yaw)
     dataset = LeRobotDataset.create(
         repo_id=REPO_ID,
         fps=FPS,
@@ -203,12 +213,14 @@ def main() -> None:
             # fresh on every get_observation, and env.step() has just called send_gripper(),
             # so the flag reflects this step's resulting gripper state. Matches RC10's
             # action-encoding convention and the schema train/eval expect downstream.
-            if action_to_record.numel() >= 4:
+            # Gripper is the LAST element regardless of yaw mode → use action[-1] so this
+            # block adapts to both 4-D and 5-D action layouts.
+            if use_gripper:
                 obs_state = transition[TransitionKey.OBSERVATION][OBS_STATE]
                 if isinstance(obs_state, torch.Tensor):
                     obs_state = obs_state.detach().cpu().float()
                 gripper_state = float(np.asarray(obs_state).reshape(-1)[-1])
-                action_to_record[3] = gripper_state
+                action_to_record[-1] = gripper_state
 
             # Pull observation tensors (drop batch dim — dataset expects (C, H, W) / (D,)).
             frame: dict = {ACTION: action_to_record, "task": TASK_DESCRIPTION}
@@ -269,8 +281,12 @@ def main() -> None:
                 auto_reset_to_home(env, dt, RESET_TIME_S, RESET_SPEED_MPS, FPS)
                 env_processor.reset()
                 action_processor.reset()
+                # Wrap with `env._augment_observation` so the post-reset obs carries
+                # the yaw slot when use_yaw=True (mirrors env.reset()/env.step()).
+                # Without this, episode N+1's first transition is the raw 16-D driver
+                # output and the 17-D dataset feature schema rejects the frame.
                 transition = env_processor(create_transition(
-                    observation=env.robot.get_observation(),
+                    observation=env._augment_observation(env.robot.get_observation()),
                     info={TeleopEvents.IS_INTERVENTION: False},
                 ))
                 episode_step = 0

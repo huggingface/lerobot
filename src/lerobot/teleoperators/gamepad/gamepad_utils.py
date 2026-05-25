@@ -22,7 +22,7 @@ from ..utils import TeleopEvents
 class InputController:
     """Base class for input controllers that generate motion deltas."""
 
-    def __init__(self, x_step_size=1.0, y_step_size=1.0, z_step_size=1.0):
+    def __init__(self, x_step_size=1.0, y_step_size=1.0, z_step_size=1.0, yaw_step_size=1.0):
         """
         Initialize the controller.
 
@@ -30,10 +30,12 @@ class InputController:
             x_step_size: Base movement step size in meters
             y_step_size: Base movement step size in meters
             z_step_size: Base movement step size in meters
+            yaw_step_size: Base yaw step size (only used when `get_deltas(with_yaw=True)`)
         """
         self.x_step_size = x_step_size
         self.y_step_size = y_step_size
         self.z_step_size = z_step_size
+        self.yaw_step_size = yaw_step_size
         self.running = True
         self.episode_end_status = None  # None, "success", or "failure"
         self.intervention_flag = False
@@ -48,8 +50,14 @@ class InputController:
         """Stop the controller and release resources."""
         pass
 
-    def get_deltas(self):
-        """Get the current movement deltas (dx, dy, dz) in meters."""
+    def get_deltas(self, with_yaw: bool = False):
+        """Get the current movement deltas.
+
+        Returns (dx, dy, dz) by default, or (dx, dy, dz, dyaw) when `with_yaw=True`.
+        Subclasses override; this base returns zeros.
+        """
+        if with_yaw:
+            return 0.0, 0.0, 0.0, 0.0
         return 0.0, 0.0, 0.0
 
     def update(self):
@@ -175,7 +183,7 @@ class KeyboardController(InputController):
         if self.listener and self.listener.is_alive():
             self.listener.stop()
 
-    def get_deltas(self):
+    def get_deltas(self, with_yaw: bool = False):
         """Get the current movement deltas from keyboard state."""
         delta_x = delta_y = delta_z = 0.0
 
@@ -192,14 +200,17 @@ class KeyboardController(InputController):
         if self.key_states["backward_z"]:
             delta_z -= self.z_step_size
 
+        # Keyboard does not currently bind a yaw key; surface 0.0 to keep the API uniform.
+        if with_yaw:
+            return delta_x, delta_y, delta_z, 0.0
         return delta_x, delta_y, delta_z
 
 
 class GamepadController(InputController):
     """Generate motion deltas from gamepad input."""
 
-    def __init__(self, x_step_size=1.0, y_step_size=1.0, z_step_size=1.0, deadzone=0.1):
-        super().__init__(x_step_size, y_step_size, z_step_size)
+    def __init__(self, x_step_size=1.0, y_step_size=1.0, z_step_size=1.0, yaw_step_size=1.0, deadzone=0.1):
+        super().__init__(x_step_size, y_step_size, z_step_size, yaw_step_size=yaw_step_size)
         self.deadzone = deadzone
         self.joystick = None
         self.intervention_flag = False
@@ -278,7 +289,7 @@ class GamepadController(InputController):
             else:
                 self.intervention_flag = False
 
-    def get_deltas(self):
+    def get_deltas(self, with_yaw: bool = False):
         """Get the current movement deltas from gamepad state."""
         import pygame
 
@@ -290,21 +301,32 @@ class GamepadController(InputController):
 
             # Right stick Y (typically axis 3 or 4)
             z_input = self.joystick.get_axis(4)  # Up/Down for Z    # For ps4
+            # Right stick X — drives yaw (rotation about tool Z) when with_yaw=True.
+            # Only read it on the yaw path to keep the no-yaw call cost identical.
+            yaw_input = self.joystick.get_axis(3) if with_yaw else 0.0
 
             # Apply deadzone to avoid drift
             x_input = 0 if abs(x_input) < self.deadzone else x_input
             y_input = 0 if abs(y_input) < self.deadzone else y_input
             z_input = 0 if abs(z_input) < self.deadzone else z_input
+            yaw_input = 0 if abs(yaw_input) < self.deadzone else yaw_input
 
             # Calculate deltas (note: may need to invert axes depending on controller)
             delta_x = x_input * self.x_step_size  # Forward/backward    # For ps4
             delta_y = -y_input * self.y_step_size  # Left/right
             delta_z = -z_input * self.z_step_size  # Up/down
-            # print(delta_x, delta_y, delta_z)
+            # Right-stick-right (positive raw value) maps to positive yaw by default; the
+            # operator-facing sign flip lives in GamepadTeleop via `invert_delta_yaw`.
+            delta_yaw = yaw_input * self.yaw_step_size
+
+            if with_yaw:
+                return delta_x, delta_y, delta_z, delta_yaw
             return delta_x, delta_y, delta_z
 
         except pygame.error:
             logging.error("Error reading gamepad. Is it still connected?")
+            if with_yaw:
+                return 0.0, 0.0, 0.0, 0.0
             return 0.0, 0.0, 0.0
 
 
@@ -316,6 +338,7 @@ class GamepadControllerHID(InputController):
         x_step_size=1.0,
         y_step_size=1.0,
         z_step_size=1.0,
+        yaw_step_size=1.0,
         deadzone=0.1,
     ):
         """
@@ -324,9 +347,10 @@ class GamepadControllerHID(InputController):
         Args:
             step_size: Base movement step size in meters
             z_scale: Scaling factor for Z-axis movement
+            yaw_step_size: Base yaw step size (only used when get_deltas(with_yaw=True))
             deadzone: Joystick deadzone to prevent drift
         """
-        super().__init__(x_step_size, y_step_size, z_step_size)
+        super().__init__(x_step_size, y_step_size, z_step_size, yaw_step_size=yaw_step_size)
         self.deadzone = deadzone
         self.device = None
         self.device_info = None
@@ -450,11 +474,16 @@ class GamepadControllerHID(InputController):
         except OSError as e:
             logging.error(f"Error reading from gamepad: {e}")
 
-    def get_deltas(self):
+    def get_deltas(self, with_yaw: bool = False):
         """Get the current movement deltas from gamepad state."""
         # Calculate deltas - invert as needed based on controller orientation
         delta_x = -self.left_x * self.x_step_size  # Forward/backward
         delta_y = -self.left_y * self.y_step_size  # Left/right
         delta_z = -self.right_y * self.z_step_size  # Up/down
+        # Right stick X (`self.right_x` is already read + deadzoned in _update); used only
+        # on the yaw path. The operator-facing sign flip lives in GamepadTeleop.
+        delta_yaw = -self.right_x * self.yaw_step_size
 
+        if with_yaw:
+            return delta_x, delta_y, delta_z, delta_yaw
         return delta_x, delta_y, delta_z

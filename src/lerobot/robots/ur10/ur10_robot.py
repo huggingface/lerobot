@@ -21,6 +21,13 @@ Observation model:
     workspace the home pose was randomized — the policy generalizes across spatial
     placement of the task object.
 
+    When `use_yaw=True`, the env layer ALSO inserts a `yaw_offset` slot (radians, tool-Z
+    rotation relative to the per-episode home orientation) between `tcp_xyz` and
+    `gripper_state`, giving a 17-D observation. Yaw is decoded from RTDE TCP via
+    `R_initial.inv() * R_current`, the exact inverse of the action-side
+    `R_home * R_z(target_yaw)` composition — so commanded and observed yaw stay
+    consistent. See `UR10RobotEnv._augment_observation` and `get_measured_yaw_offset`.
+
     `joint_pos`, `joint_vel`, `gripper_state` are absolute — matches gym-hil's convention.
 
     UR10e has no real wrist F/T sensor; `getActualTCPForce()` is an inverse-dynamics
@@ -39,6 +46,7 @@ from typing import Any, TYPE_CHECKING
 
 import gymnasium as gym
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 from lerobot.cameras.camera import Camera
 from lerobot.cameras.configs import CameraConfig
@@ -99,15 +107,26 @@ class UR10RobotEnvConfig:
     # ~1-second human reaction window before the EE has moved 1 cm. Higher values cause
     # the policy to over-shoot during early training before the user can intervene; for
     # contact-rich tasks (USB insertion, peg-in-hole) keep at 0.001 or lower.
+    #
+    # When `use_yaw=True`, this dict gains an optional "yaw" key (radians per unit
+    # action). Default 0.01 rad/unit is roughly 0.57°/unit — comparable in magnitude
+    # to the xyz mm/unit scale at 10 Hz.
     ee_step_sizes: dict[str, float] = field(
         default_factory=lambda: {"x": 0.001, "y": 0.001, "z": 0.001}
     )
 
     # Cartesian workspace bounds [x, y, z] (metres). Populated via ur10_find_limits.
+    # When `use_yaw=True`, the lists optionally carry a 4th element interpreted as a
+    # RELATIVE yaw OFFSET window (radians) around `fixed_rz`. The env latches
+    # `target_yaw = 0.0` at reset and clips accumulated yaw to [min[3], max[3]]. The
+    # mixing of absolute xyz and relative yaw at index 3 is intentional — it keeps
+    # all EE limits in one place. If `use_yaw=True` and the 4th element is missing,
+    # the env falls back to ±π/2 (1.5708 rad).
     ee_bounds_min: list[float] = field(default_factory=lambda: [-0.5, -0.5, 0.05])
     ee_bounds_max: list[float] = field(default_factory=lambda: [0.5, 0.5, 0.7])
 
-    # Fixed wrist orientation in AXIS-ANGLE (UR-native), NOT Euler.
+    # Fixed wrist orientation in AXIS-ANGLE (UR-native), NOT Euler. When `use_yaw=True`
+    # this is the *home* orientation; the env accumulates a tool-Z yaw offset on top.
     fixed_rx: float = 3.14159
     fixed_ry: float = 0.0
     fixed_rz: float = 0.0
@@ -119,6 +138,9 @@ class UR10RobotEnvConfig:
     reset_time_s: float = 5.0
 
     use_gripper: bool = True
+    # When True, the action gains a 4th continuous DOF (yaw) at index 3 — see step().
+    # Default False keeps existing recorded datasets / JSON configs working unchanged.
+    use_yaw: bool = False
 
     # Start-position randomization (metres) — uniform [-r, +r] applied at reset.
     randomization_xy: float = 0.0
@@ -197,6 +219,13 @@ class UR10Robot:
         # `tcp_xyz` gets relative semantics: encoder readings are noise-free and the
         # paper explicitly requires this.
         self._initial_tcp_xyz: np.ndarray | None = None
+        # Per-episode wrist-orientation baseline, captured by `capture_baselines()` next
+        # to `_initial_tcp_xyz`. Stored as a scipy Rotation so per-step `get_measured_
+        # yaw_offset()` is a cheap `R_initial.inv() * R_current` composition. Always
+        # populated even if `use_yaw=False` at the env layer — the cost is one matrix
+        # multiply per reset and lets the env opt into the yaw observation without the
+        # driver needing to know about the use_yaw flag.
+        self._initial_tcp_rotation: Rotation | None = None
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -412,6 +441,30 @@ class UR10Robot:
         """Current TCP pose [x, y, z, rx, ry, rz] (m, axis-angle radians)."""
         return np.array(self.rtde_rec.getActualTCPPose(), dtype=np.float32)
 
+    def get_tcp_force(self) -> np.ndarray:
+        """Current TCP wrench estimate [Fx, Fy, Fz, Tx, Ty, Tz] (N, Nm).
+
+        WARNING — this is NOT a calibrated F/T sensor reading. The UR10e has
+        no wrist F/T hardware; `rtde_rec.getActualTCPForce()` returns the
+        controller's inverse-dynamics estimate from joint motor currents.
+        Per the module docstring at the top of this file:
+
+            "exhibits ±5 N noise plus tens of N of pose-dependent bias drift.
+            We deliberately do NOT include it in the observation — the policy
+            relies on visual + proprioceptive signals for contact."
+
+        Useful for logging / monitoring / emergency-stop heuristics, but
+        don't feed it into a policy without low-pass filtering and per-pose
+        bias compensation. The wrench is in the BASE frame (not the tool
+        frame); transform via `Rotation.from_rotvec(tcp[3:6])` if you need
+        the gripper-frame components.
+
+        Reads the live RTDE state under no lock — `RTDEReceiveInterface` is
+        on a separate socket from the streaming thread's
+        `RTDEControlInterface`, so this doesn't contend with `servoL`.
+        """
+        return np.array(self.rtde_rec.getActualTCPForce(), dtype=np.float32)
+
     def is_protective_stopped(self) -> bool:
         return bool(self.rtde_rec.isProtectiveStopped())
 
@@ -421,30 +474,60 @@ class UR10Robot:
     # -- HIL-SERL relative-observation baselines ---------------------------
 
     def capture_baselines(self) -> None:
-        """Snapshot the current TCP xyz as the per-episode position anchor.
+        """Snapshot the current TCP xyz AND wrist orientation as the per-episode anchors.
 
-        Called by `UR10RobotEnv.reset()` AFTER the blocking `moveL` has driven the arm
-        to the home pose and `precise_sleep(reset_time_s)` has elapsed. All subsequent
-        `get_observation()` calls return `tcp_xyz - initial_tcp_xyz` until the next reset
-        overrides this baseline.
+        Called by `UR10RobotEnv.reset()` (and `auto_reset_to_home`) AFTER the blocking
+        `moveL` / interpolated motion has driven the arm to the home pose and the settling
+        sleep has elapsed. All subsequent `get_observation()` calls return
+        `tcp_xyz - initial_tcp_xyz`. The orientation baseline is consumed by
+        `get_measured_yaw_offset()` to produce the relative-yaw observation.
 
         Reads the live RTDE state under no lock — `RTDEReceiveInterface` is on a
         separate socket from the streaming thread's `RTDEControlInterface`, so reads
-        here don't contend with `servoL`.
+        here don't contend with `servoL`. We pay one extra `Rotation.from_rotvec` for
+        the orientation baseline regardless of `use_yaw` at the env layer — keeps the
+        driver oblivious to the env-side flag.
         """
-        self._initial_tcp_xyz = self.get_current_tcp()[:3].copy()
+        tcp_full = self.get_current_tcp()
+        self._initial_tcp_xyz = tcp_full[:3].copy()
+        self._initial_tcp_rotation = Rotation.from_rotvec(tcp_full[3:6])
         logger.info(
-            "Captured per-episode position baseline: tcp_xyz=%s",
+            "Captured per-episode baselines: tcp_xyz=%s, tcp_rotvec=%s",
             np.array2string(self._initial_tcp_xyz, precision=4, suppress_small=True),
+            np.array2string(tcp_full[3:6], precision=4, suppress_small=True),
         )
 
     def clear_baselines(self) -> None:
-        """Drop the position baseline so the next `get_observation()` returns absolute xyz.
+        """Drop the per-episode baselines so the next `get_observation()` returns absolute
+        xyz and `get_measured_yaw_offset()` returns 0.0.
 
         Called from `disconnect()` and useful in tests / CLI utilities (find-limits)
         that want to inspect raw absolute telemetry.
         """
         self._initial_tcp_xyz = None
+        self._initial_tcp_rotation = None
+
+    def get_measured_yaw_offset(self) -> float:
+        """Measured wrist yaw offset (radians) about the tool Z axis, relative to the
+        per-episode home orientation captured by `capture_baselines()`.
+
+        Mathematically: `R_delta = R_initial.inv() * R_current` (left-multiply by the
+        inverse of the home rotation); the rotation about tool Z extracted as the first
+        component of `R_delta.as_euler("zyx")`. This is the EXACT inverse of the action
+        side's `R_target = R_home * R_z(target_yaw)` composition — so commanded yaw and
+        measured yaw stay consistent by construction (sub-mrad agreement on a healthy
+        UR10e).
+
+        Returns 0.0 when the baseline is not yet set (e.g. before the first reset, or
+        between `clear_baselines()` and the next reset) so observation-space probes at
+        env construction time get a coherent value.
+        """
+        if self._initial_tcp_rotation is None:
+            return 0.0
+        tcp = self.get_current_tcp()
+        R_current = Rotation.from_rotvec(tcp[3:6])
+        R_delta = self._initial_tcp_rotation.inv() * R_current
+        return float(R_delta.as_euler("zyx")[0])
 
     # -- observation --------------------------------------------------------
 
@@ -465,6 +548,13 @@ class UR10Robot:
         time observation-space sample, or in CLI utilities that operate without an env
         wrapper), `tcp_xyz` falls back to absolute. The vector SHAPE is invariant —
         (16,) in either case — so observation-space probes match the runtime layout.
+
+        Yaw observation extension: when `UR10RobotEnvConfig.use_yaw=True`, the env layer
+        (NOT this driver) augments `agent_pos` to 17-D by inserting the measured tool-Z
+        yaw offset (from `get_measured_yaw_offset()`) between `tcp_xyz` and
+        `gripper_state` — see `UR10RobotEnv._augment_observation()`. The driver stays
+        oblivious to `use_yaw` so CLI utilities reading raw telemetry get the
+        canonical 16-D layout.
         """
         joint_pos = self.get_joint_positions()
         joint_vel = self.get_joint_velocities()
@@ -679,10 +769,24 @@ class UR10Robot:
 class UR10RobotEnv(gym.Env):
     """Gym environment for the UR10e with Cartesian xyz delta-action streaming.
 
-    Action convention (matches RC10 for dataset parity):
-        - Shape (3,): [dx, dy, dz] normalised to [-1, 1].
-        - Shape (4,): [dx, dy, dz, gripper_cmd] where gripper ∈ {0, 1, 2}.
-    Wrist orientation is held fixed at [fixed_rx, fixed_ry, fixed_rz] (axis-angle).
+    Action convention (matches RC10 for dataset parity in the no-yaw case):
+        - Shape (3,): [dx, dy, dz] normalised to [-1, 1]                          # use_yaw=F, use_gripper=F
+        - Shape (4,): [dx, dy, dz, gripper_cmd] where gripper ∈ {0, 1, 2}         # use_yaw=F, use_gripper=T
+        - Shape (4,): [dx, dy, dz, dyaw] (continuous, [-1, 1])                    # use_yaw=T, use_gripper=F
+        - Shape (5,): [dx, dy, dz, dyaw, gripper_cmd]                             # use_yaw=T, use_gripper=T
+
+    Gripper, when present, is ALWAYS the last index — keeps SAC's
+    `DISCRETE_DIMENSION_INDEX = -1` and `UR10GripperPenaltyProcessorStep`'s
+    `action[-1]` indexing valid across yaw modes.
+
+    Wrist orientation: when `use_yaw=False`, held fixed at [fixed_rx, fixed_ry, fixed_rz]
+    (axis-angle). When `use_yaw=True`, the env latches `target_yaw=0` at reset and
+    accumulates `dyaw * yaw_step_size` each step (clipped to yaw_bounds). The
+    streaming target's [rx, ry, rz] is computed by composing the home rotation with a
+    rotation about tool Z: `R_target = R_home @ Rotation.from_euler('z', target_yaw)`
+    (`Rotation.as_rotvec()` → axis-angle for servoL). This is the mathematically
+    correct yaw — simply adding to `fixed_rz` would treat axis-angle components as
+    Euler angles, which they are not.
 
     Lifecycle: the env starts the robot's streaming thread in `__init__` (if connected),
     and the robot's `disconnect()` (called from `close()`) stops the thread cleanly.
@@ -698,10 +802,31 @@ class UR10RobotEnv(gym.Env):
             config.ee_step_sizes["y"],
             config.ee_step_sizes["z"],
         ], dtype=np.float32)
-        self.ee_min = np.array(config.ee_bounds_min, dtype=np.float32)
-        self.ee_max = np.array(config.ee_bounds_max, dtype=np.float32)
+        # ee_bounds_min/max may carry a 4th element for the yaw offset window (radians)
+        # when use_yaw=True. Slice xyz off the front so the existing clipping code stays
+        # 3-D regardless of whether yaw is configured.
+        self.ee_min = np.array(config.ee_bounds_min[:3], dtype=np.float32)
+        self.ee_max = np.array(config.ee_bounds_max[:3], dtype=np.float32)
 
         self.use_gripper = config.use_gripper
+        self.use_yaw = config.use_yaw
+
+        # Yaw parameters (only consulted when use_yaw=True). Defaults match the
+        # InverseKinematicsConfig defaults so a JSON that flips use_yaw=true without
+        # filling in the yaw entries still gets sensible behaviour.
+        self.yaw_step = float(config.ee_step_sizes.get("yaw", 0.01))
+        if len(config.ee_bounds_min) >= 4 and len(config.ee_bounds_max) >= 4:
+            self.yaw_min = float(config.ee_bounds_min[3])
+            self.yaw_max = float(config.ee_bounds_max[3])
+        else:
+            self.yaw_min, self.yaw_max = -1.5708, 1.5708
+
+        # Cache the home rotation so per-step composition is a fast multiply rather than
+        # a fresh rotvec→Rotation conversion every call.
+        self._R_home = Rotation.from_rotvec([
+            float(config.fixed_rx), float(config.fixed_ry), float(config.fixed_rz),
+        ])
+
         self.current_step = 0
 
         # Latched commanded xyz target. Deltas are applied to THIS (the previous command),
@@ -710,24 +835,34 @@ class UR10RobotEnv(gym.Env):
         # the controller to reverse a few mm because the new target lands behind where it
         # was already planning. Initialised from the live TCP at first reset.
         self.target_xyz: np.ndarray | None = None
+        # Latched commanded yaw OFFSET from the home wrist orientation, in radians.
+        # 0.0 on reset; clipped to [yaw_min, yaw_max] each step. Only used when use_yaw.
+        self.target_yaw: float | None = None
 
         # -- spaces ---------------------------------------------------------
-        action_dim = 4 if self.use_gripper else 3
+        # Layout: [xyz (3)] + [yaw (1) if use_yaw] + [gripper (1) if use_gripper].
+        # Gripper stays last so SAC's discrete-critic indexing is preserved.
+        action_dim = 3 + int(self.use_yaw) + int(self.use_gripper)
+        low = [-1.0, -1.0, -1.0]
+        high = [1.0, 1.0, 1.0]
+        if self.use_yaw:
+            low.append(-1.0)
+            high.append(1.0)
         if self.use_gripper:
-            low = np.concatenate([-np.ones(3), [0.0]])
-            high = np.concatenate([np.ones(3), [2.0]])
-        else:
-            low = -np.ones(3)
-            high = np.ones(3)
+            low.append(0.0)
+            high.append(2.0)
         self.action_space = gym.spaces.Box(
-            low=low.astype(np.float32),
-            high=high.astype(np.float32),
+            low=np.array(low, dtype=np.float32),
+            high=np.array(high, dtype=np.float32),
             shape=(action_dim,),
             dtype=np.float32,
         )
 
         if self.robot.is_connected:
-            sample = self.robot.get_observation()
+            # Sample the env's actual observation layout, including the optional yaw slot
+            # when use_yaw=True. Sizes the gym space from the augmented shape so policies
+            # see the same dim at probe time and at runtime.
+            sample = self._augment_observation(self.robot.get_observation())
             obs_spaces: dict[str, gym.spaces.Box] = {
                 OBS_STATE: gym.spaces.Box(
                     low=-np.inf,
@@ -753,6 +888,174 @@ class UR10RobotEnv(gym.Env):
             )
 
     # -- gym interface ------------------------------------------------------
+
+    def _augment_observation(self, obs: dict) -> dict:
+        """Insert the measured yaw offset into `agent_pos` when `use_yaw=True`.
+
+        Layout (use_yaw=True): `[joint_pos(6), joint_vel(6), tcp_xyz_rel(3),
+        yaw_offset(1), gripper(1)]` (17-D). Layout (use_yaw=False): unchanged 16-D from
+        the robot driver. Gripper stays at index `-1` in BOTH layouts, preserving SAC's
+        `DISCRETE_DIMENSION_INDEX = -1` and the gripper-penalty processor's
+        `observation.state[-1]` indexing.
+
+        Mutates `obs["agent_pos"]` in place when augmenting; returns `obs` either way
+        so the call site can read it inline.
+        """
+        if not self.use_yaw:
+            return obs
+        agent_pos = obs["agent_pos"]
+        yaw_obs = self.robot.get_measured_yaw_offset()
+        # Insert yaw before the gripper slot. `np.concatenate` over three small slices is
+        # ~50 ns at this scale — negligible next to the RTDE read inside get_observation.
+        obs["agent_pos"] = np.concatenate([
+            agent_pos[:-1],
+            np.array([yaw_obs], dtype=agent_pos.dtype),
+            agent_pos[-1:],
+        ])
+        return obs
+
+    # ------------------------------------------------------------------------
+    # v2 ACT-mode API (absolute target poses, RC10-style)
+    # ------------------------------------------------------------------------
+    # The HIL-SERL path (step / reset / _augment_observation) above is unchanged.
+    # The methods below provide a parallel API for ACT training that mirrors
+    # RC10FollowerCut's working setup:
+    #   - Observation: 11-D ABSOLUTE state `[joint_pos(6), tcp_x, tcp_y, tcp_z,
+    #     tcp_yaw_offset, gripper]` + cameras. No joint velocities, no relative
+    #     anchoring on xyz, no per-episode home subtraction.
+    #   - Action: 5-D ABSOLUTE target pose `[target_x, target_y, target_z,
+    #     target_yaw_offset, gripper_state]` in the env's existing frames
+    #     (xyz in base-frame metres, yaw_offset in radians from R_home,
+    #     gripper_state ∈ {0.0=closed, 1.0=open}).
+    #
+    # The v2 recording flow uses the existing `step(delta_action)` to drive the
+    # wrist via gamepad — the only thing that changes is what gets stored in the
+    # dataset (the env's resulting absolute target, not the sparse bang-bang
+    # gamepad delta that caused the v1 ACT collapse-to-zero failure mode).
+
+    def get_act_observation(self) -> dict:
+        """Return the v2 ACT-mode observation: 11-D absolute state + cameras.
+
+        Layout of `agent_pos` (all float32, all absolute):
+            indices 0..5 : `joint_pos` (rad) — RTDE encoder reading
+            index    6   : `tcp_x` (m, base frame)
+            index    7   : `tcp_y` (m, base frame)
+            index    8   : `tcp_z` (m, base frame)
+            index    9   : `tcp_yaw_offset` (rad, relative to R_home — measured
+                           via `get_measured_yaw_offset()`)
+            index   10   : `gripper` (1.0 if open else 0.0)
+
+        Joint velocities are intentionally omitted — they were a noise source in
+        the v1 observation and the v2 policy doesn't need them. xyz is reported
+        ABSOLUTE (not anchored to per-episode home) so the policy can directly
+        ground its position in the workspace frame, matching RC10FollowerCut's
+        proven setup.
+
+        Yaw is reported as an OFFSET from the per-episode home wrist orientation
+        for consistency with `set_act_target` (which composes targets the same
+        way). Both sides of the loop see yaw in the same frame.
+
+        Returns:
+            dict with:
+              - `agent_pos`: np.ndarray shape (11,), float32
+              - `pixels`: dict[name, np.ndarray] — one (H, W, 3) RGB frame per camera
+        """
+        tcp = self.robot.get_current_tcp()  # [x, y, z, rx, ry, rz] absolute
+        joint_pos = self.robot.get_joint_positions()  # (6,) absolute joint angles
+        yaw_offset = self.robot.get_measured_yaw_offset()  # rad, relative to home
+        gripper = float(self.robot.gripper.is_open)  # 0.0 (closed) | 1.0 (open)
+
+        agent_pos = np.concatenate([
+            joint_pos.astype(np.float32),
+            np.array([tcp[0], tcp[1], tcp[2], yaw_offset, gripper], dtype=np.float32),
+        ])
+
+        pixels = {name: cam.async_read() for name, cam in self.robot.cameras.items()}
+        return {"agent_pos": agent_pos, "pixels": pixels}
+
+    def set_act_target(self, action) -> None:
+        """Apply an absolute target pose + gripper command from a v2 ACT action.
+
+        Action layout (5 elements; accepts dict or array-like):
+            [target_x, target_y, target_z, target_yaw_offset, gripper_state]
+        with dict keys ``{"x.pos", "y.pos", "z.pos", "yaw.pos", "gripper.pos"}``
+        (matches RC10FollowerCut's naming convention so `make_robot_action`
+        from `lerobot.policies.utils` builds the dict correctly).
+
+        Semantics:
+          - xyz are absolute base-frame targets in metres. Clipped to
+            ``ee_bounds`` (the same workspace bounds the env's `step` uses).
+          - yaw is an offset from the per-episode home orientation in radians,
+            clipped to ``yaw_bounds``. The full target rotation is composed as
+            ``R_home * R_z(yaw)`` and converted back to axis-angle — exact
+            inverse of `get_measured_yaw_offset`, so commanded and observed
+            yaw stay consistent by construction.
+          - gripper_state in [0, 1]: ``< 0.5`` means "target closed",
+            ``>= 0.5`` means "target open". The driver expects a tri-state
+            command `{0=close, 1=stay, 2=open}` — we translate via current
+            gripper state so we only emit a transition command when the
+            desired state differs (avoids redundant motor commands).
+
+        Side effects:
+          - Updates ``self.target_xyz`` and ``self.target_yaw`` so anything
+            else reading env state (e.g. `auto_reset_to_home`) sees a coherent
+            view.
+          - Calls ``self.robot.set_target_pose(...)`` (non-blocking; the
+            streaming thread picks the new target up on its next 5 ms tick).
+          - Calls ``self.robot.send_gripper(cmd)`` when ``use_gripper=True``.
+        """
+        # Accept both dict and array-like for caller convenience.
+        if isinstance(action, dict):
+            tx = float(action["x.pos"])
+            ty = float(action["y.pos"])
+            tz = float(action["z.pos"])
+            tyaw = float(action["yaw.pos"])
+            tgrip = float(action["gripper.pos"])
+        else:
+            a = np.asarray(action, dtype=np.float32).reshape(-1)
+            if a.shape[0] < 5:
+                raise ValueError(
+                    f"set_act_target expects 5 values (x, y, z, yaw, gripper); got shape {a.shape}"
+                )
+            tx, ty, tz, tyaw, tgrip = (float(v) for v in a[:5])
+
+        # Clip to workspace bounds — same invariants as the delta-action step().
+        tx = float(np.clip(tx, self.ee_min[0], self.ee_max[0]))
+        ty = float(np.clip(ty, self.ee_min[1], self.ee_max[1]))
+        tz = float(np.clip(tz, self.ee_min[2], self.ee_max[2]))
+        if self.use_yaw:
+            tyaw = float(np.clip(tyaw, self.yaw_min, self.yaw_max))
+        else:
+            tyaw = 0.0  # ignore yaw component when yaw is disabled at config level
+
+        # Compose final TCP rotation. R_home is cached at env __init__; composing
+        # with R_z(tyaw) gives the correct axis-angle rotvec for servoL.
+        if self.use_yaw:
+            R_target = self._R_home * Rotation.from_euler("z", tyaw)
+            rx, ry, rz = (float(v) for v in R_target.as_rotvec())
+        else:
+            rx = self.config.fixed_rx
+            ry = self.config.fixed_ry
+            rz = self.config.fixed_rz
+
+        # Mirror env internal state so HIL-SERL helpers reading these (e.g.
+        # `auto_reset_to_home`) see a consistent commanded pose.
+        self.target_xyz = np.array([tx, ty, tz], dtype=np.float32)
+        if self.use_yaw:
+            self.target_yaw = tyaw
+
+        self.robot.set_target_pose([tx, ty, tz, rx, ry, rz])
+
+        if self.use_gripper:
+            current_state = float(self.robot.gripper.is_open)
+            desired_state = 1.0 if tgrip >= 0.5 else 0.0
+            if desired_state == current_state:
+                cmd = 1  # STAY
+            elif desired_state > current_state:
+                cmd = 2  # OPEN  (was closed)
+            else:
+                cmd = 0  # CLOSE (was open)
+            self.robot.send_gripper(cmd)
 
     def reset(
         self,
@@ -796,6 +1099,9 @@ class UR10RobotEnv(gym.Env):
         # always in *absolute* base-frame coordinates — only the policy-facing observation
         # is relative.
         self.target_xyz = np.array(self.robot.get_current_tcp()[:3], dtype=np.float32)
+        # Reset the yaw offset to 0 every episode (home orientation = R_home, unchanged).
+        # The first step delta accumulates from here and stays inside [yaw_min, yaw_max].
+        self.target_yaw = 0.0
 
         # HIL-SERL relative-observation baseline: anchor `tcp_xyz` to the post-settling
         # reset pose. From this point on `get_observation()` returns `tcp_xyz` expressed
@@ -803,7 +1109,7 @@ class UR10RobotEnv(gym.Env):
         self.robot.capture_baselines()
 
         self.current_step = 0
-        obs = self.robot.get_observation()
+        obs = self._augment_observation(self.robot.get_observation())
         return obs, {TeleopEvents.IS_INTERVENTION: False}
 
     def step(self, action) -> tuple[dict, float, bool, bool, dict]:
@@ -822,24 +1128,53 @@ class UR10RobotEnv(gym.Env):
                 "recorded into the dataset."
             )
 
-        continuous = np.asarray(action[:3], dtype=np.float32)
-        gripper_cmd = int(round(float(action[3]))) if len(action) > 3 else 1
+        # Action layout (see class docstring):
+        #   [dx, dy, dz, (dyaw if use_yaw,) (gripper_cmd if use_gripper)]
+        # Gripper is always the LAST element when present — keeps SAC's discrete-critic
+        # index and the gripper-penalty processor's `action[-1]` valid in all modes.
+        continuous_xyz = np.asarray(action[:3], dtype=np.float32)
+        if self.use_yaw:
+            dyaw = float(action[3])
+        gripper_cmd = (
+            int(round(float(action[-1])))
+            if self.use_gripper and len(action) >= (3 + int(self.use_yaw) + 1)
+            else 1
+        )
 
-        # Defensive: if reset() wasn't called yet, latch onto the live TCP once.
+        # Defensive: if reset() wasn't called yet, latch onto the live TCP / yaw once.
         if self.target_xyz is None:
             self.target_xyz = np.array(self.robot.get_current_tcp()[:3], dtype=np.float32)
+        if self.use_yaw and self.target_yaw is None:
+            self.target_yaw = 0.0
 
         # Apply delta to the previously commanded target (NOT the live TCP) and clip.
-        delta_xyz = continuous * self.ee_step
+        delta_xyz = continuous_xyz * self.ee_step
         self.target_xyz = np.clip(self.target_xyz + delta_xyz, self.ee_min, self.ee_max)
+        if self.use_yaw:
+            self.target_yaw = float(np.clip(
+                self.target_yaw + dyaw * self.yaw_step, self.yaw_min, self.yaw_max,
+            ))
+
+        # Orientation: when yaw is enabled, compose the home rotation with an additional
+        # rotation about *tool* Z (post-multiply). `as_rotvec()` returns the axis-angle
+        # 3-vector that servoL consumes. When yaw is disabled, fall through to the
+        # legacy fixed orientation — guarantees byte-for-byte identical behaviour for
+        # the non-yaw path.
+        if self.use_yaw:
+            R_target = self._R_home * Rotation.from_euler("z", self.target_yaw)
+            rx, ry, rz = (float(v) for v in R_target.as_rotvec())
+        else:
+            rx = self.config.fixed_rx
+            ry = self.config.fixed_ry
+            rz = self.config.fixed_rz
 
         target_pose = [
             float(self.target_xyz[0]),
             float(self.target_xyz[1]),
             float(self.target_xyz[2]),
-            self.config.fixed_rx,
-            self.config.fixed_ry,
-            self.config.fixed_rz,
+            rx,
+            ry,
+            rz,
         ]
 
         # Non-blocking: just hand the new target to the streaming thread.
@@ -847,7 +1182,7 @@ class UR10RobotEnv(gym.Env):
         if self.use_gripper:
             self.robot.send_gripper(gripper_cmd)
 
-        obs = self.robot.get_observation()
+        obs = self._augment_observation(self.robot.get_observation())
         self.current_step += 1
         return obs, 0.0, False, False, {TeleopEvents.IS_INTERVENTION: False}
 

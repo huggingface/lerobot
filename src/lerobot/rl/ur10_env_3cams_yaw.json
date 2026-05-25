@@ -1,7 +1,7 @@
 {
     "env": {
         "name": "ur10",
-        "task": "usb_insertiontest",
+        "task": "pcb_act_3cams_yaw",
         "fps": 10,
         "robot": {
             "type": "ur10",
@@ -21,9 +21,11 @@
         "teleop": {
             "type": "gamepad",
             "use_gripper": true,
+            "use_yaw": true,
             "invert_delta_x": true,
             "invert_delta_y": true,
-            "invert_delta_z": false
+            "invert_delta_z": false,
+            "invert_delta_yaw": false
         },
         "processor": {
             "control_mode": "gamepad",
@@ -32,28 +34,29 @@
                 "gripper_penalty": -0.02
             },
             "reset": {
-                "fixed_reset_joint_positions": [-0.2001, -0.4956, 0.1587, 3.14159, 0.0, 0.0],
+                "fixed_reset_joint_positions": [-0.1104, -0.5698, 0.3558, -3.141, 0.0, 0.0],
                 "reset_time_s": 5.0,
-                "control_time_s": 25.0,
+                "control_time_s": 100.0,
                 "terminate_on_success": true,
-                "randomization_xy": 0.015
+                "randomization_xy": 0.00
             },
             "observation": {
                 "display_cameras": true
             },
             "image_preprocessing": {
                 "crop_params_dict": {
-                    "observation.images.front": [182, 176, 290, 342],
-                    "observation.images.side":  [3, 47, 324, 426],
-                    "observation.images.wrist": [117, 131, 351, 405]
+                    "observation.images.front": [9, 7, 469, 619],
+                    "observation.images.side":  [11, 31, 457, 585],
+                    "observation.images.wrist": [41, 59, 429, 547]
                 },
                 "resize_size": [128, 128]
             },
             "inverse_kinematics": {
-                "end_effector_step_sizes": {"x": 0.001, "y": 0.001, "z": 0.001},
+                "use_yaw": true,
+                "end_effector_step_sizes": {"x": 0.003, "y": 0.003, "z": 0.003, "yaw": 0.01},
                 "end_effector_bounds": {
-                    "min": [-0.2166, -0.5254, 0.1477],
-                    "max": [-0.1863, -0.4851, 0.1587]
+                    "min": [-0.2375, -0.6237, 0.3285, -0.27],
+                    "max": [-0.0958, -0.5218, 0.3676, 0.37]
                 }
             }
         }
@@ -61,8 +64,8 @@
 
 
     "dataset": {
-        "repo_id": "local/ur10_usb_insertiontest",
-        "task": "usb_insertiontest",
+        "repo_id": "local/pcb_act_3cams_yaw",
+        "task": "pcb_act_3cams_yaw",
         "num_episodes_to_record": 20,
         "push_to_hub": false
     },

@@ -24,6 +24,11 @@ from ..config import TeleoperatorConfig
 class GamepadTeleopConfig(TeleoperatorConfig):
     use_gripper: bool = True
 
+    # When True, add a 4th continuous DOF (yaw, rotation about the tool Z axis) to the
+    # action vector. Right Stick X drives delta_yaw. Defaults False so existing robots
+    # (RC10, etc.) and existing recorded datasets are unaffected.
+    use_yaw: bool = False
+
     # Per-axis sign flips applied in GamepadTeleop.get_action(). Use these when the robot's
     # base-frame x/y/z axes don't match the operator's intuitive forward/back/left/right/up/down
     # at the workstation (e.g. UR10e mounted facing the operator versus RC10's frame). Defaults
@@ -31,6 +36,7 @@ class GamepadTeleopConfig(TeleoperatorConfig):
     invert_delta_x: bool = False
     invert_delta_y: bool = False
     invert_delta_z: bool = False
+    invert_delta_yaw: bool = False
 
     # Symmetric deadzone applied to each stick axis BEFORE sign-flip. Any |delta| <= deadzone
     # is forced to 0.0; values above are linearly rescaled so 1.0 still maps to full deflection

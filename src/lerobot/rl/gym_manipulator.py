@@ -381,8 +381,12 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
         ik_cfg = cfg.processor.inverse_kinematics
         reset_cfg = cfg.processor.reset
         use_gripper = cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else True
+        # `getattr` so old JSON configs (no use_yaw key) parse cleanly. When use_yaw=True,
+        # the yaw step + bounds are read from the existing ee dicts (see UR10RobotEnvConfig
+        # docstring — yaw at index 3 of bounds.min/max, key "yaw" in ee_step_sizes).
+        use_yaw = bool(getattr(ik_cfg, "use_yaw", False)) if ik_cfg else False
 
-        # `fixed_reset_joint_positions` is a misnomer in the lerobot config schema — it carries
+        # `fixed_reset_joint_positions` is a misnomer in the lerobot config schema - it carries
         # the home TCP pose [x, y, z, rx, ry, rz] in axis-angle. Same convention as RC10.
         home_tcp = list(reset_cfg.fixed_reset_joint_positions) if reset_cfg \
                    else [0.5, 0.0, 0.4, 3.14159, 0.0, 0.0]
@@ -400,6 +404,7 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
             home_tcp=home_tcp,
             reset_time_s=reset_cfg.reset_time_s if reset_cfg else 5.0,
             use_gripper=use_gripper,
+            use_yaw=use_yaw,
             randomization_xy=reset_cfg.randomization_xy if reset_cfg else 0.0,
             randomization_z=reset_cfg.randomization_z if reset_cfg else 0.0,
         )
@@ -522,14 +527,20 @@ def make_processors(
         from lerobot.robots.ur10 import UR10GripperPenaltyProcessorStep
 
         use_gripper = cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else True
+        # Read use_yaw from the IK config (see make_robot_env for the same lookup). Must
+        # match what the env was constructed with so the intervention step builds an
+        # action of the right shape for downstream env.step().
+        ik_cfg = cfg.processor.inverse_kinematics
+        use_yaw = bool(getattr(ik_cfg, "use_yaw", False)) if ik_cfg else False
 
         # Action pipeline: teleop reads + intervention handling + tensor to numpy.
-        # No Python-side IK — UR10e's controller does IK at 500 Hz when servoL is called.
+        # No Python-side IK - UR10e's controller does IK at 500 Hz when servoL is called.
         action_pipeline_steps = [
             AddTeleopActionAsComplimentaryDataStep(teleop_device=teleop_device),
             AddTeleopEventsAsInfoStep(teleop_device=teleop_device),
             InterventionActionProcessorStep(
                 use_gripper=use_gripper,
+                use_yaw=use_yaw,
                 terminate_on_success=terminate_on_success,
             ),
             Torch2NumpyActionProcessorStep(),
@@ -556,7 +567,7 @@ def make_processors(
             )
 
         # UR10-specific discrete-gripper penalty. Inserted before AddBatchDimension so the
-        # state vector is 1-D and the action is a flat torch.Tensor — simplifies indexing.
+        # state vector is 1-D and the action is a flat torch.Tensor - simplifies indexing.
         if (
             cfg.processor.gripper is not None
             and cfg.processor.gripper.use_gripper
@@ -796,10 +807,13 @@ def control_loop(
         if teleop_device:
             action_features = teleop_device.action_features
         else:
+            # Derive shape from the env's action_space so this fallback adapts to yaw
+            # mode without re-hardcoding the (4,) dim. `names` left as None — the schema
+            # consumer only needs shape + dtype for the policy-less path.
             action_features = {
                 "dtype": "float32",
-                "shape": (4,),
-                "names": ["delta_x", "delta_y", "delta_z", "gripper"],
+                "shape": tuple(env.action_space.shape),
+                "names": None,
             }
         features = {
             ACTION: action_features,
@@ -846,10 +860,13 @@ def control_loop(
         # print(f"Starting episode {episode_idx+1}/{cfg.dataset.num_episodes_to_record}...", end="\r", flush=True)
         step_start_time = time.perf_counter()
 
-        # Create a neutral action (no movement)
-        neutral_action = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32)
+        # Create a neutral action (no movement). Size from the env's action_space so the
+        # zero-fill covers any combination of (xyz, yaw, gripper). Gripper, when present,
+        # is always at index -1, so we overwrite the last element with STAY=1.0.
+        ad = int(env.action_space.shape[0])
+        neutral_action = torch.zeros(ad, dtype=torch.float32)
         if use_gripper:
-            neutral_action = torch.cat([neutral_action, torch.tensor([1.0])])  # Gripper stay (for RC10 1.0 is for stay instead of 0.0)
+            neutral_action[-1] = 1.0  # STAY (RC10/UR10 convention; 0.0 = close, 2.0 = open)
 
         # Use the new step function
         transition = step_env_and_process_transition(

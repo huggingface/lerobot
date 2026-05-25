@@ -3,8 +3,11 @@
 Mirrors ``act_train/act_using_example.py`` but routes through ``UR10RobotEnv``
 (``make_robot_env`` + ``make_processors`` from ``gym_manipulator``) instead of
 the direct-robot-`send_action` pattern. UR10 doesn't have ``send_action``; the
-env's ``step()`` takes the 4-D ``[dx, dy, dz, gripper]`` action and accumulates
-it into the streaming target.
+env's ``step()`` takes either the 4-D ``[dx, dy, dz, gripper]`` action or the
+5-D ``[dx, dy, dz, dyaw, gripper]`` action (when ``use_yaw`` is set in the JSON
+config) and accumulates the deltas into the streaming target. Gripper is always
+the LAST element — this script indexes it as ``action[-1]`` so the same code
+path handles both layouts.
 
 The gamepad stays connected during eval as a safety override (Triangle / Cross
 to end an episode if the policy misbehaves; intervention substitutes the policy
@@ -49,11 +52,11 @@ logger = logging.getLogger(__name__)
 
 
 # -- user-tunable ---------------------------------------------------------------
-MODEL_DIR = "outputs/act/ur10/usb_insertion_act_2cams/last"
-DATASET_REPO_ID = "local/usb_insertion_act_2cams"   # for dataset stats
-CONFIG_PATH = "src/lerobot/rl/ur10_env_2cams.json"
+MODEL_DIR = "outputs/act/ur10/pcb_act_3cams_yaw2/last"
+DATASET_REPO_ID = "local/pcb_act_3cams_yaw"   # for dataset stats
+CONFIG_PATH = "src/lerobot/rl/ur10_env_3cams_yaw.json"
 NUM_EPISODES = 30
-EPISODE_TIME_S = 20      # safety upper bound; user ends earlier via gamepad
+EPISODE_TIME_S = 30      # safety upper bound; user ends earlier via gamepad
 RESET_TIME_S = 7         # total between-episode budget (motion + hold-at-home)
 RESET_SPEED_MPS = 0.1    # auto-reset linear velocity, m/s (matches env.reset's moveL)
 FPS = 10
@@ -72,7 +75,7 @@ DAGGER_TASK = "usb_insertion"
 # default is 0.01 (heavy smoothing). Set to None to leave the trained value
 # untouched. Only takes effect if the model was trained with ensembling on
 # (i.e. cfg.temporal_ensemble_coeff is not None and n_action_steps == 1).
-EVAL_TEMPORAL_ENSEMBLE_COEFF: float | None = 0.05
+EVAL_TEMPORAL_ENSEMBLE_COEFF =  None
 
 # Inference-time action gain on the Cartesian dx/dy/dz components (gripper
 # left untouched). ACT replays demonstration step sizes; if the demos showed
@@ -94,6 +97,19 @@ def main() -> None:
     )
 
     dt = 1.0 / FPS
+
+    # Yaw / gripper flags drive both the dataset feature schema and the per-step gripper
+    # translation. Read use_yaw via getattr so an older JSON without the key still parses.
+    ik_cfg = cfg.env.processor.inverse_kinematics
+    use_yaw = bool(getattr(ik_cfg, "use_yaw", False)) if ik_cfg else False
+    use_gripper = (
+        cfg.env.processor.gripper.use_gripper
+        if cfg.env.processor.gripper is not None
+        else True
+    )
+    # Number of continuous dims at the front of the action vector. Gripper (if present)
+    # follows at index -1. Layout: [dx, dy, dz, (dyaw,) (gripper,)].
+    cont_dims = 3 + int(use_yaw)
 
     metadata = LeRobotDatasetMetadata(DATASET_REPO_ID)
     policy: ACTPolicy = ACTPolicy.from_pretrained(MODEL_DIR)
@@ -141,8 +157,12 @@ def main() -> None:
     dagger_dataset: LeRobotDataset | None = None
     dagger_features: dict = {}
     if RECORD_DAGGER_DATASET:
-        # use_gripper is True for the UR10 env config we ship.
-        dagger_features = _build_features(transition[TransitionKey.OBSERVATION], use_gripper=True)
+        # Match the recording schema exactly — same use_gripper / use_yaw flags so an
+        # ACT model fine-tuned on the DAgger set sees the same action layout it saw
+        # during the original record run.
+        dagger_features = _build_features(
+            transition[TransitionKey.OBSERVATION], use_gripper=use_gripper, use_yaw=use_yaw,
+        )
         dagger_dataset = LeRobotDataset.create(
             repo_id=DAGGER_REPO_ID,
             fps=FPS,
@@ -188,46 +208,62 @@ def main() -> None:
             if action.ndim > 1:
                 action = action.squeeze(0)
 
-            # Inference-time action gain on dx/dy/dz only (gripper component left
-            # untouched — it's a state prediction that gets discretized below).
-            # Clamp to env's normalized action range [-1, 1] so peak-speed approach
-            # motions are bounded at full speed instead of overshooting.
-            if EVAL_ACTION_GAIN != 1.0 and action.numel() >= 4:
-                action[:3] = (action[:3] * EVAL_ACTION_GAIN).clamp(-1.0, 1.0)
+            # Inference-time action gain on the continuous dims (xyz + yaw if enabled),
+            # leaving gripper untouched — it's a state prediction that gets discretized
+            # below. Clamp to env's normalized action range [-1, 1] so peak-speed
+            # approach motions are bounded at full speed instead of overshooting.
+            if EVAL_ACTION_GAIN != 1.0 and action.numel() >= cont_dims:
+                action[:cont_dims] = (action[:cont_dims] * EVAL_ACTION_GAIN).clamp(-1.0, 1.0)
 
             # Translate policy's gripper STATE prediction → env.step's COMMAND encoding.
-            # Dataset action[3] is in {0.0=closed, 1.0=open} (state encoding from the
+            # Dataset action[-1] is in {0.0=closed, 1.0=open} (state encoding from the
             # translation script); after unnormalize the policy outputs ~[0, 1]. We
             # compare against the gripper's currently-commanded state (read from
-            # observation.state[-1] — ur10_robot.py:472 keeps that flag in sync with
+            # observation.state[-1] — ur10_robot.py keeps that flag in sync with
             # send_gripper) and emit a transition command only when the desired state
             # differs. UR10RobotEnv.step interprets {0=CLOSE, 1=STAY, 2=OPEN}.
-            if action.numel() >= 4:
+            #
+            # Yaw mode: the continuous dxyz (+dyaw) precede the gripper. action[-1] is
+            # the gripper regardless of layout; we rebuild the action by passing the
+            # leading `cont_dims` continuous values through unchanged and replacing the
+            # last element with the discretized command.
+            if use_gripper and action.numel() >= cont_dims + 1:
                 a = action.detach().cpu().float().numpy()
                 obs_state = transition[TransitionKey.OBSERVATION][OBS_STATE]
                 if isinstance(obs_state, torch.Tensor):
                     obs_state = obs_state.detach().cpu().float().numpy()
                 current_state = float(np.asarray(obs_state).reshape(-1)[-1])  # last dim
-                predicted_state = 1.0 if float(a[3]) > 0.5 else 0.0
+                predicted_state = 1.0 if float(a[-1]) > 0.5 else 0.0
                 if predicted_state == current_state:
                     cmd_int, cmd_name = 1, "STAY"
                 elif predicted_state > current_state:
                     cmd_int, cmd_name = 2, "OPEN"   # closed → open
                 else:
                     cmd_int, cmd_name = 0, "CLOSE"  # open → closed
-                # Rewrite action[3] to the discrete command env.step expects.
-                action = torch.tensor(
-                    [float(a[0]), float(a[1]), float(a[2]), float(cmd_int)],
-                    device=action.device, dtype=action.dtype,
-                )
-                logger.info(
-                    "  step %d  action=[dx=%+.3f dy=%+.3f dz=%+.3f g_raw=%+.3f "
-                    "→ desired=%s, current=%s] → gripper=%s",
-                    episode_step, float(a[0]), float(a[1]), float(a[2]), float(a[3]),
-                    "OPEN" if predicted_state == 1.0 else "CLOSED",
-                    "OPEN" if current_state == 1.0 else "CLOSED",
-                    cmd_name,
-                )
+                # Rewrite the last element to the discrete command env.step expects;
+                # keep the leading continuous dims intact.
+                new_vals = [float(a[i]) for i in range(cont_dims)] + [float(cmd_int)]
+                action = torch.tensor(new_vals, device=action.device, dtype=action.dtype)
+                if use_yaw:
+                    logger.info(
+                        "  step %d  action=[dx=%+.3f dy=%+.3f dz=%+.3f dyaw=%+.3f g_raw=%+.3f "
+                        "→ desired=%s, current=%s] → gripper=%s",
+                        episode_step,
+                        float(a[0]), float(a[1]), float(a[2]), float(a[3]), float(a[-1]),
+                        "OPEN" if predicted_state == 1.0 else "CLOSED",
+                        "OPEN" if current_state == 1.0 else "CLOSED",
+                        cmd_name,
+                    )
+                else:
+                    logger.info(
+                        "  step %d  action=[dx=%+.3f dy=%+.3f dz=%+.3f g_raw=%+.3f "
+                        "→ desired=%s, current=%s] → gripper=%s",
+                        episode_step,
+                        float(a[0]), float(a[1]), float(a[2]), float(a[-1]),
+                        "OPEN" if predicted_state == 1.0 else "CLOSED",
+                        "OPEN" if current_state == 1.0 else "CLOSED",
+                        cmd_name,
+                    )
 
             transition = step_env_and_process_transition(
                 env=env,
@@ -254,13 +290,14 @@ def main() -> None:
                     action_to_record = action_to_record.squeeze(0)
 
                 # Overwrite gripper command with the post-step gripper STATE — same
-                # source of truth as record_ur10_act.py. See ur10_robot.py:472.
-                if action_to_record.numel() >= 4:
+                # source of truth as record_ur10_act.py. Gripper is always the LAST
+                # element (action[-1]) in both 4-D and 5-D yaw layouts.
+                if use_gripper:
                     obs_state_raw = transition[TransitionKey.OBSERVATION][OBS_STATE]
                     if isinstance(obs_state_raw, torch.Tensor):
                         obs_state_raw = obs_state_raw.detach().cpu().float()
                     gripper_state = float(np.asarray(obs_state_raw).reshape(-1)[-1])
-                    action_to_record[3] = gripper_state
+                    action_to_record[-1] = gripper_state
 
                 dagger_frame: dict = {ACTION: action_to_record, "task": DAGGER_TASK}
                 for k, v in transition[TransitionKey.OBSERVATION].items():
@@ -306,8 +343,12 @@ def main() -> None:
                 env_processor.reset()
                 action_processor.reset()
                 policy.reset()  # clear ACT chunk queue + temporal ensembler.
+                # Go through `env._augment_observation` so the post-reset obs carries
+                # the yaw slot when use_yaw=True (matches env.reset()/env.step()).
+                # Without this wrap, episode N+1's first transition is raw 16-D from
+                # the driver and the 17-D normalizer raises a shape mismatch.
                 transition = env_processor(create_transition(
-                    observation=env.robot.get_observation(),
+                    observation=env._augment_observation(env.robot.get_observation()),
                     info={TeleopEvents.IS_INTERVENTION: False},
                 ))
                 episode_step = 0

@@ -16,12 +16,20 @@ Usage:
 
 The orientation is pinned to the *current* TCP at the end of warmup, so pre-pose the wrist
 during warmup before recording begins.
+
+Yaw discovery (optional):
+    Add `--use_yaw` to allow Right Stick X to rotate the wrist about its tool Z axis
+    during the recording phase. The script tracks the min/max yaw OFFSET reached
+    (relative to the warmup-end orientation) and prints a `yaw_bounds` line for the
+    JSON config:
+        processor.inverse_kinematics.end_effector_bounds.min/max  # 4th element = yaw offset
 """
 
 import argparse
 import time
 
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 from lerobot.utils.robot_utils import precise_sleep
 
@@ -34,21 +42,27 @@ def main():
                         help="[x y z rx ry rz] tool offset from flange (m, axis-angle rad)")
     parser.add_argument("--payload_mass", type=float, default=0.0)
     parser.add_argument("--payload_cog", type=float, nargs=3, default=[0.0, 0.0, 0.0])
-    parser.add_argument("--gripper_port", type=str, default="/dev/ttyUSB0")
+    parser.add_argument("--gripper_port", type=str, default="/dev/ttyACM0")
     parser.add_argument("--gripper_baudrate", type=int, default=115200)
-    parser.add_argument("--teleop_time_s", type=float, default=60.0)
+    parser.add_argument("--teleop_time_s", type=float, default=120.0)
     parser.add_argument("--warmup_time_s", type=float, default=5.0)
     parser.add_argument("--fps", type=int, default=10)
-    parser.add_argument("--ee_step_x", type=float, default=0.001)
-    parser.add_argument("--ee_step_y", type=float, default=0.001)
-    parser.add_argument("--ee_step_z", type=float, default=0.001)
-    parser.add_argument("--servo_lookahead_time", type=float, default=0.05)
-    parser.add_argument("--servo_gain", type=float, default=800.0)
+    parser.add_argument("--ee_step_x", type=float, default=0.002)
+    parser.add_argument("--ee_step_y", type=float, default=0.002)
+    parser.add_argument("--ee_step_z", type=float, default=0.002)
+    parser.add_argument("--servo_lookahead_time", type=float, default=0.15)
+    parser.add_argument("--servo_gain", type=float, default=100.0)
     # UR10e base frame is rotated relative to the operator at our workstation; flip x/y so
     # the gamepad sticks map intuitively to forward/back and left/right.
     parser.add_argument("--invert_delta_x", action="store_true", default=True)
     parser.add_argument("--invert_delta_y", action="store_true", default=True)
     parser.add_argument("--invert_delta_z", action="store_true", default=False)
+    # Optional yaw DOF — when enabled, Right Stick X rotates the wrist about tool Z
+    # during the recording phase, and the printed results include a `yaw_bounds` line.
+    parser.add_argument("--use_yaw", action="store_true", default=False)
+    parser.add_argument("--invert_delta_yaw", action="store_true", default=False)
+    parser.add_argument("--yaw_step", type=float, default=0.01,
+                        help="Yaw step size in radians per unit action (default 0.01)")
     args = parser.parse_args()
 
     # Imports that need hardware
@@ -85,14 +99,17 @@ def main():
     teleop = GamepadTeleop(
         GamepadTeleopConfig(
             use_gripper=True,
+            use_yaw=args.use_yaw,
             invert_delta_x=args.invert_delta_x,
             invert_delta_y=args.invert_delta_y,
             invert_delta_z=args.invert_delta_z,
+            invert_delta_yaw=args.invert_delta_yaw,
         )
     )
     teleop.connect()
 
     ee_step = np.array([args.ee_step_x, args.ee_step_y, args.ee_step_z], dtype=np.float32)
+    yaw_step = float(args.yaw_step)
     dt = 1.0 / args.fps
 
     # Latched commanded xyz target — deltas apply to the previous command, not to the live
@@ -118,6 +135,13 @@ def main():
     fixed_rx = fixed_ry = fixed_rz = None
     # Captured at end of warmup as the position-only relative-observation baseline.
     initial_tcp_xyz: np.ndarray | None = None
+    # Yaw tracking — only populated when --use_yaw. `R_home_warm` is built at warmup
+    # end to mirror the env's `_R_home`; `target_yaw_offset` accumulates per step and is
+    # tracked into `min_yaw_offset` / `max_yaw_offset` for the printed `yaw_bounds`.
+    R_home_warm: Rotation | None = None
+    target_yaw_offset: float = 0.0
+    min_yaw_offset: float = 0.0
+    max_yaw_offset: float = 0.0
 
     start_t = time.perf_counter()
     warmup_done = False
@@ -133,10 +157,13 @@ def main():
         while True:
             t0 = time.perf_counter()
 
+            # print(robot.get_tcp_force())
+
             teleop_action = teleop.get_action()
             dx = teleop_action.get("delta_x", 0.0)
             dy = teleop_action.get("delta_y", 0.0)
             dz = teleop_action.get("delta_z", 0.0)
+            dyaw = float(teleop_action.get("delta_yaw", 0.0)) if args.use_yaw else 0.0
             grip = teleop_action.get("gripper", 1)  # 0=close, 1=stay, 2=open
 
             tcp = robot.get_current_tcp()
@@ -145,8 +172,21 @@ def main():
             target_xyz = target_xyz + delta_xyz
 
             if fixed_rx is None:
-                # Use the live wrist orientation while warming up.
+                # Use the live wrist orientation while warming up. Yaw input (if any) is
+                # ignored here — pre-posing happens via manual physical manipulation, and
+                # accumulating dyaw before R_home is captured would just bias the baseline.
                 rx, ry, rz = float(tcp[3]), float(tcp[4]), float(tcp[5])
+            elif args.use_yaw and R_home_warm is not None:
+                # Recording phase with yaw enabled: accumulate yaw OFFSET, clip to a wide
+                # ±π window (the printed yaw_bounds capture the *actual* range used), and
+                # compose against the warmup-end orientation. Matches UR10RobotEnv.step.
+                target_yaw_offset = float(np.clip(
+                    target_yaw_offset + dyaw * yaw_step, -np.pi, np.pi,
+                ))
+                min_yaw_offset = min(min_yaw_offset, target_yaw_offset)
+                max_yaw_offset = max(max_yaw_offset, target_yaw_offset)
+                R_target = R_home_warm * Rotation.from_euler("z", target_yaw_offset)
+                rx, ry, rz = (float(v) for v in R_target.as_rotvec())
             else:
                 rx, ry, rz = fixed_rx, fixed_ry, fixed_rz
 
@@ -183,6 +223,9 @@ def main():
                     fixed_rx = float(tcp_full[3])
                     fixed_ry = float(tcp_full[4])
                     fixed_rz = float(tcp_full[5])
+                    # Cache the home rotation so per-step yaw composition mirrors the
+                    # env's `_R_home` exactly. Only consulted when --use_yaw.
+                    R_home_warm = Rotation.from_rotvec([fixed_rx, fixed_ry, fixed_rz])
 
                     # Anchor the position-only relative-observation baseline at warmup
                     # end. This is the analog of `UR10Robot.capture_baselines()` in the
@@ -283,19 +326,51 @@ def main():
     print(f"ee_bounds_min = {np.round(min_tcp[:3], r).tolist()}")
     print(f"ee_bounds_max = {np.round(max_tcp[:3], r).tolist()}")
 
-    # 16-D dataset_stats: [joint_pos(6), joint_vel(6), tcp_xyz(3) RELATIVE, gripper(1)]
-    # Matches the env's `get_observation()` exactly — tcp_xyz is anchored at reset.
+    if args.use_yaw:
+        # Yaw OFFSET range observed during recording (radians, relative to fixed_rz).
+        # Paste as the 4th element of end_effector_bounds.min/max in the JSON config —
+        # the env reads bounds[3] when `use_yaw=true` (see UR10RobotEnv.__init__).
+        print("\n# Yaw OFFSET bounds (radians, relative to fixed_rz) — paste as the 4th element")
+        print("# of processor.inverse_kinematics.end_effector_bounds.min and .max")
+        print("# Also set processor.inverse_kinematics.use_yaw = true and add 'yaw' to")
+        print("# processor.inverse_kinematics.end_effector_step_sizes (e.g. 0.01).")
+        print(f"yaw_offset_min = {round(min_yaw_offset, r)}")
+        print(f"yaw_offset_max = {round(max_yaw_offset, r)}")
+        print("# Example merged bounds row:")
+        bounds_min_with_yaw = np.round(min_tcp[:3], r).tolist() + [round(min_yaw_offset, r)]
+        bounds_max_with_yaw = np.round(max_tcp[:3], r).tolist() + [round(max_yaw_offset, r)]
+        print(f'#   "min": {bounds_min_with_yaw}')
+        print(f'#   "max": {bounds_max_with_yaw}')
+
+    # Dataset_stats for observation.state. 16-D in no-yaw mode, 17-D in yaw mode:
+    #   no-yaw: [joint_pos(6), joint_vel(6), tcp_xyz(3) RELATIVE, gripper(1)]
+    #   yaw   : [joint_pos(6), joint_vel(6), tcp_xyz(3) RELATIVE, yaw_offset(1), gripper(1)]
+    # Matches `UR10RobotEnv._augment_observation()` — gripper is always at index -1.
     gripper_min = 0.0
     gripper_max = 1.0
-    obs_min = np.concatenate([
-        min_joint_pos, min_joint_vel, min_tcp_xyz_rel, [gripper_min],
-    ])
-    obs_max = np.concatenate([
-        max_joint_pos, max_joint_vel, max_tcp_xyz_rel, [gripper_max],
-    ])
+    if args.use_yaw:
+        obs_min = np.concatenate([
+            min_joint_pos, min_joint_vel, min_tcp_xyz_rel,
+            [min_yaw_offset], [gripper_min],
+        ])
+        obs_max = np.concatenate([
+            max_joint_pos, max_joint_vel, max_tcp_xyz_rel,
+            [max_yaw_offset], [gripper_max],
+        ])
+        banner = "17D  [tcp_xyz RELATIVE, yaw_offset RELATIVE]"
+        order = "[6 joint_pos, 6 joint_vel, 3 tcp_xyz_rel, 1 yaw_offset, 1 gripper]"
+    else:
+        obs_min = np.concatenate([
+            min_joint_pos, min_joint_vel, min_tcp_xyz_rel, [gripper_min],
+        ])
+        obs_max = np.concatenate([
+            max_joint_pos, max_joint_vel, max_tcp_xyz_rel, [gripper_max],
+        ])
+        banner = "16D  [tcp_xyz RELATIVE]"
+        order = "[6 joint_pos, 6 joint_vel, 3 tcp_xyz_rel, 1 gripper]"
 
-    print("\n# dataset_stats for observation.state (16D)  [tcp_xyz RELATIVE]")
-    print("# Order: [6 joint_pos, 6 joint_vel, 3 tcp_xyz_rel, 1 gripper]")
+    print(f"\n# dataset_stats for observation.state ({banner})")
+    print(f"# Order: {order}")
     print(f'"min": {np.round(obs_min, r).tolist()}')
     print(f'"max": {np.round(obs_max, r).tolist()}')
 

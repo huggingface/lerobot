@@ -115,10 +115,13 @@ class SchemaCheck(Check):
       - `action.shape` matches `env.features.action.shape`.
       - `dataset_stats."observation.state".min/max` length equals state shape.
       - `dataset_stats.action.min/max` length equals action-continuous-channels (for
-        UR10: 3, ignoring the discrete gripper channel handled by `num_discrete_actions`).
+        UR10: 3 in the no-yaw layout, 4 in the yaw-enabled layout, ignoring the
+        discrete gripper channel handled by `num_discrete_actions`).
 
-    Also internal-consistency: `action.shape == 4` when `complementary_info.discrete_penalty`
-    is present (gripper enabled flow).
+    Also internal-consistency: when `complementary_info.discrete_penalty` is present
+    (gripper enabled flow), action.shape is either (4,) for the standard layout
+    (`[dx, dy, dz, gripper]`) or (5,) for the yaw-enabled layout
+    (`[dx, dy, dz, dyaw, gripper]`). The gripper stays the last element in both.
     """
 
     name = "schema"
@@ -158,11 +161,12 @@ class SchemaCheck(Check):
         if ds_action is None:
             self.violations.append("dataset is missing action feature")
 
-        # Internal consistency: gripper present ⇒ action is 4-D
-        if ds_pen is not None and ds_action is not None and ds_action != (4,):
+        # Internal consistency: gripper present ⇒ action is (4,) [xyz+gripper] or
+        # (5,) [xyz+yaw+gripper]. Gripper always at the last index regardless of layout.
+        if ds_pen is not None and ds_action is not None and ds_action not in {(4,), (5,)}:
             self.violations.append(
                 f"complementary_info.discrete_penalty is present but action.shape={ds_action}; "
-                "expected (4,) (3 deltas + 1 discrete gripper)"
+                "expected (4,) for [dx, dy, dz, gripper] or (5,) for [dx, dy, dz, dyaw, gripper]"
             )
 
         if self.train_config is not None:
@@ -319,12 +323,20 @@ class ActionBoundsCheck(Check):
     A teleop bug that ships malformed actions (e.g. [-2, 0, 0, 1]) would silently land
     in the dataset and be normalized to garbage by MIN_MAX clamping at training time.
     Catch it at audit time.
+
+    Auto-detects yaw-enabled vs no-yaw layouts from action_dim on the first frame
+    when `action_continuous_dims=None`:
+        action_dim == 3  → all continuous (no gripper)
+        action_dim == 4  → 3 continuous + 1 gripper (no yaw)
+        action_dim == 5  → 4 continuous + 1 gripper (yaw enabled)
+    Pass `action_continuous_dims` explicitly to override.
     """
 
     name = "action_bounds"
     severity = SEVERITY_BLOCKER
 
-    def __init__(self, action_continuous_dims: int = 3, max_details: int = 20):
+    def __init__(self, action_continuous_dims: int | None = None, max_details: int = 20):
+        # None ⇒ derive per-frame from `action_dim` (xyz+yaw+gripper layout-aware).
         self.cont_dims = action_continuous_dims
         self.max_details = max_details
         self.n_violations = 0
@@ -337,6 +349,10 @@ class ActionBoundsCheck(Check):
             return
         if self._action_dim is None:
             self._action_dim = int(a.shape[-1]) if hasattr(a, "shape") else len(a)
+        if self.cont_dims is None:
+            # Heuristic: dim ≥ 4 implies the last channel is the discrete gripper.
+            # dim == 3 is the no-gripper xyz-only layout (all continuous).
+            self.cont_dims = (self._action_dim - 1) if self._action_dim >= 4 else self._action_dim
         if isinstance(a, torch.Tensor):
             a_np = a.detach().cpu().numpy()
         else:
@@ -370,7 +386,10 @@ class ActionBoundsCheck(Check):
                 name=self.name,
                 severity=self.severity,
                 status=STATUS_PASS,
-                summary=f"action_dim={self._action_dim}: all continuous in [-1,1], gripper in {{0,1,2}}",
+                summary=(
+                    f"action_dim={self._action_dim} (cont_dims={self.cont_dims}): "
+                    "all continuous in [-1,1], gripper in {0,1,2}"
+                ),
             )
         return CheckResult(
             name=self.name,

@@ -7,6 +7,11 @@ expects `raw_joint_positions[GRIPPER_KEY]` in complementary_data — neither mat
 discrete tri-state gripper or how UR10 telemetry flows. We need a UR10-native equivalent
 that reads gripper state from `observation.state[-1]` and gripper command from `action[-1]`.
 
+Note on yaw-enabled action layouts:
+    UR10RobotEnv produces actions of shape (4,) or (5,) depending on `use_yaw`. The
+    gripper is always the LAST element when `use_gripper=True`, so this step's
+    `action[-1]` indexing is correct regardless of whether yaw is enabled.
+
 Penalty semantics (matches `gym_hil/wrappers/hil_wrappers.py::GripperPenaltyWrapper` and
 `lerobot/processor/hil_processor.py::GripperPenaltyProcessorStep`):
 
@@ -106,8 +111,10 @@ class UR10GripperPenaltyProcessorStep(ProcessorStep):
         if state is None or action is None:
             return _bail()
 
-        # `action` is a torch.Tensor of shape (4,) before AddBatchDimensionProcessorStep, or
-        # (1, 4) after. `state` is (22,) or (1, 22). Index the gripper channel for either.
+        # `action` is a torch.Tensor of shape (4,)/(5,) before AddBatchDimensionProcessorStep,
+        # or (1, N) after. The gripper command is always at index -1 (see ur10_robot.py
+        # action layout), so this step is yaw-mode agnostic. `state` is (22,) or (1, 22).
+        # The `< 4` floor is the minimum dim when use_gripper=True: 3 xyz + 1 gripper.
         if not isinstance(action, torch.Tensor) or not isinstance(state, torch.Tensor):
             return _bail()
         if action.ndim == 1:

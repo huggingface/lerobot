@@ -95,6 +95,16 @@ def auto_reset_to_home(
     # next episode is applied to a coherent setpoint — same invariant as env.reset().
     env.target_xyz = np.array(home, dtype=np.float32)
 
+    # Mirror env.reset()'s yaw-state reset so episode N+1 starts with no stale yaw
+    # offset. Without this, the first step of every episode after the first composes
+    # `R_home * R_z(end-of-episode-N yaw)` and snaps the wrist by that random amount —
+    # the motion phase above commands [fixed_rx, fixed_ry, fixed_rz] directly, so the
+    # arm physically lands at unrotated home, but `env.target_yaw` still holds the
+    # carried-over value until step() applies it. `getattr` keeps this helper
+    # backward-compatible for envs / configs that don't enable yaw.
+    if getattr(env, "use_yaw", False):
+        env.target_yaw = 0.0
+
     # Phase 2 — hold at home for whatever's left of the reset budget. The streaming
     # thread keeps issuing servoL at the held target, so the arm stays put. The user
     # can use this window to reposition the object in the scene.

@@ -1,8 +1,9 @@
 {
     "env": {
         "name": "ur10",
-        "task": "usb_insertiontest",
-        "fps": 10,
+        "task": "pcb_act_3cams_yaw_v2_1",
+        "fps": 30,
+
         "robot": {
             "type": "ur10",
             "ip": "192.168.0.100",
@@ -18,13 +19,17 @@
                 "wrist": {"type": "intelrealsense", "serial_number_or_name": "323622272232", "width": 640, "height": 480, "fps": 30}
             }
         },
+
         "teleop": {
             "type": "gamepad",
             "use_gripper": true,
+            "use_yaw": true,
             "invert_delta_x": true,
             "invert_delta_y": true,
-            "invert_delta_z": false
+            "invert_delta_z": false,
+            "invert_delta_yaw": false
         },
+
         "processor": {
             "control_mode": "gamepad",
             "gripper": {
@@ -32,38 +37,38 @@
                 "gripper_penalty": -0.02
             },
             "reset": {
-                "fixed_reset_joint_positions": [-0.2001, -0.4956, 0.1587, 3.14159, 0.0, 0.0],
-                "reset_time_s": 5.0,
-                "control_time_s": 25.0,
+                "fixed_reset_joint_positions": [-0.1104, -0.5698, 0.3558, -3.141, 0.0, 0.0],
+                "reset_time_s": 10.0,
+                "control_time_s": 30.0,
                 "terminate_on_success": true,
-                "randomization_xy": 0.015
+                "randomization_xy": 0.0
             },
             "observation": {
                 "display_cameras": true
             },
             "image_preprocessing": {
                 "crop_params_dict": {
-                    "observation.images.front": [182, 176, 290, 342],
-                    "observation.images.side":  [3, 47, 324, 426],
-                    "observation.images.wrist": [117, 131, 351, 405]
+                    "observation.images.front": [95, 31, 377, 591],
+                    "observation.images.side":  [23, 33, 433, 579],
+                    "observation.images.wrist": [130, 47, 348, 539]
                 },
-                "resize_size": [128, 128]
+                "resize_size": [240, 320]
             },
             "inverse_kinematics": {
-                "end_effector_step_sizes": {"x": 0.001, "y": 0.001, "z": 0.001},
+                "use_yaw": true,
+                "end_effector_step_sizes": {"x": 0.001, "y": 0.001, "z": 0.001, "yaw": 0.003},
                 "end_effector_bounds": {
-                    "min": [-0.2166, -0.5254, 0.1477],
-                    "max": [-0.1863, -0.4851, 0.1587]
+                    "min": [-0.2375, -0.6237, 0.3285, -0.27],
+                    "max": [0.0095, -0.5218, 0.3676,  0.37]
                 }
             }
         }
     },
 
-
     "dataset": {
-        "repo_id": "local/ur10_usb_insertiontest",
-        "task": "usb_insertiontest",
-        "num_episodes_to_record": 20,
+        "repo_id": "local/pcb_act_3cams_yaw_v2_1",
+        "task": "pcb_act_3cams_yaw_v2_1",
+        "num_episodes_to_record": 60,
         "push_to_hub": false
     },
     "mode": "record",

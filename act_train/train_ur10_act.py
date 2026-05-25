@@ -2,8 +2,10 @@
 
 Mirrors ``act_train/act_training_example.py`` (RC10 reference) but reads the
 UR10 dataset produced by ``record_ur10_act.py``. ACT is observation-agnostic
-(see the planning notes); the 16-D mixed-frame state and 4-D delta action
-work without any policy code changes.
+(see the planning notes); the 16-D (or 17-D with ``use_yaw=True``) mixed-frame
+state and the 4-D or 5-D delta action (5-D when the dataset was recorded with
+``use_yaw=True``) work without any policy code changes — both shapes are inferred
+from the dataset metadata via ``dataset_to_policy_features``.
 
 Usage:
     python act_train/train_ur10_act.py
@@ -47,9 +49,9 @@ def _log(msg: str) -> None:
 
 
 
-DATASET_REPO_ID = "local/usb_insertion_act_2cams"
-OUTPUT_DIR = Path("outputs/act/ur10/usb_insertion_act_2cams")
-TRAINING_STEPS = 60_000
+DATASET_REPO_ID = "local/pcb_act_3cams_yaw"
+OUTPUT_DIR = Path("outputs/act/ur10/pcb_act_3cams_yaw2")
+TRAINING_STEPS = 100_000
 BATCH_SIZE = 32
 
 # HG-DAgger fine-tuning: when set, load weights from this path before training
@@ -63,7 +65,7 @@ PRETRAINED_PATH: str | None = None
 
 # Chunk size = policy's prediction horizon in steps. See "Tuning CHUNK_SIZE" at
 # the bottom of this file for a step-by-step procedure to pick the right value.
-CHUNK_SIZE = 5          # 3 s @ 10 Hz; see procedure for tuning
+CHUNK_SIZE = 10          # 3 s @ 10 Hz; see procedure for tuning
 
 # Temporal ensembling: at inference, query the policy every step and average each
 # step's prediction with the still-relevant predictions from earlier (overlapping)
@@ -75,10 +77,10 @@ CHUNK_SIZE = 5          # 3 s @ 10 Hz; see procedure for tuning
 #
 # Hard constraint enforced by ACTConfig.__post_init__:
 #   if TEMPORAL_ENSEMBLE_COEFF is not None: n_action_steps must be 1.
-TEMPORAL_ENSEMBLE_COEFF: float | None = 0.05
+TEMPORAL_ENSEMBLE_COEFF = 0.01
 
 LOG_FREQ = 100
-SAVE_FREQ = 10_000
+SAVE_FREQ = 5_000
 DEVICE = "cuda"
 NUM_WORKERS = 4
 # -------------------------------------------------------------------------------
@@ -109,9 +111,10 @@ def main() -> None:
     n_action_steps = 1 if TEMPORAL_ENSEMBLE_COEFF is not None else CHUNK_SIZE
 
     # Action normalization: MIN_MAX (not the ACT default MEAN_STD). The action vector
-    # mixes a continuous Cartesian delta (dims 0-2) with a discrete gripper command
-    # in {0, 1, 2} (dim 3). With MEAN_STD, the gripper std (~0.19 in our dataset) +
-    # mean (~1.0, dominated by the >96% STAY frames) maps CLOSE → −5.3, STAY → 0,
+    # mixes continuous Cartesian deltas (dims 0..2, plus delta_yaw at dim 3 when the
+    # dataset was recorded with use_yaw=True) with a discrete gripper command in
+    # {0, 1, 2} at the LAST index. With MEAN_STD, the gripper std (~0.19 in our dataset)
+    # + mean (~1.0, dominated by the >96% STAY frames) maps CLOSE → −5.3, STAY → 0,
     # OPEN → +5.3 in normalized space — the regression network learns to predict 0
     # everywhere and the gripper collapses to STAY at inference. MIN_MAX over [0, 2]
     # maps CLOSE → −1, STAY → 0, OPEN → +1, which the network can actually reach.
@@ -119,7 +122,7 @@ def main() -> None:
     normalization_mapping = {
         "VISUAL": NormalizationMode.MEAN_STD,
         "STATE": NormalizationMode.MEAN_STD,
-        "ACTION": NormalizationMode.MIN_MAX,
+        "ACTION": NormalizationMode.MEAN_STD,
     }
 
     cfg = ACTConfig(
