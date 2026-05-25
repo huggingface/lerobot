@@ -31,6 +31,7 @@ from .dataset_tools import (
     modify_features,
     modify_tasks,
     recompute_stats,
+    reencode_dataset,
     remove_feature,
     split_dataset,
 )
@@ -48,6 +49,7 @@ from .language import (
 from .lerobot_dataset import LeRobotDataset
 from .multi_dataset import MultiLeRobotDataset
 from .pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
+from .pyav_utils import check_video_encoder_parameters_pyav, detect_available_encoders_pyav
 from .sampler import EpisodeAwareSampler
 from .streaming_dataset import StreamingLeRobotDataset
 from .utils import DEFAULT_EPISODES_PATH, create_lerobot_dataset_card
@@ -72,6 +74,8 @@ __all__ = [
     "STYLE_REGISTRY",
     "StreamingLeRobotDataset",
     "VideoEncodingManager",
+    "check_video_encoder_parameters_pyav",
+    "detect_available_encoders_pyav",
     "add_features",
     "aggregate_datasets",
     "aggregate_pipeline_dataset_features",
@@ -88,6 +92,7 @@ __all__ = [
     "modify_features",
     "modify_tasks",
     "recompute_stats",
+    "reencode_dataset",
     "remove_feature",
     "resolve_delta_timestamps",
     "safe_stop_image_writer",

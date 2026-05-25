@@ -45,16 +45,19 @@ from lerobot.model import RobotKinematics
 from lerobot.robots import (  # noqa: F401
     RobotConfig,
     bi_openarm_follower,
+    bi_rebot_b601_follower,
     bi_so_follower,
     koch_follower,
     make_robot_from_config,
     omx_follower,
     openarm_follower,
+    rebot_b601_follower,
     so_follower,
 )
 from lerobot.teleoperators import (  # noqa: F401
     TeleoperatorConfig,
     bi_openarm_leader,
+    bi_rebot_102_leader,
     bi_so_leader,
     gamepad,
     koch_leader,
@@ -62,6 +65,7 @@ from lerobot.teleoperators import (  # noqa: F401
     omx_leader,
     openarm_leader,
     openarm_mini,
+    rebot_102_leader,
     so_leader,
 )
 from lerobot.utils.robot_utils import precise_sleep

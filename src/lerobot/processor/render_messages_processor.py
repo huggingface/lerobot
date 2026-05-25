@@ -24,6 +24,7 @@ from lerobot.configs.recipe import TrainingRecipe
 from lerobot.datasets.language import LANGUAGE_EVENTS, LANGUAGE_PERSISTENT
 from lerobot.datasets.language_render import render_sample
 from lerobot.types import EnvTransition, TransitionKey
+from lerobot.utils.utils import unwrap_scalar
 
 from .pipeline import ProcessorStep, ProcessorStepRegistry
 
@@ -60,8 +61,8 @@ class RenderMessagesStep(ProcessorStep):
             recipe=self.recipe,
             persistent=persistent,
             events=events,
-            t=_scalar(timestamp),
-            sample_idx=int(_scalar(sample_idx)),
+            t=unwrap_scalar(timestamp),
+            sample_idx=int(unwrap_scalar(sample_idx)),
             task=complementary_data.get("task"),
             dataset_ctx=self.dataset_ctx,
         )
@@ -81,14 +82,3 @@ class RenderMessagesStep(ProcessorStep):
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         """Pass features through unchanged; rendering only touches complementary data."""
         return features
-
-
-def _scalar(value: Any) -> float | int:
-    """Unwrap a tensor/array/single-element list into a Python scalar."""
-    if hasattr(value, "item"):
-        return value.item()
-    if isinstance(value, list):
-        if len(value) != 1:
-            raise ValueError(f"Expected a scalar, got list of length {len(value)}: {value!r}")
-        return _scalar(value[0])
-    return value
