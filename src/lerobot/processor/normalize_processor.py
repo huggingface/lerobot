@@ -134,6 +134,24 @@ class _NormalizationMixin:
         if self.dtype is None:
             self.dtype = torch.float32
         self._tensor_stats = to_tensor(self.stats, device=self.device, dtype=self.dtype)
+        self._reshape_visual_stats()
+
+    def _reshape_visual_stats(self) -> None:
+        """Reshape flat ``(C,)`` visual stats to ``(C, 1, 1)`` for image broadcasting.
+
+        No-op for stats from :func:`~lerobot.datasets.compute_stats.compute_stats`
+        (already ``(C, 1, 1)``). Needed by RL training, which can start without
+        a dataset and supplies stats manually via JSON config.
+        """
+        for key, feature in self.features.items():
+            if feature.type != FeatureType.VISUAL:
+                continue
+            if key not in self._tensor_stats:
+                continue
+            for stat_name, stat_tensor in self._tensor_stats[key].items():
+                if not isinstance(stat_tensor, Tensor) or stat_tensor.ndim != 1:
+                    continue
+                self._tensor_stats[key][stat_name] = stat_tensor.reshape(-1, 1, 1)
 
     def to(
         self, device: torch.device | str | None = None, dtype: torch.dtype | None = None
@@ -152,6 +170,7 @@ class _NormalizationMixin:
         if dtype is not None:
             self.dtype = dtype
         self._tensor_stats = to_tensor(self.stats, device=self.device, dtype=self.dtype)
+        self._reshape_visual_stats()
         return self
 
     def state_dict(self) -> dict[str, Tensor]:
@@ -201,6 +220,7 @@ class _NormalizationMixin:
             # Don't load from state_dict, keep the explicitly provided stats
             # But ensure _tensor_stats is properly initialized
             self._tensor_stats = to_tensor(self.stats, device=self.device, dtype=self.dtype)  # type: ignore[assignment]
+            self._reshape_visual_stats()
             return
 
         # Normal behavior: load stats from state_dict
@@ -211,6 +231,7 @@ class _NormalizationMixin:
             self._tensor_stats.setdefault(key, {})[stat_name] = tensor.to(
                 dtype=torch.float32, device=self.device
             )
+        self._reshape_visual_stats()
 
         # Reconstruct the original stats dict from tensor stats for compatibility with to() method
         # and other functions that rely on self.stats

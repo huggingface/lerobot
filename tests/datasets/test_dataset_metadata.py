@@ -466,3 +466,59 @@ def test_tools_round_trip_through_dataset_info(tmp_path):
     info = DatasetInfo.from_dict(raw)
     assert info.tools == raw["tools"]
     assert info.to_dict()["tools"] == raw["tools"]
+
+
+def test_tools_setter_persists_to_info_json_and_reloads(tmp_path):
+    """Assigning meta.tools writes info.json and reloads meta.info."""
+    from lerobot.datasets.io_utils import load_info
+
+    root = tmp_path / "set_tools"
+    meta = LeRobotDatasetMetadata.create(
+        repo_id="test/set_tools",
+        fps=DEFAULT_FPS,
+        features=SIMPLE_FEATURES,
+        root=root,
+        use_videos=False,
+    )
+
+    custom_tool = {
+        "type": "function",
+        "function": {
+            "name": "record_observation",
+            "description": "Capture a still image.",
+            "parameters": {
+                "type": "object",
+                "properties": {"label": {"type": "string"}},
+                "required": ["label"],
+            },
+        },
+    }
+    meta.tools = [custom_tool]
+
+    # In-memory metadata reflects the new catalog ...
+    assert meta.tools == [custom_tool]
+    assert meta.info.tools == [custom_tool]
+    # ... and a fresh read from disk agrees.
+    assert load_info(root).tools == [custom_tool]
+
+
+def test_tools_setter_clears_key_when_set_to_none(tmp_path):
+    """Setting meta.tools back to None drops the key and restores the default."""
+    from lerobot.datasets.language import DEFAULT_TOOLS
+
+    root = tmp_path / "clear_tools"
+    meta = LeRobotDatasetMetadata.create(
+        repo_id="test/clear_tools",
+        fps=DEFAULT_FPS,
+        features=SIMPLE_FEATURES,
+        root=root,
+        use_videos=False,
+    )
+
+    meta.tools = [{"type": "function", "function": {"name": "say"}}]
+    meta.tools = None
+
+    assert meta.tools == DEFAULT_TOOLS
+    with open(root / INFO_PATH) as f:
+        info_on_disk = json.load(f)
+    assert "tools" not in info_on_disk

@@ -46,7 +46,6 @@ from tests.fixtures.constants import (
     DUMMY_MOTOR_FEATURES,
     DUMMY_REPO_ID,
     DUMMY_ROBOT_TYPE,
-    DUMMY_VIDEO_INFO,
 )
 
 
@@ -134,9 +133,7 @@ def features_factory():
         use_videos: bool = True,
     ) -> dict:
         if use_videos:
-            camera_ft = {
-                key: {"dtype": "video", **ft, **DUMMY_VIDEO_INFO} for key, ft in camera_features.items()
-            }
+            camera_ft = {key: {"dtype": "video", **ft} for key, ft in camera_features.items()}
         else:
             camera_ft = {key: {"dtype": "image", **ft} for key, ft in camera_features.items()}
         return {

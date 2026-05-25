@@ -13,12 +13,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import logging
 from pprint import pformat
 
 import datasets
 import numpy as np
 from PIL import Image as PILImage
 
+from lerobot.configs import VIDEO_ENCODER_INFO_KEYS
 from lerobot.utils.constants import DEFAULT_FEATURES
 from lerobot.utils.utils import is_valid_numpy_dtype_string
 
@@ -118,6 +120,41 @@ def create_empty_dataset_info(
         data_path=DEFAULT_DATA_PATH,
         video_path=DEFAULT_VIDEO_PATH if use_videos else None,
     )
+
+
+def features_equal_for_merge(features_a: dict[str, dict], features_b: dict[str, dict]) -> bool:
+    """Return whether two LeRobotDatasetMetadata ``features`` dicts are compatible for aggregation.
+
+    For video features, keys under ``info`` related to video encoding parameters are ignored during
+    comparison as they do not prevent aggregation.
+    """
+
+    def _without_encoder_info_keys(feature: dict) -> dict:
+        filtered = dict(feature)
+        filtered_info = filtered.get("info")
+        if isinstance(filtered_info, dict):
+            filtered["info"] = {
+                info_key: info_value
+                for info_key, info_value in filtered_info.items()
+                if info_key not in VIDEO_ENCODER_INFO_KEYS
+            }
+        return filtered
+
+    if set(features_a) != set(features_b):
+        return False
+    for key in features_a:
+        fa_key = features_a[key]
+        fb_key = features_b[key]
+        if fa_key.get("dtype") != fb_key.get("dtype"):
+            return False
+        if fa_key.get("dtype") != "video":
+            if fa_key != fb_key:
+                return False
+            continue
+
+        if _without_encoder_info_keys(fa_key) != _without_encoder_info_keys(fb_key):
+            return False
+    return True
 
 
 def check_delta_timestamps(
@@ -255,7 +292,7 @@ def validate_feature_dtype_and_shape(
     elif expected_dtype == "string":
         return validate_feature_string(name, value)
     elif expected_dtype == "language":
-        return ""
+        return validate_feature_language(name, value)
     else:
         raise NotImplementedError(f"The feature dtype '{expected_dtype}' is not implemented yet.")
 
@@ -332,6 +369,30 @@ def validate_feature_string(name: str, value: str) -> str:
     """
     if not isinstance(value, str):
         return f"The feature '{name}' is expected to be of type 'str', but type '{type(value)}' provided instead.\n"
+    return ""
+
+
+def validate_feature_language(name: str, value) -> str:
+    """Validate a feature that is expected to hold language annotations.
+
+    Language columns (``language_persistent`` / ``language_events``) are
+    populated after recording by the annotation pipeline, not at record time.
+    Any value supplied here is dropped before the frame is written, so a
+    non-empty value almost certainly signals a mistake. We warn rather than
+    fail to keep recording resilient.
+
+    Args:
+        name (str): The name of the feature.
+        value: The value to validate.
+
+    Returns:
+        str: Always an empty string — language values are non-fatal.
+    """
+    if value is not None:
+        logging.warning(
+            f"The feature '{name}' is a 'language' column populated by the annotation pipeline, "
+            f"not at record time. The provided value will be dropped."
+        )
     return ""
 
 

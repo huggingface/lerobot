@@ -24,6 +24,7 @@ from lerobot.configs.recipe import TrainingRecipe
 from lerobot.datasets.language import LANGUAGE_EVENTS, LANGUAGE_PERSISTENT
 from lerobot.datasets.language_render import render_sample
 from lerobot.types import EnvTransition, TransitionKey
+from lerobot.utils.utils import unwrap_scalar
 
 from .pipeline import ProcessorStep, ProcessorStepRegistry
 
@@ -63,8 +64,8 @@ class RenderMessagesStep(ProcessorStep):
             recipe=self.recipe,
             persistent=persistent,
             events=events,
-            t=_scalar(timestamp),
-            sample_idx=int(_scalar(sample_idx)),
+            t=unwrap_scalar(timestamp),
+            sample_idx=int(unwrap_scalar(sample_idx)),
             task=complementary_data.get("task"),
             dataset_ctx=self.dataset_ctx,
         )

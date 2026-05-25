@@ -1,60 +1,37 @@
-# Bring Your Own Policies
+# Adding a Policy
 
-This tutorial explains how to integrate your own custom policy implementations into the LeRobot ecosystem, allowing you to leverage all LeRobot tools for training, evaluation, and deployment while using your own algorithms.
+This guide walks you through implementing a custom policy and getting it to work with LeRobot's training, evaluation, and deployment tools. There are two paths:
 
-## Step 1: Create a Policy Package
+- **Plugin (out-of-tree)** — ship your policy as a standalone `lerobot_policy_*` package. Faster, no PR required, easy to iterate. Right for experimentation, internal use, or when you want to publish independently.
+- **In-tree (contributed to LeRobot)** — land your policy directly in `src/lerobot/policies/`. Requires a PR, but makes your policy a first-class citizen of the library.
 
-Your custom policy should be organized as an installable Python package following LeRobot's plugin conventions.
+The plugin route is usually the right starting point — promote to in-tree once the policy has stabilized and there's clear value in shipping it with the library.
 
-### Package Structure
+Either way, the building blocks are the same: a configuration class, a policy class, and a processor factory. The first half of this guide covers those shared pieces; the second half covers the path-specific scaffolding ([Path A](#path-a-out-of-tree-plugin), [Path B](#path-b-contributing-in-tree)).
 
-Create a package with the prefix `lerobot_policy_` (IMPORTANT!) followed by your policy name:
+A note on tone: robot-learning is an actively evolving field, and "what a policy looks like" can shift with each new architecture. The conventions described here exist because they let `lerobot-train` and `lerobot-eval` work uniformly across very different models. When a new policy genuinely doesn't fit them, raise it (in your PR, or an issue) — the conventions are not sacred.
 
-```bash
-lerobot_policy_my_custom_policy/
-├── pyproject.toml
-└── src/
-    └── lerobot_policy_my_custom_policy/
-        ├── __init__.py
-        ├── configuration_my_custom_policy.py
-        ├── modeling_my_custom_policy.py
-        └── processor_my_custom_policy.py
-```
+---
 
-### Package Configuration
+## Anatomy of a policy
 
-Set up your `pyproject.toml`:
+Three building blocks make up every policy. The names below use `my_policy` as a placeholder — replace with your policy's name. That name is load-bearing: it must match the string you pass to `@PreTrainedConfig.register_subclass`, the `MyPolicy.name` class attribute, and the `make_<name>_pre_post_processors` factory function (more on each below).
 
-```toml
-[project]
-name = "lerobot_policy_my_custom_policy"
-version = "0.1.0"
-dependencies = [
-    # your policy-specific dependencies
-]
-requires-python = ">= 3.12"
+### Configuration class
 
-[build-system]
-build-backend = # your-build-backend
-requires = # your-build-system
-```
-
-## Step 2: Define the Policy Configuration
-
-Create a configuration class that inherits from [`PreTrainedConfig`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/configs/policies.py) and registers your policy type:
-Here is a template to get you started, customize the parameters and methods as needed for your policy's architecture and training requirements.
+Inherit from [`PreTrainedConfig`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/configs/policies.py) and register your policy type. Here is a template — customize the parameters and methods as needed for your policy's architecture and training requirements.
 
 ```python
-# configuration_my_custom_policy.py
+# configuration_my_policy.py
 from dataclasses import dataclass, field
 from lerobot.configs import PreTrainedConfig
 from lerobot.optim import AdamWConfig
 from lerobot.optim import CosineDecayWithWarmupSchedulerConfig
 
-@PreTrainedConfig.register_subclass("my_custom_policy")
+@PreTrainedConfig.register_subclass("my_policy")
 @dataclass
-class MyCustomPolicyConfig(PreTrainedConfig):
-    """Configuration class for MyCustomPolicy.
+class MyPolicyConfig(PreTrainedConfig):
+    """Configuration class for MyPolicy.
 
     Args:
         n_obs_steps: Number of observation steps to use as input
@@ -77,16 +54,20 @@ class MyCustomPolicyConfig(PreTrainedConfig):
             raise ValueError("n_action_steps cannot exceed horizon")
 
     def validate_features(self) -> None:
-        """Validate input/output feature compatibility."""
+        """Validate input/output feature compatibility.
+
+        Call this explicitly from your policy's __init__ — the base class does not.
+        """
         if not self.image_features:
-            raise ValueError("MyCustomPolicy requires at least one image feature.")
+            raise ValueError("MyPolicy requires at least one image feature.")
         if self.action_feature is None:
-            raise ValueError("MyCustomPolicy requires 'action' in output_features.")
+            raise ValueError("MyPolicy requires 'action' in output_features.")
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(lr=self.optimizer_lr, weight_decay=self.optimizer_weight_decay)
 
     def get_scheduler_preset(self):
+        """Return a LRSchedulerConfig from lerobot.optim, or None."""
         return None
 
     @property
@@ -101,8 +82,7 @@ class MyCustomPolicyConfig(PreTrainedConfig):
 
     @property
     def action_delta_indices(self) -> list[int]:
-        """Relative timestep offsets for the action chunk the dataset loader returns.
-        """
+        """Relative timestep offsets for the action chunk the dataset loader returns."""
         return list(range(self.horizon))
 
     @property
@@ -110,32 +90,34 @@ class MyCustomPolicyConfig(PreTrainedConfig):
         return None
 ```
 
-## Step 3: Implement the Policy Class
+The string you pass to `@register_subclass` must match `MyPolicy.name` (next section) and is what users supply as `--policy.type` on the CLI. Default to `AdamW` from `lerobot.optim` for `get_optimizer_preset` unless you genuinely need otherwise.
 
-Create your policy implementation by inheriting from [`PreTrainedPolicy`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/pretrained.py):
+### Policy class
+
+Inherit from [`PreTrainedPolicy`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/pretrained.py) and set two class attributes — both are checked by `__init_subclass__`:
 
 ```python
-# modeling_my_custom_policy.py
+# modeling_my_policy.py
 import torch
 import torch.nn as nn
 from typing import Any
 
 from lerobot.policies import PreTrainedPolicy
 from lerobot.utils.constants import ACTION
-from .configuration_my_custom_policy import MyCustomPolicyConfig
+from .configuration_my_policy import MyPolicyConfig
 
-class MyCustomPolicy(PreTrainedPolicy):
-    config_class = MyCustomPolicyConfig  # must match the string in @register_subclass
-    name = "my_custom_policy"
+class MyPolicy(PreTrainedPolicy):
+    config_class = MyPolicyConfig  # must match the string in @register_subclass
+    name = "my_policy"
 
-    def __init__(self, config: MyCustomPolicyConfig, dataset_stats: dict[str, Any] = None):
+    def __init__(self, config: MyPolicyConfig, dataset_stats: dict[str, Any] = None):
         super().__init__(config, dataset_stats)
         config.validate_features()  # not called automatically by the base class
         self.config = config
         self.model = ...  # your nn.Module here
 
     def reset(self):
-        """Reset episode state."""
+        """Reset per-episode state. Called by lerobot-eval at the start of each episode."""
         ...
 
     def get_optim_params(self) -> dict:
@@ -147,35 +129,51 @@ class MyCustomPolicy(PreTrainedPolicy):
         ...
 
     def select_action(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
-        """Return a single action for the current timestep (called at inference)."""
+        """Return a single action for the current timestep (called every step at inference)."""
         ...
 
-    def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    def forward(self, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, dict | None]:
         """Compute the training loss.
 
+        Returns `(loss, output_dict)`. `output_dict` may be `None`; everything in it must be
+        logging-friendly Python natives (no tensors with gradients).
+
         `batch["action_is_pad"]` is a bool mask of shape (B, horizon) that marks
-        timesteps padded because the episode ended before `horizon` steps, you
+        timesteps padded because the episode ended before `horizon` steps; you
         can exclude those from your loss.
         """
         actions = batch[ACTION]
         action_is_pad = batch.get("action_is_pad")
         ...
-        return {"loss": ...}
+        return loss, {"some_loss_component": some_loss_component.item()}
 ```
 
-## Step 4: Add Data Processors
+The methods called by the train/eval loops:
 
-Create processor functions. For a concrete reference, see [processor_act.py](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/processor_act.py) or [processor_diffusion.py](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/diffusion/processor_diffusion.py).
+| Method                                                            | Used by           | What it does                                                                                                                                                                                                                                         |
+| ----------------------------------------------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reset() -> None`                                                 | `lerobot-eval`    | Clear per-episode state at the start of each episode.                                                                                                                                                                                                |
+| `select_action(batch, **kwargs) -> Tensor`                        | `lerobot-eval`    | Return the next action `(B, action_dim)`. Called every step.                                                                                                                                                                                         |
+| `predict_action_chunk(batch, **kwargs) -> Tensor`                 | the policy itself | Return an action chunk `(B, chunk_size, action_dim)`. Currently abstract on the base class — raise `NotImplementedError` if your policy doesn't chunk.                                                                                               |
+| `forward(batch, reduction="mean") -> tuple[Tensor, dict \| None]` | `lerobot-train`   | Return `(loss, output_dict)`. Accept `reduction="none"` if you want to support per-sample weighting.                                                                                                                                                 |
+| `get_optim_params() -> dict`                                      | the optimizer     | Return `self.parameters()` for simple policies; return a named parameter dict for [multi-optimizer policies](https://github.com/huggingface/lerobot/blob/ecd38c50d7d15b4184cf42649ff1185ee2e11eeb/src/lerobot/policies/sac/modeling_sac.py#L61-L73). |
+| `update() -> None` _(optional)_                                   | `lerobot-train`   | Called after each optimizer step _if defined_. Use for EMA, target nets, replay buffers (TDMPC uses this).                                                                                                                                           |
+
+Batches are flat dictionaries keyed by the constants in [`lerobot.utils.constants`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/utils/constants.py): `OBS_STATE` (`observation.state.<motor>`), `OBS_IMAGES` (`observation.images.<camera>`), `OBS_LANGUAGE`, `ACTION`, etc. Reuse the constants — don't invent new prefixes.
+
+### Processor functions
+
+LeRobot uses `PolicyProcessorPipeline`s to normalize inputs and de-normalize outputs around your policy. For a concrete reference, see [`processor_act.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/processor_act.py) or [`processor_diffusion.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/diffusion/processor_diffusion.py).
 
 ```python
-# processor_my_custom_policy.py
+# processor_my_policy.py
 from typing import Any
 import torch
 
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
 
 
-def make_my_custom_policy_pre_post_processors(
+def make_my_policy_pre_post_processors(
     config,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
 ) -> tuple[
@@ -187,11 +185,48 @@ def make_my_custom_policy_pre_post_processors(
     return preprocessor, postprocessor
 ```
 
-**Important - function naming:** LeRobot discovers your processor by name. The function **must** be called `make_{policy_name}_pre_post_processors` (matching the string you passed to `@PreTrainedConfig.register_subclass`).
+**Important — function naming:** LeRobot discovers your processor by name. The function **must** be called `make_{policy_name}_pre_post_processors` (matching the string you passed to `@PreTrainedConfig.register_subclass`).
 
-## Step 5: Package Initialization
+---
 
-Expose your classes in the package's `__init__.py`:
+## Path A: Out-of-tree plugin
+
+The fastest way to ship a policy: package it as a standalone Python distribution and install it alongside LeRobot. No PR required, you own the release cycle, and you can publish to PyPI under your own namespace.
+
+### Package structure
+
+Create a package with the prefix `lerobot_policy_` (IMPORTANT!) followed by your policy name:
+
+```bash
+lerobot_policy_my_policy/
+├── pyproject.toml
+└── src/
+    └── lerobot_policy_my_policy/
+        ├── __init__.py
+        ├── configuration_my_policy.py
+        ├── modeling_my_policy.py
+        └── processor_my_policy.py
+```
+
+### `pyproject.toml`
+
+```toml
+[project]
+name = "lerobot_policy_my_policy"
+version = "0.1.0"
+dependencies = [
+    # your policy-specific dependencies
+]
+requires-python = ">= 3.12"
+
+[build-system]
+build-backend = # your-build-backend
+requires = # your-build-system
+```
+
+### Package `__init__.py`
+
+Expose your classes in the package's `__init__.py` and guard against missing `lerobot`:
 
 ```python
 # __init__.py
@@ -204,44 +239,148 @@ except ImportError:
         "lerobot is not installed. Please install lerobot to use this policy package."
     )
 
-from .configuration_my_custom_policy import MyCustomPolicyConfig
-from .modeling_my_custom_policy import MyCustomPolicy
-from .processor_my_custom_policy import make_my_custom_policy_pre_post_processors
+from .configuration_my_policy import MyPolicyConfig
+from .modeling_my_policy import MyPolicy
+from .processor_my_policy import make_my_policy_pre_post_processors
 
 __all__ = [
-    "MyCustomPolicyConfig",
-    "MyCustomPolicy",
-    "make_my_custom_policy_pre_post_processors",
+    "MyPolicyConfig",
+    "MyPolicy",
+    "make_my_policy_pre_post_processors",
 ]
 ```
 
-## Step 6: Installation and Usage
-
-### Install Your Policy Package
+### Install and use
 
 ```bash
-cd lerobot_policy_my_custom_policy
+cd lerobot_policy_my_policy
 pip install -e .
 
 # Or install from PyPI if published
-pip install lerobot_policy_my_custom_policy
+pip install lerobot_policy_my_policy
 ```
-
-### Use Your Policy
 
 Once installed, your policy automatically integrates with LeRobot's training and evaluation tools:
 
 ```bash
 lerobot-train \
-    --policy.type my_custom_policy \
+    --policy.type my_policy \
     --env.type pusht \
     --steps 200000
 ```
 
-## Examples and Community Contributions
+---
+
+## Path B: Contributing in-tree
+
+When your policy has stabilized and there's clear value in shipping it with the library, you can land it directly in LeRobot. Read the general [contribution guide](./contributing) and the [PR template](https://github.com/huggingface/lerobot/blob/main/.github/PULL_REQUEST_TEMPLATE.md) first — that's where you'll find the testing/quality expectations every PR has to meet (`pre-commit run -a`, `pytest`, the community-review rule, etc.). What's below is the policy-specific layer on top of that.
+
+### In-tree layout
+
+```
+src/lerobot/policies/my_policy/
+├── __init__.py                    # re-exports config + modeling + processor factory
+├── configuration_my_policy.py     # MyPolicyConfig + @register_subclass
+├── modeling_my_policy.py          # MyPolicy(PreTrainedPolicy)
+├── processor_my_policy.py         # make_my_policy_pre_post_processors
+└── README.md                      # symlink → ../../../../docs/source/policy_my_policy_README.md
+```
+
+Two notes:
+
+- The `README.md` next to the source is a **symlink** into `docs/source/policy_<name>_README.md` — the actual file lives under `docs/`. Existing policies (act, smolvla, diffusion, …) all do this; copy one of those symlinks. The policy README is conventionally minimal: paper link + BibTeX citation.
+- The user-facing tutorial — what to install, how to train, hyperparameters, benchmark numbers — lives separately at `docs/source/<my_policy>.mdx` and is registered in `_toctree.yml` under "Policies".
+
+The file names are load-bearing: the factory does lazy imports by name, and the processor is discovered by the `make_<policy_name>_pre_post_processors` convention.
+
+### Wiring
+
+Three places need to know about your policy. All by name.
+
+1. **`policies/__init__.py`** — re-export `MyPolicyConfig` and add it to `__all__`. **Don't** re-export the modeling class; it loads lazily through the factory (so `import lerobot` stays fast).
+2. **`factory.py:get_policy_class`** — add a branch returning `MyPolicy` from a lazy import.
+3. **`factory.py:make_policy_config`** and **`factory.py:make_pre_post_processors`** — same idea, two more branches.
+
+Mirror an existing policy that's structurally similar to yours; the diff is small.
+
+### Heavy / optional dependencies
+
+Most policies need a heavy backbone (transformers, diffusers, a specific VLM SDK). The convention is **two-step gating**: a `TYPE_CHECKING`-guarded import at module top, and a `require_package` runtime check in the constructor. [`modeling_diffusion.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/diffusion/modeling_diffusion.py) is the canonical reference:
+
+```python
+from typing import TYPE_CHECKING
+from lerobot.utils.import_utils import _diffusers_available, require_package
+
+if TYPE_CHECKING or _diffusers_available:
+    from diffusers.schedulers.scheduling_ddim import DDIMScheduler
+else:
+    DDIMScheduler = None  # keeps the symbol bindable at import time
+
+class DiffusionPolicy(PreTrainedPolicy):
+    def __init__(self, config):
+        require_package("diffusers", extra="diffusion")
+        super().__init__(config)
+        ...
+```
+
+This way:
+
+- `import lerobot.policies` keeps working without the extra installed (the symbol is just bound to `None`).
+- Type checkers see the real symbol.
+- Instantiating the policy without the extra raises a clear `ImportError` pointing at `pip install 'lerobot[diffusion]'`.
+
+Add a matching extra to [`pyproject.toml`](https://github.com/huggingface/lerobot/blob/main/pyproject.toml) `[project.optional-dependencies]` and include it in the `all` extra so `pip install 'lerobot[all]'` keeps installing everything.
+
+### Benchmarks and a published checkpoint
+
+A new policy is much easier to review — and far more useful — when it ships with a working checkpoint and at least one number you can reproduce.
+
+**Pick at least one in-tree benchmark.** LeRobot ships sim benchmarks with per-benchmark Docker images (LIBERO, LIBERO-plus, Meta-World, RoboTwin 2.0, RoboCasa365, RoboCerebra, RoboMME, VLABench and more). Pick the one that matches your policy's modality — VLAs usually go to LIBERO or VLABench; image-only BC to LIBERO or Meta-World. The full list lives under [Benchmarks](./libero) in the docs sidebar.
+
+**Push the checkpoint & processors** to the Hub under `lerobot/<policy>_<benchmark>` (or your namespace if you don't have write access; a maintainer can mirror it). Use `PreTrainedPolicy.push_model_to_hub` so the repo gets `config.json`, `model.safetensors`, and a model card.
+
+**Report results in your policy's MDX**, with the exact `lerobot-eval` command and hardware so anyone can re-run:
+
+```markdown
+## Results
+
+Evaluated on LIBERO with `lerobot/<policy>_libero`:
+
+| Suite          | Success rate | n_episodes |
+| -------------- | -----------: | ---------: |
+| libero_spatial |        87.5% |         50 |
+| libero_object  |        93.0% |         50 |
+| libero_goal    |        81.5% |         50 |
+| libero_10      |        62.0% |         50 |
+| **average**    |    **81.0%** |        200 |
+
+Reproduce: `lerobot-eval --policy.path=lerobot/<policy>_libero --env.type=libero --env.task=libero_spatial --eval.n_episodes=50` (1× A100 40 GB).
+```
+
+Use `n_episodes ≥ 50` per suite for stable success-rate estimates.
+
+If your policy is real-robot-only and no sim benchmark applies, swap the sim eval for: a public training dataset on the Hub, the `lerobot-train` command, the checkpoint, and a real-robot success rate over ≥10 episodes via `lerobot-rollout --policy.path=...`.
+
+### PR checklist
+
+The general expectations are in [`CONTRIBUTING.md`](https://github.com/huggingface/lerobot/blob/main/CONTRIBUTING.md) and the [PR template](https://github.com/huggingface/lerobot/blob/main/.github/PULL_REQUEST_TEMPLATE.md). On top of those, reviewers will look for:
+
+- [ ] `MyPolicy` and `MyPolicyConfig` cover the surface above; `__init_subclass__` accepts the class.
+- [ ] `factory.py` and `policies/__init__.py` are wired (lazy imports for modeling).
+- [ ] `make_my_policy_pre_post_processors` follows the naming convention.
+- [ ] Optional deps live behind a `[project.optional-dependencies]` extra and the `TYPE_CHECKING + require_package` guard.
+- [ ] `tests/policies/` updated; backward-compat artifact committed & policy-specific tests.
+- [ ] `src/lerobot/policies/<name>/README.md` symlinked into `docs/source/policy_<name>_README.md`; user-facing `docs/source/<name>.mdx` written and added to `_toctree.yml`.
+- [ ] At least one reproducible benchmark eval in the policy MDX with a published checkpoint (sim benchmark, or real-robot dataset + checkpoint).
+
+The fastest way to get a clean PR is to copy the directory of the existing policy closest to yours, rename, and replace contents method by method. Don't wait until everything is polished — open a draft PR early and iterate with us; reviewers would much rather give feedback on a half-finished branch than a fully-merged one.
+
+---
+
+## Examples and community contributions
 
 Check out these example policy implementations:
 
-- [DiTFlow Policy](https://github.com/danielsanjosepro/lerobot_policy_ditflow) - Diffusion Transformer policy with flow-matching objective. Try it out in this example: [DiTFlow Example](https://github.com/danielsanjosepro/test_lerobot_policy_ditflow)
+- [DiTFlow Policy](https://github.com/danielsanjosepro/lerobot_policy_ditflow) — Diffusion Transformer policy with flow-matching objective. Try it out in this example: [DiTFlow Example](https://github.com/danielsanjosepro/test_lerobot_policy_ditflow)
 
-Share your policy implementations with the community! 🤗
+Thanks for taking the time to bring a new policy into LeRobot. Every architecture that lands in `main` — and every plugin published by the community — makes the library a little more useful for the next person, and a little more representative of where robot learning is going. We're looking forward to seeing what you ship. 🤗

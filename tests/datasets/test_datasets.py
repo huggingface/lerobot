@@ -24,11 +24,13 @@ import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+import datasets
 from huggingface_hub import HfApi
 from PIL import Image
 from safetensors.torch import load_file
 from torchvision.transforms import v2
 
+from lerobot.configs import VALID_VIDEO_CODECS, VideoEncoderConfig
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import make_dataset
@@ -43,7 +45,6 @@ from lerobot.datasets.utils import (
     DEFAULT_VIDEO_FILE_SIZE_IN_MB,
     create_branch,
 )
-from lerobot.datasets.video_utils import VALID_VIDEO_CODECS
 from lerobot.envs.factory import make_env_config
 from lerobot.policies.factory import make_policy_config
 from lerobot.robots import make_robot_from_config
@@ -358,6 +359,41 @@ def test_add_frame_image_pil(image_dataset):
     dataset.finalize()
 
     assert dataset[0]["image"].shape == torch.Size(DUMMY_CHW)
+
+
+@pytest.mark.parametrize(
+    "dtype,np_dtype,values,assert_fn",
+    [
+        ("float32", np.float32, [1.0, 2.0], np.testing.assert_allclose),
+        ("int64", np.int64, [1, 2], np.testing.assert_array_equal),
+        ("bool", np.bool_, [True, False], np.testing.assert_array_equal),
+    ],
+    ids=["float32", "int64", "bool"],
+)
+def test_save_episode_shape_1_scalar_is_scalarized_before_hf_encoding(
+    tmp_path, empty_lerobot_dataset_factory, monkeypatch, dtype, np_dtype, values, assert_fn
+):
+    features = {"state": {"dtype": dtype, "shape": (1,), "names": None}}
+    dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
+    dataset.add_frame({"state": np.array([values[0]], dtype=np_dtype), "task": "Dummy task"})
+    dataset.add_frame({"state": np.array([values[1]], dtype=np_dtype), "task": "Dummy task"})
+
+    captured = {}
+    original_from_dict = datasets.Dataset.from_dict
+
+    def _from_dict_spy(cls, mapping, *args, **kwargs):
+        captured["state"] = mapping["state"]
+        return original_from_dict(mapping, *args, **kwargs)
+
+    monkeypatch.setattr(datasets.Dataset, "from_dict", classmethod(_from_dict_spy))
+
+    dataset.save_episode()
+    dataset.finalize()
+
+    assert "state" in captured
+    assert isinstance(captured["state"], np.ndarray)
+    assert captured["state"].shape == (2,)
+    assert_fn(captured["state"], np.array(values, dtype=np_dtype))
 
 
 def test_set_image_transforms_applies_transparently(image_dataset):
@@ -1470,17 +1506,9 @@ def test_frames_in_current_file_calculation(tmp_path, empty_lerobot_dataset_fact
 
 
 def test_lerobot_dataset_vcodec_validation():
-    """Test that LeRobotDataset validates the vcodec parameter."""
-    # Test that invalid vcodec raises ValueError
+    """Invalid vcodec in encoder config is rejected at construction time."""
     with pytest.raises(ValueError, match="Invalid vcodec"):
-        LeRobotDataset.__new__(LeRobotDataset)  # bypass __init__ to test validation directly
-        # Actually test via create since it's easier
-        LeRobotDataset.create(
-            repo_id="test/invalid_codec",
-            fps=30,
-            features={"observation.state": {"dtype": "float32", "shape": (2,), "names": ["x", "y"]}},
-            vcodec="invalid_codec",
-        )
+        VideoEncoderConfig(vcodec="invalid_codec")
 
 
 def test_valid_video_codecs_constant():
@@ -1691,3 +1719,68 @@ def test_delta_timestamps_query_returns_correct_values(tmp_path, empty_lerobot_d
     # Previous frame is outside episode, so it's clamped to first frame and marked as padded
     assert state_values == [10.0, 10.0], f"Expected [10.0, 10.0], got {state_values}"
     assert is_pad == [True, False], f"Expected [True, False], got {is_pad}"
+
+
+def test_episode_filter_filters_dataset(tmp_path, lerobot_dataset_factory):
+    """episode_filter on LeRobotDataset narrows the loaded dataset to matching episodes."""
+    dataset = lerobot_dataset_factory(root=tmp_path / "test", total_episodes=8, total_frames=200)
+    lengths = dataset.meta.episodes["length"]
+    threshold = sorted(lengths)[len(lengths) // 2]
+    expected_eps = [i for i, length in enumerate(lengths) if length >= threshold]
+    expected_frames = sum(lengths[i] for i in expected_eps)
+
+    filtered = LeRobotDataset(
+        dataset.repo_id,
+        root=dataset.root,
+        episode_filter=lambda ep: ep["length"] >= threshold,
+    )
+
+    assert filtered.num_episodes == len(expected_eps)
+    assert filtered.num_frames == expected_frames
+    seen_eps = {filtered[i]["episode_index"].item() for i in range(len(filtered))}
+    assert seen_eps == set(expected_eps)
+
+
+def test_episode_filter_intersects_with_episodes(tmp_path, lerobot_dataset_factory):
+    """When both episodes and episode_filter are given to LeRobotDataset, the result is their intersection."""
+    dataset = lerobot_dataset_factory(root=tmp_path / "test", total_episodes=8, total_frames=200)
+    lengths = dataset.meta.episodes["length"]
+    candidates = [0, 2, 4, 6]
+    candidate_lengths = [lengths[i] for i in candidates]
+    threshold = sorted(candidate_lengths)[len(candidate_lengths) // 2]
+    expected_eps = [i for i in candidates if lengths[i] >= threshold]
+
+    filtered = LeRobotDataset(
+        dataset.repo_id,
+        root=dataset.root,
+        episodes=candidates,
+        episode_filter=lambda ep: ep["length"] >= threshold,
+    )
+
+    assert filtered.num_episodes == len(expected_eps)
+    seen_eps = {filtered[i]["episode_index"].item() for i in range(len(filtered))}
+    assert seen_eps == set(expected_eps)
+
+
+def test_episode_filter_no_match_raises(tmp_path, lerobot_dataset_factory):
+    """An empty match in LeRobotDataset's episode_filter raises a ValueError rather than silently returning an empty dataset."""
+    dataset = lerobot_dataset_factory(root=tmp_path / "test", total_episodes=4, total_frames=100)
+
+    with pytest.raises(ValueError, match=r"The episode filter did not match any episode"):
+        LeRobotDataset(
+            dataset.repo_id,
+            root=dataset.root,
+            episode_filter=lambda ep: ep["length"] < 0,
+        )
+
+
+def test_episode_filter_unknown_key_raises(tmp_path, lerobot_dataset_factory):
+    """A predicate referencing a column absent from meta.episodes surfaces a clear KeyError."""
+    dataset = lerobot_dataset_factory(root=tmp_path / "test", total_episodes=4, total_frames=100)
+
+    with pytest.raises(KeyError, match="not_a_real_field"):
+        LeRobotDataset(
+            dataset.repo_id,
+            root=dataset.root,
+            episode_filter=lambda ep: ep["not_a_real_field"] > 0,
+        )

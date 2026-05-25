@@ -69,7 +69,7 @@ def is_package_available(
         return package_exists
 
 
-def get_safe_default_codec():
+def get_safe_default_video_backend():
     logger = logging.getLogger(__name__)
     if importlib.util.find_spec("torchcodec"):
         return "torchcodec"
@@ -114,6 +114,10 @@ _dynamixel_sdk_available = is_package_available("dynamixel-sdk", import_name="dy
 _feetech_sdk_available = is_package_available("feetech-servo-sdk", import_name="scservo_sdk")
 _reachy2_sdk_available = is_package_available("reachy2_sdk")
 _can_available = is_package_available("python-can", "can")
+_motorbridge_available = is_package_available("motorbridge")
+_motorbridge_smart_servo_available = is_package_available(
+    "motorbridge-smart-servo", import_name="motorbridge_smart_servo"
+)
 _unitree_sdk_available = is_package_available("unitree-sdk2py", "unitree_sdk2py")
 _pyrealsense2_available = is_package_available("pyrealsense2") or is_package_available(
     "pyrealsense2-macosx", import_name="pyrealsense2"
@@ -128,10 +132,14 @@ _hidapi_available = is_package_available("hidapi", import_name="hid")
 _pandas_available = is_package_available("pandas")
 _faker_available = is_package_available("faker")
 
+# Video encoding / decoding
+_av_available = is_package_available("av")
+
 # Misc
 _pynput_available = is_package_available("pynput")
 _pygame_available = is_package_available("pygame")
 _qwen_vl_utils_available = is_package_available("qwen-vl-utils", import_name="qwen_vl_utils")
+_grpc_available = is_package_available("grpcio", import_name="grpc")
 _wallx_deps_available = (
     _transformers_available and _peft_available and _torchdiffeq_available and _qwen_vl_utils_available
 )

@@ -40,7 +40,7 @@ frame the row sits on already provides it):
 role: string
 content: string | null
 style: string | null
-timestamp: float64        # persistent rows only
+timestamp: float32        # persistent rows only
 camera: string | null     # observation.images.* feature key, view-dependent rows only
 tool_calls: list[Json] | null
 ```
@@ -63,6 +63,23 @@ The language stack itself has three internal modules backing layer 1:
 3. `RenderMessagesStep` turns dataset samples into `messages`, `message_streams`, and `target_message_indices`.
 
 `LeRobotDataset` stays recipe-agnostic. It passes `language_persistent` and `language_events` through when present, and unannotated datasets keep their existing behavior.
+
+## Layer 2 — recipe anatomy
+
+Recipes are YAML files backed by `TrainingRecipe` and `MessageTurn`. They
+declare which annotation rows to pull (via `bindings`) and how to compose them
+into chat turns (`messages`).
+
+```yaml
+messages:
+  - { role: user, content: "${task}", stream: high_level }
+  - { role: assistant, content: "${subtask}", stream: low_level, target: true }
+```
+
+A recipe can also branch into a weighted **blend** of sub-recipes. At sample
+time, exactly one branch is selected deterministically from the sample index,
+so different frames train different objectives (e.g. memory updates vs.
+low-level execution vs. VQA) without any Python wiring.
 
 ### Temporal semantics
 
@@ -112,23 +129,6 @@ ask_vqa_top:
 
 Add one such sub-recipe per camera the dataset records.
 
-## Layer 2 — recipe anatomy
-
-Recipes are YAML files backed by `TrainingRecipe` and `MessageTurn`. They
-declare which annotation rows to pull (via `bindings`) and how to compose them
-into chat turns (`messages`).
-
-```yaml
-messages:
-  - { role: user, content: "${task}", stream: high_level }
-  - { role: assistant, content: "${subtask}", stream: low_level, target: true }
-```
-
-A recipe can also branch into a weighted **blend** of sub-recipes. At sample
-time, exactly one branch is selected deterministically from the sample index,
-so different frames train different objectives (e.g. memory updates vs.
-low-level execution vs. VQA) without any Python wiring.
-
 ## Layer 3 — training format
 
 Rendered samples use HF-style chat messages plus LeRobot sidecars:
@@ -139,16 +139,12 @@ sample["message_streams"]
 sample["target_message_indices"]
 ```
 
-<<<<<<< HEAD
-The renderer does not apply a tokenizer chat template. Policy processors decide how to serialize the messages for their backbone.
+The renderer does not apply a tokenizer chat template. Policy processors decide how to serialize the messages for their backbone, which keeps the same dataset usable across SmolVLA, Pi0.5, and any future VLM that expects OpenAI-style chat messages.
 
 ## Blends
 
 Blend recipes select one weighted sub-recipe deterministically from the sample index.
 `recipes/subtasks_vqa.yaml` trains the core blend — high-level subtask prediction, low-level execution, and VQA. `recipes/subtask_mem_vqa_speech.yaml` is the fuller variant that also adds memory updates and spoken interjection responses.
-=======
-The renderer does not apply a tokenizer chat template. Policy processors decide how to serialize the messages for their backbone, which keeps the same dataset usable across SmolVLA, Pi0.5, and any future VLM that expects OpenAI-style chat messages.
->>>>>>> origin/feat/language-annotation-pipeline
 
 ## Graceful absence
 

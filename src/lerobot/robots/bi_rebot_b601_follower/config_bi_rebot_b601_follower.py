@@ -1,4 +1,6 @@
-# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#!/usr/bin/env python
+
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,8 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .configuration_sac import SACConfig
-from .modeling_sac import SACPolicy
-from .processor_sac import make_sac_pre_post_processors
+from dataclasses import dataclass
 
-__all__ = ["SACConfig", "SACPolicy", "make_sac_pre_post_processors"]
+from ..config import RobotConfig
+from ..rebot_b601_follower import RebotB601FollowerConfig
+
+
+@RobotConfig.register_subclass("bi_rebot_b601_follower")
+@dataclass
+class BiRebotB601FollowerConfig(RobotConfig):
+    """Configuration class for the bimanual reBot B601-DM follower robot."""
+
+    left_arm_config: RebotB601FollowerConfig
+    right_arm_config: RebotB601FollowerConfig

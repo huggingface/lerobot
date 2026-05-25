@@ -32,18 +32,18 @@ from lerobot.processor import (
 )
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
-from .configuration_sac import SACConfig
+from .configuration_gaussian_actor import GaussianActorConfig
 
 
-def make_sac_pre_post_processors(
-    config: SACConfig,
+def make_gaussian_actor_pre_post_processors(
+    config: GaussianActorConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
     """
-    Constructs pre-processor and post-processor pipelines for the SAC policy.
+    Constructs pre-processor and post-processor pipelines for the Gaussian actor policy.
 
     The pre-processing pipeline prepares input data for the model by:
     1. Renaming features to match pretrained configurations.
@@ -56,7 +56,7 @@ def make_sac_pre_post_processors(
     2. Unnormalizing the output features to their original scale.
 
     Args:
-        config: The configuration object for the SAC policy.
+        config: The configuration object for the tanh-Gaussian policy.
         dataset_stats: A dictionary of statistics for normalization.
 
     Returns:
