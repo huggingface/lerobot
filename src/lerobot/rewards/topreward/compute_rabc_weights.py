@@ -107,10 +107,10 @@ def compute_instruction_rewards_for_prefixes(
     else:
         prefix_lengths = np.unique(np.linspace(1, num_frames, num_samples).round().astype(np.int64))
 
+    episode_frames = torch.stack([dataset[ep_start + i][image_key] for i in range(num_frames)])
     rewards: list[float] = []
     for length in prefix_lengths:
-        frames = torch.stack([dataset[ep_start + i][image_key] for i in range(int(length))])
-        frames = frames.unsqueeze(0)  # (1, T, C, H, W)
+        frames = episode_frames[: int(length)].unsqueeze(0)  # (1, T, C, H, W)
 
         transition = {
             TransitionKey.OBSERVATION: {image_key: frames},
@@ -146,7 +146,6 @@ def compute_topreward_progress(
     device: str = "cuda",
     num_samples: int | None = None,
     fps: float | None = None,
-    reduction: str | None = None,
     episodes: list[int] | None = None,
 ) -> Path:
     """Run TOPReward over a dataset and write per-frame progress."""
@@ -154,10 +153,10 @@ def compute_topreward_progress(
         logging.info(f"Loading TOPReward config from: {reward_model_path}")
         model = TOPRewardModel.from_pretrained(reward_model_path)
         config = model.config
+        config.device = device
         if vlm_name is not None and vlm_name != config.vlm_name:
             logging.info(f"Overriding vlm_name from config: {config.vlm_name} -> {vlm_name}")
             config.vlm_name = vlm_name
-            config.device = device
             model = TOPRewardModel(config)
     else:
         config_kwargs: dict[str, Any] = {"device": device}
@@ -165,8 +164,6 @@ def compute_topreward_progress(
             config_kwargs["vlm_name"] = vlm_name
         if fps is not None:
             config_kwargs["fps"] = fps
-        if reduction is not None:
-            config_kwargs["reduction"] = reduction
         config = TOPRewardConfig(**config_kwargs)
         logging.info(f"Constructing TOPReward with VLM: {config.vlm_name}")
         model = TOPRewardModel(config)
@@ -303,9 +300,6 @@ Examples:
     )
     parser.add_argument("--fps", type=float, default=None, help="Override TOPRewardConfig.fps.")
     parser.add_argument(
-        "--reduction", type=str, default=None, choices=["mean", "sum"], help="Override reduction."
-    )
-    parser.add_argument(
         "--push-to-hub", action="store_true", help="Upload to the dataset repo on HuggingFace Hub."
     )
 
@@ -321,7 +315,6 @@ Examples:
         device=args.device,
         num_samples=args.num_samples,
         fps=args.fps,
-        reduction=args.reduction,
         episodes=args.episodes,
     )
 

@@ -19,9 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
 import torch
-from PIL import Image
 from torch import Tensor
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
@@ -60,39 +58,33 @@ _TRUE_ANSWER = "True"
 TOPREWARD_VLM_INPUT_KEYS = (
     "input_ids",
     "attention_mask",
-    "pixel_values",
     "pixel_values_videos",
-    "image_grid_thw",
     "video_grid_thw",
-    "second_per_grid_ts",
     "mm_token_type_ids",
 )
-TOPREWARD_METADATA_KEYS = ("prompt_length",)
-TOPREWARD_INPUT_KEYS = TOPREWARD_VLM_INPUT_KEYS + TOPREWARD_METADATA_KEYS
+TOPREWARD_INPUT_KEYS = TOPREWARD_VLM_INPUT_KEYS + ("labels",)
 
 
-def _video_to_numpy(video: Tensor, *, max_frames: int | None) -> np.ndarray:
-    """Convert one trajectory tensor to a ``(T, H, W, C) uint8`` numpy array."""
+def _prepare_video_batch(video: Tensor, *, max_frames: int | None) -> Tensor:
+    """Return videos as ``(B, T, C, H, W)`` uint8 tensors for Qwen3-VL."""
+    if video.ndim == 4:
+        video = video.unsqueeze(1)
+    elif video.ndim != 5:
+        raise ValueError(
+            f"Expected TOPReward frames with shape (B,C,H,W) or (B,T,C,H,W); got {tuple(video.shape)}"
+        )
+
     if max_frames is not None:
-        video = video[-max_frames:]
-    if video.shape[1] in (1, 3):
-        video = video.permute(0, 2, 3, 1)
-    elif video.shape[-1] not in (1, 3):
+        video = video[:, -max_frames:]
+    if video.shape[-1] in (1, 3):
+        video = video.permute(0, 1, 4, 2, 3)
+    elif video.shape[2] not in (1, 3):
         raise ValueError(f"Expected channel dim of size 1 or 3, got shape {tuple(video.shape)}")
 
-    array = video.detach().cpu().numpy()
-    if np.issubdtype(array.dtype, np.floating) and array.size > 0 and array.max() <= 1.0:
-        array = array * 255.0
-    return np.clip(array, 0, 255).astype(np.uint8)
+    if video.is_floating_point():
+        video = video * 255.0
 
-
-def _frames_to_pil(frames: np.ndarray) -> list[Image.Image]:
-    """Convert ``(T, H, W, C)`` uint8 frames to a list of PIL images."""
-    if frames.ndim != 4:
-        raise ValueError(f"Expected (T,H,W,C) frames; got shape {frames.shape}")
-    if frames.dtype != np.uint8:
-        frames = np.clip(frames, 0, 255).astype(np.uint8)
-    return [Image.fromarray(frames[i]) for i in range(frames.shape[0])]
+    return video.clamp(0, 255).to(torch.uint8).contiguous()
 
 
 def _expand_tasks(task: Any, *, batch_size: int, default: str | None) -> list[str]:
@@ -120,10 +112,9 @@ class TOPRewardEncoderProcessorStep(ProcessorStep):
 
     Loads a :class:`~transformers.AutoProcessor` matching ``vlm_name`` and
     builds the full chat prompt including the instruction suffix. The
-    resulting ``input_ids``, ``attention_mask``, vision tensors, and a
-    per-sample ``prompt_length`` integer are written under the
-    ``observation.topreward.*`` namespace so the model can label-mask and
-    forward without re-tokenising.
+    resulting ``input_ids``, ``attention_mask``, vision tensors, and
+    ``labels`` are written under the ``observation.topreward.*`` namespace
+    so the model can score without re-tokenising.
 
     At call time the step reads:
 
@@ -131,7 +122,7 @@ class TOPRewardEncoderProcessorStep(ProcessorStep):
     - ``complementary_data[task_key]``: a string or list of strings.
 
     and writes ``observation[f"{TOPREWARD_FEATURE_PREFIX}<name>"]`` for the
-    Qwen-VL tensors plus ``prompt_length``.
+    Qwen-VL tensors plus ``labels``.
     """
 
     vlm_name: str = "Qwen/Qwen3-VL-8B-Instruct"
@@ -149,35 +140,26 @@ class TOPRewardEncoderProcessorStep(ProcessorStep):
 
     def __post_init__(self) -> None:
         require_package("transformers", extra="topreward")
-        require_package("qwen-vl-utils", extra="topreward", import_name="qwen_vl_utils")
         self._processor = AutoProcessor.from_pretrained(self.vlm_name, trust_remote_code=True)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         observation = transition.get(TransitionKey.OBSERVATION)
         complementary = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
-        if not isinstance(observation, dict):
-            raise ValueError("TOPRewardEncoderProcessorStep requires an observation dict")
-
         if self.image_key not in observation:
             raise KeyError(f"TOPReward expected image key {self.image_key!r} in observation")
 
         frames = observation[self.image_key]
-        tensor = frames.detach().cpu() if isinstance(frames, Tensor) else torch.as_tensor(frames)
-        if tensor.ndim == 4:
-            tensor = tensor.unsqueeze(1)
-        elif tensor.ndim != 5:
-            raise ValueError(
-                f"Expected TOPReward frames with shape (B,C,H,W) or (B,T,C,H,W); got {tuple(tensor.shape)}"
-            )
+        videos = frames.detach().cpu() if isinstance(frames, Tensor) else torch.as_tensor(frames)
+        videos = _prepare_video_batch(videos, max_frames=self.max_frames)
 
-        batch_size = tensor.shape[0]
+        batch_size = videos.shape[0]
         tasks = _expand_tasks(
             complementary.get(self.task_key, self.default_task),
             batch_size=batch_size,
             default=self.default_task,
         )
 
-        encoded = self._encode_batch(tensor, tasks)
+        encoded = self._encode_batch(videos, tasks, batch_size)
 
         new_observation = dict(observation)
         for key, value in encoded.items():
@@ -187,34 +169,33 @@ class TOPRewardEncoderProcessorStep(ProcessorStep):
         new_transition[TransitionKey.OBSERVATION] = new_observation
         return new_transition
 
-    def _encode_batch(self, tensor: Tensor, tasks: list[str]) -> dict[str, Any]:
+    def _encode_batch(self, videos: Tensor, tasks: list[str], batch_size) -> dict[str, Any]:
         """Tokenise a batch of (frames, task) pairs into Qwen-VL tensors.
 
-        Processes samples one at a time (each may have a different token
-        length due to different numbers of vision patches), then pads /
-        stacks the results.
+        The loop only builds per-sample chat strings. Tokenisation, padding,
+        video preprocessing, and label construction are batched.
         """
-        from qwen_vl_utils import process_vision_info
 
-        batch_size = tensor.shape[0]
-        all_encoded: list[dict[str, Any]] = []
-        all_prompt_lengths: list[int] = []
+        texts: list[str] = []
+        video_metadata = [
+            {
+                "total_num_frames": int(videos.shape[1]),
+                "fps": float(self.fps),
+                "frames_indices": list(range(int(videos.shape[1]))),
+            }
+            for _ in range(batch_size)
+        ]
+        eos_token = self._processor.tokenizer.eos_token
 
         for i in range(batch_size):
-            frames_np = _video_to_numpy(tensor[i], max_frames=self.max_frames)
-            pil_frames = _frames_to_pil(frames_np)
-            task = tasks[i]
-
-            instruction_suffix = self.prompt_suffix_template.format(instruction=task)
-            eos_token = self._processor.tokenizer.eos_token
-
+            instruction_suffix = self.prompt_suffix_template.format(instruction=tasks[i])
             if self.add_chat_template:
                 suffix_for_template = instruction_suffix.removesuffix(_TRUE_ANSWER).rstrip()
                 templated_messages = [
                     {
                         "role": "user",
                         "content": [
-                            {"type": "video", "video": pil_frames, "fps": self.fps},
+                            {"type": "video", "video": videos[i], "fps": self.fps},
                             {"type": "text", "text": f"{self.prompt_prefix}{suffix_for_template}"},
                         ],
                     }
@@ -223,13 +204,12 @@ class TOPRewardEncoderProcessorStep(ProcessorStep):
                     templated_messages, tokenize=False, add_generation_prompt=True
                 )
                 full_text = f"{prompt_chat}{_TRUE_ANSWER}"
-                image_inputs, video_inputs = process_vision_info(templated_messages)
             else:
                 user_messages = [
                     {
                         "role": "user",
                         "content": [
-                            {"type": "video", "video": pil_frames, "fps": self.fps},
+                            {"type": "video", "video": videos[i], "fps": self.fps},
                             {"type": "text", "text": self.prompt_prefix},
                         ],
                     }
@@ -240,59 +220,29 @@ class TOPRewardEncoderProcessorStep(ProcessorStep):
                 if eos_token is not None:
                     prompt_chat = prompt_chat.split(eos_token)[0]
                 full_text = f"{prompt_chat}{instruction_suffix}"
-                image_inputs, video_inputs = process_vision_info(user_messages)
 
-            inputs = self._processor(
-                text=[full_text],
-                images=image_inputs,
-                videos=video_inputs,
-                padding=True,
-                return_tensors="pt",
+            texts.append(full_text)
+
+        result = self._processor(
+            text=texts,
+            videos=videos,
+            video_metadata=video_metadata,
+            do_sample_frames=False,
+            padding=True,
+            padding_side="left",
+            return_tensors="pt",
+        )
+        input_ids = result["input_ids"]
+
+        if input_ids.shape[-1] > self.max_length:
+            raise ValueError(
+                f"TOPReward input length {input_ids.shape[-1]} exceeds max_length "
+                f"{self.max_length}; lower `max_frames` or raise `max_length`."
             )
 
-            input_len = int(inputs["input_ids"].shape[-1])
-            if input_len > self.max_length:
-                raise ValueError(
-                    f"TOPReward input length {input_len} exceeds max_length "
-                    f"{self.max_length}; lower `max_frames` or raise `max_length`."
-                )
-
-            prompt_length = input_len - 1
-            all_encoded.append(inputs)
-            all_prompt_lengths.append(prompt_length)
-
-        result = dict(all_encoded[0]) if batch_size == 1 else self._pad_and_stack(all_encoded)
-
-        result["prompt_length"] = torch.tensor(all_prompt_lengths, dtype=torch.long)
-        return result
-
-    @staticmethod
-    def _pad_and_stack(encoded_list: list[dict[str, Any]]) -> dict[str, Any]:
-        """Right-pad and stack per-sample encoded dicts into a batch."""
-        keys = [k for k in encoded_list[0] if isinstance(encoded_list[0][k], Tensor)]
-        max_len = max(enc["input_ids"].shape[-1] for enc in encoded_list)
-        result: dict[str, Any] = {}
-
-        for key in keys:
-            tensors = [enc[key] for enc in encoded_list]
-            if key in ("input_ids", "attention_mask"):
-                padded = []
-                pad_value = 0
-                for t in tensors:
-                    pad_size = max_len - t.shape[-1]
-                    if pad_size > 0:
-                        padded.append(torch.nn.functional.pad(t, (0, pad_size), value=pad_value))
-                    else:
-                        padded.append(t)
-                result[key] = torch.cat(padded, dim=0)
-            else:
-                # Vision tensors (pixel_values_videos, image_grid_thw, etc.) are expected
-                # to have matching shapes since max_frames is applied uniformly per batch
-                result[key] = torch.cat(tensors, dim=0)
-
-        for key in encoded_list[0]:
-            if key not in result:
-                result[key] = encoded_list[0][key]
+        labels = torch.full_like(input_ids, -100)
+        labels[:, -1] = input_ids[:, -1]
+        result["labels"] = labels
         return result
 
     def transform_features(
@@ -325,8 +275,8 @@ def make_topreward_pre_post_processors(
     """Pipeline that pre-encodes frames + task into Qwen-VL tensors.
 
     The preprocessor adds a batch dimension if needed, runs TOPReward's
-    encoder (which tokenises the full prompt and emits ``prompt_length``),
-    and moves everything to the configured device. The postprocessor is
+    encoder (which tokenises the full prompt and emits ``labels``), and
+    moves everything to the configured device. The postprocessor is
     the identity since TOPReward outputs a single reward tensor.
     """
     preprocessor = PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](

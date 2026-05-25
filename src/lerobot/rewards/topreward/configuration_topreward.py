@@ -22,8 +22,8 @@ from lerobot.utils.constants import OBS_IMAGES
 
 # Default prompt scaffolding from the upstream TOPReward paper / reference
 # implementation (``QwenClient.compute_instruction_reward``). The prompt
-# computes the log-likelihood of the suffix ``f"{instruction} ... True"``
-# given the video, then reduces those token log-probs to a scalar reward.
+# scores the terminal ``True`` token in ``f"{instruction} ... True"``
+# given the video.
 DEFAULT_PROMPT_PREFIX = (
     "The above video shows a robot manipulation trajectory that completes the following task: "
 )
@@ -67,8 +67,6 @@ class TOPRewardConfig(RewardModelConfig):
         add_chat_template: If ``True``, wrap the full prompt with the
             tokenizer's chat template before tokenisation (matches
             upstream ``add_chat_template=True``).
-        reduction: Reduction over per-token log-probs of the suffix
-            tokens (``"mean"`` or ``"sum"``).
         success_threshold: Optional log-prob threshold. If finite,
             :meth:`TOPRewardModel.compute_reward` returns
             ``(reward > success_threshold).float()`` instead of the raw
@@ -96,7 +94,6 @@ class TOPRewardConfig(RewardModelConfig):
     prompt_suffix_template: str = DEFAULT_PROMPT_SUFFIX_TEMPLATE
     add_chat_template: bool = False
 
-    reduction: str = "mean"
     success_threshold: float = float("-inf")
     max_input_length: int = 32768
 
@@ -116,8 +113,6 @@ class TOPRewardConfig(RewardModelConfig):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if self.reduction not in {"mean", "sum"}:
-            raise ValueError(f"reduction must be 'mean' or 'sum', got {self.reduction!r}")
         if self.max_frames is not None and self.max_frames < 1:
             raise ValueError(f"max_frames must be >= 1, got {self.max_frames}")
         if self.fps <= 0:
