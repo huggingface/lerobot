@@ -163,6 +163,23 @@ class PI052Config(PI05Config):
     """If True, route every transformer layer through the KI
     attention path that blocks action→VLM gradient flow on K/V."""
 
+    # Learning-rate defaults --------------------------------------------
+    # pi052 inherits π0.5's openpi-validated optimizer config (peak LR
+    # 2.5e-5, cosine→2.5e-6, 1k warmup, AdamW (0.9, 0.95), wd=0.01,
+    # grad_clip=1.0). The only place pi052 needs to diverge from pi05
+    # is the LM-head LR multiplier: pi05 has no text supervision so the
+    # head doesn't get gradients; pi052 always has text supervision
+    # (subtask / memory / VQA) via the recipe, and under KI the LM head
+    # only sees gradients on ~30–45% of the batch (the text-CE mask
+    # share of the recipe). Under aggressive cosine decay this is too
+    # weak to keep the head pinned, so it drifts back toward PaliGemma's
+    # pretrained ``<loc>`` first-token bias. 5x is the documented fix
+    # (see ``PI05Config.lm_head_lr_scale`` docstring); the wiring is
+    # already in ``PI05Policy.get_optim_params`` — it splits the LM head
+    # + tied ``embed_tokens`` into their own param group while sharing
+    # the same cosine lambda, so the 5x ratio is preserved across decay.
+    lm_head_lr_scale: float = 5.0
+
     def __post_init__(self) -> None:
         super().__post_init__()
         # Backbone needs gradients flowing through the text head when
