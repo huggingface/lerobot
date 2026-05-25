@@ -168,46 +168,6 @@ class LowLevelForward(InferenceStep):
         else:
             chunk_iter = chunk.unsqueeze(0)
 
-        # Diagnostic: show what the action expert actually emitted for
-        # this chunk. The values here are *normalized* (pre-postprocessor),
-        # so we expect them roughly in [-1, 1] under QUANTILES; a chunk
-        # that stays near zero across all 50 steps is the canonical
-        # "barely moving" signature (model defaults to median pose).
-        # Also surface a few unnormalized samples by running the
-        # postprocessor on a copy so we can see the actual joint targets
-        # the robot will receive.
-        try:
-            import torch as _t  # noqa: PLC0415
-
-            sample = chunk_iter.detach().float().cpu()        # (T, D) normalized
-            mag = sample.abs().mean().item()
-            spread = (sample.amax(0) - sample.amin(0)).abs().mean().item()
-            first_norm = [round(float(x), 3) for x in sample[0].tolist()]
-            last_norm = [round(float(x), 3) for x in sample[-1].tolist()]
-            postprocessor = state.get("_postprocessor")
-            first_unnorm = last_unnorm = None
-            if postprocessor is not None:
-                try:
-                    first_unnorm_t = postprocessor(sample[:1].clone())
-                    last_unnorm_t = postprocessor(sample[-1:].clone())
-                    if isinstance(first_unnorm_t, _t.Tensor):
-                        first_unnorm = [round(float(x), 2) for x in first_unnorm_t.flatten().tolist()]
-                    if isinstance(last_unnorm_t, _t.Tensor):
-                        last_unnorm = [round(float(x), 2) for x in last_unnorm_t.flatten().tolist()]
-                except Exception:  # noqa: BLE001
-                    pass
-            state_now = observation.get("observation.state")
-            state_first = None
-            if isinstance(state_now, _t.Tensor):
-                s = state_now.detach().float().cpu().flatten().tolist()
-                state_first = [round(float(x), 2) for x in s[:6]]
-            push_log(state, f"  [act] T={sample.shape[0]} |a|_mean={mag:.3f} spread={spread:.3f}")
-            push_log(state, f"  [act] norm  first={first_norm}  last={last_norm}")
-            if first_unnorm is not None:
-                push_log(state, f"  [act] joint first={first_unnorm}  last={last_unnorm}  state={state_first}")
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("act-diag failed: %s", exc)
-
         for step in chunk_iter:
             queue.append(step.unsqueeze(0))
         state["last_chunk_size"] = int(chunk_iter.shape[0])

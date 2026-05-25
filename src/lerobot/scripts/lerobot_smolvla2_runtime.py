@@ -574,6 +574,93 @@ def _bootstrap_state_from_dataset(
     return out
 
 
+def _select_task_interactively(
+    *,
+    ds_meta: Any,
+    bootstrap_task: str | None,
+) -> str | None:
+    """Ask the operator which task to run at startup.
+
+    Behaviour:
+
+    * If a dataset is loaded, build a numbered menu of every unique task
+      string in ``ds_meta.tasks`` (canonical bootstrap task listed first
+      as the default). Add a ``[c] type a custom task`` option.
+    * If no dataset is loaded, show a plain ``Enter task:`` prompt.
+    * Non-TTY runs (scripts, pipes) skip the prompt and return the
+      bootstrap task so the existing "first stdin line becomes task"
+      flow in ``_run_repl`` / ``_run_autonomous`` still works.
+
+    Returns the chosen task string, or ``None`` when the operator declines
+    to pick one (Ctrl-D / empty + no default).
+    """
+    options: list[str] = []
+    seen: set[str] = set()
+    if bootstrap_task:
+        options.append(bootstrap_task)
+        seen.add(bootstrap_task)
+    if ds_meta is not None and getattr(ds_meta, "tasks", None) is not None:
+        try:
+            for t in list(ds_meta.tasks.index):
+                if isinstance(t, str) and t and t not in seen:
+                    options.append(t)
+                    seen.add(t)
+        except Exception:  # noqa: BLE001 — defensive: tasks shape varies
+            pass
+
+    if not sys.stdin.isatty():
+        # Scripted / piped run: no interactive prompt; fall back to the
+        # bootstrap default (may be None — REPL handles that).
+        return bootstrap_task
+
+    print("\n[smolvla2] Select startup task:", flush=True)
+    if options:
+        for i, opt in enumerate(options, 1):
+            marker = "  (dataset default)" if opt == bootstrap_task else ""
+            print(f"  [{i}] {opt}{marker}", flush=True)
+        print("  [c] type a custom task", flush=True)
+        prompt = "Choice [1]: " if bootstrap_task else "Choice: "
+    else:
+        print("  (no tasks available from dataset)", flush=True)
+        prompt = "Enter task: "
+
+    while True:
+        try:
+            choice = input(prompt).strip()
+        except EOFError:
+            print(flush=True)
+            return bootstrap_task
+
+        # No dataset options at all: the entered line *is* the task.
+        if not options:
+            return choice or None
+
+        # Empty input: take the default (item 1) when there is one.
+        if not choice:
+            return options[0] if bootstrap_task else None
+
+        if choice.lower() in ("c", "custom"):
+            try:
+                free = input("Enter task: ").strip()
+            except EOFError:
+                print(flush=True)
+                return bootstrap_task
+            if free:
+                return free
+            # Empty free-form input → loop back to the menu.
+            continue
+
+        if choice.isdigit():
+            idx = int(choice)
+            if 1 <= idx <= len(options):
+                return options[idx - 1]
+
+        print(
+            f"  invalid choice {choice!r}; pick 1–{len(options)} or 'c'.",
+            flush=True,
+        )
+
+
 def _build_robot(
     *,
     robot_type: str,
@@ -1425,8 +1512,8 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # Bootstrap the canonical task from the dataset whenever one is
-    # provided, so ``/action`` (no argument) has a sensible task to
-    # resume. The model is memorised on the exact training wording, so
+    # provided, so the interactive picker below can offer it as the
+    # default. The model is memorised on the exact training wording, so
     # matching it is what gets recall to fire.
     bootstrap_state: dict[str, str] = {}
     if args.dataset_repo_id is not None:
@@ -1435,12 +1522,22 @@ def main(argv: list[str] | None = None) -> int:
             episode=args.dataset_episode,
             start_frame=args.dataset_start_frame,
         )
-        if bootstrap_state.get("task") and not args.task:
-            args.task = bootstrap_state["task"]
-            print(
-                f"[smolvla2] canonical task from dataset: {args.task!r}",
-                flush=True,
-            )
+
+    # Interactive task picker. Skipped when ``--task`` is already set on
+    # the CLI (scripted runs and explicit overrides win). When no task
+    # was passed, prompt the operator: pick from the dataset's tasks or
+    # type a custom one. Non-TTY runs fall back to the bootstrap task
+    # silently — the existing "first stdin line becomes task" flow in
+    # ``_run_repl`` / ``_run_autonomous`` still handles the no-default
+    # case.
+    if not args.task:
+        chosen = _select_task_interactively(
+            ds_meta=ds_meta,
+            bootstrap_task=bootstrap_state.get("task"),
+        )
+        if chosen:
+            args.task = chosen
+            print(f"[smolvla2] task: {args.task!r}", flush=True)
 
     # No startup prompts — the runtime is command-driven. It comes up at
     # the command line in ``paused`` mode (robot idle) unless ``--mode``
@@ -1520,11 +1617,6 @@ def main(argv: list[str] | None = None) -> int:
     # under-trained checkpoint without recompiling.
     runtime.state["text_gen_min_new_tokens"] = int(getattr(args, "text_min_new_tokens", 0) or 0)
     runtime.state["text_gen_temperature"] = float(getattr(args, "text_temperature", 0.0) or 0.0)
-    # Stash the postprocessor so LowLevelForward's action diagnostic
-    # can show both normalized chunk values AND unnormalized joint
-    # targets — answers "what is the model emitting + what does the
-    # robot actually receive" in one log line.
-    runtime.state["_postprocessor"] = postprocessor
     runtime.state["text_gen_top_p"] = float(getattr(args, "text_top_p", 1.0) or 1.0)
     # Subtask throttle: HighLevelSubtaskFwd fires only once every N
     # action-chunk boundaries. Lets you run N action chunks per LM-head
