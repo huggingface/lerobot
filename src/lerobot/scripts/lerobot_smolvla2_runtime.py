@@ -1508,6 +1508,11 @@ def main(argv: list[str] | None = None) -> int:
     # under-trained checkpoint without recompiling.
     runtime.state["text_gen_min_new_tokens"] = int(getattr(args, "text_min_new_tokens", 0) or 0)
     runtime.state["text_gen_temperature"] = float(getattr(args, "text_temperature", 0.0) or 0.0)
+    # Stash the postprocessor so LowLevelForward's action diagnostic
+    # can show both normalized chunk values AND unnormalized joint
+    # targets — answers "what is the model emitting + what does the
+    # robot actually receive" in one log line.
+    runtime.state["_postprocessor"] = postprocessor
     runtime.state["text_gen_top_p"] = float(getattr(args, "text_top_p", 1.0) or 1.0)
     # Apply the startup mode chosen above the task picker.
     runtime.state["mode"] = startup_mode
