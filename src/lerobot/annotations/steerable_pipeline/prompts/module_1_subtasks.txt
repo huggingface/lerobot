@@ -4,9 +4,9 @@ The user originally asked: "{episode_task}"
 
 You are shown the entire demonstration as a single video. Watch the
 whole clip, then segment it into a list of consecutive atomic subtasks
-the robot performs. Write short, telegraphic action labels.
+the robot performs.
 
-Authoring rules — Hi Robot atom granularity, pi0.7-style short prompts:
+{vocabulary_block}Authoring rules — Hi Robot atom granularity, pi0.7-style short prompts:
 
 - Each subtask = one atomic skill the low-level policy can execute.
 - Write each subtask as an IMPERATIVE COMMAND, starting with a verb:

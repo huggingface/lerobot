@@ -40,6 +40,7 @@ from lerobot.annotations.steerable_pipeline.modules import (
 )
 from lerobot.annotations.steerable_pipeline.validator import StagingValidator
 from lerobot.annotations.steerable_pipeline.vlm_client import make_vlm_client
+from lerobot.annotations.steerable_pipeline.vocabulary import VocabularyDiscoveryModule
 from lerobot.annotations.steerable_pipeline.writer import LanguageColumnsWriter
 from lerobot.configs import parser
 
@@ -88,6 +89,9 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
         vlm=vlm, config=cfg.interjections, seed=cfg.seed, frame_provider=frame_provider
     )
     vqa = GeneralVqaModule(vlm=vlm, config=cfg.vqa, seed=cfg.seed, frame_provider=frame_provider)
+    vocabulary = VocabularyDiscoveryModule(
+        vlm=vlm, config=cfg.vocabulary, frame_provider=frame_provider
+    )
     writer = LanguageColumnsWriter()
     validator = StagingValidator(
         dataset_camera_keys=tuple(getattr(frame_provider, "camera_keys", []) or []) or None,
@@ -98,6 +102,7 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
         plan=plan,
         interjections=interjections,
         vqa=vqa,
+        vocabulary=vocabulary,
         writer=writer,
         validator=validator,
     )
@@ -140,7 +145,7 @@ def _push_to_hub(root: Path, cfg: AnnotationPipelineConfig) -> None:
         exist_ok=True,
     )
     print(f"[lerobot-annotate] uploading {root} -> {repo_id}...", flush=True)
-    api.upload_folder(
+    commit_info = api.upload_folder(
         folder_path=str(root),
         repo_id=repo_id,
         repo_type="dataset",
@@ -169,13 +174,18 @@ def _push_to_hub(root: Path, cfg: AnnotationPipelineConfig) -> None:
                 version_tag = ds_version
         except Exception as exc:  # noqa: BLE001
             print(f"[lerobot-annotate] could not read codebase_version from info.json ({exc}); falling back to {version_tag}", flush=True)
+    revision = getattr(commit_info, "oid", None)
+    tag_kwargs = {
+        "repo_id": repo_id,
+        "tag": version_tag,
+        "repo_type": "dataset",
+        "exist_ok": True,
+    }
+    if revision is not None:
+        tag_kwargs["revision"] = revision
+
     try:
-        api.create_tag(
-            repo_id=repo_id,
-            tag=version_tag,
-            repo_type="dataset",
-            exist_ok=True,
-        )
+        api.create_tag(**tag_kwargs)
         print(f"[lerobot-annotate] tagged {repo_id} as {version_tag}", flush=True)
     except Exception as exc:  # noqa: BLE001
         print(
