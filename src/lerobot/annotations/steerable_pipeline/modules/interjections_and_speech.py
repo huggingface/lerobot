@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Module 2: interjections + paired speech (EVENT styles + speech atoms).
+"""``interjections`` module: interjections + paired speech (EVENT styles + speech atoms).
 
 Two sub-passes:
 
@@ -26,8 +26,8 @@ Two sub-passes:
        speech atom (role:assistant, style:None, tool_calls=[say(...)])
    Both rows go in ``language_events`` at the same timestamp.
 
-Module 1's :meth:`run_plan_updates` reuses Module 2's interjection
-timestamps to refresh the ``plan`` row at the same instant.
+The ``plan`` module's :meth:`run_plan_updates` reuses this module's
+interjection timestamps to refresh the ``plan`` row at the same instant.
 """
 
 from __future__ import annotations
@@ -37,19 +37,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..config import Module2Config
+from ..config import InterjectionsConfig
 from ..frames import FrameProvider, null_provider, to_image_blocks
 from ..prompts import load as load_prompt
-from ..reader import EpisodeRecord
+from ..reader import EpisodeRecord, reconstruct_subtask_spans, snap_to_frame
 from ..staging import EpisodeStaging
 from ..vlm_client import VlmClient
 from ..writer import speech_atom
-
-
-def _snap_to_frame(t: float, frame_timestamps: Sequence[float]) -> float:
-    if not frame_timestamps:
-        return float(t)
-    return float(min(frame_timestamps, key=lambda f: abs(f - t)))
 
 
 @dataclass
@@ -57,7 +51,7 @@ class InterjectionsAndSpeechModule:
     """Generate task-start speech and mid-episode interjection/speech pairs."""
 
     vlm: VlmClient
-    config: Module2Config
+    config: InterjectionsConfig
     seed: int = 1729
     frame_provider: FrameProvider = field(default_factory=null_provider)
 
@@ -72,26 +66,13 @@ class InterjectionsAndSpeechModule:
             initial = self._initial_speech(record)
             if initial:
                 rows.append(speech_atom(t0, initial))
-        # Pull Module 1's subtask spans for this episode so the
+        # Pull the ``plan`` module's subtask spans for this episode so the
         # interjection prompt can ground itself in the actual current
-        # subtask at each chosen timestamp. Module 1 ran first.
-        subtask_spans = self._read_subtask_spans(staging)
+        # subtask at each chosen timestamp. The ``plan`` module ran first.
+        episode_end_t = float(record.frame_timestamps[-1]) if record.frame_timestamps else None
+        subtask_spans = reconstruct_subtask_spans(staging.read("plan"), episode_end_t=episode_end_t)
         rows.extend(self._mid_episode_interjections(record, subtask_spans))
-        staging.write("module_2", rows)
-
-    @staticmethod
-    def _read_subtask_spans(staging: EpisodeStaging) -> list[dict[str, Any]]:
-        rows = [r for r in staging.read("module_1") if r.get("style") == "subtask"]
-        rows.sort(key=lambda r: float(r["timestamp"]))
-        spans: list[dict[str, Any]] = []
-        last_t: float | None = None
-        for r in rows:
-            t = float(r["timestamp"])
-            if last_t is not None and spans:
-                spans[-1]["end"] = t
-            spans.append({"text": r.get("content") or "", "start": t, "end": t})
-            last_t = t
-        return spans
+        staging.write("interjections", rows)
 
     @staticmethod
     def _subtask_at(spans: Sequence[dict[str, Any]], t: float) -> str | None:
@@ -161,7 +142,7 @@ class InterjectionsAndSpeechModule:
 
         out: list[dict[str, Any]] = []
         for t, prev_subtask, next_subtask in chosen:
-            t_snap = _snap_to_frame(t, record.frame_timestamps)
+            t_snap = snap_to_frame(t, record.frame_timestamps)
             # Window straddles the boundary so the VLM sees the end of the
             # previous subtask and the start of the next one — same
             # conditioning the policy will see at training time.
@@ -197,9 +178,7 @@ class InterjectionsAndSpeechModule:
             out.append(speech_atom(t_snap, speech_text.strip()))
         return out
 
-    def _window_timestamps(
-        self, t_anchor: float, frame_timestamps: Sequence[float]
-    ) -> list[float]:
+    def _window_timestamps(self, t_anchor: float, frame_timestamps: Sequence[float]) -> list[float]:
         """Return a small set of frame timestamps centered on ``t_anchor``.
 
         The window straddles the subtask boundary the interjection sits
@@ -224,7 +203,7 @@ class InterjectionsAndSpeechModule:
         seen: set[float] = set()
         for tgt in targets:
             clamped = min(last_ts, max(0.0, tgt))
-            t = _snap_to_frame(clamped, frame_timestamps)
+            t = snap_to_frame(clamped, frame_timestamps)
             if t not in seen:
                 seen.add(t)
                 snapped.append(t)

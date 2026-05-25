@@ -16,16 +16,15 @@
 """``lerobot-annotate`` — populate ``language_persistent`` and
 ``language_events`` columns on a LeRobot dataset.
 
-Annotations live directly in ``data/chunk-*/file-*.parquet``: there is no
-flavor namespace and no sidecar tree. Multiple revisions of the same dataset
-mean multiple dataset copies.
+Annotations live directly in ``data/chunk-*/file-*.parquet``.
 
 Example:
 
   uv run lerobot-annotate \\
       --root=/path/to/dataset \\
-      --vlm.backend=transformers \\
       --vlm.model_id=Qwen/Qwen2.5-VL-7B-Instruct
+
+For distributed runs, see ``examples/annotations/run_hf_job.py``.
 """
 
 import logging
@@ -41,6 +40,7 @@ from lerobot.annotations.steerable_pipeline.modules import (
 )
 from lerobot.annotations.steerable_pipeline.validator import StagingValidator
 from lerobot.annotations.steerable_pipeline.vlm_client import make_vlm_client
+from lerobot.annotations.steerable_pipeline.vocabulary import VocabularyDiscoveryModule
 from lerobot.annotations.steerable_pipeline.writer import LanguageColumnsWriter
 from lerobot.configs import parser
 
@@ -65,28 +65,33 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
     logger.info("annotate: root=%s", root)
 
     vlm = make_vlm_client(cfg.vlm)
-    frame_provider = make_frame_provider(root, camera_key=cfg.vlm.camera_key)
-    # Surface the resolved cameras up front so silent Module-3-no-op
-    # regressions are obvious in job output rather than discovered post-hoc
-    # by counting parquet rows.
+    frame_provider = make_frame_provider(
+        root, camera_key=cfg.vlm.camera_key, video_backend=cfg.video_backend
+    )
+    # Surface the resolved cameras up front so a silent vqa-module no-op
+    # is obvious in job output rather than discovered post-hoc by counting
+    # parquet rows.
     cam_keys = list(getattr(frame_provider, "camera_keys", []) or [])
     logger.info(
         "annotate: frame_provider default camera=%r, all cameras=%s",
         getattr(frame_provider, "camera_key", None),
         cam_keys,
     )
-    if cfg.module_3.enabled and not cam_keys:
+    if cfg.vqa.enabled and not cam_keys:
         logger.warning(
-            "annotate: Module 3 (VQA) is enabled but no cameras were "
-            "resolved — Module 3 will produce zero VQA rows. Check "
+            "annotate: the vqa module is enabled but no cameras were "
+            "resolved — it will produce zero VQA rows. Check "
             "meta/info.json for observation.images.* features, or pass "
             "--vlm.camera_key=<key> to seed the cameras list."
         )
-    module_1 = PlanSubtasksMemoryModule(vlm=vlm, config=cfg.module_1, frame_provider=frame_provider)
-    module_2 = InterjectionsAndSpeechModule(
-        vlm=vlm, config=cfg.module_2, seed=cfg.seed, frame_provider=frame_provider
+    plan = PlanSubtasksMemoryModule(vlm=vlm, config=cfg.plan, frame_provider=frame_provider)
+    interjections = InterjectionsAndSpeechModule(
+        vlm=vlm, config=cfg.interjections, seed=cfg.seed, frame_provider=frame_provider
     )
-    module_3 = GeneralVqaModule(vlm=vlm, config=cfg.module_3, seed=cfg.seed, frame_provider=frame_provider)
+    vqa = GeneralVqaModule(vlm=vlm, config=cfg.vqa, seed=cfg.seed, frame_provider=frame_provider)
+    vocabulary = VocabularyDiscoveryModule(
+        vlm=vlm, config=cfg.vocabulary, frame_provider=frame_provider
+    )
     writer = LanguageColumnsWriter()
     validator = StagingValidator(
         dataset_camera_keys=tuple(getattr(frame_provider, "camera_keys", []) or []) or None,
@@ -94,9 +99,10 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
 
     executor = Executor(
         config=cfg,
-        module_1=module_1,
-        module_2=module_2,
-        module_3=module_3,
+        plan=plan,
+        interjections=interjections,
+        vqa=vqa,
+        vocabulary=vocabulary,
         writer=writer,
         validator=validator,
     )
@@ -114,14 +120,21 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
             logger.warning(w)
 
     if cfg.push_to_hub:
+        if cfg.repo_id is None and cfg.dest_repo_id is None:
+            raise ValueError(
+                "--push_to_hub requires --repo_id or --dest_repo_id (the dataset repo to push to)."
+            )
         _push_to_hub(root, cfg)
 
 
 def _push_to_hub(root: Path, cfg: AnnotationPipelineConfig) -> None:
-    """Upload the annotated dataset directory to the Hugging Face Hub."""
+    """Upload the annotated dataset directory to the Hub.
+
+    Pushes to ``cfg.dest_repo_id`` when set, otherwise back to ``cfg.repo_id``.
+    """
     from huggingface_hub import HfApi  # noqa: PLC0415
 
-    repo_id = cfg.push_to_hub
+    repo_id = cfg.dest_repo_id or cfg.repo_id
     commit_message = cfg.push_commit_message or "Add steerable annotations (lerobot-annotate)"
     api = HfApi()
     print(f"[lerobot-annotate] creating/locating dataset repo {repo_id}...", flush=True)
@@ -132,7 +145,7 @@ def _push_to_hub(root: Path, cfg: AnnotationPipelineConfig) -> None:
         exist_ok=True,
     )
     print(f"[lerobot-annotate] uploading {root} -> {repo_id}...", flush=True)
-    api.upload_folder(
+    commit_info = api.upload_folder(
         folder_path=str(root),
         repo_id=repo_id,
         repo_type="dataset",
@@ -140,6 +153,48 @@ def _push_to_hub(root: Path, cfg: AnnotationPipelineConfig) -> None:
         ignore_patterns=[".annotate_staging/**", "**/.DS_Store"],
     )
     print(f"[lerobot-annotate] uploaded to https://huggingface.co/datasets/{repo_id}", flush=True)
+
+    # Tag the upload with the codebase version. ``LeRobotDatasetMetadata``
+    # resolves the dataset revision via ``get_safe_version`` which scans
+    # for tags like ``v3.0``; without a tag it raises
+    # ``RevisionNotFoundError``. Read the version straight from the
+    # dataset's own ``meta/info.json`` so we tag whatever the writer
+    # actually wrote (no accidental drift if the codebase floor moves).
+    from lerobot.datasets.dataset_metadata import CODEBASE_VERSION  # noqa: PLC0415
+
+    info_path = root / "meta" / "info.json"
+    version_tag = CODEBASE_VERSION
+    if info_path.exists():
+        try:
+            from lerobot.utils.io_utils import load_json  # noqa: PLC0415
+
+            info = load_json(info_path)
+            ds_version = info.get("codebase_version")
+            if isinstance(ds_version, str) and ds_version.startswith("v"):
+                version_tag = ds_version
+        except Exception as exc:  # noqa: BLE001
+            print(f"[lerobot-annotate] could not read codebase_version from info.json ({exc}); falling back to {version_tag}", flush=True)
+    revision = getattr(commit_info, "oid", None)
+    tag_kwargs = {
+        "repo_id": repo_id,
+        "tag": version_tag,
+        "repo_type": "dataset",
+        "exist_ok": True,
+    }
+    if revision is not None:
+        tag_kwargs["revision"] = revision
+
+    try:
+        api.create_tag(**tag_kwargs)
+        print(f"[lerobot-annotate] tagged {repo_id} as {version_tag}", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"[lerobot-annotate] WARNING: could not create tag {version_tag!r} on {repo_id}: {exc}. "
+            "Dataset is uploaded but ``LeRobotDataset`` won't be able to load it until it's tagged. "
+            "Run: from huggingface_hub import HfApi; "
+            f"HfApi().create_tag({repo_id!r}, tag={version_tag!r}, repo_type='dataset', exist_ok=True)",
+            flush=True,
+        )
 
 
 def main() -> None:

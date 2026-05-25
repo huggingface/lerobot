@@ -142,6 +142,10 @@ class RelativeActionsProcessorStep(ProcessorStep):
         new_transition[TransitionKey.ACTION] = to_relative_actions(action, state, mask)
         return new_transition
 
+    def get_cached_state(self) -> torch.Tensor | None:
+        """Return the cached ``observation.state`` used as the reference point for relative/absolute action conversions."""
+        return self._last_state
+
     def get_config(self) -> dict[str, Any]:
         return {
             "enabled": self.enabled,
@@ -182,7 +186,8 @@ class AbsoluteActionsProcessorStep(ProcessorStep):
                 "but relative_step is None. Ensure relative_step is set when constructing the postprocessor."
             )
 
-        if self.relative_step._last_state is None:
+        cached_state = self.relative_step.get_cached_state()
+        if cached_state is None:
             raise RuntimeError(
                 "AbsoluteActionsProcessorStep requires state from RelativeActionsProcessorStep "
                 "but no state has been cached. Ensure the preprocessor runs before the postprocessor."
@@ -194,9 +199,7 @@ class AbsoluteActionsProcessorStep(ProcessorStep):
             return new_transition
 
         mask = self.relative_step._build_mask(action.shape[-1])
-        new_transition[TransitionKey.ACTION] = to_absolute_actions(
-            action, self.relative_step._last_state, mask
-        )
+        new_transition[TransitionKey.ACTION] = to_absolute_actions(action, cached_state, mask)
         return new_transition
 
     def get_config(self) -> dict[str, Any]:

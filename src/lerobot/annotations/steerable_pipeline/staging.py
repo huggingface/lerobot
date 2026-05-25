@@ -36,9 +36,9 @@ from typing import Any
 ModuleName = str
 
 _MODULES: tuple[ModuleName, ...] = (
-    "module_1",
-    "module_2",
-    "module_3",
+    "plan",
+    "interjections",
+    "vqa",
 )
 
 
@@ -61,10 +61,16 @@ class EpisodeStaging:
     def write(self, module: ModuleName, rows: Iterable[dict[str, Any]]) -> Path:
         path = self.path_for(module)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as f:
+        # Atomic replace: a crash mid-write would otherwise leave a
+        # half-written JSONL file that ``read()`` would then fail to
+        # parse. Write to a sibling .tmp and rename so the target path
+        # only ever points at a complete file.
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        with tmp_path.open("w", encoding="utf-8") as f:
             for row in rows:
                 f.write(json.dumps(row, ensure_ascii=False, sort_keys=True))
                 f.write("\n")
+        tmp_path.replace(path)
         return path
 
     def read(self, module: ModuleName) -> list[dict[str, Any]]:

@@ -145,7 +145,9 @@ def _scalar(value: Any) -> float | int:
     """Unwrap a tensor/array/single-element list into a Python scalar."""
     if hasattr(value, "item"):
         return value.item()
-    if isinstance(value, list) and len(value) == 1:
+    if isinstance(value, list):
+        if len(value) != 1:
+            raise ValueError(f"Expected a scalar, got list of length {len(value)}: {value!r}")
         return _scalar(value[0])
     return value
 

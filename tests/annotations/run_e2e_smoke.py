@@ -15,21 +15,18 @@
 # limitations under the License.
 """Opt-in E2E smoke run for ``make annotation-e2e``.
 
-Builds the same fixture used by the pytest suite, runs the full
-annotation pipeline against it with a stub VLM, and prints a short report.
-This is intentionally not a pytest test — it exercises the CLI plumbing
-without depending on conftest.py fixtures.
+Builds the shared annotation fixture (:func:`build_annotation_dataset`),
+runs the full annotation pipeline against it with a stub VLM, and prints a
+short report. This is intentionally not a pytest test — it exercises the
+CLI plumbing — but it reuses the same on-disk dataset builder as the pytest
+fixtures so there is no duplicated fixture code.
 """
 
 from __future__ import annotations
 
-import json
 import sys
 import tempfile
 from pathlib import Path
-
-import pyarrow as pa
-import pyarrow.parquet as pq
 
 from lerobot.annotations.steerable_pipeline.config import AnnotationPipelineConfig
 from lerobot.annotations.steerable_pipeline.executor import Executor
@@ -41,31 +38,7 @@ from lerobot.annotations.steerable_pipeline.modules import (
 from lerobot.annotations.steerable_pipeline.validator import StagingValidator
 from lerobot.annotations.steerable_pipeline.vlm_client import StubVlmClient
 from lerobot.annotations.steerable_pipeline.writer import LanguageColumnsWriter
-
-
-def _build_dataset(root: Path) -> Path:
-    data_dir = root / "data" / "chunk-000"
-    data_dir.mkdir(parents=True, exist_ok=True)
-    n = 30
-    timestamps = [round(i / 10, 6) for i in range(n)]
-    table = pa.Table.from_pydict(
-        {
-            "episode_index": [0] * n,
-            "frame_index": list(range(n)),
-            "timestamp": timestamps,
-            "task_index": [0] * n,
-            "subtask_index": [0] * n,
-        }
-    )
-    pq.write_table(table, data_dir / "file-000.parquet")
-    meta = root / "meta"
-    meta.mkdir(parents=True, exist_ok=True)
-    pq.write_table(
-        pa.Table.from_pydict({"task_index": [0], "task": ["Pour water into the cup."]}),
-        meta / "tasks.parquet",
-    )
-    (meta / "info.json").write_text(json.dumps({"codebase_version": "v3.1", "fps": 10}))
-    return root
+from tests.fixtures.dataset_factories import build_annotation_dataset
 
 
 def _stub_responder(messages):
@@ -102,14 +75,18 @@ def _stub_responder(messages):
 
 def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
-        root = _build_dataset(Path(tmp) / "ds")
+        root = build_annotation_dataset(
+            Path(tmp) / "ds",
+            episode_specs=[(0, 30, "Pour water into the cup.")],
+            fps=10,
+        )
         vlm = StubVlmClient(responder=_stub_responder)
         cfg = AnnotationPipelineConfig()
         executor = Executor(
             config=cfg,
-            module_1=PlanSubtasksMemoryModule(vlm=vlm, config=cfg.module_1),
-            module_2=InterjectionsAndSpeechModule(vlm=vlm, config=cfg.module_2, seed=cfg.seed),
-            module_3=GeneralVqaModule(vlm=vlm, config=cfg.module_3, seed=cfg.seed),
+            plan=PlanSubtasksMemoryModule(vlm=vlm, config=cfg.plan),
+            interjections=InterjectionsAndSpeechModule(vlm=vlm, config=cfg.interjections, seed=cfg.seed),
+            vqa=GeneralVqaModule(vlm=vlm, config=cfg.vqa, seed=cfg.seed),
             writer=LanguageColumnsWriter(),
             validator=StagingValidator(),
         )

@@ -1,11 +1,18 @@
 #!/usr/bin/env python
 
-from pathlib import Path
-
 import pytest
 
-from lerobot.configs.recipe import MessageTurn, TrainingRecipe
-from lerobot.datasets.language_render import active_at, emitted_at, nth_next, nth_prev, render_sample
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
+from lerobot.configs.recipe import MessageTurn, TrainingRecipe  # noqa: E402
+from lerobot.datasets.language_render import (  # noqa: E402
+    EMITTED_AT_TOLERANCE_S,
+    active_at,
+    emitted_at,
+    nth_next,
+    nth_prev,
+    render_sample,
+)
 
 
 def persistent_row(role, content, style, timestamp, tool_calls=None, camera=None):
@@ -201,84 +208,50 @@ def test_emitted_at_raises_on_ambiguous_per_camera_vqa():
         )
 
 
-def test_per_camera_blend_renders_both_views():
-    recipe = TrainingRecipe(
-        blend={
-            "top": TrainingRecipe(
-                weight=1.0,
-                bindings={
-                    "vqa_query": ("emitted_at(t, style=vqa, role=user, camera=observation.images.top)"),
-                    "vqa": ("emitted_at(t, style=vqa, role=assistant, camera=observation.images.top)"),
-                },
-                messages=[
-                    MessageTurn(
-                        role="user",
-                        content=[
-                            {"type": "image", "feature": "observation.images.top"},
-                            {"type": "text", "text": "${vqa_query}"},
-                        ],
-                        stream="high_level",
-                        if_present="vqa_query",
-                    ),
-                    MessageTurn(
-                        role="assistant",
-                        content="${vqa}",
-                        stream="high_level",
-                        target=True,
-                        if_present="vqa",
-                    ),
-                ],
+def _vqa_subrecipe(camera: str) -> TrainingRecipe:
+    return TrainingRecipe(
+        weight=1.0,
+        bindings={
+            "vqa_query": f"emitted_at(t, style=vqa, role=user, camera={camera})",
+            "vqa": f"emitted_at(t, style=vqa, role=assistant, camera={camera})",
+        },
+        messages=[
+            MessageTurn(
+                role="user",
+                content=[{"type": "image", "feature": camera}, {"type": "text", "text": "${vqa_query}"}],
+                stream="high_level",
+                if_present="vqa_query",
             ),
-            "wrist": TrainingRecipe(
-                weight=1.0,
-                bindings={
-                    "vqa_query": ("emitted_at(t, style=vqa, role=user, camera=observation.images.wrist)"),
-                    "vqa": ("emitted_at(t, style=vqa, role=assistant, camera=observation.images.wrist)"),
-                },
-                messages=[
-                    MessageTurn(
-                        role="user",
-                        content=[
-                            {"type": "image", "feature": "observation.images.wrist"},
-                            {"type": "text", "text": "${vqa_query}"},
-                        ],
-                        stream="high_level",
-                        if_present="vqa_query",
-                    ),
-                    MessageTurn(
-                        role="assistant",
-                        content="${vqa}",
-                        stream="high_level",
-                        target=True,
-                        if_present="vqa",
-                    ),
-                ],
+            MessageTurn(
+                role="assistant",
+                content="${vqa}",
+                stream="high_level",
+                target=True,
+                if_present="vqa",
             ),
-        }
+        ],
     )
 
-    rendered_top = render_sample(
-        recipe=recipe.blend["top"],
-        persistent=PERSISTENT,
-        events=EVENTS_AT_3_TWO_CAMERAS,
-        t=3.0,
-        sample_idx=0,
-    )
-    rendered_wrist = render_sample(
-        recipe=recipe.blend["wrist"],
+
+@pytest.mark.parametrize(
+    ("camera", "expected_query", "expected_answer"),
+    [
+        ("observation.images.top", "how many cups (top)?", '{"count": 3}'),
+        ("observation.images.wrist", "how many cups (wrist)?", '{"count": 1}'),
+    ],
+)
+def test_per_camera_blend_renders_both_views(camera, expected_query, expected_answer):
+    rendered = render_sample(
+        recipe=_vqa_subrecipe(camera),
         persistent=PERSISTENT,
         events=EVENTS_AT_3_TWO_CAMERAS,
         t=3.0,
         sample_idx=0,
     )
 
-    assert rendered_top["messages"][0]["content"][0]["feature"] == "observation.images.top"
-    assert rendered_top["messages"][0]["content"][1]["text"] == "how many cups (top)?"
-    assert rendered_top["messages"][1]["content"] == '{"count": 3}'
-
-    assert rendered_wrist["messages"][0]["content"][0]["feature"] == "observation.images.wrist"
-    assert rendered_wrist["messages"][0]["content"][1]["text"] == "how many cups (wrist)?"
-    assert rendered_wrist["messages"][1]["content"] == '{"count": 1}'
+    assert rendered["messages"][0]["content"][0]["feature"] == camera
+    assert rendered["messages"][0]["content"][1]["text"] == expected_query
+    assert rendered["messages"][1]["content"] == expected_answer
 
 
 def test_resolve_task_picks_rephrasing_deterministically_per_sample():
@@ -448,12 +421,65 @@ def test_vqa_frame_is_consumed_over_the_weighted_blend():
     assert rendered["messages"][-1]["content"] == "a subtask"
 
 
-def test_canonical_recipe_can_render_low_level_branch():
-    """The shipped ``subtasks_vqa.yaml`` recipe's ``low_level_execution``
-    branch renders — a flow-only ``user(${subtask})`` turn (no text-CE
-    target; its supervision is the action-expert flow loss)."""
-    recipe = TrainingRecipe.from_yaml(Path("src/lerobot/configs/recipes/subtasks_vqa.yaml"))
-    low_level = TrainingRecipe(blend={"low": recipe.blend["low_level_execution"]})
+def test_emitted_at_persistent_tolerates_small_timestamp_drift():
+    """Persistent ``emitted_at`` should match within EMITTED_AT_TOLERANCE_S
+    so callers that derive ``t`` arithmetically (``frame_idx / fps``) still
+    line up with the parquet-stored timestamp.
+    """
+    rows = [persistent_row("assistant", "memo", "memory", 1.0)]
+    # Half a tolerance window — bit-different float, comfortably inside
+    inside = emitted_at(1.0 + EMITTED_AT_TOLERANCE_S / 2, persistent=rows, events=[], style="memory")
+    assert inside is not None and inside["content"] == "memo"
+
+    # Just past the window — no match
+    outside = emitted_at(1.0 + EMITTED_AT_TOLERANCE_S * 2, persistent=rows, events=[], style="memory")
+    assert outside is None
+
+
+def test_render_sample_rejects_non_dict_language_rows():
+    """``_normalize_rows`` must surface malformed inputs as TypeError.
+
+    A pipeline that hands the renderer a non-dict (e.g. a stray string)
+    is a real upstream bug — silent skipping would let it propagate.
+    """
+    recipe = TrainingRecipe(
+        messages=[
+            MessageTurn(role="user", content="${task}", stream="high_level"),
+            MessageTurn(role="assistant", content="ok", stream="high_level", target=True),
+        ]
+    )
+    with pytest.raises(TypeError, match="must be dictionaries"):
+        render_sample(
+            recipe=recipe,
+            persistent=["not a dict"],
+            events=[],
+            t=0.0,
+            sample_idx=0,
+            task="x",
+        )
+
+
+def test_low_level_branch_renders_active_subtask():
+    low_level = TrainingRecipe(
+        blend={
+            "low": TrainingRecipe(
+                weight=1.0,
+                messages=[
+                    MessageTurn(
+                        role="user",
+                        content="${task}\nPlan: ${plan}\nMemory: ${memory}",
+                        stream="high_level",
+                    ),
+                    MessageTurn(
+                        role="assistant",
+                        content="${subtask}",
+                        stream="low_level",
+                        target=True,
+                    ),
+                ],
+            )
+        }
+    )
 
     rendered = render_sample(
         recipe=low_level,
@@ -464,6 +490,6 @@ def test_canonical_recipe_can_render_low_level_branch():
         task="clean kitchen",
     )
 
-    assert rendered["messages"][-1] == {"role": "user", "content": "subtask 0"}
+    assert rendered["messages"][-1] == {"role": "assistant", "content": "subtask 0"}
     assert rendered["message_streams"][-1] == "low_level"
-    assert rendered["target_message_indices"] == []
+    assert rendered["target_message_indices"] == [1]

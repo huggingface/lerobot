@@ -14,13 +14,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
+import time
+
 from lerobot.cameras.opencv import OpenCVCameraConfig
-from lerobot.common.control_utils import init_keyboard_listener
+from lerobot.common.control_utils import init_keyboard_listener, predict_action
 from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.datasets import LeRobotDataset, aggregate_pipeline_dataset_features, create_initial_features
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies import make_pre_post_processors
 from lerobot.policies.act import ACTPolicy
+from lerobot.policies.utils import make_robot_action
 from lerobot.processor import (
     RobotProcessorPipeline,
     make_default_teleop_action_processor,
@@ -34,11 +38,12 @@ from lerobot.robots.so_follower.robot_kinematic_processor import (
     ForwardKinematicsJointsToEE,
     InverseKinematicsEEToJoints,
 )
-from lerobot.scripts.lerobot_record import record_loop
 from lerobot.types import RobotAction, RobotObservation
-from lerobot.utils.feature_utils import combine_feature_dicts
+from lerobot.utils.constants import ACTION, OBS_STR
+from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
+from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
-from lerobot.utils.visualization_utils import init_rerun
+from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
 NUM_EPISODES = 5
 FPS = 30
@@ -49,6 +54,9 @@ HF_DATASET_ID = "<hf_username>/<dataset_repo_id>"
 
 
 def main():
+    # NOTE: For production policy deployment, use `lerobot-rollout` CLI instead.
+    # This script provides a self-contained example for educational purposes.
+
     # Create the robot configuration & robot
     camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
     robot_config = SO100FollowerConfig(
@@ -143,43 +151,67 @@ def main():
             raise ValueError("Robot is not connected!")
 
         print("Starting evaluate loop...")
+        control_interval = 1 / FPS
         episode_idx = 0
         for episode_idx in range(NUM_EPISODES):
             log_say(f"Running inference, recording eval episode {episode_idx + 1} of {NUM_EPISODES}")
 
-            # Main record loop
-            record_loop(
-                robot=robot,
-                events=events,
-                fps=FPS,
-                policy=policy,
-                preprocessor=preprocessor,  # Pass the pre and post policy processors
-                postprocessor=postprocessor,
-                dataset=dataset,
-                control_time_s=EPISODE_TIME_SEC,
-                single_task=TASK_DESCRIPTION,
-                display_data=True,
-                teleop_action_processor=make_default_teleop_action_processor(),
-                robot_action_processor=robot_ee_to_joints_processor,
-                robot_observation_processor=robot_joints_to_ee_pose_processor,
-            )
+            # Inline evaluation loop: predict actions and send to robot
+            timestamp = 0
+            start_episode_t = time.perf_counter()
+            while timestamp < EPISODE_TIME_SEC:
+                start_loop_t = time.perf_counter()
+
+                if events["exit_early"]:
+                    events["exit_early"] = False
+                    break
+
+                # Get robot observation
+                obs = robot.get_observation()
+                obs_processed = robot_joints_to_ee_pose_processor(obs)
+                observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
+
+                # Predict action using the policy
+                action_tensor = predict_action(
+                    observation=observation_frame,
+                    policy=policy,
+                    device=policy.config.device,
+                    preprocessor=preprocessor,
+                    postprocessor=postprocessor,
+                    use_amp=policy.config.device.type == "cuda",
+                    task=TASK_DESCRIPTION,
+                    robot_type=robot.name,
+                )
+
+                # Convert policy output to robot action dict
+                action_values = make_robot_action(action_tensor, dataset.features)
+
+                # Process and send action to robot (EE -> joints via IK)
+                robot_action_to_send = robot_ee_to_joints_processor((action_values, obs))
+                robot.send_action(robot_action_to_send)
+
+                # Write to dataset
+                action_frame = build_dataset_frame(dataset.features, action_values, prefix=ACTION)
+                frame = {**observation_frame, **action_frame, "task": TASK_DESCRIPTION}
+                dataset.add_frame(frame)
+
+                log_rerun_data(observation=obs_processed, action=action_values)
+
+                dt_s = time.perf_counter() - start_loop_t
+                sleep_time_s = control_interval - dt_s
+                if sleep_time_s < 0:
+                    logging.warning(
+                        f"Evaluate loop is running slower ({1 / dt_s:.1f} Hz) than the target FPS ({FPS} Hz)."
+                    )
+                precise_sleep(max(sleep_time_s, 0.0))
+                timestamp = time.perf_counter() - start_episode_t
 
             # Reset the environment if not stopping or re-recording
             if not events["stop_recording"] and (
                 (episode_idx < NUM_EPISODES - 1) or events["rerecord_episode"]
             ):
                 log_say("Reset the environment")
-                record_loop(
-                    robot=robot,
-                    events=events,
-                    fps=FPS,
-                    control_time_s=EPISODE_TIME_SEC,
-                    single_task=TASK_DESCRIPTION,
-                    display_data=True,
-                    teleop_action_processor=make_default_teleop_action_processor(),
-                    robot_action_processor=robot_ee_to_joints_processor,
-                    robot_observation_processor=robot_joints_to_ee_pose_processor,
-                )
+                log_say("Waiting for environment reset, press right arrow key when ready...")
 
             if events["rerecord_episode"]:
                 log_say("Re-record episode")
@@ -190,7 +222,6 @@ def main():
 
             # Save episode
             dataset.save_episode()
-            episode_idx += 1
     finally:
         # Clean up
         log_say("Stop recording")

@@ -1,13 +1,17 @@
 #!/usr/bin/env python
 
-import numpy as np
-import pandas as pd
-import pyarrow as pa
 import pytest
 
-from lerobot.datasets import LeRobotDataset
-from lerobot.datasets.io_utils import write_info
-from lerobot.datasets.language import (
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+pytest.importorskip("pandas", reason="pandas is required (install lerobot[dataset])")
+
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+import pyarrow as pa  # noqa: E402
+
+from lerobot.datasets import LeRobotDataset  # noqa: E402
+from lerobot.datasets.io_utils import write_info  # noqa: E402
+from lerobot.datasets.language import (  # noqa: E402
     EVENT_ONLY_STYLES,
     LANGUAGE_EVENTS,
     LANGUAGE_PERSISTENT,
@@ -21,7 +25,7 @@ from lerobot.datasets.language import (
     language_persistent_arrow_type,
     validate_camera_field,
 )
-from lerobot.datasets.utils import DEFAULT_DATA_PATH
+from lerobot.datasets.utils import DEFAULT_DATA_PATH  # noqa: E402
 
 
 def test_language_arrow_schema_has_expected_fields():

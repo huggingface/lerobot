@@ -15,7 +15,7 @@
 # limitations under the License.
 """Pre-write validation against staged outputs.
 
-Runs after Modules 1–3 have all written their per-episode artifacts but
+Runs after all three modules have written their per-episode artifacts but
 *before* the writer rewrites parquet shards. The validator never touches
 parquet; it only inspects the staging tree and the source frame timestamps
 exposed by :class:`EpisodeRecord`.
@@ -218,11 +218,11 @@ class StagingValidator:
         except ValueError:
             report.add_error(f"ep={episode_index} module={module}: unknown style {style!r}")
             return
-        if module == "module_1" and target_col != LANGUAGE_PERSISTENT:
+        if module == "plan" and target_col != LANGUAGE_PERSISTENT:
             report.add_error(
-                f"ep={episode_index} module=module_1 emitted style {style!r} that routes to {target_col} (must be persistent)"
+                f"ep={episode_index} module=plan emitted style {style!r} that routes to {target_col} (must be persistent)"
             )
-        if module in {"module_2", "module_3"} and target_col != LANGUAGE_EVENTS:
+        if module in {"interjections", "vqa"} and target_col != LANGUAGE_EVENTS:
             report.add_error(
                 f"ep={episode_index} module={module} emitted style {style!r} that routes to {target_col} (must be events)"
             )

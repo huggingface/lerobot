@@ -36,11 +36,22 @@ def lerobot_collate_fn(batch: list[dict[str, Any] | None]) -> dict[str, Any] | N
     if not batch:
         return None
 
-    preserved = {
-        key: [sample[key] for sample in batch if key in sample]
-        for key in _PYTHON_LIST_KEYS
-        if any(key in sample for sample in batch)
-    }
+    # All-or-nothing per key: a partial-presence batch (e.g. half the samples
+    # carry `messages` and half don't) is a real bug in the upstream
+    # rendering step — silently filtering would hand downstream consumers a
+    # preserved list shorter than the tensor batch. Raise instead so the
+    # mismatch surfaces at the boundary.
+    preserved: dict[str, list[Any]] = {}
+    for key in _PYTHON_LIST_KEYS:
+        presence = [key in sample for sample in batch]
+        if not any(presence):
+            continue
+        if not all(presence):
+            raise ValueError(
+                f"Inconsistent batch: {sum(presence)}/{len(batch)} samples carry {key!r}; "
+                f"every sample in a batch must agree."
+            )
+        preserved[key] = [sample[key] for sample in batch]
     tensorizable = [
         {
             key: value

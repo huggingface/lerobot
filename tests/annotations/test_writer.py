@@ -35,17 +35,17 @@ def _stage_episode(
     staging_dir: Path,
     episode_index: int,
     *,
-    module_1: list[dict] | None = None,
-    module_2: list[dict] | None = None,
-    module_3: list[dict] | None = None,
+    plan: list[dict] | None = None,
+    interjections: list[dict] | None = None,
+    vqa: list[dict] | None = None,
 ) -> None:
     staging = EpisodeStaging(staging_dir, episode_index)
-    if module_1 is not None:
-        staging.write("module_1", module_1)
-    if module_2 is not None:
-        staging.write("module_2", module_2)
-    if module_3 is not None:
-        staging.write("module_3", module_3)
+    if plan is not None:
+        staging.write("plan", plan)
+    if interjections is not None:
+        staging.write("interjections", interjections)
+    if vqa is not None:
+        staging.write("vqa", vqa)
 
 
 def test_writer_persistence_identity(fixture_dataset_root: Path, tmp_path: Path) -> None:
@@ -54,7 +54,7 @@ def test_writer_persistence_identity(fixture_dataset_root: Path, tmp_path: Path)
     _stage_episode(
         staging_dir,
         0,
-        module_1=[
+        plan=[
             {
                 "role": "assistant",
                 "content": "grasp the sponge",
@@ -94,7 +94,7 @@ def test_writer_events_exact_timestamp(fixture_dataset_root: Path, tmp_path: Pat
     _stage_episode(
         staging_dir,
         0,
-        module_2=[
+        interjections=[
             speech_atom(0.0, "Got it."),
             {
                 "role": "user",
@@ -127,7 +127,7 @@ def test_writer_column_routing(fixture_dataset_root: Path, tmp_path: Path) -> No
     _stage_episode(
         staging_dir,
         0,
-        module_1=[
+        plan=[
             {
                 "role": "assistant",
                 "content": "do X",
@@ -150,7 +150,7 @@ def test_writer_column_routing(fixture_dataset_root: Path, tmp_path: Path) -> No
                 "tool_calls": None,
             },
         ],
-        module_2=[
+        interjections=[
             speech_atom(0.0, "OK"),
             {
                 "role": "user",
@@ -161,12 +161,13 @@ def test_writer_column_routing(fixture_dataset_root: Path, tmp_path: Path) -> No
             },
             speech_atom(0.2, "Waiting"),
         ],
-        module_3=[
+        vqa=[
             {
                 "role": "user",
                 "content": "where is the cup?",
                 "style": "vqa",
                 "timestamp": 0.4,
+                "camera": "observation.images.front",
                 "tool_calls": None,
             },
             {
@@ -177,6 +178,7 @@ def test_writer_column_routing(fixture_dataset_root: Path, tmp_path: Path) -> No
                 ),
                 "style": "vqa",
                 "timestamp": 0.4,
+                "camera": "observation.images.front",
                 "tool_calls": None,
             },
         ],
@@ -199,7 +201,7 @@ def test_writer_drops_subtask_index_idempotent(fixture_dataset_root: Path, tmp_p
     _stage_episode(
         staging_dir,
         0,
-        module_1=[
+        plan=[
             {
                 "role": "assistant",
                 "content": "do X",
@@ -275,7 +277,7 @@ def test_writer_does_not_add_tools_column(fixture_dataset_root: Path, tmp_path: 
     _stage_episode(
         staging_dir,
         0,
-        module_1=[
+        plan=[
             {"role": "assistant", "content": "x", "style": "subtask", "timestamp": 0.0, "tool_calls": None}
         ],
     )
@@ -283,6 +285,56 @@ def test_writer_does_not_add_tools_column(fixture_dataset_root: Path, tmp_path: 
     LanguageColumnsWriter().write_all(records, staging_dir, fixture_dataset_root)
     table = pq.read_table(fixture_dataset_root / "data" / "chunk-000" / "file-000.parquet")
     assert "tools" not in table.column_names
+
+
+def test_annotation_metadata_sync_allows_non_streaming_load(
+    fixture_dataset_root: Path, tmp_path: Path
+) -> None:
+    """Annotated parquet columns must be declared in ``meta/info.json``.
+
+    ``LeRobotDataset`` loads non-streaming datasets by casting parquet
+    against metadata-derived HF features. If the annotation writer adds
+    language columns but metadata stays stale, that cast fails with a column
+    mismatch.
+    """
+    from lerobot.annotations.steerable_pipeline.executor import Executor
+    from lerobot.datasets.feature_utils import get_hf_features_from_features
+    from lerobot.datasets.io_utils import load_info, load_nested_dataset
+    from lerobot.datasets.language import LANGUAGE_EVENTS, LANGUAGE_PERSISTENT, language_feature_info
+
+    info_path = fixture_dataset_root / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    info["features"] = {
+        "episode_index": {"dtype": "int64", "shape": (1,), "names": None},
+        "frame_index": {"dtype": "int64", "shape": (1,), "names": None},
+        "timestamp": {"dtype": "float32", "shape": (1,), "names": None},
+        "task_index": {"dtype": "int64", "shape": (1,), "names": None},
+    }
+    info_path.write_text(json.dumps(info, indent=2))
+
+    staging_dir = tmp_path / "stage"
+    _stage_episode(
+        staging_dir,
+        0,
+        plan=[
+            {"role": "assistant", "content": "do X", "style": "subtask", "timestamp": 0.0, "tool_calls": None}
+        ],
+    )
+    records = list(iter_episodes(fixture_dataset_root))
+    LanguageColumnsWriter().write_all(records, staging_dir, fixture_dataset_root)
+
+    Executor._ensure_annotation_metadata_in_info(fixture_dataset_root)
+
+    synced = load_info(fixture_dataset_root)
+    for key, feature in language_feature_info().items():
+        assert synced["features"][key] == feature
+
+    hf_features = get_hf_features_from_features(synced["features"])
+    dataset = load_nested_dataset(fixture_dataset_root / "data", features=hf_features)
+
+    assert LANGUAGE_PERSISTENT in dataset.column_names
+    assert LANGUAGE_EVENTS in dataset.column_names
+    assert len(dataset) == 24
 
 
 def test_speech_atom_shape_matches_plan_spec() -> None:

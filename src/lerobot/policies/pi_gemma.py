@@ -197,6 +197,9 @@ class PiGemmaModel(GemmaModel):  # type: ignore[misc]
 
     def __init__(self, config: GemmaConfig, **kwargs):
         super().__init__(config, **kwargs)
+        # Free parent-allocated layers/norm before replacing to avoid ~2x peak memory.
+        del self.layers
+        del self.norm
         # if not getattr(config, "use_adarms", False):
         #     return
         cond_dim = getattr(config, "adarms_cond_dim", None)
@@ -330,6 +333,7 @@ class PiGemmaForCausalLM(GemmaForCausalLM):  # type: ignore[misc]
 
     def __init__(self, config: GemmaConfig, **kwargs):
         super().__init__(config, **kwargs)
+        del self.model
         self.model = PiGemmaModel(config)
 
 
@@ -338,6 +342,7 @@ class PaliGemmaModelWithPiGemma(PaliGemmaModel):
 
     def __init__(self, config):
         super().__init__(config)
+        del self.language_model
         self.language_model = PiGemmaModel(config.text_config)
 
 
@@ -346,6 +351,7 @@ class PaliGemmaForConditionalGenerationWithPiGemma(PaliGemmaForConditionalGenera
 
     def __init__(self, config):
         super().__init__(config)
+        del self.model
         self.model = PaliGemmaModelWithPiGemma(config)
 
     # Make modules available through conditional class for BC

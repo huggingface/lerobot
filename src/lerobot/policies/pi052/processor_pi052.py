@@ -51,11 +51,14 @@ from lerobot.processor import (
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
     RenameObservationsProcessorStep,
-    RenderMessagesStep,
     UnnormalizerProcessorStep,
     policy_action_to_transition,
     transition_to_policy_action,
 )
+# RenderMessagesStep is intentionally not re-exported from
+# ``lerobot.processor`` because it pulls in optional language-stack deps;
+# import it directly.
+from lerobot.processor.render_messages_processor import RenderMessagesStep
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
 from ..pi05.processor_pi05 import make_pi05_pre_post_processors

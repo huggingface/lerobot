@@ -29,7 +29,7 @@ For every episode the writer:
 
 The writer does NOT add a dataset-level ``tools`` column. Tool *calls* are
 emitted per-row via the existing ``tool_calls`` field on the v3.1 row
-struct (PR 1) for every speech atom. The tool *schema* (the description
+struct for every speech atom. The tool *schema* (the description
 of the ``say`` function and its parameters) is a fixed code constant —
 ``SAY_TOOL_SCHEMA`` below — and downstream chat-template consumers import
 it directly rather than reading a redundant per-row column.
@@ -69,7 +69,7 @@ from .staging import EpisodeStaging
 logger = logging.getLogger(__name__)
 
 
-# Tool schema constants moved to lerobot.datasets.language in PR 1 — single
+# Tool schema constants live in lerobot.datasets.language — single
 # source of truth. Re-exported here so existing imports
 # (``from lerobot.annotations.steerable_pipeline.writer import SAY_TOOL_SCHEMA``)
 # keep working.
@@ -99,6 +99,13 @@ def _normalize_persistent_row(row: dict[str, Any]) -> dict[str, Any]:
         )
     if "timestamp" not in row:
         raise ValueError(f"persistent row missing timestamp: {row!r}")
+    if "role" not in row:
+        # Surface a friendly error from the writer rather than letting
+        # the raw KeyError bubble out of the dict access below — modules
+        # are expected to always emit ``role``, but the validator
+        # currently doesn't check this so a future bug would otherwise
+        # be hard to triage.
+        raise ValueError(f"persistent row missing role: {row!r}")
     camera = row.get("camera")
     validate_camera_field(style, camera)
     return {
@@ -120,6 +127,8 @@ def _normalize_event_row(row: dict[str, Any]) -> dict[str, Any]:
         )
     if column_for_style(style) != LANGUAGE_EVENTS:
         raise ValueError(f"event row with style {style!r} would not route to language_events")
+    if "role" not in row:
+        raise ValueError(f"event row missing role: {row!r}")
     camera = row.get("camera")
     validate_camera_field(style, camera)
     return {
@@ -264,7 +273,13 @@ class LanguageColumnsWriter:
         new_table = self._materialize_table(
             table, per_row_persistent, per_row_events, drop_old=self.drop_existing_subtask_index
         )
-        pq.write_table(new_table, path)
+        # Atomic replace: write to a sibling tmp path and rename so a crash
+        # mid-write can't leave a half-written shard that ``pq.read_table``
+        # would then fail to open. ``Path.replace`` is atomic on POSIX +
+        # Windows when source and target sit on the same filesystem.
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        pq.write_table(new_table, tmp_path)
+        tmp_path.replace(path)
 
     def _materialize_table(
         self,
@@ -294,8 +309,8 @@ class LanguageColumnsWriter:
         # uses `pa.json_()` for the `tool_calls` element type, which
         # `pa.array(..., type=...)` cannot materialize from Python lists on
         # current pyarrow versions. The inferred schema round-trips through
-        # parquet and `LeRobotDataset` correctly — see PR 1's
-        # `tests/datasets/test_language.py` which exercises the same flow.
+        # parquet and `LeRobotDataset` correctly — `tests/datasets/test_language.py`
+        # exercises the same flow.
         persistent_arr = pa.array(persistent)
         events_arr = pa.array(events)
 
