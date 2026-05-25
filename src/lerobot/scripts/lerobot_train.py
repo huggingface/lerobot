@@ -50,6 +50,7 @@ from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
+from lerobot.utils.ema import ModelEMA
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
@@ -654,6 +655,49 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     policy.train()
 
+    # ------------------------------------------------------------------
+    # EMA setup
+    # ------------------------------------------------------------------
+    # Maintain a shadow copy of the trainable params for late-training
+    # averaging (Chi et al. 2023 Diffusion Policy §V.D; standard for
+    # diffusion/flow-matching policies). Lives only on the main process —
+    # accelerator broadcasts updates to other ranks naturally via the
+    # live model. Off by default; opt in with ``--ema.enable=true``.
+    ema: ModelEMA | None = None
+    if cfg.ema.enable and is_main_process:
+        ema = ModelEMA(
+            accelerator.unwrap_model(policy),
+            decay=cfg.ema.decay,
+            warmup_steps=cfg.ema.warmup_steps,
+        )
+        logging.info(
+            "EMA enabled: decay=%g, warmup_steps=%d, use_for_eval=%s, "
+            "use_for_wandb_examples=%s",
+            cfg.ema.decay,
+            cfg.ema.warmup_steps,
+            cfg.ema.use_for_eval,
+            cfg.ema.use_for_wandb_examples,
+        )
+
+        # Resume the EMA shadow if a previous run wrote one.
+        if cfg.checkpoint_path is not None:
+            ema_path = (
+                cfg.checkpoint_path / "training_state" / "ema_state.safetensors"
+            )
+            if ema_path.exists():
+                logging.info("Resuming EMA shadow from %s", ema_path)
+                try:
+                    ema = ModelEMA.load_from_file(
+                        accelerator.unwrap_model(policy),
+                        ema_path,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logging.warning(
+                        "Failed to load EMA shadow (%s) — restarting EMA from "
+                        "current live weights",
+                        exc,
+                    )
+
     train_metrics = {
         "loss": AverageMeter("loss", ":.3f"),
         "grad_norm": AverageMeter("grdn", ":.3f"),
@@ -706,6 +750,15 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             sample_weighter=sample_weighter,
         )
 
+        # EMA update: pull one step of the live weights into the shadow.
+        # Runs only on the main process (the shadow lives there); other
+        # ranks rely on the live model staying in sync via accelerator.
+        # Returns the effective decay used (interesting during warmup).
+        if ema is not None:
+            ema_effective_decay = ema.update(accelerator.unwrap_model(policy))
+        else:
+            ema_effective_decay = None
+
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
         step += 1
@@ -747,6 +800,12 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                 if sample_weighter is not None:
                     weighter_stats = sample_weighter.get_stats()
                     wandb_log_dict.update({f"sample_weighting/{k}": v for k, v in weighter_stats.items()})
+                # EMA observability: the effective decay differs from
+                # cfg.ema.decay during warmup; ``num_updates`` lets you
+                # confirm the EMA is actually firing.
+                if ema is not None:
+                    wandb_log_dict["ema/effective_decay"] = float(ema_effective_decay or ema.decay)
+                    wandb_log_dict["ema/num_updates"] = int(ema.num_updates)
                 wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
 
@@ -761,14 +820,23 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             and is_main_process
         ):
             try:
-                wandb_logger.log_training_examples(
-                    batch=batch,
-                    step=step,
-                    camera_keys=list(dataset.meta.camera_keys),
-                    n_samples=cfg.wandb.log_examples_n,
-                    policy=accelerator.unwrap_model(policy),
-                    predict_actions=cfg.wandb.log_examples_predict_actions,
+                # Optionally show the EMA model's predictions in the W&B
+                # examples table (matches the policy you'd actually
+                # deploy / eval with). Live weights are restored on exit.
+                wandb_ema_ctx = (
+                    ema.apply_to(accelerator.unwrap_model(policy))
+                    if ema is not None and cfg.ema.use_for_wandb_examples
+                    else nullcontext()
                 )
+                with wandb_ema_ctx:
+                    wandb_logger.log_training_examples(
+                        batch=batch,
+                        step=step,
+                        camera_keys=list(dataset.meta.camera_keys),
+                        n_samples=cfg.wandb.log_examples_n,
+                        policy=accelerator.unwrap_model(policy),
+                        predict_actions=cfg.wandb.log_examples_predict_actions,
+                    )
             except Exception as exc:  # noqa: BLE001
                 logging.warning("wandb log_training_examples failed: %s", exc)
 
@@ -787,6 +855,15 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     postprocessor=postprocessor,
                 )
                 update_last_checkpoint(checkpoint_dir)
+                # Save the EMA shadow alongside the training state so a
+                # resumed run picks up exactly where the live EMA left off.
+                if ema is not None:
+                    try:
+                        ema.save(
+                            checkpoint_dir / "training_state" / "ema_state.safetensors"
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logging.warning("Failed to save EMA shadow: %s", exc)
                 if wandb_logger:
                     wandb_logger.log_policy(checkpoint_dir)
 
@@ -796,7 +873,16 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             if is_main_process:
                 step_id = get_step_identifier(step, cfg.steps)
                 logging.info(f"Eval policy at step {step}")
-                with torch.no_grad(), accelerator.autocast():
+                # Optionally swap in EMA weights for eval — standard
+                # practice for diffusion-style policies (~1–3% lift on
+                # closed-loop success). Live weights are restored byte-
+                # for-byte on context exit.
+                eval_ema_ctx = (
+                    ema.apply_to(accelerator.unwrap_model(policy))
+                    if ema is not None and cfg.ema.use_for_eval
+                    else nullcontext()
+                )
+                with eval_ema_ctx, torch.no_grad(), accelerator.autocast():
                     eval_info = eval_policy_all(
                         envs=eval_env,  # dict[suite][task_id] -> vec_env
                         policy=accelerator.unwrap_model(policy),

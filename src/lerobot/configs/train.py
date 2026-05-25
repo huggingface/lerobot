@@ -30,7 +30,7 @@ from lerobot.utils.hub import HubMixin
 from lerobot.utils.sample_weighting import SampleWeightingConfig
 
 from . import parser
-from .default import DatasetConfig, EvalConfig, PeftConfig, WandBConfig
+from .default import DatasetConfig, EMAConfig, EvalConfig, PeftConfig, WandBConfig
 from .policies import PreTrainedConfig
 from .rewards import RewardModelConfig
 
@@ -111,6 +111,7 @@ class TrainPipelineConfig(HubMixin):
     scheduler: LRSchedulerConfig | None = None
     eval: EvalConfig = field(default_factory=EvalConfig)
     wandb: WandBConfig = field(default_factory=WandBConfig)
+    ema: EMAConfig = field(default_factory=EMAConfig)
     peft: PeftConfig | None = None
 
     # VQA oversampling. When set (a fraction in (0, 1)), the training
