@@ -263,6 +263,7 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int, episode_
     logging.info(f"Converting data files from {len(ep_paths)} episodes")
 
     for ep_idx, ep_path in enumerate(tqdm.tqdm(ep_paths, desc="convert data files")):
+        source_ep_idx = get_episode_index_from_path(ep_path)
         ep_size_in_mb = get_parquet_file_size_in_mb(ep_path)
         ep_num_frames = get_parquet_num_frames(ep_path)
 
@@ -281,6 +282,7 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int, episode_
         # Now create metadata with correct chunk/file indices
         ep_metadata = {
             "episode_index": ep_idx,
+            "source_episode_index": source_ep_idx,
             "data/chunk_index": chunk_idx,
             "data/file_index": file_idx,
             "dataset_from_index": num_frames,
@@ -464,18 +466,15 @@ def convert_episodes_metadata(
 
     legacy_episodes = legacy_load_episodes(root)
     legacy_episodes_stats = legacy_load_episodes_stats(root)
-    episodes_legacy_metadata = {
-        new_ep_idx: {**legacy_episode, "episode_index": new_ep_idx}
-        for new_ep_idx, legacy_episode in enumerate(
-            legacy_episodes[source_ep_idx] for source_ep_idx in episode_indices
-        )
-    }
-    episodes_stats = {
-        new_ep_idx: legacy_stats
-        for new_ep_idx, legacy_stats in enumerate(
-            legacy_episodes_stats[source_ep_idx] for source_ep_idx in episode_indices
-        )
-    }
+    episodes_legacy_metadata = {}
+    episodes_stats = {}
+    for new_ep_idx, source_ep_idx in enumerate(episode_indices):
+        episodes_legacy_metadata[new_ep_idx] = {
+            **legacy_episodes[source_ep_idx],
+            "episode_index": new_ep_idx,
+            "source_episode_index": source_ep_idx,
+        }
+        episodes_stats[new_ep_idx] = legacy_episodes_stats[source_ep_idx]
 
     num_eps_set = {len(episodes_legacy_metadata), len(episodes_metadata)}
     if episodes_video_metadata is not None:
