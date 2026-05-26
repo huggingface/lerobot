@@ -48,6 +48,8 @@ meta/, data/, videos/. When omitted, defaults to $HF_LEROBOT_HOME/{repo_id}.
 import argparse
 import logging
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -210,6 +212,75 @@ def select_episode_paths(paths: list[Path], episode_indices: range) -> list[Path
 
 def has_episode_subset(episode_start: int | None, episode_end: int | None) -> bool:
     return episode_start is not None or episode_end is not None
+
+
+def split_episode_ranges(episode_indices: range, num_workers: int) -> list[range]:
+    if num_workers < 1:
+        raise ValueError(f"num_workers must be >= 1, got {num_workers}.")
+
+    total_episodes = len(episode_indices)
+    num_shards = min(num_workers, total_episodes)
+    base_size, remainder = divmod(total_episodes, num_shards)
+    ranges = []
+    shard_start = episode_indices.start
+    for shard_idx in range(num_shards):
+        shard_size = base_size + (1 if shard_idx < remainder else 0)
+        shard_end = shard_start + shard_size
+        ranges.append(range(shard_start, shard_end))
+        shard_start = shard_end
+    return ranges
+
+
+def run_conversion_workers(
+    repo_id: str,
+    root: Path,
+    output_root: Path,
+    episode_ranges: list[range],
+    data_file_size_in_mb: int,
+    video_file_size_in_mb: int,
+):
+    output_root.mkdir(parents=True, exist_ok=True)
+    processes = []
+    for worker_idx, episode_range in enumerate(episode_ranges):
+        shard_root = output_root / f"shard-{worker_idx:03d}"
+        cmd = [
+            sys.executable,
+            "-m",
+            "lerobot.scripts.convert_dataset_v21_to_v30",
+            "--repo-id",
+            repo_id,
+            "--root",
+            str(root),
+            "--output-root",
+            str(shard_root),
+            "--push-to-hub=false",
+            "--force-conversion",
+            "--episode-start",
+            str(episode_range.start),
+            "--episode-end",
+            str(episode_range.stop),
+            "--data-file-size-in-mb",
+            str(data_file_size_in_mb),
+            "--video-file-size-in-mb",
+            str(video_file_size_in_mb),
+        ]
+        logging.info(
+            "Launching worker %s for episode range [%s, %s) -> %s",
+            worker_idx,
+            episode_range.start,
+            episode_range.stop,
+            shard_root,
+        )
+        processes.append((worker_idx, subprocess.Popen(cmd)))
+
+    failed_workers = []
+    for worker_idx, process in processes:
+        return_code = process.wait()
+        if return_code != 0:
+            failed_workers.append((worker_idx, return_code))
+
+    if failed_workers:
+        raise RuntimeError(f"Conversion workers failed: {failed_workers}")
 
 
 def convert_tasks(root, new_root):
@@ -536,14 +607,30 @@ def convert_dataset(
     force_conversion: bool = False,
     episode_start: int | None = None,
     episode_end: int | None = None,
+    output_root: str | Path | None = None,
+    num_workers: int = 1,
 ):
     if data_file_size_in_mb is None:
         data_file_size_in_mb = DEFAULT_DATA_FILE_SIZE_IN_MB
     if video_file_size_in_mb is None:
         video_file_size_in_mb = DEFAULT_VIDEO_FILE_SIZE_IN_MB
+    if num_workers < 1:
+        raise ValueError(f"num_workers must be >= 1, got {num_workers}.")
+    if num_workers > 1 and push_to_hub:
+        raise ValueError("--num-workers writes local shard directories and cannot be used with --push-to-hub=true.")
+    if output_root is not None and push_to_hub:
+        raise ValueError(
+            "--output-root writes a local shard/output directory and cannot be used with --push-to-hub=true."
+        )
 
     # First check if the dataset already has a v3.0 version
-    if root is None and not force_conversion and not has_episode_subset(episode_start, episode_end):
+    if (
+        root is None
+        and not force_conversion
+        and not has_episode_subset(episode_start, episode_end)
+        and output_root is None
+        and num_workers == 1
+    ):
         try:
             print("Trying to download v3.0 version of the dataset from the hub...")
             snapshot_download(repo_id, repo_type="dataset", revision=V30, local_dir=HF_LEROBOT_HOME / repo_id)
@@ -559,15 +646,21 @@ def convert_dataset(
         use_local_dataset = True
         print(f"Using local dataset at {root}")
 
+    output_root = Path(output_root) if output_root is not None else None
+    if num_workers > 1 and output_root is None:
+        output_root = root.parent / f"{root.name}_shards"
     old_root = root.parent / f"{root.name}_old"
-    new_root = root.parent / f"{root.name}_v30"
+    new_root = output_root if output_root is not None else root.parent / f"{root.name}_v30"
 
-    # Handle old_root cleanup if both old_root and root exist
-    if old_root.is_dir() and root.is_dir():
-        shutil.rmtree(str(root))
-        shutil.move(str(old_root), str(root))
+    if output_root is None:
+        # Handle old_root cleanup if both old_root and root exist
+        if old_root.is_dir() and root.is_dir():
+            shutil.rmtree(str(root))
+            shutil.move(str(old_root), str(root))
 
-    if new_root.is_dir():
+        if new_root.is_dir():
+            shutil.rmtree(new_root)
+    elif new_root.is_dir():
         shutil.rmtree(new_root)
 
     if not use_local_dataset:
@@ -588,6 +681,25 @@ def convert_dataset(
             info.total_episodes,
         )
 
+    if num_workers > 1:
+        if output_root.is_dir():
+            shutil.rmtree(output_root)
+        episode_ranges = split_episode_ranges(episode_indices, num_workers)
+        logging.info(
+            "Running local multiprocessing conversion with %s worker(s) into %s",
+            len(episode_ranges),
+            output_root,
+        )
+        run_conversion_workers(
+            repo_id,
+            root,
+            output_root,
+            episode_ranges,
+            data_file_size_in_mb,
+            video_file_size_in_mb,
+        )
+        return
+
     convert_tasks(root, new_root)
     episodes_metadata = convert_data(root, new_root, data_file_size_in_mb, episode_indices)
     total_frames = episodes_metadata[-1]["dataset_to_index"] if episodes_metadata else 0
@@ -597,8 +709,9 @@ def convert_dataset(
     )
     convert_episodes_metadata(root, new_root, episodes_metadata, episodes_videos_metadata)
 
-    shutil.move(str(root), str(old_root))
-    shutil.move(str(new_root), str(root))
+    if output_root is None:
+        shutil.move(str(root), str(old_root))
+        shutil.move(str(new_root), str(root))
 
     if push_to_hub:
         hub_api = HfApi()
@@ -676,6 +789,20 @@ if __name__ == "__main__":
         help=(
             "Episode index at which to stop conversion, exclusive. Defaults to the total number of episodes."
         ),
+    )
+    parser.add_argument(
+        "--output-root",
+        type=str,
+        default=None,
+        help=(
+            "Local output directory for the converted dataset. When set, the source root is left unchanged."
+        ),
+    )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=1,
+        help="Number of local subprocess workers to launch. Defaults to 1.",
     )
 
     args = parser.parse_args()
