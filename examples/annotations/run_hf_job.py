@@ -5,12 +5,15 @@ Spawns one ``h200x2`` job that:
 
   1. installs this branch of ``lerobot`` plus the annotation extras,
   2. boots two vllm servers (one per GPU) with Qwen3.6-35B-A3B-FP8,
-  3. discovers the dataset's canonical subtask + memory vocabulary
-     from the first 3 sample episodes (phase 0),
-  4. runs the plan / interjections / vqa modules across the dataset
-     (subtasks + memory are constrained to the canonical vocabulary),
-  5. uploads the annotated dataset to ``--dest_repo_id`` (when set)
+  3. runs the plan / interjections / vqa modules across the dataset
+     in free-form mode (phase 0 canonical-vocabulary discovery is
+     disabled — each episode generates its own subtasks + memory),
+  4. uploads the annotated dataset to ``--dest_repo_id`` (when set)
      or back to ``--repo_id``.
+
+Re-enable phase 0 with ``--vocabulary.enabled=true`` (optionally
+``--vocabulary.sample_episodes=N``) when the dataset is homogeneous
+enough to share one subtask + memory vocabulary across all episodes.
 
 Usage:
 
@@ -54,12 +57,14 @@ CMD = (
     "--executor.episode_parallelism=16 "
     "--vlm.chat_template_kwargs='{\"enable_thinking\": false}' "
     "--vlm.camera_key=observation.images.wrist "
-    # Phase 0 — canonical vocabulary discovery from the first N sample
-    # episodes. The VLM picks the right number of subtask + memory
-    # entries itself from what it sees; the resulting
-    # meta/canonical_vocabulary.json constrains every subtask + memory
-    # string to a small repeatable target distribution.
-    "--vocabulary.sample_episodes=3 "
+    # Phase 0 — canonical vocabulary discovery DISABLED by default.
+    # Heterogeneous datasets (different tasks/scenes across episodes)
+    # don't share a single small subtask + memory vocabulary, so each
+    # episode generates its subtasks + memory free-form. Flip to
+    # ``--vocabulary.enabled=true`` (optionally ``--vocabulary.sample_episodes=N``)
+    # for homogeneous datasets where a shared canonical vocabulary
+    # helps the downstream policy.
+    "--vocabulary.enabled=false "
     # Phase 1 — plan module (subtasks + plan + memory + task_aug).
     "--plan.frames_per_second=1.0 "
     "--plan.use_video_url=true "
