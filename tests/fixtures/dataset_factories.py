@@ -485,10 +485,14 @@ def lerobot_dataset_factory(
         hf_dataset: datasets.Dataset | None = None,
         data_files_size_in_mb: float = DEFAULT_DATA_FILE_SIZE_IN_MB,
         chunks_size: int = DEFAULT_CHUNK_SIZE,
+        camera_features: dict | None = None,
         **kwargs,
     ) -> LeRobotDataset:
         # Instantiate objects
         if info is None:
+            info_kwargs = {}
+            if camera_features is not None:
+                info_kwargs["camera_features"] = camera_features
             info = info_factory(
                 total_episodes=total_episodes,
                 total_frames=total_frames,
@@ -496,6 +500,7 @@ def lerobot_dataset_factory(
                 use_videos=use_videos,
                 data_files_size_in_mb=data_files_size_in_mb,
                 chunks_size=chunks_size,
+                **info_kwargs,
             )
         if stats is None:
             stats = stats_factory(features=info.features)
