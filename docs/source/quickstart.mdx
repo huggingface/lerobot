@@ -1,0 +1,219 @@
+# Quickstart
+
+This is the **shortest path** from an unboxed SO-101 to a policy that drives your own robot. Every step is copy-paste; replace the **`<placeholders>`** with the values for your setup.
+
+By the end you will have:
+
+- A calibrated SO-101 leader + follower pair.
+- A dataset of 30 episodes pushed to the Hugging Face Hub.
+- A trained ACT policy (~20k steps) running on your robot via `lerobot-rollout`.
+
+> [!NOTE]
+> **How long will this take?**
+> Recording 30 episodes is roughly 30–60 minutes of teleoperation. Training ACT for 20k steps takes ~1.5h on an A100, a few hours on a laptop RTX 3060, longer on Apple Silicon (`mps`). The commands themselves are quick — most of the wall-clock is data collection and training.
+
+> [!TIP]
+> If you only want to **understand the codebase** or **train on an existing dataset without hardware**, this page isn't for you. Read [Core concepts](./core_concepts) first, then jump to [Imitation learning end-to-end](./il_robots).
+
+---
+
+## Before you start
+
+You need:
+
+- An **assembled SO-101 leader + follower pair**. If your robot is not assembled yet, follow the [SO-101 assembly guide](./so101) and come back here.
+- **One or two cameras** (USB webcam works fine).
+- A **CUDA GPU with ≥ 6 GB VRAM** (ACT is light — a laptop RTX 3060 works). Apple Silicon (`mps`) and CPU are supported but slower. See the [compute hardware guide](./hardware_guide) for sizing.
+- A **Hugging Face account** — datasets and the trained policy will be pushed to your Hub.
+
+If any of the above is missing, fix it first; the rest of the page assumes it.
+
+---
+
+## Step 1 — Install LeRobot
+
+Follow the full [Installation Guide](./installation) for environment setup, then add the SO-101 motor stack and log in to the Hub:
+
+```bash
+pip install 'lerobot[feetech]'
+git lfs install && git lfs pull
+hf auth login                 # paste a token from https://huggingface.co/settings/tokens
+```
+
+Sanity check — the CLI entry points should be available:
+
+```bash
+lerobot-find-port --help
+```
+
+---
+
+## Step 2 — Identify USB ports and motor IDs
+
+Plug **only the follower arm** in (USB + power) and run:
+
+```bash
+lerobot-find-port
+```
+
+When prompted, unplug it and press Enter. Note the printed port — that's your `<FOLLOWER_PORT>`. Repeat with only the **leader arm** plugged in to get `<LEADER_PORT>`.
+
+> [!TIP]
+> On Linux, USB ports look like `/dev/ttyACM0`; on macOS like `/dev/tty.usbmodem...`. On Linux you may need `sudo chmod 666 /dev/ttyACM0` to grant access.
+
+If your motors are brand-new (or repurposed), set their IDs and baudrate **once per arm**:
+
+```bash
+lerobot-setup-motors --robot.type=so101_follower --robot.port=<FOLLOWER_PORT>
+lerobot-setup-motors --teleop.type=so101_leader  --teleop.port=<LEADER_PORT>
+```
+
+The script walks you through connecting motors one at a time. Full details: [SO-101 → Configure the motors](./so101#configure-the-motors).
+
+---
+
+## Step 3 — Calibrate
+
+Center every joint roughly in the middle of its range, then run:
+
+```bash
+lerobot-calibrate \
+    --robot.type=so101_follower \
+    --robot.port=<FOLLOWER_PORT> \
+    --robot.id=my_follower
+
+lerobot-calibrate \
+    --teleop.type=so101_leader \
+    --teleop.port=<LEADER_PORT> \
+    --teleop.id=my_leader
+```
+
+After pressing Enter, sweep each joint through its full range of motion, then press Enter again to finish.
+
+> [!WARNING]
+> The `--robot.id` / `--teleop.id` values (`my_follower`, `my_leader`) become the **calibration keys**. Reuse the same IDs in every later command — that's how LeRobot finds the calibration on disk.
+
+Watch the [calibration video](./so101#calibrate) if anything is unclear.
+
+---
+
+## Step 4 — Teleoperate (sanity check, no recording)
+
+Before recording anything, confirm the leader drives the follower correctly:
+
+```bash
+lerobot-teleoperate \
+    --robot.type=so101_follower \
+    --robot.port=<FOLLOWER_PORT> \
+    --robot.id=my_follower \
+    --robot.cameras="{ top: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30} }" \
+    --teleop.type=so101_leader \
+    --teleop.port=<LEADER_PORT> \
+    --teleop.id=my_leader \
+    --display_data=true
+```
+
+A Rerun window should open showing the camera feed and joint angles. Move the leader — the follower should mirror it in real time. If it doesn't, see [Troubleshooting & FAQ](./troubleshooting).
+
+Don't know which camera index is which? Run `lerobot-find-cameras` — it saves a frame from each detected camera so you can pick the right one.
+
+---
+
+## Step 5 — Record a dataset (30 episodes)
+
+Now record demonstrations. Pick a short, repeatable task (e.g. *"put the red brick in the bowl"*). The dataset is pushed to the Hub under your username:
+
+```bash
+export HF_USER=<your-hf-username>
+
+lerobot-record \
+    --robot.type=so101_follower \
+    --robot.port=<FOLLOWER_PORT> \
+    --robot.id=my_follower \
+    --robot.cameras="{ top: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30} }" \
+    --teleop.type=so101_leader \
+    --teleop.port=<LEADER_PORT> \
+    --teleop.id=my_leader \
+    --dataset.repo_id=${HF_USER}/so101_quickstart \
+    --dataset.num_episodes=30 \
+    --dataset.single_task="Put the red brick in the bowl" \
+    --dataset.streaming_encoding=true \
+    --display_data=true
+```
+
+**Keyboard controls during recording:**
+
+- **`→` (Right Arrow)** — save the current episode and move to the next.
+- **`←` (Left Arrow)** — discard the current episode and retry.
+- **`Esc`** — stop, encode videos, and upload to the Hub.
+
+> [!TIP]
+> **Quality beats quantity.** 30 clean, varied episodes (different brick positions, lighting, camera shake) train a much better policy than 100 identical ones. Move the object around. Vary your speed slightly.
+
+When you're done, your dataset lives at `https://huggingface.co/datasets/${HF_USER}/so101_quickstart`. You can preview it in the browser. For deeper recording options (resume, multiple tasks, custom processors), see [Imitation learning end-to-end → Record](./il_robots#record-a-dataset).
+
+---
+
+## Step 6 — Train ACT
+
+ACT (Action Chunking Transformer) is the right default for a first run — small, fast, and works well on 30 episodes.
+
+```bash
+lerobot-train \
+    --dataset.repo_id=${HF_USER}/so101_quickstart \
+    --policy.type=act \
+    --output_dir=outputs/train/act_so101_quickstart \
+    --job_name=act_so101_quickstart \
+    --policy.device=cuda \
+    --policy.repo_id=${HF_USER}/act_so101_quickstart \
+    --steps=20000 \
+    --wandb.enable=true
+```
+
+A few notes:
+
+- Replace `--policy.device=cuda` with `mps` on Apple Silicon, or `cpu` if you have no GPU (very slow — not recommended for a real run).
+- `--wandb.enable=true` is optional. If you use it, run `wandb login` first. Otherwise drop the flag.
+- Checkpoints land in `outputs/train/act_so101_quickstart/checkpoints/`. The final model is also pushed to the Hub at the `--policy.repo_id` you specified.
+- To resume from an interruption: `lerobot-train --config_path=outputs/train/act_so101_quickstart/checkpoints/last/pretrained_model/train_config.json --resume=true`.
+
+> [!TIP]
+> **No GPU locally?** Train on Google Colab using the [ACT notebook](./notebooks#training-act), or rent a GPU via [Hugging Face Jobs](./il_robots#train-using-hugging-face-jobs) — pay-as-you-go, no setup.
+
+For why ACT is the default and when to switch to SmolVLA, Pi0, or another policy, see [Choosing a policy](./policies_overview).
+
+---
+
+## Step 7 — Run your policy on the robot
+
+Deploy with `lerobot-rollout`. **Use the same camera layout you used while recording** — keys and resolutions must match.
+
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --policy.path=${HF_USER}/act_so101_quickstart \
+    --robot.type=so101_follower \
+    --robot.port=<FOLLOWER_PORT> \
+    --robot.id=my_follower \
+    --robot.cameras="{ top: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30} }" \
+    --task="Put the red brick in the bowl" \
+    --duration=60
+```
+
+`--duration` is in seconds — leave it off to run until you stop the script. You should see the follower arm move on its own, attempting the task.
+
+If observations from the robot use different keys than the policy expects, you'll need a [rename map](./rename_map). If latency matters, look at [async inference](./async) and [real-time chunking](./rtc).
+
+---
+
+## You're done 🎉
+
+You now have a working IL pipeline end-to-end. From here, the natural next steps are:
+
+- **Improve the policy** — record more diverse episodes, train longer, or try a stronger model. See [Choosing a policy](./policies_overview).
+- **Go deeper on imitation learning** — [Imitation learning end-to-end](./il_robots) covers multi-camera setups, multi-task datasets, episode replay, evaluation, and Hugging Face Jobs.
+- **Try RL with a human in the loop** — [HIL-SERL](./hilserl) trains a policy that improves while you correct it.
+- **Use a different robot** — see [Supported robots](./so101) for low-cost arms, mobile platforms, bimanual, and humanoid.
+- **Build something new** — [Bring your own hardware](./integrate_hardware) and [Add a new policy](./bring_your_own_policies).
+
+Stuck on something? Check [Troubleshooting & FAQ](./troubleshooting), or ask on [Discord](https://discord.gg/s3KuuzsPFb).
