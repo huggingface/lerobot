@@ -93,7 +93,7 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
                 dtype=float,
             )
 
-        if q_raw is None:
+        if q_raw is None or (isinstance(q_raw, np.ndarray) and q_raw.size == 0):
             raise ValueError("Joints observation is required for computing robot kinematics")
 
         # Current pose from FK on measured joints
@@ -293,7 +293,7 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
             [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
             dtype=float,
         )
-        if q_raw is None:
+        if q_raw.size == 0:
             raise ValueError("Joints observation is required for computing robot kinematics")
 
         if self.initial_guess_current_joints:  # Use current joints as initial guess
@@ -373,7 +373,7 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
             [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
             dtype=float,
         )
-        if q_raw is None:
+        if q_raw.size == 0:
             raise ValueError("Joints observation is required for computing robot kinematics")
 
         if self.discrete_gripper:
@@ -563,7 +563,7 @@ class InverseKinematicsRLStep(ProcessorStep):
             [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
             dtype=float,
         )
-        if q_raw is None:
+        if q_raw.size == 0:
             raise ValueError("Joints observation is required for computing robot kinematics")
 
         if self.initial_guess_current_joints:  # Use current joints as initial guess
