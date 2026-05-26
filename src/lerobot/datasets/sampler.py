@@ -47,15 +47,21 @@ class EpisodeAwareSampler:
         if drop_n_last_frames < 0:
             raise ValueError(f"drop_n_last_frames must be >= 0, got {drop_n_last_frames}")
 
+        # Normalise index arrays: tensors yield 0-d elements when iterated, which
+        # would break range() arithmetic; convert everything to plain Python ints.
+        if isinstance(dataset_from_indices, torch.Tensor):
+            dataset_from_indices = [int(x) for x in dataset_from_indices.flatten().cpu().tolist()]
+        else:
+            dataset_from_indices = [int(x) for x in dataset_from_indices]
+
+        if isinstance(dataset_to_indices, torch.Tensor):
+            dataset_to_indices = [int(x) for x in dataset_to_indices.flatten().cpu().tolist()]
+        else:
+            dataset_to_indices = [int(x) for x in dataset_to_indices]
+
         if episode_indices_to_use is not None:
-            tolist_fn = getattr(episode_indices_to_use, "tolist", None)
-            if tolist_fn is not None:
-                flatten_fn = getattr(episode_indices_to_use, "flatten", None)
-                if flatten_fn is not None:
-                    episode_indices_to_use = flatten_fn()
-                    tolist_fn = getattr(episode_indices_to_use, "tolist", None)
-                if tolist_fn is not None:
-                    episode_indices_to_use = tolist_fn()
+            if isinstance(episode_indices_to_use, torch.Tensor):
+                episode_indices_to_use = episode_indices_to_use.flatten().cpu().tolist()
             episode_indices_to_use = {int(x) for x in episode_indices_to_use}
 
         indices = []
