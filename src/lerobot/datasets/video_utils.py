@@ -444,7 +444,8 @@ def encode_video_frames(
     video_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Get input frames
-    suffix = ".png" if not isinstance(video_encoder, DepthEncoderConfig) else ".tiff"
+    is_depth = isinstance(video_encoder, DepthEncoderConfig)
+    suffix = ".png" if not is_depth else ".tiff"
     template = "frame-" + ("[0-9]" * 6) + suffix
     input_list = sorted(
         glob.glob(str(imgs_dir / template)), key=lambda x: int(x.split("-")[-1].split(".")[0])
@@ -472,8 +473,19 @@ def encode_video_frames(
         # Loop through input frames and encode them
         for input_data in input_list:
             with Image.open(input_data) as input_image:
-                input_image = input_image.convert("RGB")
-                input_frame = av.VideoFrame.from_image(input_image)
+                if is_depth:
+                    input_frame = quantize_depth(
+                        np.array(input_image), 
+                        depth_min=video_encoder.depth_min,
+                        depth_max=video_encoder.depth_max,
+                        shift=video_encoder.shift,
+                        use_log=video_encoder.use_log,
+                        pix_fmt=video_encoder.pix_fmt,
+                        video_backend="pyav"
+                    )
+                else:
+                    input_image = input_image.convert("RGB")
+                    input_frame = av.VideoFrame.from_image(input_image)
                 packet = output_stream.encode(input_frame)
                 if packet:
                     output.mux(packet)
@@ -883,7 +895,7 @@ class StreamingVideoEncoder:
         Args:
             video_keys: List of video feature keys (e.g. ["observation.images.laptop"])
             temp_dir: Base directory for temporary MP4 files
-            depth_video_keys: List of video feature keys that carry depth maps (e.g.
+            depth_video_keys: List of video or image feature keys that carry depth maps (e.g.
                 ["observation.images.laptop_depth"]).  Defaults to ``[]`` (no depth keys).
         """
         if self._episode_active:
@@ -1227,7 +1239,8 @@ class VideoEncodingManager:
         img_dir = self.dataset.root / "images"
         if img_dir.exists():
             png_files = list(img_dir.rglob("*.png"))
-            if len(png_files) == 0:
+            tiff_files = list(img_dir.rglob("*.tiff"))
+            if len(png_files) == 0 and len(tiff_files) == 0:
                 shutil.rmtree(img_dir)
                 logger.debug("Cleaned up empty images directory")
             else:
