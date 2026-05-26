@@ -313,3 +313,24 @@ class DepthEncoderConfig(VideoEncoderConfig):
 def depth_encoder_defaults() -> DepthEncoderConfig:
     """Return a :class:`DepthEncoderConfig` with depth-camera defaults."""
     return DepthEncoderConfig()
+
+
+def encoder_config_from_video_info(video_info: dict | None) -> VideoEncoderConfig:
+    """Build the appropriate encoder config from a feature's ``info`` block.
+
+    Dispatches to :class:`DepthEncoderConfig` when the dict marks the feature
+    as a depth map and to :class:`VideoEncoderConfig`
+    otherwise.
+
+    Args:
+        video_info: A feature's ``info`` dict as persisted in ``info.json``,
+            or ``None`` (treated as an empty dict).
+
+    Returns:
+        A :class:`DepthEncoderConfig` for depth features, otherwise a
+        :class:`VideoEncoderConfig`.
+    """
+    video_info = video_info or {}
+    is_depth = bool(video_info.get("is_depth_map") or video_info.get("video.is_depth_map"))
+    cls: type[VideoEncoderConfig] = DepthEncoderConfig if is_depth else VideoEncoderConfig
+    return cls.from_video_info(video_info)

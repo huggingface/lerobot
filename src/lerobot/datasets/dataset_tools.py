@@ -37,7 +37,8 @@ import pyarrow.parquet as pq
 import torch
 from tqdm import tqdm
 
-from lerobot.configs import VideoEncoderConfig, camera_encoder_defaults
+from lerobot.configs import VideoEncoderConfig, camera_encoder_defaults, DepthEncoderConfig, encoder_config_from_video_info, depth_encoder_defaults
+from lerobot.configs.video import DEPTH_ENCODER_INFO_FIELD_NAMES
 from lerobot.utils.constants import ACTION, HF_LEROBOT_HOME, OBS_IMAGE, OBS_STATE
 from lerobot.utils.utils import flatten_dict
 
@@ -733,7 +734,7 @@ def _copy_and_reindex_videos(
 
     for video_key in src_dataset.meta.video_keys:
         logging.info(f"Processing videos for {video_key}")
-        camera_encoder = VideoEncoderConfig.from_video_info(
+        video_encoder = encoder_config_from_video_info(
             src_dataset.meta.info.features.get(video_key, {}).get("info")
         )
 
@@ -817,7 +818,7 @@ def _copy_and_reindex_videos(
                     dst_video_path,
                     episodes_to_keep_ranges,
                     src_dataset.meta.fps,
-                    camera_encoder,
+                    video_encoder,
                 )
 
                 cumulative_ts = 0.0
@@ -1199,7 +1200,10 @@ def _save_batch_episodes_images(
         i, item = i_item_tuple
         img = item[img_key_param]
         # Use global frame index for naming
-        img.save(str(imgs_dir / f"frame-{base_frame_idx + i:06d}.png"), quality=100)
+        if img_key_param in dataset.meta.depth_keys:
+            img.save(str(imgs_dir / f"frame-{base_frame_idx + i:06d}.tiff"), compression="raw")
+        else:
+            img.save(str(imgs_dir / f"frame-{base_frame_idx + i:06d}.png"), quality=100)
         return i
 
     episode_durations = []
@@ -1290,7 +1294,7 @@ def _estimate_frame_size_via_calibration(
     episode_indices: list[int],
     temp_dir: Path,
     fps: int,
-    camera_encoder: VideoEncoderConfig,
+    video_encoder: VideoEncoderConfig,
     num_calibration_frames: int = 30,
 ) -> float:
     """Estimate MB per frame by encoding a small calibration sample.
@@ -1304,7 +1308,7 @@ def _estimate_frame_size_via_calibration(
         episode_indices: List of episode indices being processed.
         temp_dir: Temporary directory for calibration files.
         fps: Frames per second for video encoding.
-        camera_encoder: Video encoder settings used for calibration encoding.
+        video_encoder: Video encoder settings used for calibration encoding.
         num_calibration_frames: Number of frames to use for calibration (default: 30).
 
     Returns:
@@ -1340,7 +1344,7 @@ def _estimate_frame_size_via_calibration(
             imgs_dir=calibration_dir,
             video_path=calibration_video_path,
             fps=fps,
-            video_encoder=camera_encoder,
+            video_encoder=video_encoder,
             overwrite=True,
         )
 
@@ -1613,6 +1617,7 @@ def recompute_stats(
         raise ValueError(f"No parquet files found in {data_dir}")
 
     all_episode_stats = []
+    #TODO: enable image and video stats re-computation
     numeric_keys = [k for k, v in features_to_compute.items() if v["dtype"] not in ["image", "video"]]
 
     for parquet_path in tqdm(parquet_files, desc="Computing stats from data files"):
@@ -1659,6 +1664,7 @@ def convert_image_to_video_dataset(
     output_dir: Path | None = None,
     repo_id: str | None = None,
     camera_encoder: VideoEncoderConfig | None = None,
+    depth_encoder: VideoEncoderConfig | None = None,
     episode_indices: list[int] | None = None,
     num_workers: int = 4,
     max_episodes_per_batch: int | None = None,
@@ -1685,6 +1691,8 @@ def convert_image_to_video_dataset(
     """
     if camera_encoder is None:
         camera_encoder = camera_encoder_defaults()
+    if depth_encoder is None:
+        depth_encoder = depth_encoder_defaults()
 
     # Check that it's an image dataset
     if len(dataset.meta.video_keys) > 0:
@@ -1710,8 +1718,7 @@ def convert_image_to_video_dataset(
         f"Converting {len(episode_indices)} episodes with {len(img_keys)} cameras from {dataset.repo_id}"
     )
     logging.info(
-        f"Video codec: {camera_encoder.vcodec}, pixel format: {camera_encoder.pix_fmt}, "
-        f"GOP: {camera_encoder.g}, CRF: {camera_encoder.crf}"
+        f"RGB video encoder: {camera_encoder}, depth video encoder: {depth_encoder}"
     )
 
     # Create new features dict, converting image features to video features
@@ -1774,6 +1781,8 @@ def convert_image_to_video_dataset(
         episode_lengths = {ep_idx: dataset.meta.episodes["length"][ep_idx] for ep_idx in episode_indices}
 
         for img_key in tqdm(img_keys, desc="Processing cameras"):
+            target_encoder = depth_encoder if img_key in dataset.meta.depth_keys else camera_encoder
+
             # Estimate size per frame by encoding a small calibration sample
             # This provides accurate compression ratio for the specific codec parameters
             size_per_frame_mb = _estimate_frame_size_via_calibration(
@@ -1782,7 +1791,7 @@ def convert_image_to_video_dataset(
                 episode_indices=episode_indices,
                 temp_dir=temp_dir,
                 fps=fps,
-                camera_encoder=camera_encoder,
+                video_encoder=target_encoder,
             )
 
             logging.info(f"Processing camera: {img_key}")
@@ -1824,7 +1833,7 @@ def convert_image_to_video_dataset(
                     imgs_dir=imgs_dir,
                     video_path=video_path,
                     fps=fps,
-                    video_encoder=camera_encoder,
+                    video_encoder=target_encoder,
                     overwrite=True,
                 )
 
@@ -1912,7 +1921,8 @@ def _reencode_video_worker(args: tuple) -> Path:
 
 def reencode_dataset(
     dataset: LeRobotDataset,
-    camera_encoder: VideoEncoderConfig,
+    camera_encoder: VideoEncoderConfig | None = None,
+    depth_encoder: DepthEncoderConfig | None = None,
     encoder_threads: int | None = None,
     num_workers: int | None = None,
 ) -> LeRobotDataset:
@@ -1923,8 +1933,11 @@ def reencode_dataset(
     Args:
         dataset: An existing :class:`LeRobotDataset` whose videos will be
             re-encoded.
-        camera_encoder: Target encoder configuration applied to every video
-            file.
+        camera_encoder: Target encoder configuration applied to every RGB video
+            file. If ``None``, re-encoding is skipped for RGB videos.
+        depth_encoder: Target encoder configuration applied to every depth video
+            file. If ``None``, re-encoding is skipped for depth videos.
+            Quantization parameters will not override the ones in the current dataset.
         encoder_threads: Per-encoder thread count forwarded to
             :func:`reencode_video`. ``None`` lets the codec decide.
         num_workers: Number of parallel processes. ``None`` or ``0`` means
@@ -1936,23 +1949,31 @@ def reencode_dataset(
         on disk.
     """
     meta = dataset.meta
-    video_paths_list = []
+    video_keys_encoders_dict = {}
+    video_keys_paths_dict = {}
+
+    if camera_encoder is None and depth_encoder is None:
+        raise ValueError("Either camera_encoder or depth_encoder must be provided")
 
     # Only re-encode if the videos are not already encoded with the given video encoding parameters
     for video_key in meta.video_keys:
         current_info = meta.info.features[video_key].get("info", {})
-        current_encoder = VideoEncoderConfig.from_video_info(current_info)
-        if current_encoder != camera_encoder:
-            video_paths_list.extend((meta.root / VIDEO_DIR / video_key).rglob("*.mp4"))
+        current_encoder = encoder_config_from_video_info(current_info)
+        target_encoder = depth_encoder if video_key in meta.depth_keys else camera_encoder
+        if target_encoder is None:
+            logging.info(f"No encoder provided for {video_key} video. Skipping re-encoding.")
+        elif current_encoder != target_encoder:
+            video_keys_paths_dict[video_key] = (meta.root / VIDEO_DIR / video_key).rglob("*.mp4")
+            video_keys_encoders_dict[video_key] = target_encoder
         else:
-            logging.info(f"{video_key} videos are already encoded with {camera_encoder}. Nothing to do.")
+            logging.info(f"{video_key} videos are already encoded with {target_encoder}. Nothing to do.")
 
-    if len(video_paths_list) == 0:
+    if len(video_keys_paths_dict) == 0:
         logging.warning("Dataset has no videos to re-encode.")
         return dataset
-    logging.info(f"Re-encoding {len(video_paths_list)} video file(s) with {camera_encoder}")
+    logging.info(f"Re-encoding {sum(len(paths) for paths in video_keys_paths_dict.values())} video file(s).")
 
-    worker_args = [(vp, camera_encoder, encoder_threads) for vp in video_paths_list]
+    worker_args = [(path, encoder, encoder_threads) for video_key, encoder in video_keys_encoders_dict.items() for path in video_keys_paths_dict[video_key]]
     if num_workers and num_workers > 1:
         with ProcessPoolExecutor(max_workers=num_workers) as pool:
             futures = [pool.submit(_reencode_video_worker, args) for args in worker_args]
@@ -1966,10 +1987,14 @@ def reencode_dataset(
         for args in tqdm(worker_args, desc="Re-encoding videos"):
             _reencode_video_worker(args)
 
-    # Refresh video info in metadata for every video key.
-    for vid_key in meta.video_keys:
-        video_path = meta.root / meta.get_video_file_path(0, vid_key)
-        meta.info.features[vid_key]["info"] = get_video_info(video_path, video_encoder=camera_encoder)
+    # Refresh video info in metadata for every video key. For depth videos, preserve
+    # ``is_depth_map`` and the depth quantization parameters.
+    depth_preserve_keys = {"is_depth_map", *(f"video.{n}" for n in DEPTH_ENCODER_INFO_FIELD_NAMES)}
+    for video_key, encoder in video_keys_encoders_dict.items():
+        preserve_keys = depth_preserve_keys if video_key in meta.depth_keys else None
+        meta.update_video_info(
+            video_key=video_key, video_encoder=encoder, preserve_keys=preserve_keys
+        )
 
     write_info(meta.info, meta.root)
     logging.info("Dataset metadata updated.")
