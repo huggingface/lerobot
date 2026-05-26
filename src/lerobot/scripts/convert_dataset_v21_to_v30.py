@@ -252,7 +252,7 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int, profile:
         episodes_metadata.append(ep_metadata)
         paths_to_cat.append(ep_path)
         if episode_start is not None:
-            logging.info(
+            logging.debug(
                 "[profile] data episode %s converted in %.3fms",
                 ep_idx,
                 (time.perf_counter() - episode_start) * 1000,
@@ -371,7 +371,7 @@ def convert_videos_of_camera(
         size_in_mb += ep_size_in_mb
         duration_in_s += ep_duration_in_s
         if episode_start is not None:
-            logging.info(
+            logging.debug(
                 "[profile] video episode %s camera %s converted in %.3fms",
                 ep_idx,
                 video_key,
