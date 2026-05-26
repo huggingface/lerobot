@@ -20,6 +20,26 @@ import torch
 
 logger = logging.getLogger(__name__)
 
+# Torch dtypes that are safe to convert to Python int without silent truncation.
+_INTEGER_DTYPES = (torch.int8, torch.int16, torch.int32, torch.int64, torch.uint8)
+
+
+def _to_int_set(values: Sequence[int] | torch.Tensor | set[int], name: str) -> set[int]:
+    """Convert an integer sequence, set, or 1-D/N-D tensor to a ``set[int]``.
+
+    Raises ``TypeError`` if a tensor with a non-integer dtype is passed so that
+    float inputs (e.g. ``torch.tensor([0.9, 2.1])``) fail loudly instead of
+    being silently truncated by ``int()``.
+    """
+    if isinstance(values, torch.Tensor):
+        if values.dtype not in _INTEGER_DTYPES:
+            raise TypeError(
+                f"{name} tensor must have an integer dtype, got {values.dtype}. "
+                "Float values would be silently truncated."
+            )
+        return {int(x) for x in values.flatten().cpu().tolist()}
+    return {int(x) for x in values}
+
 
 class EpisodeAwareSampler:
     def __init__(
@@ -47,28 +67,32 @@ class EpisodeAwareSampler:
         if drop_n_last_frames < 0:
             raise ValueError(f"drop_n_last_frames must be >= 0, got {drop_n_last_frames}")
 
-        # Normalise index arrays: tensors yield 0-d elements when iterated, which
-        # would break range() arithmetic; convert everything to plain Python ints.
-        if isinstance(dataset_from_indices, torch.Tensor):
-            dataset_from_indices = [int(x) for x in dataset_from_indices.flatten().cpu().tolist()]
-        else:
-            dataset_from_indices = [int(x) for x in dataset_from_indices]
+        # Validate tensor dtypes up front so float inputs fail loudly rather than
+        # being silently truncated by int() inside the loop.
+        for arr, name in (
+            (dataset_from_indices, "dataset_from_indices"),
+            (dataset_to_indices, "dataset_to_indices"),
+        ):
+            if isinstance(arr, torch.Tensor) and arr.dtype not in _INTEGER_DTYPES:
+                raise TypeError(
+                    f"{name} tensor must have an integer dtype, got {arr.dtype}. "
+                    "Float values would be silently truncated."
+                )
 
-        if isinstance(dataset_to_indices, torch.Tensor):
-            dataset_to_indices = [int(x) for x in dataset_to_indices.flatten().cpu().tolist()]
-        else:
-            dataset_to_indices = [int(x) for x in dataset_to_indices]
-
+        episode_indices_set: set[int] | None = None
         if episode_indices_to_use is not None:
-            if isinstance(episode_indices_to_use, torch.Tensor):
-                episode_indices_to_use = episode_indices_to_use.flatten().cpu().tolist()
-            episode_indices_to_use = {int(x) for x in episode_indices_to_use}
+            episode_indices_set = _to_int_set(episode_indices_to_use, "episode_indices_to_use")
 
         indices = []
         for episode_idx, (start_index, end_index) in enumerate(
             zip(dataset_from_indices, dataset_to_indices, strict=True)
         ):
-            if episode_indices_to_use is None or episode_idx in episode_indices_to_use:
+            # Cast per-element to plain Python int: scalar .item() for tensors,
+            # int() for plain sequences. Avoids eagerly materialising the full
+            # index arrays into intermediate lists.
+            start_index = int(start_index)
+            end_index = int(end_index)
+            if episode_indices_set is None or episode_idx in episode_indices_set:
                 ep_length = end_index - start_index
                 if drop_n_first_frames + drop_n_last_frames >= ep_length:
                     logger.warning(

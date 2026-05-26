@@ -164,3 +164,18 @@ def test_episode_indices_to_use_types(episode_indices_to_use):
         episode_data_index["from"], episode_data_index["to"], episode_indices_to_use=episode_indices_to_use
     )
     assert sampler.indices == [0, 1, 3, 4, 5]
+
+
+def test_float_tensors_raise_type_error():
+    # dataset_from_indices as float tensor
+    with pytest.raises(TypeError, match="dataset_from_indices tensor must have an integer dtype"):
+        EpisodeAwareSampler(torch.tensor([0.0, 1.0]), torch.tensor([1, 2]))
+
+    # dataset_to_indices as float tensor
+    with pytest.raises(TypeError, match="dataset_to_indices tensor must have an integer dtype"):
+        EpisodeAwareSampler(torch.tensor([0, 1]), torch.tensor([1.0, 2.0]))
+
+    # episode_indices_to_use as float tensor
+    with pytest.raises(TypeError, match="episode_indices_to_use tensor must have an integer dtype"):
+        EpisodeAwareSampler(torch.tensor([0, 1]), torch.tensor([1, 2]), episode_indices_to_use=torch.tensor([0.0]))
+
