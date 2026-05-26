@@ -66,15 +66,16 @@ All checkpoints use `Qwen/Qwen3-VL-2B-Instruct` as the language backbone.
 
 Key parameters in `VLAJEPAConfig`:
 
-| Parameter                 | Default | Description                                                    |
-| ------------------------- | ------- | -------------------------------------------------------------- |
-| `chunk_size`              | 7       | Number of actions predicted per inference call                 |
-| `n_action_steps`          | 7       | Steps executed from the predicted chunk before re-planning     |
-| `num_video_frames`        | 8       | Video clip length fed to the world model                       |
-| `enable_world_model`      | `True`  | Whether to load and train the V-JEPA2 predictor                |
-| `world_model_loss_weight` | 0.1     | Weight of the JEPA prediction loss relative to the action loss |
-| `num_inference_timesteps` | 4       | Euler integration steps for action denoising                   |
-| `freeze_qwen`             | `False` | Freeze the Qwen3-VL backbone and only train the action head    |
+| Parameter                 | Default | Description                                                                                                                                                                     |
+| ------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `chunk_size`              | 7       | Number of actions predicted per inference call                                                                                                                                  |
+| `n_action_steps`          | 7       | Steps executed from the predicted chunk before re-planning                                                                                                                      |
+| `num_video_frames`        | 8       | Video clip length fed to the world model                                                                                                                                        |
+| `enable_world_model`      | `True`  | Whether to load and train the V-JEPA2 predictor                                                                                                                                 |
+| `world_model_loss_weight` | 0.1     | Weight of the JEPA prediction loss relative to the action loss                                                                                                                  |
+| `num_inference_timesteps` | 4       | Euler integration steps for action denoising                                                                                                                                    |
+| `freeze_qwen`             | `False` | Freeze the Qwen3-VL backbone and only train the action head                                                                                                                     |
+| `reinit_modules`          | `None`  | Key prefixes allowed to be randomly re-initialised on load (for cross-embodiment transfer, see [Fine-tuning on a different embodiment](#fine-tuning-on-a-different-embodiment)) |
 
 ---
 
@@ -110,6 +111,29 @@ lerobot-train \
   --dataset.repo_id=your_org/your_dataset
 ```
 
+### Fine-tuning on a different embodiment
+
+When the target robot has a different action or state dimensionality than the pretrained checkpoint, the input/output projection layers of the action head will have mismatched shapes and cannot be loaded directly. `reinit_modules` lets you list the key prefixes that are allowed to mismatch — those layers are randomly re-initialised while every other weight is reused from the checkpoint. Any shape mismatch outside the listed prefixes raises an error.
+
+The layers that depend on `action_dim` and `state_dim` are:
+
+| Layer                                     | Key prefix                          |
+| ----------------------------------------- | ----------------------------------- |
+| Action encoder (action_dim → inner_dim)   | `model.action_model.action_encoder` |
+| Action decoder (hidden_size → action_dim) | `model.action_model.action_decoder` |
+| State encoder (state_dim → inner_dim)     | `model.action_model.state_encoder`  |
+
+```bash
+lerobot-train \
+  --policy.path=lerobot/VLA-JEPA-Pretrain \
+  --policy.repo_id=your_org/your_repo \
+  --policy.freeze_qwen=true \
+  --policy.reinit_modules='["model.action_model.action_encoder", "model.action_model.action_decoder", "model.action_model.state_encoder"]' \
+  --dataset.repo_id=your_org/your_dataset
+```
+
+If your robot has no proprioceptive state, omit `model.action_model.state_encoder` from the list.
+
 ### Reproducing the LIBERO results
 
 **Training on LIBERO:**
@@ -132,7 +156,7 @@ lerobot-eval \
   --env.type=libero \
   --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
   --eval.n_episodes=10 \
-  --eval.batch_size=5 \
+  --eval.batch_size=5
 
 ```
 
@@ -145,8 +169,18 @@ lerobot-eval \
   --env.task=libero_10 \
   --env.task_ids='[0,1,2]' \
   --eval.n_episodes=10 \
-  --eval.batch_size=5 \
+  --eval.batch_size=5
 ```
+
+**Expected results:**
+
+| Suite          | Episodes | Successes | Success Rate |
+| -------------- | -------- | --------- | ------------ |
+| libero_spatial | 100      | 93        | **95.0%**    |
+| libero_object  | 100      | 100       | **100.0%**   |
+| libero_goal    | 100      | 98        | **98.0%**    |
+| libero_10      | 100      | 96        | **93.0%**    |
+| **Overall**    | **400**  | **387**   | **96.5%**    |
 
 ---
 

@@ -169,6 +169,7 @@ class _FakeQwenBackbone(nn.Module):
             dtype=torch.float32,
         ).view(batch_size, seq_len, hidden_size)
         hidden = values / values.numel() + self.weight
+        self.model(input_ids)  # call through so the forward hook on layers[-1] fires
         return SimpleNamespace(hidden_states=[hidden])
 
 
@@ -241,9 +242,13 @@ class _FakeVideoEncoder(nn.Module):
 
 
 class _FakeVideoProcessor:
-    def __call__(self, videos: np.ndarray, return_tensors: str) -> dict[str, Tensor]:
+    def __call__(self, videos, return_tensors: str) -> dict[str, Tensor]:
         assert return_tensors == "pt"
-        return {"pixel_values_videos": torch.as_tensor(videos).unsqueeze(0)}
+        if isinstance(videos, list):
+            pixel_values = torch.stack([torch.as_tensor(v) for v in videos])
+        else:
+            pixel_values = torch.as_tensor(videos).unsqueeze(0)
+        return {"pixel_values_videos": pixel_values}
 
 
 # ---------------------------------------------------------------------------

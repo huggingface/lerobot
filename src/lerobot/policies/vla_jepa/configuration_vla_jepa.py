@@ -27,7 +27,12 @@ class VLAJEPAConfig(PreTrainedConfig):
     jepa_encoder_name: str = "facebook/vjepa2-vitl-fpc64-256"
     freeze_qwen: bool = False
     enable_world_model: bool = True
-    reinit_action_head: bool = False
+    # Enables cross-embodiment transfer: when fine-tuning a pretrained model on a robot with a
+    # different action or state dimensionality, the input/output projection layers must be
+    # re-initialised from scratch while the rest of the network keeps its pretrained weights.
+    # List the key prefixes that are allowed to have shape mismatches; anything else raises an error.
+    # e.g. ["model.action_model.action_encoder", "model.action_model.state_encoder"]
+    reinit_modules: list[str] | None = None
 
     tokenizer_padding_side: str = "left"
     prompt_template: str = "Your task is {instruction}. Infer the temporal dynamics from frames {actions} and produce the corresponding policy actions {e_actions}."
