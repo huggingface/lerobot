@@ -531,8 +531,9 @@ def compute_episode_stats(
         )
 
         if features[key]["dtype"] in ["image", "video"]:
+            normalization_factor = 255.0 if key not in features.depth_keys else 1.0
             ep_stats[key] = {
-                k: v if k == "count" else np.squeeze(v / 255.0, axis=0) for k, v in ep_stats[key].items()
+                k: v if k == "count" else np.squeeze(v / normalization_factor, axis=0) for k, v in ep_stats[key].items()
             }
 
     return ep_stats
