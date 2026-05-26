@@ -37,7 +37,8 @@ from lerobot.datasets.dataset_tools import (
     split_dataset,
 )
 from lerobot.datasets.io_utils import load_info
-from tests.datasets.test_video_encoding import _add_frames, require_h264, require_libsvtav1
+from tests.datasets.test_video_encoding import require_h264, require_libsvtav1
+from tests.fixtures.dataset_factories import add_frames
 
 
 @pytest.fixture
@@ -1350,9 +1351,9 @@ def test_reencode_dataset_multi_key_multiprocessing(
         camera_encoder=initial_cfg,
     )
 
-    _add_frames(dataset, num_frames=4)
+    add_frames(dataset, num_frames=4)
     dataset.save_episode()
-    _add_frames(dataset, num_frames=4)
+    add_frames(dataset, num_frames=4)
     dataset.save_episode()
     dataset.finalize()
 

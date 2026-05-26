@@ -38,8 +38,6 @@ from lerobot.datasets.utils import (
     DEFAULT_VIDEO_PATH,
     DatasetInfo,
 )
-from lerobot.datasets.video_utils import encode_video_frames
-from lerobot.utils.constants import DEFAULT_FEATURES
 from tests.fixtures.constants import (
     DEFAULT_FPS,
     DUMMY_CAMERA_FEATURES,
@@ -47,6 +45,44 @@ from tests.fixtures.constants import (
     DUMMY_REPO_ID,
     DUMMY_ROBOT_TYPE,
 )
+from lerobot.datasets.video_utils import encode_video_frames
+from lerobot.utils.constants import DEFAULT_FEATURES
+
+
+def add_frames(
+    dataset: LeRobotDataset, num_frames: int
+) -> None:
+    """Append ``num_frames`` synthetic frames to ``dataset``.
+
+    Generates per-feature payloads from ``dataset.meta``: uint16 depth ramps for
+    keys in ``dataset.meta.depth_keys``, uint8 random noise for video/image keys,
+    and float32 zeros for everything else. ``DEFAULT_FEATURES`` (timestamp,
+    frame_index, ...) are auto-populated by ``add_frame`` and skipped here.
+    """
+    if video_keys is None:
+        video_keys = dataset.meta.video_keys
+    depth_keys = set(dataset.meta.depth_keys)
+    # Smooth gradient base reused per (H, W) to keep depth frames cheap to
+    # encode (HEVC Main 12 hates white noise).
+    _depth_base_cache: dict[tuple[int, int], np.ndarray] = {}
+    for i in range(num_frames):
+        frame: dict = {"task": "test"}
+        for key, ft in dataset.meta.features.items():
+            if key in DEFAULT_FEATURES:
+                continue
+            shape = ft["shape"]
+            if key in depth_keys:
+                h, w, _ = shape
+                base = _depth_base_cache.setdefault(
+                    (h, w),
+                    np.linspace(100.0, 10_000.0, h * w, dtype=np.float32).reshape(h, w, 1),
+                )
+                frame[key] = (base + 50.0 * i).clip(0, 65535).astype(np.uint16)
+            elif key in video_keys:
+                frame[key] = np.random.randint(0, 256, shape, dtype=np.uint8)
+            else:
+                frame[key] = np.zeros(shape, dtype=np.float32)
+        dataset.add_frame(frame)
 
 
 class LeRobotDatasetFactory(Protocol):

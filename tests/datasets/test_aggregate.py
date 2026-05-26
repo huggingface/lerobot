@@ -33,6 +33,7 @@ from tests.fixtures.constants import (
     DUMMY_CAMERA_FEATURES,
     DUMMY_DEPTH_CAMERA_FEATURES,
     DUMMY_REPO_ID,
+    DUMMY_CAMERA_FEATURES_WITH_DEPTH,
 )
 
 CAMERA_FEATURES_WITH_DEPTH = {**DUMMY_CAMERA_FEATURES, **DUMMY_DEPTH_CAMERA_FEATURES}
@@ -304,14 +305,14 @@ def test_aggregate_datasets(tmp_path, lerobot_dataset_factory):
         repo_id=f"{DUMMY_REPO_ID}_0",
         total_episodes=ds_0_num_episodes,
         total_frames=ds_0_num_frames,
-        camera_features=CAMERA_FEATURES_WITH_DEPTH,
+        camera_features=DUMMY_CAMERA_FEATURES_WITH_DEPTH,
     )
     ds_1 = lerobot_dataset_factory(
         root=tmp_path / "test_1",
         repo_id=f"{DUMMY_REPO_ID}_1",
         total_episodes=ds_1_num_episodes,
         total_frames=ds_1_num_frames,
-        camera_features=CAMERA_FEATURES_WITH_DEPTH,
+        camera_features=DUMMY_CAMERA_FEATURES_WITH_DEPTH,
     )
 
     # Confirm depth was actually wired into the source datasets so the
@@ -476,14 +477,14 @@ def test_aggregate_with_low_threshold(tmp_path, lerobot_dataset_factory):
         repo_id=f"{DUMMY_REPO_ID}_small_0",
         total_episodes=ds_0_num_episodes,
         total_frames=ds_0_num_frames,
-        camera_features=CAMERA_FEATURES_WITH_DEPTH,
+        camera_features=DUMMY_CAMERA_FEATURES_WITH_DEPTH,
     )
     ds_1 = lerobot_dataset_factory(
         root=tmp_path / "small_1",
         repo_id=f"{DUMMY_REPO_ID}_small_1",
         total_episodes=ds_1_num_episodes,
         total_frames=ds_1_num_frames,
-        camera_features=CAMERA_FEATURES_WITH_DEPTH,
+        camera_features=DUMMY_CAMERA_FEATURES_WITH_DEPTH,
     )
 
     assert len(ds_0.meta.depth_keys) > 0, "ds_0 should expose at least one depth key"
@@ -549,7 +550,7 @@ def test_video_timestamps_regression(tmp_path, lerobot_dataset_factory):
             repo_id=f"{DUMMY_REPO_ID}_regression_{i}",
             total_episodes=2,
             total_frames=100,
-            camera_features=CAMERA_FEATURES_WITH_DEPTH,
+            camera_features=DUMMY_CAMERA_FEATURES_WITH_DEPTH,
         )
         datasets.append(ds)
 
@@ -711,7 +712,7 @@ def test_aggregate_image_datasets(tmp_path, lerobot_dataset_factory):
         total_episodes=ds_0_num_episodes,
         total_frames=ds_0_num_frames,
         use_videos=False,
-        camera_features=CAMERA_FEATURES_WITH_DEPTH,
+        camera_features=DUMMY_CAMERA_FEATURES_WITH_DEPTH,
     )
     ds_1 = lerobot_dataset_factory(
         root=tmp_path / "image_1",
@@ -719,7 +720,7 @@ def test_aggregate_image_datasets(tmp_path, lerobot_dataset_factory):
         total_episodes=ds_1_num_episodes,
         total_frames=ds_1_num_frames,
         use_videos=False,
-        camera_features=CAMERA_FEATURES_WITH_DEPTH,
+        camera_features=DUMMY_CAMERA_FEATURES_WITH_DEPTH,
     )
 
     # Verify source datasets have image keys
