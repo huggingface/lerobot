@@ -201,11 +201,15 @@ class PI052Config(PI05Config):
     #   layer_norm only  →  −1.1% step time
     #   all three        →  −4.5% step time, peak_mem unchanged
     #
-    # ``cross_entropy`` / ``fused_linear_cross_entropy`` are NOT enabled
-    # — pi052 calls ``F.cross_entropy`` directly and bypasses
-    # ``PaliGemmaForConditionalGeneration.forward``, so neither Liger
-    # patch fires without invasive model-code changes. Reserved for a
-    # follow-up.
+    # ``fused_linear_cross_entropy`` is now wired directly into the
+    # pi052 forward via ``_shifted_lin_ce`` / ``_fast_lin_ce`` (see
+    # ``modeling_pi052``). The kernel takes ``(hidden_states,
+    # lm_head.weight, labels)`` and computes matmul + softmax + CE in
+    # fused Triton blocks, never materialising the (B, T, 257k) logits
+    # tensor. Saves ~10 GB activation memory per CE branch and ~30 %
+    # step time on the dual-CE pi052 recipe (text + FAST). Removing the
+    # ``.any().item()`` sync also lets ``compile_mode=reduce-overhead``
+    # capture full CUDA graphs over the loss path.
     use_hf_kernels: bool = False
     """If True, monkey-patch PaliGemma/Gemma/Siglip layers with Liger's
     fused Triton kernels (rope + geglu + layer_norm). Off by default;

@@ -39,11 +39,20 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
+import time
 from pathlib import Path
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# Marker file the cache-hit check looks for. ``ProcessorMixin.save_pretrained``
+# writes ``processor_config.json`` (NOT ``preprocessor_config.json`` —
+# that's the image / feature-extractor convention). Centralised here so
+# the cache-hit check and the rank-N readiness wait agree on the same
+# sentinel.
+_CACHE_SENTINEL = "processor_config.json"
 
 
 def _dataset_signature(
@@ -111,12 +120,38 @@ def fit_fast_tokenizer(
     sig = _dataset_signature(dataset_repo_id, base_tokenizer_name, n_samples, chunk_size)
     out_dir = cache_dir / sig
 
-    if out_dir.exists() and (out_dir / "preprocessor_config.json").exists():
+    if out_dir.exists() and (out_dir / _CACHE_SENTINEL).exists():
         logger.info(
             "FAST tokenizer cache hit: %s — re-using fitted tokenizer for "
             "dataset=%s base=%s n_samples=%d",
             out_dir, dataset_repo_id, base_tokenizer_name, n_samples,
         )
+        return str(out_dir)
+
+    # DDP-safe fit: only the (local) main process actually fits + saves;
+    # other ranks poll the cache sentinel until the leader is done.
+    # Without this guard, all N ranks fit concurrently and race on
+    # ``save_pretrained`` + ``AutoProcessor.from_pretrained`` (the latter
+    # copies ``processing_action_tokenizer.py`` into ``HF_MODULES_CACHE``
+    # and compiles a ``.pyc`` — concurrent writers occasionally produce
+    # a stale / partial ``.pyc`` and the subsequent ``from .. import
+    # UniversalActionProcessor`` raises ``AttributeError``.
+    is_leader = (
+        int(os.environ.get("RANK", "0")) == 0
+        and int(os.environ.get("LOCAL_RANK", "0")) == 0
+    )
+    if not is_leader:
+        timeout_s = 1800.0  # 30 min — covers ~1024-sample fits on cold caches
+        start = time.monotonic()
+        while not (out_dir / _CACHE_SENTINEL).exists():
+            if time.monotonic() - start > timeout_s:
+                raise RuntimeError(
+                    f"FAST tokenizer fit: non-leader rank timed out after "
+                    f"{timeout_s:.0f}s waiting for {out_dir / _CACHE_SENTINEL}. "
+                    "Leader rank likely crashed during the fit."
+                )
+            time.sleep(2.0)
+        logger.info("FAST tokenizer ready (leader populated cache): %s", out_dir)
         return str(out_dir)
 
     logger.info(
