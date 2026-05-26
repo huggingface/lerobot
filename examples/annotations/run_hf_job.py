@@ -55,7 +55,11 @@ CMD = (
     "--vlm.serve_ready_timeout_s=1800 "
     "--vlm.client_concurrency=256 "
     "--vlm.max_new_tokens=512 "
-    "--vlm.temperature=0.7 "
+    # Low temperature for VQA: bbox + keypoint are coordinate-regression
+    # tasks where sampling noise directly degrades localization
+    # (overlapping boxes, drifted points). 0.2 keeps the model decisive
+    # while still letting question/label phrasing vary across frames.
+    "--vlm.temperature=0.2 "
     "--executor.episode_parallelism=64 "
     "--vlm.chat_template_kwargs='{\"enable_thinking\": false}' "
     # Whole-scene agentview is the right choice for subtask reasoning +

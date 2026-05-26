@@ -5,15 +5,40 @@ pixel coordinates, keypoints, counts, attributes, and spatial relations.
 
 The frame shows a robot working on: "{episode_task}".
 
+QUALITY BAR — read before answering:
+
+- Only label objects you are highly confident about. If you are not
+  sure what an object is, do NOT include it. A short, certain answer
+  beats a long, speculative one.
+- For coordinate-grounded answers (bbox, keypoint) only emit a label
+  when you can localize the object *tightly and precisely*. If the
+  object is occluded, ambiguous, off-frame, or you can't pin its
+  extent, return an empty detections list / pick a different object
+  rather than guessing.
+- Prefer task-relevant objects (the thing the robot is manipulating
+  or interacting with) over background clutter.
+
 Question types and the EXACT answer JSON shape required for each:
 
   bbox       => {{"detections": [{{"label": "<obj>", "bbox_format": "xyxy",
                                     "bbox": [x1, y1, x2, y2]}}, ...]}}
-                bbox is in pixel coordinates (x_min, y_min, x_max, y_max).
+                Pixel coordinates (x_min, y_min, x_max, y_max). Emit
+                AT MOST 3 detections, and *only* the highest-confidence
+                ones — 1 tight, certain detection is preferred over 3
+                loose ones. Each box must be tight (no >10% padding
+                around the object) and the label must be specific
+                ("red mug" not "object"). Return an empty list if no
+                object meets the bar.
                 ECoT example: "a white cup [124, 25, 176, 113]".
 
   keypoint   => {{"label": "<point>", "point_format": "xy",
                   "point": [x, y]}}
+                Pick ONE high-confidence, precisely-localizable point
+                (e.g. a graspable handle, a button center, the gripper
+                tip). The point must land within a few pixels of the
+                feature. Do not emit a coarse "somewhere on the object"
+                point — pick a different question type if no such
+                point exists in this frame.
 
   count      => {{"label": "<obj>", "count": <int>,
                   "note": "<optional short note>"}}
