@@ -39,8 +39,10 @@
     title: Porting Large Datasets
   - local: using_dataset_tools
     title: Using the Dataset Tools
-  - local: dataset_subtask
-    title: Using Subtasks in the Dataset
+  - local: language_and_recipes
+    title: Language Columns and Recipes
+  - local: tools
+    title: Tools
   - local: video_encoding_parameters
     title: Video encoding parameters
   - local: streaming_video_encoding
@@ -143,6 +145,8 @@
     title: OMX
   - local: openarm
     title: OpenArm
+  - local: rebot_b601
+    title: reBot B601-DM
   title: "Robots"
 - sections:
   - local: phone_teleop
