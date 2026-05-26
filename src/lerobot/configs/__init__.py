@@ -39,6 +39,7 @@ from .video import (
     VideoEncoderConfig,
     camera_encoder_defaults,
     depth_encoder_defaults,
+    encoder_config_from_video_info,
 )
 
 __all__ = [
@@ -63,6 +64,8 @@ __all__ = [
     # Defaults
     "camera_encoder_defaults",
     "depth_encoder_defaults",
+    # Factories
+    "encoder_config_from_video_info",
     # Constants
     "VALID_VIDEO_CODECS",
     "VIDEO_ENCODER_INFO_KEYS",
