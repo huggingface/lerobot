@@ -674,8 +674,7 @@ if __name__ == "__main__":
         type=int,
         default=None,
         help=(
-            "Episode index at which to stop conversion, exclusive. "
-            "Defaults to the total number of episodes."
+            "Episode index at which to stop conversion, exclusive. Defaults to the total number of episodes."
         ),
     )
 
