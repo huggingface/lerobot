@@ -137,3 +137,39 @@ def test_partial_episode_drop_warns(caplog):
     # Episode 0 is skipped (1 frame, drop 1), Episode 1 keeps frames 2-5
     assert sampler.indices == [2, 3, 4, 5]
     assert "Episode 0" in caplog.text
+
+
+def test_episode_indices_to_use_types():
+    dataset = Dataset.from_dict(
+        {
+            "timestamp": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
+            "index": [0, 1, 2, 3, 4, 5],
+            "episode_index": [0, 0, 1, 2, 2, 2],
+        },
+    )
+    dataset.set_transform(hf_transform_to_torch)
+    episode_data_index = calculate_episode_data_index(dataset)
+
+    # Test with set
+    sampler_set = EpisodeAwareSampler(
+        episode_data_index["from"], episode_data_index["to"], episode_indices_to_use={0, 2}
+    )
+    assert sampler_set.indices == [0, 1, 3, 4, 5]
+
+    # Test with tuple
+    sampler_tuple = EpisodeAwareSampler(
+        episode_data_index["from"], episode_data_index["to"], episode_indices_to_use=(0, 2)
+    )
+    assert sampler_tuple.indices == [0, 1, 3, 4, 5]
+
+    # Test with torch.Tensor
+    sampler_tensor = EpisodeAwareSampler(
+        episode_data_index["from"], episode_data_index["to"], episode_indices_to_use=torch.tensor([0, 2])
+    )
+    assert sampler_tensor.indices == [0, 1, 3, 4, 5]
+
+    # Test with 2D torch.Tensor (e.g. shaped (N, 1))
+    sampler_tensor_2d = EpisodeAwareSampler(
+        episode_data_index["from"], episode_data_index["to"], episode_indices_to_use=torch.tensor([[0], [2]])
+    )
+    assert sampler_tensor_2d.indices == [0, 1, 3, 4, 5]

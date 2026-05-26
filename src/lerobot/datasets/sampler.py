@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 
 import torch
 
@@ -24,9 +24,9 @@ logger = logging.getLogger(__name__)
 class EpisodeAwareSampler:
     def __init__(
         self,
-        dataset_from_indices: list[int],
-        dataset_to_indices: list[int],
-        episode_indices_to_use: list | None = None,
+        dataset_from_indices: Sequence[int] | torch.Tensor,
+        dataset_to_indices: Sequence[int] | torch.Tensor,
+        episode_indices_to_use: Sequence[int] | torch.Tensor | set[int] | None = None,
         drop_n_first_frames: int = 0,
         drop_n_last_frames: int = 0,
         shuffle: bool = False,
@@ -46,6 +46,17 @@ class EpisodeAwareSampler:
             raise ValueError(f"drop_n_first_frames must be >= 0, got {drop_n_first_frames}")
         if drop_n_last_frames < 0:
             raise ValueError(f"drop_n_last_frames must be >= 0, got {drop_n_last_frames}")
+
+        if episode_indices_to_use is not None:
+            tolist_fn = getattr(episode_indices_to_use, "tolist", None)
+            if tolist_fn is not None:
+                flatten_fn = getattr(episode_indices_to_use, "flatten", None)
+                if flatten_fn is not None:
+                    episode_indices_to_use = flatten_fn()
+                    tolist_fn = getattr(episode_indices_to_use, "tolist", None)
+                if tolist_fn is not None:
+                    episode_indices_to_use = tolist_fn()
+            episode_indices_to_use = {int(x) for x in episode_indices_to_use}
 
         indices = []
         for episode_idx, (start_index, end_index) in enumerate(
