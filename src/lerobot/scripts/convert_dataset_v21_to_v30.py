@@ -459,16 +459,16 @@ def generate_episode_metadata_dict(
         yield ep_dict
 
 
-def convert_episodes_metadata(
-    root, new_root, episodes_metadata, episode_indices, episodes_video_metadata=None
-):
+def convert_episodes_metadata(root, new_root, episodes_metadata, episodes_video_metadata=None):
     logging.info(f"Converting episodes metadata from {root} to {new_root}")
 
     legacy_episodes = legacy_load_episodes(root)
     legacy_episodes_stats = legacy_load_episodes_stats(root)
     episodes_legacy_metadata = {}
     episodes_stats = {}
-    for new_ep_idx, source_ep_idx in enumerate(episode_indices):
+    for ep_metadata in episodes_metadata:
+        new_ep_idx = ep_metadata["episode_index"]
+        source_ep_idx = ep_metadata["source_episode_index"]
         episodes_legacy_metadata[new_ep_idx] = {
             **legacy_episodes[source_ep_idx],
             "episode_index": new_ep_idx,
@@ -595,7 +595,7 @@ def convert_dataset(
     convert_info(
         root, new_root, data_file_size_in_mb, video_file_size_in_mb, len(episode_indices), total_frames
     )
-    convert_episodes_metadata(root, new_root, episodes_metadata, episode_indices, episodes_videos_metadata)
+    convert_episodes_metadata(root, new_root, episodes_metadata, episodes_videos_metadata)
 
     shutil.move(str(root), str(old_root))
     shutil.move(str(new_root), str(root))
