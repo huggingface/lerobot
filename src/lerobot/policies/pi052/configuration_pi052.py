@@ -190,30 +190,13 @@ class PI052Config(PI05Config):
     # commonly cited weight; set 0 to disable entirely.
     text_ce_z_loss_weight: float = 1e-4
 
-    # Fused kernels (Liger via HF kernels lib) ---------------------------
-    # Patches PaliGemma / Gemma / Siglip ops with Liger Triton kernels
-    # before the model is built. Measured on H100 80GB at BS=16 / L=512
-    # with KI+GC on (bench job 22161421, see
-    # ``examples/benchmark/bench_pi052_kernels.slurm``):
-    #
-    #   rope only        →  −2.5% step time
-    #   geglu only       →  −2.2% step time
-    #   layer_norm only  →  −1.1% step time
-    #   all three        →  −4.5% step time, peak_mem unchanged
-    #
-    # ``fused_linear_cross_entropy`` is now wired directly into the
-    # pi052 forward via ``_shifted_lin_ce`` / ``_fast_lin_ce`` (see
-    # ``modeling_pi052``). The kernel takes ``(hidden_states,
-    # lm_head.weight, labels)`` and computes matmul + softmax + CE in
-    # fused Triton blocks, never materialising the (B, T, 257k) logits
-    # tensor. Saves ~10 GB activation memory per CE branch and ~30 %
-    # step time on the dual-CE pi052 recipe (text + FAST). Removing the
-    # ``.any().item()`` sync also lets ``compile_mode=reduce-overhead``
-    # capture full CUDA graphs over the loss path.
-    use_hf_kernels: bool = False
-    """If True, monkey-patch PaliGemma/Gemma/Siglip layers with Liger's
-    fused Triton kernels (rope + geglu + layer_norm). Off by default;
-    requires ``pip install liger-kernel``."""
+    # Liger Triton kernels (rope + geglu + layer_norm) are now patched
+    # unconditionally at model build time — see ``_enable_hf_kernels``
+    # in ``modeling_pi052``. The patch is process-global, idempotent
+    # and degrades gracefully if ``liger-kernel`` is missing. Measured
+    # at -4.5% step time on H100 (bench job 22161421); peak memory
+    # unchanged. ``fused_linear_cross_entropy`` ships separately via
+    # ``_shifted_lin_ce`` / ``_fast_lin_ce``.
 
     def __post_init__(self) -> None:
         super().__post_init__()

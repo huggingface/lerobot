@@ -77,8 +77,9 @@ def _enable_hf_kernels() -> None:
         from liger_kernel.transformers import apply_liger_kernel_to_paligemma  # noqa: PLC0415
     except ImportError:
         logger.warning(
-            "PI052: use_hf_kernels=True but liger-kernel is not installed; "
-            "skipping. Install with `pip install liger-kernel`."
+            "PI052: liger-kernel is not installed; skipping fused Triton "
+            "kernels (rope/geglu/layer_norm). Install with "
+            "``pip install liger-kernel`` for a ~4.5%% step speedup."
         )
         return
     apply_liger_kernel_to_paligemma(
@@ -126,15 +127,14 @@ def _shifted_lin_ce(
       * Shift convention identical to the eager version — hidden at
         position ``t`` predicts label at ``t+1``; ``ignore_index=-100``.
       * No ``.any().item()`` sync — Liger returns 0.0 cleanly when
-        every label is ignored, keeping the graph capturable for
-        ``compile_mode=reduce-overhead`` (CUDA graphs).
+        every label is ignored.
       * ``z_loss_weight`` maps directly to Liger's ``lse_square_scale``
         (same ``z²·w`` formula on per-position logsumexp). Setting it
         to 0 disables the z-loss term at zero cost.
     """
     # Liger is imported lazily so the module still imports on machines
-    # without liger-kernel; the call site only ever runs after
-    # use_hf_kernels / training has selected the Liger path.
+    # without liger-kernel — the call site only fires from the training
+    # forward, which always pulls in the kernel.
     from liger_kernel.transformers.fused_linear_cross_entropy import (  # noqa: PLC0415
         LigerFusedLinearCrossEntropyLoss,
     )
@@ -434,9 +434,10 @@ class PI052Policy(PI05Policy):
     def __init__(self, config: PI052Config, **kwargs: Any) -> None:
         # Patch ops BEFORE the backbone is built (super().__init__ below
         # constructs PaliGemmaWithExpertModel which instantiates the
-        # Gemma/Siglip layers we want to swap).
-        if getattr(config, "use_hf_kernels", False):
-            _enable_hf_kernels()
+        # Gemma/Siglip layers we want to swap). Always-on — the patch
+        # is process-global / idempotent and degrades gracefully if
+        # liger-kernel is missing.
+        _enable_hf_kernels()
 
         super().__init__(config, **kwargs)
         # ``PI05Policy.__init__`` zeroes the PaliGemma ``lm_head`` and
