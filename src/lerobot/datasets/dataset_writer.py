@@ -211,7 +211,7 @@ class DatasetWriter:
         if frame_index == 0 and self._streaming_encoder is not None:
             self._streaming_encoder.start_episode(
                 video_keys=list(self._meta.video_keys),
-                depth_video_keys=set(self._meta.video_keys) & set(self._meta.depth_keys),
+                depth_video_keys=list(self._meta.depth_keys),
                 temp_dir=self._root,
             )
 

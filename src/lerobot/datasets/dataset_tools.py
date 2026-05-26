@@ -1890,11 +1890,11 @@ def convert_image_to_video_dataset(
 
 def _reencode_video_worker(args: tuple) -> Path:
     """Picklable worker for :func:`reencode_dataset`'s process pool."""
-    video_path, camera_encoder, encoder_threads = args
+    video_path, video_encoder, encoder_threads = args
     reencode_video(
         input_video_path=video_path,
         output_video_path=video_path,
-        camera_encoder=camera_encoder,
+        video_encoder=video_encoder,
         encoder_threads=encoder_threads,
         overwrite=True,
     )
