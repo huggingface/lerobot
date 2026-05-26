@@ -559,7 +559,6 @@ def convert_dataset(
 
 
 if __name__ == "__main__":
-    init_logging()
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--repo-id",
@@ -608,6 +607,15 @@ if __name__ == "__main__":
         action="store_true",
         help="Log coarse conversion timing and per-episode timing.",
     )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default="INFO",
+        help="Console logging level. Defaults to INFO.",
+    )
 
     args = parser.parse_args()
-    convert_dataset(**vars(args))
+    init_logging(console_level=args.log_level)
+    kwargs = vars(args)
+    kwargs.pop("log_level")
+    convert_dataset(**kwargs)
