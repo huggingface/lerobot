@@ -423,6 +423,7 @@ def main() -> None:
             log.info("  Saving model.safetensors …")
             save_safetensors(mapped_sd, save_dir / "model.safetensors")
 
+            config.device = None  # don't bake in the conversion machine's device
             config._save_pretrained(save_dir)  # writes config.json via draccus
 
             preprocessor, postprocessor = make_vla_jepa_pre_post_processors(config, dataset_stats)
