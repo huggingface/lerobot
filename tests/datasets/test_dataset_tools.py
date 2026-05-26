@@ -1360,7 +1360,7 @@ def test_reencode_dataset_multi_key_multiprocessing(
 
     target_cfg = VideoEncoderConfig(vcodec="h264", g=6, crf=23, pix_fmt="yuv420p")
 
-    result = reencode_dataset(dataset, video_encoder=target_cfg, num_workers=2)
+    result = reencode_dataset(dataset, camera_encoder=target_cfg, num_workers=2)
 
     assert result is dataset
 
