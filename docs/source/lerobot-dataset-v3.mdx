@@ -163,6 +163,10 @@ Image transforms are data augmentations applied to camera frames during training
 
 Currently, transforms are applied during **training time only**, not during recording. When you create or record a dataset, the raw images are stored without transforms. This allows you to experiment with different augmentations later without re-recording data.
 
+### Training with `lerobot-train` (CLI)
+
+From the command line, pass `--dataset.image_transforms.*` flags to enable transforms (including `Resize` via `torchvision.transforms.v2`). For a full comparison of permanent dataset edits versus training-time options (episode filtering, resize, FPS), see [Preparing a dataset for training](./using_dataset_tools#preparing-a-dataset-for-training).
+
 ### Adding transforms to existing datasets (API)
 
 Use the `image_transforms` parameter when loading a dataset for training:
