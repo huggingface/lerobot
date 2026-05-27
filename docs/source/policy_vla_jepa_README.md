@@ -54,9 +54,7 @@ Three checkpoints are available, converted from [ginwind/VLA-JEPA](https://huggi
 | ----------------------------- | ----------------- | ----------------------- | ----------- | ---------- |
 | `lerobot/VLA-JEPA-LIBERO`     | LIBERO-10         | 2 (agentview + wrist)   | Enabled     | 7          |
 | `lerobot/VLA-JEPA-Pretrain`   | DROID 1.0.1       | 2 (exterior left views) | Enabled     | 7          |
-| `lerobot/VLA-JEPA-SimplerEnv` | OXE Bridge / RT-1 | 1                       | Disabled\*  | 7          |
-
-\* The SimplerEnv checkpoint was fine-tuned from Pretrain. The world model predictor architecture expects `embed_dim=2048` (2-camera input) but SimplerEnv is single-camera, so the world model cannot be loaded cleanly. Since inference only needs Qwen + the action head, `enable_world_model=False` is set for this variant. See [Fine-tuning on single-camera datasets](#fine-tuning-on-single-camera-datasets) for implications.
+| `lerobot/VLA-JEPA-SimplerEnv` | OXE Bridge / RT-1 | 1 (view duplicated ×2)  | Enabled     | 7          |
 
 All checkpoints use `Qwen/Qwen3-VL-2B-Instruct` as the language backbone.
 
@@ -184,13 +182,20 @@ lerobot-eval \
 
 ---
 
-## Fine-tuning on single-camera datasets
+## Fine-tuning on datasets with a different number of cameras
 
-The pretrained world model predictor was trained with `embed_dim = num_views × 1024`. If your target dataset has fewer cameras than the source checkpoint, the predictor input projection will have a shape mismatch and cannot be loaded.
+The pretrained world model predictor was trained with `embed_dim = jepa_tubelet_size × 1024` (default `jepa_tubelet_size=2`).
 
-**Option 1 — Disable the world model (recommended)**
+**Default behaviour — view padding / trimming (no action required)**
 
-Set `enable_world_model=False`. Only the Qwen backbone and action head are loaded and trained. This matches the original SimplerEnv fine-tuning strategy and is sufficient for good action performance.
+When fine-tuning from `VLA-JEPA-Pretrain` the model automatically adjusts the number of views fed to the world model to match `jepa_tubelet_size`:
+
+- **Single-view datasets (e.g. BridgeV2):** the single-view latent is duplicated to produce a two-view world-model input, preserving the JEPA self-supervised signal without any weight mismatch.
+- **>2-view datasets (e.g. DROID with 3 views):** all views are passed to the Qwen backbone (for richer context), but only the first `jepa_tubelet_size` views (one wrist + one third-person, following the configured view order) are used for the world model.
+
+**Option 1 — Disable the world model**
+
+Set `enable_world_model=False` to skip the JEPA loss entirely. Only the Qwen backbone and action head are loaded and trained. This is sufficient for good action performance.
 
 ```bash
 lerobot-train \
@@ -202,10 +207,7 @@ lerobot-train \
 
 **Option 2 — Reinitialize the predictor input projection**
 
-If you want the JEPA self-supervised signal during fine-tuning, load the checkpoint with `strict=False` and reinitialize `model.video_predictor.predictor_embed` for the new `embed_dim`. All other predictor block weights (attention, MLP, norm, output projection) are camera-count-agnostic and can be reused from the pretrained checkpoint.
-
-**Option 3 - Duplicate frames to match the expected number of cameras**
-A bit more advanced, you would need to change some parts of the code to support that.
+If you want to change `jepa_tubelet_size` to a value other than 2, load the checkpoint with `strict=False` and reinitialize `model.video_predictor.predictor_embed` for the new `embed_dim`. All other predictor block weights (attention, MLP, norm, output projection) are camera-count-agnostic and can be reused from the pretrained checkpoint.
 
 ---
 

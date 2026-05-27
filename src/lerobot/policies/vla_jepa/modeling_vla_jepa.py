@@ -72,7 +72,7 @@ class VLAJEPAModel(nn.Module):
                 torch_dtype=self.qwen._get_torch_dtype(config.torch_dtype),
             )
             self.video_processor = AutoVideoProcessor.from_pretrained(config.jepa_encoder_name)
-            num_views = max(1, len(config.image_features))
+            num_views = config.jepa_tubelet_size
             tubelet_size = self.video_encoder.config.tubelet_size
             image_size = getattr(self.video_encoder.config, "image_size", None)
             if image_size is None:
@@ -179,6 +179,17 @@ class VLAJEPAModel(nn.Module):
         # Stack videos: [B, V, T, H, W, 3] -> [B, V, T, 3, H, W]
         batch_videos = np.stack(batch_videos)
         batch_videos = batch_videos.transpose(0, 1, 2, 5, 3, 4)  # [B, V, T, 3, H, W]
+
+        # Adjust number of views for the world model:
+        # - fewer views than expected: duplicate the first view to fill up
+        # - more views than expected: keep only the first num_views_world_model views
+        num_views_world_model = self.config.jepa_tubelet_size
+        if batch_videos.shape[1] < num_views_world_model:
+            num_missing_views = num_views_world_model - batch_videos.shape[1]
+            first_view = np.repeat(batch_videos[:, :1], num_missing_views, axis=1)
+            batch_videos = np.concatenate([batch_videos, first_view], axis=1)
+        elif batch_videos.shape[1] > num_views_world_model:
+            batch_videos = batch_videos[:, :num_views_world_model]
 
         # ---- Step 1: QwenVL encode (same as original) ----
         qwen_inputs = self.qwen.build_inputs(

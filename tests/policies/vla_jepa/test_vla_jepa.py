@@ -23,7 +23,9 @@ from conftest import (  # noqa: E402
     BATCH_SIZE,
     EXPECTED_ACTION_CHUNK_SHAPE,
     EXPECTED_SELECT_ACTION_SHAPE,
+    IMAGE_SIZE,
     N_ACTION_STEPS,
+    QWEN_HIDDEN_SIZE,
     STATE_DIM,
     make_config,
     make_inference_batch,
@@ -31,6 +33,7 @@ from conftest import (  # noqa: E402
     set_seed_all,
 )
 
+from lerobot.policies.vla_jepa.configuration_vla_jepa import VLAJEPAConfig  # noqa: E402
 from lerobot.policies.vla_jepa.modeling_vla_jepa import VLAJEPAPolicy  # noqa: E402
 from lerobot.utils.constants import ACTION  # noqa: E402
 
@@ -471,3 +474,125 @@ def test_postprocessor_applied_after_predict_action_chunk(
     a_max = dataset_stats[ACTION]["max"].numpy()
     expected_first = 0.5 * (0.0 + 1.0) * (a_max[0] - a_min[0]) + a_min[0]
     assert unnormed[0, 0, 0].item() == pytest.approx(expected_first, abs=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# World-model view adjustment (padding / trimming) tests
+# ---------------------------------------------------------------------------
+
+
+_MULTIVIEW_NUM_FRAMES = 4  # must be >= 2 * jepa_tubelet_size (=2) for world-model tests
+
+
+def _make_multiview_config(num_views: int, jepa_tubelet_size: int = 2) -> VLAJEPAConfig:
+    from lerobot.configs.types import FeatureType, PolicyFeature
+    from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
+
+    config = VLAJEPAConfig(
+        input_features={
+            **{
+                f"{OBS_IMAGES}.cam{i}": PolicyFeature(
+                    type=FeatureType.VISUAL, shape=(3, IMAGE_SIZE, IMAGE_SIZE)
+                )
+                for i in range(num_views)
+            },
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(STATE_DIM,)),
+        },
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(ACTION_DIM,))},
+        device="cpu",
+        chunk_size=ACTION_HORIZON,
+        n_action_steps=N_ACTION_STEPS,
+        action_dim=ACTION_DIM,
+        state_dim=STATE_DIM,
+        num_video_frames=_MULTIVIEW_NUM_FRAMES,
+        num_action_tokens_per_timestep=2,
+        num_embodied_action_tokens_per_instruction=3,
+        num_inference_timesteps=2,
+        action_hidden_size=QWEN_HIDDEN_SIZE,
+        action_model_type="DiT-test",
+        action_num_layers=1,
+        predictor_depth=1,
+        predictor_num_heads=2,
+        predictor_mlp_ratio=2.0,
+        jepa_tubelet_size=jepa_tubelet_size,
+    )
+    config.validate_features()
+    return config
+
+
+def _make_multiview_train_batch(num_views: int, batch_size: int = BATCH_SIZE) -> dict:
+    from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
+
+    batch = {
+        f"{OBS_IMAGES}.cam{i}": torch.rand(batch_size, _MULTIVIEW_NUM_FRAMES, 3, IMAGE_SIZE, IMAGE_SIZE)
+        for i in range(num_views)
+    }
+    batch[OBS_STATE] = torch.randn(batch_size, 1, STATE_DIM)
+    batch[ACTION] = torch.randn(batch_size, ACTION_HORIZON, ACTION_DIM)
+    batch["task"] = ["pick up the cube"] * batch_size
+    return batch
+
+
+@pytest.mark.parametrize(
+    "num_views",
+    [
+        1,  # fewer views than jepa_tubelet_size → first view duplicated
+        2,  # exact match → unchanged
+        3,  # more views than jepa_tubelet_size → trimmed to first two
+    ],
+)
+def test_training_forward_world_model_view_adjustment(
+    patch_vla_jepa_external_models: None,
+    num_views: int,
+) -> None:
+    """World-model view padding/trimming must not break the training forward pass."""
+    set_seed_all(42)
+    policy = VLAJEPAPolicy(_make_multiview_config(num_views=num_views, jepa_tubelet_size=2))
+    policy.train()
+    loss, logs = policy.forward(_make_multiview_train_batch(num_views=num_views))
+    assert torch.isfinite(loss)
+    assert logs["wm_loss"] >= 0
+
+
+def test_single_view_is_duplicated_for_world_model(patch_vla_jepa_external_models: None) -> None:
+    """With one dataset view and jepa_tubelet_size=2, the view must be duplicated before encoding."""
+    set_seed_all(42)
+    policy = VLAJEPAPolicy(_make_multiview_config(num_views=1, jepa_tubelet_size=2))
+    policy.train()
+
+    captured_videos: list = []
+    original_processor = policy.model.video_processor
+
+    class _CapturingProcessor:
+        def __call__(self, videos: list, return_tensors: str) -> dict:
+            captured_videos.extend(videos)
+            return original_processor(videos=videos, return_tensors=return_tensors)
+
+    policy.model.video_processor = _CapturingProcessor()
+    policy.forward(_make_multiview_train_batch(num_views=1))
+
+    # reshape is batch-major: (b0v0, b0v1, b1v0, b1v1, …)
+    assert len(captured_videos) == BATCH_SIZE * 2
+    for i in range(BATCH_SIZE):
+        np.testing.assert_array_equal(captured_videos[2 * i], captured_videos[2 * i + 1])
+
+
+def test_excess_views_trimmed_for_world_model(patch_vla_jepa_external_models: None) -> None:
+    """With three dataset views and jepa_tubelet_size=2, only the first two views reach the encoder."""
+    set_seed_all(42)
+    policy = VLAJEPAPolicy(_make_multiview_config(num_views=3, jepa_tubelet_size=2))
+    policy.train()
+
+    captured_videos: list = []
+    original_processor = policy.model.video_processor
+
+    class _CapturingProcessor:
+        def __call__(self, videos: list, return_tensors: str) -> dict:
+            captured_videos.extend(videos)
+            return original_processor(videos=videos, return_tensors=return_tensors)
+
+    policy.model.video_processor = _CapturingProcessor()
+    policy.forward(_make_multiview_train_batch(num_views=3))
+
+    # Only B*2 items must reach the encoder, not B*3.
+    assert len(captured_videos) == BATCH_SIZE * 2

@@ -17,9 +17,9 @@ For each variant the script:
 Config sources
 --------------
 Numeric hyper-params  : ginwind/VLA-JEPA/<variant>/config.json
-Image keys  LIBERO    : lerobot/libero_10 meta/info.json          ✓ confirmed
-Image keys  Pretrain  : lerobot/droid_1.0.1 meta/info.json        ✓ confirmed
-Image keys  SimplerEnv: OXE Bridge/RT1 are single-camera          ✓ confirmed
+Image keys  LIBERO    : lerobot/libero_10 meta/info.json
+Image keys  Pretrain  : lerobot/droid_1.0.1 meta/info.json
+Image keys  SimplerEnv: OXE Bridge/RT1 single-camera (view x2)
 """
 
 from __future__ import annotations
@@ -252,7 +252,7 @@ _DROID_CAMS = [
     "observation.images.exterior_2_left",
 ]
 
-# OXE Bridge + RT1 — single-camera; world model disabled (predictor embed_dim mismatch)
+# OXE Bridge + RT1 — single-camera; view is duplicated at runtime to match the 2-view world model
 _OXE_CAMS = [
     "observation.images.image",
 ]
@@ -311,9 +311,9 @@ def _build_config(
 VARIANTS: dict[str, tuple] = {
     "LIBERO": (_LIBERO_CAMS, True, True, "LIBERO"),
     "Pretrain": (_DROID_CAMS, False, True, "Pretrain"),
-    # SimplerEnv uses a single camera; the predictor embed_dim (2048) would mismatch, so
-    # disable the world model — only qwen + action_model weights are needed for inference.
-    "SimplerEnv": (_OXE_CAMS, False, False, "SimplerEnv"),
+    # SimplerEnv uses a single camera; the single view is duplicated at runtime to produce
+    # the 2-view input the world model expects (embed_dim=2048).
+    "SimplerEnv": (_OXE_CAMS, False, True, "SimplerEnv"),
 }
 
 # ---------------------------------------------------------------------------
@@ -423,12 +423,12 @@ def main() -> None:
             log.info("  Saving model.safetensors …")
             save_safetensors(mapped_sd, save_dir / "model.safetensors")
 
-            config.device = None  # don't bake in the conversion machine's device
-            config._save_pretrained(save_dir)  # writes config.json via draccus
-
             preprocessor, postprocessor = make_vla_jepa_pre_post_processors(config, dataset_stats)
             preprocessor.save_pretrained(save_dir)  # writes policy_preprocessor.json
             postprocessor.save_pretrained(save_dir)  # writes policy_postprocessor.json
+
+            config.device = None  # don't bake in the conversion machine's device
+            config._save_pretrained(save_dir)  # writes config.json via draccus
 
             log.info("  Uploading …")
             commit_url = api.upload_folder(
