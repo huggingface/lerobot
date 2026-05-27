@@ -24,7 +24,7 @@ import scipy.signal
 
 from lerobot.types import RobotObservation
 
-from .config_so_follower import SO101FollowerConfig
+from .config_so_follower import SO101FollowerDragontactileConfig
 from .so_follower import SOFollower
 
 logger = logging.getLogger(__name__)
@@ -33,12 +33,12 @@ logger = logging.getLogger(__name__)
 class SO101FollowerDragontactile(SOFollower):
     """SO101 follower with an additional tactile spectrogram observation."""
 
-    config_class = SO101FollowerConfig
+    config_class = SO101FollowerDragontactileConfig
     name = "so101_follower_dragontactile"
 
-    def __init__(self, config: SO101FollowerConfig):
+    def __init__(self, config: SO101FollowerDragontactileConfig):
         super().__init__(config)
-        self._tactile_obs_key = "tactile_spectrogram"
+        self._tactile_obs_key = "left_tactile_spectrogram"
 
         self._sampling_rate = 20_000 # fs = 20 kHz
 
@@ -160,12 +160,10 @@ class SO101FollowerDragontactile(SOFollower):
     def get_observation(self) -> RobotObservation:
         tick_start = time.perf_counter()
 
-        sensor_sensitivity_voltage_per_unit=10.8
-
-
+        # sensor_sensitivity_voltage_per_unit=10.8
+        # tactile_value_mum_m = np.array([self._display_buffer[-1]/sensor_sensitivity_voltage_per_unit], dtype=np.float32)
+        
         spectrogram = self._read_tactile_spectrogram()
-        tactile_value_mum_m = np.array([self._display_buffer[-1]/sensor_sensitivity_voltage_per_unit], dtype=np.float32)
-
         obs = super().get_observation()
 
         # 4. Assemble the synchronized dictionary

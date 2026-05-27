@@ -283,8 +283,8 @@ def record_loop(
         # Applies a pipeline to the raw robot observation, default is IdentityProcessor
         obs_processed = robot_observation_processor(obs)
 
-
-        obs_processed["tactile_spectrogram"] = obs_processed["left_tactile_spectrogram"]
+        if robot.name == "BiOpenArmFollower":
+            obs_processed["tactile_spectrogram"] = obs_processed["left_tactile_spectrogram"]
         if dataset is not None:
             observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
 

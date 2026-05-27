@@ -88,7 +88,6 @@ class RolloutStrategy(abc.ABC):
         """
         if self._cached_obs_processed is None or self._interpolator.needs_new_action():
             obs_processed = processors.robot_observation_processor(obs_raw)
-            obs_processed["tactile_spectrogram"] = obs_processed["left_tactile_spectrogram"]
             self._engine.notify_observation(obs_processed)
             self._cached_obs_processed = obs_processed
         return self._cached_obs_processed
