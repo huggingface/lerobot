@@ -197,6 +197,14 @@ class PI052Config(PI05Config):
     # at -4.5% step time on H100 (bench job 22161421); peak memory
     # unchanged. ``fused_linear_cross_entropy`` ships separately via
     # ``_shifted_lin_ce`` / ``_fast_lin_ce``.
+    use_hf_kernels: bool = True
+    """Deprecated. Liger HF kernels are patched unconditionally by
+    ``_enable_hf_kernels`` — this field is retained as a no-op for
+    backward compatibility with checkpoints saved before commit
+    d70c8104 (which still serialize ``use_hf_kernels: true`` into
+    ``config.json``). Loading those configs would otherwise raise
+    ``DecodingError: The fields use_hf_kernels are not valid for
+    PI052Config`` (job 22164492). Remove in a future major bump."""
 
     def __post_init__(self) -> None:
         super().__post_init__()
