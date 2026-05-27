@@ -198,6 +198,7 @@ wallx = [
     "lerobot[qwen-vl-utils-dep]",
 ]
 pi = ["lerobot[transformers-dep]", "lerobot[scipy-dep]"]
+molmoact2 = ["lerobot[transformers-dep]", "lerobot[peft-dep]", "lerobot[scipy-dep]"]
 smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "accelerate>=1.7.0,<2.0.0"]
 multi_task_dit = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]"]
 groot = [
@@ -275,6 +276,7 @@ all = [
     "lerobot[multi_task_dit]",
     "lerobot[wallx]",
     "lerobot[pi]",
+    "lerobot[molmoact2]",
     "lerobot[smolvla]",
     # "lerobot[groot]", TODO(Steven): Gr00t requires specific installation instructions for flash-attn
     "lerobot[xvla]",
@@ -405,8 +407,11 @@ default.extend-ignore-identifiers-re = [
     "ein",
     "thw",
     "inpt",
+    "arange",
+    "is_compileable",
     "ROBOTIS",
-    "OT_VALUE"
+    "OT_VALUE",
+    "VanderBilt"
 ]
 
 # TODO: Uncomment when ready to use
