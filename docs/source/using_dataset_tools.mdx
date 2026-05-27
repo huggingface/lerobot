@@ -196,20 +196,22 @@ There is also a tool for adding features to a dataset that is not yet covered in
 
 When you run `lerobot-train` with only `--dataset.repo_id` (and optionally `--dataset.root` for a local dataset tree), you are loading the dataset as stored on disk. Some changes can be applied **at training time** (in memory, not written back to the Hub or local copy). Others require **permanent** edits with `lerobot-edit-dataset`, re-recording, or external preprocessing.
 
-| Goal                 | Permanent (on disk)                                                                                                                                  | Training-time only (`lerobot-train`)                                                                                   |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Drop episodes        | `lerobot-edit-dataset` with `--operation.type delete_episodes` (optionally `--new_repo_id` to keep the original; use `--push_to_hub true` to upload) | `--dataset.episodes=[0, 2, 5]`                                                                                         |
-| Resize camera images | No dedicated `lerobot-edit-dataset` operation; re-record or preprocess frames, then publish a new dataset                                            | `--dataset.image_transforms` with a `Resize` transform (see [Image transforms](./lerobot-dataset-v3#image-transforms)) |
-| Change dataset FPS   | Not supported by `lerobot-edit-dataset`; re-record or downsample externally, then create a new v3 dataset with matching `meta.fps`                   | No frame subsampling flag — all frames are read at the dataset's stored `fps`                                          |
+| Goal                         | Permanent (on disk)                                                                                                                                  | Training-time only (`lerobot-train`)                                                                                   |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Select a subset of episodes  | `lerobot-edit-dataset` with `--operation.type delete_episodes` (optionally `--new_repo_id` to keep the original; use `--push_to_hub true` to upload) | `--dataset.episodes='[0,2,5]'` — inclusion list: train only on listed episode indices                                |
+| Resize camera images         | No dedicated `lerobot-edit-dataset` operation; re-record or preprocess frames, then publish a new dataset                                            | `--dataset.image_transforms` with a `Resize` transform (see [Image transforms](./lerobot-dataset-v3#image-transforms)) |
+| Change dataset FPS           | Not supported by `lerobot-edit-dataset`; re-record or downsample externally, then create a new v3 dataset with matching `meta.fps`                   | No lower-FPS sampling flag; indices and timestamps remain based on stored `meta.fps`                                   |
 
-### Drop episodes without rewriting the dataset
+### Select a subset of episodes (training-time only)
 
-To **filter episodes only for one training run** (original dataset unchanged):
+To **train only on selected episodes for one run** (original dataset unchanged):
+
+`--dataset.episodes` is an **inclusion list**: to exclude bad episodes, pass the list of episode indices you want to keep.
 
 ```bash
 lerobot-train \
     --dataset.repo_id lerobot/pusht \
-    --dataset.episodes=[0, 2, 5] \
+    --dataset.episodes='[0,2,5]' \
     ...
 ```
 
@@ -229,11 +231,11 @@ lerobot-train \
     ...
 ```
 
-Many policies (for example PI0 and SmolVLA) also resize images inside their **policy preprocessor** to a fixed resolution. If you enable both dataset transforms and a policy that resizes, images may be resized twice—prefer configuring one place unless you intend both steps. For Python API usage, see `examples/dataset/use_dataset_image_transforms.py`.
+Some policy configurations may also resize or crop images in their preprocessing pipeline. If you enable both dataset transforms and policy-side preprocessing, images may be resized twice—prefer configuring one place unless you intend both steps. For Python API usage, see `examples/dataset/use_dataset_image_transforms.py`.
 
 ### FPS downsampling
 
-LeRobot datasets store a single `fps` value in dataset metadata; frame timestamps and episode lengths assume that rate. There is no FPS downsampling operation in `lerobot-edit-dataset`, and `lerobot-train` has no flag to skip frames at a lower rate. To train on fewer frames per second, downsample your recordings with an external tool, then record or convert the result into a new LeRobot v3 dataset whose `meta.fps` matches the new rate.
+LeRobot datasets store a single `fps` value in dataset metadata; frame timestamps and episode lengths assume that rate. There is no FPS downsampling operation in `lerobot-edit-dataset`, and `lerobot-train` has no lower-FPS sampling flag—dataset indices and timestamps remain based on the stored `meta.fps`. To train at a genuinely lower frame rate, downsample your recordings with an external tool, then record or convert the result into a new LeRobot v3 dataset whose `meta.fps` matches the new rate.
 
 # Dataset Visualization
 
