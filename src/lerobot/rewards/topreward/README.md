@@ -1,1 +1,0 @@
-../../../../docs/source/topreward.mdx
