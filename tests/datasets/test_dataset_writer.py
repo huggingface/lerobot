@@ -224,9 +224,10 @@ def test_clear_removes_video_frame_staging_dir(tmp_path):
     )
 
     dataset.add_frame(_make_frame(features))
-    video_staging_dir = dataset.root / Path(
-        DEFAULT_IMAGE_PATH.format(image_key=video_key, episode_index=0, frame_index=0)
-    ).parent
+    video_staging_dir = (
+        dataset.root
+        / Path(DEFAULT_IMAGE_PATH.format(image_key=video_key, episode_index=0, frame_index=0)).parent
+    )
     assert video_staging_dir.is_dir()
 
     dataset.clear_episode_buffer()
