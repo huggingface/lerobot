@@ -69,7 +69,7 @@ class AssemblingHILAdapter(gym.Wrapper):
             wrist orientation is held at the reset quaternion.
     """
 
-    metadata = {"render_fps": 10, "render_modes": ["rgb_array", "human"]}
+    metadata = {"render_fps": 10, "render_modes": ["rgb_array", "human", "all"]}
 
     def __init__(
         self,
@@ -133,17 +133,30 @@ class AssemblingHILAdapter(gym.Wrapper):
         # 7-D vector [arm_joints(6), gripper_width(1)]. Otherwise the legacy
         # 15-D vector [joint_pos(7), ee_pos(3), ee_quat(4), gripper_qpos(1)].
         _state_dim = 7 if self.record_gripper_width else 15
-        self.observation_space = spaces.Dict(
-            {
-                "pixels": spaces.Dict(
-                    {
-                        "front": spaces.Box(0, 255, shape=(h, w, 3), dtype=np.uint8),
-                        "wrist": spaces.Box(0, 255, shape=(h, w, 3), dtype=np.uint8),
-                    }
-                ),
-                "agent_pos": spaces.Box(-np.inf, np.inf, shape=(_state_dim,), dtype=np.float32),
-            }
-        )
+        # Pull sim_state dims from underlying mujoco model so observation_space
+        # advertises the full-state replay slots (qpos/qvel/act). These are
+        # passed through as `observation.sim_state.{qpos,qvel,act}` torch
+        # tensors so the gym_manipulator record loop captures them.
+        _base = env.unwrapped
+        self._sim_nq = int(_base.model.nq)
+        self._sim_nv = int(_base.model.nv)
+        self._sim_na = int(_base.model.na)
+        _spaces = {
+            "pixels": spaces.Dict(
+                {
+                    "front": spaces.Box(0, 255, shape=(h, w, 3), dtype=np.uint8),
+                    "wrist": spaces.Box(0, 255, shape=(h, w, 3), dtype=np.uint8),
+                }
+            ),
+            "agent_pos": spaces.Box(-np.inf, np.inf, shape=(_state_dim,), dtype=np.float32),
+            "observation.sim_state.qpos": spaces.Box(-np.inf, np.inf, shape=(self._sim_nq,), dtype=np.float32),
+            "observation.sim_state.qvel": spaces.Box(-np.inf, np.inf, shape=(self._sim_nv,), dtype=np.float32),
+        }
+        # Only advertise `act` if the model has stateful actuators (LeRobotDataset
+        # crashes on empty-shape features during episode stats computation).
+        if self._sim_na > 0:
+            _spaces["observation.sim_state.act"] = spaces.Box(-np.inf, np.inf, shape=(self._sim_na,), dtype=np.float32)
+        self.observation_space = spaces.Dict(_spaces)
 
         self._ee_ref_pos: np.ndarray | None = None
         self._ee_ref_quat: np.ndarray | None = None
@@ -174,10 +187,22 @@ class AssemblingHILAdapter(gym.Wrapper):
         front = _resize_uint8(np.asarray(front, dtype=np.uint8), self.image_size)
         wrist = _resize_uint8(np.asarray(wrist, dtype=np.uint8), self.image_size)
 
-        return {
+        # Full mujoco state for replay (see lerobot-214). Emitted as numpy to
+        # satisfy the gym observation_space spec; VanillaObservationProcessorStep
+        # converts any `observation.*`-prefixed numpy arrays to float32 torch
+        # tensors so the gym_manipulator record loop captures them.
+        sim = obs.get("sim_state", {})
+        qpos_np = np.asarray(sim.get("qpos", np.zeros(self._sim_nq)), dtype=np.float32)
+        qvel_np = np.asarray(sim.get("qvel", np.zeros(self._sim_nv)), dtype=np.float32)
+        out = {
             "pixels": {"front": front, "wrist": wrist},
             "agent_pos": agent_pos,
+            "observation.sim_state.qpos": qpos_np,
+            "observation.sim_state.qvel": qvel_np,
         }
+        if self._sim_na > 0:
+            out["observation.sim_state.act"] = np.asarray(sim.get("act", np.zeros(self._sim_na)), dtype=np.float32)
+        return out
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         obs, info = self.env.reset(seed=seed, options=options)

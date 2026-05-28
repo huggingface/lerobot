@@ -27,6 +27,10 @@ from lerobot.processor.reward_model.sarm import (
     SARMRewardConfig,
     SARMRewardProcessorStep,
 )
+from lerobot.processor.reward_model.teleop_bonus import (
+    TeleopBonusRewardConfig,
+    TeleopBonusRewardStep,
+)
 
 _apply_classifier_patch()
 
@@ -57,6 +61,11 @@ def build_reward_model_step(cfg: dict | None):
 
     if rtype in (None, "manual", "none"):
         return None
+    if rtype == "teleop_bonus":
+        return TeleopBonusRewardStep(
+            config=TeleopBonusRewardConfig(**_filter_cfg(cfg, TeleopBonusRewardConfig)),
+            terminate_on_success=terminate,
+        )
     if rtype == "height_gripper":
         return HeightGripperRewardStep(
             config=HeightGripperRewardConfig(**_filter_cfg(cfg, HeightGripperRewardConfig)),
@@ -88,5 +97,7 @@ __all__ = [
     "RewardModelConfig",
     "SARMRewardConfig",
     "SARMRewardProcessorStep",
+    "TeleopBonusRewardConfig",
+    "TeleopBonusRewardStep",
     "build_reward_model_step",
 ]

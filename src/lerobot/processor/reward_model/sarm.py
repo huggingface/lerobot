@@ -64,6 +64,18 @@ class SARMRewardConfig(RewardModelConfig):
     # reward_mode). Helpful for sparse-success signal in residual RL on top of
     # dense progress shaping. 0.0 = disabled.
     success_terminal_bonus: float = 0.0
+    # Extra reward added on the step where the user presses the gamepad FAILURE
+    # button (Cross / Triangle's opposite). Set to a negative value to penalize
+    # user-flagged failures. RERECORD and timeout do NOT trigger this — only
+    # explicit FAILURE (terminate_episode=True AND rerecord_episode=False AND
+    # success=False). 0.0 = disabled.
+    failure_terminal_penalty: float = 0.0
+    # Extra reward added on the step where the user presses the gamepad
+    # stage-advance button (TeleopEvents.STAGE_ADVANCE=True in info). Used to
+    # inject ground-truth progress milestones when SARM is too noisy. Episode
+    # does NOT terminate on stage advance — multiple advances per episode are
+    # additive. 0.0 = disabled.
+    stage_advance_bonus: float = 0.0
     # When True, ignore terminate_on_success at the SARM step (no auto-success
     # by threshold). Reward / bonus still fires. Termination must come from
     # an external source (e.g. gamepad SUCCESS button).
@@ -75,6 +87,16 @@ class SARMRewardConfig(RewardModelConfig):
     # offline-eval distribution (which sees real future frames). Default False
     # = legacy async behavior (replicates current frame for future deltas).
     sync_inference: bool = False
+    # When True (default), prewarm the ring buffer at episode start by
+    # replicating the first observation. Caveats: with sw>=20 SARM models,
+    # prewarming causes 5-10 frames of unstable progress (stage flipping) that
+    # can falsely fire success_threshold. Set False to skip prewarm.
+    buffer_prewarm: bool = True
+    # Skip SARM evaluation for the first N steps of an episode (return progress=0).
+    # Prevents SARM from outputting noise on under-filled ring buffer where past
+    # delta slots get clamped to current frame (OOD vs training distribution).
+    # Recommended: set to max(|past_delta|), e.g. 10 for K SARM in sync mode.
+    warmup_steps: int = 0
     # Path to JSONL log file. If set, every verbose SARM step appends
     # {step, stage_idx, stage_name, stage_conf, progress, delta_indices, ts}.
     # Used to diagnose teleop vs eval distribution gap.
@@ -313,6 +335,7 @@ class SARMRewardProcessorStep(BaseRewardProcessorStep):
             self._image_bufs[self._image_keys[0]].__len__() == 0
             and getattr(self.config, "sync_inference", False)
             and self._delta_indices is not None
+            and getattr(self.config, "buffer_prewarm", True)
         )
 
         pushed_any = False
@@ -384,21 +407,40 @@ class SARMRewardProcessorStep(BaseRewardProcessorStep):
 
         with torch.inference_mode():
             processed = self._preprocess(batch)
-            progress = self._model.calculate_rewards(
+            ret = self._model.calculate_rewards(
                 text_embeddings=processed["text_features"],
                 video_embeddings=processed["video_features"],
                 state_features=processed.get("state_features"),
                 lengths=processed.get("lengths"),
                 frame_index=self._center_idx,
                 return_all_frames=False,
-                return_stages=False,
+                return_stages=True,
                 head_mode=self.config.head_mode,
             )
+            if isinstance(ret, tuple):
+                progress, stage_probs = ret[0], ret[1]
+            else:
+                progress, stage_probs = ret, None
 
         if isinstance(progress, torch.Tensor):
             progress = float(progress.detach().cpu().reshape(-1)[0].item())
         else:
             progress = float(progress.reshape(-1)[0])
+        if stage_probs is not None:
+            try:
+                import numpy as _np
+                sp = stage_probs.detach().cpu().numpy() if isinstance(stage_probs, torch.Tensor) else _np.asarray(stage_probs)
+                if sp.ndim == 3:
+                    sp = sp[0, self._center_idx]
+                elif sp.ndim == 2:
+                    sp = sp[self._center_idx]
+                self._last_stage_idx = int(sp.argmax())
+                self._last_stage_conf = float(sp[self._last_stage_idx])
+                attr = f"{self.config.head_mode}_subtask_names"
+                names = list(getattr(self._model.config, attr, None) or ["task"])
+                self._last_stage_name = names[self._last_stage_idx] if self._last_stage_idx < len(names) else f"stage_{self._last_stage_idx}"
+            except Exception:
+                pass
         return max(0.0, min(1.0, progress))
 
     def _run_model(self, observation: dict[str, Any]) -> float:
@@ -518,6 +560,20 @@ class SARMRewardProcessorStep(BaseRewardProcessorStep):
 
         self._push_obs_to_buffer(observation)
 
+        # Warmup: skip SARM eval until buffer has enough REAL frames to fill all
+        # past delta slots. During warmup, return progress=0 to prevent spurious
+        # transient activations from OOD windows (past slots clamping to current).
+        warmup_n = int(getattr(self.config, "warmup_steps", 0) or 0)
+        if warmup_n > 0 and self._step_counter <= warmup_n:
+            self._last_progress = 0.0
+            self._prev_progress = 0.0
+            progress = 0.0
+            new_transition[TransitionKey.REWARD] = 0.0
+            info = new_transition.get(TransitionKey.INFO, {}) or {}
+            info["sarm_progress"] = 0.0
+            new_transition[TransitionKey.INFO] = info
+            return new_transition
+
         if is_terminal:
             self._drain_pending()
             progress = self._compute_progress_from_buffer()
@@ -560,16 +616,36 @@ class SARMRewardProcessorStep(BaseRewardProcessorStep):
         # Terminal bonus is fired only when the human SUCCESS button is pressed
         # (TeleopEvents.SUCCESS in info), independent of whether the SARM
         # threshold was hit. Avoids accidentally rewarding "stayed near goal".
-        if self.config.success_terminal_bonus != 0.0:
+        if (
+            self.config.success_terminal_bonus != 0.0
+            or self.config.failure_terminal_penalty != 0.0
+            or self.config.stage_advance_bonus != 0.0
+        ):
             info_local = new_transition.get(TransitionKey.INFO, {}) or {}
             try:
                 from lerobot.teleoperators.utils import TeleopEvents
 
                 _success_key = TeleopEvents.SUCCESS
+                _terminate_key = TeleopEvents.TERMINATE_EPISODE
+                _rerecord_key = TeleopEvents.RERECORD_EPISODE
+                _stage_advance_key = TeleopEvents.STAGE_ADVANCE
             except Exception:
-                _success_key = "success"
-            if info_local.get(_success_key, False):
+                _success_key, _terminate_key, _rerecord_key, _stage_advance_key = (
+                    "success", "terminate_episode", "rerecord_episode", "stage_advance",
+                )
+            _is_success = bool(info_local.get(_success_key, False))
+            _is_terminate = bool(info_local.get(_terminate_key, False))
+            _is_rerecord = bool(info_local.get(_rerecord_key, False))
+            _is_stage_advance = bool(info_local.get(_stage_advance_key, False))
+            # FAILURE = user-pressed Cross. Distinguished from RERECORD (Square)
+            # and from SUCCESS (Triangle). Timeouts do NOT set terminate_episode.
+            _is_failure = _is_terminate and not _is_rerecord and not _is_success
+            if self.config.success_terminal_bonus != 0.0 and _is_success:
                 reward = float(reward) + float(self.config.success_terminal_bonus)
+            if self.config.failure_terminal_penalty != 0.0 and _is_failure:
+                reward = float(reward) + float(self.config.failure_terminal_penalty)
+            if self.config.stage_advance_bonus != 0.0 and _is_stage_advance:
+                reward = float(reward) + float(self.config.stage_advance_bonus)
 
         self._prev_progress = progress
 
@@ -578,5 +654,9 @@ class SARMRewardProcessorStep(BaseRewardProcessorStep):
 
         info = new_transition.get(TransitionKey.INFO, {}) or {}
         info["sarm_progress"] = progress
+        if getattr(self, "_last_stage_idx", None) is not None:
+            info["sarm_stage_idx"] = int(self._last_stage_idx)
+            info["sarm_stage_name"] = str(getattr(self, "_last_stage_name", ""))
+            info["sarm_stage_conf"] = float(getattr(self, "_last_stage_conf", 0.0))
         new_transition[TransitionKey.INFO] = info
         return new_transition

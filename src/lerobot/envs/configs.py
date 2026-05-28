@@ -223,6 +223,17 @@ class EnvRewardModelConfig:
     # Extra reward added on the step that first crosses success_threshold (any
     # reward_mode). 0.0 = disabled. Used by SARM step for residual RL.
     success_terminal_bonus: float = 0.0
+    # Extra reward added on the step where the user presses the gamepad FAILURE
+    # button (Cross). Negative value penalizes user-flagged failures. RERECORD
+    # and timeout do NOT trigger this — only explicit FAILURE. SARM step only.
+    failure_terminal_penalty: float = 0.0
+    # Extra reward on each gamepad stage-advance button press (additive across
+    # multiple presses per episode). Provides ground-truth stage progress when
+    # SARM is too noisy. Episode does NOT terminate on stage advance.
+    stage_advance_bonus: float = 0.0
+    # Per-step penalty added to every transition (e.g. -1.0 for DSRL-style
+    # step cost). 0.0 = disabled.
+    step_penalty: float = 0.0
     # When True, the reward model does NOT terminate the episode when progress
     # crosses success_threshold. Reward / bonus still fires; termination is
     # left to the human SUCCESS button (gamepad) or env truncation.
@@ -230,6 +241,13 @@ class EnvRewardModelConfig:
     # SARM only: when True, run "sync" inference (shift positive deltas to past,
     # adds latency = max_future_delta * dt). Matches offline sync eval.
     sync_inference: bool = False
+    # SARM only: when True (default), replicate first frame to fill ring buffer
+    # at episode start. Set False if SARM is sensitive (high sw → stage flips
+    # in first 5-10 frames causing false success).
+    buffer_prewarm: bool = True
+    # SARM only: skip eval for first N steps of episode (return progress=0).
+    # Prevents OOD-window spurious progress before buffer fills with real frames.
+    warmup_steps: int = 0
     # SARM only: optional JSONL append path for per-step debug log.
     log_jsonl_path: str | None = None
 
