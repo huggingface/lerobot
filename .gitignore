@@ -179,3 +179,4 @@ outputs/
 *.part
 
 MUJOCO_LOG*
+docs/sarm_remote_eval_logs/

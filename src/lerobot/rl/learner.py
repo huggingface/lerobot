@@ -788,18 +788,6 @@ def add_actor_information_and_train(
                 d["discount_n"] = ci.get("discount_n")
                 return d
 
-            # --- debug: log done/reward stats every 200 steps ---
-            if optimization_step % 200 == 0:
-                _dbg_b = _dsrl_remap_batch(next(online_iterator))
-                _d = _dbg_b["done"]
-                _r = _dbg_b["reward"]
-                print(
-                    f"[DSRL-DBG] opt={optimization_step} done: sum={_d.sum().item():.0f}/{_d.numel()} "
-                    f"reward: min={_r.min().item():.4f} max={_r.max().item():.4f} "
-                    f"mean={_r.mean().item():.4f} nonzero={(_r!=0).sum().item()}",
-                    flush=True,
-                )
-
             # --- critic updates (UTD inner loop) ---
             for _utd_i in range(_utd):
                 batch_dsrl = _dsrl_remap_batch(next(online_iterator))
