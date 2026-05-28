@@ -181,3 +181,10 @@ outputs/
 MUJOCO_LOG*
 docs/sarm_remote_eval_logs/
 scripts_local/
+.beads/
+
+# project design/iteration notes kept locally, not in the merge
+docs/*.md
+!docs/README.md
+!docs/FINETUNING.md
+docs/port/
