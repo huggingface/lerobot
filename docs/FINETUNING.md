@@ -1,34 +1,46 @@
 # Finetuning stack (assembly task)
 
-Index of what is implemented across this fork + its sibling plugin repos,
-and where to look for each. All RL pipelines run through the lerobot
-actor/learner with configs in `src/lerobot/rl/`.
+What this branch (`feature/reward-models-port`) adds to LeRobot for human-in-the-loop
+finetuning on the MuJoCo assembly task, plus the sibling plugin repos it relies on.
+All RL pipelines run through the lerobot actor/learner with configs in `src/lerobot/rl/`.
 
-## Approaches & where they live
+## Features implemented in this branch
 
-| Approach | What it is | Repo | Policy key / entry |
-|---|---|---|---|
-| **IL (ACT / Diffusion)** | Behaviour cloning baselines | `lerobot` (this repo) | `lerobot-train`; configs `act_v5_*`, `dp_v5_*` |
-| **HIL-SERL** | Human-in-the-loop SAC, actor+learner over gRPC | `lerobot` (this repo) | `src/lerobot/rl/{actor,learner}.py` |
-| **SARM** | Stage-Aware Reward Modeling (reward model for RL) | `lerobot_policy_sarm` | `sarm_ext`; configs `sim_3stage_sarm_v5_*` |
-| **QC** | Q-Chunking RL (action-chunked actor-critic) | `lerobot_policy_qc` | `qc_ext`; `sim_qc_chunk5_hilserl_v5_a6000_train.json` |
-| **DSRL** | Diffusion Steering via Latent-Space RL (noise-space SAC) | `lerobot_dsrl` | `dsrl_ext`; `sim_dsrl_v5_hilserl_a6000_train.json` |
-| **Residual RL** | Residual SAC over a base policy | `lerobot` + `residual-offpolicy-rl` | SAC `residual_mode`; `sim_residual_K_chunk10_v1_train.json` |
-| **RDP** | Reactive Diffusion Policy (tokenizer + latent diffusion) | `lerobot_rdp` | `rdp_tokenizer`, `rdp_latent_diffusion` |
-| **Sim env** | MuJoCo `AssembleBase-v0` task backend | `simulator_for_IL_RL` | `--env.type=gym_manipulator` |
+- **Reward models for RL** (`processor/reward_model/`): pluggable reward sources —
+  SARM (stage-aware reward model), CNN success classifier, height+gripper heuristic,
+  and `teleop_bonus` (step penalty + per-stage advance bonus + terminal success/failure).
+  Dispatched via a common base; SARM routes to the `sarm_ext` plugin or upstream base.
+- **Stage annotation** (`processor/stage_annotator.py`): gamepad-marked substage
+  progression for multi-stage tasks, written into the dataset (sparse/dense subtask names).
+- **Sim assembly env** (`envs/sim_assembling.py`, `AssembleBase-v0`): wired into
+  `gym_manipulator` with reward-model + stage + reset/terminate plumbing.
+- **HIL-SERL extensions**: DSRL learner/actor branch, n-step returns, per-transition
+  bootstrap discount; gamepad teleop with yaw, continuous-gripper width, configurable
+  stage-advance button, and edge-detected intervention.
+- **Continuous gripper** (`processor/gripper_continuous.py`) + observation-processor updates.
+- **Eval / replay**: `eval_dsrl.py` (vanilla & DSRL rollouts, video + score logging),
+  chunk-policy eval, replay-demo-in-env.
+- **Data tooling** (`scripts/`): destale actions, SARM relabel/prepare, ACT↔DP dataset
+  merge, action-stats refresh, gripper→continuous conversion, workspace-bounds finder.
+- **Configs** (`src/lerobot/rl/`): v5 ACT/DP training, SARM/QC/DSRL/residual HIL-SERL,
+  and sim eval/record envs.
+
+## Approaches & repos
+
+| Approach | Repo | Policy key / entry |
+|---|---|---|
+| This branch (reward models + HIL-SERL + sim glue) | https://github.com/VAlikV/lerobot/tree/feature/reward-models-port | `src/lerobot/rl/`, `processor/reward_model/` |
+| **SARM** — Stage-Aware Reward Modeling (`sarm_ext`) | https://github.com/domrachev03/lerobot_policy_sarm | `sarm_ext` |
+| **QC** — Q-Chunking RL (`qc_ext`) | https://github.com/domrachev03/lerobot_policy_qc | `qc_ext` |
+| **DSRL** — Diffusion Steering via Latent-Space RL (`dsrl_ext`) | https://github.com/domrachev03/lerobot_dsrl | `dsrl_ext` |
+| **RDP** — Reactive Diffusion Policy | https://github.com/domrachev03/lerobot_rdp | `rdp_tokenizer`, `rdp_latent_diffusion` |
+| **Residual RL** — residual SAC | https://github.com/amazon-far/residual-offpolicy-rl (reference) | SAC `residual_mode` |
+| **Sim env** — MuJoCo `AssembleBase-v0` | https://github.com/VAlikV/simulator_for_IL_RL | `--env.type=gym_manipulator` |
 
 ## Plugins
 
-Plugins install into the same env as `lerobot` (`uv pip install -e .`) and
-register on import. `lerobot_policy_*` are auto-discovered by prefix;
-`lerobot_dsrl` is loaded explicitly via
-`--policy.discover_packages_path=lerobot_dsrl`. Each plugin repo has its own
-`README.md` + `docs/` with design notes and run commands.
+Install into the same env as `lerobot` (`uv pip install -e .`); they register on import.
+`lerobot_policy_*` auto-discover by prefix; `lerobot_dsrl` loads via
+`--policy.discover_packages_path=lerobot_dsrl`. Each repo has its own README + `docs/`.
 
-## Tests
-
-`tests/rl/` is the integration harness (config decode, plugin registration,
-SAC actor+learner, QC, DSRL, SARM reward wiring, sim record). Run headless
-with `MUJOCO_GL=egl`.
-
-Project design/iteration notes are kept locally under `docs/` (untracked).
+Integration tests live under `tests/rl/` (kept local, gitignored); run with `MUJOCO_GL=egl`.
