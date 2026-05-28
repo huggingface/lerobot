@@ -1,0 +1,162 @@
+{
+  "output_dir": "outputs/dsrl_hilserl_v5",
+  "job_name": "dsrl_hilserl_v5",
+  "resume": false,
+  "seed": 1000,
+  "offline_dataset_stride": 1,
+  "num_workers": 4,
+  "batch_size": 256,
+  "steps": 200000,
+  "eval_freq": 5000,
+  "log_freq": 1,
+  "save_checkpoint": true,
+  "save_freq": 250,
+  "use_policy_training_preset": true,
+  "optimizer": null,
+  "scheduler": null,
+  "wandb": {
+    "enable": true,
+    "project": "sim_3stage_dsrl_hilserl_v5",
+    "entity": "i_domrachev-interactive-robotic-systems-lab-kaist",
+    "disable_artifact": true
+  },
+  "dataset": null,
+  "env": {
+    "type": "gym_manipulator",
+    "name": "sim_assembling",
+    "task": "AssembleBase-v0",
+    "fps": 20,
+    "realtime": false,
+    "render_mode": "all",
+    "robot": null,
+    "teleop": {
+      "type": "gamepad",
+      "use_gripper": true,
+      "use_yaw": true,
+      "record_gripper_width": true,
+      "stage_advance_button": 0
+    },
+    "processor": {
+      "control_mode": "gamepad",
+      "gripper": {
+        "use_gripper": true,
+        "gripper_penalty": 0.0,
+        "continuous_gripper": false,
+        "record_gripper_width": true
+      },
+      "reset": {
+        "reset_time_s": 0.0,
+        "control_time_s": 60.0,
+        "terminate_on_success": true
+      },
+      "stage_names": [
+        "approach_box",
+        "bring_box",
+        "approach_target",
+        "place_target_in_the_box",
+        "approach_cover",
+        "place_cover_on_the_box"
+      ],
+      "reward_model": {
+        "type": "teleop_bonus",
+        "step_penalty": -1.0,
+        "stage_advance_bonus": 5.0,
+        "success_terminal_bonus": 0.0,
+        "failure_terminal_penalty": -50.0
+      },
+      "inverse_kinematics": {
+        "end_effector_bounds": {
+          "min": [-0.14, -0.77, 0.33],
+          "max": [0.18, -0.4845, 0.38]
+        }
+      }
+    },
+    "action_step_size": 0.01,
+    "include_yaw_slot": true,
+    "yaw_step_size": 0.1,
+    "object_spawn_offset": [0.1, 0.0, 0.0],
+    "features": {
+      "observation.images.front": {"type": "VISUAL", "shape": [3, 128, 128]},
+      "observation.images.wrist": {"type": "VISUAL", "shape": [3, 128, 128]},
+      "observation.state":        {"type": "STATE",  "shape": [7]},
+      "action":                   {"type": "ACTION", "shape": [5]}
+    },
+    "features_map": {
+      "observation.images.front": "observation.images.front",
+      "observation.images.wrist": "observation.images.wrist",
+      "observation.state": "observation.state",
+      "action": "action"
+    },
+    "image_size": [128, 128]
+  },
+  "policy": {
+    "type": "dsrl_ext",
+    "n_obs_steps": 1,
+    "normalization_mapping": {
+      "VISUAL": "MEAN_STD",
+      "STATE": "MIN_MAX",
+      "ENV": "MIN_MAX",
+      "ACTION": "MIN_MAX"
+    },
+    "input_features": {
+      "observation.images.front": {"type": "VISUAL", "shape": [3, 128, 128]},
+      "observation.images.wrist": {"type": "VISUAL", "shape": [3, 128, 128]},
+      "observation.state":        {"type": "STATE",  "shape": [7]}
+    },
+    "output_features": {
+      "action": {"type": "ACTION", "shape": [5]}
+    },
+    "device": "cuda",
+    "repo_id": "local/dsrl_hilserl_v5",
+    "storage_device": "cpu",
+    "use_amp": false,
+    "use_torch_compile": false,
+
+    "diffusion_pretrained_path": "outputs/dp_v5_destale_t30/checkpoints/100000/pretrained_model",
+    "diffusion_type": "diffusion",
+    "demo_dataset_repo_id": null,
+    "demo_n_episodes": 0,
+    "noise_dim": 5,
+    "noise_bound": 2.0,
+    "repeat_noise": true,
+    "horizon": 16,
+    "n_action_steps": 8,
+    "n_step": 3,
+    "state_dim": 7,
+    "image_shape": [3, 128, 128],
+    "num_cameras": 2,
+
+    "discount": 0.99,
+    "actor_lr": 0.0001,
+    "critic_lr": 0.0003,
+    "temp_lr": 0.0003,
+    "tau": 0.005,
+    "target_entropy": 0.0,
+    "init_temperature": 1.0,
+
+    "num_critics": 2,
+    "critic_hidden_dims": [1024, 1024, 1024],
+    "critic_use_layer_norm": true,
+    "actor_hidden_dims": [1024, 1024, 1024],
+    "actor_use_layer_norm": true,
+
+    "freeze_diffusion_encoder": true,
+    "encoder_feature_dim": 256,
+    "img_feature_dim": 128,
+
+    "utd_ratio": 20,
+    "critic_warmup_steps": 0,
+    "online_steps": 100000,
+    "online_buffer_capacity": 50000,
+    "online_step_before_learning": 500,
+    "grad_clip_norm": 1.0,
+    "policy_update_freq": 1,
+
+    "actor_learner_config": {
+      "learner_host": "127.0.0.1",
+      "learner_port": 50051,
+      "policy_parameters_push_frequency": 4
+    },
+    "concurrency": {"actor": "threads", "learner": "threads"}
+  }
+}

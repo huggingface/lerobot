@@ -1,0 +1,111 @@
+{
+    "output_dir": "outputs/sim_3stage_act_v5_eval",
+    "job_name": "sim_3stage_act_v5_eval",
+    "resume": false,
+    "seed": 1000,
+    "offline_dataset_stride": 1,
+    "num_workers": 0,
+    "batch_size": 1,
+    "steps": 1,
+    "eval_freq": 0,
+    "log_freq": 1,
+    "save_checkpoint": false,
+    "save_freq": 0,
+    "use_policy_training_preset": false,
+    "optimizer": null,
+    "scheduler": null,
+    "wandb": {"enable": false},
+    "dataset": {
+        "repo_id": "domrachev03/sim_3stage_v5_train_fs",
+        "use_imagenet_stats": true
+    },
+    "env": {
+        "type": "gym_manipulator",
+        "name": "sim_assembling",
+        "task": "AssembleBase-v0",
+        "fps": 20,
+        "realtime": false,
+        "render_mode": "rgb_array",
+        "image_size": [224, 224],
+        "robot": null,
+        "teleop": null,
+        "processor": {
+            "control_mode": "gamepad",
+            "gripper": {
+                "use_gripper": true,
+                "gripper_penalty": 0.0,
+                "record_gripper_width": true
+            },
+            "reset": {
+                "reset_time_s": 0.0,
+                "control_time_s": 30.0,
+                "terminate_on_success": false
+            },
+            "stage_names": [
+                "approach_box",
+                "bring_box",
+                "approach_target",
+                "place_target_in_the_box",
+                "approach_cover",
+                "place_cover_on_the_box"
+            ],
+            "inverse_kinematics": {
+                "end_effector_bounds": {
+                    "min": [-0.14, -0.77, 0.33],
+                    "max": [0.18, -0.4845, 0.38]
+                }
+            }
+        },
+        "action_step_size": 0.01,
+        "include_yaw_slot": true,
+        "yaw_step_size": 0.1,
+        "object_spawn_offset": [0.1, 0.0, 0.0]
+    },
+    "policy": {
+        "type": "act",
+        "n_obs_steps": 1,
+        "chunk_size": 40,
+        "n_action_steps": 40,
+        "vision_backbone": "resnet18",
+        "pretrained_backbone_weights": "ResNet18_Weights.IMAGENET1K_V1",
+        "use_vae": true,
+        "kl_weight": 10.0,
+        "dim_model": 512,
+        "n_heads": 8,
+        "dim_feedforward": 3200,
+        "n_encoder_layers": 4,
+        "n_decoder_layers": 1,
+        "dropout": 0.1,
+        "optimizer_lr": 1e-5,
+        "optimizer_lr_backbone": 1e-5,
+        "optimizer_weight_decay": 1e-4,
+        "device": "cuda",
+        "use_amp": true,
+        "normalization_mapping": {
+            "VISUAL": "MEAN_STD",
+            "STATE": "MIN_MAX",
+            "ACTION": "MIN_MAX"
+        },
+        "input_features": {
+            "observation.images.front": {
+                "type": "VISUAL",
+                "shape": [3, 224, 224]
+            },
+            "observation.images.wrist": {
+                "type": "VISUAL",
+                "shape": [3, 224, 224]
+            },
+            "observation.state": {
+                "type": "STATE",
+                "shape": [7]
+            }
+        },
+        "output_features": {
+            "action": {
+                "type": "ACTION",
+                "shape": [5]
+            }
+        },
+        "repo_id": "local/act_v5"
+    }
+}
