@@ -287,7 +287,7 @@ def _make_hub_inference_batch(policy: VLAJEPAPolicy, batch_size: int = 1) -> dic
     return batch
 
 
-_CP_ROOT = "lerobot"  # TODO: upload converted checkpoints
+_CP_ROOT = "lerobot"
 
 # Each tuple: (repo_id, enable_world_model)
 _HUB_VARIANTS = [
