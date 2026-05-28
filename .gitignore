@@ -180,3 +180,4 @@ outputs/
 
 MUJOCO_LOG*
 docs/sarm_remote_eval_logs/
+scripts_local/
