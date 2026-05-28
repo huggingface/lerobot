@@ -188,3 +188,11 @@ docs/*.md
 !docs/README.md
 !docs/FINETUNING.md
 docs/port/
+
+# project tests kept locally, not in the merge
+tests/rl/
+tests/envs/
+tests/fixtures/
+tests/processor/reward_model/
+tests/processor/test_stage_annotator.py
+tests/teleoperators/test_gamepad_stage_advance.py
