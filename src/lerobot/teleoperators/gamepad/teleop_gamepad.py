@@ -62,6 +62,11 @@ class GamepadTeleop(Teleoperator):
         # command stream matches the sim's default-open state before the user
         # ever presses the toggle.
         self._gripper_width_target: float = 1.0
+        # Tracks intervention edge so we can re-seed the persistent gripper
+        # target from live env state when the user starts intervening. Without
+        # this sync the stale target (often +1 = open from reset) would force
+        # the gripper open even if the policy was mid-grasp.
+        self._prev_intervention: bool = False
 
     def set_gripper_state_fn(self, fn) -> None:
         """Register a callable that returns the env's current gripper state in
@@ -110,6 +115,22 @@ class GamepadTeleop(Teleoperator):
     def get_action(self) -> RobotAction:
         # Update the controller to get fresh inputs
         self.gamepad.update()
+
+        # On intervention edge (False->True), sync the persistent width target
+        # from live env gripper state so the FIRST intervention step does not
+        # snap the gripper to the stale latched value. gripper_state_fn returns
+        # [0,1] (0=open, 1=closed); width target convention is +1=open, -1=close.
+        cur_interv = bool(getattr(self.gamepad, "intervention_flag", False))
+        if cur_interv and not self._prev_intervention:
+            fn = getattr(self.gamepad, "gripper_state_fn", None)
+            if fn is not None:
+                try:
+                    live = float(fn())  # [0,1]
+                    live = max(0.0, min(1.0, live))
+                    self._gripper_width_target = 1.0 - 2.0 * live
+                except Exception:
+                    pass
+        self._prev_intervention = cur_interv
 
         # Get movement deltas from the controller
         delta_x, delta_y, delta_z = self.gamepad.get_deltas()

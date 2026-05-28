@@ -101,6 +101,48 @@ from .gym_manipulator import (
 # Main entry point
 
 
+def _apply_nstep_returns(transitions: list, n: int, gamma: float) -> list:
+    """Rewrite each transition to its n-step return version.
+
+    For transition t: reward → Σ_{k<m} γ^k r_{t+k}, next_state → s_{t+m},
+    done → terminal-within-window, and stores γ^m in complementary_info["discount_n"]
+    so the critic bootstraps with the correct per-transition discount.
+    m = min(n, steps remaining to episode end / terminal).
+    """
+    T = len(transitions)
+    out = []
+    for t in range(T):
+        R = 0.0
+        disc = 1.0
+        done_n = False
+        last_idx = t
+        for k in range(n):
+            idx = t + k
+            if idx >= T:
+                break
+            tr = transitions[idx]
+            R += disc * float(tr["reward"])
+            disc *= gamma
+            last_idx = idx
+            if bool(tr["done"]):
+                done_n = True
+                break
+        ci = dict(transitions[t].get("complementary_info") or {})
+        ci["discount_n"] = float(disc)  # γ^m
+        out.append(
+            Transition(
+                state=transitions[t]["state"],
+                action=transitions[t]["action"],
+                reward=R,
+                next_state=transitions[last_idx]["next_state"],
+                done=done_n,
+                truncated=transitions[t]["truncated"],
+                complementary_info=ci,
+            )
+        )
+    return out
+
+
 @parser.wrap()
 def actor_cli(cfg: TrainRLServerPipelineConfig):
     # Actor never writes to output_dir (only the learner does), but it shares cfg
@@ -263,6 +305,25 @@ def act_with_policy(
     )
     policy = policy.eval()
     assert isinstance(policy, nn.Module)
+
+    # DSRL: attach frozen diffusion policy + its preprocessor for action generation
+    if getattr(cfg.policy, "type", None) == "dsrl_ext":
+        dp_path = getattr(cfg.policy, "diffusion_pretrained_path", None)
+        if dp_path:
+            from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
+            from lerobot.policies.factory import make_pre_post_processors as _make_dp_pp
+
+            dp = DiffusionPolicy.from_pretrained(pretrained_name_or_path=dp_path)
+            dp.to(cfg.policy.device)
+            dp_pre, dp_post = _make_dp_pp(
+                policy_cfg=dp.config, pretrained_path=dp_path,
+                preprocessor_overrides={"device_processor": {"device": cfg.policy.device}},
+            )
+            policy.load_diffusion_policy(dp, preprocessor=dp_pre, postprocessor=dp_post)
+            logging.info("[ACTOR] DSRL: loaded frozen diffusion policy + preprocessor from %s", dp_path)
+        else:
+            logging.warning("[ACTOR] DSRL: no diffusion_pretrained_path — actor will output raw noise")
+
     # Diagnostic: the resolved policy class MUST match cfg.policy.type. If
     # cfg says qc_ext but `policy` ends up SACPolicy, something is wrong
     # (plugin not loaded → draccus silently fell back, OR cfg.policy.type
@@ -363,6 +424,11 @@ def act_with_policy(
     episode_stage_advances = 0
     # Discard counter for telemetry.
     discarded_episodes = 0
+    # Rolling buffers for episode-level moving averages (last N completed eps).
+    _ROLLING_N = 5
+    rolling_rewards: list[float] = []
+    rolling_successes: list[int] = []
+    rolling_stage_advances: list[int] = []
     # Add counters for intervention rate calculation
     episode_intervention_steps = 0
     episode_total_steps = 0
@@ -544,12 +610,17 @@ def act_with_policy(
         # Check for intervention from transition info
         intervention_info = new_transition[TransitionKey.INFO]
         _is_interv_now = bool(intervention_info.get(TeleopEvents.IS_INTERVENTION, False))
-        # Rising edge (False -> True): flush chunk queue for chunk-aware
-        # policies (e.g. QC) when the user just took control. Gated by cfg
-        # flag so SAC default behavior is unchanged.
+        # Flush chunk queue on BOTH intervention edges for chunk-aware policies
+        # (e.g. QC). Rising edge (False -> True): user just grabbed control;
+        # drop the autonomous chunk so the next teleop action is applied
+        # cleanly. Falling edge (True -> False): user released; drop the
+        # stale chunk that was generated mid-intervention against outdated
+        # state, force regeneration from the current (post-intervention)
+        # observation. Gated by cfg flag so SAC default behavior is unchanged.
+        _edge_rising = _is_interv_now and not prev_intervention_flag
+        _edge_falling = (not _is_interv_now) and prev_intervention_flag
         if (
-            _is_interv_now
-            and not prev_intervention_flag
+            (_edge_rising or _edge_falling)
             and getattr(cfg.policy, "flush_chunk_on_intervention", False)
             and hasattr(policy, "reset")
         ):
@@ -579,7 +650,20 @@ def act_with_policy(
             "discrete_penalty": torch.tensor(
                 [new_transition[TransitionKey.COMPLEMENTARY_DATA].get("discrete_penalty", 0.0)]
             ),
+            # Propagate intervention flag to learner so the dual-buffer mode
+            # can route teleop frames into the offline (intervention-only)
+            # replay buffer. Without this, all transitions land in the
+            # online buffer regardless of whether the human took control.
+            # Use the enum's .value (string) — torch.save/load with
+            # weights_only=True can strip non-tensor objects like Enum keys.
+            TeleopEvents.IS_INTERVENTION.value: torch.tensor(
+                [1 if bool(_is_interv_now) else 0], dtype=torch.int8
+            ),
         }
+        # DSRL: store the noise vector used to generate the action
+        if hasattr(policy, "_last_noise") and policy._last_noise is not None:
+            complementary_info["noise"] = policy._last_noise.squeeze(0)
+
         # Create transition for learner (convert to old format)
         list_transition_to_send_to_learner.append(
             Transition(
@@ -603,6 +687,20 @@ def act_with_policy(
             )
 
             update_policy_parameters(policy=policy, parameters_queue=parameters_queue, device=device)
+
+            # DSRL n-step returns: rewrite each transition's reward/next_state/done
+            # to n-step versions before pushing. We have the full episode here.
+            _dsrl_n = int(getattr(cfg.policy, "n_step", 1) or 1)
+            if (
+                getattr(cfg.policy, "type", None) == "dsrl_ext"
+                and _dsrl_n > 1
+                and len(list_transition_to_send_to_learner) > 0
+            ):
+                list_transition_to_send_to_learner = _apply_nstep_returns(
+                    list_transition_to_send_to_learner,
+                    n=_dsrl_n,
+                    gamma=float(getattr(cfg.policy, "discount", 0.99)),
+                )
 
             if len(list_transition_to_send_to_learner) > 0:
                 push_transitions_to_transport_queue(
@@ -630,6 +728,17 @@ def act_with_policy(
                     "Gripper band-flip rate": grip_flip_count / episode_total_steps,
                 }
 
+            # Rolling moving avgs over last N completed episodes.
+            rolling_rewards.append(float(sum_reward_episode))
+            rolling_successes.append(int(episode_success))
+            rolling_stage_advances.append(int(episode_stage_advances))
+            for _buf in (rolling_rewards, rolling_successes, rolling_stage_advances):
+                if len(_buf) > _ROLLING_N:
+                    _buf.pop(0)
+            _roll_reward = sum(rolling_rewards) / max(len(rolling_rewards), 1)
+            _roll_success = sum(rolling_successes) / max(len(rolling_successes), 1)
+            _roll_stage = sum(rolling_stage_advances) / max(len(rolling_stage_advances), 1)
+
             # Send episodic reward to the learner
             interactions_queue.put(
                 python_object_to_bytes(
@@ -643,6 +752,9 @@ def act_with_policy(
                         "Episode stage advances": episode_stage_advances,
                         "Episode discarded total": discarded_episodes,
                         "Intervention rate": intervention_rate,
+                        "Rolling reward (last 5)": _roll_reward,
+                        "Rolling success (last 5)": _roll_success,
+                        "Rolling stage advances (last 5)": _roll_stage,
                         **grip_metrics,
                         **stats,
                     }

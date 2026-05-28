@@ -343,6 +343,55 @@ def add_actor_information_and_train(
     batch_size = cfg.batch_size
     offline_replay_buffer = None
 
+    # DSRL demo seeding: pre-fill online buffer with expert transitions (noise=zeros).
+    # This anchors early Q-values to realistic rewards and prevents divergence.
+    _dsrl_demo_repo = getattr(cfg.policy, "demo_dataset_repo_id", None)
+    if getattr(cfg.policy, "type", None) == "dsrl_ext" and _dsrl_demo_repo:
+        _dsrl_n_eps = int(getattr(cfg.policy, "demo_n_episodes", 25) or 25)
+        _dsrl_noise_dim = int(getattr(cfg.policy, "noise_dim", 5) or 5)
+        try:
+            from lerobot.datasets.lerobot_dataset import LeRobotDataset
+            _demo_ds = LeRobotDataset(_dsrl_demo_repo)
+            _state_keys = list(cfg.policy.input_features.keys())
+            _ep_indices = list(range(min(_dsrl_n_eps, _demo_ds.meta.total_episodes)))
+            _demo_ds = LeRobotDataset(_dsrl_demo_repo, episodes=_ep_indices)
+            _demo_transitions = replay_buffer._lerobotdataset_to_transitions(
+                dataset=_demo_ds, state_keys=_state_keys, stride=1,
+            )
+            _target_img_size = tuple(cfg.env.image_size) if hasattr(cfg.env, "image_size") and cfg.env.image_size else None
+            def _resize_state(s):
+                out = {}
+                for k, v in s.items():
+                    if v.ndim >= 3:
+                        if _target_img_size and v.shape[-2:] != _target_img_size:
+                            v = torch.nn.functional.interpolate(
+                                v.unsqueeze(0).float(), size=_target_img_size, mode="bilinear", align_corners=False,
+                            ).squeeze(0)
+                        if v.is_floating_point():
+                            v = v.clamp(0, 255).to(torch.uint8)
+                    out[k] = v.to(storage_device)
+                return out
+            _n_loaded = 0
+            for _dt in _demo_transitions:
+                _ci = _dt.get("complementary_info") or {}
+                _ci["noise"] = torch.zeros(_dsrl_noise_dim)
+                replay_buffer.add(
+                    state=_resize_state(_dt["state"]),
+                    action=_dt["action"].to(storage_device),
+                    reward=_dt["reward"],
+                    next_state=_resize_state(_dt["next_state"]),
+                    done=_dt["done"],
+                    truncated=False,
+                    complementary_info=_ci,
+                )
+                _n_loaded += 1
+            logging.info(
+                "[DSRL] Pre-filled online buffer with %d demo transitions "
+                "(%d eps from %s), noise=zeros", _n_loaded, len(_ep_indices), _dsrl_demo_repo,
+            )
+        except Exception as _e:
+            logging.error("[DSRL] Demo pre-fill failed: %s; continuing with empty buffer", _e)
+
     # QC dual-buffer mode: offline buffer is a chunk-aware buffer that
     # holds demonstrations + intervention transitions. Critic samples 50/50
     # (online, offline). Actor bc_flow loss samples 100% from offline so the
@@ -711,6 +760,148 @@ def add_actor_information_and_train(
 
             continue
         # ----- /QC branch ---------------------------------------------------
+
+        # ----- DSRL (noise-space SAC) branch --------------------------------
+        if getattr(cfg.policy, "type", None) == "dsrl_ext":
+            t0_dsrl = time.time()
+            _utd = max(1, int(getattr(cfg.policy, "utd_ratio", 20) or 20))
+            _dsrl_warmup_n = int(getattr(cfg.policy, "critic_warmup_steps", 0) or 0)
+            _in_dsrl_warmup = (_dsrl_warmup_n > 0) and (optimization_step < _dsrl_warmup_n)
+
+            if online_iterator is None:
+                online_iterator = replay_buffer.get_iterator(
+                    batch_size=batch_size, async_prefetch=async_prefetch, queue_size=2
+                )
+
+            def _dsrl_remap_batch(b):
+                """Map BatchTransition → dict expected by DSRLPolicy."""
+                d = {}
+                for k, v in b["state"].items():
+                    d[k] = v
+                for k, v in b["next_state"].items():
+                    d["next_" + k] = v
+                d["reward"] = b["reward"]
+                d["done"] = b["done"]
+                ci = b.get("complementary_info") or {}
+                d["noise"] = ci.get("noise")
+                d["discount_n"] = ci.get("discount_n")
+                return d
+
+            # --- debug: log done/reward stats every 200 steps ---
+            if optimization_step % 200 == 0:
+                _dbg_b = _dsrl_remap_batch(next(online_iterator))
+                _d = _dbg_b["done"]
+                _r = _dbg_b["reward"]
+                print(
+                    f"[DSRL-DBG] opt={optimization_step} done: sum={_d.sum().item():.0f}/{_d.numel()} "
+                    f"reward: min={_r.min().item():.4f} max={_r.max().item():.4f} "
+                    f"mean={_r.mean().item():.4f} nonzero={(_r!=0).sum().item()}",
+                    flush=True,
+                )
+
+            # --- critic updates (UTD inner loop) ---
+            for _utd_i in range(_utd):
+                batch_dsrl = _dsrl_remap_batch(next(online_iterator))
+                loss_critic, critic_info = policy.compute_loss_critic(
+                    batch_dsrl, return_components=True
+                )
+                optimizers["critic"].zero_grad()
+                loss_critic.backward()
+                critic_grad_norm = torch.nn.utils.clip_grad_norm_(
+                    policy.critic.parameters(), max_norm=clip_grad_norm_value
+                ).item()
+                optimizers["critic"].step()
+
+            # --- actor + temperature update (after warmup) ---
+            if not _in_dsrl_warmup:
+                batch_dsrl = _dsrl_remap_batch(next(online_iterator))
+                loss_actor, actor_info = policy.compute_loss_actor(
+                    batch_dsrl, return_components=True
+                )
+                optimizers["actor"].zero_grad()
+                loss_actor.backward()
+                actor_grad_norm = torch.nn.utils.clip_grad_norm_(
+                    policy.noise_actor.parameters(), max_norm=clip_grad_norm_value
+                ).item()
+                optimizers["actor"].step()
+
+                loss_temp = policy.compute_loss_temperature(batch_dsrl)
+                optimizers["temperature"].zero_grad()
+                loss_temp.backward()
+                torch.nn.utils.clip_grad_norm_(
+                    [policy.log_alpha], max_norm=clip_grad_norm_value
+                )
+                optimizers["temperature"].step()
+            else:
+                with torch.no_grad():
+                    batch_dsrl = _dsrl_remap_batch(next(online_iterator))
+                    loss_actor, actor_info = policy.compute_loss_actor(
+                        batch_dsrl, return_components=True
+                    )
+                actor_grad_norm = 0.0
+                loss_temp = torch.tensor(0.0)
+                if optimization_step == 0 or optimization_step % 200 == 0:
+                    logging.info(
+                        "[LEARNER] DSRL critic-warmup: opt_step=%d / %d — actor frozen",
+                        optimization_step, _dsrl_warmup_n,
+                    )
+
+            # --- target Polyak EMA ---
+            policy.update_target_networks()
+
+            # --- push params ---
+            if time.time() - last_time_policy_pushed > policy_parameters_push_frequency:
+                push_actor_policy_to_queue(parameters_queue=parameters_queue, policy=policy)
+                last_time_policy_pushed = time.time()
+
+            training_infos = {
+                "loss_critic": loss_critic.item(),
+                "loss_actor": loss_actor.item() if hasattr(loss_actor, "item") else float(loss_actor),
+                "loss_temperature": loss_temp.item() if hasattr(loss_temp, "item") else float(loss_temp),
+                "temperature": policy.temperature.item(),
+                "critic_grad_norm": critic_grad_norm,
+                "actor_grad_norm": actor_grad_norm,
+                "replay_buffer_size": len(replay_buffer),
+                "Optimization step": optimization_step,
+            }
+            for _k, _v in critic_info.items():
+                training_infos[f"critic/{_k}"] = float(_v.item()) if hasattr(_v, "item") else float(_v)
+            for _k, _v in actor_info.items():
+                training_infos[f"actor/{_k}"] = float(_v.item()) if hasattr(_v, "item") else float(_v)
+            if wandb_logger and optimization_step % log_freq == 0:
+                wandb_logger.log_dict(d=training_infos, mode="train", custom_step_key="Optimization step")
+
+            dt_dsrl = time.time() - t0_dsrl
+            hz_dsrl = 1.0 / max(dt_dsrl, 1e-9)
+            logging.info(f"[LEARNER] DSRL opt freq [Hz]: {hz_dsrl}")
+            if wandb_logger:
+                wandb_logger.log_dict(
+                    {"Optimization frequency loop [Hz]": hz_dsrl, "Optimization step": optimization_step},
+                    mode="train", custom_step_key="Optimization step",
+                )
+
+            optimization_step += 1
+            if optimization_step % log_freq == 0:
+                logging.info(f"[LEARNER] Number of optimization step: {optimization_step}")
+
+            if saving_checkpoint and (
+                optimization_step % save_freq == 0 or optimization_step == online_steps
+            ):
+                save_training_checkpoint(
+                    cfg=cfg,
+                    optimization_step=optimization_step,
+                    online_steps=online_steps,
+                    interaction_message=interaction_message,
+                    policy=policy,
+                    optimizers=optimizers,
+                    replay_buffer=replay_buffer,
+                    offline_replay_buffer=offline_replay_buffer,
+                    dataset_repo_id=dataset_repo_id,
+                    fps=fps,
+                )
+
+            continue
+        # ----- /DSRL branch -------------------------------------------------
 
         if online_iterator is None:
             online_iterator = replay_buffer.get_iterator(
@@ -1201,7 +1392,12 @@ def make_optimizers_and_scheduler(cfg: TrainRLServerPipelineConfig, policy: nn.M
         groups = policy.get_optim_params()
         optimizer_actor = torch.optim.Adam(params=list(groups["actor"]), lr=cfg.policy.actor_lr)
         optimizer_critic = torch.optim.Adam(params=list(groups["critic"]), lr=cfg.policy.critic_lr)
-        return {"actor": optimizer_actor, "critic": optimizer_critic}, None
+        optimizers = {"actor": optimizer_actor, "critic": optimizer_critic}
+        if hasattr(policy, "log_alpha"):
+            optimizers["temperature"] = torch.optim.Adam(
+                params=[policy.log_alpha], lr=getattr(cfg.policy, "temp_lr", cfg.policy.critic_lr),
+            )
+        return optimizers, None
 
     optimizer_actor = torch.optim.Adam(
         params=[

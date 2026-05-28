@@ -1024,12 +1024,21 @@ def control_loop(
                     "shape": value.squeeze(0).shape,
                     "names": None,
                 }
-            if "image" in key:
+            elif "image" in key:
                 features[key] = {
                     "dtype": "video",
                     "shape": value.squeeze(0).shape,
                     "names": ["channels", "height", "width"],
                 }
+            elif key.startswith("observation.") and isinstance(value, torch.Tensor):
+                # Generic float32 vector pass-through for env-specific extras
+                # (e.g. `observation.sim_state.qpos/qvel` from sim_assembling).
+                # Skip empty-shape features — LeRobotDataset.get_feature_stats
+                # crashes on np.reshape(size=0, shape=(0,)).
+                _shape = tuple(value.squeeze(0).shape)
+                if any(d == 0 for d in _shape):
+                    continue
+                features[key] = {"dtype": "float32", "shape": _shape, "names": None}
 
         if cfg.dataset.resume and cfg.dataset.overwrite:
             raise ValueError(

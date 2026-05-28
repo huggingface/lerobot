@@ -71,8 +71,11 @@ class ActorNetworkConfig:
 @dataclass
 class PolicyConfig:
     use_tanh_squash: bool = True
-    std_min: float = 1e-5
-    std_max: float = 10.0
+    # Either a scalar (applied to all action dims) or a list of length
+    # action_dim for per-dim bounds (e.g. tighter std on the gripper to
+    # suppress random open/close jitter while keeping wide exploration on xyz/yaw).
+    std_min: float | list[float] = 1e-5
+    std_max: float | list[float] = 10.0
     init_final: float = 0.05
 
 
@@ -226,6 +229,11 @@ class SACConfig(PreTrainedConfig):
     # stability.
     residual_action_scale: float | list[float] = 0.1
     freeze_base_policy: bool = True
+    # Critic-only warmup: for the first N opt steps the TD target uses the
+    # frozen base policy's action (δ=0) instead of resampling from the SAC
+    # actor. Critic learns Q^{π_base} grounded in base-policy actions; actor
+    # and temperature updates are skipped during warmup. Set 0 to disable.
+    critic_warmup_steps: int = 0
     # Optional: clip target Q to reward range to mitigate overestimation w/ dense reward.
     clip_q_target_to_reward_range: bool = False
     q_target_clip_min: float = 0.0

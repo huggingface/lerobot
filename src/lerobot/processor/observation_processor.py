@@ -123,6 +123,20 @@ class VanillaObservationProcessorStep(ObservationProcessorStep):
                 agent_pos = agent_pos.unsqueeze(0)
             processed_obs[OBS_STATE] = agent_pos
 
+        # Generic pass-through: any extra `observation.*`-prefixed numpy arrays
+        # (e.g. `observation.sim_state.qpos` from sim_assembling) get converted
+        # to float32 torch tensors with a leading batch dim, mirroring the
+        # OBS_STATE treatment so the downstream record loop captures them.
+        for k in list(processed_obs.keys()):
+            if not k.startswith("observation."):
+                continue
+            v = processed_obs[k]
+            if isinstance(v, np.ndarray):
+                t = torch.from_numpy(v).float()
+                if t.dim() == 1:
+                    t = t.unsqueeze(0)
+                processed_obs[k] = t
+
         return processed_obs
 
     def observation(self, observation):
