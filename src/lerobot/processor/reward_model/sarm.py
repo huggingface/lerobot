@@ -324,6 +324,9 @@ class SARMRewardProcessorStep(BaseRewardProcessorStep):
             return image_stack, state_stack
 
     def _push_obs_to_buffer(self, observation: dict[str, Any]) -> bool:
+        # No model loaded (e.g. pretrained_path=None) → no image keys to buffer.
+        if self._model is None or not self._image_keys:
+            return False
         current_state = observation.get(self._state_key)
 
         # Buffer prewarm: when the buffer is empty (first push of an episode),

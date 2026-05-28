@@ -1,0 +1,39 @@
+{
+    "env": {
+        "name": "sim_assembling",
+        "task": "AssembleBase-v0",
+        "fps": 20,
+        "realtime": false,
+        "robot": null,
+        "teleop": {
+            "type": "ps4_joystick",
+            "delta_mode": true,
+            "max_speed": 0.05,
+            "max_rot_speed": 0.1,
+            "deadzone": 0.05
+        },
+        "processor": {
+            "control_mode": "gamepad",
+            "gripper": {
+                "use_gripper": true,
+                "gripper_penalty": 0.0
+            },
+            "reset": {
+                "reset_time_s": 0.0,
+                "control_time_s": 15.0,
+                "terminate_on_success": true
+            },
+            "reward_model": {
+                "type": "sarm",
+                "pretrained_path": "outputs/sim_assembling_sarm/checkpoints/last/pretrained_model",
+                "device": "cuda",
+                "task": "assemble_nesting",
+                "head_mode": "sparse",
+                "reward_mode": "delta",
+                "success_threshold": 0.9,
+                "stats_dataset_repo_id": "local/sim_assembling_sarm_success_cropped"
+            }
+        }
+    },
+    "device": "cuda"
+}

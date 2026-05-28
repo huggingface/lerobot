@@ -1,0 +1,32 @@
+{
+    "env": {
+        "name": "sim_assembling",
+        "task": "AssembleBase-v0",
+        "fps": 20,
+        "realtime": false,
+        "robot": null,
+        "teleop": {
+            "type": "ps4_joystick",
+            "delta_mode": true,
+            "max_speed": 0.05,
+            "max_rot_speed": 0.1,
+            "deadzone": 0.05
+        },
+        "processor": {
+            "control_mode": "gamepad",
+            "gripper": {
+                "use_gripper": true,
+                "gripper_penalty": 0.0
+            },
+            "reset": {
+                "reset_time_s": 0.0,
+                "control_time_s": 15.0,
+                "terminate_on_success": true
+            },
+            "reward_model": {
+                "type": "manual"
+            }
+        }
+    },
+    "device": "cpu"
+}
