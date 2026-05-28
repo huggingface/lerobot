@@ -356,8 +356,8 @@ class SerialMotorsBus(MotorsBusBase):
         motors: dict[str, Motor],
         calibration: dict[str, MotorCalibration] | None = None,
     ):
-        require_package("pyserial", extra="hardware", import_name="serial")
-        require_package("deepdiff", extra="hardware")
+        require_package("pyserial", extra="pyserial-dep", import_name="serial")
+        require_package("deepdiff", extra="deepdiff-dep")
         super().__init__(port, motors, calibration)
 
         self.port_handler: PortHandler

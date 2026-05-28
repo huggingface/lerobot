@@ -28,6 +28,12 @@ import numpy as np
 import torch
 
 from lerobot.policies import PreTrainedPolicy, prepare_observation_for_inference
+from lerobot.utils.import_utils import _deepdiff_available, require_package
+
+if TYPE_CHECKING or _deepdiff_available:
+    from deepdiff import DeepDiff
+else:
+    DeepDiff = None
 
 if TYPE_CHECKING:
     from lerobot.datasets import LeRobotDataset
@@ -217,10 +223,7 @@ def sanity_check_dataset_robot_compatibility(
     Raises:
         ValueError: If any of the checked metadata fields do not match.
     """
-    from lerobot.utils.import_utils import require_package
-
-    require_package("deepdiff", extra="hardware")
-    from deepdiff import DeepDiff
+    require_package("deepdiff", extra="deepdiff-dep")
 
     from lerobot.utils.constants import DEFAULT_FEATURES
 

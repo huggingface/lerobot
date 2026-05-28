@@ -353,7 +353,8 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
         speed_factor: A scaling factor to convert the normalized velocity command to a position change.
         clip_min: The minimum allowed gripper joint position.
         clip_max: The maximum allowed gripper joint position.
-        discrete_gripper: If True, treat the input action as discrete (0: open, 1: close, 2: stay).
+        discrete_gripper: If True, interpret the input as a discrete class index
+            {0 = close, 1 = stay, 2 = open}, matching `GamepadTeleop.GripperAction`.
     """
 
     speed_factor: float = 20.0
@@ -377,10 +378,10 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
             raise ValueError("Joints observation is require for computing robot kinematics")
 
         if self.discrete_gripper:
-            # Discrete gripper actions are in [0, 1, 2]
-            # 0: open, 1: close, 2: stay
-            # We need to shift them to [-1, 0, 1] and then scale them to clip_max
-            gripper_vel = (gripper_vel - 1) * self.clip_max
+            # Map discrete command {0=close, 1=stay, 2=open} -> signed velocity.
+            # Negation accounts for SO100 sign (joint position increases on close).
+            #   0 -> +clip_max (close), 1 -> 0 (stay), 2 -> -clip_max (open)
+            gripper_vel = -(gripper_vel - 1) * self.clip_max
 
         # Compute desired gripper position
         delta = gripper_vel * float(self.speed_factor)

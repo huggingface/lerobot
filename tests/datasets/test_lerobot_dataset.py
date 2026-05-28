@@ -80,18 +80,18 @@ def _write_dataset_tree(
     )
     tasks = tasks_factory(total_tasks=1)
     episodes = episodes_factory(
-        features=info["features"],
-        fps=info["fps"],
+        features=info.features,
+        fps=info.fps,
         total_episodes=1,
         total_frames=3,
         tasks=tasks,
     )
-    stats = stats_factory(features=info["features"])
+    stats = stats_factory(features=info.features)
     hf_dataset = hf_dataset_factory(
-        features=info["features"],
+        features=info.features,
         tasks=tasks,
         episodes=episodes,
-        fps=info["fps"],
+        fps=info.fps,
     )
 
     create_info(root, info)
@@ -414,6 +414,18 @@ def test_create_initial_counts_zero(tmp_path):
     )
     assert dataset.num_episodes == 0
     assert dataset.num_frames == 0
+
+
+def test_create_propagates_video_files_size_in_mb(tmp_path):
+    """video_files_size_in_mb passed to create() is reflected in the dataset metadata."""
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID,
+        fps=DEFAULT_FPS,
+        features=SIMPLE_FEATURES,
+        root=tmp_path / "ds",
+        video_files_size_in_mb=42.0,
+    )
+    assert dataset.meta.video_files_size_in_mb == 42.0
 
 
 def test_add_frame_works_in_write_mode(tmp_path):

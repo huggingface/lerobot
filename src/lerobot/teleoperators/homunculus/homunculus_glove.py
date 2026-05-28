@@ -71,7 +71,7 @@ class HomunculusGlove(Teleoperator):
     name = "homunculus_glove"
 
     def __init__(self, config: HomunculusGloveConfig):
-        require_package("pyserial", extra="hardware", import_name="serial")
+        require_package("pyserial", extra="pyserial-dep", import_name="serial")
         super().__init__(config)
         self.config = config
         self.serial = serial.Serial(config.port, config.baud_rate, timeout=1)

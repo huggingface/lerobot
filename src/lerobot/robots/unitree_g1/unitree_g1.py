@@ -27,7 +27,7 @@ import numpy as np
 
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.types import RobotAction, RobotObservation
-from lerobot.utils.import_utils import _unitree_sdk_available
+from lerobot.utils.import_utils import _unitree_sdk_available, require_package
 
 from ..robot import Robot
 from .config_unitree_g1 import UnitreeG1Config
@@ -111,6 +111,7 @@ class UnitreeG1(Robot):
     name = "unitree_g1"
 
     def __init__(self, config: UnitreeG1Config):
+        require_package("unitree-sdk2py", extra="unitree_g1", import_name="unitree_sdk2py")
         super().__init__(config)
 
         logger.info("Initialize UnitreeG1...")

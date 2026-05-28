@@ -52,6 +52,9 @@ def get_policy_stats(ds_repo_id: str, policy_name: str, policy_kwargs: dict):
     )
 
     batch = next(iter(dataloader))
+    for key in batch:
+        if isinstance(batch[key], torch.Tensor) and batch[key].dtype == torch.uint8:
+            batch[key] = batch[key].to(dtype=torch.float32) / 255.0
     batch = preprocessor(batch)
     loss, output_dict = policy.forward(batch)
 
@@ -82,6 +85,9 @@ def get_policy_stats(ds_repo_id: str, policy_name: str, policy_kwargs: dict):
     # indicating padding (those ending with "_is_pad")
     dataset.reader.delta_indices = None
     batch = next(iter(dataloader))
+    for key in batch:
+        if isinstance(batch[key], torch.Tensor) and batch[key].dtype == torch.uint8:
+            batch[key] = batch[key].to(dtype=torch.float32) / 255.0
     obs = {}
     for k in batch:
         # TODO: regenerate the safetensors

@@ -26,7 +26,7 @@ def test_rtc_config_default_initialization():
     """Test RTCConfig initializes with default values."""
     config = RTCConfig()
 
-    assert config.enabled is False
+    assert config.enabled is True
     assert config.prefix_attention_schedule == RTCAttentionSchedule.LINEAR
     assert config.max_guidance_weight == 10.0
     assert config.execution_horizon == 10
