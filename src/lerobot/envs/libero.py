@@ -57,7 +57,7 @@ def _get_suite(name: str) -> benchmark.Benchmark:
 
 
 def _select_task_ids(total_tasks: int, task_ids: Iterable[int] | None) -> list[int]:
-    """Validate/normalize task ids. If None → all tasks."""
+    """Validate and normalize task ids. If ``None``, select all tasks."""
     if task_ids is None:
         return list(range(total_tasks))
     ids = sorted({int(t) for t in task_ids})
@@ -240,6 +240,9 @@ class LiberoEnv(gym.Env):
         }
         env = OffScreenRenderEnv(**env_args)
         env.reset()
+        language_instruction = getattr(env, "language_instruction", None)
+        if language_instruction:
+            self.task_description = str(language_instruction)
         return env
 
     def _format_raw_obs(self, raw_obs: RobotObservation) -> RobotObservation:
@@ -325,7 +328,27 @@ class LiberoEnv(gym.Env):
                 f"Expected action to be 1-D (shape (action_dim,)), "
                 f"but got shape {action.shape} with ndim={action.ndim}"
             )
-        raw_obs, reward, done, info = self._env.step(action)
+        try:
+            raw_obs, reward, done, info = self._env.step(action)
+        except ValueError as exc:
+            if "terminated episode" not in str(exc):
+                raise
+            observation, reset_info = self.reset()
+            info = {
+                **reset_info,
+                "task": self.task,
+                "task_id": self.task_id,
+                "done": True,
+                "is_success": False,
+                "final_info": {
+                    "task": self.task,
+                    "task_id": self.task_id,
+                    "done": True,
+                    "is_success": False,
+                    "auto_reset_after_terminated_step": True,
+                },
+            }
+            return observation, 0.0, True, False, info
 
         is_success = self._env.check_success()
         terminated = done or is_success

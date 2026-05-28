@@ -34,8 +34,13 @@ from torch import Tensor
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rlt.configuration_rlt import RLTConfig
+from lerobot.policies.rlt.vla_adapter import (
+    OBS_REFERENCE_ACTION,
+    OBS_RLT_STATE,
+    OBS_VLA_EMBEDDINGS,
+)
 
-# ── Building blocks ──────────────────────────────────────────────────
+# Building blocks
 
 
 class MLP(nn.Module):
@@ -56,7 +61,7 @@ class MLP(nn.Module):
         return self.net(x)
 
 
-# ── RL Token Encoder ─────────────────────────────────────────────────
+# RL-token encoder
 
 
 class RLTokenEncoder(nn.Module):
@@ -114,7 +119,7 @@ class RLTokenEncoder(nn.Module):
         return z_rl
 
 
-# ── RL Token Decoder ─────────────────────────────────────────────────
+# RL-token decoder
 
 
 class RLTokenDecoder(nn.Module):
@@ -176,7 +181,7 @@ class RLTokenDecoder(nn.Module):
         return self.output_head(decoded)  # (B, M, D)
 
 
-# ── Actor ────────────────────────────────────────────────────────────
+# Actor
 
 
 class RLTActor(nn.Module):
@@ -188,11 +193,21 @@ class RLTActor(nn.Module):
     chunk, acting as a "VLA-guided action editor".
     """
 
-    def __init__(self, state_dim: int, action_chunk_dim: int, hidden_dims: list[int], std: float = 0.1):
+    def __init__(
+        self,
+        state_dim: int,
+        action_chunk_dim: int,
+        hidden_dims: list[int],
+        std: float = 0.1,
+        residual_scale: float = 0.1,
+        clamp_output: bool = False,
+    ):
         super().__init__()
         input_dim = state_dim + action_chunk_dim
         self.net = MLP(input_dim, hidden_dims, action_chunk_dim)
         self.log_std = math.log(std)
+        self.residual_scale = residual_scale
+        self.clamp_output = clamp_output
 
     def forward(self, state: Tensor, ref_action_chunk: Tensor) -> Tensor:
         """Return the mean action chunk.
@@ -205,7 +220,11 @@ class RLTActor(nn.Module):
             Refined action chunk (mean), shape ``(B, C*d)``.
         """
         x = torch.cat([state, ref_action_chunk], dim=-1)
-        return self.net(x)
+        residual = torch.tanh(self.net(x)) * self.residual_scale
+        action = ref_action_chunk + residual
+        if self.clamp_output:
+            action = action.clamp(-1.0, 1.0)
+        return action
 
     def sample(self, state: Tensor, ref_action_chunk: Tensor) -> tuple[Tensor, Tensor]:
         """Sample an action and return (action, log_prob)."""
@@ -219,11 +238,11 @@ class RLTActor(nn.Module):
         return action, log_prob
 
 
-# ── Policy (inference bundle) ────────────────────────────────────────
+# Policy inference bundle
 
 
 class RLTPolicy(PreTrainedPolicy):
-    """RLT policy — bundles the RL-token encoder and actor for inference.
+    """RLT policy that bundles the RL-token encoder and actor for inference.
 
     The frozen VLA backbone is **not** part of this module; it is loaded
     separately and its embeddings / reference actions are passed in via the
@@ -271,6 +290,8 @@ class RLTPolicy(PreTrainedPolicy):
             action_chunk_dim=action_chunk_dim,
             hidden_dims=config.actor.hidden_dims,
             std=config.actor.std,
+            residual_scale=config.actor.residual_scale,
+            clamp_output=config.actor.clamp_output,
         )
 
         self._action_dim = action_dim
@@ -283,7 +304,7 @@ class RLTPolicy(PreTrainedPolicy):
         """Select a refined action chunk given an observation.
 
         Expects the observation dict to contain:
-          - ``"observation.vla_embeddings"``: VLA internal token embeddings ``(M, D)``
+          - ``"observation.vla_embeddings"`` or ``"observation.rlt_state"``
           - ``"observation.reference_action"``: VLA reference chunk ``(C*d,)``
           - ``"observation.state"`` (optional): proprioceptive state ``(P,)``
 
@@ -292,11 +313,15 @@ class RLTPolicy(PreTrainedPolicy):
         """
         self.eval()
 
-        vla_emb = batch["observation.vla_embeddings"]
-        if vla_emb.dim() == 2:
-            vla_emb = vla_emb.unsqueeze(0)
-
-        z_rl = self.rl_token_encoder(vla_emb)  # (1, D_rl)
+        if OBS_RLT_STATE in batch:
+            z_rl = batch[OBS_RLT_STATE]
+            if z_rl.dim() == 1:
+                z_rl = z_rl.unsqueeze(0)
+        else:
+            vla_emb = batch[OBS_VLA_EMBEDDINGS]
+            if vla_emb.dim() == 2:
+                vla_emb = vla_emb.unsqueeze(0)
+            z_rl = self.rl_token_encoder(vla_emb)  # (1, D_rl)
 
         parts = [z_rl]
         if "observation.state" in batch and self._proprioception_dim > 0:
@@ -307,12 +332,26 @@ class RLTPolicy(PreTrainedPolicy):
 
         state = torch.cat(parts, dim=-1)
 
-        ref = batch["observation.reference_action"]
+        ref = batch[OBS_REFERENCE_ACTION]
         if ref.dim() == 1:
             ref = ref.unsqueeze(0)
 
         action = self.actor(state, ref)
         return action.squeeze(0)
+
+    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
+        """Return the flattened action chunk produced by the RLT actor."""
+        del kwargs
+        return self.select_action(batch)
+
+    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict | None]:
+        """RLT is trained through ``RLTAlgorithm`` rather than policy ``forward``."""
+        del batch
+        raise NotImplementedError("Use RLTAlgorithm.offline_update/update to train RLTPolicy.")
+
+    def get_optim_params(self) -> dict:
+        """Return policy parameters for generic optimizer builders."""
+        return {"params": self.parameters()}
 
     def reset(self):
         pass

@@ -34,6 +34,7 @@ from torch import Tensor
 from torch.optim import Optimizer
 
 from lerobot.policies.rlt.modeling_rlt import MLP, RLTPolicy
+from lerobot.policies.rlt.vla_adapter import OBS_RLT_STATE, OBS_VLA_EMBEDDINGS
 from lerobot.policies.utils import get_device_from_parameters
 from lerobot.rl.algorithms.base import (
     BatchType,
@@ -49,7 +50,7 @@ class RLTCritic(nn.Module):
 
     Paper Eq. 3: Q_psi(x, a_{1:C})
 
-    Training-only component — lives on the algorithm side, not in the policy.
+    Training-only component that lives on the algorithm side, not in the policy.
     """
 
     def __init__(self, state_dim: int, action_chunk_dim: int, hidden_dims: list[int]):
@@ -80,7 +81,7 @@ class RLTAlgorithm(RLAlgorithm):
         self._init_critics()
         self._move_to_device()
 
-    # ── Initialization ───────────────────────────────────────────────
+    # Initialization
 
     def _init_critics(self) -> None:
         state_dim = self.policy._state_dim
@@ -98,7 +99,7 @@ class RLTAlgorithm(RLAlgorithm):
         self.critics.to(self._device)
         self.critic_targets.to(self._device)
 
-    # ── Offline phase (Stage 1): RL-token training ───────────────────
+    # Offline phase (Stage 1): RL-token training
 
     def supports_offline_phase(self) -> bool:
         return True
@@ -110,7 +111,7 @@ class RLTAlgorithm(RLAlgorithm):
         """
         batch = next(batch_iterator)
 
-        vla_embeddings = batch["state"]["observation.vla_embeddings"].to(self._device)
+        vla_embeddings = batch["state"][OBS_VLA_EMBEDDINGS].to(self._device)
         z_vla = vla_embeddings.detach()  # stop-gradient on VLA embeddings
 
         z_rl = self.policy.rl_token_encoder(z_vla)
@@ -133,6 +134,8 @@ class RLTAlgorithm(RLAlgorithm):
         """Freeze RL-token modules; rebuild optimizers for actor-critic only."""
         self.policy.rl_token_encoder.requires_grad_(False)
         self.policy.rl_token_decoder.requires_grad_(False)
+        self.policy.rl_token_encoder.eval()
+        self.policy.rl_token_decoder.eval()
         self._is_online = True
 
         self.optimizers = {
@@ -141,7 +144,7 @@ class RLTAlgorithm(RLAlgorithm):
         }
         self._optimization_step = 0
 
-    # ── Online phase (Stage 2): Actor-Critic ─────────────────────────
+    # Online phase (Stage 2): actor-critic training
 
     def update(self, batch_iterator: Iterator[BatchType]) -> TrainingStats:
         """One full RLT update step with UTD critic warm-up.
@@ -174,19 +177,23 @@ class RLTAlgorithm(RLAlgorithm):
     def _prepare_forward_batch(self, batch: BatchType) -> dict[str, Any]:
         """Convert a replay batch into algorithm-ready tensors.
 
-        Extracts RL-token from VLA embeddings, builds RL state, reads
+        Extracts or reads RL-token state, builds RL state, reads
         reference action from complementary_info.
         """
         obs = batch["state"]
         next_obs = batch["next_state"]
         device = self._device
 
-        vla_emb = obs["observation.vla_embeddings"].to(device)
-        next_vla_emb = next_obs["observation.vla_embeddings"].to(device)
+        if OBS_RLT_STATE in obs and OBS_RLT_STATE in next_obs:
+            z_rl = obs[OBS_RLT_STATE].to(device).detach()
+            z_rl_next = next_obs[OBS_RLT_STATE].to(device).detach()
+        else:
+            vla_emb = obs[OBS_VLA_EMBEDDINGS].to(device)
+            next_vla_emb = next_obs[OBS_VLA_EMBEDDINGS].to(device)
 
-        with torch.no_grad():
-            z_rl = self.policy.rl_token_encoder(vla_emb)
-            z_rl_next = self.policy.rl_token_encoder(next_vla_emb)
+            with torch.no_grad():
+                z_rl = self.policy.rl_token_encoder(vla_emb)
+                z_rl_next = self.policy.rl_token_encoder(next_vla_emb)
 
         parts = [z_rl]
         next_parts = [z_rl_next]
@@ -204,9 +211,12 @@ class RLTAlgorithm(RLAlgorithm):
         done = batch["done"].to(device)
 
         ref_action = None
+        next_ref_action = None
         comp_info = batch.get("complementary_info")
         if comp_info is not None and "reference_action" in comp_info:
             ref_action = comp_info["reference_action"].to(device)
+        if comp_info is not None and "next_reference_action" in comp_info:
+            next_ref_action = comp_info["next_reference_action"].to(device)
 
         return {
             "state": state,
@@ -215,6 +225,7 @@ class RLTAlgorithm(RLAlgorithm):
             "reward": reward,
             "done": done,
             "reference_action": ref_action,
+            "next_reference_action": next_ref_action,
         }
 
     def _critic_step(self, fb: dict[str, Any]) -> float:
@@ -226,7 +237,9 @@ class RLTAlgorithm(RLAlgorithm):
         done = fb["done"]
 
         with torch.no_grad():
-            ref = fb.get("reference_action")
+            ref = fb.get("next_reference_action")
+            if ref is None:
+                ref = fb.get("reference_action")
             if ref is None:
                 ref = torch.zeros_like(action)
             next_action = self.policy.actor(next_state, ref)
@@ -282,7 +295,7 @@ class RLTAlgorithm(RLAlgorithm):
             for p, tp in zip(critic.parameters(), target.parameters(), strict=True):
                 tp.data.copy_(tau * p.data + (1 - tau) * tp.data)
 
-    # ── Optimizer management ─────────────────────────────────────────
+    # Optimizer management
 
     def make_optimizers(self) -> dict[str, Optimizer]:
         """Create optimizers. Initially for RL-token (Stage 1)."""
@@ -300,7 +313,7 @@ class RLTAlgorithm(RLAlgorithm):
     def get_optimizers(self) -> dict[str, Optimizer]:
         return self.optimizers
 
-    # ── Weight sync ──────────────────────────────────────────────────
+    # Weight sync
 
     def get_weights(self) -> dict[str, Any]:
         """Push actor + RL-token encoder to actors (small footprint)."""

@@ -14,5 +14,6 @@
 
 from lerobot.policies.rlt.configuration_rlt import RLTConfig
 from lerobot.policies.rlt.modeling_rlt import RLTPolicy
+from lerobot.policies.rlt.vla_adapter import PI05PrefixRLTAdapter
 
-__all__ = ["RLTConfig", "RLTPolicy"]
+__all__ = ["PI05PrefixRLTAdapter", "RLTConfig", "RLTPolicy"]
