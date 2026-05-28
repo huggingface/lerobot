@@ -1288,6 +1288,29 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         ep_metadata = self._save_episode_data(episode_buffer)
 
+        # DIAG: detect ghost-frame bug (per-ep video frames > parquet rows).
+        # Counts PNGs in each per-ep image dir BEFORE encode + cross-checks
+        # against episode_length. Findings here pinpoint whether the bug is
+        # PNG-write-side (more PNGs than buffer) or encoder/concat-side.
+        try:
+            for _vk in self.meta.video_keys:
+                _fp = DEFAULT_IMAGE_PATH.format(image_key=_vk, episode_index=episode_index, frame_index=0)
+                _img_dir = self.root / Path(_fp).parent
+                if _img_dir.is_dir():
+                    _png_n = len(list(_img_dir.glob("frame-*.png")))
+                    if _png_n != episode_length:
+                        logging.warning(
+                            "[GHOST-FRAME-DIAG] ep%d cam=%s: png_count=%d episode_length=%d diff=%d",
+                            episode_index, _vk, _png_n, episode_length, _png_n - episode_length,
+                        )
+                    else:
+                        logging.info(
+                            "[GHOST-FRAME-DIAG] ep%d cam=%s: png=%d ep_len=%d OK",
+                            episode_index, _vk, _png_n, episode_length,
+                        )
+        except Exception as _e:
+            logging.warning("[GHOST-FRAME-DIAG] check failed: %r", _e)
+
         if use_streaming:
             # Finish streaming encoding and collect results
             streaming_results = self._streaming_encoder.finish_episode()
