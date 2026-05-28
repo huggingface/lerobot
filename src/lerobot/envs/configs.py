@@ -254,12 +254,28 @@ class EnvRewardModelConfig:
 
 @dataclass
 class InverseKinematicsConfig:
-    """Configuration for inverse kinematics processing."""
+    """Configuration for inverse kinematics processing.
+
+    When `use_yaw=True`, the existing EE dicts carry the extra yaw axis inline (no
+    parallel `yaw_*` fields):
+
+      end_effector_step_sizes: {"x": 0.001, "y": 0.001, "z": 0.001, "yaw": 0.01}
+      end_effector_bounds:
+          min: [x_min, y_min, z_min, yaw_offset_min]     # rad at index 3
+          max: [x_max, y_max, z_max, yaw_offset_max]
+
+    xyz at indices 0..2 are ABSOLUTE base-frame metres (the env clips xyz to these).
+    The yaw entry at index 3 is a RELATIVE OFFSET window around the home wrist
+    orientation `fixed_rz`, in radians — the env latches `target_yaw=0` at reset
+    and accumulates deltas inside this window. Currently only UR10RobotEnv consumes
+    `use_yaw`; other robots ignore it.
+    """
 
     urdf_path: str | None = None
     target_frame_name: str | None = None
     end_effector_bounds: dict[str, list[float]] | None = None
     end_effector_step_sizes: dict[str, float] | None = None
+    use_yaw: bool = False
 
 
 @dataclass

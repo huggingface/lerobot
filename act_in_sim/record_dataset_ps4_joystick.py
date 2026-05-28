@@ -12,9 +12,9 @@ from lerobot.robots.assembling_sim import AssemblingSim, AssemblingSimCut, Assem
 
 import numpy as np
 
-NUM_EPISODES = 80
+NUM_EPISODES = 50
 FPS = 20
-EPISODE_TIME_SEC = 60
+EPISODE_TIME_SEC = 25
 RESET_TIME_SEC = 10
 TASK_DESCRIPTION = "My task description"
 
@@ -26,7 +26,7 @@ sim_config = AssemblingSimConfig(
     max_episode_steps=1000,
     use_task_space=True,
     render_mode="all",   # None | "human" | "rgb_array" | "all"
-    camera_names=["cam_front", "cam_side", "cam_gripper"],
+    camera_names=["cam_front", "cam_side", "cam_gripper", "cam_state"],
     resolution=(224, 224),
 
     action_pos_scale=1000,
@@ -41,8 +41,8 @@ teleop_config = PS4JoystickTeleopConfig(
     alpha=0.3,
     poll_rate=100,
     x_init=0.1,
-    y_init=-0.5,
-    z_init=0.35,
+    y_init=-0.65,
+    z_init=0.37,
     roll_init=np.pi,
     pitch_init=0.0,
     yaw_init=np.pi/2
@@ -59,7 +59,7 @@ dataset_features = {**action_features, **obs_features}
 
 # Create the dataset
 dataset = LeRobotDataset.create(
-    repo_id="local/ACT_RC10_60eps_pcb",
+    repo_id="local/ACT_assembling_sim_s3",
     fps=FPS,
     features=dataset_features,
     robot_type=robot.name,

@@ -1,7 +1,7 @@
 {
     "output_dir": null,
     "job_name": "rc10_sac",
-    "resume": true,
+    "resume": false,
     "seed": 1000,
     "num_workers": 4,
     "batch_size": 128,
@@ -19,13 +19,13 @@
         "disable_artifact": true
     },
     "dataset": {
-        "repo_id": "local/rc10_pick_place_cube_3_cams_cropped_resized",
+        "repo_id": "local/rc10_usb_insertion",
         "use_imagenet_stats": false
     },
     "env": {
         "type": "gym_manipulator",
         "name": "rc10",
-        "task": "pick_place_cube",
+        "task": "usb_insertion",
         "fps": 10,
         "robot": {
             "type": "rc10",
@@ -54,26 +54,23 @@
                 "gripper_penalty": -0.02
             },
             "reset": {
-                "fixed_reset_joint_positions": [0.1, 0.445, 0.25, 3.14159, 0.0, 0.0],
+                "fixed_reset_joint_positions": [0.095, 0.46, 0.25, 3.14159, 0.0, 0.0],
                 "reset_time_s": 7.0,
                 "control_time_s": 15.0,
                 "terminate_on_success": true,
-                "randomization_xy": 0.02
+                "randomization_xy": 0.0
             },
             "observation": {
-                "display_cameras": false
+                "display_cameras": true
             },
             "image_preprocessing": {
-                "crop_params_dict": {
-                    "observation.images.front": [38, 18, 88, 88]
-                },
                 "resize_size": [128, 128]
             },
             "inverse_kinematics": {
                 "end_effector_step_sizes": {"x": 0.01, "y": 0.01, "z": 0.01},
                 "end_effector_bounds": {
-                    "min": [0.0133, 0.4319, 0.225],
-                    "max": [0.1741, 0.5874, 0.275]
+                    "min": [0.0095, 0.46, 0.2249],
+                    "max": [0.1533, 0.53, 0.281]
                 }
             }
         },
@@ -92,7 +89,7 @@
             },
             "observation.state": {
                 "type": "STATE",
-                "shape": [16]
+                "shape": [22]
             },
             "action": {
                 "type": "ACTION",
@@ -131,7 +128,7 @@
             },
             "observation.state": {
                 "type": "STATE",
-                "shape": [16]
+                "shape": [22]
             }
         },
         "output_features": {
@@ -141,7 +138,7 @@
             }
         },
         "device": "cuda",
-        "use_amp": true,
+        "use_amp": false,
         "dataset_stats": {
             "observation.images.front": {
                 "mean": [0.485, 0.456, 0.406],
@@ -156,15 +153,15 @@
                 "std": [0.229, 0.224, 0.225]
             },
             "observation.state": {
-                "min": [-2.2551, -1.8014, 2.2796, -2.4379, -1.5716, -0.6988, -0.1423, -0.1209, -0.142, -0.1537, -0.0169, -0.1448, 0.0, 0.0133, 0.4319, 0.225],
-                "max": [-1.8855, -1.4735, 2.5612, -2.2662, -1.5692, -0.3292, 0.1422, 0.1813, 0.1249, 0.147, 0.0135, 0.1351, 1.0, 0.1741, 0.5874, 0.275]
+                "min": [-2.2697, -1.8247, 2.3195, -2.405, -1.5662, -0.7026, -0.1541, -0.1192, -0.1155, -0.1588, -0.0065, -0.1561, -34.4428, -60.1731, -60.2494, -17.4564, -16.9859, -9.9594, 0.0, 0.0095, 0.46, 0.2249],
+                "max": [-1.9658, -1.6241, 2.5994, -2.2158, -1.5639, -0.3983, 0.1372, 0.1604, 0.1275, 0.1521, 0.0256, 0.1337, 35.252, 14.9082, -14.019, 5.9592, 21.0952, 9.7492, 1.0, 0.1533, 0.53, 0.281]
             },
             "action": {
                 "min": [-1.0, -1.0, -1.0],
                 "max": [1.0, 1.0, 1.0]
             }
         },
-        "repo_id": "local/rc10_pick_cube",
+        "repo_id": "local/rc10_usb_insertion",
         "storage_device": "cpu",
         "vision_encoder_name": "helper2424/resnet10",
         "freeze_vision_encoder": true,
@@ -175,7 +172,7 @@
         "offline_buffer_capacity": 100000,
         "online_step_before_learning": 100,
         "policy_update_freq": 1,
-        "discount": 0.97,
+        "discount": 0.98,
         "temperature_init": 0.01,
         "num_critics": 2,
         "num_subsample_critics": null,
@@ -184,8 +181,8 @@
         "temperature_lr": 0.0003,
         "critic_target_update_weight": 0.005,
         "utd_ratio": 2,
-        "state_encoder_hidden_dim": 256,
-        "latent_dim": 64,
+        "state_encoder_hidden_dim": 64,
+        "latent_dim": 256,
         "target_entropy": null,
         "use_backup_entropy": true,
         "grad_clip_norm": 10.0,

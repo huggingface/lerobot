@@ -1,0 +1,69 @@
+{
+    "env": {
+        "name": "ur10",
+        "task": "usb_insertion_hilserl_2cams",
+        "fps": 10,
+        "robot": {
+            "type": "ur10",
+            "ip": "192.168.0.100",
+            "rtde_frequency": 500,
+            "tcp_offset": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            "payload_mass": 0.0,
+            "payload_cog": [0.0, 0.0, 0.0],
+            "gripper_port": "/dev/ttyUSB0",
+            "gripper_baudrate": 115200,
+            "cameras": {
+                "front": {"type": "intelrealsense", "serial_number_or_name": "409122272284", "width": 640, "height": 480, "fps": 30},
+                "wrist": {"type": "intelrealsense", "serial_number_or_name": "323622272232", "width": 640, "height": 480, "fps": 30}
+            }
+        },
+        "teleop": {
+            "type": "gamepad",
+            "use_gripper": true,
+            "invert_delta_x": true,
+            "invert_delta_y": true,
+            "invert_delta_z": false
+        },
+        "processor": {
+            "control_mode": "gamepad",
+            "gripper": {
+                "use_gripper": true,
+                "gripper_penalty": -0.02
+            },
+            "reset": {
+                "fixed_reset_joint_positions": [-0.2001, -0.4956, 0.1587, 3.14159, 0.0, 0.0],
+                "reset_time_s": 5.0,
+                "control_time_s": 20.0,
+                "terminate_on_success": true,
+                "randomization_xy": 0.015
+            },
+            "observation": {
+                "display_cameras": true
+            },
+            "image_preprocessing": {
+                "crop_params_dict": {
+                    "observation.images.front": [77, 166, 317, 368],
+                    "observation.images.wrist": [124, 143, 356, 397]
+                },
+                "resize_size": [128, 128]
+            },
+            "inverse_kinematics": {
+                "end_effector_step_sizes": {"x": 0.001, "y": 0.001, "z": 0.001},
+                "end_effector_bounds": {
+                    "min": [-0.2166, -0.5254, 0.1477],
+                    "max": [-0.1863, -0.4851, 0.1587]
+                }
+            }
+        }
+    },
+
+
+    "dataset": {
+        "repo_id": "local/usb_insertion_hilserl_2cams",
+        "task": "usb_insertion_hilserl_2cams",
+        "num_episodes_to_record": 20,
+        "push_to_hub": false
+    },
+    "mode": "record",
+    "device": "cpu"
+}

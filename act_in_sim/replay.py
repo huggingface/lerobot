@@ -28,7 +28,7 @@ sim_config = AssemblingSimConfig(
 robot = AssemblingSimCut(sim_config)
 robot.connect()
 
-dataset = LeRobotDataset("local/ACT_RC10_60eps_pcb", episodes=[episode_idx])
+dataset = LeRobotDataset("local/ACT_assembling_sim_s2", episodes=[episode_idx])
 actions = dataset.hf_dataset.select_columns("action")
 
 log_say(f"Replaying episode {episode_idx}")

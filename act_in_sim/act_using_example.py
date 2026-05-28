@@ -17,10 +17,10 @@ MAX_STEPS_PER_EPISODE = 10000
 
 def main():
     device = torch.device("cuda")  # or "cuda" or "cpu"
-    model_id = "outputs/robot_learning_tutorial/act/last"
+    model_id = "outputs/assembling/act_s1/last"
     model = ACTPolicy.from_pretrained(model_id)
 
-    dataset_id = "local/ACT_RC10_60eps_pcb"
+    dataset_id = "local/ACT_assembling_sim_s1"
     # This only downloads the metadata for the dataset, ~10s of MB even for large-scale datasets
     dataset_metadata = LeRobotDatasetMetadata(dataset_id)
     # preprocess, postprocess = make_pre_post_processors(model.config, dataset_stats=dataset_metadata.stats)
@@ -30,11 +30,11 @@ def main():
         xml_path="scene.xml",
         sim_timestep=0.001,
         control_hz=FPS,
-        mode="realtime",   # "realtime" | "fast"
+        mode="fast",   # "realtime" | "fast"
         max_episode_steps=1000,
         use_task_space=True,
         render_mode="all",   # None | "human" | "rgb_array" | "all"
-        camera_names=["cam_front", "cam_side", "cam_gripper"],
+        camera_names=["cam_front", "cam_side", "cam_gripper", "cam_state"],
         resolution=(224, 224),
 
         action_pos_scale=1000,
@@ -53,6 +53,8 @@ def main():
     for _ in range(MAX_EPISODES):
         for _ in range(MAX_STEPS_PER_EPISODE):
             obs = robot.get_observation()
+
+            print(obs["cam_state"])
             obs_frame = build_inference_frame(
                 observation=obs, ds_features=dataset_metadata.features, device=device
             )

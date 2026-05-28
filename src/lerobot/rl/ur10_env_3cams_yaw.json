@@ -1,0 +1,74 @@
+{
+    "env": {
+        "name": "ur10",
+        "task": "pcb_act_3cams_yaw",
+        "fps": 10,
+        "robot": {
+            "type": "ur10",
+            "ip": "192.168.0.100",
+            "rtde_frequency": 500,
+            "tcp_offset": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            "payload_mass": 0.3,
+            "payload_cog": [0.0, 0.0, 0.0],
+            "gripper_port": "/dev/ttyACM0",
+            "gripper_baudrate": 115200,
+            "cameras": {
+                "front": {"type": "intelrealsense", "serial_number_or_name": "409122272284", "width": 640, "height": 480, "fps": 30},
+                "side":  {"type": "intelrealsense", "serial_number_or_name": "409122273078", "width": 640, "height": 480, "fps": 30},
+                "wrist": {"type": "intelrealsense", "serial_number_or_name": "323622272232", "width": 640, "height": 480, "fps": 30}
+            }
+        },
+        "teleop": {
+            "type": "gamepad",
+            "use_gripper": true,
+            "use_yaw": true,
+            "invert_delta_x": true,
+            "invert_delta_y": true,
+            "invert_delta_z": false,
+            "invert_delta_yaw": false
+        },
+        "processor": {
+            "control_mode": "gamepad",
+            "gripper": {
+                "use_gripper": true,
+                "gripper_penalty": -0.02
+            },
+            "reset": {
+                "fixed_reset_joint_positions": [-0.1104, -0.5698, 0.3558, -3.141, 0.0, 0.0],
+                "reset_time_s": 5.0,
+                "control_time_s": 100.0,
+                "terminate_on_success": true,
+                "randomization_xy": 0.00
+            },
+            "observation": {
+                "display_cameras": true
+            },
+            "image_preprocessing": {
+                "crop_params_dict": {
+                    "observation.images.front": [9, 7, 469, 619],
+                    "observation.images.side":  [11, 31, 457, 585],
+                    "observation.images.wrist": [41, 59, 429, 547]
+                },
+                "resize_size": [128, 128]
+            },
+            "inverse_kinematics": {
+                "use_yaw": true,
+                "end_effector_step_sizes": {"x": 0.003, "y": 0.003, "z": 0.003, "yaw": 0.01},
+                "end_effector_bounds": {
+                    "min": [-0.2375, -0.6237, 0.3285, -0.27],
+                    "max": [-0.0958, -0.5218, 0.3676, 0.37]
+                }
+            }
+        }
+    },
+
+
+    "dataset": {
+        "repo_id": "local/pcb_act_3cams_yaw",
+        "task": "pcb_act_3cams_yaw",
+        "num_episodes_to_record": 20,
+        "push_to_hub": false
+    },
+    "mode": "record",
+    "device": "cpu"
+}

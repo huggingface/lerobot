@@ -70,6 +70,7 @@ from lerobot.rl.buffer import ReplayBuffer, concatenate_batch_transitions
 from lerobot.rl.process import ProcessSignalHandler
 from lerobot.rl.wandb_utils import WandBLogger
 from lerobot.robots import rc10 as _rc10_register  # noqa: F401
+from lerobot.robots import ur10 as _ur10_register  # noqa: F401  # register UR10RobotConfig
 from lerobot.teleoperators import gamepad, so_leader  # noqa: F401
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.transport import services_pb2_grpc

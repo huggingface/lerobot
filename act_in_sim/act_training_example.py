@@ -11,6 +11,8 @@ from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
 
+PATH = "outputs/assembling/act_s2"
+
 
 def make_delta_timestamps(delta_indices: list[int] | None, fps: int) -> list[float]:
     if delta_indices is None:
@@ -20,13 +22,13 @@ def make_delta_timestamps(delta_indices: list[int] | None, fps: int) -> list[flo
 
 
 def main():
-    output_directory = Path("outputs/robot_learning_tutorial/act")
+    output_directory = Path(PATH)
     output_directory.mkdir(parents=True, exist_ok=True)
 
     # Select your device
     device = torch.device("cuda")  # or "cuda" or "cpu"
 
-    dataset_id = "local/ACT_RC10_60eps_pcb"
+    dataset_id = "local/ACT_assembling_sim_s2"
 
     # This specifies the inputs the model will be expecting and the outputs it will produce
     dataset_metadata = LeRobotDatasetMetadata(dataset_id)
@@ -70,7 +72,7 @@ def main():
     )
 
     # Number of training steps and logging frequency
-    training_steps = 75000
+    training_steps = 50000
     log_freq = 100
 
     # Run training loop
@@ -89,7 +91,7 @@ def main():
             step += 1
 
             if step % 10000 == 0:
-                output_directory = Path("outputs/robot_learning_tutorial/act/"+str(step))
+                output_directory = Path(PATH + "/"+str(step))
                 output_directory.mkdir(parents=True, exist_ok=True)
                 policy.save_pretrained(output_directory)
                 preprocessor.save_pretrained(output_directory)
@@ -101,7 +103,7 @@ def main():
 
     # Save the policy checkpoint, alongside the pre/post processors
 
-    output_directory = Path("outputs/robot_learning_tutorial/act/last")
+    output_directory = Path(PATH)
     output_directory.mkdir(parents=True, exist_ok=True)
 
     policy.save_pretrained(output_directory)

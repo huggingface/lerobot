@@ -1,0 +1,2 @@
+status,t_cmd_rel_s,t_motion_rel_s,latency_ms,trip_disp_mm,tcp_speed_at_arm_mm_s,axis_dx,axis_dy,axis_dz
+OK,0.641661,1.037984,396.323,0.2178,,-0.0000,-1.0000,-0.0000

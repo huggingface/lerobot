@@ -79,7 +79,10 @@ class GamepadTeleop(Teleoperator):
 
     @property
     def action_features(self) -> dict:
-        names = {"delta_x": 0, "delta_y": 1, "delta_z": 2}
+        # Order: xyz deltas → optional yaw → optional gripper. Keeping gripper at the
+        # last index preserves SAC's `DISCRETE_DIMENSION_INDEX = -1` convention and the
+        # UR10GripperPenaltyProcessorStep's `action[-1]` indexing across yaw modes.
+        names: dict[str, int] = {"delta_x": 0, "delta_y": 1, "delta_z": 2}
         idx = 3
         if self.config.use_yaw:
             names["delta_yaw"] = idx
@@ -132,14 +135,32 @@ class GamepadTeleop(Teleoperator):
                     pass
         self._prev_intervention = cur_interv
 
-        # Get movement deltas from the controller
-        delta_x, delta_y, delta_z = self.gamepad.get_deltas()
+        # Get movement deltas from the controller. When use_yaw=True, the driver also reads
+        # right stick X and returns a 4-tuple; otherwise the legacy 3-tuple is returned so
+        # nothing changes for non-yaw runs.
+        if self.config.use_yaw:
+            delta_x, delta_y, delta_z, delta_yaw = self.gamepad.get_deltas(with_yaw=True)
+        else:
+            delta_x, delta_y, delta_z = self.gamepad.get_deltas()
+            delta_yaw = 0.0
 
-        action_dict = {
-            "delta_x": float(delta_x),
-            "delta_y": float(delta_y),
-            "delta_z": float(delta_z),
+        # Apply per-axis sign flips so the same physical stick direction maps to the
+        # operator's intuitive forward/back/left/right/up/down regardless of the robot's
+        # base-frame orientation at the workstation.
+        sx = -1.0 if self.config.invert_delta_x else 1.0
+        sy = -1.0 if self.config.invert_delta_y else 1.0
+        sz = -1.0 if self.config.invert_delta_z else 1.0
+        syaw = -1.0 if self.config.invert_delta_yaw else 1.0
+
+        # Create action dict in canonical order (xyz → yaw → gripper) so downstream
+        # processors that index by name don't depend on insertion order.
+        action_dict: dict = {
+            "delta_x": np.float32(sx * delta_x),
+            "delta_y": np.float32(sy * delta_y),
+            "delta_z": np.float32(sz * delta_z),
         }
+        if self.config.use_yaw:
+            action_dict["delta_yaw"] = np.float32(syaw * delta_yaw)
 
         if self.config.use_yaw and hasattr(self.gamepad, "get_yaw_delta"):
             action_dict["delta_yaw"] = float(self.gamepad.get_yaw_delta())

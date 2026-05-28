@@ -1,7 +1,7 @@
 {
     "env": {
         "name": "rc10",
-        "task": "pick_place_cube",
+        "task": "usb_insertion",
         "fps": 10,
         "robot": {
             "type": "rc10",
@@ -30,7 +30,7 @@
                 "gripper_penalty": -0.02
             },
             "reset": {
-                "fixed_reset_joint_positions": [0.1, 0.445, 0.25, 3.14159, 0.0, 0.0],
+                "fixed_reset_joint_positions": [0.095, 0.46, 0.25, 3.14159, 0.0, 0.0],
                 "reset_time_s": 7.0,
                 "control_time_s": 15.0,
                 "terminate_on_success": true,
@@ -45,8 +45,8 @@
             "inverse_kinematics": {
                 "end_effector_step_sizes": {"x": 0.01, "y": 0.01, "z": 0.01},
                 "end_effector_bounds": {
-                    "min": [0.0133, 0.4319, 0.225],
-                    "max": [0.1741, 0.5874, 0.275]
+                    "min": [0.0095, 0.46, 0.2249],
+                    "max": [0.1533, 0.53, 0.281]
                 }
             }
         }
@@ -54,8 +54,8 @@
 
 
     "dataset": {
-        "repo_id": "local/rc10_pick_place_cube_3_cams",
-        "task": "pick_place_cube",
+        "repo_id": "local/rc10_usb_insertion",
+        "task": "usb_insertion",
         "num_episodes_to_record": 20,
         "push_to_hub": false
     },
