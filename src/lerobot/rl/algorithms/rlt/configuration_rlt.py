@@ -31,30 +31,30 @@ if TYPE_CHECKING:
 class RLTAlgorithmConfig(RLAlgorithmConfig):
     """RLT-specific hyper-parameters that control the update loop."""
 
-    # ── Action chunks ──
+    # Action chunks
     chunk_size: int = 10
     chunk_stride: int = 2
 
-    # ── Update cadence ──
+    # Update cadence
     utd_ratio: int = 5
     policy_update_freq: int = 2
     clip_grad_norm: float = 10.0
 
-    # ── Learning rates ──
+    # Learning rates
     actor_lr: float = 3e-4
     critic_lr: float = 3e-4
     rl_token_lr: float = 1e-4
 
-    # ── TD learning ──
+    # TD learning
     discount: float = 0.99
     tau: float = 0.005
     num_critics: int = 2
 
-    # ── Policy constraint (paper Eq. 5) ──
+    # Policy constraint (paper Eq. 5)
     bc_reg_coeff: float = 0.1
     ref_dropout: float = 0.5
 
-    # ── Offline RL-token training ──
+    # Offline RL-token training
     vla_finetune_weight: float = 0.0
 
     @classmethod

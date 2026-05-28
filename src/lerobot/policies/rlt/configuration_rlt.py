@@ -46,6 +46,8 @@ class RLTActorConfig:
 
     hidden_dims: list[int] = field(default_factory=lambda: [256, 256])
     std: float = 0.1
+    residual_scale: float = 0.1
+    clamp_output: bool = False
 
 
 @dataclass
@@ -84,25 +86,25 @@ class RLTConfig(PreTrainedConfig):
         }
     )
 
-    # ── Device ──
+    # Device
     device: str = "cuda"
     storage_device: str = "cpu"
 
-    # ── VLA backbone ──
+    # VLA backbone
     vla_checkpoint: str | None = None
 
-    # ── RL-token ──
+    # RL-token
     rl_token: RLTokenConfig = field(default_factory=RLTokenConfig)
 
-    # ── Actor / Critic heads ──
+    # Actor and critic heads
     actor: RLTActorConfig = field(default_factory=RLTActorConfig)
     critic: RLTCriticConfig = field(default_factory=RLTCriticConfig)
 
-    # ── Action chunks ──
+    # Action chunks
     chunk_size: int = 10
     vla_chunk_size: int = 50
 
-    # ── Training parameters ──
+    # Training parameters
     online_steps: int = 50000
     offline_steps: int = 5000
     online_buffer_capacity: int = 100000
@@ -111,7 +113,7 @@ class RLTConfig(PreTrainedConfig):
     warmup_steps: int = 500
     async_prefetch: bool = False
 
-    # ── Algorithm hyperparameters ──
+    # Algorithm hyperparameters
     utd_ratio: int = 5
     policy_update_freq: int = 2
     discount: float = 0.99
@@ -126,7 +128,7 @@ class RLTConfig(PreTrainedConfig):
     chunk_stride: int = 2
     vla_finetune_weight: float = 0.0
 
-    # ── Distributed ──
+    # Distributed
     actor_learner_config: ActorLearnerConfig = field(default_factory=ActorLearnerConfig)
     concurrency: ConcurrencyConfig = field(default_factory=ConcurrencyConfig)
 

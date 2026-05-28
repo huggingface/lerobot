@@ -278,9 +278,9 @@ def compute_layer_complete(
         out_emb = modeling_gemma._gated_residual(hidden_states, out_emb, gates[i])  # noqa: SLF001
         after_first_residual = out_emb.clone()
         out_emb, gate = layer.post_attention_layernorm(out_emb, cond=adarms_cond[i])
-        # Convert to bfloat16 if the next layer (mlp) uses bfloat16
-        if layer.mlp.up_proj.weight.dtype == torch.bfloat16:
-            out_emb = out_emb.to(dtype=torch.bfloat16)
+        mlp_dtype = layer.mlp.up_proj.weight.dtype
+        if out_emb.dtype != mlp_dtype:
+            out_emb = out_emb.to(dtype=mlp_dtype)
         out_emb = layer.mlp(out_emb)
         # second residual
         out_emb = modeling_gemma._gated_residual(after_first_residual, out_emb, gate)  # noqa: SLF001
@@ -335,7 +335,7 @@ class PaliGemmaWithExpertModel(
         vlm_config,
         action_expert_config,
         use_adarms=None,
-        precision: Literal["bfloat16", "float32"] = "bfloat16",
+        precision: Literal["bfloat16", "float16", "float32"] = "bfloat16",
         image_size: int = DEFAULT_IMAGE_SIZE,
         freeze_vision_encoder: bool = False,
         train_expert_only: bool = False,
@@ -384,12 +384,17 @@ class PaliGemmaWithExpertModel(
         self.gemma_expert = GemmaForCausalLM(config=action_expert_config_hf)
         self.gemma_expert.model.embed_tokens = None
 
-        self.to_bfloat16_for_selected_params(precision)
+        self.to_low_precision_for_selected_params(precision)
         self._set_requires_grad()
 
-    def to_bfloat16_for_selected_params(self, precision: Literal["bfloat16", "float32"] = "bfloat16"):
+    def to_low_precision_for_selected_params(
+        self,
+        precision: Literal["bfloat16", "float16", "float32"] = "bfloat16",
+    ):
         if precision == "bfloat16":
             self.to(dtype=torch.bfloat16)
+        elif precision == "float16":
+            self.to(dtype=torch.float16)
         elif precision == "float32":
             self.to(dtype=torch.float32)
             return
@@ -679,6 +684,9 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         embs = []
         pad_masks = []
         att_masks = []
+        action_proj_dtype = self.action_in_proj.weight.dtype
+        time_mlp_dtype = self.time_mlp_in.weight.dtype
+        noisy_actions = noisy_actions.to(dtype=action_proj_dtype)
 
         # Embed timestep using sine-cosine positional encoding
         time_emb = create_sinusoidal_pos_embedding(
@@ -688,7 +696,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             max_period=self.config.max_period,
             device=timestep.device,
         )
-        time_emb = time_emb.type(dtype=timestep.dtype)
+        time_emb = time_emb.to(dtype=time_mlp_dtype)
 
         # Fuse timestep + action information using an MLP
         def action_proj_func(noisy_actions):
@@ -736,12 +744,12 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tokens, masks)
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, time)
 
-        if (
+        prefix_dtype = (
             self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
-            == torch.bfloat16
-        ):
-            suffix_embs = suffix_embs.to(dtype=torch.bfloat16)
-            prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
+        )
+        if prefix_dtype != torch.float32:
+            suffix_embs = suffix_embs.to(dtype=prefix_dtype)
+            prefix_embs = prefix_embs.to(dtype=prefix_dtype)
 
         pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
         att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
@@ -991,7 +999,7 @@ class PI05Policy(PreTrainedPolicy):
                 from safetensors.torch import load_file
 
                 original_state_dict = load_file(resolved_file)
-                print("✓ Loaded state dict from model.safetensors")
+                print("Loaded state dict from model.safetensors")
             except Exception as e:
                 print(f"Could not load state dict from remote files: {e}")
                 print("Returning model without loading pretrained weights")
