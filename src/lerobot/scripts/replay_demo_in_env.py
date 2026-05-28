@@ -33,9 +33,35 @@ def parse_aux_args() -> argparse.Namespace:
     ap.add_argument("--demo-repo", required=True)
     ap.add_argument("--episode-index", type=int, default=0)
     ap.add_argument("--n-episodes", type=int, default=3, help="how many demo eps to replay")
+    ap.add_argument("--video-dir", type=str, default=None, help="dir to save per-ep MP4 (front+wrist side-by-side)")
     args, remaining = ap.parse_known_args()
     sys.argv = [sys.argv[0]] + remaining
     return args
+
+
+def _frame_from_obs(obs_dict):
+    import torch as _torch
+    import numpy as _np
+    f = obs_dict.get("observation.images.front")
+    w = obs_dict.get("observation.images.wrist")
+    if f is None or w is None:
+        return None
+    def _to_hwc(im):
+        if isinstance(im, _torch.Tensor):
+            im = im.detach().cpu().numpy()
+        if im.dtype != _np.uint8:
+            im = (im * 255.0).clip(0, 255).astype(_np.uint8)
+        if im.shape[0] == 3:
+            im = im.transpose(1, 2, 0)
+        return im
+    return _np.concatenate([_to_hwc(f), _to_hwc(w)], axis=1)
+
+
+def _save_video(frames, path, fps=20):
+    if not frames:
+        return
+    import imageio.v2 as imageio
+    imageio.mimsave(str(path), frames, fps=fps, codec="libx264", quality=8)
 
 
 @parser.wrap()
@@ -87,7 +113,13 @@ def main(cfg: TrainRLServerPipelineConfig):
         success = False
         steps_run = 0
         max_step_reward = 0.0
+        ep_frames = []
         for a in actions:
+            obs_d = transition[TransitionKey.OBSERVATION]
+            if aux.video_dir is not None:
+                fr = _frame_from_obs(obs_d)
+                if fr is not None:
+                    ep_frames.append(fr)
             a_t = a.float() if isinstance(a, torch.Tensor) else torch.as_tensor(a).float()
             transition = step_env_and_process_transition(
                 env=env,
@@ -109,6 +141,13 @@ def main(cfg: TrainRLServerPipelineConfig):
             "ep_idx=%d demo_len=%d steps_run=%d success=%s ep_reward=%.3f max_step_r=%.3f",
             ep_idx, len(actions), steps_run, success, ep_reward, max_step_reward,
         )
+        if aux.video_dir is not None and ep_frames:
+            from pathlib import Path
+            outd = Path(aux.video_dir); outd.mkdir(parents=True, exist_ok=True)
+            tag = "succ" if success else "fail"
+            outp = outd / f"ep{ep_idx:03d}_{tag}_len{steps_run}_R{max_step_reward:.2f}.mp4"
+            _save_video(ep_frames, outp, fps=20)
+            logging.info("  -> %s", outp)
 
 
 if __name__ == "__main__":

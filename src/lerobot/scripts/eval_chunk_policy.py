@@ -85,6 +85,23 @@ def _save_video(frames: list, path, fps: int = 20) -> None:
     imageio.mimsave(str(path), frames, fps=fps, codec="libx264", quality=8)
 
 
+def _overlay_text(frame: "np.ndarray", lines: list[tuple[str, tuple]]) -> "np.ndarray":
+    """Draw text lines onto frame (BGR uint8). lines = [(text, (r,g,b)), ...]."""
+    import cv2
+    import numpy as _np
+    h, w = frame.shape[:2]
+    # Draw black bar at top covering ~18% height for text
+    bar_h = max(36, int(h * 0.18))
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (0, 0), (w, bar_h), (0, 0, 0), -1)
+    frame = cv2.addWeighted(overlay, 0.55, frame, 0.45, 0)
+    y = 18
+    for text, color in lines:
+        cv2.putText(frame, text, (8, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+        y += 16
+    return frame
+
+
 def _frame_from_obs(obs_dict) -> "np.ndarray | None":
     """Stack front + wrist images side-by-side as HWC uint8 frame."""
     import torch as _torch
@@ -123,6 +140,8 @@ def run_eval(
     video_dir=None,
     cnn_ckpt: str = None,
     cnn_thr: float = 0.5,
+    preprocessor=None,
+    postprocessor=None,
 ) -> dict:
     rewards: list[float] = []
     successes: list[int] = []
@@ -202,8 +221,19 @@ def run_eval(
                     if p_succ >= cnn_thr:
                         cnn_success = True
             batch = _to_batch(obs_dict, device, task)
+            if preprocessor is not None:
+                batch = preprocessor(batch)
             action = policy.select_action(batch)  # (1, action_dim)
+            if postprocessor is not None:
+                action = postprocessor(action)
             action = action.squeeze(0)
+            # Binary gripper override (env interprets continuous [-1,1] as
+            # close↔open width). Force action[4] to ±1 so gripper is fully
+            # close or fully open — no partial states. Trigger via env var
+            # ACT_EVAL_BINARY_GRIPPER=1.
+            import os as _os
+            if _os.environ.get("ACT_EVAL_BINARY_GRIPPER") == "1" and action.shape[-1] >= 5:
+                action[4] = torch.where(action[4] < 0, torch.tensor(-1.0, device=action.device), torch.tensor(1.0, device=action.device))
             transition = step_env_and_process_transition(
                 env=env,
                 transition=transition,
@@ -216,6 +246,23 @@ def run_eval(
             max_step_r = max(max_step_r, r)
             max_cum_r = max(max_cum_r, ep_reward)
             ep_len += 1
+            # If video, replace the just-appended raw frame with one carrying SARM overlay.
+            if video_dir is not None and ep_frames:
+                _info = transition.get(TransitionKey.INFO, {}) or {}
+                _prog = _info.get("sarm_progress")
+                _stage_idx = _info.get("sarm_stage_idx")
+                _stage_name = _info.get("sarm_stage_name", "")
+                _stage_conf = _info.get("sarm_stage_conf")
+                _lines = [
+                    (f"ep{ep:02d} step={ep_len:4d} reward={r:+.3f}  max_cum={max_cum_r:.3f}", (255, 255, 255)),
+                ]
+                if _prog is not None:
+                    _lines.append((f"SARM progress={_prog:.3f}", (0, 255, 255)))
+                if _stage_idx is not None:
+                    _stage_name_clean = str(_stage_name)[:24]
+                    _conf_str = f" conf={_stage_conf:.2f}" if _stage_conf is not None else ""
+                    _lines.append((f"stage={_stage_idx} {_stage_name_clean}{_conf_str}", (100, 255, 100)))
+                ep_frames[-1] = _overlay_text(ep_frames[-1], _lines)
             if transition[TransitionKey.DONE] or transition[TransitionKey.TRUNCATED]:
                 success = bool(transition[TransitionKey.DONE] and not transition[TransitionKey.TRUNCATED])
                 break
@@ -301,11 +348,20 @@ def main(cfg: TrainRLServerPipelineConfig) -> None:
     policy.to(device)
     policy.eval()
 
+    # Load the saved preprocessor + postprocessor (normalizer stats live here, NOT
+    # in the policy itself). Without these, select_action() gets raw obs and
+    # outputs un-normalized garbage. See lerobot_eval.py for the canonical path.
+    from lerobot.policies.factory import make_pre_post_processors
+    preprocessor, postprocessor = make_pre_post_processors(
+        policy_cfg=pretrained_config, pretrained_path=aux.pretrained,
+    )
+
     env_proc, action_proc = _make_processors(env, teleop_device=None, cfg=cfg.env, device=device)
 
     results = run_eval(
         env, env_proc, action_proc, policy, aux.n_episodes, aux.task, device,
         video_dir=aux.video_dir, cnn_ckpt=aux.cnn_ckpt, cnn_thr=aux.cnn_thr,
+        preprocessor=preprocessor, postprocessor=postprocessor,
     )
     logging.info("=" * 60)
     logging.info("CHUNK-POLICY EVAL RESULTS (%s)", aux.policy_type)
