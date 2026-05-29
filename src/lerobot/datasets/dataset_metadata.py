@@ -36,12 +36,12 @@ from .io_utils import (
     load_episodes,
     load_info,
     load_stats,
-    load_subtasks,
     load_tasks,
     write_info,
     write_stats,
     write_tasks,
 )
+from .language import DEFAULT_TOOLS, LANGUAGE_COLUMNS
 from .utils import (
     DEFAULT_EPISODES_PATH,
     check_version_compatibility,
@@ -177,7 +177,6 @@ class LeRobotDatasetMetadata:
         self.info = load_info(self.root)
         check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
         self.tasks = load_tasks(self.root)
-        self.subtasks = load_subtasks(self.root)
         self.episodes = load_episodes(self.root)
         self.stats = load_stats(self.root)
 
@@ -342,6 +341,49 @@ class LeRobotDatasetMetadata:
     def camera_keys(self) -> list[str]:
         """Keys to access visual modalities (regardless of their storage method)."""
         return [key for key, ft in self.features.items() if ft["dtype"] in ["video", "image"]]
+
+    @property
+    def has_language_columns(self) -> bool:
+        """Return ``True`` if the dataset declares any language column.
+
+        Used to gate language-aware code paths (collate, render step) so
+        unannotated datasets keep PyTorch's default collate behavior.
+        """
+        return any(col in self.features for col in LANGUAGE_COLUMNS)
+
+    @property
+    def tools(self) -> list[dict]:
+        """OpenAI-style tool schemas declared by this dataset.
+
+        Read from ``meta/info.json["tools"]``. Returns a copy, so callers
+        can mutate the result safely. Falls back to
+        :data:`lerobot.datasets.language.DEFAULT_TOOLS` (the canonical
+        ``say`` schema) when the dataset doesn't declare any — that way
+        unannotated datasets and chat-template consumers
+        (``apply_chat_template(messages, tools=meta.tools)``) keep
+        working out of the box.
+
+        Implementations live under :mod:`lerobot.tools` (one file per
+        tool); see ``docs/source/tools.mdx`` for the authoring guide.
+        """
+        declared = self.info.tools
+        if declared:
+            return [dict(t) for t in declared]
+        return [dict(t) for t in DEFAULT_TOOLS]
+
+    @tools.setter
+    def tools(self, value: list[dict] | None) -> None:
+        """Persist a tool catalog to ``meta/info.json`` and reload metadata.
+
+        Writes ``value`` into the on-disk ``info.json`` (or clears the
+        ``tools`` key when ``value`` is ``None`` or empty), then reloads
+        ``self.info`` so the in-memory metadata matches what's on disk.
+        Saves callers from hand-editing ``info.json`` and re-instantiating
+        the metadata object.
+        """
+        self.info.tools = [dict(t) for t in value] if value else None
+        write_info(self.info, self.root)
+        self.info = load_info(self.root)
 
     @property
     def names(self) -> dict[str, list | dict]:
@@ -671,7 +713,6 @@ class LeRobotDatasetMetadata:
         _validate_feature_names(features)
 
         obj.tasks = None
-        obj.subtasks = None
         obj.episodes = None
         obj.stats = None
         obj.info = create_empty_dataset_info(
