@@ -44,11 +44,6 @@ from lerobot.utils.constants import (
 )
 from lerobot.utils.import_utils import _transformers_available, require_package
 
-<<<<<<< HEAD
-from .configuration_eo1 import EO1Config
-
-=======
->>>>>>> ee9c95b6 (feat(policies): add EO-1 model (#3403))
 if TYPE_CHECKING or _transformers_available:
     from transformers.models.qwen2_5_vl import Qwen2_5_VLProcessor
 else:

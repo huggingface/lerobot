@@ -25,6 +25,7 @@ from .compute_stats import DEFAULT_QUANTILES, aggregate_stats, get_feature_stats
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from .dataset_tools import (
     add_features,
+    create_tactile_spectrogram_variant_dataset,
     convert_image_to_video_dataset,
     delete_episodes,
     merge_datasets,
@@ -34,6 +35,7 @@ from .dataset_tools import (
     reencode_dataset,
     remove_feature,
     split_dataset,
+    transform_video_feature_dataset,
 )
 from .factory import make_dataset, resolve_delta_timestamps
 from .image_writer import safe_stop_image_writer
@@ -84,6 +86,7 @@ __all__ = [
     "create_initial_features",
     "create_lerobot_dataset_card",
     "column_for_style",
+    "create_tactile_spectrogram_variant_dataset",
     "delete_episodes",
     "get_feature_stats",
     "load_episodes",
@@ -97,5 +100,6 @@ __all__ = [
     "resolve_delta_timestamps",
     "safe_stop_image_writer",
     "split_dataset",
+    "transform_video_feature_dataset",
     "write_stats",
 ]
