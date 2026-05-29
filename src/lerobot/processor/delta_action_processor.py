@@ -132,8 +132,9 @@ class MapDeltaActionToRobotActionStep(RobotActionProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        for axis in ["x", "y", "z", "gripper"]:
+        for axis in ["x", "y", "z"]:
             features[PipelineFeatureType.ACTION].pop(f"delta_{axis}", None)
+        features[PipelineFeatureType.ACTION].pop("gripper", None)
 
         for feat in ["enabled", "target_x", "target_y", "target_z", "target_wx", "target_wy", "target_wz"]:
             features[PipelineFeatureType.ACTION][f"{feat}"] = PolicyFeature(
