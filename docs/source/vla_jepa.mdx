@@ -74,6 +74,10 @@ Key parameters in `VLAJEPAConfig`:
 | `num_inference_timesteps` | 4       | Euler integration steps for action denoising                                                                                                                                    |
 | `freeze_qwen`             | `False` | Freeze the Qwen3-VL backbone and only train the action head                                                                                                                     |
 | `reinit_modules`          | `None`  | Key prefixes allowed to be randomly re-initialised on load (for cross-embodiment transfer, see [Fine-tuning on a different embodiment](#fine-tuning-on-a-different-embodiment)) |
+| `gripper_dim`             | 6       | Index of the gripper dimension in the action vector (e.g. 6 for a 7-DoF arm with gripper as the last joint)                                                                     |
+| `gripper_threshold`       | 0.5     | Threshold used by `pre_snap_gripper_action` and `binarize_gripper_action` to binarize the gripper dimension                                                                     |
+| `pre_snap_gripper_action` | `True`  | Snap the gripper dim to {0, 1} before unnormalization. Set to `False` for robots without a binary gripper                                                                       |
+| `binarize_gripper_action` | `True`  | Binarize the gripper dim to {-1, 1} after unnormalization. Set to `False` for robots without a binary gripper                                                                   |
 
 ---
 

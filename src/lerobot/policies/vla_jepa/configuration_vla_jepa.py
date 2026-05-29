@@ -87,6 +87,8 @@ class VLAJEPAConfig(PreTrainedConfig):
     binarize_gripper_action: bool = True
     pre_snap_gripper_action: bool = True
     clip_normalized_actions: bool = True
+    gripper_dim: int = 6
+    gripper_threshold: float = 0.5
     torch_dtype: str = "bfloat16"
 
     optimizer_lr: float = 1e-4
