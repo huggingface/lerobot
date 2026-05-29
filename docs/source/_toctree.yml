@@ -75,6 +75,8 @@
 - sections:
   - local: sarm
     title: SARM
+  - local: robometer
+    title: ROBOMETER
   - local: topreward
     title: TOPReward
   title: "Reward Models"
