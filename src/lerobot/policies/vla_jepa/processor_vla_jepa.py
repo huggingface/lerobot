@@ -21,7 +21,6 @@ import torch
 from lerobot.policies.vla_jepa.configuration_vla_jepa import VLAJEPAConfig
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
-    ComplementaryDataProcessorStep,
     DeviceProcessorStep,
     EnvTransition,
     NormalizerProcessorStep,
@@ -142,12 +141,3 @@ def make_vla_jepa_pre_post_processors(
             to_output=transition_to_policy_action,
         ),
     )
-
-
-@ProcessorStepRegistry.register(name="vla_jepa_new_line_processor")
-class VLAJEPANewLineProcessor(ComplementaryDataProcessorStep):
-    def complementary_data(self, complementary_data):
-        return complementary_data
-
-    def transform_features(self, features):
-        return features
