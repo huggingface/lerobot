@@ -88,16 +88,14 @@ class MolmoAct2Config(PreTrainedConfig):
     joint_signs: list[float] | None = None
     joint_offsets: list[float] | None = None
 
-    # Default is full finetuning with gradients from the action expert flowing into the VLM.
-    enable_lora_vlm: bool = False
+    # Controls only the VLM side. The action expert is always fully fine-tuned.
+    train_mode_vlm: str = "lora"
     lora_rank: int = 64
     lora_alpha: int = 16
     lora_dropout: float = 0.05
     lora_bias: str = "none"
-    enable_lora_action_expert: bool = False
     enable_knowledge_insulation: bool = False
     freeze_embedding: bool = True
-    train_action_expert_only: bool = False
     gradient_checkpointing: bool = False
 
     model_dtype: str = "bfloat16"
@@ -151,12 +149,13 @@ class MolmoAct2Config(PreTrainedConfig):
             raise ValueError("MolmoAct2 action_mode='discrete' cannot run continuous inference.")
         if self.inference_action_mode == "discrete" and self.action_mode == "continuous":
             raise ValueError("MolmoAct2 action_mode='continuous' cannot run discrete inference.")
-        if self.train_action_expert_only and self.action_mode != "continuous":
-            raise ValueError("MolmoAct2 train_action_expert_only requires action_mode='continuous'.")
-        if self.train_action_expert_only and self.enable_lora_vlm:
-            raise ValueError("MolmoAct2 train_action_expert_only is incompatible with enable_lora_vlm.")
-        if self.enable_lora_action_expert and not self.enable_lora_vlm:
-            raise ValueError("MolmoAct2 enable_lora_action_expert requires enable_lora_vlm.")
+        if self.train_mode_vlm not in {"fft", "lora", "freeze"}:
+            raise ValueError(
+                f"Unsupported train_mode_vlm={self.train_mode_vlm!r}. "
+                "Expected one of {'fft', 'lora', 'freeze'}."
+            )
+        if self.train_mode_vlm == "freeze" and self.action_mode != "continuous":
+            raise ValueError("MolmoAct2 train_mode_vlm='freeze' requires action_mode='continuous'.")
         if self.chunk_size < 1:
             raise ValueError(f"chunk_size must be >= 1, got {self.chunk_size}.")
         if self.n_action_steps < 1:

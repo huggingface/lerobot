@@ -554,7 +554,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         self.action_tokenizer: Any | None = None
         self._load_hf_model()
         _validate_inference_action_mode(self.config, self._checkpoint_action_mode)
-        if self.config.enable_lora_vlm:
+        if self.config.train_mode_vlm == "lora":
             self._apply_lora_adapters()
         self.init_rtc_processor()
 
@@ -616,8 +616,8 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
         if self.config.freeze_embedding:
             self._freeze_input_embeddings()
-        if self.config.train_action_expert_only:
-            self._freeze_non_action_expert_parameters()
+        if self.config.train_mode_vlm == "freeze":
+            self._freeze_vlm_parameters()
         if self.config.gradient_checkpointing:
             self._enable_gradient_checkpointing()
         self.train(self.training)
@@ -677,14 +677,14 @@ class MolmoAct2Policy(PreTrainedPolicy):
         if vision_backbone is not None:
             vision_backbone.gradient_checkpointing = True
 
-    def _freeze_non_action_expert_parameters(self) -> None:
+    def _freeze_vlm_parameters(self) -> None:
         trainable_params = 0
         for name, param in self.named_parameters():
             param.requires_grad = "action_expert" in name
             if param.requires_grad:
                 trainable_params += param.numel()
         if trainable_params == 0:
-            raise RuntimeError("train_action_expert_only=true, but no action_expert parameters were found.")
+            raise RuntimeError("train_mode_vlm='freeze', but no action_expert parameters were found.")
 
     def _unfreeze_action_expert_parameters(self) -> None:
         trainable_params = 0
@@ -693,11 +693,11 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 param.requires_grad_(True)
                 trainable_params += param.numel()
         if trainable_params == 0:
-            raise RuntimeError("enable_lora_vlm=true, but no action_expert parameters were found.")
+            raise RuntimeError("train_mode_vlm='lora', but no action_expert parameters were found.")
 
     def train(self, mode: bool = True):
         super().train(mode)
-        if getattr(self.config, "train_action_expert_only", False) and hasattr(self, "model"):
+        if getattr(self.config, "train_mode_vlm", "fft") == "freeze" and hasattr(self, "model"):
             self._hf_model().eval()
             self._action_expert().train(mode)
         self._set_inference_cuda_graph_enabled(not mode)
@@ -759,9 +759,10 @@ class MolmoAct2Policy(PreTrainedPolicy):
             else:
                 vlm_params.append(param)
 
-        vlm_lr = 5e-5 if self.config.enable_lora_vlm else self.config.optimizer_lr
-        vit_lr = 5e-5 if self.config.enable_lora_vlm else self.config.optimizer_vit_lr
-        connector_lr = 5e-5 if self.config.enable_lora_vlm else self.config.optimizer_connector_lr
+        vlm_lora = self.config.train_mode_vlm == "lora"
+        vlm_lr = 5e-5 if vlm_lora else self.config.optimizer_lr
+        vit_lr = 5e-5 if vlm_lora else self.config.optimizer_vit_lr
+        connector_lr = 5e-5 if vlm_lora else self.config.optimizer_connector_lr
 
         groups: list[dict[str, Any]] = []
         if vlm_params:
@@ -1750,22 +1751,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
     def _lora_target_modules(self, *, prefix: str) -> str:
         vlm_linear_leaves = "w1|w2|w3|wq|wk|wv|wo|att_proj|attn_out|ff_proj|ff_out|patch_embedding"
-        target_modules = rf"{prefix}\.(transformer|vision_backbone)\.(?:.*\.)?({vlm_linear_leaves})$"
-        if self.config.enable_lora_action_expert:
-            action_expert_linear_paths = (
-                r"time_embed\.(1|3)|"
-                r"action_embed|context_k_proj|context_v_proj|"
-                r"blocks\.\d+\.self_attn\.(qkv|out_proj)|"
-                r"blocks\.\d+\.cross_attn\.(q_proj|out_proj)|"
-                r"blocks\.\d+\.mlp\.(up_proj|gate_proj|down_proj)|"
-                r"blocks\.\d+\.modulation\.linear|"
-                r"final_layer\.(modulation\.linear|linear)"
-            )
-            target_modules = (
-                f"({target_modules}|"
-                rf"{prefix}\.action_expert\.({action_expert_linear_paths})$)"
-            )
-        return target_modules
+        return rf"{prefix}\.(transformer|vision_backbone)\.(?:.*\.)?({vlm_linear_leaves})$"
 
     def _build_inner_lora_config(self):
         require_package("peft", extra="molmoact2")
@@ -1781,8 +1767,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         for param in self.model.parameters():
             param.requires_grad_(False)
         self.model = get_peft_model(self.model, peft_config)
-        if not self.config.enable_lora_action_expert:
-            self._unfreeze_action_expert_parameters()
+        self._unfreeze_action_expert_parameters()
         self.train(self.training)
 
     def _validate_peft_config(self, peft_config) -> None:
