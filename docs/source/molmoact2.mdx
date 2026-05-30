@@ -7,7 +7,7 @@ LeRobot datasets.
 
 This implementation currently supports training and evaluation for the regular
 MolmoAct2 model. MolmoAct2-Think, which supports adaptive depth reasoning, is
-not included in this LeRobot policy yet and is coming soon.
+not included in this LeRobot policy yet.
 
 For the original MolmoAct2 training code used for the experiments reported in
 the paper, see [allenai/molmoact2](https://github.com/allenai/molmoact2).
@@ -82,6 +82,7 @@ accelerate launch \
   --policy.checkpoint_path=allenai/MolmoAct2-LIBERO \
   --policy.device=cuda \
   --policy.action_mode=both \
+  --policy.train_mode_vlm=fft \
   --policy.chunk_size=10 \
   --policy.n_action_steps=10 \
   --policy.setup_type="single franka robotic arm in libero" \
@@ -114,7 +115,7 @@ Use `policy.path` when starting from a MolmoAct2 checkpoint that was saved by
 LeRobot, either from a local `pretrained_model` directory or from the Hub. This
 restores the saved LeRobot policy config, model weights, processor, and
 normalization statistics. You can still override training-time options such as
-`batch_size`, `steps`, LoRA flags, or `policy.action_mode`.
+`batch_size`, `steps`, `policy.train_mode_vlm`, or `policy.action_mode`.
 
 ```bash
 accelerate launch \
@@ -151,10 +152,13 @@ accelerate launch \
 
 For fine-tuning on a comparatively small dataset, such as a single LIBERO suite
 or a real-world dataset with less than 200 demonstrations, a global batch size of
-16 to 32 is a good starting point. In these settings, `policy.enable_lora_vlm=true` or `policy.train_action_expert_only=true` is also a practical choice. In both
-cases, we intentionally keep the action expert fully trainable, which we found
-to be crucial for model performance. For larger fine-tuning datasets, larger
-global batch sizes and full fine-tuning are usually preferred.
+16 to 32 is a good starting point. In these settings, we recommend using
+`policy.train_mode_vlm=lora` (the default), which usually gives similar or even
+better performance than `fft`. Additionally, `policy.train_mode_vlm=freeze` is
+also a practical choice. In all modes, we intentionally keep the action expert
+fully trainable, which we found to be crucial for model performance. For larger
+fine-tuning datasets, larger global batch sizes and full VLM fine-tuning
+(`policy.train_mode_vlm=fft`) are usually preferred.
 
 ### Common Policy Options
 
@@ -165,14 +169,11 @@ global batch sizes and full fine-tuning are usually preferred.
 - `policy.action_mode`: training target, one of `continuous`, `discrete`, or
   `both`. `both` trains the flow-matching action expert and the discrete
   action-token loss.
-- `policy.train_action_expert_only`: trains only parameters whose names contain
-  `action_expert`. It requires `policy.action_mode=continuous`.
-- `policy.enable_lora_vlm`: enables LoRA on VLM linear layers. Use
-  `policy.enable_lora_action_expert=true` only if LoRA should also cover action
-  expert linear layers. When `policy.enable_lora_action_expert=false`, the
-  action expert base weights remain fully trainable while the VLM is trained
-  through LoRA adapters. When `policy.enable_lora_action_expert=true`, the
-  action expert is also adapter-tuned instead of fully fine-tuned.
+- `policy.train_mode_vlm`: controls the VLM fine-tuning mode, one of `fft`,
+  `lora`, or `freeze`. `fft` fully fine-tunes the VLM, `lora` trains LoRA
+  adapters on VLM linear layers, and `freeze` freezes the VLM. The action expert
+  is fully fine-tuned in all three modes. The default is `lora`. `freeze`
+  requires `policy.action_mode=continuous`.
 - `policy.enable_knowledge_insulation`: when `true`, detaches action-expert
   context K/V states before the action loss. The default is `false`.
 - `policy.chunk_size`: action horizon used by the policy. For LIBERO we use
@@ -217,13 +218,10 @@ fine-tuning experiments.
   `policy.optimizer_connector_lr=5e-6` for image connector layers, and
   `policy.optimizer_action_expert_lr=5e-5` for the action expert.
 - LoRA VLM fine-tuning sets the VLM, vision, and connector LoRA parameter
-  groups to `5e-5` when `policy.enable_lora_vlm=true`. By default,
-  `policy.enable_lora_action_expert=false`, so the action expert is still fully
-  fine-tuned with `policy.optimizer_action_expert_lr`. If
-  `policy.enable_lora_action_expert=true`, the action expert is trained through
-  LoRA adapters instead.
-- Action-expert-only fine-tuning trains only the action expert and uses
-  `policy.optimizer_action_expert_lr=5e-5`.
+  groups to `5e-5` when `policy.train_mode_vlm=lora`; the action expert is still
+  fully fine-tuned with `policy.optimizer_action_expert_lr`.
+- Frozen-VLM fine-tuning uses `policy.train_mode_vlm=freeze`, trains only the
+  action expert, and uses `policy.optimizer_action_expert_lr=5e-5`.
 
 You can override the full fine-tuning and action-expert learning rates with
 `policy.optimizer_lr`, `policy.optimizer_vit_lr`,
