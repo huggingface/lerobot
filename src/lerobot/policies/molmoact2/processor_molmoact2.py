@@ -834,7 +834,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             raise ValueError(f"State batch size {state.shape[0]} does not match batch size {batch_size}.")
         return state
 
-    def _pad_action(self, action: Tensor, action_is_pad: Any | None) -> tuple[Tensor, Tensor, Tensor]:
+    def _pad_action(self, action: Tensor) -> tuple[Tensor, Tensor, Tensor]:
         if action.ndim == 2:
             action = action.unsqueeze(1)
         if action.ndim != 3:
@@ -853,17 +853,10 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             (action.shape[0], self.max_action_dim), device=action.device, dtype=torch.bool
         )
         action_dim_is_pad[:, : action.shape[-1]] = False
-        if action_is_pad is None:
-            action_horizon_is_pad = torch.zeros(action.shape[:2], device=action.device, dtype=torch.bool)
-        else:
-            action_horizon_is_pad = torch.as_tensor(action_is_pad, device=action.device, dtype=torch.bool)
-            if action_horizon_is_pad.ndim == 1:
-                action_horizon_is_pad = action_horizon_is_pad.unsqueeze(0)
-            if tuple(action_horizon_is_pad.shape) != tuple(action.shape[:2]):
-                raise ValueError(
-                    "action_is_pad must match action horizon shape: "
-                    f"got {tuple(action_horizon_is_pad.shape)} for action {tuple(action.shape)}."
-                )
+        # LeRobot clamps future actions at episode ends and marks them as padding. The
+        # original MolmoAct2 training objective keeps supervising those clamped actions
+        # for fixed-horizon fine-tuning, so the horizon mask is intentionally all false.
+        action_horizon_is_pad = torch.zeros(action.shape[:2], device=action.device, dtype=torch.bool)
         return padded, action_horizon_is_pad, action_dim_is_pad
 
     def _build_labels(self, input_ids: Tensor, attention_mask: Tensor) -> Tensor:
@@ -928,10 +921,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         action_dim_is_pad = torch.ones((batch_size, self.max_action_dim), dtype=torch.bool)
         real_action_dim = int(self.env_action_dim or 0)
         if action is not None:
-            action_is_pad = complementary.get("action_is_pad")
-            if action_is_pad is None:
-                action_is_pad = complementary.get("action_horizon_is_pad")
-            action_padded, action_horizon_is_pad, action_dim_is_pad = self._pad_action(action, action_is_pad)
+            action_padded, action_horizon_is_pad, action_dim_is_pad = self._pad_action(action)
             real_action_dim = int(action.shape[-1])
         elif real_action_dim > 0:
             action_dim_is_pad[:, :real_action_dim] = False

@@ -101,6 +101,7 @@ class MolmoAct2Config(PreTrainedConfig):
     gradient_checkpointing: bool = False
 
     model_dtype: str = "bfloat16"
+    llm_residual_dropout: float = 0.1
     softmax_auxiliary_loss: bool = True
     softmax_auxiliary_loss_scale: float = 1e-4
     discrete_loss_token_weighting: str = "root_subsegments_root_tokens"
@@ -169,6 +170,10 @@ class MolmoAct2Config(PreTrainedConfig):
         if self.model_dtype not in {"float32", "bfloat16", "float16"}:
             raise ValueError(
                 f"Unsupported model_dtype={self.model_dtype!r}. Expected 'float32', 'bfloat16', or 'float16'."
+            )
+        if not 0 <= self.llm_residual_dropout <= 1:
+            raise ValueError(
+                f"llm_residual_dropout must be in [0, 1], got {self.llm_residual_dropout}."
             )
         if self.lora_rank < 1:
             raise ValueError(f"lora_rank must be >= 1, got {self.lora_rank}.")
