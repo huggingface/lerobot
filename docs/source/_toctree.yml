@@ -9,6 +9,8 @@
 - sections:
   - local: il_robots
     title: Imitation Learning for Robots
+  - local: lelab
+    title: LeLab - Lerobot GUI
   - local: bring_your_own_policies
     title: Adding a Policy
   - local: integrate_hardware
