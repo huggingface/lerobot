@@ -83,6 +83,29 @@ def test_get_feature_stats_images():
     assert stats["min"].shape == stats["max"].shape == stats["mean"].shape == stats["std"].shape
 
 
+def test_get_feature_stats_uint8_images_preserves_std():
+    data = np.array(
+        [
+            [
+                [[0, 64], [128, 255]],
+                [[255, 128], [64, 0]],
+                [[32, 96], [160, 224]],
+            ],
+            [
+                [[16, 80], [144, 240]],
+                [[240, 144], [80, 16]],
+                [[48, 112], [176, 208]],
+            ],
+        ],
+        dtype=np.uint8,
+    )
+
+    stats = get_feature_stats(data, axis=(0, 2, 3), keepdims=True)
+
+    expected_std = data.transpose(0, 2, 3, 1).reshape(-1, 3).std(axis=0).reshape(1, 3, 1, 1)
+    np.testing.assert_allclose(stats["std"], expected_std)
+
+
 def test_get_feature_stats_axis_0_keepdims(sample_array):
     expected = {
         "min": np.array([[1, 2, 3]]),

@@ -59,6 +59,9 @@ class RunningQuantileStats:
             batch: An array where all dimensions except the last are batch dimensions.
         """
         batch = batch.reshape(-1, batch.shape[-1])
+        if not np.issubdtype(batch.dtype, np.floating):
+            # Avoid integer overflow when computing squared statistics below.
+            batch = batch.astype(np.float64, copy=False)
         num_elements, vector_length = batch.shape
 
         if self._count == 0:
