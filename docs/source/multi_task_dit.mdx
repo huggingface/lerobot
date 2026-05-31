@@ -6,8 +6,8 @@ Multitask Diffusion Transformer (DiT) Policy is an evolution of the original Dif
 
 The model uses:
 
-- **CLIP Vision Encoder**: Processes RGB images from multiple camera views
-- **CLIP Text Encoder**: Encodes language task instructions (frozen weights with learnable projection)
+- **Vision Encoder**: Processes RGB images from multiple camera views. CLIP (default), DINOv3, or SigLIP 2 — selectable via `vision_encoder_name`
+- **Text Encoder**: Encodes language task instructions (frozen weights with learnable projection). CLIP (default) or SigLIP 2 — selectable via `text_encoder_name`
 - **Diffusion Transformer**: Predicts action sequences conditioned on observations and language
 - **Two Objectives**: Supports both diffusion (DDPM/DDIM) and flow matching for action generation
 
@@ -22,7 +22,7 @@ Multitask DiT Policy has additional dependencies. Install it with:
 pip install lerobot[multi_task_dit]
 ```
 
-This will install all necessary dependencies including the HuggingFace Transformers library for CLIP models.
+This will install all necessary dependencies including the HuggingFace Transformers library for the vision/text encoders (CLIP, DINOv3, SigLIP 2).
 
 ## Usage
 
@@ -149,10 +149,24 @@ The model supports two positional encoding methods for action sequences:
 
 #### Vision Encoder Configuration
 
+The vision encoder accepts three encoder families (any HuggingFace model id; the right loader is
+chosen from the checkpoint's `model_type`). CLIP is the default and its behaviour is unchanged;
+DINOv3 and SigLIP 2 are alternatives that diverge from the CLIP baseline in the original blog/paper,
+but can generalize better on some setups. We test and recommend the three below, but other
+CLIP/DINO/SigLIP checkpoints (any size) work through the same paths — broadly, any vision encoder
+exposing a CLS token, or a SigLIP-style attention-pooled output.
+
 ```bash
-# Use different CLIP model for more expressivity at the cost of inference time
-# experiment with larger or smaller models depending on the complexity of your tasks and size of dataset
+# CLIP (default) — experiment with larger/smaller models for expressivity vs. inference cost
 --policy.vision_encoder_name=openai/clip-vit-large-patch14
+
+# DINOv3 — strong self-supervised features; uses the CLS token (register tokens are skipped)
+--policy.vision_encoder_name=facebook/dinov3-vitb16-pretrain-lvd1689m
+
+# SigLIP 2 — fixed-resolution checkpoint; uses the attention-pooled feature (no CLS token).
+# Match image_crop_shape to the checkpoint's native resolution (e.g. 224). NaFlex variants are
+# not supported — use a fixed-resolution checkpoint like below.
+--policy.vision_encoder_name=google/siglip2-base-patch16-224
 
 # Use separate vision encoder per camera
 # This may be useful when cameras have significantly different characteristics, but
@@ -167,11 +181,17 @@ The model supports two positional encoding methods for action sequences:
 
 #### Text Encoder Configuration
 
+The text encoder accepts CLIP (default) or SigLIP 2. The matching tokenizer is selected
+automatically from `text_encoder_name`. DINOv3 is vision-only and is rejected here.
+
 ```bash
-# Use different CLIP text encoder model
-# same as vision: experiment with larger or smaller models depending on the
-# complexity of your tasks and size of dataset
+# CLIP (default) — experiment with larger/smaller models for task-language complexity
 --policy.text_encoder_name=openai/clip-vit-large-patch14
+
+# SigLIP 2 text — uses its own (Gemma) tokenizer, selected automatically. SigLIP text has a
+# fixed 64-token context, so also set tokenizer_max_length=64.
+--policy.text_encoder_name=google/siglip2-base-patch16-224
+--policy.tokenizer_max_length=64
 ```
 
 #### Learning Rate Configuration
