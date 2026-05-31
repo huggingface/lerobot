@@ -25,6 +25,8 @@ import pytest
 import torch
 import torch.nn as nn
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features
 from lerobot.processor import (
@@ -1870,9 +1872,7 @@ class NonCallableStep(ProcessorStep):
 
 def test_construction_rejects_step_without_call():
     """Test that DataProcessorPipeline rejects steps that don't inherit from ProcessorStep."""
-    with pytest.raises(
-        TypeError, match=r"Can't instantiate abstract class NonCallableStep with abstract method __call_"
-    ):
+    with pytest.raises(TypeError, match=r"Can't instantiate abstract class NonCallableStep"):
         DataProcessorPipeline([NonCallableStep()])
 
     with pytest.raises(TypeError, match=r"must inherit from ProcessorStep"):

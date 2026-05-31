@@ -74,7 +74,7 @@ EnvHub exposes every LeIsaac-supported task in a uniform interface. The examples
 # envhub_random_action.py
 
 import torch
-from lerobot.envs.factory import make_env
+from lerobot.envs import make_env
 
 # Load from the hub
 envs_dict = make_env("LightwheelAI/leisaac_env:envs/so101_pick_orange.py", n_envs=1, trust_remote_code=True)
@@ -142,7 +142,7 @@ from lerobot.teleoperators import (  # noqa: F401
 )
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import init_logging
-from lerobot.envs.factory import make_env
+from lerobot.envs import make_env
 
 
 @dataclass
@@ -282,7 +282,7 @@ Note: when working with `bi_so101_fold_cloth`, call `initialize()` immediately a
 
 ```python
 import torch
-from lerobot.envs.factory import make_env
+from lerobot.envs import make_env
 
 # Load from the hub
 envs_dict = make_env("LightwheelAI/leisaac_env:envs/bi_so101_fold_cloth.py", n_envs=1, trust_remote_code=True)

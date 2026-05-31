@@ -25,15 +25,22 @@ import random
 import re
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
-from transformers import BatchFeature
 
-from lerobot.policies.wall_x.constant import (
+from lerobot.utils.import_utils import _transformers_available
+
+if TYPE_CHECKING or _transformers_available:
+    from transformers import BatchFeature
+else:
+    BatchFeature = None
+
+from lerobot.utils.constants import OBS_IMAGES
+
+from .constant import (
     CAMERA_NAME_MAPPING,
 )
-from lerobot.utils.constants import OBS_IMAGES
 
 
 @dataclass
@@ -144,7 +151,7 @@ def preprocesser_call(
     """
     # Process image inputs
     if images is not None and len(images) > 0:
-        image_inputs = processor.image_processor(images=images, videos=None, return_tensors=return_tensors)
+        image_inputs = processor.image_processor(images=images, return_tensors=return_tensors)
         image_grid_thw = image_inputs["image_grid_thw"]
     else:
         image_inputs = {}
@@ -152,7 +159,7 @@ def preprocesser_call(
 
     # Process video inputs
     if videos is not None:
-        videos_inputs = processor.image_processor(images=None, videos=videos, return_tensors=return_tensors)
+        videos_inputs = processor.image_processor(videos=videos, return_tensors=return_tensors)
         video_grid_thw = videos_inputs["video_grid_thw"]
     else:
         videos_inputs = {}

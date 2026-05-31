@@ -28,11 +28,18 @@ import json
 import logging
 import time
 from threading import Event, Lock, Thread
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import cv2
 import numpy as np
 from numpy.typing import NDArray
+
+from lerobot.utils.import_utils import _zmq_available, require_package
+
+if TYPE_CHECKING or _zmq_available:
+    import zmq
+else:
+    zmq = None
 
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.errors import DeviceNotConnectedError
@@ -74,8 +81,8 @@ class ZMQCamera(Camera):
     """
 
     def __init__(self, config: ZMQCameraConfig):
+        require_package("pyzmq", extra="pyzmq-dep", import_name="zmq")
         super().__init__(config)
-        import zmq
 
         self.config = config
         self.server_address = config.server_address
@@ -117,8 +124,6 @@ class ZMQCamera(Camera):
         logger.info(f"Connecting to {self}...")
 
         try:
-            import zmq
-
             self.context = zmq.Context()
             self.socket = self.context.socket(zmq.SUB)
             self.socket.setsockopt_string(zmq.SUBSCRIBE, "")
@@ -180,11 +185,8 @@ class ZMQCamera(Camera):
 
         try:
             message = self.socket.recv_string()
-        except Exception as e:
-            # Check for ZMQ timeout (EAGAIN/Again) without requiring global zmq import
-            if type(e).__name__ == "Again":
-                raise TimeoutError(f"{self} timeout after {self.timeout_ms}ms") from e
-            raise
+        except zmq.Again as e:
+            raise TimeoutError(f"{self} timeout after {self.timeout_ms}ms") from e
 
         # Decode JSON message
         data = json.loads(message)

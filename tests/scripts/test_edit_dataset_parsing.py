@@ -17,6 +17,8 @@
 import draccus
 import pytest
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.scripts.lerobot_edit_dataset import (
     ConvertImageToVideoConfig,
     DeleteEpisodesConfig,
@@ -27,6 +29,7 @@ from lerobot.scripts.lerobot_edit_dataset import (
     OperationConfig,
     RemoveFeatureConfig,
     SplitConfig,
+    _validate_config,
 )
 
 
@@ -51,10 +54,22 @@ class TestOperationTypeParsing:
         ],
     )
     def test_operation_type_resolves_correct_class(self, type_name, expected_cls):
-        cfg = parse_cfg(["--repo_id", "test/repo", "--operation.type", type_name])
+        cfg = parse_cfg(
+            ["--repo_id", "test/repo", "--new_repo_id", "test/merged", "--operation.type", type_name]
+        )
         assert isinstance(cfg.operation, expected_cls), (
             f"Expected {expected_cls.__name__}, got {type(cfg.operation).__name__}"
         )
+
+    def test_merge_requires_new_repo_id(self):
+        cfg = parse_cfg(["--operation.type", "merge"])
+        with pytest.raises(ValueError, match="--new_repo_id is required for merge"):
+            _validate_config(cfg)
+
+    def test_non_merge_requires_repo_id(self):
+        cfg = parse_cfg(["--operation.type", "delete_episodes"])
+        with pytest.raises(ValueError, match="--repo_id is required for delete_episodes"):
+            _validate_config(cfg)
 
     @pytest.mark.parametrize(
         "type_name, expected_cls",
@@ -69,6 +84,8 @@ class TestOperationTypeParsing:
         ],
     )
     def test_get_choice_name_roundtrips(self, type_name, expected_cls):
-        cfg = parse_cfg(["--repo_id", "test/repo", "--operation.type", type_name])
+        cfg = parse_cfg(
+            ["--repo_id", "test/repo", "--new_repo_id", "test/merged", "--operation.type", type_name]
+        )
         resolved_name = OperationConfig.get_choice_name(type(cfg.operation))
         assert resolved_name == type_name

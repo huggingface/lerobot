@@ -29,6 +29,7 @@ on:
       - "tests/**"
       - ".github/workflows/**"
       - "pyproject.toml"
+      - "uv.lock"
       - "Makefile"
 
 permissions:
@@ -37,7 +38,7 @@ permissions:
 # Sets up the environment variables
 env:
   UV_VERSION: "0.8.0"
-  PYTHON_VERSION: "3.10"
+  PYTHON_VERSION: "3.12"
   DOCKER_IMAGE_NAME: huggingface/lerobot-gpu
 
 # Ensures that only the latest action is built, canceling older runs.
@@ -60,8 +61,9 @@ jobs:
       MUJOCO_GL: egl
       HF_HOME: /mnt/cache/.cache/huggingface
       HF_LEROBOT_HOME: /mnt/cache/.cache/huggingface/lerobot
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           lfs: true
           persist-credentials: false
@@ -78,14 +80,20 @@ jobs:
           speech-dispatcher libgeos-dev portaudio19-dev
 
       - name: Setup uv and Python
-        uses: astral-sh/setup-uv@v6 # zizmor: ignore[unpinned-uses]
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
         with:
           enable-cache: true
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install lerobot with all extras
-        run: uv sync --extra all # TODO(Steven): Make flash-attn optional
+        run: uv sync --locked --extra all # TODO(Steven): Make flash-attn optional
+
+      - name: Login to Hugging Face
+        if: env.HF_USER_TOKEN != ''
+        run: |
+          uv run hf auth login --token "$HF_USER_TOKEN" --add-to-git-credential
+          uv run hf auth whoami
 
       - name: Run pytest (all extras)
         run: uv run pytest tests -vv --maxfail=10
@@ -129,21 +137,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install git-lfs
           git lfs install
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           lfs: true
           persist-credentials: false
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3 # zizmor: ignore[unpinned-uses]
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
         with:
           cache-binary: false
       - name: Login to Docker Hub
-        uses: docker/login-action@v3 # zizmor: ignore[unpinned-uses]
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3
         with:
           username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
           password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
       - name: Build and push Docker image
-        uses: docker/build-push-action@v6 # zizmor: ignore[unpinned-uses]
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6
         with:
           context: .
           file: ./docker/Dockerfile.internal
@@ -162,6 +170,7 @@ jobs:
       HF_LEROBOT_HOME: /home/user_lerobot/.cache/huggingface/lerobot
       TORCH_HOME: /home/user_lerobot/.cache/torch
       TRITON_CACHE_DIR: /home/user_lerobot/.cache/triton
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
     container:
       image: ${{ needs.build-and-push-docker.outputs.image_tag }} # zizmor: ignore[unpinned-images]
       options: --gpus all --shm-size "16gb"
@@ -173,8 +182,13 @@ jobs:
         shell: bash
         working-directory: /lerobot
     steps:
+      - name: Login to Hugging Face
+        if: env.HF_USER_TOKEN != ''
+        run: |
+          hf auth login --token "$HF_USER_TOKEN" --add-to-git-credential
+          hf auth whoami
       - name: Fix ptxas permissions
-        run: chmod +x /lerobot/.venv/lib/python3.10/site-packages/triton/backends/nvidia/bin/ptxas
+        run: chmod +x /lerobot/.venv/lib/python3.12/site-packages/triton/backends/nvidia/bin/ptxas
       - name: Run pytest on GPU
         run: pytest tests -vv --maxfail=10
       - name: Run end-to-end tests

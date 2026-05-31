@@ -26,7 +26,7 @@ This module provides utilities for:
 import logging
 import shutil
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import datasets
@@ -36,24 +36,39 @@ import pyarrow.parquet as pq
 import torch
 from tqdm import tqdm
 
-from lerobot.datasets.aggregate import aggregate_datasets
-from lerobot.datasets.compute_stats import aggregate_stats
-from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
-from lerobot.datasets.utils import (
+from lerobot.configs import VideoEncoderConfig, camera_encoder_defaults
+from lerobot.utils.constants import ACTION, HF_LEROBOT_HOME, OBS_IMAGE, OBS_STATE
+from lerobot.utils.utils import flatten_dict
+
+from .aggregate import aggregate_datasets
+from .compute_stats import (
+    aggregate_stats,
+    compute_episode_stats,
+    compute_relative_action_stats,
+)
+from .dataset_metadata import LeRobotDatasetMetadata
+from .io_utils import (
+    get_parquet_file_size_in_mb,
+    load_episodes,
+    write_info,
+    write_stats,
+    write_tasks,
+)
+from .lerobot_dataset import LeRobotDataset
+from .utils import (
     DATA_DIR,
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
     DEFAULT_EPISODES_PATH,
-    get_parquet_file_size_in_mb,
-    load_episodes,
+    VIDEO_DIR,
     update_chunk_file_indices,
-    write_info,
-    write_stats,
-    write_tasks,
 )
-from lerobot.datasets.video_utils import encode_video_frames, get_video_info
-from lerobot.utils.constants import HF_LEROBOT_HOME, OBS_IMAGE
+from .video_utils import (
+    encode_video_frames,
+    get_video_info,
+    reencode_video,
+)
 
 
 def _load_episode_with_stats(src_dataset: LeRobotDataset, episode_idx: int) -> dict:
@@ -86,11 +101,16 @@ def delete_episodes(
 ) -> LeRobotDataset:
     """Delete episodes from a LeRobotDataset and create a new dataset.
 
+    Video segments that need re-encoding (because the source file mixes kept and
+    deleted episodes) are re-encoded with the source dataset's existing encoder
+    settings — read back from ``meta/info.json`` — so the output dataset stays
+    consistent with its own metadata.
+
     Args:
         dataset: The source LeRobotDataset.
         episode_indices: List of episode indices to delete.
-        output_dir: Directory to save the new dataset. If None, uses default location.
-        repo_id: Repository ID for the new dataset. If None, appends "_modified" to original.
+        output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
+        repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
     """
     if not episode_indices:
         raise ValueError("No episodes to delete")
@@ -148,11 +168,16 @@ def split_dataset(
 ) -> dict[str, LeRobotDataset]:
     """Split a LeRobotDataset into multiple smaller datasets.
 
+    Video segments that need re-encoding (because the source file mixes episodes
+    that fall into different splits) are re-encoded with the source dataset's
+    existing encoder settings — read back from ``meta/info.json`` — so each
+    output split stays consistent with its own metadata.
+
     Args:
         dataset: The source LeRobotDataset to split.
         splits: Either a dict mapping split names to episode indices, or a dict mapping
                 split names to fractions (must sum to <= 1.0).
-        output_dir: Base directory for output datasets. If None, uses default location.
+        output_dir: Root directory where the split datasets will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id.
 
     Examples:
       Split by specific episodes
@@ -243,8 +268,8 @@ def merge_datasets(
 
     Args:
         datasets: List of LeRobotDatasets to merge.
-        output_repo_id: Repository ID for the merged dataset.
-        output_dir: Directory to save the merged dataset. If None, uses default location.
+        output_repo_id: Merged dataset identifier.
+        output_dir: Root directory where the merged dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/output_repo_id.
     """
     if not datasets:
         raise ValueError("No datasets to merge")
@@ -288,8 +313,8 @@ def modify_features(
         dataset: The source LeRobotDataset.
         add_features: Optional dict mapping feature names to (feature_values, feature_info) tuples.
         remove_features: Optional feature name(s) to remove. Can be a single string or list.
-        output_dir: Directory to save the new dataset. If None, uses default location.
-        repo_id: Repository ID for the new dataset. If None, appends "_modified" to original.
+        output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
+        repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
 
     Returns:
         New dataset with features modified.
@@ -390,8 +415,8 @@ def add_features(
     Args:
         dataset: The source LeRobotDataset.
         features: Dictionary mapping feature names to (feature_values, feature_info) tuples.
-        output_dir: Directory to save the new dataset. If None, uses default location.
-        repo_id: Repository ID for the new dataset. If None, appends "_modified" to original.
+        output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
+        repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
 
     Returns:
         New dataset with all features added.
@@ -427,8 +452,8 @@ def remove_feature(
     Args:
         dataset: The source LeRobotDataset.
         feature_names: Name(s) of features to remove. Can be a single string or list.
-        output_dir: Directory to save the new dataset. If None, uses default location.
-        repo_id: Repository ID for the new dataset. If None, appends "_modified" to original.
+        output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
+        repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
 
     Returns:
         New dataset with features removed.
@@ -569,8 +594,7 @@ def _keep_episodes_from_video_with_av(
     output_path: Path,
     episodes_to_keep: list[tuple[int, int]],
     fps: float,
-    vcodec: str = "libsvtav1",
-    pix_fmt: str = "yuv420p",
+    camera_encoder: VideoEncoderConfig,
 ) -> None:
     """Keep only specified episodes from a video file using PyAV.
 
@@ -584,8 +608,7 @@ def _keep_episodes_from_video_with_av(
             Ranges are half-open intervals: [start_frame, end_frame), where start_frame
             is inclusive and end_frame is exclusive.
         fps: Frame rate of the video.
-        vcodec: Video codec to use for encoding.
-        pix_fmt: Pixel format for output video.
+        camera_encoder: Video encoder settings used to re-encode the kept frames.
     """
     from fractions import Fraction
 
@@ -610,12 +633,13 @@ def _keep_episodes_from_video_with_av(
 
     # Convert fps to Fraction for PyAV compatibility.
     fps_fraction = Fraction(fps).limit_denominator(1000)
-    v_out = out.add_stream(vcodec, rate=fps_fraction)
+    codec_options = camera_encoder.get_codec_options(as_strings=True)
+    v_out = out.add_stream(camera_encoder.vcodec, rate=fps_fraction, options=codec_options)
 
     # PyAV type stubs don't distinguish video streams from audio/subtitle streams.
     v_out.width = v_in.codec_context.width
     v_out.height = v_in.codec_context.height
-    v_out.pix_fmt = pix_fmt
+    v_out.pix_fmt = camera_encoder.pix_fmt
 
     # Set time_base to match the frame rate for proper timestamp handling.
     v_out.time_base = Fraction(1, int(fps))
@@ -678,14 +702,14 @@ def _copy_and_reindex_videos(
     src_dataset: LeRobotDataset,
     dst_meta: LeRobotDatasetMetadata,
     episode_mapping: dict[int, int],
-    vcodec: str = "libsvtav1",
-    pix_fmt: str = "yuv420p",
 ) -> dict[int, dict]:
     """Copy and filter video files, only re-encoding files with deleted episodes.
 
     For video files that only contain kept episodes, we copy them directly.
     For files with mixed kept/deleted episodes, we use PyAV filters to efficiently
-    re-encode only the desired segments.
+    re-encode only the desired segments. The encoder used for re-encoding is
+    derived per video key from the source dataset's ``meta/info.json`` so the
+    destination metadata keeps describing the videos accurately.
 
     Args:
         src_dataset: Source dataset to copy from
@@ -702,6 +726,9 @@ def _copy_and_reindex_videos(
 
     for video_key in src_dataset.meta.video_keys:
         logging.info(f"Processing videos for {video_key}")
+        camera_encoder = VideoEncoderConfig.from_video_info(
+            src_dataset.meta.info.features.get(video_key, {}).get("info")
+        )
 
         if dst_meta.video_path is None:
             raise ValueError("Destination metadata has no video_path defined")
@@ -783,8 +810,7 @@ def _copy_and_reindex_videos(
                     dst_video_path,
                     episodes_to_keep_ranges,
                     src_dataset.meta.fps,
-                    vcodec,
-                    pix_fmt,
+                    camera_encoder,
                 )
 
                 cumulative_ts = 0.0
@@ -822,8 +848,6 @@ def _copy_and_reindex_episodes_metadata(
         data_metadata: Dict mapping new episode index to its data file metadata
         video_metadata: Optional dict mapping new episode index to its video metadata
     """
-    from lerobot.datasets.utils import flatten_dict
-
     if src_dataset.meta.episodes is None:
         src_dataset.meta.episodes = load_episodes(src_dataset.meta.root)
 
@@ -888,16 +912,12 @@ def _copy_and_reindex_episodes_metadata(
 
         total_frames += src_episode["length"]
 
-    dst_meta._close_writer()
+    dst_meta.finalize()
 
-    dst_meta.info.update(
-        {
-            "total_episodes": len(episode_mapping),
-            "total_frames": total_frames,
-            "total_tasks": len(dst_meta.tasks) if dst_meta.tasks is not None else 0,
-            "splits": {"train": f"0:{len(episode_mapping)}"},
-        }
-    )
+    dst_meta.info.total_episodes = len(episode_mapping)
+    dst_meta.info.total_frames = total_frames
+    dst_meta.info.total_tasks = len(dst_meta.tasks) if dst_meta.tasks is not None else 0
+    dst_meta.info.splits = {"train": f"0:{len(episode_mapping)}"}
     write_info(dst_meta.info, dst_meta.root)
 
     if not all_stats:
@@ -915,7 +935,8 @@ def _write_parquet(df: pd.DataFrame, path: Path, meta: LeRobotDatasetMetadata) -
 
     This ensures images are properly embedded and the file can be loaded correctly by HF datasets.
     """
-    from lerobot.datasets.utils import embed_images, get_hf_features_from_features
+    from .feature_utils import get_hf_features_from_features
+    from .io_utils import embed_images
 
     hf_features = get_hf_features_from_features(meta.features)
     ep_dataset = datasets.Dataset.from_dict(df.to_dict(orient="list"), features=hf_features, split="train")
@@ -1061,21 +1082,20 @@ def _copy_episodes_metadata_and_stats(
     if episodes_dir.exists():
         shutil.copytree(episodes_dir, dst_episodes_dir, dirs_exist_ok=True)
 
-    dst_meta.info.update(
-        {
-            "total_episodes": src_dataset.meta.total_episodes,
-            "total_frames": src_dataset.meta.total_frames,
-            "total_tasks": src_dataset.meta.total_tasks,
-            "splits": src_dataset.meta.info.get("splits", {"train": f"0:{src_dataset.meta.total_episodes}"}),
-        }
+    dst_meta.info.total_episodes = src_dataset.meta.total_episodes
+    dst_meta.info.total_frames = src_dataset.meta.total_frames
+    dst_meta.info.total_tasks = src_dataset.meta.total_tasks
+    # Preserve original splits if available, otherwise create default
+    dst_meta.info.splits = (
+        src_dataset.meta.info.splits
+        if src_dataset.meta.info.splits
+        else {"train": f"0:{src_dataset.meta.total_episodes}"}
     )
 
     if dst_meta.video_keys and src_dataset.meta.video_keys:
         for key in dst_meta.video_keys:
             if key in src_dataset.meta.features:
-                dst_meta.info["features"][key]["info"] = src_dataset.meta.info["features"][key].get(
-                    "info", {}
-                )
+                dst_meta.info.features[key]["info"] = src_dataset.meta.info.features[key].get("info", {})
 
     write_info(dst_meta.info, dst_meta.root)
 
@@ -1261,11 +1281,7 @@ def _estimate_frame_size_via_calibration(
     episode_indices: list[int],
     temp_dir: Path,
     fps: int,
-    vcodec: str,
-    pix_fmt: str,
-    g: int,
-    crf: int,
-    fast_decode: int,
+    camera_encoder: VideoEncoderConfig,
     num_calibration_frames: int = 30,
 ) -> float:
     """Estimate MB per frame by encoding a small calibration sample.
@@ -1279,11 +1295,7 @@ def _estimate_frame_size_via_calibration(
         episode_indices: List of episode indices being processed.
         temp_dir: Temporary directory for calibration files.
         fps: Frames per second for video encoding.
-        vcodec: Video codec (libsvtav1, h264, hevc).
-        pix_fmt: Pixel format (yuv420p, etc.).
-        g: GOP size (group of pictures).
-        crf: Constant Rate Factor (quality).
-        fast_decode: Fast decode tuning parameter.
+        camera_encoder: Video encoder settings used for calibration encoding.
         num_calibration_frames: Number of frames to use for calibration (default: 30).
 
     Returns:
@@ -1319,11 +1331,7 @@ def _estimate_frame_size_via_calibration(
             imgs_dir=calibration_dir,
             video_path=calibration_video_path,
             fps=fps,
-            vcodec=vcodec,
-            pix_fmt=pix_fmt,
-            g=g,
-            crf=crf,
-            fast_decode=fast_decode,
+            camera_encoder=camera_encoder,
             overwrite=True,
         )
 
@@ -1359,7 +1367,7 @@ def _copy_data_without_images(
         episode_indices: Episodes to include
         img_keys: Image keys to remove
     """
-    from lerobot.datasets.utils import DATA_DIR
+    from .utils import DATA_DIR
 
     data_dir = src_dataset.root / DATA_DIR
     parquet_files = sorted(data_dir.glob("*/*.parquet"))
@@ -1475,7 +1483,9 @@ def modify_tasks(
 
     # Collect all unique tasks and create new task mapping
     unique_tasks = sorted(set(episode_to_task.values()))
-    new_task_df = pd.DataFrame({"task_index": list(range(len(unique_tasks)))}, index=unique_tasks)
+    new_task_df = pd.DataFrame(
+        {"task_index": list(range(len(unique_tasks)))}, index=pd.Index(unique_tasks, name="task")
+    )
     task_to_index = {task: idx for idx, task in enumerate(unique_tasks)}
 
     logging.info(f"Modifying tasks in {dataset.repo_id}")
@@ -1515,7 +1525,7 @@ def modify_tasks(
     write_tasks(new_task_df, root)
 
     # Update info.json
-    dataset.meta.info["total_tasks"] = len(unique_tasks)
+    dataset.meta.info.total_tasks = len(unique_tasks)
     write_info(dataset.meta.info, root)
 
     # Reload metadata to reflect changes
@@ -1527,15 +1537,119 @@ def modify_tasks(
     return dataset
 
 
+def recompute_stats(
+    dataset: LeRobotDataset,
+    skip_image_video: bool = True,
+    relative_action: bool = False,
+    relative_exclude_joints: list[str] | None = None,
+    chunk_size: int = 50,
+    num_workers: int = 0,
+) -> LeRobotDataset:
+    """Recompute stats.json from scratch by iterating all episodes.
+
+    Args:
+        dataset: The LeRobotDataset to recompute stats for.
+        skip_image_video: If True (default), only recompute stats for numeric features
+            (action, state, etc.) and keep existing image/video stats unchanged.
+        relative_action: If True, compute action stats in relative space by
+            iterating all valid action chunks and subtracting the current state.
+            This matches the normalization distribution the model sees during
+            training with ``use_relative_actions=True``.
+        relative_exclude_joints: Joint names to exclude from relative conversion when
+            relative_action=True. These dims keep absolute stats.
+        chunk_size: Action chunk size used for relative stats computation. Should match
+            ``policy.chunk_size``. Only used when ``relative_action=True``.
+        num_workers: Number of parallel threads for relative action stats computation.
+            Values ≤1 mean single-threaded. Only used when ``relative_action=True``.
+
+    Returns:
+        The same dataset with updated stats.
+    """
+    features = dataset.meta.features
+    meta_keys = {"index", "episode_index", "task_index", "frame_index", "timestamp"}
+    numeric_features = {
+        k: v
+        for k, v in features.items()
+        if v["dtype"] not in ["image", "video", "string"] and k not in meta_keys
+    }
+
+    if skip_image_video:
+        features_to_compute = numeric_features
+    else:
+        features_to_compute = {
+            k: v for k, v in features.items() if v["dtype"] != "string" and k not in meta_keys
+        }
+
+    # When relative_action is enabled, compute action stats via chunk-based sampling
+    # (matching what the model sees during training) and skip action in the
+    # per-episode pass below.
+    relative_action_stats = None
+    if relative_action and ACTION in features and OBS_STATE in features:
+        if relative_exclude_joints is None:
+            relative_exclude_joints = ["gripper"]
+        relative_action_stats = compute_relative_action_stats(
+            hf_dataset=dataset.hf_dataset,
+            features=features,
+            chunk_size=chunk_size,
+            exclude_joints=relative_exclude_joints,
+            num_workers=num_workers,
+        )
+        features_to_compute.pop(ACTION, None)
+
+    logging.info(f"Recomputing stats for features: {list(features_to_compute.keys())}")
+
+    data_dir = dataset.root / DATA_DIR
+    parquet_files = sorted(data_dir.glob("*/*.parquet"))
+    if not parquet_files:
+        raise ValueError(f"No parquet files found in {data_dir}")
+
+    all_episode_stats = []
+    numeric_keys = [k for k, v in features_to_compute.items() if v["dtype"] not in ["image", "video"]]
+
+    for parquet_path in tqdm(parquet_files, desc="Computing stats from data files"):
+        df = pd.read_parquet(parquet_path)
+
+        for ep_idx in sorted(df["episode_index"].unique()):
+            ep_df = df[df["episode_index"] == ep_idx]
+            episode_data = {}
+            for key in numeric_keys:
+                if key in ep_df.columns:
+                    values = ep_df[key].values
+                    if hasattr(values[0], "__len__"):
+                        episode_data[key] = np.stack(values)
+                    else:
+                        episode_data[key] = np.array(values)
+
+            ep_stats = compute_episode_stats(episode_data, features_to_compute)
+            all_episode_stats.append(ep_stats)
+
+    if features_to_compute and not all_episode_stats:
+        logging.warning("No episode stats computed")
+        return dataset
+
+    new_stats = aggregate_stats(all_episode_stats) if all_episode_stats else {}
+
+    if relative_action_stats is not None:
+        new_stats[ACTION] = relative_action_stats
+
+    # Merge: keep existing stats for features we didn't recompute
+    if dataset.meta.stats:
+        for key, value in dataset.meta.stats.items():
+            if key not in new_stats:
+                new_stats[key] = value
+
+    write_stats(new_stats, dataset.root)
+    dataset.meta.stats = new_stats
+
+    logging.info("Stats recomputed successfully")
+    return dataset
+
+
 def convert_image_to_video_dataset(
     dataset: LeRobotDataset,
-    output_dir: Path,
+    output_dir: Path | None = None,
     repo_id: str | None = None,
-    vcodec: str = "libsvtav1",
-    pix_fmt: str = "yuv420p",
-    g: int = 2,
-    crf: int = 30,
-    fast_decode: int = 0,
+    camera_encoder: VideoEncoderConfig | None = None,
     episode_indices: list[int] | None = None,
     num_workers: int = 4,
     max_episodes_per_batch: int | None = None,
@@ -1548,13 +1662,10 @@ def convert_image_to_video_dataset(
 
     Args:
         dataset: The source LeRobot dataset with images
-        output_dir: Directory to save the new video dataset
-        repo_id: Repository ID for the new dataset (default: original_id + "_video")
-        vcodec: Video codec (default: libsvtav1)
-        pix_fmt: Pixel format (default: yuv420p)
-        g: Group of pictures size (default: 2)
-        crf: Constant rate factor (default: 30)
-        fast_decode: Fast decode tuning (default: 0)
+        output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
+        repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
+        camera_encoder: Video encoder settings
+            (``None`` uses :func:`~lerobot.configs.camera_encoder_defaults`).
         episode_indices: List of episode indices to convert (None = all episodes)
         num_workers: Number of threads for parallel processing (default: 4)
         max_episodes_per_batch: Maximum episodes per video batch to avoid memory issues (None = no limit)
@@ -1563,6 +1674,9 @@ def convert_image_to_video_dataset(
     Returns:
         New LeRobotDataset with images encoded as videos
     """
+    if camera_encoder is None:
+        camera_encoder = camera_encoder_defaults()
+
     # Check that it's an image dataset
     if len(dataset.meta.video_keys) > 0:
         raise ValueError(
@@ -1586,7 +1700,10 @@ def convert_image_to_video_dataset(
     logging.info(
         f"Converting {len(episode_indices)} episodes with {len(img_keys)} cameras from {dataset.repo_id}"
     )
-    logging.info(f"Video codec: {vcodec}, pixel format: {pix_fmt}, GOP: {g}, CRF: {crf}")
+    logging.info(
+        f"Video codec: {camera_encoder.vcodec}, pixel format: {camera_encoder.pix_fmt}, "
+        f"GOP: {camera_encoder.g}, CRF: {camera_encoder.crf}"
+    )
 
     # Create new features dict, converting image features to video features
     new_features = {}
@@ -1600,6 +1717,7 @@ def convert_image_to_video_dataset(
             # Video info will be updated after episodes are encoded
 
     # Create new metadata for video dataset
+    output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
     new_meta = LeRobotDatasetMetadata.create(
         repo_id=repo_id,
         fps=dataset.meta.fps,
@@ -1655,11 +1773,7 @@ def convert_image_to_video_dataset(
                 episode_indices=episode_indices,
                 temp_dir=temp_dir,
                 fps=fps,
-                vcodec=vcodec,
-                pix_fmt=pix_fmt,
-                g=g,
-                crf=crf,
-                fast_decode=fast_decode,
+                camera_encoder=camera_encoder,
             )
 
             logging.info(f"Processing camera: {img_key}")
@@ -1701,11 +1815,7 @@ def convert_image_to_video_dataset(
                     imgs_dir=imgs_dir,
                     video_path=video_path,
                     fps=fps,
-                    vcodec=vcodec,
-                    pix_fmt=pix_fmt,
-                    g=g,
-                    crf=crf,
-                    fast_decode=fast_decode,
+                    camera_encoder=camera_encoder,
                     overwrite=True,
                 )
 
@@ -1739,10 +1849,10 @@ def convert_image_to_video_dataset(
         episodes_df.to_parquet(episodes_path, index=False)
 
         # Update metadata info
-        new_meta.info["total_episodes"] = len(episode_indices)
-        new_meta.info["total_frames"] = sum(ep["length"] for ep in all_episode_metadata.values())
-        new_meta.info["total_tasks"] = dataset.meta.total_tasks
-        new_meta.info["splits"] = {"train": f"0:{len(episode_indices)}"}
+        new_meta.info.total_episodes = len(episode_indices)
+        new_meta.info.total_frames = sum(ep["length"] for ep in all_episode_metadata.values())
+        new_meta.info.total_tasks = dataset.meta.total_tasks
+        new_meta.info.splits = {"train": f"0:{len(episode_indices)}"}
 
         # Update video info for all image keys (now videos)
         # We need to manually set video info since update_video_info() checks video_keys first
@@ -1751,7 +1861,9 @@ def convert_image_to_video_dataset(
                 video_path = new_meta.root / new_meta.video_path.format(
                     video_key=img_key, chunk_index=0, file_index=0
                 )
-                new_meta.info["features"][img_key]["info"] = get_video_info(video_path)
+                new_meta.info.features[img_key]["info"] = get_video_info(
+                    video_path, camera_encoder=camera_encoder
+                )
 
         write_info(new_meta.info, new_meta.root)
 
@@ -1774,3 +1886,83 @@ def convert_image_to_video_dataset(
 
     # Return new dataset
     return LeRobotDataset(repo_id=repo_id, root=output_dir)
+
+
+def _reencode_video_worker(args: tuple) -> Path:
+    """Picklable worker for :func:`reencode_dataset`'s process pool."""
+    video_path, camera_encoder, encoder_threads = args
+    reencode_video(
+        input_video_path=video_path,
+        output_video_path=video_path,
+        camera_encoder=camera_encoder,
+        encoder_threads=encoder_threads,
+        overwrite=True,
+    )
+    return video_path
+
+
+def reencode_dataset(
+    dataset: LeRobotDataset,
+    camera_encoder: VideoEncoderConfig,
+    encoder_threads: int | None = None,
+    num_workers: int | None = None,
+) -> LeRobotDataset:
+    """Re-encode every video in a dataset with a new set of encoding parameters.
+
+    Videos are re-encoded in-place and the video information in ``info.json`` is refreshed.
+
+    Args:
+        dataset: An existing :class:`LeRobotDataset` whose videos will be
+            re-encoded.
+        camera_encoder: Target encoder configuration applied to every video
+            file.
+        encoder_threads: Per-encoder thread count forwarded to
+            :func:`reencode_video`. ``None`` lets the codec decide.
+        num_workers: Number of parallel processes. ``None`` or ``0`` means
+            sequential (no multiprocessing); ``1+`` spawns a
+            :class:`~concurrent.futures.ProcessPoolExecutor`.
+
+    Returns:
+        The same :class:`LeRobotDataset` instance with its metadata updated
+        on disk.
+    """
+    meta = dataset.meta
+    video_paths_list = []
+
+    # Only re-encode if the videos are not already encoded with the given video encoding parameters
+    for video_key in meta.video_keys:
+        current_info = meta.info.features[video_key].get("info", {})
+        current_encoder = VideoEncoderConfig.from_video_info(current_info)
+        if current_encoder != camera_encoder:
+            video_paths_list.extend((meta.root / VIDEO_DIR / video_key).rglob("*.mp4"))
+        else:
+            logging.info(f"{video_key} videos are already encoded with {camera_encoder}. Nothing to do.")
+
+    if len(video_paths_list) == 0:
+        logging.warning("Dataset has no videos to re-encode.")
+        return dataset
+    logging.info(f"Re-encoding {len(video_paths_list)} video file(s) with {camera_encoder}")
+
+    worker_args = [(vp, camera_encoder, encoder_threads) for vp in video_paths_list]
+    if num_workers and num_workers > 1:
+        with ProcessPoolExecutor(max_workers=num_workers) as pool:
+            futures = [pool.submit(_reencode_video_worker, args) for args in worker_args]
+            for future in tqdm(
+                as_completed(futures),
+                total=len(futures),
+                desc="Re-encoding videos",
+            ):
+                future.result()
+    else:
+        for args in tqdm(worker_args, desc="Re-encoding videos"):
+            _reencode_video_worker(args)
+
+    # Refresh video info in metadata for every video key.
+    for vid_key in meta.video_keys:
+        video_path = meta.root / meta.get_video_file_path(0, vid_key)
+        meta.info.features[vid_key]["info"] = get_video_info(video_path, camera_encoder=camera_encoder)
+
+    write_info(meta.info, meta.root)
+    logging.info("Dataset metadata updated.")
+
+    return dataset

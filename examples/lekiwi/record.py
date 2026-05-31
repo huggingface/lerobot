@@ -14,16 +14,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import hw_to_dataset_features
+from lerobot.common.control_utils import init_keyboard_listener
+from lerobot.datasets import LeRobotDataset
 from lerobot.processor import make_default_processors
-from lerobot.robots.lekiwi.config_lekiwi import LeKiwiClientConfig
-from lerobot.robots.lekiwi.lekiwi_client import LeKiwiClient
+from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
 from lerobot.scripts.lerobot_record import record_loop
 from lerobot.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.teleoperators.so_leader import SO100Leader, SO100LeaderConfig
 from lerobot.utils.constants import ACTION, OBS_STR
-from lerobot.utils.control_utils import init_keyboard_listener
+from lerobot.utils.feature_utils import hw_to_dataset_features
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
 
@@ -45,9 +44,6 @@ def main():
     robot = LeKiwiClient(robot_config)
     leader_arm = SO100Leader(leader_arm_config)
     keyboard = KeyboardTeleop(keyboard_config)
-
-    # TODO(Steven): Update this example to use pipelines
-    teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
 
     # Configure the dataset features
     action_features = hw_to_dataset_features(robot.action_features, ACTION)
@@ -78,6 +74,10 @@ def main():
         if not robot.is_connected or not leader_arm.is_connected or not keyboard.is_connected:
             raise ValueError("Robot or teleop is not connected!")
 
+        teleop_action_processor, robot_action_processor, robot_observation_processor = (
+            make_default_processors()
+        )
+
         print("Starting record loop...")
         recorded_episodes = 0
         while recorded_episodes < NUM_EPISODES and not events["stop_recording"]:
@@ -88,14 +88,14 @@ def main():
                 robot=robot,
                 events=events,
                 fps=FPS,
+                teleop_action_processor=teleop_action_processor,
+                robot_action_processor=robot_action_processor,
+                robot_observation_processor=robot_observation_processor,
                 dataset=dataset,
                 teleop=[leader_arm, keyboard],
                 control_time_s=EPISODE_TIME_SEC,
                 single_task=TASK_DESCRIPTION,
                 display_data=True,
-                teleop_action_processor=teleop_action_processor,
-                robot_action_processor=robot_action_processor,
-                robot_observation_processor=robot_observation_processor,
             )
 
             # Reset the environment if not stopping or re-recording
@@ -107,13 +107,13 @@ def main():
                     robot=robot,
                     events=events,
                     fps=FPS,
+                    teleop_action_processor=teleop_action_processor,
+                    robot_action_processor=robot_action_processor,
+                    robot_observation_processor=robot_observation_processor,
                     teleop=[leader_arm, keyboard],
                     control_time_s=RESET_TIME_SEC,
                     single_task=TASK_DESCRIPTION,
                     display_data=True,
-                    teleop_action_processor=teleop_action_processor,
-                    robot_action_processor=robot_action_processor,
-                    robot_observation_processor=robot_observation_processor,
                 )
 
             if events["rerecord_episode"]:

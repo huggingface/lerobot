@@ -24,6 +24,11 @@ def mock_metrics():
     return {"loss": AverageMeter("loss", ":.3f"), "accuracy": AverageMeter("accuracy", ":.2f")}
 
 
+class MockAccelerator:
+    def __init__(self, num_processes: int):
+        self.num_processes = num_processes
+
+
 def test_average_meter_initialization():
     meter = AverageMeter("loss", ":.2f")
     assert meter.name == "loss"
@@ -78,6 +83,37 @@ def test_metrics_tracker_step(mock_metrics):
     tracker.step()
     assert tracker.steps == 6
     assert tracker.samples == 6 * 32
+    assert tracker.episodes == tracker.samples / (1000 / 50)
+    assert tracker.epochs == tracker.samples / 1000
+
+
+def test_metrics_tracker_initialization_with_accelerator(mock_metrics):
+    tracker = MetricsTracker(
+        batch_size=32,
+        num_frames=1000,
+        num_episodes=50,
+        metrics=mock_metrics,
+        initial_step=10,
+        accelerator=MockAccelerator(num_processes=2),
+    )
+    assert tracker.steps == 10
+    assert tracker.samples == 10 * 32 * 2
+    assert tracker.episodes == tracker.samples / (1000 / 50)
+    assert tracker.epochs == tracker.samples / 1000
+
+
+def test_metrics_tracker_step_with_accelerator(mock_metrics):
+    tracker = MetricsTracker(
+        batch_size=32,
+        num_frames=1000,
+        num_episodes=50,
+        metrics=mock_metrics,
+        initial_step=5,
+        accelerator=MockAccelerator(num_processes=2),
+    )
+    tracker.step()
+    assert tracker.steps == 6
+    assert tracker.samples == (5 * 32 * 2) + (32 * 2)
     assert tracker.episodes == tracker.samples / (1000 / 50)
     assert tracker.epochs == tracker.samples / 1000
 

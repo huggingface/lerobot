@@ -18,14 +18,20 @@ import logging
 import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import draccus
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LambdaLR, LRScheduler
 
-from lerobot.datasets.utils import write_json
 from lerobot.utils.constants import SCHEDULER_STATE
-from lerobot.utils.io_utils import deserialize_json_into_object
+from lerobot.utils.import_utils import _diffusers_available, require_package
+from lerobot.utils.io_utils import deserialize_json_into_object, write_json
+
+if TYPE_CHECKING or _diffusers_available:
+    from diffusers.optimization import get_scheduler
+else:
+    get_scheduler = None
 
 
 @dataclass
@@ -48,7 +54,7 @@ class DiffuserSchedulerConfig(LRSchedulerConfig):
     num_warmup_steps: int | None = None
 
     def build(self, optimizer: Optimizer, num_training_steps: int) -> LambdaLR:
-        from diffusers.optimization import get_scheduler
+        require_package("diffusers", extra="diffusion")
 
         kwargs = {**asdict(self), "num_training_steps": num_training_steps, "optimizer": optimizer}
         return get_scheduler(**kwargs)

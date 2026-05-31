@@ -1,0 +1,98 @@
+# Compute HW Guide for LeRobot Training
+
+Rough sizing for training a LeRobot policy: how much VRAM each policy needs, what training time looks like, and where to run when local hardware isn't enough.
+
+The numbers below are **indicative** — order-of-magnitude figures for picking hardware, not exact predictions. Throughput depends heavily on dataset I/O, image resolution, batch size, and number of GPUs.
+
+## Memory by policy group
+
+Policies cluster by backbone size; the groupings below give a single VRAM envelope per group instead of repeating numbers per policy. Memory scales roughly linearly with batch size; AdamW (the LeRobot default) carries optimizer state that adds ~30–100% over a forward+backward pass alone.
+
+| Group      | Policies                                    | Peak VRAM (BS 8, AdamW) | Suitable starter GPUs             |
+| ---------- | ------------------------------------------- | ----------------------: | --------------------------------- |
+| Light BC   | `act`, `vqbet`, `tdmpc`                     |                  ~2–6GB | Laptop GPU (RTX 3060), L4, A10G   |
+| Diffusion  | `diffusion`, `multi_task_dit`               |                 ~8–14GB | RTX 4070+ / L4 / A10G             |
+| Small VLA  | `smolvla`                                   |                ~10–16GB | RTX 4080+ / L4 / A10G             |
+| Large VLA  | `pi0`, `pi0_fast`, `pi05`, `xvla`, `wall_x` |                ~24–40GB | A100 40 GB+ (24 GB tight at BS 1) |
+| Multimodal | `groot`, `eo1`                              |                ~24–40GB | A100 40 GB+                       |
+| RL         | `sac`                                       |             config-dep. | See [HIL-SERL guide](./hilserl)   |
+
+Memory-bound? Drop the batch size (~linear), use gradient accumulation to recover effective batch, or for SmolVLA leave `freeze_vision_encoder=True`.
+
+## Training time
+
+Robotics imitation learning typically converges in **5–10 epochs over the dataset**, not hundreds of thousands of raw steps. Once you know your epoch count, wall-clock is essentially:
+
+```text
+total_frames    = sum of frames over all episodes      # 50 ep × 30 fps × 30 s ≈ 45,000
+steps_per_epoch = ceil(total_frames / (num_gpus × batch_size))
+total_steps     = epochs × steps_per_epoch
+wall_clock      ≈ total_steps × per_step_time
+```
+
+Per-step time depends on the policy and the GPU. The numbers in the table below are anchors — pick the row closest to your setup and scale linearly with `total_steps` if you train longer or shorter.
+
+### Common scenarios
+
+Indicative wall-clock for **5 epochs on a ~50-episode dataset (~45k frames at 30 fps × 30 s)**, default optimizer (AdamW), 640×480 images:
+
+| Setup                                | Policy         | Batch | Wall-clock |
+| ------------------------------------ | -------------- | ----- | ---------: |
+| Single RTX 4090 / RTX 3090 (24 GB)   | `act`          | 8     |  ~30–60min |
+| Single RTX 4090 / RTX 3090 (24 GB)   | `diffusion`    | 8     |      ~2–4h |
+| Single L4 / A10G (24 GB)             | `act`          | 8     |      ~1–2h |
+| Single L4 / A10G (24 GB)             | `smolvla`      | 4     |      ~3–6h |
+| Single A100 40 GB                    | `smolvla`      | 16    |      ~1–2h |
+| Single A100 40 GB                    | `pi0` / `pi05` | 4     |      ~4–8h |
+| 4× H100 80 GB cluster (`accelerate`) | `diffusion`    | 32    |  ~30–60min |
+| 4× H100 80 GB cluster (`accelerate`) | `smolvla`      | 32    |      ~1–2h |
+| Apple Silicon M1/M2/M3 Max (MPS)     | `act`          | 4     |     ~6–14h |
+
+These are order-of-magnitude figures. Real runs deviate by ±50% depending on image resolution, dataset I/O, dataloader threading, and exact GPU SKU. They are useful as "is this run going to take an hour or a day?" intuition, not as SLAs.
+
+### Multi-GPU matters a lot
+
+`accelerate launch --num_processes=N` is the easiest way to cut training time. Each optimizer step processes `N × batch_size` samples in roughly the same wall-clock as a single-GPU step, so 4 GPUs ≈ 4× speedup for compute-bound runs. See the [Multi GPU training](./multi_gpu_training) guide for the full setup.
+
+Reference data points on a 4×H100 80 GB cluster (`accelerate launch --num_processes=4`), 5000 steps, batch 32, AdamW, dataset [`imstevenpmwork/super_poulain_draft`](https://huggingface.co/datasets/imstevenpmwork/super_poulain_draft) (~50 episodes, ~640×480 images):
+
+| Policy      | Wall-clock | `update_s` | `dataloading_s` | GPU util | Notable flags                                                                                                                  |
+| ----------- | ---------- | ---------: | --------------: | -------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `diffusion` | 16m 17s    |      0.167 |           0.015 | ~90%     | defaults (training from scratch)                                                                                               |
+| `smolvla`   | 27m 49s    |      0.312 |           0.011 | ~80%     | `--policy.path=lerobot/smolvla_base`, `freeze_vision_encoder=false`, `train_expert_only=false`                                 |
+| `pi05`      | 3h 41m     |      2.548 |           0.014 | ~95%     | `--policy.pretrained_path=lerobot/pi05_base`, `gradient_checkpointing=true`, `dtype=bfloat16`, vision encoder + expert trained |
+
+The `dataloading_s` vs. `update_s` ratio is the diagnostic that matters: when `dataloading_s` approaches `update_s`, more GPUs stop helping — your dataloader is the bottleneck and you should look at `--num_workers`, image resolution, and disk speed before adding compute.
+
+### Schedule and checkpoints
+
+If you shorten training (e.g. 5k–10k steps on a small dataset), also shorten the LR schedule with `--policy.scheduler_decay_steps≈--steps`. Otherwise the LR stays near its peak and never decays. Same for `--save_freq`.
+
+## Where to run
+
+VRAM is the first filter. Within a tier, pick by budget and availability — the `$`–`$$$$` columns are relative; check current pricing on the provider you actually use.
+
+| Class                      | VRAM  | Tier   | Comfortable for                                             |
+| -------------------------- | ----- | ------ | ----------------------------------------------------------- |
+| RTX 3090 / 4090 (consumer) | 24 GB | `$`    | Light BC, Diffusion, SmolVLA. Tight for VLAs at batch 1.    |
+| L4 / A10G (cloud)          | 24 GB | `$–$$` | Same envelope; common on Google Cloud, RunPod, AWS `g5/g6`. |
+| A100 40 GB                 | 40 GB | `$$$`  | Any policy at reasonable batch sizes.                       |
+| A100 80 GB / H100 80 GB    | 80 GB | `$$$$` | Multi-GPU clusters; large batches for VLAs.                 |
+| **CPU only**               | —     | —      | Don't train. Use Colab or rent a GPU.                       |
+
+### Hugging Face Jobs
+
+[Hugging Face Jobs](https://huggingface.co/docs/hub/jobs) lets you run training on managed HF infrastructure, billed by the second. The repo publishes a ready-to-use image: **`huggingface/lerobot-gpu:latest`**, rebuilt **every night at 02:00 UTC from `main`** ([`docker_publish.yml`](https://github.com/huggingface/lerobot/blob/main/.github/workflows/docker_publish.yml)) — so it tracks the current state of the repo, not a tagged release.
+
+```bash
+hf jobs run --flavor a10g-large huggingface/lerobot-gpu:latest \
+  bash -c "nvidia-smi && lerobot-train \
+    --policy.type=act --dataset.repo_id=<USER>/<DATASET> \
+    --policy.repo_id=<USER>/act_<task> --batch_size=8 --steps=50000"
+```
+
+Notes:
+
+- The leading `nvidia-smi` is a quick sanity check that CUDA is visible inside the container — useful to fail fast if the flavor or driver mismatched.
+- The default Job timeout is 30 minutes; pass `--timeout 4h` (or longer) for real training.
+- `--flavor` maps onto the table above: `t4-small`/`t4-medium` (T4, ACT only), `l4x1`/`l4x4` (L4 24 GB), `a10g-small/large/largex2/largex4` (A10G 24 GB scaled out), `a100-large` (A100). For the current full catalogue + pricing see [https://huggingface.co/docs/hub/jobs](https://huggingface.co/docs/hub/jobs).

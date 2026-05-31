@@ -35,7 +35,7 @@ from pprint import pformat
 
 import draccus
 
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -57,7 +57,7 @@ class DatasetReplayConfig:
     repo_id: str
     # Episode to replay.
     episode: int
-    # Root directory where the dataset will be stored (e.g. 'dataset/path').
+    # Root directory where the dataset will be stored (e.g. 'dataset/path'). If None, defaults to $HF_LEROBOT_HOME/repo_id.
     root: str | Path | None = None
     # Limit the frames per second. By default, uses the policy fps.
     fps: int = 30
@@ -78,7 +78,7 @@ def replay(cfg: ReplayConfig):
 
     robot = make_robot_from_config(cfg.robot)
     dataset = LeRobotDataset(cfg.dataset.repo_id, root=cfg.dataset.root, episodes=[cfg.dataset.episode])
-    actions = dataset.hf_dataset.select_columns(ACTION)
+    actions = dataset.select_columns(ACTION)
     robot.connect()
 
     try:
