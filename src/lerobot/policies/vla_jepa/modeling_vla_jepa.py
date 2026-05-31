@@ -17,7 +17,6 @@ from __future__ import annotations
 import logging
 from collections import deque
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
@@ -28,13 +27,7 @@ from torch import Tensor, nn
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 from lerobot.policies.utils import populate_queues
 from lerobot.utils.constants import ACTION, OBS_STATE
-from lerobot.utils.import_utils import _transformers_available, require_package
-
-if TYPE_CHECKING or _transformers_available:
-    from transformers import AutoModel, AutoVideoProcessor
-else:
-    AutoModel = None
-    AutoVideoProcessor = None
+from lerobot.utils.import_utils import require_package
 
 from .action_head import VLAJEPAActionHead
 from .configuration_vla_jepa import VLAJEPAConfig
@@ -81,6 +74,8 @@ class VLAJEPAModel(nn.Module):
 
         # JEPA world model components
         if config.enable_world_model:
+            from transformers import AutoModel, AutoVideoProcessor
+
             self.video_encoder = AutoModel.from_pretrained(
                 config.jepa_encoder_name,
                 torch_dtype=self.qwen._get_torch_dtype(config.torch_dtype),

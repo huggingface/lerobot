@@ -15,19 +15,10 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
 from PIL import Image
-
-from lerobot.utils.import_utils import _transformers_available
-
-if TYPE_CHECKING or _transformers_available:
-    from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
-else:
-    AutoProcessor = None
-    Qwen3VLForConditionalGeneration = None
 
 from .configuration_vla_jepa import VLAJEPAConfig
 
@@ -35,6 +26,8 @@ from .configuration_vla_jepa import VLAJEPAConfig
 class Qwen3VLInterface(torch.nn.Module):
     def __init__(self, config: VLAJEPAConfig) -> None:
         super().__init__()
+        from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
+
         self.config = config
         self.model = Qwen3VLForConditionalGeneration.from_pretrained(
             config.qwen_model_name,
