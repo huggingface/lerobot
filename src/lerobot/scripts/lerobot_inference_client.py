@@ -50,6 +50,7 @@ try:
     from lerobot.configs.policies import PreTrainedConfig
     from lerobot.policies.factory import make_policy, make_pre_post_processors
     from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
+    from lerobot.processor.rename_processor import rename_stats
     from lerobot.utils.control_utils import predict_action
     LEROBOT_AVAILABLE = True
 except ImportError as _e:
@@ -109,6 +110,18 @@ def connect_to_server(host: str, port: int, retries: int = 10) -> socket.socket:
     raise RuntimeError(f"Could not connect to {host}:{port} after {retries} attempts")
 
 
+def parse_rename_map(value: str | None) -> dict[str, str]:
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise argparse.ArgumentTypeError(f"--rename-map must be valid JSON: {exc}") from exc
+    if not isinstance(parsed, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in parsed.items()):
+        raise argparse.ArgumentTypeError("--rename-map must be a JSON object mapping string keys to string values")
+    return parsed
+
+
 # ──────────────────────────────────────────────────────────────
 # Joint keys  (must match server)
 # ──────────────────────────────────────────────────────────────
@@ -160,6 +173,7 @@ class PolicyRunner:
         dataset_repo_id: str,
         device: str = "cpu",
         actions_per_chunk: int | None = None,
+        rename_map: dict[str, str] | None = None,
     ):
         if not LEROBOT_AVAILABLE:
             raise RuntimeError("lerobot is not installed")
@@ -194,8 +208,9 @@ class PolicyRunner:
 
         print(f"  Loading dataset metadata from '{dataset_repo_id}' …")
         ds_meta = LeRobotDatasetMetadata(dataset_repo_id)
+        rename_map = rename_map or {}
 
-        self.policy = make_policy(cfg, ds_meta=ds_meta)
+        self.policy = make_policy(cfg, ds_meta=ds_meta, rename_map=rename_map)
         self.policy.eval()
         self.device = torch.device(device)
 
@@ -204,8 +219,11 @@ class PolicyRunner:
         self.preprocessor, self.postprocessor = make_pre_post_processors(
             cfg,
             pretrained_path=policy_path,
-            dataset_stats=ds_meta.stats,
-            preprocessor_overrides={"device_processor": {"device": device}},
+            dataset_stats=rename_stats(ds_meta.stats, rename_map),
+            preprocessor_overrides={
+                "device_processor": {"device": device},
+                "rename_observations_processor": {"rename_map": rename_map},
+            },
         )
 
         print(f"✓ Policy loaded  ({type(self.policy).__name__}  device={device})")
@@ -567,6 +585,8 @@ def main():
                         help="Control frequency in Hz (default: 30)")
     parser.add_argument("--actions-per-chunk", "--actions_per_chunk", type=int, default=None,
                         help="Override policy n_action_steps; 1 runs policy inference every control step")
+    parser.add_argument("--rename-map", "--rename_map", type=parse_rename_map, default={},
+                        help="JSON mapping from incoming/dataset observation keys to policy observation keys")
     parser.add_argument("--dry-run",     action="store_true",
                         help="Print actions without sending them to the robot")
     parser.add_argument("--show-images", action="store_true",
@@ -584,6 +604,7 @@ def main():
         dataset_repo_id=args.dataset_repo_id,
         device=args.device,
         actions_per_chunk=args.actions_per_chunk,
+        rename_map=args.rename_map,
     )
 
     print("\n" + "=" * 45)

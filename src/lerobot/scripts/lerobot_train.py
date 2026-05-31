@@ -436,7 +436,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             if wandb_logger:
                 wandb_log_dict = train_tracker.to_dict()
                 if output_dict:
+                    output_dict.pop("loss_per_dim", None)  # add this line
                     wandb_log_dict.update(output_dict)
+                print("DEBUG wandb_log_dict:", {k: (v, type(v)) for k, v in wandb_log_dict.items()})
                 # Log RA-BC statistics if enabled
                 if rabc_weights is not None:
                     rabc_stats = rabc_weights.get_stats()
