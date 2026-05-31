@@ -329,10 +329,50 @@ full LIBERO suite. The same command works for other released MolmoAct2
 checkpoints as long as the requested `policy.norm_tag` exists in that
 checkpoint's `norm_stats.json`.
 
+### RTC Rollout With Original MolmoAct2 Weight
+
+Use `policy.type=molmoact2` with `policy.checkpoint_path` for RTC rollout from
+an original MolmoAct2 HF checkpoint.
+
+```bash
+lerobot-rollout \
+  --robot.type=<robot_type> \
+  --robot.port=<robot_port> \
+  --task="<task instruction>" \
+  --policy.type=molmoact2 \
+  --policy.checkpoint_path=allenai/MolmoAct2-LIBERO \
+  --policy.norm_tag=libero \
+  --policy.inference_action_mode=continuous \
+  --policy.device=cuda \
+  --inference.type=rtc
+```
+
+### Async Inference With Original MolmoAct2 Weight
+
+For async inference, start the policy server normally, then pass the original HF
+checkpoint path and the required MolmoAct2 config values from the robot client.
+
+```bash
+python -m lerobot.async_inference.policy_server \
+  --host=127.0.0.1 \
+  --port=8080
+
+python -m lerobot.async_inference.robot_client \
+  --server_address=127.0.0.1:8080 \
+  --robot.type=<robot_type> \
+  --robot.port=<robot_port> \
+  --task="<task instruction>" \
+  --policy_type=molmoact2 \
+  --pretrained_name_or_path=allenai/MolmoAct2-LIBERO \
+  --policy_config_overrides='{"norm_tag":"libero","inference_action_mode":"continuous"}' \
+  --policy_device=cuda \
+  --actions_per_chunk=10
+```
+
 ### Common Evaluation Options
 
-- `policy.inference_action_mode`: required for rollout. Use `continuous` for
-  flow-matching inference or `discrete` for action-token inference. It must be
+- `policy.inference_action_mode`: defaults to `continuous` for flow-matching
+  inference. Set this to `discrete` for action-token inference. It must be
   compatible with the training-time `policy.action_mode` saved in the
   checkpoint.
 - `policy.path`: LeRobot checkpoint path or Hub repo. Use this for checkpoints

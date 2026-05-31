@@ -149,14 +149,29 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         policy_class = get_policy_class(self.policy_type)
 
         start = time.perf_counter()
-        self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
+        policy_config_overrides = dict(policy_specs.policy_config_overrides or {})
+        if policy_config_overrides and self.policy_type != "molmoact2":
+            raise ValueError(
+                "`policy_config_overrides` is currently only supported for policy_type='molmoact2'."
+            )
+        if self.policy_type == "molmoact2":
+            policy_config_overrides["async_lerobot_features"] = policy_specs.lerobot_features
+
+        self.policy = policy_class.from_pretrained(
+            policy_specs.pretrained_name_or_path,
+            **policy_config_overrides,
+        )
         self.policy.to(self.device)
 
         # Load preprocessor and postprocessor, overriding device to match requested device
         device_override = {"device": self.device}
+        processor_pretrained_path = policy_specs.pretrained_name_or_path
+        resolve_async_processor_path = getattr(self.policy.config, "async_processor_pretrained_path", None)
+        if callable(resolve_async_processor_path):
+            processor_pretrained_path = resolve_async_processor_path(processor_pretrained_path)
         self.preprocessor, self.postprocessor = make_pre_post_processors(
             self.policy.config,
-            pretrained_path=policy_specs.pretrained_name_or_path,
+            pretrained_path=processor_pretrained_path,
             preprocessor_overrides={
                 "device_processor": device_override,
                 "rename_observations_processor": {"rename_map": policy_specs.rename_map},

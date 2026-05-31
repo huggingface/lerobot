@@ -31,18 +31,22 @@ import logging
 import os
 import types
 from collections import deque
-from contextlib import nullcontext
+from contextlib import nullcontext, suppress
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
+from huggingface_hub import hf_hub_download
+from huggingface_hub.constants import CONFIG_NAME
+from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import load_file as load_safetensors_file
 from torch import Tensor
 from torch.distributions import Beta
 
+from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.constants import ACTION
+from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import (
     _peft_available,
     _scipy_available,
@@ -181,6 +185,20 @@ def _load_hf_norm_metadata_for_tag(
     return metadata
 
 
+def _stats_dim(stats: Any) -> int | None:
+    if not isinstance(stats, dict):
+        return None
+    for key in ("q01", "q99", "mean", "std", "min", "max"):
+        values = stats.get(key)
+        if values is None:
+            continue
+        try:
+            return int(len(values))
+        except TypeError:
+            continue
+    return None
+
+
 def _apply_norm_tag_metadata(config: MolmoAct2Config) -> None:
     """Populate config fields from the checkpoint's norm-tag metadata."""
     if not str(config.norm_tag or "").strip():
@@ -195,10 +213,24 @@ def _apply_norm_tag_metadata(config: MolmoAct2Config) -> None:
         config.chunk_size = int(metadata["action_horizon"])
     if metadata.get("n_action_steps") is not None:
         config.n_action_steps = int(metadata["n_action_steps"])
+    state_dim = _stats_dim(metadata.get("state_stats"))
+    if state_dim is not None and OBS_STATE not in config.input_features:
+        config.input_features[OBS_STATE] = PolicyFeature(
+            type=FeatureType.STATE,
+            shape=(state_dim,),
+        )
+    action_dim = _stats_dim(metadata.get("action_stats"))
+    if action_dim is not None and ACTION not in config.output_features:
+        config.output_features[ACTION] = PolicyFeature(
+            type=FeatureType.ACTION,
+            shape=(action_dim,),
+        )
     if not config.setup_type and metadata.get("setup_type") is not None:
         config.setup_type = str(metadata["setup_type"])
     if not config.control_mode and metadata.get("control_mode") is not None:
         config.control_mode = str(metadata["control_mode"])
+    if not config.image_keys and isinstance(metadata.get("camera_keys"), list):
+        config.image_keys = [str(key) for key in metadata["camera_keys"]]
 
 
 def _saved_policy_action_mode(config: MolmoAct2Config) -> str | None:
@@ -274,10 +306,7 @@ def _resolve_inference_action_mode(
     if requested_mode is None:
         requested_mode = config.inference_action_mode
     if requested_mode is None:
-        raise ValueError(
-            "MolmoAct2 inference requires `inference_action_mode` to be set explicitly "
-            "to either 'continuous' or 'discrete'."
-        )
+        requested_mode = "continuous"
     if requested_mode not in {"continuous", "discrete"}:
         raise ValueError("MolmoAct2 inference_action_mode must be either 'continuous' or 'discrete'.")
     if requested_mode == "continuous" and training_mode == "discrete":
@@ -318,6 +347,41 @@ def _strict_load_safetensors_weights(model: torch.nn.Module, checkpoint_location
         f"MolmoAct2 checkpoint at {checkpoint_location} must contain {SAFE_WEIGHTS_NAME} "
         f"or {SAFE_WEIGHTS_INDEX_NAME}."
     )
+
+
+def _is_lerobot_policy_checkpoint(
+    pretrained_name_or_path: str | os.PathLike,
+    *,
+    revision: str | None = None,
+    force_download: bool = False,
+    local_files_only: bool = False,
+    cache_dir: str | os.PathLike | None = None,
+) -> bool:
+    model_id = str(pretrained_name_or_path)
+    config_file: str | None = None
+    if os.path.isdir(model_id):
+        candidate = os.path.join(model_id, CONFIG_NAME)
+        if os.path.exists(candidate):
+            config_file = candidate
+    else:
+        try:
+            config_file = hf_hub_download(
+                repo_id=model_id,
+                filename=CONFIG_NAME,
+                revision=revision,
+                cache_dir=cache_dir,
+                force_download=force_download,
+                token=_hf_token(),
+                local_files_only=local_files_only,
+            )
+        except (HfHubHTTPError, FileNotFoundError, OSError):
+            return False
+
+    if config_file is None:
+        return False
+    with suppress(OSError, json.JSONDecodeError), open(config_file, encoding="utf-8") as f:
+        return json.load(f).get("type") == "molmoact2"
+    return False
 
 
 def _sample_beta_timesteps(
@@ -532,6 +596,59 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
     def supports_rtc(self) -> bool:
         return self.config.inference_action_mode == "continuous"
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        pretrained_name_or_path: str | os.PathLike,
+        *,
+        config: MolmoAct2Config | None = None,
+        force_download: bool = False,
+        resume_download: bool | None = None,
+        proxies: dict | None = None,
+        token: str | bool | None = None,
+        cache_dir: str | os.PathLike | None = None,
+        local_files_only: bool = False,
+        revision: str | None = None,
+        strict: bool = False,
+        **kwargs,
+    ) -> MolmoAct2Policy:
+        if config is not None or _is_lerobot_policy_checkpoint(
+            pretrained_name_or_path,
+            revision=revision,
+            force_download=force_download,
+            local_files_only=local_files_only,
+            cache_dir=cache_dir,
+        ):
+            return super().from_pretrained(
+                pretrained_name_or_path,
+                config=config,
+                force_download=force_download,
+                resume_download=resume_download,
+                proxies=proxies,
+                token=token,
+                cache_dir=cache_dir,
+                local_files_only=local_files_only,
+                revision=revision,
+                strict=strict,
+                **kwargs,
+            )
+
+        config_kwargs = dict(kwargs)
+        async_lerobot_features = config_kwargs.pop("async_lerobot_features", None)
+        config_kwargs.setdefault("checkpoint_path", str(pretrained_name_or_path))
+        if revision is not None:
+            config_kwargs.setdefault("checkpoint_revision", revision)
+        if force_download:
+            config_kwargs.setdefault("checkpoint_force_download", True)
+        policy_config = cls.config_class(**config_kwargs)
+        if isinstance(async_lerobot_features, dict):
+            policy_config.apply_async_lerobot_features(async_lerobot_features)
+        policy_config._uses_original_hf_checkpoint = True
+        policy = cls(policy_config)
+        policy.to(policy_config.device)
+        policy.eval()
+        return policy
 
     def __init__(
         self,
@@ -935,7 +1052,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
             )
         else:
             expected_timesteps_shape = (batch_size, num_flow_timesteps)
-            timesteps = timesteps.to(device=device, dtype=action_dtype)
+            timesteps = timesteps.to(device=device, dtype=actions.dtype)
             if tuple(timesteps.shape) != expected_timesteps_shape:
                 raise ValueError(
                     f"flow timesteps must have shape {expected_timesteps_shape}, got {tuple(timesteps.shape)}."
