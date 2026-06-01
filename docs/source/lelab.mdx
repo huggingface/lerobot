@@ -1,42 +1,26 @@
 # LeLab - LeRobot Guide
-Graphical user interfaces are the easiest to use for beginners because it's easy to just click everything without remembering the proper commands. That's why we built LeLab which is a GUI built on top of the LeRobot library. With this app you will be able to add robots, collect datasets, train and deploy models.
+
+LeLab is a graphical user interface built on top of the LeRobot library, designed to make robotics accessible without needing to memorize CLI commands. From a single app you can configure your robot, teleoperate it, collect datasets, train policies locally or on cloud GPUs via HF Jobs, and deploy trained models back onto your robot. It's the easiest way to go from an unboxed SO-101 to a working policy, and a great companion for anyone learning the LeRobot workflow. Source code and issues live on GitHub: [huggingface/leLab](https://github.com/huggingface/leLab).
+
+🎥 *Video walkthrough coming soon.*
 
 ### Installation
-To install lerobot you can simply copy the following command and paste into your terminal. For it to work you need to have `uv` installed, [here is how to do it.](https://docs.astral.sh/uv/getting-started/installation/) 
+
+Requires [`uv`](https://docs.astral.sh/uv/getting-started/installation/). Install and launch in one command:
+
 ```
 uv tool install git+https://github.com/huggingface/leLab.git && lelab
 ```
 
-Once installed you will be able to run lelab anytime you want with `lelab` command from your terminal (above command has it included at the end so it will run it right after installation).
+After install, run `lelab` from your terminal anytime to start the app.
 
-### Adding robots
+### Features
 
-##### Calibration
-You will need to select the proper arm type (leader or follower) and calibrate each arm as shown in the video available inside LeLab. Make sure that all joints are in the middle position when starting the calibration.
-
-##### Adding cameras
-At the bottom of the add robot page you can also add the cameras and name them accordingly. 
-
-### Teleoperation
-Once the robots have been configured you can go back and click the teleoperation button. You will see the 3D visualization of the arm and will be able to control the follower with the leader. If something doesn't work there, remove and add your robot again following the steps described in LeLab.
-
-### Recording a dataset
-Type a new name for your dataset and press on the plus button. You will need to provide:
-- Task description, for example "put the cube in a container"
-- Number of episodes that you want to record, at least 30 recommended
-- Episode and reset durations. These are max durations and can be shortened while recording with a spacebar press.
-- If you configured your cameras earlier you don't need to do that again.
-
-Press start recording, wait for it to load, perform the task with confident movements but don't rush. Once the task is finished and you moved your robot to the initial position press the spacebar. You will have time to reset the environment for example grab the cube from the container and placing it on the desk again. Once ready press the spacebar and record the next episode. Repeat until all the episodes are recorded.
-
-### Training a model
-This is the most powerful function with LeLab! You can easily train models locally on your own computer but also with [HF Jobs](https://huggingface.co/docs/huggingface_hub/en/guides/jobs) which gives you easy access to very powerful GPUs with clear pricing.
-
-> [!TIP]
-> To use HF Jobs make sure that you are logged in to HF, you can do that by running `hf auth login` in the terminal.
-
-In the training tab select if you want to train locally or specific HF hardware you want to use. You will also need to provide the dataset that will be used for training. Your own datasets will be listed in a dropdown list, you can also use other datasets by providing its id. Set the policy you want to train, batch size and number of steps. For guide on choosing hardware and batch size check out our [Compute HW Guide for LeRobot Training.](hardware_guide.mdx) 
-
-Once you start training the progress will be visualized inside LeLab. Checkpoints will be saved as well.
-### Running the model on a robot
-In the main view of the LeLab under jobs you will see all the models that you trained. To run the policy on the robot just click the green run button and press start inference. After loading the policy the robot should start solving the task that it learned during training.
+- **Add robots** — Select arm type (leader/follower), calibrate each joint from the middle position, and attach cameras.
+- **Teleoperation** — Control the follower arm with the leader and see a live 3D visualization of the arms.
+- **Dataset recording** — Define a task description, number of episodes, and episode/reset durations. Press spacebar to advance between episodes. 30+ episodes recommended.
+- **Local training** — Train a policy directly on your own machine with a selected dataset, policy type, batch size, and step count.
+- **Cloud training with HF Jobs** — Train on powerful GPUs via [HF Jobs](https://huggingface.co/docs/huggingface_hub/en/guides/jobs) with transparent pricing. Run `hf auth login` first. See the [Compute HW Guide](hardware_guide.mdx) for hardware/batch size tips.
+- **Training visualization** — Watch progress live in the app, with checkpoints saved automatically.
+- **Run trained policies** — Pick any model from your jobs list and run inference on your robot with one click.
+- **Use community datasets** — Provide any Hugging Face dataset ID to train on datasets you didn't record yourself.
