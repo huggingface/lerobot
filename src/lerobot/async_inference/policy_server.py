@@ -153,8 +153,10 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.lerobot_features = policy_specs.lerobot_features
         self.actions_per_chunk = policy_specs.actions_per_chunk
         # Update server config with similarity function from client
-        self.config.similarity_fn_name = policy_specs.similarity_fn_name
-        self.config.similarity_fn = get_similarity_function(policy_specs.similarity_fn_name)
+        # Use getattr with default for backward compatibility with older clients
+        similarity_fn_name = getattr(policy_specs, "similarity_fn_name", "euclidean")
+        self.config.similarity_fn_name = similarity_fn_name
+        self.config.similarity_fn = get_similarity_function(similarity_fn_name)
 
         policy_class = get_policy_class(self.policy_type)
 

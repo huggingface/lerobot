@@ -16,6 +16,7 @@ import logging
 import logging.handlers
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -277,7 +278,7 @@ def _compare_observation_states(
     obs1_state: torch.Tensor,
     obs2_state: torch.Tensor,
     atol: float,
-    similarity_fn: callable,
+    similarity_fn: Callable[[torch.Tensor, torch.Tensor, float], bool],
 ) -> bool:
     """Check if two observation states are similar, under a tolerance threshold"""
     return bool(similarity_fn(obs1_state, obs2_state, atol))
@@ -287,7 +288,7 @@ def observations_similar(
     obs1: TimedObservation,
     obs2: TimedObservation,
     lerobot_features: dict[str, dict],
-    similarity_fn,
+    similarity_fn=None,
     atol: float = 1,
 ) -> bool:
     """Check if two observations are similar, under a tolerance threshold. Measures distance between
@@ -297,6 +298,10 @@ def observations_similar(
     An immediate next step is to use (fast) perceptual difference metrics comparing some camera views,
     to surpass this joint-space similarity check.
     """
+    # Default to euclidean distance for backward compatibility
+    if similarity_fn is None:
+        similarity_fn = lambda s1, s2, tol: torch.linalg.norm(s1 - s2) < tol
+    
     obs1_state = extract_state_from_raw_observation(
         make_lerobot_observation(obs1.get_observation(), lerobot_features)
     )
