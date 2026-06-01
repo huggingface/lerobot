@@ -258,10 +258,16 @@ class _FakeVideoProcessor:
 
 @pytest.fixture
 def patch_vla_jepa_external_models(monkeypatch: pytest.MonkeyPatch) -> None:
-    from transformers import AutoModel, AutoVideoProcessor
-
     from lerobot.policies.vla_jepa import modeling_vla_jepa
 
     monkeypatch.setattr(modeling_vla_jepa, "Qwen3VLInterface", _FakeQwenInterface)
-    monkeypatch.setattr(AutoModel, "from_pretrained", lambda *args, **kwargs: _FakeVideoEncoder())
-    monkeypatch.setattr(AutoVideoProcessor, "from_pretrained", lambda *args, **kwargs: _FakeVideoProcessor())
+    monkeypatch.setattr(
+        modeling_vla_jepa.AutoModel,
+        "from_pretrained",
+        lambda *args, **kwargs: _FakeVideoEncoder(),
+    )
+    monkeypatch.setattr(
+        modeling_vla_jepa.AutoVideoProcessor,
+        "from_pretrained",
+        lambda *args, **kwargs: _FakeVideoProcessor(),
+    )
