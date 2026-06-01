@@ -222,6 +222,8 @@ class RobotClientConfig:
             raise ValueError(f"actions_per_chunk must be positive, got {self.actions_per_chunk}")
 
         self.aggregate_fn = get_aggregate_function(self.aggregate_fn_name)
+        # Validate similarity_fn_name early (will raise ValueError if invalid)
+        get_similarity_function(self.similarity_fn_name)
 
     @classmethod
     def from_dict(cls, config_dict: dict) -> "RobotClientConfig":
