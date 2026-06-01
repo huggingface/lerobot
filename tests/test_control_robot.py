@@ -27,8 +27,8 @@ from lerobot.scripts.lerobot_record import RecordConfig, record
 from lerobot.scripts.lerobot_replay import DatasetReplayConfig, ReplayConfig, replay
 from lerobot.scripts.lerobot_teleoperate import TeleoperateConfig, teleoperate
 from tests.fixtures.constants import DUMMY_REPO_ID
-from tests.mocks.mock_robot import MockRobotConfig
-from tests.mocks.mock_teleop import MockTeleopConfig
+from tests.mocks.mock_robot import MockRobot, MockRobotConfig
+from tests.mocks.mock_teleop import MockTeleop, MockTeleopConfig
 
 
 def test_calibrate():
@@ -127,3 +127,43 @@ def test_record_and_replay(tmp_path):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(tmp_path / "record_and_replay")
         replay(replay_cfg)
+
+
+def test_record_connects_teleop_before_robot(tmp_path):
+    # Regression test for #3684: the teleoperator must connect before the robot, so the robot
+    # isn't left idle holding a default pose (and possibly tripping a firmware watchdog) while
+    # the teleoperator initializes.
+    robot_cfg = MockRobotConfig()
+    teleop_cfg = MockTeleopConfig()
+    dataset_cfg = DatasetRecordConfig(
+        repo_id=DUMMY_REPO_ID,
+        single_task="Dummy task",
+        root=tmp_path / "record_connect_order",
+        num_episodes=1,
+        episode_time_s=0.1,
+        reset_time_s=0,
+        push_to_hub=False,
+    )
+    cfg = RecordConfig(
+        robot=robot_cfg,
+        dataset=dataset_cfg,
+        teleop=teleop_cfg,
+        play_sounds=False,
+    )
+
+    connect_order = []
+
+    def make_spy(name, real_connect):
+        def spy(self, *args, **kwargs):
+            connect_order.append(name)
+            return real_connect(self, *args, **kwargs)
+
+        return spy
+
+    with (
+        patch.object(MockRobot, "connect", make_spy("robot", MockRobot.connect)),
+        patch.object(MockTeleop, "connect", make_spy("teleop", MockTeleop.connect)),
+    ):
+        record(cfg)
+
+    assert connect_order == ["teleop", "robot"]

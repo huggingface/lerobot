@@ -437,11 +437,8 @@ def record(
                 encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
             )
 
-        # Connect the teleoperator before the robot. Many robots' connect()/reset() leaves
-        # them holding a default pose under a firmware watchdog; if teleop.connect() (model
-        # loading, IK init, network setup, ...) then takes longer than that watchdog, the
-        # joints drop to damping and the first send_action() makes the robot jump. Mirrors
-        # the ordering already used in lerobot_teleoperate.py.
+        # Connect the teleoperator before the robot so the robot isn't left idle (and possibly
+        # tripping a firmware watchdog) during teleop init. Matches lerobot_teleoperate.py.
         if teleop is not None:
             teleop.connect()
         robot.connect()
