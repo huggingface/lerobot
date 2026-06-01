@@ -24,4 +24,8 @@ Code: https://github.com/NVIDIA/Isaac-GR00T
 
 Blog: https://developer.nvidia.com/isaac/gr00t
 
-Hugging Face Model: https://huggingface.co/nvidia/GR00T-N1.5-3B
+Hugging Face Models:
+
+- GR00T N1.5: https://huggingface.co/nvidia/GR00T-N1.5-3B
+- GR00T N1.7: https://huggingface.co/nvidia/GR00T-N1.7-3B
+- GR00T N1.7 LIBERO checkpoints: https://huggingface.co/nvidia/GR00T-N1.7-LIBERO
