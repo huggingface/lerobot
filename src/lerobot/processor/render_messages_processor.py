@@ -50,7 +50,14 @@ class RenderMessagesStep(ProcessorStep):
         events = complementary_data.get(LANGUAGE_EVENTS) or []
 
         if not persistent and not events:
-            return transition
+            rendered = _fallback_low_level_render(complementary_data.get("task"))
+            if rendered is None:
+                return transition
+            new_transition = transition.copy()
+            new_complementary_data = dict(new_transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
+            new_complementary_data.update(rendered)
+            new_transition[TransitionKey.COMPLEMENTARY_DATA] = new_complementary_data
+            return new_transition
 
         if _is_batched_language(persistent) or _is_batched_language(events):
             return self._call_batch(transition, complementary_data, persistent, events)
@@ -191,6 +198,22 @@ def _fallback_low_level_render(task: Any) -> dict[str, Any] | None:
     """Keep action-only samples trainable when no recipe branch matches."""
     if hasattr(task, "item"):
         task = task.item()
+    if isinstance(task, list):
+        messages = []
+        message_streams = []
+        target_message_indices = []
+        for t in task:
+            rendered = _fallback_low_level_render(t)
+            if rendered is None:
+                return None
+            messages.append(rendered["messages"])
+            message_streams.append(rendered["message_streams"])
+            target_message_indices.append(rendered["target_message_indices"])
+        return {
+            "messages": messages,
+            "message_streams": message_streams,
+            "target_message_indices": target_message_indices,
+        }
     if not isinstance(task, str) or not task:
         return None
     return {

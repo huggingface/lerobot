@@ -95,6 +95,67 @@ from lerobot.utils.utils import (
 )
 
 
+def _wrap_text_to_width(text: str, cv2, font, scale: int, thickness: int, max_width: int) -> list[str]:
+    """Greedy word-wrap using measured pixel width so text fits the frame."""
+    words = text.split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        (w, _), _ = cv2.getTextSize(candidate, font, scale, thickness)
+        if w > max_width and current:
+            lines.append(current)
+            current = word
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+    return lines or [""]
+
+
+def _annotate_eval_frames(
+    frames: np.ndarray, task: str | None, subtask: str | None
+) -> np.ndarray:
+    """Overlay the high-level task and predicted subtask onto rendered frames.
+
+    ``frames`` is ``(n_envs, H, W, C)`` uint8. Best-effort: if OpenCV isn't
+    available the frames are returned unchanged so eval never fails over a
+    visualization concern.
+    """
+    if frames.ndim != 4 or frames.shape[-1] != 3:
+        return frames
+    try:
+        import cv2  # noqa: PLC0415
+    except ImportError:
+        return frames
+
+    width = frames.shape[2]
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = 0.5
+    margin = 6
+    max_width = width - 2 * margin
+
+    lines: list[str] = []
+    if task:
+        lines += _wrap_text_to_width(f"Task: {task}", cv2, font, scale, 1, max_width)
+    if subtask:
+        lines += _wrap_text_to_width(f"Subtask: {subtask}", cv2, font, scale, 1, max_width)
+    if not lines:
+        return frames
+
+    out = frames.copy()
+    for i in range(out.shape[0]):
+        img = np.ascontiguousarray(out[i])
+        y = 18
+        for line in lines:
+            # Black outline then white fill so text stays legible on any scene.
+            cv2.putText(img, line, (margin, y), font, scale, (0, 0, 0), 3, cv2.LINE_AA)
+            cv2.putText(img, line, (margin, y), font, scale, (255, 255, 255), 1, cv2.LINE_AA)
+            y += 20
+        out[i] = img
+    return out
+
+
 def rollout(
     env: gym.vector.VectorEnv,
     policy: PreTrainedPolicy,
@@ -325,11 +386,42 @@ def eval_policy(
             return
         n_to_render_now = min(max_episodes_rendered - n_episodes_rendered, env.num_envs)
         if isinstance(env, gym.vector.SyncVectorEnv):
-            ep_frames.append(np.stack([env.envs[i].render() for i in range(n_to_render_now)]))  # noqa: B023
+            frames = np.stack([env.envs[i].render() for i in range(n_to_render_now)])  # noqa: B023
         elif hasattr(env, "call"):
             # Here we must render all frames and discard any we don't need.
             # Covers AsyncVectorEnv and _LazyAsyncVectorEnv (which wraps one).
-            ep_frames.append(np.stack(env.call("render")[:n_to_render_now]))
+            frames = np.stack(env.call("render")[:n_to_render_now])
+        else:
+            return
+
+        # Overlay the high-level task and (for hierarchical policies like
+        # pi052) the predicted low-level subtask onto each frame. Both are
+        # best-effort: missing values just skip that line.
+        try:
+            tasks = list(env.call("task_description"))
+        except (AttributeError, NotImplementedError):
+            try:
+                tasks = list(env.call("task"))
+            except (AttributeError, NotImplementedError):
+                tasks = None
+        # Per-env subtasks when available (batched hierarchical policies);
+        # fall back to the scalar last_subtask for single-env / other policies.
+        subtasks = getattr(policy, "last_subtasks", None)
+        subtask_scalar = getattr(policy, "last_subtask", None)
+        annotated = []
+        for i in range(frames.shape[0]):
+            if subtasks is not None and i < len(subtasks):
+                subtask_i = subtasks[i]
+            else:
+                subtask_i = subtask_scalar
+            annotated.append(
+                _annotate_eval_frames(
+                    frames[i : i + 1],
+                    tasks[i] if tasks is not None and i < len(tasks) else None,
+                    subtask_i,
+                )[0]
+            )
+        ep_frames.append(np.stack(annotated))
 
     if max_episodes_rendered > 0:
         video_paths: list[str] = []
