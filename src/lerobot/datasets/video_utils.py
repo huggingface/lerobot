@@ -273,12 +273,8 @@ class VideoDecoderCache:
                 self._cache.move_to_end(video_path)
                 return entry[0]
 
-            file_handle = fsspec.open(video_path).__enter__()
-            try:
-                decoder = VideoDecoder(file_handle, seek_mode="approximate")
-            except Exception:
-                file_handle.close()
-                raise
+            file_handle = None
+            decoder = VideoDecoder(video_path, seek_mode="approximate")
             self._cache[video_path] = (decoder, file_handle)
 
             # Evict LRU entries until we are back under the cap. We close

@@ -17,6 +17,7 @@
 import logging
 from functools import cached_property
 
+from lerobot.cameras.opencv import OpenCVCamera  # or IntelRealSenseCamera etc.
 from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
@@ -30,6 +31,11 @@ logger = logging.getLogger(__name__)
 class BiSOFollower(Robot):
     """
     [Bimanual SO Follower Arms](https://github.com/TheRobotStudio/SO-ARM100) designed by TheRobotStudio
+
+    Cameras can be attached in three ways:
+      - per-arm:  left_arm_config.cameras / right_arm_config.cameras
+      - global:   BiSOFollowerConfig.top_cameras   ← for overhead/external cameras
+                  that don't belong to either arm
     """
 
     config_class = BiSOFollowerConfig
@@ -62,28 +68,51 @@ class BiSOFollower(Robot):
         self.left_arm = SOFollower(left_arm_config)
         self.right_arm = SOFollower(right_arm_config)
 
-        # Only for compatibility with other parts of the codebase that expect a `robot.cameras` attribute
-        self.cameras = {**self.left_arm.cameras, **self.right_arm.cameras}
+        # ── Top / global cameras ──────────────────────────────────────────────
+        # Instantiate each camera from the configs provided in BiSOFollowerConfig.
+        # These are NOT prefixed with left_/right_ — their keys are used as-is.
+        self.top_cameras: dict = {
+            name: OpenCVCamera(cam_cfg)
+            for name, cam_cfg in (config.top_cameras or {}).items()
+        }
+
+        # Expose a unified cameras dict for compatibility with the rest of the codebase.
+        # Order: left-arm cameras, right-arm cameras, then global top cameras.
+        self.cameras = {
+            **self.left_arm.cameras,
+            **self.right_arm.cameras,
+            **self.top_cameras,
+        }
+
+    # ── Feature descriptors ───────────────────────────────────────────────────
 
     @property
     def _motors_ft(self) -> dict[str, type]:
-        left_arm_motors_ft = self.left_arm._motors_ft
-        right_arm_motors_ft = self.right_arm._motors_ft
-
         return {
-            **{f"left_{k}": v for k, v in left_arm_motors_ft.items()},
-            **{f"right_{k}": v for k, v in right_arm_motors_ft.items()},
+            **{f"left_{k}": v  for k, v in self.left_arm._motors_ft.items()},
+            **{f"right_{k}": v for k, v in self.right_arm._motors_ft.items()},
         }
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
-        left_arm_cameras_ft = self.left_arm._cameras_ft
-        right_arm_cameras_ft = self.right_arm._cameras_ft
-
-        return {
-            **{f"left_{k}": v for k, v in left_arm_cameras_ft.items()},
-            **{f"right_{k}": v for k, v in right_arm_cameras_ft.items()},
+        # Per-arm camera features keep their left_/right_ prefixes (set by SOFollower).
+        arm_camera_ft = {
+            **{f"left_{k}": v  for k, v in self.left_arm._cameras_ft.items()},
+            **{f"right_{k}": v for k, v in self.right_arm._cameras_ft.items()},
         }
+
+        # ── Top camera features ───────────────────────────────────────────────
+        # Shape is read directly from the camera config so it matches
+        # the tensors returned by async_read() / read().
+        top_camera_ft = {}
+        for name, cam in self.top_cameras.items():
+            top_camera_ft[f"observation.images.{name}"] = (
+                cam.config.height,
+                cam.config.width,
+                cam.config.channels if hasattr(cam.config, "channels") else 3,
+            )
+
+        return {**arm_camera_ft, **top_camera_ft}
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
@@ -93,14 +122,22 @@ class BiSOFollower(Robot):
     def action_features(self) -> dict[str, type]:
         return self._motors_ft
 
+    # ── Connection lifecycle ──────────────────────────────────────────────────
+
     @property
     def is_connected(self) -> bool:
-        return self.left_arm.is_connected and self.right_arm.is_connected
+        top_connected = all(cam.is_connected for cam in self.top_cameras.values())
+        return self.left_arm.is_connected and self.right_arm.is_connected and top_connected
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
         self.left_arm.connect(calibrate)
         self.right_arm.connect(calibrate)
+
+        # ── Connect top cameras ───────────────────────────────────────────────
+        for name, cam in self.top_cameras.items():
+            cam.connect()
+            logger.info(f"Top camera '{name}' connected.")
 
     @property
     def is_calibrated(self) -> bool:
@@ -118,41 +155,53 @@ class BiSOFollower(Robot):
         self.left_arm.setup_motors()
         self.right_arm.setup_motors()
 
+    # ── Observation / action ──────────────────────────────────────────────────
+
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
         obs_dict = {}
 
-        # Add "left_" prefix
         left_obs = self.left_arm.get_observation()
         obs_dict.update({f"left_{key}": value for key, value in left_obs.items()})
 
-        # Add "right_" prefix
         right_obs = self.right_arm.get_observation()
         obs_dict.update({f"right_{key}": value for key, value in right_obs.items()})
+
+        # ── Read top cameras ──────────────────────────────────────────────────
+        # Keys match those registered in _cameras_ft so the dataset writer
+        # picks them up automatically.
+        for name, cam in self.top_cameras.items():
+            obs_dict[f"observation.images.{name}"] = cam.async_read(timeout_ms=200)
 
         return obs_dict
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
-        # Remove "left_" prefix
         left_action = {
-            key.removeprefix("left_"): value for key, value in action.items() if key.startswith("left_")
+            key.removeprefix("left_"): value
+            for key, value in action.items()
+            if key.startswith("left_")
         }
-        # Remove "right_" prefix
         right_action = {
-            key.removeprefix("right_"): value for key, value in action.items() if key.startswith("right_")
+            key.removeprefix("right_"): value
+            for key, value in action.items()
+            if key.startswith("right_")
         }
 
-        sent_action_left = self.left_arm.send_action(left_action)
-        sent_action_right = self.right_arm.send_action(right_action)
+        sent_left  = self.left_arm.send_action(left_action)
+        sent_right = self.right_arm.send_action(right_action)
 
-        # Add prefixes back
-        prefixed_sent_action_left = {f"left_{key}": value for key, value in sent_action_left.items()}
-        prefixed_sent_action_right = {f"right_{key}": value for key, value in sent_action_right.items()}
-
-        return {**prefixed_sent_action_left, **prefixed_sent_action_right}
+        return {
+            **{f"left_{k}":  v for k, v in sent_left.items()},
+            **{f"right_{k}": v for k, v in sent_right.items()},
+        }
 
     @check_if_not_connected
     def disconnect(self):
         self.left_arm.disconnect()
         self.right_arm.disconnect()
+
+        # ── Disconnect top cameras ────────────────────────────────────────────
+        for name, cam in self.top_cameras.items():
+            cam.disconnect()
+            logger.info(f"Top camera '{name}' disconnected.")
