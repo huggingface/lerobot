@@ -71,10 +71,10 @@ CMD = (
     "--plan.n_task_rephrasings=0 "
     # action_records OFF: the structured {verb,object,arm,grasp,dest}
     # schema is a manipulation schema; RoboCasa navigation / atomic tasks
-    # don't fit it and the VLM hallucinates (e.g. "move stove to stove").
-    # Leave off unless annotating long composite manipulation tasks you've
-    # verified render cleanly (and even then replace_subtask_text stays
-    # off by default so records are additive, never overwriting subtasks).
+    # don't fit it and the VLM hallucinates. When on, records are purely
+    # additive (emitted as style="action_record" rows) and never touch
+    # the subtask text — useful only for long composite manipulation
+    # tasks. Leave off for RoboCasa atomic / navigation.
     # Keep subtask decomposition tight for atomic tasks:
     "--plan.plan_max_steps=6 "
     # Phase 2 — interjections + speech.

@@ -124,28 +124,24 @@ class PlanSubtasksMemoryModule:
         subtask_spans = self._generate_subtasks(record, task=effective_task)
 
         # ----------------------------------------------------------------
-        # Phase 1a + 1b: structured per-subtask action records
+        # Phase 1a: structured per-subtask action records (additive)
         # ----------------------------------------------------------------
         # When enabled, for every subtask span we ask the VLM for a typed
         # ActionRecord (verb / object / arm / grasp_type / destination /
-        # mistake). A deterministic Python template renders the record
-        # back to canonical subtask text. The render replaces the
-        # free-form subtask text (cleaner conditioning) and the typed
-        # record is emitted as a separate row for downstream use.
+        # mistake) and emit it as a separate ``style="action_record"``
+        # row for downstream use. This is purely additive — it never
+        # touches the VLM's subtask text (reconstructing subtask text
+        # from these fields was too easy to hallucinate on tasks that
+        # don't fit the manipulation schema).
         records_cfg = self.config.action_records
         action_records: list[dict[str, Any] | None] = [None] * len(subtask_spans)
         if records_cfg.enabled and subtask_spans:
             for i, span in enumerate(subtask_spans):
                 rec = self._extract_action_record(record, span, effective_task)
-                if rec is None:
-                    continue
-                action_records[i] = rec
-                if records_cfg.replace_subtask_text:
-                    canonical_text = self._render_action_record_to_subtask_text(rec)
-                    if canonical_text:
-                        span["text"] = canonical_text
+                if rec is not None:
+                    action_records[i] = rec
 
-        # subtask rows (may now reflect canonical-rendered text)
+        # subtask rows
         for i, span in enumerate(subtask_spans):
             rows.append(
                 {
@@ -395,60 +391,6 @@ class PlanSubtasksMemoryModule:
             "destination": destination,
             "mistake": mistake,
         }
-
-    @staticmethod
-    def _render_action_record_to_subtask_text(record: dict[str, Any]) -> str:
-        """Deterministic template: ``ActionRecord`` → canonical subtask text.
-
-        Mirrors the authoring guidance in ``module_1_subtasks.txt``:
-        imperative, drop articles / adverbs, use canonical object nouns,
-        append arm / grasp clauses only when present.
-
-        Examples (record → rendered text)::
-
-            {verb=pick, object=blue cube}
-                → "pick blue cube"
-            {verb=pick, object=blue cube, arm=left, grasp_type=pinch}
-                → "pick blue cube with left arm using pinch grip"
-            {verb=place, object=blue cube, destination=green box}
-                → "place blue cube in green box"
-            {verb=move, object=mug, destination=stove}
-                → "move mug to stove"
-        """
-        verb = (record.get("verb") or "").strip().lower()
-        obj = (record.get("object") or "").strip()
-        arm = (record.get("arm") or "").strip().lower() if record.get("arm") else ""
-        grasp = (record.get("grasp_type") or "").strip().lower() if record.get("grasp_type") else ""
-        dest = (record.get("destination") or "").strip() if record.get("destination") else ""
-
-        if not verb:
-            return ""
-
-        # Drop a degenerate destination that just echoes the object — the
-        # VLM sometimes fills both with the same noun (e.g. navigation:
-        # ``verb=move object=stove destination=stove`` → "move stove to
-        # stove"). Treat that as "no meaningful destination".
-        if dest and obj and dest.strip().lower() == obj.strip().lower():
-            dest = ""
-
-        parts: list[str] = [verb]
-        if obj:
-            parts.append(obj)
-        if dest:
-            # Pick a sensible preposition per verb family.
-            if verb in {"place", "put", "drop", "insert", "pour", "dump"}:
-                parts.append(f"in {dest}")
-            elif verb in {"move", "transport", "reach", "navigate"}:
-                parts.append(f"to {dest}")
-            else:
-                parts.append(f"at {dest}")
-        if arm == "both":
-            parts.append("with both arms")
-        elif arm in {"left", "right"}:
-            parts.append(f"with {arm} arm")
-        if grasp:
-            parts.append(f"using {grasp} grip")
-        return " ".join(parts)
 
     # ------------------------------------------------------------------
     # Structured 5-axis task augmentation (EgoMimic-style taxonomy)

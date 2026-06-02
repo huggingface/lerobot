@@ -92,20 +92,16 @@ class ActionRecordsConfig:
           "mistake": "<short text>" | null,
         }
 
-    A deterministic Python template then renders the record back to
-    canonical subtask text (e.g. ``pick blue cube with left arm using
-    pinch grip``). When ``replace_subtask_text=True``, the rendered text
-    REPLACES the VLM's free-form subtask text. This is OFF by default:
-    the structured fields are easy for the VLM to hallucinate on tasks
-    that don't fit the manipulation schema (e.g. navigation tasks yield
-    nonsense like ``move stove to stove``), and silently overwriting the
-    subtask text with a reconstruction is high-risk. Leave it off to keep
-    the original VLM subtask text and treat the record as additive
-    metadata; only flip it on for datasets you've verified render
-    cleanly. When ``emit_record_row=True`` (default), the structured
-    record is also emitted as a row with ``style="action_record"`` so
-    downstream consumers can train on the typed schema directly —
-    without touching the subtask text.
+    The record is emitted as a separate row with ``style="action_record"``
+    (``content=json.dumps(record)``) at the subtask's start timestamp.
+    It is PURELY ADDITIVE — it never touches the VLM's subtask text.
+    Downstream training can consume the typed schema directly (e.g.
+    auxiliary supervision on verb / arm / grasp classification heads)
+    while the subtask string the policy conditions on stays exactly what
+    the subtask module produced. (Reconstructing subtask text from these
+    fields was too easy for the VLM to hallucinate on tasks that don't
+    fit the manipulation schema — navigation tasks yielded nonsense like
+    ``move stove to stove`` — so that path was removed.)
 
     Cost: one extra VLM call per subtask. For an 8-subtask episode this
     means ~8x more VLM calls in the plan module — still cheap relative
@@ -114,18 +110,10 @@ class ActionRecordsConfig:
 
     enabled: bool = False
 
-    # When True, replace the VLM-generated subtask text with the
-    # deterministic template's rendering of the structured record.
-    # OFF by default — see class docstring. Overwriting good subtask
-    # text with a reconstruction of hallucinated structured fields is
-    # high-risk (navigation / non-manipulation tasks render to
-    # nonsense). Keep records additive (``emit_record_row``) instead.
-    replace_subtask_text: bool = False
-
-    # When True, emit a separate row with ``style="action_record"`` and
-    # ``content=json.dumps(record)`` at the subtask's start timestamp.
-    # Lets downstream training consume the typed schema directly (e.g.
-    # auxiliary supervision on verb/arm/grasp classification heads).
+    # When True (default), emit a separate row with ``style="action_record"``
+    # and ``content=json.dumps(record)`` at the subtask's start timestamp.
+    # This is the only output of the feature — set ``enabled=False`` to
+    # skip the extra VLM calls entirely.
     emit_record_row: bool = True
 
     # Frame sampling for the per-subtask VLM call (similar to the
