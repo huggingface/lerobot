@@ -571,8 +571,51 @@ class PlanSubtasksMemoryModule:
         # ---- Pass 3 (optional): verification / pruning ---------------
         if getattr(self.config, "subtask_verify", False):
             cleaned = self._verify_subtasks(record, effective_task, cleaned)
+            if not cleaned:
+                return []
+
+        # ---- Full-episode coverage stitch ----------------------------
+        # The VLM (especially after the verify pass prunes spans) can
+        # leave the first subtask starting after t0 or leave gaps between
+        # spans, so the subtask timeline no longer tiles the whole
+        # episode and frames fall through with no active subtask. Stitch
+        # the surviving spans into a contiguous cover of [t0, t_last].
+        if getattr(self.config, "subtask_full_coverage", True):
+            cleaned = self._stitch_full_coverage(cleaned, record)
 
         return cleaned
+
+    def _stitch_full_coverage(
+        self, spans: list[dict[str, Any]], record: EpisodeRecord
+    ) -> list[dict[str, Any]]:
+        """Make subtask spans tile the full episode with no gaps.
+
+        * The first subtask starts at the episode's first frame ``t0``
+          (any idle / approach before the first labelled action is folded
+          into it), so every early frame has an active subtask.
+        * Each subtask's ``end`` is snapped to the next subtask's
+          ``start`` (gaps between spans are closed), and the final
+          subtask's ``end`` extends to the last frame ``t_last``.
+
+        Starts are otherwise left as the (already frame-snapped, distinct)
+        values the VLM + verify produced — only the FIRST start is pulled
+        back to ``t0``, which can't collide with a later span because it
+        was already the earliest. Purely deterministic; runs after the
+        VLM passes.
+        """
+        if not spans or not record.frame_timestamps:
+            return spans
+        t0 = float(record.frame_timestamps[0])
+        t_last = float(record.frame_timestamps[-1])
+        spans = sorted(spans, key=lambda s: float(s["start"]))
+        spans[0]["start"] = t0
+        for i in range(len(spans) - 1):
+            spans[i]["end"] = float(spans[i + 1]["start"])
+        spans[-1]["end"] = t_last
+        for s in spans:
+            if float(s["end"]) < float(s["start"]):
+                s["end"] = float(s["start"])
+        return spans
 
     def _clean_spans(
         self, spans: Any, record: EpisodeRecord
