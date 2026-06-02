@@ -1,10 +1,10 @@
 #!/usr/bin/env python
-"""Launch ``lerobot-annotate`` on a Hugging Face job (vllm + Qwen3.6 MoE).
+"""Launch ``lerobot-annotate`` on a Hugging Face job (vllm + Qwen3.6-27B VLM).
 
 Spawns one ``h200x2`` job that:
 
   1. installs this branch of ``lerobot`` plus the annotation extras,
-  2. boots two vllm servers (one per GPU) with Qwen3.6-35B-A3B-FP8,
+  2. boots two vllm servers (one per GPU) with Qwen3.6-27B (dense VLM),
   3. runs the plan / interjections / vqa modules across the dataset
      in free-form mode (each episode generates its own subtasks +
      memory),
@@ -40,10 +40,10 @@ CMD = (
     "--dest_repo_id=pepijn223/robocasa_smoke_2atomic_v3_ann "
     "--push_to_hub=true "
     "--vlm.backend=openai "
-    "--vlm.model_id=Qwen/Qwen3.6-35B-A3B-FP8 "
+    "--vlm.model_id=Qwen/Qwen3.6-27B "
     "--vlm.parallel_servers=2 "
     "--vlm.num_gpus=2 "
-    '--vlm.serve_command="vllm serve Qwen/Qwen3.6-35B-A3B-FP8 '
+    '--vlm.serve_command="vllm serve Qwen/Qwen3.6-27B '
     "--tensor-parallel-size 1 --max-model-len 32768 "
     '--gpu-memory-utilization 0.8 --uvicorn-log-level warning --port {port}" '
     "--vlm.serve_ready_timeout_s=1800 "
