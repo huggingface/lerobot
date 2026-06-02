@@ -58,10 +58,18 @@ CMD = (
     # handing the server a file:// clip. The embedded path is more
     # reliable: if clip extraction ever fails, the video_url path would
     # silently send NO video and the VLM would hallucinate subtasks from
-    # the task text alone. 2 fps gives dense visual grounding so the VLM
-    # labels what actually happens.
-    "--plan.frames_per_second=2.0 "
+    # the task text alone.
+    #
+    # CONTEXT BUDGET: with embedded frames, each frame is ~250-320 vision
+    # tokens. The model's context is 32768 (see --max-model-len). 32
+    # frames sampled uniformly across the episode (~8-10k tokens) fits
+    # comfortably alongside the prompt and the describe/verify passes.
+    # Do NOT raise max_video_frames toward 128 with embedded frames — that
+    # is ~33-39k tokens and overflows the context (BadRequestError 400,
+    # "Input length exceeds maximum context length").
     "--plan.use_video_url=false "
+    "--plan.frames_per_second=1.0 "
+    "--plan.max_video_frames=32 "
     # IMPORTANT for RoboCasa: the dataset's task string ("Navigate to the
     # stove", "Pick the mug...") is authoritative and is what eval uses.
     # ``derive_task_from_video=off`` keeps that canonical task driving

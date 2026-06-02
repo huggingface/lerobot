@@ -44,9 +44,19 @@ class PlanConfig:
     derive_task_from_video: str = "if_short"
     derive_task_min_words: int = 3
 
-    # Frame sampling for the subtask-decomposition prompt.
+    # Frame sampling for the subtask-decomposition prompt. Frames are
+    # sampled uniformly across the whole episode up to ``max_video_frames``
+    # (so longer episodes are subsampled, not truncated).
+    #
+    # ``max_video_frames`` is a HARD context-budget cap. With the embedded-
+    # frame path (use_video_url=false), every frame becomes ~250-320 vision
+    # tokens, so 128 frames ≈ 33-39k tokens — over a 32k-context VLM. 32
+    # frames (~8-10k tokens) leaves ample room for the prompt + the
+    # describe / verify passes. Raise only if your serving context is
+    # larger AND your episodes need finer temporal resolution; if you hit
+    # "Input length exceeds maximum context length", lower this.
     frames_per_second: float = 1.0
-    max_video_frames: int = 128
+    max_video_frames: int = 32
 
     min_subtask_seconds: float = 1.5
     plan_max_steps: int = 8
