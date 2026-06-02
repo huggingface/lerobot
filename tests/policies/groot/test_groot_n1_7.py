@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 import json
 import sys
 from types import SimpleNamespace
@@ -417,6 +418,13 @@ def test_groot_n1_7_can_be_selected_from_policy_config_factory_without_external_
     assert isinstance(config, GrootConfig)
     assert config.model_version == GROOT_N1_7
     assert "gr00t" not in sys.modules
+
+
+def test_groot_predict_action_chunk_accepts_rtc_kwargs():
+    signature = inspect.signature(GrootPolicy.predict_action_chunk)
+
+    assert any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+    signature.bind(object(), {}, inference_delay=2, prev_chunk_left_over=None)
 
 
 def test_groot_from_pretrained_rejects_mismatched_caller_config(tmp_path):
