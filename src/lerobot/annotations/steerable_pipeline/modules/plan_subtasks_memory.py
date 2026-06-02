@@ -578,10 +578,11 @@ class PlanSubtasksMemoryModule:
         # The VLM (especially after the verify pass prunes spans) can
         # leave the first subtask starting after t0 or leave gaps between
         # spans, so the subtask timeline no longer tiles the whole
-        # episode and frames fall through with no active subtask. Stitch
-        # the surviving spans into a contiguous cover of [t0, t_last].
-        if getattr(self.config, "subtask_full_coverage", True):
-            cleaned = self._stitch_full_coverage(cleaned, record)
+        # episode and frames fall through with no active subtask. Always
+        # stitch the surviving spans into a contiguous cover of
+        # [t0, t_last] — there is no scenario where a sparse, gap-ridden
+        # subtask timeline is desirable for conditioning.
+        cleaned = self._stitch_full_coverage(cleaned, record)
 
         return cleaned
 

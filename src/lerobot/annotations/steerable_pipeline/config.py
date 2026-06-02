@@ -73,15 +73,12 @@ class PlanConfig:
     # nothing). +1 VLM call/ep.
     subtask_verify: bool = True
 
-    # ``subtask_full_coverage``: deterministic post-step (no VLM call)
-    # that stitches the surviving subtask spans into a contiguous cover
-    # of the whole episode — first subtask pulled back to t0, each span's
-    # end snapped to the next span's start, last span extended to t_last.
-    # Without it the verify pass (which prunes spans) can leave the
-    # subtask timeline starting late or full of gaps, so frames fall
-    # through with no active subtask. On by default; disable only if a
-    # downstream consumer genuinely wants sparse (non-tiling) subtasks.
-    subtask_full_coverage: bool = True
+    # NOTE: subtask spans are ALWAYS stitched into a contiguous
+    # full-episode cover (first subtask pulled back to t0, gaps closed,
+    # last span extended to t_last) as a deterministic post-step in
+    # ``_generate_subtasks._stitch_full_coverage``. This is not
+    # configurable — a sparse / gap-ridden subtask timeline is never
+    # desirable for conditioning, so it is unconditional.
 
     # When True (and backend supports it, e.g. ``openai``), the ``plan``
     # module sends a ``video_url`` block pointing at a per-episode mp4
