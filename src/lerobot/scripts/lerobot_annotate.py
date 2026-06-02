@@ -64,9 +64,7 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
     logger.info("annotate: root=%s", root)
 
     vlm = make_vlm_client(cfg.vlm)
-    frame_provider = make_frame_provider(
-        root, camera_key=cfg.vlm.camera_key, video_backend=cfg.video_backend
-    )
+    frame_provider = make_frame_provider(root, camera_key=cfg.vlm.camera_key, video_backend=cfg.video_backend)
     # Surface the resolved cameras up front so a silent vqa-module no-op
     # is obvious in job output rather than discovered post-hoc by counting
     # parquet rows.
@@ -168,7 +166,10 @@ def _push_to_hub(root: Path, cfg: AnnotationPipelineConfig) -> None:
             if isinstance(ds_version, str) and ds_version.startswith("v"):
                 version_tag = ds_version
         except Exception as exc:  # noqa: BLE001
-            print(f"[lerobot-annotate] could not read codebase_version from info.json ({exc}); falling back to {version_tag}", flush=True)
+            print(
+                f"[lerobot-annotate] could not read codebase_version from info.json ({exc}); falling back to {version_tag}",
+                flush=True,
+            )
     revision = getattr(commit_info, "oid", None)
     tag_kwargs = {
         "repo_id": repo_id,

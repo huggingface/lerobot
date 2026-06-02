@@ -172,9 +172,7 @@ class PlanSubtasksMemoryModule:
         # "what's still left" at inference time.
         for span in subtask_spans:
             boundary_t = snap_to_frame(span["start"], record.frame_timestamps)
-            plan_text = self._generate_plan(
-                record, subtask_spans, refresh_t=boundary_t, task=effective_task
-            )
+            plan_text = self._generate_plan(record, subtask_spans, refresh_t=boundary_t, task=effective_task)
             if plan_text is not None:
                 rows.append(
                     {
@@ -336,7 +334,9 @@ class PlanSubtasksMemoryModule:
         if not frames:
             logger.debug(
                 "action_record: no frames at span %.2f-%.2f for ep %s; skipping",
-                start_t, end_t, record.episode_index,
+                start_t,
+                end_t,
+                record.episode_index,
             )
             return None
 
@@ -811,12 +811,15 @@ class PlanSubtasksMemoryModule:
         import json  # noqa: PLC0415
 
         subtasks_json = json.dumps(
-            {"subtasks": [{"text": s["text"], "start": round(s["start"], 3), "end": round(s["end"], 3)} for s in spans]},
+            {
+                "subtasks": [
+                    {"text": s["text"], "start": round(s["start"], 3), "end": round(s["end"], 3)}
+                    for s in spans
+                ]
+            },
             indent=2,
         )
-        prompt = load_prompt("module_1_subtask_verify").format(
-            episode_task=task, subtasks_json=subtasks_json
-        )
+        prompt = load_prompt("module_1_subtask_verify").format(episode_task=task, subtasks_json=subtasks_json)
         kept_raw = self._vlm_field(self._video_message(record, prompt, window=window), "subtasks")
         # Windowed verify: the video is sampled from the absolute window
         # ``[w0, w1]`` but the model perceives it as a clip starting at 0,
@@ -824,9 +827,7 @@ class PlanSubtasksMemoryModule:
         # Clamp to that relative range and skip the absolute frame-snap
         # dedupe (done once later on the merged absolute-time set).
         clamp = (0.0, float(window[1] - window[0])) if window is not None else None
-        kept = self._clean_spans(
-            kept_raw, record, bounds=clamp, dedupe=window is None
-        )
+        kept = self._clean_spans(kept_raw, record, bounds=clamp, dedupe=window is None)
         if not kept:
             logger.info(
                 "episode %d: verify pass returned nothing — keeping the %d "
@@ -927,17 +928,13 @@ class PlanSubtasksMemoryModule:
         if not subtask_spans:
             return None
         remaining = [
-            s
-            for s in subtask_spans
-            if refresh_t is None or float(s.get("start", 0.0)) >= float(refresh_t)
+            s for s in subtask_spans if refresh_t is None or float(s.get("start", 0.0)) >= float(refresh_t)
         ]
         if not remaining:
             # Past the last subtask boundary on a late refresh — nothing
             # left to plan; emit None so the caller skips the row.
             return None
-        return "\n".join(
-            f"{i}. {span.get('text', '').strip()}" for i, span in enumerate(remaining, start=1)
-        )
+        return "\n".join(f"{i}. {span.get('text', '').strip()}" for i, span in enumerate(remaining, start=1))
 
     def _generate_memory(
         self,

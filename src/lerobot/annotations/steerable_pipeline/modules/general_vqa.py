@@ -206,9 +206,7 @@ class GeneralVqaModule:
             episode_task=record.episode_task,
             question_type=question_type,
         )
-        images = self.frame_provider.frames_at(
-            record, [frame_timestamp], camera_key=camera_key
-        )
+        images = self.frame_provider.frames_at(record, [frame_timestamp], camera_key=camera_key)
         content = [*to_image_blocks(images), {"type": "text", "text": prompt}]
         return [{"role": "user", "content": content}]
 

@@ -116,7 +116,7 @@ class PlanConfig:
     # that record back to canonical subtask text — reducing the VLM's
     # "creative" surface to just the perception step. See
     # ``ActionRecordsConfig`` for details. Off by default (back-compat).
-    action_records: "ActionRecordsConfig" = field(default_factory=lambda: ActionRecordsConfig())
+    action_records: ActionRecordsConfig = field(default_factory=lambda: ActionRecordsConfig())
 
     # Structured 5-axis augmentation taxonomy for the t=0 task variants
     # (replaces the free-form ``n_task_rephrasings`` flow when enabled).
@@ -124,7 +124,7 @@ class PlanConfig:
     # free-form rephrasings, the VLM produces variants along named
     # axes (synonym / omit_arm / omit_orientation / omit_grasp_method /
     # combined). Off by default (back-compat).
-    task_aug_axes: "TaskAugAxesConfig" = field(default_factory=lambda: TaskAugAxesConfig())
+    task_aug_axes: TaskAugAxesConfig = field(default_factory=lambda: TaskAugAxesConfig())
 
 
 @dataclass
@@ -136,12 +136,12 @@ class ActionRecordsConfig:
     subtask to extract a typed record::
 
         {
-          "verb": "pick" | "place" | "press" | ...,    # closed vocabulary
-          "object": "<canonical_object_name>",
-          "arm": "left" | "right" | "both" | null,
-          "grasp_type": "pinch" | "wrap" | "hook" | ... | null,
-          "destination": "<canonical_destination>" | null,
-          "mistake": "<short text>" | null,
+            "verb": "pick" | "place" | "press" | ...,  # closed vocabulary
+            "object": "<canonical_object_name>",
+            "arm": "left" | "right" | "both" | null,
+            "grasp_type": "pinch" | "wrap" | "hook" | ... | null,
+            "destination": "<canonical_destination>" | null,
+            "mistake": "<short text>" | null,
         }
 
     The record is emitted as a separate row with ``style="action_record"``
@@ -176,16 +176,34 @@ class ActionRecordsConfig:
     # exactly one. Override per-dataset (e.g. ``["pick", "place", "open",
     # "close"]`` for door-only manipulation) for tighter constraint.
     verb_vocabulary: tuple[str, ...] = (
-        "pick", "place", "push", "pull", "open", "close", "turn",
-        "press", "lift", "insert", "pour", "move", "reach", "grasp",
-        "release", "wipe", "dump",
+        "pick",
+        "place",
+        "push",
+        "pull",
+        "open",
+        "close",
+        "turn",
+        "press",
+        "lift",
+        "insert",
+        "pour",
+        "move",
+        "reach",
+        "grasp",
+        "release",
+        "wipe",
+        "dump",
     )
 
     # Closed grasp-type vocabulary. ``null`` is always allowed (no
     # contact / unclear). Adjust per-hardware (e.g. drop ``hook`` /
     # ``key`` for parallel-jaw grippers).
     grasp_vocabulary: tuple[str, ...] = (
-        "pinch", "wrap", "hook", "key", "lateral",
+        "pinch",
+        "wrap",
+        "hook",
+        "key",
+        "lateral",
     )
 
 

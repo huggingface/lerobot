@@ -238,9 +238,7 @@ class Executor:
         prompt path is reused.
         """
         if not self.plan.enabled or not self.interjections.enabled:
-            return PhaseResult(
-                name="plan_update", episodes_processed=0, episodes_skipped=len(records)
-            )
+            return PhaseResult(name="plan_update", episodes_processed=0, episodes_skipped=len(records))
         processed = 0
         for record in records:
             staging = EpisodeStaging(staging_dir, record.episode_index)
