@@ -51,21 +51,27 @@ class PlanConfig:
     min_subtask_seconds: float = 1.5
     plan_max_steps: int = 8
 
-    # Multi-call subtask quality chain (opt-in, more VLM calls, higher
-    # quality). Both off by default → single-call behaviour unchanged.
+    # Multi-call subtask quality chain. ON by default — the single-call
+    # 'watch video -> emit subtask JSON' pattern makes the VLM commit to
+    # structured output before reasoning about the video, so it
+    # pattern-matches the task text and hallucinates steps. The chain
+    # costs 2 extra VLM calls/episode (3 total for subtasks) but is the
+    # difference between trustworthy and fabricated labels. Set either to
+    # False to trade quality for fewer calls on datasets you've verified
+    # are easy.
     #
     # ``subtask_describe_first``: run a grounding pass that narrates ONLY
     # what is visible in the video (no subtask JSON yet), then inject that
     # description into the segmentation prompt. Forces the model to
     # observe before committing to structured output — the strongest
     # lever against subtasks invented from the task text. +1 VLM call/ep.
-    subtask_describe_first: bool = False
+    subtask_describe_first: bool = True
     # ``subtask_verify``: after segmentation, re-watch the video and drop
     # any proposed subtask that can't be verified as visible. Prunes
     # hallucinations; can only remove subtasks, never add/rewrite them.
     # Fail-open (keeps un-verified spans if the verify call returns
     # nothing). +1 VLM call/ep.
-    subtask_verify: bool = False
+    subtask_verify: bool = True
 
     # When True (and backend supports it, e.g. ``openai``), the ``plan``
     # module sends a ``video_url`` block pointing at a per-episode mp4

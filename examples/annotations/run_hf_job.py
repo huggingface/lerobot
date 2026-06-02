@@ -82,13 +82,10 @@ CMD = (
     # tasks. Leave off for RoboCasa atomic / navigation.
     # Keep subtask decomposition tight for atomic tasks:
     "--plan.plan_max_steps=6 "
-    # Multi-call quality chain (3 VLM calls/episode for subtasks):
-    #   1. describe-first: narrate ONLY what is visible before segmenting
-    #      — the strongest fix for subtasks invented from the task text.
-    #   2. (segment)
-    #   3. verify: re-watch and prune any subtask not actually seen.
-    "--plan.subtask_describe_first=true "
-    "--plan.subtask_verify=true "
+    # NOTE: the multi-call subtask quality chain (describe -> segment ->
+    # verify, 3 VLM calls/episode) is ON BY DEFAULT now. Pass
+    # --plan.subtask_describe_first=false / --plan.subtask_verify=false to
+    # disable on datasets you've verified are easy and want fewer calls.
     # Phase 2 — interjections + speech.
     "--interjections.max_interjections_per_episode=6 "
     # Phase 4 — general VQA.
