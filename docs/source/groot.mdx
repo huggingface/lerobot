@@ -28,21 +28,38 @@ This approach allows the model to be highly adaptable through post-training for 
 
 ## Installation Requirements
 
-Install LeRobot with the GR00T extra:
+GR00T is intended for NVIDIA GPU-accelerated systems. The `groot` extra still includes Flash Attention on non-macOS platforms, and Flash Attention needs a compatible PyTorch/CUDA environment before it is installed. Install the dependencies in this order:
+
+1. Follow the Environment Setup in the [Installation Guide](./installation). Do not install `lerobot` yet.
+2. Install PyTorch, TorchVision, and the build dependencies used by Flash Attention:
+
+```bash
+# Check https://pytorch.org/get-started/locally/ for the right CUDA wheel index for your system.
+pip install "torch>=2.7,<2.12.0" "torchvision>=0.22.0,<0.27.0" \
+  --index-url https://download.pytorch.org/whl/cu128
+pip install "ninja>=1.11.1,<2.0.0" "packaging>=24.2,<26.0"
+```
+
+3. Install and verify Flash Attention:
+
+```bash
+pip install "flash-attn>=2.5.9,<3.0.0" --no-build-isolation
+python -c "import flash_attn; print(f'Flash Attention {flash_attn.__version__} imported successfully')"
+```
+
+4. Install LeRobot with the GR00T extra:
 
 ```bash
 pip install "lerobot[groot]"
 ```
 
-GR00T is intended for NVIDIA GPU-accelerated systems. The `groot` extra installs the policy dependencies, including `transformers`, `diffusers`, `peft`, `dm-tree`, and Flash Attention where available. If Flash Attention is unavailable or incompatible, LeRobot falls back to SDPA attention in supported GR00T paths, with lower expected throughput.
-
-For a source checkout, follow the Environment Setup in the [Installation Guide](./installation), then install the extra:
+For a source checkout, use the same order, then install the local package with:
 
 ```bash
-uv sync --locked --extra groot
+pip install -e ".[groot]"
 ```
 
-If you need to install Flash Attention manually for your CUDA/PyTorch build, use the wheel or source build recommended by the [Flash Attention project](https://github.com/Dao-AILab/flash-attention).
+If your CUDA/PyTorch build needs a different Flash Attention wheel or source build, follow the [Flash Attention project](https://github.com/Dao-AILab/flash-attention) instructions, but keep the same ordering: PyTorch first, Flash Attention next, then `lerobot[groot]`.
 
 ## Usage
 
