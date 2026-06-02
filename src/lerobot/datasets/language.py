@@ -46,7 +46,7 @@ CORE_STYLES = {
 EXTENDED_STYLES: set[str] = set()
 STYLE_REGISTRY = CORE_STYLES | EXTENDED_STYLES
 
-PERSISTENT_STYLES = {"subtask", "plan", "memory", "motion", "task_aug"}
+PERSISTENT_STYLES = {"subtask", "plan", "memory", "motion", "task_aug", "action_record"}
 EVENT_ONLY_STYLES = {"interjection", "vqa", "trace"}
 
 # Styles whose ``content`` is grounded in a specific camera view. Rows of these

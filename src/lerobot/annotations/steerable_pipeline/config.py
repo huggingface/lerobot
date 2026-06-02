@@ -92,6 +92,136 @@ class PlanConfig:
     use_video_url: bool = False
     use_video_url_fps: float = 1.0
 
+    # Structured per-subtask action records (Phase 1a + 1b, inspired by
+    # EgoMimic's annotator form). For each generated subtask span, the
+    # VLM extracts a typed record (verb / object / arm / grasp_type /
+    # destination / mistake). A deterministic Python template renders
+    # that record back to canonical subtask text — reducing the VLM's
+    # "creative" surface to just the perception step. See
+    # ``ActionRecordsConfig`` for details. Off by default (back-compat).
+    action_records: "ActionRecordsConfig" = field(default_factory=lambda: ActionRecordsConfig())
+
+    # Structured 5-axis augmentation taxonomy for the t=0 task variants
+    # (replaces the free-form ``n_task_rephrasings`` flow when enabled).
+    # Mirrors EgoMimic's ``augment_prompt.txt`` taxonomy: instead of N
+    # free-form rephrasings, the VLM produces variants along named
+    # axes (synonym / omit_arm / omit_orientation / omit_grasp_method /
+    # combined). Off by default (back-compat).
+    task_aug_axes: "TaskAugAxesConfig" = field(default_factory=lambda: TaskAugAxesConfig())
+
+
+@dataclass
+class ActionRecordsConfig:
+    """Structured per-subtask action record extraction.
+
+    When ``enabled=True``, after the existing subtask-span generation in
+    ``plan_subtasks_memory.py``, the module makes one extra VLM call per
+    subtask to extract a typed record::
+
+        {
+          "verb": "pick" | "place" | "press" | ...,    # closed vocabulary
+          "object": "<canonical_object_name>",
+          "arm": "left" | "right" | "both" | null,
+          "grasp_type": "pinch" | "wrap" | "hook" | ... | null,
+          "destination": "<canonical_destination>" | null,
+          "mistake": "<short text>" | null,
+        }
+
+    A deterministic Python template then renders the record back to
+    canonical subtask text (e.g. ``pick blue cube with left arm using
+    pinch grip``). When ``replace_subtask_text=True`` (default), the
+    rendered text REPLACES the VLM's free-form subtask text — eliminating
+    cross-episode phrasing drift. When ``emit_record_row=True``
+    (default), the structured record is also emitted as a row with
+    ``style="action_record"`` so downstream consumers can train on the
+    typed schema directly.
+
+    Cost: one extra VLM call per subtask. For an 8-subtask episode this
+    means ~8x more VLM calls in the plan module — still cheap relative
+    to the action-expert training cost, but worth knowing.
+    """
+
+    enabled: bool = False
+
+    # When True, replace the VLM-generated subtask text with the
+    # deterministic template's rendering of the structured record.
+    # Strongly recommended — it's the whole point of the structured
+    # intermediate. Set False to keep both representations side by side.
+    replace_subtask_text: bool = True
+
+    # When True, emit a separate row with ``style="action_record"`` and
+    # ``content=json.dumps(record)`` at the subtask's start timestamp.
+    # Lets downstream training consume the typed schema directly (e.g.
+    # auxiliary supervision on verb/arm/grasp classification heads).
+    emit_record_row: bool = True
+
+    # Frame sampling for the per-subtask VLM call (similar to the
+    # interjection module's window). Anchored to the subtask span.
+    frames_per_subtask: int = 4
+
+    # Closed verb vocabulary. The prompt instructs the VLM to pick
+    # exactly one. Override per-dataset (e.g. ``["pick", "place", "open",
+    # "close"]`` for door-only manipulation) for tighter constraint.
+    verb_vocabulary: tuple[str, ...] = (
+        "pick", "place", "push", "pull", "open", "close", "turn",
+        "press", "lift", "insert", "pour", "move", "reach", "grasp",
+        "release", "wipe", "dump",
+    )
+
+    # Closed grasp-type vocabulary. ``null`` is always allowed (no
+    # contact / unclear). Adjust per-hardware (e.g. drop ``hook`` /
+    # ``key`` for parallel-jaw grippers).
+    grasp_vocabulary: tuple[str, ...] = (
+        "pinch", "wrap", "hook", "key", "lateral",
+    )
+
+
+@dataclass
+class TaskAugAxesConfig:
+    """Structured 5-axis augmentation taxonomy for t=0 task variants.
+
+    When ``enabled=True``, replaces the free-form ``n_task_rephrasings``
+    flow with a structured prompt that produces variants along five
+    named axes (mirroring EgoMimic's ``augment_prompt.txt``):
+
+      * ``synonym_paraphrase`` — different wording / verbs, all
+        information preserved.
+      * ``omit_arm`` — drop the left/right/both arm specification.
+      * ``omit_orientation`` — drop orientation cues (upright,
+        sideways, ...).
+      * ``omit_grasp_method`` — drop grip / grasp method specification.
+      * ``combined_omissions`` — combine two of the above
+        simultaneously.
+
+    Default counts (3+3+2+2+2 = 12 variants per task) match EgoMimic.
+    Axes that have nothing to omit in the source task (e.g. ``omit_arm``
+    when the task doesn't mention an arm) emit fewer entries rather
+    than pad — the prompt instructs the VLM accordingly.
+
+    Each variant is emitted as a ``task_aug`` row at ``t=0`` (same
+    style as the free-form variants), so the rest of the pipeline /
+    training recipe doesn't need to know about the taxonomy.
+    """
+
+    enabled: bool = False
+
+    synonym_paraphrase: int = 3
+    omit_arm: int = 3
+    omit_orientation: int = 2
+    omit_grasp_method: int = 2
+    combined_omissions: int = 2
+
+    @property
+    def total(self) -> int:
+        """Sum of requested variants across all axes (upper bound)."""
+        return (
+            self.synonym_paraphrase
+            + self.omit_arm
+            + self.omit_orientation
+            + self.omit_grasp_method
+            + self.combined_omissions
+        )
+
 
 @dataclass
 class InterjectionsConfig:
