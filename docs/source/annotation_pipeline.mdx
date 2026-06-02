@@ -11,15 +11,15 @@ A vocabulary-discovery phase derives a small canonical wording, then three
 modules write into a per-episode staging tree, then a single writer
 rewrites the data shards in place:
 
-| Style / atom                                | Column                | Module         |
-| ------------------------------------------- | --------------------- | -------------- |
-| `subtask` (Pi0.7-style "how, not what")     | `language_persistent` | `plan`         |
-| `plan` (initial + refresh on interjection)  | `language_persistent` | `plan`         |
-| `memory` (MEM-style compression)            | `language_persistent` | `plan`         |
-| `task_aug` (rephrasings of canonical task)  | `language_persistent` | `plan`         |
-| `interjection`                              | `language_events`     | `interjections`|
-| speech tool-call atom (`style=null`, `say`) | `language_events`     | `interjections`|
-| `vqa` (user / assistant pair)               | `language_events`     | `vqa`          |
+| Style / atom                                | Column                | Module          |
+| ------------------------------------------- | --------------------- | --------------- |
+| `subtask` (Pi0.7-style "how, not what")     | `language_persistent` | `plan`          |
+| `plan` (initial + refresh on interjection)  | `language_persistent` | `plan`          |
+| `memory` (MEM-style compression)            | `language_persistent` | `plan`          |
+| `task_aug` (rephrasings of canonical task)  | `language_persistent` | `plan`          |
+| `interjection`                              | `language_events`     | `interjections` |
+| speech tool-call atom (`style=null`, `say`) | `language_events`     | `interjections` |
+| `vqa` (user / assistant pair)               | `language_events`     | `vqa`           |
 
 The `plan` module is constrained to a **canonical vocabulary** discovered
 once per dataset by the `vocabulary` module (phase 0). It watches a few
