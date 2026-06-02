@@ -196,6 +196,7 @@ class PI0FastPaliGemma(nn.Module):
         vlm_config,
         use_adarms=None,
         precision: Literal["bfloat16", "float32"] = "bfloat16",
+        attn_implementation: str = "sdpa",
     ):
         if use_adarms is None:
             use_adarms = [False, False]
@@ -220,6 +221,7 @@ class PI0FastPaliGemma(nn.Module):
         vlm_config_hf.vision_config.projector_hidden_act = "gelu_fast"
         vlm_config_hf.vision_config.dtype = "float32"
 
+        vlm_config_hf._attn_implementation = attn_implementation
         self.paligemma = PaliGemmaForConditionalGenerationWithPiGemma(config=vlm_config_hf)
 
         # Use PI Gemma (AdaRMS) as language model when use_adarms[0] is True so that
@@ -318,6 +320,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
             paligemma_config,
             use_adarms=[False, True],
             precision=config.dtype,
+            attn_implementation=config.attn_implementation,
         )
 
         # Initialize gradient checkpointing flag

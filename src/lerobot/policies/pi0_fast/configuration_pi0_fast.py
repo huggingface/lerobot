@@ -71,6 +71,10 @@ class PI0FastConfig(PreTrainedConfig):
     # Whether to use KV cache for faster autoregressive decoding
     use_kv_cache: bool = True
 
+    # Attention implementation passed explicitly to PaliGemma to avoid global-state sensitivity.
+    # Options: "sdpa" (default), "eager", "flash_attention_2"
+    attn_implementation: str = "sdpa"
+
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
