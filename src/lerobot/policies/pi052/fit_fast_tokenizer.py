@@ -178,35 +178,76 @@ def fit_fast_tokenizer(
     rng = np.random.default_rng(seed)
     actions_buf: list[np.ndarray] = []
 
-    # Load just the metadata first to know episode boundaries.
-    ds_meta_only = LeRobotDataset(dataset_repo_id, episodes=[0])
-    num_episodes = ds_meta_only.meta.total_episodes
-    if "action" not in ds_meta_only.features:
-        available = ", ".join(sorted(ds_meta_only.features)) or "<none>"
+    # Resolve the dataset's data parquet shards directly, sidestepping
+    # ``LeRobotDataset(repo_id, episodes=[N])`` which on v3-format
+    # datasets routes through HF datasets'' split lookup and raises
+    # ``ValueError: Instruction "train" corresponds to no data!`` for
+    # every episode (job 22182985 looped through 13,293 skipped episodes
+    # for ~2.5 h before NCCL killed it). Reading the ``action`` column
+    # straight from the parquet shards is also faster: each per-episode
+    # ``LeRobotDataset`` instantiation re-parses every meta file.
+    from huggingface_hub import snapshot_download  # noqa: PLC0415
+    import pyarrow as _pa  # noqa: PLC0415
+    import pyarrow.parquet as _pq  # noqa: PLC0415
+
+    snap = Path(snapshot_download(repo_id=dataset_repo_id, repo_type="dataset"))
+    data_files = sorted((snap / "data").glob("chunk-*/file-*.parquet"))
+    if not data_files:
         raise RuntimeError(
-            f"FAST fit: dataset {dataset_repo_id!r} has no ``action`` feature. "
-            f"Available features: {available}."
+            f"FAST fit: no ``data/chunk-*/file-*.parquet`` shards found under {snap!s}."
         )
-    del ds_meta_only
+
+    # Read just the (episode_index, action) columns once across all
+    # shards. This is the same pattern used elsewhere in the codebase
+    # for whole-dataset audits and stays under ~2 GB even on 32 k-episode
+    # / 29 M-frame datasets because the action column is a fixed-length
+    # float vector.
+    tables = [_pq.read_table(f, columns=["episode_index", "action"]) for f in data_files]
+    table = _pa.concat_tables(tables)
+    eps = table["episode_index"].to_numpy()
+    acts_col = table["action"]
+    # ``action`` may be a fixed-shape ListArray or a 2-D NumericArray;
+    # ``to_numpy(zero_copy_only=False)`` produces an object array of
+    # 1-D NumPy actions either way, which we stack into (N, D).
+    try:
+        acts = np.stack(acts_col.to_numpy(zero_copy_only=False)).astype(np.float32)
+    except Exception:  # noqa: BLE001
+        # Fallback path for nested-list types: flatten via to_pylist().
+        acts = np.asarray(acts_col.to_pylist(), dtype=np.float32)
+    if acts.ndim != 2:
+        raise RuntimeError(
+            f"FAST fit: expected ``action`` rows to be 1-D vectors; got shape {acts.shape}."
+        )
+
+    # Episode index → slice (start, stop) into ``acts`` along axis 0.
+    # ``eps`` is monotonically increasing within each parquet shard but
+    # we make no assumption across shards — sort once and group.
+    order = np.argsort(eps, kind="stable")
+    eps_sorted = eps[order]
+    boundaries = np.searchsorted(eps_sorted, np.arange(int(eps_sorted.max()) + 2))
+    ep_to_slice: dict[int, tuple[int, int]] = {
+        int(ep): (int(boundaries[ep]), int(boundaries[ep + 1]))
+        for ep in range(len(boundaries) - 1)
+        if boundaries[ep] < boundaries[ep + 1]
+    }
+    num_episodes = len(ep_to_slice)
+    # ``acts`` is in original (un-sorted-by-episode) row order; reorder
+    # so per-episode slices are contiguous.
+    acts = acts[order]
 
     samples_per_episode = max(1, n_samples // max(num_episodes, 1))
     collected = 0
     eps_visited = 0
     short_episodes = 0
-    for ep_idx in rng.permutation(num_episodes):
+    ep_indices = list(ep_to_slice.keys())
+    for ep_idx in rng.permutation(ep_indices):
         if collected >= n_samples:
             break
-        ep_idx = int(ep_idx)
-        try:
-            ds = LeRobotDataset(dataset_repo_id, episodes=[ep_idx])
-            ep_actions = np.asarray(ds.hf_dataset["action"], dtype=np.float32)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("FAST fit: skipping episode %d: %s", ep_idx, exc)
-            continue
-        if ep_actions.ndim != 2 or ep_actions.shape[0] < chunk_size:
+        start, stop = ep_to_slice[int(ep_idx)]
+        ep_actions = acts[start:stop]
+        if ep_actions.shape[0] < chunk_size:
             short_episodes += 1
             continue
-        # Sample ``samples_per_episode`` contiguous chunks uniformly.
         starts = rng.integers(0, ep_actions.shape[0] - chunk_size + 1, size=samples_per_episode)
         for s in starts:
             actions_buf.append(ep_actions[int(s) : int(s) + chunk_size])
