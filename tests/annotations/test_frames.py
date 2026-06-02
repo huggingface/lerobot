@@ -45,6 +45,33 @@ from lerobot.annotations.steerable_pipeline.frames import (  # noqa: E402
 )
 
 
+class _FakeMeta:
+    """Minimal metadata stub exposing ``video_keys`` / ``camera_keys``."""
+
+    def __init__(self, video_keys: list[str], image_keys: list[str]) -> None:
+        self.video_keys = video_keys
+        self.camera_keys = [*video_keys, *image_keys]
+
+
+def test_default_camera_key_skips_image_only_cameras(tmp_path: Path, monkeypatch) -> None:
+    """The default camera must be a *video* key — image-stored cameras have no
+    ``videos/<key>/from_timestamp`` and would KeyError in the clip/decode path.
+
+    Regression: a dataset whose first ``camera_keys`` entry was an image-stored
+    camera (e.g. ``observation.images.wrist``) crashed at clip extraction.
+    """
+    fake = _FakeMeta(
+        video_keys=["observation.images.robot0_agentview_right"],
+        image_keys=["observation.images.wrist"],
+    )
+    import lerobot.datasets.dataset_metadata as meta_mod
+
+    monkeypatch.setattr(meta_mod, "LeRobotDatasetMetadata", lambda *a, **k: fake, raising=True)
+    provider = VideoFrameProvider(root=tmp_path)
+    assert provider.camera_key == "observation.images.robot0_agentview_right"
+    assert "observation.images.wrist" not in provider.camera_keys
+
+
 def test_video_for_episode_is_a_method_of_videoframeprovider():
     """``video_for_episode`` must be a bound method, not nested dead code."""
     assert callable(getattr(VideoFrameProvider, "video_for_episode", None))
@@ -81,9 +108,15 @@ def sample_video(tmp_path: Path) -> Path:
     out = tmp_path / "sample.mp4"
     subprocess.run(
         [
-            "ffmpeg", "-y", "-f", "lavfi",
-            "-i", "testsrc=duration=3:size=160x120:rate=10",
-            "-pix_fmt", "yuv420p", str(out),
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=3:size=160x120:rate=10",
+            "-pix_fmt",
+            "yuv420p",
+            str(out),
         ],
         check=True,
         capture_output=True,

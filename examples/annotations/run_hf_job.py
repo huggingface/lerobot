@@ -36,8 +36,8 @@ CMD = (
     "export VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 && "
     "export VLLM_VIDEO_BACKEND=pyav && "
     "lerobot-annotate "
-    "--repo_id=imstevenpmwork/super_poulain_draft "
-    "--dest_repo_id=pepijn223/super_poulain_vocab "
+    "--repo_id=pepijn223/robocasa_smoke_2atomic_v3 "
+    "--dest_repo_id=pepijn223/robocasa_smoke_2atomic_v3_ann "
     "--push_to_hub=true "
     "--vlm.backend=openai "
     "--vlm.model_id=Qwen/Qwen3.6-35B-A3B-FP8 "
@@ -52,17 +52,18 @@ CMD = (
     "--vlm.temperature=0.7 "
     "--executor.episode_parallelism=16 "
     "--vlm.chat_template_kwargs='{\"enable_thinking\": false}' "
-    "--vlm.camera_key=observation.images.wrist "
+    "--vlm.camera_key=observation.images.robot0_agentview_right "
     # Phase 1 — plan module (subtasks + plan + memory + task_aug).
     "--plan.frames_per_second=1.0 "
     "--plan.use_video_url=true "
     "--plan.use_video_url_fps=1.0 "
     "--plan.derive_task_from_video=always "
-    "--plan.n_task_rephrasings=30 "
+    "--plan.task_aug_axes.enabled=true "
+    "--plan.action_records.enabled=true "
     # Phase 2 — interjections + speech.
     "--interjections.max_interjections_per_episode=6 "
     # Phase 4 — general VQA.
-    "--vqa.K=3 "
+    "--vqa.K=1 "
     "--vqa.vqa_emission_hz=1.0"
 )
 
