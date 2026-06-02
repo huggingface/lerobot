@@ -74,27 +74,19 @@ class PlanConfig:
     min_subtask_seconds: float = 1.5
     plan_max_steps: int = 8
 
-    # Multi-call subtask quality chain. ON by default — the single-call
-    # 'watch video -> emit subtask JSON' pattern makes the VLM commit to
-    # structured output before reasoning about the video, so it
-    # pattern-matches the task text and hallucinates steps. The chain
-    # costs 2 extra VLM calls/episode (3 total for subtasks) but is the
-    # difference between trustworthy and fabricated labels. Set either to
-    # False to trade quality for fewer calls on datasets you've verified
-    # are easy.
-    #
     # ``subtask_describe_first``: run a grounding pass that narrates ONLY
     # what is visible in the video (no subtask JSON yet), then inject that
-    # description into the segmentation prompt. Forces the model to
-    # observe before committing to structured output — the strongest
-    # lever against subtasks invented from the task text. +1 VLM call/ep.
+    # description into the segmentation prompt. Forces the model to observe
+    # before committing to structured output — the strongest lever against
+    # subtasks invented from the task text. ON by default; +1 VLM call/ep.
+    # Set False to trade quality for fewer calls on easy datasets.
     subtask_describe_first: bool = True
-    # ``subtask_verify``: after segmentation, re-watch the video and drop
-    # any proposed subtask that can't be verified as visible. Prunes
-    # hallucinations; can only remove subtasks, never add/rewrite them.
-    # Fail-open (keeps un-verified spans if the verify call returns
-    # nothing). +1 VLM call/ep.
-    subtask_verify: bool = True
+
+    # Emit ``style="plan"`` rows (the numbered still-todo list re-emitted at
+    # every subtask boundary). Set False to keep only subtasks + memory and
+    # skip the plan rows entirely — saves one ``_generate_plan`` VLM call per
+    # subtask boundary. Subtask and memory generation are unaffected.
+    emit_plan: bool = True
 
     # NOTE: subtask spans are ALWAYS stitched into a contiguous
     # full-episode cover (first subtask pulled back to t0, gaps closed,

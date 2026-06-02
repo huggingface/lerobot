@@ -170,19 +170,22 @@ class PlanSubtasksMemoryModule:
         # contains exactly the subtasks that started at or after the
         # current span. Saves the runtime from having to derive
         # "what's still left" at inference time.
-        for span in subtask_spans:
-            boundary_t = snap_to_frame(span["start"], record.frame_timestamps)
-            plan_text = self._generate_plan(record, subtask_spans, refresh_t=boundary_t, task=effective_task)
-            if plan_text is not None:
-                rows.append(
-                    {
-                        "role": "assistant",
-                        "content": plan_text,
-                        "style": "plan",
-                        "timestamp": float(boundary_t),
-                        "tool_calls": None,
-                    }
+        if self.config.emit_plan:
+            for span in subtask_spans:
+                boundary_t = snap_to_frame(span["start"], record.frame_timestamps)
+                plan_text = self._generate_plan(
+                    record, subtask_spans, refresh_t=boundary_t, task=effective_task
                 )
+                if plan_text is not None:
+                    rows.append(
+                        {
+                            "role": "assistant",
+                            "content": plan_text,
+                            "style": "plan",
+                            "timestamp": float(boundary_t),
+                            "tool_calls": None,
+                        }
+                    )
         # memory rows at every subtask boundary except the very first start
         prior_memory = ""
         for i, span in enumerate(subtask_spans[1:], start=1):
@@ -450,7 +453,7 @@ class PlanSubtasksMemoryModule:
     def _episode_video_block(
         self, record: EpisodeRecord, window: tuple[float, float] | None = None
     ) -> list[dict[str, Any]]:
-        """Video block for the segmentation / describe / verify prompts.
+        """Video block for the segmentation / describe prompts.
 
         Always returns a block that actually carries the video. When
         ``use_video_url`` is set we try the server-side ``video_url``
@@ -514,6 +517,8 @@ class PlanSubtasksMemoryModule:
         (the previous version told the model "an interjection happened"
         without telling it what the user said).
         """
+        if not self.config.emit_plan:
+            return
         existing = staging.read("plan")
         # Pass the episode's last frame timestamp so the final subtask
         # span is closed (otherwise its ``end`` equals its ``start``,
@@ -559,9 +564,6 @@ class PlanSubtasksMemoryModule:
              the model segments its own grounded observations instead of
              pattern-matching the task text.
           2. segmentation — emit subtask JSON (as before).
-          3. ``subtask_verify`` — an adversarial pass that re-watches the
-             video and drops any proposed subtask it cannot actually see,
-             pruning hallucinations.
         """
         if record.row_count == 0 or not record.frame_timestamps:
             return []
@@ -573,8 +575,8 @@ class PlanSubtasksMemoryModule:
         # than one window, process the episode in fixed-length windows so
         # the VLM always sees ``frames_per_second`` density (instead of a
         # sparse 32-frame whole-episode view). Each window runs the full
-        # describe -> segment -> verify chain on its own frames; results
-        # are merged + stitched into a contiguous whole-episode cover.
+        # describe -> segment chain on its own frames; results are merged +
+        # stitched into a contiguous whole-episode cover.
         window_s = float(getattr(self.config, "subtask_window_seconds", 0.0) or 0.0)
         if window_s > 0.0 and episode_duration > window_s:
             return self._generate_subtasks_windowed(record, effective_task, window_s)
@@ -606,18 +608,11 @@ class PlanSubtasksMemoryModule:
         if not cleaned:
             return []
 
-        # ---- Pass 3 (optional): verification / pruning ---------------
-        if getattr(self.config, "subtask_verify", False):
-            cleaned = self._verify_subtasks(record, effective_task, cleaned)
-            if not cleaned:
-                return []
-
         # ---- Full-episode coverage stitch ----------------------------
-        # The VLM (especially after the verify pass prunes spans) can
-        # leave the first subtask starting after t0 or leave gaps between
-        # spans, so the subtask timeline no longer tiles the whole
-        # episode and frames fall through with no active subtask. Always
-        # stitch the surviving spans into a contiguous cover of
+        # The VLM can leave the first subtask starting after t0 or leave
+        # gaps between spans, so the subtask timeline no longer tiles the
+        # whole episode and frames fall through with no active subtask.
+        # Always stitch the surviving spans into a contiguous cover of
         # [t0, t_last] — there is no scenario where a sparse, gap-ridden
         # subtask timeline is desirable for conditioning.
         cleaned = self._stitch_full_coverage(cleaned, record)
@@ -630,8 +625,8 @@ class PlanSubtasksMemoryModule:
         """Subtask generation in fixed-length windows at constant fps.
 
         Splits ``[t0, t_last]`` into consecutive windows of ``window_s``
-        seconds, runs the describe -> segment -> verify chain on each
-        window's own frames (sampled at ``frames_per_second``), offsets
+        seconds, runs the describe -> segment chain on each window's own
+        frames (sampled at ``frames_per_second``), offsets
         each window's spans back to absolute episode time, then merges +
         stitches into a contiguous whole-episode cover.
         """
@@ -662,7 +657,7 @@ class PlanSubtasksMemoryModule:
     def _subtasks_for_window(
         self, record: EpisodeRecord, task: str, w0: float, w1: float
     ) -> list[dict[str, Any]]:
-        """Run describe -> segment -> verify on one ``[w0, w1]`` window.
+        """Run describe -> segment on one ``[w0, w1]`` window.
 
         The model works in window-RELATIVE time ``[0, L]`` (it perceives
         the window as a clip starting at 0); spans are offset back to
@@ -698,11 +693,6 @@ class PlanSubtasksMemoryModule:
         if not cleaned:
             return []
 
-        if getattr(self.config, "subtask_verify", False):
-            cleaned = self._verify_subtasks(record, task, cleaned, window=window)
-            if not cleaned:
-                return []
-
         # Offset window-relative spans back to absolute episode time.
         for s in cleaned:
             s["start"] = w0 + float(s["start"])
@@ -722,7 +712,7 @@ class PlanSubtasksMemoryModule:
           subtask's ``end`` extends to the last frame ``t_last``.
 
         Starts are otherwise left as the (already frame-snapped, distinct)
-        values the VLM + verify produced — only the FIRST start is pulled
+        values the VLM produced — only the FIRST start is pulled
         back to ``t0``, which can't collide with a later span because it
         was already the earliest. Purely deterministic; runs after the
         VLM passes.
@@ -791,59 +781,6 @@ class PlanSubtasksMemoryModule:
         prompt = load_prompt("module_1_subtask_describe").format(episode_task=task)
         text = self._vlm_field(self._video_message(record, prompt, window=window), "description")
         return text.strip() if isinstance(text, str) and text.strip() else ""
-
-    def _verify_subtasks(
-        self,
-        record: EpisodeRecord,
-        task: str,
-        spans: list[dict[str, Any]],
-        window: tuple[float, float] | None = None,
-    ) -> list[dict[str, Any]]:
-        """Adversarial pass: drop proposed subtasks not visible in the video.
-
-        Keeps the original span on a verified ``text`` match (the verify
-        prompt is told not to rewrite text), so verification can only
-        PRUNE — never invent or mutate. If the verify call fails or
-        returns nothing parseable, the un-verified spans are kept (fail
-        open: better to keep a possibly-good label than silently drop
-        everything on a transient VLM hiccup).
-        """
-        import json  # noqa: PLC0415
-
-        subtasks_json = json.dumps(
-            {
-                "subtasks": [
-                    {"text": s["text"], "start": round(s["start"], 3), "end": round(s["end"], 3)}
-                    for s in spans
-                ]
-            },
-            indent=2,
-        )
-        prompt = load_prompt("module_1_subtask_verify").format(episode_task=task, subtasks_json=subtasks_json)
-        kept_raw = self._vlm_field(self._video_message(record, prompt, window=window), "subtasks")
-        # Windowed verify: the video is sampled from the absolute window
-        # ``[w0, w1]`` but the model perceives it as a clip starting at 0,
-        # so proposed + returned times are window-RELATIVE in ``[0, L]``.
-        # Clamp to that relative range and skip the absolute frame-snap
-        # dedupe (done once later on the merged absolute-time set).
-        clamp = (0.0, float(window[1] - window[0])) if window is not None else None
-        kept = self._clean_spans(kept_raw, record, bounds=clamp, dedupe=window is None)
-        if not kept:
-            logger.info(
-                "episode %d: verify pass returned nothing — keeping the %d "
-                "un-verified subtask(s) (fail-open)",
-                record.episode_index,
-                len(spans),
-            )
-            return spans
-        if len(kept) < len(spans):
-            logger.info(
-                "episode %d: verify pass pruned %d -> %d subtask(s)",
-                record.episode_index,
-                len(spans),
-                len(kept),
-            )
-        return kept
 
     @staticmethod
     def _dedupe_starts_to_distinct_frames(

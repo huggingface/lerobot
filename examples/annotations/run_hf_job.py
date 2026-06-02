@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 """Launch ``lerobot-annotate`` on a Hugging Face job (vllm + Qwen3.6-27B VLM).
 
-Spawns one ``h200x2`` job that:
+Spawns one ``h200x4`` job that:
 
   1. installs this branch of ``lerobot`` plus the annotation extras,
-  2. boots two vllm servers (one per GPU) with Qwen3.6-27B (dense VLM),
+  2. boots four vllm servers (one per GPU) with Qwen3.6-27B (dense VLM),
   3. runs the plan / interjections / vqa modules across the dataset
      in free-form mode (each episode generates its own subtasks +
      memory),
@@ -36,13 +36,13 @@ CMD = (
     "export VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 && "
     "export VLLM_VIDEO_BACKEND=pyav && "
     "lerobot-annotate "
-    "--repo_id=pepijn223/robocasa_smoke_2atomic_v3 "
-    "--dest_repo_id=pepijn223/robocasa_smoke_2atomic_v3_ann "
+    "--repo_id=pepijn223/robocasa_pretrain_human300_v4 "
+    "--dest_repo_id=pepijn223/robocasa_pretrain_human300_v4_annotated5 "
     "--push_to_hub=true "
     "--vlm.backend=openai "
     "--vlm.model_id=Qwen/Qwen3.6-27B "
-    "--vlm.parallel_servers=2 "
-    "--vlm.num_gpus=2 "
+    "--vlm.parallel_servers=4 "
+    "--vlm.num_gpus=4 "
     '--vlm.serve_command="vllm serve Qwen/Qwen3.6-27B '
     "--tensor-parallel-size 1 --max-model-len 32768 "
     '--gpu-memory-utilization 0.8 --uvicorn-log-level warning --port {port}" '
@@ -63,7 +63,7 @@ CMD = (
     # CONTEXT BUDGET: with embedded frames, each frame is ~250-320 vision
     # tokens. The model's context is 32768 (see --max-model-len). 32
     # frames sampled uniformly across the episode (~8-10k tokens) fits
-    # comfortably alongside the prompt and the describe/verify passes.
+    # comfortably alongside the prompt and the describe pass.
     # Do NOT raise max_video_frames toward 128 with embedded frames — that
     # is ~33-39k tokens and overflows the context (BadRequestError 400,
     # "Input length exceeds maximum context length").
@@ -73,7 +73,7 @@ CMD = (
     # Constant 1 fps density via windowing: episodes longer than 32s are
     # split into 32-second windows (each 32 frames @ 1 fps, fits context),
     # so long episodes get MORE subtasks instead of a sparser whole-episode
-    # view. describe->segment->verify runs per window; spans are merged +
+    # view. describe->segment runs per window; spans are merged +
     # stitched to a contiguous whole-episode cover. 0 disables.
     "--plan.subtask_window_seconds=32 "
     # IMPORTANT for RoboCasa: the dataset's task string ("Navigate to the
@@ -95,26 +95,23 @@ CMD = (
     # the subtask text — useful only for long composite manipulation
     # tasks. Leave off for RoboCasa atomic / navigation.
     # Keep subtask decomposition tight for atomic tasks:
-    "--plan.plan_max_steps=6 "
-    # NOTE: the multi-call subtask quality chain (describe -> segment ->
-    # verify, 3 VLM calls/episode) is ON BY DEFAULT now. Pass
-    # --plan.subtask_describe_first=false / --plan.subtask_verify=false to
-    # disable on datasets you've verified are easy and want fewer calls.
+    "--plan.plan_max_steps=10 "
+    # Only annotate subtasks + memory — skip the numbered "plan" rows
+    # (and their per-boundary VLM call). Flip to true to re-enable plan.
+    "--plan.emit_plan=false "
+    # NOTE: the grounding pass (describe -> segment, +1 VLM call/episode)
+    # is ON BY DEFAULT. Pass --plan.subtask_describe_first=false to disable
+    # on datasets you've verified are easy and want fewer calls.
     # Phase 2 — interjections + speech.
     "--interjections.max_interjections_per_episode=6 "
-    # Phase 4 — general VQA.
-    # Ground VQA on the SAME single camera as plan/interjections
-    # (--vlm.camera_key) instead of iterating every camera. The whole
-    # pipeline then focuses on one view, e.g. observation.images.base.
-    "--vqa.restrict_to_default_camera=true "
-    "--vqa.K=1 "
-    "--vqa.vqa_emission_hz=1.0"
+    # Phase 4 — general VQA: DISABLED for this run.
+    "--vqa.enabled=false"
 )
 
 job = run_job(
     image="vllm/vllm-openai:latest",
     command=["bash", "-c", CMD],
-    flavor="h200x2",
+    flavor="h200x4",
     secrets={"HF_TOKEN": token},
     timeout="2h",
 )
