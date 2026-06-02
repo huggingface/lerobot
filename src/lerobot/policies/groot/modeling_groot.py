@@ -342,10 +342,14 @@ class GrootPolicy(PreTrainedPolicy):
         return loss, loss_dict
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Tensor], **_: object) -> Tensor:
         """Predict a chunk of actions for inference by delegating to Isaac-GR00T.
 
         Returns a tensor of shape (B, n_action_steps, action_dim).
+
+        Groot does not currently implement LeRobot's RTC guidance contract. Accept
+        and ignore action-selection kwargs so the RTC engine can still use Groot as
+        an async chunk producer.
         """
         self.eval()
 
