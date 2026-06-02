@@ -6,6 +6,21 @@ You are shown the entire demonstration as a single video. Watch the
 whole clip, then segment it into a list of consecutive atomic subtasks
 the robot performs.
 
+GROUNDING — read this first, it overrides everything below:
+- Label ONLY what the robot actually does in the video. Every subtask
+  you emit must correspond to motion you can SEE in specific frames.
+- Do NOT invent, anticipate, or pad. If the robot only does one thing
+  (e.g. it just navigates to a location and the clip ends), emit
+  EXACTLY ONE subtask. Many demonstrations are a single atomic skill.
+- ``max_steps`` below is a hard CEILING, not a target. Emitting fewer
+  subtasks than the ceiling is not just allowed, it is expected for
+  short / atomic demonstrations. One correct subtask is far better
+  than several invented ones.
+- If the video does not clearly show the action implied by the task,
+  describe what you actually see — do NOT fabricate the task's steps
+  from the instruction text. The instruction tells you the goal; the
+  VIDEO is the ground truth for what happened.
+
 Authoring rules — Hi Robot atom granularity, pi0.7-style short prompts:
 
 - Each subtask = one COMPOSITE atomic skill the low-level policy can

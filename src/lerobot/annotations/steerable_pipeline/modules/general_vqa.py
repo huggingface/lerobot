@@ -180,8 +180,20 @@ class GeneralVqaModule:
         Defaults to every camera the provider exposes. Datasets with no
         cameras (or test/null providers) yield an empty list, which makes
         ``run_episode`` a no-op.
+
+        When ``config.restrict_to_default_camera`` is set, VQA grounds on
+        only the provider's default camera (the single ``--vlm.camera_key``
+        stream), matching the plan / interjection modules so the whole
+        pipeline focuses on one view.
         """
-        return list(getattr(self.frame_provider, "camera_keys", []) or [])
+        all_cameras = list(getattr(self.frame_provider, "camera_keys", []) or [])
+        if getattr(self.config, "restrict_to_default_camera", False):
+            default = getattr(self.frame_provider, "camera_key", None)
+            if default and default in all_cameras:
+                return [default]
+            if default:
+                return [default]
+        return all_cameras
 
     def _build_messages(
         self,

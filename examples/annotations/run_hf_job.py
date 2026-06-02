@@ -54,9 +54,14 @@ CMD = (
     "--vlm.chat_template_kwargs='{\"enable_thinking\": false}' "
     "--vlm.camera_key=observation.images.robot0_agentview_right "
     # Phase 1 — plan module (subtasks + plan + memory).
-    "--plan.frames_per_second=1.0 "
-    "--plan.use_video_url=true "
-    "--plan.use_video_url_fps=1.0 "
+    # Embed decoded frames directly (use_video_url=false) rather than
+    # handing the server a file:// clip. The embedded path is more
+    # reliable: if clip extraction ever fails, the video_url path would
+    # silently send NO video and the VLM would hallucinate subtasks from
+    # the task text alone. 2 fps gives dense visual grounding so the VLM
+    # labels what actually happens.
+    "--plan.frames_per_second=2.0 "
+    "--plan.use_video_url=false "
     # IMPORTANT for RoboCasa: the dataset's task string ("Navigate to the
     # stove", "Pick the mug...") is authoritative and is what eval uses.
     # ``derive_task_from_video=off`` keeps that canonical task driving
@@ -80,6 +85,10 @@ CMD = (
     # Phase 2 — interjections + speech.
     "--interjections.max_interjections_per_episode=6 "
     # Phase 4 — general VQA.
+    # Ground VQA on the SAME single camera as plan/interjections
+    # (--vlm.camera_key) instead of iterating every camera. The whole
+    # pipeline then focuses on one view, e.g. observation.images.base.
+    "--vqa.restrict_to_default_camera=true "
     "--vqa.K=1 "
     "--vqa.vqa_emission_hz=1.0"
 )

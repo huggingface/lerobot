@@ -219,6 +219,15 @@ class VqaConfig:
     precision for more (noisier) VQA frames."""
     question_types: tuple[str, ...] = ("bbox", "keypoint", "count", "attribute", "spatial")
 
+    # Camera restriction. By default VQA iterates EVERY camera the
+    # dataset declares (one VQA pair per camera per emission tick). Set
+    # ``restrict_to_default_camera=True`` to ground VQA on only the
+    # single ``--vlm.camera_key`` stream — the same camera the plan /
+    # interjection modules use — so the whole pipeline focuses on one
+    # view. Use this when you want every annotation grounded on, e.g.,
+    # ``observation.images.base`` and nothing else.
+    restrict_to_default_camera: bool = False
+
 
 @dataclass
 class VlmConfig:

@@ -443,16 +443,27 @@ class PlanSubtasksMemoryModule:
         return flat
 
     def _episode_video_block(self, record: EpisodeRecord) -> list[dict[str, Any]]:
-        """Same video block ``_generate_subtasks`` builds — extracted helper."""
+        """Same video block ``_generate_subtasks`` builds — extracted helper.
+
+        Always returns a block that actually carries the video. When
+        ``use_video_url`` is set we try the server-side ``video_url``
+        path first, but if clip extraction fails we FALL BACK to
+        decoding + embedding frames rather than returning an empty
+        block — an empty block would leave the VLM with no visual
+        grounding at all and it would hallucinate subtasks purely from
+        the task text.
+        """
         if not record.frame_timestamps:
             return []
         if self.config.use_video_url and isinstance(self.frame_provider, VideoFrameProvider):
             cache_dir = Path(self.frame_provider.root) / ".annotate_staging" / ".video_clips"
             clip = self.frame_provider.episode_clip_path(record, cache_dir)
-            return (
-                to_video_url_block(f"file://{clip}", fps=self.config.use_video_url_fps)
-                if clip is not None
-                else []
+            if clip is not None:
+                return to_video_url_block(f"file://{clip}", fps=self.config.use_video_url_fps)
+            logger.warning(
+                "episode %d: video_url clip extraction failed — falling back to "
+                "embedded frames so the VLM still sees the demonstration",
+                record.episode_index,
             )
         episode_duration = record.frame_timestamps[-1] - record.frame_timestamps[0]
         target_count = max(1, int(round(episode_duration * self.config.frames_per_second)))
