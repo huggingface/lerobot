@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import json
+from copy import copy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -45,7 +46,9 @@ from lerobot.processor import (
     ProcessorStep,
     ProcessorStepRegistry,
     RenameObservationsProcessorStep,
+    batch_to_transition,
     policy_action_to_transition,
+    transition_to_batch,
     transition_to_policy_action,
 )
 from lerobot.types import EnvTransition, TransitionKey
@@ -455,6 +458,86 @@ def _has_modality_stats(stats: dict[str, dict[str, Any]] | None) -> bool:
     if not stats:
         return False
     return any(bool(modality_stats) for modality_stats in stats.values())
+
+
+def _legacy_groot_processor_overrides(
+    config: GrootConfig,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None,
+    preprocessor_overrides: dict[str, Any] | None = None,
+    postprocessor_overrides: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Patch older serialized Groot processors with fields current processors expect."""
+
+    preprocessor_overrides = dict(preprocessor_overrides or {})
+    postprocessor_overrides = dict(postprocessor_overrides or {})
+    pack_inputs_key = (
+        "groot_n1_7_pack_inputs_v1" if config.model_version == GROOT_N1_7 else "groot_pack_inputs_v3"
+    )
+
+    pack_input_overrides = dict(preprocessor_overrides.get(pack_inputs_key, {}))
+    pack_input_overrides["normalize_min_max"] = True
+    if dataset_stats is not None and config.model_version != GROOT_N1_7:
+        pack_input_overrides["stats"] = dataset_stats
+    preprocessor_overrides[pack_inputs_key] = pack_input_overrides
+
+    try:
+        env_action_dim = int(config.output_features[ACTION].shape[0])
+    except Exception:
+        env_action_dim = 0
+    action_unpack_overrides = dict(postprocessor_overrides.get("groot_action_unpack_unnormalize_v1", {}))
+    action_unpack_overrides["normalize_min_max"] = True
+    action_unpack_overrides["env_action_dim"] = env_action_dim
+    if dataset_stats is not None and config.model_version != GROOT_N1_7:
+        action_unpack_overrides["stats"] = dataset_stats
+    postprocessor_overrides["groot_action_unpack_unnormalize_v1"] = action_unpack_overrides
+
+    return preprocessor_overrides, postprocessor_overrides
+
+
+def make_groot_pre_post_processors_from_pretrained(
+    config: GrootConfig,
+    pretrained_path: str,
+    *,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    preprocessor_overrides: dict[str, Any] | None = None,
+    postprocessor_overrides: dict[str, Any] | None = None,
+    preprocessor_config_filename: str = f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
+    postprocessor_config_filename: str = f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
+) -> tuple[
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+]:
+    """Load Groot processors while preserving compatibility with older serialized configs."""
+
+    if is_raw_groot_n1_7_checkpoint(pretrained_path):
+        processor_cfg = copy(config)
+        processor_cfg.base_model_path = str(pretrained_path)
+        return make_groot_pre_post_processors(
+            config=processor_cfg,
+            dataset_stats=dataset_stats,
+        )
+
+    preprocessor_overrides, postprocessor_overrides = _legacy_groot_processor_overrides(
+        config=config,
+        dataset_stats=dataset_stats,
+        preprocessor_overrides=preprocessor_overrides,
+        postprocessor_overrides=postprocessor_overrides,
+    )
+    preprocessor = PolicyProcessorPipeline.from_pretrained(
+        pretrained_model_name_or_path=pretrained_path,
+        config_filename=preprocessor_config_filename,
+        overrides=preprocessor_overrides,
+        to_transition=batch_to_transition,
+        to_output=transition_to_batch,
+    )
+    postprocessor = PolicyProcessorPipeline.from_pretrained(
+        pretrained_model_name_or_path=pretrained_path,
+        config_filename=postprocessor_config_filename,
+        overrides=postprocessor_overrides,
+        to_transition=policy_action_to_transition,
+        to_output=transition_to_policy_action,
+    )
+    return preprocessor, postprocessor
 
 
 def make_groot_pre_post_processors(

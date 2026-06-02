@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import importlib
 import logging
-from copy import copy
 from typing import TYPE_CHECKING, Any, TypedDict, Unpack
 
 import torch
@@ -49,7 +48,7 @@ from .act.configuration_act import ACTConfig
 from .diffusion.configuration_diffusion import DiffusionConfig
 from .eo1.configuration_eo1 import EO1Config
 from .gaussian_actor.configuration_gaussian_actor import GaussianActorConfig
-from .groot.configuration_groot import GROOT_N1_7, GrootConfig
+from .groot.configuration_groot import GrootConfig
 from .molmoact2.configuration_molmoact2 import MolmoAct2Config
 from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
 from .pi0.configuration_pi0 import PI0Config
@@ -275,48 +274,21 @@ def make_pre_post_processors(
     """
     if pretrained_path:
         if isinstance(policy_cfg, GrootConfig):
-            from .groot.configuration_groot import is_raw_groot_n1_7_checkpoint
+            from .groot.processor_groot import make_groot_pre_post_processors_from_pretrained
 
-            if is_raw_groot_n1_7_checkpoint(pretrained_path):
-                from .groot.processor_groot import make_groot_pre_post_processors
-
-                processor_cfg = copy(policy_cfg)
-                processor_cfg.base_model_path = str(pretrained_path)
-                return make_groot_pre_post_processors(
-                    config=processor_cfg,
-                    dataset_stats=kwargs.get("dataset_stats"),
-                )
-
-        # TODO(Steven): Temporary patch, implement correctly the processors for Gr00t
-        if isinstance(policy_cfg, GrootConfig):
-            # GROOT handles normalization in its pack-inputs step
-            # Need to override both stats AND normalize_min_max since saved config might be empty
-            dataset_stats = kwargs.get("dataset_stats")
-            preprocessor_overrides = dict(kwargs.get("preprocessor_overrides", {}))
-            postprocessor_overrides = dict(kwargs.get("postprocessor_overrides", {}))
-            pack_inputs_key = (
-                "groot_n1_7_pack_inputs_v1"
-                if policy_cfg.model_version == GROOT_N1_7
-                else "groot_pack_inputs_v3"
+            return make_groot_pre_post_processors_from_pretrained(
+                config=policy_cfg,
+                pretrained_path=pretrained_path,
+                dataset_stats=kwargs.get("dataset_stats"),
+                preprocessor_overrides=kwargs.get("preprocessor_overrides"),
+                postprocessor_overrides=kwargs.get("postprocessor_overrides"),
+                preprocessor_config_filename=kwargs.get(
+                    "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+                ),
+                postprocessor_config_filename=kwargs.get(
+                    "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
+                ),
             )
-            pack_input_overrides = dict(preprocessor_overrides.get(pack_inputs_key, {}))
-            pack_input_overrides["normalize_min_max"] = True
-            if dataset_stats is not None and policy_cfg.model_version != GROOT_N1_7:
-                pack_input_overrides["stats"] = dataset_stats
-            preprocessor_overrides[pack_inputs_key] = pack_input_overrides
-
-            # Also ensure postprocessing slices to env action dim and unnormalizes with dataset stats
-            env_action_dim = policy_cfg.output_features[ACTION].shape[0]
-            action_unpack_overrides = dict(
-                postprocessor_overrides.get("groot_action_unpack_unnormalize_v1", {})
-            )
-            action_unpack_overrides["normalize_min_max"] = True
-            action_unpack_overrides["env_action_dim"] = env_action_dim
-            if dataset_stats is not None and policy_cfg.model_version != GROOT_N1_7:
-                action_unpack_overrides["stats"] = dataset_stats
-            postprocessor_overrides["groot_action_unpack_unnormalize_v1"] = action_unpack_overrides
-            kwargs["preprocessor_overrides"] = preprocessor_overrides
-            kwargs["postprocessor_overrides"] = postprocessor_overrides
 
         preprocessor = PolicyProcessorPipeline.from_pretrained(
             pretrained_model_name_or_path=pretrained_path,
