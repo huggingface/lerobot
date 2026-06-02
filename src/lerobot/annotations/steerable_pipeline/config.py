@@ -94,12 +94,18 @@ class ActionRecordsConfig:
 
     A deterministic Python template then renders the record back to
     canonical subtask text (e.g. ``pick blue cube with left arm using
-    pinch grip``). When ``replace_subtask_text=True`` (default), the
-    rendered text REPLACES the VLM's free-form subtask text — eliminating
-    cross-episode phrasing drift. When ``emit_record_row=True``
-    (default), the structured record is also emitted as a row with
-    ``style="action_record"`` so downstream consumers can train on the
-    typed schema directly.
+    pinch grip``). When ``replace_subtask_text=True``, the rendered text
+    REPLACES the VLM's free-form subtask text. This is OFF by default:
+    the structured fields are easy for the VLM to hallucinate on tasks
+    that don't fit the manipulation schema (e.g. navigation tasks yield
+    nonsense like ``move stove to stove``), and silently overwriting the
+    subtask text with a reconstruction is high-risk. Leave it off to keep
+    the original VLM subtask text and treat the record as additive
+    metadata; only flip it on for datasets you've verified render
+    cleanly. When ``emit_record_row=True`` (default), the structured
+    record is also emitted as a row with ``style="action_record"`` so
+    downstream consumers can train on the typed schema directly —
+    without touching the subtask text.
 
     Cost: one extra VLM call per subtask. For an 8-subtask episode this
     means ~8x more VLM calls in the plan module — still cheap relative
@@ -110,9 +116,11 @@ class ActionRecordsConfig:
 
     # When True, replace the VLM-generated subtask text with the
     # deterministic template's rendering of the structured record.
-    # Strongly recommended — it's the whole point of the structured
-    # intermediate. Set False to keep both representations side by side.
-    replace_subtask_text: bool = True
+    # OFF by default — see class docstring. Overwriting good subtask
+    # text with a reconstruction of hallucinated structured fields is
+    # high-risk (navigation / non-manipulation tasks render to
+    # nonsense). Keep records additive (``emit_record_row``) instead.
+    replace_subtask_text: bool = False
 
     # When True, emit a separate row with ``style="action_record"`` and
     # ``content=json.dumps(record)`` at the subtask's start timestamp.

@@ -424,6 +424,13 @@ class PlanSubtasksMemoryModule:
         if not verb:
             return ""
 
+        # Drop a degenerate destination that just echoes the object — the
+        # VLM sometimes fills both with the same noun (e.g. navigation:
+        # ``verb=move object=stove destination=stove`` → "move stove to
+        # stove"). Treat that as "no meaningful destination".
+        if dest and obj and dest.strip().lower() == obj.strip().lower():
+            dest = ""
+
         parts: list[str] = [verb]
         if obj:
             parts.append(obj)
@@ -431,7 +438,7 @@ class PlanSubtasksMemoryModule:
             # Pick a sensible preposition per verb family.
             if verb in {"place", "put", "drop", "insert", "pour", "dump"}:
                 parts.append(f"in {dest}")
-            elif verb in {"move", "transport", "reach"}:
+            elif verb in {"move", "transport", "reach", "navigate"}:
                 parts.append(f"to {dest}")
             else:
                 parts.append(f"at {dest}")

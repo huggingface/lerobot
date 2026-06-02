@@ -53,13 +53,30 @@ CMD = (
     "--executor.episode_parallelism=16 "
     "--vlm.chat_template_kwargs='{\"enable_thinking\": false}' "
     "--vlm.camera_key=observation.images.robot0_agentview_right "
-    # Phase 1 — plan module (subtasks + plan + memory + task_aug).
+    # Phase 1 — plan module (subtasks + plan + memory).
     "--plan.frames_per_second=1.0 "
     "--plan.use_video_url=true "
     "--plan.use_video_url_fps=1.0 "
-    "--plan.derive_task_from_video=always "
-    "--plan.task_aug_axes.enabled=true "
-    "--plan.action_records.enabled=true "
+    # IMPORTANT for RoboCasa: the dataset's task string ("Navigate to the
+    # stove", "Pick the mug...") is authoritative and is what eval uses.
+    # ``derive_task_from_video=off`` keeps that canonical task driving
+    # subtask generation. Do NOT use ``always`` here — it throws the real
+    # task away, asks the VLM "what is this video about?" with no hint,
+    # and the hallucinated task then poisons every subtask + plan row.
+    "--plan.derive_task_from_video=off "
+    # NO task augmentation for RoboCasa: eval conditions on the exact task
+    # strings, so synthetic rephrasings are unused at best and (when they
+    # drift, e.g. "wander around the kitchen") harmful. 0 rephrasings +
+    # axes disabled = the policy only ever sees the canonical task.
+    "--plan.n_task_rephrasings=0 "
+    # action_records OFF: the structured {verb,object,arm,grasp,dest}
+    # schema is a manipulation schema; RoboCasa navigation / atomic tasks
+    # don't fit it and the VLM hallucinates (e.g. "move stove to stove").
+    # Leave off unless annotating long composite manipulation tasks you've
+    # verified render cleanly (and even then replace_subtask_text stays
+    # off by default so records are additive, never overwriting subtasks).
+    # Keep subtask decomposition tight for atomic tasks:
+    "--plan.plan_max_steps=6 "
     # Phase 2 — interjections + speech.
     "--interjections.max_interjections_per_episode=6 "
     # Phase 4 — general VQA.
