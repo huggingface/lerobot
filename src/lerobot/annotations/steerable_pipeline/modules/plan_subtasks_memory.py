@@ -521,20 +521,65 @@ class PlanSubtasksMemoryModule:
         staging.write("plan", new_rows)
 
     def _generate_subtasks(self, record: EpisodeRecord, *, task: str | None = None) -> list[dict[str, Any]]:
+        """Generate subtask spans, optionally via a multi-call quality chain.
+
+        Single call (default): watch video → emit subtask JSON.
+
+        Multi-call (opt-in, higher quality, more VLM calls):
+          1. ``subtask_describe_first`` — a grounding pass that narrates
+             ONLY what is visible (no JSON commitment to subtasks yet);
+             its description is injected into the segmentation prompt so
+             the model segments its own grounded observations instead of
+             pattern-matching the task text.
+          2. segmentation — emit subtask JSON (as before).
+          3. ``subtask_verify`` — an adversarial pass that re-watches the
+             video and drops any proposed subtask it cannot actually see,
+             pruning hallucinations.
+        """
         if record.row_count == 0 or not record.frame_timestamps:
             return []
         episode_duration = record.frame_timestamps[-1] - record.frame_timestamps[0]
+        effective_task = task if task is not None else record.episode_task
+
+        # ---- Pass 1 (optional): grounding description ----------------
+        observation_block = ""
+        if getattr(self.config, "subtask_describe_first", False):
+            description = self._describe_episode(record, effective_task)
+            if description:
+                observation_block = (
+                    "You watched this video and described, chronologically, "
+                    "ONLY what the robot actually does:\n"
+                    f'"""{description}"""\n\n'
+                    "Segment THAT grounded description (cross-checked against "
+                    "the video) into atomic subtasks. Do not introduce any "
+                    "action that is not in your description above.\n\n"
+                )
+
+        # ---- Pass 2: segmentation ------------------------------------
         prompt = load_prompt("module_1_subtasks").format(
-            episode_task=(task if task is not None else record.episode_task),
+            episode_task=effective_task,
             min_subtask_seconds=self.config.min_subtask_seconds,
             max_steps=self.config.plan_max_steps,
             episode_duration=f"{episode_duration:.3f}",
+            observation_block=observation_block,
         )
-        messages = self._video_message(record, prompt)
-        spans = self._vlm_field(messages, "subtasks")
+        spans = self._vlm_field(self._video_message(record, prompt), "subtasks")
+        cleaned = self._clean_spans(spans, record)
+        if not cleaned:
+            return []
+
+        # ---- Pass 3 (optional): verification / pruning ---------------
+        if getattr(self.config, "subtask_verify", False):
+            cleaned = self._verify_subtasks(record, effective_task, cleaned)
+
+        return cleaned
+
+    def _clean_spans(
+        self, spans: Any, record: EpisodeRecord
+    ) -> list[dict[str, Any]]:
+        """Clamp / sort / dedupe raw VLM subtask spans into valid rows."""
         if not spans:
             return []
-        # clamp to [t0, t_last] and sort
         t0 = record.frame_timestamps[0]
         t_last = record.frame_timestamps[-1]
         cleaned: list[dict[str, Any]] = []
@@ -553,8 +598,56 @@ class PlanSubtasksMemoryModule:
                 continue
             cleaned.append({"text": text, "start": start, "end": end})
         cleaned.sort(key=lambda s: s["start"])
-        cleaned = self._dedupe_starts_to_distinct_frames(cleaned, record)
-        return cleaned
+        return self._dedupe_starts_to_distinct_frames(cleaned, record)
+
+    def _describe_episode(self, record: EpisodeRecord, task: str) -> str:
+        """Grounding pass: free-form chronological description of the video."""
+        prompt = load_prompt("module_1_subtask_describe").format(episode_task=task)
+        text = self._vlm_field(self._video_message(record, prompt), "description")
+        return text.strip() if isinstance(text, str) and text.strip() else ""
+
+    def _verify_subtasks(
+        self,
+        record: EpisodeRecord,
+        task: str,
+        spans: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Adversarial pass: drop proposed subtasks not visible in the video.
+
+        Keeps the original span on a verified ``text`` match (the verify
+        prompt is told not to rewrite text), so verification can only
+        PRUNE — never invent or mutate. If the verify call fails or
+        returns nothing parseable, the un-verified spans are kept (fail
+        open: better to keep a possibly-good label than silently drop
+        everything on a transient VLM hiccup).
+        """
+        import json  # noqa: PLC0415
+
+        subtasks_json = json.dumps(
+            {"subtasks": [{"text": s["text"], "start": round(s["start"], 3), "end": round(s["end"], 3)} for s in spans]},
+            indent=2,
+        )
+        prompt = load_prompt("module_1_subtask_verify").format(
+            episode_task=task, subtasks_json=subtasks_json
+        )
+        kept_raw = self._vlm_field(self._video_message(record, prompt), "subtasks")
+        kept = self._clean_spans(kept_raw, record)
+        if not kept:
+            logger.info(
+                "episode %d: verify pass returned nothing — keeping the %d "
+                "un-verified subtask(s) (fail-open)",
+                record.episode_index,
+                len(spans),
+            )
+            return spans
+        if len(kept) < len(spans):
+            logger.info(
+                "episode %d: verify pass pruned %d -> %d subtask(s)",
+                record.episode_index,
+                len(spans),
+                len(kept),
+            )
+        return kept
 
     @staticmethod
     def _dedupe_starts_to_distinct_frames(

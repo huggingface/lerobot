@@ -1,0 +1,33 @@
+You previously segmented a teleoperated robot demonstration into these
+candidate subtasks (JSON):
+
+{subtasks_json}
+
+The user's task was: "{episode_task}"
+
+This is a VERIFICATION pass. Re-watch the video. For EACH candidate
+subtask, decide whether the robot can ACTUALLY be seen performing that
+action within its [start, end] time window.
+
+Rules:
+- KEEP a subtask only if its action is clearly visible in the video in
+  roughly that time window.
+- DROP any subtask whose action you cannot see, that describes
+  something not actually present in the video, that was inferred from
+  the task instruction rather than observed, or that duplicates another
+  kept subtask.
+- Do NOT add new subtasks. Do NOT rewrite the text of kept subtasks.
+  Do NOT change the start/end timestamps of kept subtasks.
+- It is correct and expected to return FEWER subtasks than you were
+  given — even just one — if that is all the video supports. Returning
+  zero is allowed if none can be verified.
+
+Output strictly valid JSON of the SAME shape, containing only the kept
+subtasks in chronological order:
+
+  {{
+    "subtasks": [
+      {{"text": "<kept verbatim>", "start": <float>, "end": <float>}},
+      ...
+    ]
+  }}

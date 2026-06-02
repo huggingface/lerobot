@@ -6,7 +6,7 @@ You are shown the entire demonstration as a single video. Watch the
 whole clip, then segment it into a list of consecutive atomic subtasks
 the robot performs.
 
-GROUNDING — read this first, it overrides everything below:
+{observation_block}GROUNDING — read this first, it overrides everything below:
 - Label ONLY what the robot actually does in the video. Every subtask
   you emit must correspond to motion you can SEE in specific frames.
 - Do NOT invent, anticipate, or pad. If the robot only does one thing
