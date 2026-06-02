@@ -58,6 +58,19 @@ class PlanConfig:
     frames_per_second: float = 1.0
     max_video_frames: int = 32
 
+    # Windowed subtask generation for CONSTANT temporal density. When > 0
+    # and an episode is longer than this many seconds, the plan module
+    # processes the episode in consecutive windows of this length, each
+    # sampled at ``frames_per_second``, instead of subsampling the whole
+    # episode to ``max_video_frames`` (which makes long episodes sparse).
+    # The describe -> segment -> verify chain runs per window; results are
+    # offset to absolute time, merged, and stitched into a contiguous
+    # whole-episode cover. Cost scales with episode length (≈ chain calls
+    # × ceil(duration / window)). Set to ~max_video_frames / frames_per_
+    # second (e.g. 32s at 1 fps) so each window fills — but never exceeds —
+    # the per-call frame budget. 0 disables (single whole-episode call).
+    subtask_window_seconds: float = 0.0
+
     min_subtask_seconds: float = 1.5
     plan_max_steps: int = 8
 

@@ -70,6 +70,12 @@ CMD = (
     "--plan.use_video_url=false "
     "--plan.frames_per_second=1.0 "
     "--plan.max_video_frames=32 "
+    # Constant 1 fps density via windowing: episodes longer than 32s are
+    # split into 32-second windows (each 32 frames @ 1 fps, fits context),
+    # so long episodes get MORE subtasks instead of a sparser whole-episode
+    # view. describe->segment->verify runs per window; spans are merged +
+    # stitched to a contiguous whole-episode cover. 0 disables.
+    "--plan.subtask_window_seconds=32 "
     # IMPORTANT for RoboCasa: the dataset's task string ("Navigate to the
     # stove", "Pick the mug...") is authoritative and is what eval uses.
     # ``derive_task_from_video=off`` keeps that canonical task driving
