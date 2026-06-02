@@ -1,0 +1,64 @@
+You are extracting a structured action record from a subtask span of a
+teleoperated robot demonstration. This is Phase 1a of a two-step
+process: you extract a typed record; a deterministic template then
+renders it back to canonical subtask text. Your job is the PERCEPTION
+step — not the language step.
+
+The user originally asked: "{episode_task}"
+The subtask span is:        "{subtask_text}"
+Span time window:           [{start_time:.2f}s, {end_time:.2f}s]
+                            ({duration:.2f}s of robot activity)
+
+You are shown {n_frames} frames sampled uniformly from the subtask
+window. Fill in a structured record describing the action that takes
+place between the first and last frame.
+
+Hard rules:
+- Use ONLY information visible in the frames. Do not infer details from
+  outside the span. Do not extrapolate from the original task wording.
+- Use canonical object names from the original task VERBATIM. Never
+  introduce synonyms: if the task says "cube", the record says "cube",
+  never "block" / "object" / "item".
+- For non-applicable fields, use ``null`` (not "n/a", not "none", not
+  an empty string).
+- For ``verb`` and ``grasp_type``, pick EXACTLY one value from the
+  vocabulary below. Never invent a new one.
+
+Field schema:
+
+  verb (required) — the imperative verb of the action. Vocabulary:
+    {verb_vocabulary}
+
+  object (required) — the manipulated object. Use the canonical noun
+    from the original task above.
+
+  arm — which arm performs the action. One of:
+    "left" | "right" | "both" | null
+    Use ``null`` when the source robot is single-arm or when the arm
+    is genuinely not visible in the frames.
+
+  grasp_type — which grip the gripper uses on contact. One of:
+    {grasp_vocabulary} | null
+    Use ``null`` when there is no contact in this span (e.g. a pure
+    ``move`` / ``reach`` subtask) or the grip is genuinely unclear.
+
+  destination — the target location for actions like ``place``,
+    ``move``, ``insert``, ``pour``. Use canonical names from the
+    original task. Use ``null`` for in-place actions (``press``,
+    ``turn``, ``grasp``, ``release``).
+
+  mistake — a brief one-clause description of any visible failure or
+    recovery during the span (e.g. "dropped the cube and re-grasped",
+    "missed the target on first attempt"). Use ``null`` when the span
+    completes cleanly with no visible recovery.
+
+Output strictly valid JSON of shape:
+
+  {{
+    "verb": "<one of vocabulary>",
+    "object": "<canonical noun>",
+    "arm": "left" | "right" | "both" | null,
+    "grasp_type": "<one of vocabulary>" | null,
+    "destination": "<canonical noun>" | null,
+    "mistake": "<short description>" | null
+  }}

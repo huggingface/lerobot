@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -28,6 +29,7 @@ from ..frames import (
     FrameProvider,
     VideoFrameProvider,
     null_provider,
+    to_image_blocks,
     to_video_block,
     to_video_url_block,
 )
@@ -78,13 +80,37 @@ class PlanSubtasksMemoryModule:
         # ``task_aug`` rows at t=0 (role=user), one per rephrasing — the
         # message renderer rotates ``${task}`` deterministically through
         # them so the policy sees diverse phrasings during training.
+        # Two paths:
+        #   * ``task_aug_axes.enabled=True`` — structured 5-axis taxonomy
+        #     (synonym / omit_arm / omit_orientation / omit_grasp_method
+        #     / combined). Replaces the free-form rephrasings flow.
+        #   * Otherwise — free-form ``n_task_rephrasings`` (original).
         t0 = float(record.frame_timestamps[0]) if record.frame_timestamps else 0.0
-        if self.config.n_task_rephrasings > 0 and effective_task:
+        axes_cfg = self.config.task_aug_axes
+        if axes_cfg.enabled and effective_task:
+            variants = self._generate_task_aug_by_axes(effective_task, axes_cfg)
+            seen: set[str] = set()
+            ordered = [effective_task, *variants]
+            for phrasing in ordered:
+                key = phrasing.strip()
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                rows.append(
+                    {
+                        "role": "user",
+                        "content": key,
+                        "style": "task_aug",
+                        "timestamp": t0,
+                        "tool_calls": None,
+                    }
+                )
+        elif self.config.n_task_rephrasings > 0 and effective_task:
             rephrasings = self._generate_task_rephrasings(effective_task, n=self.config.n_task_rephrasings)
             # Always include the effective task itself as the first variant
             # so the rotation is guaranteed to cover the source-of-truth
             # phrasing, not just synthetic alternatives.
-            seen: set[str] = set()
+            seen = set()
             ordered = [effective_task, *rephrasings]
             for phrasing in ordered:
                 key = phrasing.strip()
@@ -102,8 +128,31 @@ class PlanSubtasksMemoryModule:
                 )
 
         subtask_spans = self._generate_subtasks(record, task=effective_task)
-        # subtask rows
-        for span in subtask_spans:
+
+        # ----------------------------------------------------------------
+        # Phase 1a + 1b: structured per-subtask action records
+        # ----------------------------------------------------------------
+        # When enabled, for every subtask span we ask the VLM for a typed
+        # ActionRecord (verb / object / arm / grasp_type / destination /
+        # mistake). A deterministic Python template renders the record
+        # back to canonical subtask text. The render replaces the
+        # free-form subtask text (cleaner conditioning) and the typed
+        # record is emitted as a separate row for downstream use.
+        records_cfg = self.config.action_records
+        action_records: list[dict[str, Any] | None] = [None] * len(subtask_spans)
+        if records_cfg.enabled and subtask_spans:
+            for i, span in enumerate(subtask_spans):
+                rec = self._extract_action_record(record, span, effective_task)
+                if rec is None:
+                    continue
+                action_records[i] = rec
+                if records_cfg.replace_subtask_text:
+                    canonical_text = self._render_action_record_to_subtask_text(rec)
+                    if canonical_text:
+                        span["text"] = canonical_text
+
+        # subtask rows (may now reflect canonical-rendered text)
+        for i, span in enumerate(subtask_spans):
             rows.append(
                 {
                     "role": "assistant",
@@ -113,6 +162,16 @@ class PlanSubtasksMemoryModule:
                     "tool_calls": None,
                 }
             )
+            if records_cfg.enabled and records_cfg.emit_record_row and action_records[i] is not None:
+                rows.append(
+                    {
+                        "role": "assistant",
+                        "content": json.dumps(action_records[i], sort_keys=True),
+                        "style": "action_record",
+                        "timestamp": snap_to_frame(span["start"], record.frame_timestamps),
+                        "tool_calls": None,
+                    }
+                )
         # Plan rows at every subtask boundary — including t=0 (start of
         # the first subtask). Because the plan is just a numbered list
         # of *still-todo* subtasks, re-emitting at each boundary makes
@@ -243,6 +302,202 @@ class PlanSubtasksMemoryModule:
             return []
         out = [item.strip().strip('"').strip("'") for item in raw if isinstance(item, str)]
         return [s for s in out if s][:n]
+
+    # ------------------------------------------------------------------
+    # Phase 1a + 1b: structured per-subtask action records
+    # ------------------------------------------------------------------
+
+    def _extract_action_record(
+        self,
+        record: EpisodeRecord,
+        span: dict[str, Any],
+        episode_task: str,
+    ) -> dict[str, Any] | None:
+        """Ask the VLM to extract a typed ``ActionRecord`` from a subtask span.
+
+        Sends ``frames_per_subtask`` frames uniformly sampled from
+        ``[span.start, span.end]`` plus the canonical subtask text. The
+        VLM is constrained to verb + grasp vocabularies from the config
+        — invalid values are silently dropped at this layer (the
+        validator catches structural problems pre-write).
+
+        Returns ``None`` when the call fails or the VLM returns something
+        unrecognizable; callers fall back to the free-form subtask text.
+        """
+        cfg = self.config.action_records
+        start_t = float(span.get("start", 0.0))
+        end_t = float(span.get("end", start_t))
+        duration = max(0.0, end_t - start_t)
+
+        # Uniform timestamps within the span; fall back to a single
+        # center frame for very short spans.
+        n = max(1, int(cfg.frames_per_subtask))
+        if n == 1 or duration <= 0.0:
+            timestamps = [0.5 * (start_t + end_t)]
+        else:
+            step = duration / (n - 1)
+            timestamps = [start_t + i * step for i in range(n)]
+        frames = self.frame_provider.frames_at(record, timestamps)
+        if not frames:
+            logger.debug(
+                "action_record: no frames at span %.2f-%.2f for ep %s; skipping",
+                start_t, end_t, record.episode_index,
+            )
+            return None
+
+        prompt = load_prompt("module_1_action_record").format(
+            episode_task=episode_task,
+            subtask_text=span.get("text", ""),
+            start_time=start_t,
+            end_time=end_t,
+            duration=duration,
+            n_frames=len(frames),
+            verb_vocabulary=", ".join(cfg.verb_vocabulary),
+            grasp_vocabulary=" | ".join(f'"{g}"' for g in cfg.grasp_vocabulary),
+        )
+        message = [
+            {
+                "role": "user",
+                "content": [*to_image_blocks(frames), {"type": "text", "text": prompt}],
+            }
+        ]
+        result = self.vlm.generate_json([message])[0]
+        if not isinstance(result, dict):
+            return None
+
+        # Light validation + normalisation. Verb is required; everything
+        # else may be null. Verb / grasp_type are clamped to the
+        # vocabularies (out-of-vocab → reject or null).
+        verb = (result.get("verb") or "").strip().lower()
+        if not verb or verb not in {v.lower() for v in cfg.verb_vocabulary}:
+            return None
+        obj = (result.get("object") or "").strip()
+        if not obj:
+            return None
+        grasp = result.get("grasp_type")
+        if isinstance(grasp, str):
+            grasp = grasp.strip().lower()
+            if grasp not in {g.lower() for g in cfg.grasp_vocabulary}:
+                grasp = None
+        else:
+            grasp = None
+        arm = result.get("arm")
+        if isinstance(arm, str):
+            arm = arm.strip().lower()
+            if arm not in {"left", "right", "both"}:
+                arm = None
+        else:
+            arm = None
+        destination = result.get("destination")
+        destination = destination.strip() if isinstance(destination, str) and destination.strip() else None
+        mistake = result.get("mistake")
+        mistake = mistake.strip() if isinstance(mistake, str) and mistake.strip() else None
+
+        return {
+            "verb": verb,
+            "object": obj,
+            "arm": arm,
+            "grasp_type": grasp,
+            "destination": destination,
+            "mistake": mistake,
+        }
+
+    @staticmethod
+    def _render_action_record_to_subtask_text(record: dict[str, Any]) -> str:
+        """Deterministic template: ``ActionRecord`` → canonical subtask text.
+
+        Mirrors the authoring guidance in ``module_1_subtasks.txt``:
+        imperative, drop articles / adverbs, use canonical object nouns,
+        append arm / grasp clauses only when present.
+
+        Examples (record → rendered text)::
+
+            {verb=pick, object=blue cube}
+                → "pick blue cube"
+            {verb=pick, object=blue cube, arm=left, grasp_type=pinch}
+                → "pick blue cube with left arm using pinch grip"
+            {verb=place, object=blue cube, destination=green box}
+                → "place blue cube in green box"
+            {verb=move, object=mug, destination=stove}
+                → "move mug to stove"
+        """
+        verb = (record.get("verb") or "").strip().lower()
+        obj = (record.get("object") or "").strip()
+        arm = (record.get("arm") or "").strip().lower() if record.get("arm") else ""
+        grasp = (record.get("grasp_type") or "").strip().lower() if record.get("grasp_type") else ""
+        dest = (record.get("destination") or "").strip() if record.get("destination") else ""
+
+        if not verb:
+            return ""
+
+        parts: list[str] = [verb]
+        if obj:
+            parts.append(obj)
+        if dest:
+            # Pick a sensible preposition per verb family.
+            if verb in {"place", "put", "drop", "insert", "pour", "dump"}:
+                parts.append(f"in {dest}")
+            elif verb in {"move", "transport", "reach"}:
+                parts.append(f"to {dest}")
+            else:
+                parts.append(f"at {dest}")
+        if arm == "both":
+            parts.append("with both arms")
+        elif arm in {"left", "right"}:
+            parts.append(f"with {arm} arm")
+        if grasp:
+            parts.append(f"using {grasp} grip")
+        return " ".join(parts)
+
+    # ------------------------------------------------------------------
+    # Structured 5-axis task augmentation (EgoMimic-style taxonomy)
+    # ------------------------------------------------------------------
+
+    def _generate_task_aug_by_axes(self, base_task: str, axes_cfg: Any) -> list[str]:
+        """One VLM call → variants along the 5-axis taxonomy.
+
+        Variants from all axes are flattened into a single list (the
+        downstream pipeline doesn't need to know about the per-axis
+        bucketing — every variant becomes a ``task_aug`` row). Order
+        is preserved for reproducibility: synonym_paraphrase first,
+        then omit_arm, then omit_orientation, then omit_grasp_method,
+        then combined_omissions.
+        """
+        if not base_task:
+            return []
+        prompt = load_prompt("module_1_task_aug_axes").format(
+            base_task=base_task,
+            n_synonym=axes_cfg.synonym_paraphrase,
+            n_omit_arm=axes_cfg.omit_arm,
+            n_omit_orientation=axes_cfg.omit_orientation,
+            n_omit_grasp_method=axes_cfg.omit_grasp_method,
+            n_combined=axes_cfg.combined_omissions,
+        )
+        result = self.vlm.generate_json([self._text_message(prompt)])[0]
+        if not isinstance(result, dict):
+            return []
+        ordered_axes = (
+            "synonym_paraphrase",
+            "omit_arm",
+            "omit_orientation",
+            "omit_grasp_method",
+            "combined_omissions",
+        )
+        flat: list[str] = []
+        seen: set[str] = set()
+        for axis in ordered_axes:
+            entries = result.get(axis)
+            if not isinstance(entries, list):
+                continue
+            for item in entries:
+                if not isinstance(item, str):
+                    continue
+                key = item.strip().strip('"').strip("'")
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                flat.append(key)
+        return flat
 
     def _episode_video_block(self, record: EpisodeRecord) -> list[dict[str, Any]]:
         """Same video block ``_generate_subtasks`` builds — extracted helper."""
