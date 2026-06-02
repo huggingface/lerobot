@@ -37,7 +37,6 @@ from ..prompts import load as load_prompt
 from ..reader import EpisodeRecord, reconstruct_subtask_spans, snap_to_frame
 from ..staging import EpisodeStaging
 from ..vlm_client import VlmClient
-from ..vocabulary import Vocabulary
 
 logger = logging.getLogger(__name__)
 
@@ -60,11 +59,6 @@ class PlanSubtasksMemoryModule:
     vlm: VlmClient
     config: PlanConfig
     frame_provider: FrameProvider = field(default_factory=null_provider)
-    vocabulary: Vocabulary | None = None
-    """When set, the module constrains subtask + memory generation to the
-    canonical strings in ``vocabulary``. Phase 0 (vocabulary discovery)
-    populates this once per dataset; ``None`` falls back to free-form
-    generation (original behaviour)."""
 
     @property
     def enabled(self) -> bool:
@@ -575,28 +569,9 @@ class PlanSubtasksMemoryModule:
             min_subtask_seconds=self.config.min_subtask_seconds,
             max_steps=self.config.plan_max_steps,
             episode_duration=f"{episode_duration:.3f}",
-            vocabulary_block=self._subtask_vocabulary_block(),
         )
         messages = self._video_message(record, prompt)
         spans = self._vlm_field(messages, "subtasks")
-        # When a vocabulary is in force, do a single targeted retry if
-        # any returned subtask is off-vocab — strict exact-match only,
-        # no fuzzy snapping. The retry includes the offending strings
-        # and the full canonical list so the VLM can correct itself.
-        if self.vocabulary is not None and self.vocabulary.subtasks and spans:
-            invalid = self._invalid_subtasks(spans)
-            if invalid:
-                logger.info(
-                    "episode %d: VLM emitted %d off-vocab subtask(s) (%s); retrying once",
-                    record.episode_index,
-                    len(invalid),
-                    invalid,
-                )
-                retry_msg = self._build_subtask_retry_message(messages, invalid)
-                retried = self._vlm_field(retry_msg, "subtasks")
-                if retried:
-                    spans = retried
-
         if not spans:
             return []
         # clamp to [t0, t_last] and sort
@@ -616,19 +591,9 @@ class PlanSubtasksMemoryModule:
                 start, end = end, start
             if not text:
                 continue
-            text = self._canonicalize_subtask(text)
-            if not text:
-                continue
             cleaned.append({"text": text, "start": start, "end": end})
         cleaned.sort(key=lambda s: s["start"])
         cleaned = self._dedupe_starts_to_distinct_frames(cleaned, record)
-        if self.vocabulary is not None and self.vocabulary.subtasks and not cleaned:
-            logger.warning(
-                "episode %d: every VLM subtask was off-vocab even after retry — "
-                "episode left empty (extend meta/canonical_vocabulary.json to "
-                "cover the missing phase)",
-                record.episode_index,
-            )
         return cleaned
 
     @staticmethod
@@ -678,132 +643,6 @@ class PlanSubtasksMemoryModule:
                 new_span["end"] = ts
             out.append(new_span)
         return out
-
-    # ------------------------------------------------------------------
-    # Canonical-vocabulary helpers
-    # ------------------------------------------------------------------
-
-    def _subtask_vocabulary_block(self) -> str:
-        """Bullet-list of canonical subtasks the VLM must pick from.
-
-        Returns an empty string when no vocabulary is configured —
-        ``module_1_subtasks.txt`` then falls back to its free-form
-        rules (original behaviour).
-        """
-        if self.vocabulary is None or not self.vocabulary.subtasks:
-            return ""
-        bullets = "\n".join(f"- {s}" for s in self.vocabulary.subtasks)
-        return (
-            "You MUST choose each subtask label verbatim from this canonical "
-            "vocabulary — pick the closest match for each phase of the demo, "
-            "and reuse the SAME string every time that phase recurs. The "
-            "low-level policy is conditioned on these exact strings; any "
-            "novel paraphrase you invent will make its conditioning OOD.\n"
-            "Canonical subtask labels:\n"
-            f"{bullets}\n\n"
-        )
-
-    def _memory_vocabulary_block(self) -> str:
-        """Bullet-list of canonical memory milestones the VLM must pick from."""
-        if self.vocabulary is None or not self.vocabulary.memory_milestones:
-            return ""
-        bullets = "\n".join(f"- {m}" for m in self.vocabulary.memory_milestones)
-        return (
-            "Compose the memory by picking ONLY from this canonical milestone "
-            "list — append a milestone (or rewrite the running memory to "
-            "compress past ones) using these exact phrases. Do not invent new "
-            "wording: every paraphrase weakens the downstream conditioning.\n"
-            "Canonical memory milestones:\n"
-            f"{bullets}\n\n"
-        )
-
-    _NORMALIZE_STRIP_TOKENS: frozenset[str] = frozenset({"the", "a", "an"})
-
-    def _canonicalize_subtask(self, text: str) -> str:
-        """Validate ``text`` against the canonical vocabulary; no fuzzy snap.
-
-        Without a vocabulary, the original text passes through. With a
-        vocabulary, accept the span only if its normalised form (lower-
-        cased, articles stripped, whitespace collapsed) matches a
-        canonical entry exactly — the canonical wording is returned so
-        the supervised string is byte-identical across episodes.
-
-        Off-vocab spans are dropped (empty string). Upstream
-        ``_generate_subtasks`` triggers a targeted retry before reaching
-        the drop path; this function never snaps or warps a span into
-        a different label.
-        """
-        if self.vocabulary is None or not self.vocabulary.subtasks:
-            return text.strip()
-        normalised = self._normalize(text)
-        if not normalised:
-            return ""
-        for candidate in self.vocabulary.subtasks:
-            if self._normalize(candidate) == normalised:
-                return candidate
-        return ""
-
-    @classmethod
-    def _normalize(cls, text: str) -> str:
-        """Lowercase, strip articles, collapse whitespace, drop punctuation."""
-        words = [
-            w.strip(".,:;\"'!?()")
-            for w in text.lower().replace(",", " ").split()
-        ]
-        return " ".join(w for w in words if w and w not in cls._NORMALIZE_STRIP_TOKENS)
-
-    def _invalid_subtasks(self, spans: list[dict[str, Any]]) -> list[str]:
-        """Return the unique off-vocab subtask strings the VLM produced."""
-        seen: list[str] = []
-        for span in spans:
-            text = str((span or {}).get("text") or "").strip()
-            if not text:
-                continue
-            if self._canonicalize_subtask(text):
-                continue
-            if text not in seen:
-                seen.append(text)
-        return seen
-
-    def _build_subtask_retry_message(
-        self, original_messages: list[dict[str, Any]], invalid: list[str]
-    ) -> list[dict[str, Any]]:
-        """Compose a one-shot correction prompt naming the off-vocab strings."""
-        assert self.vocabulary is not None
-        canonical = "\n".join(f"- {s}" for s in self.vocabulary.subtasks)
-        invalid_list = "\n".join(f"- {s!r}" for s in invalid)
-        correction = (
-            "Your previous response included subtask labels that are NOT in "
-            "the canonical vocabulary:\n"
-            f"{invalid_list}\n\n"
-            "Re-emit the same segmentation (same number of spans, same start/end "
-            "timestamps where they were valid) but replace every off-vocab "
-            "label with the EXACT canonical string for that phase, copied "
-            "verbatim from this list:\n"
-            f"{canonical}\n\n"
-            "Strict rules:\n"
-            "- Output strings must be byte-for-byte identical to entries above.\n"
-            "- No articles, no adverbs, no extra words.\n"
-            "- If a phase truly has no canonical match, omit that span entirely.\n"
-            "Return the same JSON shape as before."
-        )
-        # Append the correction as an additional user turn; the model
-        # sees the original prompt + its prior output is implied by the
-        # conversation context (the VLM client is stateless, so we
-        # re-send the original content plus this correction).
-        retry_messages = [
-            {
-                "role": m.get("role", "user"),
-                "content": (
-                    m.get("content")
-                    if isinstance(m.get("content"), str)
-                    else list(m.get("content") or [])
-                ),
-            }
-            for m in original_messages
-        ]
-        retry_messages.append({"role": "user", "content": correction})
-        return retry_messages
 
     def _generate_plan(
         self,
@@ -866,7 +705,6 @@ class PlanSubtasksMemoryModule:
             prior_memory=prior_memory or "(none)",
             completed_subtask=completed,
             remaining_subtasks=", ".join(remaining) if remaining else "(none)",
-            vocabulary_block=self._memory_vocabulary_block(),
         )
         memory = self._vlm_field(self._text_message(prompt), "memory")
         return memory.strip() if isinstance(memory, str) else ""

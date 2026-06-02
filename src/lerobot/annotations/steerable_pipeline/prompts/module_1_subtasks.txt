@@ -6,7 +6,7 @@ You are shown the entire demonstration as a single video. Watch the
 whole clip, then segment it into a list of consecutive atomic subtasks
 the robot performs.
 
-{vocabulary_block}Authoring rules — Hi Robot atom granularity, pi0.7-style short prompts:
+Authoring rules — Hi Robot atom granularity, pi0.7-style short prompts:
 
 - Each subtask = one COMPOSITE atomic skill the low-level policy can
   execute end-to-end. A "skill" bundles its own approach motion with

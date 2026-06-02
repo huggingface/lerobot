@@ -13,7 +13,7 @@ Previous memory: {prior_memory}
 Just-completed subtask: "{completed_subtask}"
 Remaining subtasks (for relevance judgement only): {remaining_subtasks}
 
-{vocabulary_block}Write the memory as a short FIRST-PERSON, PAST-TENSE narrative of what the
+Write the memory as a short FIRST-PERSON, PAST-TENSE narrative of what the
 robot has accomplished so far — the running story it would tell itself.
 
 Authoring rules:

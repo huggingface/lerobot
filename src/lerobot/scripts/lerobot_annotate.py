@@ -40,7 +40,6 @@ from lerobot.annotations.steerable_pipeline.modules import (
 )
 from lerobot.annotations.steerable_pipeline.validator import StagingValidator
 from lerobot.annotations.steerable_pipeline.vlm_client import make_vlm_client
-from lerobot.annotations.steerable_pipeline.vocabulary import VocabularyDiscoveryModule
 from lerobot.annotations.steerable_pipeline.writer import LanguageColumnsWriter
 from lerobot.configs import parser
 
@@ -89,9 +88,6 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
         vlm=vlm, config=cfg.interjections, seed=cfg.seed, frame_provider=frame_provider
     )
     vqa = GeneralVqaModule(vlm=vlm, config=cfg.vqa, seed=cfg.seed, frame_provider=frame_provider)
-    vocabulary = VocabularyDiscoveryModule(
-        vlm=vlm, config=cfg.vocabulary, frame_provider=frame_provider
-    )
     writer = LanguageColumnsWriter()
     validator = StagingValidator(
         dataset_camera_keys=tuple(getattr(frame_provider, "camera_keys", []) or []) or None,
@@ -102,7 +98,6 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
         plan=plan,
         interjections=interjections,
         vqa=vqa,
-        vocabulary=vocabulary,
         writer=writer,
         validator=validator,
     )

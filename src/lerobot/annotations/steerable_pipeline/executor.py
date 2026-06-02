@@ -94,7 +94,6 @@ class Executor:
     vqa: Any  # GeneralVqaModule
     writer: LanguageColumnsWriter
     validator: StagingValidator
-    vocabulary: Any = None  # VocabularyDiscoveryModule | None
 
     def run(self, root: Path) -> PipelineRunSummary:
         records = list(iter_episodes(root, only_episodes=self.config.only_episodes))
@@ -108,10 +107,6 @@ class Executor:
         staging_dir.mkdir(parents=True, exist_ok=True)
 
         phases: list[PhaseResult] = []
-
-        # Phase 0: vocabulary discovery. Mutates ``self.plan.vocabulary``
-        # so subsequent per-episode plan calls see the canonical labels.
-        phases.append(self._run_vocabulary_phase(records, root))
 
         # Phase 1: ``plan`` module (plan + subtasks + memory)
         phases.append(self._run_module_phase("plan", records, staging_dir, self.plan))
@@ -182,62 +177,6 @@ class Executor:
                 f"tools={[t['function']['name'] for t in (info.tools or [])]}",
                 flush=True,
             )
-
-    def _run_vocabulary_phase(
-        self, records: list[EpisodeRecord], root: Path
-    ) -> PhaseResult:
-        """Discover (or load) the canonical vocabulary, wire it into ``self.plan``.
-
-        Returns a ``PhaseResult`` whose ``episodes_processed`` is the number
-        of sample episodes consulted (0 when disabled or no VLM call was
-        needed); ``episodes_skipped`` is always ``0`` because vocabulary is
-        a once-per-dataset artifact, not a per-episode product.
-        """
-        from .vocabulary import load_vocabulary, save_vocabulary  # noqa: PLC0415
-
-        if self.vocabulary is None or not getattr(self.vocabulary, "enabled", False):
-            print(
-                "[annotate] phase=vocabulary skipped (module disabled or unset)",
-                flush=True,
-            )
-            return PhaseResult(name="vocabulary", episodes_processed=0, episodes_skipped=0)
-
-        existing = load_vocabulary(root)
-        if existing is not None and self.config.vocabulary.reuse_existing:
-            print(
-                f"[annotate] phase=vocabulary reusing {root / 'meta' / 'canonical_vocabulary.json'} "
-                f"({len(existing.subtasks)} subtask labels, "
-                f"{len(existing.memory_milestones)} memory milestones)",
-                flush=True,
-            )
-            self.plan.vocabulary = existing
-            return PhaseResult(name="vocabulary", episodes_processed=0, episodes_skipped=0)
-
-        sample_n = max(1, min(int(self.config.vocabulary.sample_episodes), len(records)))
-        print(
-            f"[annotate] phase=vocabulary discovering from {sample_n} sample episode(s)...",
-            flush=True,
-        )
-        t0 = time.time()
-        vocab = self.vocabulary.discover(records[:sample_n], existing=existing)
-        if vocab is None:
-            print(
-                "[annotate] phase=vocabulary returned no vocabulary — "
-                "plan module will fall back to free-form generation",
-                flush=True,
-            )
-            return PhaseResult(name="vocabulary", episodes_processed=0, episodes_skipped=0)
-
-        save_path = save_vocabulary(root, vocab)
-        print(
-            f"[annotate] phase=vocabulary wrote {save_path} "
-            f"({len(vocab.subtasks)} subtask labels, "
-            f"{len(vocab.memory_milestones)} memory milestones) in "
-            f"{time.time() - t0:.1f}s",
-            flush=True,
-        )
-        self.plan.vocabulary = vocab
-        return PhaseResult(name="vocabulary", episodes_processed=sample_n, episodes_skipped=0)
 
     def _run_module_phase(
         self,
