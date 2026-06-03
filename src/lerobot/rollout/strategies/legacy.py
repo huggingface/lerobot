@@ -26,8 +26,7 @@ Mirrors the pre-rollout ``lerobot-record`` inference path:
       Left arrow   — discard the current episode and re-record it
       Escape       — stop the recording session
 
-Dataset naming follows the old lerobot-record convention: any name is
-accepted except those starting with ``eval_`` (reserved for evaluation).
+Dataset naming follows the rollout convention: repo names must start with ``rollout_``.
 """
 
 from __future__ import annotations
