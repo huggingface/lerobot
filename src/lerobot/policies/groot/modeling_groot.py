@@ -292,6 +292,27 @@ class GrootPolicy(PreTrainedPolicy):
             horizons.append(execution_horizon)
         return min(horizons)
 
+    def _resolve_prediction_horizon(self, actions: Tensor) -> int:
+        """Return the policy-facing action horizon for a native GR00T prediction."""
+
+        if self.config.model_version != GROOT_N1_7:
+            return actions.shape[1]
+
+        horizons = [actions.shape[1]]
+        checkpoint_action_horizon = infer_groot_n1_7_action_horizon(
+            self.config.base_model_path,
+            self.config.embodiment_tag,
+        )
+        if checkpoint_action_horizon is not None:
+            horizons.append(checkpoint_action_horizon)
+
+        for horizon in (self.config.chunk_size, self.config.n_action_steps):
+            horizon = int(horizon)
+            if horizon > 0:
+                horizons.append(horizon)
+
+        return max(1, min(horizons))
+
     def _filter_groot_inputs(self, batch: dict[str, Tensor], *, include_action: bool) -> dict[str, Tensor]:
         allowed_base = {"state", "state_mask", "embodiment_id"}
         if include_action:
@@ -454,6 +475,9 @@ class GrootPolicy(PreTrainedPolicy):
                 outputs = self._groot_model.get_action(groot_inputs)
 
         actions = outputs.get("action_pred")
+
+        prediction_horizon = self._resolve_prediction_horizon(actions)
+        actions = actions[:, :prediction_horizon]
 
         original_action_dim = self.config.output_features[ACTION].shape[0]
         actions = actions[:, :, :original_action_dim]
