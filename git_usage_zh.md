@@ -7,8 +7,8 @@
 建议保留两个远程仓库：
 
 ```text
-upstream    官方 LeRobot 仓库
-origin      自己或团队维护的工程仓库
+upstream    官方 LeRobot 仓库：https://github.com/huggingface/lerobot.git
+origin      本工程仓库：https://github.com/wangdt23/lerobot-soarm.git
 ```
 
 查看当前远程仓库：
@@ -32,13 +32,7 @@ git remote rename origin upstream
 然后添加团队自己的仓库为 `origin`：
 
 ```powershell
-git remote add origin <你的团队仓库地址>
-```
-
-例如：
-
-```powershell
-git remote add origin https://github.com/<user-or-org>/<repo-name>.git
+git remote add origin https://github.com/wangdt23/lerobot-soarm.git
 ```
 
 再次确认：
@@ -50,18 +44,20 @@ git remote -v
 期望看到类似结果：
 
 ```text
-origin    https://github.com/<user-or-org>/<repo-name>.git (fetch)
-origin    https://github.com/<user-or-org>/<repo-name>.git (push)
+origin    https://github.com/wangdt23/lerobot-soarm.git (fetch)
+origin    https://github.com/wangdt23/lerobot-soarm.git (push)
 upstream  https://github.com/huggingface/lerobot.git (fetch)
 upstream  https://github.com/huggingface/lerobot.git (push)
 ```
 
 ## 第一次获取团队工程
 
-如果还没有本地仓库，直接克隆团队仓库：
+本工程推荐以 GitHub fork 的方式管理：`wangdt23/lerobot-soarm` 应该是从 `huggingface/lerobot` fork 出来的仓库，而不是一个空仓库。这样可以复用官方仓库已有的 Git 历史和 LFS 对象，避免第一次 push 时要求上传整个 LeRobot 历史中的大文件。
+
+如果还没有本地仓库，直接克隆本工程仓库：
 
 ```powershell
-git clone <你的团队仓库地址>
+git clone https://github.com/wangdt23/lerobot-soarm.git
 cd lerobot
 ```
 
@@ -69,7 +65,7 @@ cd lerobot
 
 ```powershell
 git remote rename origin upstream
-git remote add origin <你的团队仓库地址>
+git remote add origin https://github.com/wangdt23/lerobot-soarm.git
 git fetch origin
 ```
 
@@ -126,6 +122,21 @@ git lfs pull
 ```powershell
 git lfs status
 ```
+
+重要提醒：不要把本地完整 LeRobot 历史直接 push 到一个空的新 GitHub 仓库。官方 LeRobot 历史里包含大量 LFS 对象，如果本地没有全部对象，push 可能失败，例如：
+
+```text
+Unable to find source for object ... (try running `git lfs fetch --all`)
+```
+
+正确做法是先在 GitHub 上从官方仓库 `huggingface/lerobot` 创建 fork，并命名为 `wangdt23/lerobot-soarm`，然后把本地 `origin` 指向这个 fork：
+
+```powershell
+git remote set-url origin https://github.com/wangdt23/lerobot-soarm.git
+git push -u origin main
+```
+
+这样只需要推送本工程新增的提交，不需要重新上传官方历史里的全部 LFS 文件。
 
 ## 换行符建议
 
@@ -334,6 +345,36 @@ git commit -m "Add SO101 kinematics lab and assets"
 ```
 
 ## 常见问题
+
+### push 时提示缺少 LFS object
+
+如果执行：
+
+```powershell
+git push -u origin main
+```
+
+出现类似报错：
+
+```text
+Uploading LFS objects:   0% (0/101), 0 B | 0 B/s, done.
+Unable to find source for object <hash> (try running `git lfs fetch --all`)
+error: failed to push some refs to 'https://github.com/wangdt23/lerobot-soarm.git'
+```
+
+通常说明你正在把完整 LeRobot 历史推到一个空仓库，而本地缺少官方历史中的部分 LFS 大文件。这时不要急着重新 `git add`，也不要随便删除本地提交。
+
+推荐处理方式：
+
+```text
+1. 删除或改名 GitHub 上的空仓库 wangdt23/lerobot-soarm。
+2. 从 https://github.com/huggingface/lerobot 创建 fork。
+3. fork 名称使用 lerobot-soarm。
+4. 本地执行 git remote set-url origin https://github.com/wangdt23/lerobot-soarm.git。
+5. 重新执行 git push -u origin main。
+```
+
+不推荐直接执行 `git lfs fetch --all upstream` 后再推到空仓库，因为这会下载和上传大量官方测试数据、视频和模型文件，速度慢，也会占用很多空间。
 
 ### pull 时提示本地文件会被覆盖
 
