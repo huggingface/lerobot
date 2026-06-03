@@ -88,7 +88,7 @@ def test_module1_plan_memory_subtask_smoke(fixture_dataset_root: Path, tmp_path:
                     {"text": "place the sponge into the sink", "start": 0.8, "end": 1.1},
                 ]
             },
-            "Update the memory": {"memory": "wiped the counter once"},
+            "compressed semantic memory": {"memory": "wiped the counter once"},
         },
     )
     module = PlanSubtasksMemoryModule(vlm=vlm, config=PlanConfig())
@@ -151,12 +151,10 @@ def test_module2_mid_episode_emits_paired_interjection_and_speech(
         {
             "acknowledgement the robot": {"text": "OK."},
             # Marker matches the distinctive line of
-            # ``module_2_interjection.txt``. The old marker
-            # ("ONE realistic interruption") came from a previous prompt
-            # version that asked for counterfactual interjections; the
-            # current design anchors on subtask boundaries instead, so
-            # the prompt and its marker changed.
-            "Write ONE interjection": {
+            # ``module_2_interjection.txt`` ("Write ONE compact
+            # interjection ..."). Keep this in sync with that prompt's
+            # wording — the canned responder matches on substring.
+            "Write ONE compact interjection": {
                 "interjection": "now wipe the counter please",
                 "speech": "On it.",
             },

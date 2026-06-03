@@ -64,7 +64,7 @@ def test_validate_feature_language_warns_only_on_non_empty_value(caplog):
 
 
 def test_style_registry_routes_columns():
-    assert {"subtask", "plan", "memory", "motion", "task_aug"} == PERSISTENT_STYLES
+    assert {"subtask", "plan", "memory", "motion", "task_aug", "action_record"} == PERSISTENT_STYLES
     assert {"interjection", "vqa", "trace"} == EVENT_ONLY_STYLES
     assert PERSISTENT_STYLES | EVENT_ONLY_STYLES <= STYLE_REGISTRY
 
