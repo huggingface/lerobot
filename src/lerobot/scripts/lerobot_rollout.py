@@ -115,11 +115,12 @@ Usage examples
     # Legacy mode — episode-oriented recording, mirrors old lerobot-record
     lerobot-rollout \\
         --strategy.type=legacy \\
+        --policy.path=user/my_policy \\
         --robot.type=so100_follower \\
         --robot.port=/dev/ttyACM0 \\
         --teleop.type=so100_leader \\
         --teleop.port=/dev/ttyACM1 \\
-        --dataset.repo_id=user/grab_cube \\
+        --dataset.repo_id=user/rollout_legacy_data \\
         --dataset.num_episodes=20 \\
         --dataset.single_task="Grab the cube"
 
