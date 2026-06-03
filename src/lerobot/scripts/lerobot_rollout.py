@@ -25,6 +25,7 @@ Strategies
     --strategy.type=sentry     Continuous recording with auto-upload
     --strategy.type=highlight  Ring buffer + keystroke save
     --strategy.type=dagger     Human-in-the-loop (DAgger / RaC)
+    --strategy.type=legacy     Episode oriented recording, mirrors old lerobot-record
 
 Inference backends
 ------------------
@@ -110,6 +111,17 @@ Usage examples
         --task="pick up cube" --duration=60 \\
         --display_data=true \\
         --use_torch_compile=true
+
+    # Legacy mode — episode-oriented recording, mirrors old lerobot-record
+    lerobot-rollout \\
+        --strategy.type=legacy \\
+        --robot.type=so100_follower \\
+        --robot.port=/dev/ttyACM0 \\
+        --teleop.type=so100_leader \\
+        --teleop.port=/dev/ttyACM1 \\
+        --dataset.repo_id=user/grab_cube \\
+        --dataset.num_episodes=20 \\
+        --dataset.single_task="Grab the cube"
 
     # Resume a previous sentry recording session
     lerobot-rollout \\

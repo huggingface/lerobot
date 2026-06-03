@@ -19,6 +19,7 @@ from .core import RolloutStrategy, estimate_max_episode_seconds, safe_push_to_hu
 from .dagger import DAggerEvents, DAggerPhase, DAggerStrategy
 from .factory import create_strategy
 from .highlight import HighlightStrategy
+from .legacy import LegacyStrategy
 from .sentry import SentryStrategy
 
 __all__ = [
@@ -27,6 +28,7 @@ __all__ = [
     "DAggerPhase",
     "DAggerStrategy",
     "HighlightStrategy",
+    "LegacyStrategy",
     "RolloutStrategy",
     "SentryStrategy",
     "create_strategy",

@@ -121,6 +121,24 @@ class DAggerPedalConfig:
     upload: str = "KEY_C"
 
 
+@RolloutStrategyConfig.register_subclass("legacy")
+@dataclass
+class LegacyStrategyConfig(RolloutStrategyConfig):
+    """Episode-oriented recording that mirrors the pre-rollout lerobot-record behavior.
+
+    Records ``dataset.num_episodes`` episodes  of maximum ``dataset.episode_time_s`` each.
+    After each episodes, runs ``dataset.reset_time_s`` seconds of reset time.
+    If --teleop.* is provided, teleoperation is used during the reset time; otherwise, the robot is idle during resets.
+
+    Keyboard controls (same as lerobot-record):
+        Right arrow  — end episode early
+        Left arrow   — discard current episode and re-record
+        Escape       — stop recording session
+    """
+
+    pass
+
+
 @RolloutStrategyConfig.register_subclass("dagger")
 @dataclass
 class DAggerStrategyConfig(RolloutStrategyConfig):
@@ -229,7 +247,13 @@ class RolloutConfig:
 
         # TODO(Steven): DAgger shouldn't require a dataset (user may want to just rollout+intervene without recording), but for now we require it to simplify the implementation.
         needs_dataset = isinstance(
-            self.strategy, (SentryStrategyConfig, HighlightStrategyConfig, DAggerStrategyConfig)
+            self.strategy,
+            (
+                SentryStrategyConfig,
+                HighlightStrategyConfig,
+                DAggerStrategyConfig,
+                LegacyStrategyConfig,
+            ),
         )
         if needs_dataset and (self.dataset is None or not self.dataset.repo_id):
             raise ValueError(f"{self.strategy.type} strategy requires --dataset.repo_id to be set")
