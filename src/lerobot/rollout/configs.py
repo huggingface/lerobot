@@ -126,9 +126,8 @@ class DAggerPedalConfig:
 class LegacyStrategyConfig(RolloutStrategyConfig):
     """Episode-oriented recording that mirrors the pre-rollout lerobot-record behavior.
 
-    Records ``dataset.num_episodes`` episodes  of maximum ``dataset.episode_time_s`` each.
-    After each episodes, runs ``dataset.reset_time_s`` seconds of reset time.
-    If --teleop.* is provided, teleoperation is used during the reset time; otherwise, the robot is idle during resets.
+    Records ``dataset.num_episodes`` episodes of maximum ``dataset.episode_time_s`` each.
+    After each episode, runs ``dataset.reset_time_s`` seconds of reset time.
 
     Keyboard controls (same as lerobot-record):
         Right arrow  — end episode early
