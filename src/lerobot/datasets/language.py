@@ -36,6 +36,7 @@ CORE_STYLES = {
     "vqa",
     "trace",
     "task_aug",
+    "action_record",
 }
 # Project-local styles can be registered at import time by appending to
 # ``EXTENDED_STYLES`` before ``column_for_style`` is called. Anything added
