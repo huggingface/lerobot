@@ -36,6 +36,8 @@ __all__ = [
     "to_absolute_actions",
 ]
 
+ActionNames = list[Any] | tuple[Any, ...]
+
 
 def to_relative_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) -> Tensor:
     """Convert absolute actions to relative: relative = action - state (for masked dims).
@@ -81,6 +83,17 @@ def to_absolute_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) ->
     return actions
 
 
+def _action_names_for_mask(action_names: ActionNames | None) -> ActionNames | None:
+    if not action_names:
+        return action_names
+
+    first = action_names[0]
+    if isinstance(first, (list, tuple)):
+        return first
+
+    return action_names
+
+
 @ProcessorStepRegistry.register("delta_actions_processor")
 @dataclass
 class RelativeActionsProcessorStep(ProcessorStep):
@@ -95,16 +108,18 @@ class RelativeActionsProcessorStep(ProcessorStep):
         enabled: Whether to apply the relative conversion.
         exclude_joints: Joint names to keep absolute (not converted to relative).
         action_names: Action dimension names from dataset metadata, used to build
-            the mask from exclude_joints. If None, all dims are converted.
+            the mask from exclude_joints. If nested, the first inner sequence is
+            used. If None, all dims are converted.
     """
 
     enabled: bool = False
     exclude_joints: list[str] = field(default_factory=list)
-    action_names: list[str] | None = None
+    action_names: ActionNames | None = None
     _last_state: torch.Tensor | None = field(default=None, init=False, repr=False)
 
     def _build_mask(self, action_dim: int) -> list[bool]:
-        if not self.exclude_joints or self.action_names is None:
+        action_names = _action_names_for_mask(self.action_names)
+        if not self.exclude_joints or action_names is None:
             return [True] * action_dim
 
         exclude_tokens = [str(name).lower() for name in self.exclude_joints if name]
@@ -112,7 +127,7 @@ class RelativeActionsProcessorStep(ProcessorStep):
             return [True] * action_dim
 
         mask = []
-        for name in self.action_names[:action_dim]:
+        for name in action_names[:action_dim]:
             action_name = str(name).lower()
             is_excluded = any(token == action_name or token in action_name for token in exclude_tokens)
             mask.append(not is_excluded)
