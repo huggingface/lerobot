@@ -12,14 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import abc
-import builtins
 import json
 import logging
 import os
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TypeVar
+from typing import Type, TypeVar
 
 import draccus
 from huggingface_hub import hf_hub_download
@@ -27,12 +26,12 @@ from huggingface_hub.constants import CONFIG_NAME
 from huggingface_hub.errors import HfHubHTTPError
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.constants import ACTION, OBS_STATE
 from lerobot.optim.optimizers import OptimizerConfig
 from lerobot.optim.schedulers import LRSchedulerConfig
 from lerobot.utils.hub import HubMixin
 from lerobot.utils.utils import auto_select_torch_device, is_amp_available, is_torch_device_available
 
+# Generic variable that is either PreTrainedConfig or a subclass thereof
 T = TypeVar("T", bound="PreTrainedConfig")
 
 
@@ -62,6 +61,9 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     # `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
     # automatic gradient scaling is used.
     use_amp: bool = False
+
+    # added by Sachin-2007
+    gradient_accumulation_steps: int = 1
 
     push_to_hub: bool = True
     repo_id: str | None = None
@@ -120,8 +122,8 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     @property
     def robot_state_feature(self) -> PolicyFeature | None:
-        for ft_name, ft in self.input_features.items():
-            if ft.type is FeatureType.STATE and ft_name == OBS_STATE:
+        for _, ft in self.input_features.items():
+            if ft.type is FeatureType.STATE:
                 return ft
         return None
 
@@ -138,8 +140,8 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     @property
     def action_feature(self) -> PolicyFeature | None:
-        for ft_name, ft in self.output_features.items():
-            if ft.type is FeatureType.ACTION and ft_name == ACTION:
+        for _, ft in self.output_features.items():
+            if ft.type is FeatureType.ACTION:
                 return ft
         return None
 
@@ -149,17 +151,17 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     @classmethod
     def from_pretrained(
-        cls: builtins.type[T],
-        pretrained_name_or_path: str | Path,
-        *,
-        force_download: bool = False,
-        resume_download: bool = None,
-        proxies: dict | None = None,
-        token: str | bool | None = None,
-        cache_dir: str | Path | None = None,
-        local_files_only: bool = False,
-        revision: str | None = None,
-        **policy_kwargs,
+            cls: Type[T],
+            pretrained_name_or_path: str | Path,
+            *,
+            force_download: bool = False,
+            resume_download: bool = None,
+            proxies: dict | None = None,
+            token: str | bool | None = None,
+            cache_dir: str | Path | None = None,
+            local_files_only: bool = False,
+            revision: str | None = None,
+            **policy_kwargs,
     ) -> T:
         model_id = str(pretrained_name_or_path)
         config_file: str | None = None
@@ -197,11 +199,16 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
             config = json.load(f)
 
         config.pop("type")
-        with tempfile.NamedTemporaryFile("w+") as f:
-            json.dump(config, f)
-            config_file = f.name
-            f.flush()
 
+        # Create temporary file and ensure it's closed before draccus reads it (Windows fix)
+        with tempfile.NamedTemporaryFile("w+", delete=False) as f:
+            json.dump(config, f)
+            temp_config_file = f.name
+
+        try:
             cli_overrides = policy_kwargs.pop("cli_overrides", [])
             with draccus.config_type("json"):
-                return draccus.parse(orig_config.__class__, config_file, args=cli_overrides)
+                return draccus.parse(orig_config.__class__, temp_config_file, args=cli_overrides)
+        finally:
+            # Clean up the temporary file
+            os.unlink(temp_config_file)

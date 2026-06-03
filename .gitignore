@@ -162,6 +162,7 @@ wandb/
 
 # Dev scripts
 .dev/
+external/
 
 # Data folders
 data/

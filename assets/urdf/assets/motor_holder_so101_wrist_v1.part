@@ -1,0 +1,14 @@
+{
+    "configuration": "default",
+    "documentId": "4bd66da73cacb4d946d43e44",
+    "documentMicroversion": "2bf56247e58b70e90806e318",
+    "documentVersion": "df78bb7089f1de7d5588d238",
+    "elementId": "d7dfe76e402c21bbd8124e43",
+    "fullConfiguration": "default",
+    "id": "MN9BZ1p69dQQtKTjq",
+    "isStandardContent": false,
+    "name": "Motor_holder_SO101_Wrist v1 <1>",
+    "partId": "JFD",
+    "suppressed": false,
+    "type": "Part"
+}
