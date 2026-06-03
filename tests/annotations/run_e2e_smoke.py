@@ -60,13 +60,11 @@ def _stub_responder(messages):
                 {"text": "place the bottle down", "start": 2.0, "end": 3.0},
             ]
         }
-    if "concise hierarchical PLAN" in text:
-        return {"plan": "1. grasp\n2. pour\n3. place"}
-    if "Update the memory" in text:
+    if "compressed semantic memory" in text:
         return {"memory": "poured once"}
     if "acknowledgement the robot" in text:
         return {"text": "Sure."}
-    if "ONE realistic interruption" in text:
+    if "compact interjection" in text:
         return {"interjection": "use less water", "speech": "Using less water."}
     if "frame-grounded visual question" in text:
         return {"question": "How many cups?", "answer": {"label": "cup", "count": 1}}
@@ -94,6 +92,23 @@ def main() -> int:
         print(f"phases={[(p.name, p.episodes_processed) for p in summary.phases]}")
         print(f"validation: {summary.validation_report.summary()}")
         print(f"shards rewritten: {len(summary.written_paths)}")
+
+        # Assert the interjection code path actually fired — otherwise a stale
+        # canned-VLM marker would silently produce zero interjections and this
+        # smoke run would still "pass" by only printing.
+        import pyarrow.parquet as pq  # noqa: PLC0415
+
+        events = [
+            r
+            for shard in summary.written_paths
+            for ev in pq.read_table(shard).column("language_events").to_pylist()
+            for r in ev
+        ]
+        n_interjections = sum(1 for r in events if r.get("style") == "interjection")
+        n_speech = sum(1 for r in events if r.get("style") is None and r.get("role") == "assistant")
+        print(f"interjections={n_interjections} speech_atoms={n_speech}")
+        assert n_interjections > 0, "no interjection rows produced — check the interjection prompt marker"
+        assert n_speech > 0, "no speech tool-call atoms produced — check the speech prompt marker"
     return 0
 
 

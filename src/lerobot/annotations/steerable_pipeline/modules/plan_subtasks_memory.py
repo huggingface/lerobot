@@ -285,14 +285,14 @@ class PlanSubtasksMemoryModule:
 
     def _derive_task_from_video(self, record: EpisodeRecord) -> str | None:
         """Ask the VLM "what is this video about" with no task hint at all."""
-        text = self._vlm_field(self._video_message(record, load_prompt("module_1_video_task")), "task")
+        text = self._vlm_field(self._video_message(record, load_prompt("plan_video_task")), "task")
         return text.strip() if isinstance(text, str) and text.strip() else None
 
     def _generate_task_rephrasings(self, base_task: str, *, n: int) -> list[str]:
         """Generate ``n`` text-only paraphrases of ``base_task``."""
         if n <= 0 or not base_task:
             return []
-        prompt = load_prompt("module_1_task_rephrasings").format(base_task=base_task, n=n)
+        prompt = load_prompt("plan_task_rephrasings").format(base_task=base_task, n=n)
         raw = self._vlm_field(self._text_message(prompt), "rephrasings")
         if not isinstance(raw, list):
             return []
@@ -343,7 +343,7 @@ class PlanSubtasksMemoryModule:
             )
             return None
 
-        prompt = load_prompt("module_1_action_record").format(
+        prompt = load_prompt("plan_action_record").format(
             episode_task=episode_task,
             subtask_text=span.get("text", ""),
             start_time=start_t,
@@ -416,7 +416,7 @@ class PlanSubtasksMemoryModule:
         """
         if not base_task:
             return []
-        prompt = load_prompt("module_1_task_aug_axes").format(
+        prompt = load_prompt("plan_task_aug_axes").format(
             base_task=base_task,
             n_synonym=axes_cfg.synonym_paraphrase,
             n_omit_arm=axes_cfg.omit_arm,
@@ -596,7 +596,7 @@ class PlanSubtasksMemoryModule:
                 )
 
         # ---- Pass 2: segmentation ------------------------------------
-        prompt = load_prompt("module_1_subtasks").format(
+        prompt = load_prompt("plan_subtasks").format(
             episode_task=effective_task,
             min_subtask_seconds=self.config.min_subtask_seconds,
             max_steps=self.config.plan_max_steps,
@@ -679,7 +679,7 @@ class PlanSubtasksMemoryModule:
                     "action that is not in your description above.\n\n"
                 )
 
-        prompt = load_prompt("module_1_subtasks").format(
+        prompt = load_prompt("plan_subtasks").format(
             episode_task=task,
             min_subtask_seconds=self.config.min_subtask_seconds,
             max_steps=self.config.plan_max_steps,
@@ -778,7 +778,7 @@ class PlanSubtasksMemoryModule:
         self, record: EpisodeRecord, task: str, window: tuple[float, float] | None = None
     ) -> str:
         """Grounding pass: free-form chronological description of the (windowed) video."""
-        prompt = load_prompt("module_1_subtask_describe").format(episode_task=task)
+        prompt = load_prompt("plan_subtask_describe").format(episode_task=task)
         text = self._vlm_field(self._video_message(record, prompt, window=window), "description")
         return text.strip() if isinstance(text, str) and text.strip() else ""
 
@@ -882,7 +882,7 @@ class PlanSubtasksMemoryModule:
         *,
         task: str | None = None,
     ) -> str:
-        prompt = load_prompt("module_1_memory").format(
+        prompt = load_prompt("plan_memory").format(
             episode_task=(task if task is not None else record.episode_task),
             prior_memory=prior_memory or "(none)",
             completed_subtask=completed,

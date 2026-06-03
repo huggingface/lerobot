@@ -138,7 +138,13 @@ class StagingValidator:
         for row in all_rows:
             self._check_column_routing(row, report, record.episode_index)
             self._check_camera_field(row, report, record.episode_index, self.dataset_camera_keys)
-            if column_for_style(row.get("style")) == LANGUAGE_PERSISTENT:
+            # ``_check_column_routing`` already recorded any unknown-style error;
+            # don't let the same ``column_for_style`` lookup raise here uncaught.
+            try:
+                column = column_for_style(row.get("style"))
+            except ValueError:
+                continue
+            if column == LANGUAGE_PERSISTENT:
                 persistent.append(row)
             else:
                 events.append(row)

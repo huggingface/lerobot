@@ -35,7 +35,7 @@ def test_push_to_hub_tags_uploaded_dataset_revision(tmp_path, monkeypatch):
 
     cfg = SimpleNamespace(
         repo_id="source/dataset",
-        dest_repo_id="annotated/dataset",
+        new_repo_id="annotated/dataset",
         push_private=True,
         push_commit_message=None,
     )

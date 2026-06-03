@@ -417,7 +417,7 @@ exclude_dirs = [
     "benchmarks",
     "src/lerobot/datasets/push_dataset_to_hub",
 ]
-skips = ["B101", "B311", "B404", "B603", "B607", "B615"]
+skips = ["B101", "B311", "B404", "B603", "B615"]
 
 [tool.typos]
 default.extend-ignore-re = [

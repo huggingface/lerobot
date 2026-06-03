@@ -1,21 +1,37 @@
 #!/usr/bin/env python
+
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """Launch ``lerobot-annotate`` on a Hugging Face job (vllm + Qwen3.6-27B VLM).
 
-Spawns one ``h200x4`` job that:
+Spawns one single-GPU ``h200`` job that:
 
-  1. installs this branch of ``lerobot`` plus the annotation extras,
-  2. boots four vllm servers (one per GPU) with Qwen3.6-27B (dense VLM),
+  1. installs ``lerobot`` plus the annotation extras,
+  2. boots one vllm server with Qwen3.6-27B (dense VLM),
   3. runs the plan / interjections / vqa modules across the dataset
      in free-form mode (each episode generates its own subtasks +
      memory),
-  4. uploads the annotated dataset to ``--dest_repo_id`` (when set)
+  4. uploads the annotated dataset to ``--new_repo_id`` (when set)
      or back to ``--repo_id``.
 
 Usage:
 
     HF_TOKEN=hf_... uv run python examples/annotations/run_hf_job.py
 
-Adjust ``CMD`` below to point at your own dataset / target hub repo.
+Adjust ``CMD`` (dataset, model, hub repo) and ``flavor`` below for your
+run. For larger datasets, scale to ``h200x4`` and raise
+``--vlm.parallel_servers`` / ``--vlm.num_gpus`` to match.
 """
 
 import os
@@ -29,7 +45,7 @@ if not token:
 CMD = (
     "apt-get update -qq && apt-get install -y -qq git ffmpeg && "
     "pip install --no-deps "
-    "'lerobot @ git+https://github.com/huggingface/lerobot.git@feat/language-annotation-pipeline' && "
+    "'lerobot @ git+https://github.com/huggingface/lerobot.git@main' && "
     "pip install --upgrade-strategy only-if-needed "
     "datasets pyarrow av jsonlines draccus gymnasium torchcodec mergedeep pyyaml-include toml typing-inspect "
     "openai && "
@@ -37,12 +53,12 @@ CMD = (
     "export VLLM_VIDEO_BACKEND=pyav && "
     "lerobot-annotate "
     "--repo_id=pepijn223/robocasa_pretrain_human300_v4 "
-    "--dest_repo_id=pepijn223/robocasa_pretrain_human300_v4_annotated5 "
+    "--new_repo_id=pepijn223/robocasa_pretrain_human300_v4_annotated5 "
     "--push_to_hub=true "
     "--vlm.backend=openai "
     "--vlm.model_id=Qwen/Qwen3.6-27B "
-    "--vlm.parallel_servers=4 "
-    "--vlm.num_gpus=4 "
+    "--vlm.parallel_servers=1 "
+    "--vlm.num_gpus=1 "
     '--vlm.serve_command="vllm serve Qwen/Qwen3.6-27B '
     "--tensor-parallel-size 1 --max-model-len 32768 "
     '--gpu-memory-utilization 0.8 --uvicorn-log-level warning --port {port}" '
@@ -111,7 +127,7 @@ CMD = (
 job = run_job(
     image="vllm/vllm-openai:latest",
     command=["bash", "-c", CMD],
-    flavor="h200x4",
+    flavor="h200",
     secrets={"HF_TOKEN": token},
     timeout="2h",
 )

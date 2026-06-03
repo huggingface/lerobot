@@ -229,7 +229,7 @@ def test_writer_drops_subtask_index_idempotent(fixture_dataset_root: Path, tmp_p
     assert "language_events" in table_a.column_names
     # The writer no longer emits a dataset-level ``tools`` column; the
     # ``say`` tool schema lives as a code constant (``SAY_TOOL_SCHEMA``)
-    # so the parquet stays small and PR 2 doesn't extend PR 1's schema.
+    # so the parquet stays small and the pipeline doesn't extend the schema.
     assert "tools" not in table_a.column_names
 
     # second pass — must produce identical bytes for the language columns

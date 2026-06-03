@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""End-to-end smoke: pipeline output → PR 1 canonical recipe rendering."""
+"""End-to-end smoke: pipeline output → canonical recipe rendering."""
 
 from __future__ import annotations
 
@@ -49,14 +49,15 @@ from lerobot.datasets.language_render import render_sample  # noqa: E402
 from ._helpers import make_canned_responder  # noqa: E402
 
 
-def _build_pr1_style_blend_recipe() -> TrainingRecipe:
+def _build_style_blend_recipe() -> TrainingRecipe:
     """Inline blend recipe that consumes every style this pipeline produces.
 
-    PR 1 used to ship ``src/lerobot/configs/recipes/pi05_hirobot.yaml`` as
-    a canonical example, but that file was dropped during PR 1 review. The
-    cross-PR contract this test guards is "the recipe DSL can render
-    non-empty messages from pipeline output", which doesn't require a
-    specific YAML — so we build the equivalent blend in code.
+    The language schema/DSL work used to ship
+    ``src/lerobot/configs/recipes/pi05_hirobot.yaml`` as a canonical
+    example, but that file was dropped during review. The contract this
+    test guards is "the recipe DSL can render non-empty messages from
+    pipeline output", which doesn't require a specific YAML — so we build
+    the equivalent blend in code.
     """
     return TrainingRecipe(
         blend={
@@ -109,10 +110,9 @@ def _build_executor() -> Executor:
                     {"text": "place the bottle down", "start": 1.0, "end": 1.5},
                 ]
             },
-            "concise hierarchical PLAN": {"plan": "1. grasp\n2. pour\n3. place"},
-            "Update the memory": {"memory": "poured once"},
+            "compressed semantic memory": {"memory": "poured once"},
             "acknowledgement the robot": {"text": "Sure."},
-            "ONE realistic interruption": {
+            "compact interjection": {
                 "interjection": "use less water",
                 "speech": "Using less water.",
             },
@@ -137,7 +137,7 @@ def _build_executor() -> Executor:
     )
 
 
-def test_pr1_canonical_recipe_renders_nonempty_from_pipeline_output(
+def test_canonical_recipe_renders_nonempty_from_pipeline_output(
     single_episode_root: Path,
 ) -> None:
     executor = _build_executor()
@@ -150,7 +150,7 @@ def test_pr1_canonical_recipe_renders_nonempty_from_pipeline_output(
     events_lists = table.column("language_events").to_pylist()
     timestamps = table.column("timestamp").to_pylist()
 
-    recipe = _build_pr1_style_blend_recipe()
+    recipe = _build_style_blend_recipe()
 
     rendered_any = False
     for ts, persistent, events in zip(timestamps, persistent_lists, events_lists, strict=True):
@@ -168,7 +168,7 @@ def test_pr1_canonical_recipe_renders_nonempty_from_pipeline_output(
             rendered_any = True
             assert result["target_message_indices"]
             break
-    assert rendered_any, "PR 1 recipe rendered no messages from pipeline output"
+    assert rendered_any, "recipe rendered no messages from pipeline output"
 
     # Sanity: speech atom appears in events column intact
     flat_events = [r for ev in events_lists for r in ev]
@@ -177,7 +177,7 @@ def test_pr1_canonical_recipe_renders_nonempty_from_pipeline_output(
     say = speech_rows[0]["tool_calls"][0]
     assert say["function"]["name"] == "say"
     assert isinstance(say["function"]["arguments"]["text"], str)
-    # PR 2 no longer writes a ``tools`` column — the say schema lives as a
-    # constant (``SAY_TOOL_SCHEMA``) so PR 1's row struct is the single
-    # source of truth for the v3.1 schema.
+    # The pipeline does not write a ``tools`` column — the say schema lives
+    # as a constant (``SAY_TOOL_SCHEMA``) so the language row struct is the
+    # single source of truth for the v3.1 schema.
     assert "tools" not in table.column_names

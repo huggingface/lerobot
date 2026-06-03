@@ -95,6 +95,7 @@ class GeneralVqaModule:
     config: VqaConfig
     seed: int = 1729
     frame_provider: FrameProvider = field(default_factory=null_provider)
+    _warned_no_camera: bool = field(default=False, init=False, repr=False)
 
     @property
     def enabled(self) -> bool:
@@ -113,7 +114,7 @@ class GeneralVqaModule:
             # No camera available — emit nothing rather than producing
             # untagged rows that would fail validation. Surface a loud one-
             # time warning so this is never silently a no-op.
-            if not getattr(self, "_warned_no_camera", False):
+            if not self._warned_no_camera:
                 logging.getLogger(__name__).warning(
                     "vqa module found no cameras on the frame provider — "
                     "every episode will emit zero VQA rows. Check that the "
@@ -191,8 +192,17 @@ class GeneralVqaModule:
             default = getattr(self.frame_provider, "camera_key", None)
             if default and default in all_cameras:
                 return [default]
+            # ``restrict_to_default_camera`` is set but the configured default
+            # isn't one the provider exposes. Returning it anyway would make
+            # ``_decode`` raise a KeyError deep in frame extraction, so warn and
+            # fall through to every available camera instead.
             if default:
-                return [default]
+                logging.getLogger(__name__).warning(
+                    "restrict_to_default_camera is set but camera_key=%r is not in the "
+                    "provider's cameras %s; grounding VQA on all available cameras instead.",
+                    default,
+                    all_cameras,
+                )
         return all_cameras
 
     def _build_messages(
@@ -202,7 +212,7 @@ class GeneralVqaModule:
         frame_timestamp: float,
         camera_key: str,
     ) -> list[dict[str, Any]]:
-        prompt = load_prompt("module_3_vqa").format(
+        prompt = load_prompt("vqa").format(
             episode_task=record.episode_task,
             question_type=question_type,
         )

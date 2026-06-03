@@ -146,6 +146,7 @@ class VideoFrameProvider:
     # ``ExecutorConfig.episode_parallelism``); guard the dict cache and the
     # one-shot warn flag against concurrent updates from worker threads.
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    _warned_decode_fail: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata  # noqa: PLC0415
@@ -285,7 +286,9 @@ class VideoFrameProvider:
             str(out_path),
         ]
         try:
-            subprocess.run(cmd, check=True, timeout=300)
+            # ffmpeg is invoked by name via PATH lookup (the standard way to
+            # call the CLI); the arg list is fully controlled here, not shell.
+            subprocess.run(cmd, check=True, timeout=300)  # nosec B607
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
             return None
         return out_path if out_path.exists() and out_path.stat().st_size > 0 else None
@@ -335,7 +338,7 @@ class VideoFrameProvider:
         # []) is debuggable from the job log instead of post-hoc parquet
         # inspection. Subsequent failures stay quiet.
         with self._lock:
-            already_warned = getattr(self, "_warned_decode_fail", False)
+            already_warned = self._warned_decode_fail
             if not already_warned:
                 self._warned_decode_fail = True
         if not already_warned:
@@ -382,7 +385,8 @@ def _decode_frames_ffmpeg(video_path: Path, timestamps: list[float]) -> list[Any
 
     frames: list[Any] = []
     for ts in timestamps:
-        proc = subprocess.run(
+        # ffmpeg invoked by name via PATH lookup; fully-controlled arg list, no shell.
+        proc = subprocess.run(  # nosec B607
             [
                 "ffmpeg",
                 "-nostdin",

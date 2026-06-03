@@ -7,8 +7,7 @@
 
 ## What the pipeline produces
 
-A vocabulary-discovery phase derives a small canonical wording, then three
-modules write into a per-episode staging tree, then a single writer
+Three modules write into a per-episode staging tree, then a single writer
 rewrites the data shards in place:
 
 | Style / atom                                | Column                | Module          |
@@ -21,20 +20,15 @@ rewrites the data shards in place:
 | speech tool-call atom (`style=null`, `say`) | `language_events`     | `interjections` |
 | `vqa` (user / assistant pair)               | `language_events`     | `vqa`           |
 
-The `plan` module is constrained to a **canonical vocabulary** discovered
-once per dataset by the `vocabulary` module (phase 0). It watches a few
-sample episode videos (`--vocabulary.sample_episodes`, default `3`) and
-asks the VLM to derive a small set of imperative subtask labels and
-first-person memory milestones that recur across the demos. The VLM
-picks the right number of entries itself based on what it sees in the
-clips — short pick-and-place demos get ~6 subtask labels, longer
-multi-step recipes get more. The result lands at
-`meta/canonical_vocabulary.json` (human-readable / hand-editable) and
-is reused on every subsequent run. The `plan` module then constrains
-both subtask + memory generation to those exact strings — the
-downstream low-level policy sees a small, repeatable target
-distribution instead of thousands of LLM paraphrases. Disable with
-`--vocabulary.enabled=False` to fall back to free-form generation.
+The `plan` module generates subtasks per episode with a **describe → segment**
+grounding flow: a first pass narrates only what is visible in the chosen
+camera, and its description is fed into a second pass that segments the
+episode into consecutive atomic subtasks. The resulting spans are then
+deterministically stitched into a contiguous full-episode cover so every
+frame has exactly one active subtask. See
+[`run_hf_job.py`](https://github.com/huggingface/lerobot/blob/main/examples/annotations/run_hf_job.py)
+for the production flag set (single camera, embedded frames, windowed
+subtask generation).
 
 The writer does **not** add a `tools` column to the parquet — the tool
 catalog lives at `meta/info.json["tools"]` instead (see
@@ -44,9 +38,11 @@ user pre-declared.
 
 If you want to declare additional tools for a dataset before annotation
 runs, edit `meta/info.json["tools"]` directly — the pipeline preserves
-anything already there. Implementations of those tools live under
-`src/lerobot/tools/`; one file per tool, registered via
-`TOOL_REGISTRY`. See the [Tools](./tools) doc for the authoring guide.
+anything already there. That makes the tool visible to the chat template
+so the model can learn to _generate_ the call. The runtime layer that
+_executes_ a generated call (the `Tool` protocol / `TOOL_REGISTRY` under
+`src/lerobot/tools/`) is not part of this PR — see the
+[Tools](./tools) doc, which marks those pieces as not-yet-implemented.
 
 ## Running on Hugging Face Jobs
 
@@ -59,18 +55,32 @@ HF_TOKEN=hf_... uv run python examples/annotations/run_hf_job.py
 ```
 
 [`examples/annotations/run_hf_job.py`](https://github.com/huggingface/lerobot/blob/main/examples/annotations/run_hf_job.py)
-spawns a multi-GPU `h200` job that:
+spawns a single-GPU `h200` job (scale up to `h200x4` for larger datasets) that:
 
 1. installs the branch under test plus the annotation extras,
 2. boots one vLLM server per GPU (in the `vllm/vllm-openai` image) for the
    chosen model, which the pipeline drives over the OpenAI-compatible API,
 3. runs the `plan` / `interjections` / `vqa` modules across the dataset
    via `lerobot-annotate`,
-4. uploads the annotated dataset to `--push_to_hub`.
+4. with `--push_to_hub=true`, uploads the annotated dataset to
+   `--new_repo_id` (or back to `--repo_id` in place when that is unset).
 
 To target a different dataset, model, or hub repo, edit the `CMD` block
 inside the script — every flag in there maps directly onto a CLI flag of
 `lerobot-annotate` (see `lerobot-annotate --help` for the full list).
+
+## Contributing new modules
+
+The pipeline is built to be extended, and **contributions are very
+welcome** — whether that's a brand-new annotation module (e.g. a
+trajectory-trace or affordance module), a new prompt template, a better
+grounding flow, or quality improvements to the existing `plan` /
+`interjections` / `vqa` modules. Each module lives under
+`src/lerobot/annotations/steerable_pipeline/modules/`, shares the VLM
+client and keyframe cache, writes its raw output to the per-episode
+staging tree, and is wired into the executor as an independent phase.
+If you have an idea for a module or an improvement, open an issue or PR
+on [the repo](https://github.com/huggingface/lerobot).
 
 ## Style-to-recipe consumer mapping
 

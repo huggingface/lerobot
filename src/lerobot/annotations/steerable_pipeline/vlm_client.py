@@ -598,13 +598,3 @@ def _pil_to_data_url(image: Any) -> str:
     image.save(buf, format="PNG")
     b64 = base64.b64encode(buf.getvalue()).decode("ascii")
     return f"data:image/png;base64,{b64}"
-
-
-def _messages_to_prompt(messages: Sequence[dict[str, Any]]) -> Any:
-    """Pass-through hook used by the vllm backend.
-
-    vllm exposes its own multimodal entry points that vary by version; for the
-    base flow we simply forward the raw message list and let the caller's
-    custom backend handle templating. Real deployments override this.
-    """
-    return list(messages)

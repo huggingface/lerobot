@@ -15,14 +15,8 @@
 # limitations under the License.
 """In-process executor that runs the annotation phases.
 
-The executor plans **seven phases** in the dependency order from the plan:
+The executor runs **six phases** in dependency order:
 
-    phase 0: vocabulary discovery — derive a small canonical vocabulary
-             from the first few sample-episode videos (subtask labels +
-             memory milestones) and persist it next to the dataset; the
-             ``plan`` module then constrains every per-episode generation
-             to those strings, so the downstream policy sees a small,
-             repeatable conditioning distribution
     phase 1: ``plan`` module (plan + subtasks + memory)
     phase 2: ``interjections`` module (interjections + speech)
     phase 3: ``plan`` plan-update pass — re-runs plan emission at every

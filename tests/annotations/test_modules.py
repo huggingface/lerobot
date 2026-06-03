@@ -151,7 +151,7 @@ def test_module2_mid_episode_emits_paired_interjection_and_speech(
         {
             "acknowledgement the robot": {"text": "OK."},
             # Marker matches the distinctive line of
-            # ``module_2_interjection.txt`` ("Write ONE compact
+            # ``interjections_interjection.txt`` ("Write ONE compact
             # interjection ..."). Keep this in sync with that prompt's
             # wording — the canned responder matches on substring.
             "Write ONE compact interjection": {
@@ -245,7 +245,6 @@ def test_module1_attaches_video_block_to_subtask_prompt(fixture_dataset_root: Pa
             {"text": "wipe the counter", "start": 0.5, "end": 1.1},
         ]
     }
-    plan_payload = {"plan": "1. grasp\n2. wipe"}
     memory_payload = {"memory": "wiped once"}
 
     def responder(messages):
@@ -255,9 +254,7 @@ def test_module1_attaches_video_block_to_subtask_prompt(fixture_dataset_root: Pa
             for block in m.get("content", []):
                 if isinstance(block, dict) and block.get("type") == "text":
                     text = block.get("text", "")
-        if "concise hierarchical PLAN" in text:
-            return plan_payload
-        if "Update the memory" in text:
+        if "compressed semantic memory" in text:
             return memory_payload
         return payload
 
