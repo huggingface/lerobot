@@ -494,6 +494,17 @@ def _legacy_groot_processor_overrides(
     return preprocessor_overrides, postprocessor_overrides
 
 
+def _local_processor_config_has_step(pretrained_path: str, config_filename: str, step_name: str) -> bool:
+    path = Path(pretrained_path).expanduser()
+    if not path.is_dir():
+        return False
+    config = _read_json(path / config_filename)
+    steps = config.get("steps", [])
+    if not isinstance(steps, list):
+        return False
+    return any(isinstance(step, dict) and step.get("registry_name") == step_name for step in steps)
+
+
 def make_groot_pre_post_processors_from_pretrained(
     config: GrootConfig,
     pretrained_path: str,
@@ -517,12 +528,26 @@ def make_groot_pre_post_processors_from_pretrained(
             dataset_stats=dataset_stats,
         )
 
-    preprocessor_overrides, postprocessor_overrides = _legacy_groot_processor_overrides(
-        config=config,
-        dataset_stats=dataset_stats,
-        preprocessor_overrides=preprocessor_overrides,
-        postprocessor_overrides=postprocessor_overrides,
-    )
+    if (
+        config.model_version == GROOT_N1_7
+        and _local_processor_config_has_step(
+            pretrained_path,
+            postprocessor_config_filename,
+            "groot_n1_7_action_decode_v1",
+        )
+    ):
+        # Converted raw N1.7 checkpoints already carry the checkpoint-specific
+        # action decoder. Adding the legacy action-unpack override would target
+        # a step that is not present and break loading.
+        preprocessor_overrides = dict(preprocessor_overrides or {})
+        postprocessor_overrides = dict(postprocessor_overrides or {})
+    else:
+        preprocessor_overrides, postprocessor_overrides = _legacy_groot_processor_overrides(
+            config=config,
+            dataset_stats=dataset_stats,
+            preprocessor_overrides=preprocessor_overrides,
+            postprocessor_overrides=postprocessor_overrides,
+        )
     preprocessor = PolicyProcessorPipeline.from_pretrained(
         pretrained_model_name_or_path=pretrained_path,
         config_filename=preprocessor_config_filename,
@@ -1712,6 +1737,15 @@ def _unnormalize_min_max(action: np.ndarray, min_v: np.ndarray, max_v: np.ndarra
     return (np.clip(action, -1.0, 1.0) + 1.0) * 0.5 * (max_v - min_v) + min_v
 
 
+def _n1_7_decode_valid_horizon(action_config: dict[str, Any], action_np: np.ndarray) -> int | None:
+    if action_np.ndim != 3:
+        return None
+    delta_indices = action_config.get("delta_indices", [])
+    if not isinstance(delta_indices, list) or not delta_indices:
+        return None
+    return max(1, min(action_np.shape[1], len(delta_indices)))
+
+
 def _rot6d_to_matrix(rot6d: np.ndarray) -> np.ndarray:
     rows = rot6d.reshape(2, 3).astype(np.float64)
     row1 = rows[0] / np.linalg.norm(rows[0])
@@ -1824,6 +1858,9 @@ class GrootN17ActionDecodeStep(ProcessorStep):
             return transition
 
         action_np = action.detach().cpu().float().numpy()
+        valid_horizon = _n1_7_decode_valid_horizon(action_config, action_np)
+        if valid_horizon is not None:
+            action_np = action_np[:, :valid_horizon]
         decoded_groups: dict[str, np.ndarray] = {}
         start_idx = 0
         for idx, key in enumerate(action_keys):

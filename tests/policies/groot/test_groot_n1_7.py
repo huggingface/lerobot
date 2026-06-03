@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 import json
 import sys
 from types import SimpleNamespace
@@ -333,13 +334,15 @@ class _DummyGrootModel(nn.Module):
         self.config = SimpleNamespace(compute_dtype="float32")
         self.compute_dtype = "float32"
         self.forward_inputs = None
+        self.get_action_options = None
 
     def forward(self, inputs):
         self.forward_inputs = dict(inputs)
         return {"loss": self.weight + 1.0}
 
-    def get_action(self, inputs):
+    def get_action(self, inputs, options=None):
         self.forward_inputs = dict(inputs)
+        self.get_action_options = options
         batch_size = inputs["state"].shape[0]
         return {"action_pred": torch.zeros(batch_size, 40, 132, device=self.weight.device)}
 
@@ -417,6 +420,109 @@ def test_groot_n1_7_can_be_selected_from_policy_config_factory_without_external_
     assert isinstance(config, GrootConfig)
     assert config.model_version == GROOT_N1_7
     assert "gr00t" not in sys.modules
+
+
+def test_groot_predict_action_chunk_accepts_rtc_kwargs():
+    signature = inspect.signature(GrootPolicy.predict_action_chunk)
+
+    assert any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+    signature.bind(object(), {}, inference_delay=2, prev_chunk_left_over=None)
+
+
+def test_groot_predict_action_chunk_forwards_n1_7_rtc_prefix(monkeypatch):
+    from lerobot.policies.groot.groot_n1_7 import GR00TN17
+
+    dummy_model = _DummyGrootModel()
+    monkeypatch.setattr(GR00TN17, "from_pretrained", classmethod(lambda cls, **kwargs: dummy_model))
+    config = _groot_config(GROOT_N1_7)
+    policy = GrootPolicy(config)
+    policy.config.rtc_config = SimpleNamespace(execution_horizon=6)
+
+    prev_chunk = torch.arange(8 * 7, dtype=torch.float32).view(8, 7)
+
+    actions = policy.predict_action_chunk(
+        {"state": torch.zeros(1, 1, 132)},
+        inference_delay=3,
+        prev_chunk_left_over=prev_chunk,
+    )
+
+    assert actions.shape == (1, 40, 7)
+    assert dummy_model.get_action_options == {
+        "action_horizon": 8,
+        "rtc_overlap_steps": 6,
+        "rtc_frozen_steps": 3,
+        "rtc_ramp_rate": 6.0,
+    }
+    assert dummy_model.forward_inputs["action"].shape == (1, 8, 132)
+    torch.testing.assert_close(dummy_model.forward_inputs["action"][0, :, :7], prev_chunk)
+    torch.testing.assert_close(dummy_model.forward_inputs["action"][0, :, 7:], torch.zeros(8, 125))
+
+
+def test_groot_predict_action_chunk_strips_padded_n1_7_rtc_prefix(monkeypatch):
+    from lerobot.policies.groot.groot_n1_7 import GR00TN17
+
+    dummy_model = _DummyGrootModel()
+    monkeypatch.setattr(GR00TN17, "from_pretrained", classmethod(lambda cls, **kwargs: dummy_model))
+    config = _groot_config(GROOT_N1_7)
+    policy = GrootPolicy(config)
+    policy.config.rtc_config = SimpleNamespace(execution_horizon=6)
+
+    prev_chunk = torch.cat(
+        (
+            torch.arange(4 * 7, dtype=torch.float32).view(4, 7) + 1.0,
+            torch.zeros(2, 7),
+        )
+    )
+
+    policy.predict_action_chunk(
+        {"state": torch.zeros(1, 1, 132)},
+        inference_delay=5,
+        prev_chunk_left_over=prev_chunk,
+    )
+
+    assert dummy_model.get_action_options == {
+        "action_horizon": 4,
+        "rtc_overlap_steps": 4,
+        "rtc_frozen_steps": 4,
+        "rtc_ramp_rate": 6.0,
+    }
+    assert dummy_model.forward_inputs["action"].shape == (1, 4, 132)
+    torch.testing.assert_close(dummy_model.forward_inputs["action"][0, :, :7], prev_chunk[:4])
+    torch.testing.assert_close(dummy_model.forward_inputs["action"][0, :, 7:], torch.zeros(4, 125))
+
+
+def test_groot_n1_7_predict_action_chunk_truncates_to_checkpoint_valid_horizon(tmp_path, monkeypatch):
+    from lerobot.policies.groot.groot_n1_7 import GR00TN17
+
+    model_path = tmp_path / "libero_spatial"
+    _write_raw_n1_7_libero_checkpoint(model_path)
+
+    class HorizonModel(_DummyGrootModel):
+        def get_action(self, inputs, options=None):
+            del options
+            batch_size = inputs["state"].shape[0]
+            steps = torch.arange(40, dtype=torch.float32).view(1, 40, 1).expand(batch_size, 40, 132)
+            return {"action_pred": steps}
+
+    monkeypatch.setattr(GR00TN17, "from_pretrained", classmethod(lambda cls, **kwargs: HorizonModel()))
+    input_features, output_features = _groot_features(state_dim=8, action_dim=7)
+    config = GrootConfig(
+        model_version=GROOT_N1_7,
+        base_model_path=str(model_path),
+        embodiment_tag="libero_sim",
+        input_features=input_features,
+        output_features=output_features,
+        device="cpu",
+        use_bf16=False,
+        chunk_size=40,
+        n_action_steps=40,
+    )
+    policy = GrootPolicy(config)
+
+    actions = policy.predict_action_chunk({"state": torch.zeros(1, 1, 132)})
+
+    assert actions.shape == (1, 16, 7)
+    torch.testing.assert_close(actions[0, :, 0], torch.arange(16, dtype=torch.float32))
 
 
 def test_groot_from_pretrained_rejects_mismatched_caller_config(tmp_path):
@@ -583,6 +689,27 @@ def test_groot_n1_7_saved_processors_round_trip_checkpoint_specific_fields(tmp_p
     assert decode_actions.env_action_dim == 7
     assert decode_actions.action_decode_transform == GROOT_ACTION_DECODE_TRANSFORM_LIBERO
     assert decode_actions.raw_stats["action"]["gripper"]["q99"] == [115.0]
+
+
+def test_converted_raw_n1_7_processors_load_without_legacy_action_unpack_override(tmp_path):
+    model_path = tmp_path / "libero_spatial"
+    _write_raw_n1_7_libero_checkpoint(model_path)
+    config = _raw_n1_7_libero_config(model_path)
+    preprocessor, postprocessor = make_pre_post_processors(config, pretrained_path=str(model_path))
+    save_dir = tmp_path / "converted_pretrained_model"
+
+    config.save_pretrained(save_dir)
+    preprocessor.save_pretrained(save_dir)
+    postprocessor.save_pretrained(save_dir)
+
+    loaded_preprocessor, loaded_postprocessor = make_pre_post_processors(
+        config,
+        pretrained_path=str(save_dir),
+        preprocessor_overrides={"rename_observations_processor": {"rename_map": {}}},
+    )
+
+    assert any(isinstance(step, GrootN17PackInputsStep) for step in loaded_preprocessor.steps)
+    assert any(isinstance(step, GrootN17ActionDecodeStep) for step in loaded_postprocessor.steps)
 
 
 def test_groot_n1_7_pack_inputs_rejects_state_dim_above_core_max():
@@ -931,6 +1058,76 @@ def test_groot_n1_7_action_decode_applies_named_libero_transform_from_modality_k
         ]
     )
     torch.testing.assert_close(output[TransitionKey.ACTION], expected)
+
+
+def test_groot_n1_7_action_decode_truncates_to_valid_horizon_for_relative_stats():
+    arm_min = [[-1.0] * 5 for _ in range(16)]
+    arm_max = [[1.0] * 5 for _ in range(16)]
+    raw_stats = {
+        "state": {
+            "single_arm": _stats([0.0] * 5),
+            "gripper": _stats([0.0]),
+        },
+        "action": {
+            "single_arm": _stats([0.0] * 5),
+            "gripper": {
+                "min": [0.0],
+                "max": [10.0],
+                "mean": [5.0],
+                "std": [1.0],
+                "q01": [0.0],
+                "q99": [10.0],
+            },
+        },
+        "relative_action": {
+            "single_arm": {
+                "min": arm_min,
+                "max": arm_max,
+                "mean": [[0.0] * 5 for _ in range(16)],
+                "std": [[1.0] * 5 for _ in range(16)],
+                "q01": arm_min,
+                "q99": arm_max,
+            },
+        },
+    }
+    modality_config = {
+        "state": {
+            "modality_keys": ["single_arm", "gripper"],
+        },
+        "action": {
+            "delta_indices": list(range(16)),
+            "modality_keys": ["single_arm", "gripper"],
+            "action_configs": [
+                {"rep": "RELATIVE", "type": "NON_EEF", "format": "DEFAULT", "state_key": None},
+                {"rep": "ABSOLUTE", "type": "NON_EEF", "format": "DEFAULT", "state_key": None},
+            ],
+        },
+    }
+    pack_step = GrootN17PackInputsStep(
+        raw_stats=raw_stats,
+        modality_config=modality_config,
+        normalize_min_max=False,
+    )
+    pack_step(
+        {
+            TransitionKey.OBSERVATION: {OBS_STATE: torch.zeros(1, 6)},
+            TransitionKey.COMPLEMENTARY_DATA: {},
+        }
+    )
+    decode_step = GrootN17ActionDecodeStep(
+        env_action_dim=6,
+        raw_stats=raw_stats,
+        modality_config=modality_config,
+        use_relative_action=True,
+        pack_step=pack_step,
+    )
+
+    output = decode_step({TransitionKey.ACTION: torch.zeros(1, 40, 6)})
+
+    decoded = output[TransitionKey.ACTION]
+    assert decoded.shape == (1, 16, 6)
+    torch.testing.assert_close(decoded[..., :5], torch.zeros(1, 16, 5))
+    torch.testing.assert_close(decoded[..., 5], torch.full((1, 16), 5.0))
 
 
 def test_groot_n1_7_action_decode_requires_gripper_key_for_libero_transform():
