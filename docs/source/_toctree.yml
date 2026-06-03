@@ -61,6 +61,8 @@
     title: π₀-FAST (Pi0Fast)
   - local: pi05
     title: π₀.₅ (Pi05)
+  - local: molmoact2
+    title: MolmoAct2
   - local: eo1
     title: EO-1
   - local: groot
@@ -75,6 +77,10 @@
 - sections:
   - local: sarm
     title: SARM
+  - local: robometer
+    title: ROBOMETER
+  - local: topreward
+    title: TOPReward
   title: "Reward Models"
 - sections:
   - local: inference
