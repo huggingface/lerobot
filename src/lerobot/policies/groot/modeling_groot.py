@@ -373,6 +373,17 @@ class GrootPolicy(PreTrainedPolicy):
                 "prev_chunk_left_over batch size must match the current GR00T N1.7 batch size."
             )
 
+        # The generic LeRobot RTC engine pads short leftovers with exact zero
+        # rows for fixed-shape policy calls. Native GR00T N1.7 RTC treats every
+        # provided prefix row as a real action constraint, so strip that padding
+        # before constructing the native overlap options.
+        valid_prefix_rows = prev_actions.detach().abs().sum(dim=(0, 2)) > 0
+        if valid_prefix_rows.any():
+            valid_prefix_steps = int(valid_prefix_rows.nonzero()[-1].item()) + 1
+            prev_actions = prev_actions[:, :valid_prefix_steps, :]
+        else:
+            return inputs, None
+
         model_action_horizon = int(getattr(self._groot_model.config, "action_horizon", self.config.chunk_size))
         max_action_dim = int(getattr(self._groot_model.config, "max_action_dim", self.config.max_action_dim))
         if prev_actions.shape[1] > model_action_horizon:
