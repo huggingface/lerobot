@@ -319,6 +319,85 @@ class GrootPolicy(PreTrainedPolicy):
             if (k in allowed_base or k.startswith("eagle_")) and not (k.startswith("next.") or k == "info")
         }
 
+    def _prepare_n1_7_rtc_inputs(
+        self,
+        inputs: dict[str, Tensor],
+        *,
+        inference_delay: object,
+        prev_chunk_left_over: object,
+    ) -> tuple[dict[str, Tensor], dict[str, object] | None]:
+        if self.config.model_version != GROOT_N1_7 or prev_chunk_left_over is None:
+            return inputs, None
+        if not isinstance(prev_chunk_left_over, torch.Tensor):
+            raise TypeError("prev_chunk_left_over must be a torch.Tensor for GR00T N1.7 RTC.")
+        if prev_chunk_left_over.numel() == 0:
+            return inputs, None
+
+        prev_actions = prev_chunk_left_over
+        if prev_actions.ndim == 2:
+            prev_actions = prev_actions.unsqueeze(0)
+        elif prev_actions.ndim != 3:
+            raise ValueError(
+                "prev_chunk_left_over must have shape (T, A) or (B, T, A) for GR00T N1.7 RTC."
+            )
+
+        state = inputs.get("state")
+        if state is None:
+            raise ValueError("GR00T N1.7 RTC requires `state` in the preprocessed batch.")
+        batch_size = state.shape[0]
+        if prev_actions.shape[0] == 1 and batch_size > 1:
+            prev_actions = prev_actions.expand(batch_size, -1, -1).clone()
+        elif prev_actions.shape[0] != batch_size:
+            raise ValueError(
+                "prev_chunk_left_over batch size must match the current GR00T N1.7 batch size."
+            )
+
+        model_action_horizon = int(getattr(self._groot_model.config, "action_horizon", self.config.chunk_size))
+        max_action_dim = int(getattr(self._groot_model.config, "max_action_dim", self.config.max_action_dim))
+        if prev_actions.shape[1] > model_action_horizon:
+            prev_actions = prev_actions[:, -model_action_horizon:, :]
+
+        action_horizon = int(prev_actions.shape[1])
+        if action_horizon <= 0:
+            return inputs, None
+
+        if prev_actions.shape[2] > max_action_dim:
+            prev_actions = prev_actions[:, :, :max_action_dim]
+        elif prev_actions.shape[2] < max_action_dim:
+            pad = torch.zeros(
+                prev_actions.shape[0],
+                prev_actions.shape[1],
+                max_action_dim - prev_actions.shape[2],
+                dtype=prev_actions.dtype,
+                device=prev_actions.device,
+            )
+            prev_actions = torch.cat([prev_actions, pad], dim=2)
+
+        prev_actions = prev_actions.to(device=state.device, dtype=state.dtype)
+
+        rtc_config = getattr(self.config, "rtc_config", None)
+        execution_horizon = int(getattr(rtc_config, "execution_horizon", action_horizon))
+        overlap_steps = max(0, min(action_horizon, execution_horizon))
+        if overlap_steps == 0:
+            return inputs, None
+
+        try:
+            frozen_steps = int(inference_delay or 0)
+        except (TypeError, ValueError):
+            frozen_steps = 0
+        frozen_steps = max(0, min(frozen_steps, overlap_steps))
+
+        options = {
+            "action_horizon": action_horizon,
+            "rtc_overlap_steps": overlap_steps,
+            "rtc_frozen_steps": frozen_steps,
+            "rtc_ramp_rate": float(getattr(self._groot_model.config, "rtc_ramp_rate", 6.0)),
+        }
+
+        inputs = dict(inputs)
+        inputs["action"] = prev_actions
+        return inputs, options
+
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
         """Training forward pass.
 
@@ -342,14 +421,13 @@ class GrootPolicy(PreTrainedPolicy):
         return loss, loss_dict
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], **_: object) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: object) -> Tensor:
         """Predict a chunk of actions for inference by delegating to Isaac-GR00T.
 
         Returns a tensor of shape (B, n_action_steps, action_dim).
 
-        Groot does not currently implement LeRobot's RTC guidance contract. Accept
-        and ignore action-selection kwargs so the RTC engine can still use Groot as
-        an async chunk producer.
+        For N1.7, LeRobot's RTC leftovers are converted into the native GR00T
+        action-overlap options before calling the underlying model.
         """
         self.eval()
 
@@ -357,13 +435,23 @@ class GrootPolicy(PreTrainedPolicy):
         # During inference, we do not pass action because it is predicted.
         # N1.7 still carries a 2-D action horizon mask from its checkpoint processor.
         groot_inputs = self._filter_groot_inputs(batch, include_action=False)
+        groot_options = None
+        if self.config.model_version == GROOT_N1_7:
+            groot_inputs, groot_options = self._prepare_n1_7_rtc_inputs(
+                groot_inputs,
+                inference_delay=kwargs.get("inference_delay"),
+                prev_chunk_left_over=kwargs.get("prev_chunk_left_over"),
+            )
 
         # Get device from model parameters
         device = next(self.parameters()).device
 
         # Use bf16 autocast for inference to keep memory low and match backbone dtype
         with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=self.config.use_bf16):
-            outputs = self._groot_model.get_action(groot_inputs)
+            if groot_options is not None:
+                outputs = self._groot_model.get_action(groot_inputs, options=groot_options)
+            else:
+                outputs = self._groot_model.get_action(groot_inputs)
 
         actions = outputs.get("action_pred")
 
