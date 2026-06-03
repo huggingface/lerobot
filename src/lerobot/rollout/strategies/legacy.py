@@ -31,6 +31,7 @@ Dataset naming follows the rollout convention: repo names must start with ``roll
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
 
@@ -104,53 +105,61 @@ class LegacyStrategy(RolloutStrategy):
         )
 
         with VideoEncodingManager(dataset):
-            recorded_episodes = 0
-            while recorded_episodes < num_episodes and not events["stop_recording"]:
-                if ctx.runtime.shutdown_event.is_set():
-                    break
+            try:
+                recorded_episodes = 0
+                while recorded_episodes < num_episodes and not events["stop_recording"]:
+                    if ctx.runtime.shutdown_event.is_set():
+                        break
 
-                # Reset policy state at episode start (discard leftover hidden state / queue)
-                self._engine.reset()
-                self._interpolator.reset()
-                self._engine.resume()
+                    # Reset policy state at episode start (discard leftover hidden state / queue)
+                    self._engine.reset()
+                    self._interpolator.reset()
+                    self._engine.resume()
 
-                log_say(f"Recording episode {dataset.num_episodes}", play_sounds)
-                self._policy_loop(
-                    ctx=ctx,
-                    robot=robot,
-                    events=events,
-                    features=features,
-                    fps=fps,
-                    control_time_s=episode_time_s,
-                    dataset=dataset,
-                    single_task=single_task,
-                )
-
-                # Reset phase, skip after the last episode (but run when re-recording)
-                if not events["stop_recording"] and (
-                    recorded_episodes < num_episodes - 1 or events["rerecord_episode"]
-                ):
-                    log_say("Reset the environment", play_sounds)
-                    self._reset_loop(
+                    log_say(f"Recording episode {dataset.num_episodes}", play_sounds)
+                    self._policy_loop(
                         ctx=ctx,
                         robot=robot,
-                        teleop=teleop,
                         events=events,
+                        features=features,
                         fps=fps,
-                        control_time_s=reset_time_s,
-                        display_data=cfg.display_data,
-                        display_compressed=display_compressed,
+                        control_time_s=episode_time_s,
+                        dataset=dataset,
+                        single_task=single_task,
                     )
 
-                if events["rerecord_episode"]:
-                    log_say("Re-record episode", play_sounds)
-                    events["rerecord_episode"] = False
-                    events["exit_early"] = False
-                    dataset.clear_episode_buffer()
-                    continue
+                    # Reset phase, skip after the last episode (but run when re-recording)
+                    if not events["stop_recording"] and (
+                        recorded_episodes < num_episodes - 1 or events["rerecord_episode"]
+                    ):
+                        log_say("Reset the environment", play_sounds)
+                        self._reset_loop(
+                            ctx=ctx,
+                            robot=robot,
+                            teleop=teleop,
+                            events=events,
+                            fps=fps,
+                            control_time_s=reset_time_s,
+                            display_data=cfg.display_data,
+                            display_compressed=display_compressed,
+                        )
 
-                dataset.save_episode()
-                recorded_episodes += 1
+                    if events["rerecord_episode"]:
+                        log_say("Re-record episode", play_sounds)
+                        events["rerecord_episode"] = False
+                        events["exit_early"] = False
+                        dataset.clear_episode_buffer()
+                        continue
+
+                    dataset.save_episode()
+                    recorded_episodes += 1
+            finally:
+                # Save any frames buffered in the current episode so an unexpected
+                # exception or KeyboardInterrupt does not silently drop recorded data.
+                # suppress: save_episode raises if the buffer is empty (nothing to lose).
+                logger.info("Legacy control loop ended — saving any in-progress episode")
+                with contextlib.suppress(Exception):
+                    dataset.save_episode()
 
     def _policy_loop(
         self,
