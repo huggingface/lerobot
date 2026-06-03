@@ -48,38 +48,6 @@ anything already there. Implementations of those tools live under
 `src/lerobot/tools/`; one file per tool, registered via
 `TOOL_REGISTRY`. See the [Tools](./tools) doc for the authoring guide.
 
-## Running locally
-
-Install the extra and invoke the console script. Episode-level
-concurrency comes from `--executor.episode_parallelism` (default 16);
-that is the only knob the in-process executor exposes.
-
-```bash
-uv sync --extra annotations
-uv run lerobot-annotate \
-  --root=/path/to/dataset \
-  --vlm.model_id=Qwen/Qwen2.5-VL-7B-Instruct
-```
-
-The pipeline attaches actual camera footage to every `plan` /
-`interjections` / `vqa` prompt by default, decoded from the dataset's
-first `observation.images.*` stream. Override with
-`--vlm.camera_key=observation.images.<name>` to pin a specific
-viewpoint. Datasets with no video tracks fall back to text-only prompts
-automatically.
-
-**The `plan` module sees the whole episode as one video block.** Subtask
-decomposition gets a `{"type":"video", "video":[<frames>]}` block
-covering the entire demonstration; Qwen-VL pools temporally on its own
-and decides where to cut. There is no keyframe stride or count knob —
-`--plan.max_video_frames` (default 128) only caps the frames packed
-into the video block as a model-capacity bound. The `interjections`
-module attaches a short window of frames straddling the interjection
-timestamp. The `vqa` module grounds each VQA pair on a single frame —
-its `--vqa.K` knob sets how many consecutive frames each emission tick
-anchors, and every anchored frame gets its own VQA pair on that one
-frame (there is no per-pair frame window).
-
 ## Running on Hugging Face Jobs
 
 Distributed annotation is delegated to
@@ -91,10 +59,11 @@ HF_TOKEN=hf_... uv run python examples/annotations/run_hf_job.py
 ```
 
 [`examples/annotations/run_hf_job.py`](https://github.com/huggingface/lerobot/blob/main/examples/annotations/run_hf_job.py)
-spawns one `h200x2` job that:
+spawns a multi-GPU `h200` job that:
 
 1. installs the branch under test plus the annotation extras,
-2. boots two vllm servers (one per GPU) for the chosen model,
+2. boots one vLLM server per GPU (in the `vllm/vllm-openai` image) for the
+   chosen model, which the pipeline drives over the OpenAI-compatible API,
 3. runs the `plan` / `interjections` / `vqa` modules across the dataset
    via `lerobot-annotate`,
 4. uploads the annotated dataset to `--push_to_hub`.
@@ -126,9 +95,9 @@ Two things drive the scope:
    speech) only appear on the exact frame whose timestamp matches the
    emission. The pipeline writes timestamps taken straight from the
    source parquet — no floating-point recomputation.
-2. **One Qwen-VL pass.** All three modules share a single VLM client
-   (vLLM if available, transformers fallback) so the cost is one model
-   load per dataset, not three.
+2. **One Qwen-VL pass.** All three modules share a single VLM client (the
+   OpenAI-compatible client talking to the job's vLLM server) so the cost
+   is one model load per dataset, not three.
 
 ## Module independence and staged reruns
 

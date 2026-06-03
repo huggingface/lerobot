@@ -295,11 +295,13 @@ class VqaConfig:
 class VlmConfig:
     """Shared Qwen-VL client configuration."""
 
-    # One of ``vllm``, ``transformers``, ``openai``, or ``stub`` (tests).
-    # ``openai`` talks to a local OpenAI-compatible server; the CLI
-    # auto-spawns one when ``auto_serve=True``.
+    # Only ``openai`` is supported for now (the in-process ``vllm`` /
+    # ``transformers`` local backends were removed — the shipped workflow
+    # is Hugging Face Jobs). ``openai`` talks to an OpenAI-compatible vLLM
+    # server; the CLI auto-spawns one in-job when ``auto_serve=True``.
+    # ``stub`` is for unit tests (construct ``StubVlmClient`` directly).
     backend: str = "openai"
-    model_id: str = "Qwen/Qwen3.6-35B-A3B-FP8"
+    model_id: str = "Qwen/Qwen3.6-27B"
 
     # OpenAI-compatible server endpoint; ``EMPTY`` works for local servers.
     api_base: str = "http://localhost:8000/v1"
