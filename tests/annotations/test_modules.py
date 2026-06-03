@@ -22,21 +22,29 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from lerobot.annotations.steerable_pipeline.config import (
+import pytest
+
+# ``lerobot.annotations`` imports pull in ``lerobot.datasets`` (-> the HF
+# ``datasets`` library), which only ships under the ``dataset`` extra. Skip
+# this module in tiers without it instead of erroring at import.
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+pytest.importorskip("pandas", reason="pandas is required (install lerobot[dataset])")
+
+from lerobot.annotations.steerable_pipeline.config import (  # noqa: E402
     InterjectionsConfig,
     PlanConfig,
     VqaConfig,
 )
-from lerobot.annotations.steerable_pipeline.modules import (
+from lerobot.annotations.steerable_pipeline.modules import (  # noqa: E402
     GeneralVqaModule,
     InterjectionsAndSpeechModule,
     PlanSubtasksMemoryModule,
 )
-from lerobot.annotations.steerable_pipeline.reader import iter_episodes
-from lerobot.annotations.steerable_pipeline.staging import EpisodeStaging
-from lerobot.annotations.steerable_pipeline.vlm_client import StubVlmClient
+from lerobot.annotations.steerable_pipeline.reader import iter_episodes  # noqa: E402
+from lerobot.annotations.steerable_pipeline.staging import EpisodeStaging  # noqa: E402
+from lerobot.annotations.steerable_pipeline.vlm_client import StubVlmClient  # noqa: E402
 
-from ._helpers import make_canned_responder
+from ._helpers import make_canned_responder  # noqa: E402
 
 
 @dataclass

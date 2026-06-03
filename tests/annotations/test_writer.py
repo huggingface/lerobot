@@ -20,12 +20,19 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pyarrow.parquet as pq
 import pytest
 
-from lerobot.annotations.steerable_pipeline.reader import iter_episodes
-from lerobot.annotations.steerable_pipeline.staging import EpisodeStaging
-from lerobot.annotations.steerable_pipeline.writer import (
+# ``pyarrow`` and the ``lerobot.annotations`` -> ``lerobot.datasets`` chain
+# (-> the HF ``datasets`` library) only ship under the ``dataset`` extra.
+# Skip this module in tiers without it instead of erroring at import.
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+pytest.importorskip("pandas", reason="pandas is required (install lerobot[dataset])")
+
+import pyarrow.parquet as pq  # noqa: E402
+
+from lerobot.annotations.steerable_pipeline.reader import iter_episodes  # noqa: E402
+from lerobot.annotations.steerable_pipeline.staging import EpisodeStaging  # noqa: E402
+from lerobot.annotations.steerable_pipeline.writer import (  # noqa: E402
     LanguageColumnsWriter,
     speech_atom,
 )

@@ -19,26 +19,34 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pyarrow.parquet as pq
+import pytest
 
-from lerobot.annotations.steerable_pipeline.config import (
+# ``pyarrow`` and the ``lerobot.datasets`` chain (-> the HF ``datasets``
+# library) only ship under the ``dataset`` extra. Skip this module in
+# tiers without it instead of erroring at import.
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+pytest.importorskip("pandas", reason="pandas is required (install lerobot[dataset])")
+
+import pyarrow.parquet as pq  # noqa: E402
+
+from lerobot.annotations.steerable_pipeline.config import (  # noqa: E402
     AnnotationPipelineConfig,
     InterjectionsConfig,
     PlanConfig,
     VqaConfig,
 )
-from lerobot.annotations.steerable_pipeline.executor import Executor
-from lerobot.annotations.steerable_pipeline.modules import (
+from lerobot.annotations.steerable_pipeline.executor import Executor  # noqa: E402
+from lerobot.annotations.steerable_pipeline.modules import (  # noqa: E402
     GeneralVqaModule,
     InterjectionsAndSpeechModule,
     PlanSubtasksMemoryModule,
 )
-from lerobot.annotations.steerable_pipeline.validator import StagingValidator
-from lerobot.annotations.steerable_pipeline.writer import LanguageColumnsWriter
-from lerobot.configs.recipe import MessageTurn, TrainingRecipe
-from lerobot.datasets.language_render import render_sample
+from lerobot.annotations.steerable_pipeline.validator import StagingValidator  # noqa: E402
+from lerobot.annotations.steerable_pipeline.writer import LanguageColumnsWriter  # noqa: E402
+from lerobot.configs.recipe import MessageTurn, TrainingRecipe  # noqa: E402
+from lerobot.datasets.language_render import render_sample  # noqa: E402
 
-from ._helpers import make_canned_responder
+from ._helpers import make_canned_responder  # noqa: E402
 
 
 def _build_pr1_style_blend_recipe() -> TrainingRecipe:

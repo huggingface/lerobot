@@ -3,6 +3,13 @@
 import json
 from types import SimpleNamespace
 
+import pytest
+
+# ``lerobot.scripts.lerobot_annotate`` (and the ``_push_to_hub`` path it
+# exercises) imports ``lerobot.datasets``, which only ships under the
+# ``dataset`` extra. Skip in tiers without it instead of erroring.
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 
 def test_push_to_hub_tags_uploaded_dataset_revision(tmp_path, monkeypatch):
     from lerobot.scripts.lerobot_annotate import _push_to_hub

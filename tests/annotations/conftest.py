@@ -26,12 +26,20 @@ from pathlib import Path
 
 import pytest
 
-from tests.fixtures.dataset_factories import build_annotation_dataset
+# NOTE: ``build_annotation_dataset`` pulls in ``lerobot.datasets`` (-> the HF
+# ``datasets`` library + ``pandas``), which only ship under the ``dataset``
+# extra. It is imported LAZILY inside the fixtures below so this conftest
+# imports cleanly in dependency tiers without that extra (e.g. the base
+# ``--extra test`` fast-test tier). The annotation test modules guard
+# themselves with a module-level ``pytest.importorskip("datasets")`` so
+# their collection is skipped — never erroring — when the extra is absent.
 
 
 @pytest.fixture
 def fixture_dataset_root(tmp_path: Path) -> Path:
     """A tiny dataset with two episodes, 12 frames each at 10 fps."""
+    from tests.fixtures.dataset_factories import build_annotation_dataset
+
     return build_annotation_dataset(
         tmp_path / "ds",
         episode_specs=[
@@ -44,6 +52,8 @@ def fixture_dataset_root(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def single_episode_root(tmp_path: Path) -> Path:
+    from tests.fixtures.dataset_factories import build_annotation_dataset
+
     return build_annotation_dataset(
         tmp_path / "ds_one",
         episode_specs=[(0, 30, "Pour water from the bottle into the cup.")],
