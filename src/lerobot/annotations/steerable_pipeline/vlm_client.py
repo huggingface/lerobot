@@ -216,7 +216,11 @@ def _make_vllm_client(config: VlmConfig) -> VlmClient:
         from vllm import LLM, SamplingParams  # type: ignore[import-not-found]
     except ImportError as exc:
         raise ImportError(
-            "vllm is required for backend='vllm'. Install with `pip install lerobot[annotations]`."
+            "vllm is required for backend='vllm'. Install it separately with "
+            "`pip install vllm` (it is not a hard dependency of the "
+            "``annotations`` extra because it pins an older torch). The HF "
+            "Jobs launcher uses the vllm/vllm-openai image + backend='openai' "
+            "instead."
         ) from exc
     # Workaround for cuDNN 9.x + torch 2.8 conv3d regression that surfaces
     # as CUDNN_STATUS_NOT_INITIALIZED in Qwen-VL vision-tower patch

@@ -231,7 +231,17 @@ annotations = [
     "lerobot[dataset]",
     "lerobot[transformers-dep]",
     "openai>=1.40,<2.0",
-    "vllm>=0.6.0,<1.0.0; sys_platform == 'linux'",
+    # NOTE: ``vllm`` is intentionally NOT a hard dependency here. vLLM
+    # hard-pins an older torch (via xformers/xgrammar), and because uv
+    # resolves a single unified lock across all extras, including it would
+    # cap ``torch`` for every other extra too (e.g. forcing torch 2.8 while
+    # ``torchcodec`` in the ``dataset`` extra needs torch 2.11 -> ABI break
+    # in CI). vLLM is also not needed by the shipped workflow: the HF Jobs
+    # launcher (``examples/annotations/run_hf_job.py``) gets it from the
+    # ``vllm/vllm-openai`` image and talks to it over the OpenAI-compatible
+    # API (``--vlm.backend=openai``), and ``vlm_client._make_vllm_client``
+    # imports vllm lazily with an actionable error. To use the in-process
+    # ``--vlm.backend=vllm`` locally, ``pip install vllm`` separately.
 ]
 
 # Development
