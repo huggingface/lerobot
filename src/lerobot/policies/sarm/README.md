@@ -1,1 +1,0 @@
-../../../../docs/source/policy_sarm_README.md

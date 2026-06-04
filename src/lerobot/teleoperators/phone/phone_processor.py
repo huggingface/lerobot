@@ -16,10 +16,11 @@
 
 from dataclasses import dataclass, field
 
-from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.processor import ProcessorStepRegistry, RobotActionProcessorStep
-from lerobot.teleoperators.phone.config_phone import PhoneOS
 from lerobot.types import RobotAction
+
+from .config_phone import PhoneOS
 
 
 @ProcessorStepRegistry.register("map_phone_action_to_robot_action")

@@ -15,6 +15,8 @@
 """
 Replays the actions of an episode from a dataset on a robot.
 
+Requires: pip install 'lerobot[core_scripts]'  (includes dataset + hardware + viz extras)
+
 Examples:
 
 ```shell
@@ -46,7 +48,7 @@ from pathlib import Path
 from pprint import pformat
 
 from lerobot.configs import parser
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 from lerobot.processor import (
     make_default_robot_action_processor,
 )
@@ -54,6 +56,7 @@ from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
     bi_openarm_follower,
+    bi_rebot_b601_follower,
     bi_so_follower,
     earthrover_mini_plus,
     hope_jr,
@@ -62,6 +65,7 @@ from lerobot.robots import (  # noqa: F401
     omx_follower,
     openarm_follower,
     reachy2,
+    rebot_b601_follower,
     so_follower,
     unitree_g1,
 )

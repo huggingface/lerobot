@@ -17,10 +17,10 @@
 import logging
 from functools import cached_property
 
-from lerobot.robots.openarm_follower import OpenArmFollower, OpenArmFollowerConfig
 from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
+from ..openarm_follower import OpenArmFollower, OpenArmFollowerConfig
 from ..robot import Robot
 from .config_bi_openarm_follower import BiOpenArmFollowerConfig
 
@@ -54,6 +54,7 @@ class BiOpenArmFollower(Robot):
             calibration_dir=config.calibration_dir,
             port=config.left_arm_config.port,
             disable_torque_on_disconnect=config.left_arm_config.disable_torque_on_disconnect,
+            use_velocity_and_torque=config.left_arm_config.use_velocity_and_torque,
             max_relative_target=config.left_arm_config.max_relative_target,
             cameras=left_cameras,
             side=config.left_arm_config.side,
@@ -72,6 +73,7 @@ class BiOpenArmFollower(Robot):
             calibration_dir=config.calibration_dir,
             port=config.right_arm_config.port,
             disable_torque_on_disconnect=config.right_arm_config.disable_torque_on_disconnect,
+            use_velocity_and_torque=config.right_arm_config.use_velocity_and_torque,
             max_relative_target=config.right_arm_config.max_relative_target,
             cameras=right_cameras,
             side=config.right_arm_config.side,

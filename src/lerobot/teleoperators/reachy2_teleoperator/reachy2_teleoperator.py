@@ -19,7 +19,7 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
-from lerobot.utils.import_utils import _reachy2_sdk_available
+from lerobot.utils.import_utils import _reachy2_sdk_available, require_package
 
 if TYPE_CHECKING or _reachy2_sdk_available:
     from reachy2_sdk import ReachySDK
@@ -84,6 +84,7 @@ class Reachy2Teleoperator(Teleoperator):
     name = "reachy2_specific"
 
     def __init__(self, config: Reachy2TeleoperatorConfig):
+        require_package("reachy2_sdk", extra="reachy2")
         super().__init__(config)
 
         self.config = config
