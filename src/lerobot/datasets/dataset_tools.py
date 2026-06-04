@@ -2049,7 +2049,7 @@ def transform_video_feature_dataset(
     encoder_threads: int | None = None,
     recompute_dataset_stats_flag: bool = False,
 ) -> LeRobotDataset:
-    """Create a new dataset by transforming one existing video feature.
+    """Create a new dataset by transforming one existing video feature and blacking out the rest of the video .
 
     This is an external/offline dataset edit operation: source dataset stays
     untouched, and a new dataset root is created with the transformed feature.
@@ -2114,6 +2114,7 @@ def create_tactile_spectrogram_variant_dataset(
     dataset: LeRobotDataset,
     feature_key: str = "observation.images.left_tactile_spectrogram",
     crop_data: int = 10,
+    begin_crop_freq: float = 5_000.0,
     output_dir: str | Path | None = None,
     repo_id: str | None = None,
     camera_encoder: VideoEncoderConfig | None = None,
@@ -2124,7 +2125,7 @@ def create_tactile_spectrogram_variant_dataset(
     return transform_video_feature_dataset(
         dataset=dataset,
         feature_key=feature_key,
-        transform=lambda image: crop_and_rescale_rendered_tactile_spectrogram(image, crop_data=crop_data),
+        transform=lambda image: crop_and_rescale_rendered_tactile_spectrogram(image, crop_data=crop_data,begin_crop_freq=begin_crop_freq),
         output_dir=output_dir,
         repo_id=repo_id,
         camera_encoder=camera_encoder,

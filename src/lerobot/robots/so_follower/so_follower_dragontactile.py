@@ -38,11 +38,12 @@ class SO101FollowerDragontactile(SOFollower):
 
     def __init__(self, config: SO101FollowerConfig):
         super().__init__(config)
-        self._tactile_obs_key = "tactile_spectrogram"
+        self._tactile_obs_key = "left_tactile_spectrogram"
 
         self._sampling_rate_hz = 20_000 # fs = 20 kHz
 
         self._crop_data = 10 # crop the data with this factor from 0 Hz to 10/self._crop_data kHz
+        self._begin_crop_freq = 0 # crop from this frequency (Hz)
         self._nfft = 1024
         self._width, self._height = 224, 224 # For ResNet
         self._target_size = (self._width, self._height)
@@ -148,27 +149,27 @@ class SO101FollowerDragontactile(SOFollower):
         if nperseg < 16:
             return self._last_spectrogram_frame
 
-        _, _, sxx = scipy.signal.spectrogram(
+        frequencies, _, sxx = scipy.signal.spectrogram(
             self._display_buffer,
             fs=self._sampling_rate_hz,
             nperseg=nperseg,
             noverlap=noverlap,
         )
 
-        original_height = sxx.shape[0]
-        cropped_height = int(original_height / self._crop_data)
-        sxx_cropped = sxx[:cropped_height, :]
+        nyquist = self._sampling_rate / 2.0
+        upper_crop_freq = min(nyquist, self._begin_crop_freq + nyquist / max(self._crop_data, 1e-6))
+        start_bin = int(np.searchsorted(frequencies, self._begin_crop_freq, side="left"))
+        end_bin = int(np.searchsorted(frequencies, upper_crop_freq, side="right"))
+        if end_bin <= start_bin:
+            return self._last_spectrogram_frame
 
-        sxx = np.repeat(sxx_cropped, self._crop_data, axis=0)
+        cropped = np.zeros_like(sxx)
+        cropped[start_bin:end_bin, :] = sxx[start_bin:end_bin, :]
+        sxx = cropped
 
-        if sxx.shape[0] != original_height:
-            # Pad with zeros or truncate slightly to match exactly
-            sxx = np.resize(sxx, (original_height, sxx.shape[1]))
-        
         sxx_db = 10.0 * np.log10(sxx + 1e-12)
-        normalized = (
-            np.clip(sxx_db, self._spectrogram_min_db, self._spectrogram_max_db) - self._spectrogram_min_db
-        ) / max(self._spectrogram_max_db - self._spectrogram_min_db, 1e-6)
+        normalized = np.clip(sxx_db, self._spectrogram_min_db, self._spectrogram_max_db)
+        normalized = (normalized - self._spectrogram_min_db) / max(self._spectrogram_max_db - self._spectrogram_min_db, 1e-6)
         image_32bit = np.uint8(np.flipud(normalized) * 255.0)
         spectro_bgr = cv2.cvtColor(image_32bit, cv2.COLOR_GRAY2BGR)
         spectro_bgr = cv2.resize(spectro_bgr, self._target_size, interpolation=cv2.INTER_LINEAR)
