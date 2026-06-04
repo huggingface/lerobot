@@ -222,26 +222,19 @@ hilserl = ["lerobot[transformers-dep]", "lerobot[dataset]", "gym-hil>=0.1.13,<0.
 async = ["lerobot[grpcio-dep]", "lerobot[matplotlib-dep]"]
 peft = ["lerobot[transformers-dep]", "lerobot[peft-dep]"]
 
-# Annotation pipeline (lerobot-annotate). vllm is the preferred backend
-# on Linux, with a transformers fallback elsewhere; openai is the default
-# backend and talks to any OpenAI-compatible server (``vllm serve`` /
-# ``transformers serve`` / hosted endpoints). Distributed execution is
-# delegated to Hugging Face Jobs (see examples/annotations/run_hf_job.py).
+# Annotation pipeline (lerobot-annotate). The only backend is ``openai``,
+# which talks to any OpenAI-compatible server (``vllm serve`` /
+# ``transformers serve`` / hosted). Distributed runs use Hugging Face Jobs
+# (see examples/annotations/run_hf_job.py).
 annotations = [
     "lerobot[dataset]",
     "lerobot[transformers-dep]",
     "openai>=1.40,<2.0",
-    # NOTE: ``vllm`` is intentionally NOT a hard dependency here. vLLM
-    # hard-pins an older torch (via xformers/xgrammar), and because uv
-    # resolves a single unified lock across all extras, including it would
-    # cap ``torch`` for every other extra too (e.g. forcing torch 2.8 while
-    # ``torchcodec`` in the ``dataset`` extra needs torch 2.11 -> ABI break
-    # in CI). vLLM is also not needed by the shipped workflow: the HF Jobs
-    # launcher (``examples/annotations/run_hf_job.py``) gets it from the
-    # ``vllm/vllm-openai`` image and talks to it over the OpenAI-compatible
-    # API (``--vlm.backend=openai``), and ``vlm_client._make_vllm_client``
-    # imports vllm lazily with an actionable error. To use the in-process
-    # ``--vlm.backend=vllm`` locally, ``pip install vllm`` separately.
+    # ``vllm`` is intentionally NOT a hard dep: it pins an older torch, and
+    # uv's single unified lock would then cap ``torch`` for every extra
+    # (e.g. forcing 2.8 while ``torchcodec`` in [dataset] needs 2.11 -> ABI
+    # break in CI). The HF Jobs image (``vllm/vllm-openai``) provides vLLM;
+    # install it locally only if you run your own ``vllm serve``.
 ]
 
 # Development

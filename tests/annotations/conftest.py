@@ -26,13 +26,10 @@ from pathlib import Path
 
 import pytest
 
-# NOTE: ``build_annotation_dataset`` pulls in ``lerobot.datasets`` (-> the HF
-# ``datasets`` library + ``pandas``), which only ship under the ``dataset``
-# extra. It is imported LAZILY inside the fixtures below so this conftest
-# imports cleanly in dependency tiers without that extra (e.g. the base
-# ``--extra test`` fast-test tier). The annotation test modules guard
-# themselves with a module-level ``pytest.importorskip("datasets")`` so
-# their collection is skipped — never erroring — when the extra is absent.
+# ``build_annotation_dataset`` pulls in ``lerobot.datasets`` (HF ``datasets``
+# + ``pandas``, only in the ``dataset`` extra), so it's imported lazily inside
+# each fixture — this conftest stays importable without that extra. The test
+# modules ``pytest.importorskip("datasets")`` so they skip rather than error.
 
 
 @pytest.fixture
