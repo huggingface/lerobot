@@ -55,6 +55,17 @@ from .configuration_pi052 import PI052Config
 logger = logging.getLogger(__name__)
 
 
+# FAST action-token vocab size (``lerobot/fast-action-tokenizer``). The
+# tokenizer maps a FAST BPE id ``t`` to the PaliGemma vocab id
+# ``vocab_size - 1 - fast_skip_tokens - t`` (see ``TokenizerProcessorStep``),
+# so action tokens occupy the top ``_FAST_ACTION_VOCAB_SIZE`` ids below the
+# ``fast_skip_tokens`` margin. The upper part collides with the reserved
+# ``<loc>`` block; the lower part sits just under it and otherwise leaks into
+# generated text as high-codepoint gibberish (the action-trained LM head puts
+# heavy mass on these ids), so ``select_message`` masks it.
+_FAST_ACTION_VOCAB_SIZE = 2048
+
+
 _HF_KERNELS_ENABLED = False
 
 
@@ -998,60 +1009,11 @@ class PI052Policy(PI05Policy):
             text_logits = lm_head(text_hidden.to(lm_head.weight.dtype))
             preds = text_logits.argmax(dim=-1)
 
-            # Train/inference parity check — run select_message on the
-            # *same* prompt prefix (the language up to but not including
-            # the supervised span) and capture the auto-regressive
-            # generation. The first generated token MUST match the
-            # training-side argmax at the prompt-end position (both are
-            # ``argmax lm_head(h_last_prompt)`` over identical context);
-            # any divergence is a parity bug (mask, dtype, KI routing
-            # difference). Later tokens can diverge because training
-            # uses teacher forcing while inference free-runs.
-            inference_outputs: list[dict[str, Any]] = []
-            for s in range(n):
-                row_labels = sub_labels[s]
-                sup_pos = (row_labels != -100).nonzero(as_tuple=True)[0]
-                if sup_pos.numel() == 0:
-                    inference_outputs.append({"first_token": None, "decoded": ""})
-                    continue
-                first_sup = int(sup_pos[0].item())
-                # Build a single-sample batch by *truncating* the token
-                # sequence to the prompt-only portion (length == first_sup),
-                # not by zero-masking. ``select_message`` reads the
-                # prompt-end hidden state via ``vlm_out[:, -1:]`` — the
-                # *last position* of the prefix — so a padded sequence
-                # would make it read a padding-token hidden state
-                # (PaliGemma's prior on those happens to be ``<loc>``,
-                # which would falsely flag a parity diverge). The real
-                # runtime feeds ``tokenizer(prompt)`` without padding,
-                # so we mirror that here.
-                prompt_tokens = sub[OBS_LANGUAGE_TOKENS][s : s + 1, :first_sup]
-                prompt_mask_orig = sub[OBS_LANGUAGE_ATTENTION_MASK][s : s + 1, :first_sup]
-                inf_batch: dict[str, Any] = {
-                    OBS_LANGUAGE_TOKENS: prompt_tokens,
-                    OBS_LANGUAGE_ATTENTION_MASK: prompt_mask_orig,
-                }
-                for k, v in sub.items():
-                    if isinstance(k, str) and k.startswith("observation.images."):
-                        inf_batch[k] = v[s : s + 1]
-                if "observation.state" in batch and torch.is_tensor(batch["observation.state"]):
-                    inf_batch["observation.state"] = batch["observation.state"][s : s + 1]
-                try:
-                    # Tight budget — we just want to see the model's
-                    # opening continuation, not the full sequence.
-                    decoded = self.select_message(
-                        inf_batch, max_new_tokens=24, temperature=0.0, top_p=1.0
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    decoded = f"<inference failed: {type(exc).__name__}: {exc}>"
-                inference_outputs.append({"first_sup_pos": first_sup, "decoded": decoded})
-
             return {
                 "input_ids": lang_tokens.detach().cpu(),
                 "attention_mask": lang_masks.detach().cpu(),
                 "labels": sub_labels.detach().cpu(),
                 "predictions": preds.detach().cpu(),
-                "inference": inference_outputs,
             }
         finally:
             if was_training:
@@ -1166,6 +1128,15 @@ class PI052Policy(PI05Policy):
             if special_ids and len(generated) < min_new_tokens:
                 for sid in special_ids:
                     logits_step[..., sid] = float("-inf")
+            # Mask FAST action tokens that fall *below* the ``<loc>`` block.
+            # They are never valid text, but the action-trained head leaks
+            # them as gibberish; unlike the loc/seg block this region is never
+            # legitimately emitted (even by VQA), so suppress it on every call.
+            vocab_size = logits_step.shape[-1]
+            fast_skip = int(getattr(self.config, "fast_skip_tokens", 128))
+            fast_lo = vocab_size - 1 - fast_skip - (_FAST_ACTION_VOCAB_SIZE - 1)
+            if 0 < fast_lo < 256000:
+                logits_step[..., fast_lo:256000] = float("-inf")
             if suppress_loc_tokens:
                 logits_step[..., 256000:257024] = float("-inf")
             next_ids = self._sample_next_token(logits_step, temperature, top_p)
