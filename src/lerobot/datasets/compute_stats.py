@@ -515,6 +515,13 @@ def compute_episode_stats(
         if features[key]["dtype"] in {"string", "language"}:
             continue
 
+        # Features with a zero-width dimension (e.g. shape=(0,)) carry no
+        # statistics-bearing values. Skip them like strings instead of letting
+        # get_feature_stats -> RunningQuantileStats.update reshape a size-0 array,
+        # which raises "ValueError: cannot reshape array of size 0".
+        if any(dim == 0 for dim in features[key].get("shape", ())):
+            continue
+
         if features[key]["dtype"] in ["image", "video"]:
             ep_ft_array = sample_images(data)
             axes_to_reduce = (0, 2, 3)
