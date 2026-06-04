@@ -268,12 +268,9 @@ class PI0FastPaliGemma(nn.Module):
         return features
 
     def embed_language_tokens(self, tokens: torch.Tensor):
-        # Match OpenPI: scale token embeddings by sqrt(embed_dim) (the Gemma embedder
-        # normalizer). Applied here so every caller — prompt, FAST action tokens, and
-        # autoregressive next-token embeds — is scaled consistently, mirroring OpenPI's
-        # llm.embed which normalizes all embedded tokens. main omitted this.
-        lang_emb = self.paligemma.model.language_model.get_input_embeddings()(tokens)
-        return lang_emb * (lang_emb.shape[-1] ** 0.5)
+        # get_input_embeddings() is GemmaTextScaledWordEmbedding (transformers >=5.4.0): it already
+        # multiplies by sqrt(hidden_size) internally, so no manual scaling is needed here.
+        return self.paligemma.model.language_model.get_input_embeddings()(tokens)
 
     def forward(
         self,

@@ -704,9 +704,10 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         # Process language tokens
         def lang_embed_func(tokens):
-            lang_emb = self.paligemma_with_expert.embed_language_tokens(tokens)
-            lang_emb_dim = lang_emb.shape[-1]
-            return lang_emb * math.sqrt(lang_emb_dim)
+            # embed_language_tokens -> Gemma embed_tokens, which is GemmaTextScaledWordEmbedding
+            # (transformers >=5.4.0): it already multiplies by sqrt(hidden_size) internally. Do NOT
+            # scale again here or text tokens get double-scaled (~45x) and break alignment.
+            return self.paligemma_with_expert.embed_language_tokens(tokens)
 
         lang_emb = self._apply_checkpoint(lang_embed_func, tokens)
         embs.append(lang_emb)
