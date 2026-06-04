@@ -23,79 +23,53 @@ from typing import Any
 
 @dataclass
 class PlanConfig:
-    """``plan`` module: plan + subtasks + memory + task augmentation.
-
-    The ``plan`` module attaches the whole episode as one Qwen-VL video
-    block; ``max_video_frames`` only caps the frames packed in (a
-    model-capacity bound, not an annotation-logic knob).
-    """
+    """``plan`` module: subtasks + plan + memory + task augmentation."""
 
     enabled: bool = True
 
-    # Number of ``task_aug`` rephrasings emitted at ``t=0``. The renderer's
-    # ``${task}`` binding rotates among them per ``sample_idx``. ``0`` disables.
+    # ``task_aug`` rephrasings at t=0 (renderer rotates ${task} among them); 0 disables.
     n_task_rephrasings: int = 10
 
-    # Derive the task from video instead of ``record.episode_task``: ``off``,
-    # ``if_short`` (canonical task short/placeholder/missing), or ``always``.
+    # Derive the task from video instead of episode_task: off / if_short / always.
     # Affects prompts only; ``meta/tasks.parquet`` is untouched.
     derive_task_from_video: str = "if_short"
     derive_task_min_words: int = 3
 
-    # Frames sampled uniformly, capped at ``max_video_frames`` — a HARD context
-    # cap (~250-320 tokens/frame, so 32 fit a 32k VLM; 128 overflow). Lower it
-    # if you hit "Input length exceeds maximum context length".
+    # Frames sampled uniformly, capped at max_video_frames — a hard context cap
+    # (~300 tokens/frame, so 32 fit a 32k VLM; 128 overflow).
     frames_per_second: float = 1.0
     max_video_frames: int = 32
 
-    # Windowed subtask generation for constant temporal density: when > 0 and
-    # the episode is longer, process it in windows of this length (each at
-    # ``frames_per_second``) instead of subsampling the whole episode; spans are
-    # merged + stitched. ~max_video_frames / frames_per_second. 0 disables.
+    # >0: split long episodes into windows of this length (constant fps density)
+    # instead of subsampling the whole episode; spans merged + stitched. 0 disables.
     subtask_window_seconds: float = 0.0
 
     min_subtask_seconds: float = 1.5
     plan_max_steps: int = 8
 
-    # Grounding pass that narrates ONLY what's visible before segmenting — the
-    # strongest lever against subtasks invented from the task text. ON by
-    # default (+1 VLM call/episode); False trades quality for fewer calls.
+    # Narrate-only grounding pass before segmenting — best defense against subtasks
+    # invented from the task text (+1 VLM call/episode).
     subtask_describe_first: bool = True
 
-    # Emit ``style="plan"`` rows (the numbered still-todo list, re-emitted at
-    # every subtask boundary). False keeps only subtasks + memory and skips
-    # the per-boundary ``_generate_plan`` call.
+    # Emit ``style="plan"`` rows at each boundary; False = subtasks + memory only.
     emit_plan: bool = True
 
-    # NOTE: subtask spans are ALWAYS stitched into a contiguous full-episode
-    # cover (see ``_stitch_full_coverage``) — not configurable.
+    # (subtask spans are always stitched to a contiguous full-episode cover; not configurable.)
 
-    # When True, send a server-side ``video_url`` clip (sampled at
-    # ``use_video_url_fps``) instead of embedded frames.
+    # Send a server-side ``video_url`` clip (at use_video_url_fps) instead of embedded frames.
     use_video_url: bool = False
     use_video_url_fps: float = 1.0
 
-    # Optional 5-axis task-augmentation taxonomy for the t=0 variants
-    # (EgoMimic-style: synonym / omit_arm / omit_orientation /
-    # omit_grasp_method / combined). Replaces the free-form
-    # ``n_task_rephrasings`` flow when enabled; see ``TaskAugAxesConfig``.
+    # Optional EgoMimic-style 5-axis task augmentation; replaces n_task_rephrasings.
     task_aug_axes: TaskAugAxesConfig = field(default_factory=lambda: TaskAugAxesConfig())
 
 
 @dataclass
 class TaskAugAxesConfig:
-    """Structured 5-axis augmentation taxonomy for t=0 task variants.
-
-    When ``enabled=True``, replaces the free-form ``n_task_rephrasings``
-    flow with variants along five named axes (EgoMimic-style):
-    ``synonym_paraphrase`` (reword, keep all info), ``omit_arm``,
-    ``omit_orientation``, ``omit_grasp_method``, and ``combined_omissions``
-    (drop two at once).
-
-    Default counts (3+3+2+2+2 = 12) match EgoMimic. Axes with nothing to
-    omit emit fewer entries rather than pad. Each variant becomes a
-    ``task_aug`` row at ``t=0``, identical in style to the free-form ones.
-    """
+    """5-axis t=0 task augmentation (EgoMimic-style): synonym / omit_arm /
+    omit_orientation / omit_grasp_method / combined. Replaces n_task_rephrasings
+    when enabled; each variant becomes a ``task_aug`` row. Axes with nothing to
+    omit emit fewer entries. Defaults (3+3+2+2+2) match EgoMimic."""
 
     enabled: bool = False
 
@@ -112,13 +86,11 @@ class InterjectionsConfig:
 
     enabled: bool = True
 
-    # Each interjection emits a paired (interjection, speech) event row and
-    # triggers a ``plan`` refresh at the same timestamp.
+    # Each emits a paired (interjection, speech) row + a plan refresh at that ts.
     max_interjections_per_episode: int = 3
     interjection_min_t: float = 2.0
 
-    # A short frame window centered on the timestamp so the VLM sees the
-    # motion, not one frozen frame.
+    # Frame window centered on the timestamp so the VLM sees motion, not one frame.
     interjection_window_seconds: float = 2.0
     interjection_window_frames: int = 4
 
@@ -130,14 +102,11 @@ class VqaConfig:
     enabled: bool = True
     vqa_emission_hz: float = 1.0
     K: int = 1
-    """Consecutive frames each emission tick anchors a VQA pair to. The VLM
-    grounds its answer on the FIRST anchored frame, so K>1 copies that answer
-    onto later (moved) frames — stale labels. Default 1 (no smear)."""
+    """Consecutive frames per emission tick. The VLM grounds on the FIRST frame,
+    so K>1 smears stale labels onto moved frames. Default 1 (no smear)."""
     question_types: tuple[str, ...] = ("bbox", "keypoint", "count", "attribute", "spatial")
 
-    # By default VQA iterates every camera (one pair per camera per tick). Set
-    # True to ground VQA only on ``--vlm.camera_key`` — the single view the
-    # plan / interjection modules use.
+    # True: ground VQA only on --vlm.camera_key (default: every camera).
     restrict_to_default_camera: bool = False
 
 
@@ -145,27 +114,22 @@ class VqaConfig:
 class VlmConfig:
     """Shared Qwen-VL client configuration."""
 
-    # Only ``openai`` is supported (in-process vllm/transformers were removed;
-    # the shipped workflow is HF Jobs). Talks to an OpenAI-compatible vLLM
-    # server, auto-spawned in-job when ``auto_serve=True``. ``stub`` is for tests.
+    # Only ``openai`` (OpenAI-compatible vLLM server, auto-spawned when
+    # auto_serve=True); ``stub`` is for tests.
     backend: str = "openai"
     model_id: str = "Qwen/Qwen3.6-27B"
 
-    # OpenAI-compatible server endpoint; ``EMPTY`` works for local servers.
+    # OpenAI-compatible endpoint; ``EMPTY`` key works for local servers.
     api_base: str = "http://localhost:8000/v1"
     api_key: str = "EMPTY"
 
-    # When True with ``backend=openai``, the CLI probes ``api_base`` and
-    # spawns a server if none answers (default: ``transformers serve``).
-    # Set to False to fail fast when pointing at a remote endpoint.
+    # Spawn a server if none answers api_base; False = fail fast on a remote.
     auto_serve: bool = True
     serve_port: int = 8000
-    # Override the auto-serve command. ``{port}`` is substituted per replica
-    # when ``parallel_servers > 1``.
+    # Override the auto-serve command; ``{port}`` substituted per replica.
     serve_command: str | None = None
 
-    # Independent servers for round-robin routing (each pinned to a GPU,
-    # bound to ``serve_port + i``). ``num_gpus=0`` = one GPU per replica.
+    # Independent servers for round-robin routing (one per GPU). num_gpus=0 = one each.
     parallel_servers: int = 1
     num_gpus: int = 0
     client_concurrency: int = 16
@@ -174,49 +138,37 @@ class VlmConfig:
     max_new_tokens: int = 512
     temperature: float = 0.2
 
-    # Context length for the auto-spawned vLLM server (None → 32768). vLLM
-    # tuning flags (tensor-parallel size, GPU memory fraction, ...) go in
-    # ``serve_command`` directly, not here.
+    # Auto-serve context length (None → 32768); other vLLM flags go in serve_command.
     max_model_len: int | None = None
 
-    # Override the camera stream used for keyframe attachment. None picks
-    # the first ``observation.images.*`` key the dataset declares.
+    # Camera for keyframes; None → first ``observation.images.*`` key.
     camera_key: str | None = None
-    # Forwarded as ``extra_body.chat_template_kwargs`` on every chat call;
-    # use to pass model-specific flags such as ``{"enable_thinking": false}``.
+    # Forwarded as extra_body.chat_template_kwargs (e.g. {"enable_thinking": false}).
     chat_template_kwargs: dict[str, Any] | None = None
 
 
 @dataclass
 class ExecutorConfig:
-    """Executor settings — intra-process episode concurrency only
-    (distributed execution is delegated to Hugging Face Jobs)."""
+    """Executor settings (intra-process episode concurrency; distribution via HF Jobs)."""
 
-    # Episodes processed concurrently per module phase. Each dispatches 3-5 VLM
-    # calls, so this is the main knob for saturating ``parallel_servers`` /
-    # ``client_concurrency``.
+    # Episodes processed concurrently per phase; main knob for saturating the servers.
     episode_parallelism: int = 16
 
 
 @dataclass
 class AnnotationPipelineConfig:
-    """Top-level config for ``lerobot-annotate``.
+    """Top-level config for ``lerobot-annotate`` (rewrites data shards in place)."""
 
-    The writer rewrites ``data/chunk-*/file-*.parquet`` in place. Multiple
-    revisions of the same dataset live in separate copies.
-    """
-
-    # Hub dataset id: download source when ``root`` is unset, and push target
-    # when ``push_to_hub`` is on and ``new_repo_id`` is unset.
+    # Hub dataset: download source when ``root`` unset; push target when push_to_hub
+    # is on and ``new_repo_id`` unset.
     repo_id: str | None = None
 
-    # Optional separate push target (named to match the LeRobot dataset edit
-    # tools). Unset → push back to ``repo_id`` in place; set → source untouched.
+    # Separate push target (matches the LeRobot edit tools). Unset → push in place.
     new_repo_id: str | None = None
 
     root: Path | None = None
 
-    # Defaults to ``<root>/.annotate_staging/`` when unset.
+    # Defaults to ``<root>/.annotate_staging/``.
     staging_dir: Path | None = None
 
     seed: int = 1729
@@ -231,13 +183,11 @@ class AnnotationPipelineConfig:
     skip_validation: bool = False
     only_episodes: tuple[int, ...] | None = None
 
-    # Keyframe decode backend. Unset → ffmpeg CLI: decodes AV1 in an isolated
-    # child process, so it's crash- and thread-safe under concurrent decode
-    # (torchcodec SIGSEGVs there). Set ``"torchcodec"`` / ``"pyav"`` to pin one.
+    # Keyframe decode backend. None → ffmpeg CLI (crash-/thread-safe; torchcodec
+    # SIGSEGVs under concurrent decode). Or ``"torchcodec"`` / ``"pyav"``.
     video_backend: str | None = None
 
-    # Upload the annotated dataset to the Hub (to ``new_repo_id`` if set, else
-    # back to ``repo_id`` — one of the two must be set).
+    # Upload to the Hub (new_repo_id if set, else repo_id; one must be set).
     push_to_hub: bool = False
     push_private: bool = False
     push_commit_message: str | None = None
