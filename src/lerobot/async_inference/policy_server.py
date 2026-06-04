@@ -24,7 +24,9 @@ python -m lerobot.async_inference.policy_server \
 ```
 """
 
+import io
 import logging
+import os
 import pickle  # nosec
 import threading
 import time
@@ -33,10 +35,37 @@ from dataclasses import asdict
 from pprint import pformat
 from queue import Empty, Queue
 from typing import Any
+from urllib.parse import quote
 
 import draccus
 import grpc
 import torch
+
+try:
+    import numpy as np
+except ImportError:  # pragma: no cover - optional dependency in some server envs
+    np = None
+
+try:
+    from fastapi import FastAPI, HTTPException
+    from fastapi.responses import JSONResponse, Response
+    import uvicorn
+except ImportError:  # pragma: no cover - policy server can still run without the API
+    FastAPI = None
+    HTTPException = None
+    JSONResponse = None
+    Response = None
+    uvicorn = None
+
+try:
+    from PIL import Image
+except ImportError:  # pragma: no cover - optional fallback; OpenCV may still be available
+    Image = None
+
+try:
+    import cv2
+except ImportError:  # pragma: no cover - optional fallback; Pillow may still be available
+    cv2 = None
 
 from lerobot.policies import get_policy_class, make_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline
@@ -59,6 +88,140 @@ from .helpers import (
     observations_similar,
     raw_observation_to_observation,
 )
+
+
+def _is_image_like(value: Any) -> bool:
+    """Cheap check for camera-like arrays/tensors in raw observations."""
+    shape = None
+    if isinstance(value, torch.Tensor):
+        shape = tuple(value.shape)
+    elif np is not None and isinstance(value, np.ndarray):
+        shape = value.shape
+    elif isinstance(value, (bytes, bytearray)):
+        return True
+
+    if shape is None:
+        return False
+
+    while len(shape) == 4 and shape[0] == 1:
+        shape = shape[1:]
+
+    if len(shape) == 2:
+        return shape[0] >= 16 and shape[1] >= 16
+
+    if len(shape) == 3:
+        return (
+            shape[0] >= 16
+            and shape[1] >= 16
+            and shape[2] in (1, 3, 4)
+        ) or (
+            shape[1] >= 16
+            and shape[2] >= 16
+            and shape[0] in (1, 3, 4)
+        )
+
+    return False
+
+
+def _to_uint8_hwc_image(value: Any):
+    """Return an image-like value as a uint8 HWC/gray numpy array, or None."""
+    if np is None:
+        return None
+
+    if isinstance(value, torch.Tensor):
+        value = value.detach().cpu().numpy()
+
+    if not isinstance(value, np.ndarray):
+        return None
+
+    image = value
+    while image.ndim == 4 and image.shape[0] == 1:
+        image = image[0]
+
+    if image.ndim == 3 and image.shape[0] in (1, 3, 4) and image.shape[-1] not in (1, 3, 4):
+        image = np.moveaxis(image, 0, -1)  # CHW -> HWC
+
+    if image.ndim not in (2, 3):
+        return None
+
+    if image.ndim == 3 and image.shape[-1] not in (1, 3, 4):
+        return None
+
+    # Avoid mistaking small vectors/matrices for camera images.
+    if image.shape[0] < 16 or image.shape[1] < 16:
+        return None
+
+    if image.dtype != np.uint8:
+        image = image.astype(np.float32, copy=False)
+        finite = image[np.isfinite(image)]
+        if finite.size == 0:
+            image = np.zeros_like(image, dtype=np.uint8)
+        else:
+            min_value = float(finite.min())
+            max_value = float(finite.max())
+            if 0.0 <= min_value and max_value <= 1.0:
+                image = image * 255.0
+            elif min_value < 0.0 or max_value > 255.0:
+                denom = max(max_value - min_value, 1e-6)
+                image = (image - min_value) * (255.0 / denom)
+            image = np.clip(image, 0, 255).astype(np.uint8)
+
+    return np.ascontiguousarray(image)
+
+
+def _encode_image(value: Any) -> tuple[bytes, str, list[int]] | None:
+    """Encode a raw observation image value as bytes for the FastAPI endpoint."""
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value), "application/octet-stream", [len(value)]
+
+    image = _to_uint8_hwc_image(value)
+    if image is None:
+        return None
+
+    if cv2 is not None:
+        image_for_cv2 = image
+        if image.ndim == 3 and image.shape[-1] == 3:
+            image_for_cv2 = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        elif image.ndim == 3 and image.shape[-1] == 4:
+            image_for_cv2 = cv2.cvtColor(image, cv2.COLOR_RGBA2BGRA)
+        ok, encoded = cv2.imencode(".jpg", image_for_cv2)
+        if ok:
+            return encoded.tobytes(), "image/jpeg", list(image.shape)
+
+    if Image is not None:
+        pil_image = Image.fromarray(image)
+        if pil_image.mode not in ("RGB", "L"):
+            pil_image = pil_image.convert("RGB")
+        buffer = io.BytesIO()
+        pil_image.save(buffer, format="JPEG")
+        return buffer.getvalue(), "image/jpeg", list(image.shape)
+
+    return None
+
+
+def _summarize_value(value: Any) -> Any:
+    """Keep /observation JSON small while still exposing useful raw_obs metadata."""
+    if isinstance(value, torch.Tensor):
+        return {
+            "type": "torch.Tensor",
+            "shape": list(value.shape),
+            "dtype": str(value.dtype),
+        }
+    if np is not None and isinstance(value, np.ndarray):
+        return {
+            "type": "np.ndarray",
+            "shape": list(value.shape),
+            "dtype": str(value.dtype),
+        }
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, (list, tuple)):
+        if len(value) <= 16 and all(isinstance(x, (str, int, float, bool, type(None))) for x in value):
+            return list(value)
+        return {"type": type(value).__name__, "length": len(value)}
+    if isinstance(value, dict):
+        return {str(k): _summarize_value(v) for k, v in value.items()}
+    return {"type": type(value).__name__}
 
 
 class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
@@ -88,6 +251,14 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None
         self.postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction] | None = None
 
+        # Latest raw observation snapshot for the FastAPI publisher.
+        self.latest_observation_lock = threading.Lock()
+        self.latest_observation: dict[str, Any] | None = None
+        self.latest_images: dict[str, dict[str, Any]] = {}
+        self.latest_client_timestamp: float | None = None
+        self.latest_server_timestamp: float | None = None
+        self.latest_timestep: int | None = None
+
     @property
     def running(self):
         return not self.shutdown_event.is_set()
@@ -105,6 +276,13 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         with self._predicted_timesteps_lock:
             self._predicted_timesteps = set()
 
+        with self.latest_observation_lock:
+            self.latest_observation = None
+            self.latest_images = {}
+            self.latest_client_timestamp = None
+            self.latest_server_timestamp = None
+            self.latest_timestep = None
+
     def Ready(self, request, context):  # noqa: N802
         client_id = context.peer()
         self.logger.info(f"Client {client_id} connected and ready")
@@ -112,6 +290,31 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.shutdown_event.clear()
 
         return services_pb2.Empty()
+
+    def _update_latest_observation_snapshot(
+        self,
+        timestep: int,
+        client_timestamp: float,
+        server_timestamp: float,
+        raw_observation: dict[str, Any],
+    ) -> None:
+        """Publish the newest raw observation for FastAPI readers.
+
+        This keeps the gRPC hot path simple: store the latest timestamp and raw_obs;
+        image encoding happens only when an HTTP client requests an image.
+        """
+        image_keys = []
+        if isinstance(raw_observation, dict):
+            for key, value in raw_observation.items():
+                if _is_image_like(value):
+                    image_keys.append(str(key))
+
+        with self.latest_observation_lock:
+            self.latest_observation = dict(raw_observation)
+            self.latest_images = {key: {} for key in image_keys}
+            self.latest_client_timestamp = client_timestamp
+            self.latest_server_timestamp = server_timestamp
+            self.latest_timestep = timestep
 
     def SendPolicyInstructions(self, request, context):  # noqa: N802
         """Receive policy instructions from the robot client"""
@@ -202,6 +405,13 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             f"Server timestamp: {receive_time:.6f} | "
             f"Client timestamp: {obs_timestamp:.6f} | "
             f"Deserialization time: {deserialize_time:.6f}s"
+        )
+
+        self._update_latest_observation_snapshot(
+            timestep=obs_timestep,
+            client_timestamp=obs_timestamp,
+            server_timestamp=receive_time,
+            raw_observation=timed_observation.get_observation(),
         )
 
         if not self._enqueue_observation(
@@ -404,10 +614,147 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
         return action_chunk
 
+    def get_latest_snapshot(self) -> dict[str, Any]:
+        with self.latest_observation_lock:
+            raw_observation = self.latest_observation
+            return {
+                "timestep": self.latest_timestep,
+                "client_timestamp": self.latest_client_timestamp,
+                "server_timestamp": self.latest_server_timestamp,
+                "observation": dict(raw_observation) if raw_observation is not None else None,
+                "image_keys": list(self.latest_images.keys()),
+            }
+
     def stop(self):
         """Stop the server"""
         self._reset_server()
         self.logger.info("Server stopping...")
+
+
+def create_observation_api(policy_server: PolicyServer):
+    if FastAPI is None:
+        return None
+
+    app = FastAPI(title="LeRobot Policy Server Observation API")
+
+    @app.get("/")
+    def root():
+        return {
+            "status": "/status",
+            "observation": "/observation",
+            "images": "/images",
+            "first_image": "/image",
+        }
+
+    @app.get("/status")
+    def status():
+        snapshot = policy_server.get_latest_snapshot()
+        return {
+            "has_observation": snapshot["observation"] is not None,
+            "timestep": snapshot["timestep"],
+            "client_timestamp": snapshot["client_timestamp"],
+            "server_timestamp": snapshot["server_timestamp"],
+            "image_keys": snapshot["image_keys"],
+            "observation_keys": list(snapshot["observation"].keys()) if snapshot["observation"] else [],
+        }
+
+    @app.get("/observation")
+    def observation():
+        snapshot = policy_server.get_latest_snapshot()
+        if snapshot["observation"] is None:
+            raise HTTPException(status_code=404, detail="No observation has been received yet")
+        return JSONResponse(
+            {
+                "timestep": snapshot["timestep"],
+                "client_timestamp": snapshot["client_timestamp"],
+                "server_timestamp": snapshot["server_timestamp"],
+                "image_keys": snapshot["image_keys"],
+                "observation": {
+                    key: _summarize_value(value) for key, value in snapshot["observation"].items()
+                },
+            }
+        )
+
+    @app.get("/images")
+    def images():
+        snapshot = policy_server.get_latest_snapshot()
+        return {
+            "timestep": snapshot["timestep"],
+            "client_timestamp": snapshot["client_timestamp"],
+            "server_timestamp": snapshot["server_timestamp"],
+            "image_keys": snapshot["image_keys"],
+            "urls": {key: f"/images/{quote(key, safe='')}" for key in snapshot["image_keys"]},
+        }
+
+    def _get_image_response(key: str | None = None):
+        snapshot = policy_server.get_latest_snapshot()
+        observation = snapshot["observation"]
+        image_keys = snapshot["image_keys"]
+        if observation is None:
+            raise HTTPException(status_code=404, detail="No observation has been received yet")
+        if not image_keys:
+            raise HTTPException(status_code=404, detail="No image-like values found in the latest raw observation")
+
+        selected_key = key or image_keys[0]
+        if selected_key not in observation:
+            raise HTTPException(status_code=404, detail=f"No image found for key '{selected_key}'")
+
+        encoded = _encode_image(observation[selected_key])
+        if encoded is None:
+            raise HTTPException(status_code=415, detail=f"Value for key '{selected_key}' could not be encoded as an image")
+
+        data, media_type, shape = encoded
+        return Response(
+            content=data,
+            media_type=media_type,
+            headers={
+                "X-LeRobot-Image-Key": selected_key,
+                "X-LeRobot-Image-Shape": str(shape),
+                "X-LeRobot-Timestep": str(snapshot["timestep"]),
+                "X-LeRobot-Client-Timestamp": str(snapshot["client_timestamp"]),
+                "X-LeRobot-Server-Timestamp": str(snapshot["server_timestamp"]),
+            },
+        )
+
+    @app.get("/image")
+    def first_image():
+        return _get_image_response()
+
+    @app.get("/images/{key}")
+    def image_by_key(key: str):
+        return _get_image_response(key)
+
+    return app
+
+
+def start_observation_api(policy_server: PolicyServer, cfg: PolicyServerConfig) -> None:
+    if FastAPI is None or uvicorn is None:
+        policy_server.logger.warning("FastAPI/uvicorn is not installed; observation API is disabled")
+        return
+
+    http_port = getattr(cfg, "http_port", 8001)
+    if http_port is None:
+        policy_server.logger.info("Observation API disabled because http_port is None")
+        return
+
+    http_host = os.environ.get("LEROBOT_OBS_API_HOST", str(getattr(cfg, "http_host", "0.0.0.0")))
+    ssl_certfile = os.environ.get("LEROBOT_OBS_API_SSL_CERTFILE")
+    ssl_keyfile = os.environ.get("LEROBOT_OBS_API_SSL_KEYFILE")
+    scheme = "https" if ssl_certfile and ssl_keyfile else "http"
+
+    app = create_observation_api(policy_server)
+    config = uvicorn.Config(
+        app,
+        host=http_host,
+        port=int(http_port),
+        log_level="warning",
+        ssl_certfile=ssl_certfile,
+        ssl_keyfile=ssl_keyfile,
+    )
+    api_server = uvicorn.Server(config)
+    api_thread = threading.Thread(target=api_server.run, name="observation_api", daemon=True)
+    api_thread.start()
+    policy_server.logger.info(f"Observation API started at {scheme}://{http_host}:{http_port}")
 
 
 @draccus.wrap()
@@ -421,6 +768,7 @@ def serve(cfg: PolicyServerConfig):
 
     # Create the server instance first
     policy_server = PolicyServer(cfg)
+    start_observation_api(policy_server, cfg)
 
     # Setup and start gRPC server
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
