@@ -17,14 +17,8 @@
 """
 Groot Policy Wrapper for LeRobot Integration
 
-Minimal integration that delegates to Isaac-GR00T components where possible
-without porting their code. The intent is to:
-
-- Download and load the pretrained GR00T model via GR00TN15.from_pretrained
-- Optionally align action horizon similar to gr00t_finetune.py
-- Expose predict_action via GR00T model.get_action
-- Provide a training forward that can call the GR00T model forward if batch
-  structure matches.
+Minimal integration that delegates to Isaac-GR00T N1.7 components where
+possible without porting their code.
 
 Notes:
 - Dataset loading and full training orchestration is handled by Isaac-GR00T
@@ -47,7 +41,6 @@ from lerobot.utils.import_utils import require_package
 
 from ..pretrained import PreTrainedPolicy
 from .configuration_groot import (
-    GROOT_N1_5,
     GROOT_N1_7,
     GrootConfig,
     infer_groot_model_version,
@@ -55,7 +48,6 @@ from .configuration_groot import (
     infer_groot_n1_7_action_horizon,
     normalize_groot_model_version,
 )
-from .groot_n1 import GR00TN15
 
 T = TypeVar("T", bound="GrootPolicy")
 
@@ -80,14 +72,7 @@ class GrootPolicy(PreTrainedPolicy):
         self.reset()
 
     def _create_groot_model(self):
-        """Create and initialize the GR00T model using Isaac-GR00T API.
-
-        This is only called when creating a NEW policy (not when loading from checkpoint).
-
-        Steps (delegating to Isaac-GR00T):
-        1) Download and load pretrained model via GR00TN15.from_pretrained
-        2) Align action horizon with data_config if provided
-        """
+        """Create and initialize the GR00T N1.7 model using Isaac-GR00T APIs."""
         # Handle Flash Attention compatibility issues
         self._handle_flash_attention_compatibility()
 
@@ -98,16 +83,13 @@ class GrootPolicy(PreTrainedPolicy):
             "tune_projector": self.config.tune_projector,
             "tune_diffusion_model": self.config.tune_diffusion_model,
         }
-        if self.config.model_version == GROOT_N1_7:
-            from .groot_n1_7 import GR00TN17
+        from .groot_n1_7 import GR00TN17
 
-            model = GR00TN17.from_pretrained(
-                **model_kwargs,
-                tune_vlln=True,
-                transformers_loading_kwargs={"trust_remote_code": True},
-            )
-        else:
-            model = GR00TN15.from_pretrained(**model_kwargs)
+        model = GR00TN17.from_pretrained(
+            **model_kwargs,
+            tune_vlln=True,
+            transformers_loading_kwargs={"trust_remote_code": True},
+        )
 
         model.compute_dtype = "bfloat16" if self.config.use_bf16 else model.compute_dtype
         model.config.compute_dtype = model.compute_dtype
@@ -137,7 +119,7 @@ class GrootPolicy(PreTrainedPolicy):
         """Load Groot policy from pretrained model.
 
         Handles two cases:
-        1. Base GR00T models (e.g., 'nvidia/GR00T-N1.5-3B') - loads the raw model
+        1. Base GR00T N1.7 models - loads the raw model
         2. Fine-tuned LeRobot checkpoints - loads config and weights from safetensors
 
         Args:
@@ -163,7 +145,7 @@ class GrootPolicy(PreTrainedPolicy):
         requested_version = (
             normalize_groot_model_version(config.model_version)
             if config is not None
-            else infer_groot_model_version(str(pretrained_name_or_path)) or GROOT_N1_5
+            else infer_groot_model_version(str(pretrained_name_or_path)) or GROOT_N1_7
         )
         print(
             f"The Groot policy is a wrapper around Nvidia's GR00T {requested_version} model.\n"
@@ -217,7 +199,7 @@ class GrootPolicy(PreTrainedPolicy):
         print("Detected base GR00T model, loading from HuggingFace...")
 
         if config is None:
-            model_version = infer_groot_model_version(str(pretrained_name_or_path)) or GROOT_N1_5
+            model_version = infer_groot_model_version(str(pretrained_name_or_path)) or GROOT_N1_7
             # Create default config with the pretrained path
             config = GrootConfig(
                 model_version=model_version,
@@ -250,18 +232,6 @@ class GrootPolicy(PreTrainedPolicy):
                 f"GR00T model_version '{config.model_version}' does not match base_model_path "
                 f"'{config.base_model_path}', which looks like '{inferred_version}'."
             )
-        if config.model_version == GROOT_N1_7:
-            if config.max_state_dim == 64:
-                config.max_state_dim = 132
-            if config.max_action_dim == 32:
-                config.max_action_dim = 132
-            if config.chunk_size == 50:
-                config.chunk_size = 40
-            if config.n_action_steps == 50:
-                config.n_action_steps = 40
-            if tuple(config.image_size) == (224, 224):
-                config.image_size = (256, 256)
-
         # Create a fresh policy instance - this will automatically load the GR00T model
         # in __init__ via _create_groot_model()
         policy = cls(config)
@@ -274,9 +244,6 @@ class GrootPolicy(PreTrainedPolicy):
 
     def _resolve_action_queue_steps(self) -> int:
         n_action_steps = int(self.config.n_action_steps)
-        if self.config.model_version != GROOT_N1_7:
-            return n_action_steps
-
         checkpoint_action_horizon = infer_groot_n1_7_action_horizon(
             self.config.base_model_path,
             self.config.embodiment_tag,
@@ -294,9 +261,6 @@ class GrootPolicy(PreTrainedPolicy):
 
     def _resolve_prediction_horizon(self, actions: Tensor) -> int:
         """Return the policy-facing action horizon for a native GR00T prediction."""
-
-        if self.config.model_version != GROOT_N1_7:
-            return actions.shape[1]
 
         horizons = [actions.shape[1]]
         checkpoint_action_horizon = infer_groot_n1_7_action_horizon(
@@ -318,26 +282,23 @@ class GrootPolicy(PreTrainedPolicy):
         if include_action:
             allowed_base.update({"action", "action_mask"})
 
-        if self.config.model_version == GROOT_N1_7:
-            allowed_base.update(
-                {
-                    "input_ids",
-                    "attention_mask",
-                    "pixel_values",
-                    "image_grid_thw",
-                    "mm_token_type_ids",
-                    "pixel_values_videos",
-                    "video_grid_thw",
-                }
-            )
-            allowed_base.add("action_mask")
-        else:
-            allowed_base.update({"action_mask"} if include_action else set())
+        allowed_base.update(
+            {
+                "input_ids",
+                "attention_mask",
+                "pixel_values",
+                "image_grid_thw",
+                "mm_token_type_ids",
+                "pixel_values_videos",
+                "video_grid_thw",
+            }
+        )
+        allowed_base.add("action_mask")
 
         return {
             k: v
             for k, v in batch.items()
-            if (k in allowed_base or k.startswith("eagle_")) and not (k.startswith("next.") or k == "info")
+            if k in allowed_base and not (k.startswith("next.") or k == "info")
         }
 
     def _prepare_n1_7_rtc_inputs(
@@ -347,7 +308,7 @@ class GrootPolicy(PreTrainedPolicy):
         inference_delay: object,
         prev_chunk_left_over: object,
     ) -> tuple[dict[str, Tensor], dict[str, object] | None]:
-        if self.config.model_version != GROOT_N1_7 or prev_chunk_left_over is None:
+        if prev_chunk_left_over is None:
             return inputs, None
         if not isinstance(prev_chunk_left_over, torch.Tensor):
             raise TypeError("prev_chunk_left_over must be a torch.Tensor for GR00T N1.7 RTC.")
