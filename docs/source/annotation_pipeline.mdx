@@ -117,6 +117,65 @@ To use a different dataset, model, or hub repo, edit the `CMD` block in
 the script. Every flag there maps directly to a `lerobot-annotate` flag
 (run `lerobot-annotate --help` for the full list).
 
+## Key options
+
+These are the flags you'll reach for most often. Run
+`lerobot-annotate --help` for everything else; the defaults are tuned for
+short manipulation episodes.
+
+### Dataset in / out
+
+| Flag              | Default | What it does                                                            |
+| ----------------- | ------- | ----------------------------------------------------------------------- |
+| `--repo_id`       | —       | Hub dataset to annotate (downloaded if `--root` unset).                 |
+| `--root`          | —       | Annotate a local dataset directory instead.                             |
+| `--new_repo_id`   | —       | Push the result to a new repo (leaves the source repo untouched).       |
+| `--push_to_hub`   | `false` | Upload after annotating (to `--new_repo_id`, else back to `--repo_id`). |
+| `--only_episodes` | all     | Annotate just these episode indices (handy for a test run).             |
+| `--seed`          | `1729`  | Seeds the RNGs that pick interjection timestamps + VQA question types.  |
+
+### Which modules run
+
+Each module can be turned off independently to iterate on one at a time:
+`--plan.enabled`, `--interjections.enabled`, `--vqa.enabled` (all
+`true` by default).
+
+### The VLM (`--vlm.*`)
+
+| Flag                       | Default            | What it does                                                                        |
+| -------------------------- | ------------------ | ----------------------------------------------------------------------------------- |
+| `--vlm.model_id`           | `Qwen/Qwen3.6-27B` | The model to serve and prompt.                                                      |
+| `--vlm.camera_key`         | first `images.*`   | Which camera every prompt is grounded on.                                           |
+| `--vlm.serve_command`      | auto               | The exact `vllm serve …` command (set TP size, GPU memory, `--max-model-len` here). |
+| `--vlm.parallel_servers`   | `1`                | Independent servers for round-robin routing (one per GPU).                          |
+| `--vlm.num_gpus`           | `0`                | GPUs per server (`0` = one each).                                                   |
+| `--vlm.client_concurrency` | `16`               | In-flight requests across all servers.                                              |
+| `--vlm.max_new_tokens`     | `512`              | Generation cap per call.                                                            |
+| `--vlm.temperature`        | `0.2`              | Sampling temperature.                                                               |
+
+### Subtasks / plan / memory (`--plan.*`)
+
+| Flag                            | Default    | What it does                                                                                                              |
+| ------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `--plan.frames_per_second`      | `1.0`      | How densely the episode video is sampled.                                                                                 |
+| `--plan.max_video_frames`       | `32`       | Hard cap on frames per call (context-budget guard — don't exceed ~32 for a 32k context).                                  |
+| `--plan.subtask_window_seconds` | `0`        | Split long episodes into fixed windows for constant frame density (`0` = whole episode).                                  |
+| `--plan.plan_max_steps`         | `8`        | Upper bound on subtasks per episode.                                                                                      |
+| `--plan.subtask_describe_first` | `true`     | Run the describe→segment grounding pass (best subtask quality; +1 call/episode).                                          |
+| `--plan.emit_plan`              | `true`     | Emit the numbered `plan` rows (`false` = subtasks + memory only).                                                         |
+| `--plan.n_task_rephrasings`     | `10`       | How many `task_aug` rephrasings to emit (`0` disables).                                                                   |
+| `--plan.derive_task_from_video` | `if_short` | Use the dataset task as-is (`off`), only when it's missing/short (`if_short`), or always re-derive from video (`always`). |
+| `--plan.use_video_url`          | `false`    | Send a server-side video clip instead of embedded frames.                                                                 |
+
+### Interjections + VQA
+
+| Flag                                            | Default | What it does                                               |
+| ----------------------------------------------- | ------- | ---------------------------------------------------------- |
+| `--interjections.max_interjections_per_episode` | `3`     | Cap on interjection/speech pairs per episode.              |
+| `--vqa.vqa_emission_hz`                         | `1.0`   | How often VQA pairs are emitted.                           |
+| `--vqa.restrict_to_default_camera`              | `false` | Ground VQA only on `--vlm.camera_key` (else every camera). |
+| `--executor.episode_parallelism`                | `16`    | Episodes processed concurrently within each phase.         |
+
 ## Contributing new modules
 
 The pipeline is built to grow, and **contributions are very welcome** —

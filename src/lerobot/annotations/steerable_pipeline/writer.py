@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -338,19 +338,3 @@ def speech_atom(timestamp: float, text: str) -> dict[str, Any]:
             }
         ],
     }
-
-
-def normalize_rows_for_writer(
-    rows: Iterable[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Helper used by tests/validators to partition a flat row list into
-    (persistent_rows, event_rows) using ``column_for_style``.
-    """
-    persistent: list[dict[str, Any]] = []
-    events: list[dict[str, Any]] = []
-    for row in rows:
-        if column_for_style(row.get("style")) == LANGUAGE_PERSISTENT:
-            persistent.append(row)
-        else:
-            events.append(row)
-    return persistent, events

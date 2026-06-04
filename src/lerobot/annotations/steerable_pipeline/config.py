@@ -44,78 +44,56 @@ class PlanConfig:
     derive_task_from_video: str = "if_short"
     derive_task_min_words: int = 3
 
-    # Frame sampling for the subtask-decomposition prompt. Frames are
-    # sampled uniformly across the whole episode up to ``max_video_frames``
-    # (so longer episodes are subsampled, not truncated).
-    #
-    # ``max_video_frames`` is a HARD context-budget cap. With the embedded-
-    # frame path (use_video_url=false), every frame becomes ~250-320 vision
-    # tokens, so 128 frames ≈ 33-39k tokens — over a 32k-context VLM. 32
-    # frames (~8-10k tokens) leaves ample room for the prompt + the
-    # describe / verify passes. Raise only if your serving context is
-    # larger AND your episodes need finer temporal resolution; if you hit
-    # "Input length exceeds maximum context length", lower this.
+    # Frames are sampled uniformly across the episode, capped at
+    # ``max_video_frames`` (a HARD context-budget cap, not an annotation
+    # knob). Each embedded frame is ~250-320 vision tokens, so 32 frames
+    # (~8-10k tokens) fit a 32k-context VLM; 128 would overflow it. Lower
+    # this if you hit "Input length exceeds maximum context length".
     frames_per_second: float = 1.0
     max_video_frames: int = 32
 
     # Windowed subtask generation for CONSTANT temporal density. When > 0
-    # and an episode is longer than this many seconds, the plan module
-    # processes the episode in consecutive windows of this length, each
-    # sampled at ``frames_per_second``, instead of subsampling the whole
-    # episode to ``max_video_frames`` (which makes long episodes sparse).
-    # The describe -> segment -> verify chain runs per window; results are
-    # offset to absolute time, merged, and stitched into a contiguous
-    # whole-episode cover. Cost scales with episode length (≈ chain calls
-    # × ceil(duration / window)). Set to ~max_video_frames / frames_per_
-    # second (e.g. 32s at 1 fps) so each window fills — but never exceeds —
-    # the per-call frame budget. 0 disables (single whole-episode call).
+    # and the episode is longer than this, the plan module processes it in
+    # consecutive windows of this length (each sampled at
+    # ``frames_per_second``) instead of subsampling the whole episode to a
+    # sparse ``max_video_frames``. The describe -> segment chain runs per
+    # window; spans are merged + stitched. Set to ~max_video_frames /
+    # frames_per_second (e.g. 32s at 1 fps). 0 disables.
     subtask_window_seconds: float = 0.0
 
     min_subtask_seconds: float = 1.5
     plan_max_steps: int = 8
 
-    # ``subtask_describe_first``: run a grounding pass that narrates ONLY
-    # what is visible in the video (no subtask JSON yet), then inject that
-    # description into the segmentation prompt. Forces the model to observe
-    # before committing to structured output — the strongest lever against
-    # subtasks invented from the task text. ON by default; +1 VLM call/ep.
-    # Set False to trade quality for fewer calls on easy datasets.
+    # Run a grounding pass that narrates ONLY what's visible (no subtask
+    # JSON yet), then feed that into the segmentation prompt — the strongest
+    # lever against subtasks invented from the task text. ON by default;
+    # +1 VLM call/episode. False trades quality for fewer calls.
     subtask_describe_first: bool = True
 
-    # Emit ``style="plan"`` rows (the numbered still-todo list re-emitted at
-    # every subtask boundary). Set False to keep only subtasks + memory and
-    # skip the plan rows entirely — saves one ``_generate_plan`` VLM call per
-    # subtask boundary. Subtask and memory generation are unaffected.
+    # Emit ``style="plan"`` rows (the numbered still-todo list, re-emitted at
+    # every subtask boundary). False keeps only subtasks + memory and skips
+    # the per-boundary ``_generate_plan`` call.
     emit_plan: bool = True
 
-    # NOTE: subtask spans are ALWAYS stitched into a contiguous
-    # full-episode cover (first subtask pulled back to t0, gaps closed,
-    # last span extended to t_last) as a deterministic post-step in
-    # ``_generate_subtasks._stitch_full_coverage``. This is not
-    # configurable — a sparse / gap-ridden subtask timeline is never
-    # desirable for conditioning, so it is unconditional.
+    # NOTE: subtask spans are ALWAYS stitched into a contiguous full-episode
+    # cover (see ``_stitch_full_coverage``) — not configurable, since a
+    # sparse / gap-ridden timeline is never useful for conditioning.
 
-    # When True (and backend supports it, e.g. ``openai``), the ``plan``
-    # module sends a ``video_url`` block pointing at a per-episode mp4
-    # subclip and lets the server sample frames at ``use_video_url_fps``.
+    # When True (with a backend that supports it, e.g. ``openai``), send a
+    # ``video_url`` block pointing at a per-episode mp4 subclip and let the
+    # server sample frames at ``use_video_url_fps``.
     use_video_url: bool = False
     use_video_url_fps: float = 1.0
 
-    # Structured per-subtask action records (Phase 1a + 1b, inspired by
-    # EgoMimic's annotator form). For each generated subtask span, the
-    # VLM extracts a typed record (verb / object / arm / grasp_type /
-    # destination / mistake). A deterministic Python template renders
-    # that record back to canonical subtask text — reducing the VLM's
-    # "creative" surface to just the perception step. See
-    # ``ActionRecordsConfig`` for details. Off by default (back-compat).
+    # Optional structured per-subtask action records (EgoMimic-style). When
+    # enabled, the VLM extracts a typed record per subtask span; see
+    # ``ActionRecordsConfig``. Purely additive — off by default.
     action_records: ActionRecordsConfig = field(default_factory=lambda: ActionRecordsConfig())
 
-    # Structured 5-axis augmentation taxonomy for the t=0 task variants
-    # (replaces the free-form ``n_task_rephrasings`` flow when enabled).
-    # Mirrors EgoMimic's ``augment_prompt.txt`` taxonomy: instead of N
-    # free-form rephrasings, the VLM produces variants along named
-    # axes (synonym / omit_arm / omit_orientation / omit_grasp_method /
-    # combined). Off by default (back-compat).
+    # Optional 5-axis task-augmentation taxonomy for the t=0 variants
+    # (EgoMimic-style: synonym / omit_arm / omit_orientation /
+    # omit_grasp_method / combined). Replaces the free-form
+    # ``n_task_rephrasings`` flow when enabled; see ``TaskAugAxesConfig``.
     task_aug_axes: TaskAugAxesConfig = field(default_factory=lambda: TaskAugAxesConfig())
 
 
@@ -123,9 +101,8 @@ class PlanConfig:
 class ActionRecordsConfig:
     """Structured per-subtask action record extraction.
 
-    When ``enabled=True``, after the existing subtask-span generation in
-    ``plan_subtasks_memory.py``, the module makes one extra VLM call per
-    subtask to extract a typed record::
+    When ``enabled=True``, after subtask-span generation the module makes
+    one extra VLM call per subtask to extract a typed record::
 
         {
             "verb": "pick" | "place" | "press" | ...,  # closed vocabulary
@@ -136,20 +113,13 @@ class ActionRecordsConfig:
             "mistake": "<short text>" | null,
         }
 
-    The record is emitted as a separate row with ``style="action_record"``
-    (``content=json.dumps(record)``) at the subtask's start timestamp.
-    It is PURELY ADDITIVE — it never touches the VLM's subtask text.
-    Downstream training can consume the typed schema directly (e.g.
-    auxiliary supervision on verb / arm / grasp classification heads)
-    while the subtask string the policy conditions on stays exactly what
-    the subtask module produced. (Reconstructing subtask text from these
-    fields was too easy for the VLM to hallucinate on tasks that don't
-    fit the manipulation schema — navigation tasks yielded nonsense like
-    ``move stove to stove`` — so that path was removed.)
+    Emitted as a separate ``style="action_record"`` row at the subtask's
+    start timestamp. PURELY ADDITIVE — it never touches the subtask text,
+    so downstream training can use the typed schema (e.g. auxiliary
+    verb/arm/grasp heads) while the conditioning string stays unchanged.
 
-    Cost: one extra VLM call per subtask. For an 8-subtask episode this
-    means ~8x more VLM calls in the plan module — still cheap relative
-    to the action-expert training cost, but worth knowing.
+    Cost: one extra VLM call per subtask (~8x plan-module calls on an
+    8-subtask episode).
     """
 
     enabled: bool = False
@@ -204,26 +174,14 @@ class TaskAugAxesConfig:
     """Structured 5-axis augmentation taxonomy for t=0 task variants.
 
     When ``enabled=True``, replaces the free-form ``n_task_rephrasings``
-    flow with a structured prompt that produces variants along five
-    named axes (mirroring EgoMimic's ``augment_prompt.txt``):
+    flow with variants along five named axes (EgoMimic-style):
+    ``synonym_paraphrase`` (reword, keep all info), ``omit_arm``,
+    ``omit_orientation``, ``omit_grasp_method``, and ``combined_omissions``
+    (drop two at once).
 
-      * ``synonym_paraphrase`` — different wording / verbs, all
-        information preserved.
-      * ``omit_arm`` — drop the left/right/both arm specification.
-      * ``omit_orientation`` — drop orientation cues (upright,
-        sideways, ...).
-      * ``omit_grasp_method`` — drop grip / grasp method specification.
-      * ``combined_omissions`` — combine two of the above
-        simultaneously.
-
-    Default counts (3+3+2+2+2 = 12 variants per task) match EgoMimic.
-    Axes that have nothing to omit in the source task (e.g. ``omit_arm``
-    when the task doesn't mention an arm) emit fewer entries rather
-    than pad — the prompt instructs the VLM accordingly.
-
-    Each variant is emitted as a ``task_aug`` row at ``t=0`` (same
-    style as the free-form variants), so the rest of the pipeline /
-    training recipe doesn't need to know about the taxonomy.
+    Default counts (3+3+2+2+2 = 12) match EgoMimic. Axes with nothing to
+    omit emit fewer entries rather than pad. Each variant becomes a
+    ``task_aug`` row at ``t=0``, identical in style to the free-form ones.
     """
 
     enabled: bool = False
@@ -233,17 +191,6 @@ class TaskAugAxesConfig:
     omit_orientation: int = 2
     omit_grasp_method: int = 2
     combined_omissions: int = 2
-
-    @property
-    def total(self) -> int:
-        """Sum of requested variants across all axes (upper bound)."""
-        return (
-            self.synonym_paraphrase
-            + self.omit_arm
-            + self.omit_orientation
-            + self.omit_grasp_method
-            + self.combined_omissions
-        )
 
 
 @dataclass
@@ -326,16 +273,11 @@ class VlmConfig:
 
     max_new_tokens: int = 512
     temperature: float = 0.2
-    json_mode: bool = True
-    batch_size: int = 4
-    tensor_parallel_size: int = 1
 
-    # Fraction of GPU memory vllm allocates for weights + KV cache.
-    gpu_memory_utilization: float = 0.9
-    # Cap context length (None = model default). On 80 GB H100 a 30B BF16
-    # model often needs <= 8192 to leave KV-cache headroom.
+    # Context length for the auto-spawned vLLM server (None → 32768). vLLM
+    # tuning flags (tensor-parallel size, GPU memory fraction, ...) go in
+    # ``serve_command`` directly, not here.
     max_model_len: int | None = None
-    trust_remote_code: bool = False
 
     # Override the camera stream used for keyframe attachment. None picks
     # the first ``observation.images.*`` key the dataset declares.

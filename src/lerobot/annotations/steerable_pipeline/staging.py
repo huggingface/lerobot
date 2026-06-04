@@ -28,7 +28,7 @@ intermediate.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -90,15 +90,3 @@ class EpisodeStaging:
 
     def has(self, module: ModuleName) -> bool:
         return self.path_for(module).exists()
-
-
-def iter_staged_episodes(root: Path) -> Iterator[int]:
-    """Yield episode indices for which any staging artifact exists."""
-    if not root.exists():
-        return
-    for child in sorted(root.iterdir()):
-        if child.is_dir() and child.name.startswith("episode_"):
-            try:
-                yield int(child.name.removeprefix("episode_"))
-            except ValueError:
-                continue

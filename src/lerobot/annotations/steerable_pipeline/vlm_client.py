@@ -23,8 +23,7 @@ into a real model.
 The client speaks one method, :meth:`VlmClient.generate_json`, which:
 
 - accepts a list of OpenAI/HF-style multimodal messages,
-- requests JSON output (``json_mode=True`` enables guided decoding when the
-  backend supports it),
+- requests JSON output from the server,
 - batches requests transparently,
 - and reprompts once on a JSON parse failure with an inline correction
   message before raising.
