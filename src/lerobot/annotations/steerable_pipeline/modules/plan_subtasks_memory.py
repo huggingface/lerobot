@@ -71,47 +71,16 @@ class PlanSubtasksMemoryModule:
         effective_task = self._resolve_effective_task(record)
         # task_aug rows at t=0: phrasings the renderer rotates ${task} through.
         # Either the structured 5-axis taxonomy (task_aug_axes.enabled) or
-        # free-form n_task_rephrasings.
+        # free-form n_task_rephrasings; the effective task is always emitted
+        # first so the rotation covers the source-of-truth phrasing.
         t0 = float(record.frame_timestamps[0]) if record.frame_timestamps else 0.0
-        axes_cfg = self.config.task_aug_axes
-        if axes_cfg.enabled and effective_task:
-            variants = self._generate_task_aug_by_axes(effective_task, axes_cfg)
-            seen: set[str] = set()
-            ordered = [effective_task, *variants]
-            for phrasing in ordered:
-                key = phrasing.strip()
-                if not key or key in seen:
-                    continue
-                seen.add(key)
-                rows.append(
-                    {
-                        "role": "user",
-                        "content": key,
-                        "style": "task_aug",
-                        "timestamp": t0,
-                        "tool_calls": None,
-                    }
-                )
+        variants: list[str] | None = None
+        if self.config.task_aug_axes.enabled and effective_task:
+            variants = self._generate_task_aug_by_axes(effective_task, self.config.task_aug_axes)
         elif self.config.n_task_rephrasings > 0 and effective_task:
-            rephrasings = self._generate_task_rephrasings(effective_task, n=self.config.n_task_rephrasings)
-            # Include the effective task first so the rotation always covers
-            # the source-of-truth phrasing, not just synthetic ones.
-            seen = set()
-            ordered = [effective_task, *rephrasings]
-            for phrasing in ordered:
-                key = phrasing.strip()
-                if not key or key in seen:
-                    continue
-                seen.add(key)
-                rows.append(
-                    {
-                        "role": "user",
-                        "content": key,
-                        "style": "task_aug",
-                        "timestamp": t0,
-                        "tool_calls": None,
-                    }
-                )
+            variants = self._generate_task_rephrasings(effective_task, n=self.config.n_task_rephrasings)
+        if variants is not None:
+            rows.extend(self._task_aug_rows([effective_task, *variants], t0))
 
         subtask_spans = self._generate_subtasks(record, task=effective_task)
 
@@ -232,6 +201,21 @@ class PlanSubtasksMemoryModule:
         if len(task.split()) < int(self.config.derive_task_min_words):
             return True
         return task.lower() in self._PLACEHOLDER_TASKS
+
+    @staticmethod
+    def _task_aug_rows(phrasings: Sequence[str], t0: float) -> list[dict[str, Any]]:
+        """Build deduplicated ``task_aug`` rows (role=user) at ``t0``."""
+        seen: set[str] = set()
+        rows: list[dict[str, Any]] = []
+        for phrasing in phrasings:
+            key = phrasing.strip()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            rows.append(
+                {"role": "user", "content": key, "style": "task_aug", "timestamp": t0, "tool_calls": None}
+            )
+        return rows
 
     # ------------------------------------------------------------------
     # VLM call helpers — every plan-module prompt follows the same shape:

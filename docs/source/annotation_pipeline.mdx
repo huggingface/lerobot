@@ -136,9 +136,14 @@ short manipulation episodes.
 
 ### Which modules run
 
-Each module can be turned off independently to iterate on one at a time:
-`--plan.enabled`, `--interjections.enabled`, `--vqa.enabled` (all
-`true` by default).
+Every module is on by default and can be toggled independently (set to
+`false` to skip it, e.g. to iterate on one module at a time):
+
+| Flag                      | Default | Turns off                           |
+| ------------------------- | ------- | ----------------------------------- |
+| `--plan.enabled`          | `true`  | subtasks + plan + memory + task_aug |
+| `--interjections.enabled` | `true`  | interjections + speech atoms        |
+| `--vqa.enabled`           | `true`  | the VQA pairs                       |
 
 ### The VLM (`--vlm.*`)
 
