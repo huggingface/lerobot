@@ -36,38 +36,30 @@ class PlanConfig:
     # ``${task}`` binding rotates among them per ``sample_idx``. ``0`` disables.
     n_task_rephrasings: int = 10
 
-    # When to derive the task from the video instead of using
-    # ``record.episode_task``: ``off``, ``if_short`` (short / placeholder /
-    # missing canonical task), or ``always``. The derived task replaces the
-    # canonical one for every ``plan``-module prompt; ``meta/tasks.parquet``
-    # is never modified.
+    # Derive the task from video instead of ``record.episode_task``: ``off``,
+    # ``if_short`` (canonical task short/placeholder/missing), or ``always``.
+    # Affects prompts only; ``meta/tasks.parquet`` is untouched.
     derive_task_from_video: str = "if_short"
     derive_task_min_words: int = 3
 
-    # Frames are sampled uniformly across the episode, capped at
-    # ``max_video_frames`` (a HARD context-budget cap, not an annotation
-    # knob). Each embedded frame is ~250-320 vision tokens, so 32 frames
-    # (~8-10k tokens) fit a 32k-context VLM; 128 would overflow it. Lower
-    # this if you hit "Input length exceeds maximum context length".
+    # Frames sampled uniformly, capped at ``max_video_frames`` — a HARD context
+    # cap (~250-320 tokens/frame, so 32 fit a 32k VLM; 128 overflow). Lower it
+    # if you hit "Input length exceeds maximum context length".
     frames_per_second: float = 1.0
     max_video_frames: int = 32
 
-    # Windowed subtask generation for CONSTANT temporal density. When > 0
-    # and the episode is longer than this, the plan module processes it in
-    # consecutive windows of this length (each sampled at
-    # ``frames_per_second``) instead of subsampling the whole episode to a
-    # sparse ``max_video_frames``. The describe -> segment chain runs per
-    # window; spans are merged + stitched. Set to ~max_video_frames /
-    # frames_per_second (e.g. 32s at 1 fps). 0 disables.
+    # Windowed subtask generation for constant temporal density: when > 0 and
+    # the episode is longer, process it in windows of this length (each at
+    # ``frames_per_second``) instead of subsampling the whole episode; spans are
+    # merged + stitched. ~max_video_frames / frames_per_second. 0 disables.
     subtask_window_seconds: float = 0.0
 
     min_subtask_seconds: float = 1.5
     plan_max_steps: int = 8
 
-    # Run a grounding pass that narrates ONLY what's visible (no subtask
-    # JSON yet), then feed that into the segmentation prompt — the strongest
-    # lever against subtasks invented from the task text. ON by default;
-    # +1 VLM call/episode. False trades quality for fewer calls.
+    # Grounding pass that narrates ONLY what's visible before segmenting — the
+    # strongest lever against subtasks invented from the task text. ON by
+    # default (+1 VLM call/episode); False trades quality for fewer calls.
     subtask_describe_first: bool = True
 
     # Emit ``style="plan"`` rows (the numbered still-todo list, re-emitted at
@@ -76,12 +68,10 @@ class PlanConfig:
     emit_plan: bool = True
 
     # NOTE: subtask spans are ALWAYS stitched into a contiguous full-episode
-    # cover (see ``_stitch_full_coverage``) — not configurable, since a
-    # sparse / gap-ridden timeline is never useful for conditioning.
+    # cover (see ``_stitch_full_coverage``) — not configurable.
 
-    # When True (with a backend that supports it, e.g. ``openai``), send a
-    # ``video_url`` block pointing at a per-episode mp4 subclip and let the
-    # server sample frames at ``use_video_url_fps``.
+    # When True, send a server-side ``video_url`` clip (sampled at
+    # ``use_video_url_fps``) instead of embedded frames.
     use_video_url: bool = False
     use_video_url_fps: float = 1.0
 
@@ -124,19 +114,15 @@ class ActionRecordsConfig:
 
     enabled: bool = False
 
-    # When True (default), emit a separate row with ``style="action_record"``
-    # and ``content=json.dumps(record)`` at the subtask's start timestamp.
-    # This is the only output of the feature — set ``enabled=False`` to
-    # skip the extra VLM calls entirely.
+    # Emit the ``style="action_record"`` row (JSON content) at the subtask
+    # start — the only output of the feature. ``enabled=False`` skips it.
     emit_record_row: bool = True
 
-    # Frame sampling for the per-subtask VLM call (similar to the
-    # interjection module's window). Anchored to the subtask span.
+    # Frames sampled from the subtask span for the per-subtask VLM call.
     frames_per_subtask: int = 4
 
-    # Closed verb vocabulary. The prompt instructs the VLM to pick
-    # exactly one. Override per-dataset (e.g. ``["pick", "place", "open",
-    # "close"]`` for door-only manipulation) for tighter constraint.
+    # Closed verb vocabulary; the prompt picks exactly one. Override
+    # per-dataset (e.g. door-only manipulation) for a tighter constraint.
     verb_vocabulary: tuple[str, ...] = (
         "pick",
         "place",
@@ -157,9 +143,8 @@ class ActionRecordsConfig:
         "dump",
     )
 
-    # Closed grasp-type vocabulary. ``null`` is always allowed (no
-    # contact / unclear). Adjust per-hardware (e.g. drop ``hook`` /
-    # ``key`` for parallel-jaw grippers).
+    # Closed grasp-type vocabulary (``null`` always allowed). Adjust
+    # per-hardware (e.g. drop ``hook`` / ``key`` for parallel-jaw grippers).
     grasp_vocabulary: tuple[str, ...] = (
         "pinch",
         "wrap",
@@ -199,15 +184,13 @@ class InterjectionsConfig:
 
     enabled: bool = True
 
-    # Each interjection emits a paired ``(interjection, speech)`` event row
-    # and triggers a ``plan`` refresh at the same timestamp via the
-    # ``plan`` module.
+    # Each interjection emits a paired (interjection, speech) event row and
+    # triggers a ``plan`` refresh at the same timestamp.
     max_interjections_per_episode: int = 3
     interjection_min_t: float = 2.0
 
-    # Visual context attached to the interjection prompt: a short window
-    # of frames centered on the chosen timestamp so the VLM sees the
-    # ongoing motion rather than a single frozen frame.
+    # A short frame window centered on the timestamp so the VLM sees the
+    # motion, not one frozen frame.
     interjection_window_seconds: float = 2.0
     interjection_window_frames: int = 4
 
@@ -219,22 +202,14 @@ class VqaConfig:
     enabled: bool = True
     vqa_emission_hz: float = 1.0
     K: int = 1
-    """How many *consecutive* frames each emission tick anchors a VQA pair
-    to. The VLM grounds its answer (bbox / keypoint coordinates, count, …)
-    against the *first* anchored frame's image, so anchoring K>1 frames
-    copies that same answer onto later frames where the scene has already
-    moved — stale labels. Default ``1``: a VQA pair lands on exactly its
-    emission frame, no temporal smear. Raise it only to trade label
-    precision for more (noisier) VQA frames."""
+    """Consecutive frames each emission tick anchors a VQA pair to. The VLM
+    grounds its answer on the FIRST anchored frame, so K>1 copies that answer
+    onto later (moved) frames — stale labels. Default 1 (no smear)."""
     question_types: tuple[str, ...] = ("bbox", "keypoint", "count", "attribute", "spatial")
 
-    # Camera restriction. By default VQA iterates EVERY camera the
-    # dataset declares (one VQA pair per camera per emission tick). Set
-    # ``restrict_to_default_camera=True`` to ground VQA on only the
-    # single ``--vlm.camera_key`` stream — the same camera the plan /
-    # interjection modules use — so the whole pipeline focuses on one
-    # view. Use this when you want every annotation grounded on, e.g.,
-    # ``observation.images.base`` and nothing else.
+    # By default VQA iterates every camera (one pair per camera per tick). Set
+    # True to ground VQA only on ``--vlm.camera_key`` — the single view the
+    # plan / interjection modules use.
     restrict_to_default_camera: bool = False
 
 
@@ -242,11 +217,9 @@ class VqaConfig:
 class VlmConfig:
     """Shared Qwen-VL client configuration."""
 
-    # Only ``openai`` is supported for now (the in-process ``vllm`` /
-    # ``transformers`` local backends were removed — the shipped workflow
-    # is Hugging Face Jobs). ``openai`` talks to an OpenAI-compatible vLLM
-    # server; the CLI auto-spawns one in-job when ``auto_serve=True``.
-    # ``stub`` is for unit tests (construct ``StubVlmClient`` directly).
+    # Only ``openai`` is supported (in-process vllm/transformers were removed;
+    # the shipped workflow is HF Jobs). Talks to an OpenAI-compatible vLLM
+    # server, auto-spawned in-job when ``auto_serve=True``. ``stub`` is for tests.
     backend: str = "openai"
     model_id: str = "Qwen/Qwen3.6-27B"
 
@@ -263,9 +236,8 @@ class VlmConfig:
     # when ``parallel_servers > 1``.
     serve_command: str | None = None
 
-    # Run multiple independent inference servers for round-robin client
-    # routing (each pinned to a GPU via ``CUDA_VISIBLE_DEVICES`` and bound
-    # to ``serve_port + i``). ``num_gpus=0`` means one GPU per replica.
+    # Independent servers for round-robin routing (each pinned to a GPU,
+    # bound to ``serve_port + i``). ``num_gpus=0`` = one GPU per replica.
     parallel_servers: int = 1
     num_gpus: int = 0
     client_concurrency: int = 16
@@ -289,16 +261,12 @@ class VlmConfig:
 
 @dataclass
 class ExecutorConfig:
-    """Executor settings.
+    """Executor settings — intra-process episode concurrency only
+    (distributed execution is delegated to Hugging Face Jobs)."""
 
-    Distributed execution is provided by Hugging Face Jobs (see
-    ``examples/annotation/run_hf_job.py``); this config only controls
-    intra-process episode concurrency.
-    """
-
-    # Episodes processed concurrently within each module phase. Each
-    # in-flight episode dispatches 3-5 dependent VLM calls, so this is the
-    # main knob for saturating ``parallel_servers`` and ``client_concurrency``.
+    # Episodes processed concurrently per module phase. Each dispatches 3-5 VLM
+    # calls, so this is the main knob for saturating ``parallel_servers`` /
+    # ``client_concurrency``.
     episode_parallelism: int = 16
 
 
@@ -310,15 +278,12 @@ class AnnotationPipelineConfig:
     revisions of the same dataset live in separate copies.
     """
 
-    # Hub dataset id. Used as the download source when ``root`` is unset,
-    # and as the destination repo when ``push_to_hub`` is enabled and
-    # ``new_repo_id`` is unset.
+    # Hub dataset id: download source when ``root`` is unset, and push target
+    # when ``push_to_hub`` is on and ``new_repo_id`` is unset.
     repo_id: str | None = None
 
-    # Optional separate Hub dataset id to push the annotated result to (named
-    # ``new_repo_id`` to match the LeRobot dataset edit tools). When unset,
-    # ``push_to_hub`` uploads back to ``repo_id`` (annotate in place); when
-    # set, the source ``repo_id`` is left untouched.
+    # Optional separate push target (named to match the LeRobot dataset edit
+    # tools). Unset → push back to ``repo_id`` in place; set → source untouched.
     new_repo_id: str | None = None
 
     root: Path | None = None
@@ -338,17 +303,13 @@ class AnnotationPipelineConfig:
     skip_validation: bool = False
     only_episodes: tuple[int, ...] | None = None
 
-    # Keyframe decode backend. When unset, the pipeline decodes with the
-    # ffmpeg CLI: it decodes AV1 and runs each decode as an isolated child
-    # process, which is both crash-safe and safe under the concurrent
-    # decode the executor performs (torchcodec is not thread-safe and
-    # SIGSEGVs there). Set to ``"torchcodec"`` or ``"pyav"`` to pin an
-    # in-process decoder when its build is known thread-safe.
+    # Keyframe decode backend. Unset → ffmpeg CLI: decodes AV1 in an isolated
+    # child process, so it's crash- and thread-safe under concurrent decode
+    # (torchcodec SIGSEGVs there). Set ``"torchcodec"`` / ``"pyav"`` to pin one.
     video_backend: str | None = None
 
-    # When True, upload the annotated dataset to the Hugging Face Hub:
-    # to ``new_repo_id`` if set, otherwise back to ``repo_id``. One of
-    # the two must be set for this to take effect.
+    # Upload the annotated dataset to the Hub (to ``new_repo_id`` if set, else
+    # back to ``repo_id`` — one of the two must be set).
     push_to_hub: bool = False
     push_private: bool = False
     push_commit_message: str | None = None
