@@ -268,8 +268,6 @@ class PI0FastPaliGemma(nn.Module):
         return features
 
     def embed_language_tokens(self, tokens: torch.Tensor):
-        # get_input_embeddings() is GemmaTextScaledWordEmbedding (transformers >=5.4.0): it already
-        # multiplies by sqrt(hidden_size) internally, so no manual scaling is needed here.
         return self.paligemma.model.language_model.get_input_embeddings()(tokens)
 
     def forward(

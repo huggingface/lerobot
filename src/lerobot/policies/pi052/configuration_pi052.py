@@ -39,6 +39,7 @@ step, which the multi-rate ``PI052Runtime`` (in
 from dataclasses import dataclass
 
 from lerobot.configs import PreTrainedConfig
+from lerobot.optim.optimizers import AdamWConfig
 
 from ..pi05.configuration_pi05 import PI05Config
 
@@ -205,6 +206,24 @@ class PI052Config(PI05Config):
     ``config.json``). Loading those configs would otherwise raise
     ``DecodingError: The fields use_hf_kernels are not valid for
     PI052Config`` (job 22164492). Remove in a future major bump."""
+
+    # Optimizer foreach/fused. pi052 carries these locally because the shared
+    # PI05Config (kept identical to upstream main) does not define them; the
+    # checkpoints we train serialize both keys into config.json, so they must
+    # be valid PI052Config fields and flow into the AdamW preset below.
+    optimizer_foreach: bool | None = False
+    optimizer_fused: bool | None = True
+
+    def get_optimizer_preset(self) -> AdamWConfig:
+        return AdamWConfig(
+            lr=self.optimizer_lr,
+            betas=self.optimizer_betas,
+            eps=self.optimizer_eps,
+            weight_decay=self.optimizer_weight_decay,
+            grad_clip_norm=self.optimizer_grad_clip_norm,
+            foreach=self.optimizer_foreach,
+            fused=self.optimizer_fused,
+        )
 
     def __post_init__(self) -> None:
         super().__post_init__()

@@ -37,19 +37,25 @@ for the LM head.
 
 from __future__ import annotations
 
+import builtins
 import logging
 import types
-from typing import Any
+from collections import deque
+from pathlib import Path
+from typing import Any, Unpack
 
 import torch
 from torch import Tensor
 from torch.nn import functional as F
 
+from lerobot.configs import PreTrainedConfig
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
+from lerobot.utils.import_utils import require_package
 
-from ..pi05.configuration_pi05 import PI05Config
-from ..pi05.modeling_pi05 import PI05Policy
+from ..pretrained import PreTrainedPolicy, T
+from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_pi052 import PI052Config
+from .pi05_backbone import ActionSelectKwargs, PI05Pytorch, pad_vector, resize_with_pad_torch
 
 logger = logging.getLogger(__name__)
 
@@ -335,7 +341,7 @@ def _compute_layer_ki(
     if mask_for_action.dtype != Q_action.dtype:
         mask_for_action = mask_for_action.to(dtype=Q_action.dtype)
 
-    from ..pi05.modeling_pi05 import sdpa_attention_forward  # noqa: PLC0415
+    from .pi05_backbone import sdpa_attention_forward  # noqa: PLC0415
 
     att_vlm, _ = sdpa_attention_forward(
         paligemma.model.language_model.layers[layer_idx].self_attn,
@@ -387,7 +393,7 @@ def _paligemma_forward_ki(
     (VLM-only or action-only) defer back to the original forward —
     KI only matters when actions and VLM tokens are forwarded together.
     """
-    from ..pi05.modeling_pi05 import layernorm_forward  # noqa: PLC0415
+    from .pi05_backbone import layernorm_forward  # noqa: PLC0415
 
     if adarms_cond is None:
         adarms_cond = [None, None]
@@ -435,21 +441,38 @@ def _paligemma_forward_ki(
     return [outputs_embeds[0], outputs_embeds[1]], None
 
 
-class PI052Policy(PI05Policy):
-    """π0.5 with the PaliGemma LM head re-enabled."""
+class PI052Policy(PreTrainedPolicy):
+    """π0.5 with the PaliGemma LM head re-enabled.
+
+    Self-contained: the PI0.5 backbone (PaliGemmaWithExpertModel / PI05Pytorch)
+    is vendored in ``pi05_backbone.py`` and the PI05Policy wrapper logic is
+    inlined directly here, so this policy does not depend on or inherit from
+    ``lerobot.policies.pi05`` (which stays identical to ``main``).
+    """
 
     config_class = PI052Config
     name = "pi052"
 
     def __init__(self, config: PI052Config, **kwargs: Any) -> None:
-        # Patch ops BEFORE the backbone is built (super().__init__ below
-        # constructs PaliGemmaWithExpertModel which instantiates the
-        # Gemma/Siglip layers we want to swap). Always-on — the patch
-        # is process-global / idempotent and degrades gracefully if
-        # liger-kernel is missing.
+        # Patch ops BEFORE the backbone is built (the backbone constructed
+        # below instantiates the Gemma/Siglip layers we want to swap).
+        # Always-on — the patch is process-global / idempotent and degrades
+        # gracefully if liger-kernel is missing.
         _enable_hf_kernels()
 
-        super().__init__(config, **kwargs)
+        # ---- inlined PI05Policy.__init__ ----------------------------------
+        require_package("transformers", extra="pi")
+        super().__init__(config)
+        config.validate_features()
+        self.config = config
+        self.init_rtc_processor()
+        self.model = PI05Pytorch(config, rtc_processor=self.rtc_processor)
+        if config.gradient_checkpointing:
+            self.model.gradient_checkpointing_enable()
+        self.model.to(config.device)
+        self.reset()
+        # ---- end inlined PI05Policy.__init__ ------------------------------
+
         # ``PI05Policy.__init__`` zeroes the PaliGemma ``lm_head`` and
         # freezes a few terminal layers when ``train_expert_only`` is
         # the (default) True. We re-enable the head if the user
@@ -487,7 +510,11 @@ class PI052Policy(PI05Policy):
 
     def reset(self):
         """Reset action and high-level inference state."""
-        super().reset()
+        # inlined PI05Policy.reset
+        self._action_queue = deque(maxlen=self.config.n_action_steps)
+        self._queues = {
+            ACTION: deque(maxlen=self.config.n_action_steps),
+        }
         self.last_subtasks = None
         self.last_subtasks_raw = None
         self.last_subtasks_source = None
@@ -556,7 +583,7 @@ class PI052Policy(PI05Policy):
             and predict_actions_t is None
             and not getattr(self.config, "enable_fast_action_loss", False)
         ):
-            return super().forward(batch, reduction=reduction)
+            return self._pi05_flow_forward(batch, reduction=reduction)
 
         run_flow = (
             self.config.flow_loss_weight > 0
@@ -687,7 +714,7 @@ class PI052Policy(PI05Policy):
         """
         from lerobot.utils.constants import ACTION  # noqa: PLC0415
 
-        from ..pi05.modeling_pi05 import make_att_2d_masks  # noqa: PLC0415
+        from .pi05_backbone import make_att_2d_masks  # noqa: PLC0415
 
         # ---- preamble (mirrors PI05Pytorch.forward) ------------------
         actions = self.prepare_action(batch)
@@ -842,7 +869,7 @@ class PI052Policy(PI05Policy):
         Returns ``(text_loss, fast_loss)``. Either can be ``None`` if
         the caller doesn't want that head.
         """
-        from ..pi05.modeling_pi05 import make_att_2d_masks  # noqa: PLC0415
+        from .pi05_backbone import make_att_2d_masks  # noqa: PLC0415
 
         images, img_masks = self._preprocess_images(batch)
         lang_tokens = batch[OBS_LANGUAGE_TOKENS]
@@ -953,7 +980,7 @@ class PI052Policy(PI05Policy):
         ``input_ids[t+1]`` for next-token prediction). Returns ``{}``
         when the batch has no supervised text positions.
         """
-        from ..pi05.modeling_pi05 import make_att_2d_masks  # noqa: PLC0415
+        from .pi05_backbone import make_att_2d_masks  # noqa: PLC0415
 
         text_labels = batch.get("text_labels")
         if text_labels is None or not bool((text_labels != -100).any().item()):
@@ -1089,7 +1116,7 @@ class PI052Policy(PI05Policy):
         current_att = prefix_att_masks
         generated: list[int] = []
 
-        from ..pi05.modeling_pi05 import make_att_2d_masks  # noqa: PLC0415
+        from .pi05_backbone import make_att_2d_masks  # noqa: PLC0415
 
         backbone = self.model.paligemma_with_expert
         lm_head = backbone.paligemma.lm_head
@@ -1397,3 +1424,413 @@ class PI052Policy(PI05Policy):
             choice = torch.multinomial(sorted_p, num_samples=1)
             return sorted_ix.gather(-1, choice).squeeze(-1)
         return torch.multinomial(probs, num_samples=1).squeeze(-1)
+
+    # ------------------------------------------------------------------
+    # Inlined from PI05Policy (vendored; pi052 does not inherit pi05).
+    # Kept verbatim except PI05Policy.forward -> _pi05_flow_forward (the
+    # flow-only fallback used by PI052Policy.forward on unannotated batches).
+    # ------------------------------------------------------------------
+    @classmethod
+    def from_pretrained(
+        cls: builtins.type[T],
+        pretrained_name_or_path: str | Path,
+        *,
+        config: PreTrainedConfig | None = None,
+        force_download: bool = False,
+        resume_download: bool | None = None,
+        proxies: dict | None = None,
+        token: str | bool | None = None,
+        cache_dir: str | Path | None = None,
+        local_files_only: bool = False,
+        revision: str | None = None,
+        strict: bool = True,
+        **kwargs,
+    ) -> T:
+        """Override the from_pretrained method to handle key remapping and display important disclaimer."""
+        print(
+            "The PI05 model is a direct port of the OpenPI implementation. \n"
+            "This implementation follows the original OpenPI structure for compatibility. \n"
+            "Original implementation: https://github.com/Physical-Intelligence/openpi"
+        )
+        if pretrained_name_or_path is None:
+            raise ValueError("pretrained_name_or_path is required")
+
+        # Use provided config if available, otherwise create default config
+        if config is None:
+            config = PreTrainedConfig.from_pretrained(
+                pretrained_name_or_path=pretrained_name_or_path,
+                force_download=force_download,
+                resume_download=resume_download,
+                proxies=proxies,
+                token=token,
+                cache_dir=cache_dir,
+                local_files_only=local_files_only,
+                revision=revision,
+                **kwargs,
+            )
+
+        # Initialize model without loading weights
+        # Check if dataset_stats were provided in kwargs
+        model = cls(config, **kwargs)
+
+        # Load state dict (expects keys with "model." prefix)
+        try:
+            print(f"Loading model from: {pretrained_name_or_path}")
+            try:
+                from transformers.utils import cached_file
+
+                resolved_file = cached_file(
+                    pretrained_name_or_path,
+                    "model.safetensors",
+                    cache_dir=kwargs.get("cache_dir"),
+                    force_download=kwargs.get("force_download", False),
+                    resume_download=kwargs.get("resume_download"),
+                    proxies=kwargs.get("proxies"),
+                    token=kwargs.get("token"),
+                    revision=kwargs.get("revision"),
+                    local_files_only=kwargs.get("local_files_only", False),
+                )
+                from safetensors.torch import load_file
+
+                original_state_dict = load_file(resolved_file)
+                print("✓ Loaded state dict from model.safetensors")
+            except Exception as e:
+                print(f"Could not load state dict from remote files: {e}")
+                print("Returning model without loading pretrained weights")
+                return model
+
+            # First, fix any key differences (see openpi model.py, _fix_pytorch_state_dict_keys)
+            fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)
+
+            # Then add "model." prefix for all keys that don't already have it
+            remapped_state_dict = {}
+            remap_count = 0
+
+            for key, value in fixed_state_dict.items():
+                if not key.startswith("model."):
+                    new_key = f"model.{key}"
+                    remapped_state_dict[new_key] = value
+                    remap_count += 1
+                else:
+                    remapped_state_dict[key] = value
+
+            if remap_count > 0:
+                print(f"Remapped {remap_count} state dict keys")
+
+            lm_head_key = "model.paligemma_with_expert.paligemma.lm_head.weight"
+            embed_tokens_key = (
+                "model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
+            )
+            if lm_head_key not in remapped_state_dict and embed_tokens_key in remapped_state_dict:
+                remapped_state_dict[lm_head_key] = remapped_state_dict[embed_tokens_key].clone().float()
+                print("Initialized PaliGemma lm_head from language token embeddings")
+            elif lm_head_key in remapped_state_dict:
+                remapped_state_dict[lm_head_key] = remapped_state_dict[lm_head_key].float()
+
+            # Load the remapped state dict into the model
+            missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
+
+            if missing_keys:
+                print(f"Missing keys when loading state dict: {len(missing_keys)} keys")
+                if len(missing_keys) <= 5:
+                    for key in missing_keys:
+                        print(f"  - {key}")
+                else:
+                    for key in missing_keys[:5]:
+                        print(f"  - {key}")
+                    print(f"  ... and {len(missing_keys) - 5} more")
+
+            if unexpected_keys:
+                print(f"Unexpected keys when loading state dict: {len(unexpected_keys)} keys")
+                if len(unexpected_keys) <= 5:
+                    for key in unexpected_keys:
+                        print(f"  - {key}")
+                else:
+                    for key in unexpected_keys[:5]:
+                        print(f"  - {key}")
+                    print(f"  ... and {len(unexpected_keys) - 5} more")
+
+            if not missing_keys and not unexpected_keys:
+                print("All keys loaded successfully!")
+
+        except Exception as e:
+            print(f"Warning: Could not load state dict: {e}")
+
+        return model
+
+    def _fix_pytorch_state_dict_keys(
+        self, state_dict, model_config
+    ):  # see openpi `BaseModelConfig, _fix_pytorch_state_dict_keys`
+        """Fix state dict keys to match current model architecture."""
+        import re
+
+        fixed_state_dict = {}
+
+        for key, value in state_dict.items():
+            new_key = key
+
+            # Handle layer norm structure changes: .weight -> .dense.weight + .dense.bias
+            # For gemma expert layers
+            if re.match(
+                r"paligemma_with_expert\.gemma_expert\.model\.layers\.\d+\.(input_layernorm|post_attention_layernorm)\.weight",
+                key,
+            ):
+                # Check if the model actually has adaRMS enabled for the expert
+                expert_uses_adarms = getattr(
+                    self.model.paligemma_with_expert.gemma_expert.config, "use_adarms", False
+                )
+                if expert_uses_adarms:
+                    logging.warning(f"Skipping layer norm key (adaRMS mismatch): {key}")
+                    continue
+
+            if re.match(r"paligemma_with_expert\.gemma_expert\.model\.norm\.weight", key):
+                # Check if the model actually has adaRMS enabled for the expert
+                expert_uses_adarms = getattr(
+                    self.model.paligemma_with_expert.gemma_expert.config, "use_adarms", False
+                )
+                if expert_uses_adarms:
+                    logging.warning(f"Skipping norm key (adaRMS mismatch): {key}")
+                    continue
+
+            # Handle MLP naming changes for pi05
+            # pi05 model expects time_mlp_*, but checkpoint might have action_time_mlp_*
+            if key.startswith("action_time_mlp_in."):
+                new_key = key.replace("action_time_mlp_in.", "time_mlp_in.")
+            elif key.startswith("action_time_mlp_out."):
+                new_key = key.replace("action_time_mlp_out.", "time_mlp_out.")
+            # Also handle state_proj which shouldn't exist in pi05
+            if key.startswith("state_proj."):
+                logging.warning(f"Skipping state_proj key in pi05 mode: {key}")
+                continue
+
+            # Handle vision tower embedding layer potential differences
+            if "patch_embedding" in key:
+                # Some checkpoints might have this, but current model expects different structure
+                logging.warning(f"Vision embedding key might need handling: {key}")
+
+            if (
+                key == "model.paligemma_with_expert.paligemma.lm_head.weight"
+                or key == "paligemma_with_expert.paligemma.lm_head.weight"
+            ):
+                fixed_state_dict[
+                    "model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
+                ] = value.clone()
+
+            fixed_state_dict[new_key] = value
+
+        return fixed_state_dict
+
+    def get_optim_params(self):
+        """Return policy parameters, optionally split into LR-scaled groups.
+
+        When ``config.lm_head_lr_scale != 1.0``, the PaliGemma ``lm_head``
+        and its tied ``embed_tokens`` are placed in their own param
+        group with ``lr = base_lr * lm_head_lr_scale``. The cosine
+        scheduler multiplies both groups by the same lambda each step,
+        so the ratio is preserved across decay. Default ``1.0`` =
+        return ``self.parameters()`` (back-compat with existing checkpoints
+        and configs).
+        """
+        scale = float(getattr(self.config, "lm_head_lr_scale", 1.0))
+        if scale == 1.0:
+            return self.parameters()
+        head_params: list[torch.nn.Parameter] = []
+        other_params: list[torch.nn.Parameter] = []
+        # Both ``lm_head.weight`` and the tied ``embed_tokens.weight`` —
+        # boosting only the projection without the embedding pulls them
+        # apart and breaks the tie that PaliGemma was pre-trained with.
+        head_substrings = (
+            "paligemma_with_expert.paligemma.lm_head.",
+            "paligemma_with_expert.paligemma.model.language_model.embed_tokens.",
+        )
+        for name, p in self.named_parameters():
+            if not p.requires_grad:
+                continue
+            if any(s in name for s in head_substrings):
+                head_params.append(p)
+            else:
+                other_params.append(p)
+        base_lr = float(self.config.optimizer_lr)
+        groups: list[dict[str, object]] = []
+        if other_params:
+            groups.append({"params": other_params, "lr": base_lr, "name": "policy"})
+        if head_params:
+            groups.append(
+                {"params": head_params, "lr": base_lr * scale, "name": "lm_head"}
+            )
+        # Sanity: head_substrings must match at least one parameter, otherwise
+        # the scale silently does nothing — surface that fast.
+        if not head_params:
+            raise RuntimeError(
+                "lm_head_lr_scale != 1.0 but no parameters matched the LM-head "
+                "name patterns: "
+                f"{head_substrings!r}. Did the underlying PaliGemma module rename?"
+            )
+        logging.info(
+            "PI05Policy: LM-head LR scale = %.3g (base=%.3g, head=%.3g) over "
+            "%d head params + %d other params",
+            scale,
+            base_lr,
+            base_lr * scale,
+            len(head_params),
+            len(other_params),
+        )
+        return groups
+
+
+    def init_rtc_processor(self):
+        """Initialize RTC processor if RTC is enabled in config."""
+        self.rtc_processor = None
+
+        # Create processor if config provided
+        # If RTC is not enabled - we can still track the denoising data
+        if self.config.rtc_config is not None:
+            self.rtc_processor = RTCProcessor(self.config.rtc_config)
+
+            model_value = getattr(self, "model", None)
+            if model_value is not None:
+                model_value.rtc_processor = self.rtc_processor
+
+    def _rtc_enabled(self) -> bool:
+        return self.config.rtc_config is not None and self.config.rtc_config.enabled
+
+    def _preprocess_images(self, batch: dict[str, Tensor]) -> tuple[list[Tensor], list[Tensor]]:
+        """Preprocess images for the model.
+
+        Images from LeRobot are typically in [B, C, H, W] format and normalized to [0, 1].
+        PaliGemma expects images in [B, C, H, W] format and normalized to [-1, 1].
+        """
+        images = []
+        img_masks = []
+
+        # Get device from model parameters
+        device = next(self.parameters()).device
+
+        present_img_keys = [key for key in self.config.image_features if key in batch]
+        missing_img_keys = [key for key in self.config.image_features if key not in batch]
+
+        if len(present_img_keys) == 0:
+            raise ValueError(
+                f"All image features are missing from the batch. At least one expected. "
+                f"(batch: {batch.keys()}) (image_features: {self.config.image_features})"
+            )
+
+        # Preprocess image features present in the batch
+        for key in present_img_keys:
+            img = batch[key]
+
+            # Ensure tensor is on the same device as the model
+            if img.device != device:
+                img = img.to(device)
+
+            # Ensure float32 dtype for consistency
+            if img.dtype != torch.float32:
+                img = img.to(torch.float32)
+
+            # from openpi preprocess_observation_pytorch: Handle both [B, C, H, W] and [B, H, W, C] formats
+            is_channels_first = img.shape[1] == 3  # Check if channels are in dimension 1
+
+            if is_channels_first:
+                # Convert [B, C, H, W] to [B, H, W, C] for processing
+                img = img.permute(0, 2, 3, 1)
+
+            # from openpi preprocess_observation_pytorch: Resize with padding if needed
+            if img.shape[1:3] != self.config.image_resolution:
+                img = resize_with_pad_torch(img, *self.config.image_resolution)
+
+            # Normalize from [0,1] to [-1,1] as expected by siglip
+            img = img * 2.0 - 1.0
+
+            # from openpi preprocess_observation_pytorch: Convert back to [B, C, H, W] format if it was originally channels-first
+            if is_channels_first:
+                img = img.permute(0, 3, 1, 2)  # [B, H, W, C] -> [B, C, H, W]
+
+            images.append(img)
+            # Create mask (all ones for real images)
+            bsize = img.shape[0]
+            mask = torch.ones(bsize, dtype=torch.bool, device=device)
+            img_masks.append(mask)
+
+        # Create image features not present in the batch as fully 0 padded images
+        for _num_empty_cameras in range(len(missing_img_keys)):
+            img = torch.ones_like(img) * -1  # Padded with -1 for SigLIP
+            mask = torch.zeros_like(mask)  # Mask is zero for empty cameras
+            images.append(img)
+            img_masks.append(mask)
+
+        return images, img_masks
+
+    def prepare_action(self, batch):
+        """Pad action"""
+        actions = pad_vector(batch[ACTION], self.config.max_action_dim)
+        return actions
+
+
+    @torch.no_grad()
+    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
+        """Predict a chunk of actions given environment observations."""
+        self.eval()
+
+        # Prepare inputs
+        images, img_masks = self._preprocess_images(batch)
+        tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
+
+        # Sample actions using the model (pass through RTC kwargs, no separate state needed for PI05)
+        actions = self.model.sample_actions(images, img_masks, tokens, masks, **kwargs)
+
+        # Unpad actions to actual action dimension
+        original_action_dim = self.config.output_features[ACTION].shape[0]
+        actions = actions[:, :, :original_action_dim]
+
+        return actions
+
+    def _pi05_flow_forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict]:
+        """Run the batch through the model and compute the loss for training.
+
+        Args:
+            batch: Training batch containing observations and actions.
+            reduction: How to reduce the loss. Options:
+                - "mean": Return scalar mean loss (default, backward compatible)
+                - "none": Return per-sample losses of shape (batch_size,) for RA-BC weighting
+        """
+        # Prepare inputs
+        images, img_masks = self._preprocess_images(batch)
+        tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
+
+        actions = self.prepare_action(batch)
+
+        noise = self.model.sample_noise(actions.shape, actions.device)
+        time = self.model.sample_time(actions.shape[0], actions.device)
+
+        # Compute loss (no separate state needed for PI05)
+        losses = self.model.forward(images, img_masks, tokens, masks, actions, noise, time)
+
+        # Truncate losses to actual action dimensions
+        original_action_dim = self.config.output_features[ACTION].shape[0]
+        losses = losses[:, :, :original_action_dim]
+
+        loss_dict = {
+            "loss_per_dim": losses.mean(dim=[0, 1]).detach().cpu().numpy().tolist(),
+        }
+
+        if reduction == "none":
+            # Return per-sample losses (B,) by averaging over time and action dims
+            per_sample_loss = losses.mean(dim=(1, 2))
+            loss_dict["loss"] = per_sample_loss.mean().item()
+            return per_sample_loss, loss_dict
+        else:
+            # Default: return scalar mean loss
+            loss = losses.mean()
+            loss_dict["loss"] = loss.item()
+            return loss, loss_dict
+
+    def _get_default_peft_targets(self) -> dict[str, any]:
+        """Return default PEFT target modules for PI0.5 fine-tuning."""
+        common_projections = (
+            "state_proj|action_in_proj|action_out_proj|action_time_mlp_in|action_time_mlp_out"
+        )
+        target_modules = rf"(.*\.gemma_expert\..*\.self_attn\.(q|v)_proj|model\.({common_projections}))"
+        return {
+            "target_modules": target_modules,
+            "modules_to_save": [],
+        }

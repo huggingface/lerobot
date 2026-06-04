@@ -93,21 +93,6 @@ class PI05Config(PreTrainedConfig):
     optimizer_eps: float = 1e-8
     optimizer_weight_decay: float = 0.01
     optimizer_grad_clip_norm: float = 1.0
-    optimizer_foreach: bool | None = False
-    optimizer_fused: bool | None = True
-
-    # LM-head LR multiplier. The PaliGemma `lm_head` projection (and its
-    # tied `embed_tokens`) is the surface the LM head's first-token
-    # distribution depends on. With ``knowledge_insulation`` blocking
-    # action→VLM gradients, the LM head only sees gradients on text-CE
-    # samples — which can be a small fraction of the mix (e.g. ~45% in
-    # ``subtask_mem.yaml``). Under aggressive cosine LR decay the head's
-    # first-token distribution can drift back toward PaliGemma's
-    # pretrained ``<loc>`` detection prior, despite teacher-forced CE
-    # staying near zero. Boosting just the LM-head LR (e.g. 5x) keeps
-    # the head pinned to fine-tuning targets without perturbing the
-    # backbone / vision tower / action expert. Default 1.0 = no change.
-    lm_head_lr_scale: float = 1.0
 
     # Scheduler settings: see openpi `CosineDecaySchedule`
     # Note: These will auto-scale if --steps < scheduler_decay_steps
@@ -167,8 +152,6 @@ class PI05Config(PreTrainedConfig):
             eps=self.optimizer_eps,
             weight_decay=self.optimizer_weight_decay,
             grad_clip_norm=self.optimizer_grad_clip_norm,
-            foreach=self.optimizer_foreach,
-            fused=self.optimizer_fused,
         )
 
     def get_scheduler_preset(self):

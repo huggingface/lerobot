@@ -33,7 +33,7 @@ pytest.importorskip("transformers")
 
 from transformers.models.gemma import modeling_gemma  # noqa: E402
 
-from lerobot.policies.pi05.modeling_pi05 import (  # noqa: E402
+from lerobot.policies.pi052.pi05_backbone import (  # noqa: E402
     make_att_2d_masks,
     sdpa_attention_forward,
 )
