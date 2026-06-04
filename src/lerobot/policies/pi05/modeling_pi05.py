@@ -477,7 +477,11 @@ class PaliGemmaWithExpertModel(
         if image.dtype != torch.float32:
             image = image.to(torch.float32)
         image_outputs = self.paligemma.model.get_image_features(image)
-        features = image_outputs.pooler_output * self.paligemma.config.text_config.hidden_size**0.5
+        # OpenPI / big_vision convention: image (soft) tokens are NOT scaled by the
+        # Gemma embedder normalizer (sqrt(hidden_size)) — only text tokens are. lerobot/pi05_base
+        # was trained in this regime, so scaling image features here over-scales them ~45x and
+        # breaks the pretrained vision-language alignment. Keep image features un-normalized.
+        features = image_outputs.pooler_output
         if features.dtype != out_dtype:
             features = features.to(out_dtype)
         return features
