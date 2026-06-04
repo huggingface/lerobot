@@ -17,7 +17,7 @@
 
 Spawns one single-GPU ``h200`` job that:
 
-  1. installs ``lerobot`` plus the annotation extras,
+  1. installs ``lerobot`` from ``main`` plus the annotation extras,
   2. boots one vllm server with Qwen3.6-27B (dense VLM),
   3. runs the plan / interjections / vqa modules across the dataset
      in free-form mode (each episode generates its own subtasks +

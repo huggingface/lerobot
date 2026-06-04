@@ -57,7 +57,7 @@ HF_TOKEN=hf_... uv run python examples/annotations/run_hf_job.py
 [`examples/annotations/run_hf_job.py`](https://github.com/huggingface/lerobot/blob/main/examples/annotations/run_hf_job.py)
 spawns a single-GPU `h200` job (scale up to `h200x4` for larger datasets) that:
 
-1. installs the branch under test plus the annotation extras,
+1. installs `lerobot` (from `main`) plus the annotation extras,
 2. boots one vLLM server per GPU (in the `vllm/vllm-openai` image) for the
    chosen model, which the pipeline drives over the OpenAI-compatible API,
 3. runs the `plan` / `interjections` / `vqa` modules across the dataset
