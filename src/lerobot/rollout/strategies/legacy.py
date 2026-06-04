@@ -150,17 +150,17 @@ class LegacyStrategy(RolloutStrategy):
                             current_pos = {k: v for k, v in obs.items() if k.endswith(".pos")}
                             if teleop_supports_feedback(teleop):
                                 logger.info("Smooth handover: moving leader arm to follower position")
-                                teleop_smooth_move_to(teleop, current_pos)
+                                teleop_smooth_move_to(teleop, current_pos, duration_s=1)
                             else:
                                 logger.info("Smooth handover: sliding follower to teleop position")
                                 teleop_action = teleop.get_action()
                                 processed = ctx.processors.teleop_action_processor((teleop_action, obs))
                                 target = ctx.processors.robot_action_processor((processed, obs))
-                                follower_smooth_move_to(robot, current_pos, target)
+                                follower_smooth_move_to(robot, current_pos, target, duration_s=1)
 
                         elif self.config.reset_to_initial_position:
                             # No teleop: return the robot to its startup position.
-                            self._return_to_initial_position(hw=ctx.hardware)
+                            self._return_to_initial_position(hw=ctx.hardware, duration_s=1)
 
                         self._reset_loop(
                             ctx=ctx,
@@ -181,7 +181,7 @@ class LegacyStrategy(RolloutStrategy):
 
                         # returns to its initial joint positions captured at startup
                         if not teleop and self.config.reset_to_initial_position:
-                            self._return_to_initial_position(hw=ctx.hardware)
+                            self._return_to_initial_position(hw=ctx.hardware, duration_s=1)
 
                         continue
 
