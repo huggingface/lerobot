@@ -14,21 +14,32 @@ trained on.
 ## How it fits together
 
 ```text
-  your dataset                lerobot-annotate
-  (LeRobot v3.1)        ┌──────────────────────────────────┐
-        │              │   read episodes                    │
-        └─────────────▶│        │                           │
-                       │        ▼                           │
-   one shared          │   ┌──────┐ ┌─────────────┐ ┌─────┐ │  each module writes
-   Qwen-VL server ────▶│   │ plan │ │interjections│ │ vqa │ │  raw JSONL into
-   (vLLM, OpenAI API)  │   └──┬───┘ └──────┬──────┘ └──┬──┘ │  .annotate_staging/
-                       │      └────────────┼───────────┘    │
-                       │                   ▼                 │
-                       │               validator             │  checks everything
-                       │                   │                 │
-                       │                   ▼                 │
-                       │                writer ──────────────┼─▶ data/chunk-*/file-*.parquet
-                       └──────────────────────────────────┘     (+ meta/info.json tools)
+  your dataset                  lerobot-annotate
+  (LeRobot v3.1)
+        │
+        ▼
+  ┌─────────────────────────────────────────────────────┐
+  │                    read episodes                     │
+  └──────────────────────────┬──────────────────────────┘
+                             │
+        ┌────────────────────┼────────────────────┐
+        ▼                    ▼                     ▼
+  ┌──────────┐      ┌───────────────┐        ┌──────────┐       one shared Qwen-VL
+  │   plan   │      │ interjections │        │   vqa    │  ◀──   server (vLLM, OpenAI
+  └────┬─────┘      └───────┬───────┘        └────┬─────┘        API) drives all three
+       └────────────────────┼─────────────────────┘
+                            │   each module stages raw JSONL
+                            ▼   into .annotate_staging/
+                  ┌─────────────────┐
+                  │    validator    │  ◀──  checks everything
+                  └────────┬────────┘
+                           ▼
+                  ┌─────────────────┐
+                  │     writer      │
+                  └────────┬────────┘
+                           ▼
+              data/chunk-*/file-*.parquet
+              (+ meta/info.json tools)
 ```
 
 Three modules (`plan`, `interjections`, `vqa`) all talk to **one** shared
