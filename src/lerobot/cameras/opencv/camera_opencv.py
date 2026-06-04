@@ -324,9 +324,11 @@ class OpenCVCamera(Camera):
                 default_format = camera.get(cv2.CAP_PROP_FORMAT)
 
                 # Get FOURCC code and convert to string
-                default_fourcc_code = camera.get(cv2.CAP_PROP_FOURCC)
-                default_fourcc_code_int = int(default_fourcc_code)
-                default_fourcc = "".join([chr((default_fourcc_code_int >> 8 * i) & 0xFF) for i in range(4)])
+                # default_fourcc_code = camera.get(cv2.CAP_PROP_FOURCC)
+                # default_fourcc_code_int = int(default_fourcc_code)
+                # default_fourcc = "".join([chr((default_fourcc_code_int >> 8 * i) & 0xFF) for i in range(4)])
+                # Hi this is Olivia on June 4 2026. I am forcing all default_fourcc to be fourcc="MJPG" to resolve wrist camera issues.
+                default_fourcc="MJPG"
 
                 camera_info = {
                     "name": f"OpenCV Camera @ {target}",

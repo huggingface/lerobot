@@ -62,7 +62,7 @@ class OpenCVCameraConfig(CameraConfig):
     color_mode: ColorMode = ColorMode.RGB
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     warmup_s: int = 1
-    fourcc: str | None = None
+    fourcc: str | None = "MJPG" # Default to MJPG to resolve wrist camera issues june 4 2026 Olivia Cai
     backend: Cv2Backends = Cv2Backends.ANY
 
     def __post_init__(self) -> None:
