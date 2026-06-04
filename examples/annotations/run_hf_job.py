@@ -69,58 +69,34 @@ CMD = (
     "--executor.episode_parallelism=16 "
     "--vlm.chat_template_kwargs='{\"enable_thinking\": false}' "
     "--vlm.camera_key=observation.images.robot0_agentview_right "
-    # Phase 1 — plan module (subtasks + plan + memory).
-    # Embed decoded frames directly (use_video_url=false) rather than
-    # handing the server a file:// clip. The embedded path is more
-    # reliable: if clip extraction ever fails, the video_url path would
-    # silently send NO video and the VLM would hallucinate subtasks from
-    # the task text alone.
-    #
-    # CONTEXT BUDGET: with embedded frames, each frame is ~250-320 vision
-    # tokens. The model's context is 32768 (see --max-model-len). 32
-    # frames sampled uniformly across the episode (~8-10k tokens) fits
-    # comfortably alongside the prompt and the describe pass.
-    # Do NOT raise max_video_frames toward 128 with embedded frames — that
-    # is ~33-39k tokens and overflows the context (BadRequestError 400,
-    # "Input length exceeds maximum context length").
+    # Phase 1 — plan module (subtasks + memory).
+    # Embed decoded frames (not a file:// clip): if clip extraction fails,
+    # the video_url path silently sends no video and the VLM hallucinates.
     "--plan.use_video_url=false "
     "--plan.frames_per_second=1.0 "
+    # 32 frames ≈ 8-10k vision tokens, fits the 32768 context. Don't push
+    # toward 128 — that overflows the context (BadRequestError 400).
     "--plan.max_video_frames=32 "
-    # Constant 1 fps density via windowing: episodes longer than 32s are
-    # split into 32-second windows (each 32 frames @ 1 fps, fits context),
-    # so long episodes get MORE subtasks instead of a sparser whole-episode
-    # view. describe->segment runs per window; spans are merged +
-    # stitched to a contiguous whole-episode cover. 0 disables.
+    # Window long episodes into 32s chunks (constant 1 fps density) so they
+    # get more subtasks; per-window spans are merged + stitched. 0 disables.
     "--plan.subtask_window_seconds=32 "
-    # IMPORTANT for RoboCasa: the dataset's task string ("Navigate to the
-    # stove", "Pick the mug...") is authoritative and is what eval uses.
-    # ``derive_task_from_video=off`` keeps that canonical task driving
-    # subtask generation. Do NOT use ``always`` here — it throws the real
-    # task away, asks the VLM "what is this video about?" with no hint,
-    # and the hallucinated task then poisons every subtask + plan row.
+    # RoboCasa: the dataset task string is authoritative (eval uses it), so
+    # keep it driving subtasks. ``always`` would throw it away and hallucinate.
     "--plan.derive_task_from_video=off "
-    # NO task augmentation for RoboCasa: eval conditions on the exact task
-    # strings, so synthetic rephrasings are unused at best and (when they
-    # drift, e.g. "wander around the kitchen") harmful. 0 rephrasings +
-    # axes disabled = the policy only ever sees the canonical task.
+    # No task augmentation: eval conditions on the exact task strings, so
+    # rephrasings are unused at best and harmful when they drift.
     "--plan.n_task_rephrasings=0 "
-    # action_records OFF: the structured {verb,object,arm,grasp,dest}
-    # schema is a manipulation schema; RoboCasa navigation / atomic tasks
-    # don't fit it and the VLM hallucinates. When on, records are purely
-    # additive (emitted as style="action_record" rows) and never touch
-    # the subtask text — useful only for long composite manipulation
-    # tasks. Leave off for RoboCasa atomic / navigation.
-    # Keep subtask decomposition tight for atomic tasks:
+    # Keep subtask decomposition tight for atomic tasks.
+    # (action_records left off: the {verb,object,arm,grasp,dest} schema is for
+    # long manipulation tasks, not RoboCasa atomic/navigation.)
     "--plan.plan_max_steps=10 "
-    # Only annotate subtasks + memory — skip the numbered "plan" rows
-    # (and their per-boundary VLM call). Flip to true to re-enable plan.
+    # Only subtasks + memory — skip the numbered "plan" rows. true re-enables.
     "--plan.emit_plan=false "
-    # NOTE: the grounding pass (describe -> segment, +1 VLM call/episode)
-    # is ON BY DEFAULT. Pass --plan.subtask_describe_first=false to disable
-    # on datasets you've verified are easy and want fewer calls.
+    # The describe->segment grounding pass (+1 VLM call/episode) is ON by
+    # default; pass --plan.subtask_describe_first=false to skip it.
     # Phase 2 — interjections + speech.
     "--interjections.max_interjections_per_episode=6 "
-    # Phase 4 — general VQA: DISABLED for this run.
+    # Phase 4 — general VQA: disabled for this run.
     "--vqa.enabled=false"
 )
 
