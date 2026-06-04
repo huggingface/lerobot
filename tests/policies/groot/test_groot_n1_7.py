@@ -29,8 +29,6 @@ from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.policies.factory import make_policy_config, make_pre_post_processors
 from lerobot.policies.groot.configuration_groot import (
     GROOT_ACTION_DECODE_TRANSFORM_LIBERO,
-    GROOT_N1_5,
-    GROOT_N1_5_BASE_MODEL,
     GROOT_N1_7,
     GROOT_N1_7_BASE_MODEL,
     GrootConfig,
@@ -40,7 +38,6 @@ from lerobot.policies.groot.configuration_groot import (
 from lerobot.policies.groot.modeling_groot import GrootPolicy
 from lerobot.policies.groot.processor_groot import (
     GrootActionUnpackUnnormalizeStep,
-    GrootEagleEncodeStep,
     GrootN17ActionDecodeStep,
     GrootN17PackInputsStep,
     GrootN17VLMEncodeStep,
@@ -64,11 +61,9 @@ def _groot_features(
     )
 
 
-def _groot_config(model_version: str) -> GrootConfig:
+def _groot_config(model_version: str = GROOT_N1_7) -> GrootConfig:
     input_features, output_features = _groot_features(state_dim=8, action_dim=7)
-    kwargs = {}
-    if model_version == GROOT_N1_7:
-        kwargs["action_decode_transform"] = GROOT_ACTION_DECODE_TRANSFORM_LIBERO
+    kwargs = {"action_decode_transform": GROOT_ACTION_DECODE_TRANSFORM_LIBERO}
     return GrootConfig(
         model_version=model_version,
         input_features=input_features,
@@ -347,18 +342,8 @@ class _DummyGrootModel(nn.Module):
         return {"action_pred": torch.zeros(batch_size, 40, 132, device=self.weight.device)}
 
 
-def test_groot_n1_5_defaults_are_preserved():
+def test_groot_defaults_use_n1_7():
     config = GrootConfig(device="cpu")
-
-    assert config.model_version == GROOT_N1_5
-    assert config.base_model_path == GROOT_N1_5_BASE_MODEL
-    assert config.max_state_dim == 64
-    assert config.max_action_dim == 32
-    assert len(config.action_delta_indices) == 16
-
-
-def test_groot_n1_7_explicit_selection_uses_n1_7_defaults():
-    config = GrootConfig(model_version=GROOT_N1_7, device="cpu")
 
     assert config.model_version == GROOT_N1_7
     assert config.base_model_path == GROOT_N1_7_BASE_MODEL
@@ -389,25 +374,17 @@ def test_groot_n1_7_rejects_legacy_libero_gripper_action_decode_transform(legacy
         )
 
 
-def test_groot_n1_5_rejects_action_decode_transform():
-    with pytest.raises(ValueError, match="action_decode_transform"):
-        GrootConfig(
-            model_version=GROOT_N1_5,
-            action_decode_transform=GROOT_ACTION_DECODE_TRANSFORM_LIBERO,
-            device="cpu",
-        )
-
-
-def test_groot_n1_7_path_requires_matching_model_version():
-    with pytest.raises(ValueError, match="model_version"):
-        GrootConfig(base_model_path=GROOT_N1_7_BASE_MODEL, device="cpu")
+@pytest.mark.parametrize("legacy_version", ["n1.5", "n1_5", "n15", "1.5"])
+def test_groot_rejects_n1_5_aliases(legacy_version):
+    with pytest.raises(ValueError, match="Unsupported GR00T model_version"):
+        GrootConfig(model_version=legacy_version, device="cpu")
 
 
 def test_groot_config_rejects_mismatched_n1_5_path_for_n1_7():
     with pytest.raises(ValueError, match="does not match base_model_path"):
         GrootConfig(
             model_version=GROOT_N1_7,
-            base_model_path=GROOT_N1_5_BASE_MODEL,
+            base_model_path="nvidia/GR00T-N1.5-3B",
             device="cpu",
         )
 
@@ -528,7 +505,16 @@ def test_groot_n1_7_predict_action_chunk_truncates_to_checkpoint_valid_horizon(t
 def test_groot_from_pretrained_rejects_mismatched_caller_config(tmp_path):
     model_path = tmp_path / "GR00T-N1.7-local"
     model_path.mkdir()
-    config = _groot_config(GROOT_N1_5)
+    input_features, output_features = _groot_features(state_dim=8, action_dim=7)
+    config = GrootConfig(
+        model_version=GROOT_N1_7,
+        base_model_path="nvidia/GR00T-N1.5-3B",
+        input_features=input_features,
+        output_features=output_features,
+        device="cpu",
+        use_bf16=False,
+        action_decode_transform=GROOT_ACTION_DECODE_TRANSFORM_LIBERO,
+    )
 
     with pytest.raises(ValueError, match="does not match base_model_path"):
         GrootPolicy.from_pretrained(model_path, config=config)
@@ -1251,7 +1237,16 @@ def test_groot_from_pretrained_rejects_caller_config_mismatch_from_local_config(
     model_path = tmp_path / "local-checkpoint"
     model_path.mkdir()
     (model_path / "config.json").write_text('{"model_type": "Gr00tN1d7"}')
-    config = _groot_config(GROOT_N1_5)
+    input_features, output_features = _groot_features(state_dim=8, action_dim=7)
+    config = GrootConfig(
+        model_version=GROOT_N1_7,
+        base_model_path="nvidia/GR00T-N1.5-3B",
+        input_features=input_features,
+        output_features=output_features,
+        device="cpu",
+        use_bf16=False,
+        action_decode_transform=GROOT_ACTION_DECODE_TRANSFORM_LIBERO,
+    )
 
     with pytest.raises(ValueError, match="does not match base_model_path"):
         GrootPolicy.from_pretrained(model_path, config=config)
@@ -1266,18 +1261,7 @@ def test_groot_n1_7_processors_are_registered_lazily_without_external_gr00t():
 
     assert GrootN17PackInputsStep in step_types
     assert GrootN17VLMEncodeStep in step_types
-    assert GrootEagleEncodeStep not in step_types
     assert "gr00t" not in sys.modules
-
-
-def test_groot_n1_5_processors_still_use_eagle_path():
-    config = _groot_config(GROOT_N1_5)
-
-    preprocessor, _ = make_groot_pre_post_processors(config)
-    step_types = {type(step) for step in preprocessor.steps}
-
-    assert GrootEagleEncodeStep in step_types
-    assert GrootN17VLMEncodeStep not in step_types
 
 
 def test_groot_n1_7_pack_inputs_preserves_per_sample_language():
@@ -1672,67 +1656,6 @@ def test_groot_n1_7_saved_processors_reload_through_factory_preserves_saved_stat
     assert unpack_step.env_action_dim == 7
 
 
-def test_groot_legacy_n1_5_processors_reload_with_compatibility_overrides(tmp_path):
-    config = _groot_config(GROOT_N1_5)
-    dataset_stats = {
-        OBS_STATE: {
-            "min": torch.full((8,), -1.0),
-            "max": torch.full((8,), 1.0),
-        },
-        ACTION: {
-            "min": torch.full((7,), -2.0),
-            "max": torch.full((7,), 2.0),
-        },
-    }
-    legacy_preprocessor_config = {
-        "name": "policy_preprocessor",
-        "steps": [
-            {
-                "registry_name": "groot_pack_inputs_v3",
-                "config": {
-                    "state_horizon": 1,
-                    "action_horizon": 16,
-                    "max_state_dim": config.max_state_dim,
-                    "max_action_dim": config.max_action_dim,
-                    "language_key": "task",
-                    "formalize_language": False,
-                    "embodiment_tag": config.embodiment_tag,
-                    "embodiment_mapping": {"new_embodiment": 31},
-                    "normalize_min_max": False,
-                },
-            }
-        ],
-    }
-    legacy_postprocessor_config = {
-        "name": "policy_postprocessor",
-        "steps": [
-            {
-                "registry_name": "groot_action_unpack_unnormalize_v1",
-                "config": {
-                    "env_action_dim": 0,
-                    "normalize_min_max": False,
-                },
-            }
-        ],
-    }
-    (tmp_path / "policy_preprocessor.json").write_text(json.dumps(legacy_preprocessor_config))
-    (tmp_path / "policy_postprocessor.json").write_text(json.dumps(legacy_postprocessor_config))
-
-    loaded_preprocessor, loaded_postprocessor = make_pre_post_processors(
-        config,
-        pretrained_path=str(tmp_path),
-        dataset_stats=dataset_stats,
-    )
-
-    pack_step = loaded_preprocessor.steps[0]
-    unpack_step = loaded_postprocessor.steps[0]
-    assert pack_step.normalize_min_max
-    assert unpack_step.normalize_min_max
-    assert unpack_step.env_action_dim == 7
-    torch.testing.assert_close(pack_step.stats[OBS_STATE]["min"], dataset_stats[OBS_STATE]["min"])
-    torch.testing.assert_close(pack_step.stats[ACTION]["max"], dataset_stats[ACTION]["max"])
-    torch.testing.assert_close(unpack_step.stats[OBS_STATE]["min"], dataset_stats[OBS_STATE]["min"])
-    torch.testing.assert_close(unpack_step.stats[ACTION]["max"], dataset_stats[ACTION]["max"])
 
 
 def test_groot_policy_selects_n1_7_model_class(monkeypatch):

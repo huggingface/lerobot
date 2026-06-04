@@ -110,7 +110,7 @@ class MultiEmbodimentActionEncoder(nn.Module):
 
 
 class FlowmatchingActionHeadConfig(PretrainedConfig):
-    """NOTE: N1.5 uses XEmbFlowmatchingPolicyHeadConfig as action head"""
+    """Flow-matching action head used by GR00T backbones."""
 
     add_pos_embed: bool = field(default=True, metadata={"help": "Whether to add positional embedding"})
     model_dtype: str = field(default="float32", metadata={"help": "Model data type."})
