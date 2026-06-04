@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>WebPhone Teleop</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #0d1117;
+            color: #e6edf3;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 10px;
+        }
+        .container { width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 12px; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 14px; }
+
+        .status-bar { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+        .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+        .dot-green { background: #3fb950; }
+        .dot-red { background: #f85149; }
+        .dot-blue { background: #58a6ff; }
+        .dot-gray { background: #30363d; }
+
+        .qr-section { text-align: center; }
+        .qr-section h2 { font-size: 15px; margin-bottom: 8px; color: #8b949e; }
+        .qr-section img { width: 180px; height: 180px; border: 2px solid #30363d; border-radius: 8px; }
+        .qr-url { font-size: 11px; color: #58a6ff; margin-top: 6px; word-break: break-all; }
+
+        .sensor-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; text-align: center; }
+        .sensor-item { background: #0d1117; border-radius: 8px; padding: 10px 4px; }
+        .sensor-label { font-size: 11px; color: #8b949e; margin-bottom: 4px; }
+        .sensor-value { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+        .sensor-live .sensor-value { color: #58a6ff; }
+        .sensor-count { text-align: center; font-size: 12px; color: #8b949e; margin-top: 6px; }
+
+        .control-row { display: flex; gap: 8px; align-items: center; }
+        .btn {
+            flex: 1; padding: 12px 8px; border: 1px solid #30363d;
+            border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;
+            background: #21262d; color: #e6edf3; transition: background 0.15s; user-select: none;
+        }
+        .btn:active { background: #30363d; }
+        .btn.primary { background: #238636; border-color: #2ea043; }
+        .btn.danger { background: #da3633; border-color: #f85149; }
+        .btn.active { background: #1f6feb; border-color: #388bfd; }
+
+        .toggle-container { display: flex; align-items: center; justify-content: space-between; }
+        .toggle-label { font-size: 15px; font-weight: 600; }
+        .toggle { position: relative; width: 52px; height: 28px; cursor: pointer; }
+        .toggle input { display: none; }
+        .toggle-slider {
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            background: #30363d; border-radius: 28px; transition: 0.2s;
+        }
+        .toggle-slider::before {
+            content: ''; position: absolute; width: 22px; height: 22px;
+            left: 3px; bottom: 3px; background: #e6edf3; border-radius: 50%; transition: 0.2s;
+        }
+        .toggle input:checked + .toggle-slider { background: #238636; }
+        .toggle input:checked + .toggle-slider::before { transform: translateX(24px); }
+
+        .slider-row { display: flex; align-items: center; gap: 10px; }
+        .slider-row label { font-size: 13px; color: #8b949e; white-space: nowrap; }
+        .slider-row input[type=range] {
+            flex: 1; -webkit-appearance: none; height: 6px;
+            background: #30363d; border-radius: 3px; outline: none;
+        }
+        .slider-row input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 20px; height: 20px;
+            background: #58a6ff; border-radius: 50%; cursor: pointer;
+        }
+        .slider-val { font-size: 14px; font-weight: 600; min-width: 32px; text-align: center; }
+        .hidden { display: none !important; }
+
+        .msg { text-align: center; font-size: 13px; padding: 10px; border-radius: 8px; }
+        .msg-info { background: #1c2a3a; color: #8b949e; }
+        .msg-warn { background: #3a281c; color: #d29922; }
+        .msg-ok   { background: #1a3a28; color: #3fb950; }
+    </style>
+</head>
+<body>
+<div class="container">
+
+    <div class="card">
+        <div class="status-bar">
+            <span><span class="status-dot dot-red" id="ws-dot"></span><span id="ws-text">未连接</span></span>
+            <span><span class="status-dot dot-gray" id="sensor-dot"></span><span id="sensor-text">传感器: 等待</span></span>
+        </div>
+    </div>
+
+    <!-- QR (hidden after connecting) -->
+    <div class="card qr-section" id="qr-card">
+        <h2>扫描二维码连接</h2>
+        <img id="qr-img" src="" alt="QR" />
+        <div class="qr-url" id="qr-url"></div>
+    </div>
+
+    <!-- Init -->
+    <div class="card hidden" id="init-card">
+        <button class="btn primary" id="init-btn" style="width:100%;padding:14px;font-size:15px;">
+            📡 激活传感器
+        </button>
+        <div class="msg msg-info" id="init-msg" style="margin-top:8px;">
+            点击按钮后缓慢移动设备以激活传感器
+        </div>
+    </div>
+
+    <!-- Sensor readout -->
+    <div class="card hidden" id="sensor-card">
+        <div class="sensor-grid">
+            <div class="sensor-item" id="si-alpha"><div class="sensor-label">α (Z / 航向)</div><div class="sensor-value" id="val-alpha">---</div></div>
+            <div class="sensor-item" id="si-beta"><div class="sensor-label">β (X / 俯仰)</div><div class="sensor-value" id="val-beta">---</div></div>
+            <div class="sensor-item" id="si-gamma"><div class="sensor-label">γ (Y / 翻滚)</div><div class="sensor-value" id="val-gamma">---</div></div>
+        </div>
+        <div class="sensor-count" id="sensor-count">等待传感器数据...</div>
+    </div>
+
+    <!-- Toggle -->
+    <div class="card hidden" id="toggle-card">
+        <div class="toggle-container">
+            <span class="toggle-label" id="toggle-text">🔴 遥操作关闭</span>
+            <label class="toggle"><input type="checkbox" id="enable-toggle"><span class="toggle-slider"></span></label>
+        </div>
+    </div>
+
+    <!-- Gripper -->
+    <div class="card hidden" id="gripper-card">
+        <div class="control-row">
+            <button class="btn" id="grip-open-btn">🖐 夹爪张开</button>
+            <button class="btn danger" id="grip-close-btn">✊ 夹爪闭合</button>
+        </div>
+    </div>
+
+    <!-- Sensitivity -->
+    <div class="card hidden" id="sens-card">
+        <div class="slider-row">
+            <label>灵敏度</label>
+            <input type="range" id="sens-slider" min="0.1" max="3.0" value="1.0" step="0.1">
+            <span class="slider-val" id="sens-val">1.0</span>
+        </div>
+    </div>
+
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+// ── State ──
+let ws = null, isConnected = false;
+let sensorActive = false, enabled = false;
+let gripperClosed = false, sensitivity = 1.0;
+let gripperVel = 0;  // -1=open, 0=stop, +1=close
+let latestSensor = null, sensorEventCount = 0, lastSensorTime = 0;
+let sensorTimer = null;
+let _orientSensor = null;  // Generic Sensor API instance
+
+// ── WebSocket ──
+(function connectWS() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(proto + '//' + location.host + '/ws');
+    ws.onopen = () => {
+        isConnected = true;
+        $('ws-dot').className = 'status-dot dot-green';
+        $('ws-text').textContent = '已连接';
+        // Auto-detect mobile and show init immediately
+        if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+            $('qr-card').classList.add('hidden');
+        }
+        $('init-card').classList.remove('hidden');
+        $('sensor-card').classList.remove('hidden');
+    };
+    ws.onclose = () => {
+        isConnected = false;
+        $('ws-dot').className = 'status-dot dot-red';
+        $('ws-text').textContent = '断开，重连中...';
+        setTimeout(connectWS, 2000);
+    };
+})();
+
+function sendSensor() {
+    if (!ws || ws.readyState !== WebSocket.OPEN || !sensorActive) return;
+    if (!latestSensor) return;
+    if (Date.now() - lastSensorTime > 2000) return;
+    ws.send(JSON.stringify({
+        type: 'sensor',
+        data: {
+            alpha: latestSensor.alpha ?? 0,
+            beta:  latestSensor.beta  ?? 0,
+            gamma: latestSensor.gamma ?? 0,
+            enabled: enabled,
+            gripper_vel: gripperVel,
+            sensitivity: sensitivity,
+        }
+    }));
+}
+
+// ── Orientation handler (legacy API) ──
+function onOrientation(e) {
+    if (!sensorActive) return;
+    if (e.alpha === null && e.beta === null && e.gamma === null) return;
+    latestSensor = { alpha: e.alpha, beta: e.beta, gamma: e.gamma };
+    sensorEventCount++;
+    lastSensorTime = Date.now();
+    updateSensorUI(e.alpha ?? 0, e.beta ?? 0, e.gamma ?? 0);
+}
+
+// ── Generic Sensor API: quaternion → euler (ZXY convention) ──
+function quatToEuler(q) {
+    // q = [x, y, z, w] from AbsoluteOrientationSensor
+    const x = q[0], y = q[1], z = q[2], w = q[3];
+    // Convert to rotation matrix then to Tait-Bryan ZXY
+    const alpha = Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)) * 180 / Math.PI;
+    const beta  = Math.asin(2 * (w * x - y * z)) * 180 / Math.PI;
+    const gamma = Math.atan2(2 * (w * y + x * z), 1 - 2 * (x * x + y * y)) * 180 / Math.PI;
+    return { alpha, beta, gamma };
+}
+
+function onSensorReading() {
+    if (!sensorActive || !_orientSensor) return;
+    const q = _orientSensor.quaternion;
+    if (!q) return;
+    const euler = quatToEuler(q);
+    latestSensor = { alpha: euler.alpha, beta: euler.beta, gamma: euler.gamma };
+    sensorEventCount++;
+    lastSensorTime = Date.now();
+    updateSensorUI(euler.alpha, euler.beta, euler.gamma);
+}
+
+function updateSensorUI(alpha, beta, gamma) {
+    if (!updateSensorUI._t || Date.now() - updateSensorUI._t > 200) {
+        updateSensorUI._t = Date.now();
+        $('val-alpha').textContent = alpha.toFixed(1) + '°';
+        $('val-beta').textContent  = beta.toFixed(1) + '°';
+        $('val-gamma').textContent = gamma.toFixed(1) + '°';
+        $('sensor-count').textContent = '已收 ' + sensorEventCount + ' 帧';
+        $('sensor-dot').className = 'status-dot dot-blue';
+        $('sensor-text').textContent = '传感器: 活跃';
+        $('si-alpha').classList.add('sensor-live');
+        $('si-beta').classList.add('sensor-live');
+        $('si-gamma').classList.add('sensor-live');
+    }
+}
+
+// Also try devicemotion as backup (rotationRate)
+let _rotationRate = null;
+function onMotion(e) {
+    if (!sensorActive) return;
+    if (e.rotationRate) {
+        _rotationRate = {
+            alpha: e.rotationRate.alpha ?? 0,
+            beta:  e.rotationRate.beta  ?? 0,
+            gamma: e.rotationRate.gamma ?? 0,
+        };
+        // If orientation never fired, use integrated rotationRate
+        if (!latestSensor && sensorEventCount === 0) {
+            if (!onMotion._acc) onMotion._acc = { alpha: 0, beta: 0, gamma: 0 };
+            const dt = 1 / 60;
+            onMotion._acc.alpha += _rotationRate.alpha * dt;
+            onMotion._acc.beta  += _rotationRate.beta  * dt;
+            onMotion._acc.gamma += _rotationRate.gamma * dt;
+            latestSensor = { ...onMotion._acc };
+            sensorEventCount++;
+            lastSensorTime = Date.now();
+        }
+    }
+}
+
+// ── Activation ──
+function startListening() {
+    sensorActive = true;
+    $('qr-card').classList.add('hidden');
+    $('init-card').classList.add('hidden');
+    $('toggle-card').classList.remove('hidden');
+    $('gripper-card').classList.remove('hidden');
+    $('sens-card').classList.remove('hidden');
+    $('sensor-dot').className = 'status-dot dot-blue';
+    $('sensor-text').textContent = '传感器: 活跃';
+    window.addEventListener('deviceorientation', onOrientation, true);
+    window.addEventListener('deviceorientationabsolute', onOrientation, true);
+    window.addEventListener('devicemotion', onMotion, true);
+    sensorTimer = setInterval(sendSensor, 33);
+
+    // Try Generic Sensor API first (Android 15+ / modern Chrome)
+    if (typeof AbsoluteOrientationSensor !== 'undefined') {
+        try {
+            _orientSensor = new AbsoluteOrientationSensor({ frequency: 60 });
+            _orientSensor.addEventListener('reading', onSensorReading);
+            _orientSensor.addEventListener('error', () => {
+                console.warn('AbsoluteOrientationSensor error, trying Relative');
+                _orientSensor = null;
+                tryLegacyOrientation();
+            });
+            _orientSensor.start();
+            $('sensor-count').textContent = 'Generic Sensor API: Absolute';
+            return;
+        } catch (e) {
+            console.warn('AbsoluteOrientationSensor failed:', e.message);
+            _orientSensor = null;
+        }
+    }
+
+    if (typeof RelativeOrientationSensor !== 'undefined') {
+        try {
+            _orientSensor = new RelativeOrientationSensor({ frequency: 60 });
+            _orientSensor.addEventListener('reading', onSensorReading);
+            _orientSensor.addEventListener('error', () => {
+                console.warn('RelativeOrientationSensor error');
+                _orientSensor = null;
+                tryLegacyOrientation();
+            });
+            _orientSensor.start();
+            $('sensor-count').textContent = 'Generic Sensor API: Relative';
+            return;
+        } catch (e) {
+            console.warn('RelativeOrientationSensor failed:', e.message);
+            _orientSensor = null;
+        }
+    }
+
+    // Fallback to legacy DeviceOrientationEvent API
+    tryLegacyOrientation();
+}
+
+function tryLegacyOrientation() {
+    $('sensor-count').textContent = 'Legacy: deviceorientation';
+}
+
+function activateSensors() {
+    // iOS 13+: request permission
+    if (typeof DeviceOrientationEvent !== 'undefined' &&
+        typeof DeviceOrientationEvent.requestPermission === 'function') {
+        $('init-msg').className = 'msg msg-info';
+        $('init-msg').textContent = '请求权限中...';
+        DeviceOrientationEvent.requestPermission()
+            .then(state => {
+                if (state === 'granted') {
+                    $('init-msg').className = 'msg msg-ok';
+                    $('init-msg').textContent = '权限已授予 ✓';
+                    startListening();
+                } else {
+                    $('init-msg').className = 'msg msg-warn';
+                    $('init-msg').textContent = '权限被拒绝！设置 > Safari > 动作与方向访问';
+                }
+            })
+            .catch(err => {
+                $('init-msg').className = 'msg msg-warn';
+                $('init-msg').textContent = '权限失败: ' + err.message;
+            });
+        return;
+    }
+
+    // Android: wait for first valid event, then start
+    let resolved = false;
+    function onFirst(e) {
+        if (resolved) return;
+        if (e.alpha === null && e.beta === null && e.gamma === null) return;
+        resolved = true;
+        $('init-msg').className = 'msg msg-ok';
+        $('init-msg').textContent = '传感器已激活 ✓ (' +
+            (e.type === 'deviceorientationabsolute' ? '绝对' : '相对') + ')';
+        window.removeEventListener('deviceorientation', onFirst);
+        window.removeEventListener('deviceorientationabsolute', onFirst);
+        startListening();
+    }
+    window.addEventListener('deviceorientation', onFirst, true);
+    window.addEventListener('deviceorientationabsolute', onFirst, true);
+
+    $('init-msg').className = 'msg msg-info';
+    $('init-msg').textContent = '正在检测传感器... 请移动设备';
+
+    setTimeout(() => {
+        if (!resolved) {
+            window.removeEventListener('deviceorientation', onFirst);
+            window.removeEventListener('deviceorientationabsolute', onFirst);
+            $('init-msg').className = 'msg msg-warn';
+            $('init-msg').textContent = '⚠ 未检测到 orientation 事件，尝试 devicemotion';
+            resolved = true;
+            startListening();
+        }
+    }, 3000);
+}
+
+// ── QR ──
+(function() {
+    const url = location.href;
+    $('qr-url').textContent = url;
+    $('qr-img').src = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(url);
+})();
+
+// ── Controls ──
+$('init-btn').addEventListener('click', activateSensors);
+$('enable-toggle').addEventListener('change', function() {
+    enabled = this.checked;
+    $('toggle-text').textContent = enabled ? '🟢 遥操作开启' : '🔴 遥操作关闭';
+});
+$('grip-open-btn').addEventListener('mousedown', () => { gripperVel = -1; $('grip-open-btn').classList.add('active'); });
+$('grip-open-btn').addEventListener('mouseup',   () => { gripperVel = 0;  $('grip-open-btn').classList.remove('active'); });
+$('grip-open-btn').addEventListener('mouseleave',() => { gripperVel = 0;  $('grip-open-btn').classList.remove('active'); });
+$('grip-open-btn').addEventListener('touchstart',() => { gripperVel = -1; $('grip-open-btn').classList.add('active'); });
+$('grip-open-btn').addEventListener('touchend',  () => { gripperVel = 0;  $('grip-open-btn').classList.remove('active'); });
+$('grip-close-btn').addEventListener('mousedown', () => { gripperVel = 1; $('grip-close-btn').classList.add('active'); });
+$('grip-close-btn').addEventListener('mouseup',   () => { gripperVel = 0; $('grip-close-btn').classList.remove('active'); });
+$('grip-close-btn').addEventListener('mouseleave',() => { gripperVel = 0; $('grip-close-btn').classList.remove('active'); });
+$('grip-close-btn').addEventListener('touchstart',() => { gripperVel = 1; $('grip-close-btn').classList.add('active'); });
+$('grip-close-btn').addEventListener('touchend',  () => { gripperVel = 0; $('grip-close-btn').classList.remove('active'); });
+$('sens-slider').addEventListener('input', function() {
+    sensitivity = parseFloat(this.value);
+    $('sens-val').textContent = sensitivity.toFixed(1);
+});
+</script>
+</body>
+</html>

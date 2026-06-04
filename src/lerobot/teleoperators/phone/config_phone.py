@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 import numpy as np
@@ -34,3 +34,6 @@ class PhoneConfig(TeleoperatorConfig):
     camera_offset = np.array(
         [0.0, -0.02, 0.04]
     )  # iPhone 14 Pro camera is 2cm off center and 4cm above center
+    frontend_dir: str | None = None
+    host: str = "0.0.0.0"
+    port: int = 4443
