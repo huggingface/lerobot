@@ -37,7 +37,24 @@ import torch
 pytest.importorskip("transformers")
 
 from lerobot.policies.pi05.modeling_pi05 import make_att_2d_masks  # noqa: E402
-from lerobot.policies.pi052.modeling_pi052 import _mark_target_span_causal, _shifted_ce  # noqa: E402
+from lerobot.policies.pi052.modeling_pi052 import (  # noqa: E402
+    _mark_target_span_causal,
+    _shifted_lin_ce,
+)
+
+
+def _shifted_ce(logits, labels):
+    """Adapter: ``_shifted_lin_ce`` is Liger-fused (hidden @ lm_head_weightᵀ).
+
+    An identity ``lm_head_weight`` makes the computed logits equal ``logits``.
+    Liger's Triton kernel is GPU-only, so inputs run on CUDA; the loss is
+    returned on CPU so grad still flows back to the CPU ``logits`` leaf.
+    """
+    if not torch.cuda.is_available():
+        pytest.skip("Liger fused CE requires CUDA")
+    vocab_size = logits.shape[-1]
+    eye = torch.eye(vocab_size, dtype=logits.dtype, device="cuda")
+    return _shifted_lin_ce(logits.cuda(), eye, labels.cuda()).cpu()
 
 # ---------------------------------------------------------------------------
 # A synthetic PI052 prefix layout: [images, prompt-lang, target-lang]
@@ -139,6 +156,7 @@ def test_unmarked_mask_is_bidirectional_the_bug():
 
 
 def test_shifted_ce_returns_zero_when_no_text_positions_are_supervised():
+    pytest.importorskip("liger_kernel")
     logits = torch.randn(2, 4, 8, requires_grad=True)
     labels = torch.full((2, 4), -100, dtype=torch.long)
 

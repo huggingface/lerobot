@@ -21,8 +21,29 @@ import torch
 from torch.nn import functional as F
 
 pytest.importorskip("transformers")
+pytest.importorskip("liger_kernel")
 
-from lerobot.policies.pi052.modeling_pi052 import _fast_ce  # noqa: E402
+from lerobot.policies.pi052.modeling_pi052 import _fast_lin_ce  # noqa: E402
+
+
+def _fast_ce(logits, action_tokens, action_code_mask, predict_actions_t):
+    """Adapter: ``_fast_lin_ce`` is Liger-fused (hidden @ lm_head_weightᵀ).
+
+    Feeding an identity ``lm_head_weight`` makes the computed logits equal the
+    provided ``logits``, so these regression tests exercise the masking/gating
+    logic exactly as before the fused-CE refactor. Liger's Triton kernel is
+    GPU-only, so inputs are moved to CUDA and the loss is returned on CPU
+    (keeping grad flowing back to the CPU ``logits`` leaf).
+    """
+    if not torch.cuda.is_available():
+        pytest.skip("Liger fused CE requires CUDA")
+    vocab_size = logits.shape[-1]
+    eye = torch.eye(vocab_size, dtype=logits.dtype, device="cuda")
+    predict = predict_actions_t.cuda() if predict_actions_t is not None else None
+    loss = _fast_lin_ce(
+        logits.cuda(), eye, action_tokens.cuda(), action_code_mask.cuda(), predict
+    )
+    return loss.cpu()
 
 
 def test_fast_ce_supervises_only_discrete_action_codes():
@@ -46,7 +67,10 @@ def test_fast_ce_supervises_only_discrete_action_codes():
         reduction="mean",
     )
 
-    assert torch.allclose(loss, expected)
+    # Looser tolerance: the fused Triton kernel (GPU) differs from CPU eager
+    # F.cross_entropy at the ~1e-7 level, which exceeds the default rtol on
+    # these very small (~1e-4) losses.
+    assert torch.allclose(loss, expected, atol=1e-5, rtol=1e-3)
 
 
 def test_fast_ce_masks_non_action_samples():
@@ -72,7 +96,10 @@ def test_fast_ce_masks_non_action_samples():
         reduction="mean",
     )
 
-    assert torch.allclose(loss, expected)
+    # Looser tolerance: the fused Triton kernel (GPU) differs from CPU eager
+    # F.cross_entropy at the ~1e-7 level, which exceeds the default rtol on
+    # these very small (~1e-4) losses.
+    assert torch.allclose(loss, expected, atol=1e-5, rtol=1e-3)
 
 
 def test_fast_ce_returns_zero_when_no_action_code_positions_are_valid():
