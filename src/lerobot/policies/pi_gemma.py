@@ -383,12 +383,10 @@ __all__ = [
 ]
 
 
-# ======================================================================
-# PI0.5 / PI052 dual-expert backbone (moved here from pi052/pi05_backbone.py).
-# Generic PaliGemma + Gemma action-expert transformer machinery shared by the
-# pi052 policy. ``GemmaVariantConfig`` is openpi's width/depth variant config
-# (renamed from GemmaConfig to avoid clashing with transformers' GemmaConfig).
-# ======================================================================
+# PI0.5 / PI052 dual-expert backbone: generic PaliGemma + Gemma action-expert
+# transformer machinery used by the pi052 policy. GemmaVariantConfig is openpi's
+# width/depth variant config (renamed from GemmaConfig to avoid clashing with
+# transformers' GemmaConfig).
 
 def sdpa_attention_forward(
     module,

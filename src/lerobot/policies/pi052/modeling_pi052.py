@@ -68,12 +68,9 @@ from .configuration_pi052 import PI052Config
 logger = logging.getLogger(__name__)
 
 
-# ======================================================================
-# PI0.5 flow-matching model + helpers (moved here from pi05_backbone.py).
-# pi052-specific; the generic dual-expert transformer (PaliGemmaWithExpertModel,
-# sdpa_attention_forward, compute_layer_complete, get_gemma_config) lives in
-# ``lerobot.policies.pi_gemma`` and is imported above.
-# ======================================================================
+# PI0.5 flow-matching model + helpers (pi052-specific). The generic dual-expert
+# transformer (PaliGemmaWithExpertModel, sdpa_attention_forward,
+# compute_layer_complete, get_gemma_config) lives in lerobot.policies.pi_gemma.
 
 class ActionSelectKwargs(TypedDict, total=False):
     inference_delay: int | None
