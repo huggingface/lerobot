@@ -18,6 +18,7 @@ from __future__ import annotations
 # Utilities
 ########################################################################################
 import logging
+import time
 import traceback
 from contextlib import nullcontext
 from copy import copy
@@ -243,3 +244,70 @@ def sanity_check_dataset_robot_compatibility(
         raise ValueError(
             "Dataset metadata compatibility check failed with mismatches:\n" + "\n".join(mismatches)
         )
+
+
+########################################################################################
+# Teleoperator smooth handover helpers
+########################################################################################
+
+
+def teleop_supports_feedback(teleop) -> bool:
+    """Return True when the teleop can receive position feedback (is actuated).
+
+    Actuated teleops (e.g. SO-101, OpenArmMini) have non-empty ``feedback_features``
+    and expose ``enable_torque`` / ``disable_torque`` motor-control methods.
+
+    TODO(Maxime): See if it is possible to unify this interface across teleops instead of duck-typing.
+    """
+    return (
+        bool(teleop.feedback_features)
+        and hasattr(teleop, "disable_torque")
+        and hasattr(teleop, "enable_torque")
+    )
+
+
+def teleop_smooth_move_to(teleop, target_pos: dict, duration_s: float = 2.0, fps: int = 30) -> None:
+    """Smoothly move an actuated teleop to ``target_pos`` via linear interpolation.
+
+    Requires the teleoperator to support feedback (i.e. have non-empty
+    ``feedback_features`` and implement ``disable_torque`` / ``enable_torque``).
+
+    ``target_pos`` is expected to be in the teleop's action/feedback key space.
+    For homogeneous setups (e.g. SO-101 leader + SO-101 follower) this matches
+    the robot action key space directly.
+
+    TODO(Maxime): This blocks up to ``duration_s`` seconds; during this time the
+    follower robot does not receive new actions, which could be an issue on LeKiwi.
+    """
+    teleop.enable_torque()
+    current = teleop.get_action()
+    steps = max(int(duration_s * fps), 1)
+
+    for step in range(steps + 1):
+        t = step / steps
+        interp = {
+            k: current[k] * (1 - t) + target_pos[k] * t if k in target_pos else current[k] for k in current
+        }
+        teleop.send_feedback(interp)
+        time.sleep(1 / fps)
+
+
+def follower_smooth_move_to(
+    robot, current: dict, target: dict, duration_s: float = 1.0, fps: int = 30
+) -> None:
+    """Smoothly move the follower robot from ``current`` to ``target`` action.
+
+    Used when the teleop is non-actuated: instead of driving the leader arm to
+    the follower, the follower is brought to the teleop's current pose so the
+    robot meets the operator's hand rather than jumping to it on the first frame.
+
+    Both ``current`` and ``target`` must be in the robot action key space
+    (i.e. the output of ``robot_action_processor``).
+    """
+    steps = max(int(duration_s * fps), 1)
+
+    for step in range(steps + 1):
+        t = step / steps
+        interp = {k: current[k] * (1 - t) + target[k] * t if k in target else current[k] for k in current}
+        robot.send_action(interp)
+        time.sleep(1 / fps)

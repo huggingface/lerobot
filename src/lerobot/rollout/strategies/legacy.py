@@ -35,7 +35,13 @@ import contextlib
 import logging
 import time
 
-from lerobot.common.control_utils import init_keyboard_listener, is_headless
+from lerobot.common.control_utils import (
+    follower_smooth_move_to,
+    init_keyboard_listener,
+    is_headless,
+    teleop_smooth_move_to,
+    teleop_supports_feedback,
+)
 from lerobot.datasets import VideoEncodingManager
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame
@@ -134,8 +140,26 @@ class LegacyStrategy(RolloutStrategy):
                     ):
                         log_say("Reset the environment", play_sounds)
 
-                        # returns to its initial joint positions captured at startup during the reset phase
-                        if not teleop and self.config.reset_to_initial_position:
+                        if teleop:
+                            # Smooth handover so the transition to teleop control is jerk-free.
+                            # For actuated teleops: drive the leader arm to the follower's current
+                            # position so the operator takes over without fighting the arm.
+                            # For non-actuated teleops: slide the follower to the teleop's current
+                            # pose instead, since the leader cannot be driven.
+                            obs = robot.get_observation()
+                            current_pos = {k: v for k, v in obs.items() if k.endswith(".pos")}
+                            if teleop_supports_feedback(teleop):
+                                logger.info("Smooth handover: moving leader arm to follower position")
+                                teleop_smooth_move_to(teleop, current_pos)
+                            else:
+                                logger.info("Smooth handover: sliding follower to teleop position")
+                                teleop_action = teleop.get_action()
+                                processed = ctx.processors.teleop_action_processor((teleop_action, obs))
+                                target = ctx.processors.robot_action_processor((processed, obs))
+                                follower_smooth_move_to(robot, current_pos, target)
+
+                        elif self.config.reset_to_initial_position:
+                            # No teleop: return the robot to its startup position.
                             self._return_to_initial_position(hw=ctx.hardware)
 
                         self._reset_loop(
