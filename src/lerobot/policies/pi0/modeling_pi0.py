@@ -678,7 +678,11 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         # Process language tokens
         def lang_embed_func(lang_tokens):
             lang_emb = self.paligemma_with_expert.embed_language_tokens(lang_tokens)
-            return lang_emb
+            # Match OpenPI: scale text embeddings by sqrt(embed_dim) (the Gemma embedder
+            # normalizer). lerobot/pi0_base (OpenPI port) expects this; main omitted it,
+            # leaving language tokens ~45x under-scaled relative to the residual stream.
+            lang_emb_dim = lang_emb.shape[-1]
+            return lang_emb * math.sqrt(lang_emb_dim)
 
         lang_emb = self._apply_checkpoint(lang_embed_func, lang_tokens)
         embs.append(lang_emb)
