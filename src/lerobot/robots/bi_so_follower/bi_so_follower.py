@@ -106,7 +106,7 @@ class BiSOFollower(Robot):
         # the tensors returned by async_read() / read().
         top_camera_ft = {}
         for name, cam in self.top_cameras.items():
-            top_camera_ft[f"observation.images.{name}"] = (
+            top_camera_ft[f"{name}"] = (
                 cam.config.height,
                 cam.config.width,
                 cam.config.channels if hasattr(cam.config, "channels") else 3,
@@ -171,7 +171,7 @@ class BiSOFollower(Robot):
         # Keys match those registered in _cameras_ft so the dataset writer
         # picks them up automatically.
         for name, cam in self.top_cameras.items():
-            obs_dict[f"observation.images.{name}"] = cam.async_read(timeout_ms=200)
+            obs_dict[f"{name}"] = cam.async_read(timeout_ms=200)
 
         return obs_dict
 

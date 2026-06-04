@@ -18,8 +18,8 @@ from dataclasses import dataclass, field
 
 from ..config import RobotConfig
 from ..so_follower import SOFollowerConfig
+from lerobot.cameras.camera import CameraConfig 
 
-from lerobot.cameras.opencv import OpenCVCameraConfig
 
 @RobotConfig.register_subclass("bi_so_follower")
 @dataclass
@@ -28,4 +28,4 @@ class BiSOFollowerConfig(RobotConfig):
 
     left_arm_config: SOFollowerConfig
     right_arm_config: SOFollowerConfig
-    top_cameras: dict[str, OpenCVCameraConfig] = field(default_factory=dict)
+    top_cameras: dict[str, CameraConfig] = field(default_factory=dict)

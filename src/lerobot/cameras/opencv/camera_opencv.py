@@ -21,6 +21,7 @@ import math
 import os
 import platform
 import time
+from time import sleep
 from pathlib import Path
 from threading import Event, Lock, Thread
 from typing import Any
@@ -155,7 +156,10 @@ class OpenCVCamera(Camera):
         # blocking in multi-threaded applications, especially during data collection.
         cv2.setNumThreads(1)
 
-        self.videocapture = cv2.VideoCapture(self.index_or_path, self.backend)
+        try:
+            self.videocapture = cv2.VideoCapture(self.index_or_path, cv2.CAP_V4L2)
+        except:
+            self.videocapture = cv2.VideoCapture(self.index_or_path, self.backend)
 
         if not self.videocapture.isOpened():
             self.videocapture.release()
@@ -311,8 +315,9 @@ class OpenCVCamera(Camera):
             targets_to_scan = [int(i) for i in range(MAX_OPENCV_INDEX)]
 
         for target in targets_to_scan:
-            camera = cv2.VideoCapture(target)
+            camera = cv2.VideoCapture(target, cv2.CAP_V4L2)
             if camera.isOpened():
+                print("################ Camera found at index/path:", target)
                 default_width = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
                 default_height = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
                 default_fps = camera.get(cv2.CAP_PROP_FPS)
@@ -447,6 +452,7 @@ class OpenCVCamera(Camera):
 
         failure_count = 0
         while not self.stop_event.is_set():
+            # sleep(0.001)  # Small sleep to prevent tight loop if errors occur
             try:
                 raw_frame = self._read_from_hardware()
                 processed_frame = self._postprocess_image(raw_frame)
