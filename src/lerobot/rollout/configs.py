@@ -133,8 +133,16 @@ class LegacyStrategyConfig(RolloutStrategyConfig):
         Right arrow  — end episode early
         Left arrow   — discard current episode and re-record
         Escape       — stop recording session
+
+    In between episodes:
+    - if there is no teleop leader, the robot is held at its initial joint positions captured at startup.
+    - else, the robot is moved smoothly to the position of the teleop leader.
     """
 
+    # This only applies if there are no teleop leaders specified.
+    # When True (default), moves the robot back to the joint positions captured at startup.
+    # Otherwise, leave the robot in its current position.
+    reset_to_initial_position: bool = True
     pass
 
 

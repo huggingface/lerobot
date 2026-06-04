@@ -57,7 +57,7 @@ class LegacyStrategy(RolloutStrategy):
     seconds, recording every frame.  A reset phase of ``dataset.reset_time_s``
     follows every episode (except the last) so the operator can manually
     reset the environment.  During the reset phase, an optional teleoperator
-    drives the robot; if none is present the robot holds its position.
+    drives the robot; if none is present the robot returns to its initial joint positions captured at startup.
 
     The policy state (hidden state, RTC queue, interpolator) is reset at
     the start of each recording episode.
@@ -133,6 +133,11 @@ class LegacyStrategy(RolloutStrategy):
                         recorded_episodes < num_episodes - 1 or events["rerecord_episode"]
                     ):
                         log_say("Reset the environment", play_sounds)
+
+                        # returns to its initial joint positions captured at startup during the reset phase
+                        if not teleop and self.config.reset_to_initial_position:
+                            self._return_to_initial_position(hw=ctx.hardware)
+
                         self._reset_loop(
                             ctx=ctx,
                             robot=robot,
@@ -149,6 +154,11 @@ class LegacyStrategy(RolloutStrategy):
                         events["rerecord_episode"] = False
                         events["exit_early"] = False
                         dataset.clear_episode_buffer()
+
+                        # returns to its initial joint positions captured at startup
+                        if not teleop and self.config.reset_to_initial_position:
+                            self._return_to_initial_position(hw=ctx.hardware)
+
                         continue
 
                     dataset.save_episode()
