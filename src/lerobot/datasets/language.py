@@ -36,7 +36,6 @@ CORE_STYLES = {
     "vqa",
     "trace",
     "task_aug",
-    "action_record",
 }
 # Project-local styles can be registered at import time by appending to
 # ``EXTENDED_STYLES`` before ``column_for_style`` is called. Anything added
@@ -47,7 +46,7 @@ CORE_STYLES = {
 EXTENDED_STYLES: set[str] = set()
 STYLE_REGISTRY = CORE_STYLES | EXTENDED_STYLES
 
-PERSISTENT_STYLES = {"subtask", "plan", "memory", "motion", "task_aug", "action_record"}
+PERSISTENT_STYLES = {"subtask", "plan", "memory", "motion", "task_aug"}
 EVENT_ONLY_STYLES = {"interjection", "vqa", "trace"}
 
 # Styles whose ``content`` is grounded in a specific camera view. Rows of these

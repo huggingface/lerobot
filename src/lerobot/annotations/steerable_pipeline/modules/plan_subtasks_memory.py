@@ -17,7 +17,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -29,7 +28,6 @@ from ..frames import (
     FrameProvider,
     VideoFrameProvider,
     null_provider,
-    to_image_blocks,
     to_video_block,
     to_video_url_block,
 )
@@ -84,20 +82,8 @@ class PlanSubtasksMemoryModule:
 
         subtask_spans = self._generate_subtasks(record, task=effective_task)
 
-        # Phase 1a: optional per-subtask action records. When enabled, emit a
-        # typed ActionRecord (verb/object/arm/grasp_type/destination/mistake)
-        # per span as a separate style="action_record" row. Purely additive —
-        # never touches the subtask text.
-        records_cfg = self.config.action_records
-        action_records: list[dict[str, Any] | None] = [None] * len(subtask_spans)
-        if records_cfg.enabled and subtask_spans:
-            for i, span in enumerate(subtask_spans):
-                rec = self._extract_action_record(record, span, effective_task)
-                if rec is not None:
-                    action_records[i] = rec
-
         # subtask rows
-        for i, span in enumerate(subtask_spans):
+        for span in subtask_spans:
             rows.append(
                 {
                     "role": "assistant",
@@ -107,16 +93,6 @@ class PlanSubtasksMemoryModule:
                     "tool_calls": None,
                 }
             )
-            if records_cfg.enabled and records_cfg.emit_record_row and action_records[i] is not None:
-                rows.append(
-                    {
-                        "role": "assistant",
-                        "content": json.dumps(action_records[i], sort_keys=True),
-                        "style": "action_record",
-                        "timestamp": snap_to_frame(span["start"], record.frame_timestamps),
-                        "tool_calls": None,
-                    }
-                )
         # Plan rows at every subtask boundary (incl. t=0). The plan is a
         # numbered list of still-todo subtasks, so re-emitting at each
         # boundary makes it shrink as work progresses — ${plan} at frame t is
@@ -263,107 +239,6 @@ class PlanSubtasksMemoryModule:
             return []
         out = [item.strip().strip('"').strip("'") for item in raw if isinstance(item, str)]
         return [s for s in out if s][:n]
-
-    # ------------------------------------------------------------------
-    # Phase 1a + 1b: structured per-subtask action records
-    # ------------------------------------------------------------------
-
-    def _extract_action_record(
-        self,
-        record: EpisodeRecord,
-        span: dict[str, Any],
-        episode_task: str,
-    ) -> dict[str, Any] | None:
-        """Ask the VLM to extract a typed ``ActionRecord`` from a subtask span.
-
-        Sends ``frames_per_subtask`` frames uniformly sampled from
-        ``[span.start, span.end]`` plus the canonical subtask text. The
-        VLM is constrained to verb + grasp vocabularies from the config
-        — invalid values are silently dropped at this layer (the
-        validator catches structural problems pre-write).
-
-        Returns ``None`` when the call fails or the VLM returns something
-        unrecognizable; callers fall back to the free-form subtask text.
-        """
-        cfg = self.config.action_records
-        start_t = float(span.get("start", 0.0))
-        end_t = float(span.get("end", start_t))
-        duration = max(0.0, end_t - start_t)
-
-        # Uniform timestamps within the span; fall back to a single
-        # center frame for very short spans.
-        n = max(1, int(cfg.frames_per_subtask))
-        if n == 1 or duration <= 0.0:
-            timestamps = [0.5 * (start_t + end_t)]
-        else:
-            step = duration / (n - 1)
-            timestamps = [start_t + i * step for i in range(n)]
-        frames = self.frame_provider.frames_at(record, timestamps)
-        if not frames:
-            logger.debug(
-                "action_record: no frames at span %.2f-%.2f for ep %s; skipping",
-                start_t,
-                end_t,
-                record.episode_index,
-            )
-            return None
-
-        prompt = load_prompt("plan_action_record").format(
-            episode_task=episode_task,
-            subtask_text=span.get("text", ""),
-            start_time=start_t,
-            end_time=end_t,
-            duration=duration,
-            n_frames=len(frames),
-            verb_vocabulary=", ".join(cfg.verb_vocabulary),
-            grasp_vocabulary=" | ".join(f'"{g}"' for g in cfg.grasp_vocabulary),
-        )
-        message = [
-            {
-                "role": "user",
-                "content": [*to_image_blocks(frames), {"type": "text", "text": prompt}],
-            }
-        ]
-        result = self.vlm.generate_json([message])[0]
-        if not isinstance(result, dict):
-            return None
-
-        # Light validation + normalisation. Verb is required; everything
-        # else may be null. Verb / grasp_type are clamped to the
-        # vocabularies (out-of-vocab → reject or null).
-        verb = (result.get("verb") or "").strip().lower()
-        if not verb or verb not in {v.lower() for v in cfg.verb_vocabulary}:
-            return None
-        obj = (result.get("object") or "").strip()
-        if not obj:
-            return None
-        grasp = result.get("grasp_type")
-        if isinstance(grasp, str):
-            grasp = grasp.strip().lower()
-            if grasp not in {g.lower() for g in cfg.grasp_vocabulary}:
-                grasp = None
-        else:
-            grasp = None
-        arm = result.get("arm")
-        if isinstance(arm, str):
-            arm = arm.strip().lower()
-            if arm not in {"left", "right", "both"}:
-                arm = None
-        else:
-            arm = None
-        destination = result.get("destination")
-        destination = destination.strip() if isinstance(destination, str) and destination.strip() else None
-        mistake = result.get("mistake")
-        mistake = mistake.strip() if isinstance(mistake, str) and mistake.strip() else None
-
-        return {
-            "verb": verb,
-            "object": obj,
-            "arm": arm,
-            "grasp_type": grasp,
-            "destination": destination,
-            "mistake": mistake,
-        }
 
     # ------------------------------------------------------------------
     # Structured 5-axis task augmentation (EgoMimic-style taxonomy)

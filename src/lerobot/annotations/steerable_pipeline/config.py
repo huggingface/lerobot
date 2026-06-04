@@ -75,83 +75,11 @@ class PlanConfig:
     use_video_url: bool = False
     use_video_url_fps: float = 1.0
 
-    # Optional structured per-subtask action records (EgoMimic-style). When
-    # enabled, the VLM extracts a typed record per subtask span; see
-    # ``ActionRecordsConfig``. Purely additive — off by default.
-    action_records: ActionRecordsConfig = field(default_factory=lambda: ActionRecordsConfig())
-
     # Optional 5-axis task-augmentation taxonomy for the t=0 variants
     # (EgoMimic-style: synonym / omit_arm / omit_orientation /
     # omit_grasp_method / combined). Replaces the free-form
     # ``n_task_rephrasings`` flow when enabled; see ``TaskAugAxesConfig``.
     task_aug_axes: TaskAugAxesConfig = field(default_factory=lambda: TaskAugAxesConfig())
-
-
-@dataclass
-class ActionRecordsConfig:
-    """Structured per-subtask action record extraction.
-
-    When ``enabled=True``, after subtask-span generation the module makes
-    one extra VLM call per subtask to extract a typed record::
-
-        {
-            "verb": "pick" | "place" | "press" | ...,  # closed vocabulary
-            "object": "<canonical_object_name>",
-            "arm": "left" | "right" | "both" | null,
-            "grasp_type": "pinch" | "wrap" | "hook" | ... | null,
-            "destination": "<canonical_destination>" | null,
-            "mistake": "<short text>" | null,
-        }
-
-    Emitted as a separate ``style="action_record"`` row at the subtask's
-    start timestamp. PURELY ADDITIVE — it never touches the subtask text,
-    so downstream training can use the typed schema (e.g. auxiliary
-    verb/arm/grasp heads) while the conditioning string stays unchanged.
-
-    Cost: one extra VLM call per subtask (~8x plan-module calls on an
-    8-subtask episode).
-    """
-
-    enabled: bool = False
-
-    # Emit the ``style="action_record"`` row (JSON content) at the subtask
-    # start — the only output of the feature. ``enabled=False`` skips it.
-    emit_record_row: bool = True
-
-    # Frames sampled from the subtask span for the per-subtask VLM call.
-    frames_per_subtask: int = 4
-
-    # Closed verb vocabulary; the prompt picks exactly one. Override
-    # per-dataset (e.g. door-only manipulation) for a tighter constraint.
-    verb_vocabulary: tuple[str, ...] = (
-        "pick",
-        "place",
-        "push",
-        "pull",
-        "open",
-        "close",
-        "turn",
-        "press",
-        "lift",
-        "insert",
-        "pour",
-        "move",
-        "reach",
-        "grasp",
-        "release",
-        "wipe",
-        "dump",
-    )
-
-    # Closed grasp-type vocabulary (``null`` always allowed). Adjust
-    # per-hardware (e.g. drop ``hook`` / ``key`` for parallel-jaw grippers).
-    grasp_vocabulary: tuple[str, ...] = (
-        "pinch",
-        "wrap",
-        "hook",
-        "key",
-        "lateral",
-    )
 
 
 @dataclass

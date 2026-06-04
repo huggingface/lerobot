@@ -87,8 +87,6 @@ CMD = (
     # rephrasings are unused at best and harmful when they drift.
     "--plan.n_task_rephrasings=0 "
     # Keep subtask decomposition tight for atomic tasks.
-    # (action_records left off: the {verb,object,arm,grasp,dest} schema is for
-    # long manipulation tasks, not RoboCasa atomic/navigation.)
     "--plan.plan_max_steps=10 "
     # Only subtasks + memory — skip the numbered "plan" rows. true re-enables.
     "--plan.emit_plan=false "
