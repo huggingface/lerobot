@@ -26,25 +26,11 @@ outputs are staged per-episode before a final parquet rewrite:
 
 from .config import AnnotationPipelineConfig
 from .validator import StagingValidator, ValidationReport
-from .vocabulary import (
-    VOCABULARY_FILENAME,
-    Vocabulary,
-    VocabularyDiscoveryModule,
-    load_vocabulary,
-    save_vocabulary,
-    vocabulary_path,
-)
 from .writer import LanguageColumnsWriter
 
 __all__ = [
-    "VOCABULARY_FILENAME",
     "AnnotationPipelineConfig",
     "LanguageColumnsWriter",
     "StagingValidator",
     "ValidationReport",
-    "Vocabulary",
-    "VocabularyDiscoveryModule",
-    "load_vocabulary",
-    "save_vocabulary",
-    "vocabulary_path",
 ]

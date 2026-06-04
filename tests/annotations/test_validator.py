@@ -20,10 +20,18 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from lerobot.annotations.steerable_pipeline.reader import iter_episodes
-from lerobot.annotations.steerable_pipeline.staging import EpisodeStaging
-from lerobot.annotations.steerable_pipeline.validator import StagingValidator
-from lerobot.annotations.steerable_pipeline.writer import speech_atom
+import pytest
+
+# ``lerobot.annotations`` imports pull in ``lerobot.datasets`` (-> the HF
+# ``datasets`` library), which only ships under the ``dataset`` extra. Skip
+# this module in tiers without it instead of erroring at import.
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+pytest.importorskip("pandas", reason="pandas is required (install lerobot[dataset])")
+
+from lerobot.annotations.steerable_pipeline.reader import iter_episodes  # noqa: E402
+from lerobot.annotations.steerable_pipeline.staging import EpisodeStaging  # noqa: E402
+from lerobot.annotations.steerable_pipeline.validator import StagingValidator  # noqa: E402
+from lerobot.annotations.steerable_pipeline.writer import speech_atom  # noqa: E402
 
 
 def _validate(root: Path, staging_dir: Path):

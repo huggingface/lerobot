@@ -506,7 +506,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         processor_pretrained_path = None
 
     processor_kwargs = {}
-    postprocessor_kwargs = {}
     if (processor_pretrained_path and not cfg.resume) or not processor_pretrained_path:
         processor_kwargs["dataset_stats"] = dataset.meta.stats
 
@@ -522,24 +521,31 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         processor_kwargs["dataset_repo_id"] = cfg.dataset.repo_id
 
     if not cfg.is_reward_model_training and processor_pretrained_path is not None:
-        processor_kwargs["preprocessor_overrides"] = {
+        preprocessor_overrides = {
             "device_processor": {"device": device.type},
             "normalizer_processor": {
                 "stats": dataset.meta.stats,
                 "features": {**policy.config.input_features, **policy.config.output_features},
                 "norm_map": policy.config.normalization_mapping,
             },
+            "rename_observations_processor": {"rename_map": cfg.rename_map},
         }
-        processor_kwargs["preprocessor_overrides"]["rename_observations_processor"] = {
-            "rename_map": cfg.rename_map
-        }
-        postprocessor_kwargs["postprocessor_overrides"] = {
+        postprocessor_overrides = {
             "unnormalizer_processor": {
                 "stats": dataset.meta.stats,
                 "features": policy.config.output_features,
                 "norm_map": policy.config.normalization_mapping,
             },
         }
+        if getattr(active_cfg, "use_relative_actions", False):
+            preprocessor_overrides["relative_actions_processor"] = {
+                "enabled": True,
+                "exclude_joints": getattr(active_cfg, "relative_exclude_joints", []),
+                "action_names": getattr(active_cfg, "action_feature_names", None),
+            }
+            postprocessor_overrides["absolute_actions_processor"] = {"enabled": True}
+        processor_kwargs["preprocessor_overrides"] = preprocessor_overrides
+        processor_kwargs["postprocessor_overrides"] = postprocessor_overrides
 
     if cfg.is_reward_model_training:
         preprocessor, postprocessor = make_reward_pre_post_processors(
@@ -551,7 +557,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             policy_cfg=cfg.policy,
             pretrained_path=processor_pretrained_path,
             **processor_kwargs,
-            **postprocessor_kwargs,
         )
 
     if is_main_process:

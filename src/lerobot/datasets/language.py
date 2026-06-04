@@ -46,7 +46,7 @@ CORE_STYLES = {
 EXTENDED_STYLES: set[str] = set()
 STYLE_REGISTRY = CORE_STYLES | EXTENDED_STYLES
 
-PERSISTENT_STYLES = {"subtask", "plan", "memory", "motion", "task_aug", "action_record"}
+PERSISTENT_STYLES = {"subtask", "plan", "memory", "motion", "task_aug"}
 EVENT_ONLY_STYLES = {"interjection", "vqa", "trace"}
 
 # Styles whose ``content`` is grounded in a specific camera view. Rows of these
@@ -70,22 +70,8 @@ def _json_arrow_type() -> pa.DataType:
 
 
 def _json_feature() -> object:
-    """Return the HF feature used for tool-call payloads.
-
-    Older ``datasets`` versions do not expose ``datasets.Json``. The
-    annotation pipeline currently emits the canonical ``say`` tool call
-    shape, so use that explicit struct instead of falling back to a string
-    that cannot cast structured parquet values.
-    """
-    if hasattr(datasets, "Json"):
-        return datasets.Json()
-    return {
-        "type": datasets.Value("string"),
-        "function": {
-            "name": datasets.Value("string"),
-            "arguments": {"text": datasets.Value("string")},
-        },
-    }
+    """Return the HF ``datasets`` JSON feature, falling back to a string value."""
+    return datasets.Json() if hasattr(datasets, "Json") else datasets.Value("string")
 
 
 def language_persistent_row_arrow_type() -> pa.StructType:

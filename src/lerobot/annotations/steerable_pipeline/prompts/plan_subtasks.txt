@@ -6,7 +6,22 @@ You are shown the entire demonstration as a single video. Watch the
 whole clip, then segment it into a list of consecutive atomic subtasks
 the robot performs.
 
-{vocabulary_block}Authoring rules — Hi Robot atom granularity, pi0.7-style short prompts:
+{observation_block}GROUNDING — read this first, it overrides everything below:
+- Label ONLY what the robot actually does in the video. Every subtask
+  you emit must correspond to motion you can SEE in specific frames.
+- Do NOT invent, anticipate, or pad. If the robot only does one thing
+  (e.g. it just navigates to a location and the clip ends), emit
+  EXACTLY ONE subtask. Many demonstrations are a single atomic skill.
+- ``max_steps`` below is a hard CEILING, not a target. Emitting fewer
+  subtasks than the ceiling is not just allowed, it is expected for
+  short / atomic demonstrations. One correct subtask is far better
+  than several invented ones.
+- If the video does not clearly show the action implied by the task,
+  describe what you actually see — do NOT fabricate the task's steps
+  from the instruction text. The instruction tells you the goal; the
+  VIDEO is the ground truth for what happened.
+
+Authoring rules — Hi Robot atom granularity, pi0.7-style short prompts:
 
 - Each subtask = one COMPOSITE atomic skill the low-level policy can
   execute end-to-end. A "skill" bundles its own approach motion with
@@ -69,6 +84,23 @@ the robot performs.
   are preferred over many micro-steps.
 - Every subtask's [start_time, end_time] must lie within
   [0.0, {episode_duration}] seconds.
+
+SPECIAL CASES — verb disambiguation (each rule is narrowly visual and
+fires ONLY on the spatial situation it names; it must not change how you
+label any other situation):
+- STACK vs PUT: if an object is placed ON TOP OF another specific object
+  (not on a flat table / shelf / counter), use "stack ... on ...", not
+  "put". "stack blue book on green book", NOT "put blue book on table".
+- INSERT vs PUT: if an object goes INTO a fitted slot / hole / socket /
+  receptacle (push-fit), use "insert ... into ...", not "put".
+- RETRIEVE/PICK-UP vs PUT (direction): watch the gripper. If it CLOSES
+  on the object and the object moves WITH the hand, it is "pick up" /
+  "retrieve" (object leaves its location). If the gripper OPENS and the
+  object stays where the hand left it, it is "put" / "place" (object
+  arrives at a location). Decide by which way the object moves, not by
+  where the hand ends up.
+- POUR vs PUT: only use "pour" when the source is tilted and contents
+  flow out; moving a full container without tilting is "put"/"place".
 
 Output strictly valid JSON of shape:
 

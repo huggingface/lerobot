@@ -17,7 +17,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -29,7 +28,6 @@ from ..frames import (
     FrameProvider,
     VideoFrameProvider,
     null_provider,
-    to_image_blocks,
     to_video_block,
     to_video_url_block,
 )
@@ -37,7 +35,6 @@ from ..prompts import load as load_prompt
 from ..reader import EpisodeRecord, reconstruct_subtask_spans, snap_to_frame
 from ..staging import EpisodeStaging
 from ..vlm_client import VlmClient
-from ..vocabulary import Vocabulary
 
 logger = logging.getLogger(__name__)
 
@@ -60,11 +57,6 @@ class PlanSubtasksMemoryModule:
     vlm: VlmClient
     config: PlanConfig
     frame_provider: FrameProvider = field(default_factory=null_provider)
-    vocabulary: Vocabulary | None = None
-    """When set, the module constrains subtask + memory generation to the
-    canonical strings in ``vocabulary``. Phase 0 (vocabulary discovery)
-    populates this once per dataset; ``None`` falls back to free-form
-    generation (original behaviour)."""
 
     @property
     def enabled(self) -> bool:
@@ -72,87 +64,26 @@ class PlanSubtasksMemoryModule:
 
     def run_episode(self, record: EpisodeRecord, staging: EpisodeStaging) -> None:
         rows: list[dict[str, Any]] = []
-        # Resolve the task that drives every other ``plan``-module prompt.
-        # May be the canonical ``record.episode_task`` (default), or a fresh
-        # description derived from the video when the canonical task is
-        # empty / placeholder / forced-off (see PlanConfig.derive_task_*).
+        # Task driving every plan-module prompt: canonical episode_task, or a
+        # video-derived one when it's empty/placeholder (see derive_task_*).
         effective_task = self._resolve_effective_task(record)
-        # ``task_aug`` rows at t=0 (role=user), one per rephrasing — the
-        # message renderer rotates ``${task}`` deterministically through
-        # them so the policy sees diverse phrasings during training.
-        # Two paths:
-        #   * ``task_aug_axes.enabled=True`` — structured 5-axis taxonomy
-        #     (synonym / omit_arm / omit_orientation / omit_grasp_method
-        #     / combined). Replaces the free-form rephrasings flow.
-        #   * Otherwise — free-form ``n_task_rephrasings`` (original).
+        # task_aug rows at t=0: phrasings the renderer rotates ${task} through.
+        # Either the structured 5-axis taxonomy (task_aug_axes.enabled) or
+        # free-form n_task_rephrasings; the effective task is always emitted
+        # first so the rotation covers the source-of-truth phrasing.
         t0 = float(record.frame_timestamps[0]) if record.frame_timestamps else 0.0
-        axes_cfg = self.config.task_aug_axes
-        if axes_cfg.enabled and effective_task:
-            variants = self._generate_task_aug_by_axes(effective_task, axes_cfg)
-            seen: set[str] = set()
-            ordered = [effective_task, *variants]
-            for phrasing in ordered:
-                key = phrasing.strip()
-                if not key or key in seen:
-                    continue
-                seen.add(key)
-                rows.append(
-                    {
-                        "role": "user",
-                        "content": key,
-                        "style": "task_aug",
-                        "timestamp": t0,
-                        "tool_calls": None,
-                    }
-                )
+        variants: list[str] | None = None
+        if self.config.task_aug_axes.enabled and effective_task:
+            variants = self._generate_task_aug_by_axes(effective_task, self.config.task_aug_axes)
         elif self.config.n_task_rephrasings > 0 and effective_task:
-            rephrasings = self._generate_task_rephrasings(effective_task, n=self.config.n_task_rephrasings)
-            # Always include the effective task itself as the first variant
-            # so the rotation is guaranteed to cover the source-of-truth
-            # phrasing, not just synthetic alternatives.
-            seen = set()
-            ordered = [effective_task, *rephrasings]
-            for phrasing in ordered:
-                key = phrasing.strip()
-                if not key or key in seen:
-                    continue
-                seen.add(key)
-                rows.append(
-                    {
-                        "role": "user",
-                        "content": key,
-                        "style": "task_aug",
-                        "timestamp": t0,
-                        "tool_calls": None,
-                    }
-                )
+            variants = self._generate_task_rephrasings(effective_task, n=self.config.n_task_rephrasings)
+        if variants is not None:
+            rows.extend(self._task_aug_rows([effective_task, *variants], t0))
 
         subtask_spans = self._generate_subtasks(record, task=effective_task)
 
-        # ----------------------------------------------------------------
-        # Phase 1a + 1b: structured per-subtask action records
-        # ----------------------------------------------------------------
-        # When enabled, for every subtask span we ask the VLM for a typed
-        # ActionRecord (verb / object / arm / grasp_type / destination /
-        # mistake). A deterministic Python template renders the record
-        # back to canonical subtask text. The render replaces the
-        # free-form subtask text (cleaner conditioning) and the typed
-        # record is emitted as a separate row for downstream use.
-        records_cfg = self.config.action_records
-        action_records: list[dict[str, Any] | None] = [None] * len(subtask_spans)
-        if records_cfg.enabled and subtask_spans:
-            for i, span in enumerate(subtask_spans):
-                rec = self._extract_action_record(record, span, effective_task)
-                if rec is None:
-                    continue
-                action_records[i] = rec
-                if records_cfg.replace_subtask_text:
-                    canonical_text = self._render_action_record_to_subtask_text(rec)
-                    if canonical_text:
-                        span["text"] = canonical_text
-
-        # subtask rows (may now reflect canonical-rendered text)
-        for i, span in enumerate(subtask_spans):
+        # subtask rows
+        for span in subtask_spans:
             rows.append(
                 {
                     "role": "assistant",
@@ -162,39 +93,26 @@ class PlanSubtasksMemoryModule:
                     "tool_calls": None,
                 }
             )
-            if records_cfg.enabled and records_cfg.emit_record_row and action_records[i] is not None:
-                rows.append(
-                    {
-                        "role": "assistant",
-                        "content": json.dumps(action_records[i], sort_keys=True),
-                        "style": "action_record",
-                        "timestamp": snap_to_frame(span["start"], record.frame_timestamps),
-                        "tool_calls": None,
-                    }
+        # Plan rows at every subtask boundary (incl. t=0). The plan is a
+        # numbered list of still-todo subtasks, so re-emitting at each
+        # boundary makes it shrink as work progresses — ${plan} at frame t is
+        # exactly what's left to do.
+        if self.config.emit_plan:
+            for span in subtask_spans:
+                boundary_t = snap_to_frame(span["start"], record.frame_timestamps)
+                plan_text = self._generate_plan(
+                    record, subtask_spans, refresh_t=boundary_t, task=effective_task
                 )
-        # Plan rows at every subtask boundary — including t=0 (start of
-        # the first subtask). Because the plan is just a numbered list
-        # of *still-todo* subtasks, re-emitting at each boundary makes
-        # the active plan shrink as work progresses: at frame t the
-        # rendered ``${plan}`` is the most recent emission, which
-        # contains exactly the subtasks that started at or after the
-        # current span. Saves the runtime from having to derive
-        # "what's still left" at inference time.
-        for span in subtask_spans:
-            boundary_t = snap_to_frame(span["start"], record.frame_timestamps)
-            plan_text = self._generate_plan(
-                record, subtask_spans, refresh_t=boundary_t, task=effective_task
-            )
-            if plan_text is not None:
-                rows.append(
-                    {
-                        "role": "assistant",
-                        "content": plan_text,
-                        "style": "plan",
-                        "timestamp": float(boundary_t),
-                        "tool_calls": None,
-                    }
-                )
+                if plan_text is not None:
+                    rows.append(
+                        {
+                            "role": "assistant",
+                            "content": plan_text,
+                            "style": "plan",
+                            "timestamp": float(boundary_t),
+                            "tool_calls": None,
+                        }
+                    )
         # memory rows at every subtask boundary except the very first start
         prior_memory = ""
         for i, span in enumerate(subtask_spans[1:], start=1):
@@ -260,10 +178,24 @@ class PlanSubtasksMemoryModule:
             return True
         return task.lower() in self._PLACEHOLDER_TASKS
 
+    @staticmethod
+    def _task_aug_rows(phrasings: Sequence[str], t0: float) -> list[dict[str, Any]]:
+        """Build deduplicated ``task_aug`` rows (role=user) at ``t0``."""
+        seen: set[str] = set()
+        rows: list[dict[str, Any]] = []
+        for phrasing in phrasings:
+            key = phrasing.strip()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            rows.append(
+                {"role": "user", "content": key, "style": "task_aug", "timestamp": t0, "tool_calls": None}
+            )
+        return rows
+
     # ------------------------------------------------------------------
-    # VLM call helpers (factored out: every ``plan``-module prompt below follows
-    # the same "build messages → single VLM call → pull a named field"
-    # shape, only differing in field name + post-processing).
+    # VLM call helpers — every plan-module prompt follows the same shape:
+    # build messages → single VLM call → pull a named field.
     # ------------------------------------------------------------------
 
     def _vlm_field(self, messages: list[dict[str, Any]], field: str) -> Any:
@@ -282,172 +214,31 @@ class PlanSubtasksMemoryModule:
         """One-shot text-only user message wrapped for ``generate_json``."""
         return [{"role": "user", "content": [{"type": "text", "text": text}]}]
 
-    def _video_message(self, record: EpisodeRecord, prompt: str) -> list[dict[str, Any]]:
-        """User message combining the episode video block with ``prompt``."""
-        content = [*self._episode_video_block(record), {"type": "text", "text": prompt}]
+    def _video_message(
+        self,
+        record: EpisodeRecord,
+        prompt: str,
+        window: tuple[float, float] | None = None,
+    ) -> list[dict[str, Any]]:
+        """User message combining the (optionally windowed) video block with ``prompt``."""
+        content = [*self._episode_video_block(record, window=window), {"type": "text", "text": prompt}]
         return [{"role": "user", "content": content}]
 
     def _derive_task_from_video(self, record: EpisodeRecord) -> str | None:
         """Ask the VLM "what is this video about" with no task hint at all."""
-        text = self._vlm_field(self._video_message(record, load_prompt("module_1_video_task")), "task")
+        text = self._vlm_field(self._video_message(record, load_prompt("plan_video_task")), "task")
         return text.strip() if isinstance(text, str) and text.strip() else None
 
     def _generate_task_rephrasings(self, base_task: str, *, n: int) -> list[str]:
         """Generate ``n`` text-only paraphrases of ``base_task``."""
         if n <= 0 or not base_task:
             return []
-        prompt = load_prompt("module_1_task_rephrasings").format(base_task=base_task, n=n)
+        prompt = load_prompt("plan_task_rephrasings").format(base_task=base_task, n=n)
         raw = self._vlm_field(self._text_message(prompt), "rephrasings")
         if not isinstance(raw, list):
             return []
         out = [item.strip().strip('"').strip("'") for item in raw if isinstance(item, str)]
         return [s for s in out if s][:n]
-
-    # ------------------------------------------------------------------
-    # Phase 1a + 1b: structured per-subtask action records
-    # ------------------------------------------------------------------
-
-    def _extract_action_record(
-        self,
-        record: EpisodeRecord,
-        span: dict[str, Any],
-        episode_task: str,
-    ) -> dict[str, Any] | None:
-        """Ask the VLM to extract a typed ``ActionRecord`` from a subtask span.
-
-        Sends ``frames_per_subtask`` frames uniformly sampled from
-        ``[span.start, span.end]`` plus the canonical subtask text. The
-        VLM is constrained to verb + grasp vocabularies from the config
-        — invalid values are silently dropped at this layer (the
-        validator catches structural problems pre-write).
-
-        Returns ``None`` when the call fails or the VLM returns something
-        unrecognizable; callers fall back to the free-form subtask text.
-        """
-        cfg = self.config.action_records
-        start_t = float(span.get("start", 0.0))
-        end_t = float(span.get("end", start_t))
-        duration = max(0.0, end_t - start_t)
-
-        # Uniform timestamps within the span; fall back to a single
-        # center frame for very short spans.
-        n = max(1, int(cfg.frames_per_subtask))
-        if n == 1 or duration <= 0.0:
-            timestamps = [0.5 * (start_t + end_t)]
-        else:
-            step = duration / (n - 1)
-            timestamps = [start_t + i * step for i in range(n)]
-        frames = self.frame_provider.frames_at(record, timestamps)
-        if not frames:
-            logger.debug(
-                "action_record: no frames at span %.2f-%.2f for ep %s; skipping",
-                start_t, end_t, record.episode_index,
-            )
-            return None
-
-        prompt = load_prompt("module_1_action_record").format(
-            episode_task=episode_task,
-            subtask_text=span.get("text", ""),
-            start_time=start_t,
-            end_time=end_t,
-            duration=duration,
-            n_frames=len(frames),
-            verb_vocabulary=", ".join(cfg.verb_vocabulary),
-            grasp_vocabulary=" | ".join(f'"{g}"' for g in cfg.grasp_vocabulary),
-        )
-        message = [
-            {
-                "role": "user",
-                "content": [*to_image_blocks(frames), {"type": "text", "text": prompt}],
-            }
-        ]
-        result = self.vlm.generate_json([message])[0]
-        if not isinstance(result, dict):
-            return None
-
-        # Light validation + normalisation. Verb is required; everything
-        # else may be null. Verb / grasp_type are clamped to the
-        # vocabularies (out-of-vocab → reject or null).
-        verb = (result.get("verb") or "").strip().lower()
-        if not verb or verb not in {v.lower() for v in cfg.verb_vocabulary}:
-            return None
-        obj = (result.get("object") or "").strip()
-        if not obj:
-            return None
-        grasp = result.get("grasp_type")
-        if isinstance(grasp, str):
-            grasp = grasp.strip().lower()
-            if grasp not in {g.lower() for g in cfg.grasp_vocabulary}:
-                grasp = None
-        else:
-            grasp = None
-        arm = result.get("arm")
-        if isinstance(arm, str):
-            arm = arm.strip().lower()
-            if arm not in {"left", "right", "both"}:
-                arm = None
-        else:
-            arm = None
-        destination = result.get("destination")
-        destination = destination.strip() if isinstance(destination, str) and destination.strip() else None
-        mistake = result.get("mistake")
-        mistake = mistake.strip() if isinstance(mistake, str) and mistake.strip() else None
-
-        return {
-            "verb": verb,
-            "object": obj,
-            "arm": arm,
-            "grasp_type": grasp,
-            "destination": destination,
-            "mistake": mistake,
-        }
-
-    @staticmethod
-    def _render_action_record_to_subtask_text(record: dict[str, Any]) -> str:
-        """Deterministic template: ``ActionRecord`` → canonical subtask text.
-
-        Mirrors the authoring guidance in ``module_1_subtasks.txt``:
-        imperative, drop articles / adverbs, use canonical object nouns,
-        append arm / grasp clauses only when present.
-
-        Examples (record → rendered text)::
-
-            {verb=pick, object=blue cube}
-                → "pick blue cube"
-            {verb=pick, object=blue cube, arm=left, grasp_type=pinch}
-                → "pick blue cube with left arm using pinch grip"
-            {verb=place, object=blue cube, destination=green box}
-                → "place blue cube in green box"
-            {verb=move, object=mug, destination=stove}
-                → "move mug to stove"
-        """
-        verb = (record.get("verb") or "").strip().lower()
-        obj = (record.get("object") or "").strip()
-        arm = (record.get("arm") or "").strip().lower() if record.get("arm") else ""
-        grasp = (record.get("grasp_type") or "").strip().lower() if record.get("grasp_type") else ""
-        dest = (record.get("destination") or "").strip() if record.get("destination") else ""
-
-        if not verb:
-            return ""
-
-        parts: list[str] = [verb]
-        if obj:
-            parts.append(obj)
-        if dest:
-            # Pick a sensible preposition per verb family.
-            if verb in {"place", "put", "drop", "insert", "pour", "dump"}:
-                parts.append(f"in {dest}")
-            elif verb in {"move", "transport", "reach"}:
-                parts.append(f"to {dest}")
-            else:
-                parts.append(f"at {dest}")
-        if arm == "both":
-            parts.append("with both arms")
-        elif arm in {"left", "right"}:
-            parts.append(f"with {arm} arm")
-        if grasp:
-            parts.append(f"using {grasp} grip")
-        return " ".join(parts)
 
     # ------------------------------------------------------------------
     # Structured 5-axis task augmentation (EgoMimic-style taxonomy)
@@ -465,7 +256,7 @@ class PlanSubtasksMemoryModule:
         """
         if not base_task:
             return []
-        prompt = load_prompt("module_1_task_aug_axes").format(
+        prompt = load_prompt("plan_task_aug_axes").format(
             base_task=base_task,
             n_synonym=axes_cfg.synonym_paraphrase,
             n_omit_arm=axes_cfg.omit_arm,
@@ -499,17 +290,50 @@ class PlanSubtasksMemoryModule:
                 flat.append(key)
         return flat
 
-    def _episode_video_block(self, record: EpisodeRecord) -> list[dict[str, Any]]:
-        """Same video block ``_generate_subtasks`` builds — extracted helper."""
+    def _episode_video_block(
+        self, record: EpisodeRecord, window: tuple[float, float] | None = None
+    ) -> list[dict[str, Any]]:
+        """Video block for the segmentation / describe prompts.
+
+        Always returns a block that actually carries the video. When
+        ``use_video_url`` is set we try the server-side ``video_url``
+        path first, but if clip extraction fails we FALL BACK to
+        decoding + embedding frames rather than returning an empty
+        block — an empty block would leave the VLM with no visual
+        grounding at all and it would hallucinate subtasks purely from
+        the task text.
+
+        When ``window=(w0, w1)`` is given (windowed subtask generation,
+        ``subtask_window_seconds > 0``), embed frames sampled at the FIXED
+        ``frames_per_second`` rate within ``[w0, w1]`` — constant temporal
+        density regardless of episode length, so long episodes are split
+        into windows rather than subsampled to a sparse 32-frame whole-
+        episode view. The ``video_url`` path is skipped for windows (it is
+        a whole-episode clip). ``max_video_frames`` still caps each window
+        as a context-budget safety net.
+        """
         if not record.frame_timestamps:
             return []
+        if window is not None:
+            w0, w1 = float(window[0]), float(window[1])
+            dur = max(0.0, w1 - w0)
+            n = max(1, int(round(dur * self.config.frames_per_second)) + 1)
+            n = min(n, self.config.max_video_frames)
+            if n <= 1 or dur <= 0.0:
+                timestamps = [0.5 * (w0 + w1)]
+            else:
+                step = dur / (n - 1)
+                timestamps = [w0 + i * step for i in range(n)]
+            return to_video_block(self.frame_provider.frames_at(record, timestamps))
         if self.config.use_video_url and isinstance(self.frame_provider, VideoFrameProvider):
             cache_dir = Path(self.frame_provider.root) / ".annotate_staging" / ".video_clips"
             clip = self.frame_provider.episode_clip_path(record, cache_dir)
-            return (
-                to_video_url_block(f"file://{clip}", fps=self.config.use_video_url_fps)
-                if clip is not None
-                else []
+            if clip is not None:
+                return to_video_url_block(f"file://{clip}", fps=self.config.use_video_url_fps)
+            logger.warning(
+                "episode %d: video_url clip extraction failed — falling back to "
+                "embedded frames so the VLM still sees the demonstration",
+                record.episode_index,
             )
         episode_duration = record.frame_timestamps[-1] - record.frame_timestamps[0]
         target_count = max(1, int(round(episode_duration * self.config.frames_per_second)))
@@ -526,18 +350,15 @@ class PlanSubtasksMemoryModule:
     ) -> None:
         """Append additional ``plan`` rows at every interjection timestamp.
 
-        Plans refresh ONLY on user interjections — subtask generation
-        runs ~1 Hz at inference, but plan re-emission is event-driven.
-        Now also forwards the interjection's own text into the prompt so
-        the refreshed plan can actually reflect the user's correction
-        (the previous version told the model "an interjection happened"
-        without telling it what the user said).
+        Plans refresh ONLY on user interjections (event-driven). The
+        interjection text is forwarded into the prompt so the refreshed plan
+        reflects the user's correction.
         """
+        if not self.config.emit_plan:
+            return
         existing = staging.read("plan")
-        # Pass the episode's last frame timestamp so the final subtask
-        # span is closed (otherwise its ``end`` equals its ``start``,
-        # zero duration, and the "current subtask at refresh_t" lookup
-        # in ``_generate_plan`` misses any refresh that lands inside it).
+        # Pass the last frame timestamp so the final span is closed (else its
+        # end == start, zero duration, and a refresh inside it is missed).
         episode_end_t = float(record.frame_timestamps[-1]) if record.frame_timestamps else None
         spans = reconstruct_subtask_spans(existing, episode_end_t=episode_end_t)
         already_planned: set[float] = {float(r["timestamp"]) for r in existing if r.get("style") == "plan"}
@@ -567,41 +388,201 @@ class PlanSubtasksMemoryModule:
         staging.write("plan", new_rows)
 
     def _generate_subtasks(self, record: EpisodeRecord, *, task: str | None = None) -> list[dict[str, Any]]:
+        """Generate subtask spans, optionally via a multi-call quality chain.
+
+        Single call (default): watch video → emit subtask JSON.
+
+        Multi-call (opt-in, higher quality, more VLM calls):
+          1. ``subtask_describe_first`` — a grounding pass that narrates
+             ONLY what is visible (no JSON commitment to subtasks yet);
+             its description is injected into the segmentation prompt so
+             the model segments its own grounded observations instead of
+             pattern-matching the task text.
+          2. segmentation — emit subtask JSON (as before).
+        """
         if record.row_count == 0 or not record.frame_timestamps:
             return []
         episode_duration = record.frame_timestamps[-1] - record.frame_timestamps[0]
-        prompt = load_prompt("module_1_subtasks").format(
-            episode_task=(task if task is not None else record.episode_task),
+        effective_task = task if task is not None else record.episode_task
+
+        # ---- Windowed path (constant temporal density) ---------------
+        # If subtask_window_seconds > 0 and the episode exceeds one window,
+        # process fixed-length windows so the VLM always sees
+        # frames_per_second density; results are merged + stitched.
+        window_s = float(getattr(self.config, "subtask_window_seconds", 0.0) or 0.0)
+        if window_s > 0.0 and episode_duration > window_s:
+            return self._generate_subtasks_windowed(record, effective_task, window_s)
+
+        # ---- Pass 1 (optional): grounding description ----------------
+        observation_block = ""
+        if getattr(self.config, "subtask_describe_first", False):
+            description = self._describe_episode(record, effective_task)
+            if description:
+                observation_block = (
+                    "You watched this video and described, chronologically, "
+                    "ONLY what the robot actually does:\n"
+                    f'"""{description}"""\n\n'
+                    "Segment THAT grounded description (cross-checked against "
+                    "the video) into atomic subtasks. Do not introduce any "
+                    "action that is not in your description above.\n\n"
+                )
+
+        # ---- Pass 2: segmentation ------------------------------------
+        prompt = load_prompt("plan_subtasks").format(
+            episode_task=effective_task,
             min_subtask_seconds=self.config.min_subtask_seconds,
             max_steps=self.config.plan_max_steps,
             episode_duration=f"{episode_duration:.3f}",
-            vocabulary_block=self._subtask_vocabulary_block(),
+            observation_block=observation_block,
         )
-        messages = self._video_message(record, prompt)
-        spans = self._vlm_field(messages, "subtasks")
-        # When a vocabulary is in force, do a single targeted retry if
-        # any returned subtask is off-vocab — strict exact-match only,
-        # no fuzzy snapping. The retry includes the offending strings
-        # and the full canonical list so the VLM can correct itself.
-        if self.vocabulary is not None and self.vocabulary.subtasks and spans:
-            invalid = self._invalid_subtasks(spans)
-            if invalid:
-                logger.info(
-                    "episode %d: VLM emitted %d off-vocab subtask(s) (%s); retrying once",
-                    record.episode_index,
-                    len(invalid),
-                    invalid,
-                )
-                retry_msg = self._build_subtask_retry_message(messages, invalid)
-                retried = self._vlm_field(retry_msg, "subtasks")
-                if retried:
-                    spans = retried
+        spans = self._vlm_field(self._video_message(record, prompt), "subtasks")
+        cleaned = self._clean_spans(spans, record)
+        if not cleaned:
+            return []
 
+        # ---- Full-episode coverage stitch ----------------------------
+        # The VLM can start after t0 or leave gaps, so frames fall through
+        # with no active subtask. Always stitch into a contiguous
+        # [t0, t_last] cover.
+        cleaned = self._stitch_full_coverage(cleaned, record)
+
+        return cleaned
+
+    def _generate_subtasks_windowed(
+        self, record: EpisodeRecord, task: str, window_s: float
+    ) -> list[dict[str, Any]]:
+        """Subtask generation in fixed-length windows at constant fps.
+
+        Splits ``[t0, t_last]`` into consecutive windows of ``window_s``
+        seconds, runs the describe -> segment chain on each window's own
+        frames (sampled at ``frames_per_second``), offsets
+        each window's spans back to absolute episode time, then merges +
+        stitches into a contiguous whole-episode cover.
+        """
+        t0 = float(record.frame_timestamps[0])
+        t_last = float(record.frame_timestamps[-1])
+        all_spans: list[dict[str, Any]] = []
+        w0 = t0
+        n_windows = 0
+        while w0 < t_last - 1e-6:
+            w1 = min(w0 + window_s, t_last)
+            all_spans.extend(self._subtasks_for_window(record, task, w0, w1))
+            n_windows += 1
+            w0 = w1
+        logger.info(
+            "episode %d: windowed subtask gen over %d window(s) of %.1fs -> %d raw spans",
+            record.episode_index,
+            n_windows,
+            window_s,
+            len(all_spans),
+        )
+        # Merge across windows: clamp to the absolute episode, sort, and
+        # frame-snap to distinct starts (handles any boundary collisions).
+        cleaned = self._clean_spans(all_spans, record)
+        if not cleaned:
+            return []
+        return self._stitch_full_coverage(cleaned, record)
+
+    def _subtasks_for_window(
+        self, record: EpisodeRecord, task: str, w0: float, w1: float
+    ) -> list[dict[str, Any]]:
+        """Run describe -> segment on one ``[w0, w1]`` window.
+
+        The model works in window-RELATIVE time ``[0, L]`` (it perceives
+        the window as a clip starting at 0); spans are offset back to
+        absolute ``[w0, w1]`` before returning.
+        """
+        window = (w0, w1)
+        win_len = max(0.0, w1 - w0)
+
+        observation_block = ""
+        if getattr(self.config, "subtask_describe_first", False):
+            description = self._describe_episode(record, task, window=window)
+            if description:
+                observation_block = (
+                    "You watched this video clip and described, chronologically, "
+                    "ONLY what the robot actually does:\n"
+                    f'"""{description}"""\n\n'
+                    "Segment THAT grounded description (cross-checked against "
+                    "the clip) into atomic subtasks. Do not introduce any "
+                    "action that is not in your description above.\n\n"
+                )
+
+        prompt = load_prompt("plan_subtasks").format(
+            episode_task=task,
+            min_subtask_seconds=self.config.min_subtask_seconds,
+            max_steps=self.config.plan_max_steps,
+            episode_duration=f"{win_len:.3f}",
+            observation_block=observation_block,
+        )
+        spans = self._vlm_field(self._video_message(record, prompt, window=window), "subtasks")
+        # Window-relative clamp; no frame-snap dedupe yet (done on the
+        # merged absolute set).
+        cleaned = self._clean_spans(spans, record, bounds=(0.0, win_len), dedupe=False)
+        if not cleaned:
+            return []
+
+        # Offset window-relative spans back to absolute episode time.
+        for s in cleaned:
+            s["start"] = w0 + float(s["start"])
+            s["end"] = w0 + float(s["end"])
+        return cleaned
+
+    def _stitch_full_coverage(
+        self, spans: list[dict[str, Any]], record: EpisodeRecord
+    ) -> list[dict[str, Any]]:
+        """Make subtask spans tile the full episode with no gaps.
+
+        * The first subtask starts at the episode's first frame ``t0``
+          (any idle / approach before the first labelled action is folded
+          into it), so every early frame has an active subtask.
+        * Each subtask's ``end`` is snapped to the next subtask's
+          ``start`` (gaps between spans are closed), and the final
+          subtask's ``end`` extends to the last frame ``t_last``.
+
+        Starts are otherwise left as the (already frame-snapped, distinct)
+        values the VLM produced — only the FIRST start is pulled
+        back to ``t0``, which can't collide with a later span because it
+        was already the earliest. Purely deterministic; runs after the
+        VLM passes.
+        """
+        if not spans or not record.frame_timestamps:
+            return spans
+        t0 = float(record.frame_timestamps[0])
+        t_last = float(record.frame_timestamps[-1])
+        spans = sorted(spans, key=lambda s: float(s["start"]))
+        spans[0]["start"] = t0
+        for i in range(len(spans) - 1):
+            spans[i]["end"] = float(spans[i + 1]["start"])
+        spans[-1]["end"] = t_last
+        for s in spans:
+            if float(s["end"]) < float(s["start"]):
+                s["end"] = float(s["start"])
+        return spans
+
+    def _clean_spans(
+        self,
+        spans: Any,
+        record: EpisodeRecord,
+        bounds: tuple[float, float] | None = None,
+        dedupe: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Clamp / sort / (optionally) dedupe raw VLM subtask spans into valid rows.
+
+        ``bounds`` overrides the clamp range — pass the window's
+        ``(w_lo, w_hi)`` when cleaning window-relative spans, or leave
+        ``None`` to clamp to the whole episode ``[t0, t_last]``.
+        ``dedupe`` runs the frame-snap distinct-start step; skip it for
+        window-relative spans (frame snapping is done once on the merged,
+        absolute-time set).
+        """
         if not spans:
             return []
-        # clamp to [t0, t_last] and sort
-        t0 = record.frame_timestamps[0]
-        t_last = record.frame_timestamps[-1]
+        if bounds is not None:
+            lo, hi = float(bounds[0]), float(bounds[1])
+        else:
+            lo = record.frame_timestamps[0]
+            hi = record.frame_timestamps[-1]
         cleaned: list[dict[str, Any]] = []
         for span in spans:
             try:
@@ -610,26 +591,25 @@ class PlanSubtasksMemoryModule:
                 text = str(span["text"]).strip()
             except (KeyError, ValueError, TypeError):
                 continue
-            start = max(t0, min(start, t_last))
-            end = max(t0, min(end, t_last))
+            start = max(lo, min(start, hi))
+            end = max(lo, min(end, hi))
             if end < start:
                 start, end = end, start
             if not text:
                 continue
-            text = self._canonicalize_subtask(text)
-            if not text:
-                continue
             cleaned.append({"text": text, "start": start, "end": end})
         cleaned.sort(key=lambda s: s["start"])
-        cleaned = self._dedupe_starts_to_distinct_frames(cleaned, record)
-        if self.vocabulary is not None and self.vocabulary.subtasks and not cleaned:
-            logger.warning(
-                "episode %d: every VLM subtask was off-vocab even after retry — "
-                "episode left empty (extend meta/canonical_vocabulary.json to "
-                "cover the missing phase)",
-                record.episode_index,
-            )
+        if dedupe:
+            return self._dedupe_starts_to_distinct_frames(cleaned, record)
         return cleaned
+
+    def _describe_episode(
+        self, record: EpisodeRecord, task: str, window: tuple[float, float] | None = None
+    ) -> str:
+        """Grounding pass: free-form chronological description of the (windowed) video."""
+        prompt = load_prompt("plan_subtask_describe").format(episode_task=task)
+        text = self._vlm_field(self._video_message(record, prompt, window=window), "description")
+        return text.strip() if isinstance(text, str) and text.strip() else ""
 
     @staticmethod
     def _dedupe_starts_to_distinct_frames(
@@ -679,132 +659,6 @@ class PlanSubtasksMemoryModule:
             out.append(new_span)
         return out
 
-    # ------------------------------------------------------------------
-    # Canonical-vocabulary helpers
-    # ------------------------------------------------------------------
-
-    def _subtask_vocabulary_block(self) -> str:
-        """Bullet-list of canonical subtasks the VLM must pick from.
-
-        Returns an empty string when no vocabulary is configured —
-        ``module_1_subtasks.txt`` then falls back to its free-form
-        rules (original behaviour).
-        """
-        if self.vocabulary is None or not self.vocabulary.subtasks:
-            return ""
-        bullets = "\n".join(f"- {s}" for s in self.vocabulary.subtasks)
-        return (
-            "You MUST choose each subtask label verbatim from this canonical "
-            "vocabulary — pick the closest match for each phase of the demo, "
-            "and reuse the SAME string every time that phase recurs. The "
-            "low-level policy is conditioned on these exact strings; any "
-            "novel paraphrase you invent will make its conditioning OOD.\n"
-            "Canonical subtask labels:\n"
-            f"{bullets}\n\n"
-        )
-
-    def _memory_vocabulary_block(self) -> str:
-        """Bullet-list of canonical memory milestones the VLM must pick from."""
-        if self.vocabulary is None or not self.vocabulary.memory_milestones:
-            return ""
-        bullets = "\n".join(f"- {m}" for m in self.vocabulary.memory_milestones)
-        return (
-            "Compose the memory by picking ONLY from this canonical milestone "
-            "list — append a milestone (or rewrite the running memory to "
-            "compress past ones) using these exact phrases. Do not invent new "
-            "wording: every paraphrase weakens the downstream conditioning.\n"
-            "Canonical memory milestones:\n"
-            f"{bullets}\n\n"
-        )
-
-    _NORMALIZE_STRIP_TOKENS: frozenset[str] = frozenset({"the", "a", "an"})
-
-    def _canonicalize_subtask(self, text: str) -> str:
-        """Validate ``text`` against the canonical vocabulary; no fuzzy snap.
-
-        Without a vocabulary, the original text passes through. With a
-        vocabulary, accept the span only if its normalised form (lower-
-        cased, articles stripped, whitespace collapsed) matches a
-        canonical entry exactly — the canonical wording is returned so
-        the supervised string is byte-identical across episodes.
-
-        Off-vocab spans are dropped (empty string). Upstream
-        ``_generate_subtasks`` triggers a targeted retry before reaching
-        the drop path; this function never snaps or warps a span into
-        a different label.
-        """
-        if self.vocabulary is None or not self.vocabulary.subtasks:
-            return text.strip()
-        normalised = self._normalize(text)
-        if not normalised:
-            return ""
-        for candidate in self.vocabulary.subtasks:
-            if self._normalize(candidate) == normalised:
-                return candidate
-        return ""
-
-    @classmethod
-    def _normalize(cls, text: str) -> str:
-        """Lowercase, strip articles, collapse whitespace, drop punctuation."""
-        words = [
-            w.strip(".,:;\"'!?()")
-            for w in text.lower().replace(",", " ").split()
-        ]
-        return " ".join(w for w in words if w and w not in cls._NORMALIZE_STRIP_TOKENS)
-
-    def _invalid_subtasks(self, spans: list[dict[str, Any]]) -> list[str]:
-        """Return the unique off-vocab subtask strings the VLM produced."""
-        seen: list[str] = []
-        for span in spans:
-            text = str((span or {}).get("text") or "").strip()
-            if not text:
-                continue
-            if self._canonicalize_subtask(text):
-                continue
-            if text not in seen:
-                seen.append(text)
-        return seen
-
-    def _build_subtask_retry_message(
-        self, original_messages: list[dict[str, Any]], invalid: list[str]
-    ) -> list[dict[str, Any]]:
-        """Compose a one-shot correction prompt naming the off-vocab strings."""
-        assert self.vocabulary is not None
-        canonical = "\n".join(f"- {s}" for s in self.vocabulary.subtasks)
-        invalid_list = "\n".join(f"- {s!r}" for s in invalid)
-        correction = (
-            "Your previous response included subtask labels that are NOT in "
-            "the canonical vocabulary:\n"
-            f"{invalid_list}\n\n"
-            "Re-emit the same segmentation (same number of spans, same start/end "
-            "timestamps where they were valid) but replace every off-vocab "
-            "label with the EXACT canonical string for that phase, copied "
-            "verbatim from this list:\n"
-            f"{canonical}\n\n"
-            "Strict rules:\n"
-            "- Output strings must be byte-for-byte identical to entries above.\n"
-            "- No articles, no adverbs, no extra words.\n"
-            "- If a phase truly has no canonical match, omit that span entirely.\n"
-            "Return the same JSON shape as before."
-        )
-        # Append the correction as an additional user turn; the model
-        # sees the original prompt + its prior output is implied by the
-        # conversation context (the VLM client is stateless, so we
-        # re-send the original content plus this correction).
-        retry_messages = [
-            {
-                "role": m.get("role", "user"),
-                "content": (
-                    m.get("content")
-                    if isinstance(m.get("content"), str)
-                    else list(m.get("content") or [])
-                ),
-            }
-            for m in original_messages
-        ]
-        retry_messages.append({"role": "user", "content": correction})
-        return retry_messages
-
     def _generate_plan(
         self,
         record: EpisodeRecord,  # noqa: ARG002  (kept for signature stability)
@@ -816,41 +670,28 @@ class PlanSubtasksMemoryModule:
     ) -> str | None:
         """Deterministic plan = numbered list of *still-todo* subtasks.
 
-        Previously this called the VLM with a prompt that asked it to
-        compress the subtasks into a "compact hierarchical plan". That
-        produced longer-than-necessary plans, cost an extra VLM round-trip
-        per episode (plus one per interjection on refresh), and could
-        diverge from the actual subtask sequence the model is going to
-        execute. Replacing it with a plain summarisation keeps the plan
-        tightly aligned with the upcoming subtasks and removes the VLM
-        call entirely.
-
-        Layout — short imperative fragments prefixed by "N. ":
+        No VLM call: a plain numbered list keeps the plan aligned with the
+        upcoming subtasks (the old VLM "compact hierarchical plan" prompt
+        cost a round-trip per episode/refresh and could diverge).
 
             1. <subtask 1>
             2. <subtask 2>
-            ...
 
-        On a refresh at ``refresh_t`` (called from ``run_plan_updates``
-        on interjection events, and from ``run_episode`` at every subtask
-        boundary), only subtasks whose start is at or after ``refresh_t``
-        are included — the plan shrinks as work progresses, so it always
+        On a refresh at ``refresh_t`` (from ``run_plan_updates`` on
+        interjections, and ``run_episode`` at each boundary), only subtasks
+        starting at or after ``refresh_t`` are included — so it always
         describes what's left.
         """
         if not subtask_spans:
             return None
         remaining = [
-            s
-            for s in subtask_spans
-            if refresh_t is None or float(s.get("start", 0.0)) >= float(refresh_t)
+            s for s in subtask_spans if refresh_t is None or float(s.get("start", 0.0)) >= float(refresh_t)
         ]
         if not remaining:
             # Past the last subtask boundary on a late refresh — nothing
             # left to plan; emit None so the caller skips the row.
             return None
-        return "\n".join(
-            f"{i}. {span.get('text', '').strip()}" for i, span in enumerate(remaining, start=1)
-        )
+        return "\n".join(f"{i}. {span.get('text', '').strip()}" for i, span in enumerate(remaining, start=1))
 
     def _generate_memory(
         self,
@@ -861,12 +702,11 @@ class PlanSubtasksMemoryModule:
         *,
         task: str | None = None,
     ) -> str:
-        prompt = load_prompt("module_1_memory").format(
+        prompt = load_prompt("plan_memory").format(
             episode_task=(task if task is not None else record.episode_task),
             prior_memory=prior_memory or "(none)",
             completed_subtask=completed,
             remaining_subtasks=", ".join(remaining) if remaining else "(none)",
-            vocabulary_block=self._memory_vocabulary_block(),
         )
         memory = self._vlm_field(self._text_message(prompt), "memory")
         return memory.strip() if isinstance(memory, str) else ""

@@ -85,7 +85,7 @@ class InterjectionsAndSpeechModule:
         return current
 
     def _initial_speech(self, record: EpisodeRecord) -> str | None:
-        prompt = load_prompt("module_2_initial_speech").format(
+        prompt = load_prompt("interjections_initial_speech").format(
             episode_task=record.episode_task,
         )
         messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
@@ -147,7 +147,7 @@ class InterjectionsAndSpeechModule:
             # previous subtask and the start of the next one — same
             # conditioning the policy will see at training time.
             window_ts = self._window_timestamps(t_snap, record.frame_timestamps)
-            prompt = load_prompt("module_2_interjection").format(
+            prompt = load_prompt("interjections_interjection").format(
                 episode_task=record.episode_task,
                 prev_subtask=prev_subtask or "(starting from initial state)",
                 next_subtask=next_subtask,
@@ -198,11 +198,12 @@ class InterjectionsAndSpeechModule:
         # Center the window on the anchor so half lands before, half after.
         start_offset = -window / 2.0
         targets = [t_anchor + start_offset + step * i for i in range(n)]
+        first_ts = float(frame_timestamps[0])
         last_ts = float(frame_timestamps[-1])
         snapped: list[float] = []
         seen: set[float] = set()
         for tgt in targets:
-            clamped = min(last_ts, max(0.0, tgt))
+            clamped = min(last_ts, max(first_ts, tgt))
             t = snap_to_frame(clamped, frame_timestamps)
             if t not in seen:
                 seen.add(t)

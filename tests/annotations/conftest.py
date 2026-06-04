@@ -26,12 +26,17 @@ from pathlib import Path
 
 import pytest
 
-from tests.fixtures.dataset_factories import build_annotation_dataset
+# ``build_annotation_dataset`` pulls in ``lerobot.datasets`` (HF ``datasets``
+# + ``pandas``, only in the ``dataset`` extra), so it's imported lazily inside
+# each fixture — this conftest stays importable without that extra. The test
+# modules ``pytest.importorskip("datasets")`` so they skip rather than error.
 
 
 @pytest.fixture
 def fixture_dataset_root(tmp_path: Path) -> Path:
     """A tiny dataset with two episodes, 12 frames each at 10 fps."""
+    from tests.fixtures.dataset_factories import build_annotation_dataset
+
     return build_annotation_dataset(
         tmp_path / "ds",
         episode_specs=[
@@ -44,6 +49,8 @@ def fixture_dataset_root(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def single_episode_root(tmp_path: Path) -> Path:
+    from tests.fixtures.dataset_factories import build_annotation_dataset
+
     return build_annotation_dataset(
         tmp_path / "ds_one",
         episode_specs=[(0, 30, "Pour water from the bottle into the cup.")],

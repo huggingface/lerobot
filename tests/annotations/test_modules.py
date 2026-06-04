@@ -22,21 +22,29 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from lerobot.annotations.steerable_pipeline.config import (
+import pytest
+
+# ``lerobot.annotations`` imports pull in ``lerobot.datasets`` (-> the HF
+# ``datasets`` library), which only ships under the ``dataset`` extra. Skip
+# this module in tiers without it instead of erroring at import.
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+pytest.importorskip("pandas", reason="pandas is required (install lerobot[dataset])")
+
+from lerobot.annotations.steerable_pipeline.config import (  # noqa: E402
     InterjectionsConfig,
     PlanConfig,
     VqaConfig,
 )
-from lerobot.annotations.steerable_pipeline.modules import (
+from lerobot.annotations.steerable_pipeline.modules import (  # noqa: E402
     GeneralVqaModule,
     InterjectionsAndSpeechModule,
     PlanSubtasksMemoryModule,
 )
-from lerobot.annotations.steerable_pipeline.reader import iter_episodes
-from lerobot.annotations.steerable_pipeline.staging import EpisodeStaging
-from lerobot.annotations.steerable_pipeline.vlm_client import StubVlmClient
+from lerobot.annotations.steerable_pipeline.reader import iter_episodes  # noqa: E402
+from lerobot.annotations.steerable_pipeline.staging import EpisodeStaging  # noqa: E402
+from lerobot.annotations.steerable_pipeline.vlm_client import StubVlmClient  # noqa: E402
 
-from ._helpers import make_canned_responder
+from ._helpers import make_canned_responder  # noqa: E402
 
 
 @dataclass
@@ -80,7 +88,7 @@ def test_module1_plan_memory_subtask_smoke(fixture_dataset_root: Path, tmp_path:
                     {"text": "place the sponge into the sink", "start": 0.8, "end": 1.1},
                 ]
             },
-            "Update the memory": {"memory": "wiped the counter once"},
+            "compressed semantic memory": {"memory": "wiped the counter once"},
         },
     )
     module = PlanSubtasksMemoryModule(vlm=vlm, config=PlanConfig())
@@ -143,12 +151,10 @@ def test_module2_mid_episode_emits_paired_interjection_and_speech(
         {
             "acknowledgement the robot": {"text": "OK."},
             # Marker matches the distinctive line of
-            # ``module_2_interjection.txt``. The old marker
-            # ("ONE realistic interruption") came from a previous prompt
-            # version that asked for counterfactual interjections; the
-            # current design anchors on subtask boundaries instead, so
-            # the prompt and its marker changed.
-            "Write ONE interjection": {
+            # ``interjections_interjection.txt`` ("Write ONE compact
+            # interjection ..."). Keep this in sync with that prompt's
+            # wording — the canned responder matches on substring.
+            "Write ONE compact interjection": {
                 "interjection": "now wipe the counter please",
                 "speech": "On it.",
             },
@@ -239,7 +245,6 @@ def test_module1_attaches_video_block_to_subtask_prompt(fixture_dataset_root: Pa
             {"text": "wipe the counter", "start": 0.5, "end": 1.1},
         ]
     }
-    plan_payload = {"plan": "1. grasp\n2. wipe"}
     memory_payload = {"memory": "wiped once"}
 
     def responder(messages):
@@ -249,9 +254,7 @@ def test_module1_attaches_video_block_to_subtask_prompt(fixture_dataset_root: Pa
             for block in m.get("content", []):
                 if isinstance(block, dict) and block.get("type") == "text":
                     text = block.get("text", "")
-        if "concise hierarchical PLAN" in text:
-            return plan_payload
-        if "Update the memory" in text:
+        if "compressed semantic memory" in text:
             return memory_payload
         return payload
 

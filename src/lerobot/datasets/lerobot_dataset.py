@@ -524,7 +524,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         license: str | None = "apache-2.0",
         tag_version: bool = True,
         push_videos: bool = True,
-        private: bool = False,
+        private: bool | None = None,
         allow_patterns: list[str] | str | None = None,
         upload_large_folder: bool = False,
         **card_kwargs,
@@ -543,7 +543,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             tag_version: If ``True``, create a Git tag for the current codebase
                 version.
             push_videos: If ``False``, skip uploading the ``videos/`` directory.
-            private: If ``True``, create a private repository.
+            private: If ``True``, create a private repository. If ``None``
+                (default), defer to the org default on the Hub (only affects orgs).
             allow_patterns: Glob pattern(s) restricting which files to upload.
             upload_large_folder: If ``True``, use ``upload_large_folder`` instead
                 of ``upload_folder`` for very large datasets.

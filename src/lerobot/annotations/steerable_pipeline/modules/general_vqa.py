@@ -23,7 +23,7 @@ one ``(vqa, user)`` + ``(vqa, assistant)`` pair *per camera*: each pair is
 generated against that camera's frame and stamped with the matching
 ``camera`` field on the emitted rows. The resolver disambiguates via
 ``camera=...``; recipes that consume VQA do so through one sub-recipe
-per camera (see ``recipes/subtasks_vqa.yaml``).
+per camera (see ``recipes/pi05_hirobot.yaml``).
 
 Within a single (frame, camera) we still emit at most one ``(vqa, user)``
 and one ``(vqa, assistant)`` row, so the resolver contract stays scalar.
@@ -95,6 +95,7 @@ class GeneralVqaModule:
     config: VqaConfig
     seed: int = 1729
     frame_provider: FrameProvider = field(default_factory=null_provider)
+    _warned_no_camera: bool = field(default=False, init=False, repr=False)
 
     @property
     def enabled(self) -> bool:
@@ -113,7 +114,7 @@ class GeneralVqaModule:
             # No camera available — emit nothing rather than producing
             # untagged rows that would fail validation. Surface a loud one-
             # time warning so this is never silently a no-op.
-            if not getattr(self, "_warned_no_camera", False):
+            if not self._warned_no_camera:
                 logging.getLogger(__name__).warning(
                     "vqa module found no cameras on the frame provider — "
                     "every episode will emit zero VQA rows. Check that the "
@@ -180,8 +181,29 @@ class GeneralVqaModule:
         Defaults to every camera the provider exposes. Datasets with no
         cameras (or test/null providers) yield an empty list, which makes
         ``run_episode`` a no-op.
+
+        When ``config.restrict_to_default_camera`` is set, VQA grounds on
+        only the provider's default camera (the single ``--vlm.camera_key``
+        stream), matching the plan / interjection modules so the whole
+        pipeline focuses on one view.
         """
-        return list(getattr(self.frame_provider, "camera_keys", []) or [])
+        all_cameras = list(getattr(self.frame_provider, "camera_keys", []) or [])
+        if getattr(self.config, "restrict_to_default_camera", False):
+            default = getattr(self.frame_provider, "camera_key", None)
+            if default and default in all_cameras:
+                return [default]
+            # ``restrict_to_default_camera`` is set but the configured default
+            # isn't one the provider exposes. Returning it anyway would make
+            # ``_decode`` raise a KeyError deep in frame extraction, so warn and
+            # fall through to every available camera instead.
+            if default:
+                logging.getLogger(__name__).warning(
+                    "restrict_to_default_camera is set but camera_key=%r is not in the "
+                    "provider's cameras %s; grounding VQA on all available cameras instead.",
+                    default,
+                    all_cameras,
+                )
+        return all_cameras
 
     def _build_messages(
         self,
@@ -190,13 +212,11 @@ class GeneralVqaModule:
         frame_timestamp: float,
         camera_key: str,
     ) -> list[dict[str, Any]]:
-        prompt = load_prompt("module_3_vqa").format(
+        prompt = load_prompt("vqa").format(
             episode_task=record.episode_task,
             question_type=question_type,
         )
-        images = self.frame_provider.frames_at(
-            record, [frame_timestamp], camera_key=camera_key
-        )
+        images = self.frame_provider.frames_at(record, [frame_timestamp], camera_key=camera_key)
         content = [*to_image_blocks(images), {"type": "text", "text": prompt}]
         return [{"role": "user", "content": content}]
 

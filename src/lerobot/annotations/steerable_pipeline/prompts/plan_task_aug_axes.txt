@@ -37,9 +37,16 @@ Axes and target counts:
     orientation, grasp_method) appear in the original task.
 
 Hard rules:
-- Each variant MUST preserve the core action and the target object.
-  Do not change which object is involved, the destination, or the
-  high-level action.
+- Each variant MUST preserve the core action, the target object, AND
+  the goal / destination. Do not change which object is involved, where
+  it goes, or the high-level action. "Navigate to the stove" may become
+  "go to the stove" or "head over to the stove" — it must NEVER become
+  "wander around the kitchen", "explore the room", or anything that
+  drops or generalises the stove destination. If you cannot vary the
+  wording without changing the goal, emit fewer variants.
+- Only the FIVE listed elements (wording, arm, orientation, grasp
+  method, or a combination) may be varied or omitted. The verb's
+  meaning, the object, and the destination are fixed.
 - Each variant is plain prose, no markdown, no quotes, no list numbers.
 - Each variant must be DISTINCT from every other variant in the entire
   output, both within and across axes. Near-duplicates are not allowed.

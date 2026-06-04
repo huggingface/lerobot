@@ -204,6 +204,7 @@ wallx = [
     "lerobot[qwen-vl-utils-dep]",
 ]
 pi = ["lerobot[transformers-dep]", "lerobot[scipy-dep]", "lerobot[sentencepiece-dep]"]
+molmoact2 = ["lerobot[transformers-dep]", "lerobot[peft-dep]", "lerobot[scipy-dep]"]
 smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "accelerate>=1.7.0,<2.0.0"]
 multi_task_dit = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]"]
 groot = [
@@ -217,6 +218,8 @@ groot = [
     "flash-attn>=2.5.9,<3.0.0 ; sys_platform != 'darwin'"
 ]
 sarm = ["lerobot[transformers-dep]", "pydantic>=2.0.0,<3.0.0", "faker>=33.0.0,<35.0.0", "lerobot[matplotlib-dep]", "lerobot[qwen-vl-utils-dep]"]
+robometer = ["lerobot[transformers-dep]", "lerobot[qwen-vl-utils-dep]", "lerobot[peft-dep]"]
+topreward = ["lerobot[transformers-dep]"]
 xvla = ["lerobot[transformers-dep]"]
 eo1 = ["lerobot[transformers-dep]", "lerobot[qwen-vl-utils-dep]"]
 hilserl = ["lerobot[transformers-dep]", "lerobot[dataset]", "gym-hil>=0.1.13,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
@@ -225,16 +228,19 @@ hilserl = ["lerobot[transformers-dep]", "lerobot[dataset]", "gym-hil>=0.1.13,<0.
 async = ["lerobot[grpcio-dep]", "lerobot[matplotlib-dep]"]
 peft = ["lerobot[transformers-dep]", "lerobot[peft-dep]"]
 
-# Annotation pipeline (lerobot-annotate). vllm is the preferred backend
-# on Linux, with a transformers fallback elsewhere; openai is the default
-# backend and talks to any OpenAI-compatible server (``vllm serve`` /
-# ``transformers serve`` / hosted endpoints). Distributed execution is
-# delegated to Hugging Face Jobs (see examples/annotations/run_hf_job.py).
+# Annotation pipeline (lerobot-annotate). The only backend is ``openai``,
+# which talks to any OpenAI-compatible server (``vllm serve`` /
+# ``transformers serve`` / hosted). Distributed runs use Hugging Face Jobs
+# (see examples/annotations/run_hf_job.py).
 annotations = [
     "lerobot[dataset]",
     "lerobot[transformers-dep]",
     "openai>=1.40,<2.0",
-    "vllm>=0.6.0,<1.0.0; sys_platform == 'linux'",
+    # ``vllm`` is intentionally NOT a hard dep: it pins an older torch, and
+    # uv's single unified lock would then cap ``torch`` for every extra
+    # (e.g. forcing 2.8 while ``torchcodec`` in [dataset] needs 2.11 -> ABI
+    # break in CI). The HF Jobs image (``vllm/vllm-openai``) provides vLLM;
+    # install it locally only if you run your own ``vllm serve``.
 ]
 
 # Tool implementations under src/lerobot/tools/. Each tool's dependencies
@@ -300,6 +306,7 @@ all = [
     "lerobot[multi_task_dit]",
     "lerobot[wallx]",
     "lerobot[pi]",
+    "lerobot[molmoact2]",
     "lerobot[smolvla]",
     # "lerobot[groot]", TODO(Steven): Gr00t requires specific installation instructions for flash-attn
     "lerobot[xvla]",
@@ -314,6 +321,8 @@ all = [
     "lerobot[libero]; sys_platform == 'linux'",
     "lerobot[metaworld]",
     "lerobot[sarm]",
+    "lerobot[robometer]",
+    "lerobot[topreward]",
     "lerobot[peft]",
     # "lerobot[unitree_g1]", TODO: Unitree requires specific installation instructions for unitree_sdk2
 ]
@@ -432,8 +441,11 @@ default.extend-ignore-identifiers-re = [
     "ein",
     "thw",
     "inpt",
+    "arange",
+    "is_compileable",
     "ROBOTIS",
-    "OT_VALUE"
+    "OT_VALUE",
+    "VanderBilt"
 ]
 
 # TODO: Uncomment when ready to use

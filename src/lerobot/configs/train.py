@@ -188,6 +188,12 @@ class TrainPipelineConfig(HubMixin):
             )
 
         active_cfg = self.trainable_config
+        if self.rename_map and active_cfg.pretrained_path is None:
+            raise ValueError(
+                "`rename_map` requires a pretrained policy checkpoint. "
+                "Fresh initialization derives feature names from the current dataset, so no rename is applied."
+            )
+
         if not self.job_name:
             if self.env is None:
                 self.job_name = f"{active_cfg.type}"

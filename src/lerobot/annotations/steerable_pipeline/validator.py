@@ -137,10 +137,14 @@ class StagingValidator:
         persistent: list[dict[str, Any]] = []
         for row in all_rows:
             self._check_column_routing(row, report, record.episode_index)
-            self._check_camera_field(
-                row, report, record.episode_index, self.dataset_camera_keys
-            )
-            if column_for_style(row.get("style")) == LANGUAGE_PERSISTENT:
+            self._check_camera_field(row, report, record.episode_index, self.dataset_camera_keys)
+            # ``_check_column_routing`` already recorded any unknown-style error;
+            # don't let the same ``column_for_style`` lookup raise here uncaught.
+            try:
+                column = column_for_style(row.get("style"))
+            except ValueError:
+                continue
+            if column == LANGUAGE_PERSISTENT:
                 persistent.append(row)
             else:
                 events.append(row)
@@ -166,15 +170,9 @@ class StagingValidator:
         try:
             validate_camera_field(style, camera)
         except ValueError as exc:
-            report.add_error(
-                f"ep={episode_index} module={row.get('_module')}: {exc}"
-            )
+            report.add_error(f"ep={episode_index} module={row.get('_module')}: {exc}")
             return
-        if (
-            is_view_dependent_style(style)
-            and dataset_camera_keys
-            and camera not in dataset_camera_keys
-        ):
+        if is_view_dependent_style(style) and dataset_camera_keys and camera not in dataset_camera_keys:
             report.add_error(
                 f"ep={episode_index} module={row.get('_module')}: camera {camera!r} on style "
                 f"{style!r} is not one of the dataset's video keys {sorted(dataset_camera_keys)!r}"

@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -89,6 +89,27 @@ def _row_event_sort_key(row: dict[str, Any]) -> tuple:
     )
 
 
+def _normalize_row(row: dict[str, Any], style: str | None, *, with_timestamp: bool) -> dict[str, Any]:
+    """Coerce a staged row into the language-column struct shape.
+
+    Key order matches ``PERSISTENT_ROW_FIELDS`` / ``EVENT_ROW_FIELDS`` — the
+    writer infers the parquet struct schema from insertion order, so
+    ``timestamp`` (persistent rows only) sits between ``style`` and ``camera``.
+    """
+    camera = row.get("camera")
+    validate_camera_field(style, camera)
+    out: dict[str, Any] = {
+        "role": str(row["role"]),
+        "content": None if row.get("content") is None else str(row["content"]),
+        "style": style,
+    }
+    if with_timestamp:
+        out["timestamp"] = float(row["timestamp"])
+    out["camera"] = None if camera is None else str(camera)
+    out["tool_calls"] = _normalize_tool_calls(row.get("tool_calls"))
+    return out
+
+
 def _normalize_persistent_row(row: dict[str, Any]) -> dict[str, Any]:
     """Coerce a staged row into the persistent column's struct shape."""
     style = row.get("style")
@@ -100,22 +121,10 @@ def _normalize_persistent_row(row: dict[str, Any]) -> dict[str, Any]:
     if "timestamp" not in row:
         raise ValueError(f"persistent row missing timestamp: {row!r}")
     if "role" not in row:
-        # Surface a friendly error from the writer rather than letting
-        # the raw KeyError bubble out of the dict access below — modules
-        # are expected to always emit ``role``, but the validator
-        # currently doesn't check this so a future bug would otherwise
-        # be hard to triage.
+        # Friendly error from the writer instead of a raw KeyError below;
+        # the validator doesn't check ``role`` yet.
         raise ValueError(f"persistent row missing role: {row!r}")
-    camera = row.get("camera")
-    validate_camera_field(style, camera)
-    return {
-        "role": str(row["role"]),
-        "content": None if row.get("content") is None else str(row["content"]),
-        "style": style,
-        "timestamp": float(row["timestamp"]),
-        "camera": None if camera is None else str(camera),
-        "tool_calls": _normalize_tool_calls(row.get("tool_calls")),
-    }
+    return _normalize_row(row, style, with_timestamp=True)
 
 
 def _normalize_event_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -129,15 +138,7 @@ def _normalize_event_row(row: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"event row with style {style!r} would not route to language_events")
     if "role" not in row:
         raise ValueError(f"event row missing role: {row!r}")
-    camera = row.get("camera")
-    validate_camera_field(style, camera)
-    return {
-        "role": str(row["role"]),
-        "content": None if row.get("content") is None else str(row["content"]),
-        "style": style,
-        "camera": None if camera is None else str(camera),
-        "tool_calls": _normalize_tool_calls(row.get("tool_calls")),
-    }
+    return _normalize_row(row, style, with_timestamp=False)
 
 
 def _normalize_tool_calls(value: Any) -> list[Any] | None:
@@ -338,19 +339,3 @@ def speech_atom(timestamp: float, text: str) -> dict[str, Any]:
             }
         ],
     }
-
-
-def normalize_rows_for_writer(
-    rows: Iterable[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Helper used by tests/validators to partition a flat row list into
-    (persistent_rows, event_rows) using ``column_for_style``.
-    """
-    persistent: list[dict[str, Any]] = []
-    events: list[dict[str, Any]] = []
-    for row in rows:
-        if column_for_style(row.get("style")) == LANGUAGE_PERSISTENT:
-            persistent.append(row)
-        else:
-            events.append(row)
-    return persistent, events

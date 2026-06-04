@@ -1,199 +1,281 @@
 # Annotation Pipeline
 
-`lerobot-annotate` populates the two language columns introduced by the
+`lerobot-annotate` watches each episode's video with a vision-language
+model (VLM) and writes natural-language annotations back into your
+dataset. It fills the two language columns from the
 [Language Columns and Recipes](./language_and_recipes) page —
-`language_persistent` and `language_events` — directly into
+`language_persistent` and `language_events` — straight into
 `data/chunk-*/file-*.parquet`.
+
+In short: point it at a LeRobot dataset, and it adds subtasks, plans,
+memory, interjections, speech, and visual Q&A that a policy can be
+trained on.
+
+## How it fits together
+
+```text
+  your dataset                  lerobot-annotate
+  (LeRobot v3.1)
+        │
+        ▼
+  ┌─────────────────────────────────────────────────────┐
+  │                    read episodes                     │
+  └──────────────────────────┬──────────────────────────┘
+                             │
+        ┌────────────────────┼────────────────────┐
+        ▼                    ▼                     ▼
+  ┌──────────┐      ┌───────────────┐        ┌──────────┐       one shared Qwen-VL
+  │   plan   │      │ interjections │        │   vqa    │  ◀──   server (vLLM, OpenAI
+  └────┬─────┘      └───────┬───────┘        └────┬─────┘        API) drives all three
+       └────────────────────┼─────────────────────┘
+                            │   each module stages raw JSONL
+                            ▼   into .annotate_staging/
+                  ┌─────────────────┐
+                  │    validator    │  ◀──  checks everything
+                  └────────┬────────┘
+                           ▼
+                  ┌─────────────────┐
+                  │     writer      │
+                  └────────┬────────┘
+                           ▼
+              data/chunk-*/file-*.parquet
+              (+ meta/info.json tools)
+```
+
+Three modules (`plan`, `interjections`, `vqa`) all talk to **one** shared
+VLM. Each module stages its output to disk, a validator checks it, and a
+single writer rewrites the dataset shards in place.
 
 ## What the pipeline produces
 
-A vocabulary-discovery phase derives a small canonical wording, then three
-modules write into a per-episode staging tree, then a single writer
-rewrites the data shards in place:
+Each module emits a few kinds of annotation ("styles"), routed to one of
+the two language columns:
 
-| Style / atom                                | Column                | Module         |
-| ------------------------------------------- | --------------------- | -------------- |
-| `subtask` (Pi0.7-style "how, not what")     | `language_persistent` | `plan`         |
-| `plan` (initial + refresh on interjection)  | `language_persistent` | `plan`         |
-| `memory` (MEM-style compression)            | `language_persistent` | `plan`         |
-| `task_aug` (rephrasings of canonical task)  | `language_persistent` | `plan`         |
-| `interjection`                              | `language_events`     | `interjections`|
-| speech tool-call atom (`style=null`, `say`) | `language_events`     | `interjections`|
-| `vqa` (user / assistant pair)               | `language_events`     | `vqa`          |
+| Style / atom                                | Column                | Module          |
+| ------------------------------------------- | --------------------- | --------------- |
+| `subtask` (Pi0.7-style "how, not what")     | `language_persistent` | `plan`          |
+| `plan` (initial + refresh on interjection)  | `language_persistent` | `plan`          |
+| `memory` (MEM-style compression)            | `language_persistent` | `plan`          |
+| `task_aug` (rephrasings of the task)        | `language_persistent` | `plan`          |
+| `interjection`                              | `language_events`     | `interjections` |
+| speech tool-call atom (`style=null`, `say`) | `language_events`     | `interjections` |
+| `vqa` (user / assistant pair)               | `language_events`     | `vqa`           |
 
-The `plan` module is constrained to a **canonical vocabulary** discovered
-once per dataset by the `vocabulary` module (phase 0). It watches a few
-sample episode videos (`--vocabulary.sample_episodes`, default `3`) and
-asks the VLM to derive a small set of imperative subtask labels and
-first-person memory milestones that recur across the demos. The VLM
-picks the right number of entries itself based on what it sees in the
-clips — short pick-and-place demos get ~6 subtask labels, longer
-multi-step recipes get more. The result lands at
-`meta/canonical_vocabulary.json` (human-readable / hand-editable) and
-is reused on every subsequent run. The `plan` module then constrains
-both subtask + memory generation to those exact strings — the
-downstream low-level policy sees a small, repeatable target
-distribution instead of thousands of LLM paraphrases. Disable with
-`--vocabulary.enabled=False` to fall back to free-form generation.
+### How subtasks are generated
 
-The writer does **not** add a `tools` column to the parquet — the tool
-catalog lives at `meta/info.json["tools"]` instead (see
-[Tools](./tools)). After every annotation run the pipeline ensures the
-canonical `say` schema is present in that list, preserving any tools the
-user pre-declared.
+The `plan` module doesn't ask the VLM for subtasks in one shot. Instead
+it uses a two-step **describe → segment** flow:
 
-If you want to declare additional tools for a dataset before annotation
-runs, edit `meta/info.json["tools"]` directly — the pipeline preserves
-anything already there. Implementations of those tools live under
-`src/lerobot/tools/`; one file per tool, registered via
-`TOOL_REGISTRY`. See the [Tools](./tools) doc for the authoring guide.
+1. **Describe** — the VLM narrates only what it actually sees in the
+   chosen camera (no guessing about the task).
+2. **Segment** — that description is fed back in, and the VLM splits the
+   episode into consecutive atomic subtasks.
 
-## Running locally
+The resulting spans are then stitched into a gap-free, full-episode
+cover, so **every frame has exactly one active subtask**. See
+[`run_hf_job.py`](https://github.com/huggingface/lerobot/blob/main/examples/annotations/run_hf_job.py)
+for the production settings (single camera, embedded frames, windowed
+subtask generation).
 
-Install the extra and invoke the console script. Episode-level
-concurrency comes from `--executor.episode_parallelism` (default 16);
-that is the only knob the in-process executor exposes.
+### Tools
 
-```bash
-uv sync --extra annotations
-uv run lerobot-annotate \
-  --root=/path/to/dataset \
-  --vlm.model_id=Qwen/Qwen2.5-VL-7B-Instruct
-```
+The writer does **not** add a `tools` column to the parquet. The tool
+catalog lives in `meta/info.json["tools"]` instead (see [Tools](./tools)).
+After every run, the pipeline makes sure the canonical `say` schema is in
+that list, keeping any tools you declared beforehand.
 
-The pipeline attaches actual camera footage to every `plan` /
-`interjections` / `vqa` prompt by default, decoded from the dataset's
-first `observation.images.*` stream. Override with
-`--vlm.camera_key=observation.images.<name>` to pin a specific
-viewpoint. Datasets with no video tracks fall back to text-only prompts
-automatically.
-
-**The `plan` module sees the whole episode as one video block.** Subtask
-decomposition gets a `{"type":"video", "video":[<frames>]}` block
-covering the entire demonstration; Qwen-VL pools temporally on its own
-and decides where to cut. There is no keyframe stride or count knob —
-`--plan.max_video_frames` (default 128) only caps the frames packed
-into the video block as a model-capacity bound. The `interjections`
-module attaches a short window of frames straddling the interjection
-timestamp. The `vqa` module grounds each VQA pair on a single frame —
-its `--vqa.K` knob sets how many consecutive frames each emission tick
-anchors, and every anchored frame gets its own VQA pair on that one
-frame (there is no per-pair frame window).
+Want to add your own tool? Edit `meta/info.json["tools"]` directly — the
+pipeline preserves whatever is already there. That makes the tool visible
+to the chat template, so the model can learn to _generate_ the call. The
+runtime layer that actually _executes_ a generated call (the `Tool`
+protocol / `TOOL_REGISTRY` under `src/lerobot/tools/`) is not part of
+this PR — the [Tools](./tools) doc marks those pieces as
+not-yet-implemented.
 
 ## Running on Hugging Face Jobs
 
-Distributed annotation is delegated to
-[Hugging Face Jobs](https://huggingface.co/docs/hub/en/jobs). The repo
-ships a launcher script you copy and edit for your dataset:
+Annotation runs on [Hugging Face Jobs](https://huggingface.co/docs/hub/en/jobs).
+The repo ships a launcher script you copy and tweak for your dataset:
 
 ```bash
 HF_TOKEN=hf_... uv run python examples/annotations/run_hf_job.py
 ```
 
-[`examples/annotations/run_hf_job.py`](https://github.com/huggingface/lerobot/blob/main/examples/annotations/run_hf_job.py)
-spawns one `h200x2` job that:
+[`run_hf_job.py`](https://github.com/huggingface/lerobot/blob/main/examples/annotations/run_hf_job.py)
+starts a single-GPU `h200` job (bump it to `h200x4` for big datasets)
+that:
 
-1. installs the branch under test plus the annotation extras,
-2. boots two vllm servers (one per GPU) for the chosen model,
+1. installs `lerobot` (from `main`) plus the annotation extras,
+2. boots one vLLM server per GPU (using the `vllm/vllm-openai` image) and
+   drives it over the OpenAI-compatible API,
 3. runs the `plan` / `interjections` / `vqa` modules across the dataset
-   via `lerobot-annotate`,
-4. uploads the annotated dataset to `--push_to_hub`.
+   with `lerobot-annotate`,
+4. with `--push_to_hub=true`, uploads the result to `--new_repo_id` (or
+   back to `--repo_id` in place if you leave that unset).
 
-To target a different dataset, model, or hub repo, edit the `CMD` block
-inside the script — every flag in there maps directly onto a CLI flag of
-`lerobot-annotate` (see `lerobot-annotate --help` for the full list).
+To use a different dataset, model, or hub repo, edit the `CMD` block in
+the script. Every flag there maps directly to a `lerobot-annotate` flag
+(run `lerobot-annotate --help` for the full list).
 
-## Style-to-recipe consumer mapping
+## Key options
 
-The pipeline's outputs are designed to be consumed by recipes (see
-[Language Columns and Recipes](./language_and_recipes)) — for the
-canonical PI052 blend `src/lerobot/configs/recipes/subtask_mem_vqa_speech.yaml`:
+These are the flags you'll reach for most often. Run
+`lerobot-annotate --help` for everything else; the defaults are tuned for
+short manipulation episodes.
 
-- low-level / high-level / memory-update branches consume
-  `subtask`/`plan`/`memory` from `language_persistent`.
-- An interjection-response branch consumes `interjection` events plus
-  the paired speech atom (merged into one assistant target turn via
-  `tool_calls_from`) and the same-timestamp `plan` refresh.
-- A VQA branch consumes the `(vqa, user)` and `(vqa, assistant)` pairs
-  from `language_events`.
+### Dataset in / out
 
-## Why the design splits state from events
+| Flag              | Default | What it does                                                            |
+| ----------------- | ------- | ----------------------------------------------------------------------- |
+| `--repo_id`       | —       | Hub dataset to annotate (downloaded if `--root` unset).                 |
+| `--root`          | —       | Annotate a local dataset directory instead.                             |
+| `--new_repo_id`   | —       | Push the result to a new repo (leaves the source repo untouched).       |
+| `--push_to_hub`   | `false` | Upload after annotating (to `--new_repo_id`, else back to `--repo_id`). |
+| `--only_episodes` | all     | Annotate just these episode indices (handy for a test run).             |
+| `--seed`          | `1729`  | Seeds the RNGs that pick interjection timestamps + VQA question types.  |
 
-Two things drive the scope:
+### Which modules run
 
-1. **Persistent state vs exact-event split.** Persistent rows
-   (`subtask`, `plan`, `memory`) broadcast per episode and answer "what
-   state is in force at this frame?". Event rows (`interjection`, `vqa`,
-   speech) only appear on the exact frame whose timestamp matches the
-   emission. The pipeline writes timestamps taken straight from the
-   source parquet — no floating-point recomputation.
-2. **One Qwen-VL pass.** All three modules share a single VLM client
-   (vLLM if available, transformers fallback) so the cost is one model
-   load per dataset, not three.
+Every module is on by default and can be toggled independently (set to
+`false` to skip it, e.g. to iterate on one module at a time):
 
-## Module independence and staged reruns
+| Flag                      | Default | Turns off                           |
+| ------------------------- | ------- | ----------------------------------- |
+| `--plan.enabled`          | `true`  | subtasks + plan + memory + task_aug |
+| `--interjections.enabled` | `true`  | interjections + speech atoms        |
+| `--vqa.enabled`           | `true`  | the VQA pairs                       |
 
-Each module writes its raw output to
-`<root>/.annotate_staging/episode_{N:06d}/<module>.jsonl`. That makes
-prompt iteration cheap — re-running one module overwrites only its own
-JSONL file before the writer composes the final parquet. Modules can be
-disabled via `--plan.enabled=false` (and likewise `--interjections.enabled`
-/ `--vqa.enabled`) to
-test them in isolation.
+### The VLM (`--vlm.*`)
 
-## Validation/report checks before final write
+| Flag                       | Default            | What it does                                                                        |
+| -------------------------- | ------------------ | ----------------------------------------------------------------------------------- |
+| `--vlm.model_id`           | `Qwen/Qwen3.6-27B` | The model to serve and prompt.                                                      |
+| `--vlm.camera_key`         | first `images.*`   | Which camera every prompt is grounded on.                                           |
+| `--vlm.serve_command`      | auto               | The exact `vllm serve …` command (set TP size, GPU memory, `--max-model-len` here). |
+| `--vlm.parallel_servers`   | `1`                | Independent servers for round-robin routing (one per GPU).                          |
+| `--vlm.num_gpus`           | `0`                | GPUs per server (`0` = one each).                                                   |
+| `--vlm.client_concurrency` | `16`               | In-flight requests across all servers.                                              |
+| `--vlm.max_new_tokens`     | `512`              | Generation cap per call.                                                            |
+| `--vlm.temperature`        | `0.2`              | Sampling temperature.                                                               |
 
-Before the writer runs, `StagingValidator` checks:
+### Subtasks / plan / memory (`--plan.*`)
 
-- exact frame-timestamp alignment for every event row;
-- no orphan speech / interjection pairs;
+| Flag                            | Default    | What it does                                                                                                              |
+| ------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `--plan.frames_per_second`      | `1.0`      | How densely the episode video is sampled.                                                                                 |
+| `--plan.max_video_frames`       | `32`       | Hard cap on frames per call (context-budget guard — don't exceed ~32 for a 32k context).                                  |
+| `--plan.subtask_window_seconds` | `0`        | Split long episodes into fixed windows for constant frame density (`0` = whole episode).                                  |
+| `--plan.plan_max_steps`         | `8`        | Upper bound on subtasks per episode.                                                                                      |
+| `--plan.subtask_describe_first` | `true`     | Run the describe→segment grounding pass (best subtask quality; +1 call/episode).                                          |
+| `--plan.emit_plan`              | `true`     | Emit the numbered `plan` rows (`false` = subtasks + memory only).                                                         |
+| `--plan.n_task_rephrasings`     | `10`       | How many `task_aug` rephrasings to emit (`0` disables).                                                                   |
+| `--plan.derive_task_from_video` | `if_short` | Use the dataset task as-is (`off`), only when it's missing/short (`if_short`), or always re-derive from video (`always`). |
+| `--plan.use_video_url`          | `false`    | Send a server-side video clip instead of embedded frames.                                                                 |
+
+### Interjections + VQA
+
+| Flag                                            | Default | What it does                                               |
+| ----------------------------------------------- | ------- | ---------------------------------------------------------- |
+| `--interjections.max_interjections_per_episode` | `3`     | Cap on interjection/speech pairs per episode.              |
+| `--vqa.vqa_emission_hz`                         | `1.0`   | How often VQA pairs are emitted.                           |
+| `--vqa.restrict_to_default_camera`              | `false` | Ground VQA only on `--vlm.camera_key` (else every camera). |
+| `--executor.episode_parallelism`                | `16`    | Episodes processed concurrently within each phase.         |
+
+## Contributing new modules
+
+The pipeline is built to grow, and **contributions are very welcome** —
+a brand-new module (say, trajectory traces or affordances), a new prompt
+template, a smarter grounding flow, or quality fixes to the existing
+`plan` / `interjections` / `vqa` modules.
+
+Every module lives under
+`src/lerobot/annotations/steerable_pipeline/modules/`, shares the VLM
+client and the keyframe cache, writes its raw output to the staging
+tree, and plugs into the executor as its own phase. Got an idea? Open an
+issue or PR on [the repo](https://github.com/huggingface/lerobot).
+
+## How recipes consume the output
+
+The annotations are meant to be read by recipes (see
+[Language Columns and Recipes](./language_and_recipes)). Typically:
+
+- low-level / high-level / memory-update branches read
+  `subtask` / `plan` / `memory` from `language_persistent`.
+- an interjection-response branch reads `interjection` events plus the
+  paired speech atom (merged into one assistant turn via `tool_calls_from`)
+  and the matching `plan` refresh at the same timestamp.
+- a VQA branch reads the `(vqa, user)` and `(vqa, assistant)` pairs from
+  `language_events`.
+
+## Why state and events are split
+
+Two ideas shape the design:
+
+1. **Persistent state vs. exact events.** Persistent rows (`subtask`,
+   `plan`, `memory`) apply to the whole episode and answer "what's true
+   right now?". Event rows (`interjection`, `vqa`, speech) appear only on
+   the one frame whose timestamp matches. Timestamps are copied straight
+   from the source parquet — never recomputed in floating point.
+2. **One VLM pass.** All three modules share a single VLM client (the
+   OpenAI-compatible client talking to the job's vLLM server), so you pay
+   for one model load per dataset, not three.
+
+## Re-running a single module
+
+Each module stages its raw output to
+`<root>/.annotate_staging/episode_{N:06d}/<module>.jsonl`. This makes
+prompt iteration cheap: re-running one module overwrites only its own
+JSONL, then the writer recomposes the final parquet. Disable modules you
+don't want with `--plan.enabled=false` (and likewise
+`--interjections.enabled` / `--vqa.enabled`) to test one at a time.
+
+## What the validator checks
+
+Before the writer runs, `StagingValidator` confirms:
+
+- every event row lands exactly on a real frame timestamp;
+- no speech / interjection pairs are left orphaned;
 - `plan` is refreshed at every interjection timestamp;
-- `memory` rows fall on subtask boundaries (warning, not error);
-- VQA assistant `content` parses as JSON in one of the
+- `memory` rows fall on subtask boundaries (a warning, not an error);
+- each VQA assistant `content` is valid JSON in one of the
   bbox / keypoint / count / attribute / spatial shapes;
-- every row routes to the column dictated by `column_for_style(style)`.
+- every row goes to the column chosen by `column_for_style(style)`.
 
-Errors abort the writer (`--skip_validation=true` overrides for debugging).
+Any error aborts the writer. Pass `--skip_validation=true` to override
+while debugging.
 
-## Paper inspirations per module
+## Where each module's ideas come from
 
-- **`plan` module — subtasks.** Hi Robot ([Shi 2025](https://arxiv.org/abs/2502.19417))
-  atom granularity ("pick up one piece of lettuce", "place bowl to box");
-  Pi0.7 ([Physical Intelligence 2025](https://pi.website/pi07)) "how, not
-  what" detail.
-- **`plan` module — memory.** MEM ([Torne 2026](https://arxiv.org/abs/2603.03596))
-  compression directive: keep only minimal relevant information; functional
-  outcomes preserved, specific attributes dropped.
-- **`interjections` module.** Hi Robot scenario taxonomy: negative task,
+- **`plan` — subtasks.** Hi Robot ([Shi 2025](https://arxiv.org/abs/2502.19417))
+  for atom granularity ("pick up one piece of lettuce", "place bowl to
+  box"); Pi0.7 ([Physical Intelligence 2025](https://pi.website/pi07))
+  for "how, not what" detail.
+- **`plan` — memory.** MEM ([Torne 2026](https://arxiv.org/abs/2603.03596)):
+  keep only the minimal relevant information — preserve outcomes, drop
+  specific attributes.
+- **`interjections`.** Hi Robot's scenario taxonomy: negative task,
   situated correction, specific constraint, preference. Speech is a
-  tool-call-only atom (`tool_calls=[{type:function, function:{name:"say",
-arguments:{text:...}}}]`).
-- **`vqa` module.** ECoT ([Zawalski 2024](https://arxiv.org/abs/2407.08693))
-  grounded features (bounding boxes in pixel `[x_min, y_min, x_max, y_max]`,
-  keypoints) and Steerable VLA Policies ([Zhao 2025](https://arxiv.org/abs/2509.07626))
-  multi-abstraction grounding. Pi0.7 also grounds answers across
-  multiple abstraction levels.
+  tool-call-only atom
+  (`tool_calls=[{type:function, function:{name:"say", arguments:{text:...}}}]`).
+- **`vqa`.** ECoT ([Zawalski 2024](https://arxiv.org/abs/2407.08693)) for
+  grounded features (pixel bounding boxes `[x_min, y_min, x_max, y_max]`,
+  keypoints) and Steerable VLA Policies
+  ([Zhao 2025](https://arxiv.org/abs/2509.07626)) for multi-abstraction
+  grounding. Pi0.7 also grounds answers across abstraction levels.
 
-Future maintainers should adjust the prompt templates in
-`src/lerobot/annotations/steerable_pipeline/prompts/` against these
-references rather than rewriting from scratch.
+When improving a module, tweak its prompt template in
+`src/lerobot/annotations/steerable_pipeline/prompts/` rather than
+rewriting from scratch.
 
-## Compute and list-size estimates
+## Roughly how much it costs
 
-Per episode, the pipeline issues O(`max_steps`) `plan`-module calls,
-O(`max_interjections_per_episode`) `interjections`-module calls, and
-O(`vqa_emission_hz × episode_seconds`) `vqa`-module calls. With defaults
-(8 subtasks, 1 interjection, 1 Hz × 3 pairs) and 30-second episodes, that
-is ~50 VLM calls per episode. `language_persistent` per episode is ~10s of
-KB at most (parquet dictionary-encodes one entry per episode);
-`language_events` is empty on most frames and is bounded by the number of
-emissions, not `num_frames × num_emissions`.
+Per episode, the pipeline makes about `max_steps` plan calls,
+`max_interjections_per_episode` interjection calls, and
+`vqa_emission_hz × episode_seconds` VQA calls. With the defaults (8
+subtasks, 1 interjection, 1 Hz × 3 pairs) on a 30-second episode, that's
+~50 VLM calls.
 
-## Reproducibility via seed and prompt hashes
-
-`--seed` (default 1729) feeds the per-episode RNGs that select interjection
-timestamps and VQA question types. Combined with the deterministic prompt
-templates checked into `prompts/`, two runs at the same seed against the
-same dataset and the same model checkpoint produce byte-identical staging
-artifacts. Prompt edits are recorded by file hash; future tooling can pin
-expected `(seed, prompt_hash)` pairs into the dataset card.
+Storage stays small: `language_persistent` is at most tens of KB per
+episode (parquet dictionary-encodes the one entry that repeats across
+frames), and `language_events` is empty on most frames — its size scales
+with the number of emissions, not `num_frames × num_emissions`.

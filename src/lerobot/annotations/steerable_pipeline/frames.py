@@ -146,18 +146,21 @@ class VideoFrameProvider:
     # ``ExecutorConfig.episode_parallelism``); guard the dict cache and the
     # one-shot warn flag against concurrent updates from worker threads.
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    _warned_decode_fail: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata  # noqa: PLC0415
 
         self._meta = LeRobotDatasetMetadata(repo_id="local", root=self.root)
-        # ``camera_keys`` covers both image- and video-stored cameras and is
-        # always defined on the metadata (``[]`` in the worst case), so it is
-        # the single source we need here.
-        keys = list(self._meta.camera_keys)
-        # Last-resort fallback: if metadata didn't surface anything but the
-        # caller explicitly named a camera (``--vlm.camera_key=...``), trust
-        # them — the key is by definition known to exist on the dataset.
+        # Only ``video_keys`` are decodable here: the clip/decode paths read
+        # ``videos/<key>/from_timestamp`` from episode metadata, which exists
+        # only for video-stored cameras. Image-stored cameras (also in
+        # ``camera_keys``) would KeyError, so restrict the list — and the
+        # default — to video keys.
+        keys = list(self._meta.video_keys)
+        # Last-resort fallback: if metadata didn't surface any video keys but
+        # the caller explicitly named a camera (``--vlm.camera_key=...``),
+        # trust them — the key is by definition known to exist on the dataset.
         if not keys and self.camera_key:
             keys = [self.camera_key]
         self._camera_keys = keys
@@ -283,7 +286,9 @@ class VideoFrameProvider:
             str(out_path),
         ]
         try:
-            subprocess.run(cmd, check=True, timeout=300)
+            # ffmpeg is invoked by name via PATH lookup (the standard way to
+            # call the CLI); the arg list is fully controlled here, not shell.
+            subprocess.run(cmd, check=True, timeout=300)  # nosec B607
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
             return None
         return out_path if out_path.exists() and out_path.stat().st_size > 0 else None
@@ -333,13 +338,12 @@ class VideoFrameProvider:
         # []) is debuggable from the job log instead of post-hoc parquet
         # inspection. Subsequent failures stay quiet.
         with self._lock:
-            already_warned = getattr(self, "_warned_decode_fail", False)
+            already_warned = self._warned_decode_fail
             if not already_warned:
                 self._warned_decode_fail = True
         if not already_warned:
             logger.warning(
-                "VideoFrameProvider._decode failed for episode=%s camera=%s "
-                "video_path=%s backends=%s: %s",
+                "VideoFrameProvider._decode failed for episode=%s camera=%s video_path=%s backends=%s: %s",
                 episode_index,
                 camera_key,
                 video_path,
@@ -381,13 +385,24 @@ def _decode_frames_ffmpeg(video_path: Path, timestamps: list[float]) -> list[Any
 
     frames: list[Any] = []
     for ts in timestamps:
-        proc = subprocess.run(
+        # ffmpeg invoked by name via PATH lookup; fully-controlled arg list, no shell.
+        proc = subprocess.run(  # nosec B607
             [
-                "ffmpeg", "-nostdin", "-loglevel", "error",
-                "-ss", f"{max(ts, 0.0):.3f}",
-                "-i", str(video_path),
-                "-frames:v", "1",
-                "-f", "image2pipe", "-vcodec", "png", "pipe:1",
+                "ffmpeg",
+                "-nostdin",
+                "-loglevel",
+                "error",
+                "-ss",
+                f"{max(ts, 0.0):.3f}",
+                "-i",
+                str(video_path),
+                "-frames:v",
+                "1",
+                "-f",
+                "image2pipe",
+                "-vcodec",
+                "png",
+                "pipe:1",
             ],
             capture_output=True,
             check=True,
