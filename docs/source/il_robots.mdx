@@ -394,6 +394,38 @@ Control the data recording flow using keyboard shortcuts:
 - Press **Left Arrow (`←`)**: Cancel the current episode and re-record it.
 - Press **Escape (`ESC`)**: Immediately stop the session, encode videos, and upload the dataset.
 
+##### 5. Interactive Reset Mode (Wayland / headless compatibility)
+
+On Wayland-based desktops (the default on recent GNOME/KDE), `pynput` cannot
+capture global keyboard shortcuts, so the arrow and escape keys above have no
+effect during recording. The same limitation applies to purely headless
+sessions over SSH.
+
+As an alternative, set `--dataset.reset_time_s` to a **negative** value to
+enable an interactive recording mode that relies only on `stdin` and POSIX
+signals (no display server, no extra threads):
+
+```bash
+lerobot-record \
+  ... \
+  --dataset.reset_time_s=-1 \
+  ...
+```
+
+When active:
+
+- **Between episodes**, the countdown is replaced by a blocking `stdin` prompt
+  `[Y/n/q]`:
+  - `Y` or `Enter` → keep the scene and start the next episode
+  - `n` → discard the episode just recorded and re-record it
+  - `q` → stop the recording session
+- **During recording**, press **`Ctrl+\`** (SIGQUIT) to end the current episode
+  early — the Wayland-friendly equivalent of the Right Arrow.
+
+This mode coexists with `pynput` when a display server is available (e.g. on an
+X11 session), and falls back to a no-op with a warning when `stdin` is not a
+TTY, so automated runs do not block on input.
+
 #### Tips for gathering data
 
 Once you're comfortable with data recording, you can create a larger dataset for training. A good starting task is grasping an object at different locations and placing it in a bin. We suggest recording at least 50 episodes, with 10 episodes per location. Keep the cameras fixed and maintain consistent grasping behavior throughout the recordings. Also make sure the object you are manipulating is visible on the camera's. A good rule of thumb is you should be able to do the task yourself by only looking at the camera images.
@@ -406,7 +438,7 @@ If you want to dive deeper into this important topic, you can check out the [blo
 
 #### Troubleshooting:
 
-- On Linux, if the left and right arrow keys and escape key don't have any effect during data recording, make sure you've set the `$DISPLAY` environment variable. See [pynput limitations](https://pynput.readthedocs.io/en/latest/limitations.html#linux).
+- On Linux, if the left and right arrow keys and escape key don't have any effect during data recording, make sure you've set the `$DISPLAY` environment variable. See [pynput limitations](https://pynput.readthedocs.io/en/latest/limitations.html#linux). On Wayland sessions (where `pynput` cannot capture global shortcuts at all) or headless setups, use the [Interactive Reset Mode](#5-interactive-reset-mode-wayland--headless-compatibility) instead by passing `--dataset.reset_time_s=-1`.
 
 ## Visualize a dataset
 
