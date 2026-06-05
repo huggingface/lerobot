@@ -69,6 +69,8 @@
     title: VLA-JEPA
   - local: eo1
     title: EO-1
+  - local: lingbot_va
+    title: LingBot-VA
   - local: groot
     title: NVIDIA GR00T N1.5
   - local: xvla
