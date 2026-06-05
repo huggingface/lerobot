@@ -105,6 +105,7 @@ def rollout(
     seeds: list[int] | None = None,
     return_observations: bool = False,
     render_callback: Callable[[gym.vector.VectorEnv], None] | None = None,
+    predicted_frames_callback: Callable[[PreTrainedPolicy], None] | None = None,
 ) -> dict:
     """Run a batched policy rollout once through a batch of environments.
 
@@ -134,6 +135,9 @@ def rollout(
             are returned optionally because they typically take more memory to cache. Defaults to False.
         render_callback: Optional rendering callback to be used after the environments are reset, and after
             every step.
+        predicted_frames_callback: Optional callback invoked after every ``select_action`` with the policy
+            itself. World-model policies (e.g. LingBot-VA) stash their decoded predicted video frames on
+            ``policy.last_predicted_frames``; this lets the caller collect them to save predicted-video MP4s.
     Returns:
         The dictionary described above.
     """
@@ -184,6 +188,8 @@ def rollout(
         observation = preprocessor(observation)
         with torch.inference_mode():
             action = policy.select_action(observation)
+        if predicted_frames_callback is not None:
+            predicted_frames_callback(policy)
         action = postprocessor(action)
 
         action_transition = {ACTION: action}
@@ -273,6 +279,7 @@ def eval_policy(
     videos_dir: Path | None = None,
     return_episode_data: bool = False,
     start_seed: int | None = None,
+    save_predicted_video: bool = False,
 ) -> dict:
     """
     Args:
@@ -290,6 +297,11 @@ def eval_policy(
     """
     if max_episodes_rendered > 0 and not videos_dir:
         raise ValueError("If max_episodes_rendered > 0, videos_dir must be provided.")
+
+    # World-model policies (e.g. LingBot-VA) opt into predicted-video saving via their config.
+    save_predicted_video = save_predicted_video or bool(
+        getattr(getattr(policy, "config", None), "save_predicted_video", False)
+    )
 
     if not isinstance(policy, PreTrainedPolicy):
         exc = ValueError(
@@ -334,6 +346,21 @@ def eval_policy(
     if max_episodes_rendered > 0:
         video_paths: list[str] = []
 
+    if save_predicted_video:
+        if not videos_dir:
+            raise ValueError("If save_predicted_video is True, videos_dir must be provided.")
+        predicted_video_paths: list[str] = []
+        n_predicted_rendered = 0
+
+    # Collects the policy's decoded predicted-video frames across a rollout (world-model policies only).
+    def collect_predicted_frames(policy: PreTrainedPolicy):
+        frames = getattr(policy, "last_predicted_frames", None)
+        if frames is not None:
+            pred_frames.append(
+                np.asarray(frames.detach().to("cpu")) if hasattr(frames, "detach") else np.asarray(frames)
+            )
+            policy.last_predicted_frames = None
+
     if return_episode_data:
         episode_data: dict | None = None
 
@@ -344,6 +371,9 @@ def eval_policy(
         # step.
         if max_episodes_rendered > 0:
             ep_frames: list[np.ndarray] = []
+
+        if save_predicted_video:
+            pred_frames: list[np.ndarray] = []
 
         if start_seed is None:
             seeds = None
@@ -361,6 +391,7 @@ def eval_policy(
             seeds=list(seeds) if seeds else None,
             return_observations=return_episode_data,
             render_callback=render_frame if max_episodes_rendered > 0 else None,
+            predicted_frames_callback=collect_predicted_frames if save_predicted_video else None,
         )
 
         # Figure out where in each rollout sequence the first done condition was encountered (results after
@@ -426,6 +457,25 @@ def eval_policy(
                 threads.append(thread)
                 n_episodes_rendered += 1
 
+        # Maybe save the policy's predicted (imagined) video for this batch's rollout.
+        if save_predicted_video and len(pred_frames) > 0:
+            # pred_frames is a list of [F, H, W, C] uint8 stacks emitted on chunk refills; concat over time.
+            predicted_video = np.concatenate(pred_frames, axis=0)
+            videos_dir.mkdir(parents=True, exist_ok=True)
+            predicted_video_path = videos_dir / f"pred_episode_{n_predicted_rendered}.mp4"
+            predicted_video_paths.append(str(predicted_video_path))
+            thread = threading.Thread(
+                target=write_video,
+                args=(
+                    str(predicted_video_path),
+                    predicted_video,
+                    env.unwrapped.metadata["render_fps"],
+                ),
+            )
+            thread.start()
+            threads.append(thread)
+            n_predicted_rendered += 1
+
         progbar.set_postfix(
             {"running_success_rate": f"{np.mean(all_successes[:n_episodes]).item() * 100:.1f}%"}
         )
@@ -468,6 +518,9 @@ def eval_policy(
 
     if max_episodes_rendered > 0:
         info["video_paths"] = video_paths
+
+    if save_predicted_video:
+        info["predicted_video_paths"] = predicted_video_paths
 
     return info
 

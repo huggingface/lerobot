@@ -1,0 +1,120 @@
+# LingBot-VA
+
+LingBot-VA is an **autoregressive video-action world-model policy** built on the **Wan2.2**
+video-diffusion stack. It interleaves, in one autoregressive sequence, the prediction of
+future **video latents** and **robot actions** ("VA" = Video-Action). The LeRobot
+integration wires LingBot-VA into the standard training, evaluation and processor
+interfaces.
+
+## Model Overview
+
+LingBot-VA is a **dual-stream "mixture-of-transformers"**: a video/latent stream
+(`patch_embedding_mlp → blocks → proj_out`) and an action stream
+(`action_embedder → blocks → action_proj_out`) share the same 30 transformer blocks and
+text conditioning. Actions are produced by the dedicated `action_proj_out` head — they are
+**not** decoded from predicted pixels, though video and action are co-trained.
+
+| Component | Class | Role |
+|---|---|---|
+| DiT backbone (trainable) | `WanTransformer3DModel` | ~5B-param dual-stream transformer (the only weights stored in the LeRobot checkpoint). |
+| VAE (frozen) | `AutoencoderKLWan` | Wan2.2 VAE, `z_dim=48`. Lazy-pulled from the source repo. |
+| Text encoder (frozen) | `UMT5EncoderModel` | UMT5-XXL, `d_model=4096`. Lazy-pulled from the source repo. |
+
+At inference the policy runs an autoregressive loop per chunk: it denoises the video-latent
+stream (CFG, ~20 steps) and the action stream (~50 steps) with two independent
+flow-matching schedulers, maintaining a KV cache across chunks. Real observed keyframes are
+fed back into the KV cache as the chunk is executed (closed-loop world modeling).
+
+### What the LeRobot Integration Covers
+
+- Standard `policy.type=lingbot_va` configuration through LeRobot.
+- Checkpoint conversion from the released HuggingFace checkpoints.
+- Autoregressive dual-stream inference behind the standard `select_action` interface
+  (single-environment eval, `--eval.batch_size=1`).
+- Opt-in saving of the policy's **predicted (imagined) videos** during eval / training.
+- Evaluation with `lerobot-eval` on the LIBERO benchmark.
+
+Training (the flow-matching dual-stream loss + latent dataset) is part of a follow-up
+training port and is not yet wired into `lerobot-train`.
+
+## Installation
+
+1. Install LeRobot by following the [Installation Guide](./installation).
+2. Install the LingBot-VA extra (brings in `diffusers>=0.36` for the Wan2.2 stack):
+
+```bash
+pip install -e ".[lingbot_va]"
+# For LIBERO evaluation (Linux only):
+pip install -e ".[lingbot_va,libero]"
+```
+
+## Checkpoint Conversion
+
+The released checkpoints are diffusers-style directories
+(`robbyant/lingbot-va-base`, `robbyant/lingbot-va-posttrain-robotwin`,
+`robbyant/lingbot-va-posttrain-libero-long`). Convert one to LeRobot format with:
+
+```bash
+python -m lerobot.policies.lingbot_va.convert_lingbot_va_checkpoints \
+    --checkpoint robbyant/lingbot-va-posttrain-libero-long \
+    --variant libero \
+    --output_dir outputs/lingbot_va_libero_long
+```
+
+**Packaging:** only the trainable ~5B transformer is stored in the LeRobot
+`model.safetensors`. The frozen VAE + UMT5 + tokenizer (~20 GB) are **lazily pulled** from
+`config.wan_pretrained_path` at load time (defaults to the source repo). Pass
+`--bundle-frozen` to copy those sub-folders next to the converted checkpoint instead.
+
+Run conversion on a Linux machine with a CUDA GPU and enough RAM/VRAM to materialize the
+transformer.
+
+## Evaluation (LIBERO)
+
+```bash
+lerobot-eval \
+    --policy.path=outputs/lingbot_va_libero_long \
+    --env.type=libero --env.task=libero_10 \
+    --eval.n_episodes=50 --eval.batch_size=1 \
+    --output_dir=outputs/eval/lingbot_va_libero
+```
+
+LingBot-VA's streaming inference (KV cache + observed-keyframe feedback) is implemented for
+single-environment eval; use `--eval.batch_size=1`.
+
+### Saving predicted (imagined) videos
+
+Set `--policy.save_predicted_video=true` to additionally VAE-decode the predicted video
+latents and write `pred_episode_*.mp4` next to the env-rendered `eval_episode_*.mp4` videos.
+The same flag works for the periodic eval during `lerobot-train`.
+
+## Inference Hyperparameters (LIBERO)
+
+| Key | Value |
+|---|---|
+| height × width | 128 × 128 |
+| cameras | `observation.images.image` (agentview), `observation.images.image2` (eye-in-hand) |
+| action channels used | 0–6 (7-DoF arm + gripper) |
+| action_per_frame / frame_chunk_size | 4 / 4 |
+| attn_window | 30 |
+| video / action denoising steps | 20 / 50 |
+| guidance_scale / action_guidance_scale | 5 / 1 |
+| snr_shift / action_snr_shift | 5.0 / 0.05 |
+
+These are the defaults of `LingBotVAConfig`; override any of them via `--policy.<name>=...`.
+
+## Notes & Limitations
+
+- **Correctness gate:** matching the upstream LIBERO success rate requires validating the
+  converted checkpoint on a GPU and tensor-diffing intermediate activations against the
+  upstream implementation. The most sensitive parts are the action quantile normalization,
+  the camera ordering, the `action_per_frame`/`frame_chunk_size` alignment, and `attn_mode`.
+- **Attention backend:** inference uses the `torch` SDPA backend (always available). The
+  `flashattn` and `flex` backends are optional; `flex` is only needed for training.
+- **Model size:** the DiT is ~5B params and the frozen VAE+UMT5 add ~20 GB; inference needs
+  roughly 18–24 GB of VRAM.
+
+## License
+
+LingBot-VA is released under Apache-2.0. See the
+[upstream repository](https://github.com/Robbyant/lingbot-va).
