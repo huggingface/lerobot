@@ -304,172 +304,176 @@ def eval_policy(
             raise exc from None
 
     start = time.time()
+    was_training = policy.training
     policy.eval()
+    try:
+        # Determine how many batched rollouts we need to get n_episodes. Note that if n_episodes is not evenly
+        # divisible by env.num_envs we end up discarding some data in the last batch.
+        n_batches = n_episodes // env.num_envs + int((n_episodes % env.num_envs) != 0)
 
-    # Determine how many batched rollouts we need to get n_episodes. Note that if n_episodes is not evenly
-    # divisible by env.num_envs we end up discarding some data in the last batch.
-    n_batches = n_episodes // env.num_envs + int((n_episodes % env.num_envs) != 0)
+        # Keep track of some metrics.
+        sum_rewards = []
+        max_rewards = []
+        all_successes = []
+        all_seeds = []
+        threads = []  # for video saving threads
+        n_episodes_rendered = 0  # for saving the correct number of videos
 
-    # Keep track of some metrics.
-    sum_rewards = []
-    max_rewards = []
-    all_successes = []
-    all_seeds = []
-    threads = []  # for video saving threads
-    n_episodes_rendered = 0  # for saving the correct number of videos
+        # Callback for visualization.
+        def render_frame(env: gym.vector.VectorEnv):
+            # noqa: B023
+            if n_episodes_rendered >= max_episodes_rendered:
+                return
+            n_to_render_now = min(max_episodes_rendered - n_episodes_rendered, env.num_envs)
+            if isinstance(env, gym.vector.SyncVectorEnv):
+                ep_frames.append(np.stack([env.envs[i].render() for i in range(n_to_render_now)]))  # noqa: B023
+            elif hasattr(env, "call"):
+                # Here we must render all frames and discard any we don't need.
+                # Covers AsyncVectorEnv and _LazyAsyncVectorEnv (which wraps one).
+                ep_frames.append(np.stack(env.call("render")[:n_to_render_now]))
 
-    # Callback for visualization.
-    def render_frame(env: gym.vector.VectorEnv):
-        # noqa: B023
-        if n_episodes_rendered >= max_episodes_rendered:
-            return
-        n_to_render_now = min(max_episodes_rendered - n_episodes_rendered, env.num_envs)
-        if isinstance(env, gym.vector.SyncVectorEnv):
-            ep_frames.append(np.stack([env.envs[i].render() for i in range(n_to_render_now)]))  # noqa: B023
-        elif hasattr(env, "call"):
-            # Here we must render all frames and discard any we don't need.
-            # Covers AsyncVectorEnv and _LazyAsyncVectorEnv (which wraps one).
-            ep_frames.append(np.stack(env.call("render")[:n_to_render_now]))
-
-    if max_episodes_rendered > 0:
-        video_paths: list[str] = []
-
-    if return_episode_data:
-        episode_data: dict | None = None
-
-    # we dont want progress bar when we use slurm, since it clutters the logs
-    progbar = trange(n_batches, desc="Stepping through eval batches", disable=inside_slurm())
-    for batch_ix in progbar:
-        # Cache frames for rendering videos. Each item will be (b, h, w, c), and the list indexes the rollout
-        # step.
         if max_episodes_rendered > 0:
-            ep_frames: list[np.ndarray] = []
+            video_paths: list[str] = []
 
-        if start_seed is None:
-            seeds = None
-        else:
-            seeds = range(
-                start_seed + (batch_ix * env.num_envs), start_seed + ((batch_ix + 1) * env.num_envs)
-            )
-        rollout_data = rollout(
-            env=env,
-            policy=policy,
-            env_preprocessor=env_preprocessor,
-            env_postprocessor=env_postprocessor,
-            preprocessor=preprocessor,
-            postprocessor=postprocessor,
-            seeds=list(seeds) if seeds else None,
-            return_observations=return_episode_data,
-            render_callback=render_frame if max_episodes_rendered > 0 else None,
-        )
-
-        # Figure out where in each rollout sequence the first done condition was encountered (results after
-        # this won't be included).
-        n_steps = rollout_data["done"].shape[1]
-        # Note: this relies on a property of argmax: that it returns the first occurrence as a tiebreaker.
-        done_indices = torch.argmax(rollout_data["done"].to(int), dim=1)
-
-        # Make a mask with shape (batch, n_steps) to mask out rollout data after the first done
-        # (batch-element-wise). Note the `done_indices + 1` to make sure to keep the data from the done step.
-        mask = (torch.arange(n_steps) <= einops.repeat(done_indices + 1, "b -> b s", s=n_steps)).int()
-        # Extend metrics.
-        batch_sum_rewards = einops.reduce((rollout_data["reward"] * mask), "b n -> b", "sum")
-        sum_rewards.extend(batch_sum_rewards.tolist())
-        batch_max_rewards = einops.reduce((rollout_data["reward"] * mask), "b n -> b", "max")
-        max_rewards.extend(batch_max_rewards.tolist())
-        batch_successes = einops.reduce((rollout_data["success"] * mask), "b n -> b", "any")
-        all_successes.extend(batch_successes.tolist())
-        if seeds:
-            all_seeds.extend(seeds)
-        else:
-            all_seeds.append(None)
-
-        # FIXME: episode_data is either None or it doesn't exist
         if return_episode_data:
-            this_episode_data = _compile_episode_data(
-                rollout_data,
-                done_indices,
-                start_episode_index=batch_ix * env.num_envs,
-                start_data_index=(0 if episode_data is None else (episode_data["index"][-1].item() + 1)),
-                fps=env.unwrapped.metadata["render_fps"],
-            )
-            if episode_data is None:
-                episode_data = this_episode_data
+            episode_data: dict | None = None
+
+        # we dont want progress bar when we use slurm, since it clutters the logs
+        progbar = trange(n_batches, desc="Stepping through eval batches", disable=inside_slurm())
+        for batch_ix in progbar:
+            # Cache frames for rendering videos. Each item will be (b, h, w, c), and the list indexes the rollout
+            # step.
+            if max_episodes_rendered > 0:
+                ep_frames: list[np.ndarray] = []
+
+            if start_seed is None:
+                seeds = None
             else:
-                # Some sanity checks to make sure we are correctly compiling the data.
-                assert episode_data["episode_index"][-1] + 1 == this_episode_data["episode_index"][0]
-                assert episode_data["index"][-1] + 1 == this_episode_data["index"][0]
-                # Concatenate the episode data.
-                episode_data = {k: torch.cat([episode_data[k], this_episode_data[k]]) for k in episode_data}
-
-        # Maybe render video for visualization.
-        if max_episodes_rendered > 0 and len(ep_frames) > 0:
-            batch_stacked_frames = np.stack(ep_frames, axis=1)  # (b, t, *)
-            for stacked_frames, done_index in zip(
-                batch_stacked_frames, done_indices.flatten().tolist(), strict=False
-            ):
-                if n_episodes_rendered >= max_episodes_rendered:
-                    break
-
-                videos_dir.mkdir(parents=True, exist_ok=True)
-                video_path = videos_dir / f"eval_episode_{n_episodes_rendered}.mp4"
-                video_paths.append(str(video_path))
-                thread = threading.Thread(
-                    target=write_video,
-                    args=(
-                        str(video_path),
-                        stacked_frames[: done_index + 1],  # + 1 to capture the last observation
-                        env.unwrapped.metadata["render_fps"],
-                    ),
+                seeds = range(
+                    start_seed + (batch_ix * env.num_envs), start_seed + ((batch_ix + 1) * env.num_envs)
                 )
-                thread.start()
-                threads.append(thread)
-                n_episodes_rendered += 1
-
-        progbar.set_postfix(
-            {"running_success_rate": f"{np.mean(all_successes[:n_episodes]).item() * 100:.1f}%"}
-        )
-
-    # Wait till all video rendering threads are done.
-    for thread in threads:
-        thread.join()
-
-    # Compile eval info.
-    info = {
-        "per_episode": [
-            {
-                "episode_ix": i,
-                "sum_reward": sum_reward,
-                "max_reward": max_reward,
-                "success": success,
-                "seed": seed,
-            }
-            for i, (sum_reward, max_reward, success, seed) in enumerate(
-                zip(
-                    sum_rewards[:n_episodes],
-                    max_rewards[:n_episodes],
-                    all_successes[:n_episodes],
-                    all_seeds[:n_episodes],
-                    strict=True,
-                )
+            rollout_data = rollout(
+                env=env,
+                policy=policy,
+                env_preprocessor=env_preprocessor,
+                env_postprocessor=env_postprocessor,
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
+                seeds=list(seeds) if seeds else None,
+                return_observations=return_episode_data,
+                render_callback=render_frame if max_episodes_rendered > 0 else None,
             )
-        ],
-        "aggregated": {
-            "avg_sum_reward": float(np.nanmean(sum_rewards[:n_episodes])),
-            "avg_max_reward": float(np.nanmean(max_rewards[:n_episodes])),
-            "pc_success": float(np.nanmean(all_successes[:n_episodes]) * 100),
-            "eval_s": time.time() - start,
-            "eval_ep_s": (time.time() - start) / n_episodes,
-        },
-    }
 
-    if return_episode_data:
-        info["episodes"] = episode_data
+            # Figure out where in each rollout sequence the first done condition was encountered (results after
+            # this won't be included).
+            n_steps = rollout_data["done"].shape[1]
+            # Note: this relies on a property of argmax: that it returns the first occurrence as a tiebreaker.
+            done_indices = torch.argmax(rollout_data["done"].to(int), dim=1)
 
-    if max_episodes_rendered > 0:
-        info["video_paths"] = video_paths
+            # Make a mask with shape (batch, n_steps) to mask out rollout data after the first done
+            # (batch-element-wise). Note the `done_indices + 1` to make sure to keep the data from the done step.
+            mask = (torch.arange(n_steps) <= einops.repeat(done_indices + 1, "b -> b s", s=n_steps)).int()
+            # Extend metrics.
+            batch_sum_rewards = einops.reduce((rollout_data["reward"] * mask), "b n -> b", "sum")
+            sum_rewards.extend(batch_sum_rewards.tolist())
+            batch_max_rewards = einops.reduce((rollout_data["reward"] * mask), "b n -> b", "max")
+            max_rewards.extend(batch_max_rewards.tolist())
+            batch_successes = einops.reduce((rollout_data["success"] * mask), "b n -> b", "any")
+            all_successes.extend(batch_successes.tolist())
+            if seeds:
+                all_seeds.extend(seeds)
+            else:
+                all_seeds.append(None)
 
-    return info
+            # FIXME: episode_data is either None or it doesn't exist
+            if return_episode_data:
+                this_episode_data = _compile_episode_data(
+                    rollout_data,
+                    done_indices,
+                    start_episode_index=batch_ix * env.num_envs,
+                    start_data_index=(0 if episode_data is None else (episode_data["index"][-1].item() + 1)),
+                    fps=env.unwrapped.metadata["render_fps"],
+                )
+                if episode_data is None:
+                    episode_data = this_episode_data
+                else:
+                    # Some sanity checks to make sure we are correctly compiling the data.
+                    assert episode_data["episode_index"][-1] + 1 == this_episode_data["episode_index"][0]
+                    assert episode_data["index"][-1] + 1 == this_episode_data["index"][0]
+                    # Concatenate the episode data.
+                    episode_data = {k: torch.cat([episode_data[k], this_episode_data[k]]) for k in episode_data}
+
+            # Maybe render video for visualization.
+            if max_episodes_rendered > 0 and len(ep_frames) > 0:
+                batch_stacked_frames = np.stack(ep_frames, axis=1)  # (b, t, *)
+                for stacked_frames, done_index in zip(
+                    batch_stacked_frames, done_indices.flatten().tolist(), strict=False
+                ):
+                    if n_episodes_rendered >= max_episodes_rendered:
+                        break
+
+                    videos_dir.mkdir(parents=True, exist_ok=True)
+                    video_path = videos_dir / f"eval_episode_{n_episodes_rendered}.mp4"
+                    video_paths.append(str(video_path))
+                    thread = threading.Thread(
+                        target=write_video,
+                        args=(
+                            str(video_path),
+                            stacked_frames[: done_index + 1],  # + 1 to capture the last observation
+                            env.unwrapped.metadata["render_fps"],
+                        ),
+                    )
+                    thread.start()
+                    threads.append(thread)
+                    n_episodes_rendered += 1
+
+            progbar.set_postfix(
+                {"running_success_rate": f"{np.mean(all_successes[:n_episodes]).item() * 100:.1f}%"}
+            )
+
+        # Wait till all video rendering threads are done.
+        for thread in threads:
+            thread.join()
+
+        # Compile eval info.
+        info = {
+            "per_episode": [
+                {
+                    "episode_ix": i,
+                    "sum_reward": sum_reward,
+                    "max_reward": max_reward,
+                    "success": success,
+                    "seed": seed,
+                }
+                for i, (sum_reward, max_reward, success, seed) in enumerate(
+                    zip(
+                        sum_rewards[:n_episodes],
+                        max_rewards[:n_episodes],
+                        all_successes[:n_episodes],
+                        all_seeds[:n_episodes],
+                        strict=True,
+                    )
+                )
+            ],
+            "aggregated": {
+                "avg_sum_reward": float(np.nanmean(sum_rewards[:n_episodes])),
+                "avg_max_reward": float(np.nanmean(max_rewards[:n_episodes])),
+                "pc_success": float(np.nanmean(all_successes[:n_episodes]) * 100),
+                "eval_s": time.time() - start,
+                "eval_ep_s": (time.time() - start) / n_episodes,
+            },
+        }
+
+        if return_episode_data:
+            info["episodes"] = episode_data
+
+        if max_episodes_rendered > 0:
+            info["video_paths"] = video_paths
+
+        return info
+    finally:
+        if was_training:
+            policy.train()
 
 
 def _compile_episode_data(
