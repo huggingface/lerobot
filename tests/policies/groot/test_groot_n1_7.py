@@ -506,17 +506,20 @@ def test_groot_from_pretrained_rejects_mismatched_caller_config(tmp_path):
     model_path = tmp_path / "GR00T-N1.7-local"
     model_path.mkdir()
     input_features, output_features = _groot_features(state_dim=8, action_dim=7)
-    config = GrootConfig(
-        model_version=GROOT_N1_7,
-        base_model_path="nvidia/GR00T-N1.5-3B",
-        input_features=input_features,
-        output_features=output_features,
-        device="cpu",
-        use_bf16=False,
-        action_decode_transform=GROOT_ACTION_DECODE_TRANSFORM_LIBERO,
-    )
 
+    # An N1.7 config paired with a legacy N1.5 base path is a mismatch and must be
+    # rejected. The mismatch is detected during config validation (__post_init__),
+    # so construction itself raises before from_pretrained is reached.
     with pytest.raises(ValueError, match="does not match base_model_path"):
+        config = GrootConfig(
+            model_version=GROOT_N1_7,
+            base_model_path="nvidia/GR00T-N1.5-3B",
+            input_features=input_features,
+            output_features=output_features,
+            device="cpu",
+            use_bf16=False,
+            action_decode_transform=GROOT_ACTION_DECODE_TRANSFORM_LIBERO,
+        )
         GrootPolicy.from_pretrained(model_path, config=config)
 
 
@@ -1238,17 +1241,20 @@ def test_groot_from_pretrained_rejects_caller_config_mismatch_from_local_config(
     model_path.mkdir()
     (model_path / "config.json").write_text('{"model_type": "Gr00tN1d7"}')
     input_features, output_features = _groot_features(state_dim=8, action_dim=7)
-    config = GrootConfig(
-        model_version=GROOT_N1_7,
-        base_model_path="nvidia/GR00T-N1.5-3B",
-        input_features=input_features,
-        output_features=output_features,
-        device="cpu",
-        use_bf16=False,
-        action_decode_transform=GROOT_ACTION_DECODE_TRANSFORM_LIBERO,
-    )
 
+    # An N1.7 config paired with a legacy N1.5 base path is a mismatch and must be
+    # rejected. The mismatch is detected during config validation (__post_init__),
+    # so construction itself raises before from_pretrained is reached.
     with pytest.raises(ValueError, match="does not match base_model_path"):
+        config = GrootConfig(
+            model_version=GROOT_N1_7,
+            base_model_path="nvidia/GR00T-N1.5-3B",
+            input_features=input_features,
+            output_features=output_features,
+            device="cpu",
+            use_bf16=False,
+            action_decode_transform=GROOT_ACTION_DECODE_TRANSFORM_LIBERO,
+        )
         GrootPolicy.from_pretrained(model_path, config=config)
 
 
