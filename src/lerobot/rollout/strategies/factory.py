@@ -21,8 +21,8 @@ from typing import TYPE_CHECKING
 from .base import BaseStrategy
 from .core import RolloutStrategy
 from .dagger import DAggerStrategy
+from .episodic import EpisodicStrategy
 from .highlight import HighlightStrategy
-from .legacy import LegacyStrategy
 from .sentry import SentryStrategy
 
 if TYPE_CHECKING:
@@ -43,8 +43,8 @@ def create_strategy(config: RolloutStrategyConfig) -> RolloutStrategy:
         return HighlightStrategy(config)
     if config.type == "dagger":
         return DAggerStrategy(config)
-    if config.type == "legacy":
-        return LegacyStrategy(config)
+    if config.type == "episodic":
+        return EpisodicStrategy(config)
     raise ValueError(
-        f"Unknown strategy type '{config.type}'. Available: base, sentry, highlight, dagger, legacy"
+        f"Unknown strategy type '{config.type}'. Available: base, sentry, highlight, dagger, episodic"
     )

@@ -157,13 +157,13 @@ Foot pedal input is also supported via `--strategy.input_device=pedal`. Configur
 | `--strategy.input_device`            | Input device: `keyboard` or `pedal` (default: keyboard) |
 | `--teleop.type`                      | **Required.** Teleoperator type                         |
 
-### Legacy (`--strategy.type=legacy`)
+### Episodic (`--strategy.type=episodic`)
 
-Episode-oriented recording that mirrors the old `lerobot-record` inference path. The policy drives the robot for each episode; an optional teleoperator can drive the robot during the reset phase between episodes.
+Episode-oriented recording that mirrors the behavior of `lerobot-record`. The policy drives the robot for each episode; an optional teleoperator can drive the robot during the reset phase between episodes.
 
 ```bash
 lerobot-rollout \
-    --strategy.type=legacy \
+    --strategy.type=episodic \
     --policy.path=${HF_USER}/my_policy \
     --robot.type=so100_follower \
     --robot.port=/dev/ttyACM0 \
@@ -186,12 +186,14 @@ Teleop is optional — if omitted the robot holds its position during the reset 
 | `←` (left)  | Discard episode and re-record it |
 | `ESC`       | Stop the recording session       |
 
-| Flag                       | Description                                             |
-| -------------------------- | ------------------------------------------------------- |
-| `--dataset.num_episodes`   | Number of episodes to record                            |
-| `--dataset.episode_time_s` | Duration of each recording episode in seconds           |
-| `--dataset.reset_time_s`   | Duration of the reset phase between episodes in seconds |
-| `--teleop.type`            | Optional. Teleoperator to drive the robot during resets |
+| Flag                                         | Description                                                                |
+| -------------------------------------------- | -------------------------------------------------------------------------- |
+| `--dataset.num_episodes`                     | Number of episodes to record                                               |
+| `--dataset.episode_time_s`                   | Duration of each recording episode in seconds                              |
+| `--dataset.reset_time_s`                     | Duration of the reset phase between episodes in seconds                    |
+| `--teleop.type`                              | Optional. Teleoperator to drive the robot during resets                    |
+| `--strategy.reset_to_initial_position`       | Whether to reset the robot to its initial position between episodes        |
+| `--strategy.smooth_leader_follower_handover` | Whether to turn on or off the leader -> follower smooth handover behavior. |
 
 ---
 

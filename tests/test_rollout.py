@@ -59,8 +59,8 @@ def test_strategy_config_types():
     from lerobot.rollout import (
         BaseStrategyConfig,
         DAggerStrategyConfig,
+        EpisodicStrategyConfig,
         HighlightStrategyConfig,
-        LegacyStrategyConfig,
         SentryStrategyConfig,
     )
 
@@ -68,7 +68,7 @@ def test_strategy_config_types():
     assert SentryStrategyConfig().type == "sentry"
     assert HighlightStrategyConfig().type == "highlight"
     assert DAggerStrategyConfig().type == "dagger"
-    assert LegacyStrategyConfig().type == "legacy"
+    assert EpisodicStrategyConfig().type == "episodic"
 
 
 def test_dagger_config_invalid_input_device():
@@ -205,8 +205,8 @@ def test_create_strategy_dispatches():
         BaseStrategyConfig,
         DAggerStrategy,
         DAggerStrategyConfig,
-        LegacyStrategy,
-        LegacyStrategyConfig,
+        EpisodicStrategy,
+        EpisodicStrategyConfig,
         SentryStrategy,
         SentryStrategyConfig,
         create_strategy,
@@ -215,7 +215,7 @@ def test_create_strategy_dispatches():
     assert isinstance(create_strategy(BaseStrategyConfig()), BaseStrategy)
     assert isinstance(create_strategy(SentryStrategyConfig()), SentryStrategy)
     assert isinstance(create_strategy(DAggerStrategyConfig()), DAggerStrategy)
-    assert isinstance(create_strategy(LegacyStrategyConfig()), LegacyStrategy)
+    assert isinstance(create_strategy(EpisodicStrategyConfig()), EpisodicStrategy)
 
 
 def test_create_strategy_unknown_raises():

@@ -647,6 +647,6 @@ The `--strategy.type` flag selects the execution mode:
 - `sentry`: Continuous recording with auto-upload (useful for large-scale evaluation)
 - `highlight`: Ring buffer recording with keystroke save (useful for capturing interesting events)
 - `dagger`: Human-in-the-loop data collection (see [HIL Data Collection](./hil_data_collection))
-- `legacy`: Episode-oriented policy recording with reset phases, mirrors the old `lerobot-record` inference path
+- `episodic`: Episode-oriented policy recording with reset phases between episodes
 
 All strategies support `--inference.type=rtc` for smooth execution with slow VLA models (Pi0, Pi0.5, SmolVLA).

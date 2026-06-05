@@ -12,17 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Legacy rollout strategy: policy-driven multi-episode recording with reset phases.
-
-Mirrors the pre-rollout ``lerobot-record`` inference path:
+"""Episodic rollout strategy: mirrors the behavior of ``lerobot-record``.
 
 - Policy drives the robot during each recording episode.
 - An optional teleoperator can drive the robot during reset phases so the
   operator can bring the environment back to its starting configuration.
   If no teleop is connected the robot stays in its current position.
-- Keyboard controls (identical to the old lerobot-record):
+- Keyboard controls:
 
-      Right arrow  — end the current episode early
+      Right arrow  — end the current episode or reset phase early
       Left arrow   — discard the current episode and re-record it
       Escape       — stop the recording session
 
@@ -49,15 +47,15 @@ from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import log_rerun_data
 
-from ..configs import LegacyStrategyConfig
+from ..configs import EpisodicStrategyConfig
 from ..context import RolloutContext
 from .core import RolloutStrategy, safe_push_to_hub, send_next_action
 
 logger = logging.getLogger(__name__)
 
 
-class LegacyStrategy(RolloutStrategy):
-    """Policy-driven multi-episode recording (mirrors old lerobot-record inference path).
+class EpisodicStrategy(RolloutStrategy):
+    """Policy-driven multi-episode recording, mirrors the behavior of ``lerobot-record``.
 
     Each recording episode runs the policy for maximum ``dataset.episode_time_s``
     seconds, recording every frame.  A reset phase of ``dataset.reset_time_s``
@@ -69,14 +67,14 @@ class LegacyStrategy(RolloutStrategy):
     the start of each recording episode.
 
     Keyboard events:
-        right arrow  → exit current episode early
+        right arrow  → end current episode or reset phase early
         left arrow   → discard & re-record current episode
         ESC          → stop the session
     """
 
-    config: LegacyStrategyConfig
+    config: EpisodicStrategyConfig
 
-    def __init__(self, config: LegacyStrategyConfig) -> None:
+    def __init__(self, config: EpisodicStrategyConfig) -> None:
         super().__init__(config)
         self._listener = None
         self._events: dict | None = None
@@ -85,7 +83,7 @@ class LegacyStrategy(RolloutStrategy):
         """Start the inference engine and attach the keyboard listener."""
         self._init_engine(ctx)
         self._listener, self._events = init_keyboard_listener()
-        logger.info("Legacy strategy ready")
+        logger.info("Episodic strategy ready")
 
     def run(self, ctx: RolloutContext) -> None:
         """Main multi-episode recording loop."""
@@ -150,7 +148,8 @@ class LegacyStrategy(RolloutStrategy):
                             current_pos = {k: v for k, v in obs.items() if k.endswith(".pos")}
                             if teleop_supports_feedback(teleop):
                                 logger.info("Smooth handover: moving leader arm to follower position")
-                                teleop_smooth_move_to(teleop, current_pos, duration_s=1)
+                                teleop_smooth_move_to(teleop, current_pos, duration_s=2)
+                                teleop.disable_torque()
                             else:
                                 logger.info("Smooth handover: sliding follower to teleop position")
                                 teleop_action = teleop.get_action()
@@ -191,7 +190,7 @@ class LegacyStrategy(RolloutStrategy):
                 # Save any frames buffered in the current episode so an unexpected
                 # exception or KeyboardInterrupt does not silently drop recorded data.
                 # suppress: save_episode raises if the buffer is empty (nothing to lose).
-                logger.info("Legacy control loop ended — saving any in-progress episode")
+                logger.info("Episodic control loop ended — saving any in-progress episode")
                 with contextlib.suppress(Exception):
                     dataset.save_episode()
 
@@ -330,4 +329,4 @@ class LegacyStrategy(RolloutStrategy):
             return_to_initial_position=cfg.return_to_initial_position,
         )
         log_say("Exiting", play_sounds)
-        logger.info("Legacy strategy teardown complete")
+        logger.info("Episodic strategy teardown complete")

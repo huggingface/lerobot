@@ -248,6 +248,8 @@ def sanity_check_dataset_robot_compatibility(
 
 ########################################################################################
 # Teleoperator smooth handover helpers
+# NOTE(Maxime): These functions use minimal type hints to maintain compatibility with utils
+# being a root module.
 ########################################################################################
 
 

@@ -121,16 +121,16 @@ class DAggerPedalConfig:
     upload: str = "KEY_C"
 
 
-@RolloutStrategyConfig.register_subclass("legacy")
+@RolloutStrategyConfig.register_subclass("episodic")
 @dataclass
-class LegacyStrategyConfig(RolloutStrategyConfig):
-    """Episode-oriented recording that mirrors the pre-rollout lerobot-record behavior.
+class EpisodicStrategyConfig(RolloutStrategyConfig):
+    """Episode-oriented recording that mirrors the behavior of ``lerobot-record``.
 
     Records ``dataset.num_episodes`` episodes of maximum ``dataset.episode_time_s`` each.
     After each episode, runs ``dataset.reset_time_s`` seconds of reset time.
 
-    Keyboard controls (same as lerobot-record):
-        Right arrow  — end episode early
+    Keyboard controls:
+        Right arrow  — end current episode or reset phase early
         Left arrow   — discard current episode and re-record
         Escape       — stop recording session
 
@@ -143,7 +143,11 @@ class LegacyStrategyConfig(RolloutStrategyConfig):
     # When True (default), moves the robot back to the joint positions captured at startup.
     # Otherwise, leave the robot in its current position.
     reset_to_initial_position: bool = True
-    pass
+
+    # Whether to turn on or off the leader -> follower smooth handover behavior.
+    # When False, fallback to follower -> leader handover.
+    # Note that leader -> follower handover is only supported when the leader has `send_feedback` capability.
+    smooth_leader_follower_handover: bool = True
 
 
 @RolloutStrategyConfig.register_subclass("dagger")
@@ -259,7 +263,7 @@ class RolloutConfig:
                 SentryStrategyConfig,
                 HighlightStrategyConfig,
                 DAggerStrategyConfig,
-                LegacyStrategyConfig,
+                EpisodicStrategyConfig,
             ),
         )
         if needs_dataset and (self.dataset is None or not self.dataset.repo_id):
