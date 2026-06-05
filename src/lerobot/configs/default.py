@@ -98,14 +98,14 @@ class EMAConfig:
     Cost: 1× model params in fp32 shadow (~13 GB for pi052's 3.3B
     params) + one elementwise update per training step (~1% step time).
 
-    On by default — matches openpi (JAX) which ships EMA on for every
-    config, and closes the gap with the openpi PyTorch port which
-    explicitly lists EMA as unsupported. Set ``--ema.enable=false`` to
-    disable for short runs / memory-constrained training where the
-    extra fp32 shadow copy is the bottleneck.
+    Off by default (opt-in): EMA is only beneficial for flow-matching /
+    diffusion policies (pi0/pi05/pi052), and the fp32 shadow copy is pure
+    overhead for other policies (e.g. VLA-JEPA). Set ``--ema.enable=true``
+    to turn it on (the pi05/pi052 training recipes do this). openpi (JAX)
+    ships EMA on for every config; enable it explicitly to match that.
     """
 
-    enable: bool = True
+    enable: bool = False
     # Target EMA decay β in θ_ema ← β·θ_ema + (1-β)·θ_live (passed to
     # ema-pytorch as ``beta``).
     #   0.999  — last ~1000 steps; pi05_libero default in openpi
