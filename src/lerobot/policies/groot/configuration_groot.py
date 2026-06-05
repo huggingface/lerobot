@@ -24,6 +24,11 @@ from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 GROOT_N1_7 = "n1.7"
+# Legacy GR00T N1.5 identifier. N1.5 is NOT a supported model_version (it is
+# intentionally absent from _GROOT_MODEL_VERSION_ALIASES so normalize_groot_model_version
+# still rejects it). It is retained only so that infer_groot_model_version can recognise
+# an N1.5 base path/checkpoint and the N1.7 config/loader can reject the mismatch.
+GROOT_N1_5 = "n1.5"
 GROOT_N1_7_BASE_MODEL = "nvidia/GR00T-N1.7-3B"
 GROOT_N1_7_BACKBONE_MODEL = "nvidia/Cosmos-Reason2-2B"
 GROOT_ACTION_DECODE_TRANSFORM_LIBERO = "libero"
@@ -74,6 +79,11 @@ def infer_groot_model_version(model_path: str | None) -> str | None:
     model_path_lower = model_path.lower()
     if "gr00t-n1.7" in model_path_lower or "gr00t_n1.7" in model_path_lower:
         return GROOT_N1_7
+    # Detect legacy N1.5 paths so the N1.7 config/loader can reject the mismatch.
+    # N1.5 is unsupported, but it must still be recognised here to fail loudly
+    # rather than silently treating an N1.5 checkpoint as N1.7.
+    if "gr00t-n1.5" in model_path_lower or "gr00t_n1.5" in model_path_lower:
+        return GROOT_N1_5
     config_version = _infer_groot_model_version_from_local_config(model_path)
     if config_version is not None:
         return config_version
