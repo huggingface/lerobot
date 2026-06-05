@@ -242,20 +242,31 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         raise NotImplementedError
 
     def flush_action_queue(self) -> None:
-        """Discard any precomputed actions so the next select_action call recomputes from scratch.
+        """Request that precomputed actions be discarded on the next control tick.
 
-        The default implementation covers the two naming conventions used across LeRobot policies:
+        This sets a deferred flag rather than immediately clearing the queue.
+        The actual clear happens inside :meth:`_apply_pending_flush`, which
+        policies should call at the start of their ``select_action``.  This
+        eliminates the race condition where a background listener thread clears
+        the deque between the "is-empty" check and ``popleft()`` in the main
+        control-loop thread.
 
-        * ``self._queues`` (dict) — policies like SmolVLA, TDMPC, VQBeT, WallX, MultiTaskDiT.
-          The ``ACTION`` key is cleared; observation history queues are left intact.
-        * ``self._action_queue`` (deque) — policies like Pi0, EO1, Groot.
-
-        Policies that use neither convention are unaffected (no-op).
-
-        Typical use: call this whenever the task prompt or goal changes at runtime so the policy
-        reacts to the new instruction on the very next control tick instead of draining stale
-        precomputed actions.
+        Typical use: call this whenever the task prompt or goal changes at
+        runtime so the policy reacts to the new instruction on the very next
+        control tick instead of draining stale precomputed actions.
         """
+        self._flush_requested = True
+
+    def _apply_pending_flush(self) -> None:
+        """Apply a pending flush request (thread-safe, call from the main loop only).
+
+        Must be called at the start of ``select_action`` by each policy subclass.
+        Because this runs in the same thread as ``popleft()``, no lock is needed.
+        """
+        if not getattr(self, "_flush_requested", False):
+            return
+        self._flush_requested = False
+
         from lerobot.utils.constants import ACTION
 
         if hasattr(self, "_queues") and isinstance(self._queues, dict) and ACTION in self._queues:

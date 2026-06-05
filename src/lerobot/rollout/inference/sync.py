@@ -118,6 +118,12 @@ class SyncInferenceEngine(InferenceEngine):
             observation = self._preprocessor(observation)
             action = self._policy.select_action(observation)
             action = self._postprocessor(action)
+            _preview = action.view(-1)[:5].tolist()
+            logger.info(
+                "[SyncInference] task='%s' | action[0:5]=%s",
+                _task,
+                [f"{v:.4f}" for v in _preview],
+            )
         action_tensor = action.squeeze(0).cpu()
 
         # Reorder to match dataset action ordering so the caller can treat
