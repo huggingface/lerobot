@@ -112,7 +112,7 @@ class EMAConfig:
     #   0.99   — last ~100 steps; openpi top-level default
     #   0.75   — very fast EMA (Diffusion Policy original setting)
     #   0.9999 — very slow EMA (long classification runs)
-    decay: float = 0.999
+    decay: float = 0.99
     # Skip the first N calls to ``ema.update()``; during this window
     # the shadow is just a hard copy of the live weights (no averaging).
     # Lets early-training rapid changes settle before averaging begins.
