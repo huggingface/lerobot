@@ -58,6 +58,7 @@ from .smolvla.configuration_smolvla import SmolVLAConfig
 from .tdmpc.configuration_tdmpc import TDMPCConfig
 from .utils import validate_visual_features_consistency
 from .vla_jepa.configuration_vla_jepa import VLAJEPAConfig
+from .vllm.configuration_vllm import VllmConfig
 from .vqbet.configuration_vqbet import VQBeTConfig
 from .wall_x.configuration_wall_x import WallXConfig
 from .xvla.configuration_xvla import XVLAConfig
@@ -162,6 +163,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from .vla_jepa.modeling_vla_jepa import VLAJEPAPolicy
 
         return VLAJEPAPolicy
+    elif name == "vllm":
+        from .vllm.modeling_vllm import VllmPolicy
+
+        return VllmPolicy
     else:
         try:
             return _get_policy_cls_from_policy_name(name=name)
@@ -218,6 +223,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return MolmoAct2Config(**kwargs)
     elif policy_type == "vla_jepa":
         return VLAJEPAConfig(**kwargs)
+    elif policy_type == "vllm":
+        return VllmConfig(**kwargs)
     else:
         try:
             config_cls = PreTrainedConfig.get_choice_class(policy_type)

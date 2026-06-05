@@ -75,6 +75,8 @@
     title: Multitask DiT Policy
   - local: walloss
     title: WALL-OSS
+  - local: vllm
+    title: vLLM (remote OpenPI)
   title: "Policies"
 - sections:
   - local: sarm
