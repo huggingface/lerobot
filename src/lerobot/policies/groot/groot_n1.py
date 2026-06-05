@@ -110,6 +110,8 @@ class EagleBackbone(nn.Module):
                     return
                 if getattr(cfg, "_attn_implementation_internal", None) == "flash_attention_2":
                     cfg._attn_implementation_internal = None
+                if getattr(cfg, "_attn_implementation", None) == "flash_attention_2":
+                    cfg._attn_implementation = _attn_impl
                 for sub_attr in ("vision_config", "text_config", "language_model_config", "llm_config"):
                     _clear_flash_attn_recursive(getattr(cfg, sub_attr, None))
 
