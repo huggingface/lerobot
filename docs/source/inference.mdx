@@ -186,14 +186,14 @@ Teleop is optional — if omitted the robot holds its position during the reset 
 | `←` (left)  | Discard episode and re-record it |
 | `ESC`       | Stop the recording session       |
 
-| Flag                                         | Description                                                                |
-| -------------------------------------------- | -------------------------------------------------------------------------- |
-| `--dataset.num_episodes`                     | Number of episodes to record                                               |
-| `--dataset.episode_time_s`                   | Duration of each recording episode in seconds                              |
-| `--dataset.reset_time_s`                     | Duration of the reset phase between episodes in seconds                    |
-| `--teleop.type`                              | Optional. Teleoperator to drive the robot during resets                    |
-| `--strategy.reset_to_initial_position`       | Whether to reset the robot to its initial position between episodes        |
-| `--strategy.smooth_leader_follower_handover` | Whether to turn on or off the leader -> follower smooth handover behavior. |
+| Flag                                            | Description                                                                |
+| ----------------------------------------------- | -------------------------------------------------------------------------- |
+| `--dataset.num_episodes`                        | Number of episodes to record                                               |
+| `--dataset.episode_time_s`                      | Duration of each recording episode in seconds                              |
+| `--dataset.reset_time_s`                        | Duration of the reset phase between episodes in seconds                    |
+| `--teleop.type`                                 | Optional. Teleoperator to drive the robot during resets                    |
+| `--strategy.reset_to_initial_position`          | Whether to reset the robot to its initial position between episodes        |
+| `--strategy.smooth_leader_to_follower_handover` | Whether to turn on or off the leader -> follower smooth handover behavior. |
 
 ---
 

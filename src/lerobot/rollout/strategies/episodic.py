@@ -148,7 +148,7 @@ class EpisodicStrategy(RolloutStrategy):
                             current_pos = {k: v for k, v in obs.items() if k.endswith(".pos")}
                             if (
                                 teleop_supports_feedback(teleop)
-                                and self.config.smooth_leader_follower_handover
+                                and self.config.smooth_leader_to_follower_handover
                             ):
                                 logger.info("Smooth handover: moving leader arm to follower position")
                                 teleop_smooth_move_to(teleop, current_pos, duration_s=2)

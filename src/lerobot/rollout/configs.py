@@ -147,7 +147,7 @@ class EpisodicStrategyConfig(RolloutStrategyConfig):
     # Whether to turn on or off the leader -> follower smooth handover behavior.
     # When False, fallback to follower -> leader handover.
     # Note that leader -> follower handover is only supported when the leader has `send_feedback` capability.
-    smooth_leader_follower_handover: bool = True
+    smooth_leader_to_follower_handover: bool = True
 
 
 @RolloutStrategyConfig.register_subclass("dagger")
