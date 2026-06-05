@@ -410,6 +410,15 @@ class GrootConfig(PreTrainedConfig):
         if self.base_model_path is None:
             self.base_model_path = GROOT_N1_7_BASE_MODEL
 
+        # The N1.7 LIBERO checkpoints emit a [0, 1] gripper action, but the LIBERO
+        # simulator expects the OpenVLA/[-1, 1] sign convention. NVIDIA's rollout
+        # wrapper applies this conversion; mirror it here so eval on the
+        # 'libero_sim' embodiment grasps correctly instead of scoring 0% success.
+        # This matches the embodiment-specific handling already done for the
+        # action execution horizon (see infer_groot_n1_7_action_execution_horizon).
+        if self.action_decode_transform is None and self.embodiment_tag == "libero_sim":
+            self.action_decode_transform = GROOT_ACTION_DECODE_TRANSFORM_LIBERO
+
         if self.max_state_dim == 64:
             self.max_state_dim = 132
         if self.max_action_dim == 32:
