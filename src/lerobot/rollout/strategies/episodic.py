@@ -146,7 +146,10 @@ class EpisodicStrategy(RolloutStrategy):
                             # pose instead, since the leader cannot be driven.
                             obs = robot.get_observation()
                             current_pos = {k: v for k, v in obs.items() if k.endswith(".pos")}
-                            if teleop_supports_feedback(teleop):
+                            if (
+                                teleop_supports_feedback(teleop)
+                                and self.config.smooth_leader_follower_handover
+                            ):
                                 logger.info("Smooth handover: moving leader arm to follower position")
                                 teleop_smooth_move_to(teleop, current_pos, duration_s=2)
                                 teleop.disable_torque()
