@@ -23,18 +23,17 @@ from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTr
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 
-GROOT_N1_5 = "n1.5"
 GROOT_N1_7 = "n1.7"
-GROOT_N1_5_BASE_MODEL = "nvidia/GR00T-N1.5-3B"
+# Legacy GR00T N1.5 identifier. N1.5 is NOT a supported model_version (it is
+# intentionally absent from _GROOT_MODEL_VERSION_ALIASES so normalize_groot_model_version
+# still rejects it). It is retained only so that infer_groot_model_version can recognise
+# an N1.5 base path/checkpoint and the N1.7 config/loader can reject the mismatch.
+GROOT_N1_5 = "n1.5"
 GROOT_N1_7_BASE_MODEL = "nvidia/GR00T-N1.7-3B"
 GROOT_N1_7_BACKBONE_MODEL = "nvidia/Cosmos-Reason2-2B"
 GROOT_ACTION_DECODE_TRANSFORM_LIBERO = "libero"
 
 _GROOT_MODEL_VERSION_ALIASES = {
-    "n1.5": GROOT_N1_5,
-    "n1_5": GROOT_N1_5,
-    "n15": GROOT_N1_5,
-    "1.5": GROOT_N1_5,
     "n1.7": GROOT_N1_7,
     "n1_7": GROOT_N1_7,
     "n1d7": GROOT_N1_7,
@@ -52,7 +51,7 @@ _GROOT_ACTION_DECODE_TRANSFORM_ALIASES = {
 def normalize_groot_model_version(model_version: str) -> str:
     normalized = _GROOT_MODEL_VERSION_ALIASES.get(model_version.lower())
     if normalized is None:
-        supported = ", ".join(sorted({GROOT_N1_5, GROOT_N1_7}))
+        supported = GROOT_N1_7
         raise ValueError(
             f"Unsupported GR00T model_version '{model_version}'. Supported versions: {supported}."
         )
@@ -80,6 +79,9 @@ def infer_groot_model_version(model_path: str | None) -> str | None:
     model_path_lower = model_path.lower()
     if "gr00t-n1.7" in model_path_lower or "gr00t_n1.7" in model_path_lower:
         return GROOT_N1_7
+    # Detect legacy N1.5 paths so the N1.7 config/loader can reject the mismatch.
+    # N1.5 is unsupported, but it must still be recognised here to fail loudly
+    # rather than silently treating an N1.5 checkpoint as N1.7.
     if "gr00t-n1.5" in model_path_lower or "gr00t_n1.5" in model_path_lower:
         return GROOT_N1_5
     config_version = _infer_groot_model_version_from_local_config(model_path)
@@ -296,9 +298,6 @@ def _infer_groot_model_version_from_config(config: dict) -> str | None:
         normalized = candidate.lower().replace("-", "_")
         if normalized in {"gr00tn1d7", "gr00t_n1d7", "gr00t_n1_7"}:
             return GROOT_N1_7
-        if normalized in {"gr00t_n1_5", "gr00tn15", "gr00t_n1d5"}:
-            return GROOT_N1_5
-
     if config.get("model_name") == GROOT_N1_7_BACKBONE_MODEL:
         return GROOT_N1_7
     return None
@@ -335,14 +334,11 @@ class GrootConfig(PreTrainedConfig):
 
     # Groot-specific model parameters (from groot_finetune_script.py)
 
-    # Explicit GR00T model family selection. Defaults to N1.5 to preserve existing behavior.
-    model_version: str = GROOT_N1_5
+    # Explicit GR00T model family selection. LeRobot supports GR00T N1.7 only.
+    model_version: str = GROOT_N1_7
 
     # Path or HuggingFace model ID for the base Groot model
     base_model_path: str | None = None
-
-    # HF repo ID (or local path) that hosts vocab.json and merges.txt for Eagle tokenizer.
-    tokenizer_assets_repo: str = "lerobot/eagle2hg-processor-groot-n1p5"
 
     # HF repo ID (or local path) for the GR00T N1.7 Cosmos/Qwen3-VL backbone processor.
     n1_7_backbone_model: str = GROOT_N1_7_BACKBONE_MODEL
@@ -412,24 +408,27 @@ class GrootConfig(PreTrainedConfig):
         self.model_version = normalize_groot_model_version(self.model_version)
         self.action_decode_transform = normalize_groot_action_decode_transform(self.action_decode_transform)
         if self.base_model_path is None:
-            self.base_model_path = (
-                GROOT_N1_7_BASE_MODEL if self.model_version == GROOT_N1_7 else GROOT_N1_5_BASE_MODEL
-            )
+            self.base_model_path = GROOT_N1_7_BASE_MODEL
 
-        if self.action_decode_transform is not None and self.model_version != GROOT_N1_7:
-            raise ValueError("action_decode_transform can only be used with model_version='n1.7'.")
+        # The N1.7 LIBERO checkpoints emit a [0, 1] gripper action, but the LIBERO
+        # simulator expects the OpenVLA/[-1, 1] sign convention. NVIDIA's rollout
+        # wrapper applies this conversion; mirror it here so eval on the
+        # 'libero_sim' embodiment grasps correctly instead of scoring 0% success.
+        # This matches the embodiment-specific handling already done for the
+        # action execution horizon (see infer_groot_n1_7_action_execution_horizon).
+        if self.action_decode_transform is None and self.embodiment_tag == "libero_sim":
+            self.action_decode_transform = GROOT_ACTION_DECODE_TRANSFORM_LIBERO
 
-        if self.model_version == GROOT_N1_7:
-            if self.max_state_dim == 64:
-                self.max_state_dim = 132
-            if self.max_action_dim == 32:
-                self.max_action_dim = 132
-            if self.chunk_size == 50:
-                self.chunk_size = 40
-            if self.n_action_steps == 50:
-                self.n_action_steps = 40
-            if tuple(self.image_size) == (224, 224):
-                self.image_size = (256, 256)
+        if self.max_state_dim == 64:
+            self.max_state_dim = 132
+        if self.max_action_dim == 32:
+            self.max_action_dim = 132
+        if self.chunk_size == 50:
+            self.chunk_size = 40
+        if self.n_action_steps == 50:
+            self.n_action_steps = 40
+        if tuple(self.image_size) == (224, 224):
+            self.image_size = (256, 256)
 
         inferred_version = infer_groot_model_version(self.base_model_path)
         if inferred_version is not None and inferred_version != self.model_version:
@@ -513,11 +512,7 @@ class GrootConfig(PreTrainedConfig):
     @property
     def action_delta_indices(self) -> list[int]:
         """Return indices for delta actions."""
-        model_action_horizon = 16
-        if self.model_version == GROOT_N1_7:
-            model_action_horizon = (
-                infer_groot_n1_7_action_horizon(self.base_model_path, self.embodiment_tag) or 40
-            )
+        model_action_horizon = infer_groot_n1_7_action_horizon(self.base_model_path, self.embodiment_tag) or 40
         return list(range(min(self.chunk_size, model_action_horizon)))
 
     @property

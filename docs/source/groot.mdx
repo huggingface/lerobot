@@ -2,11 +2,11 @@
 
 GR00T is an NVIDIA foundation model family for generalized humanoid robot reasoning and skills. It is a cross-embodiment policy that accepts multimodal input, including language, images, and proprioception, to perform manipulation tasks in diverse environments.
 
-LeRobot integrates GR00T through the `groot` policy type. The default model family is GR00T N1.5, and GR00T N1.7 can be selected with `policy.model_version=n1.7`.
+LeRobot integrates GR00T N1.7 through the `groot` policy type.
 
 ## Model Overview
 
-NVIDIA Isaac GR00T N1.5 is an upgraded version of the GR00T N1 foundation model. GR00T N1.7 extends the family with a Cosmos-Reason2/Qwen3-VL backbone and N1.7 checkpoints for SimplerEnv, DROID, and LIBERO.
+GR00T N1.7 uses a Cosmos-Reason2/Qwen3-VL backbone and provides checkpoints for SimplerEnv, DROID, and LIBERO.
 
 Developers and researchers can post-train GR00T with their own real or synthetic data to adapt it for specific humanoid robots or tasks.
 
@@ -63,12 +63,6 @@ If your CUDA/PyTorch build needs a different Flash Attention wheel or source bui
 
 ## Usage
 
-To use GR00T N1.5 in your LeRobot configuration, specify the policy type:
-
-```bash
---policy.type=groot
-```
-
 To use GR00T N1.7:
 
 ```bash
@@ -104,12 +98,6 @@ accelerate launch \
   --job_name=$JOB_NAME
 ```
 
-For N1.7, add:
-
-```bash
---policy.model_version=n1.7
-```
-
 ## Performance Results
 
 ### LIBERO Benchmark Results
@@ -117,16 +105,7 @@ For N1.7, add:
 > [!NOTE]
 > Follow the [LIBERO](./libero) setup instructions before running `lerobot-eval`.
 
-GR00T has demonstrated strong performance on the LIBERO benchmark suite. To compare and test its LeRobot implementation, we finetuned the GR00T N1.5 model for 30k steps on the LIBERO dataset and compared the results to the GR00T reference results.
-
-| Benchmark          | LeRobot Implementation | GR00T Reference |
-| ------------------ | ---------------------- | --------------- |
-| **Libero Spatial** | 82.0%                  | 92.0%           |
-| **Libero Object**  | 99.0%                  | 92.0%           |
-| **Libero Long**    | 82.0%                  | 76.0%           |
-| **Average**        | 87.0%                  | 87.0%           |
-
-These results demonstrate GR00T's strong generalization capabilities across diverse robotic manipulation tasks. To reproduce these results, follow the instructions in the [LIBERO](./libero) section.
+GR00T N1.7 has demonstrated strong performance on the LIBERO benchmark suite. To reproduce LeRobot results, follow the instructions in the [LIBERO](./libero) section.
 
 ### GR00T N1.7 LIBERO Checkpoints
 
@@ -198,4 +177,4 @@ lerobot-rollout\
 
 ## License
 
-GR00T N1.5 follows NVIDIA's license terms, consistent with the original [GR00T repository](https://github.com/NVIDIA/Isaac-GR00T). GR00T N1.7 is released under the [NVIDIA Open Model License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/).
+GR00T N1.7 is released under the [NVIDIA Open Model License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/).
