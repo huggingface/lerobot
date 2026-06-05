@@ -33,12 +33,14 @@ else:
     ProcessorMixin = object
 
 from lerobot.processor import (
+    AbsoluteActionsProcessorStep,
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
+    RelativeActionsProcessorStep,
     RenameObservationsProcessorStep,
     batch_to_transition,
     policy_action_to_transition,
@@ -542,7 +544,24 @@ def make_groot_pre_post_processors_from_pretrained(
         to_transition=policy_action_to_transition,
         to_output=transition_to_policy_action,
     )
+    _reconnect_groot_relative_absolute_steps(preprocessor, postprocessor)
     return preprocessor, postprocessor
+
+
+def _reconnect_groot_relative_absolute_steps(
+    preprocessor: PolicyProcessorPipeline,
+    postprocessor: PolicyProcessorPipeline,
+) -> None:
+    relative_step = next(
+        (step for step in preprocessor.steps if isinstance(step, RelativeActionsProcessorStep)),
+        None,
+    )
+    if relative_step is None:
+        return
+
+    for step in postprocessor.steps:
+        if isinstance(step, AbsoluteActionsProcessorStep) and step.relative_step is None:
+            step.relative_step = relative_step
 
 
 def make_groot_pre_post_processors(
