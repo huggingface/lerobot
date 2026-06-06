@@ -239,13 +239,12 @@ def init_keyboard_listener():
 
     combined_listener = CombinedListener()
 
-    if sys.stdin.isatty():
-        terminal_listener = TerminalKeyListener(on_key=handle_key)
-        terminal_listener.start()
-        combined_listener.add(terminal_listener)
-
     if is_headless():
-        if not sys.stdin.isatty():
+        if sys.stdin.isatty():
+            terminal_listener = TerminalKeyListener(on_key=handle_key)
+            terminal_listener.start()
+            combined_listener.add(terminal_listener)
+        else:
             logging.warning(
                 "Headless environment detected and no interactive terminal is available. Keyboard inputs will not be available."
             )
