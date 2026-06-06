@@ -552,6 +552,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             ProcessorMigrationError: If the model requires migration to processor format.
         """
         model_id = str(pretrained_model_name_or_path)
+        model_path = Path(model_id)
+        is_local_source = model_path.is_dir() or model_path.is_file()
         hub_download_kwargs = {
             "force_download": force_download,
             "resume_download": resume_download,
@@ -570,7 +572,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
         # 3. Build steps with overrides
         steps, validated_overrides = cls._build_steps_with_overrides(
-            loaded_config, overrides or {}, model_id, base_path, hub_download_kwargs
+            loaded_config, overrides or {}, model_id, base_path, hub_download_kwargs, is_local_source
         )
 
         # 4. Validate that all overrides were used
@@ -715,6 +717,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         model_id: str,
         base_path: Path | None,
         hub_download_kwargs: dict[str, Any],
+        is_local_source: bool = False,
     ) -> tuple[list[ProcessorStep], set[str]]:
         """Build all processor steps with overrides and state loading.
 
@@ -738,7 +741,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         3. **State Loading** (via _load_step_state):
            - **If step has "state_file"**: Load tensor state from .safetensors
            - **Local first**: Check base_path/state_file.safetensors
-           - **Hub fallback**: Download state file if not found locally
+           - **Hub fallback**: Download state file if the pipeline was loaded from the Hub
            - **Optional**: Only load if step has load_state_dict method
 
         4. **Override Tracking**:
@@ -756,6 +759,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             model_id: The model identifier (needed for Hub state file downloads)
             base_path: Local directory path for finding state files
             hub_download_kwargs: Parameters for hf_hub_download (tokens, cache, etc.)
+            is_local_source: Whether model_id resolved to a local directory or config file.
 
         Returns:
             Tuple of (instantiated_steps_list, unused_override_keys)
@@ -777,7 +781,9 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             step_instance = cls._instantiate_step(step_entry, step_class, step_key, overrides)
 
             # 3. Load step state if available
-            cls._load_step_state(step_instance, step_entry, model_id, base_path, hub_download_kwargs)
+            cls._load_step_state(
+                step_instance, step_entry, model_id, base_path, hub_download_kwargs, is_local_source
+            )
 
             # 4. Track used overrides
             if step_key in override_keys:
@@ -918,6 +924,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         model_id: str,
         base_path: Path | None,
         hub_download_kwargs: dict[str, Any],
+        is_local_source: bool = False,
     ) -> None:
         """Load state dictionary for a processor step if available.
 
@@ -936,7 +943,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
            - **Use case**: Loading from local saved model directory
 
         2. **Hub download fallback**: Download state file from repository
-           - **When triggered**: Local file not found or base_path is None
+           - **When triggered**: Local file not found and the pipeline source is a Hub repo
            - **Process**: Use hf_hub_download with same parameters as config
            - **Example**: Download "normalize_step_0.safetensors" from "user/repo"
            - **Result**: Downloaded to local cache, path returned
@@ -957,6 +964,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             model_id: The model identifier (used for Hub downloads if needed)
             base_path: Local directory path for finding state files (None for Hub-only)
             hub_download_kwargs: Parameters for hf_hub_download (tokens, cache, etc.)
+            is_local_source: Whether model_id resolved to a local directory or config file.
 
         Note:
             This method modifies step_instance in-place and returns None.
@@ -970,6 +978,12 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         # Try local file first
         if base_path and (base_path / state_filename).exists():
             state_path = str(base_path / state_filename)
+        elif is_local_source:
+            state_path = base_path / state_filename if base_path else Path(state_filename)
+            raise FileNotFoundError(
+                f"State file '{state_filename}' was not found for local processor pipeline "
+                f"'{model_id}' at '{state_path}'."
+            )
         else:
             # Download from Hub
             state_path = hf_hub_download(
