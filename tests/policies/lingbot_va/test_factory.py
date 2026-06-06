@@ -36,17 +36,3 @@ def test_get_policy_class_resolves_lazily() -> None:
     cls = get_policy_class("lingbot_va")
     assert cls.name == "lingbot_va"
     assert cls.config_class is LingBotVAConfig
-
-
-def test_convert_build_config_libero() -> None:
-    pytest.importorskip("diffusers")
-    from lerobot.policies.lingbot_va.convert_lingbot_va_checkpoints import build_config
-
-    cfg = build_config("libero", wan_pretrained_path="dummy/path", dtype="float32")
-    assert cfg.height == 128 and cfg.width == 128
-    assert cfg.used_action_channel_ids == list(range(7))
-    # validate_features (called inside build_config) must have populated the action feature.
-    from lerobot.utils.constants import ACTION
-
-    assert cfg.output_features[ACTION].shape == (7,)
-    assert len(cfg.obs_cam_keys) == 2

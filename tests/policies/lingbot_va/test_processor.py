@@ -21,6 +21,7 @@ import torch
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.lingbot_va.configuration_lingbot_va import LingBotVAConfig
 from lerobot.policies.lingbot_va.processor_lingbot_va import (
+    LIBERO_ACTION_Q01,
     LingBotVAActionUnnormalizeStep,
     make_lingbot_va_pre_post_processors,
 )
@@ -75,7 +76,7 @@ def test_make_pre_post_processors_names_and_steps() -> None:
 def test_postprocessor_applies_unnormalization() -> None:
     cfg = _make_config()
     _, post = make_lingbot_va_pre_post_processors(cfg, dataset_stats=None)
-    # A normalized action of all -1 should map back to q01.
+    # A normalized action of all -1 should map back to q01 (the LIBERO 7-DoF default quantiles).
     normed = torch.full((1, len(cfg.used_action_channel_ids)), -1.0)
     out = post(normed)
-    assert torch.allclose(out, torch.tensor(cfg.action_q01).unsqueeze(0), atol=1e-4)
+    assert torch.allclose(out, torch.tensor(LIBERO_ACTION_Q01).unsqueeze(0), atol=1e-4)

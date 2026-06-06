@@ -14,14 +14,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Pure-torch unit tests for the vendored LingBot-VA helper modules (no diffusers needed)."""
+"""Unit tests for the vendored LingBot-VA helper code (scheduler + grid utilities)."""
 
 from __future__ import annotations
 
+import pytest
 import torch
 
-from lerobot.policies.lingbot_va.schedulers import FlowMatchScheduler
-from lerobot.policies.lingbot_va.wan_utils import data_seq_to_patch, get_mesh_id
+pytest.importorskip("diffusers")  # the model code lives in modeling_lingbot_va, which imports diffusers
+
+from lerobot.policies.lingbot_va.modeling_lingbot_va import (  # noqa: E402
+    FlowMatchScheduler,
+    data_seq_to_patch,
+    get_mesh_id,
+)
 
 
 def test_flow_match_scheduler_timesteps_monotone_decreasing() -> None:

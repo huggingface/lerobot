@@ -31,27 +31,6 @@ from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import LRSchedulerConfig
 from lerobot.utils.constants import ACTION
 
-# Upstream LIBERO action-normalization quantiles (single 7-DoF arm + gripper).
-# Verbatim from wan_va/configs/va_libero_cfg.py (channels 0-6 of a 30-dim action space).
-LIBERO_ACTION_Q01 = [
-    -0.6589285731315613,
-    -0.84375,
-    -0.9375,
-    -0.12107142806053162,
-    -0.15964286029338837,
-    -0.26571428775787354,
-    -1.0,
-]
-LIBERO_ACTION_Q99 = [
-    0.8999999761581421,
-    0.8544642925262451,
-    0.9375,
-    0.17142857611179352,
-    0.1842857152223587,
-    0.34392857551574707,
-    1.0,
-]
-
 
 @PreTrainedConfig.register_subclass("lingbot_va")
 @dataclass
@@ -84,12 +63,27 @@ class LingBotVAConfig(PreTrainedConfig):
     wan_pretrained_path: str = "robbyant/lingbot-va-posttrain-libero-long"
     # dtype used for the transformer / VAE / text-encoder weights at inference.
     dtype: str = "bfloat16"  # one of "bfloat16", "float16", "float32"
+    # Device for the frozen UMT5-XXL text encoder. It encodes the (fixed) instruction once per
+    # episode, so keeping it on CPU frees ~11 GB of VRAM and lets the 5B transformer + VAE fit on
+    # a single 24-32 GB GPU. Set to "cuda" if you have the headroom and want faster prompt encoding.
+    text_encoder_device: str = "cpu"
 
     # ── Observation cameras (order matters: latents are concatenated on width) ──
     # Defaults match the LIBERO env feature keys (agentview -> image, eye-in-hand -> image2).
     obs_cam_keys: list[str] = field(
         default_factory=lambda: ["observation.images.image", "observation.images.image2"]
     )
+    # Horizontally flip the camera images before encoding. LeRobot's LIBERO env processor rotates
+    # frames 180° (flip H *and* W; the HuggingFaceVLA convention), but upstream LingBot-VA trains /
+    # evaluates on vertically-flipped-only frames (``obs[::-1]`` in evaluation/libero/client.py).
+    # Undoing the extra horizontal flip here realigns the input with the model's training orientation.
+    image_hflip: bool = False
+    # Latent assembly layout for the observation cameras:
+    #   "width_concat"    : encode every camera at (height, width) and concat latents on width (LIBERO).
+    #   "robotwin_tshape" : head camera at full (height, width), the two wrist cameras at half
+    #                       resolution, assembled in a "T" (wrists side-by-side on top of the head
+    #                       on the height axis) using a second streaming VAE (RoboTwin).
+    camera_layout: str = "width_concat"
 
     # ── Inference hyperparameters (LIBERO defaults) ──
     n_obs_steps: int = 1
@@ -108,10 +102,9 @@ class LingBotVAConfig(PreTrainedConfig):
     max_sequence_length: int = 512  # UMT5 prompt length
 
     # Subset of the 30-d action space actually used by the benchmark (LIBERO = 7-DoF).
+    # The fixed action (un)normalization quantiles live in the post-processor
+    # (``LingBotVAActionUnnormalizeStep`` in ``processor_lingbot_va.py``), not here.
     used_action_channel_ids: list[int] = field(default_factory=lambda: list(range(7)))
-    # Fixed quantiles for action (un)normalization on the *used* channels.
-    action_q01: list[float] = field(default_factory=lambda: list(LIBERO_ACTION_Q01))
-    action_q99: list[float] = field(default_factory=lambda: list(LIBERO_ACTION_Q99))
 
     # Opt-in: VAE-decode the predicted video latents and stash them on
     # ``self.last_predicted_frames`` so eval/train can save predicted-video MP4s.
@@ -140,13 +133,6 @@ class LingBotVAConfig(PreTrainedConfig):
         super().__post_init__()
         if self.attn_mode not in ("torch", "flashattn", "flex"):
             raise ValueError(f"attn_mode must be one of 'torch', 'flashattn', 'flex'; got {self.attn_mode!r}")
-        if len(self.action_q01) != len(self.used_action_channel_ids) or len(self.action_q99) != len(
-            self.used_action_channel_ids
-        ):
-            raise ValueError(
-                "action_q01 / action_q99 must each have one entry per used_action_channel_ids "
-                f"({len(self.used_action_channel_ids)}); got {len(self.action_q01)} / {len(self.action_q99)}."
-            )
 
     @property
     def chunk_size(self) -> int:
