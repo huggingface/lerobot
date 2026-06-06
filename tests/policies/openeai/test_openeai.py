@@ -373,8 +373,8 @@ def test_dit_head_initialization(tiny_openeai_config):
     assert "__default__" in head.state_encoders
     assert "__default__" in head.action_encoders
     assert "__default__" in head.action_decoders
-    # cond_pos_embed is preallocated to 1024 (per modeling._initialize)
-    assert head.cond_pos_embed.shape[1] >= tiny_openeai_config.feat_length
+    # cond_pos_embed is preallocated to feat_length
+    assert head.cond_pos_embed.shape[1] == tiny_openeai_config.feat_length
 
 
 def test_dit_head_forward(tiny_openeai_config):

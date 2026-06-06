@@ -49,7 +49,7 @@ from lerobot.processor import (
     policy_action_to_transition,
     transition_to_policy_action,
 )
-from lerobot.types import EnvTransition, RobotObservation, TransitionKey
+from lerobot.lerobot_types import EnvTransition, RobotObservation, TransitionKey
 from lerobot.utils.constants import (
     OBS_IMAGE,
     OBS_IMAGES,
