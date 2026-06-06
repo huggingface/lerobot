@@ -41,11 +41,13 @@ from typing import TypeVar
 import torch
 from torch import Tensor
 
-from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.policies.groot.configuration_groot import GrootConfig
-from lerobot.policies.groot.groot_n1 import GR00TN15
-from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.utils.constants import ACTION, OBS_IMAGES
+from lerobot.utils.import_utils import require_package
+
+from ..pretrained import PreTrainedPolicy
+from .configuration_groot import GrootConfig
+from .groot_n1 import GR00TN15
 
 T = TypeVar("T", bound="GrootPolicy")
 
@@ -58,6 +60,7 @@ class GrootPolicy(PreTrainedPolicy):
 
     def __init__(self, config: GrootConfig, **kwargs):
         """Initialize Groot policy wrapper."""
+        require_package("transformers", extra="groot")
         super().__init__(config)
         config.validate_features()
         self.config = config

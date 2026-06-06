@@ -14,8 +14,7 @@
 
 from dataclasses import dataclass, field
 
-from lerobot.cameras import CameraConfig
-from lerobot.cameras.configs import ColorMode
+from lerobot.cameras import CameraConfig, ColorMode
 from lerobot.cameras.reachy2_camera import Reachy2CameraConfig
 
 from ..config import RobotConfig

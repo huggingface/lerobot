@@ -26,6 +26,8 @@ import torch
 import torch.nn as nn
 from safetensors.torch import load_file
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features
 from lerobot.processor import (

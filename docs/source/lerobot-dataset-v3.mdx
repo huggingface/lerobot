@@ -10,6 +10,7 @@ This docs will guide you to:
 - Stream datasets without downloading using `StreamingLeRobotDataset`
 - Apply image transforms for data augmentation during training
 - Migrate existing `v2.1` datasets to `v3.0`
+- Experiment with other `LeRobotDataset` formats and implementations like Lance
 
 ## What’s new in `v3`
 
@@ -43,7 +44,7 @@ lerobot-record \
   --dataset.num_episodes=5 \
   --dataset.single_task="Grab the black cube" \
   --dataset.streaming_encoding=true \
-  # --dataset.vcodec=auto \
+  # --dataset.camera_encoder.vcodec=auto \
   --dataset.encoder_threads=2
 ```
 
@@ -89,7 +90,7 @@ A core v3 principle is **decoupling storage from the user API**: data is stored 
 
 ```python
 import torch
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 
 repo_id = "yaak-ai/L2D-v3"
 
@@ -135,7 +136,7 @@ for batch in data_loader:
 Use `StreamingLeRobotDataset` to iterate directly from the Hub without local copies. This allows to stream large datasets without the need to downloading them onto disk or loading them onto memory, and is a key feature of the new dataset format.
 
 ```python
-from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
+from lerobot.datasets import StreamingLeRobotDataset
 
 repo_id = "yaak-ai/L2D-v3"
 dataset = StreamingLeRobotDataset(repo_id)  # streams directly from the Hub
@@ -167,8 +168,8 @@ Currently, transforms are applied during **training time only**, not during reco
 Use the `image_transforms` parameter when loading a dataset for training:
 
 ```python
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.transforms import ImageTransforms, ImageTransformsConfig, ImageTransformConfig
+from lerobot.datasets import LeRobotDataset
+from lerobot.transforms import ImageTransforms, ImageTransformsConfig, ImageTransformConfig
 
 # Option 1: Use default transform configuration (disabled by default)
 transforms_config = ImageTransformsConfig(
@@ -274,7 +275,7 @@ A converter aggregates per‑episode files into larger shards and writes episode
 pip install "https://github.com/huggingface/lerobot/archive/33cad37054c2b594ceba57463e8f11ee374fa93c.zip"
 
 # Convert an existing v2.1 dataset hosted on the Hub:
-python -m lerobot.datasets.v30.convert_dataset_v21_to_v30 --repo-id=<HF_USER/DATASET_ID>
+python -m lerobot.scripts.convert_dataset_v21_to_v30 --repo-id=<HF_USER/DATASET_ID>
 ```
 
 **What it does**
@@ -290,7 +291,7 @@ python -m lerobot.datasets.v30.convert_dataset_v21_to_v30 --repo-id=<HF_USER/DAT
 When creating or recording datasets, you **must** call `dataset.finalize()` to properly close parquet writers. See the [PR #1903](https://github.com/huggingface/lerobot/pull/1903) for more details.
 
 ```python
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 
 # Create dataset and record episodes
 dataset = LeRobotDataset.create(...)
@@ -315,3 +316,39 @@ Dataset v3.0 uses incremental parquet writing with buffered metadata for efficie
 - Ensures the dataset is valid for loading
 
 Without calling `finalize()`, your parquet files will be incomplete and the dataset won't load properly.
+
+## Other formats and implementations
+
+### Lance
+
+Lance is a useful format for multimodal AI datasets, especially for large-scale training requiring high performance IO and random access.
+
+The `lerobot-lancedb` package implements `LeRobotLanceDataset` (for JPEG images) and `LeRobotLanceVideoDataset` (for mp4 videos).
+Those two storage layouts both subclass LeRobotDataset and can provide data loading speed ups.
+
+`LeRobotLanceDataset` is a drop-in replacement for `LeRobotDataset`:
+
+```python
+from lerobot.datasets import LeRobotDatasetMetadata
+from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
+from lerobot_lancedb import LeRobotLanceDataset, LeRobotLanceVideoDataset
+
+cfg = DiffusionConfig(...)
+meta = LeRobotDatasetMetadata(root=local_dataset_path)  # or use repo_id=... to load metadata from the Hub
+delta_timestamps = {...}
+
+# Use LeRobotLanceDataset for image datasets
+dataset = LeRobotLanceDataset(
+    root=local_dataset_path,                            # or use repo_id=... to stream from the Hub
+    delta_timestamps=delta_timestamps,
+    return_uint8=True,
+)
+# Or use LeRobotLanceVideoDataset for video datasets:
+dataset = LeRobotLanceVideoDataset(
+    root=local_dataset_path,                            # or use repo_id=... to stream from the Hub
+    delta_timestamps=delta_timestamps,
+    return_uint8=True,
+)
+```
+
+Join the discussion on [Github](https://github.com/huggingface/lerobot/issues/3608) and explore the `lerobot-lancedb` documentation [here](https://lancedb.github.io/lerobot-lancedb/).

@@ -31,26 +31,28 @@ import PIL.Image
 import pyarrow.parquet as pq
 import torch
 
-from lerobot.datasets.compute_stats import compute_episode_stats
-from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-from lerobot.datasets.feature_utils import (
+from lerobot.configs import VideoEncoderConfig, camera_encoder_defaults
+
+from .compute_stats import compute_episode_stats
+from .dataset_metadata import LeRobotDatasetMetadata
+from .feature_utils import (
     get_hf_features_from_features,
     validate_episode_buffer,
     validate_frame,
 )
-from lerobot.datasets.image_writer import AsyncImageWriter, write_image
-from lerobot.datasets.io_utils import (
+from .image_writer import AsyncImageWriter, write_image
+from .io_utils import (
     embed_images,
     get_file_size_in_mb,
     load_episodes,
     write_info,
 )
-from lerobot.datasets.utils import (
+from .utils import (
     DEFAULT_EPISODES_PATH,
     DEFAULT_IMAGE_PATH,
     update_chunk_file_indices,
 )
-from lerobot.datasets.video_utils import (
+from .video_utils import (
     StreamingVideoEncoder,
     concatenate_video_files,
     encode_video_frames,
@@ -65,14 +67,19 @@ def _encode_video_worker(
     episode_index: int,
     root: Path,
     fps: int,
-    vcodec: str = "libsvtav1",
+    camera_encoder: VideoEncoderConfig | None = None,
     encoder_threads: int | None = None,
 ) -> Path:
     temp_path = Path(tempfile.mkdtemp(dir=root)) / f"{video_key}_{episode_index:03d}.mp4"
     fpath = DEFAULT_IMAGE_PATH.format(image_key=video_key, episode_index=episode_index, frame_index=0)
     img_dir = (root / fpath).parent
     encode_video_frames(
-        img_dir, temp_path, fps, vcodec=vcodec, overwrite=True, encoder_threads=encoder_threads
+        img_dir,
+        temp_path,
+        fps,
+        camera_encoder=camera_encoder,
+        encoder_threads=encoder_threads,
+        overwrite=True,
     )
     shutil.rmtree(img_dir)
     return temp_path
@@ -89,20 +96,22 @@ class DatasetWriter:
         self,
         meta: LeRobotDatasetMetadata,
         root: Path,
-        vcodec: str,
+        camera_encoder: VideoEncoderConfig | None,
         encoder_threads: int | None,
         batch_encoding_size: int,
         streaming_encoder: StreamingVideoEncoder | None = None,
         initial_frames: int = 0,
     ):
-        """Initialize the writer with metadata, codec, and encoding config.
+        """Initialize the writer with metadata, codec, and encoder config.
 
         Args:
             meta: Dataset metadata instance (used for feature schema, chunk
                 settings, and episode persistence).
             root: Local dataset root directory.
-            vcodec: Video codec for encoding (e.g. ``'libsvtav1'``, ``'h264'``).
-            encoder_threads: Threads per encoder instance. ``None`` for auto.
+            camera_encoder: Video encoder settings applied to all cameras.
+                ``None`` uses :func:`~lerobot.configs.camera_encoder_defaults`.
+            encoder_threads: Number of encoder threads (global). ``None``
+                lets the codec decide.
             batch_encoding_size: Number of episodes to accumulate before
                 batch-encoding videos.
             streaming_encoder: Optional pre-built :class:`StreamingVideoEncoder`
@@ -111,7 +120,7 @@ class DatasetWriter:
         """
         self._meta = meta
         self._root = root
-        self._vcodec = vcodec
+        self._camera_encoder = camera_encoder or camera_encoder_defaults()
         self._encoder_threads = encoder_threads
         self._batch_encoding_size = batch_encoding_size
         self._streaming_encoder = streaming_encoder
@@ -155,7 +164,16 @@ class DatasetWriter:
             self.image_writer.save_image(image=image, fpath=fpath, compress_level=compress_level)
 
     def add_frame(self, frame: dict) -> None:
-        """Add a frame to the episode_buffer. Images are written to a temporary directory."""
+        """
+        Add a single frame to the current episode buffer.
+
+        Apart from images written to a temporary directory, nothing is written to disk
+        until ``save_episode()`` is called.
+
+        The caller must provide all user-defined features plus ``"task"``, and must
+        not provide ``"timestamp"`` or ``"frame_index"``; those are computed
+        automatically.
+        """
         # Convert torch to numpy if needed
         for name in frame:
             if isinstance(frame[name], torch.Tensor):
@@ -168,7 +186,7 @@ class DatasetWriter:
 
         # Automatically add frame_index and timestamp to episode buffer
         frame_index = self.episode_buffer["size"]
-        timestamp = frame.pop("timestamp") if "timestamp" in frame else frame_index / self._meta.fps
+        timestamp = frame_index / self._meta.fps
         self.episode_buffer["frame_index"].append(frame_index)
         self.episode_buffer["timestamp"].append(timestamp)
         self.episode_buffer["task"].append(frame.pop("task"))
@@ -232,7 +250,14 @@ class DatasetWriter:
         for key, ft in self._meta.features.items():
             if key in ["index", "episode_index", "task_index"] or ft["dtype"] in ["image", "video"]:
                 continue
-            episode_buffer[key] = np.stack(episode_buffer[key])
+            stacked_values = np.stack(episode_buffer[key])
+
+            # `shape=(1,)` numeric features are serialized as `datasets.Value`, which expects scalars.
+            # Normalizing to `(N,)` keeps save semantics stable across dependency versions.
+            if tuple(ft["shape"]) == (1,) and ft["dtype"] != "string":
+                stacked_values = stacked_values.reshape(episode_length)
+
+            episode_buffer[key] = stacked_values
 
         # Wait for image writer to end, so that episode stats over images can be computed
         self._wait_image_writer()
@@ -275,7 +300,7 @@ class DatasetWriter:
                             episode_index,
                             self._root,
                             self._meta.fps,
-                            self._vcodec,
+                            self._camera_encoder,
                             self._encoder_threads,
                         ): video_key
                         for video_key in self._meta.video_keys
@@ -486,7 +511,7 @@ class DatasetWriter:
 
         # Update video info (only needed when first episode is encoded)
         if episode_index == 0:
-            self._meta.update_video_info(video_key)
+            self._meta.update_video_info(video_key, camera_encoder=self._camera_encoder)
             write_info(self._meta.info, self._meta.root)
 
         metadata = {
@@ -555,7 +580,12 @@ class DatasetWriter:
     def _encode_temporary_episode_video(self, video_key: str, episode_index: int) -> Path:
         """Use ffmpeg to convert frames stored as png into mp4 videos."""
         return _encode_video_worker(
-            video_key, episode_index, self._root, self._meta.fps, self._vcodec, self._encoder_threads
+            video_key,
+            episode_index,
+            self._root,
+            self._meta.fps,
+            self._camera_encoder,
+            self._encoder_threads,
         )
 
     def close_writer(self) -> None:
@@ -588,7 +618,7 @@ class DatasetWriter:
 
     def cleanup_interrupted_episode(self, episode_index: int) -> None:
         """Remove temporary image directories for an interrupted episode."""
-        for key in self._meta.video_keys:
+        for key in self._meta.camera_keys:
             img_dir = self._get_image_file_path(
                 episode_index=episode_index, image_key=key, frame_index=0
             ).parent

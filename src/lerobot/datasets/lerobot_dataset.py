@@ -24,20 +24,21 @@ import torch.utils
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.errors import RevisionNotFoundError
 
-from lerobot.datasets.dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
-from lerobot.datasets.dataset_reader import DatasetReader
-from lerobot.datasets.dataset_writer import DatasetWriter
-from lerobot.datasets.utils import (
+from lerobot.configs import VideoEncoderConfig
+from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
+
+from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
+from .dataset_reader import DatasetReader
+from .dataset_writer import DatasetWriter
+from .utils import (
     create_lerobot_dataset_card,
     get_safe_version,
     is_valid_version,
 )
-from lerobot.datasets.video_utils import (
+from .video_utils import (
     StreamingVideoEncoder,
-    get_safe_default_codec,
-    resolve_vcodec,
+    get_safe_default_video_backend,
 )
-from lerobot.utils.constants import HF_LEROBOT_HOME
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         repo_id: str,
         root: str | Path | None = None,
         episodes: list[int] | None = None,
+        episode_filter: Callable[[dict], bool] | None = None,
         image_transforms: Callable | None = None,
         delta_timestamps: dict[str, list[float]] | None = None,
         tolerance_s: float = 1e-4,
@@ -55,11 +57,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
         force_cache_sync: bool = False,
         download_videos: bool = True,
         video_backend: str | None = None,
+        return_uint8: bool = False,
         batch_encoding_size: int = 1,
-        vcodec: str = "libsvtav1",
+        camera_encoder: VideoEncoderConfig | None = None,
+        encoder_threads: int | None = None,
         streaming_encoding: bool = False,
         encoder_queue_maxsize: int = 30,
-        encoder_threads: int | None = None,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -144,15 +147,23 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         Args:
             repo_id (str): This is the repo id that will be used to fetch the dataset.
-            root (Path | None, optional): Local directory where the dataset will be downloaded and
-                stored. If set, all dataset files will be stored directly under this path. If not set, the
-                dataset files will be stored under $HF_LEROBOT_HOME/repo_id (configurable via the
-                HF_LEROBOT_HOME environment variable).
+            root (Path | None, optional): Local directory where the dataset will be read from or downloaded
+                into. If set, all dataset files are materialized directly under this path. If not set,
+                existing local datasets are still looked up under ``$HF_LEROBOT_HOME/{repo_id}``, but Hub
+                downloads use a revision-safe snapshot cache under
+                ``$HF_LEROBOT_HOME/hub``.
             episodes (list[int] | None, optional): If specified, this will only load episodes specified by
                 their episode_index in this list. Defaults to None.
-            image_transforms (Callable | None, optional): You can pass standard v2 image transforms from
-                torchvision.transforms.v2 here which will be applied to visual modalities (whether they come
-                from videos or images). Defaults to None.
+            episode_filter (Callable[[dict], bool] | None, optional): Predicate over per-episode
+                metadata rows used to select episodes. Evaluated against ``meta/`` without ``stats`` keys
+                (e.g.``task_index``, ``episode_index``, ``length``, ``from_timestamp``, ``to_timestamp``).
+                Intersected with ``episodes`` when both are set. Example: ``lambda ep: ep["length"] >= 100``.
+                Defaults to None.
+            image_transforms (Callable | None, optional):
+                Transform applied to visual modalities inside `__getitem__` after image decoding / tensor
+                conversion. This works for both image-backed and video-backed observations and can later be
+                updated with `set_image_transforms()` or cleared with `clear_image_transforms()`.
+                Defaults to None.
             delta_timestamps (dict[list[float]] | None, optional): _description_. Defaults to None.
             tolerance_s (float, optional): Tolerance in seconds used to ensure data timestamps are actually in
                 sync with the fps value. It is used at the init of the dataset to make sure that each
@@ -172,16 +183,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 You can also use the 'pyav' decoder used by Torchvision, which used to be the default option, or 'video_reader' which is another decoder of Torchvision.
             batch_encoding_size (int, optional): Number of episodes to accumulate before batch encoding videos.
                 Set to 1 for immediate encoding (default), or higher for batched encoding. Defaults to 1.
-            vcodec (str, optional): Video codec for encoding videos during recording. Options: 'h264', 'hevc',
-                'libsvtav1', 'auto', or hardware-specific codecs like 'h264_videotoolbox', 'h264_nvenc'.
-                Defaults to 'libsvtav1'. Use 'auto' to auto-detect the best available hardware encoder.
+            camera_encoder (VideoEncoderConfig | None, optional): Video encoder settings for cameras
+                (codec, quality, etc.). When ``None``, :func:`~lerobot.configs.video.camera_encoder_defaults`
+                is used by the writer.
+            encoder_threads (int | None, optional): Number of encoder threads (global). ``None`` lets the
+                codec decide.
             streaming_encoding (bool, optional): If True, encode video frames in real-time during capture
                 instead of writing PNG images first. This makes save_episode() near-instant. Defaults to False.
             encoder_queue_maxsize (int, optional): Maximum number of frames to buffer per camera when using
                 streaming encoding. Defaults to 30 (~1s at 30fps).
-            encoder_threads (int | None, optional): Number of threads per encoder instance. None lets the
-                codec auto-detect (default). Lower values reduce CPU usage per encoder. Maps to 'lp' (via svtav1-params) for
-                libsvtav1 and 'threads' for h264/hevc.
 
         Note:
             Write-mode parameters (``streaming_encoding``, ``batch_encoding_size``) passed to
@@ -190,23 +200,43 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         super().__init__()
         self.repo_id = repo_id
-        self.root = Path(root) if root else HF_LEROBOT_HOME / repo_id
-        self.image_transforms = image_transforms
+        self._requested_root = Path(root) if root else None
+        self.reader = None
+        self.set_image_transforms(image_transforms)
         self.delta_timestamps = delta_timestamps
-        self.episodes = episodes
         self.tolerance_s = tolerance_s
         self.revision = revision if revision else CODEBASE_VERSION
-        self._video_backend = video_backend if video_backend else get_safe_default_codec()
+        self._video_backend = video_backend if video_backend else get_safe_default_video_backend()
+        self._return_uint8 = return_uint8
         self._batch_encoding_size = batch_encoding_size
-        self._vcodec = resolve_vcodec(vcodec)
         self._encoder_threads = encoder_threads
 
-        self.root.mkdir(exist_ok=True, parents=True)
+        if self._requested_root is not None:
+            self._requested_root.mkdir(exist_ok=True, parents=True)
 
-        # Load metadata
+        # Load metadata (sets self.root once from the resolved metadata root)
         self.meta = LeRobotDatasetMetadata(
-            self.repo_id, self.root, self.revision, force_cache_sync=force_cache_sync
+            self.repo_id, self._requested_root, self.revision, force_cache_sync=force_cache_sync
         )
+        self.root = self.meta.root
+        self.revision = self.meta.revision
+
+        if episodes is not None and any(
+            episode >= self.meta.total_episodes or episode < 0 for episode in episodes
+        ):
+            logger.warning(
+                f"Some episodes in the provided episodes list are out of range for this dataset ({self.meta.total_episodes})."
+            )
+
+        if episode_filter is not None:
+            resolved = self.meta.filter_episodes(episode_filter, candidates=episodes)
+            if not resolved:
+                raise ValueError(
+                    "The episode filter did not match any episode. Make sure the filter and episodes list are valid and compatible."
+                )
+            logger.info(f"The episode filter matched {len(resolved)} episode(s).")
+            episodes = resolved
+        self.episodes = episodes
 
         # Create reader (hf_dataset loaded below)
         self.reader = DatasetReader(
@@ -217,6 +247,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             video_backend=self._video_backend,
             delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
+            return_uint8=self._return_uint8,
         )
 
         # Load actual data
@@ -240,12 +271,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
             streaming_enc = None
             if streaming_encoding and len(self.meta.video_keys) > 0:
                 streaming_enc = self._build_streaming_encoder(
-                    self.meta.fps, self._vcodec, encoder_queue_maxsize, encoder_threads
+                    self.meta.fps,
+                    camera_encoder,
+                    encoder_queue_maxsize,
+                    encoder_threads,
                 )
             self.writer = DatasetWriter(
                 meta=self.meta,
                 root=self.root,
-                vcodec=self._vcodec,
+                camera_encoder=camera_encoder,
                 encoder_threads=encoder_threads,
                 batch_encoding_size=batch_encoding_size,
                 streaming_encoder=streaming_enc,
@@ -271,6 +305,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def _ensure_reader(self) -> DatasetReader:
         """Lazily create the reader on first access."""
         if self.reader is None:
+            self.meta.ensure_readable()
             self.reader = DatasetReader(
                 meta=self.meta,
                 root=self.root,
@@ -279,23 +314,20 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 video_backend=self._video_backend,
                 delta_timestamps=self.delta_timestamps,
                 image_transforms=self.image_transforms,
+                return_uint8=self._return_uint8,
             )
         return self.reader
 
     @staticmethod
     def _build_streaming_encoder(
         fps: int,
-        vcodec: str,
+        camera_encoder: VideoEncoderConfig | None,
         encoder_queue_maxsize: int,
         encoder_threads: int | None,
     ) -> StreamingVideoEncoder:
         return StreamingVideoEncoder(
             fps=fps,
-            vcodec=vcodec,
-            pix_fmt="yuv420p",
-            g=2,
-            crf=30,
-            preset=None,
+            camera_encoder=camera_encoder,
             queue_maxsize=encoder_queue_maxsize,
             encoder_threads=encoder_threads,
         )
@@ -471,6 +503,18 @@ class LeRobotDataset(torch.utils.data.Dataset):
             f"}})"
         )
 
+    def set_image_transforms(self, image_transforms: Callable | None) -> None:
+        """Replace the transform applied to visual observations."""
+        if image_transforms is not None and not callable(image_transforms):
+            raise TypeError("image_transforms must be callable or None.")
+        self.image_transforms = image_transforms
+        if self.reader is not None:
+            self.reader._image_transforms = image_transforms
+
+    def clear_image_transforms(self) -> None:
+        """Remove the transform applied to visual observations."""
+        self.set_image_transforms(None)
+
     # ── Hub methods (stay on facade) ──────────────────────────────────
 
     def push_to_hub(
@@ -480,7 +524,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         license: str | None = "apache-2.0",
         tag_version: bool = True,
         push_videos: bool = True,
-        private: bool = False,
+        private: bool | None = None,
         allow_patterns: list[str] | str | None = None,
         upload_large_folder: bool = False,
         **card_kwargs,
@@ -499,7 +543,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             tag_version: If ``True``, create a Git tag for the current codebase
                 version.
             push_videos: If ``False``, skip uploading the ``videos/`` directory.
-            private: If ``True``, create a private repository.
+            private: If ``True``, create a private repository. If ``None``
+                (default), defer to the org default on the Hub (only affects orgs).
             allow_patterns: Glob pattern(s) restricting which files to upload.
             upload_large_folder: If ``True``, use ``upload_large_folder`` instead
                 of ``upload_folder`` for very large datasets.
@@ -556,14 +601,33 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self.episodes is not None:
             # Reader is guaranteed to exist here (created in __init__ before _download)
             files = self.reader.get_episodes_file_paths()
-        snapshot_download(
-            self.repo_id,
-            repo_type="dataset",
-            revision=self.revision,
-            local_dir=self.root,
-            allow_patterns=files,
-            ignore_patterns=ignore_patterns,
-        )
+
+        if self._requested_root is None:
+            self.meta.root = Path(
+                snapshot_download(
+                    self.repo_id,
+                    repo_type="dataset",
+                    revision=self.revision,
+                    cache_dir=HF_LEROBOT_HUB_CACHE,
+                    allow_patterns=files,
+                    ignore_patterns=ignore_patterns,
+                )
+            )
+        else:
+            self._requested_root.mkdir(exist_ok=True, parents=True)
+            snapshot_download(
+                self.repo_id,
+                repo_type="dataset",
+                revision=self.revision,
+                local_dir=self._requested_root,
+                allow_patterns=files,
+                ignore_patterns=ignore_patterns,
+            )
+            self.meta.root = self._requested_root
+
+        # Propagate resolved root from metadata (single source of truth)
+        self.root = self.meta.root
+        self.reader.root = self.meta.root
 
     # ── Class constructors ────────────────────────────────────────────
 
@@ -581,11 +645,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
         image_writer_threads: int = 0,
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
-        vcodec: str = "libsvtav1",
+        camera_encoder: VideoEncoderConfig | None = None,
         metadata_buffer_size: int = 10,
         streaming_encoding: bool = False,
         encoder_queue_maxsize: int = 30,
         encoder_threads: int | None = None,
+        video_files_size_in_mb: int | None = None,
+        data_files_size_in_mb: int | None = None,
     ) -> "LeRobotDataset":
         """Create a new LeRobotDataset from scratch for recording data.
 
@@ -610,20 +676,20 @@ class LeRobotDataset(torch.utils.data.Dataset):
             video_backend: Video decoding backend (used when reading back).
             batch_encoding_size: Number of episodes to accumulate before
                 batch-encoding videos. ``1`` means encode immediately.
-            vcodec: Video codec for encoding. Options include ``'libsvtav1'``,
-                ``'h264'``, ``'hevc'``, ``'auto'``.
+            camera_encoder: Video encoder settings for cameras (codec, quality, etc.).
+                When ``None``, :func:`~lerobot.configs.video.camera_encoder_defaults` is used.
+            encoder_threads: Number of encoder threads (global). ``None``
+                lets the codec decide.
             metadata_buffer_size: Number of episode metadata records to buffer
                 before flushing to parquet.
             streaming_encoding: If ``True``, encode video frames in real-time
                 during capture instead of writing images first.
             encoder_queue_maxsize: Max buffered frames per camera when using
                 streaming encoding.
-            encoder_threads: Threads per encoder instance. ``None`` for auto.
 
         Returns:
             A new :class:`LeRobotDataset` in write mode.
         """
-        vcodec = resolve_vcodec(vcodec)
         obj = cls.__new__(cls)
         obj.meta = LeRobotDatasetMetadata.create(
             repo_id=repo_id,
@@ -633,30 +699,34 @@ class LeRobotDataset(torch.utils.data.Dataset):
             root=root,
             use_videos=use_videos,
             metadata_buffer_size=metadata_buffer_size,
+            video_files_size_in_mb=video_files_size_in_mb,
+            data_files_size_in_mb=data_files_size_in_mb,
         )
         obj.repo_id = obj.meta.repo_id
+        obj._requested_root = obj.meta.root
         obj.root = obj.meta.root
         obj.revision = None
         obj.tolerance_s = tolerance_s
         obj.image_transforms = None
         obj.delta_timestamps = None
         obj.episodes = None
-        obj._video_backend = video_backend if video_backend is not None else get_safe_default_codec()
+        obj._video_backend = video_backend if video_backend is not None else get_safe_default_video_backend()
+        obj._return_uint8 = False
         obj._batch_encoding_size = batch_encoding_size
-        obj._vcodec = vcodec
         obj._encoder_threads = encoder_threads
 
         # Reader is lazily created on first access (write-only mode)
         obj.reader = None
 
-        # Create writer
         streaming_enc = None
         if streaming_encoding and len(obj.meta.video_keys) > 0:
-            streaming_enc = cls._build_streaming_encoder(fps, vcodec, encoder_queue_maxsize, encoder_threads)
+            streaming_enc = cls._build_streaming_encoder(
+                fps, camera_encoder, encoder_queue_maxsize, encoder_threads
+            )
         obj.writer = DatasetWriter(
             meta=obj.meta,
             root=obj.root,
-            vcodec=vcodec,
+            camera_encoder=camera_encoder,
             encoder_threads=encoder_threads,
             batch_encoding_size=batch_encoding_size,
             streaming_encoder=streaming_enc,
@@ -679,12 +749,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
         force_cache_sync: bool = False,
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
-        vcodec: str = "libsvtav1",
+        camera_encoder: VideoEncoderConfig | None = None,
+        encoder_threads: int | None = None,
         image_writer_processes: int = 0,
         image_writer_threads: int = 0,
         streaming_encoding: bool = False,
         encoder_queue_maxsize: int = 30,
-        encoder_threads: int | None = None,
     ) -> "LeRobotDataset":
         """Resume recording on an existing dataset.
 
@@ -695,8 +765,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         Args:
             repo_id: Repository identifier of the existing dataset.
-            root: Local directory of the dataset. Defaults to
-                ``$HF_LEROBOT_HOME/{repo_id}``.
+            root: Local directory of the dataset. When provided, Hub downloads
+                are materialized directly into this directory. When omitted,
+                Hub downloads use a revision-safe snapshot cache under
+                ``$HF_LEROBOT_HOME/hub``.
             tolerance_s: Timestamp synchronization tolerance in seconds.
             revision: Git revision (branch, tag, or commit hash). Defaults to
                 current codebase version tag.
@@ -705,50 +777,60 @@ class LeRobotDataset(torch.utils.data.Dataset):
             video_backend: Video decoding backend for reading back data.
             batch_encoding_size: Number of episodes to accumulate before
                 batch-encoding videos.
-            vcodec: Video codec for encoding.
+            camera_encoder: Video encoder settings for cameras (codec, quality, etc.).
+                When ``None``, :func:`~lerobot.configs.video.camera_encoder_defaults` is used.
+            encoder_threads: Number of encoder threads (global). ``None``
+                lets the codec decide.
             image_writer_processes: Subprocesses for async image writing.
             image_writer_threads: Threads for async image writing.
             streaming_encoding: If ``True``, encode video in real-time during
                 capture.
             encoder_queue_maxsize: Max buffered frames per camera for streaming.
-            encoder_threads: Threads per encoder instance. ``None`` for auto.
 
         Returns:
             A :class:`LeRobotDataset` in write mode, ready to append episodes.
         """
-        vcodec = resolve_vcodec(vcodec)
+        if not root:
+            raise ValueError(
+                "resume() requires an explicit 'root' directory because it creates a DatasetWriter. "
+                "Writing into the revision-safe Hub snapshot cache (used when root=None) would corrupt "
+                "the shared cache. Please provide a local directory path."
+            )
         obj = cls.__new__(cls)
         obj.repo_id = repo_id
-        obj.root = Path(root) if root else HF_LEROBOT_HOME / repo_id
-        obj.root.mkdir(exist_ok=True, parents=True)
+        obj._requested_root = Path(root)
         obj.revision = revision if revision else CODEBASE_VERSION
         obj.tolerance_s = tolerance_s
         obj.image_transforms = None
         obj.delta_timestamps = None
         obj.episodes = None
-        obj._video_backend = video_backend if video_backend else get_safe_default_codec()
+        obj._video_backend = video_backend if video_backend else get_safe_default_video_backend()
+        obj._return_uint8 = False
         obj._batch_encoding_size = batch_encoding_size
-        obj._vcodec = vcodec
-        obj._encoder_threads = encoder_threads
 
-        # Load metadata
+        if obj._requested_root is not None:
+            obj._requested_root.mkdir(exist_ok=True, parents=True)
+
+        # Load metadata (revision-safe when root is not provided)
         obj.meta = LeRobotDatasetMetadata(
-            obj.repo_id, obj.root, obj.revision, force_cache_sync=force_cache_sync
+            obj.repo_id, obj._requested_root, obj.revision, force_cache_sync=force_cache_sync
         )
+
+        obj._encoder_threads = encoder_threads
+        obj.root = obj.meta.root
 
         # Reader is lazily created on first access (write-only mode)
         obj.reader = None
 
-        # Create writer for appending
         streaming_enc = None
         if streaming_encoding and len(obj.meta.video_keys) > 0:
             streaming_enc = cls._build_streaming_encoder(
-                obj.meta.fps, vcodec, encoder_queue_maxsize, encoder_threads
+                obj.meta.fps, camera_encoder, encoder_queue_maxsize, encoder_threads
             )
         obj.writer = DatasetWriter(
             meta=obj.meta,
             root=obj.root,
-            vcodec=vcodec,
+            camera_encoder=camera_encoder,
             encoder_threads=encoder_threads,
             batch_encoding_size=batch_encoding_size,
             streaming_encoder=streaming_enc,

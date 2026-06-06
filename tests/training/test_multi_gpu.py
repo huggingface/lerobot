@@ -33,6 +33,8 @@ from pathlib import Path
 import pytest
 import torch
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 

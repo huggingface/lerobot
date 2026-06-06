@@ -30,12 +30,11 @@ else:
     AutoProcessor = None
     ProcessorMixin = object
 
-from lerobot.configs.types import (
+from lerobot.configs import (
     FeatureType,
     NormalizationMode,
     PolicyFeature,
 )
-from lerobot.policies.groot.configuration_groot import GrootConfig
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
@@ -44,8 +43,6 @@ from lerobot.processor import (
     ProcessorStep,
     ProcessorStepRegistry,
     RenameObservationsProcessorStep,
-)
-from lerobot.processor.converters import (
     policy_action_to_transition,
     transition_to_policy_action,
 )
@@ -59,6 +56,8 @@ from lerobot.utils.constants import (
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
+
+from .configuration_groot import GrootConfig
 
 # Defaults for Eagle processor locations
 DEFAULT_TOKENIZER_ASSETS_REPO = "lerobot/eagle2hg-processor-groot-n1p5"
@@ -207,7 +206,11 @@ def _build_eagle_processor(tokenizer_assets_repo: str = DEFAULT_TOKENIZER_ASSETS
             "Vendor files are copied during model creation. Create the policy/model first, "
             "or call ensure_eagle_cache_ready() before building processors."
         )
-    proc = AutoProcessor.from_pretrained(str(cache_dir), trust_remote_code=True, use_fast=True)
+    proc = AutoProcessor.from_pretrained(
+        str(cache_dir),
+        trust_remote_code=True,
+        fix_mistral_regex=False,
+    )
     proc.tokenizer.padding_side = "left"
     return proc
 

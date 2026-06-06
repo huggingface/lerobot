@@ -199,11 +199,12 @@ class OpenCVCamera(Camera):
             DeviceNotConnectedError: If the camera is not connected.
         """
 
-        # Set FOURCC first (if specified) as it can affect available FPS/resolution options
-        if self.config.fourcc is not None:
-            self._validate_fourcc()
         if self.videocapture is None:
             raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
+
+        set_fourcc_after_size_and_fps = platform.system() == "Windows"
+        if self.config.fourcc is not None and not set_fourcc_after_size_and_fps:
+            self._validate_fourcc()
 
         default_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
         default_height = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
@@ -221,6 +222,11 @@ class OpenCVCamera(Camera):
             self.fps = self.videocapture.get(cv2.CAP_PROP_FPS)
         else:
             self._validate_fps()
+
+        if self.config.fourcc is not None and set_fourcc_after_size_and_fps:
+            # On Windows with DSHOW, changing the resolution can silently override the FOURCC setting.
+            # Set FOURCC last to make sure the requested pixel format is actually enforced.
+            self._validate_fourcc()
 
     def _validate_fps(self) -> None:
         """Validates and sets the camera's frames per second (FPS)."""

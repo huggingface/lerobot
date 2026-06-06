@@ -58,10 +58,10 @@ pip install -e .
 cd ..
 
 
-# 5. Install LeRobot
+# 5. Install LeRobot (evaluation extra for env/policy evaluation)
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
-pip install -e .
+pip install -e ".[evaluation]"
 cd ..
 
 
@@ -262,7 +262,7 @@ def main(cfg: EvalPipelineConfig):
     """Run random action rollout for IsaacLab Arena environment."""
     logging.info(pformat(asdict(cfg)))
 
-    from lerobot.envs.factory import make_env
+    from lerobot.envs import make_env
 
     env_dict = make_env(
         cfg.env,
