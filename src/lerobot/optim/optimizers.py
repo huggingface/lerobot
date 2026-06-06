@@ -334,7 +334,8 @@ def _save_single_optimizer_state(optimizer: torch.optim.Optimizer, save_dir: Pat
     # Also, bnb shares qmap1/qmap2 tensors across parameter states — clone
     # them to avoid the "tensors share memory" safetensors error.
     flat_state = {
-        k: (torch.tensor(v) if not isinstance(v, torch.Tensor) else v.clone()) for k, v in flat_state.items()
+        k: (torch.as_tensor(v) if not isinstance(v, torch.Tensor) else v.clone())
+        for k, v in flat_state.items()
     }
     save_file(flat_state, save_dir / OPTIMIZER_STATE)
     write_json(param_groups, save_dir / OPTIMIZER_PARAM_GROUPS)
