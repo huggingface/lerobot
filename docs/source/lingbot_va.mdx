@@ -32,10 +32,8 @@ fed back into the KV cache as the chunk is executed (closed-loop world modeling)
 - Autoregressive dual-stream inference behind the standard `select_action` interface
   (single-environment eval, `--eval.batch_size=1`).
 - Opt-in saving of the policy's **predicted (imagined) videos** during eval / training.
-- Evaluation with `lerobot-eval` on the LIBERO benchmark.
-
-Training (the flow-matching dual-stream loss + latent dataset) is part of a follow-up
-training port and is not yet wired into `lerobot-train`.
+- Evaluation with `lerobot-eval` on LIBERO and RoboTwin.
+- Training / fine-tuning via the dual-stream flow-matching loss (`policy.forward`), see below.
 
 ## Installation
 
@@ -104,6 +102,32 @@ lerobot-eval \
 Set `--policy.save_predicted_video=true` to additionally VAE-decode the predicted video
 latents and write `pred_episode_*.mp4` next to the env-rendered `eval_episode_*.mp4` videos.
 The same flag works for the periodic eval during `lerobot-train`.
+
+## Training / fine-tuning
+
+`LingBotVAPolicy.forward(batch)` implements the dual-stream **flow-matching** loss
+(`latent_loss + action_loss`, timestep-weighted, action-masked) from the paper: it VAE-encodes
+the camera clips into video latents, UMT5-encodes the task, noises both streams, runs the
+transformer's block-causal training pass and returns `(loss, metrics)`. Optimizer preset is AdamW
+with a linear-warmup-then-constant schedule (matching upstream).
+
+Requirements:
+- The block-causal masks use PyTorch **flex-attention**, so build the policy with
+  `--policy.attn_mode=flex` for training (the default `torch` SDPA is inference-only).
+- The full 5B DiT does not fit a single 24–32 GB GPU under AdamW; fine-tune with **LoRA**
+  (`--policy.use_peft=true`) and/or optimizer offload. `get_optim_params` returns only the
+  trainable (e.g. adapter) parameters; the VAE + UMT5 text encoder stay frozen.
+
+```bash
+lerobot-train \
+  --policy.path=pepijn223/lingbot_va_libero_long --policy.attn_mode=flex \
+  --policy.use_peft=true \
+  --dataset.repo_id=<your LeRobot-format dataset> \
+  --batch_size=1 --steps=... --output_dir=outputs/train/lingbot_va
+```
+
+The dataset must provide camera clips (a temporal window per camera, VAE-encoded to
+`frame_chunk_size` latent frames) and `frame_chunk_size * action_per_frame` action steps per item.
 
 ## Inference Hyperparameters (LIBERO)
 

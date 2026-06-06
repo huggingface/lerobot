@@ -73,3 +73,59 @@ def test_data_seq_to_patch_roundtrip_shape() -> None:
     seq = torch.arange(b * f * h * w * c, dtype=torch.float32).reshape(b, f * h * w, c)
     out = data_seq_to_patch((1, 2, 2), seq, f, h, w, batch_size=b)
     assert out.shape == (b, c, f, h, w)
+
+
+def test_training_step_reduces_loss_tiny_flex() -> None:
+    """End-to-end single training step (flow-matching loss -> backward -> AdamW) on a tiny config.
+
+    Exercises the flex-attention training path; requires a CUDA GPU with flex-attention support.
+    """
+    if not torch.cuda.is_available():
+        import pytest
+
+        pytest.skip("training step test requires a CUDA GPU (flex-attention)")
+
+    from lerobot.configs.types import FeatureType, PolicyFeature
+    from lerobot.policies.lingbot_va.configuration_lingbot_va import LingBotVAConfig
+    from lerobot.policies.lingbot_va.modeling_lingbot_va import LingBotVAPolicy
+    from lerobot.utils.constants import ACTION, OBS_IMAGES
+
+    cfg = LingBotVAConfig(
+        attn_mode="flex",
+        dtype="bfloat16",
+        in_channels=16,
+        out_channels=16,
+        action_dim=8,
+        text_dim=32,
+        freq_dim=64,
+        ffn_dim=64,
+        num_attention_heads=2,
+        attention_head_dim=24,
+        num_layers=2,
+        frame_chunk_size=2,
+        action_per_frame=4,
+        used_action_channel_ids=[0, 1, 2, 3],
+        obs_cam_keys=[f"{OBS_IMAGES}.image"],
+        device="cuda",
+    )
+    cfg.input_features = {f"{OBS_IMAGES}.image": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 64, 64))}
+    cfg.output_features = {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(4,))}
+    cfg.validate_features()
+
+    policy = LingBotVAPolicy(cfg).to("cuda")
+    policy.train()
+    opt = torch.optim.AdamW(policy.get_optim_params(), lr=1e-4)
+
+    b, fc, apf = 1, cfg.frame_chunk_size, cfg.action_per_frame
+    latents = torch.randn(b, cfg.in_channels, fc, 4, 4, device="cuda", dtype=torch.bfloat16)
+    actions = torch.randn(b, cfg.action_dim, fc, apf, 1, device="cuda", dtype=torch.bfloat16)
+    amask = torch.zeros(cfg.action_dim, device="cuda")
+    amask[cfg.used_action_channel_ids] = 1.0
+    actions_mask = amask.view(1, -1, 1, 1, 1).expand_as(actions)
+    text_emb = torch.randn(b, cfg.max_sequence_length, cfg.text_dim, device="cuda", dtype=torch.bfloat16)
+
+    loss, metrics = policy.training_loss_from_streams(latents, actions, actions_mask, text_emb)
+    assert torch.isfinite(loss) and {"latent_loss", "action_loss"} <= set(metrics)
+    loss.backward()
+    assert any(p.grad is not None and torch.isfinite(p.grad).all() for p in policy.get_optim_params())
+    opt.step()
