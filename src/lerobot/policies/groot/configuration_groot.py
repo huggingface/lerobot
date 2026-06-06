@@ -17,7 +17,7 @@
 from dataclasses import dataclass, field
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
-from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
+from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig, OptimizerConfig
 
 try:
     import bitsandbytes  # noqa: F401
@@ -25,6 +25,7 @@ try:
     from lerobot.optim.optimizers import AdamW8bitConfig as _AdamWPresetClass
 except ImportError:
     _AdamWPresetClass = AdamWConfig
+
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 
@@ -173,7 +174,7 @@ class GrootConfig(PreTrainedConfig):
                     f"Either reduce action dimension or increase max_action_dim in config."
                 )
 
-    def get_optimizer_preset(self) -> AdamWConfig:
+    def get_optimizer_preset(self) -> OptimizerConfig:
         """Return optimizer configuration.
 
         Uses AdamW8bitConfig (bitsandbytes) when available to reduce optimizer
