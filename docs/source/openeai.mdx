@@ -36,7 +36,7 @@ OpenEAI-VLA is an end-to-end VLA policy that combines a **Qwen3-VL** vision-lang
 | `n_layers`        | 18                          | Number of DiT blocks                     |
 | `num_heads`       | 32                          | Attention heads per block                |
 | `ff_ratio`        | 2.67                        | MLP expansion ratio                      |
-| `action_horizon`  | 50                          | Action chunk size                        |
+| `chunk_size`      | 50                          | Action chunk size                        |
 | `denoise_steps`   | 10                          | Flow matching inference steps            |
 | `img_seq_len`     | 64                          | Image token sequence length from Qwen    |
 | `feat_length`     | 20                          | Condition feature (query token) length   |
@@ -73,7 +73,7 @@ We release pretrained OpenEAI-VLA checkpoints on the Hugging Face Hub:
 
 ### Downloading the Checkpoint
 
-Using the `huggingface-cli` to download only the LeRobot-compatible folder:
+Using the `hf` to download only the LeRobot-compatible folder:
 
 ```bash
 hf download OpenEAI/OpenEAI-VLA-Pretrained \

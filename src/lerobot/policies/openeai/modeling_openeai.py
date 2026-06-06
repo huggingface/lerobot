@@ -257,30 +257,32 @@ class OpenEAIModel(nn.Module):
         return self
 
     def embed_cond(self, batch: dict, add_feat_query: bool = True):
-        """Build condition embeddings from images + text + (optional) feat-query.
+        """Build condition embeddings from images + text + feat-query.
+
+        Handles both image+text and text-only batches. The feat-query
+        (``add_feat_query``) is appended for the DiT head via cross-attention.
 
         Returns:
             cond_embed: [B, lang_seq + feat_length, qwen_dim]
             full_attention_mask: [B, lang_seq + feat_length] mask for Qwen forward
-            feat_mask: [B, feat_length] mask for DiT cross-attention (None if no feat_query)
+            feat_mask: [B, feat_length] mask for DiT cross-attention (None if add_feat_query=False)
         """
-        pixel_values = batch["pixel_values"]
-        image_grid_thw = batch["image_grid_thw"]
         input_ids = batch[OBS_LANGUAGE_TOKENS]
         attention_mask = batch[OBS_LANGUAGE_ATTENTION_MASK]
-
-        raw_image_feature = self.qwen_model.get_image_features(pixel_values, image_grid_thw)
-        pooler = raw_image_feature.pooler_output
-        image_features = torch.cat(list(pooler), dim=0) if isinstance(pooler, (list, tuple)) else pooler
-
         token_embeds = self.qwen_model.get_input_embeddings()(input_ids)
-        image_features = image_features.to(dtype=token_embeds.dtype)
 
-        # Insert image features into placeholder positions
-        image_mask, _ = self.qwen_model.model.get_placeholder_mask(
-            input_ids, inputs_embeds=token_embeds, image_features=image_features
-        )
-        token_embeds = token_embeds.masked_scatter(image_mask, image_features)
+        # --- Image path: insert image features into placeholder positions ---
+        if "pixel_values" in batch and "image_grid_thw" in batch:
+            raw_image_feature = self.qwen_model.get_image_features(
+                batch["pixel_values"], batch["image_grid_thw"]
+            )
+            pooler = raw_image_feature.pooler_output
+            image_features = torch.cat(list(pooler), dim=0) if isinstance(pooler, (list, tuple)) else pooler
+            image_features = image_features.to(dtype=token_embeds.dtype)
+            image_mask, _ = self.qwen_model.model.get_placeholder_mask(
+                input_ids, inputs_embeds=token_embeds, image_features=image_features
+            )
+            token_embeds = token_embeds.masked_scatter(image_mask, image_features)
 
         if add_feat_query:
             batch_size = token_embeds.shape[0]
@@ -402,7 +404,7 @@ class OpenEAIModel(nn.Module):
 
         if action_dim is None:
             action_dim = self.policy_head.data_dim_info.get(subset, (0, self.config.max_action_dim))[1]
-            if action_dim == 0:
+            if action_dim == 0:  # In case self.policy_head.data_dim_info['subset'] is 0
                 action_dim = self.config.max_action_dim
 
         # Initial noise
@@ -486,7 +488,7 @@ class OpenEAIPolicy(PreTrainedPolicy):
         self.model.to(config.device)
 
         if config.gradient_checkpointing:
-            self.model.gradient_checkpointing_enable()
+            self.model.qwen_model.gradient_checkpointing_enable()
 
         self.reset()
 
@@ -546,9 +548,7 @@ class OpenEAIPolicy(PreTrainedPolicy):
             action_dim=self.config.output_features[ACTION].shape[0],
         )
 
-        # Unpad to declared action dimension
-        orig_dim = self.config.output_features[ACTION].shape[0]
-        return actions[:, :, :orig_dim]
+        return actions
 
     def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict]:
         """Training forward pass: compute loss."""
