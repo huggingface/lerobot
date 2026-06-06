@@ -28,7 +28,7 @@ fed back into the KV cache as the chunk is executed (closed-loop world modeling)
 ### What the LeRobot Integration Covers
 
 - Standard `policy.type=lingbot_va` configuration through LeRobot.
-- Checkpoint conversion from the released HuggingFace checkpoints.
+- Ready-to-use LeRobot-format checkpoints on the Hub (converted from the released upstream ones).
 - Autoregressive dual-stream inference behind the standard `select_action` interface
   (single-environment eval, `--eval.batch_size=1`).
 - Opt-in saving of the policy's **predicted (imagined) videos** during eval / training.
@@ -48,39 +48,56 @@ pip install -e ".[lingbot_va]"
 pip install -e ".[lingbot_va,libero]"
 ```
 
-## Checkpoint Conversion
+## Checkpoints
 
-The released checkpoints are diffusers-style directories
-(`robbyant/lingbot-va-base`, `robbyant/lingbot-va-posttrain-robotwin`,
-`robbyant/lingbot-va-posttrain-libero-long`). Convert one to LeRobot format with:
+The released upstream checkpoints have been converted to LeRobot format and pushed to the Hub:
 
-```bash
-python -m lerobot.policies.lingbot_va.convert_lingbot_va_checkpoints \
-    --checkpoint robbyant/lingbot-va-posttrain-libero-long \
-    --variant libero \
-    --output_dir outputs/lingbot_va_libero_long
-```
+| Variant | LeRobot checkpoint |
+|---|---|
+| LIBERO-Long post-train | `pepijn223/lingbot_va_libero_long` |
+| RoboTwin post-train | `pepijn223/lingbot_va_robotwin` |
+| Pretrained base | `pepijn223/lingbot_va_base` |
 
 **Packaging:** only the trainable ~5B transformer is stored in the LeRobot
 `model.safetensors`. The frozen VAE + UMT5 + tokenizer (~20 GB) are **lazily pulled** from
-`config.wan_pretrained_path` at load time (defaults to the source repo). Pass
-`--bundle-frozen` to copy those sub-folders next to the converted checkpoint instead.
-
-Run conversion on a Linux machine with a CUDA GPU and enough RAM/VRAM to materialize the
-transformer.
+`config.wan_pretrained_path` at load time (defaults to the source `robbyant/*` repo). The
+UMT5-XXL text encoder runs on CPU by default (`config.text_encoder_device`) so the 5B
+transformer + VAE fit on a single 24–32 GB GPU.
 
 ## Evaluation (LIBERO)
 
 ```bash
 lerobot-eval \
-    --policy.path=outputs/lingbot_va_libero_long \
+    --policy.path=pepijn223/lingbot_va_libero_long \
+    --policy.device=cuda \
     --env.type=libero --env.task=libero_10 \
+    --env.observation_height=128 --env.observation_width=128 \
     --eval.n_episodes=50 --eval.batch_size=1 \
     --output_dir=outputs/eval/lingbot_va_libero
 ```
 
+Native LeRobot eval reproduces **96% success on `libero_10` (LIBERO-Long)** (48/50 episodes).
+
 LingBot-VA's streaming inference (KV cache + observed-keyframe feedback) is implemented for
 single-environment eval; use `--eval.batch_size=1`.
+
+## Evaluation (RoboTwin)
+
+RoboTwin 2.0 needs the SAPIEN + CuRobo simulator stack — use the benchmark Docker image
+(`docker/Dockerfile.benchmark.robotwin`, which also needs `warp-lang==1.3.1` and CuRobo built
+with the GPU's compute capability in `TORCH_CUDA_ARCH_LIST`). RoboTwin uses **end-effector-pose
+control**, so run with `--env.action_mode=ee`: the policy predicts per-arm `xyz+quaternion+gripper`
+deltas (`robotwin_tshape` latent layout) that are composed onto the episode's initial eef pose and
+executed via CuRobo IK.
+
+```bash
+lerobot-eval \
+    --policy.path=pepijn223/lingbot_va_robotwin \
+    --policy.device=cuda \
+    --env.type=robotwin --env.task=beat_block_hammer --env.action_mode=ee \
+    --eval.n_episodes=10 --eval.batch_size=1 \
+    --output_dir=outputs/eval/lingbot_va_robotwin
+```
 
 ### Saving predicted (imagined) videos
 

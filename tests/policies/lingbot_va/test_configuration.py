@@ -76,8 +76,3 @@ def test_validate_features_no_visual_raises() -> None:
 def test_invalid_attn_mode_raises() -> None:
     with pytest.raises(ValueError, match="attn_mode"):
         make_config(attn_mode="banana")
-
-
-def test_quantile_length_mismatch_raises() -> None:
-    with pytest.raises(ValueError, match="action_q01"):
-        make_config(used_action_channel_ids=[0, 1, 2], action_q01=[0.0, 0.0], action_q99=[1.0, 1.0, 1.0])

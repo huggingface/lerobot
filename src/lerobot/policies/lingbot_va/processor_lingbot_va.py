@@ -47,6 +47,60 @@ from lerobot.utils.constants import (
 
 from .configuration_lingbot_va import LingBotVAConfig
 
+# Upstream LIBERO action-normalization quantiles (single 7-DoF arm + gripper).
+# Verbatim from wan_va/configs/va_libero_cfg.py (channels 0-6 of a 30-dim action space).
+# These are the fixed (un)normalization stats baked into the released LIBERO checkpoint; they
+# live here (in the processor) and are serialized into the saved post-processor config.
+LIBERO_ACTION_Q01 = [
+    -0.6589285731315613,
+    -0.84375,
+    -0.9375,
+    -0.12107142806053162,
+    -0.15964286029338837,
+    -0.26571428775787354,
+    -1.0,
+]
+LIBERO_ACTION_Q99 = [
+    0.8999999761581421,
+    0.8544642925262451,
+    0.9375,
+    0.17142857611179352,
+    0.1842857152223587,
+    0.34392857551574707,
+    1.0,
+]
+
+
+# Upstream RoboTwin action quantiles, reordered to the model's used-channel layout
+# [left xyz+quat (0-6), left gripper (28), right xyz+quat (7-13), right gripper (29)] = 16 channels.
+# Verbatim from wan_va/configs/va_robotwin_cfg.py ``norm_stat`` (quaternion + gripper channels use the
+# neutral [-1, 1] / [0, 1] mapping). Positions are quantile-scaled; rotations pass through.
+ROBOTWIN_ACTION_Q01 = [
+    -0.06172713458538055, -3.6716461181640625e-05, -0.08783501386642456, -1.0, -1.0, -1.0, -1.0,
+    0.0,
+    -0.3547105032205582, -1.3113021850585938e-06, -0.11975435614585876, -1.0, -1.0, -1.0, -1.0,
+    0.0,
+]  # fmt: skip
+ROBOTWIN_ACTION_Q99 = [
+    0.3462600058317184, 0.39966784834861746, 0.14745532035827624, 1.0, 1.0, 1.0, 1.0,
+    1.0,
+    0.034201726913452024, 0.39142737388610793, 0.1792279863357542, 1.0, 1.0, 1.0, 1.0,
+    1.0,
+]  # fmt: skip
+
+
+def _default_action_quantiles(n_used: int) -> tuple[list[float], list[float]]:
+    """Return the fixed (q01, q99) for the used action channels, by benchmark channel count.
+
+    LIBERO = 7 (single 7-DoF arm), RoboTwin = 16 (dual-arm eef pose + grippers). Falls back to a
+    neutral ``[-1, 1]`` mapping (no rescale) for any other channel count.
+    """
+    if n_used == len(LIBERO_ACTION_Q01):
+        return list(LIBERO_ACTION_Q01), list(LIBERO_ACTION_Q99)
+    if n_used == len(ROBOTWIN_ACTION_Q01):
+        return list(ROBOTWIN_ACTION_Q01), list(ROBOTWIN_ACTION_Q99)
+    return [-1.0] * n_used, [1.0] * n_used
+
 
 @dataclass
 @ProcessorStepRegistry.register(name="lingbot_va_action_unnormalize")
@@ -94,8 +148,9 @@ def make_lingbot_va_pre_post_processors(
         DeviceProcessorStep(device=config.device),
     ]
 
+    action_q01, action_q99 = _default_action_quantiles(len(config.used_action_channel_ids))
     output_steps: list[ProcessorStep] = [
-        LingBotVAActionUnnormalizeStep(action_q01=config.action_q01, action_q99=config.action_q99),
+        LingBotVAActionUnnormalizeStep(action_q01=action_q01, action_q99=action_q99),
         DeviceProcessorStep(device="cpu"),
     ]
 
