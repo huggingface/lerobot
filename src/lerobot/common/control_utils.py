@@ -239,9 +239,9 @@ def init_keyboard_listener():
 
     combined_listener = CombinedListener()
 
-    terminal_listener = TerminalKeyListener(on_key=handle_key)
-    terminal_listener.start()
     if sys.stdin.isatty():
+        terminal_listener = TerminalKeyListener(on_key=handle_key)
+        terminal_listener.start()
         combined_listener.add(terminal_listener)
 
     if is_headless():
