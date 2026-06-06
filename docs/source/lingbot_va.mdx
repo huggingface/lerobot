@@ -130,6 +130,41 @@ lerobot-train \
 The dataset must provide camera clips (a temporal window per camera, VAE-encoded to
 `frame_chunk_size` latent frames) and `frame_chunk_size * action_per_frame` action steps per item.
 
+## Data format (action channels & camera order)
+
+LingBot-VA is an **end-effector (Cartesian) pose** policy — it predicts EEF poses + gripper, not
+joint positions. Actions live in a fixed multi-embodiment **30-dim** layout; map your robot's
+action dimensions into these channels and pad the rest with `0` (`used_action_channel_ids` selects
+the channels a given checkpoint actually uses):
+
+| channels | meaning                                               |
+| -------- | ----------------------------------------------------- |
+| 0–6      | Left-arm end-effector pose                            |
+| 7–13     | Right-arm end-effector pose                           |
+| 14–20    | Left-arm joints (unused by the released checkpoints)  |
+| 21–27    | Right-arm joints (unused by the released checkpoints) |
+| 28       | Left gripper                                          |
+| 29       | Right gripper                                         |
+
+- **LIBERO** uses channels `0–6`: a 6-DoF EEF delta (xyz + rotation) + gripper (single arm).
+- **RoboTwin** uses channels `[0–6, 28, 7–13, 29]`: left EEF (xyz + quaternion) + left gripper +
+  right EEF + right gripper (16 dims). The env converts these poses to joint trajectories via
+  CuRobo IK — joints are never predicted.
+
+Joint-space datasets (or a different EEF convention) must be remapped into this schema before
+fine-tuning these checkpoints.
+
+**Camera order is fixed and order-sensitive** — per-camera latents are concatenated spatially in
+`obs_cam_keys` order, so the physical camera→slot mapping must match training:
+
+| benchmark | `obs_cam_keys` (in order)                                                                             | `camera_layout`                                                     |
+| --------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| LIBERO    | `observation.images.image` (agentview / 3rd-person), `observation.images.image2` (eye-in-hand wrist)  | `width_concat` (latents concatenated on width)                      |
+| RoboTwin  | `observation.images.head_camera`, `observation.images.left_camera`, `observation.images.right_camera` | `robotwin_tshape` (full-res head below, two half-res wrists on top) |
+
+The first camera is the exterior/head view and the rest are wrist views; swapping the order (or
+which physical camera maps to each slot) breaks inference.
+
 ## Inference Hyperparameters (LIBERO)
 
 | Key                                    | Value                                                                             |
