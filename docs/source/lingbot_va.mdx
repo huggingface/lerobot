@@ -14,11 +14,11 @@ LingBot-VA is a **dual-stream "mixture-of-transformers"**: a video/latent stream
 text conditioning. Actions are produced by the dedicated `action_proj_out` head — they are
 **not** decoded from predicted pixels, though video and action are co-trained.
 
-| Component | Class | Role |
-|---|---|---|
+| Component                | Class                   | Role                                                                                   |
+| ------------------------ | ----------------------- | -------------------------------------------------------------------------------------- |
 | DiT backbone (trainable) | `WanTransformer3DModel` | ~5B-param dual-stream transformer (the only weights stored in the LeRobot checkpoint). |
-| VAE (frozen) | `AutoencoderKLWan` | Wan2.2 VAE, `z_dim=48`. Lazy-pulled from the source repo. |
-| Text encoder (frozen) | `UMT5EncoderModel` | UMT5-XXL, `d_model=4096`. Lazy-pulled from the source repo. |
+| VAE (frozen)             | `AutoencoderKLWan`      | Wan2.2 VAE, `z_dim=48`. Lazy-pulled from the source repo.                              |
+| Text encoder (frozen)    | `UMT5EncoderModel`      | UMT5-XXL, `d_model=4096`. Lazy-pulled from the source repo.                            |
 
 At inference the policy runs an autoregressive loop per chunk: it denoises the video-latent
 stream (CFG, ~20 steps) and the action stream (~50 steps) with two independent
@@ -50,11 +50,11 @@ pip install -e ".[lingbot_va,libero]"
 
 The released upstream checkpoints have been converted to LeRobot format and pushed to the Hub:
 
-| Variant | LeRobot checkpoint |
-|---|---|
+| Variant                | LeRobot checkpoint                 |
+| ---------------------- | ---------------------------------- |
 | LIBERO-Long post-train | `pepijn223/lingbot_va_libero_long` |
-| RoboTwin post-train | `pepijn223/lingbot_va_robotwin` |
-| Pretrained base | `pepijn223/lingbot_va_base` |
+| RoboTwin post-train    | `pepijn223/lingbot_va_robotwin`    |
+| Pretrained base        | `pepijn223/lingbot_va_base`        |
 
 **Packaging:** only the trainable ~5B transformer is stored in the LeRobot
 `model.safetensors`. The frozen VAE + UMT5 + tokenizer (~20 GB) are **lazily pulled** from
@@ -112,6 +112,7 @@ transformer's block-causal training pass and returns `(loss, metrics)`. Optimize
 with a linear-warmup-then-constant schedule (matching upstream).
 
 Requirements:
+
 - The block-causal masks use PyTorch **flex-attention**, so build the policy with
   `--policy.attn_mode=flex` for training (the default `torch` SDPA is inference-only).
 - The full 5B DiT does not fit a single 24–32 GB GPU under AdamW; fine-tune with **LoRA**
@@ -131,16 +132,16 @@ The dataset must provide camera clips (a temporal window per camera, VAE-encoded
 
 ## Inference Hyperparameters (LIBERO)
 
-| Key | Value |
-|---|---|
-| height × width | 128 × 128 |
-| cameras | `observation.images.image` (agentview), `observation.images.image2` (eye-in-hand) |
-| action channels used | 0–6 (7-DoF arm + gripper) |
-| action_per_frame / frame_chunk_size | 4 / 4 |
-| attn_window | 30 |
-| video / action denoising steps | 20 / 50 |
-| guidance_scale / action_guidance_scale | 5 / 1 |
-| snr_shift / action_snr_shift | 5.0 / 0.05 |
+| Key                                    | Value                                                                             |
+| -------------------------------------- | --------------------------------------------------------------------------------- |
+| height × width                         | 128 × 128                                                                         |
+| cameras                                | `observation.images.image` (agentview), `observation.images.image2` (eye-in-hand) |
+| action channels used                   | 0–6 (7-DoF arm + gripper)                                                         |
+| action_per_frame / frame_chunk_size    | 4 / 4                                                                             |
+| attn_window                            | 30                                                                                |
+| video / action denoising steps         | 20 / 50                                                                           |
+| guidance_scale / action_guidance_scale | 5 / 1                                                                             |
+| snr_shift / action_snr_shift           | 5.0 / 0.05                                                                        |
 
 These are the defaults of `LingBotVAConfig`; override any of them via `--policy.<name>=...`.
 

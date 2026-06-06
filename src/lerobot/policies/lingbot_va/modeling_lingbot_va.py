@@ -185,12 +185,12 @@ class FlowMatchScheduler:
         prev_sample = sample + model_output * (sigma_ - sigma)
         return prev_sample
 
-    def return_to_timestep(self, timestep, sample, sample_stablized):
+    def return_to_timestep(self, timestep, sample, sample_stabilized):
         if isinstance(timestep, torch.Tensor):
             timestep = timestep.cpu()
         timestep_id = torch.argmin((self.timesteps - timestep).abs())
         sigma = self.sigmas[timestep_id]
-        model_output = (sample - sample_stablized) / sigma
+        model_output = (sample - sample_stabilized) / sigma
         return model_output
 
     def add_noise(self, original_samples, noise, timestep, t_dim=2):
@@ -518,15 +518,15 @@ class WanAttention(nn.Module):
             return
         self.attn_caches[cache_name] = None
 
-    def init_kv_cache(self, cache_name, total_tolen, num_head, head_dim, device, dtype, batch_size):
+    def init_kv_cache(self, cache_name, total_token_len, num_head, head_dim, device, dtype, batch_size):
         if self.attn_caches is None:
             return
         self.attn_caches[cache_name] = {
-            "k": torch.empty([batch_size, total_tolen, num_head, head_dim], device=device, dtype=dtype),
-            "v": torch.empty([batch_size, total_tolen, num_head, head_dim], device=device, dtype=dtype),
-            "id": torch.full((total_tolen,), -1, device=device),
-            "mask": torch.zeros((total_tolen,), dtype=torch.bool, device=device),
-            "is_pred": torch.zeros((total_tolen,), dtype=torch.bool, device=device),
+            "k": torch.empty([batch_size, total_token_len, num_head, head_dim], device=device, dtype=dtype),
+            "v": torch.empty([batch_size, total_token_len, num_head, head_dim], device=device, dtype=dtype),
+            "id": torch.full((total_token_len,), -1, device=device),
+            "mask": torch.zeros((total_token_len,), dtype=torch.bool, device=device),
+            "is_pred": torch.zeros((total_token_len,), dtype=torch.bool, device=device),
         }
 
     def allocate_slots(self, cache_name, key_size):
@@ -831,13 +831,13 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin):
         dtype,
         batch_size,
     ):
-        total_tolen = (attn_window // 2) * latent_token_per_chunk + (
+        total_token_len = (attn_window // 2) * latent_token_per_chunk + (
             attn_window // 2
         ) * action_token_per_chunk
         for block in self.blocks:
             block.attn1.init_kv_cache(
                 cache_name,
-                total_tolen,
+                total_token_len,
                 self.num_attention_heads,
                 self.attention_head_dim,
                 device,
@@ -866,9 +866,9 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin):
         return hidden_states
 
     def _time_embed(self, timesteps, H, W, dtype, action_mode=False):
-        pach_scale_h, pach_scale_w = (1, 1) if action_mode else (self.patch_size[1], self.patch_size[2])
+        patch_scale_h, patch_scale_w = (1, 1) if action_mode else (self.patch_size[1], self.patch_size[2])
         latent_time_steps = torch.repeat_interleave(
-            timesteps, (H // pach_scale_h) * (W // pach_scale_w), dim=1
+            timesteps, (H // patch_scale_h) * (W // patch_scale_w), dim=1
         )
         current_condition_embedder = (
             self.condition_embedder_action if action_mode else self.condition_embedder
@@ -1012,12 +1012,12 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin):
 
         latent_grid_id = input_dict["grid_id"]
         rotary_emb = self.rope(latent_grid_id)[:, :, None]  # 1 L 1 C
-        pach_scale_h, pach_scale_w = (1, 1) if action_mode else (self.patch_size[1], self.patch_size[2])
+        patch_scale_h, patch_scale_w = (1, 1) if action_mode else (self.patch_size[1], self.patch_size[2])
 
         latent_time_steps = torch.repeat_interleave(
             input_dict["timesteps"],
-            (input_dict["noisy_latents"].shape[-2] // pach_scale_h)
-            * (input_dict["noisy_latents"].shape[-1] // pach_scale_w),
+            (input_dict["noisy_latents"].shape[-2] // patch_scale_h)
+            * (input_dict["noisy_latents"].shape[-1] // patch_scale_w),
             dim=1,
         )  # L
         current_condition_embedder = (

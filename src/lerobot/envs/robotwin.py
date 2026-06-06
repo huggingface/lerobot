@@ -359,6 +359,7 @@ class RoboTwinEnv(gym.Env):
 
     def _read_eef_pose(self) -> np.ndarray:
         """Read the current 16-d dual-arm eef pose [left(xyz+quat)+grip, right(xyz+quat)+grip]."""
+        assert self._env is not None, "_read_eef_pose called before _ensure_env()"
         ep = self._env.get_obs()["endpose"]
         pose = (
             list(ep["left_endpose"])
