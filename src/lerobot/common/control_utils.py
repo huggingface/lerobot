@@ -21,10 +21,8 @@ import logging
 import os
 import select
 import sys
-import termios
 import threading
 import traceback
-import tty
 from contextlib import nullcontext
 from copy import copy
 from functools import cache
@@ -205,6 +203,9 @@ def init_keyboard_listener():
                     self._on_key("esc")
 
         def start(self):
+            import termios
+            import tty
+
             if not sys.stdin.isatty():
                 return
             self._fd = sys.stdin.fileno()
@@ -219,6 +220,8 @@ def init_keyboard_listener():
             if self._thread is not None:
                 self._thread.join(timeout=0.2)
             if self._fd is not None and self._old_attrs is not None:
+                import termios
+
                 termios.tcsetattr(self._fd, termios.TCSADRAIN, self._old_attrs)
 
     def handle_key(kind: str):
