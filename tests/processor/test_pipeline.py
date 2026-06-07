@@ -217,6 +217,11 @@ class MockLazyTensorStateStep(ProcessorStep):
         return features
 
 
+@ProcessorStepRegistry.register("registered_lazy_tensor_state_step")
+class RegisteredLazyTensorStateStep(MockLazyTensorStateStep):
+    """Registered lazy tensor state step for registry-based serialization tests."""
+
+
 def test_empty_pipeline():
     """Test pipeline with no steps."""
     pipeline = DataProcessorPipeline([], to_transition=identity_transition, to_output=identity_transition)
@@ -671,6 +676,8 @@ def test_get_config_matches_saved_json():
 
     in_memory_config = pipeline.get_config()
 
+    assert pipeline.get_config() == in_memory_config
+
     with tempfile.TemporaryDirectory() as tmp_dir:
         pipeline.save_pretrained(tmp_dir)
 
@@ -731,6 +738,26 @@ def test_from_config_round_trips_stateful_pipeline():
     assert len(loaded_pipeline) == 1
     assert isinstance(loaded_step, MockLazyTensorStateStep)
     torch.testing.assert_close(loaded_step.tensor_state, torch.tensor([11.0]))
+
+
+def test_from_config_round_trips_registered_stateful_pipeline():
+    """Test that from_config resolves registry steps and loads their named tensor state."""
+    stateful_step = RegisteredLazyTensorStateStep(name="registered", initial_value=29.0)
+    pipeline = DataProcessorPipeline([stateful_step], name="Registry Pipeline")
+    config = pipeline.get_config()
+    pipeline_state_dict = pipeline.state_dict()
+    state_filename = "registry_pipeline_step_0_registered_lazy_tensor_state_step.safetensors"
+
+    assert config["steps"][0]["registry_name"] == "registered_lazy_tensor_state_step"
+    assert config["steps"][0]["state_file"] == state_filename
+    assert set(pipeline_state_dict) == {state_filename}
+
+    loaded_pipeline = DataProcessorPipeline.from_config(config, state_dict=pipeline_state_dict)
+    loaded_step = loaded_pipeline.steps[0]
+
+    assert isinstance(loaded_step, RegisteredLazyTensorStateStep)
+    assert loaded_step.tensor_state is not None
+    torch.testing.assert_close(loaded_step.tensor_state, torch.tensor([29.0]))
 
 
 def test_from_config_preserves_state_metadata_for_empty_initial_state():
@@ -838,7 +865,7 @@ def test_stateless_pipeline_in_memory_serialization_returns_empty_state():
 def test_from_config_rejects_non_dict_config(invalid_config):
     """Test from_config reports invalid top-level config values cleanly."""
     with pytest.raises(ValueError, match="not a valid processor configuration"):
-        DataProcessorPipeline.from_config(invalid_config)
+        DataProcessorPipeline.from_config(invalid_config)  # type: ignore[arg-type]
 
 
 class MockModuleStep(ProcessorStep, nn.Module):

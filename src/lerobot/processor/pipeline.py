@@ -350,8 +350,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         """
         return re.sub(r"[^a-zA-Z0-9_]", "_", self.name.lower())
 
+    @staticmethod
     def _get_state_filename(
-        self,
         *,
         step_index: int,
         registry_name: str | None,
@@ -434,7 +434,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
             if registry_name:
                 step_entry["registry_name"] = registry_name
-            if not registry_name:
+            else:
                 step_entry["class"] = (
                     f"{processor_step.__class__.__module__}.{processor_step.__class__.__name__}"
                 )
@@ -514,12 +514,14 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             processor_step.load_state_dict(state_dict[state_filename])
             used_state_filenames.add(state_filename)
 
-        expected_state_filename_set = {
-            state_filename for state_filename in expected_state_filenames if state_filename is not None
-        }
-        unexpected_state_filenames = set(state_dict) - used_state_filenames
+        if not strict:
+            return
 
-        if strict and unexpected_state_filenames:
+        unexpected_state_filenames = set(state_dict) - used_state_filenames
+        if unexpected_state_filenames:
+            expected_state_filename_set = {
+                state_filename for state_filename in expected_state_filenames if state_filename is not None
+            }
             raise KeyError(
                 f"Unexpected processor state files: {sorted(unexpected_state_filenames)}. "
                 f"Expected state files: {sorted(expected_state_filename_set)}"
@@ -858,9 +860,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                 ) from e
 
     @classmethod
-    def _validate_loaded_config(
-        cls, model_id: str, loaded_config: dict[str, Any], config_filename: str
-    ) -> None:
+    def _validate_loaded_config(cls, model_id: str, loaded_config: Any, config_filename: str) -> None:
         """Validate that a config was loaded and is a valid processor config.
 
         This method validates processor config format with intelligent migration detection:
