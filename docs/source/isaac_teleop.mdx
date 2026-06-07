@@ -222,15 +222,22 @@ runtime on exit/Ctrl-C.
 
 The example assumes you configured your robot (SO‑101 follower) and set the correct serial port.
 
-You also need to **copy the URDF of the robot into the examples folder**. Copy the `SO101`
-folder from the [SO‑ARM100 repo](https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101)
-into `examples/isaac_teleop_to_so101/`, so the URDF path becomes
-`examples/isaac_teleop_to_so101/SO101/so101_new_calib.urdf`.
+You also need the **robot URDF (and its meshes) in the example folder**. The example loads
+`./SO101/so101_new_calib.urdf` relative to its own directory, so run the example from there. A
+helper script downloads the URDF and the meshes it references from the
+[SO‑ARM100 repo](https://github.com/TheRobotStudio/SO-ARM100/tree/main/Simulation/SO101) into
+`examples/isaac_teleop_to_so101/SO101/`:
 
 ```bash
 cd examples/isaac_teleop_to_so101
+python download_assets.py    # fetches SO101/so101_new_calib.urdf + assets/*.stl
 python teleoperate.py
 ```
+
+`download_assets.py` uses only the standard library (no extra dependencies) and skips files
+already present; pass `--force` to re‑download. If you prefer, you can instead copy the `SO101`
+folder from the SO‑ARM100 repo into `examples/isaac_teleop_to_so101/` by hand — the script just
+automates that, fetching only the meshes the URDF actually references.
 
 Then, in your headset: squeeze and hold the grip to engage, move the controller to drive the
 arm, and use the trigger to open/close the gripper.
