@@ -697,11 +697,12 @@ def test_state_dict_matches_saved_safetensors():
 
     in_memory_state_dict = pipeline.state_dict()
     state_filename = "stateful_pipeline_step_0.safetensors"
+    state_key = "stateful_pipeline_step_0"
 
-    assert set(in_memory_state_dict) == {state_filename}
-    assert set(in_memory_state_dict[state_filename]) == {"tensor_state"}
+    assert set(in_memory_state_dict) == {state_key}
+    assert set(in_memory_state_dict[state_key]) == {"tensor_state"}
 
-    in_memory_state_dict[state_filename]["tensor_state"].add_(1)
+    in_memory_state_dict[state_key]["tensor_state"].add_(1)
     assert stateful_step.tensor_state is not None
     assert torch.equal(stateful_step.tensor_state, torch.tensor([7.0]))
 
@@ -747,10 +748,11 @@ def test_from_config_round_trips_registered_stateful_pipeline():
     config = pipeline.get_config()
     pipeline_state_dict = pipeline.state_dict()
     state_filename = "registry_pipeline_step_0_registered_lazy_tensor_state_step.safetensors"
+    state_key = "registry_pipeline_step_0_registered_lazy_tensor_state_step"
 
     assert config["steps"][0]["registry_name"] == "registered_lazy_tensor_state_step"
     assert config["steps"][0]["state_file"] == state_filename
-    assert set(pipeline_state_dict) == {state_filename}
+    assert set(pipeline_state_dict) == {state_key}
 
     loaded_pipeline = DataProcessorPipeline.from_config(config, state_dict=pipeline_state_dict)
     loaded_step = loaded_pipeline.steps[0]
@@ -761,7 +763,7 @@ def test_from_config_round_trips_registered_stateful_pipeline():
 
 
 def test_from_config_preserves_state_metadata_for_empty_initial_state():
-    """Test strict in-memory loading when rebuilt steps start without tensor state."""
+    """Test in-memory loading when rebuilt steps start without tensor state."""
     stateful_step = MockLazyTensorStateStep(name="lazy", initial_value=13.0)
     pipeline = DataProcessorPipeline([stateful_step], name="Lazy Pipeline")
     config = pipeline.get_config()
@@ -798,52 +800,22 @@ def test_from_config_applies_overrides_before_state_loading():
     torch.testing.assert_close(loaded_step.tensor_state, torch.tensor([17.0]))
 
 
-def test_load_state_dict_strict_raises_on_missing_expected_state():
-    """Test strict loading raises when serialized config expects missing state."""
+def test_load_state_dict_raises_on_missing_expected_state():
+    """Test loading raises when serialized config expects missing state."""
     stateful_step = MockLazyTensorStateStep(initial_value=19.0)
     pipeline = DataProcessorPipeline([stateful_step], name="Missing Pipeline")
     loaded_pipeline = DataProcessorPipeline.from_config(pipeline.get_config())
 
-    with pytest.raises(KeyError, match="missing_pipeline_step_0.safetensors"):
+    with pytest.raises(KeyError, match="missing_pipeline_step_0"):
         loaded_pipeline.load_state_dict({})
 
 
-def test_load_state_dict_strict_raises_on_unexpected_extra_state():
-    """Test strict loading raises on unexpected top-level state files."""
+def test_load_state_dict_raises_on_unexpected_extra_state():
+    """Test loading raises on unexpected top-level state keys."""
     pipeline = DataProcessorPipeline([MockStep(name="stateless")], name="Unexpected Pipeline")
 
-    with pytest.raises(KeyError, match="extra.safetensors"):
-        pipeline.load_state_dict({"extra.safetensors": {"tensor_state": torch.tensor([1.0])}})
-
-
-def test_load_state_dict_non_strict_ignores_missing_and_extra_state():
-    """Test non-strict loading ignores missing and extra state while loading matches."""
-    stateful_step = MockLazyTensorStateStep(initial_value=23.0)
-    pipeline = DataProcessorPipeline([stateful_step], name="Non Strict Pipeline")
-    config = pipeline.get_config()
-    pipeline_state_dict = pipeline.state_dict()
-
-    loaded_pipeline = DataProcessorPipeline.from_config(config)
-    loaded_pipeline.load_state_dict(
-        {
-            **pipeline_state_dict,
-            "extra.safetensors": {"tensor_state": torch.tensor([1.0])},
-        },
-        strict=False,
-    )
-    loaded_step = loaded_pipeline.steps[0]
-
-    assert isinstance(loaded_step, MockLazyTensorStateStep)
-    torch.testing.assert_close(loaded_step.tensor_state, torch.tensor([23.0]))
-
-    missing_loaded_pipeline = DataProcessorPipeline.from_config(config)
-    missing_loaded_pipeline.load_state_dict(
-        {"extra.safetensors": {"tensor_state": torch.tensor([1.0])}},
-        strict=False,
-    )
-
-    assert isinstance(missing_loaded_pipeline.steps[0], MockLazyTensorStateStep)
-    assert missing_loaded_pipeline.steps[0].state_dict() == {}
+    with pytest.raises(KeyError, match="extra"):
+        pipeline.load_state_dict({"extra": {"tensor_state": torch.tensor([1.0])}})
 
 
 def test_stateless_pipeline_in_memory_serialization_returns_empty_state():

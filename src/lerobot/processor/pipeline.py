@@ -373,6 +373,18 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         return f"{sanitized_name}_step_{step_index}.safetensors"
 
     @staticmethod
+    def _get_state_key(state_filename: str) -> str:
+        """Return the in-memory state key for a serialized state filename.
+
+        Args:
+            state_filename: The `.safetensors` filename from the serialized config.
+
+        Returns:
+            The state key used by the in-memory pipeline state dictionary.
+        """
+        return state_filename.removesuffix(".safetensors")
+
+    @staticmethod
     def _get_state_filenames_from_config(loaded_config: dict[str, Any]) -> tuple[str | None, ...]:
         """Return serialized state filenames in step order.
 
@@ -454,10 +466,10 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         return pipeline_config
 
     def state_dict(self) -> dict[str, dict[str, torch.Tensor]]:
-        """Return pipeline state tensors grouped by safetensors filename.
+        """Return pipeline state tensors grouped by state key.
 
         Returns:
-            A dictionary mapping safetensors filenames to cloned step state dictionaries.
+            A dictionary mapping suffixless state keys to cloned step state dictionaries.
         """
         sanitized_name = self._get_sanitized_name()
         pipeline_state_dict: dict[str, dict[str, torch.Tensor]] = {}
@@ -473,7 +485,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                 registry_name=registry_name,
                 sanitized_name=sanitized_name,
             )
-            pipeline_state_dict[state_filename] = {
+            state_key = self._get_state_key(state_filename)
+            pipeline_state_dict[state_key] = {
                 tensor_name: tensor.clone() for tensor_name, tensor in step_state_dict.items()
             }
 
@@ -482,20 +495,17 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
     def load_state_dict(
         self,
         state_dict: dict[str, dict[str, torch.Tensor]],
-        *,
-        strict: bool = True,
     ) -> None:
         """Load pipeline state tensors into the existing steps.
 
         Args:
-            state_dict: A dictionary mapping safetensors filenames to step state dictionaries.
-            strict: Whether to raise on missing expected state files or unexpected extra state files.
+            state_dict: A dictionary mapping suffixless state keys to step state dictionaries.
 
         Raises:
-            KeyError: If strict loading finds missing expected state or unexpected extra state.
+            KeyError: If loading finds missing expected state or unexpected extra state.
         """
         expected_state_filenames = self._get_state_filenames_for_loading()
-        used_state_filenames: set[str] = set()
+        used_state_keys: set[str] = set()
 
         for step_index, (processor_step, state_filename) in enumerate(
             zip(self.steps, expected_state_filenames, strict=True)
@@ -503,28 +513,26 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             if state_filename is None:
                 continue
 
-            if state_filename not in state_dict:
-                if strict:
-                    raise KeyError(
-                        f"Missing state file '{state_filename}' for processor step {step_index}. "
-                        f"Available state files: {sorted(state_dict.keys())}"
-                    )
-                continue
+            state_key = self._get_state_key(state_filename)
+            if state_key not in state_dict:
+                raise KeyError(
+                    f"Missing state key '{state_key}' for processor step {step_index}. "
+                    f"Available state keys: {sorted(state_dict.keys())}"
+                )
 
-            processor_step.load_state_dict(state_dict[state_filename])
-            used_state_filenames.add(state_filename)
+            processor_step.load_state_dict(state_dict[state_key])
+            used_state_keys.add(state_key)
 
-        if not strict:
-            return
-
-        unexpected_state_filenames = set(state_dict) - used_state_filenames
-        if unexpected_state_filenames:
-            expected_state_filename_set = {
-                state_filename for state_filename in expected_state_filenames if state_filename is not None
+        unexpected_state_keys = set(state_dict) - used_state_keys
+        if unexpected_state_keys:
+            expected_state_key_set = {
+                self._get_state_key(state_filename)
+                for state_filename in expected_state_filenames
+                if state_filename is not None
             }
             raise KeyError(
-                f"Unexpected processor state files: {sorted(unexpected_state_filenames)}. "
-                f"Expected state files: {sorted(expected_state_filename_set)}"
+                f"Unexpected processor state keys: {sorted(unexpected_state_keys)}. "
+                f"Expected state keys: {sorted(expected_state_key_set)}"
             )
 
     def _save_pretrained(self, save_directory: Path, **kwargs) -> None:
@@ -541,7 +549,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         pipeline_config = self.get_config()
         pipeline_state_dict = self.state_dict()
 
-        for state_filename, step_state_dict in pipeline_state_dict.items():
+        for state_key, step_state_dict in pipeline_state_dict.items():
+            state_filename = f"{state_key}.safetensors"
             save_file(step_state_dict, save_directory / state_filename)
 
         with open(save_directory / config_filename, "w") as file_pointer:
@@ -752,7 +761,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
         Args:
             config: A config dictionary with the same structure as the saved processor JSON.
-            state_dict: Optional in-memory pipeline state grouped by safetensors filename.
+            state_dict: Optional in-memory pipeline state grouped by suffixless state key.
             overrides: Optional constructor overrides keyed by registry name or class name.
             to_transition: Optional converter from input data to `EnvTransition`.
             to_output: Optional converter from `EnvTransition` to output data.
