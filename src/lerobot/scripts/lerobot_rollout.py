@@ -25,6 +25,7 @@ Strategies
     --strategy.type=sentry     Continuous recording with auto-upload
     --strategy.type=highlight  Ring buffer + keystroke save
     --strategy.type=dagger     Human-in-the-loop (DAgger / RaC)
+    --strategy.type=episodic   Episode-oriented recording with reset phases
 
 Inference backends
 ------------------
@@ -110,6 +111,18 @@ Usage examples
         --task="pick up cube" --duration=60 \\
         --display_data=true \\
         --use_torch_compile=true
+
+    # Episodic mode — episode-oriented recording with reset phases
+    lerobot-rollout \\
+        --strategy.type=episodic \\
+        --policy.path=user/my_policy \\
+        --robot.type=so100_follower \\
+        --robot.port=/dev/ttyACM0 \\
+        --teleop.type=so100_leader \\
+        --teleop.port=/dev/ttyACM1 \\
+        --dataset.repo_id=user/rollout_episodic_data \\
+        --dataset.num_episodes=20 \\
+        --dataset.single_task="Grab the cube"
 
     # Resume a previous sentry recording session
     lerobot-rollout \\
