@@ -40,6 +40,30 @@ class IsaacTeleopConfig(TeleoperatorConfig):
     app_name: str = "LeTeleop"
     """Application name for the OpenXR / Isaac Teleop session."""
 
+    auto_launch_cloudxr: bool = True
+    """Whether to auto-launch the NVIDIA CloudXR runtime on :meth:`connect`.
+
+    When ``True`` (default), :meth:`connect` starts the CloudXR runtime so
+    operators need not run ``python -m isaacteleop.cloudxr`` and ``source
+    cloudxr.env`` by hand. Set ``False`` (or export
+    ``LEROBOT_CLOUDXR_SKIP_AUTOLAUNCH=1``, which takes precedence) when CloudXR
+    is already running externally. The first launch blocks ~30s and, on a fresh
+    machine, prompts for the CloudXR EULA on stdin (see
+    :meth:`~lerobot.teleoperators.isaac_teleop.base.IsaacTeleopTeleoperator.connect`);
+    EULA acceptance is deliberately not exposed here — accept it once via
+    ``python -m isaacteleop.cloudxr --accept-eula``.
+    """
+
+    cloudxr_env_file: str | None = None
+    """Optional CloudXR device-profile ``.env`` passed to ``CloudXRLauncher`` as input.
+
+    This is an INPUT profile that selects the headset transport (e.g. an Apple
+    Vision Pro profile); it is NOT the ``~/.cloudxr/run/cloudxr.env`` file the old
+    manual flow told you to ``source`` (that is launcher OUTPUT, now handled
+    automatically). ``None`` keeps the launcher's default auto-WebRTC profile,
+    which matches today's manual default.
+    """
+
 
 @TeleoperatorConfig.register_subclass("isaac_teleop_controller")
 @dataclass(kw_only=True)

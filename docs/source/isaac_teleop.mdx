@@ -66,14 +66,62 @@ pre-release, the `isaac-teleop` extra is intentionally not pinned in the public 
 ### Set up CloudXR and connect a headset
 
 Isaac Teleop streams the headset to your machine over **NVIDIA CloudXR**, which provides the
-OpenXR runtime the session connects to. Before teleoperating you must start the CloudXR server,
-whitelist its firewall ports, connect a supported headset, and source the CloudXR environment.
-Follow the Isaac Teleop [Quick Start](https://nvidia.github.io/IsaacTeleop/main/getting_started/quick_start.html)
-for the full procedure; in brief:
+OpenXR runtime the session connects to. By default LeTeleop **auto-launches the CloudXR runtime
+for you** when you call `teleop_device.connect()` — you no longer have to run `python -m
+isaacteleop.cloudxr` and `source cloudxr.env` in a separate shell. All you need is a supported
+headset connected and the CloudXR firewall ports open. Follow the Isaac Teleop
+[Quick Start](https://nvidia.github.io/IsaacTeleop/main/getting_started/quick_start.html) for the
+headset-pairing and firewall details.
+
+**First run (EULA).** The very first launch must accept the NVIDIA CloudXR EULA. The auto-launch
+prompts for it **on stdin**, so on a headless machine it will hang waiting for input. Bootstrap
+the EULA once, interactively, with:
 
 ```bash
-python -m isaacteleop.cloudxr --accept-eula   # start the CloudXR server (first run accepts the EULA)
-source ~/.cloudxr/run/cloudxr.env             # load CloudXR env vars in the shell that runs teleop
+python -m isaacteleop.cloudxr --accept-eula   # one-time: accept the CloudXR EULA
+```
+
+After that, `connect()` launches the runtime non-interactively. The launch **blocks for ~30s**
+while the runtime comes up.
+
+**Configuration.** Two fields on `IsaacTeleopConfig` (shared by every device) control this:
+
+- `auto_launch_cloudxr` (default `True`) — whether `connect()` starts the runtime. Set `False`
+  when CloudXR is already running externally.
+- `cloudxr_env_file` (default `None`) — an optional CloudXR device-profile `.env` selecting the
+  headset transport (e.g. an Apple Vision Pro profile). This is launcher **input**; it is not the
+  `~/.cloudxr/run/cloudxr.env` **output** file the old manual flow told you to `source`. `None`
+  keeps the default auto-WebRTC profile.
+
+**Opting out.** To skip the auto-launch (CloudXR already running), either set
+`auto_launch_cloudxr=False` or export:
+
+```bash
+export LEROBOT_CLOUDXR_SKIP_AUTOLAUNCH=1
+```
+
+The **env var takes precedence over the config field**: if `LEROBOT_CLOUDXR_SKIP_AUTOLAUNCH=1` is
+set, the auto-launch is skipped even when `auto_launch_cloudxr=True`. This variable is
+**independent** of Isaac Lab's `ISAACLAB_CXR_SKIP_AUTOLAUNCH` — setting one does not affect the
+other.
+
+**One teleoperator per process.** The CloudXR runtime configures the environment process-wide (a
+singleton), so run a single Isaac Teleop teleoperator per process.
+
+**Shutting down.** Always call `teleop_device.disconnect()` on exit — including on Ctrl-C. Wrap
+your teleoperation loop in `try/finally` and call `disconnect()` in the `finally`. This tears down
+the OpenXR session **before** the CloudXR runtime, which is the required order; the launcher's
+`atexit` hook only reaps the runtime and does not run the session's `__exit__`, so without an
+explicit `disconnect()` an interrupted run shuts down in the wrong order.
+
+```python
+teleop_device.connect()
+try:
+    while True:
+        action = teleop_device.get_action()
+        # ... drive the robot ...
+finally:
+    teleop_device.disconnect()
 ```
 
 See [System Requirements](https://nvidia.github.io/IsaacTeleop/main/references/requirements.html)
@@ -161,10 +209,14 @@ state, and the boolean `enabled` clutch.
 
 ### Step 2: Connect
 
-Calling `teleop_device.connect()` starts the Isaac Teleop
+Calling `teleop_device.connect()` first auto-launches the CloudXR runtime (unless you opted out —
+see [Set up CloudXR and connect a headset](#set-up-cloudxr-and-connect-a-headset); this blocks for
+~30s and on the first run prompts for the EULA on stdin), then starts the Isaac Teleop
 [`TeleopSession`](https://nvidia.github.io/IsaacTeleop/main/getting_started/teleop_session.html)
 (opens the OpenXR session and discovers the controllers). XR controllers are self‑calibrating, so
-there is no manual calibration step — the clutch handles re‑centering each time you engage.
+there is no manual calibration step — the clutch handles re‑centering each time you engage. Pair
+`connect()` with a `try/finally` that calls `disconnect()` so the session tears down before the
+runtime on exit/Ctrl-C.
 
 ### Step 3: Run the example
 
@@ -238,10 +290,16 @@ adapting the pipeline to other robots.
 - **`ModuleNotFoundError: isaacteleop`** — the `isaac-teleop` extra was installed without the
   NVIDIA index. Re-run the install command at the top of this guide, with `--extra-index-url
 https://pypi.nvidia.com --prerelease=allow`.
-- **No controllers found** — make sure the CloudXR server is running, the firewall ports are
-  whitelisted, the headset is connected, and you sourced `cloudxr.env` in the same shell (see
+- **No controllers found** — make sure the CloudXR runtime is running, the firewall ports are
+  whitelisted, and the headset is connected (see
   [Set up CloudXR and connect a headset](#set-up-cloudxr-and-connect-a-headset) and the Isaac
   Teleop [Quick Start](https://nvidia.github.io/IsaacTeleop/main/getting_started/quick_start.html)).
+- **CloudXR auto-launch failed** — `connect()` raises a `RuntimeError` if the runtime does not
+  come up within its startup timeout. Check the launcher logs under `~/.cloudxr/logs`. Common
+  causes: the EULA was never accepted (run `python -m isaacteleop.cloudxr --accept-eula` once,
+  interactively — the auto-launch prompts on stdin and hangs headless), or the runtime is already
+  running externally (set `LEROBOT_CLOUDXR_SKIP_AUTOLAUNCH=1` or `auto_launch_cloudxr=False` to
+  skip the auto-launch).
 - **Arm does not move** — the clutch is a deadman: you must hold the squeeze/grip past
   `clutch_threshold`. Lower the threshold if your controller's squeeze is reported softly.
 - **Motion feels misaligned** — confirm the headset/play space orientation; the OpenXR→robot
