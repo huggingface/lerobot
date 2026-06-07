@@ -123,6 +123,39 @@ def test_invalid_width_connect():
         camera.connect(warmup=False)
 
 
+def test_connect_releases_handle_on_settings_failure():
+    """A failure while applying capture settings must not leak the device handle."""
+    config = OpenCVCameraConfig(
+        index_or_path=DEFAULT_PNG_FILE_PATH,
+        width=99999,
+        height=480,
+    )
+
+    camera = OpenCVCamera(config)
+    with pytest.raises(RuntimeError):
+        camera.connect(warmup=False)
+
+    assert camera.videocapture is None
+    assert not camera.is_connected
+    assert camera.thread is None
+
+
+def test_connect_releases_handle_on_warmup_failure():
+    """A failure during warmup must release the handle and stop the read thread."""
+    config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH, warmup_s=1)
+
+    camera = OpenCVCamera(config)
+    with (
+        patch.object(OpenCVCamera, "async_read", side_effect=TimeoutError("no frame")),
+        pytest.raises((ConnectionError, TimeoutError)),
+    ):
+        camera.connect(warmup=True)
+
+    assert camera.videocapture is None
+    assert not camera.is_connected
+    assert camera.thread is None
+
+
 @pytest.mark.parametrize("index_or_path", TEST_IMAGE_PATHS, ids=TEST_IMAGE_SIZES)
 def test_read(index_or_path):
     config = OpenCVCameraConfig(index_or_path=index_or_path, warmup_s=0)
