@@ -125,6 +125,7 @@ from lerobot.robots import (  # noqa: F401
     earthrover_mini_plus,
     hope_jr,
     koch_follower,
+    lekiwi,
     make_robot_from_config,
     omx_follower,
     openarm_follower,
@@ -150,7 +151,7 @@ from lerobot.teleoperators import (  # noqa: F401
     so_leader,
     unitree_g1,
 )
-from lerobot.teleoperators.keyboard import KeyboardTeleop
+from lerobot.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
 from lerobot.utils.import_utils import register_third_party_plugins
@@ -366,6 +367,19 @@ def record(
     robot = make_robot_from_config(cfg.robot)
     teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
 
+    # LeKiwi is teleoperated by two devices at once: the configured arm leader plus a
+    # keyboard for the mobile base. record_loop() consumes them as a [arm, keyboard] list;
+    # the single --teleop.* CLI slot only covers the arm, so we attach the keyboard here.
+    if robot.name == "lekiwi_client" and teleop is not None:
+        teleop = [teleop, KeyboardTeleop(KeyboardTeleopConfig())]
+
+    # LeKiwiClient (a network client) exposes camera specs on `.config.cameras` rather than
+    # instantiating local `.cameras` objects, so `len(robot.cameras)` would raise. Support both.
+    robot_cameras = getattr(robot, "cameras", None)
+    if robot_cameras is None:
+        robot_cameras = getattr(robot.config, "cameras", {})
+    num_cameras = len(robot_cameras)
+
     # Fall back to identity pipelines when the caller doesn't supply processors.
     if (
         teleop_action_processor is None
@@ -397,7 +411,6 @@ def record(
 
     try:
         if cfg.resume:
-            num_cameras = len(robot.cameras) if hasattr(robot, "cameras") else 0
             dataset = LeRobotDataset.resume(
                 cfg.dataset.repo_id,
                 root=cfg.dataset.root,
@@ -429,7 +442,7 @@ def record(
                 features=dataset_features,
                 use_videos=cfg.dataset.video,
                 image_writer_processes=cfg.dataset.num_image_writer_processes,
-                image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot.cameras),
+                image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * num_cameras,
                 batch_encoding_size=cfg.dataset.video_encoding_batch_size,
                 camera_encoder=cfg.dataset.camera_encoder,
                 encoder_threads=cfg.dataset.encoder_threads,
@@ -439,7 +452,8 @@ def record(
 
         robot.connect()
         if teleop is not None:
-            teleop.connect()
+            for teleop_device in teleop if isinstance(teleop, list) else [teleop]:
+                teleop_device.connect()
 
         listener, events = init_keyboard_listener()
 
@@ -504,8 +518,10 @@ def record(
 
         if robot.is_connected:
             robot.disconnect()
-        if teleop and teleop.is_connected:
-            teleop.disconnect()
+        if teleop is not None:
+            for teleop_device in teleop if isinstance(teleop, list) else [teleop]:
+                if teleop_device.is_connected:
+                    teleop_device.disconnect()
 
         if not is_headless() and listener:
             listener.stop()

@@ -77,6 +77,7 @@ from lerobot.robots import (  # noqa: F401
     earthrover_mini_plus,
     hope_jr,
     koch_follower,
+    lekiwi,
     make_robot_from_config,
     omx_follower,
     openarm_follower,
@@ -104,6 +105,7 @@ from lerobot.teleoperators import (  # noqa: F401
     so_leader,
     unitree_g1,
 )
+from lerobot.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import init_logging, move_cursor_up
@@ -129,7 +131,7 @@ class TeleoperateConfig:
 
 
 def teleop_loop(
-    teleop: Teleoperator,
+    teleop: Teleoperator | list[Teleoperator],
     robot: Robot,
     fps: int,
     teleop_action_processor: RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction],
@@ -158,6 +160,34 @@ def teleop_loop(
 
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
+
+    # LeKiwi is teleoperated by two devices at once: an arm leader plus a keyboard for the
+    # mobile base. Identify them once here (mirrors record_loop's multi-teleop handling).
+    teleop_arm = teleop_keyboard = None
+    if isinstance(teleop, list):
+        teleop_keyboard = next((t for t in teleop if isinstance(t, KeyboardTeleop)), None)
+        teleop_arm = next(
+            (
+                t
+                for t in teleop
+                if isinstance(
+                    t,
+                    (
+                        so_leader.SO100Leader
+                        | so_leader.SO101Leader
+                        | koch_leader.KochLeader
+                        | omx_leader.OmxLeader
+                    ),
+                )
+            ),
+            None,
+        )
+        if not (teleop_arm and teleop_keyboard and len(teleop) == 2 and robot.name == "lekiwi_client"):
+            raise ValueError(
+                "For multi-teleop, the list must contain exactly one KeyboardTeleop and one arm "
+                "teleoperator. Currently only supported for LeKiwi robot."
+            )
+
     while True:
         loop_start = time.perf_counter()
 
@@ -170,8 +200,14 @@ def teleop_loop(
         if robot.name == "unitree_g1":
             teleop.send_feedback(obs)
 
-        # Get teleop action
-        raw_action = teleop.get_action()
+        # Get teleop action (single device, or LeKiwi arm + keyboard-driven base)
+        if isinstance(teleop, list):
+            arm_action = teleop_arm.get_action()
+            arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
+            base_action = robot._from_keyboard_to_base_action(teleop_keyboard.get_action())
+            raw_action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
+        else:
+            raw_action = teleop.get_action()
 
         # Process teleop action through pipeline
         teleop_action = teleop_action_processor((raw_action, obs))
@@ -225,7 +261,13 @@ def teleoperate(cfg: TeleoperateConfig):
     robot = make_robot_from_config(cfg.robot)
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
 
-    teleop.connect()
+    # LeKiwi needs a keyboard for the mobile base alongside the configured arm leader;
+    # teleop_loop() consumes them as a [arm, keyboard] list (mirrors record()).
+    if robot.name == "lekiwi_client":
+        teleop = [teleop, KeyboardTeleop(KeyboardTeleopConfig())]
+
+    for teleop_device in teleop if isinstance(teleop, list) else [teleop]:
+        teleop_device.connect()
     robot.connect()
 
     try:
@@ -245,7 +287,8 @@ def teleoperate(cfg: TeleoperateConfig):
     finally:
         if cfg.display_data:
             shutdown_rerun()
-        teleop.disconnect()
+        for teleop_device in teleop if isinstance(teleop, list) else [teleop]:
+            teleop_device.disconnect()
         robot.disconnect()
 
 
