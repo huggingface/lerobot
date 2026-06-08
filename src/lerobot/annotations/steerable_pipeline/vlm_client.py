@@ -310,6 +310,19 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
     return _GenericTextClient(_gen, config)
 
 
+def _bind_serve_port(cmd: str, port: int) -> str:
+    """Bind a serve command to ``port``: substitute a ``{port}`` placeholder
+    if present, else append ``--port`` when the command omits it (leaving an
+    explicit ``--port`` untouched). Shared by the single- and parallel-server
+    paths so a serve_command never reaches the server with a literal
+    ``{port}``."""
+    if "{port}" in cmd:
+        return cmd.replace("{port}", str(port))
+    if "--port" not in cmd:
+        return f"{cmd} --port {port}"
+    return cmd
+
+
 def _spawn_parallel_inference_servers(config: VlmConfig) -> list[str]:
     """Spawn ``config.parallel_servers`` independent vllm replicas.
 
@@ -352,7 +365,7 @@ def _spawn_parallel_inference_servers(config: VlmConfig) -> list[str]:
         gpu = i % num_gpus
         env = os.environ.copy()
         env["CUDA_VISIBLE_DEVICES"] = str(gpu)
-        cmd = base_cmd.replace("{port}", str(port)) if "{port}" in base_cmd else f"{base_cmd} --port {port}"
+        cmd = _bind_serve_port(base_cmd, port)
         api_base = f"http://localhost:{port}/v1"
         api_bases.append(api_base)
         print(f"[server-{i}] launching on GPU {gpu} port {port}: {cmd}", flush=True)
@@ -451,6 +464,11 @@ def _spawn_inference_server(config: VlmConfig) -> str:
             f"transformers serve {shlex.quote(config.model_id)} "
             f"--port {config.serve_port} --continuous-batching"
         )
+    # Bind the single server to ``serve_port`` (what ``api_base`` below
+    # targets): substitute a literal ``{port}`` placeholder, else append
+    # ``--port``. Without this a serve_command carrying ``{port}`` would
+    # reach the server unsubstituted and fail to parse.
+    cmd = _bind_serve_port(cmd, config.serve_port)
     api_base = f"http://localhost:{config.serve_port}/v1"
     print(f"[server] launching: {cmd}", flush=True)
     proc = subprocess.Popen(
