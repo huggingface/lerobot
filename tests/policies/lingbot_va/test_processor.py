@@ -21,10 +21,10 @@ import torch
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.lingbot_va.configuration_lingbot_va import LingBotVAConfig
 from lerobot.policies.lingbot_va.processor_lingbot_va import (
-    LIBERO_ACTION_Q01,
     LingBotVAActionUnnormalizeStep,
     make_lingbot_va_pre_post_processors,
 )
+from lerobot.processor import PolicyProcessorPipeline
 from lerobot.utils.constants import (
     OBS_IMAGES,
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
@@ -73,10 +73,29 @@ def test_make_pre_post_processors_names_and_steps() -> None:
     assert any(isinstance(s, LingBotVAActionUnnormalizeStep) for s in post.steps)
 
 
-def test_postprocessor_applies_unnormalization() -> None:
+def test_freshly_built_postprocessor_is_neutral() -> None:
+    # A fresh (unconverted) policy defaults to a neutral [-1, 1] mapping (identity rescale): the real
+    # per-benchmark quantiles are NOT hardcoded, they are restored from the saved checkpoint on load.
     cfg = _make_config()
     _, post = make_lingbot_va_pre_post_processors(cfg, dataset_stats=None)
-    # A normalized action of all -1 should map back to q01 (the LIBERO 7-DoF default quantiles).
-    normed = torch.full((1, len(cfg.used_action_channel_ids)), -1.0)
+    normed = torch.tensor([[0.3, -0.5, 1.0, -1.0, 0.0, 0.7, -0.2]])
     out = post(normed)
-    assert torch.allclose(out, torch.tensor(LIBERO_ACTION_Q01).unsqueeze(0), atol=1e-4)
+    assert torch.allclose(out, normed, atol=1e-4)
+
+
+def test_postprocessor_quantiles_survive_save_load(tmp_path) -> None:
+    # Regression guard for the Hub mechanism this policy relies on: the benchmark quantiles live in
+    # the serialized post-processor config and must round-trip through save_pretrained/from_pretrained.
+    q01 = [-0.6, -0.8, -0.9, -0.1, -0.15, -0.25, -1.0]
+    q99 = [0.9, 0.85, 0.9, 0.17, 0.18, 0.34, 1.0]
+    post = PolicyProcessorPipeline[torch.Tensor, torch.Tensor](
+        steps=[LingBotVAActionUnnormalizeStep(action_q01=q01, action_q99=q99)],
+        name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
+    )
+    post.save_pretrained(tmp_path)
+    loaded = PolicyProcessorPipeline.from_pretrained(
+        tmp_path, config_filename=f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
+    )
+    step = next(s for s in loaded.steps if isinstance(s, LingBotVAActionUnnormalizeStep))
+    assert step.action_q01 == q01
+    assert step.action_q99 == q99
