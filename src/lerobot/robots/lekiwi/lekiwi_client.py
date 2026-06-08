@@ -316,6 +316,10 @@ class LeKiwiClient(Robot):
             np.ndarray: the action sent to the motors, potentially clipped.
         """
 
+        # Action values may be torch tensors (e.g. replayed from a dataset) or numpy
+        # scalars; json.dumps only serializes Python primitives, so coerce each value to a
+        # plain float before sending.
+        action = {key: float(value) for key, value in action.items()}
         self.zmq_cmd_socket.send_string(json.dumps(action))  # action is in motor space
 
         # TODO(Steven): Remove the np conversion when it is possible to record a non-numpy array value
