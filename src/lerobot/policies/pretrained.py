@@ -263,7 +263,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             tags=list(set(tags or []).union({"robotics", "lerobot", model_type})),
             model_name=model_type,
             datasets=dataset_repo_id,
-            base_model=base_model_mapping(model_type, None),
+            base_model=base_model_mapping.get(model_type),
         )
 
         template_card = (
