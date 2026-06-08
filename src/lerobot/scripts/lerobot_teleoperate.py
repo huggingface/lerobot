@@ -67,6 +67,21 @@ lerobot-teleoperate \
   --display_data=true
 ```
 
+Example teleoperation with LeKiwi, a mobile manipulator. The `lekiwi_leader` teleoperator drives
+the arm from a leader arm and the holonomic base from the keyboard (WASD to move, Z/X to rotate,
+R/F to change speed):
+
+```shell
+lerobot-teleoperate \
+  --robot.type=lekiwi_client \
+  --robot.remote_ip=192.168.0.42 \
+  --robot.id=my_kiwi \
+  --teleop.type=lekiwi_leader \
+  --teleop.arm_config.port=/dev/tty.usbmodem58760431551 \
+  --teleop.id=my_kiwi_leader \
+  --display_data=true
+```
+
 """
 
 import logging
@@ -93,6 +108,7 @@ from lerobot.robots import (  # noqa: F401
     earthrover_mini_plus,
     hope_jr,
     koch_follower,
+    lekiwi,
     make_robot_from_config,
     omx_follower,
     openarm_follower,
@@ -112,6 +128,7 @@ from lerobot.teleoperators import (  # noqa: F401
     homunculus,
     keyboard,
     koch_leader,
+    lekiwi_leader,
     make_teleoperator_from_config,
     omx_leader,
     openarm_leader,
