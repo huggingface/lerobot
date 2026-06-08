@@ -14,13 +14,9 @@
 
 """Pre/post-processor pipelines for the LingBot-VA policy.
 
-The policy itself handles image resizing, scaling to [-1, 1] and VAE encoding (the VAE
-lives inside the policy), so the preprocessor only renames, batches, normalizes (IDENTITY)
-and moves to device. The policy emits actions in the normalized ``[-1, 1]`` space; the
-postprocessor maps them back to physical units with the standard ``UnnormalizerProcessorStep``
-in QUANTILES mode (``(action + 1) / 2 * (q99 - q01) + q01``). The per-channel q01/q99 are NOT
-hardcoded: they are saved in each checkpoint's post-processor state and restored on load. A
-fresh (unconverted) policy has no action stats, so the step is a no-op (identity passthrough).
+The preprocessor passes inputs through (IDENTITY) and the postprocessor maps the policy's
+``[-1, 1]`` actions back to physical units with the built-in ``UnnormalizerProcessorStep``
+(QUANTILES) using per-channel q01/q99 restored from the checkpoint.
 """
 
 from typing import Any
@@ -67,9 +63,7 @@ def make_lingbot_va_pre_post_processors(
         DeviceProcessorStep(device=config.device),
     ]
 
-    # Unnormalize predicted actions from [-1, 1] back to physical units via per-channel q01/q99
-    # (QUANTILES mode), overriding the policy's IDENTITY action mapping. The q01/q99 stats are
-    # restored from the checkpoint on load; a fresh build has no action stats and is a passthrough.
+    # Unnormalize actions from [-1, 1] to physical units (QUANTILES) using q01/q99 restored from the checkpoint.
     output_steps: list[ProcessorStep] = [
         UnnormalizerProcessorStep(
             features=config.output_features,
