@@ -34,11 +34,17 @@ class DatasetRecordConfig:
     # Number of seconds for data recording for each episode.
     episode_time_s: int | float = 60
     # Number of seconds for resetting the environment after each episode.
-    # Set to a negative value (e.g. -1) to enable interactive recording mode:
-    #   - between episodes: stdin prompt [Y/n/q] instead of a fixed countdown
-    #   - during recording: Ctrl+\ (SIGQUIT) ends the current episode early
-    # Useful when pynput keyboard shortcuts are unavailable (e.g. Wayland sessions).
     reset_time_s: int | float = 60
+    # Interactive recording mode for environments where pynput keyboard shortcuts don't work
+    # (headless/SSH or Wayland sessions). When active:
+    #   - between episodes: a stdin prompt [Y/n/q] replaces the fixed reset countdown
+    #   - during recording: Ctrl+\ (SIGQUIT) ends the current episode early
+    # Accepted values:
+    #   - "auto" (default): enable automatically when stdin is a TTY and pynput capture is
+    #     unavailable (headless or Wayland); otherwise keep the standard pynput behavior.
+    #   - "on": force the interactive prompt + SIGQUIT mode on.
+    #   - "off": disable it (legacy pynput-only behavior).
+    interactive_reset: str = "auto"
     # Number of episodes to record.
     num_episodes: int = 50
     # Encode frames in the dataset into video

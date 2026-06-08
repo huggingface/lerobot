@@ -27,10 +27,13 @@ import sys
 
 import pytest
 
+import lerobot.common.control_utils as control_utils
 from lerobot.common.control_utils import (
     install_signal_early_exit,
     interactive_reset_prompt,
+    is_wayland,
     restore_signal_early_exit,
+    should_use_interactive_reset,
 )
 
 
@@ -131,3 +134,90 @@ class TestSignalEarlyExit:
             assert signal.getsignal(signal.SIGQUIT) is not original
         finally:
             restore_signal_early_exit(original)
+
+
+class TestIsWayland:
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        # is_wayland is @cache-decorated; clear it around each test so env changes take effect.
+        is_wayland.cache_clear()
+        yield
+        is_wayland.cache_clear()
+
+    def test_detects_xdg_session_type(self, monkeypatch):
+        monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+        monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+        assert is_wayland() is True
+
+    def test_detects_wayland_display(self, monkeypatch):
+        monkeypatch.delenv("XDG_SESSION_TYPE", raising=False)
+        monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
+        assert is_wayland() is True
+
+    def test_x11_is_not_wayland(self, monkeypatch):
+        monkeypatch.setenv("XDG_SESSION_TYPE", "x11")
+        monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+        assert is_wayland() is False
+
+
+class TestShouldUseInteractiveReset:
+    @pytest.fixture
+    def tty(self, monkeypatch):
+        """Set whether sys.stdin reports as a TTY."""
+
+        def _set(is_tty):
+            stdin = io.StringIO("")
+            stdin.isatty = lambda: is_tty
+            monkeypatch.setattr(sys, "stdin", stdin)
+
+        return _set
+
+    def test_on_forces_active(self, monkeypatch, tty):
+        # "on" ignores environment detection entirely (even with a non-TTY stdin).
+        tty(False)
+        monkeypatch.setattr(control_utils, "is_headless", lambda: False)
+        monkeypatch.setattr(control_utils, "is_wayland", lambda: False)
+        assert should_use_interactive_reset("on") is True
+
+    def test_off_forces_inactive(self, monkeypatch, tty):
+        # "off" stays inactive even on a TTY Wayland session.
+        tty(True)
+        monkeypatch.setattr(control_utils, "is_headless", lambda: False)
+        monkeypatch.setattr(control_utils, "is_wayland", lambda: True)
+        assert should_use_interactive_reset("off") is False
+
+    def test_auto_wayland_tty_is_active(self, monkeypatch, tty):
+        tty(True)
+        monkeypatch.setattr(control_utils, "is_headless", lambda: False)
+        monkeypatch.setattr(control_utils, "is_wayland", lambda: True)
+        assert should_use_interactive_reset("auto") is True
+
+    def test_auto_headless_tty_is_active(self, monkeypatch, tty):
+        tty(True)
+        monkeypatch.setattr(control_utils, "is_headless", lambda: True)
+        monkeypatch.setattr(control_utils, "is_wayland", lambda: False)
+        assert should_use_interactive_reset("auto") is True
+
+    def test_auto_x11_tty_is_inactive(self, monkeypatch, tty):
+        # Working pynput environment (X11 with display): keep the legacy behavior.
+        tty(True)
+        monkeypatch.setattr(control_utils, "is_headless", lambda: False)
+        monkeypatch.setattr(control_utils, "is_wayland", lambda: False)
+        assert should_use_interactive_reset("auto") is False
+
+    def test_auto_non_tty_is_inactive(self, monkeypatch, tty):
+        # No TTY → nothing to prompt → stay inactive even if pynput is unavailable.
+        tty(False)
+        monkeypatch.setattr(control_utils, "is_headless", lambda: True)
+        monkeypatch.setattr(control_utils, "is_wayland", lambda: True)
+        assert should_use_interactive_reset("auto") is False
+
+    def test_case_insensitive(self, monkeypatch, tty):
+        tty(True)
+        monkeypatch.setattr(control_utils, "is_headless", lambda: False)
+        monkeypatch.setattr(control_utils, "is_wayland", lambda: True)
+        assert should_use_interactive_reset("AUTO") is True
+
+    def test_invalid_mode_raises(self):
+        with pytest.raises(ValueError, match="Invalid interactive_reset mode"):
+            should_use_interactive_reset("sometimes")

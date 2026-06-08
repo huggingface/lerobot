@@ -18,6 +18,7 @@ from __future__ import annotations
 # Utilities
 ########################################################################################
 import logging
+import os
 import signal
 import sys
 import traceback
@@ -70,6 +71,57 @@ def is_headless():
         traceback.print_exc()
         print()
         return True
+
+
+@cache
+def is_wayland():
+    """
+    Detects whether the current session is a Wayland session.
+
+    ``pynput`` relies on an X11 backend, which under Wayland only sees XWayland clients and
+    therefore cannot capture *global* hotkeys reliably (the documented arrow/Esc shortcuts are
+    non-functional while a Wayland-native window has focus). Unlike a missing display, this case
+    is invisible to :func:`is_headless` because ``pynput`` still imports successfully.
+
+    Returns:
+        True if a Wayland session is detected, False otherwise.
+    """
+    return os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland" or bool(
+        os.environ.get("WAYLAND_DISPLAY")
+    )
+
+
+def should_use_interactive_reset(mode: str) -> bool:
+    """
+    Decide whether the interactive recording mode (stdin ``[Y/n/q]`` prompt between episodes +
+    ``Ctrl+\\`` / SIGQUIT early-exit during recording) should be active for the given ``mode``.
+
+    This is the display-independent fallback for environments where ``pynput`` keyboard shortcuts
+    do not work (headless/SSH or Wayland sessions).
+
+    Args:
+        mode: One of ``"auto"``, ``"on"``, ``"off"`` (case-insensitive).
+            - ``"on"``  : always active (explicit override).
+            - ``"off"`` : never active (legacy ``pynput``-only behavior).
+            - ``"auto"``: active when stdin is a TTY *and* ``pynput`` capture is unavailable,
+              i.e. a headless environment (:func:`is_headless`) or a Wayland session
+              (:func:`is_wayland`). When stdin is not a TTY there is nothing to prompt, so it
+              stays inactive to avoid changing non-interactive/automated runs.
+
+    Returns:
+        True if interactive reset mode should be enabled.
+    """
+    mode = (mode or "auto").lower()
+    if mode == "on":
+        return True
+    if mode == "off":
+        return False
+    if mode != "auto":
+        raise ValueError(f"Invalid interactive_reset mode '{mode}'. Expected one of: auto, on, off.")
+
+    if not sys.stdin.isatty():
+        return False
+    return is_headless() or is_wayland()
 
 
 def predict_action(
@@ -179,7 +231,7 @@ def init_keyboard_listener():
 def interactive_reset_prompt(events, episode_index=None, play_sounds=False):
     """
     Blocking stdin prompt used between episodes when the interactive recording mode is enabled
-    (activated by passing ``--dataset.reset_time_s < 0``).
+    (see :func:`should_use_interactive_reset` / ``--dataset.interactive_reset``).
 
     Asks the user to confirm whether the just-recorded episode should be kept and a new one
     started. The user is assumed to have manually reset the scene before answering. Writes into
@@ -199,7 +251,7 @@ def interactive_reset_prompt(events, episode_index=None, play_sounds=False):
     if not sys.stdin.isatty():
         logging.warning(
             "interactive_reset_prompt: stdin is not a TTY, skipping prompt and keeping the scene. "
-            "(reset_time_s < 0 has no interactive effect in this environment)"
+            "(interactive_reset has no effect in this environment)"
         )
         return
 

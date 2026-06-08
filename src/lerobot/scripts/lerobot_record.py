@@ -103,6 +103,7 @@ from lerobot.common.control_utils import (
     is_headless,
     restore_signal_early_exit,
     sanity_check_dataset_robot_compatibility,
+    should_use_interactive_reset,
 )
 from lerobot.configs import parser
 from lerobot.configs.dataset import DatasetRecordConfig
@@ -447,12 +448,14 @@ def record(
 
         listener, events = init_keyboard_listener()
 
-        if cfg.dataset.reset_time_s < 0:
+        interactive_reset = should_use_interactive_reset(cfg.dataset.interactive_reset)
+        if interactive_reset:
             original_sigquit = install_signal_early_exit(events)
             logging.info(
-                "[INTERACTIVE] reset_time_s < 0: interactive recording mode enabled. "
+                "[INTERACTIVE] Interactive recording mode enabled (interactive_reset=%s). "
                 "Between episodes you will be prompted [Y/n/q] on stdin. "
-                "During recording, press Ctrl+\\ (SIGQUIT) to end the current episode early."
+                "During recording, press Ctrl+\\ (SIGQUIT) to end the current episode early.",
+                cfg.dataset.interactive_reset,
             )
 
         if not cfg.dataset.streaming_encoding:
@@ -484,7 +487,7 @@ def record(
                 if not events["stop_recording"] and (
                     (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
                 ):
-                    if cfg.dataset.reset_time_s < 0:
+                    if interactive_reset:
                         interactive_reset_prompt(
                             events,
                             episode_index=dataset.num_episodes,

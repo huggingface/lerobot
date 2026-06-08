@@ -401,14 +401,21 @@ capture global keyboard shortcuts, so the arrow and escape keys above have no
 effect during recording. The same limitation applies to purely headless
 sessions over SSH.
 
-As an alternative, set `--dataset.reset_time_s` to a **negative** value to
-enable an interactive recording mode that relies only on `stdin` and POSIX
-signals (no display server, no extra threads):
+For these cases there is an interactive recording mode that relies only on
+`stdin` and POSIX signals (no display server, no extra threads), controlled by
+`--dataset.interactive_reset`:
+
+- `auto` (**default**) — enabled automatically when `stdin` is a TTY and
+  `pynput` keyboard capture is unavailable (a Wayland session or a headless
+  environment). On a working X11 session it stays off, preserving the standard
+  arrow/escape behavior. No flag needed in the common case.
+- `on` — force the interactive prompt + `Ctrl+\` mode on.
+- `off` — disable it (legacy `pynput`-only behavior).
 
 ```bash
 lerobot-record \
   ... \
-  --dataset.reset_time_s=-1 \
+  --dataset.interactive_reset=on \  # usually unnecessary: 'auto' detects Wayland/headless
   ...
 ```
 
@@ -438,7 +445,7 @@ If you want to dive deeper into this important topic, you can check out the [blo
 
 #### Troubleshooting:
 
-- On Linux, if the left and right arrow keys and escape key don't have any effect during data recording, make sure you've set the `$DISPLAY` environment variable. See [pynput limitations](https://pynput.readthedocs.io/en/latest/limitations.html#linux). On Wayland sessions (where `pynput` cannot capture global shortcuts at all) or headless setups, use the [Interactive Reset Mode](#5-interactive-reset-mode-wayland--headless-compatibility) instead by passing `--dataset.reset_time_s=-1`.
+- On Linux, if the left and right arrow keys and escape key don't have any effect during data recording, make sure you've set the `$DISPLAY` environment variable. See [pynput limitations](https://pynput.readthedocs.io/en/latest/limitations.html#linux). On Wayland sessions (where `pynput` cannot capture global shortcuts at all) or headless setups, the [Interactive Reset Mode](#5-interactive-reset-mode-wayland--headless-compatibility) is enabled automatically (`--dataset.interactive_reset=auto`, the default); pass `--dataset.interactive_reset=on` to force it.
 
 ## Visualize a dataset
 
