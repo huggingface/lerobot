@@ -115,6 +115,34 @@ def test_module1_plan_memory_subtask_smoke(fixture_dataset_root: Path, tmp_path:
     assert len(plan_rows[-1]["content"].splitlines()) == 1
 
 
+def test_module1_emit_memory_false_skips_memory_keeps_subtasks_and_plan(
+    fixture_dataset_root: Path, tmp_path: Path
+) -> None:
+    """``emit_memory=False`` drops ``memory`` rows (and their VLM calls) while
+    leaving subtask + plan generation intact — symmetric to ``emit_plan``."""
+    vlm = make_canned_responder(
+        {
+            "atomic subtasks": {
+                "subtasks": [
+                    {"text": "grasp the handle of the sponge", "start": 0.0, "end": 0.4},
+                    {"text": "wipe the counter from left to right", "start": 0.4, "end": 0.8},
+                    {"text": "place the sponge into the sink", "start": 0.8, "end": 1.1},
+                ]
+            },
+            "compressed semantic memory": {"memory": "wiped the counter once"},
+        },
+    )
+    module = PlanSubtasksMemoryModule(vlm=vlm, config=PlanConfig(emit_memory=False))
+    record = next(iter_episodes(fixture_dataset_root))
+    staging = EpisodeStaging(tmp_path / "stage", record.episode_index)
+    module.run_episode(record, staging)
+    rows = staging.read("plan")
+
+    styles = {r["style"] for r in rows}
+    assert "memory" not in styles
+    assert {"subtask", "plan"}.issubset(styles)
+
+
 def test_module2_at_t0_emits_speech_only_no_interjection(fixture_dataset_root: Path, tmp_path: Path) -> None:
     vlm = make_canned_responder(
         {"acknowledgement the robot": {"text": "Sure, on it."}},

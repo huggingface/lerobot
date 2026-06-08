@@ -54,6 +54,10 @@ class PlanConfig:
     # Emit ``style="plan"`` rows at each boundary; False = subtasks + memory only.
     emit_plan: bool = True
 
+    # Emit ``style="memory"`` rows at each boundary; False = subtasks (+ plan) only.
+    # Symmetric counterpart of ``emit_plan``.
+    emit_memory: bool = True
+
     # (subtask spans are always stitched to a contiguous full-episode cover; not configurable.)
 
     # Send a server-side ``video_url`` clip (at use_video_url_fps) instead of embedded frames.

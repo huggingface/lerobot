@@ -168,6 +168,7 @@ Every module is on by default and can be toggled independently (set to
 | `--plan.plan_max_steps`         | `8`        | Upper bound on subtasks per episode.                                                                                      |
 | `--plan.subtask_describe_first` | `true`     | Run the describe→segment grounding pass (best subtask quality; +1 call/episode).                                          |
 | `--plan.emit_plan`              | `true`     | Emit the numbered `plan` rows (`false` = subtasks + memory only).                                                         |
+| `--plan.emit_memory`            | `true`     | Emit the `memory` rows (`false` = subtasks + plan only); symmetric to `emit_plan`.                                        |
 | `--plan.n_task_rephrasings`     | `10`       | How many `task_aug` rephrasings to emit (`0` disables).                                                                   |
 | `--plan.derive_task_from_video` | `if_short` | Use the dataset task as-is (`off`), only when it's missing/short (`if_short`), or always re-derive from video (`always`). |
 | `--plan.use_video_url`          | `false`    | Send a server-side video clip instead of embedded frames.                                                                 |

@@ -113,9 +113,11 @@ class PlanSubtasksMemoryModule:
                             "tool_calls": None,
                         }
                     )
-        # memory rows at every subtask boundary except the very first start
+        # memory rows at every subtask boundary except the very first start;
+        # skipped entirely when ``emit_memory`` is False (subtasks-only / plan-only).
         prior_memory = ""
-        for i, span in enumerate(subtask_spans[1:], start=1):
+        memory_boundaries = enumerate(subtask_spans[1:], start=1) if self.config.emit_memory else []
+        for i, span in memory_boundaries:
             completed = subtask_spans[i - 1]["text"]
             remaining = [s["text"] for s in subtask_spans[i:]]
             mem_text = self._generate_memory(record, prior_memory, completed, remaining, task=effective_task)
