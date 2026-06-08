@@ -47,14 +47,9 @@ from lerobot.utils.constants import (
 
 from .configuration_lingbot_va import LingBotVAConfig
 
-# LingBot-VA applies a *fixed* per-channel action quantile (un)normalization rather than
-# dataset-derived stats. The benchmark-specific quantiles (LIBERO 7-DoF, RoboTwin 16-d eef) are
-# deliberately NOT hardcoded here: they are serialized into each checkpoint's
-# ``policy_postprocessor.json`` (via ``LingBotVAActionUnnormalizeStep.get_config``) and restored on
-# load by ``PolicyProcessorPipeline.from_pretrained``. A freshly built (unconverted) policy defaults
-# to a neutral ``[-1, 1]`` mapping (identity rescale); the real stats always come from the checkpoint
-# (or via ``postprocessor_overrides``). To regenerate a checkpoint from scratch, source the quantiles
-# from the upstream ``wan_va/configs/va_{libero,robotwin}_cfg.py`` and pass them through.
+# LingBot-VA uses fixed per-channel action quantile (un)normalization. The benchmark quantiles are
+# NOT hardcoded here: they live in each checkpoint's ``policy_postprocessor.json`` and are restored on
+# load. A fresh (unconverted) policy defaults to a neutral ``[-1, 1]`` mapping (identity rescale).
 
 
 @dataclass

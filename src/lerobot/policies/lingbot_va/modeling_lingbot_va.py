@@ -1191,9 +1191,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
         self.last_predicted_frames: Tensor | None = None
         self.reset()
 
-    # ------------------------------------------------------------------
     # Frozen-module lazy loading (VAE + UMT5 + tokenizer)
-    # ------------------------------------------------------------------
     def _ensure_frozen_modules(self):
         if self._frozen:
             return
@@ -1234,9 +1232,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
     def _streaming_vae(self):
         return self._frozen["streaming_vae"]
 
-    # ------------------------------------------------------------------
     # PreTrainedPolicy API
-    # ------------------------------------------------------------------
     def get_optim_params(self) -> dict:
         # Only the transformer is trainable; the VAE / text encoder stay frozen (kept outside the
         # nn.Module registry). With PEFT/LoRA this naturally returns just the adapter params.
@@ -1283,9 +1279,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
             if "streaming_vae_half" in self._frozen:
                 self._frozen["streaming_vae_half"].clear_cache()
 
-    # ------------------------------------------------------------------
     # Training (flow-matching dual-stream loss). Requires attn_mode="flex".
-    # ------------------------------------------------------------------
     def _ensure_train_schedulers(self):
         if getattr(self, "_train_sched_latent", None) is None:
             cfg = self.config
@@ -1565,9 +1559,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
         a = a.transpose(1, 2).contiguous()  # [B, n_steps, n_used]
         return a.to(torch.float32)
 
-    # ------------------------------------------------------------------
     # Prompt / text encoding
-    # ------------------------------------------------------------------
     def _maybe_init_prompt(self, batch):
         if self._prompt_embeds is not None or batch is None:
             return
@@ -1616,9 +1608,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
             negative_prompt_embeds = self._get_t5_prompt_embeds("", max_len)
         return prompt_embeds, negative_prompt_embeds
 
-    # ------------------------------------------------------------------
     # Observation (image) encoding -> normalized video latents
-    # ------------------------------------------------------------------
     def _extract_raw_obs(self, batch) -> dict[str, Tensor]:
         """Snapshot the configured camera images from a batch (kept raw for later VAE encoding)."""
         return {k: batch[k].detach() for k in self.config.obs_cam_keys}
@@ -1696,9 +1686,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
         video_latent = self._normalize_vae_latent(enc_out)
         return video_latent.to(self.config.device)
 
-    # ------------------------------------------------------------------
     # KV cache management
-    # ------------------------------------------------------------------
     @property
     def _latent_hw(self):
         if self.config.camera_layout == "robotwin_tshape":
@@ -1802,9 +1790,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
         mask[self.config.used_action_channel_ids] = True
         return mask
 
-    # ------------------------------------------------------------------
     # Action conditioning (executed action history) (de)normalization
-    # ------------------------------------------------------------------
     def _preprocess_action_state(self, action_norm: Tensor) -> Tensor:
         """Build the action-conditioning tensor from the already-normalized executed actions.
 
@@ -1845,9 +1831,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
             )
         self._frame_st_id += latent_model_input.shape[2]
 
-    # ------------------------------------------------------------------
     # The core dual-stream denoising loop (one chunk)
-    # ------------------------------------------------------------------
     @torch.no_grad()
     def _infer(self, init_latent, frame_st_id=0):
         cfg = self.config
@@ -1937,9 +1921,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
         actions[:, ~self._action_mask] *= 0
         return actions, latents
 
-    # ------------------------------------------------------------------
     # Predicted-video decoding (opt-in)
-    # ------------------------------------------------------------------
     @torch.no_grad()
     def _decode_predicted_video(self, latents) -> Tensor:
         """VAE-decode predicted latents into a uint8 frame stack ``[T, H, W, 3]`` on CPU."""

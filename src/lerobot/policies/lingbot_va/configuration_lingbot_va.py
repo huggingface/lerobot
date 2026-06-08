@@ -51,38 +51,25 @@ class LingBotVAConfig(PreTrainedConfig):
     cross_attn_norm: bool = True
     eps: float = 1e-6
     rope_max_seq_len: int = 1024
-    # "flex" is supported for training only and needs a recent torch build. Inference uses
-    # "torch" SDPA (always available) or, optionally, "flashattn".
+    # "flex" = training only (needs recent torch); inference uses "torch" SDPA or "flashattn".
     attn_mode: str = "torch"
 
     # ── Frozen sub-models (VAE + UMT5 text encoder + tokenizer) ──
-    # These heavy frozen weights (~20 GB) are NOT bundled into the LeRobot safetensors
-    # checkpoint (only the trainable ~5B transformer is). They are lazily pulled from this
-    # HF repo / local directory at policy-init time. The directory must contain the
-    # diffusers-style ``vae/``, ``text_encoder/`` and ``tokenizer/`` sub-folders.
+    # ~20 GB of frozen weights, NOT bundled in the checkpoint; lazily pulled from this HF repo /
+    # local dir (must hold diffusers-style ``vae/``, ``text_encoder/``, ``tokenizer/`` sub-folders).
     wan_pretrained_path: str = "robbyant/lingbot-va-posttrain-libero-long"
-    # dtype used for the transformer / VAE / text-encoder weights at inference.
-    dtype: str = "bfloat16"  # one of "bfloat16", "float16", "float32"
-    # Device for the frozen UMT5-XXL text encoder. It encodes the (fixed) instruction once per
-    # episode, so keeping it on CPU frees ~11 GB of VRAM and lets the 5B transformer + VAE fit on
-    # a single 24-32 GB GPU. Set to "cuda" if you have the headroom and want faster prompt encoding.
+    dtype: str = "bfloat16"  # transformer / VAE / text-encoder dtype: "bfloat16", "float16", "float32"
+    # Frozen UMT5-XXL encoder device; "cpu" frees ~11 GB VRAM (it runs once per episode).
     text_encoder_device: str = "cpu"
 
-    # ── Observation cameras (order matters: latents are concatenated on width) ──
-    # Defaults match the LIBERO env feature keys (agentview -> image, eye-in-hand -> image2).
+    # ── Observation cameras (order matters: latents are concatenated on width; LIBERO defaults) ──
     obs_cam_keys: list[str] = field(
         default_factory=lambda: ["observation.images.image", "observation.images.image2"]
     )
-    # Horizontally flip the camera images before encoding. LeRobot's LIBERO env processor rotates
-    # frames 180° (flip H *and* W; the HuggingFaceVLA convention), but upstream LingBot-VA trains /
-    # evaluates on vertically-flipped-only frames (``obs[::-1]`` in evaluation/libero/client.py).
-    # Undoing the extra horizontal flip here realigns the input with the model's training orientation.
+    # Undo the LIBERO env processor's extra horizontal flip to match the model's training orientation.
     image_hflip: bool = False
-    # Latent assembly layout for the observation cameras:
-    #   "width_concat"    : encode every camera at (height, width) and concat latents on width (LIBERO).
-    #   "robotwin_tshape" : head camera at full (height, width), the two wrist cameras at half
-    #                       resolution, assembled in a "T" (wrists side-by-side on top of the head
-    #                       on the height axis) using a second streaming VAE (RoboTwin).
+    # Camera latent layout: "width_concat" (cameras concatenated on width; LIBERO) or
+    # "robotwin_tshape" (full-res head + half-res wrists in a "T"; RoboTwin).
     camera_layout: str = "width_concat"
 
     # ── Inference hyperparameters (LIBERO defaults) ──
@@ -101,19 +88,15 @@ class LingBotVAConfig(PreTrainedConfig):
     action_snr_shift: float = 0.05
     max_sequence_length: int = 512  # UMT5 prompt length
 
-    # Subset of the 30-d action space actually used by the benchmark (LIBERO = 7-DoF).
-    # The fixed action (un)normalization quantiles are not stored here nor hardcoded in the
-    # processor: they are serialized into the checkpoint's ``policy_postprocessor.json``
-    # (``LingBotVAActionUnnormalizeStep``) and restored on load by ``from_pretrained``.
+    # Subset of the 30-d action space used by the benchmark (LIBERO = 7-DoF). The action
+    # (un)normalization quantiles live in the checkpoint's ``policy_postprocessor.json``, not here.
     used_action_channel_ids: list[int] = field(default_factory=lambda: list(range(7)))
 
-    # Opt-in: VAE-decode the predicted video latents and stash them on
-    # ``self.last_predicted_frames`` so eval/train can save predicted-video MP4s.
+    # Opt-in: VAE-decode predicted video latents to ``self.last_predicted_frames`` for saving MP4s.
     save_predicted_video: bool = False
 
-    # ── Normalization (handled internally / via custom steps, hence IDENTITY here) ──
-    # Images are scaled to [-1, 1] and VAE-encoded inside the policy; actions are
-    # quantile-(un)normalized by dedicated processor steps using the fixed quantiles above.
+    # ── Normalization: IDENTITY here; images are scaled + VAE-encoded and actions are
+    # quantile-(un)normalized inside the policy / dedicated processor steps. ──
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
