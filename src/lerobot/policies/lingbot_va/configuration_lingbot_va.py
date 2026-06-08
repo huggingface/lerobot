@@ -37,7 +37,7 @@ from lerobot.utils.constants import ACTION
 class LingBotVAConfig(PreTrainedConfig):
     """Configuration for the native LingBot-VA policy integration in LeRobot."""
 
-    # ── Wan transformer architecture (from transformer/config.json) ──
+    # Wan transformer architecture
     patch_size: tuple[int, int, int] = (1, 2, 2)
     num_attention_heads: int = 24
     attention_head_dim: int = 128
@@ -54,15 +54,15 @@ class LingBotVAConfig(PreTrainedConfig):
     # "flex" = training only (needs recent torch); inference uses "torch" SDPA or "flashattn".
     attn_mode: str = "torch"
 
-    # ── Frozen sub-models (VAE + UMT5 text encoder + tokenizer) ──
+    # Frozen sub-models (VAE + UMT5 text encoder + tokenizer)
     # ~20 GB of frozen weights, NOT bundled in the checkpoint; lazily pulled from this HF repo /
     # local dir (must hold diffusers-style ``vae/``, ``text_encoder/``, ``tokenizer/`` sub-folders).
-    wan_pretrained_path: str = "robbyant/lingbot-va-posttrain-libero-long"
+    wan_pretrained_path: str = "robbyant/lingbot-va-base"
     dtype: str = "bfloat16"  # transformer / VAE / text-encoder dtype: "bfloat16", "float16", "float32"
     # Frozen UMT5-XXL encoder device; "cpu" frees ~11 GB VRAM (it runs once per episode).
     text_encoder_device: str = "cpu"
 
-    # ── Observation cameras (order matters: latents are concatenated on width; LIBERO defaults) ──
+    # Observation cameras (order matters: latents are concatenated on width; LIBERO defaults)
     obs_cam_keys: list[str] = field(
         default_factory=lambda: ["observation.images.image", "observation.images.image2"]
     )
@@ -72,7 +72,7 @@ class LingBotVAConfig(PreTrainedConfig):
     # "robotwin_tshape" (full-res head + half-res wrists in a "T"; RoboTwin).
     camera_layout: str = "width_concat"
 
-    # ── Inference hyperparameters (LIBERO defaults) ──
+    # Inference hyperparameters (LIBERO defaults)
     n_obs_steps: int = 1
     height: int = 128
     width: int = 128
@@ -95,8 +95,8 @@ class LingBotVAConfig(PreTrainedConfig):
     # Opt-in: VAE-decode predicted video latents to ``self.last_predicted_frames`` for saving MP4s.
     save_predicted_video: bool = False
 
-    # ── Normalization: IDENTITY here; images are scaled + VAE-encoded and actions are
-    # quantile-(un)normalized inside the policy / dedicated processor steps. ──
+    # Normalization: IDENTITY here; images are scaled + VAE-encoded and actions are
+    # quantile-(un)normalized inside the policy / dedicated processor steps.
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
@@ -105,7 +105,7 @@ class LingBotVAConfig(PreTrainedConfig):
         }
     )
 
-    # ── Optimizer / scheduler (training; AdamW + warmup-constant per upstream train.py) ──
+    # Optimizer / scheduler (training; AdamW + warmup-constant per upstream train.py)
     optimizer_lr: float = 1e-5
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
     optimizer_eps: float = 1e-8
