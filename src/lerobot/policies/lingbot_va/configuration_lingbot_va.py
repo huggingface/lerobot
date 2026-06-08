@@ -102,8 +102,9 @@ class LingBotVAConfig(PreTrainedConfig):
     max_sequence_length: int = 512  # UMT5 prompt length
 
     # Subset of the 30-d action space actually used by the benchmark (LIBERO = 7-DoF).
-    # The fixed action (un)normalization quantiles live in the post-processor
-    # (``LingBotVAActionUnnormalizeStep`` in ``processor_lingbot_va.py``), not here.
+    # The fixed action (un)normalization quantiles are not stored here nor hardcoded in the
+    # processor: they are serialized into the checkpoint's ``policy_postprocessor.json``
+    # (``LingBotVAActionUnnormalizeStep``) and restored on load by ``from_pretrained``.
     used_action_channel_ids: list[int] = field(default_factory=lambda: list(range(7)))
 
     # Opt-in: VAE-decode the predicted video latents and stash them on
