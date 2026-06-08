@@ -889,7 +889,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
         Args:
             model_id: The model identifier (used for migration detection)
-            loaded_config: The loaded config dictionary (guaranteed non-None)
+            loaded_config: The loaded config value to validate (may be non-dict)
             config_filename: The config filename that was loaded (for error messages)
 
         Raises:
