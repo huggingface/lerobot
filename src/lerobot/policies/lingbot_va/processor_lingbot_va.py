@@ -16,28 +16,27 @@
 
 The policy itself handles image resizing, scaling to [-1, 1] and VAE encoding (the VAE
 lives inside the policy), so the preprocessor only renames, batches, normalizes (IDENTITY)
-and moves to device. The postprocessor reverses the *fixed* action quantile normalization
-(``(action + 1) / 2 * (q99 - q01 + 1e-6) + q01``) baked into the released checkpoints — this
-is a fixed transform, not a dataset-stats one, so it cannot use the standard
-``UnnormalizerProcessorStep`` and is implemented as a dedicated step below.
+and moves to device. The policy emits actions in the normalized ``[-1, 1]`` space; the
+postprocessor maps them back to physical units with the standard ``UnnormalizerProcessorStep``
+in QUANTILES mode (``(action + 1) / 2 * (q99 - q01) + q01``). The per-channel q01/q99 are NOT
+hardcoded: they are saved in each checkpoint's post-processor state and restored on load. A
+fresh (unconverted) policy has no action stats, so the step is a no-op (identity passthrough).
 """
 
-from dataclasses import dataclass, field
 from typing import Any
 
 import torch
 
-from lerobot.configs.types import PipelineFeatureType, PolicyFeature
+from lerobot.configs.types import FeatureType, NormalizationMode
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessorStep,
     PolicyAction,
-    PolicyActionProcessorStep,
     PolicyProcessorPipeline,
     ProcessorStep,
-    ProcessorStepRegistry,
     RenameObservationsProcessorStep,
+    UnnormalizerProcessorStep,
 )
 from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
 from lerobot.utils.constants import (
@@ -46,36 +45,6 @@ from lerobot.utils.constants import (
 )
 
 from .configuration_lingbot_va import LingBotVAConfig
-
-# LingBot-VA uses fixed per-channel action quantile (un)normalization. The benchmark quantiles are
-# NOT hardcoded here: they live in each checkpoint's ``policy_postprocessor.json`` and are restored on
-# load. A fresh (unconverted) policy defaults to a neutral ``[-1, 1]`` mapping (identity rescale).
-
-
-@dataclass
-@ProcessorStepRegistry.register(name="lingbot_va_action_unnormalize")
-class LingBotVAActionUnnormalizeStep(PolicyActionProcessorStep):
-    """Reverse LingBot-VA's fixed per-channel quantile normalization on predicted actions.
-
-    The policy emits actions in the normalized ``[-1, 1]`` space of the used action channels.
-    This step maps them back to physical units via the fixed quantiles stored in the config.
-    """
-
-    action_q01: list[float] = field(default_factory=list)
-    action_q99: list[float] = field(default_factory=list)
-
-    def action(self, action: PolicyAction) -> PolicyAction:
-        q01 = torch.as_tensor(self.action_q01, dtype=action.dtype, device=action.device)
-        q99 = torch.as_tensor(self.action_q99, dtype=action.dtype, device=action.device)
-        return (action + 1.0) / 2.0 * (q99 - q01 + 1e-6) + q01
-
-    def get_config(self) -> dict[str, Any]:
-        return {"action_q01": list(self.action_q01), "action_q99": list(self.action_q99)}
-
-    def transform_features(
-        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
-    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        return features
 
 
 def make_lingbot_va_pre_post_processors(
@@ -98,11 +67,15 @@ def make_lingbot_va_pre_post_processors(
         DeviceProcessorStep(device=config.device),
     ]
 
-    # Fresh-build default: neutral [-1, 1] mapping (identity rescale). The real per-benchmark
-    # quantiles are restored from the checkpoint's saved post-processor config by from_pretrained.
-    n_used = len(config.used_action_channel_ids)
+    # Unnormalize predicted actions from [-1, 1] back to physical units via per-channel q01/q99
+    # (QUANTILES mode), overriding the policy's IDENTITY action mapping. The q01/q99 stats are
+    # restored from the checkpoint on load; a fresh build has no action stats and is a passthrough.
     output_steps: list[ProcessorStep] = [
-        LingBotVAActionUnnormalizeStep(action_q01=[-1.0] * n_used, action_q99=[1.0] * n_used),
+        UnnormalizerProcessorStep(
+            features=config.output_features,
+            norm_map={FeatureType.ACTION: NormalizationMode.QUANTILES},
+            stats=dataset_stats,
+        ),
         DeviceProcessorStep(device="cpu"),
     ]
 
