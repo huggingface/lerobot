@@ -41,8 +41,20 @@ For more details, see the [Physical Intelligence π₀ blog post](https://www.ph
 For more details, see the [Physical Intelligence π₀.₅ blog post](https://www.physicalintelligence.company/blog/pi05).
 {% elif model_name == "gaussian_actor" %}
 This is a Gaussian Actor policy (Gaussian policy with a tanh squash) — the policy-side component used by [Soft Actor-Critic (SAC)](https://huggingface.co/papers/1801.01290) and related maximum-entropy continuous-control algorithms.
+{% elif model_name == "pi0_fast" %}
+[π₀-FAST (Pi0-FAST)](https://www.physicalintelligence.company/research/fast) is a Vision-Language-Action model for general robot control, from Physical Intelligence. It models continuous robot actions with autoregressive next-token prediction using FAST (Frequency-space Action Sequence Tokenization), training up to 5x faster than diffusion-based π₀.
+{% elif model_name == "eo1" %}
+[EO-1](https://huggingface.co/papers/2508.21112) is a Vision-Language-Action model for general robot control. It pairs a Qwen2.5-VL backbone for vision-language understanding with a continuous flow-matching action head that denoises action chunks.
+{% elif model_name == "groot" %}
+[GR00T N1.5](https://github.com/NVIDIA/Isaac-GR00T) is an open, cross-embodiment foundation model from NVIDIA for generalized humanoid robot reasoning and skills. It takes language and images as input and uses a flow-matching action transformer to predict actions conditioned on vision, language, and proprioception.
+{% elif model_name == "multi_task_dit" %}
+[Multi-Task Diffusion Transformer (DiT)](https://huggingface.co/papers/2507.05331) extends Diffusion Policy with a large Diffusion Transformer and text + vision conditioning for multi-task robot learning. It supports both diffusion and flow-matching objectives and reaches high dexterity with only ~450M parameters.
+{% elif model_name == "wall_x" %}
+[WALL-OSS](https://huggingface.co/papers/2509.11766) is an open-source foundation model for embodied intelligence from XSquare Robot. Built on Qwen2.5-VL, it uses a tightly-coupled multimodal architecture with flow matching to unify semantic reasoning and high-frequency action generation for cross-embodiment control.
+{% elif model_name == "xvla" %}
+[X-VLA](https://huggingface.co/papers/2510.10274) is a soft-prompted, flow-matching Vision-Language-Action framework that treats each robot or hardware setup as a "task" encoded with a small set of learnable Soft Prompt embeddings, letting a single model reconcile diverse robot morphologies, sensors, and action spaces.
 {% else %}
-_Model type not recognized — please update this template._
+This is a **{{ model_name }}** policy trained with [LeRobot](https://github.com/huggingface/lerobot).
 {% endif %}
 
 This policy has been trained and pushed to the Hub using [LeRobot](https://github.com/huggingface/lerobot).
@@ -60,11 +72,11 @@ Below is the short version on how to train and run inference/eval:
 ```bash
 lerobot-train \
   --dataset.repo_id=${HF_USER}/<dataset> \
-  --policy.type=act \
+  --policy.type={{ model_name }} \
   --output_dir=outputs/train/<desired_policy_repo_id> \
   --job_name=lerobot_training \
   --policy.device=cuda \
-  --policy.repo_id=${HF_USER}/<desired_policy_repo_id>
+  --policy.repo_id=${HF_USER}/<desired_policy_repo_id> \
   --wandb.enable=true
 ```
 
@@ -75,13 +87,15 @@ _Writes checkpoints to `outputs/train/<desired_policy_repo_id>/checkpoints/`._
 ```bash
 lerobot-rollout \
   --strategy.type=base \
-  --robot.type=so101_follower \
-  --robot.port=/dev/ttyACM0 \
-  --robot.cameras="{ up: {type: opencv, index_or_path: /dev/video1, width: 640, height: 480, fps: 30}, side: {type: opencv, index_or_path: /dev/video5, width: 640, height: 480, fps: 30}}" \
+  --robot.type=<your_robot_type> \
+  --robot.port=<your_robot_port> \
+  --robot.cameras="{ <camera_1>: {type: opencv, index_or_path: <index_or_path>, width: 640, height: 480, fps: 30}, <camera_2>: {type: opencv, index_or_path: <index_or_path>, width: 640, height: 480, fps: 30}}" \
   --policy.path=<hf_user>/<desired_policy_repo_id> \
-  --task="Put lego brick into the transparent box" \
+  --task="<your_task_description>" \
   --duration=60
 ```
+
+Replace every `<...>` placeholder with your own values. The `--robot.type`, `--robot.port`, and camera names/indices must match the robot and observation keys this policy was trained on, and `--task` should describe what you want the policy to do.
 
 If you want to record a dataset while testing the policy use `--dataset.repo_id=<hf_user>/eval_dataset_name` it is important to use the prefix **eval\_**. For the policy path use the policy from the Hugging Face Hub or a local one. Skipping duration will make the policy run indefinitely.
 
