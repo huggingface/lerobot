@@ -13,11 +13,11 @@ LingBot-VA is a **dual-stream "mixture-of-transformers"**: a video/latent stream
 (`action_embedder → blocks → action_proj_out`) share the same 30 transformer blocks and
 text conditioning.
 
-| Component                | Class                   | Role                                                                                   |
-| ------------------------ | ----------------------- | -------------------------------------------------------------------------------------- |
-| DiT backbone (trainable) | `WanTransformer3DModel` | ~5B-param dual-stream transformer.                                                     |
-| VAE (frozen)             | `AutoencoderKLWan`      | Wan2.2 VAE, `z_dim=48`. Lazy-pulled from the source repo.                              |
-| Text encoder (frozen)    | `UMT5EncoderModel`      | UMT5-XXL, `d_model=4096`. Lazy-pulled from the source repo.                            |
+| Component                | Class                   | Role                                                        |
+| ------------------------ | ----------------------- | ----------------------------------------------------------- |
+| DiT backbone (trainable) | `WanTransformer3DModel` | ~5B-param dual-stream transformer.                          |
+| VAE (frozen)             | `AutoencoderKLWan`      | Wan2.2 VAE, `z_dim=48`. Lazy-pulled from the source repo.   |
+| Text encoder (frozen)    | `UMT5EncoderModel`      | UMT5-XXL, `d_model=4096`. Lazy-pulled from the source repo. |
 
 At inference the policy runs an autoregressive loop per chunk: it denoises the video-latent
 stream (CFG, ~20 steps) and the action stream (~50 steps) with two independent
@@ -47,8 +47,8 @@ pip install -e ".[lingbot_va]"
 
 The released upstream checkpoints have been converted to LeRobot format and pushed to the Hub:
 
-| Variant                | LeRobot checkpoint                 |
-| ---------------------- | ---------------------------------- |
+| Variant                | LeRobot checkpoint               |
+| ---------------------- | -------------------------------- |
 | LIBERO-Long post-train | `lerobot/lingbot_va_libero_long` |
 | RoboTwin post-train    | `lerobot/lingbot_va_robotwin`    |
 | Pretrained base        | `lerobot/lingbot_va_base`        |
@@ -63,7 +63,7 @@ transformer + VAE fit on a single 24–32 GB GPU.
 
 ```bash
 lerobot-eval \
-    --policy.path=pepijn223/lingbot_va_libero_long \
+    --policy.path=lerobot/lingbot_va_libero_long \
     --policy.device=cuda \
     --env.type=libero --env.task=libero_10 \
     --env.observation_height=128 --env.observation_width=128 \
@@ -85,7 +85,7 @@ executed via CuRobo IK.
 
 ```bash
 lerobot-eval \
-    --policy.path=pepijn223/lingbot_va_robotwin \
+    --policy.path=lerobot/lingbot_va_robotwin \
     --policy.device=cuda \
     --env.type=robotwin --env.task=beat_block_hammer --env.action_mode=ee \
     --eval.n_episodes=10 --eval.batch_size=1 \
@@ -116,7 +116,7 @@ Requirements:
 
 ```bash
 lerobot-train \
-  --policy.path=pepijn223/lingbot_va_libero_long --policy.attn_mode=flex \
+  --policy.path=lerobot/lingbot_va_libero_long --policy.attn_mode=flex \
   --policy.use_peft=true \
   --dataset.repo_id=<your LeRobot-format dataset> \
   --batch_size=1 --steps=... --output_dir=outputs/train/lingbot_va
