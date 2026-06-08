@@ -307,7 +307,6 @@ all = [
     "lerobot[xvla]",
     "lerobot[hilserl]",
     "lerobot[vla_jepa]",
-    "lerobot[eo1]",
     "lerobot[lingbot_va]",
     "lerobot[async]",
     "lerobot[dev]",
@@ -402,7 +401,7 @@ ignore = [
 "src/lerobot/scripts/convert_dataset_v21_to_v30.py" = ["E402"]
 "src/lerobot/policies/wall_x/**" = ["N801", "N812", "SIM102", "SIM108", "SIM210", "SIM211", "B006", "B007", "SIM118"] # Supprese these as they are coming from original Qwen2_5_vl code TODO(pepijn): refactor original
 # Vendored Wan2.2 / LingBot-VA model code uses tensor-dimension names (B, F, H, W) and `F` for
-# torch.nn.functional; keep the upstream naming to make diffing against upstream tractable.
+# torch.nn.functional.
 "src/lerobot/policies/lingbot_va/**" = ["N803", "N806", "N812", "SIM102"]
 
 [tool.ruff.lint.isort]
