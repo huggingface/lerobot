@@ -242,7 +242,7 @@ class VideoDecoderCache:
 
     _SENTINEL: ClassVar[object] = object()
 
-    def __init__(self, max_size: int | None | object = _SENTINEL):
+    def __init__(self, max_size: int | None | object = _SENTINEL, counters: "torch.Tensor | None" = None):
         if max_size is VideoDecoderCache._SENTINEL:
             max_size = _default_max_cache_size()
         if max_size is not None and max_size <= 0:
@@ -254,6 +254,10 @@ class VideoDecoderCache:
         self.hits = 0
         self.misses = 0
         self.evictions = 0
+        # Optional shared [hits, misses, evictions] tensor so DataLoader workers aggregate into one place
+        # (the per-worker `self.*` ints are invisible to the main process). Lock-free across processes, so
+        # treat the aggregate as approximate; the hit-rate ratio is preserved.
+        self._counters = counters
 
     def __contains__(self, video_path: object) -> bool:
         with self._lock:
@@ -276,9 +280,13 @@ class VideoDecoderCache:
             if entry is not None:
                 self._cache.move_to_end(video_path)
                 self.hits += 1
+                if self._counters is not None:
+                    self._counters[0] += 1
                 return entry[0]
 
             self.misses += 1
+            if self._counters is not None:
+                self._counters[1] += 1
             file_handle = fsspec.open(video_path).__enter__()
             try:
                 decoder = VideoDecoder(file_handle, seek_mode="approximate")
@@ -294,6 +302,8 @@ class VideoDecoderCache:
                 while len(self._cache) > self.max_size:
                     _evicted_path, (_evicted_decoder, evicted_handle) = self._cache.popitem(last=False)
                     self.evictions += 1
+                    if self._counters is not None:
+                        self._counters[2] += 1
                     with contextlib.suppress(Exception):
                         evicted_handle.close()
 

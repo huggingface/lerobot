@@ -51,6 +51,13 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo_id", type=str, required=True)
     parser.add_argument("--root", type=str, default=None, help="Local/prewarmed root (else stream from Hub).")
+    parser.add_argument(
+        "--data_files_root",
+        type=str,
+        default=None,
+        help="fsspec root for bulk data/videos, e.g. hf://buckets/<owner>/<name>. Metadata still loads "
+        "from --repo_id on the Hub. Use for bucket / warmed_bucket sources.",
+    )
     parser.add_argument("--mode", choices=["single", "sarm"], default="single")
     parser.add_argument("--source", type=str, default="hub", help="Label only: hub | bucket | warmed_bucket.")
     parser.add_argument("--batch_size", type=int, default=64)
@@ -70,6 +77,7 @@ def build_dataset(args: argparse.Namespace, meta: LeRobotDatasetMetadata) -> Str
     return StreamingLeRobotDataset(
         args.repo_id,
         root=args.root,
+        data_files_root=args.data_files_root,
         delta_timestamps=delta_timestamps,
         buffer_size=args.buffer_size,
         video_decoder_cache_size=args.video_decoder_cache_size,
@@ -103,6 +111,7 @@ def main() -> None:
     sample_latencies_ms: list[float] = []
     frames = 0
     first_batch_latency_s = None
+    steady_start = None  # wall-clock start of the post-warmup measurement window
 
     t_start = time.perf_counter()
     t_prev = t_start
@@ -115,17 +124,23 @@ def main() -> None:
         if first_batch_latency_s is None:
             first_batch_latency_s = now - t_start
 
-        if i >= args.warmup_batches:
-            per_sample_ms = (now - t_prev) / args.batch_size * 1000.0
-            sample_latencies_ms.append(per_sample_ms)
+        if i == args.warmup_batches:
+            # Start the steady window here; the slow first batch and the prefetch queue it filled are
+            # excluded so throughput reflects sustained production, not draining a pre-filled queue.
+            steady_start = now
+        elif i > args.warmup_batches:
+            sample_latencies_ms.append((now - t_prev) / args.batch_size * 1000.0)
             frames += args.batch_size
         t_prev = now
         if i + 1 >= args.num_batches:
             break
 
-    elapsed = time.perf_counter() - t_start
-    steady_elapsed_s = sum(sample_latencies_ms) / 1000.0
-    cache_stats = dataset.video_decoder_cache.stats() if dataset.video_decoder_cache is not None else {}
+    now = time.perf_counter()
+    elapsed = now - t_start
+    # Wall-clock throughput over the steady window. NOT sum(inter-batch gaps): under async prefetch those
+    # gaps collapse to ~0 (the consumer drains a pre-filled queue) and overstate throughput by ~100x.
+    steady_elapsed_s = (now - steady_start) if steady_start is not None else elapsed
+    cache_stats = dataset.video_decoder_cache_stats()
 
     results = {
         "repo_id": args.repo_id,

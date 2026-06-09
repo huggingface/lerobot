@@ -261,6 +261,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         rank: int | None = None,
         world_size: int | None = None,
         video_decoder_cache_size: int | None = None,
+        data_files_root: str | None = None,
     ):
         """Initialize a StreamingLeRobotDataset.
 
@@ -290,6 +291,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             video_decoder_cache_size (int | None, optional): Max number of open video decoders to retain.
                 When omitted, it defaults to ``(concurrent active shards + 1) × num_cameras`` so the working
                 set of live decoders never thrashes. See :class:`VideoDecoderCache`.
+            data_files_root (str | None, optional): fsspec root holding the bulk ``data/`` and ``videos/``
+                trees (e.g. an HF storage bucket ``hf://buckets/<owner>/<name>``). When set, parquet and
+                video frames are read from there while metadata still loads from ``repo_id`` on the Hub.
+                Resolves through fsspec exactly like ``hf://``; use it to benchmark bucket / prewarmed-bucket
+                sources without copying the (small) metadata.
         """
         super().__init__()
         self.repo_id = repo_id
@@ -312,9 +318,13 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         self.rank, self.world_size = self._resolve_distributed(rank, world_size)
         self.video_decoder_cache_size = video_decoder_cache_size
+        self.data_files_root = data_files_root.rstrip("/") if data_files_root else None
 
         # We cache the video decoders to avoid re-initializing them at each frame (avoiding a ~10x slowdown)
         self.video_decoder_cache = None
+        # Shared [hits, misses, evictions] tensor so DataLoader workers aggregate decoder-cache stats into
+        # one place the main process can read after iteration (see video_decoder_cache_stats()).
+        self._cache_counters = torch.zeros(3, dtype=torch.int64).share_memory_()
         # Resume state captured by load_state_dict() and consumed at the next __iter__.
         self._resume_state: dict | None = None
 
@@ -338,13 +348,22 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             self.delta_timestamps = delta_timestamps
             self.delta_indices = get_delta_indices(self.delta_timestamps, self.fps)
 
-        self.hf_dataset: datasets.IterableDataset = load_dataset(
-            self.repo_id if not self.streaming_from_local else str(self.root),
-            split="train",
-            streaming=self.streaming,
-            data_files="data/*/*.parquet",
-            revision=self.revision,
-        )
+        if self.data_files_root is not None:
+            # Bulk data lives in an fsspec root (e.g. an HF storage bucket); metadata stays on the Hub.
+            self.hf_dataset: datasets.IterableDataset = load_dataset(
+                "parquet",
+                split="train",
+                streaming=self.streaming,
+                data_files=f"{self.data_files_root}/data/*/*.parquet",
+            )
+        else:
+            self.hf_dataset = load_dataset(
+                self.repo_id if not self.streaming_from_local else str(self.root),
+                split="train",
+                streaming=self.streaming,
+                data_files="data/*/*.parquet",
+                revision=self.revision,
+            )
 
         self.num_shards = min(self.hf_dataset.num_shards, max_num_shards)
 
@@ -406,11 +425,13 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         margin so the round-robin never evicts a still-live decoder.
         """
         if self.video_decoder_cache_size is not None:
-            return VideoDecoderCache(max_size=self.video_decoder_cache_size)
+            return VideoDecoderCache(max_size=self.video_decoder_cache_size, counters=self._cache_counters)
         num_cameras = len(self.meta.video_keys)
         if num_cameras == 0:
-            return VideoDecoderCache()
-        return VideoDecoderCache(max_size=(num_active_shards + 1) * num_cameras)
+            return VideoDecoderCache(counters=self._cache_counters)
+        return VideoDecoderCache(
+            max_size=(num_active_shards + 1) * num_cameras, counters=self._cache_counters
+        )
 
     # TODO(fracapuano): Implement multi-threaded prefetching to accelerate data loading.
     # The current sequential iteration is a bottleneck. A producer-consumer pattern
@@ -506,6 +527,22 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
     def load_state_dict(self, state_dict: dict) -> None:
         """Stage resume state captured by :meth:`state_dict`; applied at the next ``__iter__``."""
         self._resume_state = state_dict
+
+    def video_decoder_cache_stats(self) -> dict[str, int | float]:
+        """Decoder-cache reuse aggregated across DataLoader workers via the shared counter tensor.
+
+        Unlike ``self.video_decoder_cache.stats()`` (which only reflects the main process), this sums
+        hits/misses/evictions over every worker. Counts are lock-free across processes, so treat them as
+        approximate; the ``hit_rate`` ratio is preserved.
+        """
+        hits, misses, evictions = (int(x) for x in self._cache_counters.tolist())
+        total = hits + misses
+        return {
+            "hits": hits,
+            "misses": misses,
+            "evictions": evictions,
+            "hit_rate": round(hits / total, 4) if total else 0.0,
+        }
 
     def _get_window_steps(
         self, delta_timestamps: dict[str, list[float]] | None = None, dynamic_bounds: bool = False
@@ -679,7 +716,12 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             # query_ts is episode-local; shift to the absolute in-file timeline by the episode's offset.
             from_timestamp = self.meta.episodes[ep_idx][f"videos/{video_key}/from_timestamp"]
             shifted_query_ts = [from_timestamp + ts for ts in query_ts]
-            root = self.meta.url_root if self.streaming and not self.streaming_from_local else self.root
+            if self.data_files_root is not None:
+                root = self.data_files_root
+            elif self.streaming and not self.streaming_from_local:
+                root = self.meta.url_root
+            else:
+                root = self.root
             video_path = f"{root}/{self.meta.get_video_file_path(ep_idx, video_key)}"
             frames = decode_video_frames_torchcodec(
                 video_path,
