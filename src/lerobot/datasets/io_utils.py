@@ -78,7 +78,10 @@ def load_nested_dataset(
     with SuppressProgressBars():
         # We use .from_parquet() memory-mapped loading for efficiency
         filters = pa_ds.field("episode_index").isin(episodes) if episodes is not None else None
-        return Dataset.from_parquet([str(path) for path in paths], filters=filters, features=features)
+        try:
+            return Dataset.from_parquet([str(path) for path in paths], filters=filters, features=features)
+        except ValueError:
+            raise ValueError(f"Failed to load parquet files in {pq_dir}, make sure the dataset is valid and is not missing any files.")
 
 
 def get_parquet_num_frames(parquet_path: str | Path) -> int:
