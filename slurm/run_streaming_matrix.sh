@@ -71,8 +71,8 @@ for SOURCE in $SOURCES; do
         --mem="$MEM" --time="$TIME" --output="$REPO_DIR/logs/%x-%j.out" \
         $DEPFLAG \
         ${ACCOUNT:+--account=$ACCOUNT} ${PARTITION:+--partition=$PARTITION} ${QOS:+--qos=$QOS} \
-        --wrap "set -euo pipefail; cd '$REPO_DIR'; \
-          export TOKENIZERS_PARALLELISM=false HF_HOME=\${HF_HOME:-\$SCRATCH/hf_home}; \
+        --wrap "cd '$REPO_DIR' && \
+          export TOKENIZERS_PARALLELISM=false && export HF_HOME=\${HF_HOME:-\$SCRATCH/hf_home} && \
           $RUN benchmarks/streaming/benchmark_streaming.py \
             --repo_id $REPO_ID $ROOTFLAG \
             --mode $MODE --source $SOURCE --video_decode_device $DECODE \
