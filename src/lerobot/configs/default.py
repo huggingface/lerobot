@@ -39,6 +39,9 @@ class DatasetConfig:
     # This reduces memory and speeds up DataLoader IPC. The training pipeline handles the conversion.
     return_uint8: bool = False
     streaming: bool = False
+    # Output shuffle-buffer size (in frames) when streaming. Larger decorrelates samples better at the cost
+    # of host RAM. Ignored when streaming is False.
+    streaming_buffer_size: int = 1000
 
     def __post_init__(self) -> None:
         if self.episodes is not None:

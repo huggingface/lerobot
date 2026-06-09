@@ -13,6 +13,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import logging
+import math
+import os
 from collections import deque
 from collections.abc import Callable, Generator, Iterable, Iterator
 from pathlib import Path
@@ -21,6 +24,7 @@ import datasets
 import numpy as np
 import torch
 from datasets import load_dataset
+from datasets.distributed import split_dataset_by_node
 
 from lerobot.utils.constants import HF_LEROBOT_HOME, LOOKAHEAD_BACKTRACKTABLE, LOOKBACK_BACKTRACKTABLE
 
@@ -37,6 +41,8 @@ from .video_utils import (
     VideoDecoderCache,
     decode_video_frames_torchcodec,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class LookBackError(Exception):
@@ -252,6 +258,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         rng: np.random.Generator | None = None,
         shuffle: bool = True,
         return_uint8: bool = False,
+        rank: int | None = None,
+        world_size: int | None = None,
+        video_decoder_cache_size: int | None = None,
     ):
         """Initialize a StreamingLeRobotDataset.
 
@@ -272,6 +281,15 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             seed (int, optional): Reproducibility random seed.
             rng (np.random.Generator | None, optional): Random number generator.
             shuffle (bool, optional): Whether to shuffle the dataset across exhaustions. Defaults to True.
+            rank (int | None, optional): This process' rank for distributed (multi-GPU/multi-node) training.
+                Each rank streams a disjoint set of shards via ``split_dataset_by_node``. When omitted, it is
+                resolved from Accelerate (``process_index``) or the ``RANK`` env var, defaulting to 0.
+            world_size (int | None, optional): Total number of distributed processes. When omitted, resolved
+                from Accelerate (``num_processes``) or the ``WORLD_SIZE`` env var, defaulting to 1 (no sharding).
+                For an even per-rank split, ``num_shards % world_size == 0`` should hold.
+            video_decoder_cache_size (int | None, optional): Max number of open video decoders to retain.
+                When omitted, it defaults to ``(concurrent active shards + 1) × num_cameras`` so the working
+                set of live decoders never thrashes. See :class:`VideoDecoderCache`.
         """
         super().__init__()
         self.repo_id = repo_id
@@ -289,10 +307,16 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         self.streaming = streaming
         self.buffer_size = buffer_size
+        self.max_num_shards = max_num_shards
         self._return_uint8 = return_uint8
+
+        self.rank, self.world_size = self._resolve_distributed(rank, world_size)
+        self.video_decoder_cache_size = video_decoder_cache_size
 
         # We cache the video decoders to avoid re-initializing them at each frame (avoiding a ~10x slowdown)
         self.video_decoder_cache = None
+        # Resume state captured by load_state_dict() and consumed at the next __iter__.
+        self._resume_state: dict | None = None
 
         if self._requested_root is not None:
             self.root.mkdir(exist_ok=True, parents=True)
@@ -348,22 +372,91 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         while True:
             yield rng.choice(elements)
 
+    @staticmethod
+    def _resolve_distributed(rank: int | None, world_size: int | None) -> tuple[int, int]:
+        """Resolve (rank, world_size) for distributed streaming.
+
+        Explicit arguments win. Otherwise prefer an already-initialized Accelerate state, then the
+        ``RANK``/``WORLD_SIZE`` env vars set by launchers, and finally fall back to single-process (0, 1).
+        """
+        if rank is not None and world_size is not None:
+            return rank, world_size
+
+        try:
+            from accelerate.state import PartialState
+
+            if PartialState._shared_state:  # only read it if already initialized; never initialize here
+                state = PartialState()
+                return state.process_index, state.num_processes
+        except Exception:
+            logger.debug("Could not resolve distributed state from Accelerate; using env/defaults.")
+
+        env_rank = os.environ.get("RANK")
+        env_world = os.environ.get("WORLD_SIZE")
+        if env_rank is not None and env_world is not None:
+            return int(env_rank), int(env_world)
+
+        return 0, 1
+
+    def _make_video_decoder_cache(self, num_active_shards: int) -> VideoDecoderCache:
+        """Size the decoder cache to the working set of live shards so it does not thrash.
+
+        Each shard mid-episode keeps one open decoder per camera; with several shards iterated
+        concurrently the working set is ``num_active_shards × num_cameras``. We add one shard worth of
+        margin so the round-robin never evicts a still-live decoder.
+        """
+        if self.video_decoder_cache_size is not None:
+            return VideoDecoderCache(max_size=self.video_decoder_cache_size)
+        num_cameras = len(self.meta.video_keys)
+        if num_cameras == 0:
+            return VideoDecoderCache()
+        return VideoDecoderCache(max_size=(num_active_shards + 1) * num_cameras)
+
     # TODO(fracapuano): Implement multi-threaded prefetching to accelerate data loading.
     # The current sequential iteration is a bottleneck. A producer-consumer pattern
     # could be used with a ThreadPoolExecutor to run `make_frame` (especially video decoding)
     # in parallel, feeding a queue from which this iterator will yield processed items.
     def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
-        if self.video_decoder_cache is None:
-            self.video_decoder_cache = VideoDecoderCache()
+        # Distributed correctness: each rank streams a disjoint set of shards (order preserved).
+        ds = self.hf_dataset
+        if self.world_size > 1:
+            ds = split_dataset_by_node(ds, rank=self.rank, world_size=self.world_size)
+
+        num_shards = min(ds.num_shards, self.max_num_shards)
+        shard_indices = list(range(num_shards))
+
+        # DataLoader workers within this rank further split the shards so they don't yield duplicates.
+        worker_info = torch.utils.data.get_worker_info()
+        if worker_info is not None:
+            shard_indices = shard_indices[worker_info.id :: worker_info.num_workers]
+
+        self.video_decoder_cache = self._make_video_decoder_cache(len(shard_indices))
 
         # keep the same seed across exhaustions if shuffle is False, otherwise shuffle data across exhaustions
         rng = np.random.default_rng(self.seed) if not self.shuffle else self.rng
 
+        # Best-effort resume: restore RNG + exhausted shards and rewind each shard's HF stream. The
+        # shuffle buffer is re-warmed rather than restored, so resumption is not bit-exact (acceptable
+        # for pretraining); the underlying stream may also skip the few frames Backtrackable read ahead.
+        resume = self._resume_state
+        self._resume_state = None
+        self._exhausted: set[int] = set(resume["exhausted"]) if resume is not None else set()
+        if resume is not None:
+            rng.bit_generator.state = resume["rng"]
+
+        self._shards: dict[int, datasets.IterableDataset] = {}
+        for idx in shard_indices:
+            shard = safe_shard(ds, idx, num_shards)
+            if resume is not None and str(idx) in resume["shards"]:
+                shard.load_state_dict(resume["shards"][str(idx)])
+            self._shards[idx] = shard
+
         buffer_indices_generator = self._iter_random_indices(rng, self.buffer_size)
 
         idx_to_backtrack_dataset = {
-            idx: self._make_backtrackable_dataset(safe_shard(self.hf_dataset, idx, self.num_shards))
-            for idx in range(self.num_shards)
+            idx: self._make_backtrackable_dataset(shard)
+            for idx, shard in self._shards.items()
+            if idx not in self._exhausted
         }
 
         # This buffer is populated while iterating on the dataset's shards
@@ -389,10 +482,30 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 StopIteration,
             ):  # NOTE: StopIteration inside a generator throws a RuntimeError since python 3.7
                 del idx_to_backtrack_dataset[shard_key]  # Remove exhausted shard, onto another shard
+                self._exhausted.add(shard_key)
 
         # Once shards are all exhausted, shuffle the buffer and yield the remaining frames
         rng.shuffle(frames_buffer)
         yield from frames_buffer
+
+    def state_dict(self) -> dict:
+        """Capture resume state: per-shard HF stream position, exhausted shards, and RNG state.
+
+        Must be called after iteration has started (so the shard streams exist). Restore the returned
+        dict with :meth:`load_state_dict` before re-iterating. The shuffle buffer is not captured, so
+        resumption is not bit-exact — see :meth:`__iter__`.
+        """
+        if not hasattr(self, "_shards"):
+            raise RuntimeError("state_dict() requires the dataset to have been iterated at least once.")
+        return {
+            "shards": {str(idx): shard.state_dict() for idx, shard in self._shards.items()},
+            "exhausted": sorted(self._exhausted),
+            "rng": self.rng.bit_generator.state,
+        }
+
+    def load_state_dict(self, state_dict: dict) -> None:
+        """Stage resume state captured by :meth:`state_dict`; applied at the next ``__iter__``."""
+        self._resume_state = state_dict
 
     def _get_window_steps(
         self, delta_timestamps: dict[str, list[float]] | None = None, dynamic_bounds: bool = False
@@ -405,19 +518,23 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             lookback = LOOKBACK_BACKTRACKTABLE
             lookahead = LOOKAHEAD_BACKTRACKTABLE
         else:
-            # Dynamically adjust the windows based on the given delta_timesteps
+            # Dynamically size the windows to exactly cover the requested delta_timestamps (in frames).
+            # This removes the fixed LOOKAHEAD_BACKTRACKTABLE ceiling, which would raise LookAheadError for
+            # long horizons (e.g. a SARM window of 8 steps spaced 1s = ~160 frames @ fps20).
             all_timestamps = sum(delta_timestamps.values(), [])
-            lookback = min(all_timestamps) * self.fps
-            lookahead = max(all_timestamps) * self.fps
+            lookback = math.floor(min(all_timestamps) * self.fps)
+            lookahead = math.ceil(max(all_timestamps) * self.fps)
 
             # When lookback is >=0 it means no negative timesteps have been provided
-            lookback = 0 if lookback >= 0 else (lookback * -1)
+            lookback = 0 if lookback >= 0 else -lookback
 
         return lookback, lookahead
 
     def _make_backtrackable_dataset(self, dataset: datasets.IterableDataset) -> Backtrackable:
-        lookback, lookahead = self._get_window_steps(self.delta_timestamps)
-        return Backtrackable(dataset, history=lookback, lookahead=lookahead)
+        lookback, lookahead = self._get_window_steps(self.delta_timestamps, dynamic_bounds=True)
+        # Backtrackable.peek_back(n) needs `history >= n + 1`, so reach a frame `lookback` steps back requires
+        # history = lookback + 1. history must be >= 1 and lookahead > 0, so clamp both to at least 1.
+        return Backtrackable(dataset, history=max(1, lookback + 1), lookahead=max(1, lookahead))
 
     def _make_timestamps_from_indices(
         self, start_ts: float, indices: dict[str, list[int]] | None = None
