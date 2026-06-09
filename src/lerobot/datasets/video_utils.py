@@ -250,6 +250,10 @@ class VideoDecoderCache:
         self.max_size: int | None = max_size  # type: ignore[assignment]
         self._cache: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
         self._lock = Lock()
+        # Observability counters (cheap, updated under the lock) for benchmarking decoder reuse.
+        self.hits = 0
+        self.misses = 0
+        self.evictions = 0
 
     def __contains__(self, video_path: object) -> bool:
         with self._lock:
@@ -271,8 +275,10 @@ class VideoDecoderCache:
             entry = self._cache.get(video_path)
             if entry is not None:
                 self._cache.move_to_end(video_path)
+                self.hits += 1
                 return entry[0]
 
+            self.misses += 1
             file_handle = fsspec.open(video_path).__enter__()
             try:
                 decoder = VideoDecoder(file_handle, seek_mode="approximate")
@@ -287,6 +293,7 @@ class VideoDecoderCache:
             if self.max_size is not None:
                 while len(self._cache) > self.max_size:
                     _evicted_path, (_evicted_decoder, evicted_handle) = self._cache.popitem(last=False)
+                    self.evictions += 1
                     with contextlib.suppress(Exception):
                         evicted_handle.close()
 
@@ -304,6 +311,18 @@ class VideoDecoderCache:
         """Return the number of cached decoders."""
         with self._lock:
             return len(self._cache)
+
+    def stats(self) -> dict[str, int | float]:
+        """Return reuse counters (hits/misses/evictions, hit rate, current size) for benchmarking."""
+        with self._lock:
+            total = self.hits + self.misses
+            return {
+                "hits": self.hits,
+                "misses": self.misses,
+                "evictions": self.evictions,
+                "hit_rate": self.hits / total if total else 0.0,
+                "size": len(self._cache),
+            }
 
 
 class FrameTimestampError(ValueError):

@@ -115,8 +115,12 @@ def test_sarm_window_covers_long_horizon_without_padding(tmp_path, lerobot_datas
     SARM uses a window of 8 steps spaced 1s (~160 frames @ fps20). Here fps=30, so +5s = 150 frames > 100.
     """
     repo_id = f"{DUMMY_REPO_ID}-sarm"
-    # Two episodes of 200 frames each -> a +150-frame lookahead stays inside an episode for early frames.
-    _make_local_dataset(lerobot_dataset_factory, tmp_path / "ds", repo_id, total_episodes=2, total_frames=400)
+    # A single long episode so a +150-frame lookahead is unambiguously inside the episode (the fixture
+    # gives episodes variable lengths, so multi-episode boundaries can't be assumed).
+    episode_frames = 300
+    _make_local_dataset(
+        lerobot_dataset_factory, tmp_path / "ds", repo_id, total_episodes=1, total_frames=episode_frames
+    )
 
     horizon_s = 5.0  # 150 frames @ fps30, well beyond LOOKAHEAD_BACKTRACKTABLE=100
     delta_timestamps = {ACTION: [0.0, horizon_s]}
@@ -130,11 +134,12 @@ def test_sarm_window_covers_long_horizon_without_padding(tmp_path, lerobot_datas
     )
 
     horizon_frames = int(round(horizon_s * ds.fps))
+    assert horizon_frames > 100, "test must exceed the old LOOKAHEAD_BACKTRACKTABLE ceiling"
     checked = 0
     for frame in ds:
         idx = int(frame["index"])
-        # Only assert on frames whose +horizon target is still inside the same episode.
-        if int(frame["episode_index"]) == 0 and idx + horizon_frames < 200:
+        # The +horizon target is inside the single episode -> it must be a real frame, not padding.
+        if idx + horizon_frames < episode_frames:
             assert not bool(frame[f"{ACTION}_is_pad"][-1]), (
                 f"frame {idx}: +{horizon_frames} target was padded; long delta window did not reach it"
             )
