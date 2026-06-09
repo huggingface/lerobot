@@ -1,0 +1,626 @@
+# 在真實世界機器人上進行模仿學習（Imitation Learning）
+
+本教學將說明如何訓練神經網路來自主控制真實的機器人。
+
+**您將學到：**
+
+1. 如何錄製並視覺化您的資料集。
+2. 如何使用您的資料訓練策略，並準備進行評估。
+3. 如何評估您的策略並視覺化結果。
+
+按照這些步驟，您將能夠複現各種任務，例如撿起一塊樂高積木並放入箱子中，並達到很高的成功率，如下方影片所示。
+
+<details>
+<summary><strong>影片：撿起樂高積木任務</strong></summary>
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot_task.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+</details>
+
+本教學不限定於特定機器人：我們會帶您了解可適用於任何支援平台的命令和 API 程式碼範例。
+
+在資料收集過程中，您將使用「遙操作（teloperation）」裝置，例如領導臂或鍵盤來遠程操作機器人並記錄其運動軌跡。
+
+一旦收集到足夠的軌跡，您將訓練一個神經網路來模仿這些軌跡（trajectories），並部署訓練好的模型，讓您的機器人能夠自主執行任務。
+
+如果您在任何環節遇到問題，歡迎加入我們的 [Discord 社群](https://discord.com/invite/s3KuuzsPFb)尋求支援。
+
+## 設定與校準
+
+如果您尚未設定和校準您的機器人與遙操作裝置，請按照機器人專屬的教學進行操作。
+
+## 遙操作（Teleoperate）
+
+在此範例中，我們將示範如何遙操作 SO101 機器人。每個命令都附有對應的 API 範例。
+
+請注意，與機器人關聯的 `id` 用於儲存校準檔案。在遙操作、錄製和評估使用相同設定時，務必使用相同的 `id`。
+
+<hfoptions id="teleoperate_so101">
+<hfoption id="Command">
+```bash
+lerobot-teleoperate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --robot.id=my_awesome_follower_arm \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/tty.usbmodem58760431551 \
+    --teleop.id=my_awesome_leader_arm
+```
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.teleoperators.so_leader import SO101LeaderConfig, SO101Leader
+from lerobot.robots.so_follower import SO101FollowerConfig, SO101Follower
+
+robot_config = SO101FollowerConfig(
+    port="/dev/tty.usbmodem58760431541",
+    id="my_red_robot_arm",
+)
+
+teleop_config = SO101LeaderConfig(
+    port="/dev/tty.usbmodem58760431551",
+    id="my_blue_leader_arm",
+)
+
+robot = SO101Follower(robot_config)
+teleop_device = SO101Leader(teleop_config)
+robot.connect()
+teleop_device.connect()
+
+while True:
+    action = teleop_device.get_action()
+    robot.send_action(action)
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+遙操作指令會自動：
+
+1. 識別任何缺少的校準，並啟動校準程序。
+2. 連接機器人和遙操作裝置，並開始遙操作。
+
+## 攝影機
+
+要將攝影機加入您的設定，請參照此[指南](./cameras#setup-cameras)。
+
+## 搭配攝影機進行遙操作
+
+使用 `rerun`，您可以在遙操作的同時視覺化攝影機畫面和關節位置。在此範例中，我們使用的是 Koch 手臂。
+
+<hfoptions id="teleoperate_koch_camera">
+<hfoption id="Command">
+```bash
+lerobot-teleoperate \
+    --robot.type=koch_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --robot.id=my_awesome_follower_arm \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
+    --teleop.type=koch_leader \
+    --teleop.port=/dev/tty.usbmodem58760431551 \
+    --teleop.id=my_awesome_leader_arm \
+    --display_data=true
+```
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.teleoperators.koch_leader import KochLeaderConfig, KochLeader
+from lerobot.robots.koch_follower import KochFollowerConfig, KochFollower
+
+camera_config = {
+    "front": OpenCVCameraConfig(index_or_path=0, width=1920, height=1080, fps=30)
+}
+
+robot_config = KochFollowerConfig(
+    port="/dev/tty.usbmodem585A0076841",
+    id="my_red_robot_arm",
+    cameras=camera_config
+)
+
+teleop_config = KochLeaderConfig(
+    port="/dev/tty.usbmodem58760431551",
+    id="my_blue_leader_arm",
+)
+
+robot = KochFollower(robot_config)
+teleop_device = KochLeader(teleop_config)
+robot.connect()
+teleop_device.connect()
+
+while True:
+    observation = robot.get_observation()
+    action = teleop_device.get_action()
+    robot.send_action(action)
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+## 錄製資料集
+
+熟悉遙操作後，您就可以錄製您的第一個資料集。
+
+我們使用 Hugging Face Hub 功能來上傳您的資料集。如果您之前未使用過 Hub，請確保您可以使用具有寫入權限的 token 登入 CLI，此 token 可從 [Hugging Face 設定](https://huggingface.co/settings/tokens)頁面產生。
+
+執行以下命令將您的 token 加入 CLI：
+
+```bash
+hf auth login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
+```
+
+然後將您的 Hugging Face 儲存庫名稱存入變數：
+
+```bash
+HF_USER=$(NO_COLOR=1 hf auth whoami | awk -F': *' 'NR==1 {print $2}')
+echo $HF_USER
+```
+
+現在您可以錄製資料集了。要錄製 5 個回合（episodes）並將資料集上傳到 Hub，請根據您的機器人調整下方程式碼，然後執行命令或 API 範例。
+
+<hfoptions id="record">
+<hfoption id="Command">
+```bash
+lerobot-record \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem585A0076841 \
+    --robot.id=my_awesome_follower_arm \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/tty.usbmodem58760431551 \
+    --teleop.id=my_awesome_leader_arm \
+    --display_data=true \
+    --dataset.repo_id=${HF_USER}/record-test \
+    --dataset.num_episodes=5 \
+    --dataset.single_task="Grab the black cube" \
+    --dataset.streaming_encoding=true \
+    # --dataset.vcodec=auto \
+    --dataset.encoder_threads=2
+```
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.utils import hw_to_dataset_features
+from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
+from lerobot.teleoperators.so_leader.config_so100_leader import SO100LeaderConfig
+from lerobot.teleoperators.so_leader.so100_leader import SO100Leader
+from lerobot.utils.control_utils import init_keyboard_listener
+from lerobot.utils.utils import log_say
+from lerobot.utils.visualization_utils import init_rerun
+from lerobot.scripts.lerobot_record import record_loop
+from lerobot.processor import make_default_processors
+
+NUM_EPISODES = 5
+FPS = 30
+EPISODE_TIME_SEC = 60
+RESET_TIME_SEC = 10
+TASK_DESCRIPTION = "My task description"
+
+# 建立機器人配置
+robot_config = SO100FollowerConfig(
+    id="my_awesome_follower_arm",
+    cameras={
+        "front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS) # 選用：fourcc="MJPG" 用於排除 OpenCV 非同步錯誤。
+    },
+    port="/dev/tty.usbmodem58760434471",
+)
+
+teleop_config = SO100LeaderConfig(
+    id="my_awesome_leader_arm",
+    port="/dev/tty.usbmodem585A0077581",
+)
+
+# 初始化機器人和遙操作器（teleoperator）
+robot = SO100Follower(robot_config)
+teleop = SO100Leader(teleop_config)
+
+# 設置資料集特徵
+action_features = hw_to_dataset_features(robot.action_features, "action")
+obs_features = hw_to_dataset_features(robot.observation_features, "observation")
+dataset_features = {**action_features, **obs_features}
+
+# 建立資料集
+dataset = LeRobotDataset.create(
+    repo_id="<hf_username>/<dataset_repo_id>",
+    fps=FPS,
+    features=dataset_features,
+    robot_type=robot.name,
+    use_videos=True,
+    image_writer_threads=4,
+)
+
+# 初始化鍵盤監聽器和 rerun 視覺化
+_, events = init_keyboard_listener()
+init_rerun(session_name="recording")
+
+# 連接機器人和遙操作器
+robot.connect()
+teleop.connect()
+
+# 建立所需的處理器
+teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
+
+episode_idx = 0
+while episode_idx < NUM_EPISODES and not events["stop_recording"]:
+    log_say(f"Recording episode {episode_idx + 1} of {NUM_EPISODES}")
+
+    record_loop(
+        robot=robot,
+        events=events,
+        fps=FPS,
+        teleop_action_processor=teleop_action_processor,
+        robot_action_processor=robot_action_processor,
+        robot_observation_processor=robot_observation_processor,
+        teleop=teleop,
+        dataset=dataset,
+        control_time_s=EPISODE_TIME_SEC,
+        single_task=TASK_DESCRIPTION,
+        display_data=True,
+    )
+
+    # 如果不是停止錄製或重新錄製，則重置環境
+    if not events["stop_recording"] and (episode_idx < NUM_EPISODES - 1 or events["rerecord_episode"]):
+        log_say("Reset the environment")
+        record_loop(
+            robot=robot,
+            events=events,
+            fps=FPS,
+            teleop_action_processor=teleop_action_processor,
+            robot_action_processor=robot_action_processor,
+            robot_observation_processor=robot_observation_processor,
+            teleop=teleop,
+            control_time_s=RESET_TIME_SEC,
+            single_task=TASK_DESCRIPTION,
+            display_data=True,
+        )
+
+    if events["rerecord_episode"]:
+        log_say("Re-recording episode")
+        events["rerecord_episode"] = False
+        events["exit_early"] = False
+        dataset.clear_episode_buffer()
+        continue
+
+    dataset.save_episode()
+    episode_idx += 1
+
+# 清除資源
+log_say("Stop recording")
+robot.disconnect()
+teleop.disconnect()
+dataset.push_to_hub()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+#### 資料集上傳
+
+在本機端，您的資料集儲存在此資料夾中：`~/.cache/huggingface/lerobot/{repo-id}`。資料錄製結束後，您的資料集將被上傳到您的 Hugging Face 頁面（例如 `https://huggingface.co/datasets/${HF_USER}/so101_test`），您可以執行以下命令取得該連結：
+
+```bash
+echo https://huggingface.co/datasets/${HF_USER}/so101_test
+```
+
+您的資料集會自動標記 `LeRobot` 標籤，方便社群輕鬆找到它，您也可以新增自訂標籤（例如此處加上 `tutorial`）。
+
+您可以在 Hub 上搜尋 `LeRobot` [標籤](https://huggingface.co/datasets?other=LeRobot)來瀏覽其他 LeRobot 資料集。
+
+您也可以手動將本機資料集推送到 Hub，執行：
+
+```bash
+hf upload ${HF_USER}/record-test ~/.cache/huggingface/lerobot/{repo-id} --repo-type dataset
+```
+
+#### 錄製功能
+
+`record` 功能提供了一套工具，用於在機器人操作期間擷取和管理資料：
+
+##### 1. 資料儲存
+
+- 資料使用 `LeRobotDataset` 格式儲存，並在錄製期間存入磁碟。
+- 預設情況下，資料集會在錄製完成後推送到您的 Hugging Face 頁面。
+  - 若要停用上傳功能，請使用 `--dataset.push_to_hub=False`。
+
+##### 2. Checkpointing 與 Resuming
+
+- 錄製過程中會自動建立 checkpoints。
+- 如果發生問題，您可以使用 `--resume=true` 重新執行相同命令來續錄。續錄時，`--dataset.num_episodes` 必須設定為**額外要錄製的回合數**，而不是資料集中的目標總回合數！
+- 若要從頭開始錄製，請**手動刪除**資料集目錄。
+
+##### 3. 錄製參數
+
+使用命令列參數設定資料錄製的流程：
+
+- `--dataset.episode_time_s=60`
+  每次資料錄製回合的持續時間（預設：**60 秒**）。
+- `--dataset.reset_time_s=60`
+  每個回合結束後重設環境的持續時間（預設：**60 秒**）。
+- `--dataset.num_episodes=50`
+  要錄製的總回合數（預設：**50**）。
+
+##### 4. 錄製期間的鍵盤控制
+
+使用鍵盤快捷鍵控制資料錄製流程：
+
+- 按下**右方向鍵（`→`）**：提前結束目前的回合或重設時間，並進入下一個。
+- 按下**左方向鍵（`←`）**：取消目前的回合並重新錄製。
+- 按下 **Escape（`ESC`）**：立即停止錄製階段，編碼影片並上傳資料集。
+
+#### 收集資料的技巧
+
+熟悉資料錄製後，您可以建立更大的資料集進行訓練。一個好的入門任務是在不同位置抓取物體並放入箱中。我們建議至少錄製 50 個回合，每個位置 10 個回合。保持攝影機固定，並在整個錄製過程中維持一致的抓取行為。同時確保您操作的物體在攝影機畫面中可見。一個好的經驗法則是，您應該能夠僅透過觀看攝影機影像就能自行完成任務。
+
+在接下來的章節中，您將訓練您的神經網路。在達到可靠的抓取效能後，您可以開始在資料收集中引入更多變化，例如增加抓取位置、不同的抓取技巧，以及改變攝影機位置。
+
+避免太快引入過多變化，因為這可能會影響您的結果。
+
+如果您想深入了解這個重要主題，可以參閱我們撰寫的關於什麼是好的資料集的[部落格文章](https://huggingface.co/blog/lerobot-datasets#what-makes-a-good-dataset)。
+
+#### 疑難排解：
+
+- 在 Linux 上，如果左右方向鍵和 Escape 鍵在資料錄製期間沒有任何效果，請確認您已設定 `$DISPLAY` 環境變數。請參閱 [pynput](https://pynput.readthedocs.io/en/latest/limitations.html#linux) 限制。
+
+## 視覺化資料集
+
+若您已使用 `--control.push_to_hub=true` 將資料集上傳至 Hub，可透過複製貼上下方指令所提供的儲存庫 ID，於[線上工具中視覺化您的資料集](https://huggingface.co/spaces/lerobot/visualize_dataset)：
+
+```bash
+echo ${HF_USER}/so101_test
+```
+
+## 回合重播
+
+一個實用的功能是 `replay` 函式，它允許您重播任何已錄製的回合或任何現有資料集中的回合。此功能可幫助您測試機器人動作的可重複性，並評估在相同型號機器人之間的可遷移性。
+
+您可以使用以下命令或 API 範例在機器人上重播第一個回合：
+
+<hfoptions id="replay">
+<hfoption id="Command">
+```bash
+lerobot-replay \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --robot.id=my_awesome_follower_arm \
+    --dataset.repo_id=${HF_USER}/record-test \
+    --dataset.episode=0 # 選擇您想要重播的回合
+```
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+import time
+
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.robots.so_follower.config_so100_follower import SO100FollowerConfig
+from lerobot.robots.so_follower.so100_follower import SO100Follower
+from lerobot.utils.robot_utils import precise_sleep
+from lerobot.utils.utils import log_say
+
+episode_idx = 0
+
+robot_config = SO100FollowerConfig(port="/dev/tty.usbmodem58760434471", id="my_awesome_follower_arm")
+
+robot = SO100Follower(robot_config)
+robot.connect()
+
+dataset = LeRobotDataset("<hf_username>/<dataset_repo_id>", episodes=[episode_idx])
+actions = dataset.select_columns("action")
+
+log_say(f"Replaying episode {episode_idx}")
+for idx in range(dataset.num_frames):
+    t0 = time.perf_counter()
+
+    action = {
+        name: float(actions[idx]["action"][i]) for i, name in enumerate(dataset.features["action"]["names"])
+    }
+    robot.send_action(action)
+
+    precise_sleep(max(1.0 / dataset.fps - (time.perf_counter() - t0), 0.0))
+
+robot.disconnect()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+您的機器人應該會複現與您錄製時類似的動作。例如，觀看[這段影片](https://x.com/RemiCadene/status/1793654950905680090)，我們在 [Trossen Robotics](https://www.trossenrobotics.com) 的 Aloha 機器人上使用了 `replay`。
+
+## 訓練策略
+
+要訓練一個策略來控制您的機器人，請使用 [`lerobot-train`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/scripts/lerobot_train.py) 腳本。需要幾個必要參數。以下是一個範例命令：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=${HF_USER}/so101_test \
+  --policy.type=act \
+  --output_dir=outputs/train/act_so101_test \
+  --job_name=act_so101_test \
+  --policy.device=cuda \
+  --wandb.enable=true \
+  --policy.repo_id=${HF_USER}/my_policy
+```
+
+讓我們說明這個指令：
+
+1. 我們透過 `--dataset.repo_id=${HF_USER}/so101_test` 提供了資料集作為參數。
+2. 我們透過 `policy.type=act` 提供了策略。這會從 [`configuration_act.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/configuration_act.py) 載入設定。重要的是，此策略會自動適配您機器人的馬達狀態數、馬達動作數和攝影機（例如 `laptop` 和 `phone`），這些資訊已儲存在您的資料集中。
+3. 我們提供了 `policy.device=cuda`，因為我們在 Nvidia GPU 上訓練，但您可以使用 `policy.device=mps` 在 Apple 晶片上訓練。
+4. 我們提供了 `wandb.enable=true` 以使用 [Weights and Biases](https://docs.wandb.ai/quickstart) 來視覺化訓練圖表。這是選用的，但如果您要使用，請確保已執行 `wandb login` 完成登入。
+
+訓練應需要數小時。您會在 `outputs/train/act_so101_test/checkpoints` 中找到檢查點。
+
+要從 checkpoint 繼續訓練，以下是從 `act_so101_test` 策略的 `last` checkpoint 繼續的範例命令：
+
+```bash
+lerobot-train \
+  --config_path=outputs/train/act_so101_test/checkpoints/last/pretrained_model/train_config.json \
+  --resume=true
+```
+
+如果您不想在訓練後將模型推送到 Hub，請使用 `--policy.push_to_hub=false`。
+
+此外，您可以為模型提供額外的 `tags` 或指定 `license`，或透過新增以下參數將模型儲存庫設為 `private`：`--policy.private=true --policy.tags=\[ppo,rl\] --policy.license=mit`
+
+#### 使用 Google Colab 訓練
+
+如果您的本機電腦沒有強大的 GPU，您可以透過 [ACT 訓練筆記本](./notebooks#training-act)利用 Google Colab 來訓練模型。
+
+#### 上傳策略的 checkpoints
+
+訓練完成後，使用以下命令上傳最新的 checkpoint：
+
+```bash
+hf upload ${HF_USER}/act_so101_test \
+  outputs/train/act_so101_test/checkpoints/last/pretrained_model
+```
+
+您也可以上傳中間 checkpoints：
+
+```bash
+CKPT=010000
+hf upload ${HF_USER}/act_so101_test${CKPT} \
+  outputs/train/act_so101_test/checkpoints/${CKPT}/pretrained_model
+```
+
+## 執行推論並評估您的策略
+
+您可以使用 [`lerobot-record`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/scripts/lerobot_record.py) 的 `record` 腳本，並輸入策略的 checkpoint，來執行推論並評估您的策略。例如，執行此命令或 API 範例來執行推論並錄製 10 個評估回合：
+
+<hfoptions id="eval">
+<hfoption id="Command">
+```bash
+lerobot-record  \
+  --robot.type=so100_follower \
+  --robot.port=/dev/ttyACM1 \
+  --robot.cameras="{ up: {type: opencv, index_or_path: /dev/video10, width: 640, height: 480, fps: 30}, side: {type: intelrealsense, serial_number_or_name: 233522074606, width: 640, height: 480, fps: 30}}" \
+  --robot.id=my_awesome_follower_arm \
+  --display_data=false \
+  --dataset.repo_id=${HF_USER}/eval_so100 \
+  --dataset.single_task="Put lego brick into the transparent box" \
+  --dataset.streaming_encoding=true \
+  --dataset.encoder_threads=2 \
+  # --dataset.vcodec=auto \
+  # <- 如果您想在情節之間進行遙操作，Teleop 為選用 \
+  # --teleop.type=so100_leader \
+  # --teleop.port=/dev/ttyACM0 \
+  # --teleop.id=my_awesome_leader_arm \
+  --policy.path=${HF_USER}/my_policy
+```
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.utils import hw_to_dataset_features
+from lerobot.policies.act.modeling_act import ACTPolicy
+from lerobot.policies.factory import make_pre_post_processors
+from lerobot.robots.so_follower.config_so100_follower import SO100FollowerConfig
+from lerobot.robots.so_follower.so100_follower import SO100Follower
+from lerobot.scripts.lerobot_record import record_loop
+from lerobot.utils.control_utils import init_keyboard_listener
+from lerobot.utils.utils import log_say
+from lerobot.utils.visualization_utils import init_rerun
+
+
+NUM_EPISODES = 5
+FPS = 30
+EPISODE_TIME_SEC = 60
+TASK_DESCRIPTION = "My task description"
+HF_MODEL_ID = "<hf_username>/<model_repo_id>"
+HF_DATASET_ID = "<hf_username>/<eval_dataset_repo_id>"
+
+# 建立機器人配置
+camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
+robot_config = SO100FollowerConfig(
+    port="/dev/tty.usbmodem58760434471", id="my_awesome_follower_arm", cameras=camera_config
+)
+
+# 初始化機器人
+robot = SO100Follower(robot_config)
+
+# 初始化策略
+policy = ACTPolicy.from_pretrained(HF_MODEL_ID)
+
+# 設置資料集特徵
+action_features = hw_to_dataset_features(robot.action_features, "action")
+obs_features = hw_to_dataset_features(robot.observation_features, "observation")
+dataset_features = {**action_features, **obs_features}
+
+# 建立資料集
+dataset = LeRobotDataset.create(
+    repo_id=HF_DATASET_ID,
+    fps=FPS,
+    features=dataset_features,
+    robot_type=robot.name,
+    use_videos=True,
+    image_writer_threads=4,
+)
+
+# 初始化鍵盤監聽器和 rerun 視覺化
+_, events = init_keyboard_listener()
+init_rerun(session_name="recording")
+
+# 連接機器人
+robot.connect()
+
+preprocessor, postprocessor = make_pre_post_processors(
+    policy_cfg=policy,
+    pretrained_path=HF_MODEL_ID,
+    dataset_stats=dataset.meta.stats,
+)
+
+for episode_idx in range(NUM_EPISODES):
+    log_say(f"Running inference, recording eval episode {episode_idx + 1} of {NUM_EPISODES}")
+
+    # 執行策略推論迴圈
+    record_loop(
+        robot=robot,
+        events=events,
+        fps=FPS,
+        policy=policy,
+        preprocessor=preprocessor,
+        postprocessor=postprocessor,
+        dataset=dataset,
+        control_time_s=EPISODE_TIME_SEC,
+        single_task=TASK_DESCRIPTION,
+        display_data=True,
+    )
+
+    dataset.save_episode()
+
+# 清理資源
+robot.disconnect()
+dataset.push_to_hub()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+如您所見，這與之前用來錄製訓練資料集的命令幾乎相同。有兩處變更：
+
+1. 新增了 `--control.policy.path` 參數，用於指定您的策略檢查點路徑（例如 `outputs/train/eval_act_so101_test/checkpoints/last/pretrained_model`）。如果您已將模型檢查點上傳到 Hub，也可以使用模型儲存庫（例如 `${HF_USER}/act_so101_test`）。
+2. 資料集名稱以 `eval` 開頭，以表示您正在執行推論（例如 `${HF_USER}/eval_act_so101_test`）。
