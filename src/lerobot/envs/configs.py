@@ -24,7 +24,12 @@ import gymnasium as gym
 from gymnasium.envs.registration import registry as gym_registry
 
 from lerobot.configs import FeatureType, PolicyFeature
-from lerobot.processor import IsaaclabArenaProcessorStep, LiberoProcessorStep, PolicyProcessorPipeline
+from lerobot.processor import (
+    IsaaclabArenaProcessorStep,
+    LiberoActionProcessorStep,
+    LiberoProcessorStep,
+    PolicyProcessorPipeline,
+)
 from lerobot.robots import RobotConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.constants import (
@@ -123,7 +128,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
             vec = env_cls([_make_one for _ in range(n_envs)], **extra_kwargs)
         return {self.type: {0: vec}}
 
-    def get_env_processors(self):
+    def get_env_processors(self, policy_cfg: Any | None = None):
         """Return (preprocessor, postprocessor) for this env. Default: identity."""
         return PolicyProcessorPipeline(steps=[]), PolicyProcessorPipeline(steps=[])
 
@@ -436,10 +441,13 @@ class LiberoEnv(EnvConfig):
             is_libero_plus=self.is_libero_plus,
         )
 
-    def get_env_processors(self):
+    def get_env_processors(self, policy_cfg: Any | None = None):
+        max_state_dim = getattr(policy_cfg, "max_state_dim", None) if getattr(policy_cfg, "type", None) == "evo1" else None
+        action_feature = self.features.get(ACTION)
+        action_dim = int(action_feature.shape[0]) if action_feature is not None else 7
         return (
-            PolicyProcessorPipeline(steps=[LiberoProcessorStep()]),
-            PolicyProcessorPipeline(steps=[]),
+            PolicyProcessorPipeline(steps=[LiberoProcessorStep(max_state_dim=max_state_dim)]),
+            PolicyProcessorPipeline(steps=[LiberoActionProcessorStep(action_dim=action_dim)]),
         )
 
 
@@ -705,7 +713,7 @@ class IsaaclabArenaEnv(HubEnvConfig):
     def gym_kwargs(self) -> dict:
         return {}
 
-    def get_env_processors(self):
+    def get_env_processors(self, policy_cfg: Any | None = None):
         state_keys = tuple(k.strip() for k in (self.state_keys or "").split(",") if k.strip())
         camera_keys = tuple(k.strip() for k in (self.camera_keys or "").split(",") if k.strip())
         if not state_keys and not camera_keys:

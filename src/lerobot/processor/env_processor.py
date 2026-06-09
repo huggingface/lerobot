@@ -18,9 +18,9 @@ from dataclasses import dataclass
 import torch
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.utils.constants import OBS_IMAGES, OBS_PREFIX, OBS_STATE, OBS_STR
+from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_PREFIX, OBS_STATE, OBS_STR
 
-from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
+from .pipeline import ActionProcessorStep, ObservationProcessorStep, ProcessorStepRegistry
 
 
 @dataclass
@@ -45,6 +45,8 @@ class LiberoProcessorStep(ObservationProcessorStep):
     -   Rotates images by 180 degrees by flipping both height and width dimensions.
     -   This accounts for the HuggingFaceVLA/libero camera orientation convention.
     """
+
+    max_state_dim: int | None = None
 
     def _process_observation(self, observation):
         """
@@ -78,6 +80,15 @@ class LiberoProcessorStep(ObservationProcessorStep):
             state = state.float()
             if state.dim() == 1:
                 state = state.unsqueeze(0)
+            if self.max_state_dim is not None:
+                if state.shape[-1] > self.max_state_dim:
+                    raise ValueError(
+                        f"LIBERO state has {state.shape[-1]} dims, which is larger than "
+                        f"configured max_state_dim={self.max_state_dim}."
+                    )
+                if state.shape[-1] < self.max_state_dim:
+                    pad_width = self.max_state_dim - state.shape[-1]
+                    state = torch.nn.functional.pad(state, (0, pad_width))
 
             processed_obs[OBS_STATE] = state
         return processed_obs
@@ -101,7 +112,7 @@ class LiberoProcessorStep(ObservationProcessorStep):
         # add our new flattened state
         state_feats[OBS_STATE] = PolicyFeature(
             type=FeatureType.STATE,
-            shape=(8,),  # [eef_pos(3), axis_angle(3), gripper(2)]
+            shape=(self.max_state_dim or 8,),  # [eef_pos(3), axis_angle(3), gripper(2)] plus padding
         )
 
         new_features[FeatureType.STATE] = state_feats
@@ -110,6 +121,9 @@ class LiberoProcessorStep(ObservationProcessorStep):
 
     def observation(self, observation):
         return self._process_observation(observation)
+
+    def get_config(self) -> dict:
+        return {"max_state_dim": self.max_state_dim}
 
     def _quat2axisangle(self, quat: torch.Tensor) -> torch.Tensor:
         """
@@ -151,6 +165,32 @@ class LiberoProcessorStep(ObservationProcessorStep):
             result[mask] = axis * angle.unsqueeze(1)
 
         return result
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="libero_action_processor")
+class LiberoActionProcessorStep(ActionProcessorStep):
+    """Slices padded policy actions back to the executable LIBERO action space."""
+
+    action_dim: int = 7
+
+    def action(self, action):
+        if action.shape[-1] < self.action_dim:
+            raise ValueError(
+                f"LIBERO action has {action.shape[-1]} dims, which is smaller than action_dim={self.action_dim}."
+            )
+        return action[..., : self.action_dim]
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        new_features = {ft: feats.copy() for ft, feats in features.items()}
+        action_feats = new_features.setdefault(FeatureType.ACTION, {})
+        action_feats[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(self.action_dim,))
+        return new_features
+
+    def get_config(self) -> dict:
+        return {"action_dim": self.action_dim}
 
 
 @dataclass
