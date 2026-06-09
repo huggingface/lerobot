@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lerobot_teleoperator_rudder_pedal"
+version = "0.1.0"
+description = "Logitech/Saitek rudder pedal teleoperator for differential drive wheel control"
+requires-python = ">=3.10"
+dependencies = ["lerobot", "pygame"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["lerobot_teleoperator_rudder_pedal*"]

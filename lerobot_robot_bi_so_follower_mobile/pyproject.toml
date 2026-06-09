@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lerobot_robot_bi_so_follower_mobile"
+version = "0.1.0"
+description = "Bimanual SO-101 follower arms with dual wheel mobile base"
+requires-python = ">=3.10"
+dependencies = ["lerobot"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["lerobot_robot_bi_so_follower_mobile*"]
