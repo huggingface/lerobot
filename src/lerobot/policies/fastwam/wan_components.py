@@ -31,9 +31,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 WAN_DIT_PATTERN = "diffusion_pytorch_model*.safetensors"
-WAN_T5_CHECKPOINT = "models_t5_umt5-xxl-enc-bf16.pth"
+WAN_T5_SAFE_CHECKPOINT = "models_t5_umt5-xxl-enc-bf16.safetensors"
+WAN_T5_CHECKPOINT = WAN_T5_SAFE_CHECKPOINT
 WAN_T5_TOKENIZER = "google/umt5-xxl"
-WAN_VAE_CHECKPOINT = "Wan2.2_VAE.pth"
+WAN_VAE_SAFE_CHECKPOINT = "Wan2.2_VAE.safetensors"
+WAN_VAE_CHECKPOINT = WAN_VAE_SAFE_CHECKPOINT
 
 
 @dataclass(frozen=True)
@@ -101,25 +103,24 @@ def resolve_wan_checkpoint_paths(
     root = Path(checkpoint_dir).expanduser()
     tokenizer_root = Path(tokenizer_dir).expanduser() if tokenizer_dir is not None else root
     dit = sorted(root.glob(WAN_DIT_PATTERN)) if load_dit else []
-    vae = root / WAN_VAE_CHECKPOINT
-    text_encoder = root / WAN_T5_CHECKPOINT if load_text_encoder else None
+    vae = root / WAN_VAE_SAFE_CHECKPOINT
+    text_encoder = root / WAN_T5_SAFE_CHECKPOINT if load_text_encoder else None
     tokenizer = tokenizer_root / WAN_T5_TOKENIZER if load_text_encoder else None
 
     missing = []
     if load_dit and len(dit) == 0:
         missing.append(f"DiT ({WAN_DIT_PATTERN})")
     if not vae.exists():
-        missing.append(f"VAE ({WAN_VAE_CHECKPOINT})")
+        missing.append(f"VAE ({WAN_VAE_SAFE_CHECKPOINT})")
     if load_text_encoder:
         if text_encoder is None or not text_encoder.exists():
-            missing.append(f"text encoder ({WAN_T5_CHECKPOINT})")
+            missing.append(f"text encoder ({WAN_T5_SAFE_CHECKPOINT})")
         if tokenizer is None or not tokenizer.exists():
             missing.append(f"tokenizer ({WAN_T5_TOKENIZER})")
     if missing:
         raise FileNotFoundError(
             f"Incomplete Wan2.2 checkpoint directory {root}: missing {', '.join(missing)}."
         )
-
     return WanCheckpointPaths(
         root=root,
         dit=dit,
@@ -158,7 +159,10 @@ def load_wan_text_encoder(
         dtype=torch_dtype,
         device=device,
     )
-    state_dict = torch.load(checkpoint_path, map_location="cpu")
+    checkpoint_path = Path(checkpoint_path)
+    if checkpoint_path.suffix != ".safetensors":
+        raise ValueError(f"Wan2.2 text encoder checkpoint must be safetensors, got {checkpoint_path}.")
+    state_dict = load_file(checkpoint_path)
     model.load_state_dict(state_dict)
     return model.to(device=device, dtype=torch_dtype)
 

@@ -15,14 +15,15 @@
 from __future__ import annotations
 
 import shutil
+import warnings
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import torch
-import torch.nn.functional as functional
 from torch import Tensor
 
+from lerobot.configs import PreTrainedConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, OBS_STATE
 
@@ -55,6 +56,15 @@ class FastWAMPolicy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
         self.dataset_stats = dataset_stats
+        suppress_base_init_warning = bool(kwargs.pop("_suppress_base_init_warning", False))
+        if not skip_wan_init and not suppress_base_init_warning:
+            warnings.warn(
+                "FastWAMPolicy(config) initializes from architecture/config and does not load pretrained "
+                "FastWAM weights. For training or evaluation, use `make_policy(config)` or "
+                "`FastWAMPolicy.from_pretrained(...)`.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
         if skip_wan_init:
             self.model = _build_core_model_from_architecture(config)
         else:
@@ -82,7 +92,7 @@ class FastWAMPolicy(PreTrainedPolicy):
         Args:
             pretrained_name_or_path (str | Path): HF-format policy directory
                 containing `config.json`, `model.safetensors`, local Wan VAE,
-                local UMT5 text encoder, and tokenizer files.
+                local UMT5 text encoder safetensors, and tokenizer files.
             config (FastWAMConfig | None): Optional config override. When
                 omitted, `config.json` is read from `pretrained_name_or_path`.
             force_download (bool): Forwarded to LeRobot's pretrained loader.
@@ -107,7 +117,9 @@ class FastWAMPolicy(PreTrainedPolicy):
             revision=revision,
         )
         if config is None:
-            config = cls.config_class.from_pretrained(pretrained_path)
+            config = PreTrainedConfig.from_pretrained(pretrained_path)
+            if not isinstance(config, FastWAMConfig):
+                raise TypeError(f"Expected FastWAM config, got {type(config).__name__}.")
         kwargs["_skip_wan_init"] = True
         policy = super().from_pretrained(
             pretrained_path,
@@ -144,7 +156,7 @@ class FastWAMPolicy(PreTrainedPolicy):
 
         Args:
             pretrained_name_or_path (str | Path): Directory containing
-                `Wan2.2_VAE.pth`, `models_t5_umt5-xxl-enc-bf16.pth`,
+                `Wan2.2_VAE.safetensors`, `models_t5_umt5-xxl-enc-bf16.safetensors`,
                 and `google/umt5-xxl/` tokenizer files.
         """
 
@@ -171,7 +183,11 @@ class FastWAMPolicy(PreTrainedPolicy):
         sample = _batch_to_training_sample(batch=batch, config=self.config)
         loss, metrics = self.model.training_loss(sample)
         output = {"loss": loss}
-        output.update(_metrics_to_tensors(metrics=metrics, device=loss.device))
+        for key, value in (metrics or {}).items():
+            if isinstance(value, Tensor):
+                output[key] = value.to(device=loss.device)
+            else:
+                output[key] = torch.as_tensor(value, device=loss.device)
         return output
 
     @torch.no_grad()
@@ -232,6 +248,12 @@ def _resolve_pretrained_directory(
 
     from huggingface_hub import snapshot_download
 
+    from .wan_components import (
+        WAN_T5_CHECKPOINT,
+        WAN_T5_TOKENIZER,
+        WAN_VAE_CHECKPOINT,
+    )
+
     snapshot_path = snapshot_download(
         repo_id=str(pretrained_name_or_path),
         revision=revision,
@@ -242,9 +264,9 @@ def _resolve_pretrained_directory(
         allow_patterns=[
             "config.json",
             "model.safetensors",
-            "Wan2.2_VAE.pth",
-            "models_t5_umt5-xxl-enc-bf16.pth",
-            "google/umt5-xxl/**",
+            WAN_VAE_CHECKPOINT,
+            WAN_T5_CHECKPOINT,
+            f"{WAN_T5_TOKENIZER}/**",
         ],
     )
     return Path(snapshot_path)
@@ -284,10 +306,6 @@ def _load_wan_components_into_policy(policy: FastWAMPolicy, paths: WanCheckpoint
         paths.tokenizer,
         tokenizer_max_len=int(policy.config.tokenizer_max_len),
     )
-    _record_wan_component_paths(policy=policy, paths=paths)
-
-
-def _record_wan_component_paths(policy: FastWAMPolicy, paths: WanCheckpointPaths) -> None:
     model_paths = dict(getattr(policy.model, "model_paths", {}) or {})
     model_paths.update(
         {
@@ -504,18 +522,6 @@ def _dtype_from_name(name: str) -> torch.dtype:
     return dtype_map[name]
 
 
-def _metrics_to_tensors(metrics: dict[str, Any] | None, device: torch.device) -> dict[str, Tensor]:
-    if metrics is None:
-        return {}
-    tensor_metrics = {}
-    for key, value in metrics.items():
-        if isinstance(value, Tensor):
-            tensor_metrics[key] = value.to(device=device)
-        else:
-            tensor_metrics[key] = torch.as_tensor(value, device=device)
-    return tensor_metrics
-
-
 def batch_device(batch: dict[str, Any]) -> torch.device:
     for value in batch.values():
         if isinstance(value, Tensor):
@@ -555,29 +561,11 @@ def _prepare_infer_image(image: Tensor, config: FastWAMConfig) -> Tensor:
     if image.ndim != 4:
         raise ValueError(f"Expected image tensor [B,C,H,W] or [C,H,W], got {tuple(image.shape)}.")
 
-    if image.dtype == torch.uint8:
-        image = image.to(dtype=torch.float32).div(255.0).mul(2.0).sub(1.0)
-    else:
-        image = image.to(dtype=torch.float32)
-        image_min = float(image.detach().amin().cpu())
-        image_max = float(image.detach().amax().cpu())
-        if image_min >= 0.0 and image_max <= 1.0:
-            image = image.mul(2.0).sub(1.0)
-        elif image_max > 2.0:
-            image = image.div(255.0).mul(2.0).sub(1.0)
-
     target_h, target_w = config.image_size
     if tuple(image.shape[-2:]) != (target_h, target_w):
-        image = _center_crop_resize(image, target_h=target_h, target_w=target_w)
+        raise ValueError(
+            "FastWAM policy expects preprocessed image tensors with shape "
+            f"[B,C,{target_h},{target_w}], got {tuple(image.shape)}. "
+            "Run the FastWAM preprocessor before calling the policy."
+        )
     return image
-
-
-def _center_crop_resize(image: Tensor, *, target_h: int, target_w: int) -> Tensor:
-    _, _, height, width = image.shape
-    scale = max(target_h / height, target_w / width)
-    resized_h = round(height * scale)
-    resized_w = round(width * scale)
-    image = functional.interpolate(image, size=(resized_h, resized_w), mode="bilinear", align_corners=False)
-    top = max((resized_h - target_h) // 2, 0)
-    left = max((resized_w - target_w) // 2, 0)
-    return image[:, :, top : top + target_h, left : left + target_w].contiguous()

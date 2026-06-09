@@ -19,7 +19,7 @@ from typing import Any
 
 import torch
 
-from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.processor import (
     ActionProcessorStep,
     AddBatchDimensionProcessorStep,
@@ -39,36 +39,6 @@ from lerobot.utils.constants import (
 )
 
 from .configuration_fastwam import FastWAMConfig
-
-
-@dataclass
-@ProcessorStepRegistry.register(name="fastwam_action_inversion_processor")
-class FastWAMActionInversionProcessorStep(ActionProcessorStep):
-    """Invert configured FastWAM action dimensions during postprocessing."""
-
-    invert_dimensions: list[int]
-
-    def action(self, action: PolicyAction) -> PolicyAction:
-        if not self.invert_dimensions:
-            return action
-        processed_action = action.clone()
-        action_dim = int(processed_action.shape[-1])
-        for dim in self.invert_dimensions:
-            resolved_dim = dim if dim >= 0 else action_dim + dim
-            if resolved_dim < 0 or resolved_dim >= action_dim:
-                raise ValueError(
-                    f"FastWAM action inversion dimension {dim} is out of bounds for action dim {action_dim}."
-                )
-            processed_action[..., resolved_dim] = -processed_action[..., resolved_dim]
-        return processed_action
-
-    def get_config(self) -> dict[str, Any]:
-        return {"invert_dimensions": self.invert_dimensions}
-
-    def transform_features(
-        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
-    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        return features
 
 
 @dataclass
@@ -120,6 +90,17 @@ def make_fastwam_pre_post_processors(
         output processor pipelines discoverable by LeRobot.
     """
 
+    normalization_stats: dict[str, dict[str, Any]] = {
+        key: dict(value) for key, value in (dataset_stats or {}).items()
+    }
+    for key, feature in config.input_features.items():
+        if feature.type != FeatureType.VISUAL:
+            continue
+        channels = int(feature.shape[0])
+        normalization_stats[key] = {
+            "mean": torch.full((channels, 1, 1), 0.5, dtype=torch.float32),
+            "std": torch.full((channels, 1, 1), 0.5, dtype=torch.float32),
+        }
     input_steps = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
@@ -127,7 +108,7 @@ def make_fastwam_pre_post_processors(
         NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
-            stats=dataset_stats,
+            stats=normalization_stats,
             device=config.device,
         ),
     ]
@@ -135,43 +116,14 @@ def make_fastwam_pre_post_processors(
         UnnormalizerProcessorStep(
             features=config.output_features,
             norm_map=config.normalization_mapping,
-            stats=dataset_stats,
+            stats=normalization_stats,
         ),
     ]
     if config.toggle_action_dimensions:
         output_steps.append(
             FastWAMActionToggleProcessorStep(toggle_dimensions=config.toggle_action_dimensions)
         )
-    elif config.invert_dimensions:
-        output_steps.append(FastWAMActionInversionProcessorStep(invert_dimensions=config.invert_dimensions))
     output_steps.append(DeviceProcessorStep(device="cpu"))
-    return _build_lerobot_pipelines(input_steps=input_steps, output_steps=output_steps)
-
-
-def migrate_fastwam_postprocessor(
-    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
-    config: FastWAMConfig,
-) -> PolicyProcessorPipeline[PolicyAction, PolicyAction]:
-    """Upgrade old FastWAM postprocessor pipelines to the LIBERO toggle step."""
-
-    if not config.toggle_action_dimensions:
-        return postprocessor
-
-    toggle_step = FastWAMActionToggleProcessorStep(toggle_dimensions=config.toggle_action_dimensions)
-    steps = [
-        step
-        for step in postprocessor.steps
-        if not isinstance(step, (FastWAMActionInversionProcessorStep, FastWAMActionToggleProcessorStep))
-    ]
-    insert_at = next(
-        (idx for idx, step in enumerate(steps) if isinstance(step, DeviceProcessorStep)), len(steps)
-    )
-    steps.insert(insert_at, toggle_step)
-    postprocessor.steps = steps
-    return postprocessor
-
-
-def _build_lerobot_pipelines(input_steps: list[Any], output_steps: list[Any]) -> tuple[Any, Any]:
     return (
         PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
             steps=input_steps,

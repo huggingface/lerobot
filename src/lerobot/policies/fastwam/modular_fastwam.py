@@ -27,7 +27,9 @@ from PIL import Image
 from .wan_components import load_wan22_ti2v_5b_components
 from .wan_video_dit import (
     FastWAMAttentionBlock,
+    WanContinuousFlowMatchScheduler,
     fastwam_masked_attention,
+    gradient_checkpoint_forward,
     modulate,
     precompute_freqs_cis,
     sinusoidal_embedding_1d,
@@ -62,130 +64,6 @@ def _apply_block_norm(block, name: str, x: torch.Tensor) -> torch.Tensor:
     return getattr(block, name)(x)
 
 
-def _get_wan_sampling_sigmas(num_inference_steps: int, shift: float) -> list[float]:
-    from .wan.utils.fm_solvers import get_sampling_sigmas
-
-    return get_sampling_sigmas(num_inference_steps, shift)
-
-
-def create_custom_forward(module):
-    def custom_forward(*inputs, **kwargs):
-        return module(*inputs, **kwargs)
-
-    return custom_forward
-
-
-def gradient_checkpoint_forward(
-    model,
-    use_gradient_checkpointing,
-    *args,
-    **kwargs,
-):
-    if use_gradient_checkpointing:
-        model_output = torch.utils.checkpoint.checkpoint(
-            create_custom_forward(model),
-            *args,
-            **kwargs,
-            use_reentrant=False,
-        )
-    else:
-        model_output = model(*args, **kwargs)
-    return model_output
-
-
-class WanContinuousFlowMatchScheduler:
-    """Continuous-time Flow-Matching scheduler with shift-based sampling."""
-
-    def __init__(self, num_train_timesteps: int = 1000, shift: float = 5.0, eps: float = 1e-10):
-        if num_train_timesteps <= 0:
-            raise ValueError(f"`num_train_timesteps` must be positive, got {num_train_timesteps}")
-        if shift <= 0:
-            raise ValueError(f"`shift` must be positive, got {shift}")
-        self.num_train_timesteps = int(num_train_timesteps)
-        self.shift = float(shift)
-        self.eps = float(eps)
-        self._y_min, self._weight_norm_const = self._precompute_training_weight_stats()
-
-    @staticmethod
-    def _phi(u: torch.Tensor, shift: float) -> torch.Tensor:
-        return shift * u / (1.0 + (shift - 1.0) * u)
-
-    def _precompute_training_weight_stats(self) -> tuple[float, float]:
-        steps = self.num_train_timesteps
-        u_grid = torch.linspace(1.0, 0.0, steps + 1, dtype=torch.float64)[:-1]
-        t_grid = self._phi(u_grid, self.shift) * float(steps)
-        y_grid = torch.exp(-2.0 * ((t_grid - (steps / 2.0)) / steps) ** 2)
-        y_min = float(y_grid.min().item())
-        y_shifted_grid = y_grid - y_min
-        norm_const = float(y_shifted_grid.mean().item())
-        return y_min, norm_const
-
-    def sample_training_t(self, batch_size: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
-        if batch_size <= 0:
-            raise ValueError(f"`batch_size` must be positive, got {batch_size}")
-        u = torch.rand((batch_size,), device=device, dtype=torch.float32)
-        sigma = self._phi(u, self.shift)
-        timestep = sigma * float(self.num_train_timesteps)
-        return timestep.to(dtype=dtype)
-
-    def training_weight(self, timestep: torch.Tensor) -> torch.Tensor:
-        t = timestep.to(dtype=torch.float32)
-        steps = float(self.num_train_timesteps)
-        y = torch.exp(-2.0 * ((t - (steps / 2.0)) / steps) ** 2)
-        y_shifted = y - self._y_min
-        weight = y_shifted / (self._weight_norm_const + self.eps)
-        if weight.numel() == 1:
-            return weight.reshape(())
-        return weight
-
-    def add_noise(
-        self, original_samples: torch.Tensor, noise: torch.Tensor, timestep: torch.Tensor
-    ) -> torch.Tensor:
-        sigma = (timestep / float(self.num_train_timesteps)).to(
-            original_samples.device, dtype=original_samples.dtype
-        )
-        if sigma.ndim == 0:
-            return (1 - sigma) * original_samples + sigma * noise
-        sigma = sigma.view(-1, *([1] * (original_samples.ndim - 1)))
-        return (1 - sigma) * original_samples + sigma * noise
-
-    @staticmethod
-    def training_target(sample: torch.Tensor, noise: torch.Tensor, timestep: torch.Tensor) -> torch.Tensor:
-        del timestep
-        return noise - sample
-
-    def build_inference_schedule(
-        self,
-        num_inference_steps: int,
-        device: torch.device,
-        dtype: torch.dtype,
-        shift_override: float | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        if num_inference_steps <= 0:
-            raise ValueError(f"`num_inference_steps` must be positive, got {num_inference_steps}")
-        shift = self.shift if shift_override is None else float(shift_override)
-        if shift <= 0:
-            raise ValueError(f"`shift` must be positive, got {shift}")
-
-        sigma_steps = torch.as_tensor(
-            _get_wan_sampling_sigmas(num_inference_steps, shift),
-            device=device,
-            dtype=torch.float32,
-        )
-        timesteps = sigma_steps * float(self.num_train_timesteps)
-        sigma_next = torch.cat([sigma_steps[1:], sigma_steps.new_zeros(1)])
-        deltas = sigma_next - sigma_steps
-        return timesteps.to(dtype=dtype), deltas.to(dtype=dtype)
-
-    @staticmethod
-    def step(model_output: torch.Tensor, delta: torch.Tensor, sample: torch.Tensor) -> torch.Tensor:
-        delta = delta.to(sample.device, dtype=sample.dtype)
-        if delta.ndim == 0:
-            return sample + model_output * delta
-        delta = delta.view(-1, *([1] * (sample.ndim - 1)))
-        return sample + model_output * delta
-
-
 class ActionHead(nn.Module):
     def __init__(self, hidden_dim: int, out_dim: int, eps: float):
         super().__init__()
@@ -213,6 +91,7 @@ class ActionDiT(nn.Module):
         attn_head_dim: int,
         num_layers: int,
         use_gradient_checkpointing: bool = False,
+        fp32_attention: bool = True,
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
@@ -250,12 +129,14 @@ class ActionDiT(nn.Module):
                     num_heads=num_heads,
                     ffn_dim=ffn_dim,
                     eps=eps,
+                    fp32_attention=fp32_attention,
                 )
                 for _ in range(num_layers)
             ]
         )
         self.head = nn.Linear(hidden_dim, action_dim)
         self.freqs = precompute_freqs_cis(attn_head_dim, end=1024)
+        self.fp32_attention = bool(fp32_attention)
 
         self.use_gradient_checkpointing = use_gradient_checkpointing
 
@@ -395,6 +276,7 @@ class MoT(nn.Module):
         self.num_layers = len(first_expert.blocks)
         self.num_heads = first_expert.num_heads
         self.attn_head_dim = first_expert.attn_head_dim
+        self.fp32_attention = bool(getattr(first_expert, "fp32_attention", True))
 
         for name in self.expert_order[1:]:
             expert = self.mixtures[name]
@@ -411,6 +293,8 @@ class MoT(nn.Module):
                     "All experts must have same attn_head_dim; "
                     f"got {self.attn_head_dim} and {expert.attn_head_dim}"
                 )
+            if bool(getattr(expert, "fp32_attention", True)) != self.fp32_attention:
+                raise ValueError("All experts must use the same `fp32_attention` setting.")
 
         logger.info(f"Initialized MoT with experts: {self.expert_order}, num_layers={self.num_layers}")
         for name in self.expert_order:
@@ -450,7 +334,14 @@ class MoT(nn.Module):
         attn_mask = attention_mask.to(device=q_cat.device)
 
         def _forward(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
-            return fastwam_masked_attention(q=q, k=k, v=v, num_heads=self.num_heads, ctx_mask=attn_mask)
+            return fastwam_masked_attention(
+                q=q,
+                k=k,
+                v=v,
+                num_heads=self.num_heads,
+                ctx_mask=attn_mask,
+                fp32_attention=self.fp32_attention,
+            )
 
         if self.mot_checkpoint_mixed_attn and self.training:
             return torch.utils.checkpoint.checkpoint(
@@ -1107,6 +998,8 @@ class FastWAM(torch.nn.Module):
         seq_lens = mask.gt(0).sum(dim=1).long()
         for i, v in enumerate(seq_lens):
             prompt_emb[i, v:] = 0
+        # Match FastWAM/Wan2.2 context semantics: padding embeddings are zeroed,
+        # while cross-attention still sees a fixed-length context.
         mask = torch.ones_like(mask)
         return prompt_emb.to(device=self.device), mask
 
@@ -1822,7 +1715,7 @@ class FastWAM(torch.nn.Module):
             timestep_video = step_t_video.unsqueeze(0).to(dtype=latents_video.dtype, device=self.device)
             timestep_action = step_t_action.unsqueeze(0).to(dtype=latents_action.dtype, device=self.device)
 
-            pred_video_posi, pred_action_posi = self._predict_joint_noise(
+            pred_video, pred_action = self._predict_joint_noise(
                 latents_video=latents_video,
                 latents_action=latents_action,
                 timestep_video=timestep_video,
@@ -1832,8 +1725,6 @@ class FastWAM(torch.nn.Module):
                 fuse_vae_embedding_in_latents=fuse_flag,
                 gt_action=action,
             )
-            pred_video = pred_video_posi
-            pred_action = pred_action_posi
 
             latents_video = self.infer_video_scheduler.step(pred_video, step_delta_video, latents_video)
             latents_action = self.infer_action_scheduler.step(pred_action, step_delta_action, latents_action)
@@ -1924,7 +1815,7 @@ class FastWAM(torch.nn.Module):
         for step_t_action, step_delta_action in zip(infer_timesteps_action, infer_deltas_action, strict=True):
             timestep_action = step_t_action.unsqueeze(0).to(dtype=latents_action.dtype, device=self.device)
 
-            pred_action_posi = self._predict_action_noise_with_cache(
+            pred_action = self._predict_action_noise_with_cache(
                 latents_action=latents_action,
                 timestep_action=timestep_action,
                 context=context,
@@ -1933,7 +1824,6 @@ class FastWAM(torch.nn.Module):
                 attention_mask=attention_mask,
                 video_seq_len=video_seq_len,
             )
-            pred_action = pred_action_posi
 
             latents_action = self.infer_action_scheduler.step(pred_action, step_delta_action, latents_action)
 

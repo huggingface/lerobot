@@ -327,10 +327,6 @@ def make_pre_post_processors(
             to_output=transition_to_policy_action,
         )
         _reconnect_relative_absolute_steps(preprocessor, postprocessor)
-        if isinstance(policy_cfg, FastWAMConfig):
-            from .fastwam.processor_fastwam import migrate_fastwam_postprocessor
-
-            postprocessor = migrate_fastwam_postprocessor(postprocessor, policy_cfg)
         return preprocessor, postprocessor
 
     # Create a new processor based on policy type

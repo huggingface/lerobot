@@ -14,8 +14,7 @@
 
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -29,9 +28,34 @@ from lerobot.optim import AdamWConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 WAN22_MODEL_ID = "Wan-AI/Wan2.2-TI2V-5B"
+FASTWAM_BASE_MODEL_ID = "lerobot/fastwam-base"
 
 
-def _default_video_dit_config(action_dim: int) -> dict[str, Any]:
+_FASTWAM_VIDEO_BASE_COMPAT_KEYS = (
+    "patch_size",
+    "in_dim",
+    "hidden_dim",
+    "ffn_dim",
+    "freq_dim",
+    "text_dim",
+    "out_dim",
+    "num_heads",
+    "attn_head_dim",
+    "num_layers",
+)
+
+_FASTWAM_ACTION_BASE_COMPAT_KEYS = (
+    "hidden_dim",
+    "ffn_dim",
+    "num_heads",
+    "attn_head_dim",
+    "num_layers",
+    "text_dim",
+    "freq_dim",
+)
+
+
+def default_video_dit_config(action_dim: int) -> dict[str, Any]:
     return {
         "patch_size": [1, 2, 2],
         "in_dim": 48,
@@ -50,10 +74,11 @@ def _default_video_dit_config(action_dim: int) -> dict[str, Any]:
         "action_conditioned": False,
         "action_dim": action_dim,
         "action_group_causal_mask_mode": "group_diagonal",
+        "fp32_attention": True,
     }
 
 
-def _default_action_dit_config(action_dim: int) -> dict[str, Any]:
+def default_action_dit_config(action_dim: int) -> dict[str, Any]:
     return {
         "action_dim": action_dim,
         "hidden_dim": 1024,
@@ -65,6 +90,7 @@ def _default_action_dit_config(action_dim: int) -> dict[str, Any]:
         "freq_dim": 256,
         "eps": 1.0e-6,
         "use_gradient_checkpointing": False,
+        "fp32_attention": True,
     }
 
 
@@ -107,13 +133,18 @@ def _validate_wan_model_id(value: str, field_name: str) -> str:
     raise ValueError(f"`{field_name}` must be `{WAN22_MODEL_ID}` or an explicit local path, got `{value}`.")
 
 
-def _coerce_pretrained_tokenizer_model_id(payload: dict[str, Any]) -> None:
-    tokenizer_model_id = payload.get("tokenizer_model_id")
-    if tokenizer_model_id is None:
-        return
-    if tokenizer_model_id == WAN22_MODEL_ID or _is_local_model_id(tokenizer_model_id):
-        return
-    payload["tokenizer_model_id"] = WAN22_MODEL_ID
+def is_fastwam_base_compatible_config(config: FastWAMConfig) -> bool:
+    """Return whether `fastwam-base` partial weights can initialize this config."""
+
+    default_video_config = default_video_dit_config(config.action_dim)
+    default_action_config = default_action_dit_config(config.action_dim)
+    return all(
+        config.video_dit_config.get(key) == default_video_config.get(key)
+        for key in _FASTWAM_VIDEO_BASE_COMPAT_KEYS
+    ) and all(
+        config.action_dit_config.get(key) == default_action_config.get(key)
+        for key in _FASTWAM_ACTION_BASE_COMPAT_KEYS
+    )
 
 
 @PreTrainedConfig.register_subclass("fastwam")
@@ -131,8 +162,6 @@ class FastWAMConfig(PreTrainedConfig):
         context_len (int): Maximum text embedding token length.
         video_dit_config (dict[str, Any] | None): Wan video expert config.
         action_dit_config (dict[str, Any] | None): Action expert config.
-        invert_dimensions (list[int]): Action dimensions to multiply by -1
-            during postprocessing. Supports negative indices.
     """
 
     n_obs_steps: int = 1
@@ -145,6 +174,7 @@ class FastWAMConfig(PreTrainedConfig):
     context_len: int = 128
     model_id: str = WAN22_MODEL_ID
     tokenizer_model_id: str = WAN22_MODEL_ID
+    base_model_id: str | None = FASTWAM_BASE_MODEL_ID
     tokenizer_max_len: int = 128
     load_text_encoder: bool = True
     mot_checkpoint_mixed_attn: bool = False
@@ -159,7 +189,8 @@ class FastWAMConfig(PreTrainedConfig):
     negative_prompt: str = ""
     sigma_shift: float | None = None
     tiled: bool = False
-    toggle_action_dimensions: list[int] = field(default_factory=lambda: [-1])
+    fp32_attention: bool = True
+    toggle_action_dimensions: list[int] = field(default_factory=list)
     video_scheduler: dict[str, float | int] = field(
         default_factory=lambda: {"train_shift": 5.0, "infer_shift": 5.0, "num_train_timesteps": 1000}
     )
@@ -169,7 +200,6 @@ class FastWAMConfig(PreTrainedConfig):
     loss: dict[str, float] = field(default_factory=lambda: {"lambda_video": 1.0, "lambda_action": 1.0})
     video_dit_config: dict[str, Any] | None = None
     action_dit_config: dict[str, Any] | None = None
-    invert_dimensions: list[int] = field(default_factory=list)
     normalization_mapping: dict[str, Any] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.MEAN_STD,
@@ -183,33 +213,52 @@ class FastWAMConfig(PreTrainedConfig):
     optimizer_weight_decay: float = 1.0e-2
 
     def __post_init__(self) -> None:
-        parent_post_init = getattr(super(), "__post_init__", None)
-        if parent_post_init is not None:
-            parent_post_init()
+        super().__post_init__()
         self.image_size = tuple(self.image_size)
         self.model_id = _validate_wan_model_id(self.model_id, "model_id")
         self.tokenizer_model_id = _validate_wan_model_id(self.tokenizer_model_id, "tokenizer_model_id")
         self.input_features = _coerce_policy_features(self.input_features)
         self.output_features = _coerce_policy_features(self.output_features)
-        self.invert_dimensions = [int(dim) for dim in self.invert_dimensions]
         self.toggle_action_dimensions = [int(dim) for dim in self.toggle_action_dimensions]
         self.normalization_mapping = _coerce_normalization_mapping(self.normalization_mapping)
-        self.video_dit_config = self.video_dit_config or _default_video_dit_config(self.action_dim)
-        self.action_dit_config = self.action_dit_config or _default_action_dit_config(self.action_dim)
-        self.input_features = self.input_features or self._default_input_features()
-        self.output_features = self.output_features or self._default_output_features()
+        self.video_dit_config = self.video_dit_config or default_video_dit_config(self.action_dim)
+        self.action_dit_config = self.action_dit_config or default_action_dit_config(self.action_dim)
+        self.video_dit_config["fp32_attention"] = bool(self.fp32_attention)
+        self.action_dit_config["fp32_attention"] = bool(self.fp32_attention)
+        if self.input_features is None:
+            height, width = self.image_size
+            self.input_features = {
+                "observation.images.image": PolicyFeature(
+                    type=FeatureType.VISUAL,
+                    shape=(3, height, width),
+                )
+            }
+            if self.proprio_dim is not None:
+                self.input_features[OBS_STATE] = PolicyFeature(
+                    type=FeatureType.STATE,
+                    shape=(self.proprio_dim,),
+                )
+        if self.output_features is None:
+            self.output_features = {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(self.action_dim,))}
         self.validate_features()
+        if self.pretrained_path or self.use_peft or not self.base_model_id:
+            return
+        if not is_fastwam_base_compatible_config(self):
+            return
+        self.pretrained_path = Path(self.base_model_id)
+        self._auto_pretrained_path = True
 
-    @classmethod
-    def from_pretrained(cls, pretrained_name_or_path: str | Path, **_: Any) -> FastWAMConfig:
-        config_path = Path(pretrained_name_or_path) / "config.json"
-        with open(config_path, encoding="utf-8") as f:
-            payload = json.load(f)
-        payload.pop("type", None)
-        known_fields = {field.name for field in fields(cls)}
-        payload = {key: value for key, value in payload.items() if key in known_fields}
-        _coerce_pretrained_tokenizer_model_id(payload)
-        return cls(**payload)
+    def _save_pretrained(self, save_directory: Path) -> None:
+        if not getattr(self, "_auto_pretrained_path", False):
+            super()._save_pretrained(save_directory)
+            return
+
+        pretrained_path = self.pretrained_path
+        self.pretrained_path = None
+        try:
+            super()._save_pretrained(save_directory)
+        finally:
+            self.pretrained_path = pretrained_path
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(lr=self.optimizer_lr, weight_decay=self.optimizer_weight_decay)
@@ -244,9 +293,6 @@ class FastWAMConfig(PreTrainedConfig):
                 raise ValueError(
                     f"FastWAM state feature shape must be ({self.proprio_dim},), got {state_shape}."
                 )
-        self._validate_image_feature_shapes()
-
-    def _validate_image_feature_shapes(self) -> None:
         height, width = self.image_size
         image_width_sum = 0
         for name, feature in self.image_features.items():
@@ -270,15 +316,3 @@ class FastWAMConfig(PreTrainedConfig):
     @property
     def reward_delta_indices(self) -> None:
         return None
-
-    def _default_input_features(self) -> dict[str, PolicyFeature]:
-        height, width = self.image_size
-        features = {
-            "observation.images.image": PolicyFeature(type=FeatureType.VISUAL, shape=(3, height, width))
-        }
-        if self.proprio_dim is not None:
-            features[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=(self.proprio_dim,))
-        return features
-
-    def _default_output_features(self) -> dict[str, PolicyFeature]:
-        return {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(self.action_dim,))}
