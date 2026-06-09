@@ -1,0 +1,6 @@
+- sections:
+  - local: contributing
+    title: 為 LeRobot 做出貢獻
+  - local: backwardcomp
+    title: 向下相容性
+  title: "關於"
