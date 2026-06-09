@@ -590,13 +590,20 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         # Get episode index from the item
         ep_idx = item["episode_index"]
 
-        # "timestamp" restarts from 0 for each episode, whereas we need a global timestep within the single .mp4 file (given by index/fps)
-        current_ts = item["index"] / self.fps
+        # `timestamp` is episode-local (restarts at 0 each episode). The absolute in-file timestamp is
+        # `from_timestamp + timestamp`, applied per camera at decode time (see `_query_videos`), mirroring
+        # the map-style reader. Using `index / fps` here is a dataset-global value that only matches the
+        # file timeline when the whole dataset is a single video (e.g. small test fixtures), and otherwise
+        # decodes out-of-range frames on multi-file v3 datasets.
+        current_ts = float(item["timestamp"])
 
+        # Per-camera episode-local bounds [0, duration]. Query timestamps are clamped into this range so
+        # out-of-episode deltas pad rather than decode against a neighbouring episode in the same file.
         episode_boundaries_ts = {
             key: (
-                self.meta.episodes[ep_idx][f"videos/{key}/from_timestamp"],
-                self.meta.episodes[ep_idx][f"videos/{key}/to_timestamp"],
+                0.0,
+                self.meta.episodes[ep_idx][f"videos/{key}/to_timestamp"]
+                - self.meta.episodes[ep_idx][f"videos/{key}/from_timestamp"],
             )
             for key in self.meta.video_keys
         }
@@ -669,11 +676,14 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         item = {}
         for video_key, query_ts in query_timestamps.items():
+            # query_ts is episode-local; shift to the absolute in-file timeline by the episode's offset.
+            from_timestamp = self.meta.episodes[ep_idx][f"videos/{video_key}/from_timestamp"]
+            shifted_query_ts = [from_timestamp + ts for ts in query_ts]
             root = self.meta.url_root if self.streaming and not self.streaming_from_local else self.root
             video_path = f"{root}/{self.meta.get_video_file_path(ep_idx, video_key)}"
             frames = decode_video_frames_torchcodec(
                 video_path,
-                query_ts,
+                shifted_query_ts,
                 self.tolerance_s,
                 decoder_cache=self.video_decoder_cache,
                 return_uint8=self._return_uint8,
