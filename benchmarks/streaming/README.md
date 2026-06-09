@@ -55,8 +55,9 @@ limited number of concurrent decode sessions per GPU; if you hit session/IPC lim
 or compare against `--num_workers 0` (single-process NVDEC, which often saturates the decode engine on its
 own). Result files include the decode device in their name (`..._w6_cuda.json`).
 
-> **Codec ⇄ NVDEC compatibility (important).** NVDEC can only decode codecs its hardware supports. LeRobot
-> v3 datasets are often **AV1**-encoded, and the **A100 and H100 compute GPUs have no AV1 NVDEC decoder**
+> **Codec ⇄ NVDEC compatibility (important).** NVDEC can only decode codecs its hardware supports. LeRobot's
+> **default video codec is AV1** (`VideoEncoderConfig.vcodec = "libsvtav1"`), so most v3 datasets are
+> AV1-encoded — and the **A100 and H100 compute GPUs have no AV1 NVDEC decoder**
 > (per NVIDIA's [decode support matrix](https://developer.nvidia.com/video-encode-and-decode-gpu-support-matrix-new));
 > only Ada (L4/L40/RTX40) and a few Ampere cards (A10/A40/A16) do. On A100/H100, AV1 must be decoded on
 > **CPU**, or the dataset re-encoded to H.265/H.264 (which those GPUs' NVDEC do support). Run
