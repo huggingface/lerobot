@@ -58,14 +58,69 @@ This is a **{{ model_name }}** policy trained with [LeRobot](https://github.com/
 {% endif %}
 
 This policy has been trained and pushed to the Hub using [LeRobot](https://github.com/huggingface/lerobot).
-See the full documentation at [LeRobot Docs](https://huggingface.co/docs/lerobot/index).
+{% set policy_docs = {"act": "act", "smolvla": "smolvla", "pi0": "pi0", "pi0_fast": "pi0fast", "pi05": "pi05", "eo1": "eo1", "groot": "groot"} %}
+{% if policy_docs.get(model_name) %}Learn how to train and run it in the [LeRobot {{ model_name }} guide](https://huggingface.co/docs/lerobot/main/en/{{ policy_docs[model_name] }}), or browse the [full documentation](https://huggingface.co/docs/lerobot/index).
+{% else %}See the [full LeRobot documentation](https://huggingface.co/docs/lerobot/index).
+{% endif %}
 
+---
+
+## Model Details
+
+- **License:** {{ license | default("\[More Information Needed]", true) }}
+{% if robot_type %}- **Robot type:** `{{ robot_type }}`
+{% endif %}{% if cameras %}- **Cameras:** {% for camera in cameras %}`{{ camera }}`{% if not loop.last %}, {% endif %}{% endfor %}
+{% endif %}
+{% if input_features or output_features %}
+## Inputs & Outputs
+
+The policy consumes these observation features and produces these action features.
+{% if input_features %}
+**Inputs**
+
+| Feature | Type | Shape |
+| --- | --- | --- |
+{% for name, feature in input_features.items() %}| `{{ name }}` | {{ feature.type.value }} | `{{ feature.shape }}` |
+{% endfor %}{% endif %}{% if output_features %}
+**Outputs**
+
+| Feature | Type | Shape |
+| --- | --- | --- |
+{% for name, feature in output_features.items() %}| `{{ name }}` | {{ feature.type.value }} | `{{ feature.shape }}` |
+{% endfor %}{% endif %}{% endif %}
+{% if dataset %}
+## Training Dataset
+
+- **Repository:** [{{ dataset.repo_id }}](https://huggingface.co/datasets/{{ dataset.repo_id }})
+- **Episodes:** {{ dataset.episodes }}
+- **Frames:** {{ dataset.frames }}
+- **Frame rate:** {{ dataset.fps }} FPS
+{% if dataset.tasks %}- **Task(s):** {% for task in dataset.tasks %}"{{ task }}"{% if not loop.last %}, {% endif %}{% endfor %}
+{% endif %}{% endif %}
+{% if training %}
+## Training Configuration
+
+| Setting | Value |
+| --- | --- |
+| Training steps | {{ training.steps }} |
+| Batch size | {{ training.batch_size }} |
+{% if training.optimizer %}| Optimizer | {{ training.optimizer }} |
+{% endif %}{% if training.lr %}| Learning rate | {{ training.lr }} |
+{% endif %}{% if training.seed is not none %}| Seed | {{ training.seed }} |
+{% endif %}| LeRobot version | {{ training.lerobot_version }} |
+{% endif %}
 ---
 
 ## How to Get Started with the Model
 
-For a complete walkthrough, see the [training guide](https://huggingface.co/docs/lerobot/il_robots#train-a-policy).
-Below is the short version on how to train and run inference/eval:
+New to LeRobot? These guides cover the full workflow:
+
+- **[Install LeRobot](https://huggingface.co/docs/lerobot/main/en/installation)** — set up the `lerobot` package.
+- **[Hardware setup](https://huggingface.co/docs/lerobot/main/en/hardware_guide)** — assemble, wire, and calibrate your robot and cameras.
+- **[Record data & train a policy](https://huggingface.co/docs/lerobot/en/il_robots)** — the end-to-end imitation-learning walkthrough.
+- **[CLI cheat-sheet](https://huggingface.co/docs/lerobot/main/en/cheat-sheet)** — quick reference for the `lerobot-*` commands.
+
+The short version to train and run this policy:
 
 ### Train from scratch
 
@@ -97,10 +152,27 @@ lerobot-rollout \
 
 Replace every `<...>` placeholder with your own values. The `--robot.type`, `--robot.port`, and camera names/indices must match the robot and observation keys this policy was trained on, and `--task` should describe what you want the policy to do.
 
-If you want to record a dataset while testing the policy use `--dataset.repo_id=<hf_user>/eval_dataset_name` it is important to use the prefix **eval\_**. For the policy path use the policy from the Hugging Face Hub or a local one. Skipping duration will make the policy run indefinitely.
+When `--strategy.type=base` is used the script doesn't record the episodes. Skipping duration will make the policy run indefinitely. For more information look at [rollout documentation](https://huggingface.co/docs/lerobot/main/en/inference).
 
 ---
 
-## Model Details
+## Evaluation
 
-- **License:** {{ license | default("\[More Information Needed]", true) }}
+<!-- Add evaluation results here: success rate, number of trials, and the conditions (robot, task, environment). -->
+
+_No evaluation results have been provided for this policy yet._
+
+---
+
+## Citation
+
+If you use this policy, please cite the method linked in the description above, along with LeRobot:
+
+```bibtex
+@misc{cadene2024lerobot,
+    author = {Cadene, Remi and Alibert, Simon and Soare, Alexander and Gallouedec, Quentin and Zouitine, Adil and Palma, Steven and Kooijmans, Pepijn and Aractingi, Michel and Shukor, Mustafa and Aubakirova, Dana and Russi, Martino and Capuano, Francesco and Pascal, Caroline and Choghari, Jade and Moss, Jess and Wolf, Thomas},
+    title = {LeRobot: State-of-the-art Machine Learning for Real-World Robotics in Pytorch},
+    howpublished = "\url{https://github.com/huggingface/lerobot}",
+    year = {2024}
+}
+```
