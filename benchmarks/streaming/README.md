@@ -55,6 +55,15 @@ limited number of concurrent decode sessions per GPU; if you hit session/IPC lim
 or compare against `--num_workers 0` (single-process NVDEC, which often saturates the decode engine on its
 own). Result files include the decode device in their name (`..._w6_cuda.json`).
 
+> **Codec ⇄ NVDEC compatibility (important).** NVDEC can only decode codecs its hardware supports. LeRobot
+> v3 datasets are often **AV1**-encoded, and the **A100 and H100 compute GPUs have no AV1 NVDEC decoder**
+> (per NVIDIA's [decode support matrix](https://developer.nvidia.com/video-encode-and-decode-gpu-support-matrix-new));
+> only Ada (L4/L40/RTX40) and a few Ampere cards (A10/A40/A16) do. On A100/H100, AV1 must be decoded on
+> **CPU**, or the dataset re-encoded to H.265/H.264 (which those GPUs' NVDEC do support). Run
+> `diagnose_decode.py --video_decode_device cuda` to check your exact node before relying on `cuda` decode.
+> A `cuda` torchcodec build also needs an FFmpeg with NVDEC; see
+> <https://github.com/meta-pytorch/torchcodec#installing-cuda-enabled-torchcodec>.
+
 Reference data root: bucket sources resolve through `--data_files_root hf://buckets/<owner>/<name>` (metadata
 still loads from `--repo_id`). The local `single`/`sarm` CPU baselines on this dataset were ~176 / ~212
 frames/s/node at `--num_workers 3` (3 cameras, fps 20).
