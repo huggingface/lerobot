@@ -5,7 +5,7 @@ import math
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import torch.nn.functional as functional
 
 from .tokenizers import HuggingfaceTokenizer
 
@@ -49,7 +49,7 @@ class GELU(nn.Module):
 
 class T5LayerNorm(nn.Module):
     def __init__(self, dim, eps=1e-6):
-        super(T5LayerNorm, self).__init__()
+        super().__init__()
         self.dim = dim
         self.eps = eps
         self.weight = nn.Parameter(torch.ones(dim))
@@ -64,7 +64,7 @@ class T5LayerNorm(nn.Module):
 class T5Attention(nn.Module):
     def __init__(self, dim, dim_attn, num_heads, dropout=0.1):
         assert dim_attn % num_heads == 0
-        super(T5Attention, self).__init__()
+        super().__init__()
         self.dim = dim
         self.dim_attn = dim_attn
         self.num_heads = num_heads
@@ -103,7 +103,7 @@ class T5Attention(nn.Module):
 
         # compute attention (T5 does not use scaling)
         attn = torch.einsum("binc,bjnc->bnij", q, k) + attn_bias
-        attn = F.softmax(attn.float(), dim=-1).type_as(attn)
+        attn = functional.softmax(attn.float(), dim=-1).type_as(attn)
         x = torch.einsum("bnij,bjnc->binc", attn, v)
 
         # output
@@ -115,7 +115,7 @@ class T5Attention(nn.Module):
 
 class T5FeedForward(nn.Module):
     def __init__(self, dim, dim_ffn, dropout=0.1):
-        super(T5FeedForward, self).__init__()
+        super().__init__()
         self.dim = dim
         self.dim_ffn = dim_ffn
 
@@ -135,7 +135,7 @@ class T5FeedForward(nn.Module):
 
 class T5SelfAttention(nn.Module):
     def __init__(self, dim, dim_attn, dim_ffn, num_heads, num_buckets, shared_pos=True, dropout=0.1):
-        super(T5SelfAttention, self).__init__()
+        super().__init__()
         self.dim = dim
         self.dim_attn = dim_attn
         self.dim_ffn = dim_ffn
@@ -161,7 +161,7 @@ class T5SelfAttention(nn.Module):
 
 class T5CrossAttention(nn.Module):
     def __init__(self, dim, dim_attn, dim_ffn, num_heads, num_buckets, shared_pos=True, dropout=0.1):
-        super(T5CrossAttention, self).__init__()
+        super().__init__()
         self.dim = dim
         self.dim_attn = dim_attn
         self.dim_ffn = dim_ffn
@@ -190,7 +190,7 @@ class T5CrossAttention(nn.Module):
 
 class T5RelativeEmbedding(nn.Module):
     def __init__(self, num_buckets, num_heads, bidirectional, max_dist=128):
-        super(T5RelativeEmbedding, self).__init__()
+        super().__init__()
         self.num_buckets = num_buckets
         self.num_heads = num_heads
         self.bidirectional = bidirectional
@@ -239,7 +239,7 @@ class T5Encoder(nn.Module):
     def __init__(
         self, vocab, dim, dim_attn, dim_ffn, num_heads, num_layers, num_buckets, shared_pos=True, dropout=0.1
     ):
-        super(T5Encoder, self).__init__()
+        super().__init__()
         self.dim = dim
         self.dim_attn = dim_attn
         self.dim_ffn = dim_ffn
@@ -280,7 +280,7 @@ class T5Decoder(nn.Module):
     def __init__(
         self, vocab, dim, dim_attn, dim_ffn, num_heads, num_layers, num_buckets, shared_pos=True, dropout=0.1
     ):
-        super(T5Decoder, self).__init__()
+        super().__init__()
         self.dim = dim
         self.dim_attn = dim_attn
         self.dim_ffn = dim_ffn
@@ -340,7 +340,7 @@ class T5Model(nn.Module):
         shared_pos=True,
         dropout=0.1,
     ):
-        super(T5Model, self).__init__()
+        super().__init__()
         self.vocab_size = vocab_size
         self.dim = dim
         self.dim_attn = dim_attn
@@ -391,13 +391,14 @@ def _t5(
     encoder_only=False,
     decoder_only=False,
     return_tokenizer=False,
-    tokenizer_kwargs={},
+    tokenizer_kwargs=None,
     dtype=torch.float32,
     device="cpu",
     **kwargs,
 ):
     # sanity check
     assert not (encoder_only and decoder_only)
+    tokenizer_kwargs = tokenizer_kwargs or {}
 
     # params
     if encoder_only:
@@ -431,18 +432,18 @@ def _t5(
 
 
 def umt5_xxl(**kwargs):
-    cfg = dict(
-        vocab_size=256384,
-        dim=4096,
-        dim_attn=4096,
-        dim_ffn=10240,
-        num_heads=64,
-        encoder_layers=24,
-        decoder_layers=24,
-        num_buckets=32,
-        shared_pos=False,
-        dropout=0.1,
-    )
+    cfg = {
+        "vocab_size": 256384,
+        "dim": 4096,
+        "dim_attn": 4096,
+        "dim_ffn": 10240,
+        "num_heads": 64,
+        "encoder_layers": 24,
+        "decoder_layers": 24,
+        "num_buckets": 32,
+        "shared_pos": False,
+        "dropout": 0.1,
+    }
     cfg.update(**kwargs)
     return _t5("umt5-xxl", **cfg)
 
@@ -470,7 +471,7 @@ class T5EncoderModel:
             .requires_grad_(False)
         )
         logging.info(f"loading {checkpoint_path}")
-        model.load_state_dict(torch.load(checkpoint_path, map_location="cpu"))
+        model.load_state_dict(torch.load(checkpoint_path, map_location="cpu", weights_only=True))
         self.model = model
         if shard_fn is not None:
             self.model = shard_fn(self.model, sync_module_states=False)
@@ -485,4 +486,4 @@ class T5EncoderModel:
         mask = mask.to(device)
         seq_lens = mask.gt(0).sum(dim=1).long()
         context = self.model(ids, mask)
-        return [u[:v] for u, v in zip(context, seq_lens)]
+        return [u[:v] for u, v in zip(context, seq_lens, strict=False)]

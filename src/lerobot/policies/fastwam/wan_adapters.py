@@ -19,7 +19,7 @@ from typing import Any
 
 import torch
 
-from .wan.modules.vae2_2 import Wan2_2_VAE
+from .wan.modules.vae2_2 import Wan2VAE
 
 
 class WanVideoVAE38(torch.nn.Module):
@@ -36,7 +36,7 @@ class WanVideoVAE38(torch.nn.Module):
         device: str | torch.device = "cuda",
     ) -> None:
         super().__init__()
-        self.wan_vae = Wan2_2_VAE(vae_pth=str(vae_pth), dtype=dtype, device=str(device))
+        self.wan_vae = Wan2VAE(vae_pth=str(vae_pth), dtype=dtype, device=str(device))
         self.model = self.wan_vae.model
         self.dtype = dtype
         self.device = torch.device(device)
