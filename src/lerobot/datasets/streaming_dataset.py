@@ -262,6 +262,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         world_size: int | None = None,
         video_decoder_cache_size: int | None = None,
         data_files_root: str | None = None,
+        video_decode_device: str = "cpu",
     ):
         """Initialize a StreamingLeRobotDataset.
 
@@ -296,6 +297,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 video frames are read from there while metadata still loads from ``repo_id`` on the Hub.
                 Resolves through fsspec exactly like ``hf://``; use it to benchmark bucket / prewarmed-bucket
                 sources without copying the (small) metadata.
+            video_decode_device (str, optional): Device for video decoding, passed to the torchcodec
+                ``VideoDecoder``. Defaults to ``"cpu"``. Set to ``"cuda"`` to offload H.264/H.265 decode to
+                the GPU's dedicated NVDEC engine (independent of the training SMs), which requires a
+                CUDA-enabled torchcodec build. Note: ``"cuda"`` decode inside ``DataLoader`` workers needs
+                the ``spawn`` start method (CUDA cannot init in forked workers).
         """
         super().__init__()
         self.repo_id = repo_id
@@ -319,6 +325,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self.rank, self.world_size = self._resolve_distributed(rank, world_size)
         self.video_decoder_cache_size = video_decoder_cache_size
         self.data_files_root = data_files_root.rstrip("/") if data_files_root else None
+        self.video_decode_device = video_decode_device
 
         # We cache the video decoders to avoid re-initializing them at each frame (avoiding a ~10x slowdown)
         self.video_decoder_cache = None
@@ -425,12 +432,18 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         margin so the round-robin never evicts a still-live decoder.
         """
         if self.video_decoder_cache_size is not None:
-            return VideoDecoderCache(max_size=self.video_decoder_cache_size, counters=self._cache_counters)
+            return VideoDecoderCache(
+                max_size=self.video_decoder_cache_size,
+                counters=self._cache_counters,
+                device=self.video_decode_device,
+            )
         num_cameras = len(self.meta.video_keys)
         if num_cameras == 0:
-            return VideoDecoderCache(counters=self._cache_counters)
+            return VideoDecoderCache(counters=self._cache_counters, device=self.video_decode_device)
         return VideoDecoderCache(
-            max_size=(num_active_shards + 1) * num_cameras, counters=self._cache_counters
+            max_size=(num_active_shards + 1) * num_cameras,
+            counters=self._cache_counters,
+            device=self.video_decode_device,
         )
 
     # TODO(fracapuano): Implement multi-threaded prefetching to accelerate data loading.

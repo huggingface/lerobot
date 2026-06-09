@@ -64,6 +64,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument("--buffer_size", type=int, default=2000)
     parser.add_argument("--video_decoder_cache_size", type=int, default=None)
+    parser.add_argument(
+        "--video_decode_device",
+        type=str,
+        default="cpu",
+        help="Decode device passed to torchcodec. 'cuda' offloads decode to the GPU's NVDEC engine "
+        "(needs a CUDA-enabled torchcodec build). With num_workers>0 this forces the 'spawn' start method.",
+    )
     parser.add_argument("--num_batches", type=int, default=200)
     parser.add_argument("--warmup_batches", type=int, default=5, help="Excluded from steady-state stats.")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
@@ -81,6 +88,7 @@ def build_dataset(args: argparse.Namespace, meta: LeRobotDatasetMetadata) -> Str
         delta_timestamps=delta_timestamps,
         buffer_size=args.buffer_size,
         video_decoder_cache_size=args.video_decoder_cache_size,
+        video_decode_device=args.video_decode_device,
         tolerance_s=1e-3,
     )
 
@@ -99,13 +107,18 @@ def main() -> None:
     meta = LeRobotDatasetMetadata(args.repo_id, root=args.root)
     dataset = build_dataset(args, meta)
 
+    gpu_decode = args.video_decode_device.startswith("cuda")
     loader = DataLoader(
         dataset,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
-        pin_memory=device.type == "cuda",
+        # GPU-decoded frames are already on the GPU, so CPU pinning is irrelevant (and pinning CUDA
+        # tensors errors). Pin only when decode is on CPU and we copy to a CUDA device.
+        pin_memory=device.type == "cuda" and not gpu_decode,
         drop_last=True,
         prefetch_factor=2 if args.num_workers > 0 else None,
+        # CUDA cannot initialize in forked workers; NVDEC decode in workers needs the spawn start method.
+        multiprocessing_context="spawn" if gpu_decode and args.num_workers > 0 else None,
     )
 
     sample_latencies_ms: list[float] = []
@@ -152,6 +165,7 @@ def main() -> None:
         "num_cameras": len(meta.video_keys),
         "fps": meta.fps,
         "device": str(device),
+        "video_decode_device": args.video_decode_device,
         "frames_measured": frames,
         "first_batch_latency_s": round(first_batch_latency_s or float("nan"), 4),
         "frames_per_s_node": round(frames / steady_elapsed_s, 2) if steady_elapsed_s else 0.0,
@@ -167,7 +181,7 @@ def main() -> None:
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    tag = f"{args.source}_{args.mode}_bs{args.batch_size}_w{args.num_workers}"
+    tag = f"{args.source}_{args.mode}_bs{args.batch_size}_w{args.num_workers}_{args.video_decode_device}"
     (out_dir / f"{tag}.json").write_text(json.dumps(results, indent=2))
     flat = {k: (json.dumps(v) if isinstance(v, dict) else v) for k, v in results.items()}
     with open(out_dir / f"{tag}.csv", "w", newline="") as f:

@@ -29,7 +29,35 @@ sbatch slurm/benchmark_streaming_robocasa.sh
 | Nodes      | 1 and 2 (per-node throughput should be independent)                                                                  |
 | Frame mode | `single` (1 frame, all cameras; target ≥ 120 frames/s/node) · `sarm` (8 steps spaced 1s; target ≥ 320 frames/s/node) |
 
-`--source` is a label only; the actual source is whatever `--repo_id` / `--root` point at.
+`--source` is a label only; the actual source is whatever `--repo_id` / `--root` / `--data_files_root`
+point at.
+
+### GPU (NVDEC) decoding
+
+By default video is decoded on the **CPU** in each DataLoader worker, so throughput is CPU-decode-bound and
+scales with `--num_workers` (capped by the dataset's `num_shards`). Pass `--video_decode_device cuda` to
+offload H.264/H.265 decode to the GPU's dedicated **NVDEC** engine, which runs independently of the SMs used
+for training (see <https://developer.nvidia.com/video-codec-sdk>). This requires a CUDA-enabled torchcodec
+build, and because CUDA cannot initialize in forked workers the benchmark switches to the `spawn` start
+method automatically when `--num_workers > 0`.
+
+```bash
+# GPU/NVDEC decode, 6 workers, bucket source
+python benchmarks/streaming/benchmark_streaming.py \
+    --repo_id pepijn223/robocasa_pretrain_human300_v4 \
+    --data_files_root hf://buckets/pepijn223/robocasa-stream \
+    --mode sarm --batch_size 64 --num_workers 6 --num_batches 200 \
+    --video_decode_device cuda --source bucket
+```
+
+Caveats with `cuda` + many workers: each worker creates its own CUDA context (VRAM overhead) and NVDEC has a
+limited number of concurrent decode sessions per GPU; if you hit session/IPC limits, reduce `--num_workers`
+or compare against `--num_workers 0` (single-process NVDEC, which often saturates the decode engine on its
+own). Result files include the decode device in their name (`..._w6_cuda.json`).
+
+Reference data root: bucket sources resolve through `--data_files_root hf://buckets/<owner>/<name>` (metadata
+still loads from `--repo_id`). The local `single`/`sarm` CPU baselines on this dataset were ~176 / ~212
+frames/s/node at `--num_workers 3` (3 cameras, fps 20).
 
 ## Metrics emitted (JSON + CSV)
 

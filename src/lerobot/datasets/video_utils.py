@@ -242,7 +242,12 @@ class VideoDecoderCache:
 
     _SENTINEL: ClassVar[object] = object()
 
-    def __init__(self, max_size: int | None | object = _SENTINEL, counters: "torch.Tensor | None" = None):
+    def __init__(
+        self,
+        max_size: int | None | object = _SENTINEL,
+        counters: "torch.Tensor | None" = None,
+        device: str = "cpu",
+    ):
         if max_size is VideoDecoderCache._SENTINEL:
             max_size = _default_max_cache_size()
         if max_size is not None and max_size <= 0:
@@ -250,6 +255,10 @@ class VideoDecoderCache:
         self.max_size: int | None = max_size  # type: ignore[assignment]
         self._cache: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
         self._lock = Lock()
+        # Decode device for the underlying torchcodec VideoDecoder. "cuda" offloads H.264/H.265 decode to
+        # the GPU's dedicated NVDEC engine (independent of the SMs used for training); requires a
+        # CUDA-enabled torchcodec/FFmpeg build. See https://developer.nvidia.com/video-codec-sdk.
+        self.device = device
         # Observability counters (cheap, updated under the lock) for benchmarking decoder reuse.
         self.hits = 0
         self.misses = 0
@@ -289,7 +298,7 @@ class VideoDecoderCache:
                 self._counters[1] += 1
             file_handle = fsspec.open(video_path).__enter__()
             try:
-                decoder = VideoDecoder(file_handle, seek_mode="approximate")
+                decoder = VideoDecoder(file_handle, seek_mode="approximate", device=self.device)
             except Exception:
                 file_handle.close()
                 raise
