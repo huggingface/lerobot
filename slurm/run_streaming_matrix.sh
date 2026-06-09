@@ -38,6 +38,13 @@ CPU_BUFFER=${CPU_BUFFER:-4000}
 GPU_BUFFER=${GPU_BUFFER:-1000}  # smaller buffer bounds on-GPU frame memory
 BATCH_SIZE=${BATCH_SIZE:-64}
 RUN=${RUN:-python}
+# CONDA_ENV=<name> runs each job via `conda run -n <name>` (no activation needed inside the dash --wrap;
+# --no-capture-output streams logs live). Set this to a conda env that has a MODERN torchcodec (>=0.11)
+# + datasets (>=4.7) — the default `base` env on many clusters is too old to decode AV1 / lacks CUDA.
+CONDA_ENV=${CONDA_ENV:-}
+if [ -n "$CONDA_ENV" ] && [ "$RUN" = "python" ]; then
+  RUN="conda run --no-capture-output -n $CONDA_ENV python"
+fi
 
 SOURCES=${SOURCES:-"hub bucket warmed_bucket"}
 MODES=${MODES:-"single sarm"}
