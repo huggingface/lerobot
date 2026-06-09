@@ -211,16 +211,17 @@ def test_reset_clears_action_queue(patch_vla_jepa_external_models: None) -> None
 
 
 def test_prepare_model_inputs_training_format(patch_vla_jepa_external_models: None) -> None:
-    from PIL import Image
-
     policy = VLAJEPAPolicy(make_config())
     examples = policy._prepare_model_inputs(make_train_batch())
 
     assert len(examples) == BATCH_SIZE
     for ex in examples:
         assert set(ex) >= {"image", "video", "lang", "action", "state"}
-        assert len(ex["image"]) == 1 and isinstance(ex["image"][0], Image.Image)
-        assert ex["video"].ndim == 5 and ex["video"].dtype == np.uint8  # [V,T,H,W,C]
+        assert len(ex["image"]) == 1
+        assert isinstance(ex["image"][0], torch.Tensor) and ex["image"][0].dtype == torch.float32
+        assert ex["image"][0].ndim == 3  # [C, H, W]
+        assert isinstance(ex["video"], torch.Tensor)
+        assert ex["video"].ndim == 5 and ex["video"].dtype == torch.float32  # [V, T, C, H, W]
         assert ex["action"].shape == (ACTION_HORIZON, ACTION_DIM)
         assert ex["state"].shape == (1, STATE_DIM)
 
@@ -446,14 +447,14 @@ def test_postprocessor_applied_after_predict_action_chunk(
     """
     from lerobot.policies.vla_jepa.processor_vla_jepa import make_vla_jepa_pre_post_processors
 
-    raw_actions = np.zeros((BATCH_SIZE, ACTION_HORIZON, ACTION_DIM), dtype=np.float32)
+    raw_actions = torch.zeros((BATCH_SIZE, ACTION_HORIZON, ACTION_DIM), dtype=torch.float32)
 
     cfg = make_config()
     cfg.clip_normalized_actions = False
     cfg.binarize_gripper_action = False
     policy = VLAJEPAPolicy(cfg)
     policy.eval()
-    monkeypatch.setattr(policy.model, "predict_action", lambda *a, **kw: raw_actions.copy())
+    monkeypatch.setattr(policy.model, "predict_action", lambda *a, **kw: raw_actions.clone())
 
     dataset_stats = _make_dataset_stats()
     _, postprocessor = make_vla_jepa_pre_post_processors(cfg, dataset_stats)
@@ -564,9 +565,9 @@ def test_single_view_is_duplicated_for_world_model(patch_vla_jepa_external_model
     original_processor = policy.model.video_processor
 
     class _CapturingProcessor:
-        def __call__(self, videos: list, return_tensors: str) -> dict:
+        def __call__(self, videos: list, return_tensors: str, **kwargs) -> dict:
             captured_videos.extend(videos)
-            return original_processor(videos=videos, return_tensors=return_tensors)
+            return original_processor(videos=videos, return_tensors=return_tensors, **kwargs)
 
     policy.model.video_processor = _CapturingProcessor()
     policy.forward(_make_multiview_train_batch(num_views=1))
@@ -587,9 +588,9 @@ def test_excess_views_trimmed_for_world_model(patch_vla_jepa_external_models: No
     original_processor = policy.model.video_processor
 
     class _CapturingProcessor:
-        def __call__(self, videos: list, return_tensors: str) -> dict:
+        def __call__(self, videos: list, return_tensors: str, **kwargs) -> dict:
             captured_videos.extend(videos)
-            return original_processor(videos=videos, return_tensors=return_tensors)
+            return original_processor(videos=videos, return_tensors=return_tensors, **kwargs)
 
     policy.model.video_processor = _CapturingProcessor()
     policy.forward(_make_multiview_train_batch(num_views=3))

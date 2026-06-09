@@ -19,10 +19,8 @@ from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
-from PIL import Image
 from torch import Tensor, nn
 
 from lerobot.policies.pretrained import PreTrainedPolicy, T
@@ -56,11 +54,11 @@ class VLAJEPAModel(nn.Module):
       - V-JEPA: world model for video frame prediction
 
     Input: List[dict] native format (same as original starVLA)
-      - "image": List[PIL.Image] (multi-view images)
-      - "video": np.ndarray [V, T, H, W, 3]
+      - "image": List[Tensor [C, H, W]] (float [0,1], multi-view images)
+      - "video": Tensor [V, T, C, H, W] (float [0,1])
       - "lang": str (task instruction)
-      - "action": np.ndarray [T, action_dim] (optional, training only)
-      - "state": np.ndarray [1, state_dim] (optional)
+      - "action": Tensor [T, action_dim] (optional, training only)
+      - "state": Tensor [1, state_dim] (optional)
     """
 
     def __init__(self, config: VLAJEPAConfig) -> None:
@@ -167,18 +165,18 @@ class VLAJEPAModel(nn.Module):
 
         Args:
             examples: List of per-sample dicts with keys:
-                "image"  : List[PIL.Image]  — multi-view images
-                "video"  : np.ndarray [V, T, H, W, 3]
+                "image"  : List[Tensor [C, H, W]] (float [0,1]) — multi-view images
+                "video"  : Tensor [V, T, C, H, W] (float [0,1])
                 "lang"   : str — task instruction
-                "action" : np.ndarray [T, action_dim] (optional)
-                "state"  : np.ndarray [1, state_dim] (optional)
+                "action" : Tensor [T, action_dim] (optional)
+                "state"  : Tensor [1, state_dim] (optional)
 
         Returns:
             dict with "action_loss" and "wm_loss" keys (scalar Tensors).
         """
         # Unpack native format (same pattern as original VLA_JEPA.py)
-        batch_images = [ex["image"] for ex in examples]  # List[List[PIL.Image]]
-        batch_videos = [ex["video"] for ex in examples]  # List[np.ndarray]
+        batch_images = [ex["image"] for ex in examples]  # List[List[Tensor [C, H, W]]]
+        batch_videos = [ex["video"] for ex in examples]  # List[Tensor [V, T, C, H, W]]
         instructions = [ex["lang"] for ex in examples]  # List[str]
         has_action = "action" in examples[0] and examples[0]["action"] is not None
         actions = [ex["action"] for ex in examples] if has_action else None
@@ -190,9 +188,8 @@ class VLAJEPAModel(nn.Module):
             else None
         )
 
-        # Stack videos: [B, V, T, H, W, 3] -> [B, V, T, 3, H, W]
-        batch_videos = np.stack(batch_videos)
-        batch_videos = batch_videos.transpose(0, 1, 2, 5, 3, 4)  # [B, V, T, 3, H, W]
+        # Stack videos: List[[V, T, 3, H, W]] -> [B, V, T, 3, H, W] (already channels-first)
+        batch_videos = torch.stack(batch_videos)
 
         # Adjust number of views for the world model:
         # - fewer views than expected: duplicate the first view to fill up
@@ -200,8 +197,8 @@ class VLAJEPAModel(nn.Module):
         num_views_world_model = self.config.jepa_tubelet_size
         if batch_videos.shape[1] < num_views_world_model:
             num_missing_views = num_views_world_model - batch_videos.shape[1]
-            first_view = np.repeat(batch_videos[:, :1], num_missing_views, axis=1)
-            batch_videos = np.concatenate([batch_videos, first_view], axis=1)
+            first_view = batch_videos[:, :1].repeat(1, num_missing_views, 1, 1, 1, 1)
+            batch_videos = torch.cat([batch_videos, first_view], dim=1)
         elif batch_videos.shape[1] > num_views_world_model:
             batch_videos = batch_videos[:, :num_views_world_model]
 
@@ -244,9 +241,15 @@ class VLAJEPAModel(nn.Module):
             b, v, t_frames, c, h_img, w_img = batch_videos.shape
             batch_videos_flat = batch_videos.reshape(b * v, t_frames, c, h_img, w_img)
 
-            video_pixels = self.video_processor(videos=list(batch_videos_flat), return_tensors="pt")[
-                "pixel_values_videos"
-            ].to(self.video_encoder.device)  # [B*V, T, C, H, W]
+            # Fast (torchvision) video processor: pass GPU float [0,1] tensors + device so the
+            # resize/normalize stays on-device (no GPU->CPU->GPU roundtrip). do_rescale=False
+            # because the frames already arrive in [0, 1].
+            video_pixels = self.video_processor(
+                videos=list(batch_videos_flat),
+                return_tensors="pt",
+                device=self.video_encoder.device,
+                do_rescale=False,
+            )["pixel_values_videos"]  # [B*V, T, C, H, W]
 
             with torch.no_grad():
                 video_embeddings = self.video_encoder.get_vision_features(pixel_values_videos=video_pixels)
@@ -286,16 +289,16 @@ class VLAJEPAModel(nn.Module):
 
         # ---- Step 4: Action Head ----
         with torch.autocast(device_type=device_type, dtype=torch.float32):
-            actions_tensor = torch.tensor(
-                np.array(actions), device=last_hidden.device, dtype=torch.float32
+            actions_tensor = torch.stack(actions).to(
+                device=last_hidden.device, dtype=torch.float32
             )  # [B, T_full, action_dim]
             action_horizon = self.config.chunk_size
             actions_target = actions_tensor[:, -action_horizon:, :]
 
             state_tensor = None
             if state is not None:
-                state_tensor = torch.tensor(
-                    np.array(state), device=last_hidden.device, dtype=last_hidden.dtype
+                state_tensor = torch.stack(state).to(
+                    device=last_hidden.device, dtype=last_hidden.dtype
                 )  # [B, 1, state_dim]
 
             repeated_diffusion_steps = self.config.repeated_diffusion_steps
@@ -307,12 +310,7 @@ class VLAJEPAModel(nn.Module):
             action_is_pad_rep = None
             if action_is_pad is not None:
                 pad_tensor = torch.stack(
-                    [
-                        p.to(actions_target.device)
-                        if isinstance(p, Tensor)
-                        else torch.tensor(p, device=actions_target.device)
-                        for p in action_is_pad
-                    ]
+                    [p.to(actions_target.device) for p in action_is_pad]
                 )  # [B, T_full]
                 pad_tensor = pad_tensor[:, -action_horizon:]  # [B, action_horizon]
                 action_is_pad_rep = pad_tensor.repeat(repeated_diffusion_steps, 1)  # [B*R, action_horizon]
@@ -328,26 +326,30 @@ class VLAJEPAModel(nn.Module):
     @torch.no_grad()
     def predict_action(
         self,
-        batch_images: list[list[Image.Image]],
+        batch_images: list[list[Tensor]],
         instructions: list[str],
-        state: np.ndarray | None = None,
-    ) -> np.ndarray:
+        state: Tensor | None = None,
+    ) -> Tensor:
         """
         Native action prediction following original VLA_JEPA.predict_action.
 
         Args:
-            batch_images: List of samples; each is List[PIL.Image] (multi-view).
+            batch_images: List of samples; each is List[Tensor [C, H, W]] (float [0,1], multi-view).
             instructions: Task instructions, one per sample.
-            state: Optional [B, state_dim] numpy array.
+            state: Optional [B, state_dim] tensor.
 
         Returns:
-            np.ndarray [B, action_horizon, action_dim] — predicted actions.
+            Tensor [B, action_horizon, action_dim] — predicted actions (on the model device).
         """
         if self.config.resize_images_to is not None:
             height, width = self.config.resize_images_to
-            resampling = getattr(Image, "Resampling", Image).BOX
+            # PIL BOX resampling ~= area-averaging downsample; F.interpolate(mode="area")
+            # is the on-GPU equivalent. Images stay float [0,1] (do_rescale=False downstream).
             batch_images = [
-                [image.resize((width, height), resample=resampling) for image in sample_images]
+                [
+                    F.interpolate(image[None], size=(height, width), mode="area")[0]
+                    for image in sample_images
+                ]
                 for sample_images in batch_images
             ]
 
@@ -370,15 +372,13 @@ class VLAJEPAModel(nn.Module):
 
         state_tensor = None
         if state is not None:
-            state_tensor = torch.from_numpy(np.array(state)).to(
-                device=last_hidden.device, dtype=last_hidden.dtype
-            )
+            state_tensor = state.to(device=last_hidden.device, dtype=last_hidden.dtype)
 
         pred_actions = self.action_model.predict_action(
             embodied_action_tokens.float(), state_tensor.float() if state_tensor is not None else None
         )  # [B, action_horizon, action_dim]
 
-        return pred_actions.detach().cpu().numpy()
+        return pred_actions
 
 
 # ============================================================================
@@ -431,13 +431,13 @@ class VLAJEPAPolicy(PreTrainedPolicy):
                 "task": str | List[str],  (optional instruction)
             }
 
-        Native format (List[dict]):
+        Native format (List[dict]), all tensors kept on the batch device:
             {
-                "image": List[PIL.Image],       # multi-view images per sample
-                "video": np.ndarray [V, T, H, W, 3],
+                "image": List[Tensor [C, H, W]] (float [0,1]),  # multi-view images per sample
+                "video": Tensor [V, T, C, H, W] (float [0,1]),
                 "lang": str,                     # task instruction
-                "action": np.ndarray [T, action_dim],  # optional
-                "state": np.ndarray [1, state_dim],    # optional
+                "action": Tensor [T, action_dim],  # optional
+                "state": Tensor [1, state_dim],    # optional
             }
         """
         # Determine batch size from the first image feature
@@ -449,8 +449,8 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         batch_size = first_tensor.shape[0]
 
         # ---- Collect images per sample ----
-        # images_per_sample[b][v] = PIL.Image for view v
-        images_per_sample: list[list[Image.Image]] = [[] for _ in range(batch_size)]
+        # images_per_sample[b][v] = float [0,1] Tensor [C, H, W] for view v (kept on-device)
+        images_per_sample: list[list[Tensor]] = [[] for _ in range(batch_size)]
         for key in image_keys:
             tensor = batch[key]  # [B, C, H, W] or [B, T, C, H, W]
             if tensor.ndim == 5:
@@ -458,20 +458,10 @@ class VLAJEPAPolicy(PreTrainedPolicy):
                 # index 0 is the current observation (delta=0)
                 tensor = tensor[:, 0]
             for b in range(batch_size):
-                images_per_sample[b].append(self.model.qwen.tensor_to_pil(tensor[b]))
+                images_per_sample[b].append(self.model.qwen.to_pixel_values(tensor[b]))
 
         # ---- Collect videos per sample ----
-        # Build video arrays: for each sample, stack views as [V, T, H, W, 3]
-        # Check whether any image feature has a time dimension
-        video_source = None
-        for k in image_keys:
-            if k in batch:
-                video_source = batch[k]  # Use first available for shape inspection
-                break
-
-        if video_source is None:
-            raise ValueError("No image data found in batch for video construction.")
-
+        # Build video tensors: for each sample, stack views as [V, T, C, H, W] (float [0,1], on-device)
         videos_per_sample = []
         for b in range(batch_size):
             sample_views = []
@@ -479,15 +469,9 @@ class VLAJEPAPolicy(PreTrainedPolicy):
                 t = batch[k][b]  # [C, H, W] or [T, C, H, W]
                 if t.ndim == 3:
                     t = t.unsqueeze(0)  # [1, C, H, W]
-                # Convert to [T, H, W, 3] numpy
-                t_np = t.permute(0, 2, 3, 1).detach().cpu().float().numpy()
-                # Clamp to [0, 255]
-                if t_np.max() <= 1.0:
-                    t_np = t_np * 255.0
-                t_np = np.rint(t_np.clip(0, 255)).astype(np.uint8)
-                sample_views.append(t_np)
-            # Stack views: [V, T, H, W, 3]
-            videos_per_sample.append(np.stack(sample_views, axis=0))
+                sample_views.append(self.model.qwen.to_pixel_values(t))
+            # Stack views: [V, T, C, H, W]
+            videos_per_sample.append(torch.stack(sample_views, dim=0))
 
         # ---- Collect instructions ----
         tasks = batch.get("task")
@@ -505,10 +489,10 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         if actions_tensor is not None:
             if actions_tensor.ndim == 2:
                 actions_tensor = actions_tensor.unsqueeze(1)
-            actions_list = [actions_tensor[b].detach().cpu().float().numpy() for b in range(batch_size)]
+            actions_list = [actions_tensor[b].detach().float() for b in range(batch_size)]
             action_is_pad_tensor = batch.get("action_is_pad")
             if action_is_pad_tensor is not None:
-                action_is_pad_list = [action_is_pad_tensor[b].detach().cpu() for b in range(batch_size)]
+                action_is_pad_list = [action_is_pad_tensor[b].detach() for b in range(batch_size)]
 
         # ---- Collect state ----
         state_list = None
@@ -518,7 +502,7 @@ class VLAJEPAPolicy(PreTrainedPolicy):
                 state_tensor = state_tensor[:, -1, :]
             if state_tensor.ndim == 2:
                 state_tensor = state_tensor.unsqueeze(1)  # [B, 1, state_dim]
-            state_list = [state_tensor[b].detach().cpu().float().numpy() for b in range(batch_size)]
+            state_list = [state_tensor[b].detach().float() for b in range(batch_size)]
 
         # ---- Assemble native examples ----
         examples = []
@@ -565,12 +549,12 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         batch_images = [ex["image"] for ex in examples]
         instructions = [ex["lang"] for ex in examples]
 
-        state_np = None
+        state = None
         if "state" in examples[0] and examples[0]["state"] is not None:
-            state_np = np.stack([ex["state"] for ex in examples])
+            state = torch.stack([ex["state"] for ex in examples])
 
-        actions_np = self.model.predict_action(batch_images, instructions, state_np)
-        return torch.from_numpy(actions_np).to(device=self.config.device, dtype=torch.float32)
+        actions = self.model.predict_action(batch_images, instructions, state)
+        return actions.to(device=self.config.device, dtype=torch.float32)
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
