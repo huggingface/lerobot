@@ -212,40 +212,41 @@ def test_reset_clears_action_queue(patch_vla_jepa_external_models: None) -> None
 
 def test_prepare_model_inputs_training_format(patch_vla_jepa_external_models: None) -> None:
     policy = VLAJEPAPolicy(make_config())
-    examples = policy._prepare_model_inputs(make_train_batch())
+    inputs = policy._prepare_model_inputs(make_train_batch())
 
-    assert len(examples) == BATCH_SIZE
-    for ex in examples:
-        assert set(ex) >= {"image", "video", "lang", "action", "state"}
-        assert len(ex["image"]) == 1
-        assert isinstance(ex["image"][0], torch.Tensor) and ex["image"][0].dtype == torch.float32
-        assert ex["image"][0].ndim == 3  # [C, H, W]
-        assert isinstance(ex["video"], torch.Tensor)
-        assert ex["video"].ndim == 5 and ex["video"].dtype == torch.float32  # [V, T, C, H, W]
-        assert ex["action"].shape == (ACTION_HORIZON, ACTION_DIM)
-        assert ex["state"].shape == (1, STATE_DIM)
+    assert set(inputs) >= {"images", "instructions", "videos", "actions", "state"}
+    # images: per-sample, per-view [C, H, W] float tensors (kept as a list for Qwen messages)
+    assert len(inputs["images"]) == BATCH_SIZE and len(inputs["images"][0]) == 1
+    img = inputs["images"][0][0]
+    assert isinstance(img, torch.Tensor) and img.dtype == torch.float32 and img.ndim == 3
+    assert len(inputs["instructions"]) == BATCH_SIZE
+    # videos: batched [B, V, T, C, H, W] float
+    assert inputs["videos"].ndim == 6 and inputs["videos"].shape[0] == BATCH_SIZE
+    assert inputs["videos"].dtype == torch.float32
+    assert inputs["actions"].shape == (BATCH_SIZE, ACTION_HORIZON, ACTION_DIM)
+    assert inputs["state"].shape == (BATCH_SIZE, 1, STATE_DIM)
 
 
 def test_prepare_model_inputs_inference_omits_action(patch_vla_jepa_external_models: None) -> None:
     policy = VLAJEPAPolicy(make_config())
-    for ex in policy._prepare_model_inputs(make_inference_batch()):
-        assert "action" not in ex
-        assert "image" in ex and "video" in ex and "lang" in ex
+    inputs = policy._prepare_model_inputs(make_inference_batch())
+    assert "actions" not in inputs and "action_is_pad" not in inputs
+    assert {"images", "instructions", "state"} <= set(inputs)
 
 
 def test_prepare_model_inputs_missing_task_uses_default(patch_vla_jepa_external_models: None) -> None:
     policy = VLAJEPAPolicy(make_config())
     batch = make_inference_batch()
     del batch["task"]
-    examples = policy._prepare_model_inputs(batch)
-    assert all(isinstance(ex["lang"], str) and len(ex["lang"]) > 0 for ex in examples)
+    instructions = policy._prepare_model_inputs(batch)["instructions"]
+    assert all(isinstance(s, str) and len(s) > 0 for s in instructions)
 
 
 def test_prepare_model_inputs_string_task_broadcast(patch_vla_jepa_external_models: None) -> None:
     policy = VLAJEPAPolicy(make_config())
     batch = make_inference_batch()
     batch["task"] = "open the drawer"
-    assert all(ex["lang"] == "open the drawer" for ex in policy._prepare_model_inputs(batch))
+    assert policy._prepare_model_inputs(batch)["instructions"] == ["open the drawer"] * BATCH_SIZE
 
 
 def test_prepare_model_inputs_no_state_omitted(patch_vla_jepa_external_models: None) -> None:
@@ -254,7 +255,7 @@ def test_prepare_model_inputs_no_state_omitted(patch_vla_jepa_external_models: N
     policy = VLAJEPAPolicy(make_config())
     batch = make_inference_batch()
     del batch[OBS_STATE]
-    assert all("state" not in ex for ex in policy._prepare_model_inputs(batch))
+    assert "state" not in policy._prepare_model_inputs(batch)
 
 
 # ---------------------------------------------------------------------------

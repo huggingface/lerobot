@@ -121,8 +121,13 @@ class Qwen3VLInterface(torch.nn.Module):
         normalization is IDENTITY, so the tensor already arrives in [0, 1]; we pass it
         through as float and let the processors normalize (no rescale, no uint8
         quantization). A single channel is expanded to 3 to match the RGB processors.
+
+        Works for any channels-first layout (channel dim is -3): [C, H, W], [B, C, H, W],
+        [T, C, H, W], [B, V, T, C, H, W], ...
         """
         image = image_tensor.detach().float()
-        if image.ndim == 3 and image.shape[0] == 1:
-            image = image.repeat(3, 1, 1)
+        if image.shape[-3] == 1:
+            repeats = [1] * image.ndim
+            repeats[-3] = 3
+            image = image.repeat(*repeats)
         return image

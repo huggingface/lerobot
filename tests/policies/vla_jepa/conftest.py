@@ -215,8 +215,10 @@ class _FakeQwenInterface(nn.Module):
     @staticmethod
     def to_pixel_values(image_tensor: Tensor) -> Tensor:
         image = image_tensor.detach().float()
-        if image.ndim == 3 and image.shape[0] == 1:
-            image = image.repeat(3, 1, 1)
+        if image.shape[-3] == 1:
+            repeats = [1] * image.ndim
+            repeats[-3] = 3
+            image = image.repeat(*repeats)
         return image
 
 
