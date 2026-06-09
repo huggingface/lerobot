@@ -27,6 +27,7 @@ from lerobot.processor import (
     RenameObservationsProcessorStep,
     UnnormalizerProcessorStep,
 )
+from lerobot.processor.hil_processor import ImageCropResizeProcessorStep
 from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
@@ -57,6 +58,7 @@ def make_act_pre_post_processors(
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
         DeviceProcessorStep(device=config.device),
+        ImageCropResizeProcessorStep(resize_size=config.resize_imgs),
         NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
