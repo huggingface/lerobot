@@ -56,6 +56,20 @@ This is a Gaussian Actor policy (Gaussian policy with a tanh squash) — the pol
 {% else %}
 This is a **{{ model_name }}** policy trained with [LeRobot](https://github.com/huggingface/lerobot).
 {% endif %}
+{% set diagrams = {
+  "smolvla": "https://cdn-uploads.huggingface.co/production/uploads/640e21ef3c82bd463ee5a76d/aooU0a3DMtYmy_1IWMaIM.png",
+  "pi0": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot-pi0%20(1).png",
+  "pi0_fast": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot-pifast.png",
+  "eo1": "https://huggingface.co/datasets/HaomingSong/lerobot-documentation-images/resolve/main/lerobot/eo_pipeline.png",
+  "groot": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot-groot-paper1%20(1).png",
+  "wall_x": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/walloss-lerobot-paper.png",
+  "xvla": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/xvla-architecture.png"
+} %}
+{% if diagrams.get(model_name) %}
+<p align="center">
+  <img src="{{ diagrams[model_name] }}" alt="{{ model_name }} architecture" width="85%"/>
+</p>
+{% endif %}
 
 This policy has been trained and pushed to the Hub using [LeRobot](https://github.com/huggingface/lerobot).
 {% set policy_docs = {"act": "act", "smolvla": "smolvla", "pi0": "pi0", "pi0_fast": "pi0fast", "pi05": "pi05", "eo1": "eo1", "groot": "groot"} %}
@@ -96,7 +110,12 @@ The policy consumes these observation features and produces these action feature
 - **Frames:** {{ dataset.frames }}
 - **Frame rate:** {{ dataset.fps }} FPS
 {% if dataset.tasks %}- **Task(s):** {% for task in dataset.tasks %}"{{ task }}"{% if not loop.last %}, {% endif %}{% endfor %}
-{% endif %}{% endif %}
+{% endif %}
+<a class="flex" href="https://huggingface.co/spaces/lerobot/visualize_dataset?path={{ dataset.repo_id }}">
+<img class="block dark:hidden" src="https://huggingface.co/datasets/huggingface/badges/resolve/main/visualize-this-dataset-xl.svg"/>
+<img class="hidden dark:block" src="https://huggingface.co/datasets/huggingface/badges/resolve/main/visualize-this-dataset-xl-dark.svg"/>
+</a>
+{% endif %}
 {% if training %}
 ## Training Configuration
 
