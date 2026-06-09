@@ -372,6 +372,15 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 revision=self.revision,
             )
 
+        # Drop any parquet columns not declared in the dataset's feature contract. Some revisions / sources
+        # (e.g. an unversioned bucket holding `main`) carry extra, possibly variable-length annotation
+        # columns such as `language_events`; left in, they leak into the sample and break default DataLoader
+        # collation across frames of differing length. On a clean revision this is a no-op.
+        known_columns = set(self.meta.features)
+        extra_columns = [c for c in (self.hf_dataset.column_names or []) if c not in known_columns]
+        if extra_columns:
+            self.hf_dataset = self.hf_dataset.remove_columns(extra_columns)
+
         self.num_shards = min(self.hf_dataset.num_shards, max_num_shards)
 
     @property
