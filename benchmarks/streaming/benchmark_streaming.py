@@ -155,6 +155,17 @@ def main() -> None:
     steady_elapsed_s = (now - steady_start) if steady_start is not None else elapsed
     cache_stats = dataset.video_decoder_cache_stats()
 
+    # A 0-frame run is a failure, not a 0-throughput result: the pipeline produced no batches (decode
+    # error swallowed in workers, all batches dropped by drop_last, etc.). Exit non-zero so the job is
+    # never reported green with NaN/zero numbers.
+    if frames == 0:
+        raise SystemExit(
+            f"FAILED: measured 0 frames over {args.num_batches} requested batches "
+            f"(cache misses={cache_stats.get('misses', 0)}, hits={cache_stats.get('hits', 0)}). "
+            "The data pipeline yielded no usable batches — inspect worker logs for decode errors. "
+            "Try --num_workers 0 to surface the underlying exception directly."
+        )
+
     results = {
         "repo_id": args.repo_id,
         "source": args.source,
