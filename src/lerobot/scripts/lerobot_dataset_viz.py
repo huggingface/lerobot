@@ -80,14 +80,16 @@ from lerobot.utils.utils import init_logging
 def get_feature_names(dataset: LeRobotDataset, key: str) -> list[str]:
     """Return per-dimension names for a feature from the dataset metadata.
 
-    Falls back to ``{key}_{i}`` indices when the metadata has no names.
+    Only flat-list ``names`` metadata is used. Dict-style ``names`` and missing names fall back to ``{key}_{i}`` indices.
     """
     feature = dataset.features[key]
+    dim = feature["shape"][-1]
+
     names = feature.get("names")
-    if names is not None:
+    if isinstance(names, list) and len(names) == dim:
         return [str(name) for name in names]
 
-    return [f"{key}_{d}" for d in range(feature["shape"][-1])]
+    return [f"{key}_{d}" for d in range(dim)]
 
 
 def to_hwc_uint8_numpy(chw_float32_torch: torch.Tensor) -> np.ndarray:
@@ -329,6 +331,8 @@ def main():
         )
         logging.warning("Setting grpc_port to ws_port value.")
         kwargs["grpc_port"] = kwargs.pop("ws_port")
+    else:
+        kwargs.pop("ws_port")  # Always remove ws_port from kwargs
 
     init_logging()
     logging.info("Loading dataset")

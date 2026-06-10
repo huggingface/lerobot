@@ -38,6 +38,8 @@ def init_rerun(
     require_package("rerun-sdk", extra="viz", import_name="rerun")
     import rerun as rr
 
+    log_rerun_data.blueprint = None  # Reset blueprint cache for new session
+
     batch_size = os.getenv("RERUN_FLUSH_NUM_BYTES", "8000")
     os.environ["RERUN_FLUSH_NUM_BYTES"] = batch_size
     rr.init(session_name)
@@ -110,7 +112,7 @@ def log_rerun_data(
       from CHW to HWC format, (optionally) compressed to JPEG and logged as `rr.Image` or `rr.EncodedImage`.
     - 1D NumPy arrays are logged as a single `rr.Scalars` batch under one entity path, so that every
       dimension shares the same view instead of being split across one view per element.
-    - Other multi-dimensional arrays are flattened and logged as a single `rr.Scalars` batch.
+    - Multi-dimensional **action** arrays are flattened and logged as a single `rr.Scalars` batch.
 
     Keys are automatically namespaced with "observation." or "action." if not already present.
 
