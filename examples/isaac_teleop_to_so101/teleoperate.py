@@ -34,6 +34,7 @@ Requires the ``isaac-teleop`` extra (``isaacteleop``) and an OpenXR runtime.
 """
 
 import time
+from pathlib import Path
 
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import (
@@ -75,12 +76,20 @@ EE_STEP_SIZES = {"x": 1.0, "y": 1.0, "z": 1.0}
 # bounded, so a large but smooth reach is fine.
 MAX_EE_STEP_M = 0.10
 
+# CloudXR device-profile env file passed to the launcher (see webxr.env next to
+# this script). Resolved absolutely so it loads regardless of the working dir.
+CLOUDXR_ENV_FILE = str(Path(__file__).parent / "webxr.env")
+
 
 def main():
     robot_config = SO100FollowerConfig(
-        port="/dev/tty.usbmodem5A460814411", id="my_awesome_follower_arm", use_degrees=True
+        port="/dev/ttyACM0", id="jiwenc_follower_arm", use_degrees=True
     )
-    teleop_config = XRControllerConfig(hand_side="right", clutch_threshold=0.5)
+    teleop_config = XRControllerConfig(
+        hand_side="right",
+        clutch_threshold=0.5,
+        cloudxr_env_file=CLOUDXR_ENV_FILE,
+    )
 
     # SO100Follower is the shared SO-100/SO-101 follower class: so_follower
     # registers the same class under both "so100_follower" and "so101_follower".
