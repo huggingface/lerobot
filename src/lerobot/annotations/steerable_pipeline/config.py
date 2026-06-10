@@ -51,6 +51,30 @@ class PlanConfig:
     # invented from the task text (+1 VLM call/episode).
     subtask_describe_first: bool = True
 
+    # Frame-input mode for the subtask describe/segment passes:
+    #   "embedded"      — one image per sampled frame (default; current behavior),
+    #                     capped at ``max_video_frames``.
+    #   "contact_sheet" — pack sampled frames into timestamped JPEG grids
+    #                     (macrodata/refiner-style). The model cites the
+    #                     burned-in per-tile timestamp directly; far fewer vision
+    #                     tokens per frame, so coverage can stay dense over long
+    #                     episodes without windowing.
+    frame_input_mode: str = "embedded"
+    # contact_sheet sampling/layout. Frame budget is independent of (and usually
+    # higher than) ``max_video_frames`` because grids are cheap.
+    contact_sheet_max_frames: int = 60
+    contact_sheet_columns: int = 5
+    contact_sheet_frames_per_sheet: int = 20
+    contact_sheet_frame_width: int = 224
+    contact_sheet_quality: int = 84
+
+    # Append refiner-style causal "one event = one world-state change" boundary
+    # rules to the describe (and segment) prompts. Sharpens WHERE subtask cuts
+    # land — boundaries fire when an object becomes held / is released / reaches
+    # a new location / a lid changes state / contents move — while keeping the
+    # existing imperative phrasing. Off = byte-identical baseline prompts.
+    causal_boundary_rules: bool = False
+
     # Emit ``style="plan"`` rows at each boundary; False = subtasks + memory only.
     emit_plan: bool = True
 

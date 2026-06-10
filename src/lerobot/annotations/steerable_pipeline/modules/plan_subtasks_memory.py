@@ -28,6 +28,7 @@ from ..frames import (
     FrameProvider,
     VideoFrameProvider,
     null_provider,
+    to_contact_sheet_blocks,
     to_video_block,
     to_video_url_block,
 )
@@ -37,6 +38,45 @@ from ..staging import EpisodeStaging
 from ..vlm_client import VlmClient
 
 logger = logging.getLogger(__name__)
+
+
+# Prepended to the describe / segment prompt text when
+# ``frame_input_mode == "contact_sheet"`` so the VLM knows the images are
+# timestamped grids, not a single video, and reads the burned-in per-tile
+# timestamp when choosing boundaries.
+def _contact_sheet_preamble(columns: int) -> str:
+    return (
+        "CONTACT SHEETS — how to read the images below:\n"
+        f"- Each image is a grid of sampled video frames, {columns} per row, "
+        "with time running left-to-right then top-to-bottom (row-major).\n"
+        "- Each frame has its timestamp burned into the top-left corner, e.g. "
+        '"012.50s". Use that printed timestamp (not the tile position) when you '
+        "choose start/end times; boundaries should land on or near a printed "
+        "timestamp.\n"
+        "- Frames continue across grids: an action may span the end of one sheet "
+        "and the start of the next, so do not place a boundary just because a new "
+        "image begins.\n\n"
+    )
+
+
+# Appended to the describe (and segment) prompt when
+# ``causal_boundary_rules`` is set. A visual, causal definition of where one
+# event ends and the next begins — adapted from macrodata/refiner — to sharpen
+# cut points while the existing prompt keeps owning the imperative phrasing.
+_CAUSAL_BOUNDARY_RULES = (
+    "EVENT BOUNDARIES — where one event ends and the next begins:\n"
+    "- Start a new event whenever the world state changes: an object becomes "
+    "held (the gripper closes on it), an object is released (the gripper opens "
+    "and it stays put), an object reaches a new location, a lid/door/drawer "
+    "changes open/closed state, a tool starts or stops affecting a surface, or "
+    "contents visibly move (e.g. poured).\n"
+    "- If a single action changes the same state gradually and continuously, "
+    "keep it as ONE event — do not split it.\n"
+    "- If the same action repeats on different objects or target locations, "
+    "treat each repetition as a separate event.\n"
+    "- Do NOT create boundaries for idle time, camera motion, hesitation, or "
+    "tiny hand adjustments."
+)
 
 
 @dataclass
@@ -222,7 +262,15 @@ class PlanSubtasksMemoryModule:
         prompt: str,
         window: tuple[float, float] | None = None,
     ) -> list[dict[str, Any]]:
-        """User message combining the (optionally windowed) video block with ``prompt``."""
+        """User message combining the (optionally windowed) video block with ``prompt``.
+
+        In ``contact_sheet`` frame-input mode the prompt is prefixed with a
+        short explanation of how to read the timestamped grids, so the model
+        treats them as one ordered sequence of frames rather than unrelated
+        images.
+        """
+        if self.config.frame_input_mode == "contact_sheet":
+            prompt = _contact_sheet_preamble(self.config.contact_sheet_columns) + prompt
         content = [*self._episode_video_block(record, window=window), {"type": "text", "text": prompt}]
         return [{"role": "user", "content": content}]
 
@@ -316,18 +364,26 @@ class PlanSubtasksMemoryModule:
         """
         if not record.frame_timestamps:
             return []
+        contact_sheet = self.config.frame_input_mode == "contact_sheet"
         if window is not None:
             w0, w1 = float(window[0]), float(window[1])
             dur = max(0.0, w1 - w0)
+            cap = self.config.contact_sheet_max_frames if contact_sheet else self.config.max_video_frames
             n = max(1, int(round(dur * self.config.frames_per_second)) + 1)
-            n = min(n, self.config.max_video_frames)
+            n = min(n, cap)
             if n <= 1 or dur <= 0.0:
                 timestamps = [0.5 * (w0 + w1)]
             else:
                 step = dur / (n - 1)
                 timestamps = [w0 + i * step for i in range(n)]
-            return to_video_block(self.frame_provider.frames_at(record, timestamps))
-        if self.config.use_video_url and isinstance(self.frame_provider, VideoFrameProvider):
+            frames = self.frame_provider.frames_at(record, timestamps)
+            if contact_sheet:
+                # Window-relative badges so they match the window-relative time
+                # frame the segmentation prompt works in (offset back later).
+                rel = [ts - w0 for ts in timestamps[: len(frames)]]
+                return self._contact_sheet_blocks(frames, rel)
+            return to_video_block(frames)
+        if not contact_sheet and self.config.use_video_url and isinstance(self.frame_provider, VideoFrameProvider):
             cache_dir = Path(self.frame_provider.root) / ".annotate_staging" / ".video_clips"
             clip = self.frame_provider.episode_clip_path(record, cache_dir)
             if clip is not None:
@@ -338,10 +394,37 @@ class PlanSubtasksMemoryModule:
                 record.episode_index,
             )
         episode_duration = record.frame_timestamps[-1] - record.frame_timestamps[0]
+        cap = self.config.contact_sheet_max_frames if contact_sheet else self.config.max_video_frames
         target_count = max(1, int(round(episode_duration * self.config.frames_per_second)))
-        target_count = min(target_count, self.config.max_video_frames)
-        video_frames = self.frame_provider.video_for_episode(record, target_count)
-        return to_video_block(video_frames)
+        target_count = min(target_count, cap)
+        timestamps = self._uniform_episode_timestamps(record, target_count)
+        frames = self.frame_provider.frames_at(record, timestamps)
+        if contact_sheet:
+            return self._contact_sheet_blocks(frames, timestamps[: len(frames)])
+        return to_video_block(frames)
+
+    @staticmethod
+    def _uniform_episode_timestamps(record: EpisodeRecord, n: int) -> list[float]:
+        """``n`` episode-relative timestamps spanning ``[t0, t_last]`` uniformly."""
+        ts = record.frame_timestamps
+        if n >= len(ts):
+            return [float(t) for t in ts]
+        t0, t_last = float(ts[0]), float(ts[-1])
+        if t_last <= t0 or n <= 1:
+            return [t0] * max(1, n)
+        step = (t_last - t0) / (n - 1)
+        return [t0 + i * step for i in range(n)]
+
+    def _contact_sheet_blocks(self, frames: list[Any], timestamps: list[float]) -> list[dict[str, Any]]:
+        """Build timestamped contact-sheet image blocks from decoded frames."""
+        return to_contact_sheet_blocks(
+            frames,
+            timestamps,
+            columns=self.config.contact_sheet_columns,
+            frames_per_sheet=self.config.contact_sheet_frames_per_sheet,
+            frame_width=self.config.contact_sheet_frame_width,
+            quality=self.config.contact_sheet_quality,
+        )
 
     def run_plan_updates(
         self,
@@ -430,12 +513,14 @@ class PlanSubtasksMemoryModule:
                 )
 
         # ---- Pass 2: segmentation ------------------------------------
-        prompt = load_prompt("plan_subtasks").format(
-            episode_task=effective_task,
-            min_subtask_seconds=self.config.min_subtask_seconds,
-            max_steps=self.config.plan_max_steps,
-            episode_duration=f"{episode_duration:.3f}",
-            observation_block=observation_block,
+        prompt = self._with_causal_rules(
+            load_prompt("plan_subtasks").format(
+                episode_task=effective_task,
+                min_subtask_seconds=self.config.min_subtask_seconds,
+                max_steps=self.config.plan_max_steps,
+                episode_duration=f"{episode_duration:.3f}",
+                observation_block=observation_block,
+            )
         )
         spans = self._vlm_field(self._video_message(record, prompt), "subtasks")
         cleaned = self._clean_spans(spans, record)
@@ -510,12 +595,14 @@ class PlanSubtasksMemoryModule:
                     "action that is not in your description above.\n\n"
                 )
 
-        prompt = load_prompt("plan_subtasks").format(
-            episode_task=task,
-            min_subtask_seconds=self.config.min_subtask_seconds,
-            max_steps=self.config.plan_max_steps,
-            episode_duration=f"{win_len:.3f}",
-            observation_block=observation_block,
+        prompt = self._with_causal_rules(
+            load_prompt("plan_subtasks").format(
+                episode_task=task,
+                min_subtask_seconds=self.config.min_subtask_seconds,
+                max_steps=self.config.plan_max_steps,
+                episode_duration=f"{win_len:.3f}",
+                observation_block=observation_block,
+            )
         )
         spans = self._vlm_field(self._video_message(record, prompt, window=window), "subtasks")
         # Window-relative clamp; no frame-snap dedupe yet (done on the
@@ -561,6 +648,12 @@ class PlanSubtasksMemoryModule:
             if float(s["end"]) < float(s["start"]):
                 s["end"] = float(s["start"])
         return spans
+
+    def _with_causal_rules(self, prompt: str) -> str:
+        """Append the causal event-boundary rules when the flag is set."""
+        if self.config.causal_boundary_rules:
+            return f"{prompt}\n\n{_CAUSAL_BOUNDARY_RULES}"
+        return prompt
 
     def _clean_spans(
         self,
@@ -609,7 +702,7 @@ class PlanSubtasksMemoryModule:
         self, record: EpisodeRecord, task: str, window: tuple[float, float] | None = None
     ) -> str:
         """Grounding pass: free-form chronological description of the (windowed) video."""
-        prompt = load_prompt("plan_subtask_describe").format(episode_task=task)
+        prompt = self._with_causal_rules(load_prompt("plan_subtask_describe").format(episode_task=task))
         text = self._vlm_field(self._video_message(record, prompt, window=window), "description")
         return text.strip() if isinstance(text, str) and text.strip() else ""
 
