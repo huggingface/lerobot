@@ -124,7 +124,6 @@ class Eagle25VLProcessor(ProcessorMixin):
         "videos_kwargs",
         "text_kwargs",
     ]
-    image_processor_class = "AutoImageProcessor"
     tokenizer_class = "AutoTokenizer"
 
     def __init__(

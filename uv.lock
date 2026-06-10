@@ -2915,6 +2915,11 @@ metaworld = [
     { name = "scipy" },
     { name = "torchcodec", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'AMD64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'arm64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
 ]
+molmoact2 = [
+    { name = "peft" },
+    { name = "scipy" },
+    { name = "transformers" },
+]
 motorbridge-dep = [
     { name = "motorbridge" },
 ]
@@ -2984,6 +2989,11 @@ rebot = [
     { name = "motorbridge" },
     { name = "motorbridge-smart-servo" },
 ]
+robometer = [
+    { name = "peft" },
+    { name = "qwen-vl-utils" },
+    { name = "transformers" },
+]
 robstride = [
     { name = "python-can" },
 ]
@@ -3008,6 +3018,9 @@ test = [
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-timeout" },
+]
+topreward = [
+    { name = "transformers" },
 ]
 training = [
     { name = "accelerate" },
@@ -3038,6 +3051,11 @@ video-benchmark = [
 ]
 viz = [
     { name = "rerun-sdk" },
+]
+vla-jepa = [
+    { name = "diffusers" },
+    { name = "qwen-vl-utils" },
+    { name = "transformers" },
 ]
 wallx = [
     { name = "peft" },
@@ -3107,6 +3125,7 @@ requires-dist = [
     { name = "lerobot", extras = ["diffusers-dep"], marker = "extra == 'diffusion'" },
     { name = "lerobot", extras = ["diffusers-dep"], marker = "extra == 'groot'" },
     { name = "lerobot", extras = ["diffusers-dep"], marker = "extra == 'multi-task-dit'" },
+    { name = "lerobot", extras = ["diffusers-dep"], marker = "extra == 'vla-jepa'" },
     { name = "lerobot", extras = ["diffusion"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["dynamixel"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["feetech"], marker = "extra == 'all'" },
@@ -3128,6 +3147,7 @@ requires-dist = [
     { name = "lerobot", extras = ["matplotlib-dep"], marker = "extra == 'sarm'" },
     { name = "lerobot", extras = ["matplotlib-dep"], marker = "extra == 'unitree-g1'" },
     { name = "lerobot", extras = ["metaworld"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["molmoact2"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["motorbridge-dep"], marker = "extra == 'rebot'" },
     { name = "lerobot", extras = ["motorbridge-smart-servo-dep"], marker = "extra == 'rebot'" },
     { name = "lerobot", extras = ["multi-task-dit"], marker = "extra == 'all'" },
@@ -3135,7 +3155,9 @@ requires-dist = [
     { name = "lerobot", extras = ["openarms"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["peft"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["peft-dep"], marker = "extra == 'groot'" },
+    { name = "lerobot", extras = ["peft-dep"], marker = "extra == 'molmoact2'" },
     { name = "lerobot", extras = ["peft-dep"], marker = "extra == 'peft'" },
+    { name = "lerobot", extras = ["peft-dep"], marker = "extra == 'robometer'" },
     { name = "lerobot", extras = ["peft-dep"], marker = "extra == 'wallx'" },
     { name = "lerobot", extras = ["phone"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["pi"], marker = "extra == 'all'" },
@@ -3153,36 +3175,46 @@ requires-dist = [
     { name = "lerobot", extras = ["pyzmq-dep"], marker = "extra == 'lekiwi'" },
     { name = "lerobot", extras = ["pyzmq-dep"], marker = "extra == 'unitree-g1'" },
     { name = "lerobot", extras = ["qwen-vl-utils-dep"], marker = "extra == 'eo1'" },
+    { name = "lerobot", extras = ["qwen-vl-utils-dep"], marker = "extra == 'robometer'" },
     { name = "lerobot", extras = ["qwen-vl-utils-dep"], marker = "extra == 'sarm'" },
+    { name = "lerobot", extras = ["qwen-vl-utils-dep"], marker = "extra == 'vla-jepa'" },
     { name = "lerobot", extras = ["qwen-vl-utils-dep"], marker = "extra == 'wallx'" },
     { name = "lerobot", extras = ["reachy2"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["rebot"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["robometer"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["robstride"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["sarm"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'aloha'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'libero'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'metaworld'" },
+    { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'molmoact2'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'phone'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'pi'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'wallx'" },
     { name = "lerobot", extras = ["smolvla"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["test"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["topreward"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["training"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'eo1'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'groot'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'hilserl'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'libero'" },
+    { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'molmoact2'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'multi-task-dit'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'peft'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'pi'" },
+    { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'robometer'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'sarm'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'smolvla'" },
+    { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'topreward'" },
+    { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'vla-jepa'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'wallx'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'xvla'" },
     { name = "lerobot", extras = ["video-benchmark"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["viz"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["viz"], marker = "extra == 'core-scripts'" },
     { name = "lerobot", extras = ["viz"], marker = "extra == 'dataset-viz'" },
+    { name = "lerobot", extras = ["vla-jepa"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["wallx"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["xvla"], marker = "extra == 'all'" },
     { name = "matplotlib", marker = "extra == 'matplotlib-dep'", specifier = ">=3.10.3,<4.0.0" },
@@ -3203,7 +3235,7 @@ requires-dist = [
     { name = "pandas", marker = "extra == 'video-benchmark'", specifier = ">=2.2.2,<2.4.0" },
     { name = "peft", marker = "extra == 'peft-dep'", specifier = ">=0.18.0,<1.0.0" },
     { name = "pillow", specifier = ">=10.0.0,<13.0.0" },
-    { name = "placo", marker = "extra == 'placo-dep'", specifier = ">=0.9.6,<0.9.17" },
+    { name = "placo", marker = "extra == 'placo-dep'", specifier = ">=0.9.6,<0.9.16" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.7.0,<5.0.0" },
     { name = "protobuf", marker = "extra == 'grpcio-dep'", specifier = ">=6.31.1,<6.32.0" },
     { name = "pyarrow", marker = "extra == 'dataset'", specifier = ">=21.0.0,<30.0.0" },
@@ -3244,7 +3276,7 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'transformers-dep'", specifier = ">=5.4.0,<5.6.0" },
     { name = "wandb", marker = "extra == 'training'", specifier = ">=0.24.0,<0.25.0" },
 ]
-provides-extras = ["dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "grpcio-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "smolvla", "multi-task-dit", "groot", "sarm", "xvla", "eo1", "hilserl", "async", "peft", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
+provides-extras = ["dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "grpcio-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "molmoact2", "smolvla", "multi-task-dit", "groot", "sarm", "robometer", "topreward", "xvla", "eo1", "hilserl", "vla-jepa", "async", "peft", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
 
 [[package]]
 name = "librt"
@@ -4592,7 +4624,7 @@ wheels = [
 
 [[package]]
 name = "placo"
-version = "0.9.16"
+version = "0.9.15"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cmeel" },
@@ -4602,16 +4634,16 @@ dependencies = [
     { name = "pin" },
     { name = "rhoban-cmeel-jsoncpp" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9e/0a/36c5b729d0d69075e7dfafd1b36c4df6fbb8c1ff1585e88d3c56d4c15010/placo-0.9.16.tar.gz", hash = "sha256:5314faaf6442e7ffe17347680d236af953951813bbfb1c09c4a27f7388d332e4", size = 136871, upload-time = "2025-11-07T14:24:58.811Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/40/c4/a33a0ee2ad798471a1c43a96109d28f358fd95c78a56f8cff57acb66d2bc/placo-0.9.15.tar.gz", hash = "sha256:df47f1154bae305c943bd20ba4f56d50ffc65625efc98679fefb11e8ff3c462c", size = 136856, upload-time = "2025-11-03T10:49:13.151Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a4/95/8a85b58033303fd354a680e1494f47801abdca9133c222ae1c2473983f25/placo-0.9.16-0-cp312-cp312-macosx_10_9_x86_64.whl", hash = "sha256:417a89920b340e3aec19f1f49e1fb06789c679a807450157af8bdf4aef4bc82b", size = 1641806, upload-time = "2025-11-07T14:24:34.736Z" },
-    { url = "https://files.pythonhosted.org/packages/92/bd/2fb3556c71b0689b3168c0e85fce5befb605affcfe4afb3b5e7b5ba6749f/placo-0.9.16-0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:a7ef7ac33ba889d2122db0d7ed55eeecdffed020e2282712989bb11e408bab40", size = 1515468, upload-time = "2025-11-07T14:24:36.587Z" },
-    { url = "https://files.pythonhosted.org/packages/ea/fd/7dba380720dfb89df582a51d0b2cb43957a36849f676baa3dfc74704e67f/placo-0.9.16-0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:885773fe8a8e809022451ec16d47479562a042596f663b8c5bbe762cd616f573", size = 2106540, upload-time = "2025-11-07T14:24:38.149Z" },
-    { url = "https://files.pythonhosted.org/packages/7a/40/97c7c799fe4f89111b973d7a5f86626a2ec1d0e6e20ce2988e0a2bda66f5/placo-0.9.16-0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:19f097305c714e539fbf19e761897f6daab2ff73f639319431b144e77dd3852e", size = 2178511, upload-time = "2025-11-07T14:24:40.04Z" },
-    { url = "https://files.pythonhosted.org/packages/f7/4d/f1700aae269584477b5d72561d2fc5ace37b4bca167892a74a369849c67e/placo-0.9.16-0-cp313-cp313-macosx_10_9_x86_64.whl", hash = "sha256:be11fa987702114097ccf3d94e1c4a891796878429e25c8d88b187ecc652e7ae", size = 1641812, upload-time = "2025-11-07T14:24:41.308Z" },
-    { url = "https://files.pythonhosted.org/packages/43/d7/21d1d0dd1311c0cbd9ccd233cdae520bbe2370095e3c831059d6077c90bd/placo-0.9.16-0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:c2d65aeb4844eae28006ad3a50c8519b27c701912cc99c46c95e33ed049f3635", size = 1515457, upload-time = "2025-11-07T14:24:42.758Z" },
-    { url = "https://files.pythonhosted.org/packages/0f/e8/939ba23bfa539fb90ab9ab1c2c59ff9a9a46e24699fc90e8ca3ff2948646/placo-0.9.16-0-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:a7633aff1c592c1f45e86a174a372d5d7972673935cb9151391277ff49ec2072", size = 2106538, upload-time = "2025-11-07T14:24:44.517Z" },
-    { url = "https://files.pythonhosted.org/packages/08/00/ad24cc0ad85fbe12267df28c2061e1eaef8f852146c467fcd7a681e11028/placo-0.9.16-0-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:0d97a7284b65fc45aef27865c80cf7e53f04646d35bb18494ab62dfbbc9a35bd", size = 2178514, upload-time = "2025-11-07T14:24:45.994Z" },
+    { url = "https://files.pythonhosted.org/packages/ef/03/207b1c087996b918fdbaa5a3a685e3b14b068cd303bf87affdf83f722b33/placo-0.9.15-0-cp312-cp312-macosx_10_9_x86_64.whl", hash = "sha256:eab7a299e73291fe631c02448b9e9826539f4824e198bcf85f7c91fdd77d054b", size = 1641975, upload-time = "2025-11-03T10:48:48.887Z" },
+    { url = "https://files.pythonhosted.org/packages/92/55/40432b26bb1c5b9e677fbc41e8d85b54fa8897b7daebb2a22d410b0a7f7b/placo-0.9.15-0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:23f9dd19b8d15fa9d86968948b57981ebc6f1decafeffc2d646d8b56f685b50d", size = 1515448, upload-time = "2025-11-03T10:48:50.562Z" },
+    { url = "https://files.pythonhosted.org/packages/fd/8e/e6283201d329409dccf2045b5c1efd73b3dad5268143bbea4668029ca9c6/placo-0.9.15-0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:2680a2166c23a0a2aa6226ad75c63a2b2310c812673a5db296616d9af053e076", size = 2106550, upload-time = "2025-11-03T10:48:52.364Z" },
+    { url = "https://files.pythonhosted.org/packages/51/c3/77efe4c999e1d80ec14879ef73ea2a2144aa12db2b67870a562f87ed5b43/placo-0.9.15-0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:1a2202a78bcd2874ca09a9a6526a95b38874803923cb9b3b4b96cd68ab4b7217", size = 2178531, upload-time = "2025-11-03T10:48:53.932Z" },
+    { url = "https://files.pythonhosted.org/packages/fe/e7/b5cc5ad53414ff7af3357e0c9d97d902a3ce276e7810f8814fe9f0c1fb70/placo-0.9.15-0-cp313-cp313-macosx_10_9_x86_64.whl", hash = "sha256:84a445a99b059a512d1b4c64841a91d6f50149c7be9255c65bedeebbe6663989", size = 1641982, upload-time = "2025-11-03T10:48:55.277Z" },
+    { url = "https://files.pythonhosted.org/packages/ad/1c/1c9163d941698a077617f218041efc573d3bf5a1c169a284112bd622fccd/placo-0.9.15-0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:b3106e7e6b05cbfa494239d8aa14795f7da8ee5dec851602f0d6297e311d7334", size = 1515447, upload-time = "2025-11-03T10:48:56.975Z" },
+    { url = "https://files.pythonhosted.org/packages/cd/22/3d9b9045b89248c8476dd42243bc9821a123d9199e4e96a944124ad80cf1/placo-0.9.15-0-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:66c3d099e87551401aace04f1293a3c3563b1399319976647846845bf92c3ccf", size = 2106558, upload-time = "2025-11-03T10:48:58.667Z" },
+    { url = "https://files.pythonhosted.org/packages/20/0b/45dbdd2c378a7cece578b7344fda493d5a2aa6777089798a315ce4f97c22/placo-0.9.15-0-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:0e06b7d3d618ddc2b649ab8b0b46db8001fe72fe2fbcc801524df0ccc8a3da40", size = 2178531, upload-time = "2025-11-03T10:49:00.533Z" },
 ]
 
 [[package]]

@@ -41,8 +41,8 @@ class DatasetRecordConfig:
     video: bool = True
     # Upload dataset to Hugging Face hub.
     push_to_hub: bool = True
-    # Upload on private repository on the Hugging Face hub.
-    private: bool = False
+    # If True, upload as private; if None, defer to the org default on the Hub (only affects orgs).
+    private: bool | None = None
     # Add tags to your dataset on the hub.
     tags: list[str] | None = None
     # Number of subprocesses handling the saving of frames as PNG. Set to 0 to use threads only;
