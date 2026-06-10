@@ -24,6 +24,7 @@ from lerobot.configs.rewards import RewardModelConfig
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
 
 from .classifier.configuration_classifier import RewardClassifierConfig
+from .distributional_value_function.configuration_distributional_value_function import DistributionalVFConfig
 from .pretrained import PreTrainedRewardModel
 from .robometer.configuration_robometer import RobometerConfig
 from .sarm.configuration_sarm import SARMConfig
@@ -63,6 +64,12 @@ def get_reward_model_class(name: str) -> type[PreTrainedRewardModel]:
         from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
 
         return TOPRewardModel
+    elif name == "distributional_value_function":
+        from lerobot.rewards.distributional_value_function.modeling_distributional_value_function import (
+            DistributionalVFRewardModel,
+        )
+
+        return DistributionalVFRewardModel
     else:
         try:
             return _get_reward_model_cls_from_name(name=name)
@@ -96,6 +103,8 @@ def make_reward_model_config(reward_type: str, **kwargs) -> RewardModelConfig:
         return RobometerConfig(**kwargs)
     elif reward_type == "topreward":
         return TOPRewardConfig(**kwargs)
+    elif reward_type == "distributional_value_function":
+        return DistributionalVFConfig(**kwargs)
     else:
         try:
             config_cls = RewardModelConfig.get_choice_class(reward_type)
@@ -188,6 +197,16 @@ def make_reward_pre_post_processors(
         from lerobot.rewards.topreward.processor_topreward import make_topreward_pre_post_processors
 
         return make_topreward_pre_post_processors(
+            config=reward_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(reward_cfg, DistributionalVFConfig):
+        from lerobot.rewards.distributional_value_function.processor_distributional_value_function import (
+            make_distributional_vf_pre_post_processors,
+        )
+
+        return make_distributional_vf_pre_post_processors(
             config=reward_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )

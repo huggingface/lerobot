@@ -13,6 +13,9 @@
 # limitations under the License.
 
 from .classifier.configuration_classifier import RewardClassifierConfig as RewardClassifierConfig
+from .distributional_value_function.configuration_distributional_value_function import (
+    DistributionalVFConfig as DistributionalVFConfig,
+)
 from .factory import (
     get_reward_model_class as get_reward_model_class,
     make_reward_model as make_reward_model,
@@ -26,6 +29,7 @@ from .topreward.configuration_topreward import TOPRewardConfig as TOPRewardConfi
 
 __all__ = [
     # Configuration classes
+    "DistributionalVFConfig",
     "RewardClassifierConfig",
     "RobometerConfig",
     "SARMConfig",
