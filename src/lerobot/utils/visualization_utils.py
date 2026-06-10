@@ -76,8 +76,9 @@ def log_rerun_data(
     - Scalars values (floats, ints) are logged as `rr.Scalars`.
     - 3D NumPy arrays that resemble images (e.g., with 1, 3, or 4 channels first) are transposed
       from CHW to HWC format, (optionally) compressed to JPEG and logged as `rr.Image` or `rr.EncodedImage`.
-    - 1D NumPy arrays are logged as a series of individual scalars, with each element indexed.
-    - Other multi-dimensional arrays are flattened and logged as individual scalars.
+    - 1D NumPy arrays are logged as a single `rr.Scalars` batch under one entity path, so that every
+      dimension shares the same view instead of being split across one view per element.
+    - Other multi-dimensional arrays are flattened and logged as a single `rr.Scalars` batch.
 
     Keys are automatically namespaced with "observation." or "action." if not already present.
 
@@ -89,6 +90,15 @@ def log_rerun_data(
 
     require_package("rerun-sdk", extra="viz", import_name="rerun")
     import rerun as rr
+
+    def _log_vector(key: str, arr: np.ndarray) -> None:
+        """
+        Logs an array as one batch so all dimensions share a single view, while keeping the per-dimension `{key}_{i}` names via SeriesLines. 
+        Arrays with more than one dimension are flattened.
+        """
+        arr = arr.reshape(-1).astype(float)
+        rr.log(key, rr.SeriesLines(names=[f"{key}_{i}" for i in range(arr.shape[0])]), static=True)
+        rr.log(key, rr.Scalars(arr))
 
     if observation:
         for k, v in observation.items():
@@ -104,8 +114,7 @@ def log_rerun_data(
                 if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
                     arr = np.transpose(arr, (1, 2, 0))
                 if arr.ndim == 1:
-                    for i, vi in enumerate(arr):
-                        rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
+                    _log_vector(key, arr)
                 else:
                     img_entity = rr.Image(arr).compress() if compress_images else rr.Image(arr)
                     rr.log(key, entity=img_entity, static=True)
@@ -119,11 +128,4 @@ def log_rerun_data(
             if _is_scalar(v):
                 rr.log(key, rr.Scalars(float(v)))
             elif isinstance(v, np.ndarray):
-                if v.ndim == 1:
-                    for i, vi in enumerate(v):
-                        rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
-                else:
-                    # Fall back to flattening higher-dimensional arrays
-                    flat = v.flatten()
-                    for i, vi in enumerate(flat):
-                        rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
+                _log_vector(key, v)
